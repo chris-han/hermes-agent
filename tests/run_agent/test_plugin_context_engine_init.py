@@ -72,7 +72,7 @@ def test_plugin_engine_update_model_args():
     ):
         from run_agent import AIAgent
 
-        agent = AIAgent(
+        AIAgent(
             model="openrouter/auto",
             api_key="test-key-1234567890",
             quiet_mode=True,

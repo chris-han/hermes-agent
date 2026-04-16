@@ -1,7 +1,6 @@
 """Tests for hermes_cli.gateway."""
 
 from types import SimpleNamespace
-from unittest.mock import patch, call
 
 import hermes_cli.gateway as gateway
 

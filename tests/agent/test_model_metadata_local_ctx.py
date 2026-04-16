@@ -6,12 +6,10 @@ All tests use synthetic inputs — no filesystem or live server required.
 
 import sys
 import os
-import json
 from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import pytest
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +140,7 @@ class TestQueryLocalContextLengthVllm:
         from agent.model_metadata import _query_local_context_length
 
         detail_resp = self._make_resp(200, {"id": "omnicoder-9b", "max_model_len": 100000})
-        list_resp = self._make_resp(404, {})
+        self._make_resp(404, {})
 
         client_mock = MagicMock()
         client_mock.__enter__ = lambda s: client_mock
@@ -460,7 +458,7 @@ class TestGetModelContextLengthLocalFallback:
              patch("agent.model_metadata.fetch_model_metadata", return_value={}), \
              patch("agent.model_metadata.is_local_endpoint", return_value=True), \
              patch("agent.model_metadata._query_local_context_length", return_value=131072), \
-             patch("agent.model_metadata.save_context_length") as mock_save:
+             patch("agent.model_metadata.save_context_length"):
             result = get_model_context_length("omnicoder-9b", "http://localhost:11434/v1")
 
         assert result == 131072
@@ -494,14 +492,14 @@ class TestGetModelContextLengthLocalFallback:
 
     def test_non_local_endpoint_does_not_query_local_server(self):
         """For non-local endpoints, _query_local_context_length is not called."""
-        from agent.model_metadata import get_model_context_length, CONTEXT_PROBE_TIERS
+        from agent.model_metadata import get_model_context_length
 
         with patch("agent.model_metadata.get_cached_context_length", return_value=None), \
              patch("agent.model_metadata.fetch_endpoint_model_metadata", return_value={}), \
              patch("agent.model_metadata.fetch_model_metadata", return_value={}), \
              patch("agent.model_metadata.is_local_endpoint", return_value=False), \
              patch("agent.model_metadata._query_local_context_length") as mock_query:
-            result = get_model_context_length(
+            get_model_context_length(
                 "unknown-model", "https://some-cloud-api.example.com/v1"
             )
 
@@ -526,6 +524,6 @@ class TestGetModelContextLengthLocalFallback:
              patch("agent.model_metadata.fetch_endpoint_model_metadata", return_value={}), \
              patch("agent.model_metadata.fetch_model_metadata", return_value={}), \
              patch("agent.model_metadata._query_local_context_length") as mock_query:
-            result = get_model_context_length("unknown-xyz-model", "")
+            get_model_context_length("unknown-xyz-model", "")
 
         mock_query.assert_not_called()

@@ -2,7 +2,6 @@
 
 import os
 import subprocess
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -441,7 +440,7 @@ class TestSSHBulkUploadWiring:
 
         monkeypatch.setattr(ssh_env, "FileSyncManager", FakeSyncManager)
 
-        env = SSHEnvironment(host="h", user="u")
+        SSHEnvironment(host="h", user="u")
 
         assert "bulk_upload_fn" in captured_kwargs
         assert captured_kwargs["bulk_upload_fn"] is not None

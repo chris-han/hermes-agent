@@ -33,7 +33,7 @@ def find_shell_configs() -> list:
     """Find shell configuration files that might have PATH entries."""
     home = Path.home()
     configs = []
-    
+
     candidates = [
         home / ".bashrc",
         home / ".bash_profile",
@@ -41,11 +41,11 @@ def find_shell_configs() -> list:
         home / ".zshrc",
         home / ".zprofile",
     ]
-    
+
     for config in candidates:
         if config.exists():
             configs.append(config)
-    
+
     return configs
 
 
@@ -53,16 +53,16 @@ def remove_path_from_shell_configs():
     """Remove Hermes PATH entries from shell configuration files."""
     configs = find_shell_configs()
     removed_from = []
-    
+
     for config_path in configs:
         try:
             content = config_path.read_text()
             original_content = content
-            
+
             # Remove lines containing hermes-agent or hermes PATH entries
             new_lines = []
             skip_next = False
-            
+
             for line in content.split('\n'):
                 # Skip the "# Hermes Agent" comment and following line
                 if '# Hermes Agent' in line or '# hermes-agent' in line:
@@ -72,26 +72,26 @@ def remove_path_from_shell_configs():
                     skip_next = False
                     continue
                 skip_next = False
-                
+
                 # Remove any PATH line containing hermes
                 if 'hermes' in line.lower() and ('PATH=' in line or 'path=' in line.lower()):
                     continue
-                    
+
                 new_lines.append(line)
-            
+
             new_content = '\n'.join(new_lines)
-            
+
             # Clean up multiple blank lines
             while '\n\n\n' in new_content:
                 new_content = new_content.replace('\n\n\n', '\n\n')
-            
+
             if new_content != original_content:
                 config_path.write_text(new_content)
                 removed_from.append(config_path)
-                
+
         except Exception as e:
             log_warn(f"Could not update {config_path}: {e}")
-    
+
     return removed_from
 
 
@@ -101,7 +101,7 @@ def remove_wrapper_script():
         Path.home() / ".local" / "bin" / "hermes",
         Path("/usr/local/bin/hermes"),
     ]
-    
+
     removed = []
     for wrapper in wrapper_paths:
         if wrapper.exists():
@@ -113,21 +113,21 @@ def remove_wrapper_script():
                     removed.append(wrapper)
             except Exception as e:
                 log_warn(f"Could not remove {wrapper}: {e}")
-    
+
     return removed
 
 
 def uninstall_gateway_service():
     """Stop and uninstall the gateway service if running."""
     import platform
-    
+
     if platform.system() != "Linux":
         return False
 
     prefix = os.getenv("PREFIX", "")
     if os.getenv("TERMUX_VERSION") or "com.termux/files/usr" in prefix:
         return False
-    
+
     try:
         from hermes_cli.gateway import get_service_name
         svc_name = get_service_name()
@@ -135,10 +135,10 @@ def uninstall_gateway_service():
         svc_name = "hermes-gateway"
 
     service_file = Path.home() / ".config" / "systemd" / "user" / f"{svc_name}.service"
-    
+
     if not service_file.exists():
         return False
-    
+
     try:
         # Stop the service
         subprocess.run(
@@ -146,26 +146,26 @@ def uninstall_gateway_service():
             capture_output=True,
             check=False
         )
-        
+
         # Disable the service
         subprocess.run(
             ["systemctl", "--user", "disable", svc_name],
             capture_output=True,
             check=False
         )
-        
+
         # Remove service file
         service_file.unlink()
-        
+
         # Reload systemd
         subprocess.run(
             ["systemctl", "--user", "daemon-reload"],
             capture_output=True,
             check=False
         )
-        
+
         return True
-        
+
     except Exception as e:
         log_warn(f"Could not fully remove gateway service: {e}")
         return False
@@ -174,20 +174,20 @@ def uninstall_gateway_service():
 def run_uninstall(args):
     """
     Run the uninstall process.
-    
+
     Options:
     - Full uninstall: removes code + ~/.hermes/ (configs, data, logs)
     - Keep data: removes code but keeps ~/.hermes/ for future reinstall
     """
     project_root = get_project_root()
     hermes_home = get_hermes_home()
-    
+
     print()
     print(color("┌─────────────────────────────────────────────────────────┐", Colors.MAGENTA, Colors.BOLD))
     print(color("│            ⚕ Hermes Agent Uninstaller                  │", Colors.MAGENTA, Colors.BOLD))
     print(color("└─────────────────────────────────────────────────────────┘", Colors.MAGENTA, Colors.BOLD))
     print()
-    
+
     # Show what will be affected
     print(color("Current Installation:", Colors.CYAN, Colors.BOLD))
     print(f"  Code:    {project_root}")
@@ -195,7 +195,7 @@ def run_uninstall(args):
     print(f"  Secrets: {hermes_home / '.env'}")
     print(f"  Data:    {hermes_home / 'cron/'}, {hermes_home / 'sessions/'}, {hermes_home / 'logs/'}")
     print()
-    
+
     # Ask for confirmation
     print(color("Uninstall Options:", Colors.YELLOW, Colors.BOLD))
     print()
@@ -207,21 +207,21 @@ def run_uninstall(args):
     print()
     print("  3) " + color("Cancel", Colors.CYAN) + " - Don't uninstall")
     print()
-    
+
     try:
         choice = input(color("Select option [1/2/3]: ", Colors.BOLD)).strip()
     except (KeyboardInterrupt, EOFError):
         print()
         print("Cancelled.")
         return
-    
+
     if choice == "3" or choice.lower() in ("c", "cancel", "q", "quit", "n", "no"):
         print()
         print("Uninstall cancelled.")
         return
-    
+
     full_uninstall = (choice == "2")
-    
+
     # Final confirmation
     print()
     if full_uninstall:
@@ -229,7 +229,7 @@ def run_uninstall(args):
         print(color("   Including: configs, API keys, sessions, scheduled jobs, logs", Colors.RED))
     else:
         print("This will remove the Hermes code but keep your configuration and data.")
-    
+
     print()
     try:
         confirm = input(f"Type '{color('yes', Colors.YELLOW)}' to confirm: ").strip().lower()
@@ -237,23 +237,23 @@ def run_uninstall(args):
         print()
         print("Cancelled.")
         return
-    
+
     if confirm != "yes":
         print()
         print("Uninstall cancelled.")
         return
-    
+
     print()
     print(color("Uninstalling...", Colors.CYAN, Colors.BOLD))
     print()
-    
+
     # 1. Stop and uninstall gateway service
     log_info("Checking for gateway service...")
     if uninstall_gateway_service():
         log_success("Gateway service stopped and removed")
     else:
         log_info("No gateway service found")
-    
+
     # 2. Remove PATH entries from shell configs
     log_info("Removing PATH entries from shell configs...")
     removed_configs = remove_path_from_shell_configs()
@@ -262,7 +262,7 @@ def run_uninstall(args):
             log_success(f"Updated {config}")
     else:
         log_info("No PATH entries found to remove")
-    
+
     # 3. Remove wrapper script
     log_info("Removing hermes command...")
     removed_wrappers = remove_wrapper_script()
@@ -271,10 +271,10 @@ def run_uninstall(args):
             log_success(f"Removed {wrapper}")
     else:
         log_info("No wrapper script found")
-    
+
     # 4. Remove installation directory (code)
     log_info("Removing installation directory...")
-    
+
     # Check if we're running from within the install dir
     # We need to be careful here
     try:
@@ -290,7 +290,7 @@ def run_uninstall(args):
     except Exception as e:
         log_warn(f"Could not fully remove {project_root}: {e}")
         log_info("You may need to manually remove it")
-    
+
     # 5. Optionally remove ~/.hermes/ data directory
     if full_uninstall:
         log_info("Removing configuration and data...")
@@ -303,14 +303,14 @@ def run_uninstall(args):
             log_info("You may need to manually remove it")
     else:
         log_info(f"Keeping configuration and data in {hermes_home}")
-    
+
     # Done
     print()
     print(color("┌─────────────────────────────────────────────────────────┐", Colors.GREEN, Colors.BOLD))
     print(color("│              ✓ Uninstall Complete!                      │", Colors.GREEN, Colors.BOLD))
     print(color("└─────────────────────────────────────────────────────────┘", Colors.GREEN, Colors.BOLD))
     print()
-    
+
     if not full_uninstall:
         print(color("Your configuration and data have been preserved:", Colors.CYAN))
         print(f"  {hermes_home}/")
@@ -318,7 +318,7 @@ def run_uninstall(args):
         print("To reinstall later with your existing settings:")
         print(color("  curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash", Colors.DIM))
         print()
-    
+
     print(color("Reload your shell to complete the process:", Colors.YELLOW))
     print("  source ~/.bashrc  # or ~/.zshrc")
     print()

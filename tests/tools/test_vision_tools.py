@@ -1,6 +1,5 @@
 """Tests for tools/vision_tools.py — URL validation, type hints, error logging."""
 
-import asyncio
 import json
 import logging
 import os
@@ -346,13 +345,12 @@ class TestErrorLoggingExcInfo:
                 patch("tools.vision_tools.async_call_llm", new_callable=AsyncMock, return_value=mock_response),
             ):
                 # Make unlink fail to trigger cleanup warning
-                original_unlink = Path.unlink
 
                 def failing_unlink(self, *args, **kwargs):
                     raise PermissionError("no permission")
 
                 with patch.object(Path, "unlink", failing_unlink):
-                    result = await vision_analyze_tool(
+                    await vision_analyze_tool(
                         "https://example.com/tempimg.jpg", "describe", "test/model"
                     )
 
@@ -778,7 +776,6 @@ class TestResizeImageForVision:
         raw = base64.b64decode(b64data)
         from io import BytesIO
         resized = Image.open(BytesIO(raw))
-        original_ratio = 8000 / 200  # 40:1
         resized_ratio = resized.width / resized.height if resized.height > 0 else 0
         # Allow some tolerance (floor clamping), but ratio should stay above 10:1
         # With independent halving, ratio would collapse to ~1:1. Proportional
@@ -807,7 +804,6 @@ class TestResizeImageForVision:
         header, b64data = result.split(",", 1)
         raw = base64.b64decode(b64data)
         resized = Image.open(BytesIO(raw))
-        original_ratio = 6000 / 200  # 30:1 (h/w)
         resized_ratio = resized.height / resized.width if resized.width > 0 else 0
         assert resized_ratio > 5, (
             f"Aspect ratio collapsed: {resized.width}x{resized.height} "

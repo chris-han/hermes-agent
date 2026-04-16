@@ -10,7 +10,6 @@ The fix creates the AsyncOpenAI client lazily via _get_async_client() so
 each asyncio.run() gets a client bound to the current loop.
 """
 
-import types
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -45,7 +44,7 @@ class TestAsyncClientLazyCreation:
 
         mock_async_openai = MagicMock()
         with patch("openai.AsyncOpenAI", mock_async_openai):
-            client = comp._get_async_client()
+            comp._get_async_client()
 
         mock_async_openai.assert_called_once_with(
             api_key="test-key",
@@ -75,8 +74,8 @@ class TestAsyncClientLazyCreation:
             return instance
 
         with patch("openai.AsyncOpenAI", side_effect=mock_constructor):
-            client1 = comp._get_async_client()
-            client2 = comp._get_async_client()
+            comp._get_async_client()
+            comp._get_async_client()
 
         # Should have created two separate instances
         assert call_count == 2

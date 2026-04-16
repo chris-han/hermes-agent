@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Shared fixtures for gateway e2e tests (Telegram, Discord).
 
 These tests exercise the full async message flow:

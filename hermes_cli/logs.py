@@ -172,7 +172,7 @@ def tail_log(
     log_path = get_hermes_home() / "logs" / filename
     if not log_path.exists():
         print(f"Log file not found: {log_path}")
-        print(f"(Logs are created when Hermes runs — try 'hermes chat' first)")
+        print("(Logs are created when Hermes runs — try 'hermes chat' first)")
         sys.exit(1)
 
     # Parse --since into a datetime cutoff
@@ -265,8 +265,8 @@ def _read_tail(
         # For large files, read last 10K lines and filter down.
         raw_lines = _read_last_n_lines(path, max(num_lines * 20, 2000))
         filtered = [
-            l for l in raw_lines
-            if _matches_filters(l, min_level=min_level,
+            line for line in raw_lines
+            if _matches_filters(line, min_level=min_level,
                                 session_filter=session_filter, since=since,
                                 component_prefixes=component_prefixes)
         ]

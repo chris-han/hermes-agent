@@ -1,9 +1,8 @@
 """Tests for Discord bot message filtering (DISCORD_ALLOW_BOTS)."""
 
-import asyncio
 import os
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 
 def _make_author(*, bot: bool = False, is_self: bool = False):
@@ -55,7 +54,7 @@ class TestDiscordBotFilter(unittest.TestCase):
                 if not client_user or client_user not in message.mentions:
                     return False
             # "all" falls through
-        
+
         return True  # message accepted
 
     def test_own_messages_always_ignored(self):

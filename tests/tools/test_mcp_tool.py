@@ -5,7 +5,6 @@ All tests use mocks -- no real MCP servers or subprocesses are started.
 
 import asyncio
 import json
-import os
 import threading
 import time
 from types import SimpleNamespace
@@ -708,7 +707,6 @@ class TestToolsetInjection:
             result1 = discover_mcp_tools()
             assert "mcp_good_ping" in result1
             assert "mcp_broken_ping" not in result1
-            first_attempts = call_count
 
             # "Fix" the broken server
             broken_fixed = True
@@ -1166,7 +1164,7 @@ class TestConfigurableTimeouts:
 
     def test_timeout_passed_to_handler(self):
         """The tool handler uses the server's configured timeout."""
-        from tools.mcp_tool import _make_tool_handler, _servers, MCPServerTask
+        from tools.mcp_tool import _make_tool_handler, _servers
 
         mock_session = MagicMock()
         mock_session.call_tool = AsyncMock(
@@ -1620,8 +1618,6 @@ class TestUtilityToolRegistration:
 # SamplingHandler tests
 # ===========================================================================
 
-import math
-import time
 
 from mcp.types import (
     CreateMessageResult,
@@ -2843,7 +2839,8 @@ class TestRegistryCollisionWarning:
 
         reg = ToolRegistry()
         schema = {"name": "my_tool", "description": "test", "parameters": {"type": "object", "properties": {}}}
-        handler = lambda args, **kw: "{}"
+        def handler(args, **kw):
+            return "{}"
 
         reg.register(name="my_tool", toolset="builtin", schema=schema, handler=handler)
 
@@ -2860,7 +2857,8 @@ class TestRegistryCollisionWarning:
 
         reg = ToolRegistry()
         schema = {"name": "my_tool", "description": "test", "parameters": {"type": "object", "properties": {}}}
-        handler = lambda args, **kw: "{}"
+        def handler(args, **kw):
+            return "{}"
 
         reg.register(name="my_tool", toolset="mcp-server", schema=schema, handler=handler)
 

@@ -1,13 +1,10 @@
 """Tests for the QQ Bot platform adapter."""
 
-import json
 import os
-import sys
 from unittest import mock
 
-import pytest
 
-from gateway.config import Platform, PlatformConfig
+from gateway.config import PlatformConfig
 
 
 # ---------------------------------------------------------------------------

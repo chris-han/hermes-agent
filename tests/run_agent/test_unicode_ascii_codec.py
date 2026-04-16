@@ -4,7 +4,6 @@ Covers the fix for issue #6843 — systems with ASCII locale (LANG=C)
 that can't encode non-ASCII characters in API request payloads.
 """
 
-import pytest
 
 from run_agent import (
     _strip_non_ascii,

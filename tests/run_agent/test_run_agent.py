@@ -3008,7 +3008,6 @@ class TestSafeWriter:
 
     def test_double_wrap_prevented(self):
         """Wrapping an already-wrapped stream doesn't add layers."""
-        import sys
         from run_agent import _SafeWriter
         from io import StringIO
         inner = StringIO()
@@ -3310,7 +3309,7 @@ class TestAnthropicBaseUrlPassthrough:
             patch("agent.anthropic_adapter.build_anthropic_client") as mock_build,
         ):
             mock_build.return_value = MagicMock()
-            a = AIAgent(
+            AIAgent(
                 api_key="sk-ant-api03-test1234567890",
                 base_url="https://llm-proxy.company.com/v1",
                 api_mode="anthropic_messages",
@@ -3329,7 +3328,7 @@ class TestAnthropicBaseUrlPassthrough:
             patch("agent.anthropic_adapter.build_anthropic_client") as mock_build,
         ):
             mock_build.return_value = MagicMock()
-            a = AIAgent(
+            AIAgent(
                 api_key="sk-ant-api03-test1234567890",
                 api_mode="anthropic_messages",
                 quiet_mode=True,
@@ -3666,7 +3665,7 @@ class TestInterruptVprintForceTrue:
                 if "force=True" not in stripped:
                     violations.append(f"line {i}: {stripped}")
         assert not violations, (
-            f"Interrupt _vprint calls missing force=True:\n"
+            "Interrupt _vprint calls missing force=True:\n"
             + "\n".join(violations)
         )
 
@@ -3723,7 +3722,8 @@ class TestStreamCallbackNonStreamingProvider:
         agent._interruptible_api_call = MagicMock(return_value=mock_response)
 
         received = []
-        cb = lambda delta: received.append(delta)
+        def cb(delta):
+            return received.append(delta)
         agent._stream_callback = cb
 
         _cb = getattr(agent, "_stream_callback", None)
@@ -3767,7 +3767,8 @@ class TestStreamCallbackNonStreamingProvider:
         )
 
         received = []
-        cb = lambda d: received.append(d)
+        def cb(d):
+            return received.append(d)
         agent._stream_callback = cb
         _cb = agent._stream_callback
 

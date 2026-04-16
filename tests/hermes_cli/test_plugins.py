@@ -1,26 +1,18 @@
 """Tests for the Hermes plugin system (hermes_cli.plugins)."""
 
 import logging
-import os
 import sys
 import types
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 import yaml
 
 from hermes_cli.plugins import (
     ENTRY_POINTS_GROUP,
     VALID_HOOKS,
-    LoadedPlugin,
-    PluginContext,
     PluginManager,
-    PluginManifest,
-    get_plugin_manager,
     get_pre_tool_call_block_message,
-    discover_plugins,
-    invoke_hook,
 )
 
 

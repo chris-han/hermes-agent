@@ -17,9 +17,8 @@ import json
 import sys
 import os
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
-import pytest
 
 # Ensure project root is on path (mirrors conftest.py)
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -281,8 +280,6 @@ class TestCwdDriftPrevention:
         env = _mock_env()
         env.cwd = "/drifted"  # simulate prior drift
 
-        active = {task_id: env}
-        last_activity = {task_id: 0.0}
         config = _make_env_config(cwd=global_cwd)
 
         _run_terminal(
@@ -470,7 +467,8 @@ class TestWrapCommandCwdInjection:
         env.cwd = "/drifted/path"
         env.timeout = 30
         env._snapshot_ready = False
-        import uuid, tempfile
+        import uuid
+        import tempfile
         env._session_id = uuid.uuid4().hex
         td = tempfile.gettempdir()
         env._snapshot_path = f"{td}/hermes-snap-{env._session_id}.sh"
@@ -508,7 +506,8 @@ class TestWrapCommandCwdInjection:
         env.cwd = "/var/tmp/leaked"
         env.timeout = 30
         env._snapshot_ready = False
-        import uuid, tempfile
+        import uuid
+        import tempfile
         env._session_id = uuid.uuid4().hex
         td = tempfile.gettempdir()
         env._snapshot_path = f"{td}/hermes-snap-{env._session_id}.sh"
@@ -552,7 +551,8 @@ class TestLocalEnvironmentExecuteCwdFallback:
             def cleanup(self):
                 pass
 
-        import uuid, tempfile
+        import uuid
+        import tempfile
         session_id = uuid.uuid4().hex
         td = tempfile.gettempdir()
 
@@ -596,7 +596,8 @@ class TestLocalEnvironmentExecuteCwdFallback:
             def cleanup(self):
                 pass
 
-        import uuid, tempfile
+        import uuid
+        import tempfile
         session_id = uuid.uuid4().hex
         td = tempfile.gettempdir()
 

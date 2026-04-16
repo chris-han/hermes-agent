@@ -13,7 +13,7 @@ import queue
 import subprocess
 import sys
 from pathlib import Path
-from unittest.mock import patch, MagicMock, PropertyMock, mock_open
+from unittest.mock import patch, MagicMock, mock_open
 
 import pytest
 
@@ -229,7 +229,6 @@ class TestIsWsl:
             assert _is_wsl() is False
 
     def test_result_is_cached(self):
-        import hermes_constants
         content = "Linux version 5.15.0 (microsoft-standard-WSL2)"
         with patch("builtins.open", mock_open(read_data=content)) as m:
             assert _is_wsl() is True
@@ -633,8 +632,6 @@ class TestConvertToPng:
         with patch.dict(sys.modules, {"PIL": None, "PIL.Image": None}):
             with patch("hermes_cli.clipboard.subprocess.run", side_effect=fake_run):
                 # Force ImportError for Pillow
-                import hermes_cli.clipboard as cb
-                original = cb._convert_to_png
 
                 def patched_convert(path):
                     # Skip Pillow, go straight to ImageMagick

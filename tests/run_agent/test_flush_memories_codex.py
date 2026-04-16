@@ -5,13 +5,11 @@ Responses-only client, which would fail silently or with a 404.
 """
 
 import json
-import os
 import sys
 import types
 from types import SimpleNamespace
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock
 
-import pytest
 
 sys.modules.setdefault("fire", types.SimpleNamespace(Fire=lambda *a, **k: None))
 sys.modules.setdefault("firecrawl", types.SimpleNamespace(Firecrawl=object))
@@ -161,7 +159,7 @@ class TestFlushMemoriesUsesAuxiliaryClient:
                 {"role": "assistant", "content": "Hi there"},
                 {"role": "user", "content": "Remember this"},
             ]
-            with patch("tools.memory_tool.memory_tool", return_value="Saved.") as mock_memory:
+            with patch("tools.memory_tool.memory_tool", return_value="Saved."):
                 agent.flush_memories(messages)
 
         mock_call.assert_called_once()

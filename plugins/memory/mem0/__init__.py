@@ -258,9 +258,9 @@ class Mem0MemoryProvider(MemoryProvider):
                     top_k=5,
                 ))
                 if results:
-                    lines = [r.get("memory", "") for r in results if r.get("memory")]
+                    lines = [result.get("memory", "") for result in results if result.get("memory")]
                     with self._prefetch_lock:
-                        self._prefetch_result = "\n".join(f"- {l}" for l in lines)
+                        self._prefetch_result = "\n".join(f"- {line}" for line in lines)
                 self._record_success()
             except Exception as e:
                 self._record_failure()

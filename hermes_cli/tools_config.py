@@ -752,7 +752,7 @@ def _prompt_toolset_checklist(platform_label: str, enabled: Set[str]) -> Set[str
 
 def _configure_toolset(ts_key: str, config: dict):
     """Configure a toolset - provider selection + API keys.
-    
+
     Uses TOOL_CATEGORIES for provider-aware config, falls back to simple
     env var prompts for toolsets not in TOOL_CATEGORIES.
     """
@@ -1037,7 +1037,7 @@ def _configure_simple_requirements(ts_key: str):
     if not missing:
         return
 
-    ts_label = next((l for k, l, _ in _get_effective_configurable_toolsets() if k == ts_key), ts_key)
+    ts_label = next((label for k, label, _ in _get_effective_configurable_toolsets() if k == ts_key), ts_key)
     print()
     print(color(f"  {ts_label} requires configuration:", Colors.YELLOW))
 
@@ -1186,7 +1186,7 @@ def _reconfigure_simple_requirements(ts_key: str):
     if not requirements:
         return
 
-    ts_label = next((l for k, l, _ in _get_effective_configurable_toolsets() if k == ts_key), ts_key)
+    ts_label = next((label for k, label, _ in _get_effective_configurable_toolsets() if k == ts_key), ts_key)
     print()
     print(color(f"  {ts_label}:", Colors.CYAN))
 
@@ -1236,7 +1236,7 @@ def tools_command(args=None, first_install: bool = False, config: dict = None):
             print(color(f"  {pinfo['label']}", Colors.BOLD) + color(f"  ({count}/{total})", Colors.DIM))
             if enabled:
                 for ts_key in sorted(enabled):
-                    label = next((l for k, l, _ in _get_effective_configurable_toolsets() if k == ts_key), ts_key)
+                    label = next((tool_label for k, tool_label, _ in _get_effective_configurable_toolsets() if k == ts_key), ts_key)
                     print(color(f"    ✓ {label}", Colors.GREEN))
             else:
                 print(color("    (none enabled)", Colors.DIM))
@@ -1264,11 +1264,11 @@ def tools_command(args=None, first_install: bool = False, config: dict = None):
             removed = current_enabled - new_enabled
             if added:
                 for ts in sorted(added):
-                    label = next((l for k, l, _ in _get_effective_configurable_toolsets() if k == ts), ts)
+                    label = next((tool_label for k, tool_label, _ in _get_effective_configurable_toolsets() if k == ts), ts)
                     print(color(f"  + {label}", Colors.GREEN))
             if removed:
                 for ts in sorted(removed):
-                    label = next((l for k, l, _ in _get_effective_configurable_toolsets() if k == ts), ts)
+                    label = next((tool_label for k, tool_label, _ in _get_effective_configurable_toolsets() if k == ts), ts)
                     print(color(f"  - {label}", Colors.RED))
 
             auto_configured = apply_nous_managed_defaults(
@@ -1277,7 +1277,7 @@ def tools_command(args=None, first_install: bool = False, config: dict = None):
             )
             if managed_nous_tools_enabled():
                 for ts_key in sorted(auto_configured):
-                    label = next((l for k, l, _ in CONFIGURABLE_TOOLSETS if k == ts_key), ts_key)
+                    label = next((tool_label for k, tool_label, _ in CONFIGURABLE_TOOLSETS if k == ts_key), ts_key)
                     print(color(f"  ✓ {label}: using your Nous subscription defaults", Colors.GREEN))
 
             # Walk through ALL selected tools that have provider options or
@@ -1294,7 +1294,7 @@ def tools_command(args=None, first_install: bool = False, config: dict = None):
                 print()
                 print(color(f"  Configuring {len(to_configure)} tool(s):", Colors.YELLOW))
                 for ts_key in to_configure:
-                    label = next((l for k, l, _ in _get_effective_configurable_toolsets() if k == ts_key), ts_key)
+                    label = next((tool_label for k, tool_label, _ in _get_effective_configurable_toolsets() if k == ts_key), ts_key)
                     print(color(f"    • {label}", Colors.DIM))
                 print(color("  You can skip any tool you don't need right now.", Colors.DIM))
                 print()
@@ -1372,10 +1372,10 @@ def tools_command(args=None, first_install: bool = False, config: dict = None):
                     if added or removed:
                         print(color(f"  {pinfo_inner['label']}:", Colors.DIM))
                         for ts in sorted(added):
-                            label = next((l for k, l, _ in _get_effective_configurable_toolsets() if k == ts), ts)
+                            label = next((tool_label for k, tool_label, _ in _get_effective_configurable_toolsets() if k == ts), ts)
                             print(color(f"    + {label}", Colors.GREEN))
                         for ts in sorted(removed):
-                            label = next((l for k, l, _ in _get_effective_configurable_toolsets() if k == ts), ts)
+                            label = next((tool_label for k, tool_label, _ in _get_effective_configurable_toolsets() if k == ts), ts)
                             print(color(f"    - {label}", Colors.RED))
                     # Configure API keys for newly enabled tools
                     for ts_key in sorted(added):
@@ -1410,11 +1410,11 @@ def tools_command(args=None, first_install: bool = False, config: dict = None):
 
             if added:
                 for ts in sorted(added):
-                    label = next((l for k, l, _ in _get_effective_configurable_toolsets() if k == ts), ts)
+                    label = next((tool_label for k, tool_label, _ in _get_effective_configurable_toolsets() if k == ts), ts)
                     print(color(f"  + {label}", Colors.GREEN))
             if removed:
                 for ts in sorted(removed):
-                    label = next((l for k, l, _ in _get_effective_configurable_toolsets() if k == ts), ts)
+                    label = next((tool_label for k, tool_label, _ in _get_effective_configurable_toolsets() if k == ts), ts)
                     print(color(f"  - {label}", Colors.RED))
 
             # Configure newly enabled toolsets that need API keys
@@ -1626,7 +1626,7 @@ def _print_tools_list(enabled_toolsets: set, mcp_servers: dict, platform: str = 
         print(f"  {status}  {ts_key}  {color(label, Colors.DIM)}")
 
     # Plugin toolsets
-    plugin_entries = [(k, l) for k, l, _ in effective if k not in builtin_keys]
+    plugin_entries = [(key, label) for key, label, _ in effective if key not in builtin_keys]
     if plugin_entries:
         print()
         print(f"Plugin toolsets ({platform}):")

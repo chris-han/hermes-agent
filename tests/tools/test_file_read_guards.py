@@ -18,7 +18,6 @@ from tools.file_tools import (
     read_file_tool,
     reset_file_dedup,
     _is_blocked_device,
-    _get_max_read_chars,
     _DEFAULT_MAX_READ_CHARS,
     _read_tracker,
 )

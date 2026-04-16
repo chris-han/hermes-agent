@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Tests for the Feishu gateway integration."""
 
 import asyncio
@@ -11,9 +13,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 try:
-    import lark_oapi
-    _HAS_LARK_OAPI = True
-except ImportError:
+try:
+    import importlib.util
+
+    _HAS_LARK_OAPI = importlib.util.find_spec("lark_oapi") is not None
+except Exception:
     _HAS_LARK_OAPI = False
 
 
@@ -2549,8 +2553,6 @@ class TestWebhookSecurity(unittest.TestCase):
 
     def test_signature_valid_passes(self):
         import hashlib
-        from gateway.platforms.feishu import FeishuAdapter
-        from gateway.config import PlatformConfig
 
         encrypt_key = "test_secret"
         adapter = self._make_adapter(encrypt_key)

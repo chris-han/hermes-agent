@@ -84,7 +84,7 @@ def _mock_aiohttp(status=200, json_data=None, json_side_effect=None):
 
 def _connect_patches(mock_proc, mock_fh, mock_client_cls=None):
     """Return a dict of common patches needed to reach the health-check loop."""
-    patches = {
+    {
         "gateway.platforms.whatsapp.check_whatsapp_requirements": True,
         "gateway.platforms.whatsapp.asyncio.create_task": MagicMock(),
     }

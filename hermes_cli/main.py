@@ -756,7 +756,7 @@ def cmd_chat(args):
 
     # Import and run the CLI
     from cli import main as cli_main
-    
+
     # Build kwargs from args
     kwargs = {
         "model": args.model,
@@ -775,7 +775,7 @@ def cmd_chat(args):
     }
     # Filter out None values
     kwargs = {k: v for k, v in kwargs.items() if v is not None}
-    
+
     try:
         cli_main(**kwargs)
     except ValueError as e:
@@ -2842,10 +2842,10 @@ def cmd_version(args):
     """Show version."""
     print(f"Hermes Agent v{__version__} ({__release_date__})")
     print(f"Project: {PROJECT_ROOT}")
-    
+
     # Show Python version
     print(f"Python: {sys.version.split()[0]}")
-    
+
     # Check for key dependencies
     try:
         import openai
@@ -2996,24 +2996,24 @@ def _build_web_ui(web_dir: Path, *, fatal: bool = False) -> bool:
 
 def _update_via_zip(args):
     """Update Hermes Agent by downloading a ZIP archive.
-    
-    Used on Windows when git file I/O is broken (antivirus, NTFS filter 
+
+    Used on Windows when git file I/O is broken (antivirus, NTFS filter
     drivers causing 'Invalid argument' errors on file creation).
     """
     import shutil
     import tempfile
     import zipfile
     from urllib.request import urlretrieve
-    
+
     branch = "main"
     zip_url = f"https://github.com/NousResearch/hermes-agent/archive/refs/heads/{branch}.zip"
-    
+
     print("→ Downloading latest version...")
     try:
         tmp_dir = tempfile.mkdtemp(prefix="hermes-update-")
         zip_path = os.path.join(tmp_dir, f"hermes-agent-{branch}.zip")
         urlretrieve(zip_url, zip_path)
-        
+
         print("→ Extracting...")
         with zipfile.ZipFile(zip_path, 'r') as zf:
             # Validate paths to prevent zip-slip (path traversal)
@@ -3023,7 +3023,7 @@ def _update_via_zip(args):
                 if not member_path.startswith(tmp_dir_real + os.sep) and member_path != tmp_dir_real:
                     raise ValueError(f"Zip-slip detected: {member.filename} escapes extraction directory")
             zf.extractall(tmp_dir)
-        
+
         # GitHub ZIPs extract to hermes-agent-<branch>/
         extracted = os.path.join(tmp_dir, f"hermes-agent-{branch}")
         if not os.path.isdir(extracted):
@@ -3033,7 +3033,7 @@ def _update_via_zip(args):
                 if os.path.isdir(candidate) and d != "__MACOSX":
                     extracted = candidate
                     break
-        
+
         # Copy updated files over existing installation, preserving venv/node_modules/.git
         preserve = {'venv', 'node_modules', '.git', '.env'}
         update_count = 0
@@ -3049,12 +3049,12 @@ def _update_via_zip(args):
             else:
                 shutil.copy2(src, dst)
             update_count += 1
-        
+
         print(f"✓ Updated {update_count} items from ZIP")
-        
+
         # Cleanup
         shutil.rmtree(tmp_dir, ignore_errors=True)
-        
+
     except Exception as e:
         print(f"✗ ZIP update failed: {e}")
         sys.exit(1)
@@ -3063,7 +3063,7 @@ def _update_via_zip(args):
     removed = _clear_bytecode_cache(PROJECT_ROOT)
     if removed:
         print(f"  ✓ Cleared {removed} stale __pycache__ director{'y' if removed == 1 else 'ies'}")
-    
+
     # Reinstall Python dependencies. Prefer .[all], but if one optional extra
     # breaks on this machine, keep base deps and reinstall the remaining extras
     # individually so update does not silently strip working capabilities.
@@ -3109,7 +3109,7 @@ def _update_via_zip(args):
             print("  ✓ Skills are up to date")
     except Exception:
         pass
-    
+
     print()
     print("✓ Update complete!")
 
@@ -3623,15 +3623,15 @@ def cmd_update(args):
     gateway_mode = getattr(args, "gateway", False)
     # In gateway mode, use file-based IPC for prompts instead of stdin
     gw_input_fn = (lambda prompt, default="": _gateway_prompt(prompt, default)) if gateway_mode else None
-    
+
     print("⚕ Updating Hermes Agent...")
     print()
-    
+
     # Try git-based update first, fall back to ZIP download on Windows
     # when git file I/O is broken (antivirus, NTFS filter drivers, etc.)
     use_zip_update = False
     git_dir = PROJECT_ROOT / '.git'
-    
+
     if not git_dir.exists():
         if sys.platform == "win32":
             use_zip_update = True
@@ -3639,7 +3639,7 @@ def cmd_update(args):
             print("✗ Not a git repository. Please reinstall:")
             print("  curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash")
             sys.exit(1)
-    
+
     # On Windows, git can fail with "unable to write loose object file: Invalid argument"
     # due to filesystem atomicity issues. Set the recommended workaround.
     if sys.platform == "win32" and git_dir.exists():
@@ -3685,7 +3685,7 @@ def cmd_update(args):
             elif "Authentication failed" in stderr or "could not read Username" in stderr:
                 print("✗ Authentication failed — check your git credentials or SSH key.")
             else:
-                print(f"✗ Failed to fetch updates from origin.")
+                print("✗ Failed to fetch updates from origin.")
                 if stderr:
                     print(f"  {stderr.splitlines()[0]}")
             sys.exit(1)
@@ -3785,7 +3785,7 @@ def cmd_update(args):
                 # working tree is in an unknown state.
                 if not update_succeeded:
                     print(f"  ℹ️  Local changes preserved in stash (ref: {auto_stash_ref})")
-                    print(f"  Restore manually with: git stash apply")
+                    print("  Restore manually with: git stash apply")
                 else:
                     _restore_stashed_changes(
                         git_cmd,
@@ -3794,7 +3794,7 @@ def cmd_update(args):
                         prompt_user=prompt_for_restore,
                         input_fn=gw_input_fn,
                     )
-        
+
         _invalidate_update_cache()
 
         # Clear stale .pyc bytecode cache — prevents ImportError on gateway
@@ -3807,7 +3807,7 @@ def cmd_update(args):
         # Fork upstream sync logic (only for main branch on forks)
         if is_fork and branch == "main":
             _sync_with_upstream_if_needed(git_cmd, PROJECT_ROOT)
-        
+
         # Reinstall Python dependencies. Prefer .[all], but if one optional extra
         # breaks on this machine, keep base deps and reinstall the remaining extras
         # individually so update does not silently strip working capabilities.
@@ -3831,7 +3831,7 @@ def cmd_update(args):
                     check=True,
                 )
             _install_python_dependencies_with_optional_fallback(pip_cmd)
-        
+
         # Check for Node.js deps
         if (PROJECT_ROOT / "package.json").exists():
             import shutil
@@ -3844,7 +3844,7 @@ def cmd_update(args):
 
         print()
         print("✓ Code updated!")
-        
+
         # After git pull, source files on disk are newer than cached Python
         # modules in this process.  Reload hermes_constants so that any lazy
         # import executed below (skills sync, gateway restart) sees new
@@ -3855,7 +3855,7 @@ def cmd_update(args):
             importlib.reload(_hc)
         except Exception:
             pass  # non-fatal — worst case a lazy import fails gracefully
-        
+
         # Sync bundled skills (copies new, updates changed, respects user deletions)
         try:
             from tools.skills_sync import sync_skills
@@ -3891,9 +3891,12 @@ def cmd_update(args):
                             updated = len(r.get("updated", []))
                             modified = len(r.get("user_modified", []))
                             parts = []
-                            if copied: parts.append(f"+{copied} new")
-                            if updated: parts.append(f"↑{updated} updated")
-                            if modified: parts.append(f"~{modified} user-modified")
+                            if copied:
+                                parts.append(f"+{copied} new")
+                            if updated:
+                                parts.append(f"↑{updated} updated")
+                            if modified:
+                                parts.append(f"~{modified} user-modified")
                             status = ", ".join(parts) if parts else "up to date"
                         else:
                             status = "sync failed"
@@ -3915,25 +3918,25 @@ def cmd_update(args):
         # Check for config migrations
         print()
         print("→ Checking configuration for new options...")
-        
+
         from hermes_cli.config import (
-            get_missing_env_vars, get_missing_config_fields, 
+            get_missing_env_vars, get_missing_config_fields,
             check_config_version, migrate_config
         )
-        
+
         missing_env = get_missing_env_vars(required_only=True)
         missing_config = get_missing_config_fields()
         current_ver, latest_ver = check_config_version()
-        
+
         needs_migration = missing_env or missing_config or current_ver < latest_ver
-        
+
         if needs_migration:
             print()
             if missing_env:
                 print(f"  ⚠️  {len(missing_env)} new required setting(s) need configuration")
             if missing_config:
                 print(f"  ℹ️  {len(missing_config)} new config option(s) available")
-            
+
             print()
             if gateway_mode:
                 response = _gateway_prompt(
@@ -3948,13 +3951,13 @@ def cmd_update(args):
                     response = input("Would you like to configure them now? [Y/n]: ").strip().lower()
                 except EOFError:
                     response = "n"
-            
+
             if response in ('', 'y', 'yes'):
                 print()
                 # In gateway mode, run auto-migrations only (no input() prompts
                 # for API keys which would hang the detached process).
                 results = migrate_config(interactive=not gateway_mode, quiet=False)
-                
+
                 if results["env_added"] or results["config_added"]:
                     print()
                     print("✓ Configuration updated!")
@@ -3965,10 +3968,10 @@ def cmd_update(args):
                 print("Skipped. Run 'hermes config migrate' later to configure.")
         else:
             print("  ✓ Configuration is up to date")
-        
+
         print()
         print("✓ Update complete!")
-        
+
         # Write exit code *before* the gateway restart attempt.
         # When running as ``hermes update --gateway`` (spawned by the gateway's
         # /update command), this process lives inside the gateway's systemd
@@ -3988,7 +3991,7 @@ def cmd_update(args):
                 _exit_code_path.write_text("0")
             except OSError:
                 pass
-        
+
         # Auto-restart ALL gateways after update.
         # The code update (git pull) is shared across all profiles, so every
         # running gateway needs restarting to pick up the new code.
@@ -4092,11 +4095,11 @@ def cmd_update(args):
 
         except Exception as e:
             logger.debug("Gateway restart during update failed: %s", e)
-        
+
         print()
         print("Tip: You can now select a provider and model:")
         print("  hermes model              # Select provider and model")
-        
+
     except subprocess.CalledProcessError as e:
         if sys.platform == "win32":
             print(f"⚠ Git update failed: {e}")
@@ -4207,7 +4210,7 @@ def cmd_profile(args):
         try:
             set_active_profile(name)
             if name == "default":
-                print(f"Switched to: default (~/.hermes)")
+                print("Switched to: default (~/.hermes)")
             else:
                 print(f"Switched to: {name}")
         except (ValueError, FileNotFoundError) as e:
@@ -4270,8 +4273,8 @@ def cmd_profile(args):
                         print(f"Wrapper created: {wrapper_path}")
                         if not _is_wrapper_dir_in_path():
                             print(f"\n⚠ {_get_wrapper_dir()} is not in your PATH.")
-                            print(f'  Add to your shell config (~/.bashrc or ~/.zshrc):')
-                            print(f'    export PATH="$HOME/.local/bin:$PATH"')
+                            print('  Add to your shell config (~/.bashrc or ~/.zshrc):')
+                            print('    export PATH="$HOME/.local/bin:$PATH"')
 
             # Profile dir for display
             try:
@@ -4280,7 +4283,7 @@ def cmd_profile(args):
                 profile_dir_display = str(profile_dir)
 
             # Next steps
-            print(f"\nNext steps:")
+            print("\nNext steps:")
             print(f"  {name} setup              Configure API keys and model")
             print(f"  {name} chat               Start chatting")
             print(f"  {name} gateway start      Start the messaging gateway")
@@ -4289,7 +4292,7 @@ def cmd_profile(args):
                 print(f"  Edit {profile_dir_display}/SOUL.md for different personality")
             else:
                 print(f"\n  ⚠ This profile has no API keys yet. Run '{name} setup' first,")
-                print(f"    or it will inherit keys from your shell environment.")
+                print("    or it will inherit keys from your shell environment.")
                 print(f"  Edit {profile_dir_display}/SOUL.md to customize personality")
             print()
 
@@ -4494,7 +4497,7 @@ For more help on a command:
     hermes <command> --help
 """
     )
-    
+
     parser.add_argument(
         "--version", "-V",
         action="store_true",
@@ -4539,9 +4542,9 @@ For more help on a command:
         default=False,
         help="Include the session ID in the agent's system prompt"
     )
-    
+
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
-    
+
     # =========================================================================
     # chat command
     # =========================================================================
@@ -4698,7 +4701,7 @@ For more help on a command:
         description="Manage the messaging gateway (Telegram, Discord, WhatsApp)"
     )
     gateway_subparsers = gateway_parser.add_subparsers(dest="gateway_command")
-    
+
     # gateway run (default)
     gateway_run = gateway_subparsers.add_parser("run", help="Run gateway in foreground (recommended for WSL, Docker, Termux)")
     gateway_run.add_argument("-v", "--verbose", action="count", default=0,
@@ -4707,31 +4710,31 @@ For more help on a command:
                              help="Suppress all stderr log output")
     gateway_run.add_argument("--replace", action="store_true",
                              help="Replace any existing gateway instance (useful for systemd)")
-    
+
     # gateway start
     gateway_start = gateway_subparsers.add_parser("start", help="Start the installed systemd/launchd background service")
     gateway_start.add_argument("--system", action="store_true", help="Target the Linux system-level gateway service")
-    
+
     # gateway stop
     gateway_stop = gateway_subparsers.add_parser("stop", help="Stop gateway service")
     gateway_stop.add_argument("--system", action="store_true", help="Target the Linux system-level gateway service")
     gateway_stop.add_argument("--all", action="store_true", help="Stop ALL gateway processes across all profiles")
-    
+
     # gateway restart
     gateway_restart = gateway_subparsers.add_parser("restart", help="Restart gateway service")
     gateway_restart.add_argument("--system", action="store_true", help="Target the Linux system-level gateway service")
-    
+
     # gateway status
     gateway_status = gateway_subparsers.add_parser("status", help="Show gateway status")
     gateway_status.add_argument("--deep", action="store_true", help="Deep status check")
     gateway_status.add_argument("--system", action="store_true", help="Target the Linux system-level gateway service")
-    
+
     # gateway install
     gateway_install = gateway_subparsers.add_parser("install", help="Install gateway as a systemd/launchd background service")
     gateway_install.add_argument("--force", action="store_true", help="Force reinstall")
     gateway_install.add_argument("--system", action="store_true", help="Install as a Linux system-level service (starts at boot)")
     gateway_install.add_argument("--run-as-user", dest="run_as_user", help="User account the Linux system service should run as")
-    
+
     # gateway uninstall
     gateway_uninstall = gateway_subparsers.add_parser("uninstall", help="Uninstall gateway service")
     gateway_uninstall.add_argument("--system", action="store_true", help="Target the Linux system-level gateway service")
@@ -4740,7 +4743,7 @@ For more help on a command:
     gateway_subparsers.add_parser("setup", help="Configure messaging platforms")
 
     gateway_parser.set_defaults(func=cmd_gateway)
-    
+
     # =========================================================================
     # setup command
     # =========================================================================
@@ -4895,7 +4898,7 @@ For more help on a command:
         help="Run deep checks (may take longer)"
     )
     status_parser.set_defaults(func=cmd_status)
-    
+
     # =========================================================================
     # cron command
     # =========================================================================
@@ -4905,7 +4908,7 @@ For more help on a command:
         description="Manage scheduled tasks"
     )
     cron_subparsers = cron_parser.add_subparsers(dest="cron_command")
-    
+
     # cron list
     cron_list = cron_subparsers.add_parser("list", help="List scheduled jobs")
     cron_list.add_argument("--all", action="store_true", help="Include disabled jobs")
@@ -5109,32 +5112,32 @@ Examples:
         description="Manage Hermes Agent configuration"
     )
     config_subparsers = config_parser.add_subparsers(dest="config_command")
-    
+
     # config show (default)
     config_subparsers.add_parser("show", help="Show current configuration")
-    
+
     # config edit
     config_subparsers.add_parser("edit", help="Open config file in editor")
-    
+
     # config set
     config_set = config_subparsers.add_parser("set", help="Set a configuration value")
     config_set.add_argument("key", nargs="?", help="Configuration key (e.g., model, terminal.backend)")
     config_set.add_argument("value", nargs="?", help="Value to set")
-    
+
     # config path
     config_subparsers.add_parser("path", help="Print config file path")
-    
+
     # config env-path
     config_subparsers.add_parser("env-path", help="Print .env file path")
-    
+
     # config check
     config_subparsers.add_parser("check", help="Check for missing/outdated config")
-    
+
     # config migrate
     config_subparsers.add_parser("migrate", help="Update config with new options")
-    
+
     config_parser.set_defaults(func=cmd_config)
-    
+
     # =========================================================================
     # pairing command
     # =========================================================================
@@ -5793,7 +5796,7 @@ Examples:
         help="Show version information"
     )
     version_parser.set_defaults(func=cmd_version)
-    
+
     # =========================================================================
     # update command
     # =========================================================================
@@ -5807,7 +5810,7 @@ Examples:
         help="Gateway mode: use file-based IPC for prompts instead of stdin (used internally by /update)"
     )
     update_parser.set_defaults(func=cmd_update)
-    
+
     # =========================================================================
     # uninstall command
     # =========================================================================
@@ -6008,7 +6011,7 @@ Examples:
     if args.version:
         cmd_version(args)
         return
-    
+
     # Handle top-level --resume / --continue as shortcut to chat
     if (args.resume or args.continue_last) and args.command is None:
         args.command = "chat"
@@ -6021,7 +6024,7 @@ Examples:
             args.worktree = False
         cmd_chat(args)
         return
-    
+
     # Default to chat if no command specified
     if args.command is None:
         args.query = None
@@ -6035,7 +6038,7 @@ Examples:
             args.worktree = False
         cmd_chat(args)
         return
-    
+
     # Execute the command
     if hasattr(args, 'func'):
         args.func(args)

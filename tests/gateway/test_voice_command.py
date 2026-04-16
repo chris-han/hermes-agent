@@ -801,7 +801,6 @@ class TestVoiceChannelCommands:
     @pytest.mark.asyncio
     async def test_input_no_adapter(self, runner):
         """No Discord adapter — early return, no crash."""
-        from gateway.config import Platform
         # No adapters set
         await runner._handle_voice_channel_input(111, 42, "Hello")
 
@@ -1136,7 +1135,9 @@ class TestVoiceReceiverThreadSafety:
 
     def test_check_silence_holds_lock(self):
         """check_silence must hold lock while iterating buffers."""
-        import ast, inspect, textwrap
+        import ast
+        import inspect
+        import textwrap
         from gateway.platforms.discord import VoiceReceiver
         source = textwrap.dedent(inspect.getsource(VoiceReceiver.check_silence))
         tree = ast.parse(source)
@@ -1157,7 +1158,9 @@ class TestVoiceReceiverThreadSafety:
 
     def test_on_packet_buffer_write_holds_lock(self):
         """_on_packet must hold lock when writing to buffers."""
-        import ast, inspect, textwrap
+        import ast
+        import inspect
+        import textwrap
         from gateway.platforms.discord import VoiceReceiver
         source = textwrap.dedent(inspect.getsource(VoiceReceiver._on_packet))
         tree = ast.parse(source)
@@ -1210,7 +1213,7 @@ class TestCallbackWiringOrder:
 
     def test_callback_set_before_join(self):
         """_handle_voice_channel_join wires callback before calling join."""
-        import ast, inspect
+        import inspect
         from gateway.run import GatewayRunner
         source = inspect.getsource(GatewayRunner._handle_voice_channel_join)
         lines = source.split("\n")
@@ -1338,14 +1341,14 @@ class TestAutoTtsEmptyTextGuard:
         """Code-only response results in empty speech text."""
         import re
         text_content = "```python\nprint(1)\n```"
-        speech_text = re.sub(r'[*_`#\[\]()]', '', text_content)[:4000].strip()
+        re.sub(r'[*_`#\[\]()]', '', text_content)[:4000].strip()
         # Note: base.py regex only strips individual chars, not full code blocks
         # So code blocks are partially stripped but may leave content
         # The real fix is in base.py — empty check after strip
 
     def test_base_empty_check_in_source(self):
         """base.py must check speech_text is non-empty before calling TTS."""
-        import ast, inspect
+        import inspect
         from gateway.platforms.base import BasePlatformAdapter
         source = inspect.getsource(BasePlatformAdapter._process_message_background)
         assert "if not speech_text" in source or "not speech_text" in source, (
@@ -1895,7 +1898,9 @@ class TestSendVoiceReplyCleanup:
 
     def test_cleanup_in_finally(self):
         """The method has cleanup in a finally block, not inside try."""
-        import inspect, textwrap, ast
+        import inspect
+        import textwrap
+        import ast
         from gateway.run import GatewayRunner
         source = textwrap.dedent(inspect.getsource(GatewayRunner._send_voice_reply))
         tree = ast.parse(source)
@@ -2080,7 +2085,6 @@ class TestDisconnectVoiceCleanup:
 
     @pytest.mark.asyncio
     async def test_disconnect_clears_voice_state(self):
-        from unittest.mock import AsyncMock
 
         adapter = MagicMock()
         adapter._voice_clients = {111: MagicMock(), 222: MagicMock()}
@@ -2501,7 +2505,7 @@ class TestVoiceTTSPlayback:
         from gateway.platforms.base import SendResult
         adapter.send_voice = AsyncMock(return_value=SendResult(success=True))
         # Different chat_id — shouldn't match VC
-        result = await adapter.play_tts(chat_id="999", audio_path="/tmp/tts.ogg")
+        await adapter.play_tts(chat_id="999", audio_path="/tmp/tts.ogg")
         adapter.send_voice.assert_called_once()
 
     # -- Runner dedup --
@@ -2516,7 +2520,7 @@ class TestVoiceTTSPlayback:
 
     def _call_should_reply(self, runner, voice_mode, msg_type, response="Hello",
                            agent_msgs=None, already_sent=False):
-        from gateway.platforms.base import MessageType, MessageEvent, SessionSource
+        from gateway.platforms.base import MessageEvent, SessionSource
         from gateway.config import Platform
         runner._voice_mode["ch1"] = voice_mode
         source = SessionSource(

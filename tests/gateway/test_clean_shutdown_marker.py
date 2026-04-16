@@ -7,15 +7,12 @@ suspend_recently_active() is skipped so users don't lose their sessions.
 After a crash (no marker), suspension still fires as a safety net for stuck sessions.
 """
 
-import os
 from datetime import datetime, timedelta
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 
-from gateway.config import GatewayConfig, Platform, PlatformConfig, SessionResetPolicy
-from gateway.session import SessionEntry, SessionSource, SessionStore
+from gateway.config import GatewayConfig, Platform
+from gateway.session import SessionSource, SessionStore
 
 
 # ---------------------------------------------------------------------------
@@ -69,14 +66,14 @@ class TestSuspendRecentlyActive:
     def test_already_suspended_not_double_counted(self, tmp_path):
         store = _make_store(tmp_path)
         source = _make_source()
-        entry = store.get_or_create_session(source)
+        store.get_or_create_session(source)
 
         # Suspend once
         count1 = store.suspend_recently_active()
         assert count1 == 1
 
         # Create a new session (the old one got reset on next access)
-        entry2 = store.get_or_create_session(source)
+        store.get_or_create_session(source)
 
         # Suspend again — the new session is recent but not yet suspended
         count2 = store.suspend_recently_active()

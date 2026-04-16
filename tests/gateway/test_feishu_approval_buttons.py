@@ -1,12 +1,10 @@
 """Tests for Feishu interactive card approval buttons."""
 
-import asyncio
 import json
-import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -374,7 +372,7 @@ class TestFeishuUpdateApprovalCard:
     async def test_updates_card_on_approve(self):
         adapter = _make_adapter()
 
-        mock_update = AsyncMock()
+        AsyncMock()
         adapter._client.im.v1.message.update = MagicMock()
 
         with patch("asyncio.to_thread", new_callable=AsyncMock) as mock_thread:

@@ -103,13 +103,14 @@ def test_anthropic_cache_read_only(monkeypatch):
 # -- OpenAI: prompt_tokens already total --
 
 def test_openai_prompt_tokens_unchanged(monkeypatch):
-    resp = lambda: SimpleNamespace(
-        choices=[SimpleNamespace(index=0, message=SimpleNamespace(
-            role="assistant", content="ok", tool_calls=None, reasoning_content=None,
-        ), finish_reason="stop")],
-        usage=SimpleNamespace(prompt_tokens=5000, completion_tokens=100, total_tokens=5100),
-        model="gpt-4o",
-    )
+    def resp():
+        return SimpleNamespace(
+            choices=[SimpleNamespace(index=0, message=SimpleNamespace(
+                role="assistant", content="ok", tool_calls=None, reasoning_content=None,
+            ), finish_reason="stop")],
+            usage=SimpleNamespace(prompt_tokens=5000, completion_tokens=100, total_tokens=5100),
+            model="gpt-4o",
+        )
     agent = _make_agent(monkeypatch, "chat_completions", "openrouter", resp)
     agent.run_conversation("hi")
     assert agent.context_compressor.last_prompt_tokens == 5000
@@ -118,11 +119,12 @@ def test_openai_prompt_tokens_unchanged(monkeypatch):
 # -- Codex: no cache fields, getattr returns 0 --
 
 def test_codex_no_cache_fields(monkeypatch):
-    resp = lambda: SimpleNamespace(
-        output=[SimpleNamespace(type="message", content=[SimpleNamespace(type="output_text", text="ok")])],
-        usage=SimpleNamespace(input_tokens=3000, output_tokens=50, total_tokens=3050),
-        status="completed", model="gpt-5-codex",
-    )
+    def resp():
+        return SimpleNamespace(
+            output=[SimpleNamespace(type="message", content=[SimpleNamespace(type="output_text", text="ok")])],
+            usage=SimpleNamespace(input_tokens=3000, output_tokens=50, total_tokens=3050),
+            status="completed", model="gpt-5-codex",
+        )
     agent = _make_agent(monkeypatch, "codex_responses", "openai-codex", resp)
     agent.run_conversation("hi")
     assert agent.context_compressor.last_prompt_tokens == 3000

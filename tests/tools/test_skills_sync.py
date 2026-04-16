@@ -12,8 +12,6 @@ from tools.skills_sync import (
     _compute_relative_dest,
     _dir_hash,
     sync_skills,
-    MANIFEST_FILE,
-    SKILLS_DIR,
 )
 
 
@@ -397,7 +395,7 @@ class TestSyncSkills:
         (user_skill / "SKILL.md").write_text("# User modified")
 
         with self._patches(bundled, skills_dir, manifest_file):
-            result = sync_skills(quiet=True)
+            sync_skills(quiet=True)
 
         assert (user_skill / "SKILL.md").read_text() == "# User modified"
 

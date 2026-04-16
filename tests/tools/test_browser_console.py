@@ -3,7 +3,7 @@
 import json
 import os
 import sys
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 
@@ -158,7 +158,7 @@ class TestBrowserVisionAnnotate:
 
         with (
             patch("tools.browser_tool._run_browser_command") as mock_cmd,
-            patch("tools.browser_tool.call_llm") as mock_call_llm,
+            patch("tools.browser_tool.call_llm"),
             patch("tools.browser_tool._get_vision_model", return_value="test-model"),
         ):
             mock_cmd.return_value = {"success": True, "data": {}}
@@ -179,7 +179,7 @@ class TestBrowserVisionAnnotate:
 
         with (
             patch("tools.browser_tool._run_browser_command") as mock_cmd,
-            patch("tools.browser_tool.call_llm") as mock_call_llm,
+            patch("tools.browser_tool.call_llm"),
             patch("tools.browser_tool._get_vision_model", return_value="test-model"),
         ):
             mock_cmd.return_value = {"success": True, "data": {}}

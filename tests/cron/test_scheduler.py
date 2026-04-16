@@ -5,7 +5,6 @@ import logging
 import os
 from unittest.mock import AsyncMock, patch, MagicMock
 
-import pytest
 
 from cron.scheduler import _resolve_origin, _resolve_delivery_target, _deliver_result, _send_media_via_adapter, run_job, SILENT_MARKER, _build_job_prompt
 
@@ -672,7 +671,7 @@ class TestRunJobSessionPersistence:
 
     def test_run_job_empty_response_returns_empty_not_placeholder(self, tmp_path):
         """Empty final_response should stay empty for delivery logic (issue #2234).
-        
+
         The placeholder '(No response generated)' should only appear in the
         output log, not in the returned final_response that's used for delivery.
         """

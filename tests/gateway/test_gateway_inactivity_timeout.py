@@ -14,9 +14,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
-import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -103,7 +101,7 @@ class TestStagedInactivityWarning:
         while True:
             done, _ = concurrent.futures.wait({future}, timeout=_POLL_INTERVAL)
             if done:
-                result = future.result()
+                future.result()
                 break
             _idle_secs = 0.0
             if hasattr(agent, "get_activity_summary"):

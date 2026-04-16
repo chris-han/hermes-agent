@@ -4,7 +4,6 @@ import asyncio
 import json
 import os
 import sys
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -842,7 +841,7 @@ class TestSendToPlatformDiscordThread:
         send_mock = AsyncMock(return_value={"success": True, "message_id": "1"})
 
         with patch("tools.send_message_tool._send_discord", send_mock):
-            result = asyncio.run(
+            asyncio.run(
                 _send_to_platform(
                     Platform.DISCORD,
                     SimpleNamespace(enabled=True, token="tok", extra={}),

@@ -19,10 +19,14 @@ import os
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set
+from typing import TYPE_CHECKING
 
 from model_tools import handle_function_call
 from tools.terminal_tool import get_active_env
 from tools.tool_result_storage import maybe_persist_tool_result, enforce_turn_budget
+
+if TYPE_CHECKING:
+    from tools.budget_config import BudgetConfig
 
 # Thread pool for running sync tool calls that internally use asyncio.run()
 # (e.g., the Modal/Docker/Daytona terminal backends). Running them in a separate
@@ -377,7 +381,7 @@ class HermesAgentLoop:
                         if args is not None:
                             try:
                                 if tool_name == "terminal":
-                                    backend = os.getenv("TERMINAL_ENV", "local")
+                                    os.getenv("TERMINAL_ENV", "local")
                                     cmd_preview = args.get("command", "")[:80]
                                     logger.info(
                                         "[%s] $ %s", self.task_id[:8], cmd_preview,

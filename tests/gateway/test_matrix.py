@@ -1,7 +1,4 @@
 """Tests for Matrix platform adapter (mautrix-python backend)."""
-import asyncio
-import json
-import re
 import sys
 import time
 import types
@@ -817,7 +814,7 @@ class TestMatrixE2EEHardFail:
 
     @pytest.mark.asyncio
     async def test_connect_fails_when_encryption_true_but_no_e2ee_deps(self):
-        from gateway.platforms.matrix import MatrixAdapter, _check_e2ee_deps
+        from gateway.platforms.matrix import MatrixAdapter
 
         config = PlatformConfig(
             enabled=True,
@@ -1039,7 +1036,6 @@ class TestMatrixPasswordLoginDeviceId:
 
         fake_mautrix_mods["mautrix.client"].Client = MagicMock(return_value=mock_client)
 
-        from gateway.platforms import matrix as matrix_mod
         with patch.dict("sys.modules", fake_mautrix_mods):
             with patch.object(adapter, "_refresh_dm_cache", AsyncMock()):
                 with patch.object(adapter, "_sync_loop", AsyncMock(return_value=None)):
@@ -1329,7 +1325,7 @@ class TestMatrixEncryptedEventHandler:
         # Verify event handlers were registered.
         # In mautrix the order is: add_event_handler(EventType, callback)
         handler_calls = mock_client.add_event_handler.call_args_list
-        registered_types = [call.args[0] for call in handler_calls]
+        [call.args[0] for call in handler_calls]
 
         # Should have registered handlers for ROOM_MESSAGE, REACTION, INVITE, and ROOM_ENCRYPTED
         assert len(handler_calls) >= 4  # At minimum these four

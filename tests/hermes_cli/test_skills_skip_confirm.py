@@ -10,9 +10,8 @@ Based on PR #1595 by 333Alden333 (salvaged).
 Updated for PR #3586 (cache-aware install/uninstall).
 """
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
-import pytest
 
 
 class TestHandleSkillsSlashInstallFlags:
@@ -131,7 +130,7 @@ class TestDoInstallSkipConfirm:
         with patch("hermes_cli.skills_hub._console"), \
              patch("tools.skills_hub.ensure_hub_dirs"), \
              patch("tools.skills_hub.GitHubAuth"), \
-             patch("tools.skills_hub.create_source_router") as mock_router, \
+             patch("tools.skills_hub.create_source_router"), \
              patch("hermes_cli.skills_hub._resolve_short_name", return_value="test/skill"), \
              patch("hermes_cli.skills_hub._resolve_source_meta_and_bundle") as mock_resolve:
 
@@ -148,7 +147,7 @@ class TestDoUninstallSkipConfirm:
     def test_skip_confirm_bypasses_input(self):
         """With skip_confirm=True, input() should not be called."""
         from hermes_cli.skills_hub import do_uninstall
-        with patch("hermes_cli.skills_hub._console") as mock_console, \
+        with patch("hermes_cli.skills_hub._console"), \
              patch("tools.skills_hub.uninstall_skill", return_value=(True, "Removed")) as mock_uninstall, \
              patch("builtins.input") as mock_input:
             do_uninstall("test-skill", skip_confirm=True)

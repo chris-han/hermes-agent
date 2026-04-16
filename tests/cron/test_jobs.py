@@ -1,10 +1,7 @@
 """Tests for cron/jobs.py — schedule parsing, job CRUD, and due-job detection."""
 
-import json
 import pytest
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
-from unittest.mock import patch
 
 from cron.jobs import (
     parse_duration,
@@ -495,7 +492,7 @@ class TestGetDueJobs:
         assert len(due) == 0
 
     def test_disabled_not_returned(self, tmp_cron_dir):
-        job = create_job(prompt="Disabled", schedule="every 1h")
+        create_job(prompt="Disabled", schedule="every 1h")
         jobs = load_jobs()
         jobs[0]["enabled"] = False
         jobs[0]["next_run_at"] = (datetime.now() - timedelta(minutes=5)).isoformat()

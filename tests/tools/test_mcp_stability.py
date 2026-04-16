@@ -1,12 +1,9 @@
 """Tests for MCP stability fixes — event loop handler, PID tracking, shutdown robustness."""
 
 import asyncio
-import os
 import signal
-import threading
 from unittest.mock import patch, MagicMock
 
-import pytest
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +194,7 @@ class TestMCPInitialConnectionRetry:
 
     def test_initial_connect_retry_succeeds_on_second_attempt(self):
         """Server succeeds after one transient initial failure."""
-        from tools.mcp_tool import MCPServerTask, _MAX_INITIAL_CONNECT_RETRIES
+        from tools.mcp_tool import MCPServerTask
 
         call_count = 0
 
@@ -206,7 +203,6 @@ class TestMCPInitialConnectionRetry:
             server = MCPServerTask("test-retry")
 
             # Track calls via patching the method on the class
-            original_run_stdio = MCPServerTask._run_stdio
 
             async def fake_run_stdio(self_inner, config):
                 nonlocal call_count

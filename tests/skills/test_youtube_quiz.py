@@ -3,7 +3,6 @@
 import json
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 from unittest import mock
 
 import pytest
@@ -51,7 +50,7 @@ class TestFetchMissingDependency:
 
         monkeypatch.setattr(builtins, "__import__", mock_import)
 
-        with pytest.raises(SystemExit) as exc_info:
+        with pytest.raises(SystemExit):
             _run(capsys, ["fetch", "test123"])
 
         captured = capsys.readouterr()

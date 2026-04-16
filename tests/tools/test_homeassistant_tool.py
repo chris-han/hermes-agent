@@ -322,7 +322,7 @@ class TestCallServiceStringData:
             "entity_id": "climate.living_room",
             "data": '{"hvac_mode": "heat"}',
         })
-        call_args = mock_run.call_args[0][0]  # the coroutine arg
+        mock_run.call_args[0][0]  # the coroutine arg
         # _run_async was called, meaning we got past validation
 
     @patch("tools.homeassistant_tool._run_async", return_value={"success": True})

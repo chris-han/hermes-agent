@@ -1,11 +1,8 @@
 """Tests for _reap_orphaned_browser_sessions() — kills orphaned agent-browser
 daemons whose Python parent exited without cleaning up."""
 
-import os
 import signal
-import textwrap
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 
@@ -65,10 +62,9 @@ class TestReapOrphanedBrowserSessions:
         """Alive daemon not tracked by _active_sessions gets SIGTERM."""
         from tools.browser_tool import _reap_orphaned_browser_sessions
 
-        d = _make_socket_dir(fake_tmpdir, "h_orphan12345", pid=12345)
+        _make_socket_dir(fake_tmpdir, "h_orphan12345", pid=12345)
 
         kill_calls = []
-        original_kill = os.kill
 
         def mock_kill(pid, sig):
             kill_calls.append((pid, sig))

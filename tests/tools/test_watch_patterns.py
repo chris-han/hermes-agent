@@ -11,7 +11,6 @@ Covers:
 """
 
 import json
-import queue
 import time
 import pytest
 from unittest.mock import patch
