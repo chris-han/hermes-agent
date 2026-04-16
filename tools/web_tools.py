@@ -68,10 +68,6 @@ logger = logging.getLogger(__name__)
 
 # ─── Backend Selection ────────────────────────────────────────────────────────
 
-def _has_env(name: str) -> bool:
-    val = os.getenv(name)
-    return bool(val and val.strip())
-
 def _load_web_config() -> dict:
     """Load the ``web:`` section from ~/.hermes/config.yaml."""
     try:
@@ -79,6 +75,46 @@ def _load_web_config() -> dict:
         return load_config().get("web", {})
     except (ImportError, Exception):
         return {}
+
+
+_WEB_CONFIG_VALUE_PATHS: Dict[str, tuple[tuple[str, ...], ...]] = {
+    "EXA_API_KEY": (("EXA_API_KEY",), ("exa_api_key",), ("exa", "api_key")),
+    "PARALLEL_API_KEY": (("PARALLEL_API_KEY",), ("parallel_api_key",), ("parallel", "api_key")),
+    "TAVILY_API_KEY": (("TAVILY_API_KEY",), ("tavily_api_key",), ("tavily", "api_key")),
+    "FIRECRAWL_API_KEY": (("FIRECRAWL_API_KEY",), ("firecrawl_api_key",), ("firecrawl", "api_key")),
+    "FIRECRAWL_API_URL": (("FIRECRAWL_API_URL",), ("firecrawl_api_url",), ("firecrawl", "api_url")),
+    "FIRECRAWL_GATEWAY_URL": (("FIRECRAWL_GATEWAY_URL",), ("firecrawl_gateway_url",), ("firecrawl", "gateway_url")),
+    "TOOL_GATEWAY_DOMAIN": (("TOOL_GATEWAY_DOMAIN",), ("tool_gateway_domain",), ("tool_gateway", "domain")),
+    "TOOL_GATEWAY_SCHEME": (("TOOL_GATEWAY_SCHEME",), ("tool_gateway_scheme",), ("tool_gateway", "scheme")),
+    "TOOL_GATEWAY_USER_TOKEN": (("TOOL_GATEWAY_USER_TOKEN",), ("tool_gateway_user_token",), ("tool_gateway", "user_token")),
+}
+
+
+def _get_configured_web_value(name: str) -> str:
+    """Return a web-tool credential from env first, then ``web:`` config fallback."""
+    val = os.getenv(name)
+    if isinstance(val, str) and val.strip():
+        return val.strip()
+
+    web_cfg = _load_web_config()
+    if not isinstance(web_cfg, dict):
+        return ""
+
+    for path in _WEB_CONFIG_VALUE_PATHS.get(name, ((name,),)):
+        current: Any = web_cfg
+        for segment in path:
+            if not isinstance(current, dict):
+                current = None
+                break
+            current = current.get(segment)
+        if isinstance(current, str) and current.strip():
+            return current.strip()
+
+    return ""
+
+
+def _has_env(name: str) -> bool:
+    return bool(_get_configured_web_value(name))
 
 def _get_backend() -> str:
     """Determine which web backend to use.
@@ -127,8 +163,8 @@ _firecrawl_client_config = None
 
 def _get_direct_firecrawl_config() -> Optional[tuple[Dict[str, str], tuple[str, Optional[str], Optional[str]]]]:
     """Return explicit direct Firecrawl kwargs + cache key, or None when unset."""
-    api_key = os.getenv("FIRECRAWL_API_KEY", "").strip()
-    api_url = os.getenv("FIRECRAWL_API_URL", "").strip().rstrip("/")
+    api_key = _get_configured_web_value("FIRECRAWL_API_KEY")
+    api_url = _get_configured_web_value("FIRECRAWL_API_URL").rstrip("/")
 
     if not api_key and not api_url:
         return None
@@ -248,15 +284,16 @@ _async_parallel_client = None
 def _get_parallel_client():
     """Get or create the Parallel sync client (lazy initialization).
 
-    Requires PARALLEL_API_KEY environment variable.
+    Requires ``PARALLEL_API_KEY`` in env or ``web.parallel_api_key`` in config.
     """
     from parallel import Parallel
     global _parallel_client
     if _parallel_client is None:
-        api_key = os.getenv("PARALLEL_API_KEY")
+        api_key = _get_configured_web_value("PARALLEL_API_KEY")
         if not api_key:
             raise ValueError(
-                "PARALLEL_API_KEY environment variable not set. "
+                "PARALLEL_API_KEY is not configured. "
+                "Set it in the environment or in `web.parallel_api_key` in config.yaml. "
                 "Get your API key at https://parallel.ai"
             )
         _parallel_client = Parallel(api_key=api_key)
@@ -266,15 +303,16 @@ def _get_parallel_client():
 def _get_async_parallel_client():
     """Get or create the Parallel async client (lazy initialization).
 
-    Requires PARALLEL_API_KEY environment variable.
+    Requires ``PARALLEL_API_KEY`` in env or ``web.parallel_api_key`` in config.
     """
     from parallel import AsyncParallel
     global _async_parallel_client
     if _async_parallel_client is None:
-        api_key = os.getenv("PARALLEL_API_KEY")
+        api_key = _get_configured_web_value("PARALLEL_API_KEY")
         if not api_key:
             raise ValueError(
-                "PARALLEL_API_KEY environment variable not set. "
+                "PARALLEL_API_KEY is not configured. "
+                "Set it in the environment or in `web.parallel_api_key` in config.yaml. "
                 "Get your API key at https://parallel.ai"
             )
         _async_parallel_client = AsyncParallel(api_key=api_key)
@@ -291,10 +329,11 @@ def _tavily_request(endpoint: str, payload: dict) -> dict:
     Auth is provided via ``api_key`` in the JSON body (no header-based auth).
     Raises ``ValueError`` if ``TAVILY_API_KEY`` is not set.
     """
-    api_key = os.getenv("TAVILY_API_KEY")
+    api_key = _get_configured_web_value("TAVILY_API_KEY")
     if not api_key:
         raise ValueError(
-            "TAVILY_API_KEY environment variable not set. "
+            "TAVILY_API_KEY is not configured. "
+            "Set it in the environment or in `web.tavily_api_key` in config.yaml. "
             "Get your API key at https://app.tavily.com/home"
         )
     payload["api_key"] = api_key
@@ -883,10 +922,11 @@ def _get_exa_client():
     from exa_py import Exa
     global _exa_client
     if _exa_client is None:
-        api_key = os.getenv("EXA_API_KEY")
+        api_key = _get_configured_web_value("EXA_API_KEY")
         if not api_key:
             raise ValueError(
-                "EXA_API_KEY environment variable not set. "
+                "EXA_API_KEY is not configured. "
+                "Set it in the environment or in `web.exa_api_key` in config.yaml. "
                 "Get your API key at https://exa.ai"
             )
         _exa_client = Exa(api_key=api_key)
@@ -1945,8 +1985,8 @@ if __name__ == "__main__":
     # Check if API keys are available
     web_available = check_web_api_key()
     tool_gateway_available = _is_tool_gateway_ready()
-    firecrawl_key_available = bool(os.getenv("FIRECRAWL_API_KEY", "").strip())
-    firecrawl_url_available = bool(os.getenv("FIRECRAWL_API_URL", "").strip())
+    firecrawl_key_available = bool(_get_configured_web_value("FIRECRAWL_API_KEY"))
+    firecrawl_url_available = bool(_get_configured_web_value("FIRECRAWL_API_URL"))
     nous_available = check_auxiliary_model()
     default_summarizer_model = _get_default_summarizer_model()
 

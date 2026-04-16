@@ -6414,6 +6414,7 @@ For more help on a command:
             "copilot",
             "anthropic",
             "gemini",
+            "deepseek",
             "xai",
             "ollama-cloud",
             "huggingface",

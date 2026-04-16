@@ -2724,6 +2724,52 @@ class TestNousCredentialRefresh:
         assert isinstance(agent.client, _RebuiltClient)
 
 
+class TestRoutedClientHeaderPreservation:
+    """Ensure routed OpenAI-compatible clients keep their custom headers."""
+
+    def test_init_preserves_custom_headers_from_routed_client(self):
+        rebuilt = {"kwargs": None}
+
+        routed_client = SimpleNamespace(
+            api_key="routed-kimi-key",
+            base_url="https://api.kimi.com/coding/v1",
+            _custom_headers={"User-Agent": "RooCode/1.0.0"},
+            default_headers={"User-Agent": "RooCode/1.0.0"},
+        )
+
+        class _BuiltClient:
+            pass
+
+        def _fake_openai(**kwargs):
+            rebuilt["kwargs"] = kwargs
+            return _BuiltClient()
+
+        with (
+            patch(
+                "run_agent.get_tool_definitions",
+                return_value=_make_tool_defs("web_search"),
+            ),
+            patch("run_agent.check_toolset_requirements", return_value={}),
+            patch(
+                "agent.auxiliary_client.resolve_provider_client",
+                return_value=(routed_client, "kimi-for-coding"),
+            ),
+            patch("run_agent.OpenAI", side_effect=_fake_openai),
+        ):
+            agent = AIAgent(
+                provider="kimi-coding",
+                model="kimi-for-coding",
+                quiet_mode=True,
+                skip_context_files=True,
+                skip_memory=True,
+            )
+
+        assert isinstance(agent.client, _BuiltClient)
+        assert rebuilt["kwargs"]["api_key"] == "routed-kimi-key"
+        assert rebuilt["kwargs"]["base_url"] == "https://api.kimi.com/coding/v1"
+        assert rebuilt["kwargs"]["default_headers"]["User-Agent"] == "KimiCLI/1.3"
+
+
 class TestCredentialPoolRecovery:
     def test_recover_with_pool_rotates_on_402(self, agent):
         current = SimpleNamespace(label="primary")
@@ -3012,7 +3058,7 @@ class TestSystemPromptStability:
         # Should have built fresh, not queried the DB
         mock_db.get_session.assert_not_called()
         assert agent._cached_system_prompt is not None
-        assert "Hermes Agent" in agent._cached_system_prompt
+        assert "Seman Agent" in agent._cached_system_prompt
 
     def test_fresh_build_when_db_has_no_prompt(self, agent):
         """If the session DB has no stored prompt, build fresh even with history."""
@@ -3039,7 +3085,7 @@ class TestSystemPromptStability:
                 agent._cached_system_prompt = agent._build_system_prompt()
 
         # Empty string is falsy, so should fall through to fresh build
-        assert "Hermes Agent" in agent._cached_system_prompt
+        assert "Seman Agent" in agent._cached_system_prompt
 
 class TestBudgetPressure:
     """Budget exhaustion grace call system."""

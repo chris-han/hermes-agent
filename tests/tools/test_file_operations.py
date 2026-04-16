@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from tools.file_operations import (
+    _get_write_deny_reason,
     _is_write_denied,
     WRITE_DENIED_PATHS,
     WRITE_DENIED_PREFIXES,
@@ -56,6 +57,15 @@ class TestIsWriteDenied:
 
     def test_tilde_expansion(self):
         assert _is_write_denied("~/.ssh/authorized_keys") is True
+
+    def test_safe_write_root_has_distinct_reason(self, tmp_path):
+        safe_root = tmp_path / "workspace"
+        outside = tmp_path / "other" / "sample_charts.md"
+        safe_root.mkdir()
+
+        assert _get_write_deny_reason(str(outside), str(safe_root)) == (
+            f"outside the allowed write root '{safe_root.resolve()}'"
+        )
 
 
 

@@ -45,6 +45,25 @@ class TestTavilyRequest:
                 assert payload["query"] == "hello"
                 assert "api.tavily.com/search" in call_kwargs.args[0]
 
+    def test_posts_with_api_key_from_web_config(self):
+        """web.tavily_api_key in config should work when env is unset."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"results": []}
+        mock_response.raise_for_status = MagicMock()
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("TAVILY_API_KEY", None)
+            with patch("tools.web_tools._load_web_config", return_value={"tavily_api_key": "tvly-config-key"}):
+                with patch("tools.web_tools.httpx.post", return_value=mock_response) as mock_post:
+                    from tools.web_tools import _tavily_request
+                    _tavily_request("search", {"query": "hello"})
+
+                    mock_post.assert_called_once()
+                    call_kwargs = mock_post.call_args
+                    payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json")
+                    assert payload["api_key"] == "tvly-config-key"
+                    assert payload["query"] == "hello"
+
     def test_raises_on_http_error(self):
         """Non-2xx responses propagate as httpx.HTTPStatusError."""
         import httpx as _httpx

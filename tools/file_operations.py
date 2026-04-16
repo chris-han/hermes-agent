@@ -79,15 +79,15 @@ WRITE_DENIED_PREFIXES = [
 ]
 
 
-def _get_safe_write_root() -> Optional[str]:
-    """Return the resolved HERMES_WRITE_SAFE_ROOT path, or None if unset.
+def _get_safe_write_root(safe_root: str | None = None) -> Optional[str]:
+    """Return the resolved safe write root, or None if unset.
 
     When set, all write_file/patch operations are constrained to this
-    directory tree.  Writes outside it are denied even if the target is
-    not on the static deny list.  Opt-in hardening for gateway/messaging
-    deployments that should only touch a workspace checkout.
+    directory tree. Writes outside it are denied even if the target is
+    not on the static deny list. The per-task safe root takes precedence
+    over the global HERMES_WRITE_SAFE_ROOT environment variable.
     """
-    root = os.getenv("HERMES_WRITE_SAFE_ROOT", "")
+    root = safe_root if safe_root is not None else os.getenv("HERMES_WRITE_SAFE_ROOT", "")
     if not root:
         return None
     try:
@@ -96,24 +96,29 @@ def _get_safe_write_root() -> Optional[str]:
         return None
 
 
-def _is_write_denied(path: str) -> bool:
-    """Return True if path is on the write deny list."""
+def _get_write_deny_reason(path: str, safe_root: str | None = None) -> Optional[str]:
+    """Return the write-deny reason for a path, or None if writes are allowed."""
     resolved = os.path.realpath(os.path.expanduser(str(path)))
 
     # 1) Static deny list
     if resolved in WRITE_DENIED_PATHS:
-        return True
+        return "protected system/credential file"
     for prefix in WRITE_DENIED_PREFIXES:
         if resolved.startswith(prefix):
-            return True
+            return "protected system/credential file"
 
     # 2) Optional safe-root sandbox
-    safe_root = _get_safe_write_root()
-    if safe_root:
-        if not (resolved == safe_root or resolved.startswith(safe_root + os.sep)):
-            return True
+    resolved_safe_root = _get_safe_write_root(safe_root)
+    if resolved_safe_root:
+        if not (resolved == resolved_safe_root or resolved.startswith(resolved_safe_root + os.sep)):
+            return f"outside the allowed write root '{resolved_safe_root}'"
 
-    return False
+    return None
+
+
+def _is_write_denied(path: str, safe_root: str | None = None) -> bool:
+    """Return True if path is on the write deny list."""
+    return _get_write_deny_reason(path, safe_root) is not None
 
 
 # =============================================================================
@@ -327,7 +332,7 @@ class ShellFileOperations(FileOperations):
     This includes local, docker, singularity, ssh, modal, and daytona environments.
     """
     
-    def __init__(self, terminal_env, cwd: str = None):
+    def __init__(self, terminal_env, cwd: str = None, safe_write_root: str | None = None):
         """
         Initialize file operations with a terminal environment.
 
@@ -358,6 +363,7 @@ class ShellFileOperations(FileOperations):
         # If nothing provides a cwd, use "/" as a safe universal default.
         self.cwd = cwd or getattr(terminal_env, 'cwd', None) or \
                    getattr(getattr(terminal_env, 'config', None), 'cwd', None) or "/"
+        self.safe_write_root = safe_write_root
 
         # Cache for command availability checks
         self._command_cache: Dict[str, bool] = {}
@@ -664,8 +670,9 @@ class ShellFileOperations(FileOperations):
     def delete_file(self, path: str) -> WriteResult:
         """Delete a file via rm."""
         path = self._expand_path(path)
-        if _is_write_denied(path):
-            return WriteResult(error=f"Delete denied: {path} is a protected path")
+        deny_reason = _get_write_deny_reason(path, self.safe_write_root)
+        if deny_reason:
+            return WriteResult(error=f"Delete denied: '{path}' is {deny_reason}.")
         result = self._exec(f"rm -f {self._escape_shell_arg(path)}")
         if result.exit_code != 0:
             return WriteResult(error=f"Failed to delete {path}: {result.stdout}")
@@ -676,8 +683,9 @@ class ShellFileOperations(FileOperations):
         src = self._expand_path(src)
         dst = self._expand_path(dst)
         for p in (src, dst):
-            if _is_write_denied(p):
-                return WriteResult(error=f"Move denied: {p} is a protected path")
+            deny_reason = _get_write_deny_reason(p, self.safe_write_root)
+            if deny_reason:
+                return WriteResult(error=f"Move denied: '{p}' is {deny_reason}.")
         result = self._exec(
             f"mv {self._escape_shell_arg(src)} {self._escape_shell_arg(dst)}"
         )
@@ -708,8 +716,9 @@ class ShellFileOperations(FileOperations):
         path = self._expand_path(path)
 
         # Block writes to sensitive paths
-        if _is_write_denied(path):
-            return WriteResult(error=f"Write denied: '{path}' is a protected system/credential file.")
+        deny_reason = _get_write_deny_reason(path, self.safe_write_root)
+        if deny_reason:
+            return WriteResult(error=f"Write denied: '{path}' is {deny_reason}.")
 
         # Create parent directories
         parent = os.path.dirname(path)
@@ -765,8 +774,9 @@ class ShellFileOperations(FileOperations):
         path = self._expand_path(path)
 
         # Block writes to sensitive paths
-        if _is_write_denied(path):
-            return PatchResult(error=f"Write denied: '{path}' is a protected system/credential file.")
+        deny_reason = _get_write_deny_reason(path, self.safe_write_root)
+        if deny_reason:
+            return PatchResult(error=f"Write denied: '{path}' is {deny_reason}.")
 
         # Read current content
         read_cmd = f"cat {self._escape_shell_arg(path)} 2>/dev/null"
