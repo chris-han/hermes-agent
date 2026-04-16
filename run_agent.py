@@ -548,7 +548,7 @@ def _merged_client_headers_for_base_url(base_url: str, existing_headers=None) ->
         headers.update(copilot_default_headers())
     elif "api.kimi.com" in normalized:
         headers["User-Agent"] = "KimiCLI/1.3"
-    elif "portal.qwen.ai" in normalized:
+    elif "portal.qwen.ai" in normalized or "dashscope.aliyuncs.com" in normalized:
         headers.update(_qwen_portal_headers())
 
     return headers or None
@@ -4389,7 +4389,14 @@ class AIAgent:
         # socket in CLOSE-WAIT and epoll_wait may never fire, causing the
         # agent to hang indefinitely.  Keepalive probes detect the dead
         # peer within ~60s (30s idle + 3×10s probes).
-        if "http_client" not in client_kwargs:
+        #
+        # IMPORTANT: build a local copy for the OpenAI constructor so we
+        # never store the ephemeral http_client back into the caller's dict
+        # (which may be self._client_kwargs).  Leaking it would cause every
+        # subsequent request-local client to reuse (and then close) the same
+        # httpx transport, killing the primary client's connection pool.
+        _ctor_kwargs = dict(client_kwargs)
+        if "http_client" not in _ctor_kwargs:
             try:
                 import httpx as _httpx
                 import socket as _socket
@@ -4402,12 +4409,12 @@ class AIAgent:
                 elif hasattr(_socket, "TCP_KEEPALIVE"):
                     # macOS (uses TCP_KEEPALIVE instead of TCP_KEEPIDLE)
                     _sock_opts.append((_socket.IPPROTO_TCP, _socket.TCP_KEEPALIVE, 30))
-                client_kwargs["http_client"] = _httpx.Client(
+                _ctor_kwargs["http_client"] = _httpx.Client(
                     transport=_httpx.HTTPTransport(socket_options=_sock_opts),
                 )
             except Exception:
                 pass  # Fall through to default transport if socket opts fail
-        client = OpenAI(**client_kwargs)
+        client = OpenAI(**_ctor_kwargs)
         logger.info(
             "OpenAI client created (%s, shared=%s) %s",
             reason,

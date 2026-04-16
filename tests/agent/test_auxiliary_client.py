@@ -737,6 +737,61 @@ class TestAuxiliaryPoolAwareness:
         assert call_kwargs["base_url"] == "https://api.githubcopilot.com"
         assert call_kwargs["default_headers"]["Editor-Version"]
 
+    def test_resolve_provider_client_dashscope_uses_runtime_headers(self, monkeypatch):
+        monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+
+        with (
+            patch(
+                "hermes_cli.auth.resolve_api_key_provider_credentials",
+                return_value={
+                    "provider": "alibaba",
+                    "api_key": "dashscope-key",
+                    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                    "source": "env",
+                },
+            ),
+            patch("agent.auxiliary_client.OpenAI") as mock_openai,
+        ):
+            client, model = resolve_provider_client("alibaba", model="qwen3.5-plus")
+
+        assert client is not None
+        assert model == "qwen3.5-plus"
+        call_kwargs = mock_openai.call_args.kwargs
+        assert call_kwargs["api_key"] == "dashscope-key"
+        assert call_kwargs["base_url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        assert call_kwargs["default_headers"]["X-DashScope-CacheControl"] == "enable"
+        assert call_kwargs["default_headers"]["X-DashScope-AuthType"] == "qwen-oauth"
+        assert call_kwargs["default_headers"]["X-DashScope-UserAgent"].startswith("QwenCode/")
+
+    def test_resolve_provider_client_dashscope_async_preserves_headers(self, monkeypatch):
+        monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+
+        sync_client = MagicMock()
+        sync_client.api_key = "dashscope-key"
+        sync_client.base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+        with (
+            patch(
+                "hermes_cli.auth.resolve_api_key_provider_credentials",
+                return_value={
+                    "provider": "alibaba",
+                    "api_key": "dashscope-key",
+                    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                    "source": "env",
+                },
+            ),
+            patch("agent.auxiliary_client.OpenAI", return_value=sync_client) as mock_openai,
+            patch("openai.AsyncOpenAI") as mock_async_openai,
+        ):
+            client, model = resolve_provider_client("alibaba", model="qwen3.5-plus", async_mode=True)
+
+        assert client is mock_async_openai.return_value
+        assert model == "qwen3.5-plus"
+        async_call_kwargs = mock_async_openai.call_args.kwargs
+        assert async_call_kwargs["default_headers"]["X-DashScope-CacheControl"] == "enable"
+        assert async_call_kwargs["default_headers"]["X-DashScope-AuthType"] == "qwen-oauth"
+        assert async_call_kwargs["default_headers"]["X-DashScope-UserAgent"].startswith("QwenCode/")
+
     def test_copilot_responses_api_model_wrapped_in_codex_client(self, monkeypatch):
         """Copilot GPT-5+ models (needing Responses API) are wrapped in CodexAuxiliaryClient."""
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
