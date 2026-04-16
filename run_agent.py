@@ -23,6 +23,7 @@ Usage:
 import asyncio
 import base64
 import concurrent.futures
+import contextvars
 import copy
 import hashlib
 import json
@@ -532,6 +533,27 @@ def _qwen_portal_headers() -> dict:
     }
 
 
+def _merged_client_headers_for_base_url(base_url: str, existing_headers=None) -> dict | None:
+    """Merge provider-required headers with any pre-existing routed headers."""
+    normalized = (base_url or "").lower()
+    headers = dict(existing_headers or {})
+
+    if "openrouter" in normalized:
+        from agent.auxiliary_client import _OR_HEADERS
+
+        headers.update(_OR_HEADERS)
+    elif "api.githubcopilot.com" in normalized:
+        from hermes_cli.models import copilot_default_headers
+
+        headers.update(copilot_default_headers())
+    elif "api.kimi.com" in normalized:
+        headers["User-Agent"] = "KimiCLI/1.3"
+    elif "portal.qwen.ai" in normalized:
+        headers.update(_qwen_portal_headers())
+
+    return headers or None
+
+
 class AIAgent:
     """
     AI Agent with tool calling capabilities.
@@ -974,23 +996,9 @@ class AIAgent:
                 if self.provider == "copilot-acp":
                     client_kwargs["command"] = self.acp_command
                     client_kwargs["args"] = self.acp_args
-                effective_base = base_url
-                if "openrouter" in effective_base.lower():
-                    client_kwargs["default_headers"] = {
-                        "HTTP-Referer": "https://hermes-agent.nousresearch.com",
-                        "X-OpenRouter-Title": "Hermes Agent",
-                        "X-OpenRouter-Categories": "productivity,cli-agent",
-                    }
-                elif "api.githubcopilot.com" in effective_base.lower():
-                    from hermes_cli.models import copilot_default_headers
-
-                    client_kwargs["default_headers"] = copilot_default_headers()
-                elif "api.kimi.com" in effective_base.lower():
-                    client_kwargs["default_headers"] = {
-                        "User-Agent": "KimiCLI/1.30.0",
-                    }
-                elif "portal.qwen.ai" in effective_base.lower():
-                    client_kwargs["default_headers"] = _qwen_portal_headers()
+                merged_headers = _merged_client_headers_for_base_url(base_url)
+                if merged_headers:
+                    client_kwargs["default_headers"] = merged_headers
             else:
                 # No explicit creds — use the centralized provider router
                 from agent.auxiliary_client import resolve_provider_client
@@ -1001,9 +1009,19 @@ class AIAgent:
                         "api_key": _routed_client.api_key,
                         "base_url": str(_routed_client.base_url),
                     }
-                    # Preserve any default_headers the router set
-                    if hasattr(_routed_client, '_default_headers') and _routed_client._default_headers:
-                        client_kwargs["default_headers"] = dict(_routed_client._default_headers)
+                    # Preserve any custom/default headers the router set, but
+                    # re-apply provider-required sentinels (e.g. Kimi's
+                    # User-Agent) when rebuilding the client locally.
+                    routed_headers = (
+                        getattr(_routed_client, "_custom_headers", None)
+                        or getattr(_routed_client, "_default_headers", None)
+                        or getattr(_routed_client, "default_headers", None)
+                    )
+                    merged_headers = _merged_client_headers_for_base_url(
+                        client_kwargs["base_url"], routed_headers
+                    )
+                    if merged_headers:
+                        client_kwargs["default_headers"] = merged_headers
                 else:
                     # When the user explicitly chose a non-OpenRouter provider
                     # but no credentials were found, fail fast with a clear
@@ -4902,19 +4920,12 @@ class AIAgent:
         return True
 
     def _apply_client_headers_for_base_url(self, base_url: str) -> None:
-        from agent.auxiliary_client import _OR_HEADERS
-
-        normalized = (base_url or "").lower()
-        if "openrouter" in normalized:
-            self._client_kwargs["default_headers"] = dict(_OR_HEADERS)
-        elif "api.githubcopilot.com" in normalized:
-            from hermes_cli.models import copilot_default_headers
-
-            self._client_kwargs["default_headers"] = copilot_default_headers()
-        elif "api.kimi.com" in normalized:
-            self._client_kwargs["default_headers"] = {"User-Agent": "KimiCLI/1.30.0"}
-        elif "portal.qwen.ai" in normalized:
-            self._client_kwargs["default_headers"] = _qwen_portal_headers()
+        merged_headers = _merged_client_headers_for_base_url(
+            base_url,
+            self._client_kwargs.get("default_headers"),
+        )
+        if merged_headers:
+            self._client_kwargs["default_headers"] = merged_headers
         else:
             self._client_kwargs.pop("default_headers", None)
 
@@ -6042,6 +6053,7 @@ class AIAgent:
                     "base_url": fb_base_url,
                     **({"default_headers": dict(fb_headers)} if fb_headers else {}),
                 }
+                self._apply_client_headers_for_base_url(fb_base_url)
 
             # Re-evaluate prompt caching for the new provider/model
             is_native_anthropic = fb_api_mode == "anthropic_messages" and fb_provider == "anthropic"
@@ -7544,7 +7556,9 @@ class AIAgent:
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
                 futures = []
                 for i, (tc, name, args) in enumerate(parsed_calls):
-                    f = executor.submit(_run_tool, i, tc, name, args)
+                    # A copied Context cannot be entered concurrently from multiple
+                    # threads, so each submitted worker gets its own snapshot.
+                    f = executor.submit(contextvars.copy_context().run, _run_tool, i, tc, name, args)
                     futures.append(f)
 
                 # Wait for all to complete with periodic heartbeats so the
@@ -7619,8 +7633,9 @@ class AIAgent:
 
                 if self.tool_progress_callback:
                     try:
+                        _cb_preview = function_result[:300] if len(function_result) > 300 else function_result
                         self.tool_progress_callback(
-                            "tool.completed", function_name, None, None,
+                            "tool.completed", function_name, _cb_preview, None,
                             duration=tool_duration, is_error=is_error,
                         )
                     except Exception as cb_err:
@@ -7987,7 +8002,7 @@ class AIAgent:
             if self.tool_progress_callback:
                 try:
                     self.tool_progress_callback(
-                        "tool.completed", function_name, None, None,
+                        "tool.completed", function_name, result_preview, None,
                         duration=tool_duration, is_error=_is_error_result,
                     )
                 except Exception as cb_err:

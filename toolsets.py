@@ -149,6 +149,12 @@ TOOLSETS = {
         "tools": ["read_file", "write_file", "patch", "search_files"],
         "includes": []
     },
+
+    "documents": {
+        "description": "Local document tools for reading uploaded PDF files",
+        "tools": ["read_document"],
+        "includes": []
+    },
     
     "tts": {
         "description": "Text-to-speech: convert text to audio with Edge TTS (free), ElevenLabs, OpenAI, or xAI",
@@ -201,13 +207,24 @@ TOOLSETS = {
         "includes": []
     },
 
-
     # Scenario-specific toolsets
     
     "debugging": {
         "description": "Debugging and troubleshooting toolkit",
         "tools": ["terminal", "process"],
         "includes": ["web", "file"]  # For searching error messages and solutions, and file operations
+    },
+
+    "research": {
+        "description": "Research toolkit: web research, document reading, and vision tools",
+        "tools": [],
+        "includes": ["web", "documents", "vision", "compat"]
+    },
+
+    "development": {
+        "description": "Development toolkit: terminal, file editing, browser, code execution, planning, and skills",
+        "tools": [],
+        "includes": ["terminal", "file", "browser", "skills", "todo", "memory", "session_search", "code_execution", "delegation", "cronjob", "compat"]
     },
     
     "safe": {
@@ -251,6 +268,8 @@ TOOLSETS = {
             "terminal", "process",
             # File manipulation
             "read_file", "write_file", "patch", "search_files",
+            # Documents
+            "read_document",
             # Vision + image generation
             "vision_analyze", "image_generate",
             # Skills
