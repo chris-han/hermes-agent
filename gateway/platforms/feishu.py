@@ -116,6 +116,13 @@ _MARKDOWN_HINT_RE = re.compile(
 )
 _MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 _MENTION_RE = re.compile(r"@_user_\d+")
+# Matches ```echarts ... ``` fenced blocks (case-insensitive language tag)
+_ECHARTS_BLOCK_RE = re.compile(r"```echarts[ \t]*\r?\n([\s\S]*?)```", re.IGNORECASE)
+# CDP defaults for ECharts rendering
+_CDP_HOST = "localhost"
+_CDP_PORT = 9222
+_ECHARTS_RENDER_WIDTH = 860
+_ECHARTS_RENDER_HEIGHT = 520
 _MULTISPACE_RE = re.compile(r"[ \t]{2,}")
 _POST_CONTENT_INVALID_RE = re.compile(r"content format of the post type is incorrect", re.IGNORECASE)
 # ---------------------------------------------------------------------------
@@ -430,6 +437,55 @@ def _build_markdown_post_payload(content: str) -> str:
     )
 
 
+def _build_mixed_post_payload(parts: list[dict]) -> str:
+    """Build a Feishu post payload mixing text (md) and image (img) elements.
+
+    Each element in *parts* is either::
+
+        {"type": "text", "content": "<markdown string>"}
+        {"type": "image", "image_key": "<feishu image key>"}
+    """
+    rows: list[list[dict]] = []
+    for part in parts:
+        if part["type"] == "image":
+            rows.append([{"tag": "img", "image_key": part["image_key"]}])
+        else:
+            text = (part.get("content") or "").strip()
+            if text:
+                rows.append([{"tag": "md", "text": text}])
+    if not rows:
+        return _build_markdown_post_payload("")
+    return json.dumps({"zh_cn": {"content": rows}}, ensure_ascii=False)
+
+
+def _split_echarts_blocks(content: str) -> list[tuple[str, str]]:
+    """Split *content* into alternating text and echarts-JSON segments.
+
+    Returns a list of ``(kind, value)`` tuples where *kind* is ``"text"``
+    or ``"echarts"`` and *value* is the corresponding segment string.
+    The echarts value is the raw JSON inside the fence (not including the
+    fence delimiters).
+    """
+    parts: list[tuple[str, str]] = []
+    last_end = 0
+    for m in _ECHARTS_BLOCK_RE.finditer(content):
+        before = content[last_end : m.start()]
+        if before:
+            parts.append(("text", before))
+        parts.append(("echarts", m.group(1).strip()))
+        last_end = m.end()
+    tail = content[last_end:]
+    if tail:
+        parts.append(("text", tail))
+    return parts
+
+
+def parse_feishu_post_content(raw_content: str) -> FeishuPostParseResult:
+    try:
+        parsed = json.loads(raw_content) if raw_content else {}
+    except json.JSONDecodeError:
+        return FeishuPostParseResult(text_content=FALLBACK_POST_TEXT)
+    return parse_feishu_post_payload(parsed)
 def parse_feishu_post_payload(payload: Any) -> FeishuPostParseResult:
     resolved = _resolve_post_payload(payload)
     if not resolved:
@@ -1341,6 +1397,15 @@ class FeishuAdapter(BasePlatformAdapter):
         """Send a Feishu message."""
         if not self._client:
             return SendResult(success=False, error="Not connected")
+
+        # Route messages containing echarts fences through the rendering pipeline
+        # so they arrive as image cards rather than unrenderable code blocks.
+        if _ECHARTS_BLOCK_RE.search(content):
+            try:
+                return await self._send_with_echarts_rendering(chat_id, content, reply_to, metadata)
+            except Exception as exc:
+                logger.warning("[Feishu] ECharts rendering pipeline failed, falling back to text: %s", exc)
+                # Fall through to plain text send
 
         formatted = self.format_message(content)
         chunks = self.truncate_message(formatted, self.MAX_MESSAGE_LENGTH)
@@ -3162,6 +3227,262 @@ class FeishuAdapter(BasePlatformAdapter):
             return "post", _build_markdown_post_payload(content)
         text_payload = {"text": content}
         return "text", json.dumps(text_payload, ensure_ascii=False)
+
+    # =========================================================================
+    # ECharts → PNG rendering (Chrome CDP)
+    # =========================================================================
+
+    async def _render_echarts_via_cdp(
+        self,
+        options_json: str,
+        *,
+        width: int = _ECHARTS_RENDER_WIDTH,
+        height: int = _ECHARTS_RENDER_HEIGHT,
+        host: str = _CDP_HOST,
+        port: int = _CDP_PORT,
+    ) -> bytes | None:
+        """Render an ECharts option object to PNG using the Chrome CDP on *host*:*port*.
+
+        Spawns a new headless tab, loads ECharts from CDN, renders the chart,
+        captures a screenshot, then closes the tab.  Returns raw PNG bytes or
+        *None* on any failure.
+        """
+        if websockets is None:
+            logger.debug("[Feishu] ECharts render skipped: websockets not available")
+            return None
+        try:
+            import base64 as _b64
+            import urllib.parse as _uparse
+            import json as _json
+            import httpx as _httpx
+
+            # Validate JSON before doing any network I/O.
+            _json.loads(options_json)
+
+            async with _httpx.AsyncClient(timeout=5.0) as _client:
+                new_tab = await _client.put(f"http://{host}:{port}/json/new")
+                if new_tab.status_code != 200:
+                    return None
+                tab = new_tab.json()
+
+            ws_url = tab.get("webSocketDebuggerUrl", "")
+            tab_id = tab.get("id", "")
+            if not ws_url:
+                return None
+
+            # Base64-encode the options to avoid any injection via special chars.
+            opts_b64 = _b64.b64encode(options_json.encode()).decode()
+            html = (
+                f"<!DOCTYPE html><html><head>"
+                f"<style>*{{margin:0;padding:0}}body{{background:#1a1a2e}}</style>"
+                f"</head><body>"
+                f"<canvas id='c' width='{width}' height='{height}'></canvas>"
+                f"<script src='https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js'></script>"
+                f"<script>"
+                f"window._done=false;"
+                f"try{{"
+                f"  var chart=echarts.init(document.getElementById('c'),'dark',{{width:{width},height:{height}}});"
+                f"  chart.setOption(JSON.parse(atob('{opts_b64}')));"
+                f"  chart.on('finished',function(){{window._done=true;}});"
+                f"  setTimeout(function(){{window._done=true;}},4000);"
+                f"}}catch(e){{window._done=true;}}"
+                f"</script></body></html>"
+            )
+            data_url = "data:text/html;charset=utf-8," + _uparse.quote(html)
+
+            _msg_id = 0
+
+            def _next_id() -> int:
+                nonlocal _msg_id
+                _msg_id += 1
+                return _msg_id
+
+            async with websockets.connect(ws_url, max_size=None) as sock:  # type: ignore[union-attr]
+                pending: dict[int, asyncio.Future] = {}
+
+                async def _send(method: str, params: dict | None = None) -> asyncio.Future:
+                    mid = _next_id()
+                    fut: asyncio.Future = asyncio.get_event_loop().create_future()
+                    pending[mid] = fut
+                    await sock.send(_json.dumps({"id": mid, "method": method, "params": params or {}}))
+                    return fut
+
+                async def _recv_loop():
+                    async for raw in sock:
+                        data = _json.loads(raw)
+                        mid = data.get("id")
+                        if mid and mid in pending:
+                            if not pending[mid].done():
+                                pending[mid].set_result(data.get("result", {}))
+
+                recv_task = asyncio.create_task(_recv_loop())
+                try:
+                    # Navigate to the data URI containing the chart HTML.
+                    nav_fut = await _send("Page.navigate", {"url": data_url})
+                    await asyncio.wait_for(nav_fut, timeout=10)
+
+                    # Poll for chart render completion (max ~5 s).
+                    for _ in range(25):
+                        await asyncio.sleep(0.2)
+                        poll_fut = await _send(
+                            "Runtime.evaluate",
+                            {"expression": "window._done===true", "returnByValue": True},
+                        )
+                        result = await asyncio.wait_for(poll_fut, timeout=2.0)
+                        if (result or {}).get("result", {}).get("value") is True:
+                            break
+
+                    # Capture screenshot.
+                    ss_fut = await _send(
+                        "Page.captureScreenshot",
+                        {
+                            "format": "png",
+                            "clip": {"x": 0, "y": 0, "width": width, "height": height, "scale": 1},
+                        },
+                    )
+                    ss_result = await asyncio.wait_for(ss_fut, timeout=15)
+                    png_b64 = (ss_result or {}).get("data", "")
+                finally:
+                    recv_task.cancel()
+                    await asyncio.gather(recv_task, return_exceptions=True)
+
+            if not png_b64:
+                return None
+
+            # Best-effort tab cleanup.
+            try:
+                async with _httpx.AsyncClient(timeout=3.0) as _client:
+                    await _client.get(f"http://{host}:{port}/json/close/{tab_id}")
+            except Exception:
+                pass
+
+            return _b64.b64decode(png_b64)
+        except Exception:
+            logger.warning("[Feishu] ECharts CDP render failed", exc_info=True)
+            return None
+
+    async def _upload_image_bytes(self, png_bytes: bytes) -> str | None:
+        """Upload raw PNG *bytes* to Feishu and return the ``image_key``, or *None*."""
+        if not self._client:
+            return None
+        try:
+            import io as _io
+            image_file = _io.BytesIO(png_bytes)
+            image_file.name = "chart.png"
+            body = self._build_image_upload_body(
+                image_type=_FEISHU_IMAGE_UPLOAD_TYPE,
+                image=image_file,
+            )
+            request = self._build_image_upload_request(body)
+            response = await asyncio.to_thread(self._client.im.v1.image.create, request)
+            image_key = self._extract_response_field(response, "image_key")
+            return image_key or None
+        except Exception:
+            logger.warning("[Feishu] Failed to upload rendered ECharts image", exc_info=True)
+            return None
+
+    async def _send_with_echarts_rendering(
+        self,
+        chat_id: str,
+        content: str,
+        reply_to: Optional[str],
+        metadata: Optional[Dict[str, Any]],
+    ) -> SendResult:
+        """Split *content* at echarts blocks, render each to PNG and send as
+        a mixed post (text + image) or a sequence of messages.
+
+        Falls back to plain code-block rendering for any block that cannot be
+        rendered.
+        """
+        parts = _split_echarts_blocks(content)
+        post_parts: list[dict] = []
+
+        for kind, value in parts:
+            if kind == "text":
+                stripped = value.strip()
+                if stripped:
+                    post_parts.append({"type": "text", "content": stripped})
+            else:
+                # Try to render the echarts JSON to PNG.
+                png_bytes = await self._render_echarts_via_cdp(value)
+                if png_bytes:
+                    image_key = await self._upload_image_bytes(png_bytes)
+                    if image_key:
+                        post_parts.append({"type": "image", "image_key": image_key})
+                        continue
+                # Fallback: include as a code block so nothing is silently lost.
+                post_parts.append({"type": "text", "content": f"```echarts\n{value}\n```"})
+
+        if not post_parts:
+            return SendResult(success=False, error="Empty content after echarts processing")
+
+        # Check if all parts are images (no text) — send each image individually.
+        # Otherwise build a single mixed post.
+        has_text = any(p["type"] == "text" for p in post_parts)
+        has_image = any(p["type"] == "image" for p in post_parts)
+
+        if has_image and not has_text:
+            # Pure images: send each as a standalone image message.
+            last: SendResult = SendResult(success=False, error="no parts")
+            for p in post_parts:
+                last = await self._feishu_send_with_retry(
+                    chat_id=chat_id,
+                    msg_type="image",
+                    payload=json.dumps({"image_key": p["image_key"]}, ensure_ascii=False),
+                    reply_to=reply_to,
+                    metadata=metadata,
+                )
+            return self._finalize_send_result(last, "image send failed")
+
+        if has_image and has_text:
+            # Mixed: build a structured post payload.
+            payload = _build_mixed_post_payload(post_parts)
+            response = await self._feishu_send_with_retry(
+                chat_id=chat_id,
+                msg_type="post",
+                payload=payload,
+                reply_to=reply_to,
+                metadata=metadata,
+            )
+            return self._finalize_send_result(response, "mixed post send failed")
+
+        # Text-only (all echarts renders failed): fall through to normal send.
+        text_content = "\n\n".join(p["content"] for p in post_parts if p.get("content"))
+        return await self._send_text_only(chat_id, text_content, reply_to, metadata)
+
+    async def _send_text_only(
+        self,
+        chat_id: str,
+        content: str,
+        reply_to: Optional[str],
+        metadata: Optional[Dict[str, Any]],
+    ) -> SendResult:
+        """Send *content* using the normal text/post pipeline (no echarts handling)."""
+        formatted = self.format_message(content)
+        chunks = self.truncate_message(formatted, self.MAX_MESSAGE_LENGTH)
+        last_response = None
+        for chunk in chunks:
+            msg_type, payload = self._build_outbound_payload(chunk)
+            try:
+                response = await self._feishu_send_with_retry(
+                    chat_id=chat_id,
+                    msg_type=msg_type,
+                    payload=payload,
+                    reply_to=reply_to,
+                    metadata=metadata,
+                )
+            except Exception as exc:
+                if msg_type != "post" or not _POST_CONTENT_INVALID_RE.search(str(exc)):
+                    raise
+                response = await self._feishu_send_with_retry(
+                    chat_id=chat_id,
+                    msg_type="text",
+                    payload=json.dumps({"text": _strip_markdown_to_plain_text(chunk)}, ensure_ascii=False),
+                    reply_to=reply_to,
+                    metadata=metadata,
+                )
+            last_response = response
+        return self._finalize_send_result(last_response, "send failed")
 
     async def _send_uploaded_file_message(
         self,

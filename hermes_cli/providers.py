@@ -74,6 +74,12 @@ HERMES_OVERLAYS: Dict[str, HermesOverlay] = {
         transport="openai_chat",
         extra_env_vars=("COPILOT_GITHUB_TOKEN", "GH_TOKEN"),
     ),
+    "azure-openai": HermesOverlay(
+        transport="openai_chat",
+        extra_env_vars=("AZURE_OPENAI_API_KEY",),
+        base_url_override="https://YOUR_RESOURCE.openai.azure.com/openai/v1",
+        base_url_env_var="AZURE_OPENAI_ENDPOINT",
+    ),
     "anthropic": HermesOverlay(
         transport="anthropic_messages",
         extra_env_vars=("ANTHROPIC_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"),
@@ -171,6 +177,10 @@ ALIASES: Dict[str, str] = {
     # openrouter
     "openai": "openrouter",     # bare "openai" → route through aggregator
 
+    # azure-openai
+    "azure": "azure-openai",
+    "azure-openai": "azure-openai",
+
     # zai
     "glm": "zai",
     "z-ai": "zai",
@@ -259,6 +269,7 @@ ALIASES: Dict[str, str] = {
 _LABEL_OVERRIDES: Dict[str, str] = {
     "nous": "Nous Portal",
     "openai-codex": "OpenAI Codex",
+    "azure-openai": "Azure OpenAI",
     "copilot-acp": "GitHub Copilot ACP",
     "xiaomi": "Xiaomi MiMo",
     "local": "Local endpoint",

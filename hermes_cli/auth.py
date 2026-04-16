@@ -144,6 +144,14 @@ PROVIDER_REGISTRY: Dict[str, ProviderConfig] = {
         api_key_env_vars=("GOOGLE_API_KEY", "GEMINI_API_KEY"),
         base_url_env_var="GEMINI_BASE_URL",
     ),
+    "azure-openai": ProviderConfig(
+        id="azure-openai",
+        name="Azure OpenAI",
+        auth_type="api_key",
+        inference_base_url="https://YOUR_RESOURCE.openai.azure.com/openai/v1",
+        api_key_env_vars=("AZURE_OPENAI_API_KEY",),
+        base_url_env_var="AZURE_OPENAI_ENDPOINT",
+    ),
     "zai": ProviderConfig(
         id="zai",
         name="Z.AI / GLM",
@@ -308,6 +316,7 @@ def get_anthropic_key() -> str:
 # api.moonshot.ai/v1 (the default).  Auto-detect when user hasn't set
 # KIMI_BASE_URL explicitly.
 KIMI_CODE_BASE_URL = "https://api.kimi.com/coding/v1"
+AZURE_OPENAI_DEFAULT_BASE_URL = "https://YOUR_RESOURCE.openai.azure.com/openai/v1"
 
 
 def _resolve_kimi_base_url(api_key: str, default_url: str, env_override: str) -> str:
@@ -323,6 +332,64 @@ def _resolve_kimi_base_url(api_key: str, default_url: str, env_override: str) ->
     return default_url
 
 
+def _resolve_azure_openai_base_url(default_url: str, env_override: str) -> str:
+    """Return an OpenAI-compatible Azure base URL.
+
+    Accepts either the raw resource endpoint (``https://resource.openai.azure.com``)
+    or a fully-qualified ``/openai/v1`` base URL. ``AZURE_OPENAI_BASE_URL`` wins
+    if it is explicitly set.
+    """
+    explicit_base = os.getenv("AZURE_OPENAI_BASE_URL", "").strip()
+    base = explicit_base or env_override or ""
+    if not base:
+        return default_url
+
+    normalized = base.rstrip("/")
+    lower = normalized.lower()
+    if "/openai/v1" in lower or "/openai/deployments/" in lower:
+        return normalized
+    if lower.endswith("/openai"):
+        return normalized + "/v1"
+    return normalized + "/openai/v1"
+
+
+def _gh_cli_candidates() -> list[str]:
+    """Return candidate ``gh`` binary paths, including common Homebrew installs."""
+    candidates: list[str] = []
+
+    resolved = shutil.which("gh")
+    if resolved:
+        candidates.append(resolved)
+
+    for candidate in (
+        "/opt/homebrew/bin/gh",
+        "/usr/local/bin/gh",
+        str(Path.home() / ".local" / "bin" / "gh"),
+    ):
+        if candidate in candidates:
+            continue
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            candidates.append(candidate)
+
+    return candidates
+
+
+def _try_gh_cli_token() -> Optional[str]:
+    """Return a token from ``gh auth token`` when the GitHub CLI is available."""
+    for gh_path in _gh_cli_candidates():
+        try:
+            result = subprocess.run(
+                [gh_path, "auth", "token"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+            logger.debug("gh CLI token lookup failed (%s): %s", gh_path, exc)
+            continue
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    return None
 
 _PLACEHOLDER_SECRET_VALUES = {
     "*",
@@ -906,6 +973,7 @@ def resolve_provider(
     _PROVIDER_ALIASES = {
         "glm": "zai", "z-ai": "zai", "z.ai": "zai", "zhipu": "zai",
         "google": "gemini", "google-gemini": "gemini", "google-ai-studio": "gemini",
+        "azure": "azure-openai",
         "kimi": "kimi-coding", "kimi-for-coding": "kimi-coding", "moonshot": "kimi-coding",
         "kimi-cn": "kimi-coding-cn", "moonshot-cn": "kimi-coding-cn",
         "arcee-ai": "arcee", "arceeai": "arcee",
@@ -947,6 +1015,11 @@ def resolve_provider(
     # Explicit one-off CLI creds always mean openrouter/custom
     if explicit_api_key or explicit_base_url:
         return "openrouter"
+
+    # Azure OpenAI is more specific than the generic OPENAI_API_KEY/OpenRouter
+    # fallback, so prefer it when the Azure env var is present.
+    if has_usable_secret(os.getenv("AZURE_OPENAI_API_KEY")):
+        return "azure-openai"
 
     # Check auth store for an active OAuth provider
     try:
@@ -2379,7 +2452,9 @@ def get_api_key_provider_status(provider_id: str) -> Dict[str, Any]:
     if pconfig.base_url_env_var:
         env_url = os.getenv(pconfig.base_url_env_var, "").strip()
 
-    if provider_id == "kimi-coding":
+    if provider_id == "azure-openai":
+        base_url = _resolve_azure_openai_base_url(pconfig.inference_base_url, env_url)
+    elif provider_id == "kimi-coding":
         base_url = _resolve_kimi_base_url(api_key, pconfig.inference_base_url, env_url)
     elif env_url:
         base_url = env_url
@@ -2465,7 +2540,9 @@ def resolve_api_key_provider_credentials(provider_id: str) -> Dict[str, Any]:
     if pconfig.base_url_env_var:
         env_url = os.getenv(pconfig.base_url_env_var, "").strip()
 
-    if provider_id == "kimi-coding":
+    if provider_id == "azure-openai":
+        base_url = _resolve_azure_openai_base_url(pconfig.inference_base_url, env_url)
+    elif provider_id == "kimi-coding":
         base_url = _resolve_kimi_base_url(api_key, pconfig.inference_base_url, env_url)
     elif provider_id == "zai":
         base_url = _resolve_zai_base_url(api_key, pconfig.inference_base_url, env_url)

@@ -355,10 +355,13 @@ class TestSkillView:
         assert "llm" in result["tags"]
 
     def test_view_nonexistent_skills_dir(self, tmp_path):
-        with patch("tools.skills_tool.SKILLS_DIR", tmp_path / "nope"):
+        missing_dir = tmp_path / "nope"
+        with patch("tools.skills_tool.SKILLS_DIR", missing_dir):
             raw = skill_view("anything")
         result = json.loads(raw)
         assert result["success"] is False
+        assert missing_dir.exists()
+        assert "not found" in result["error"].lower()
 
     def test_view_disabled_skill_blocked(self, tmp_path):
         """Disabled skills should not be viewable via skill_view."""

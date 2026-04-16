@@ -91,6 +91,7 @@ _DEFAULT_PROVIDER_MODELS = {
         "gemini-2.5-pro",
         "grok-code-fast-1",
     ],
+    "azure-openai": ["gpt-4.1", "gpt-4o", "gpt-4o-mini", "o3", "o4-mini"],
     "gemini": [
         "gemini-3.1-pro-preview", "gemini-3-flash-preview", "gemini-3.1-flash-lite-preview",
         "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite",
@@ -770,6 +771,7 @@ def setup_model_provider(config: dict, *, quick: bool = False):
             "nous-api": "Nous Portal API key",
             "copilot": "GitHub Copilot",
             "copilot-acp": "GitHub Copilot ACP",
+            "azure-openai": "Azure OpenAI",
             "zai": "Z.AI / GLM",
             "kimi-coding": "Kimi / Moonshot",
             "kimi-coding-cn": "Kimi / Moonshot (China)",

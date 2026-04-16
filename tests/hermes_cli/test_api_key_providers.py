@@ -39,6 +39,7 @@ class TestProviderRegistry:
         ("copilot-acp", "GitHub Copilot ACP", "external_process"),
         ("copilot", "GitHub Copilot", "api_key"),
         ("huggingface", "Hugging Face", "api_key"),
+        ("azure-openai", "Azure OpenAI", "api_key"),
         ("zai", "Z.AI / GLM", "api_key"),
         ("xai", "xAI", "api_key"),
         ("kimi-coding", "Kimi / Moonshot", "api_key"),
@@ -53,6 +54,11 @@ class TestProviderRegistry:
         assert pconfig.name == name
         assert pconfig.auth_type == auth_type
         assert pconfig.inference_base_url  # must have a default base URL
+
+    def test_azure_env_vars(self):
+        pconfig = PROVIDER_REGISTRY["azure-openai"]
+        assert pconfig.api_key_env_vars == ("AZURE_OPENAI_API_KEY",)
+        assert pconfig.base_url_env_var == "AZURE_OPENAI_ENDPOINT"
 
     def test_zai_env_vars(self):
         pconfig = PROVIDER_REGISTRY["zai"]
@@ -103,6 +109,7 @@ class TestProviderRegistry:
     def test_base_urls(self):
         assert PROVIDER_REGISTRY["copilot"].inference_base_url == "https://api.githubcopilot.com"
         assert PROVIDER_REGISTRY["copilot-acp"].inference_base_url == "acp://copilot"
+        assert PROVIDER_REGISTRY["azure-openai"].inference_base_url == "https://YOUR_RESOURCE.openai.azure.com/openai/v1"
         assert PROVIDER_REGISTRY["zai"].inference_base_url == "https://api.z.ai/api/paas/v4"
         assert PROVIDER_REGISTRY["kimi-coding"].inference_base_url == "https://api.moonshot.ai/v1"
         assert PROVIDER_REGISTRY["minimax"].inference_base_url == "https://api.minimax.io/anthropic"
@@ -126,6 +133,7 @@ class TestProviderRegistry:
 PROVIDER_ENV_VARS = (
     "OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_TOKEN",
     "CLAUDE_CODE_OAUTH_TOKEN",
+    "AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_BASE_URL",
     "GLM_API_KEY", "ZAI_API_KEY", "Z_AI_API_KEY",
     "KIMI_API_KEY", "KIMI_BASE_URL", "MINIMAX_API_KEY", "MINIMAX_CN_API_KEY",
     "AI_GATEWAY_API_KEY", "AI_GATEWAY_BASE_URL",
@@ -146,6 +154,12 @@ def _clear_provider_env(monkeypatch):
 
 class TestResolveProvider:
     """Test resolve_provider() with new providers."""
+
+    def test_explicit_azure_openai(self):
+        assert resolve_provider("azure-openai") == "azure-openai"
+
+    def test_alias_azure(self):
+        assert resolve_provider("azure") == "azure-openai"
 
     def test_explicit_zai(self):
         assert resolve_provider("zai") == "zai"
@@ -229,6 +243,10 @@ class TestResolveProvider:
         with pytest.raises(AuthError):
             resolve_provider("nonexistent-provider-xyz")
 
+    def test_auto_detects_azure_key(self, monkeypatch):
+        monkeypatch.setenv("AZURE_OPENAI_API_KEY", "azure-test-key")
+        assert resolve_provider("auto") == "azure-openai"
+
     def test_auto_detects_glm_key(self, monkeypatch):
         monkeypatch.setenv("GLM_API_KEY", "test-glm-key")
         assert resolve_provider("auto") == "zai"
@@ -296,6 +314,15 @@ class TestApiKeyProviderStatus:
         assert status["key_source"] == "GLM_API_KEY"
         assert "z.ai" in status["base_url"].lower() or "api.z.ai" in status["base_url"]
 
+    def test_azure_status_uses_endpoint(self, monkeypatch):
+        monkeypatch.setenv("AZURE_OPENAI_API_KEY", "azure-key")
+        monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://example.openai.azure.com/")
+        status = get_api_key_provider_status("azure-openai")
+        assert status["configured"] is True
+        assert status["logged_in"] is True
+        assert status["key_source"] == "AZURE_OPENAI_API_KEY"
+        assert status["base_url"] == "https://example.openai.azure.com/openai/v1"
+
     def test_fallback_env_var(self, monkeypatch):
         """ZAI_API_KEY should work when GLM_API_KEY is not set."""
         monkeypatch.setenv("ZAI_API_KEY", "zai-fallback-key")
@@ -354,6 +381,15 @@ class TestApiKeyProviderStatus:
 # =============================================================================
 
 class TestResolveApiKeyProviderCredentials:
+
+    def test_resolve_azure_openai_with_endpoint(self, monkeypatch):
+        monkeypatch.setenv("AZURE_OPENAI_API_KEY", "azure-secret-key")
+        monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://example.openai.azure.com/")
+        creds = resolve_api_key_provider_credentials("azure-openai")
+        assert creds["provider"] == "azure-openai"
+        assert creds["api_key"] == "azure-secret-key"
+        assert creds["base_url"] == "https://example.openai.azure.com/openai/v1"
+        assert creds["source"] == "AZURE_OPENAI_API_KEY"
 
     def test_resolve_zai_with_key(self, monkeypatch):
         monkeypatch.setenv("GLM_API_KEY", "glm-secret-key")
@@ -498,6 +534,16 @@ class TestResolveApiKeyProviderCredentials:
 # =============================================================================
 
 class TestRuntimeProviderResolution:
+
+    def test_runtime_azure_openai(self, monkeypatch):
+        monkeypatch.setenv("AZURE_OPENAI_API_KEY", "azure-key")
+        monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://example.openai.azure.com/")
+        from hermes_cli.runtime_provider import resolve_runtime_provider
+        result = resolve_runtime_provider(requested="azure-openai")
+        assert result["provider"] == "azure-openai"
+        assert result["api_mode"] == "chat_completions"
+        assert result["api_key"] == "azure-key"
+        assert result["base_url"] == "https://example.openai.azure.com/openai/v1"
 
     def test_runtime_zai(self, monkeypatch):
         monkeypatch.setenv("GLM_API_KEY", "glm-key")

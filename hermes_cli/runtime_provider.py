@@ -174,6 +174,8 @@ def _resolve_runtime_from_pool_entry(
         # Only override when the pool entry has no explicit base_url (i.e. it
         # fell back to the hardcoded default).  Env var overrides win (#6039).
         pconfig = PROVIDER_REGISTRY.get(provider)
+        if provider == "azure-openai" and pconfig:
+            base_url = auth_mod._resolve_azure_openai_base_url(pconfig.inference_base_url, base_url)
         pool_url_is_default = pconfig and base_url.rstrip("/") == pconfig.inference_base_url.rstrip("/")
         if configured_provider == provider and pool_url_is_default:
             cfg_base_url = str(model_cfg.get("base_url") or "").strip().rstrip("/")

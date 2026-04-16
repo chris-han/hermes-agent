@@ -12,6 +12,79 @@ metadata:
 
 # Systematic Debugging
 
+## Purpose
+
+To resolve unexpected errors, iteratively locate the cause, and apply corrections:
+- Missing imports
+- File read/write issues
+- Adjusting script execution paths
+
+## Steps
+
+### Debugging Python Errors
+
+1. **Error Identification**:
+   - Review error message promptly to understand the type (NameError, ImportError, FileNotFoundError).
+   - In our example: `NameError` due to missing pandas import.
+
+2. **Correction of Missing Imports**:
+   - Ensure critical libraries are imported at the script's top.
+   - Example correction:
+     ```python
+     import pandas as pd
+     ```
+
+### Handling File Read/Write Issues
+
+1. **Validate File Paths**:
+   - Confirm the file paths exist and are correctly referenced in the code.
+
+2. **Adjust Execution Paths**:
+   - If persistent issues arise (e.g., read failures), integrate manual inspection and alternative debugging methods:
+     - `search_files` command for validation
+     - Adjust script to save data differently if read consistently fails.
+
+## Example Fixes
+
+### Correcting Missing Imports
+
+```python
+import yfinance as yf
+import pandas as pd
+
+# Define stock ticker
+ticker = 'NVDA'
+
+# Download historical data
+data = yf.download(ticker, start='2022-01-01', end='2026-04-01')
+data['MA5'] = data['Close'].rolling(window=5).mean()
+data.to_csv('nvda_technical_indicators.csv')
+```
+
+### Debugging Read/Write Failures
+
+```python
+# Enhanced debugging for file paths
+import os
+if os.path.exists('nvda_technical_indicators.csv'):
+    with open('nvda_technical_indicators.csv', 'r') as file:
+        content = file.read()
+        print(content)
+else:
+    print("File does not exist, please check the path!")
+```
+
+## Dependencies
+
+```bash
+pip install pandas numpy yfinance
+```
+
+## Signal Convention
+
+- 1 = long, -1 = short, 0 = stand aside
+
+
 ## Overview
 
 Random fixes waste time and create new bugs. Quick patches mask underlying issues.

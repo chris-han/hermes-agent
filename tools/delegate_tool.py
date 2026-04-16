@@ -216,7 +216,13 @@ def _build_child_progress_callback(task_index: int, parent_agent, task_count: in
             if len(_batch) >= _BATCH_SIZE:
                 summary = ", ".join(_batch)
                 try:
-                    parent_cb("subagent_progress", f"🔀 {prefix}{summary}")
+                    parent_cb(
+                        "subagent_progress",
+                        "delegate_task",
+                        f"🔀 {prefix}{summary}",
+                        {},
+                        parent_tool="delegate_task",
+                    )
                 except Exception as e:
                     logger.debug("Parent callback failed: %s", e)
                 _batch.clear()
@@ -226,7 +232,13 @@ def _build_child_progress_callback(task_index: int, parent_agent, task_count: in
         if parent_cb and _batch:
             summary = ", ".join(_batch)
             try:
-                parent_cb("subagent_progress", f"🔀 {prefix}{summary}")
+                parent_cb(
+                    "subagent_progress",
+                    "delegate_task",
+                    f"🔀 {prefix}{summary}",
+                    {},
+                    parent_tool="delegate_task",
+                )
             except Exception as e:
                 logger.debug("Parent callback flush failed: %s", e)
             _batch.clear()

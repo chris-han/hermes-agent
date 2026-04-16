@@ -41,6 +41,7 @@ import threading
 import atexit
 import shutil
 import subprocess
+import shlex
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
@@ -172,6 +173,81 @@ def _validate_workdir(workdir: str) -> str | None:
                     "Use a simple filesystem path without shell metacharacters."
                 )
         return "Blocked: workdir contains disallowed characters."
+    return None
+
+
+def _resolve_safe_write_root(task_id: str, cwd: str) -> str | None:
+    """Return the task-scoped safe write root, if configured."""
+    overrides = _task_env_overrides.get(task_id, {})
+    raw = overrides.get("safe_write_root") or os.getenv("HERMES_WRITE_SAFE_ROOT", "")
+    if not raw:
+        return None
+    try:
+        return os.path.realpath(os.path.expanduser(raw))
+    except Exception:
+        return None
+
+
+def _resolve_command_path(target: str, anchor_cwd: str) -> str:
+    """Resolve a shell path token against the registered cwd anchor."""
+    stripped = target.strip()
+    if ((stripped.startswith("'") and stripped.endswith("'"))
+            or (stripped.startswith('"') and stripped.endswith('"'))):
+        stripped = stripped[1:-1]
+    expanded = os.path.expanduser(stripped)
+    if os.path.isabs(expanded):
+        return os.path.realpath(expanded)
+    return os.path.realpath(os.path.join(anchor_cwd, expanded))
+
+
+def _extract_cd_targets(command: str) -> list[str]:
+    """Return explicit `cd <path>` targets from a shell command string."""
+    targets: list[str] = []
+    pattern = re.compile(r"(?:(?<=^)|(?<=[;&\n])|(?<=&&)|(?<=\|\|))\s*cd\s+([^\n;&|]+)")
+    for match in pattern.finditer(command):
+        raw = match.group(1).strip()
+        if not raw:
+            continue
+        try:
+            parts = shlex.split(raw, posix=True)
+        except ValueError:
+            parts = [raw]
+        if parts:
+            targets.append(parts[0])
+    return targets
+
+
+def _check_task_path_policy(
+    *,
+    command: str,
+    task_id: str,
+    anchor_cwd: str,
+    workdir: str | None,
+) -> str | None:
+    """Reject explicit cwd escapes outside the task's safe root."""
+    safe_root = _resolve_safe_write_root(task_id, anchor_cwd)
+    if not safe_root:
+        return None
+
+    def _is_within_safe_root(path: str) -> bool:
+        resolved = _resolve_command_path(path, anchor_cwd)
+        return resolved == safe_root or resolved.startswith(safe_root + os.sep)
+
+    if workdir and not _is_within_safe_root(workdir):
+        resolved = _resolve_command_path(workdir, anchor_cwd)
+        return (
+            f"Blocked: workdir escapes the task sandbox. "
+            f"Resolved to '{resolved}', but the allowed root is '{safe_root}'."
+        )
+
+    for target in _extract_cd_targets(command):
+        if not _is_within_safe_root(target):
+            resolved = _resolve_command_path(target, anchor_cwd)
+            return (
+                f"Blocked: command changes directory outside the task sandbox. "
+                f"`cd {target}` resolves to '{resolved}', but the allowed root is '{safe_root}'."
+            )
+
     return None
 
 
@@ -560,6 +636,7 @@ def register_task_env_overrides(task_id: str, overrides: Dict[str, Any]):
         - modal_image: str -- Path to Dockerfile or Docker Hub image name
         - docker_image: str -- Docker image name
         - cwd: str -- Working directory inside the sandbox
+        - safe_write_root: str -- Root directory that writes and `cd` targets must stay under
 
     Args:
         task_id: The rollout's unique task identifier
@@ -1332,6 +1409,25 @@ def terminal_tool(
                     "status": "blocked"
                 }, ensure_ascii=False)
 
+        path_policy_error = _check_task_path_policy(
+            command=command,
+            task_id=effective_task_id,
+            anchor_cwd=cwd,
+            workdir=workdir,
+        )
+        if path_policy_error:
+            logger.warning(
+                "Blocked task sandbox escape for task %s: %s",
+                effective_task_id[:8],
+                _safe_command_preview(command),
+            )
+            return json.dumps({
+                "output": "",
+                "exit_code": -1,
+                "error": path_policy_error,
+                "status": "blocked",
+            }, ensure_ascii=False)
+
         # Prepare command for execution
         pty_disabled_reason = None
         effective_pty = pty
@@ -1434,12 +1530,20 @@ def terminal_tool(
             max_retries = 3
             retry_count = 0
             result = None
-            
+
+            # When no explicit workdir is requested, use the registered task
+            # cwd override (set via register_task_env_overrides) as the anchor
+            # for every call.  This prevents self.cwd drift from persisting
+            # across calls when a command uses an internal `cd` to escape the
+            # task-scoped working directory (e.g. `cd /repo && python script.py`).
+            registered_cwd = cwd  # already resolved from overrides or config above
+            effective_execute_cwd = workdir if workdir else registered_cwd
+
             while retry_count <= max_retries:
                 try:
                     execute_kwargs = {"timeout": effective_timeout}
-                    if workdir:
-                        execute_kwargs["cwd"] = workdir
+                    if effective_execute_cwd:
+                        execute_kwargs["cwd"] = effective_execute_cwd
                     result = env.execute(command, **execute_kwargs)
                 except Exception as e:
                     error_str = str(e).lower()

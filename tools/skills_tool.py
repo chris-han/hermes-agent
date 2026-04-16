@@ -713,20 +713,12 @@ def skill_view(name: str, file_path: str = None, task_id: str = None) -> str:
     try:
         from agent.skill_utils import get_external_skills_dirs
 
-        # Build list of all skill directories to search
-        all_dirs = []
-        if SKILLS_DIR.exists():
-            all_dirs.append(SKILLS_DIR)
+        # Build list of all skill directories to search.
+        # Keep skill_view consistent with skills_list by ensuring the local
+        # skills directory exists even on first use.
+        SKILLS_DIR.mkdir(parents=True, exist_ok=True)
+        all_dirs = [SKILLS_DIR]
         all_dirs.extend(get_external_skills_dirs())
-
-        if not all_dirs:
-            return json.dumps(
-                {
-                    "success": False,
-                    "error": "Skills directory does not exist yet. It will be created on first install.",
-                },
-                ensure_ascii=False,
-            )
 
         skill_dir = None
         skill_md = None
