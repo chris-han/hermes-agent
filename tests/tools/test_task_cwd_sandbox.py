@@ -212,6 +212,68 @@ class TestRegisteredCwdAnchor:
         assert "outside the task sandbox" in result["error"]
         env.execute.assert_not_called()
 
+    def test_virtual_display_roots_are_used_in_block_messages(self, tmp_path):
+        """Sandbox errors should expose virtual task paths instead of host paths."""
+        from tools.terminal_tool import register_task_env_overrides, clear_task_env_overrides
+
+        workspace_dir = tmp_path / "agent" / "workspace"
+        artifacts_dir = tmp_path / "agent" / "sessions" / "abc123" / "runs" / "run1" / "artifacts"
+        workspace_dir.mkdir(parents=True)
+        artifacts_dir.mkdir(parents=True)
+        task_id = "test-task-read-escape-display"
+        register_task_env_overrides(task_id, {
+            "cwd": str(artifacts_dir),
+            "safe_read_root": str(workspace_dir),
+            "safe_write_root": str(artifacts_dir.parent),
+            "display_cwd": "/workspace/run/artifacts",
+            "display_safe_read_root": "/workspace",
+            "display_safe_write_root": "/workspace/run",
+        })
+
+        env = _mock_env()
+        try:
+            result = _run_terminal(
+                task_id=task_id,
+                command="find /mnt/outside -name '*.pdf'",
+                mock_env=env,
+                config=_make_env_config(cwd=str(artifacts_dir)),
+            )
+        finally:
+            clear_task_env_overrides(task_id)
+
+        assert result["status"] == "blocked"
+        assert "/workspace" in result["error"]
+        assert str(workspace_dir) not in result["error"]
+
+    def test_foreground_output_rewrites_host_paths_to_virtual_aliases(self, tmp_path):
+        """Foreground output should not leak host task roots when display aliases exist."""
+        from tools.terminal_tool import register_task_env_overrides, clear_task_env_overrides
+
+        artifacts_dir = tmp_path / "agent" / "sessions" / "abc123" / "runs" / "run1" / "artifacts"
+        artifacts_dir.mkdir(parents=True)
+        task_id = "test-task-output-display"
+        register_task_env_overrides(task_id, {
+            "cwd": str(artifacts_dir),
+            "safe_read_root": str(tmp_path),
+            "safe_write_root": str(artifacts_dir.parent),
+            "display_cwd": "/workspace/run/artifacts",
+            "display_safe_read_root": "/workspace",
+            "display_safe_write_root": "/workspace/run",
+        })
+
+        env = _mock_env(output=f"wrote {artifacts_dir / 'result.txt'}")
+        try:
+            result = _run_terminal(
+                task_id=task_id,
+                command="pwd",
+                mock_env=env,
+                config=_make_env_config(cwd=str(artifacts_dir)),
+            )
+        finally:
+            clear_task_env_overrides(task_id)
+
+        assert result["output"] == "wrote /workspace/run/artifacts/result.txt"
+
     def test_cwd_passed_on_every_call(self, tmp_path):
         """Registered cwd is re-passed on each consecutive terminal call."""
         from tools.terminal_tool import register_task_env_overrides, clear_task_env_overrides
