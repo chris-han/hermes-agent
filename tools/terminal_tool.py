@@ -205,6 +205,72 @@ def _resolve_safe_read_root(task_id: str, cwd: str) -> str | None:
         return None
 
 
+def _resolve_display_root(task_id: str, key: str) -> str | None:
+    """Return the task-scoped display alias for a sandbox root, if configured."""
+    raw = _task_env_overrides.get(task_id, {}).get(key)
+    if not raw:
+        return None
+    value = str(raw).strip()
+    return value or None
+
+
+def _build_display_path_mappings(task_id: str, anchor_cwd: str) -> list[tuple[str, str]]:
+    """Return actual-to-display root mappings for terminal-visible paths."""
+    overrides = _task_env_overrides.get(task_id, {})
+    raw_cwd = overrides.get("cwd") or anchor_cwd
+    try:
+        actual_cwd = os.path.realpath(os.path.expanduser(str(raw_cwd))) if raw_cwd else None
+    except Exception:
+        actual_cwd = None
+
+    candidates = [
+        (actual_cwd, _resolve_display_root(task_id, "display_cwd")),
+        (_resolve_safe_write_root(task_id, anchor_cwd), _resolve_display_root(task_id, "display_safe_write_root")),
+        (_resolve_safe_read_root(task_id, anchor_cwd), _resolve_display_root(task_id, "display_safe_read_root")),
+    ]
+
+    mappings: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for actual_root, display_root in sorted(
+        ((actual_root, display_root) for actual_root, display_root in candidates if actual_root and display_root),
+        key=lambda item: len(item[0]),
+        reverse=True,
+    ):
+        if actual_root in seen:
+            continue
+        seen.add(actual_root)
+        mappings.append((actual_root, str(display_root).rstrip("/")))
+    return mappings
+
+
+def _display_path(path: str, task_id: str, anchor_cwd: str) -> str:
+    """Render a host path through any configured display aliases."""
+    try:
+        resolved = os.path.realpath(os.path.expanduser(path))
+    except Exception:
+        return path
+
+    for actual_root, display_root in _build_display_path_mappings(task_id, anchor_cwd):
+        if resolved == actual_root:
+            return display_root or "/"
+        prefix = actual_root + os.sep
+        if resolved.startswith(prefix):
+            suffix = resolved[len(prefix):].replace(os.sep, "/")
+            return f"{display_root}/{suffix}" if suffix else display_root
+    return resolved
+
+
+def _rewrite_visible_paths(text: str, task_id: str, anchor_cwd: str) -> str:
+    """Rewrite host paths in terminal-visible text to their virtual aliases."""
+    if not text:
+        return text
+
+    rewritten = text
+    for actual_root, display_root in _build_display_path_mappings(task_id, anchor_cwd):
+        rewritten = rewritten.replace(actual_root, display_root)
+    return rewritten
+
+
 def _resolve_command_path(target: str, anchor_cwd: str) -> str:
     """Resolve a shell path token against the registered cwd anchor."""
     stripped = target.strip()
@@ -284,7 +350,8 @@ def _check_task_path_policy(
         resolved = _resolve_command_path(workdir, anchor_cwd)
         return (
             f"Blocked: workdir escapes the task sandbox. "
-            f"Resolved to '{resolved}', but the allowed root is '{safe_write_root}'."
+            f"Resolved to '{_display_path(resolved, task_id, anchor_cwd)}', "
+            f"but the allowed root is '{_display_path(safe_write_root, task_id, anchor_cwd)}'."
         )
 
     for target in _extract_cd_targets(command):
@@ -292,7 +359,8 @@ def _check_task_path_policy(
             resolved = _resolve_command_path(target, anchor_cwd)
             return (
                 f"Blocked: command changes directory outside the task sandbox. "
-                f"`cd {target}` resolves to '{resolved}', but the allowed root is '{safe_write_root}'."
+                f"`cd {target}` resolves to '{_display_path(resolved, task_id, anchor_cwd)}', "
+                f"but the allowed root is '{_display_path(safe_write_root, task_id, anchor_cwd)}'."
             )
 
     for target in _extract_explicit_path_targets(command):
@@ -300,7 +368,8 @@ def _check_task_path_policy(
             resolved = _resolve_command_path(target, anchor_cwd)
             return (
                 f"Blocked: command references a path outside the task sandbox. "
-                f"'{target}' resolves to '{resolved}', but the allowed root is '{safe_read_root}'."
+                f"'{target}' resolves to '{_display_path(resolved, task_id, anchor_cwd)}', "
+                f"but the allowed root is '{_display_path(safe_read_root, task_id, anchor_cwd)}'."
             )
 
     return None
@@ -693,6 +762,9 @@ def register_task_env_overrides(task_id: str, overrides: Dict[str, Any]):
         - cwd: str -- Working directory inside the sandbox
         - safe_read_root: str -- Root directory that explicit read/search paths must stay under
         - safe_write_root: str -- Root directory that writes and `cd` targets must stay under
+        - display_cwd: str -- Virtual cwd exposed in terminal output and sandbox messages
+        - display_safe_read_root: str -- Virtual read root exposed in terminal output and sandbox messages
+        - display_safe_write_root: str -- Virtual write root exposed in terminal output and sandbox messages
 
     Args:
         task_id: The rollout's unique task identifier
@@ -1630,7 +1702,11 @@ def terminal_tool(
                     return json.dumps({
                         "output": "",
                         "exit_code": -1,
-                        "error": f"Command execution failed: {type(e).__name__}: {str(e)}"
+                        "error": _rewrite_visible_paths(
+                            f"Command execution failed: {type(e).__name__}: {str(e)}",
+                            effective_task_id,
+                            cwd,
+                        )
                     }, ensure_ascii=False)
                 
                 # Got a result
@@ -1663,6 +1739,7 @@ def terminal_tool(
             # Redact secrets from command output (catches env/printenv leaking keys)
             from agent.redact import redact_sensitive_text
             output = redact_sensitive_text(output.strip()) if output else ""
+            output = _rewrite_visible_paths(output, effective_task_id, cwd)
 
             # Interpret non-zero exit codes that aren't real errors
             # (e.g. grep=1 means "no matches", diff=1 means "files differ")
@@ -1684,10 +1761,12 @@ def terminal_tool(
         import traceback
         tb_str = traceback.format_exc()
         logger.error("terminal_tool exception:\n%s", tb_str)
+        error_task_id = locals().get("effective_task_id", "default")
+        error_cwd = locals().get("cwd", os.getcwd())
         return json.dumps({
             "output": "",
             "exit_code": -1,
-            "error": f"Failed to execute command: {str(e)}",
+            "error": _rewrite_visible_paths(f"Failed to execute command: {str(e)}", error_task_id, error_cwd),
             "traceback": tb_str,
             "status": "error"
         }, ensure_ascii=False)
