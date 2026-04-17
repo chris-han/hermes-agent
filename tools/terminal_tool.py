@@ -271,13 +271,33 @@ def _rewrite_visible_paths(text: str, task_id: str, anchor_cwd: str) -> str:
     return rewritten
 
 
-def _resolve_command_path(target: str, anchor_cwd: str) -> str:
-    """Resolve a shell path token against the registered cwd anchor."""
+def _resolve_virtual_task_path(target: str, task_id: str, anchor_cwd: str) -> str:
+    """Map a visible task path like `/workspace/run` back to its actual root."""
     stripped = target.strip()
     if ((stripped.startswith("'") and stripped.endswith("'"))
             or (stripped.startswith('"') and stripped.endswith('"'))):
         stripped = stripped[1:-1]
+
     expanded = os.path.expanduser(stripped)
+    if not os.path.isabs(expanded):
+        return expanded
+
+    normalized = expanded.rstrip("/") or "/"
+    for actual_root, display_root in _build_display_path_mappings(task_id, anchor_cwd):
+        display_normalized = str(display_root).rstrip("/") or "/"
+        if normalized == display_normalized:
+            return actual_root or "/"
+        prefix = display_normalized + "/"
+        if normalized.startswith(prefix):
+            suffix = normalized[len(prefix):].lstrip("/")
+            return os.path.join(actual_root, suffix) if suffix else actual_root
+
+    return expanded
+
+
+def _resolve_command_path(target: str, task_id: str, anchor_cwd: str) -> str:
+    """Resolve a shell path token against the registered cwd anchor."""
+    expanded = _resolve_virtual_task_path(target, task_id, anchor_cwd)
     if os.path.isabs(expanded):
         return os.path.realpath(expanded)
     return os.path.realpath(os.path.join(anchor_cwd, expanded))
@@ -343,11 +363,11 @@ def _check_task_path_policy(
         return None
 
     def _is_within_root(path: str, root: str) -> bool:
-        resolved = _resolve_command_path(path, anchor_cwd)
+        resolved = _resolve_command_path(path, task_id, anchor_cwd)
         return resolved == root or resolved.startswith(root + os.sep)
 
     if safe_write_root and workdir and not _is_within_root(workdir, safe_write_root):
-        resolved = _resolve_command_path(workdir, anchor_cwd)
+        resolved = _resolve_command_path(workdir, task_id, anchor_cwd)
         return (
             f"Blocked: workdir escapes the task sandbox. "
             f"Resolved to '{_display_path(resolved, task_id, anchor_cwd)}', "
@@ -356,7 +376,7 @@ def _check_task_path_policy(
 
     for target in _extract_cd_targets(command):
         if safe_write_root and not _is_within_root(target, safe_write_root):
-            resolved = _resolve_command_path(target, anchor_cwd)
+            resolved = _resolve_command_path(target, task_id, anchor_cwd)
             return (
                 f"Blocked: command changes directory outside the task sandbox. "
                 f"`cd {target}` resolves to '{_display_path(resolved, task_id, anchor_cwd)}', "
@@ -365,7 +385,7 @@ def _check_task_path_policy(
 
     for target in _extract_explicit_path_targets(command):
         if safe_read_root and not _is_within_root(target, safe_read_root):
-            resolved = _resolve_command_path(target, anchor_cwd)
+            resolved = _resolve_command_path(target, task_id, anchor_cwd)
             return (
                 f"Blocked: command references a path outside the task sandbox. "
                 f"'{target}' resolves to '{_display_path(resolved, task_id, anchor_cwd)}', "
