@@ -389,6 +389,58 @@ def test_build_api_kwargs_copilot_responses_omits_reasoning_for_non_reasoning_mo
     assert "prompt_cache_key" not in kwargs
 
 
+def test_build_api_kwargs_alibaba_responses_uses_enable_thinking(monkeypatch):
+    _patch_agent_bootstrap(monkeypatch)
+
+    agent = run_agent.AIAgent(
+        model="qwen3.5-plus",
+        provider="alibaba",
+        api_mode="codex_responses",
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        api_key="dashscope-token",
+        quiet_mode=True,
+        max_iterations=1,
+        skip_context_files=True,
+        skip_memory=True,
+        reasoning_config={"enabled": True, "effort": "medium"},
+    )
+    agent._cleanup_task_resources = lambda task_id: None
+    agent._persist_session = lambda messages, history=None: None
+    agent._save_trajectory = lambda messages, user_message, completed: None
+    agent._save_session_log = lambda messages: None
+
+    kwargs = agent._build_api_kwargs(
+        [
+            {"role": "system", "content": "You are Hermes."},
+            {"role": "user", "content": "Ping"},
+        ]
+    )
+
+    assert kwargs["model"] == "qwen3.5-plus"
+    assert kwargs["instructions"] == "You are Hermes."
+    assert kwargs["store"] is False
+    assert kwargs["extra_body"] == {"enable_thinking": True}
+    assert "reasoning" not in kwargs
+    assert "include" not in kwargs
+    assert "prompt_cache_key" not in kwargs
+
+
+def test_preflight_codex_api_kwargs_accepts_extra_body(monkeypatch):
+    agent = _build_agent(monkeypatch)
+
+    normalized = agent._preflight_codex_api_kwargs(
+        {
+            "model": "qwen3.5-plus",
+            "instructions": "You are Hermes.",
+            "input": [{"role": "user", "content": "Ping"}],
+            "store": False,
+            "extra_body": {"enable_thinking": True},
+        }
+    )
+
+    assert normalized["extra_body"] == {"enable_thinking": True}
+
+
 def test_run_codex_stream_retries_when_completed_event_missing(monkeypatch):
     agent = _build_agent(monkeypatch)
     calls = {"stream": 0}

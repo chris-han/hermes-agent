@@ -434,7 +434,9 @@ class TestBuildApiKwargsCodex:
         assert kwargs["store"] is False
         assert "messages" not in kwargs
         assert "reasoning" not in kwargs
-        assert kwargs.get("include") == []
+        assert "include" not in kwargs
+        assert kwargs["extra_body"] == {"enable_thinking": False}
+        assert "prompt_cache_key" not in kwargs
 
 
 # ── Message conversion tests ────────────────────────────────────────────────
@@ -609,6 +611,38 @@ class TestNormalizeCodexResponse:
         assert reason == "tool_calls"
         assert len(msg.tool_calls) == 1
         assert msg.tool_calls[0].function.name == "web_search"
+
+    def test_dict_shaped_message_items_are_normalized(self, monkeypatch):
+        agent = self._make_codex_agent(monkeypatch)
+        response = SimpleNamespace(
+            output=[
+                {
+                    "type": "reasoning",
+                    "summary": [{"type": "summary_text", "text": "Thinking about a reply"}],
+                    "encrypted_content": "enc_blob",
+                    "id": "rs_dict_1",
+                },
+                {
+                    "type": "message",
+                    "status": "completed",
+                    "phase": "final_answer",
+                    "content": [{"type": "output_text", "text": "Hello from dict output"}],
+                },
+            ],
+            status="completed",
+        )
+
+        msg, reason = agent._normalize_codex_response(response)
+
+        assert msg.content == "Hello from dict output"
+        assert "Thinking about a reply" in (msg.reasoning or "")
+        assert msg.codex_reasoning_items == [{
+            "type": "reasoning",
+            "encrypted_content": "enc_blob",
+            "id": "rs_dict_1",
+            "summary": [{"type": "summary_text", "text": "Thinking about a reply"}],
+        }]
+        assert reason == "stop"
 
 
 # ── Chat completions response handling (OpenRouter/Nous) ─────────────────────
