@@ -4216,7 +4216,7 @@ class AIAgent:
             "model", "instructions", "input", "tools", "store",
             "reasoning", "include", "max_output_tokens", "temperature",
             "tool_choice", "parallel_tool_calls", "prompt_cache_key", "service_tier",
-            "extra_headers",
+            "extra_headers", "extra_body",
         }
         normalized: Dict[str, Any] = {
             "model": model,
@@ -4266,6 +4266,20 @@ class AIAgent:
             if normalized_headers:
                 normalized["extra_headers"] = normalized_headers
 
+        extra_body = api_kwargs.get("extra_body")
+        if extra_body is not None:
+            if not isinstance(extra_body, dict):
+                raise ValueError("Codex Responses request 'extra_body' must be an object.")
+            normalized_extra_body: Dict[str, Any] = {}
+            for key, value in extra_body.items():
+                if not isinstance(key, str) or not key.strip():
+                    raise ValueError("Codex Responses request 'extra_body' keys must be non-empty strings.")
+                if value is None:
+                    continue
+                normalized_extra_body[key.strip()] = value
+            if normalized_extra_body:
+                normalized["extra_body"] = normalized_extra_body
+
         if allow_stream:
             stream = api_kwargs.get("stream")
             if stream is not None and stream is not True:
@@ -4286,32 +4300,32 @@ class AIAgent:
 
     def _extract_responses_message_text(self, item: Any) -> str:
         """Extract assistant text from a Responses message output item."""
-        content = getattr(item, "content", None)
+        content = item.get("content") if isinstance(item, dict) else getattr(item, "content", None)
         if not isinstance(content, list):
             return ""
 
         chunks: List[str] = []
         for part in content:
-            ptype = getattr(part, "type", None)
+            ptype = part.get("type") if isinstance(part, dict) else getattr(part, "type", None)
             if ptype not in {"output_text", "text"}:
                 continue
-            text = getattr(part, "text", None)
+            text = part.get("text") if isinstance(part, dict) else getattr(part, "text", None)
             if isinstance(text, str) and text:
                 chunks.append(text)
         return "".join(chunks).strip()
 
     def _extract_responses_reasoning_text(self, item: Any) -> str:
         """Extract a compact reasoning text from a Responses reasoning item."""
-        summary = getattr(item, "summary", None)
+        summary = item.get("summary") if isinstance(item, dict) else getattr(item, "summary", None)
         if isinstance(summary, list):
             chunks: List[str] = []
             for part in summary:
-                text = getattr(part, "text", None)
+                text = part.get("text") if isinstance(part, dict) else getattr(part, "text", None)
                 if isinstance(text, str) and text:
                     chunks.append(text)
             if chunks:
                 return "\n".join(chunks).strip()
-        text = getattr(item, "text", None)
+        text = item.get("text") if isinstance(item, dict) else getattr(item, "text", None)
         if isinstance(text, str) and text:
             return text.strip()
         return ""
@@ -4360,8 +4374,8 @@ class AIAgent:
         saw_final_answer_phase = False
 
         for item in output:
-            item_type = getattr(item, "type", None)
-            item_status = getattr(item, "status", None)
+            item_type = item.get("type") if isinstance(item, dict) else getattr(item, "type", None)
+            item_status = item.get("status") if isinstance(item, dict) else getattr(item, "status", None)
             if isinstance(item_status, str):
                 item_status = item_status.strip().lower()
             else:
@@ -4371,7 +4385,7 @@ class AIAgent:
                 has_incomplete_items = True
 
             if item_type == "message":
-                item_phase = getattr(item, "phase", None)
+                item_phase = item.get("phase") if isinstance(item, dict) else getattr(item, "phase", None)
                 if isinstance(item_phase, str):
                     normalized_phase = item_phase.strip().lower()
                     if normalized_phase in {"commentary", "analysis"}:
@@ -4388,18 +4402,18 @@ class AIAgent:
                 # Capture the full reasoning item for multi-turn continuity.
                 # encrypted_content is an opaque blob the API needs back on
                 # subsequent turns to maintain coherent reasoning chains.
-                encrypted = getattr(item, "encrypted_content", None)
+                encrypted = item.get("encrypted_content") if isinstance(item, dict) else getattr(item, "encrypted_content", None)
                 if isinstance(encrypted, str) and encrypted:
                     raw_item = {"type": "reasoning", "encrypted_content": encrypted}
-                    item_id = getattr(item, "id", None)
+                    item_id = item.get("id") if isinstance(item, dict) else getattr(item, "id", None)
                     if isinstance(item_id, str) and item_id:
                         raw_item["id"] = item_id
                     # Capture summary — required by the API when replaying reasoning items
-                    summary = getattr(item, "summary", None)
+                    summary = item.get("summary") if isinstance(item, dict) else getattr(item, "summary", None)
                     if isinstance(summary, list):
                         raw_summary = []
                         for part in summary:
-                            text = getattr(part, "text", None)
+                            text = part.get("text") if isinstance(part, dict) else getattr(part, "text", None)
                             if isinstance(text, str):
                                 raw_summary.append({"type": "summary_text", "text": text})
                         raw_item["summary"] = raw_summary
@@ -4407,12 +4421,13 @@ class AIAgent:
             elif item_type == "function_call":
                 if item_status in {"queued", "in_progress", "incomplete"}:
                     continue
-                fn_name = getattr(item, "name", "") or ""
-                arguments = getattr(item, "arguments", "{}")
+                fn_name = item.get("name", "") if isinstance(item, dict) else getattr(item, "name", "")
+                fn_name = fn_name or ""
+                arguments = item.get("arguments", "{}") if isinstance(item, dict) else getattr(item, "arguments", "{}")
                 if not isinstance(arguments, str):
                     arguments = json.dumps(arguments, ensure_ascii=False)
-                raw_call_id = getattr(item, "call_id", None)
-                raw_item_id = getattr(item, "id", None)
+                raw_call_id = item.get("call_id") if isinstance(item, dict) else getattr(item, "call_id", None)
+                raw_item_id = item.get("id") if isinstance(item, dict) else getattr(item, "id", None)
                 embedded_call_id, _ = self._split_responses_tool_id(raw_item_id)
                 call_id = raw_call_id if isinstance(raw_call_id, str) and raw_call_id.strip() else embedded_call_id
                 if not isinstance(call_id, str) or not call_id.strip():
@@ -4428,12 +4443,13 @@ class AIAgent:
                     function=SimpleNamespace(name=fn_name, arguments=arguments),
                 ))
             elif item_type == "custom_tool_call":
-                fn_name = getattr(item, "name", "") or ""
-                arguments = getattr(item, "input", "{}")
+                fn_name = item.get("name", "") if isinstance(item, dict) else getattr(item, "name", "")
+                fn_name = fn_name or ""
+                arguments = item.get("input", "{}") if isinstance(item, dict) else getattr(item, "input", "{}")
                 if not isinstance(arguments, str):
                     arguments = json.dumps(arguments, ensure_ascii=False)
-                raw_call_id = getattr(item, "call_id", None)
-                raw_item_id = getattr(item, "id", None)
+                raw_call_id = item.get("call_id") if isinstance(item, dict) else getattr(item, "call_id", None)
+                raw_item_id = item.get("id") if isinstance(item, dict) else getattr(item, "id", None)
                 embedded_call_id, _ = self._split_responses_tool_id(raw_item_id)
                 call_id = raw_call_id if isinstance(raw_call_id, str) and raw_call_id.strip() else embedded_call_id
                 if not isinstance(call_id, str) or not call_id.strip():
@@ -6733,6 +6749,12 @@ class AIAgent:
                 self.provider == "openai-codex"
                 or "chatgpt.com/backend-api/codex" in self.base_url.lower()
             )
+            is_alibaba_responses = (
+                self.provider == "alibaba"
+                or "dashscope.aliyuncs.com" in (self.base_url or "").lower()
+                or "dashscope-intl.aliyuncs.com" in (self.base_url or "").lower()
+                or "dashscope-us.aliyuncs.com" in (self.base_url or "").lower()
+            )
 
             # Resolve reasoning effort: config > default (medium)
             reasoning_effort = "medium"
@@ -6748,23 +6770,28 @@ class AIAgent:
             # "minimal" is valid on OpenRouter and GPT-5 but fails on 5.2/5.4.
             _effort_clamp = {"minimal": "low"}
             reasoning_effort = _effort_clamp.get(reasoning_effort, reasoning_effort)
+            response_tools = self._responses_tools()
 
             kwargs = {
                 "model": self.model,
                 "instructions": instructions,
                 "input": self._chat_messages_to_responses_input(payload_messages),
-                "tools": self._responses_tools(),
-                "tool_choice": "auto",
-                "parallel_tool_calls": True,
                 "store": False,
             }
 
-            if not is_github_responses:
+            if response_tools:
+                kwargs["tools"] = response_tools
+                kwargs["tool_choice"] = "auto"
+                kwargs["parallel_tool_calls"] = True
+
+            if not is_github_responses and not is_alibaba_responses:
                 kwargs["prompt_cache_key"] = self.session_id
 
             is_xai_responses = self.provider == "xai" or "api.x.ai" in (self.base_url or "").lower()
 
-            if reasoning_enabled and is_xai_responses:
+            if is_alibaba_responses:
+                kwargs["extra_body"] = {"enable_thinking": bool(reasoning_enabled)}
+            elif reasoning_enabled and is_xai_responses:
                 # xAI reasons automatically — no effort param, just include encrypted content
                 kwargs["include"] = ["reasoning.encrypted_content"]
             elif reasoning_enabled:
@@ -6778,7 +6805,7 @@ class AIAgent:
                 else:
                     kwargs["reasoning"] = {"effort": reasoning_effort, "summary": "auto"}
                     kwargs["include"] = ["reasoning.encrypted_content"]
-            elif not is_github_responses and not is_xai_responses:
+            elif not is_github_responses and not is_xai_responses and not is_alibaba_responses:
                 kwargs["include"] = []
 
             if self.request_overrides:
