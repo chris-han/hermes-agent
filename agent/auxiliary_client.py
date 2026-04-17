@@ -2332,7 +2332,11 @@ def _build_call_kwargs(
     merged_extra = dict(extra_body or {})
     if provider == "nous" or auxiliary_is_nous:
         merged_extra.setdefault("tags", []).extend(["product=hermes-agent"])
-    if merged_extra:
+    normalized_base = (base_url or "").lower()
+    extra_body_supported = not (
+        provider == "alibaba" and "dashscope.aliyuncs.com" in normalized_base
+    )
+    if merged_extra and extra_body_supported:
         kwargs["extra_body"] = merged_extra
 
     return kwargs
