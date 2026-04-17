@@ -828,6 +828,41 @@ class TestWriteSafeRootIntegration:
 
         assert file_ops.safe_read_root == str(workspace_dir)
 
+    def test_file_tool_maps_virtual_workspace_paths_from_task_overrides(self, tmp_path):
+        """Per-task display roots let file tools resolve /workspace back to the actual read root."""
+        from tools.file_tools import _get_file_ops, clear_file_ops_cache
+        from tools.terminal_tool import register_task_env_overrides, clear_task_env_overrides
+
+        task_id = "test-task-file-display-root"
+        workspace_dir = tmp_path / "agent" / "workspace"
+        artifact_dir = tmp_path / "agent" / "runs" / "run1" / "artifacts"
+        workspace_dir.mkdir(parents=True)
+        artifact_dir.mkdir(parents=True)
+        register_task_env_overrides(task_id, {
+            "cwd": str(artifact_dir),
+            "safe_read_root": str(workspace_dir),
+            "safe_write_root": str(artifact_dir.parent),
+            "display_cwd": "/workspace/run/artifacts",
+            "display_safe_read_root": "/workspace",
+            "display_safe_write_root": "/workspace/run",
+        })
+
+        env = _mock_env()
+        active = {task_id: env}
+        last_activity = {task_id: 0.0}
+
+        try:
+            with patch("tools.terminal_tool._active_environments", active), \
+                 patch("tools.terminal_tool._last_activity", last_activity), \
+                 patch("tools.terminal_tool._get_env_config", return_value=_make_env_config(cwd=str(artifact_dir))):
+                file_ops = _get_file_ops(task_id)
+        finally:
+            clear_file_ops_cache(task_id)
+            clear_task_env_overrides(task_id)
+
+        assert file_ops._expand_path("/workspace") == str(workspace_dir)
+        assert file_ops._expand_path("/workspace/run/artifacts") == str(artifact_dir)
+
     def test_file_read_outside_safe_read_root_is_blocked(self, tmp_path):
         """read_file refuses paths outside the registered read root."""
         env = _mock_env()

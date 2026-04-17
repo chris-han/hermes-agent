@@ -359,6 +359,7 @@ class ShellFileOperations(FileOperations):
         cwd: str = None,
         safe_write_root: str | None = None,
         safe_read_root: str | None = None,
+        path_aliases: list[tuple[str, str]] | None = None,
     ):
         """
         Initialize file operations with a terminal environment.
@@ -392,7 +393,16 @@ class ShellFileOperations(FileOperations):
                    getattr(getattr(terminal_env, 'config', None), 'cwd', None) or "/"
         self.safe_write_root = safe_write_root
         self.safe_read_root = safe_read_root
-
+        self.path_aliases = sorted(
+            [
+                (str(display_root).rstrip("/"), str(actual_root).rstrip("/"))
+                for display_root, actual_root in (path_aliases or [])
+                if display_root and actual_root
+            ],
+            key=lambda item: len(item[0]),
+            reverse=True,
+        )
+        
         # Cache for command availability checks
         self._command_cache: Dict[str, bool] = {}
     
@@ -478,6 +488,16 @@ class ShellFileOperations(FileOperations):
         """
         if not path:
             return path
+
+        if os.path.isabs(path):
+            normalized = str(path).rstrip("/") or "/"
+            for display_root, actual_root in self.path_aliases:
+                if normalized == display_root:
+                    return actual_root or "/"
+                prefix = display_root + "/"
+                if normalized.startswith(prefix):
+                    suffix = normalized[len(prefix):]
+                    return f"{actual_root}/{suffix}" if suffix else actual_root
         
         # Handle ~ and ~user
         if path.startswith('~'):
@@ -504,6 +524,12 @@ class ShellFileOperations(FileOperations):
                         suffix = path[1 + len(username):]  # e.g. "/rest/of/path"
                         return user_home + suffix
         
+        # Resolve relative paths against the task cwd so that the
+        # deny-check (which uses os.path.realpath) sees the correct
+        # directory rather than the server process's cwd.
+        if not os.path.isabs(path) and self.cwd:
+            return os.path.join(self.cwd, path)
+
         return path
     
     def _escape_shell_arg(self, arg: str) -> str:
@@ -1046,6 +1072,10 @@ class ShellFileOperations(FileOperations):
         default, and uses parallel directory traversal for ~200x speedup
         over find on wide trees.  Results are sorted by modification time
         (most recently edited first) when rg >= 13.0 supports --sortr.
+
+        When a safe_read_root sandbox is configured (typical for agent
+        sessions), we add --no-ignore so that runtime artifacts under
+        gitignored directories (sessions/, uploads/, runs/) are visible.
         """
         # rg --files -g uses glob patterns; wrap bare names so they match
         # at any depth (equivalent to find -name).
@@ -1055,9 +1085,12 @@ class ShellFileOperations(FileOperations):
             glob_pattern = pattern
 
         fetch_limit = limit + offset
+        # When operating inside a sandboxed task root, skip .gitignore so
+        # runtime artifacts (sessions/, uploads/, runs/) are discoverable.
+        ignore_flag = " --no-ignore" if self.safe_read_root else ""
         # Try mtime-sorted first (rg 13+); fall back to unsorted if not supported.
         cmd_sorted = (
-            f"rg --files --sortr=modified -g {self._escape_shell_arg(glob_pattern)} "
+            f"rg --files{ignore_flag} --sortr=modified -g {self._escape_shell_arg(glob_pattern)} "
             f"{self._escape_shell_arg(path)} 2>/dev/null "
             f"| head -n {fetch_limit}"
         )
@@ -1067,7 +1100,7 @@ class ShellFileOperations(FileOperations):
         if not all_files:
             # --sortr may have failed on older rg; retry without it.
             cmd_plain = (
-                f"rg --files -g {self._escape_shell_arg(glob_pattern)} "
+                f"rg --files{ignore_flag} -g {self._escape_shell_arg(glob_pattern)} "
                 f"{self._escape_shell_arg(path)} 2>/dev/null "
                 f"| head -n {fetch_limit}"
             )
@@ -1103,6 +1136,11 @@ class ShellFileOperations(FileOperations):
                         limit: int, offset: int, output_mode: str, context: int) -> SearchResult:
         """Search using ripgrep."""
         cmd_parts = ["rg", "--line-number", "--no-heading", "--with-filename"]
+
+        # Inside a sandboxed task root, skip .gitignore so runtime artifacts
+        # (sessions/, uploads/, runs/) are searchable.
+        if self.safe_read_root:
+            cmd_parts.append("--no-ignore")
         
         # Add context if requested
         if context > 0:

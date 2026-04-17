@@ -268,6 +268,27 @@ class TestShellFileOpsHelpers:
         ops = ShellFileOperations(env)
         assert ops.cwd == "/"
 
+    def test_expand_path_maps_virtual_workspace_root(self, mock_env):
+        ops = ShellFileOperations(
+            mock_env,
+            cwd="/tmp/test",
+            safe_read_root="/tmp/test/workspace",
+            path_aliases=[("/workspace", "/tmp/test/workspace")],
+        )
+
+        assert ops._expand_path("/workspace") == "/tmp/test/workspace"
+        assert ops._expand_path("/workspace/uploads/report.pdf") == "/tmp/test/workspace/uploads/report.pdf"
+
+    def test_expand_path_resolves_relative_against_cwd(self, mock_env):
+        """Relative paths like '.' must resolve against self.cwd, not os.getcwd()."""
+        ops = ShellFileOperations(
+            mock_env,
+            cwd="/tmp/task/sandbox",
+        )
+        assert ops._expand_path(".") == "/tmp/task/sandbox/."
+        assert ops._expand_path("subdir") == "/tmp/task/sandbox/subdir"
+        assert ops._expand_path("a/b/c") == "/tmp/task/sandbox/a/b/c"
+
 
 class TestSearchPathValidation:
     """Test that search() returns an error for non-existent paths."""

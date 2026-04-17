@@ -223,6 +223,15 @@ def _get_file_ops(task_id: str = "default") -> ShellFileOperations:
     safe_read_root = overrides.get("safe_read_root") or overrides.get("safe_write_root")
     safe_write_root = overrides.get("safe_write_root")
     effective_cwd = overrides.get("cwd") or config["cwd"]
+    path_aliases: list[tuple[str, str]] = []
+    for display_key, actual_root in (
+        ("display_cwd", effective_cwd),
+        ("display_safe_write_root", safe_write_root),
+        ("display_safe_read_root", safe_read_root),
+    ):
+        display_root = overrides.get(display_key)
+        if display_root and actual_root:
+            path_aliases.append((str(display_root), str(actual_root)))
 
     # Fast path: check cache -- but also verify the underlying environment
     # is still alive (it may have been killed by the cleanup thread).
@@ -322,6 +331,7 @@ def _get_file_ops(task_id: str = "default") -> ShellFileOperations:
         cwd=effective_cwd,
         safe_read_root=safe_read_root,
         safe_write_root=safe_write_root,
+        path_aliases=path_aliases,
     )
     with _file_ops_lock:
         _file_ops_cache[task_id] = file_ops
