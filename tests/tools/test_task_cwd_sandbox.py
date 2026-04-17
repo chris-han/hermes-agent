@@ -212,6 +212,39 @@ class TestRegisteredCwdAnchor:
         assert "outside the task sandbox" in result["error"]
         env.execute.assert_not_called()
 
+    def test_heredoc_body_is_not_scanned_as_shell_path(self, tmp_path):
+        """Heredoc program input must not be mistaken for explicit filesystem paths."""
+        from tools.terminal_tool import register_task_env_overrides, clear_task_env_overrides
+
+        workspace_dir = tmp_path / "agent" / "workspace"
+        run_dir = workspace_dir / "runs" / "run1"
+        artifacts_dir = run_dir / "artifacts"
+        artifacts_dir.mkdir(parents=True)
+        task_id = "test-task-heredoc-body"
+        register_task_env_overrides(task_id, {
+            "cwd": str(artifacts_dir),
+            "safe_read_root": str(workspace_dir),
+            "safe_write_root": str(run_dir),
+            "display_cwd": "/workspace/run/artifacts",
+            "display_safe_read_root": "/workspace",
+            "display_safe_write_root": "/workspace/run",
+        })
+
+        env = _mock_env(output="ok")
+        try:
+            result = _run_terminal(
+                task_id=task_id,
+                command="python3 << 'EOF'\nprint(0/1e9)\nEOF",
+                mock_env=env,
+                config=_make_env_config(cwd=str(artifacts_dir)),
+            )
+        finally:
+            clear_task_env_overrides(task_id)
+
+        assert result["exit_code"] == 0
+        assert result["error"] is None
+        env.execute.assert_called_once()
+
     def test_virtual_display_roots_are_used_in_block_messages(self, tmp_path):
         """Sandbox errors should expose virtual task paths instead of host paths."""
         from tools.terminal_tool import register_task_env_overrides, clear_task_env_overrides

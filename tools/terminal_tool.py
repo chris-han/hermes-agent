@@ -306,8 +306,9 @@ def _resolve_command_path(target: str, task_id: str, anchor_cwd: str) -> str:
 def _extract_cd_targets(command: str) -> list[str]:
     """Return explicit `cd <path>` targets from a shell command string."""
     targets: list[str] = []
+    sanitized = _strip_heredoc_bodies(command)
     pattern = re.compile(r"(?:(?<=^)|(?<=[;&\n])|(?<=&&)|(?<=\|\|))\s*cd\s+([^\n;&|]+)")
-    for match in pattern.finditer(command):
+    for match in pattern.finditer(sanitized):
         raw = match.group(1).strip()
         if not raw:
             continue
@@ -327,10 +328,11 @@ def _extract_explicit_path_targets(command: str) -> list[str]:
     home-relative paths, and relative traversal paths. It ignores shell
     redirections like ``2>/dev/null`` so common stderr suppression still works.
     """
+    sanitized = _strip_heredoc_bodies(command)
     try:
-        tokens = shlex.split(command, posix=True)
+        tokens = shlex.split(sanitized, posix=True)
     except ValueError:
-        tokens = command.split()
+        tokens = sanitized.split()
 
     targets: list[str] = []
     for token in tokens:
@@ -347,6 +349,43 @@ def _extract_explicit_path_targets(command: str) -> list[str]:
             targets.append(stripped)
 
     return targets
+
+
+def _strip_heredoc_bodies(command: str) -> str:
+    """Remove heredoc bodies before shell token inspection.
+
+    Path policy should only inspect the shell syntax layer. When a command uses
+    a heredoc like ``python3 << 'EOF'``, the body is program input, not shell
+    path arguments, and naive tokenization can misclassify arithmetic such as
+    ``0/1e9`` as an absolute path token.
+    """
+    if "<<" not in command:
+        return command
+
+    lines = command.splitlines()
+    sanitized: list[str] = []
+    index = 0
+
+    while index < len(lines):
+        line = lines[index]
+        sanitized.append(line)
+
+        match = re.search(r"<<-?\s*([\"']?)([A-Za-z_][A-Za-z0-9_]*)\1", line)
+        if not match:
+            index += 1
+            continue
+
+        delimiter = match.group(2)
+        index += 1
+        while index < len(lines):
+            current = lines[index]
+            if current.strip() == delimiter:
+                sanitized.append(current)
+                break
+            index += 1
+        index += 1
+
+    return "\n".join(sanitized)
 
 
 def _check_task_path_policy(
