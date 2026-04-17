@@ -16,6 +16,7 @@ from agent.auxiliary_client import (
     auxiliary_max_tokens_param,
     call_llm,
     async_call_llm,
+    _build_call_kwargs,
     _read_codex_access_token,
     _get_provider_chain,
     _is_payment_error,
@@ -248,6 +249,17 @@ class TestAnthropicOAuthFlag:
 
 
 class TestTryCodex:
+    def test_build_call_kwargs_omits_extra_body_for_alibaba_dashscope(self):
+        kwargs = _build_call_kwargs(
+            "alibaba",
+            "qwen3.5-plus",
+            [{"role": "user", "content": "hi"}],
+            extra_body={"tags": ["product=hermes-agent"]},
+            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        )
+
+        assert "extra_body" not in kwargs
+
     def test_pool_without_selected_entry_falls_back_to_auth_store(self):
         with (
             patch("agent.auxiliary_client._select_pool_entry", return_value=(True, None)),

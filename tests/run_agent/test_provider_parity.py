@@ -432,6 +432,26 @@ class TestBuildApiKwargsCodex:
         assert "name" in tools[0]
         assert "function" not in tools[0]
 
+    def test_alibaba_codex_responses_uses_native_responses_format(self, monkeypatch):
+        agent = _make_agent(
+            monkeypatch,
+            "alibaba",
+            api_mode="codex_responses",
+            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            model="qwen3.5-plus",
+        )
+        agent.reasoning_config = {"enabled": False}
+        messages = [{"role": "user", "content": "hi"}]
+
+        kwargs = agent._build_api_kwargs(messages)
+
+        assert "input" in kwargs
+        assert "instructions" in kwargs
+        assert kwargs["store"] is False
+        assert "messages" not in kwargs
+        assert "reasoning" not in kwargs
+        assert kwargs.get("include") == []
+
 
 # ── Message conversion tests ────────────────────────────────────────────────
 
