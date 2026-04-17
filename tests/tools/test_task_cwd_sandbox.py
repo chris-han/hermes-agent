@@ -245,6 +245,74 @@ class TestRegisteredCwdAnchor:
         assert "/workspace" in result["error"]
         assert str(workspace_dir) not in result["error"]
 
+    def test_virtual_cd_target_inside_safe_root_is_allowed(self, tmp_path):
+        """Visible task roots like `/workspace/run` should resolve back to the actual safe root."""
+        from tools.terminal_tool import register_task_env_overrides, clear_task_env_overrides
+
+        workspace_dir = tmp_path / "agent" / "workspace"
+        run_dir = workspace_dir / "runs" / "run1"
+        artifacts_dir = run_dir / "artifacts"
+        artifacts_dir.mkdir(parents=True)
+        task_id = "test-task-virtual-cd-allowed"
+        register_task_env_overrides(task_id, {
+            "cwd": str(artifacts_dir),
+            "safe_read_root": str(workspace_dir),
+            "safe_write_root": str(run_dir),
+            "display_cwd": "/workspace/run/artifacts",
+            "display_safe_read_root": "/workspace",
+            "display_safe_write_root": "/workspace/run",
+        })
+
+        env = _mock_env(output="pwd ok")
+        try:
+            result = _run_terminal(
+                task_id=task_id,
+                command="cd /workspace/run && python3 -c 'print(123)'",
+                mock_env=env,
+                config=_make_env_config(cwd=str(artifacts_dir)),
+            )
+        finally:
+            clear_task_env_overrides(task_id)
+
+        assert result["exit_code"] == 0
+        assert result["error"] is None
+        env.execute.assert_called_once()
+
+    def test_virtual_absolute_read_path_inside_safe_root_is_allowed(self, tmp_path):
+        """Visible read-root paths like `/workspace/...` should resolve to the actual workspace root."""
+        from tools.terminal_tool import register_task_env_overrides, clear_task_env_overrides
+
+        workspace_dir = tmp_path / "agent" / "workspace"
+        run_dir = workspace_dir / "runs" / "run1"
+        artifacts_dir = run_dir / "artifacts"
+        config_file = workspace_dir / "config.json"
+        artifacts_dir.mkdir(parents=True)
+        config_file.write_text("{}", encoding="utf-8")
+        task_id = "test-task-virtual-read-allowed"
+        register_task_env_overrides(task_id, {
+            "cwd": str(artifacts_dir),
+            "safe_read_root": str(workspace_dir),
+            "safe_write_root": str(run_dir),
+            "display_cwd": "/workspace/run/artifacts",
+            "display_safe_read_root": "/workspace",
+            "display_safe_write_root": "/workspace/run",
+        })
+
+        env = _mock_env(output="{}")
+        try:
+            result = _run_terminal(
+                task_id=task_id,
+                command="cat /workspace/config.json",
+                mock_env=env,
+                config=_make_env_config(cwd=str(artifacts_dir)),
+            )
+        finally:
+            clear_task_env_overrides(task_id)
+
+        assert result["exit_code"] == 0
+        assert result["error"] is None
+        env.execute.assert_called_once()
+
     def test_foreground_output_rewrites_host_paths_to_virtual_aliases(self, tmp_path):
         """Foreground output should not leak host task roots when display aliases exist."""
         from tools.terminal_tool import register_task_env_overrides, clear_task_env_overrides
