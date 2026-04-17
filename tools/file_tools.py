@@ -168,6 +168,7 @@ def _get_file_ops(task_id: str = "default") -> ShellFileOperations:
     import time
     config = _get_env_config()
     overrides = _task_env_overrides.get(task_id, {})
+    safe_read_root = overrides.get("safe_read_root") or overrides.get("safe_write_root")
     safe_write_root = overrides.get("safe_write_root")
     effective_cwd = overrides.get("cwd") or config["cwd"]
 
@@ -267,6 +268,7 @@ def _get_file_ops(task_id: str = "default") -> ShellFileOperations:
     file_ops = ShellFileOperations(
         terminal_env,
         cwd=effective_cwd,
+        safe_read_root=safe_read_root,
         safe_write_root=safe_write_root,
     )
     with _file_ops_lock:

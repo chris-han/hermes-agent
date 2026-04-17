@@ -96,6 +96,17 @@ def _get_safe_write_root(safe_root: str | None = None) -> Optional[str]:
         return None
 
 
+def _get_safe_read_root(safe_root: str | None = None) -> Optional[str]:
+    """Return the resolved safe read root, or None if unset."""
+    root = safe_root if safe_root is not None else os.getenv("HERMES_READ_SAFE_ROOT", "")
+    if not root:
+        return None
+    try:
+        return os.path.realpath(os.path.expanduser(root))
+    except Exception:
+        return None
+
+
 def _get_write_deny_reason(path: str, safe_root: str | None = None) -> Optional[str]:
     """Return the write-deny reason for a path, or None if writes are allowed."""
     resolved = os.path.realpath(os.path.expanduser(str(path)))
@@ -113,6 +124,16 @@ def _get_write_deny_reason(path: str, safe_root: str | None = None) -> Optional[
         if not (resolved == resolved_safe_root or resolved.startswith(resolved_safe_root + os.sep)):
             return f"outside the allowed write root '{resolved_safe_root}'"
 
+    return None
+
+
+def _get_read_deny_reason(path: str, safe_root: str | None = None) -> Optional[str]:
+    """Return the read-deny reason for a path, or None if reads are allowed."""
+    resolved = os.path.realpath(os.path.expanduser(str(path)))
+    resolved_safe_root = _get_safe_read_root(safe_root)
+    if resolved_safe_root:
+        if not (resolved == resolved_safe_root or resolved.startswith(resolved_safe_root + os.sep)):
+            return f"outside the allowed read root '{resolved_safe_root}'"
     return None
 
 
@@ -332,7 +353,13 @@ class ShellFileOperations(FileOperations):
     This includes local, docker, singularity, ssh, modal, and daytona environments.
     """
     
-    def __init__(self, terminal_env, cwd: str = None, safe_write_root: str | None = None):
+    def __init__(
+        self,
+        terminal_env,
+        cwd: str = None,
+        safe_write_root: str | None = None,
+        safe_read_root: str | None = None,
+    ):
         """
         Initialize file operations with a terminal environment.
         
@@ -349,6 +376,7 @@ class ShellFileOperations(FileOperations):
         self.cwd = cwd or getattr(terminal_env, 'cwd', None) or \
                    getattr(getattr(terminal_env, 'config', None), 'cwd', None) or "/"
         self.safe_write_root = safe_write_root
+        self.safe_read_root = safe_read_root
         
         # Cache for command availability checks
         self._command_cache: Dict[str, bool] = {}
@@ -485,6 +513,10 @@ class ShellFileOperations(FileOperations):
         """
         # Expand ~ and other shell paths
         path = self._expand_path(path)
+
+        deny_reason = _get_read_deny_reason(path, self.safe_read_root)
+        if deny_reason:
+            return ReadResult(error=f"Read denied: '{path}' is {deny_reason}.")
         
         # Clamp limit
         limit = min(limit, MAX_LINES)
@@ -562,6 +594,10 @@ class ShellFileOperations(FileOperations):
     
     def _suggest_similar_files(self, path: str) -> ReadResult:
         """Suggest similar files when the requested file is not found."""
+        deny_reason = _get_read_deny_reason(path, self.safe_read_root)
+        if deny_reason:
+            return ReadResult(error=f"Read denied: '{path}' is {deny_reason}.")
+
         dir_path = os.path.dirname(path) or "."
         filename = os.path.basename(path)
         basename_no_ext = os.path.splitext(filename)[0]
@@ -619,6 +655,9 @@ class ShellFileOperations(FileOperations):
         Uses cat so the full file is returned regardless of size.
         """
         path = self._expand_path(path)
+        deny_reason = _get_read_deny_reason(path, self.safe_read_root)
+        if deny_reason:
+            return ReadResult(error=f"Read denied: '{path}' is {deny_reason}.")
         stat_cmd = f"wc -c < {self._escape_shell_arg(path)} 2>/dev/null"
         stat_result = self._exec(stat_cmd)
         if stat_result.exit_code != 0:
@@ -878,6 +917,10 @@ class ShellFileOperations(FileOperations):
         """
         # Expand ~ and other shell paths
         path = self._expand_path(path)
+
+        deny_reason = _get_read_deny_reason(path, self.safe_read_root)
+        if deny_reason:
+            return SearchResult(error=f"Search denied: '{path}' is {deny_reason}.", total_count=0)
         
         # Validate that the path exists before searching
         check = self._exec(f"test -e {self._escape_shell_arg(path)} && echo exists || echo not_found")

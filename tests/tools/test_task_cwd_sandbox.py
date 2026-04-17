@@ -182,6 +182,36 @@ class TestRegisteredCwdAnchor:
         assert "task sandbox" in result["error"]
         env.execute.assert_not_called()
 
+    def test_explicit_absolute_read_outside_safe_read_root_is_blocked(self, tmp_path):
+        """A command cannot reference an absolute path outside the registered read root."""
+        from tools.terminal_tool import register_task_env_overrides, clear_task_env_overrides
+
+        workspace_dir = tmp_path / "agent" / "workspace"
+        artifacts_dir = tmp_path / "agent" / "sessions" / "abc123" / "runs" / "run1" / "artifacts"
+        workspace_dir.mkdir(parents=True)
+        artifacts_dir.mkdir(parents=True)
+        task_id = "test-task-read-escape"
+        register_task_env_overrides(task_id, {
+            "cwd": str(artifacts_dir),
+            "safe_read_root": str(workspace_dir),
+            "safe_write_root": str(artifacts_dir),
+        })
+
+        env = _mock_env()
+        try:
+            result = _run_terminal(
+                task_id=task_id,
+                command="ls -la /mnt/c/Users/test/Desktop/report.pdf 2>/dev/null",
+                mock_env=env,
+                config=_make_env_config(cwd=str(artifacts_dir)),
+            )
+        finally:
+            clear_task_env_overrides(task_id)
+
+        assert result["status"] == "blocked"
+        assert "outside the task sandbox" in result["error"]
+        env.execute.assert_not_called()
+
     def test_cwd_passed_on_every_call(self, tmp_path):
         """Registered cwd is re-passed on each consecutive terminal call."""
         from tools.terminal_tool import register_task_env_overrides, clear_task_env_overrides
@@ -704,3 +734,51 @@ class TestWriteSafeRootIntegration:
             clear_task_env_overrides(task_id)
 
         assert file_ops.safe_write_root == str(artifact_dir)
+
+    def test_file_tool_uses_task_safe_read_root_override(self, tmp_path):
+        """Per-task safe_read_root is propagated into ShellFileOperations."""
+        from tools.file_tools import _get_file_ops, clear_file_ops_cache
+        from tools.terminal_tool import register_task_env_overrides, clear_task_env_overrides
+
+        task_id = "test-task-file-read-root"
+        workspace_dir = tmp_path / "agent" / "workspace"
+        artifact_dir = tmp_path / "agent" / "sessions" / "abc123" / "runs" / "run1" / "artifacts"
+        workspace_dir.mkdir(parents=True)
+        artifact_dir.mkdir(parents=True)
+        register_task_env_overrides(task_id, {
+            "cwd": str(artifact_dir),
+            "safe_read_root": str(workspace_dir),
+            "safe_write_root": str(artifact_dir),
+        })
+
+        env = _mock_env()
+        active = {task_id: env}
+        last_activity = {task_id: 0.0}
+
+        try:
+            with patch("tools.terminal_tool._active_environments", active), \
+                 patch("tools.terminal_tool._last_activity", last_activity), \
+                 patch("tools.terminal_tool._get_env_config", return_value=_make_env_config(cwd=str(artifact_dir))):
+                file_ops = _get_file_ops(task_id)
+        finally:
+            clear_file_ops_cache(task_id)
+            clear_task_env_overrides(task_id)
+
+        assert file_ops.safe_read_root == str(workspace_dir)
+
+    def test_file_read_outside_safe_read_root_is_blocked(self, tmp_path):
+        """read_file refuses paths outside the registered read root."""
+        env = _mock_env()
+        safe_read_root = tmp_path / "workspace"
+        safe_read_root.mkdir()
+        ops = __import__("tools.file_operations", fromlist=["ShellFileOperations"]).ShellFileOperations(
+            env,
+            cwd=str(safe_read_root),
+            safe_read_root=str(safe_read_root),
+        )
+
+        result = ops.read_file("/mnt/c/Users/test/Desktop/report.pdf")
+
+        assert result.error is not None
+        assert "outside the allowed read root" in result.error
+        env.execute.assert_not_called()
