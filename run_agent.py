@@ -3795,6 +3795,96 @@ class AIAgent:
         digest = hashlib.sha1(seed.encode("utf-8")).hexdigest()[:24]
         return f"fc_{digest}"
 
+    _KNOWN_NATIVE_RESPONSES_TOOL_ITEM_TYPES = frozenset(
+        {
+            "apply_patch_call",
+            "code_interpreter_call",
+            "computer_call",
+            "exec",
+            "file_search_call",
+            "image_generation_call",
+            "local_shell_call",
+            "mcp_approval_request",
+            "mcp_call",
+            "mcp_list_tools",
+            "shell_call",
+            "web_search_call",
+        }
+    )
+
+    def _translate_native_responses_tool_call(
+        self,
+        item: Any,
+        *,
+        item_type: str,
+        tool_index: int,
+    ) -> Optional[Any]:
+        raw_item_id = item.get("id") if isinstance(item, dict) else getattr(item, "id", None)
+
+        if item_type == "web_search_call":
+            arguments = self._native_web_search_arguments(item)
+            if not arguments:
+                logger.warning(
+                    "Ignoring native Responses tool item %s without usable arguments "
+                    "(provider=%s, model=%s, item_id=%s)",
+                    item_type,
+                    self.provider or "unknown",
+                    self.model or "unknown",
+                    raw_item_id or "-",
+                )
+                return None
+
+            fn_name = "web_search"
+            call_id = self._deterministic_call_id(fn_name, arguments, tool_index)
+            response_item_id = self._derive_responses_function_call_id(call_id)
+            logger.info(
+                "Translated native Responses tool item %s -> Hermes tool %s "
+                "(provider=%s, model=%s, item_id=%s, call_id=%s)",
+                item_type,
+                fn_name,
+                self.provider or "unknown",
+                self.model or "unknown",
+                raw_item_id or "-",
+                call_id,
+            )
+            return SimpleNamespace(
+                id=call_id,
+                call_id=call_id,
+                response_item_id=response_item_id,
+                type="function",
+                function=SimpleNamespace(name=fn_name, arguments=arguments),
+            )
+
+        if item_type in self._KNOWN_NATIVE_RESPONSES_TOOL_ITEM_TYPES:
+            logger.warning(
+                "Unsupported native Responses tool item %s "
+                "(provider=%s, model=%s, item_id=%s); no Hermes translator is implemented",
+                item_type,
+                self.provider or "unknown",
+                self.model or "unknown",
+                raw_item_id or "-",
+            )
+
+        return None
+
+    @staticmethod
+    def _native_web_search_arguments(item: Any) -> Optional[str]:
+        """Translate provider-native Responses web_search_call items into Hermes web_search args."""
+        if isinstance(item, dict):
+            action = item.get("action")
+        else:
+            action = getattr(item, "action", None)
+
+        if isinstance(action, dict):
+            query = action.get("query")
+        else:
+            query = getattr(action, "query", None)
+
+        if not isinstance(query, str) or not query.strip():
+            return None
+
+        return json.dumps({"query": query.strip()}, ensure_ascii=False)
+
     def _chat_messages_to_responses_input(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Convert internal chat-style messages to Responses input items."""
         items: List[Dict[str, Any]] = []
@@ -4320,6 +4410,16 @@ class AIAgent:
                     type="function",
                     function=SimpleNamespace(name=fn_name, arguments=arguments),
                 ))
+            elif item_type in self._KNOWN_NATIVE_RESPONSES_TOOL_ITEM_TYPES:
+                if item_status in {"queued", "in_progress", "incomplete"}:
+                    continue
+                translated_tool_call = self._translate_native_responses_tool_call(
+                    item,
+                    item_type=item_type,
+                    tool_index=len(tool_calls),
+                )
+                if translated_tool_call is not None:
+                    tool_calls.append(translated_tool_call)
 
         final_text = "\n".join([p for p in content_parts if p]).strip()
         if not final_text and hasattr(response, "output_text"):
