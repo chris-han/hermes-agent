@@ -3812,6 +3812,12 @@ class AIAgent:
         }
     )
 
+    _NATIVE_RESPONSES_SELF_HEAL_TOOL_ALLOWLIST = {
+        "local_shell_call": frozenset({"terminal"}),
+        "shell_call": frozenset({"terminal"}),
+        "web_search_call": frozenset({"web_search"}),
+    }
+
     def _translate_native_responses_tool_call(
         self,
         item: Any,
@@ -3823,39 +3829,49 @@ class AIAgent:
 
         if item_type == "web_search_call":
             arguments = self._native_web_search_arguments(item)
-            if not arguments:
-                logger.warning(
-                    "Ignoring native Responses tool item %s without usable arguments "
-                    "(provider=%s, model=%s, item_id=%s)",
-                    item_type,
-                    self.provider or "unknown",
-                    self.model or "unknown",
-                    raw_item_id or "-",
-                )
-                return None
-
-            fn_name = "web_search"
-            call_id = self._deterministic_call_id(fn_name, arguments, tool_index)
-            response_item_id = self._derive_responses_function_call_id(call_id)
-            logger.info(
-                "Translated native Responses tool item %s -> Hermes tool %s "
-                "(provider=%s, model=%s, item_id=%s, call_id=%s)",
-                item_type,
-                fn_name,
-                self.provider or "unknown",
-                self.model or "unknown",
-                raw_item_id or "-",
-                call_id,
+            translated = self._build_native_responses_tool_call(
+                fn_name="web_search",
+                arguments=arguments,
+                item_type=item_type,
+                raw_item_id=raw_item_id,
+                tool_index=tool_index,
             )
-            return SimpleNamespace(
-                id=call_id,
-                call_id=call_id,
-                response_item_id=response_item_id,
-                type="function",
-                function=SimpleNamespace(name=fn_name, arguments=arguments),
+            if translated is not None:
+                return translated
+            return self._self_heal_native_responses_tool_call(
+                item,
+                item_type=item_type,
+                raw_item_id=raw_item_id,
+                tool_index=tool_index,
+            )
+
+        if item_type in {"shell_call", "local_shell_call"}:
+            arguments = self._native_shell_arguments(item)
+            translated = self._build_native_responses_tool_call(
+                fn_name="terminal",
+                arguments=arguments,
+                item_type=item_type,
+                raw_item_id=raw_item_id,
+                tool_index=tool_index,
+            )
+            if translated is not None:
+                return translated
+            return self._self_heal_native_responses_tool_call(
+                item,
+                item_type=item_type,
+                raw_item_id=raw_item_id,
+                tool_index=tool_index,
             )
 
         if item_type in self._KNOWN_NATIVE_RESPONSES_TOOL_ITEM_TYPES:
+            healed = self._self_heal_native_responses_tool_call(
+                item,
+                item_type=item_type,
+                raw_item_id=raw_item_id,
+                tool_index=tool_index,
+            )
+            if healed is not None:
+                return healed
             logger.warning(
                 "Unsupported native Responses tool item %s "
                 "(provider=%s, model=%s, item_id=%s); no Hermes translator is implemented",
@@ -3866,6 +3882,298 @@ class AIAgent:
             )
 
         return None
+
+    def _build_native_responses_tool_call(
+        self,
+        *,
+        fn_name: str,
+        arguments: Optional[str],
+        item_type: str,
+        raw_item_id: Any,
+        tool_index: int,
+        translated_via_fallback: bool = False,
+    ) -> Optional[Any]:
+        if not arguments:
+            return None
+
+        call_id = self._deterministic_call_id(fn_name, arguments, tool_index)
+        response_item_id = self._derive_responses_function_call_id(call_id)
+        log_message = (
+            "Self-healed native Responses tool item %s -> Hermes tool %s "
+            "(provider=%s, model=%s, item_id=%s, call_id=%s)"
+            if translated_via_fallback
+            else "Translated native Responses tool item %s -> Hermes tool %s "
+            "(provider=%s, model=%s, item_id=%s, call_id=%s)"
+        )
+        logger.info(
+            log_message,
+            item_type,
+            fn_name,
+            self.provider or "unknown",
+            self.model or "unknown",
+            raw_item_id or "-",
+            call_id,
+        )
+        return SimpleNamespace(
+            id=call_id,
+            call_id=call_id,
+            response_item_id=response_item_id,
+            type="function",
+            function=SimpleNamespace(name=fn_name, arguments=arguments),
+        )
+
+    def _self_heal_native_responses_tool_call(
+        self,
+        item: Any,
+        *,
+        item_type: str,
+        raw_item_id: Any,
+        tool_index: int,
+    ) -> Optional[Any]:
+        allowed_tools = self._NATIVE_RESPONSES_SELF_HEAL_TOOL_ALLOWLIST.get(item_type)
+        if not allowed_tools:
+            return None
+
+        proposal = self._request_native_tool_translation_proposal(
+            item,
+            item_type=item_type,
+            allowed_tools=allowed_tools,
+        )
+        if not proposal:
+            return None
+
+        validated = self._validate_native_tool_translation_proposal(
+            proposal,
+            item_type=item_type,
+            allowed_tools=allowed_tools,
+        )
+        if validated is None:
+            return None
+
+        fn_name, arguments = validated
+        return self._build_native_responses_tool_call(
+            fn_name=fn_name,
+            arguments=arguments,
+            item_type=item_type,
+            raw_item_id=raw_item_id,
+            tool_index=tool_index,
+            translated_via_fallback=True,
+        )
+
+    def _request_native_tool_translation_proposal(
+        self,
+        item: Any,
+        *,
+        item_type: str,
+        allowed_tools: frozenset[str],
+    ) -> Optional[dict[str, Any]]:
+        if self.api_mode != "codex_responses":
+            return None
+
+        tool_summaries = []
+        for tool_name in sorted(allowed_tools):
+            schema = self._tool_schema_for_name(tool_name)
+            if not schema:
+                continue
+            tool_summaries.append(
+                {
+                    "name": tool_name,
+                    "description": schema.get("description", ""),
+                    "parameters": schema.get("parameters", {}),
+                }
+            )
+        if not tool_summaries:
+            return None
+
+        prompt = (
+            "Translate this provider-native Responses tool item into one Hermes-managed tool call. "
+            "Return JSON only with keys tool_name, arguments, confidence, and reason. "
+            "tool_name must be one of the allowlisted Hermes tools. "
+            "arguments must be a JSON object. "
+            "If the mapping is unsafe or ambiguous, return tool_name as an empty string and confidence as 0.\n\n"
+            f"Native item type: {item_type}\n"
+            f"Allowlisted Hermes tools: {json.dumps(sorted(allowed_tools), ensure_ascii=False)}\n"
+            f"Hermes tool schemas: {json.dumps(tool_summaries, ensure_ascii=False)}\n"
+            f"Native item payload: {json.dumps(self._native_tool_item_to_dict(item), ensure_ascii=False)}"
+        )
+
+        try:
+            response = self._interruptible_api_call(
+                {
+                    "model": self.model,
+                    "instructions": (
+                        "You translate provider-native Responses API tool items into Hermes-managed tool calls. "
+                        "Output JSON only. Never emit tool calls or prose."
+                    ),
+                    "input": [{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
+                    "store": False,
+                    "max_output_tokens": 300,
+                }
+            )
+        except Exception as exc:
+            logger.warning(
+                "Native Responses tool self-heal request failed for %s "
+                "(provider=%s, model=%s): %s",
+                item_type,
+                self.provider or "unknown",
+                self.model or "unknown",
+                exc,
+            )
+            return None
+
+        assistant_message, _finish_reason = self._normalize_codex_response(response)
+        raw_text = (assistant_message.content or "").strip()
+        if not raw_text:
+            logger.warning(
+                "Native Responses tool self-heal request returned empty content for %s "
+                "(provider=%s, model=%s)",
+                item_type,
+                self.provider or "unknown",
+                self.model or "unknown",
+            )
+            return None
+
+        try:
+            parsed = json.loads(raw_text)
+        except json.JSONDecodeError:
+            logger.warning(
+                "Native Responses tool self-heal request returned invalid JSON for %s: %r",
+                item_type,
+                raw_text[:300],
+            )
+            return None
+
+        return parsed if isinstance(parsed, dict) else None
+
+    def _validate_native_tool_translation_proposal(
+        self,
+        proposal: dict[str, Any],
+        *,
+        item_type: str,
+        allowed_tools: frozenset[str],
+    ) -> Optional[tuple[str, str]]:
+        tool_name = proposal.get("tool_name")
+        if not isinstance(tool_name, str):
+            return None
+        tool_name = tool_name.strip()
+        if not tool_name:
+            return None
+        if tool_name not in allowed_tools or tool_name not in self.valid_tool_names:
+            logger.warning(
+                "Rejected self-heal translation for %s: tool %r is not allowlisted/available",
+                item_type,
+                tool_name,
+            )
+            return None
+
+        confidence = proposal.get("confidence")
+        try:
+            confidence_value = float(confidence)
+        except (TypeError, ValueError):
+            confidence_value = 0.0
+        if confidence_value < 0.85:
+            logger.warning(
+                "Rejected self-heal translation for %s: confidence %.3f below threshold",
+                item_type,
+                confidence_value,
+            )
+            return None
+
+        arguments = proposal.get("arguments")
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except json.JSONDecodeError:
+                logger.warning(
+                    "Rejected self-heal translation for %s: arguments are not valid JSON",
+                    item_type,
+                )
+                return None
+        if not isinstance(arguments, dict):
+            logger.warning(
+                "Rejected self-heal translation for %s: arguments are not an object",
+                item_type,
+            )
+            return None
+
+        schema = self._tool_schema_for_name(tool_name)
+        if not schema:
+            return None
+        if not self._arguments_match_tool_schema(arguments, schema.get("parameters", {})):
+            logger.warning(
+                "Rejected self-heal translation for %s: arguments failed Hermes schema validation for %s",
+                item_type,
+                tool_name,
+            )
+            return None
+
+        return tool_name, json.dumps(arguments, ensure_ascii=False)
+
+    def _tool_schema_for_name(self, tool_name: str) -> Optional[dict[str, Any]]:
+        for tool in self.tools or []:
+            function_schema = tool.get("function")
+            if not isinstance(function_schema, dict):
+                continue
+            if function_schema.get("name") == tool_name:
+                return function_schema
+        return None
+
+    @staticmethod
+    def _native_tool_item_to_dict(item: Any) -> dict[str, Any]:
+        if isinstance(item, dict):
+            return item
+
+        if hasattr(item, "model_dump"):
+            dumped = item.model_dump(mode="json")
+            if isinstance(dumped, dict):
+                return dumped
+
+        if hasattr(item, "dict"):
+            dumped = item.dict()
+            if isinstance(dumped, dict):
+                return dumped
+
+        return {
+            key: value
+            for key, value in vars(item).items()
+            if not key.startswith("_")
+        }
+
+    @staticmethod
+    def _arguments_match_tool_schema(arguments: dict[str, Any], schema: dict[str, Any]) -> bool:
+        if not isinstance(schema, dict):
+            return False
+
+        properties = schema.get("properties")
+        if not isinstance(properties, dict):
+            properties = {}
+        required = schema.get("required")
+        if not isinstance(required, list):
+            required = []
+
+        for name in required:
+            if name not in arguments:
+                return False
+
+        for key, value in arguments.items():
+            prop_schema = properties.get(key)
+            if prop_schema is None:
+                return False
+            expected_type = prop_schema.get("type") if isinstance(prop_schema, dict) else None
+            if expected_type == "string" and not isinstance(value, str):
+                return False
+            if expected_type == "boolean" and not isinstance(value, bool):
+                return False
+            if expected_type == "integer" and not (isinstance(value, int) and not isinstance(value, bool)):
+                return False
+            if expected_type == "number" and not isinstance(value, (int, float)):
+                return False
+            if expected_type == "array" and not isinstance(value, list):
+                return False
+            if expected_type == "object" and not isinstance(value, dict):
+                return False
+
+        return True
 
     @staticmethod
     def _native_web_search_arguments(item: Any) -> Optional[str]:
@@ -3884,6 +4192,37 @@ class AIAgent:
             return None
 
         return json.dumps({"query": query.strip()}, ensure_ascii=False)
+
+    @staticmethod
+    def _native_shell_arguments(item: Any) -> Optional[str]:
+        if isinstance(item, dict):
+            action = item.get("action")
+        else:
+            action = getattr(item, "action", None)
+
+        if isinstance(action, dict):
+            commands = action.get("commands")
+            timeout_ms = action.get("timeout_ms")
+        else:
+            commands = getattr(action, "commands", None)
+            timeout_ms = getattr(action, "timeout_ms", None)
+
+        if not isinstance(commands, list):
+            return None
+
+        normalized_commands = [command.strip() for command in commands if isinstance(command, str) and command.strip()]
+        if not normalized_commands:
+            return None
+
+        arguments: dict[str, Any] = {
+            "command": "set -e\n" + "\n".join(normalized_commands),
+        }
+        if isinstance(timeout_ms, int) and timeout_ms > 0:
+            timeout_seconds = max(1, (timeout_ms + 999) // 1000)
+            if timeout_seconds <= 180:
+                arguments["timeout"] = timeout_seconds
+
+        return json.dumps(arguments, ensure_ascii=False)
 
     def _chat_messages_to_responses_input(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Convert internal chat-style messages to Responses input items."""

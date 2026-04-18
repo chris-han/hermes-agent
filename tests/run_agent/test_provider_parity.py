@@ -24,13 +24,35 @@ from run_agent import AIAgent
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _tool_defs(*names):
+    schema_by_name = {
+        "web_search": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+            },
+            "required": ["query"],
+        },
+        "terminal": {
+            "type": "object",
+            "properties": {
+                "command": {"type": "string"},
+                "background": {"type": "boolean"},
+                "timeout": {"type": "integer"},
+                "workdir": {"type": "string"},
+                "pty": {"type": "boolean"},
+                "notify_on_complete": {"type": "boolean"},
+                "watch_patterns": {"type": "array"},
+            },
+            "required": ["command"],
+        },
+    }
     return [
         {
             "type": "function",
             "function": {
                 "name": n,
                 "description": f"{n} tool",
-                "parameters": {"type": "object", "properties": {}},
+                "parameters": schema_by_name.get(n, {"type": "object", "properties": {}}),
             },
         }
         for n in names
@@ -661,6 +683,66 @@ class TestNormalizeCodexResponse:
             for record in caplog.records
         )
 
+    def test_native_shell_call_maps_to_terminal_tool(self, monkeypatch):
+        agent = self._make_codex_agent(monkeypatch)
+        response = SimpleNamespace(
+            output=[
+                SimpleNamespace(
+                    type="shell_call",
+                    status="completed",
+                    id="sh_123",
+                    action=SimpleNamespace(
+                        commands=["pwd", "ls -1"],
+                        timeout_ms=15000,
+                    ),
+                ),
+            ],
+            status="completed",
+        )
+
+        msg, reason = agent._normalize_codex_response(response)
+
+        assert reason == "tool_calls"
+        assert len(msg.tool_calls) == 1
+        assert msg.tool_calls[0].function.name == "terminal"
+        assert msg.tool_calls[0].function.arguments == '{"command": "set -e\\npwd\\nls -1", "timeout": 15}'
+
+    def test_native_web_search_call_self_heals_when_direct_translation_fails(self, monkeypatch, caplog):
+        agent = self._make_codex_agent(monkeypatch)
+        response = SimpleNamespace(
+            output=[
+                SimpleNamespace(
+                    type="web_search_call",
+                    status="completed",
+                    id="ws_123",
+                    action=SimpleNamespace(query=None, type="search"),
+                ),
+            ],
+            status="completed",
+        )
+        monkeypatch.setattr(
+            agent,
+            "_request_native_tool_translation_proposal",
+            lambda item, **kwargs: {
+                "tool_name": "web_search",
+                "arguments": {"query": "latest fed minutes"},
+                "confidence": 0.92,
+                "reason": "native query field was absent but the item clearly requested web search",
+            },
+        )
+
+        with caplog.at_level(logging.INFO, logger="run_agent"):
+            msg, reason = agent._normalize_codex_response(response)
+
+        assert reason == "tool_calls"
+        assert len(msg.tool_calls) == 1
+        assert msg.tool_calls[0].function.name == "web_search"
+        assert msg.tool_calls[0].function.arguments == '{"query": "latest fed minutes"}'
+        assert any(
+            "Self-healed native Responses tool item web_search_call -> Hermes tool web_search" in record.getMessage()
+            for record in caplog.records
+        )
+
     def test_unsupported_native_tool_item_is_logged(self, monkeypatch, caplog):
         agent = self._make_codex_agent(monkeypatch)
         response = SimpleNamespace(
@@ -683,6 +765,22 @@ class TestNormalizeCodexResponse:
             "Unsupported native Responses tool item file_search_call" in record.getMessage()
             for record in caplog.records
         )
+
+    def test_self_heal_translation_rejects_unknown_fields(self, monkeypatch):
+        agent = self._make_codex_agent(monkeypatch)
+
+        validated = agent._validate_native_tool_translation_proposal(
+            {
+                "tool_name": "web_search",
+                "arguments": {"query": "latest fed minutes", "unexpected": True},
+                "confidence": 0.99,
+                "reason": "bad",
+            },
+            item_type="web_search_call",
+            allowed_tools=frozenset({"web_search"}),
+        )
+
+        assert validated is None
 
     def test_dict_shaped_message_items_are_normalized(self, monkeypatch):
         agent = self._make_codex_agent(monkeypatch)
