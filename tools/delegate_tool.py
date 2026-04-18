@@ -496,6 +496,18 @@ def _run_single_child(
     _heartbeat_thread = threading.Thread(target=_heartbeat_loop, daemon=True)
     _heartbeat_thread.start()
 
+    child_task_id = getattr(child, "session_id", None) or None
+    inherited_task_env = False
+    if child_task_id and parent_agent is not None:
+        parent_task_id = getattr(parent_agent, "session_id", None) or None
+        if parent_task_id and parent_task_id != child_task_id:
+            try:
+                from tools.terminal_tool import clone_task_env_overrides
+
+                inherited_task_env = clone_task_env_overrides(parent_task_id, child_task_id)
+            except Exception as exc:
+                logger.debug("Failed to clone task env overrides for child %s: %s", child_task_id, exc)
+
     try:
         if child_progress_cb:
             try:
@@ -503,7 +515,10 @@ def _run_single_child(
             except Exception as e:
                 logger.debug("Progress callback start failed: %s", e)
 
-        result = child.run_conversation(user_message=goal)
+        run_kwargs = {"user_message": goal}
+        if child_task_id:
+            run_kwargs["task_id"] = child_task_id
+        result = child.run_conversation(**run_kwargs)
 
         # Flush any remaining batched progress to gateway
         if child_progress_cb and hasattr(child_progress_cb, '_flush'):
@@ -676,6 +691,14 @@ def _run_single_child(
                 child.close()
         except Exception:
             logger.debug("Failed to close child agent after delegation")
+
+        if inherited_task_env and child_task_id:
+            try:
+                from tools.terminal_tool import clear_task_env_overrides
+
+                clear_task_env_overrides(child_task_id)
+            except Exception as exc:
+                logger.debug("Failed to clear child task env overrides for %s: %s", child_task_id, exc)
 
 def delegate_task(
     goal: Optional[str] = None,

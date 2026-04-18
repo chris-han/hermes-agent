@@ -832,6 +832,20 @@ def register_task_env_overrides(task_id: str, overrides: Dict[str, Any]):
     _task_env_overrides[task_id] = overrides
 
 
+def clone_task_env_overrides(source_task_id: str, target_task_id: str) -> bool:
+    """Copy sandbox overrides from one task ID to another.
+
+    Returns ``True`` when a source override existed and was copied.
+    """
+    if not source_task_id or not target_task_id or source_task_id == target_task_id:
+        return False
+    overrides = _task_env_overrides.get(source_task_id)
+    if not overrides:
+        return False
+    _task_env_overrides[target_task_id] = dict(overrides)
+    return True
+
+
 def clear_task_env_overrides(task_id: str):
     """
     Clear environment overrides for a task after rollout completes.

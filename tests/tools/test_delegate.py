@@ -46,6 +46,7 @@ def _make_mock_parent(depth=0):
     parent.providers_order = None
     parent.provider_sort = None
     parent._session_db = None
+    parent.session_id = "parent-session"
     parent._delegate_depth = depth
     parent._active_children = []
     parent._active_children_lock = threading.Lock()
@@ -387,8 +388,9 @@ class TestToolNamePreservation(unittest.TestCase):
         with patch("run_agent.AIAgent") as MockAgent:
             mock_child = MagicMock()
 
-            def capture_and_return(user_message):
+            def capture_and_return(user_message, task_id=None):
                 captured["saved"] = list(mock_child._delegate_saved_tool_names)
+                captured["task_id"] = task_id
                 return {"final_response": "ok", "completed": True, "api_calls": 1}
 
             mock_child.run_conversation.side_effect = capture_and_return
@@ -397,6 +399,33 @@ class TestToolNamePreservation(unittest.TestCase):
             delegate_task(goal="capture test", parent_agent=parent)
 
         self.assertEqual(captured["saved"], expected_tools)
+        self.assertEqual(captured["task_id"], mock_child.session_id)
+
+    def test_child_inherits_parent_task_env_overrides(self):
+        parent = _make_mock_parent(depth=0)
+
+        with patch("run_agent.AIAgent") as MockAgent, \
+             patch("tools.terminal_tool.clone_task_env_overrides") as mock_clone, \
+             patch("tools.terminal_tool.clear_task_env_overrides") as mock_clear:
+            mock_child = MagicMock()
+            mock_child.session_id = "child-session"
+            mock_child.run_conversation.return_value = {
+                "final_response": "done",
+                "completed": True,
+                "api_calls": 1,
+                "messages": [],
+            }
+            MockAgent.return_value = mock_child
+            mock_clone.return_value = True
+
+            delegate_task(goal="inherit sandbox", parent_agent=parent)
+
+            mock_clone.assert_called_once_with("parent-session", "child-session")
+            mock_child.run_conversation.assert_called_once_with(
+                user_message="inherit sandbox",
+                task_id="child-session",
+            )
+            mock_clear.assert_called_once_with("child-session")
 
 
 class TestDelegateObservability(unittest.TestCase):
