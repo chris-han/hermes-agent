@@ -1046,6 +1046,89 @@ def test_run_conversation_codex_continues_after_ack_for_directory_listing_prompt
     assert any(msg.get("role") == "tool" and msg.get("tool_call_id") == "call_1" for msg in result["messages"])
 
 
+def test_run_conversation_codex_continues_after_ack_for_latest_research_prompt(monkeypatch):
+    """With ack_continuation='aggressive', non-workspace acks also continue."""
+    _patch_agent_bootstrap(monkeypatch)
+    agent = run_agent.AIAgent(
+        model="gpt-5-codex",
+        base_url="https://chatgpt.com/backend-api/codex",
+        api_key="codex-token",
+        quiet_mode=True,
+        max_iterations=4,
+        skip_context_files=True,
+        skip_memory=True,
+        ack_continuation="aggressive",
+    )
+    agent._cleanup_task_resources = lambda task_id: None
+    agent._persist_session = lambda messages, history=None: None
+    agent._save_trajectory = lambda messages, user_message, completed: None
+    agent._save_session_log = lambda messages: None
+    responses = [
+        _codex_ack_message_response(
+            "I'll search for the latest Fed meeting minutes and then read them to provide you with key takeaways for equity and crypto markets."
+        ),
+        _codex_tool_call_response(),
+        _codex_message_response("Fed summary complete."),
+    ]
+    monkeypatch.setattr(agent, "_interruptible_api_call", lambda api_kwargs: responses.pop(0))
+
+    def _fake_execute_tool_calls(assistant_message, messages, effective_task_id):
+        for call in assistant_message.tool_calls:
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "content": '{"ok":true}',
+                }
+            )
+
+    monkeypatch.setattr(agent, "_execute_tool_calls", _fake_execute_tool_calls)
+
+    result = agent.run_conversation(
+        "Read the latest Fed meeting minutes and summarize the key takeaways for equity and crypto markets"
+    )
+
+    assert result["completed"] is True
+    assert result["final_response"] == "Fed summary complete."
+    assert any(
+        msg.get("role") == "assistant"
+        and msg.get("finish_reason") == "incomplete"
+        and "latest Fed meeting minutes" in (msg.get("content") or "")
+        for msg in result["messages"]
+    )
+    assert any(
+        msg.get("role") == "user"
+        and "Continue now. Execute the required tool calls" in (msg.get("content") or "")
+        for msg in result["messages"]
+    )
+    assert any(msg.get("role") == "tool" and msg.get("tool_call_id") == "call_1" for msg in result["messages"])
+
+
+def test_run_conversation_codex_conservative_skips_non_workspace_ack(monkeypatch):
+    """Default conservative mode does NOT continue for non-workspace acks."""
+    agent = _build_agent(monkeypatch)
+    responses = [
+        _codex_ack_message_response(
+            "I'll search for the latest Fed meeting minutes and summarize them."
+        ),
+    ]
+    monkeypatch.setattr(agent, "_interruptible_api_call", lambda api_kwargs: responses.pop(0))
+
+    result = agent.run_conversation(
+        "Read the latest Fed meeting minutes and summarize the key takeaways"
+    )
+
+    # Conservative mode: no workspace markers → treated as final answer, no continuation
+    assert result["completed"] is True
+    assert "Fed meeting minutes" in result["final_response"]
+    # Should NOT have a continuation prompt
+    assert not any(
+        msg.get("role") == "user"
+        and "Continue now. Execute the required tool calls" in (msg.get("content") or "")
+        for msg in result["messages"]
+    )
+
+
 def test_dump_api_request_debug_uses_responses_url(monkeypatch, tmp_path):
     """Debug dumps should show /responses URL when in codex_responses mode."""
     import json
