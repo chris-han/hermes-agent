@@ -162,6 +162,26 @@ def _codex_commentary_message_response(text: str):
     )
 
 
+def _codex_native_shell_call_response():
+    return SimpleNamespace(
+        output=[
+            SimpleNamespace(
+                type="shell_call",
+                id="sh_1",
+                call_id="call_shell_1",
+                status="completed",
+                action=SimpleNamespace(
+                    commands=["pwd", "ls -1"],
+                    timeout_ms=12000,
+                ),
+            )
+        ],
+        usage=SimpleNamespace(input_tokens=12, output_tokens=4, total_tokens=16),
+        status="completed",
+        model="gpt-5-codex",
+    )
+
+
 def _codex_ack_message_response(text: str):
     return SimpleNamespace(
         output=[
@@ -735,6 +755,32 @@ def test_run_conversation_codex_native_web_search_uses_hermes_tool(monkeypatch):
     assistant_with_tools = next(msg for msg in result["messages"] if msg.get("role") == "assistant" and msg.get("tool_calls"))
     assert assistant_with_tools["tool_calls"][0]["function"]["name"] == "web_search"
     assert assistant_with_tools["tool_calls"][0]["function"]["arguments"] == '{"query": "latest Federal Reserve FOMC meeting minutes 2026"}'
+
+
+def test_run_conversation_codex_native_shell_uses_terminal_tool(monkeypatch):
+    agent = _build_agent(monkeypatch)
+    responses = [_codex_native_shell_call_response(), _codex_message_response("done")]
+    monkeypatch.setattr(agent, "_interruptible_api_call", lambda api_kwargs: responses.pop(0))
+
+    def _fake_execute_tool_calls(assistant_message, messages, effective_task_id):
+        for call in assistant_message.tool_calls:
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "content": '{"ok":true}',
+                }
+            )
+
+    monkeypatch.setattr(agent, "_execute_tool_calls", _fake_execute_tool_calls)
+
+    result = agent.run_conversation("run shell commands")
+
+    assert result["completed"] is True
+    assert result["final_response"] == "done"
+    assistant_with_tools = next(msg for msg in result["messages"] if msg.get("role") == "assistant" and msg.get("tool_calls"))
+    assert assistant_with_tools["tool_calls"][0]["function"]["name"] == "terminal"
+    assert assistant_with_tools["tool_calls"][0]["function"]["arguments"] == '{"command": "set -e\\npwd\\nls -1", "timeout": 12}'
 
 
 def test_chat_messages_to_responses_input_uses_call_id_for_function_call(monkeypatch):
