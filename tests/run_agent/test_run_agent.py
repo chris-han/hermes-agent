@@ -1197,6 +1197,25 @@ class TestExecuteToolCalls:
         assert len(messages) == 1
         assert messages[0]["role"] == "tool"
 
+    def test_sequential_tool_complete_callback_receives_sanitized_large_result(self, agent):
+        tc = _mock_tool_call(name="web_search", arguments='{"q":"test"}', call_id="c1")
+        mock_msg = _mock_assistant_msg(content="", tool_calls=[tc])
+        messages = []
+        completed = []
+        agent.tool_complete_callback = lambda tool_call_id, function_name, function_args, function_result: completed.append(
+            (tool_call_id, function_name, function_args, function_result)
+        )
+        big_result = "x" * 150_000
+
+        with patch("run_agent.handle_function_call", return_value=big_result):
+            agent._execute_tool_calls_sequential(mock_msg, messages, "task-1")
+
+        assert len(completed) == 1
+        callback_result = completed[0][3]
+        assert len(callback_result) < len(big_result)
+        assert ("Truncated" in callback_result or "<persisted-output>" in callback_result)
+        assert callback_result == messages[0]["content"]
+
     def test_vprint_suppressed_in_parseable_quiet_mode(self, agent):
         agent.suppress_status_output = True
 
@@ -1522,6 +1541,27 @@ class TestConcurrentToolExecution:
         assert len(completes) == 2
         assert {entry[0] for entry in completes} == {"c1", "c2"}
         assert {entry[3] for entry in completes} == {'{"id":1}', '{"id":2}'}
+
+    def test_concurrent_tool_complete_callback_receives_sanitized_large_result(self, agent):
+        tc1 = _mock_tool_call(name="web_search", arguments='{"query":"one"}', call_id="c1")
+        tc2 = _mock_tool_call(name="web_search", arguments='{"query":"two"}', call_id="c2")
+        mock_msg = _mock_assistant_msg(content="", tool_calls=[tc1, tc2])
+        messages = []
+        completes = []
+        agent.tool_complete_callback = lambda tool_call_id, function_name, function_args, function_result: completes.append(
+            (tool_call_id, function_name, function_args, function_result)
+        )
+        big_result = "x" * 150_000
+
+        with patch("run_agent.handle_function_call", return_value=big_result):
+            agent._execute_tool_calls_concurrent(mock_msg, messages, "task-1")
+
+        assert len(completes) == 2
+        for entry, message in zip(completes, messages):
+            callback_result = entry[3]
+            assert len(callback_result) < len(big_result)
+            assert ("Truncated" in callback_result or "<persisted-output>" in callback_result)
+            assert callback_result == message["content"]
 
     def test_invoke_tool_handles_agent_level_tools(self, agent):
         """_invoke_tool should handle todo tool directly."""

@@ -8150,13 +8150,7 @@ class AIAgent:
             self._current_tool = None
             self._touch_activity(f"tool completed: {name} ({tool_duration:.1f}s)")
 
-            if self.tool_complete_callback:
-                try:
-                    self.tool_complete_callback(tc.id, name, args, function_result)
-                except Exception as cb_err:
-                    logging.debug(f"Tool complete callback error: {cb_err}")
-
-            function_result = maybe_persist_tool_result(
+            final_tool_result = maybe_persist_tool_result(
                 content=function_result,
                 tool_name=name,
                 tool_use_id=tc.id,
@@ -8165,11 +8159,17 @@ class AIAgent:
 
             subdir_hints = self._subdirectory_hints.check_tool_call(name, args)
             if subdir_hints:
-                function_result += subdir_hints
+                final_tool_result += subdir_hints
+
+            if self.tool_complete_callback:
+                try:
+                    self.tool_complete_callback(tc.id, name, args, final_tool_result)
+                except Exception as cb_err:
+                    logging.debug(f"Tool complete callback error: {cb_err}")
 
             tool_msg = {
                 "role": "tool",
-                "content": function_result,
+                "content": final_tool_result,
                 "tool_call_id": tc.id,
             }
             messages.append(tool_msg)
@@ -8505,13 +8505,7 @@ class AIAgent:
                 logging.debug(f"Tool {function_name} completed in {tool_duration:.2f}s")
                 logging.debug(f"Tool result ({len(function_result)} chars): {function_result}")
 
-            if self.tool_complete_callback:
-                try:
-                    self.tool_complete_callback(tool_call.id, function_name, function_args, function_result)
-                except Exception as cb_err:
-                    logging.debug(f"Tool complete callback error: {cb_err}")
-
-            function_result = maybe_persist_tool_result(
+            final_tool_result = maybe_persist_tool_result(
                 content=function_result,
                 tool_name=function_name,
                 tool_use_id=tool_call.id,
@@ -8521,11 +8515,17 @@ class AIAgent:
             # Discover subdirectory context files from tool arguments
             subdir_hints = self._subdirectory_hints.check_tool_call(function_name, function_args)
             if subdir_hints:
-                function_result += subdir_hints
+                final_tool_result += subdir_hints
+
+            if self.tool_complete_callback:
+                try:
+                    self.tool_complete_callback(tool_call.id, function_name, function_args, final_tool_result)
+                except Exception as cb_err:
+                    logging.debug(f"Tool complete callback error: {cb_err}")
 
             tool_msg = {
                 "role": "tool",
-                "content": function_result,
+                "content": final_tool_result,
                 "tool_call_id": tool_call.id
             }
             messages.append(tool_msg)
