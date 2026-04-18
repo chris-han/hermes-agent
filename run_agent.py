@@ -682,6 +682,7 @@ class AIAgent:
         checkpoint_max_snapshots: int = 50,
         pass_session_id: bool = False,
         persist_session: bool = True,
+        ack_continuation: str = "conservative",
     ):
         """
         Initialize the AI Agent.
@@ -736,6 +737,7 @@ class AIAgent:
         self.save_trajectories = save_trajectories
         self.verbose_logging = verbose_logging
         self.quiet_mode = quiet_mode
+        self.ack_continuation = ack_continuation
         self.ephemeral_system_prompt = ephemeral_system_prompt
         self.platform = platform  # "cli", "telegram", "discord", "whatsapp", etc.
         self._user_id = user_id  # Platform user identifier (gateway sessions)
@@ -804,6 +806,12 @@ class AIAgent:
         # surface.
         # When api_mode was explicitly provided, respect it — the user
         # knows what their endpoint supports (#10473).
+        _is_dashscope = (
+            self.provider == "alibaba"
+            or "dashscope.aliyuncs.com" in self._base_url_lower
+            or "dashscope-intl.aliyuncs.com" in self._base_url_lower
+            or "dashscope-us.aliyuncs.com" in self._base_url_lower
+        )
         if (
             api_mode is None
             and self.api_mode == "chat_completions"
@@ -812,6 +820,7 @@ class AIAgent:
             and not str(self.base_url or "").lower().startswith("acp+tcp://")
             and (
                 self._is_direct_openai_url()
+                or _is_dashscope
                 or self._provider_model_requires_responses_api(
                     self.model,
                     provider=self.provider,
@@ -2326,6 +2335,14 @@ class AIAgent:
         assistant_targets_workspace = any(
             marker in assistant_text for marker in workspace_markers
         )
+
+        # "aggressive" mode: any future-ack + action-marker is enough.
+        # Application embedders set this when the model should always
+        # follow through on planning acknowledgements with tool calls.
+        if self.ack_continuation == "aggressive":
+            return assistant_mentions_action
+
+        # Conservative (default): only continue for workspace-oriented acks.
         return (user_targets_workspace or assistant_targets_workspace) and assistant_mentions_action
     
     
@@ -11300,6 +11317,30 @@ class AIAgent:
                                 f"⚠️ Empty response from model — retrying "
                                 f"({self._empty_content_retries}/3)"
                             )
+                            # After prefill exhaustion the model keeps
+                            # producing reasoning-only output.  Nudge it
+                            # with an explicit user message so the next
+                            # API call has different input — otherwise we
+                            # loop with identical messages and get the
+                            # same empty result every time.
+                            if _prefill_exhausted:
+                                # Append the empty assistant turn first to
+                                # keep the message sequence valid.
+                                assistant_msg = self._build_assistant_message(
+                                    assistant_message, finish_reason,
+                                )
+                                assistant_msg["content"] = assistant_msg.get("content") or "(empty)"
+                                messages.append(assistant_msg)
+                                messages.append({
+                                    "role": "user",
+                                    "content": (
+                                        "Your previous response contained only "
+                                        "internal reasoning with no visible output. "
+                                        "Please provide your response directly "
+                                        "without using think or reasoning blocks."
+                                    ),
+                                })
+                                self._session_messages = messages
                             continue
 
                         # ── Exhausted retries — try fallback provider ──
