@@ -716,17 +716,30 @@ def check_all_command_guards(command: str, env_type: str,
 
     # --- Phase 1: Gather findings from both checks ---
 
+    # Dangerous command check is cheap and deterministic. Run it first so
+    # obvious shell-danger cases (rm -rf, chmod 777, force-push, etc.) do
+    # not get stuck behind a slower Tirith subprocess before the gateway can
+    # notify the user and block for approval.
+    is_dangerous, pattern_key, description = detect_dangerous_command(command)
+
     # Tirith check — wrapper guarantees no raise for expected failures.
     # Only catch ImportError (module not installed).
-    tirith_result = {"action": "allow", "findings": [], "summary": ""}
-    try:
-        from tools.tirith_security import check_command_security
-        tirith_result = check_command_security(command)
-    except ImportError:
-        pass  # tirith module not installed — allow
+    # Skip it only for the blocking gateway approval path when the command is
+    # already covered by the built-in dangerous rules. That preserves the
+    # fast notification UX for live gateway sessions without weakening the
+    # richer combined-warning behavior that CLI and non-blocking flows rely on.
+    has_blocking_gateway_notify = False
+    if is_dangerous and is_gateway:
+        with _lock:
+            has_blocking_gateway_notify = get_current_session_key() in _gateway_notify_cbs
 
-    # Dangerous command check (detection only, no approval)
-    is_dangerous, pattern_key, description = detect_dangerous_command(command)
+    tirith_result = {"action": "allow", "findings": [], "summary": ""}
+    if not (is_dangerous and has_blocking_gateway_notify):
+        try:
+            from tools.tirith_security import check_command_security
+            tirith_result = check_command_security(command)
+        except ImportError:
+            pass  # tirith module not installed — allow
 
     # --- Phase 2: Decide ---
 

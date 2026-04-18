@@ -770,8 +770,9 @@ class TestAuxiliaryPoolAwareness:
         assert resolved_provider == "gemini"
         assert client is not None
         assert model == "gemini-3.1-pro-preview"
-        assert mock_openai.call_args.kwargs["api_key"] == "gemini-key"
+        assert mock_openai.call_args.kwargs["api_key"] == "not-used"
         assert mock_openai.call_args.kwargs["base_url"] == "https://generativelanguage.googleapis.com/v1beta/openai"
+        assert mock_openai.call_args.kwargs["default_headers"]["x-goog-api-key"] == "gemini-key"
 
 
 
@@ -928,9 +929,6 @@ class TestAuxiliaryMaxTokensParam:
              patch("agent.auxiliary_client._read_codex_access_token", return_value=None):
             result = auxiliary_max_tokens_param(1024)
         assert result == {"max_tokens": 1024}
-
-
->>>>>>> 8cf55d47 (feat: add support for DashScope headers and improve OpenAI client initialization)
 # ── Payment / credit exhaustion fallback ─────────────────────────────────
 
 

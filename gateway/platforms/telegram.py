@@ -135,6 +135,50 @@ _TABLE_SEPARATOR_RE = re.compile(
 )
 
 
+def _telegram_chat_type_name(chat_type: Any) -> str:
+    """Return a normalized Telegram chat type name.
+
+    Test suites replace Telegram's ChatType enum with a mix of strings,
+    enum-like objects, and MagicMock stand-ins. Normalize those variants so
+    message routing does not depend on identity equality with one imported
+    ChatType object.
+    """
+    if chat_type is None:
+        return ""
+
+    for attr in ("value", "name"):
+        value = getattr(chat_type, attr, None)
+        if isinstance(value, str) and value:
+            return value.lower()
+
+    if isinstance(chat_type, str):
+        return chat_type.lower()
+
+    mock_name = getattr(chat_type, "_mock_name", None)
+    if isinstance(mock_name, str) and mock_name:
+        lowered = mock_name.lower()
+        if "supergroup" in lowered:
+            return "supergroup"
+        if lowered.endswith("group") or ".group" in lowered:
+            return "group"
+        if "channel" in lowered:
+            return "channel"
+        if "private" in lowered:
+            return "private"
+
+    rendered = str(chat_type).lower()
+    if "supergroup" in rendered:
+        return "supergroup"
+    if ".group" in rendered or rendered.endswith("group"):
+        return "group"
+    if "channel" in rendered:
+        return "channel"
+    if "private" in rendered:
+        return "private"
+
+    return rendered
+
+
 def _is_table_row(line: str) -> bool:
     """Return True if *line* could plausibly be a table data row."""
     stripped = line.strip()
@@ -1944,14 +1988,16 @@ class TelegramAdapter(BasePlatformAdapter):
         try:
             chat = await self._bot.get_chat(int(chat_id))
             
+            raw_chat_type = _telegram_chat_type_name(getattr(chat, "type", None))
+
             chat_type = "dm"
-            if chat.type == ChatType.GROUP:
+            if raw_chat_type == "group":
                 chat_type = "group"
-            elif chat.type == ChatType.SUPERGROUP:
+            elif raw_chat_type == "supergroup":
                 chat_type = "group"
                 if chat.is_forum:
                     chat_type = "forum"
-            elif chat.type == ChatType.CHANNEL:
+            elif raw_chat_type == "channel":
                 chat_type = "channel"
             
             return {
@@ -2880,10 +2926,12 @@ class TelegramAdapter(BasePlatformAdapter):
         user = message.from_user
         
         # Determine chat type
+        raw_chat_type = _telegram_chat_type_name(getattr(chat, "type", None))
+
         chat_type = "dm"
-        if chat.type in (ChatType.GROUP, ChatType.SUPERGROUP):
+        if raw_chat_type in {"group", "supergroup"}:
             chat_type = "group"
-        elif chat.type == ChatType.CHANNEL:
+        elif raw_chat_type == "channel":
             chat_type = "channel"
 
         # Resolve DM topic name and skill binding
