@@ -354,6 +354,12 @@ class TestBackendSelection:
              patch.dict(os.environ, {"TAVILY_API_KEY": "tvly-test"}):
             assert _get_backend() == "tavily"
 
+    def test_fallback_tavily_key_from_web_config(self):
+        """web.tavily_api_key in config should enable Tavily without env vars."""
+        from tools.web_tools import _get_backend
+        with patch("tools.web_tools._load_web_config", return_value={"tavily_api_key": "tvly-config"}):
+            assert _get_backend() == "tavily"
+
     def test_fallback_tavily_with_firecrawl_prefers_firecrawl(self):
         """Tavily + Firecrawl keys, no config → 'firecrawl' (backward compat)."""
         from tools.web_tools import _get_backend
@@ -529,6 +535,11 @@ class TestCheckWebApiKey:
 
     def test_tavily_key_only(self):
         with patch.dict(os.environ, {"TAVILY_API_KEY": "tvly-test"}):
+            from tools.web_tools import check_web_api_key
+            assert check_web_api_key() is True
+
+    def test_tavily_key_from_web_config(self):
+        with patch("tools.web_tools._load_web_config", return_value={"tavily_api_key": "tvly-config"}):
             from tools.web_tools import check_web_api_key
             assert check_web_api_key() is True
 

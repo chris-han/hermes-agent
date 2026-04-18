@@ -1,0 +1,712 @@
+........................................................................ [  0%]
+........................................................................ [  1%]
+........................................................................ [  1%]
+........................................................................ [  2%]
+........................................................................ [  2%]
+........................................................................ [  3%]
+........................................................................ [  3%]
+........................................................................ [  4%]
+........................................................................ [  4%]
+........................................................................ [  5%]
+........................................................................ [  6%]
+........................................................................ [  6%]
+........................................................................ [  7%]
+........................................................................ [  7%]
+........................................................................ [  8%]
+........................................................................ [  8%]
+........................................................................ [  9%]
+........................................................................ [  9%]
+........................................................................ [ 10%]
+........................................................................ [ 11%]
+........................................................................ [ 11%]
+........................................................................ [ 12%]
+........................................................................ [ 12%]
+........................................................................ [ 13%]
+........................................................................ [ 13%]
+........................................................................ [ 14%]
+........................................................................ [ 14%]
+........................................................................ [ 15%]
+..................................................................s..s.. [ 16%]
+....s........................s.......................................... [ 16%]
+........................................................................ [ 17%]
+........................................................................ [ 17%]
+........................................................................ [ 18%]
+........................................................................ [ 18%]
+........................................................................ [ 19%]
+........................................................................ [ 19%]
+........................................................................ [ 20%]
+........................................................................ [ 21%]
+........................................................................ [ 21%]
+........................................................................ [ 22%]
+.......................................FF............................... [ 22%]
+......................FFF......F..........F.F.FFFF...................... [ 23%]
+.......................................FFF...F.......................... [ 23%]
+........................................................................ [ 24%]
+.................................................................s...... [ 24%]
+..................................................sssssssssssssss......s [ 25%]
+ssss.................................................................... [ 26%]
+........................................................................ [ 26%]
+........................................................F............... [ 27%]
+.................................................F...................... [ 27%]
+........................................................................ [ 28%]
+........................................................................ [ 28%]
+........................................................................ [ 29%]
+........................................................................ [ 29%]
+........................................................................ [ 30%]
+........................................................................ [ 31%]
+........................................................................ [ 31%]
+..........FF
+=================================== FAILURES ===================================
+_______________ TestOpusFindLibrary.test_uses_find_library_first _______________
+
+self = <tests.gateway.test_discord_opus.TestOpusFindLibrary object at 0x7f347f389bb0>
+
+    def test_uses_find_library_first(self):
+        """find_library must be the primary lookup strategy."""
+        from gateway.platforms.discord import DiscordAdapter
+        source = inspect.getsource(DiscordAdapter.connect)
+>       assert "find_library" in source, \
+            "Opus loading must use ctypes.util.find_library"
+E       AssertionError: Opus loading must use ctypes.util.find_library
+E       assert 'find_library' in '    def pcm_to_wav(pcm_data: bytes, output_path: str,\n                   src_rate: int = 48000, src_channels: int = ...  finally:\n            try:\n                os.unlink(pcm_path)\n            except OSError:\n                pass\n'
+
+tests/gateway/test_discord_opus.py:13: AssertionError
+__________ TestOpusFindLibrary.test_homebrew_fallback_is_conditional ___________
+
+self = <tests.gateway.test_discord_opus.TestOpusFindLibrary object at 0x7f347f41bf20>
+
+    def test_homebrew_fallback_is_conditional(self):
+        """Homebrew paths must only be tried when find_library returns None."""
+        from gateway.platforms.discord import DiscordAdapter
+        source = inspect.getsource(DiscordAdapter.connect)
+        # Homebrew fallback must exist
+>       assert "/opt/homebrew" in source or "homebrew" in source, \
+            "Opus loading should have macOS Homebrew fallback"
+E       AssertionError: Opus loading should have macOS Homebrew fallback
+E       assert ('/opt/homebrew' in '    def pcm_to_wav(pcm_data: bytes, output_path: str,\n                   src_rate: int = 48000, src_channels: int = ...  finally:\n            try:\n                os.unlink(pcm_path)\n            except OSError:\n                pass\n' or 'homebrew' in '    def pcm_to_wav(pcm_data: bytes, output_path: str,\n                   src_rate: int = 48000, src_channels: int = ...  finally:\n            try:\n                os.unlink(pcm_path)\n            except OSError:\n                pass\n')
+
+tests/gateway/test_discord_opus.py:21: AssertionError
+_________________ test_auto_registers_missing_gateway_commands _________________
+
+adapter = <gateway.platforms.discord.DiscordAdapter object at 0x7f347a076de0>
+
+    @pytest.mark.asyncio
+    async def test_auto_registers_missing_gateway_commands(adapter):
+        """Commands in COMMAND_REGISTRY that aren't explicitly registered should
+        be auto-registered by the dynamic catch-all block."""
+        adapter._run_simple_slash = AsyncMock()
+        adapter._register_slash_commands()
+    
+        tree_names = set(adapter._client.tree.commands.keys())
+    
+        # These commands are gateway-available but were not in the original
+        # hardcoded registration list — they should be auto-registered.
+        expected_auto = {"debug", "yolo", "reload", "profile"}
+        for name in expected_auto:
+>           assert name in tree_names, f"/{name} should be auto-registered on Discord"
+E           AssertionError: /debug should be auto-registered on Discord
+E           assert 'debug' in {'approve', 'background', 'btw', 'compress', 'deny', 'help', ...}
+
+tests/gateway/test_discord_slash_commands.py:169: AssertionError
+------------------------------ Captured log call -------------------------------
+WARNING  gateway.platforms.discord:discord.py:2189 Discord auto-register from COMMAND_REGISTRY failed: 'types.SimpleNamespace' object has no attribute 'Command'
+WARNING  gateway.platforms.discord:discord.py:2314 [Discord] Failed to register /skill command: 'types.SimpleNamespace' object has no attribute 'autocomplete'
+______________ test_auto_registered_command_dispatches_correctly _______________
+
+adapter = <gateway.platforms.discord.DiscordAdapter object at 0x7f347a07ca70>
+
+    @pytest.mark.asyncio
+    async def test_auto_registered_command_dispatches_correctly(adapter):
+        """Auto-registered commands should dispatch via _run_simple_slash."""
+        adapter._run_simple_slash = AsyncMock()
+        adapter._register_slash_commands()
+    
+        # /debug has no args — test parameterless dispatch
+>       debug_cmd = adapter._client.tree.commands["debug"]
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'debug'
+
+tests/gateway/test_discord_slash_commands.py:179: KeyError
+------------------------------ Captured log call -------------------------------
+WARNING  gateway.platforms.discord:discord.py:2189 Discord auto-register from COMMAND_REGISTRY failed: 'types.SimpleNamespace' object has no attribute 'Command'
+WARNING  gateway.platforms.discord:discord.py:2314 [Discord] Failed to register /skill command: 'types.SimpleNamespace' object has no attribute 'autocomplete'
+____________________ test_auto_registered_command_with_args ____________________
+
+adapter = <gateway.platforms.discord.DiscordAdapter object at 0x7f347a075e80>
+
+    @pytest.mark.asyncio
+    async def test_auto_registered_command_with_args(adapter):
+        """Auto-registered commands with args_hint should accept an optional args param."""
+        adapter._run_simple_slash = AsyncMock()
+        adapter._register_slash_commands()
+    
+        # /branch has args_hint="[name]" — test dispatch with args
+>       branch_cmd = adapter._client.tree.commands["branch"]
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'branch'
+
+tests/gateway/test_discord_slash_commands.py:193: KeyError
+------------------------------ Captured log call -------------------------------
+WARNING  gateway.platforms.discord:discord.py:2189 Discord auto-register from COMMAND_REGISTRY failed: 'types.SimpleNamespace' object has no attribute 'Command'
+WARNING  gateway.platforms.discord:discord.py:2314 [Discord] Failed to register /skill command: 'types.SimpleNamespace' object has no attribute 'autocomplete'
+_______________ test_build_slash_event_preserves_thread_context ________________
+
+adapter = <gateway.platforms.discord.DiscordAdapter object at 0x7f347a195280>
+
+    def test_build_slash_event_preserves_thread_context(adapter):
+        interaction = SimpleNamespace(
+            channel=_FakeThreadChannel(channel_id=555, name="Planning"),
+            channel_id=555,
+            user=SimpleNamespace(display_name="Jezza", id=42),
+        )
+    
+        event = adapter._build_slash_event(interaction, "/status")
+    
+        assert event.text == "/status"
+        assert event.source.chat_id == "555"
+>       assert event.source.chat_type == "thread"
+E       AssertionError: assert 'group' == 'thread'
+E         
+E         - thread
+E         + group
+
+tests/gateway/test_discord_slash_commands.py:373: AssertionError
+____________________ test_auto_thread_skips_threads_and_dms ____________________
+
+adapter = <gateway.platforms.discord.DiscordAdapter object at 0x7f347a168f20>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f347a16af60>
+
+    @pytest.mark.asyncio
+    async def test_auto_thread_skips_threads_and_dms(adapter, monkeypatch):
+        """Auto-thread should not create threads inside existing threads."""
+        monkeypatch.setenv("DISCORD_AUTO_THREAD", "true")
+        monkeypatch.setenv("DISCORD_REQUIRE_MENTION", "false")
+    
+        adapter._auto_create_thread = AsyncMock()
+    
+        captured_events = []
+    
+        async def capture_handle(event):
+            captured_events.append(event)
+    
+        adapter.handle_message = capture_handle
+    
+        msg = _fake_message(_FakeThreadChannel())
+    
+        await adapter._handle_message(msg)
+    
+>       adapter._auto_create_thread.assert_not_awaited()  # should NOT auto-thread
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/gateway/test_discord_slash_commands.py:652: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <AsyncMock id='139863363219728'>
+
+    def assert_not_awaited(self):
+        """
+        Assert that the mock was never awaited.
+        """
+        if self.await_count != 0:
+            msg = (f"Expected {self._mock_name or 'mock'} to not have been awaited."
+                   f" Awaited {self.await_count} times.")
+>           raise AssertionError(msg)
+E           AssertionError: Expected mock to not have been awaited. Awaited 1 times.
+
+../../../.local/share/uv/python/cpython-3.12.11-linux-x86_64-gnu/lib/python3.12/unittest/mock.py:2429: AssertionError
+________________ test_register_skill_command_is_flat_not_nested ________________
+
+adapter = <gateway.platforms.discord.DiscordAdapter object at 0x7f347a32eb70>
+
+    def test_register_skill_command_is_flat_not_nested(adapter):
+        """_register_skill_group should register a single flat ``/skill`` command.
+    
+        The older layout nested categories as subcommand groups under ``/skill``.
+        That registered as one giant command whose serialized payload exceeded
+        Discord's 8KB per-command limit with the default skill catalog. The
+        flat layout sidesteps the limit — autocomplete options are fetched
+        dynamically by Discord and don't count against the registration budget.
+        """
+        mock_categories = {
+            "creative": [
+                ("ascii-art", "Generate ASCII art", "/ascii-art"),
+                ("excalidraw", "Hand-drawn diagrams", "/excalidraw"),
+            ],
+            "media": [
+                ("gif-search", "Search for GIFs", "/gif-search"),
+            ],
+        }
+        mock_uncategorized = [
+            ("dogfood", "Exploratory QA testing", "/dogfood"),
+        ]
+    
+        with patch(
+            "hermes_cli.commands.discord_skill_commands_by_category",
+            return_value=(mock_categories, mock_uncategorized, 0),
+        ):
+            adapter._register_slash_commands()
+    
+        tree = adapter._client.tree
+>       assert "skill" in tree.commands, "Expected /skill command to be registered"
+E       AssertionError: Expected /skill command to be registered
+E       assert 'skill' in {'approve': <function DiscordAdapter._register_slash_commands.<locals>.slash_approve at 0x7f3468e95a80>, 'background':...e96700>, 'compress': <function DiscordAdapter._register_slash_commands.<locals>.slash_compress at 0x7f3468e96840>, ...}
+E        +  where {'approve': <function DiscordAdapter._register_slash_commands.<locals>.slash_approve at 0x7f3468e95a80>, 'background':...e96700>, 'compress': <function DiscordAdapter._register_slash_commands.<locals>.slash_compress at 0x7f3468e96840>, ...} = <tests.gateway.test_discord_slash_commands.FakeTree object at 0x7f347a32c9e0>.commands
+
+tests/gateway/test_discord_slash_commands.py:718: AssertionError
+------------------------------ Captured log call -------------------------------
+WARNING  gateway.platforms.discord:discord.py:2189 Discord auto-register from COMMAND_REGISTRY failed: 'types.SimpleNamespace' object has no attribute 'Command'
+WARNING  gateway.platforms.discord:discord.py:2314 [Discord] Failed to register /skill command: 'types.SimpleNamespace' object has no attribute 'autocomplete'
+___________ test_register_skill_command_callback_dispatches_by_name ____________
+
+adapter = <gateway.platforms.discord.DiscordAdapter object at 0x7f347a306f30>
+
+    def test_register_skill_command_callback_dispatches_by_name(adapter):
+        """The /skill callback should look up the skill by ``name`` and
+        dispatch via ``_run_simple_slash`` with the real command key.
+        """
+        mock_categories = {
+            "media": [
+                ("gif-search", "Search for GIFs", "/gif-search"),
+            ],
+        }
+        mock_uncategorized = [
+            ("dogfood", "QA testing", "/dogfood"),
+        ]
+    
+        with patch(
+            "hermes_cli.commands.discord_skill_commands_by_category",
+            return_value=(mock_categories, mock_uncategorized, 0),
+        ):
+            adapter._register_slash_commands()
+    
+>       skill_cmd = adapter._client.tree.commands["skill"]
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'skill'
+
+tests/gateway/test_discord_slash_commands.py:758: KeyError
+------------------------------ Captured log call -------------------------------
+WARNING  gateway.platforms.discord:discord.py:2189 Discord auto-register from COMMAND_REGISTRY failed: 'types.SimpleNamespace' object has no attribute 'Command'
+WARNING  gateway.platforms.discord:discord.py:2314 [Discord] Failed to register /skill command: 'types.SimpleNamespace' object has no attribute 'autocomplete'
+_________ test_register_skill_command_handles_unknown_skill_gracefully _________
+
+adapter = <gateway.platforms.discord.DiscordAdapter object at 0x7f347a354ce0>
+
+    def test_register_skill_command_handles_unknown_skill_gracefully(adapter):
+        """Passing a name that isn't a registered skill should respond with
+        an ephemeral error message, NOT crash the callback.
+        """
+        with patch(
+            "hermes_cli.commands.discord_skill_commands_by_category",
+            return_value=({"media": [("gif-search", "GIFs", "/gif-search")]}, [], 0),
+        ):
+            adapter._register_slash_commands()
+    
+>       skill_cmd = adapter._client.tree.commands["skill"]
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'skill'
+
+tests/gateway/test_discord_slash_commands.py:790: KeyError
+------------------------------ Captured log call -------------------------------
+WARNING  gateway.platforms.discord:discord.py:2189 Discord auto-register from COMMAND_REGISTRY failed: 'types.SimpleNamespace' object has no attribute 'Command'
+WARNING  gateway.platforms.discord:discord.py:2314 [Discord] Failed to register /skill command: 'types.SimpleNamespace' object has no attribute 'autocomplete'
+__________ test_register_skill_command_payload_fits_discord_8kb_limit __________
+
+adapter = <gateway.platforms.discord.DiscordAdapter object at 0x7f347a38dca0>
+
+    def test_register_skill_command_payload_fits_discord_8kb_limit(adapter):
+        """The /skill command registration payload must stay under Discord's
+        ~8000-byte per-command limit even with a large skill catalog.
+    
+        This is the regression guard for #11321 / #10259. Simulates 500 skills
+        (20 categories × 25 — the hard cap per category in the collector) and
+        confirms the serialized command still fits. Autocomplete options are
+        not part of this payload, so the budget is essentially constant.
+        """
+        import json
+    
+        # Simulate the largest catalog the collector will ever produce:
+        # 20 categories × 25 skills each, with verbose 100-char descriptions.
+        large_categories: dict[str, list[tuple[str, str, str]]] = {}
+        long_desc = "A verbose description padded to approximately 100 chars " + "." * 42
+        for i in range(20):
+            cat = f"cat{i:02d}"
+            large_categories[cat] = [
+                (f"skill-{i:02d}-{j:02d}", long_desc, f"/skill-{i:02d}-{j:02d}")
+                for j in range(25)
+            ]
+    
+        with patch(
+            "hermes_cli.commands.discord_skill_commands_by_category",
+            return_value=(large_categories, [], 0),
+        ):
+            adapter._register_slash_commands()
+    
+>       skill_cmd = adapter._client.tree.commands["skill"]
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'skill'
+
+tests/gateway/test_discord_slash_commands.py:838: KeyError
+------------------------------ Captured log call -------------------------------
+WARNING  gateway.platforms.discord:discord.py:2189 Discord auto-register from COMMAND_REGISTRY failed: 'types.SimpleNamespace' object has no attribute 'Command'
+WARNING  gateway.platforms.discord:discord.py:2314 [Discord] Failed to register /skill command: 'types.SimpleNamespace' object has no attribute 'autocomplete'
+___ test_register_skill_command_autocomplete_filters_by_name_and_description ___
+
+adapter = <gateway.platforms.discord.DiscordAdapter object at 0x7f347a278290>
+
+    def test_register_skill_command_autocomplete_filters_by_name_and_description(adapter):
+        """The autocomplete callback should match on both skill name and
+        description so the user can search by either.
+        """
+        mock_categories = {
+            "ocr": [
+                ("ocr-and-documents", "Extract text from PDFs and scanned documents", "/ocr-and-documents"),
+            ],
+            "media": [
+                ("gif-search", "Search and download GIFs from Tenor", "/gif-search"),
+            ],
+        }
+    
+        with patch(
+            "hermes_cli.commands.discord_skill_commands_by_category",
+            return_value=(mock_categories, [], 0),
+        ):
+            adapter._register_slash_commands()
+    
+>       skill_cmd = adapter._client.tree.commands["skill"]
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'skill'
+
+tests/gateway/test_discord_slash_commands.py:874: KeyError
+------------------------------ Captured log call -------------------------------
+WARNING  gateway.platforms.discord:discord.py:2189 Discord auto-register from COMMAND_REGISTRY failed: 'types.SimpleNamespace' object has no attribute 'Command'
+WARNING  gateway.platforms.discord:discord.py:2314 [Discord] Failed to register /skill command: 'types.SimpleNamespace' object has no attribute 'autocomplete'
+________________________ test_group_topic_skill_binding ________________________
+
+    def test_group_topic_skill_binding():
+        """Group topic with skill config should set auto_skill on the event."""
+        from gateway.platforms.base import MessageType
+    
+        adapter = _make_adapter(group_topics_config=[
+            {
+                "chat_id": -1001234567890,
+                "topics": [
+                    {"name": "Engineering", "thread_id": 5, "skill": "software-development"},
+                    {"name": "Sales", "thread_id": 12, "skill": "sales-framework"},
+                ],
+            }
+        ])
+    
+        msg = _make_mock_message(
+            chat_id=-1001234567890, chat_type=_ChatType.SUPERGROUP, thread_id=5, text="hello"
+        )
+        event = adapter._build_message_event(msg, MessageType.TEXT)
+    
+>       assert event.auto_skill == "software-development"
+E       AssertionError: assert None == 'software-development'
+E        +  where None = MessageEvent(text='hello', message_type=<MessageType.TEXT: 'text'>, source=SessionSource(platform=<Platform.TELEGRAM: ...[], reply_to_message_id=None, reply_to_text=None, auto_skill=None, channel_prompt=None, internal=False, timestamp=None).auto_skill
+
+tests/gateway/test_dm_topics.py:520: AssertionError
+_________________ test_group_topic_skill_binding_second_topic __________________
+
+    def test_group_topic_skill_binding_second_topic():
+        """A different thread_id in the same group should resolve its own skill."""
+        from gateway.platforms.base import MessageType
+    
+        adapter = _make_adapter(group_topics_config=[
+            {
+                "chat_id": -1001234567890,
+                "topics": [
+                    {"name": "Engineering", "thread_id": 5, "skill": "software-development"},
+                    {"name": "Sales", "thread_id": 12, "skill": "sales-framework"},
+                ],
+            }
+        ])
+    
+        msg = _make_mock_message(
+            chat_id=-1001234567890, chat_type=_ChatType.SUPERGROUP, thread_id=12, text="deal update"
+        )
+        event = adapter._build_message_event(msg, MessageType.TEXT)
+    
+>       assert event.auto_skill == "sales-framework"
+E       AssertionError: assert None == 'sales-framework'
+E        +  where None = MessageEvent(text='deal update', message_type=<MessageType.TEXT: 'text'>, source=SessionSource(platform=<Platform.TELE...[], reply_to_message_id=None, reply_to_text=None, auto_skill=None, channel_prompt=None, internal=False, timestamp=None).auto_skill
+
+tests/gateway/test_dm_topics.py:543: AssertionError
+______________________ test_group_topic_no_skill_binding _______________________
+
+    def test_group_topic_no_skill_binding():
+        """Group topic without a skill key should have auto_skill=None but set chat_topic."""
+        from gateway.platforms.base import MessageType
+    
+        adapter = _make_adapter(group_topics_config=[
+            {
+                "chat_id": -1001234567890,
+                "topics": [
+                    {"name": "General", "thread_id": 1},
+                ],
+            }
+        ])
+    
+        msg = _make_mock_message(
+            chat_id=-1001234567890, chat_type=_ChatType.SUPERGROUP, thread_id=1, text="hey"
+        )
+        event = adapter._build_message_event(msg, MessageType.TEXT)
+    
+        assert event.auto_skill is None
+>       assert event.source.chat_topic == "General"
+E       AssertionError: assert None == 'General'
+E        +  where None = SessionSource(platform=<Platform.TELEGRAM: 'telegram'>, chat_id='-1001234567890', chat_name='Test User', chat_type='dm', user_id='42', user_name='Test User', thread_id='1', chat_topic=None, user_id_alt=None, chat_id_alt=None, is_bot=False).chat_topic
+E        +    where SessionSource(platform=<Platform.TELEGRAM: 'telegram'>, chat_id='-1001234567890', chat_name='Test User', chat_type='dm', user_id='42', user_name='Test User', thread_id='1', chat_topic=None, user_id_alt=None, chat_id_alt=None, is_bot=False) = MessageEvent(text='hey', message_type=<MessageType.TEXT: 'text'>, source=SessionSource(platform=<Platform.TELEGRAM: 't...[], reply_to_message_id=None, reply_to_text=None, auto_skill=None, channel_prompt=None, internal=False, timestamp=None).source
+
+tests/gateway/test_dm_topics.py:566: AssertionError
+_________________ test_group_topic_chat_id_int_string_coercion _________________
+
+    def test_group_topic_chat_id_int_string_coercion():
+        """chat_id as string in config should match integer chat.id via str() coercion."""
+        from gateway.platforms.base import MessageType
+    
+        adapter = _make_adapter(group_topics_config=[
+            {
+                "chat_id": "-1001234567890",  # string, not int
+                "topics": [
+                    {"name": "Dev", "thread_id": "7", "skill": "hermes-agent-dev"},
+                ],
+            }
+        ])
+    
+        msg = _make_mock_message(
+            chat_id=-1001234567890, chat_type=_ChatType.SUPERGROUP, thread_id=7, text="test"
+        )
+        event = adapter._build_message_event(msg, MessageType.TEXT)
+    
+>       assert event.auto_skill == "hermes-agent-dev"
+E       AssertionError: assert None == 'hermes-agent-dev'
+E        +  where None = MessageEvent(text='test', message_type=<MessageType.TEXT: 'text'>, source=SessionSource(platform=<Platform.TELEGRAM: '...[], reply_to_message_id=None, reply_to_text=None, auto_skill=None, channel_prompt=None, internal=False, timestamp=None).auto_skill
+
+tests/gateway/test_dm_topics.py:646: AssertionError
+____________ test_non_internal_event_without_user_triggers_pairing _____________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f34780b8bc0>
+tmp_path = PosixPath('/tmp/pytest-of-chris/pytest-127/test_non_internal_event_withou0')
+
+    @pytest.mark.asyncio
+    async def test_non_internal_event_without_user_triggers_pairing(monkeypatch, tmp_path):
+        """Verify the normal (non-internal) path still triggers pairing for unknown users."""
+        import gateway.run as gateway_run
+    
+        monkeypatch.setattr(gateway_run, "_hermes_home", tmp_path)
+        (tmp_path / "config.yaml").write_text("", encoding="utf-8")
+    
+        # Clear env vars that could let all users through (loaded by
+        # module-level dotenv in gateway/run.py from the real ~/.hermes/.env).
+        monkeypatch.delenv("DISCORD_ALLOW_ALL_USERS", raising=False)
+        monkeypatch.delenv("DISCORD_ALLOWED_USERS", raising=False)
+        monkeypatch.delenv("GATEWAY_ALLOW_ALL_USERS", raising=False)
+        monkeypatch.delenv("GATEWAY_ALLOWED_USERS", raising=False)
+    
+        runner = GatewayRunner(GatewayConfig())
+        adapter = SimpleNamespace(send=AsyncMock())
+        runner.adapters[Platform.DISCORD] = adapter
+    
+        source = SessionSource(
+            platform=Platform.DISCORD,
+            chat_id="123",
+            chat_type="dm",
+            user_id="unknown_user_999",
+        )
+        # Normal event (not internal)
+        event = MessageEvent(
+            text="hello",
+            source=source,
+            internal=False,
+        )
+    
+        result = await runner._handle_message(event)
+    
+        # Should return None (unauthorized) and send pairing message
+        assert result is None
+>       assert adapter.send.await_count == 1
+E       AssertionError: assert 0 == 1
+E        +  where 0 = <AsyncMock id='139863108787744'>.await_count
+E        +    where <AsyncMock id='139863108787744'> = namespace(send=<AsyncMock id='139863108787744'>).send
+
+tests/gateway/test_internal_event_bypass_pairing.py:390: AssertionError
+------------------------------ Captured log call -------------------------------
+WARNING  gateway.run:run.py:2831 Unauthorized user: unknown_user_999 (None) on discord
+_____ TestMatrixUploadAndSend.test_upload_encrypted_room_uses_file_payload _____
+
+self = <tests.gateway.test_matrix.TestMatrixUploadAndSend object at 0x7f347f073260>
+
+    @pytest.mark.asyncio
+    async def test_upload_encrypted_room_uses_file_payload(self):
+        """Encrypted rooms should use 'file' key with crypto metadata."""
+        adapter = _make_adapter()
+        adapter._encryption = True
+        mock_client = MagicMock()
+        mock_client.crypto = object()
+        mock_client.state_store = MagicMock()
+        mock_client.state_store.is_encrypted = AsyncMock(return_value=True)
+        mock_client.upload_media = AsyncMock(return_value="mxc://example.org/enc")
+        mock_client.send_message_event = AsyncMock(return_value="$event")
+        adapter._client = mock_client
+    
+        result = await adapter._upload_and_send(
+            "!room:example.org", b"secret", "secret.txt", "text/plain", "m.file",
+        )
+    
+>       assert result.success is True
+E       assert False is True
+E        +  where False = SendResult(success=False, message_id=None, error="No module named 'mautrix'", raw_response=None, retryable=False).success
+
+tests/gateway/test_matrix.py:1244: AssertionError
+------------------------------ Captured log call -------------------------------
+ERROR    gateway.platforms.matrix:matrix.py:1011 Matrix: attachment encryption failed: No module named 'mautrix'
+_____ TestDiscordSendImageFile.test_send_document_uploads_file_attachment ______
+
+self = <tests.gateway.test_send_image_file.TestDiscordSendImageFile object at 0x7f347e578950>
+adapter = <gateway.platforms.discord.DiscordAdapter object at 0x7f346a3c2990>
+tmp_path = PosixPath('/tmp/pytest-of-chris/pytest-127/test_send_document_uploads_fil1')
+
+    def test_send_document_uploads_file_attachment(self, adapter, tmp_path):
+        """send_document should upload a native Discord attachment."""
+        pdf = tmp_path / "sample.pdf"
+        pdf.write_bytes(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+    
+        mock_channel = MagicMock()
+        mock_msg = MagicMock()
+        mock_msg.id = 100
+        mock_channel.send = AsyncMock(return_value=mock_msg)
+        adapter._client.get_channel = MagicMock(return_value=mock_channel)
+    
+        with patch.object(discord_mod_ref, "File", MagicMock()) as file_cls:
+            result = _run(
+                adapter.send_document(
+                    chat_id="67890",
+                    file_path=str(pdf),
+                    file_name="renamed.pdf",
+                    metadata={"thread_id": "123"},
+                )
+            )
+    
+        assert result.success
+        assert result.message_id == "100"
+        assert "file" in mock_channel.send.call_args.kwargs
+>       assert file_cls.call_args.kwargs["filename"] == "renamed.pdf"
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'NoneType' object has no attribute 'kwargs'
+
+tests/gateway/test_send_image_file.py:246: AttributeError
+_______ TestDiscordSendImageFile.test_send_video_uploads_file_attachment _______
+
+self = <tests.gateway.test_send_image_file.TestDiscordSendImageFile object at 0x7f347e578fe0>
+adapter = <gateway.platforms.discord.DiscordAdapter object at 0x7f3469d2b2c0>
+tmp_path = PosixPath('/tmp/pytest-of-chris/pytest-127/test_send_video_uploads_file_a1')
+
+    def test_send_video_uploads_file_attachment(self, adapter, tmp_path):
+        """send_video should upload a native Discord attachment."""
+        video = tmp_path / "clip.mp4"
+        video.write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 50)
+    
+        mock_channel = MagicMock()
+        mock_msg = MagicMock()
+        mock_msg.id = 101
+        mock_channel.send = AsyncMock(return_value=mock_msg)
+        adapter._client.get_channel = MagicMock(return_value=mock_channel)
+    
+        with patch.object(discord_mod_ref, "File", MagicMock()) as file_cls:
+            result = _run(
+                adapter.send_video(
+                    chat_id="67890",
+                    video_path=str(video),
+                    metadata={"thread_id": "123"},
+                )
+            )
+    
+        assert result.success
+        assert result.message_id == "101"
+        assert "file" in mock_channel.send.call_args.kwargs
+>       assert file_cls.call_args.kwargs["filename"] == "clip.mp4"
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'NoneType' object has no attribute 'kwargs'
+
+tests/gateway/test_send_image_file.py:271: AttributeError
+=============================== warnings summary ===============================
+tests/tools/test_file_sync_perf.py:82
+  /home/chris/repo/Vibe-Trading/hermes-agent/tests/tools/test_file_sync_perf.py:82: PytestUnknownMarkWarning: Unknown pytest.mark.ssh - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.ssh
+
+tests/acp/test_auth.py::TestHasProvider::test_has_provider_with_resolved_runtime
+  /home/chris/repo/Vibe-Trading/hermes-agent/tests/conftest.py:307: DeprecationWarning: There is no current event loop
+    loop = asyncio.get_event_loop_policy().get_event_loop()
+
+tests/acp/test_events.py::TestToolProgressCallback::test_duplicate_same_name_tool_calls_use_fifo_ids
+tests/acp/test_events.py::TestStepCallback::test_none_result_passed_through
+tests/acp/test_events.py::TestStepCallback::test_step_callback_passes_arguments_and_snapshot
+tests/acp/test_mcp_e2e.py::TestMcpRegistrationE2E::test_session_with_mcp_servers_registers_tools
+  /home/chris/.local/share/uv/python/cpython-3.12.11-linux-x86_64-gnu/lib/python3.12/unittest/mock.py:2217: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    def __init__(self, name, parent):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/agent/test_gemini_cloudcode.py::TestAuthStatus::test_logged_in_reports_email_and_project
+  /home/chris/.local/share/uv/python/cpython-3.12.11-linux-x86_64-gnu/lib/python3.12/pathlib.py:551: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    @property
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/cli/test_quick_commands.py::TestGatewayQuickCommands::test_gateway_config_object_supports_quick_commands
+  /home/chris/.local/share/uv/python/cpython-3.12.11-linux-x86_64-gnu/lib/python3.12/unittest/mock.py:2217: RuntimeWarning: coroutine 'Process.communicate' was never awaited
+    def __init__(self, name, parent):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/gateway/test_api_server.py: 75 warnings
+  /home/chris/repo/Vibe-Trading/hermes-agent/tests/gateway/test_api_server.py:222: NotAppKeyWarning: It is recommended to use web.AppKey instances for keys.
+  https://docs.aiohttp.org/en/stable/web_advanced.html#application-s-config
+    app["api_server_adapter"] = adapter
+
+tests/gateway/test_api_server_bind_guard.py::TestConnectBindGuard::test_refuses_ipv4_wildcard_without_key
+tests/gateway/test_api_server_bind_guard.py::TestConnectBindGuard::test_refuses_ipv6_wildcard_without_key
+  /home/chris/repo/Vibe-Trading/hermes-agent/gateway/platforms/api_server.py:2315: NotAppKeyWarning: It is recommended to use web.AppKey instances for keys.
+  https://docs.aiohttp.org/en/stable/web_advanced.html#application-s-config
+    self._app["api_server_adapter"] = self
+
+tests/gateway/test_api_server_jobs.py: 35 warnings
+  /home/chris/repo/Vibe-Trading/hermes-agent/tests/gateway/test_api_server_jobs.py:52: NotAppKeyWarning: It is recommended to use web.AppKey instances for keys.
+  https://docs.aiohttp.org/en/stable/web_advanced.html#application-s-config
+    app["api_server_adapter"] = adapter
+
+tests/gateway/test_discord_channel_prompts.py::test_run_agent_appends_channel_prompt_to_ephemeral_system_prompt
+  /home/chris/repo/Vibe-Trading/hermes-agent/tools/tirith_security.py:355: DeprecationWarning: Python 3.14 will, by default, filter extracted tar archives and reject files or modify their metadata. Use the filter argument to control this behavior.
+    tar.extract(member, tmpdir)
+
+tests/gateway/test_qqbot.py::TestDispatchPayload::test_op10_updates_heartbeat_interval
+  /home/chris/repo/Vibe-Trading/hermes-agent/gateway/platforms/qqbot/adapter.py:727: RuntimeWarning: coroutine 'QQAdapter._send_identify' was never awaited
+    self._create_task(self._send_identify())
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/gateway/test_discord_opus.py::TestOpusFindLibrary::test_uses_find_library_first
+FAILED tests/gateway/test_discord_opus.py::TestOpusFindLibrary::test_homebrew_fallback_is_conditional
+FAILED tests/gateway/test_discord_slash_commands.py::test_auto_registers_missing_gateway_commands
+FAILED tests/gateway/test_discord_slash_commands.py::test_auto_registered_command_dispatches_correctly
+FAILED tests/gateway/test_discord_slash_commands.py::test_auto_registered_command_with_args
+FAILED tests/gateway/test_discord_slash_commands.py::test_build_slash_event_preserves_thread_context
+FAILED tests/gateway/test_discord_slash_commands.py::test_auto_thread_skips_threads_and_dms
+FAILED tests/gateway/test_discord_slash_commands.py::test_register_skill_command_is_flat_not_nested
+FAILED tests/gateway/test_discord_slash_commands.py::test_register_skill_command_callback_dispatches_by_name
+FAILED tests/gateway/test_discord_slash_commands.py::test_register_skill_command_handles_unknown_skill_gracefully
+FAILED tests/gateway/test_discord_slash_commands.py::test_register_skill_command_payload_fits_discord_8kb_limit
+FAILED tests/gateway/test_discord_slash_commands.py::test_register_skill_command_autocomplete_filters_by_name_and_description
+FAILED tests/gateway/test_dm_topics.py::test_group_topic_skill_binding - Asse...
+FAILED tests/gateway/test_dm_topics.py::test_group_topic_skill_binding_second_topic
+FAILED tests/gateway/test_dm_topics.py::test_group_topic_no_skill_binding - A...
+FAILED tests/gateway/test_dm_topics.py::test_group_topic_chat_id_int_string_coercion
+FAILED tests/gateway/test_internal_event_bypass_pairing.py::test_non_internal_event_without_user_triggers_pairing
+FAILED tests/gateway/test_matrix.py::TestMatrixUploadAndSend::test_upload_encrypted_room_uses_file_payload
+FAILED tests/gateway/test_send_image_file.py::TestDiscordSendImageFile::test_send_document_uploads_file_attachment
+FAILED tests/gateway/test_send_image_file.py::TestDiscordSendImageFile::test_send_video_uploads_file_attachment
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 20 failures !!!!!!!!!!!!!!!!!!!!!!!!!!
+20 failed, 4071 passed, 30 skipped, 23 deselected, 122 warnings in 244.28s (0:04:04)

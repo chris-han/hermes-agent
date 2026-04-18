@@ -1207,6 +1207,25 @@ class TestExecuteToolCalls:
         assert len(messages) == 1
         assert messages[0]["role"] == "tool"
 
+    def test_sequential_tool_complete_callback_receives_sanitized_large_result(self, agent):
+        tc = _mock_tool_call(name="web_search", arguments='{"q":"test"}', call_id="c1")
+        mock_msg = _mock_assistant_msg(content="", tool_calls=[tc])
+        messages = []
+        completed = []
+        agent.tool_complete_callback = lambda tool_call_id, function_name, function_args, function_result: completed.append(
+            (tool_call_id, function_name, function_args, function_result)
+        )
+        big_result = "x" * 150_000
+
+        with patch("run_agent.handle_function_call", return_value=big_result):
+            agent._execute_tool_calls_sequential(mock_msg, messages, "task-1")
+
+        assert len(completed) == 1
+        callback_result = completed[0][3]
+        assert len(callback_result) < len(big_result)
+        assert ("Truncated" in callback_result or "<persisted-output>" in callback_result)
+        assert callback_result == messages[0]["content"]
+
     def test_vprint_suppressed_in_parseable_quiet_mode(self, agent):
         agent.suppress_status_output = True
 
@@ -1532,6 +1551,27 @@ class TestConcurrentToolExecution:
         assert len(completes) == 2
         assert {entry[0] for entry in completes} == {"c1", "c2"}
         assert {entry[3] for entry in completes} == {'{"id":1}', '{"id":2}'}
+
+    def test_concurrent_tool_complete_callback_receives_sanitized_large_result(self, agent):
+        tc1 = _mock_tool_call(name="web_search", arguments='{"query":"one"}', call_id="c1")
+        tc2 = _mock_tool_call(name="web_search", arguments='{"query":"two"}', call_id="c2")
+        mock_msg = _mock_assistant_msg(content="", tool_calls=[tc1, tc2])
+        messages = []
+        completes = []
+        agent.tool_complete_callback = lambda tool_call_id, function_name, function_args, function_result: completes.append(
+            (tool_call_id, function_name, function_args, function_result)
+        )
+        big_result = "x" * 150_000
+
+        with patch("run_agent.handle_function_call", return_value=big_result):
+            agent._execute_tool_calls_concurrent(mock_msg, messages, "task-1")
+
+        assert len(completes) == 2
+        for entry, message in zip(completes, messages):
+            callback_result = entry[3]
+            assert len(callback_result) < len(big_result)
+            assert ("Truncated" in callback_result or "<persisted-output>" in callback_result)
+            assert callback_result == message["content"]
 
     def test_invoke_tool_handles_agent_level_tools(self, agent):
         """_invoke_tool should handle todo tool directly."""
@@ -2724,7 +2764,151 @@ class TestNousCredentialRefresh:
         assert isinstance(agent.client, _RebuiltClient)
 
 
+class TestRoutedClientHeaderPreservation:
+    """Ensure routed OpenAI-compatible clients keep their custom headers."""
+
+    def test_init_preserves_custom_headers_from_routed_client(self):
+        rebuilt = {"kwargs": None}
+
+        routed_client = SimpleNamespace(
+            api_key="routed-kimi-key",
+            base_url="https://api.kimi.com/coding/v1",
+            _custom_headers={"User-Agent": "RooCode/1.0.0"},
+            default_headers={"User-Agent": "RooCode/1.0.0"},
+        )
+
+        class _BuiltClient:
+            pass
+
+        def _fake_openai(**kwargs):
+            rebuilt["kwargs"] = kwargs
+            return _BuiltClient()
+
+        with (
+            patch(
+                "run_agent.get_tool_definitions",
+                return_value=_make_tool_defs("web_search"),
+            ),
+            patch("run_agent.check_toolset_requirements", return_value={}),
+            patch(
+                "agent.auxiliary_client.resolve_provider_client",
+                return_value=(routed_client, "kimi-for-coding"),
+            ),
+            patch("run_agent.OpenAI", side_effect=_fake_openai),
+        ):
+            agent = AIAgent(
+                provider="kimi-coding",
+                model="kimi-for-coding",
+                quiet_mode=True,
+                skip_context_files=True,
+                skip_memory=True,
+            )
+
+        assert isinstance(agent.client, _BuiltClient)
+        assert rebuilt["kwargs"]["api_key"] == "routed-kimi-key"
+        assert rebuilt["kwargs"]["base_url"] == "https://api.kimi.com/coding/v1"
+        assert rebuilt["kwargs"]["default_headers"]["User-Agent"] == "KimiCLI/1.3"
+
+    def test_init_preserves_dashscope_headers_from_routed_client(self):
+        rebuilt = {"kwargs": None}
+
+        routed_client = SimpleNamespace(
+            api_key="routed-dashscope-key",
+            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            _custom_headers=None,
+            default_headers=None,
+        )
+
+        class _BuiltClient:
+            pass
+
+        def _fake_openai(**kwargs):
+            rebuilt["kwargs"] = kwargs
+            return _BuiltClient()
+
+        with (
+            patch(
+                "run_agent.get_tool_definitions",
+                return_value=_make_tool_defs("web_search"),
+            ),
+            patch("run_agent.check_toolset_requirements", return_value={}),
+            patch(
+                "agent.auxiliary_client.resolve_provider_client",
+                return_value=(routed_client, "qwen3.5-plus"),
+            ),
+            patch("run_agent.OpenAI", side_effect=_fake_openai),
+        ):
+            agent = AIAgent(
+                provider="alibaba",
+                model="qwen3.5-plus",
+                quiet_mode=True,
+                skip_context_files=True,
+                skip_memory=True,
+            )
+
+        assert isinstance(agent.client, _BuiltClient)
+        assert rebuilt["kwargs"]["api_key"] == "routed-dashscope-key"
+        assert rebuilt["kwargs"]["base_url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        assert rebuilt["kwargs"]["default_headers"]["X-DashScope-CacheControl"] == "enable"
+        assert rebuilt["kwargs"]["default_headers"]["X-DashScope-AuthType"] == "qwen-oauth"
+        assert rebuilt["kwargs"]["default_headers"]["X-DashScope-UserAgent"].startswith("QwenCode/")
+
+
 class TestCredentialPoolRecovery:
+
+    def test_http_client_not_leaked_into_client_kwargs(self):
+        """Regression: _create_openai_client must not store http_client back into
+        self._client_kwargs.  When the ephemeral httpx.Client leaks into the stored
+        kwargs, every subsequent request-local client shares — and then closes —
+        the same transport, killing the primary client's connection pool.
+
+        Bug: first API call succeeds, second always fails with
+        RuntimeError('Cannot send a request, as the client has been closed.')
+        """
+        created_clients = []
+
+        class _FakeClient:
+            def __init__(self, **kw):
+                self._init_kwargs = kw
+                created_clients.append(self)
+
+        with (
+            patch(
+                "run_agent.get_tool_definitions",
+                return_value=_make_tool_defs("web_search"),
+            ),
+            patch("run_agent.check_toolset_requirements", return_value={}),
+            patch("run_agent.OpenAI", side_effect=_FakeClient),
+        ):
+            agent = AIAgent(
+                api_key="test-key-1234567890",
+                quiet_mode=True,
+                skip_context_files=True,
+                skip_memory=True,
+            )
+
+        # After init, _client_kwargs must NOT contain http_client
+        assert "http_client" not in agent._client_kwargs, (
+            "_create_openai_client leaked http_client into self._client_kwargs"
+        )
+
+        # Create two request clients — they should get independent httpx instances
+        with patch("run_agent.OpenAI", side_effect=_FakeClient):
+            created_clients.clear()
+            agent.client = _FakeClient()  # mock primary
+            c1 = agent._create_openai_client(dict(agent._client_kwargs), reason="req1", shared=False)
+            c2 = agent._create_openai_client(dict(agent._client_kwargs), reason="req2", shared=False)
+
+        # Each should have gotten its own http_client
+        hc1 = c1._init_kwargs.get("http_client")
+        hc2 = c2._init_kwargs.get("http_client")
+        assert hc1 is not None, "request client should get an http_client"
+        assert hc2 is not None, "request client should get an http_client"
+        assert hc1 is not hc2, "each request client must get its own httpx.Client"
+
+        # _client_kwargs must still be clean
+        assert "http_client" not in agent._client_kwargs
+
     def test_recover_with_pool_rotates_on_402(self, agent):
         current = SimpleNamespace(label="primary")
         next_entry = SimpleNamespace(label="secondary")
@@ -3012,7 +3196,7 @@ class TestSystemPromptStability:
         # Should have built fresh, not queried the DB
         mock_db.get_session.assert_not_called()
         assert agent._cached_system_prompt is not None
-        assert "Hermes Agent" in agent._cached_system_prompt
+        assert "Seman Agent" in agent._cached_system_prompt
 
     def test_fresh_build_when_db_has_no_prompt(self, agent):
         """If the session DB has no stored prompt, build fresh even with history."""
@@ -3039,7 +3223,7 @@ class TestSystemPromptStability:
                 agent._cached_system_prompt = agent._build_system_prompt()
 
         # Empty string is falsy, so should fall through to fresh build
-        assert "Hermes Agent" in agent._cached_system_prompt
+        assert "Seman Agent" in agent._cached_system_prompt
 
 class TestBudgetPressure:
     """Budget exhaustion grace call system."""
@@ -4126,10 +4310,16 @@ class TestMemoryNudgeCounterPersistence:
 
     def test_counters_initialized_in_init(self):
         """Counters must exist on the agent after __init__."""
-        with patch("run_agent.get_tool_definitions", return_value=[]):
+        with (
+            patch("run_agent.get_tool_definitions", return_value=[]),
+            patch("run_agent.OpenAI"),
+        ):
             a = AIAgent(
-                model="test", api_key="test-key", base_url="http://localhost:1234/v1",
-                provider="openrouter", skip_context_files=True, skip_memory=True,
+                model="test",
+                api_key="test-key",
+                base_url="http://localhost:1234/v1",
+                provider="openrouter",
+                skip_context_files=True, skip_memory=True,
             )
         assert hasattr(a, "_turns_since_memory")
         assert hasattr(a, "_iters_since_skill")

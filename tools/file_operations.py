@@ -79,15 +79,15 @@ WRITE_DENIED_PREFIXES = [
 ]
 
 
-def _get_safe_write_root() -> Optional[str]:
-    """Return the resolved HERMES_WRITE_SAFE_ROOT path, or None if unset.
+def _get_safe_write_root(safe_root: str | None = None) -> Optional[str]:
+    """Return the resolved safe write root, or None if unset.
 
     When set, all write_file/patch operations are constrained to this
-    directory tree.  Writes outside it are denied even if the target is
-    not on the static deny list.  Opt-in hardening for gateway/messaging
-    deployments that should only touch a workspace checkout.
+    directory tree. Writes outside it are denied even if the target is
+    not on the static deny list. The per-task safe root takes precedence
+    over the global HERMES_WRITE_SAFE_ROOT environment variable.
     """
-    root = os.getenv("HERMES_WRITE_SAFE_ROOT", "")
+    root = safe_root if safe_root is not None else os.getenv("HERMES_WRITE_SAFE_ROOT", "")
     if not root:
         return None
     try:
@@ -96,24 +96,50 @@ def _get_safe_write_root() -> Optional[str]:
         return None
 
 
-def _is_write_denied(path: str) -> bool:
-    """Return True if path is on the write deny list."""
+def _get_safe_read_root(safe_root: str | None = None) -> Optional[str]:
+    """Return the resolved safe read root, or None if unset."""
+    root = safe_root if safe_root is not None else os.getenv("HERMES_READ_SAFE_ROOT", "")
+    if not root:
+        return None
+    try:
+        return os.path.realpath(os.path.expanduser(root))
+    except Exception:
+        return None
+
+
+def _get_write_deny_reason(path: str, safe_root: str | None = None) -> Optional[str]:
+    """Return the write-deny reason for a path, or None if writes are allowed."""
     resolved = os.path.realpath(os.path.expanduser(str(path)))
 
     # 1) Static deny list
     if resolved in WRITE_DENIED_PATHS:
-        return True
+        return "protected system/credential file"
     for prefix in WRITE_DENIED_PREFIXES:
         if resolved.startswith(prefix):
-            return True
+            return "protected system/credential file"
 
     # 2) Optional safe-root sandbox
-    safe_root = _get_safe_write_root()
-    if safe_root:
-        if not (resolved == safe_root or resolved.startswith(safe_root + os.sep)):
-            return True
+    resolved_safe_root = _get_safe_write_root(safe_root)
+    if resolved_safe_root:
+        if not (resolved == resolved_safe_root or resolved.startswith(resolved_safe_root + os.sep)):
+            return f"outside the allowed write root '{resolved_safe_root}'"
 
-    return False
+    return None
+
+
+def _get_read_deny_reason(path: str, safe_root: str | None = None) -> Optional[str]:
+    """Return the read-deny reason for a path, or None if reads are allowed."""
+    resolved = os.path.realpath(os.path.expanduser(str(path)))
+    resolved_safe_root = _get_safe_read_root(safe_root)
+    if resolved_safe_root:
+        if not (resolved == resolved_safe_root or resolved.startswith(resolved_safe_root + os.sep)):
+            return f"outside the allowed read root '{resolved_safe_root}'"
+    return None
+
+
+def _is_write_denied(path: str, safe_root: str | None = None) -> bool:
+    """Return True if path is on the write deny list."""
+    return _get_write_deny_reason(path, safe_root) is not None
 
 
 # =============================================================================
@@ -327,7 +353,14 @@ class ShellFileOperations(FileOperations):
     This includes local, docker, singularity, ssh, modal, and daytona environments.
     """
     
-    def __init__(self, terminal_env, cwd: str = None):
+    def __init__(
+        self,
+        terminal_env,
+        cwd: str = None,
+        safe_write_root: str | None = None,
+        safe_read_root: str | None = None,
+        path_aliases: list[tuple[str, str]] | None = None,
+    ):
         """
         Initialize file operations with a terminal environment.
 
@@ -358,7 +391,18 @@ class ShellFileOperations(FileOperations):
         # If nothing provides a cwd, use "/" as a safe universal default.
         self.cwd = cwd or getattr(terminal_env, 'cwd', None) or \
                    getattr(getattr(terminal_env, 'config', None), 'cwd', None) or "/"
-
+        self.safe_write_root = safe_write_root
+        self.safe_read_root = safe_read_root
+        self.path_aliases = sorted(
+            [
+                (str(display_root).rstrip("/"), str(actual_root).rstrip("/"))
+                for display_root, actual_root in (path_aliases or [])
+                if display_root and actual_root
+            ],
+            key=lambda item: len(item[0]),
+            reverse=True,
+        )
+        
         # Cache for command availability checks
         self._command_cache: Dict[str, bool] = {}
     
@@ -444,6 +488,16 @@ class ShellFileOperations(FileOperations):
         """
         if not path:
             return path
+
+        if os.path.isabs(path):
+            normalized = str(path).rstrip("/") or "/"
+            for display_root, actual_root in self.path_aliases:
+                if normalized == display_root:
+                    return actual_root or "/"
+                prefix = display_root + "/"
+                if normalized.startswith(prefix):
+                    suffix = normalized[len(prefix):]
+                    return f"{actual_root}/{suffix}" if suffix else actual_root
         
         # Handle ~ and ~user
         if path.startswith('~'):
@@ -470,6 +524,12 @@ class ShellFileOperations(FileOperations):
                         suffix = path[1 + len(username):]  # e.g. "/rest/of/path"
                         return user_home + suffix
         
+        # Resolve relative paths against the task cwd so that the
+        # deny-check (which uses os.path.realpath) sees the correct
+        # directory rather than the server process's cwd.
+        if not os.path.isabs(path) and self.cwd:
+            return os.path.join(self.cwd, path)
+
         return path
     
     def _escape_shell_arg(self, arg: str) -> str:
@@ -506,6 +566,10 @@ class ShellFileOperations(FileOperations):
         """
         # Expand ~ and other shell paths
         path = self._expand_path(path)
+
+        deny_reason = _get_read_deny_reason(path, self.safe_read_root)
+        if deny_reason:
+            return ReadResult(error=f"Read denied: '{path}' is {deny_reason}.")
         
         # Clamp limit
         limit = min(limit, MAX_LINES)
@@ -583,6 +647,10 @@ class ShellFileOperations(FileOperations):
     
     def _suggest_similar_files(self, path: str) -> ReadResult:
         """Suggest similar files when the requested file is not found."""
+        deny_reason = _get_read_deny_reason(path, self.safe_read_root)
+        if deny_reason:
+            return ReadResult(error=f"Read denied: '{path}' is {deny_reason}.")
+
         dir_path = os.path.dirname(path) or "."
         filename = os.path.basename(path)
         basename_no_ext = os.path.splitext(filename)[0]
@@ -640,6 +708,9 @@ class ShellFileOperations(FileOperations):
         Uses cat so the full file is returned regardless of size.
         """
         path = self._expand_path(path)
+        deny_reason = _get_read_deny_reason(path, self.safe_read_root)
+        if deny_reason:
+            return ReadResult(error=f"Read denied: '{path}' is {deny_reason}.")
         stat_cmd = f"wc -c < {self._escape_shell_arg(path)} 2>/dev/null"
         stat_result = self._exec(stat_cmd)
         if stat_result.exit_code != 0:
@@ -664,8 +735,9 @@ class ShellFileOperations(FileOperations):
     def delete_file(self, path: str) -> WriteResult:
         """Delete a file via rm."""
         path = self._expand_path(path)
-        if _is_write_denied(path):
-            return WriteResult(error=f"Delete denied: {path} is a protected path")
+        deny_reason = _get_write_deny_reason(path, self.safe_write_root)
+        if deny_reason:
+            return WriteResult(error=f"Delete denied: '{path}' is {deny_reason}.")
         result = self._exec(f"rm -f {self._escape_shell_arg(path)}")
         if result.exit_code != 0:
             return WriteResult(error=f"Failed to delete {path}: {result.stdout}")
@@ -676,8 +748,9 @@ class ShellFileOperations(FileOperations):
         src = self._expand_path(src)
         dst = self._expand_path(dst)
         for p in (src, dst):
-            if _is_write_denied(p):
-                return WriteResult(error=f"Move denied: {p} is a protected path")
+            deny_reason = _get_write_deny_reason(p, self.safe_write_root)
+            if deny_reason:
+                return WriteResult(error=f"Move denied: '{p}' is {deny_reason}.")
         result = self._exec(
             f"mv {self._escape_shell_arg(src)} {self._escape_shell_arg(dst)}"
         )
@@ -708,8 +781,9 @@ class ShellFileOperations(FileOperations):
         path = self._expand_path(path)
 
         # Block writes to sensitive paths
-        if _is_write_denied(path):
-            return WriteResult(error=f"Write denied: '{path}' is a protected system/credential file.")
+        deny_reason = _get_write_deny_reason(path, self.safe_write_root)
+        if deny_reason:
+            return WriteResult(error=f"Write denied: '{path}' is {deny_reason}.")
 
         # Create parent directories
         parent = os.path.dirname(path)
@@ -765,8 +839,9 @@ class ShellFileOperations(FileOperations):
         path = self._expand_path(path)
 
         # Block writes to sensitive paths
-        if _is_write_denied(path):
-            return PatchResult(error=f"Write denied: '{path}' is a protected system/credential file.")
+        deny_reason = _get_write_deny_reason(path, self.safe_write_root)
+        if deny_reason:
+            return PatchResult(error=f"Write denied: '{path}' is {deny_reason}.")
 
         # Read current content
         read_cmd = f"cat {self._escape_shell_arg(path)} 2>/dev/null"
@@ -895,6 +970,10 @@ class ShellFileOperations(FileOperations):
         """
         # Expand ~ and other shell paths
         path = self._expand_path(path)
+
+        deny_reason = _get_read_deny_reason(path, self.safe_read_root)
+        if deny_reason:
+            return SearchResult(error=f"Search denied: '{path}' is {deny_reason}.", total_count=0)
         
         # Validate that the path exists before searching
         check = self._exec(f"test -e {self._escape_shell_arg(path)} && echo exists || echo not_found")
@@ -993,6 +1072,10 @@ class ShellFileOperations(FileOperations):
         default, and uses parallel directory traversal for ~200x speedup
         over find on wide trees.  Results are sorted by modification time
         (most recently edited first) when rg >= 13.0 supports --sortr.
+
+        When a safe_read_root sandbox is configured (typical for agent
+        sessions), we add --no-ignore so that runtime artifacts under
+        gitignored directories (sessions/, uploads/, runs/) are visible.
         """
         # rg --files -g uses glob patterns; wrap bare names so they match
         # at any depth (equivalent to find -name).
@@ -1002,9 +1085,12 @@ class ShellFileOperations(FileOperations):
             glob_pattern = pattern
 
         fetch_limit = limit + offset
+        # When operating inside a sandboxed task root, skip .gitignore so
+        # runtime artifacts (sessions/, uploads/, runs/) are discoverable.
+        ignore_flag = " --no-ignore" if self.safe_read_root else ""
         # Try mtime-sorted first (rg 13+); fall back to unsorted if not supported.
         cmd_sorted = (
-            f"rg --files --sortr=modified -g {self._escape_shell_arg(glob_pattern)} "
+            f"rg --files{ignore_flag} --sortr=modified -g {self._escape_shell_arg(glob_pattern)} "
             f"{self._escape_shell_arg(path)} 2>/dev/null "
             f"| head -n {fetch_limit}"
         )
@@ -1014,7 +1100,7 @@ class ShellFileOperations(FileOperations):
         if not all_files:
             # --sortr may have failed on older rg; retry without it.
             cmd_plain = (
-                f"rg --files -g {self._escape_shell_arg(glob_pattern)} "
+                f"rg --files{ignore_flag} -g {self._escape_shell_arg(glob_pattern)} "
                 f"{self._escape_shell_arg(path)} 2>/dev/null "
                 f"| head -n {fetch_limit}"
             )
@@ -1050,6 +1136,11 @@ class ShellFileOperations(FileOperations):
                         limit: int, offset: int, output_mode: str, context: int) -> SearchResult:
         """Search using ripgrep."""
         cmd_parts = ["rg", "--line-number", "--no-heading", "--with-filename"]
+
+        # Inside a sandboxed task root, skip .gitignore so runtime artifacts
+        # (sessions/, uploads/, runs/) are searchable.
+        if self.safe_read_root:
+            cmd_parts.append("--no-ignore")
         
         # Add context if requested
         if context > 0:

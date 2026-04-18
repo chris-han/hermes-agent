@@ -41,6 +41,7 @@ import threading
 import atexit
 import shutil
 import subprocess
+import shlex
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
@@ -173,6 +174,263 @@ def _validate_workdir(workdir: str) -> str | None:
                     "Use a simple filesystem path without shell metacharacters."
                 )
         return "Blocked: workdir contains disallowed characters."
+    return None
+
+
+def _resolve_safe_write_root(task_id: str, cwd: str) -> str | None:
+    """Return the task-scoped safe write root, if configured."""
+    overrides = _task_env_overrides.get(task_id, {})
+    raw = overrides.get("safe_write_root") or os.getenv("HERMES_WRITE_SAFE_ROOT", "")
+    if not raw:
+        return None
+    try:
+        return os.path.realpath(os.path.expanduser(raw))
+    except Exception:
+        return None
+
+
+def _resolve_safe_read_root(task_id: str, cwd: str) -> str | None:
+    """Return the task-scoped safe read root, defaulting to the write root."""
+    overrides = _task_env_overrides.get(task_id, {})
+    raw = (
+        overrides.get("safe_read_root")
+        or overrides.get("safe_write_root")
+        or os.getenv("HERMES_READ_SAFE_ROOT", "")
+    )
+    if not raw:
+        return None
+    try:
+        return os.path.realpath(os.path.expanduser(raw))
+    except Exception:
+        return None
+
+
+def _resolve_display_root(task_id: str, key: str) -> str | None:
+    """Return the task-scoped display alias for a sandbox root, if configured."""
+    raw = _task_env_overrides.get(task_id, {}).get(key)
+    if not raw:
+        return None
+    value = str(raw).strip()
+    return value or None
+
+
+def _build_display_path_mappings(task_id: str, anchor_cwd: str) -> list[tuple[str, str]]:
+    """Return actual-to-display root mappings for terminal-visible paths."""
+    overrides = _task_env_overrides.get(task_id, {})
+    raw_cwd = overrides.get("cwd") or anchor_cwd
+    try:
+        actual_cwd = os.path.realpath(os.path.expanduser(str(raw_cwd))) if raw_cwd else None
+    except Exception:
+        actual_cwd = None
+
+    candidates = [
+        (actual_cwd, _resolve_display_root(task_id, "display_cwd")),
+        (_resolve_safe_write_root(task_id, anchor_cwd), _resolve_display_root(task_id, "display_safe_write_root")),
+        (_resolve_safe_read_root(task_id, anchor_cwd), _resolve_display_root(task_id, "display_safe_read_root")),
+    ]
+
+    mappings: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for actual_root, display_root in sorted(
+        ((actual_root, display_root) for actual_root, display_root in candidates if actual_root and display_root),
+        key=lambda item: len(item[0]),
+        reverse=True,
+    ):
+        if actual_root in seen:
+            continue
+        seen.add(actual_root)
+        mappings.append((actual_root, str(display_root).rstrip("/")))
+    return mappings
+
+
+def _display_path(path: str, task_id: str, anchor_cwd: str) -> str:
+    """Render a host path through any configured display aliases."""
+    try:
+        resolved = os.path.realpath(os.path.expanduser(path))
+    except Exception:
+        return path
+
+    for actual_root, display_root in _build_display_path_mappings(task_id, anchor_cwd):
+        if resolved == actual_root:
+            return display_root or "/"
+        prefix = actual_root + os.sep
+        if resolved.startswith(prefix):
+            suffix = resolved[len(prefix):].replace(os.sep, "/")
+            return f"{display_root}/{suffix}" if suffix else display_root
+    return resolved
+
+
+def _rewrite_visible_paths(text: str, task_id: str, anchor_cwd: str) -> str:
+    """Rewrite host paths in terminal-visible text to their virtual aliases."""
+    if not text:
+        return text
+
+    rewritten = text
+    for actual_root, display_root in _build_display_path_mappings(task_id, anchor_cwd):
+        rewritten = rewritten.replace(actual_root, display_root)
+    return rewritten
+
+
+def _resolve_virtual_task_path(target: str, task_id: str, anchor_cwd: str) -> str:
+    """Map a visible task path like `/workspace/run` back to its actual root."""
+    stripped = target.strip()
+    if ((stripped.startswith("'") and stripped.endswith("'"))
+            or (stripped.startswith('"') and stripped.endswith('"'))):
+        stripped = stripped[1:-1]
+
+    expanded = os.path.expanduser(stripped)
+    if not os.path.isabs(expanded):
+        return expanded
+
+    normalized = expanded.rstrip("/") or "/"
+    for actual_root, display_root in _build_display_path_mappings(task_id, anchor_cwd):
+        display_normalized = str(display_root).rstrip("/") or "/"
+        if normalized == display_normalized:
+            return actual_root or "/"
+        prefix = display_normalized + "/"
+        if normalized.startswith(prefix):
+            suffix = normalized[len(prefix):].lstrip("/")
+            return os.path.join(actual_root, suffix) if suffix else actual_root
+
+    return expanded
+
+
+def _resolve_command_path(target: str, task_id: str, anchor_cwd: str) -> str:
+    """Resolve a shell path token against the registered cwd anchor."""
+    expanded = _resolve_virtual_task_path(target, task_id, anchor_cwd)
+    if os.path.isabs(expanded):
+        return os.path.realpath(expanded)
+    return os.path.realpath(os.path.join(anchor_cwd, expanded))
+
+
+def _extract_cd_targets(command: str) -> list[str]:
+    """Return explicit `cd <path>` targets from a shell command string."""
+    targets: list[str] = []
+    sanitized = _strip_heredoc_bodies(command)
+    pattern = re.compile(r"(?:(?<=^)|(?<=[;&\n])|(?<=&&)|(?<=\|\|))\s*cd\s+([^\n;&|]+)")
+    for match in pattern.finditer(sanitized):
+        raw = match.group(1).strip()
+        if not raw:
+            continue
+        try:
+            parts = shlex.split(raw, posix=True)
+        except ValueError:
+            parts = [raw]
+        if parts:
+            targets.append(parts[0])
+    return targets
+
+
+def _extract_explicit_path_targets(command: str) -> list[str]:
+    """Return explicit path arguments embedded in a shell command.
+
+    This intentionally targets obvious filesystem paths such as absolute paths,
+    home-relative paths, and relative traversal paths. It ignores shell
+    redirections like ``2>/dev/null`` so common stderr suppression still works.
+    """
+    sanitized = _strip_heredoc_bodies(command)
+    try:
+        tokens = shlex.split(sanitized, posix=True)
+    except ValueError:
+        tokens = sanitized.split()
+
+    targets: list[str] = []
+    for token in tokens:
+        stripped = token.strip()
+        if not stripped:
+            continue
+        if stripped in {"|", "||", "&&", ";", "&", "(" , ")"}:
+            continue
+        if re.match(r"^\d*(?:>>?|<<?).+", stripped):
+            continue
+        if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://", stripped):
+            continue
+        if stripped.startswith(("/", "~/", "./", "../")) or stripped in {"~", ".", ".."}:
+            targets.append(stripped)
+
+    return targets
+
+
+def _strip_heredoc_bodies(command: str) -> str:
+    """Remove heredoc bodies before shell token inspection.
+
+    Path policy should only inspect the shell syntax layer. When a command uses
+    a heredoc like ``python3 << 'EOF'``, the body is program input, not shell
+    path arguments, and naive tokenization can misclassify arithmetic such as
+    ``0/1e9`` as an absolute path token.
+    """
+    if "<<" not in command:
+        return command
+
+    lines = command.splitlines()
+    sanitized: list[str] = []
+    index = 0
+
+    while index < len(lines):
+        line = lines[index]
+        sanitized.append(line)
+
+        match = re.search(r"<<-?\s*([\"']?)([A-Za-z_][A-Za-z0-9_]*)\1", line)
+        if not match:
+            index += 1
+            continue
+
+        delimiter = match.group(2)
+        index += 1
+        while index < len(lines):
+            current = lines[index]
+            if current.strip() == delimiter:
+                sanitized.append(current)
+                break
+            index += 1
+        index += 1
+
+    return "\n".join(sanitized)
+
+
+def _check_task_path_policy(
+    *,
+    command: str,
+    task_id: str,
+    anchor_cwd: str,
+    workdir: str | None,
+) -> str | None:
+    """Reject explicit cwd escapes outside the task's safe root."""
+    safe_write_root = _resolve_safe_write_root(task_id, anchor_cwd)
+    safe_read_root = _resolve_safe_read_root(task_id, anchor_cwd)
+    if not safe_write_root and not safe_read_root:
+        return None
+
+    def _is_within_root(path: str, root: str) -> bool:
+        resolved = _resolve_command_path(path, task_id, anchor_cwd)
+        return resolved == root or resolved.startswith(root + os.sep)
+
+    if safe_write_root and workdir and not _is_within_root(workdir, safe_write_root):
+        resolved = _resolve_command_path(workdir, task_id, anchor_cwd)
+        return (
+            f"Blocked: workdir escapes the task sandbox. "
+            f"Resolved to '{_display_path(resolved, task_id, anchor_cwd)}', "
+            f"but the allowed root is '{_display_path(safe_write_root, task_id, anchor_cwd)}'."
+        )
+
+    for target in _extract_cd_targets(command):
+        if safe_write_root and not _is_within_root(target, safe_write_root):
+            resolved = _resolve_command_path(target, task_id, anchor_cwd)
+            return (
+                f"Blocked: command changes directory outside the task sandbox. "
+                f"`cd {target}` resolves to '{_display_path(resolved, task_id, anchor_cwd)}', "
+                f"but the allowed root is '{_display_path(safe_write_root, task_id, anchor_cwd)}'."
+            )
+
+    for target in _extract_explicit_path_targets(command):
+        if safe_read_root and not _is_within_root(target, safe_read_root):
+            resolved = _resolve_command_path(target, task_id, anchor_cwd)
+            return (
+                f"Blocked: command references a path outside the task sandbox. "
+                f"'{target}' resolves to '{_display_path(resolved, task_id, anchor_cwd)}', "
+                f"but the allowed root is '{_display_path(safe_read_root, task_id, anchor_cwd)}'."
+            )
+
     return None
 
 
@@ -561,6 +819,11 @@ def register_task_env_overrides(task_id: str, overrides: Dict[str, Any]):
         - modal_image: str -- Path to Dockerfile or Docker Hub image name
         - docker_image: str -- Docker image name
         - cwd: str -- Working directory inside the sandbox
+        - safe_read_root: str -- Root directory that explicit read/search paths must stay under
+        - safe_write_root: str -- Root directory that writes and `cd` targets must stay under
+        - display_cwd: str -- Virtual cwd exposed in terminal output and sandbox messages
+        - display_safe_read_root: str -- Virtual read root exposed in terminal output and sandbox messages
+        - display_safe_write_root: str -- Virtual write root exposed in terminal output and sandbox messages
 
     Args:
         task_id: The rollout's unique task identifier
@@ -1333,6 +1596,25 @@ def terminal_tool(
                     "status": "blocked"
                 }, ensure_ascii=False)
 
+        path_policy_error = _check_task_path_policy(
+            command=command,
+            task_id=effective_task_id,
+            anchor_cwd=cwd,
+            workdir=workdir,
+        )
+        if path_policy_error:
+            logger.warning(
+                "Blocked task sandbox escape for task %s: %s",
+                effective_task_id[:8],
+                _safe_command_preview(command),
+            )
+            return json.dumps({
+                "output": "",
+                "exit_code": -1,
+                "error": path_policy_error,
+                "status": "blocked",
+            }, ensure_ascii=False)
+
         # Prepare command for execution
         pty_disabled_reason = None
         effective_pty = pty
@@ -1441,12 +1723,20 @@ def terminal_tool(
             max_retries = 3
             retry_count = 0
             result = None
-            
+
+            # When no explicit workdir is requested, use the registered task
+            # cwd override (set via register_task_env_overrides) as the anchor
+            # for every call.  This prevents self.cwd drift from persisting
+            # across calls when a command uses an internal `cd` to escape the
+            # task-scoped working directory (e.g. `cd /repo && python script.py`).
+            registered_cwd = cwd  # already resolved from overrides or config above
+            effective_execute_cwd = workdir if workdir else registered_cwd
+
             while retry_count <= max_retries:
                 try:
                     execute_kwargs = {"timeout": effective_timeout}
-                    if workdir:
-                        execute_kwargs["cwd"] = workdir
+                    if effective_execute_cwd:
+                        execute_kwargs["cwd"] = effective_execute_cwd
                     result = env.execute(command, **execute_kwargs)
                 except Exception as e:
                     error_str = str(e).lower()
@@ -1471,7 +1761,11 @@ def terminal_tool(
                     return json.dumps({
                         "output": "",
                         "exit_code": -1,
-                        "error": f"Command execution failed: {type(e).__name__}: {str(e)}"
+                        "error": _rewrite_visible_paths(
+                            f"Command execution failed: {type(e).__name__}: {str(e)}",
+                            effective_task_id,
+                            cwd,
+                        )
                     }, ensure_ascii=False)
                 
                 # Got a result
@@ -1504,6 +1798,7 @@ def terminal_tool(
             # Redact secrets from command output (catches env/printenv leaking keys)
             from agent.redact import redact_sensitive_text
             output = redact_sensitive_text(output.strip()) if output else ""
+            output = _rewrite_visible_paths(output, effective_task_id, cwd)
 
             # Interpret non-zero exit codes that aren't real errors
             # (e.g. grep=1 means "no matches", diff=1 means "files differ")
@@ -1525,10 +1820,12 @@ def terminal_tool(
         import traceback
         tb_str = traceback.format_exc()
         logger.error("terminal_tool exception:\n%s", tb_str)
+        error_task_id = locals().get("effective_task_id", "default")
+        error_cwd = locals().get("cwd", os.getcwd())
         return json.dumps({
             "output": "",
             "exit_code": -1,
-            "error": f"Failed to execute command: {str(e)}",
+            "error": _rewrite_visible_paths(f"Failed to execute command: {str(e)}", error_task_id, error_cwd),
             "traceback": tb_str,
             "status": "error"
         }, ensure_ascii=False)

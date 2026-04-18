@@ -15,10 +15,12 @@ import os
 import struct
 import subprocess
 import tempfile
+from types import SimpleNamespace
 import threading
 import time
 from collections import defaultdict
 from typing import Callable, Dict, Optional, Any
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -109,12 +111,97 @@ def _build_allowed_mentions():
             return default
         return raw in ("true", "1", "yes", "on")
 
-    return discord.AllowedMentions(
-        everyone=_b("DISCORD_ALLOW_MENTION_EVERYONE", False),
-        roles=_b("DISCORD_ALLOW_MENTION_ROLES", False),
-        users=_b("DISCORD_ALLOW_MENTION_USERS", True),
-        replied_user=_b("DISCORD_ALLOW_MENTION_REPLIED_USER", True),
+    everyone = _b("DISCORD_ALLOW_MENTION_EVERYONE", False)
+    roles = _b("DISCORD_ALLOW_MENTION_ROLES", False)
+    users = _b("DISCORD_ALLOW_MENTION_USERS", True)
+    replied_user = _b("DISCORD_ALLOW_MENTION_REPLIED_USER", True)
+
+    mentions = discord.AllowedMentions(
+        everyone=everyone,
+        roles=roles,
+        users=users,
+        replied_user=replied_user,
     )
+
+    # Test doubles and some third-party discord mocks ignore constructor
+    # kwargs and return a generic mock object. Reassign the flags on the
+    # created instance so callers always observe the effective policy.
+    mentions.everyone = everyone
+    mentions.roles = roles
+    mentions.users = users
+    mentions.replied_user = replied_user
+    return mentions
+
+
+def _looks_like_discord_instance(obj: Any, class_name: str) -> bool:
+    """Return True when *obj* appears to be an instance of a Discord class.
+
+    Test suites in this repo replace the ``discord`` module with different
+    stand-ins across files, so strict ``isinstance(..., discord.X)`` checks
+    can fail even when the object is clearly modeling that Discord type.
+    """
+    obj_type = type(obj)
+    for candidate in obj_type.__mro__:
+        if getattr(candidate, "__name__", "") == class_name:
+            return True
+    return False
+
+
+def _is_discord_thread_channel(channel: Any) -> bool:
+    if channel is None:
+        return False
+    thread_cls = getattr(discord, "Thread", None)
+    if isinstance(thread_cls, type) and isinstance(channel, thread_cls):
+        return True
+    if _looks_like_discord_instance(channel, "Thread"):
+        return True
+    channel_type = getattr(channel, "type", None)
+    if channel_type is not None:
+        type_value = getattr(channel_type, "value", channel_type)
+        if type_value in {10, 11, 12}:
+            return True
+    return False
+
+
+def _make_app_command(name: str, description: str, callback: Callable[..., Any]) -> Any:
+    """Build a Discord app command or a lightweight fallback for tests."""
+    app_commands = getattr(discord, "app_commands", None)
+    command_cls = getattr(app_commands, "Command", None) if app_commands is not None else None
+    if callable(command_cls):
+        return command_cls(name=name, description=description, callback=callback)
+    return SimpleNamespace(
+        name=name,
+        description=description,
+        callback=callback,
+    )
+
+
+def _decorate_app_command(fn: Callable[..., Any], decorator_name: str, **kwargs: Any) -> Callable[..., Any]:
+    """Apply a Discord app_commands decorator when available, otherwise no-op."""
+    app_commands = getattr(discord, "app_commands", None)
+    decorator = getattr(app_commands, decorator_name, None) if app_commands is not None else None
+    if callable(decorator):
+        return decorator(**kwargs)(fn)
+    return fn
+
+
+def _is_trusted_discord_attachment_url(url: str) -> bool:
+    """Allow known Discord attachment/CDN hosts for authenticated gateway media."""
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+    if parsed.scheme != "https":
+        return False
+    host = (parsed.hostname or "").lower()
+    if host not in {
+        "cdn.discordapp.com",
+        "media.discordapp.net",
+        "images-ext-1.discordapp.net",
+        "images-ext-2.discordapp.net",
+    }:
+        return False
+    return parsed.path.startswith("/attachments/")
 
 
 class VoiceReceiver:
@@ -2121,13 +2208,16 @@ class DiscordAdapter(BasePlatformAdapter):
                     # Command takes optional arguments — create handler with
                     # an optional ``args`` string parameter.
                     def _make_args_handler(_name: str, _hint: str):
-                        @discord.app_commands.describe(args=f"Arguments: {_hint}"[:100])
                         async def _handler(interaction: discord.Interaction, args: str = ""):
                             await self._run_simple_slash(
                                 interaction, f"/{_name} {args}".strip()
                             )
                         _handler.__name__ = f"auto_slash_{_name.replace('-', '_')}"
-                        return _handler
+                        return _decorate_app_command(
+                            _handler,
+                            "describe",
+                            args=f"Arguments: {_hint}"[:100],
+                        )
 
                     handler = _make_args_handler(cmd_def.name, cmd_def.args_hint)
                 else:
@@ -2140,7 +2230,7 @@ class DiscordAdapter(BasePlatformAdapter):
 
                     handler = _make_simple_handler(cmd_def.name)
 
-                auto_cmd = discord.app_commands.Command(
+                auto_cmd = _make_app_command(
                     name=discord_name,
                     description=desc,
                     callback=handler,
@@ -2245,11 +2335,6 @@ class DiscordAdapter(BasePlatformAdapter):
                             break
                 return choices
 
-            @discord.app_commands.describe(
-                name="Which skill to run",
-                args="Optional arguments for the skill",
-            )
-            @discord.app_commands.autocomplete(name=_autocomplete_name)
             async def _skill_handler(
                 interaction: "discord.Interaction", name: str, args: str = "",
             ):
@@ -2266,7 +2351,19 @@ class DiscordAdapter(BasePlatformAdapter):
                     interaction, f"{cmd_key} {args}".strip()
                 )
 
-            cmd = discord.app_commands.Command(
+            _skill_handler = _decorate_app_command(
+                _skill_handler,
+                "describe",
+                name="Which skill to run",
+                args="Optional arguments for the skill",
+            )
+            _skill_handler = _decorate_app_command(
+                _skill_handler,
+                "autocomplete",
+                name=_autocomplete_name,
+            )
+
+            cmd = _make_app_command(
                 name="skill",
                 description="Run a Hermes skill",
                 callback=_skill_handler,
@@ -2287,8 +2384,8 @@ class DiscordAdapter(BasePlatformAdapter):
 
     def _build_slash_event(self, interaction: discord.Interaction, text: str) -> MessageEvent:
         """Build a MessageEvent from a Discord slash command interaction."""
-        is_dm = isinstance(interaction.channel, discord.DMChannel)
-        is_thread = isinstance(interaction.channel, discord.Thread)
+        is_dm = self._is_dm_channel(interaction.channel)
+        is_thread = _is_discord_thread_channel(interaction.channel)
         thread_id = None
 
         if is_dm:
@@ -2751,12 +2848,30 @@ class DiscordAdapter(BasePlatformAdapter):
         if channel is None:
             return False
         forum_cls = getattr(discord, "ForumChannel", None)
-        if forum_cls and isinstance(channel, forum_cls):
+        if isinstance(forum_cls, type) and isinstance(channel, forum_cls):
+            return True
+        if _looks_like_discord_instance(channel, "ForumChannel"):
             return True
         channel_type = getattr(channel, "type", None)
         if channel_type is not None:
             type_value = getattr(channel_type, "value", channel_type)
             if type_value == 15:
+                return True
+        return False
+
+    def _is_dm_channel(self, channel: Any) -> bool:
+        """Best-effort check for Discord DM channels across real and mocked libs."""
+        if channel is None:
+            return False
+        dm_cls = getattr(discord, "DMChannel", None)
+        if isinstance(dm_cls, type) and isinstance(channel, dm_cls):
+            return True
+        if _looks_like_discord_instance(channel, "DMChannel"):
+            return True
+        channel_type = getattr(channel, "type", None)
+        if channel_type is not None:
+            type_value = getattr(channel_type, "value", channel_type)
+            if type_value == 1:
                 return True
         return False
 
@@ -2869,7 +2984,13 @@ class DiscordAdapter(BasePlatformAdapter):
                 )
         return await cache_audio_from_url(att.url, ext=ext)
 
-    async def _cache_discord_document(self, att, ext: str) -> bytes:
+    async def _cache_discord_document(
+        self,
+        att,
+        ext: str,
+        *,
+        allow_trusted_discord_url: bool = False,
+    ) -> bytes:
         """Download a Discord document attachment and return the raw bytes.
 
         Primary path: ``att.read()`` (authenticated, no SSRF gate).
@@ -2885,7 +3006,13 @@ class DiscordAdapter(BasePlatformAdapter):
             return raw_bytes
 
         # Fallback: SSRF-gated URL download.
-        if not is_safe_url(att.url):
+        # Keep the low-level helper strict by default. Callers that are
+        # handling authenticated Discord attachment objects can explicitly
+        # allow trusted Discord CDN/media hosts to bypass false positives
+        # from generic SSRF resolution in some environments.
+        if not is_safe_url(att.url) and not (
+            allow_trusted_discord_url and _is_trusted_discord_attachment_url(att.url)
+        ):
             raise ValueError(
                 f"Blocked unsafe attachment URL (SSRF protection): {att.url}"
             )
@@ -2919,13 +3046,14 @@ class DiscordAdapter(BasePlatformAdapter):
 
         thread_id = None
         parent_channel_id = None
-        is_thread = isinstance(message.channel, discord.Thread)
+        is_thread = _is_discord_thread_channel(message.channel)
+        is_dm_channel = self._is_dm_channel(message.channel)
         if is_thread:
             thread_id = str(message.channel.id)
             parent_channel_id = self._get_parent_channel_id(message.channel)
 
         is_voice_linked_channel = False
-        if not isinstance(message.channel, discord.DMChannel):
+        if not is_dm_channel:
             channel_ids = {str(message.channel.id)}
             if parent_channel_id:
                 channel_ids.add(parent_channel_id)
@@ -2974,7 +3102,7 @@ class DiscordAdapter(BasePlatformAdapter):
         # Messages already inside threads or DMs are unaffected.
         # no_thread_channels: channels where bot responds directly without thread.
         auto_threaded_channel = None
-        if not is_thread and not isinstance(message.channel, discord.DMChannel):
+        if not is_thread and not is_dm_channel:
             no_thread_channels_raw = os.getenv("DISCORD_NO_THREAD_CHANNELS", "")
             no_thread_channels = {ch.strip() for ch in no_thread_channels_raw.split(",") if ch.strip()}
             skip_thread = bool(channel_ids & no_thread_channels) or is_free_channel
@@ -3015,7 +3143,7 @@ class DiscordAdapter(BasePlatformAdapter):
         effective_channel = auto_threaded_channel or message.channel
 
         # Determine chat type
-        if isinstance(message.channel, discord.DMChannel):
+        if is_dm_channel:
             chat_type = "dm"
             chat_name = message.author.name
         elif is_thread:
@@ -3102,7 +3230,11 @@ class DiscordAdapter(BasePlatformAdapter):
                         )
                     else:
                         try:
-                            raw_bytes = await self._cache_discord_document(att, ext)
+                            raw_bytes = await self._cache_discord_document(
+                                att,
+                                ext,
+                                allow_trusted_discord_url=True,
+                            )
                             cached_path = cache_document_from_bytes(
                                 raw_bytes, att.filename or f"document{ext}"
                             )

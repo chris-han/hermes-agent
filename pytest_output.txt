@@ -1,0 +1,674 @@
+........................................................................ [  0%]
+........................................................................ [  1%]
+........................................................................ [  1%]
+........................................................................ [  2%]
+........................................................................ [  2%]
+........................................................................ [  3%]
+........................................................................ [  3%]
+........................................................................ [  4%]
+........................................................................ [  4%]
+........................................................................ [  5%]
+........................................................................ [  6%]
+........................................................................ [  6%]
+........................................................................ [  7%]
+........................................................................ [  7%]
+........................................................................ [  8%]
+........................................................................ [  8%]
+........................................................................ [  9%]
+........................................................................ [  9%]
+........................................................................ [ 10%]
+........................................................................ [ 11%]
+........................................................................ [ 11%]
+........................................................................ [ 12%]
+........................................................................ [ 12%]
+........................................................................ [ 13%]
+........................................................................ [ 13%]
+........................................................................ [ 14%]
+........................................................................ [ 14%]
+........................................................................ [ 15%]
+..................................................................s..s.. [ 16%]
+....s........................s.......................................... [ 16%]
+........................................................................ [ 17%]
+........................................................................ [ 17%]
+........................................................................ [ 18%]
+........................................................................ [ 18%]
+........................................................................ [ 19%]
+........................................................................ [ 19%]
+........................................................................ [ 20%]
+........................................................................ [ 21%]
+........................................................................ [ 21%]
+........................................................................ [ 22%]
+........................................................................ [ 22%]
+FFFFF....F...FFFF.....FFF......F..........F.F.FFFF
+=================================== FAILURES ===================================
+_________________ TestReplyToText.test_no_reference_both_none __________________
+
+self = <tests.gateway.test_discord_reply_mode.TestReplyToText object at 0x7fdf8a638620>
+reply_text_adapter = <gateway.platforms.discord.DiscordAdapter object at 0x7fdf7587a300>
+
+    @pytest.mark.asyncio
+    async def test_no_reference_both_none(self, reply_text_adapter):
+        message = _make_message(reference=None)
+    
+        await reply_text_adapter._handle_message(message)
+    
+>       event = reply_text_adapter.handle_message.await_args.args[0]
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'NoneType' object has no attribute 'args'
+
+tests/gateway/test_discord_reply_mode.py:347: AttributeError
+_______________ TestReplyToText.test_reference_without_resolved ________________
+
+self = <tests.gateway.test_discord_reply_mode.TestReplyToText object at 0x7fdf8a6389e0>
+reply_text_adapter = <gateway.platforms.discord.DiscordAdapter object at 0x7fdf7587bbc0>
+
+    @pytest.mark.asyncio
+    async def test_reference_without_resolved(self, reply_text_adapter):
+        ref = SimpleNamespace(message_id=555, resolved=None)
+        message = _make_message(reference=ref)
+    
+        await reply_text_adapter._handle_message(message)
+    
+>       event = reply_text_adapter.handle_message.await_args.args[0]
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'NoneType' object has no attribute 'args'
+
+tests/gateway/test_discord_reply_mode.py:358: AttributeError
+_____________ TestReplyToText.test_reference_with_resolved_content _____________
+
+self = <tests.gateway.test_discord_reply_mode.TestReplyToText object at 0x7fdf8a638ec0>
+reply_text_adapter = <gateway.platforms.discord.DiscordAdapter object at 0x7fdf7597d580>
+
+    @pytest.mark.asyncio
+    async def test_reference_with_resolved_content(self, reply_text_adapter):
+        resolved_msg = SimpleNamespace(content="original message text")
+        ref = SimpleNamespace(message_id=555, resolved=resolved_msg)
+        message = _make_message(reference=ref)
+    
+        await reply_text_adapter._handle_message(message)
+    
+>       event = reply_text_adapter.handle_message.await_args.args[0]
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'NoneType' object has no attribute 'args'
+
+tests/gateway/test_discord_reply_mode.py:370: AttributeError
+__________ TestReplyToText.test_reference_with_empty_resolved_content __________
+
+self = <tests.gateway.test_discord_reply_mode.TestReplyToText object at 0x7fdf8a6393a0>
+reply_text_adapter = <gateway.platforms.discord.DiscordAdapter object at 0x7fdf7597f8c0>
+
+    @pytest.mark.asyncio
+    async def test_reference_with_empty_resolved_content(self, reply_text_adapter):
+        """Empty string content should become None, not leak as empty string."""
+        resolved_msg = SimpleNamespace(content="")
+        ref = SimpleNamespace(message_id=555, resolved=resolved_msg)
+        message = _make_message(reference=ref)
+    
+        await reply_text_adapter._handle_message(message)
+    
+>       event = reply_text_adapter.handle_message.await_args.args[0]
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'NoneType' object has no attribute 'args'
+
+tests/gateway/test_discord_reply_mode.py:383: AttributeError
+_____________ TestReplyToText.test_reference_with_deleted_message ______________
+
+self = <tests.gateway.test_discord_reply_mode.TestReplyToText object at 0x7fdf8a639880>
+reply_text_adapter = <gateway.platforms.discord.DiscordAdapter object at 0x7fdf7597e240>
+
+    @pytest.mark.asyncio
+    async def test_reference_with_deleted_message(self, reply_text_adapter):
+        """Deleted messages lack .content — getattr guard should return None."""
+        resolved_deleted = SimpleNamespace(id=555)
+        ref = SimpleNamespace(message_id=555, resolved=resolved_deleted)
+        message = _make_message(reference=ref)
+    
+        await reply_text_adapter._handle_message(message)
+    
+>       event = reply_text_adapter.handle_message.await_args.args[0]
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'NoneType' object has no attribute 'args'
+
+tests/gateway/test_discord_reply_mode.py:396: AttributeError
+_____________ TestIsForumParent.test_forum_channel_class_instance ______________
+
+self = <tests.gateway.test_discord_send.TestIsForumParent object at 0x7fdf8a6576e0>
+
+    def test_forum_channel_class_instance(self):
+        adapter = DiscordAdapter(PlatformConfig(enabled=True, token="***"))
+        forum_cls = getattr(_discord_mod, "ForumChannel", None)
+        if forum_cls is None:
+            # Re-create a type for the mock
+            forum_cls = type("ForumChannel", (), {})
+            _discord_mod.ForumChannel = forum_cls
+        ch = forum_cls()
+>       assert adapter._is_forum_parent(ch) is True
+E       assert False is True
+E        +  where False = _is_forum_parent(<tests.gateway.conftest.ForumChannel object at 0x7fdf7587bf80>)
+E        +    where _is_forum_parent = <gateway.platforms.discord.DiscordAdapter object at 0x7fdf75879be0>._is_forum_parent
+
+tests/gateway/test_discord_send.py:182: AssertionError
+____________________ test_send_to_forum_creates_thread_post ____________________
+
+    @pytest.mark.asyncio
+    async def test_send_to_forum_creates_thread_post():
+        adapter = DiscordAdapter(PlatformConfig(enabled=True, token="***"))
+    
+        # thread object has no 'send' so _send_to_forum uses thread.thread
+        thread_ch = SimpleNamespace(id=555, send=AsyncMock(return_value=SimpleNamespace(id=600)))
+        thread = SimpleNamespace(
+            id=555,
+            message=SimpleNamespace(id=500),
+            thread=thread_ch,
+        )
+        forum_channel = _discord_mod.ForumChannel()
+        forum_channel.id = 999
+        forum_channel.name = "ideas"
+        forum_channel.create_thread = AsyncMock(return_value=thread)
+        adapter._client = SimpleNamespace(
+            get_channel=lambda _chat_id: forum_channel,
+            fetch_channel=AsyncMock(),
+        )
+    
+        result = await adapter.send("999", "Hello forum!")
+    
+>       assert result.success is True
+E       assert False is True
+E        +  where False = SendResult(success=False, message_id=None, error="'ForumChannel' object has no attribute 'send'", raw_response=None, retryable=False).success
+
+tests/gateway/test_discord_send.py:222: AssertionError
+------------------------------ Captured log call -------------------------------
+ERROR    gateway.platforms.discord:discord.py:966 [Discord] Failed to send Discord message: 'ForumChannel' object has no attribute 'send'
+Traceback (most recent call last):
+  File "/home/chris/repo/Vibe-Trading/hermes-agent/gateway/platforms/discord.py", line 929, in send
+    msg = await channel.send(
+                ^^^^^^^^^^^^
+AttributeError: 'ForumChannel' object has no attribute 'send'
+__________________ test_send_to_forum_sends_remaining_chunks ___________________
+
+    @pytest.mark.asyncio
+    async def test_send_to_forum_sends_remaining_chunks():
+        adapter = DiscordAdapter(PlatformConfig(enabled=True, token="***"))
+        # Force a small max message length so the message splits
+        adapter.MAX_MESSAGE_LENGTH = 20
+    
+        chunk_msg_1 = SimpleNamespace(id=500)
+        chunk_msg_2 = SimpleNamespace(id=501)
+        thread_ch = SimpleNamespace(
+            id=555,
+            send=AsyncMock(return_value=chunk_msg_2),
+        )
+        # thread object has no 'send' so _send_to_forum uses thread.thread
+        thread = SimpleNamespace(
+            id=555,
+            message=chunk_msg_1,
+            thread=thread_ch,
+        )
+        forum_channel = _discord_mod.ForumChannel()
+        forum_channel.id = 999
+        forum_channel.name = "ideas"
+        forum_channel.create_thread = AsyncMock(return_value=thread)
+        adapter._client = SimpleNamespace(
+            get_channel=lambda _chat_id: forum_channel,
+            fetch_channel=AsyncMock(),
+        )
+    
+        result = await adapter.send("999", "A" * 50)
+    
+>       assert result.success is True
+E       assert False is True
+E        +  where False = SendResult(success=False, message_id=None, error="'ForumChannel' object has no attribute 'send'", raw_response=None, retryable=False).success
+
+tests/gateway/test_discord_send.py:256: AssertionError
+------------------------------ Captured log call -------------------------------
+ERROR    gateway.platforms.discord:discord.py:966 [Discord] Failed to send Discord message: 'ForumChannel' object has no attribute 'send'
+Traceback (most recent call last):
+  File "/home/chris/repo/Vibe-Trading/hermes-agent/gateway/platforms/discord.py", line 929, in send
+    msg = await channel.send(
+                ^^^^^^^^^^^^
+AttributeError: 'ForumChannel' object has no attribute 'send'
+___________________ test_send_to_forum_create_thread_failure ___________________
+
+    @pytest.mark.asyncio
+    async def test_send_to_forum_create_thread_failure():
+        adapter = DiscordAdapter(PlatformConfig(enabled=True, token="***"))
+    
+        forum_channel = _discord_mod.ForumChannel()
+        forum_channel.id = 999
+        forum_channel.name = "ideas"
+        forum_channel.create_thread = AsyncMock(side_effect=Exception("rate limited"))
+        adapter._client = SimpleNamespace(
+            get_channel=lambda _chat_id: forum_channel,
+            fetch_channel=AsyncMock(),
+        )
+    
+        result = await adapter.send("999", "Hello forum!")
+    
+        assert result.success is False
+>       assert "rate limited" in result.error
+E       assert 'rate limited' in "'ForumChannel' object has no attribute 'send'"
+E        +  where "'ForumChannel' object has no attribute 'send'" = SendResult(success=False, message_id=None, error="'ForumChannel' object has no attribute 'send'", raw_response=None, retryable=False).error
+
+tests/gateway/test_discord_send.py:278: AssertionError
+------------------------------ Captured log call -------------------------------
+ERROR    gateway.platforms.discord:discord.py:966 [Discord] Failed to send Discord message: 'ForumChannel' object has no attribute 'send'
+Traceback (most recent call last):
+  File "/home/chris/repo/Vibe-Trading/hermes-agent/gateway/platforms/discord.py", line 929, in send
+    msg = await channel.send(
+                ^^^^^^^^^^^^
+AttributeError: 'ForumChannel' object has no attribute 'send'
+______ test_send_to_forum_follow_up_chunk_failures_collected_as_warnings _______
+
+    @pytest.mark.asyncio
+    async def test_send_to_forum_follow_up_chunk_failures_collected_as_warnings():
+        """Partial-send chunk failures surface in raw_response['warnings']."""
+        adapter = DiscordAdapter(PlatformConfig(enabled=True, token="***"))
+        adapter.MAX_MESSAGE_LENGTH = 20
+    
+        chunk_msg_1 = SimpleNamespace(id=500)
+        # Every follow-up chunk fails — we should collect a warning per failure
+        thread_ch = SimpleNamespace(
+            id=555,
+            send=AsyncMock(side_effect=Exception("rate limited")),
+        )
+        thread = SimpleNamespace(id=555, message=chunk_msg_1, thread=thread_ch)
+        forum_channel = _discord_mod.ForumChannel()
+        forum_channel.id = 999
+        forum_channel.name = "ideas"
+        forum_channel.create_thread = AsyncMock(return_value=thread)
+        adapter._client = SimpleNamespace(
+            get_channel=lambda _chat_id: forum_channel,
+            fetch_channel=AsyncMock(),
+        )
+    
+        # Long enough to produce multiple chunks
+        result = await adapter.send("999", "A" * 60)
+    
+        # Starter message (first chunk) was delivered via create_thread, so send is
+        # successful overall — but follow-up chunks all failed and are reported.
+>       assert result.success is True
+E       assert False is True
+E        +  where False = SendResult(success=False, message_id=None, error="'ForumChannel' object has no attribute 'send'", raw_response=None, retryable=False).success
+
+tests/gateway/test_discord_send.py:314: AssertionError
+------------------------------ Captured log call -------------------------------
+ERROR    gateway.platforms.discord:discord.py:966 [Discord] Failed to send Discord message: 'ForumChannel' object has no attribute 'send'
+Traceback (most recent call last):
+  File "/home/chris/repo/Vibe-Trading/hermes-agent/gateway/platforms/discord.py", line 929, in send
+    msg = await channel.send(
+                ^^^^^^^^^^^^
+AttributeError: 'ForumChannel' object has no attribute 'send'
+_________________ test_auto_registers_missing_gateway_commands _________________
+
+adapter = <gateway.platforms.discord.DiscordAdapter object at 0x7fdf744cfc80>
+
+    @pytest.mark.asyncio
+    async def test_auto_registers_missing_gateway_commands(adapter):
+        """Commands in COMMAND_REGISTRY that aren't explicitly registered should
+        be auto-registered by the dynamic catch-all block."""
+        adapter._run_simple_slash = AsyncMock()
+        adapter._register_slash_commands()
+    
+        tree_names = set(adapter._client.tree.commands.keys())
+    
+        # These commands are gateway-available but were not in the original
+        # hardcoded registration list — they should be auto-registered.
+        expected_auto = {"debug", "yolo", "reload", "profile"}
+        for name in expected_auto:
+>           assert name in tree_names, f"/{name} should be auto-registered on Discord"
+E           AssertionError: /yolo should be auto-registered on Discord
+E           assert 'yolo' in {'approve', 'background', 'btw', 'compress', 'deny', 'help', ...}
+
+tests/gateway/test_discord_slash_commands.py:169: AssertionError
+------------------------------ Captured log call -------------------------------
+WARNING  gateway.platforms.discord:discord.py:2175 Discord auto-register from COMMAND_REGISTRY failed: 'types.SimpleNamespace' object has no attribute 'Command'
+WARNING  gateway.platforms.discord:discord.py:2300 [Discord] Failed to register /skill command: 'types.SimpleNamespace' object has no attribute 'autocomplete'
+______________ test_auto_registered_command_dispatches_correctly _______________
+
+adapter = <gateway.platforms.discord.DiscordAdapter object at 0x7fdf8446aa20>
+
+    @pytest.mark.asyncio
+    async def test_auto_registered_command_dispatches_correctly(adapter):
+        """Auto-registered commands should dispatch via _run_simple_slash."""
+        adapter._run_simple_slash = AsyncMock()
+        adapter._register_slash_commands()
+    
+        # /debug has no args — test parameterless dispatch
+>       debug_cmd = adapter._client.tree.commands["debug"]
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'debug'
+
+tests/gateway/test_discord_slash_commands.py:179: KeyError
+------------------------------ Captured log call -------------------------------
+WARNING  gateway.platforms.discord:discord.py:2175 Discord auto-register from COMMAND_REGISTRY failed: 'types.SimpleNamespace' object has no attribute 'Command'
+WARNING  gateway.platforms.discord:discord.py:2300 [Discord] Failed to register /skill command: 'types.SimpleNamespace' object has no attribute 'autocomplete'
+____________________ test_auto_registered_command_with_args ____________________
+
+adapter = <gateway.platforms.discord.DiscordAdapter object at 0x7fdf7589bf50>
+
+    @pytest.mark.asyncio
+    async def test_auto_registered_command_with_args(adapter):
+        """Auto-registered commands with args_hint should accept an optional args param."""
+        adapter._run_simple_slash = AsyncMock()
+        adapter._register_slash_commands()
+    
+        # /branch has args_hint="[name]" — test dispatch with args
+>       branch_cmd = adapter._client.tree.commands["branch"]
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'branch'
+
+tests/gateway/test_discord_slash_commands.py:193: KeyError
+------------------------------ Captured log call -------------------------------
+WARNING  gateway.platforms.discord:discord.py:2175 Discord auto-register from COMMAND_REGISTRY failed: 'types.SimpleNamespace' object has no attribute 'Command'
+WARNING  gateway.platforms.discord:discord.py:2300 [Discord] Failed to register /skill command: 'types.SimpleNamespace' object has no attribute 'autocomplete'
+_______________ test_build_slash_event_preserves_thread_context ________________
+
+adapter = <gateway.platforms.discord.DiscordAdapter object at 0x7fdf75a07ec0>
+
+    def test_build_slash_event_preserves_thread_context(adapter):
+        interaction = SimpleNamespace(
+            channel=_FakeThreadChannel(channel_id=555, name="Planning"),
+            channel_id=555,
+            user=SimpleNamespace(display_name="Jezza", id=42),
+        )
+    
+        event = adapter._build_slash_event(interaction, "/status")
+    
+        assert event.text == "/status"
+        assert event.source.chat_id == "555"
+>       assert event.source.chat_type == "thread"
+E       AssertionError: assert 'group' == 'thread'
+E         
+E         - thread
+E         + group
+
+tests/gateway/test_discord_slash_commands.py:373: AssertionError
+____________________ test_auto_thread_skips_threads_and_dms ____________________
+
+adapter = <gateway.platforms.discord.DiscordAdapter object at 0x7fdf8449d820>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fdf678435f0>
+
+    @pytest.mark.asyncio
+    async def test_auto_thread_skips_threads_and_dms(adapter, monkeypatch):
+        """Auto-thread should not create threads inside existing threads."""
+        monkeypatch.setenv("DISCORD_AUTO_THREAD", "true")
+        monkeypatch.setenv("DISCORD_REQUIRE_MENTION", "false")
+    
+        adapter._auto_create_thread = AsyncMock()
+    
+        captured_events = []
+    
+        async def capture_handle(event):
+            captured_events.append(event)
+    
+        adapter.handle_message = capture_handle
+    
+        msg = _fake_message(_FakeThreadChannel())
+    
+        await adapter._handle_message(msg)
+    
+>       adapter._auto_create_thread.assert_not_awaited()  # should NOT auto-thread
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/gateway/test_discord_slash_commands.py:652: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <AsyncMock id='140597491103792'>
+
+    def assert_not_awaited(self):
+        """
+        Assert that the mock was never awaited.
+        """
+        if self.await_count != 0:
+            msg = (f"Expected {self._mock_name or 'mock'} to not have been awaited."
+                   f" Awaited {self.await_count} times.")
+>           raise AssertionError(msg)
+E           AssertionError: Expected mock to not have been awaited. Awaited 1 times.
+
+../../../.local/share/uv/python/cpython-3.12.11-linux-x86_64-gnu/lib/python3.12/unittest/mock.py:2429: AssertionError
+________________ test_register_skill_command_is_flat_not_nested ________________
+
+adapter = <gateway.platforms.discord.DiscordAdapter object at 0x7fdf758204d0>
+
+    def test_register_skill_command_is_flat_not_nested(adapter):
+        """_register_skill_group should register a single flat ``/skill`` command.
+    
+        The older layout nested categories as subcommand groups under ``/skill``.
+        That registered as one giant command whose serialized payload exceeded
+        Discord's 8KB per-command limit with the default skill catalog. The
+        flat layout sidesteps the limit — autocomplete options are fetched
+        dynamically by Discord and don't count against the registration budget.
+        """
+        mock_categories = {
+            "creative": [
+                ("ascii-art", "Generate ASCII art", "/ascii-art"),
+                ("excalidraw", "Hand-drawn diagrams", "/excalidraw"),
+            ],
+            "media": [
+                ("gif-search", "Search for GIFs", "/gif-search"),
+            ],
+        }
+        mock_uncategorized = [
+            ("dogfood", "Exploratory QA testing", "/dogfood"),
+        ]
+    
+        with patch(
+            "hermes_cli.commands.discord_skill_commands_by_category",
+            return_value=(mock_categories, mock_uncategorized, 0),
+        ):
+            adapter._register_slash_commands()
+    
+        tree = adapter._client.tree
+>       assert "skill" in tree.commands, "Expected /skill command to be registered"
+E       AssertionError: Expected /skill command to be registered
+E       assert 'skill' in {'approve': <function DiscordAdapter._register_slash_commands.<locals>.slash_approve at 0x7fdf76868fe0>, 'background':...869940>, 'compress': <function DiscordAdapter._register_slash_commands.<locals>.slash_compress at 0x7fdf76868360>, ...}
+E        +  where {'approve': <function DiscordAdapter._register_slash_commands.<locals>.slash_approve at 0x7fdf76868fe0>, 'background':...869940>, 'compress': <function DiscordAdapter._register_slash_commands.<locals>.slash_compress at 0x7fdf76868360>, ...} = <tests.gateway.test_discord_slash_commands.FakeTree object at 0x7fdf75820710>.commands
+
+tests/gateway/test_discord_slash_commands.py:718: AssertionError
+------------------------------ Captured log call -------------------------------
+WARNING  gateway.platforms.discord:discord.py:2175 Discord auto-register from COMMAND_REGISTRY failed: 'types.SimpleNamespace' object has no attribute 'Command'
+WARNING  gateway.platforms.discord:discord.py:2300 [Discord] Failed to register /skill command: 'types.SimpleNamespace' object has no attribute 'autocomplete'
+___________ test_register_skill_command_callback_dispatches_by_name ____________
+
+adapter = <gateway.platforms.discord.DiscordAdapter object at 0x7fdf758f6de0>
+
+    def test_register_skill_command_callback_dispatches_by_name(adapter):
+        """The /skill callback should look up the skill by ``name`` and
+        dispatch via ``_run_simple_slash`` with the real command key.
+        """
+        mock_categories = {
+            "media": [
+                ("gif-search", "Search for GIFs", "/gif-search"),
+            ],
+        }
+        mock_uncategorized = [
+            ("dogfood", "QA testing", "/dogfood"),
+        ]
+    
+        with patch(
+            "hermes_cli.commands.discord_skill_commands_by_category",
+            return_value=(mock_categories, mock_uncategorized, 0),
+        ):
+            adapter._register_slash_commands()
+    
+>       skill_cmd = adapter._client.tree.commands["skill"]
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'skill'
+
+tests/gateway/test_discord_slash_commands.py:758: KeyError
+------------------------------ Captured log call -------------------------------
+WARNING  gateway.platforms.discord:discord.py:2175 Discord auto-register from COMMAND_REGISTRY failed: 'types.SimpleNamespace' object has no attribute 'Command'
+WARNING  gateway.platforms.discord:discord.py:2300 [Discord] Failed to register /skill command: 'types.SimpleNamespace' object has no attribute 'autocomplete'
+_________ test_register_skill_command_handles_unknown_skill_gracefully _________
+
+adapter = <gateway.platforms.discord.DiscordAdapter object at 0x7fdf758f7230>
+
+    def test_register_skill_command_handles_unknown_skill_gracefully(adapter):
+        """Passing a name that isn't a registered skill should respond with
+        an ephemeral error message, NOT crash the callback.
+        """
+        with patch(
+            "hermes_cli.commands.discord_skill_commands_by_category",
+            return_value=({"media": [("gif-search", "GIFs", "/gif-search")]}, [], 0),
+        ):
+            adapter._register_slash_commands()
+    
+>       skill_cmd = adapter._client.tree.commands["skill"]
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'skill'
+
+tests/gateway/test_discord_slash_commands.py:790: KeyError
+------------------------------ Captured log call -------------------------------
+WARNING  gateway.platforms.discord:discord.py:2175 Discord auto-register from COMMAND_REGISTRY failed: 'types.SimpleNamespace' object has no attribute 'Command'
+WARNING  gateway.platforms.discord:discord.py:2300 [Discord] Failed to register /skill command: 'types.SimpleNamespace' object has no attribute 'autocomplete'
+__________ test_register_skill_command_payload_fits_discord_8kb_limit __________
+
+adapter = <gateway.platforms.discord.DiscordAdapter object at 0x7fdf7580d400>
+
+    def test_register_skill_command_payload_fits_discord_8kb_limit(adapter):
+        """The /skill command registration payload must stay under Discord's
+        ~8000-byte per-command limit even with a large skill catalog.
+    
+        This is the regression guard for #11321 / #10259. Simulates 500 skills
+        (20 categories × 25 — the hard cap per category in the collector) and
+        confirms the serialized command still fits. Autocomplete options are
+        not part of this payload, so the budget is essentially constant.
+        """
+        import json
+    
+        # Simulate the largest catalog the collector will ever produce:
+        # 20 categories × 25 skills each, with verbose 100-char descriptions.
+        large_categories: dict[str, list[tuple[str, str, str]]] = {}
+        long_desc = "A verbose description padded to approximately 100 chars " + "." * 42
+        for i in range(20):
+            cat = f"cat{i:02d}"
+            large_categories[cat] = [
+                (f"skill-{i:02d}-{j:02d}", long_desc, f"/skill-{i:02d}-{j:02d}")
+                for j in range(25)
+            ]
+    
+        with patch(
+            "hermes_cli.commands.discord_skill_commands_by_category",
+            return_value=(large_categories, [], 0),
+        ):
+            adapter._register_slash_commands()
+    
+>       skill_cmd = adapter._client.tree.commands["skill"]
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'skill'
+
+tests/gateway/test_discord_slash_commands.py:838: KeyError
+------------------------------ Captured log call -------------------------------
+WARNING  gateway.platforms.discord:discord.py:2175 Discord auto-register from COMMAND_REGISTRY failed: 'types.SimpleNamespace' object has no attribute 'Command'
+WARNING  gateway.platforms.discord:discord.py:2300 [Discord] Failed to register /skill command: 'types.SimpleNamespace' object has no attribute 'autocomplete'
+___ test_register_skill_command_autocomplete_filters_by_name_and_description ___
+
+adapter = <gateway.platforms.discord.DiscordAdapter object at 0x7fdf67880350>
+
+    def test_register_skill_command_autocomplete_filters_by_name_and_description(adapter):
+        """The autocomplete callback should match on both skill name and
+        description so the user can search by either.
+        """
+        mock_categories = {
+            "ocr": [
+                ("ocr-and-documents", "Extract text from PDFs and scanned documents", "/ocr-and-documents"),
+            ],
+            "media": [
+                ("gif-search", "Search and download GIFs from Tenor", "/gif-search"),
+            ],
+        }
+    
+        with patch(
+            "hermes_cli.commands.discord_skill_commands_by_category",
+            return_value=(mock_categories, [], 0),
+        ):
+            adapter._register_slash_commands()
+    
+>       skill_cmd = adapter._client.tree.commands["skill"]
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'skill'
+
+tests/gateway/test_discord_slash_commands.py:874: KeyError
+------------------------------ Captured log call -------------------------------
+WARNING  gateway.platforms.discord:discord.py:2175 Discord auto-register from COMMAND_REGISTRY failed: 'types.SimpleNamespace' object has no attribute 'Command'
+WARNING  gateway.platforms.discord:discord.py:2300 [Discord] Failed to register /skill command: 'types.SimpleNamespace' object has no attribute 'autocomplete'
+=============================== warnings summary ===============================
+tests/tools/test_file_sync_perf.py:82
+  /home/chris/repo/Vibe-Trading/hermes-agent/tests/tools/test_file_sync_perf.py:82: PytestUnknownMarkWarning: Unknown pytest.mark.ssh - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.ssh
+
+tests/acp/test_auth.py::TestHasProvider::test_has_provider_with_resolved_runtime
+  /home/chris/repo/Vibe-Trading/hermes-agent/tests/conftest.py:307: DeprecationWarning: There is no current event loop
+    loop = asyncio.get_event_loop_policy().get_event_loop()
+
+tests/acp/test_events.py::TestToolProgressCallback::test_duplicate_same_name_tool_calls_use_fifo_ids
+  /home/chris/.local/share/uv/python/cpython-3.12.11-linux-x86_64-gnu/lib/python3.12/importlib/__init__.py:90: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    return _bootstrap._gcd_import(name[level:], package, level)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/acp/test_events.py::TestThinkingCallback::test_emits_thought_chunk
+tests/acp/test_events.py::TestStepCallback::test_completes_tracked_tool_calls
+tests/acp/test_events.py::TestStepCallback::test_step_callback_passes_arguments_and_snapshot
+tests/acp/test_mcp_e2e.py::TestMcpRegistrationE2E::test_prompt_with_tool_calls_emits_acp_events
+  /home/chris/.local/share/uv/python/cpython-3.12.11-linux-x86_64-gnu/lib/python3.12/unittest/mock.py:2217: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    def __init__(self, name, parent):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/acp/test_events.py::TestStepCallback::test_tool_progress_captures_snapshot_metadata
+  /home/chris/.local/share/uv/python/cpython-3.12.11-linux-x86_64-gnu/lib/python3.12/pkgutil.py:499: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    m = _NAME_PATTERN.match(name)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/cli/test_reasoning_command.py::TestHandleReasoningCommand::test_off_disables_display
+  /home/chris/.local/share/uv/python/cpython-3.12.11-linux-x86_64-gnu/lib/python3.12/unittest/mock.py:2217: RuntimeWarning: coroutine 'Process.communicate' was never awaited
+    def __init__(self, name, parent):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/gateway/test_api_server.py: 75 warnings
+  /home/chris/repo/Vibe-Trading/hermes-agent/tests/gateway/test_api_server.py:222: NotAppKeyWarning: It is recommended to use web.AppKey instances for keys.
+  https://docs.aiohttp.org/en/stable/web_advanced.html#application-s-config
+    app["api_server_adapter"] = adapter
+
+tests/gateway/test_api_server_bind_guard.py::TestConnectBindGuard::test_refuses_ipv4_wildcard_without_key
+tests/gateway/test_api_server_bind_guard.py::TestConnectBindGuard::test_refuses_ipv6_wildcard_without_key
+  /home/chris/repo/Vibe-Trading/hermes-agent/gateway/platforms/api_server.py:2315: NotAppKeyWarning: It is recommended to use web.AppKey instances for keys.
+  https://docs.aiohttp.org/en/stable/web_advanced.html#application-s-config
+    self._app["api_server_adapter"] = self
+
+tests/gateway/test_api_server_jobs.py: 35 warnings
+  /home/chris/repo/Vibe-Trading/hermes-agent/tests/gateway/test_api_server_jobs.py:52: NotAppKeyWarning: It is recommended to use web.AppKey instances for keys.
+  https://docs.aiohttp.org/en/stable/web_advanced.html#application-s-config
+    app["api_server_adapter"] = adapter
+
+tests/gateway/test_discord_channel_prompts.py::test_run_agent_appends_channel_prompt_to_ephemeral_system_prompt
+  /home/chris/repo/Vibe-Trading/hermes-agent/tools/tirith_security.py:355: DeprecationWarning: Python 3.14 will, by default, filter extracted tar archives and reject files or modify their metadata. Use the filter argument to control this behavior.
+    tar.extract(member, tmpdir)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/gateway/test_discord_reply_mode.py::TestReplyToText::test_no_reference_both_none
+FAILED tests/gateway/test_discord_reply_mode.py::TestReplyToText::test_reference_without_resolved
+FAILED tests/gateway/test_discord_reply_mode.py::TestReplyToText::test_reference_with_resolved_content
+FAILED tests/gateway/test_discord_reply_mode.py::TestReplyToText::test_reference_with_empty_resolved_content
+FAILED tests/gateway/test_discord_reply_mode.py::TestReplyToText::test_reference_with_deleted_message
+FAILED tests/gateway/test_discord_send.py::TestIsForumParent::test_forum_channel_class_instance
+FAILED tests/gateway/test_discord_send.py::test_send_to_forum_creates_thread_post
+FAILED tests/gateway/test_discord_send.py::test_send_to_forum_sends_remaining_chunks
+FAILED tests/gateway/test_discord_send.py::test_send_to_forum_create_thread_failure
+FAILED tests/gateway/test_discord_send.py::test_send_to_forum_follow_up_chunk_failures_collected_as_warnings
+FAILED tests/gateway/test_discord_slash_commands.py::test_auto_registers_missing_gateway_commands
+FAILED tests/gateway/test_discord_slash_commands.py::test_auto_registered_command_dispatches_correctly
+FAILED tests/gateway/test_discord_slash_commands.py::test_auto_registered_command_with_args
+FAILED tests/gateway/test_discord_slash_commands.py::test_build_slash_event_preserves_thread_context
+FAILED tests/gateway/test_discord_slash_commands.py::test_auto_thread_skips_threads_and_dms
+FAILED tests/gateway/test_discord_slash_commands.py::test_register_skill_command_is_flat_not_nested
+FAILED tests/gateway/test_discord_slash_commands.py::test_register_skill_command_callback_dispatches_by_name
+FAILED tests/gateway/test_discord_slash_commands.py::test_register_skill_command_handles_unknown_skill_gracefully
+FAILED tests/gateway/test_discord_slash_commands.py::test_register_skill_command_payload_fits_discord_8kb_limit
+FAILED tests/gateway/test_discord_slash_commands.py::test_register_skill_command_autocomplete_filters_by_name_and_description
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 20 failures !!!!!!!!!!!!!!!!!!!!!!!!!!
+20 failed, 2978 passed, 9 skipped, 23 deselected, 122 warnings in 142.94s (0:02:22)

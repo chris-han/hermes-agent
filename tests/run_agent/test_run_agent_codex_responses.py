@@ -110,6 +110,27 @@ def _codex_tool_call_response():
     )
 
 
+def _codex_native_web_search_call_response():
+    return SimpleNamespace(
+        output=[
+            SimpleNamespace(
+                type="web_search_call",
+                id="ws_1",
+                status="completed",
+                action=SimpleNamespace(
+                    query="latest Federal Reserve FOMC meeting minutes 2026",
+                    type="search",
+                    queries=None,
+                    sources=[],
+                ),
+            )
+        ],
+        usage=SimpleNamespace(input_tokens=12, output_tokens=4, total_tokens=16),
+        status="completed",
+        model="qwen3.5-plus",
+    )
+
+
 def _codex_incomplete_message_response(text: str):
     return SimpleNamespace(
         output=[
@@ -136,6 +157,26 @@ def _codex_commentary_message_response(text: str):
             )
         ],
         usage=SimpleNamespace(input_tokens=4, output_tokens=2, total_tokens=6),
+        status="completed",
+        model="gpt-5-codex",
+    )
+
+
+def _codex_native_shell_call_response():
+    return SimpleNamespace(
+        output=[
+            SimpleNamespace(
+                type="shell_call",
+                id="sh_1",
+                call_id="call_shell_1",
+                status="completed",
+                action=SimpleNamespace(
+                    commands=["pwd", "ls -1"],
+                    timeout_ms=12000,
+                ),
+            )
+        ],
+        usage=SimpleNamespace(input_tokens=12, output_tokens=4, total_tokens=16),
         status="completed",
         model="gpt-5-codex",
     )
@@ -398,6 +439,58 @@ def test_build_api_kwargs_copilot_responses_omits_reasoning_for_non_reasoning_mo
     assert "prompt_cache_key" not in kwargs
 
 
+def test_build_api_kwargs_alibaba_responses_uses_enable_thinking(monkeypatch):
+    _patch_agent_bootstrap(monkeypatch)
+
+    agent = run_agent.AIAgent(
+        model="qwen3.5-plus",
+        provider="alibaba",
+        api_mode="codex_responses",
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        api_key="dashscope-token",
+        quiet_mode=True,
+        max_iterations=1,
+        skip_context_files=True,
+        skip_memory=True,
+        reasoning_config={"enabled": True, "effort": "medium"},
+    )
+    agent._cleanup_task_resources = lambda task_id: None
+    agent._persist_session = lambda messages, history=None: None
+    agent._save_trajectory = lambda messages, user_message, completed: None
+    agent._save_session_log = lambda messages: None
+
+    kwargs = agent._build_api_kwargs(
+        [
+            {"role": "system", "content": "You are Hermes."},
+            {"role": "user", "content": "Ping"},
+        ]
+    )
+
+    assert kwargs["model"] == "qwen3.5-plus"
+    assert kwargs["instructions"] == "You are Hermes."
+    assert kwargs["store"] is False
+    assert kwargs["extra_body"] == {"enable_thinking": True}
+    assert "reasoning" not in kwargs
+    assert "include" not in kwargs
+    assert "prompt_cache_key" not in kwargs
+
+
+def test_preflight_codex_api_kwargs_accepts_extra_body(monkeypatch):
+    agent = _build_agent(monkeypatch)
+
+    normalized = agent._preflight_codex_api_kwargs(
+        {
+            "model": "qwen3.5-plus",
+            "instructions": "You are Hermes.",
+            "input": [{"role": "user", "content": "Ping"}],
+            "store": False,
+            "extra_body": {"enable_thinking": True},
+        }
+    )
+
+    assert normalized["extra_body"] == {"enable_thinking": True}
+
+
 def test_run_codex_stream_retries_when_completed_event_missing(monkeypatch):
     agent = _build_agent(monkeypatch)
     calls = {"stream": 0}
@@ -636,6 +729,58 @@ def test_run_conversation_codex_tool_round_trip(monkeypatch):
     assert result["final_response"] == "done"
     assert any(msg.get("tool_calls") for msg in result["messages"] if msg.get("role") == "assistant")
     assert any(msg.get("role") == "tool" and msg.get("tool_call_id") == "call_1" for msg in result["messages"])
+
+
+def test_run_conversation_codex_native_web_search_uses_hermes_tool(monkeypatch):
+    agent = _build_agent(monkeypatch)
+    responses = [_codex_native_web_search_call_response(), _codex_message_response("done")]
+    monkeypatch.setattr(agent, "_interruptible_api_call", lambda api_kwargs: responses.pop(0))
+
+    def _fake_execute_tool_calls(assistant_message, messages, effective_task_id):
+        for call in assistant_message.tool_calls:
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "content": '{"ok":true}',
+                }
+            )
+
+    monkeypatch.setattr(agent, "_execute_tool_calls", _fake_execute_tool_calls)
+
+    result = agent.run_conversation("run a search")
+
+    assert result["completed"] is True
+    assert result["final_response"] == "done"
+    assistant_with_tools = next(msg for msg in result["messages"] if msg.get("role") == "assistant" and msg.get("tool_calls"))
+    assert assistant_with_tools["tool_calls"][0]["function"]["name"] == "web_search"
+    assert assistant_with_tools["tool_calls"][0]["function"]["arguments"] == '{"query": "latest Federal Reserve FOMC meeting minutes 2026"}'
+
+
+def test_run_conversation_codex_native_shell_uses_terminal_tool(monkeypatch):
+    agent = _build_agent(monkeypatch)
+    responses = [_codex_native_shell_call_response(), _codex_message_response("done")]
+    monkeypatch.setattr(agent, "_interruptible_api_call", lambda api_kwargs: responses.pop(0))
+
+    def _fake_execute_tool_calls(assistant_message, messages, effective_task_id):
+        for call in assistant_message.tool_calls:
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "content": '{"ok":true}',
+                }
+            )
+
+    monkeypatch.setattr(agent, "_execute_tool_calls", _fake_execute_tool_calls)
+
+    result = agent.run_conversation("run shell commands")
+
+    assert result["completed"] is True
+    assert result["final_response"] == "done"
+    assistant_with_tools = next(msg for msg in result["messages"] if msg.get("role") == "assistant" and msg.get("tool_calls"))
+    assert assistant_with_tools["tool_calls"][0]["function"]["name"] == "terminal"
+    assert assistant_with_tools["tool_calls"][0]["function"]["arguments"] == '{"command": "set -e\\npwd\\nls -1", "timeout": 12}'
 
 
 def test_chat_messages_to_responses_input_uses_call_id_for_function_call(monkeypatch):
@@ -1001,6 +1146,89 @@ def test_run_conversation_codex_continues_after_ack_for_directory_listing_prompt
         for msg in result["messages"]
     )
     assert any(msg.get("role") == "tool" and msg.get("tool_call_id") == "call_1" for msg in result["messages"])
+
+
+def test_run_conversation_codex_continues_after_ack_for_latest_research_prompt(monkeypatch):
+    """With ack_continuation='aggressive', non-workspace acks also continue."""
+    _patch_agent_bootstrap(monkeypatch)
+    agent = run_agent.AIAgent(
+        model="gpt-5-codex",
+        base_url="https://chatgpt.com/backend-api/codex",
+        api_key="codex-token",
+        quiet_mode=True,
+        max_iterations=4,
+        skip_context_files=True,
+        skip_memory=True,
+        ack_continuation="aggressive",
+    )
+    agent._cleanup_task_resources = lambda task_id: None
+    agent._persist_session = lambda messages, history=None: None
+    agent._save_trajectory = lambda messages, user_message, completed: None
+    agent._save_session_log = lambda messages: None
+    responses = [
+        _codex_ack_message_response(
+            "I'll search for the latest Fed meeting minutes and then read them to provide you with key takeaways for equity and crypto markets."
+        ),
+        _codex_tool_call_response(),
+        _codex_message_response("Fed summary complete."),
+    ]
+    monkeypatch.setattr(agent, "_interruptible_api_call", lambda api_kwargs: responses.pop(0))
+
+    def _fake_execute_tool_calls(assistant_message, messages, effective_task_id):
+        for call in assistant_message.tool_calls:
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "content": '{"ok":true}',
+                }
+            )
+
+    monkeypatch.setattr(agent, "_execute_tool_calls", _fake_execute_tool_calls)
+
+    result = agent.run_conversation(
+        "Read the latest Fed meeting minutes and summarize the key takeaways for equity and crypto markets"
+    )
+
+    assert result["completed"] is True
+    assert result["final_response"] == "Fed summary complete."
+    assert any(
+        msg.get("role") == "assistant"
+        and msg.get("finish_reason") == "incomplete"
+        and "latest Fed meeting minutes" in (msg.get("content") or "")
+        for msg in result["messages"]
+    )
+    assert any(
+        msg.get("role") == "user"
+        and "Continue now. Execute the required tool calls" in (msg.get("content") or "")
+        for msg in result["messages"]
+    )
+    assert any(msg.get("role") == "tool" and msg.get("tool_call_id") == "call_1" for msg in result["messages"])
+
+
+def test_run_conversation_codex_conservative_skips_non_workspace_ack(monkeypatch):
+    """Default conservative mode does NOT continue for non-workspace acks."""
+    agent = _build_agent(monkeypatch)
+    responses = [
+        _codex_ack_message_response(
+            "I'll search for the latest Fed meeting minutes and summarize them."
+        ),
+    ]
+    monkeypatch.setattr(agent, "_interruptible_api_call", lambda api_kwargs: responses.pop(0))
+
+    result = agent.run_conversation(
+        "Read the latest Fed meeting minutes and summarize the key takeaways"
+    )
+
+    # Conservative mode: no workspace markers → treated as final answer, no continuation
+    assert result["completed"] is True
+    assert "Fed meeting minutes" in result["final_response"]
+    # Should NOT have a continuation prompt
+    assert not any(
+        msg.get("role") == "user"
+        and "Continue now. Execute the required tool calls" in (msg.get("content") or "")
+        for msg in result["messages"]
+    )
 
 
 def test_dump_api_request_debug_uses_responses_url(monkeypatch, tmp_path):

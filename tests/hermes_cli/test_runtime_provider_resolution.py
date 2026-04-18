@@ -915,6 +915,20 @@ def test_api_key_provider_explicit_api_mode_config(monkeypatch):
     assert resolved["api_mode"] == "anthropic_messages"
 
 
+def test_alibaba_explicit_api_mode_config_uses_codex_responses(monkeypatch):
+    """Alibaba should honor explicit Responses mode for DashScope /responses."""
+    monkeypatch.setattr(rp, "resolve_provider", lambda *a, **k: "alibaba")
+    monkeypatch.setattr(rp, "_get_model_config", lambda: {"api_mode": "codex_responses"})
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "test-dashscope-key")
+    monkeypatch.delenv("DASHSCOPE_BASE_URL", raising=False)
+
+    resolved = rp.resolve_runtime_provider(requested="alibaba")
+
+    assert resolved["provider"] == "alibaba"
+    assert resolved["api_mode"] == "codex_responses"
+    assert resolved["base_url"] == "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+
+
 def test_minimax_default_url_uses_anthropic_messages(monkeypatch):
     """MiniMax with default /anthropic URL should auto-detect anthropic_messages mode."""
     monkeypatch.setattr(rp, "resolve_provider", lambda *a, **k: "minimax")

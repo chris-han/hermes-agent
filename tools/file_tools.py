@@ -214,10 +214,24 @@ def _get_file_ops(task_id: str = "default") -> ShellFileOperations:
     from tools.terminal_tool import (
         _active_environments, _env_lock, _create_environment,
         _get_env_config, _last_activity, _start_cleanup_thread,
-        _creation_locks,
+        _creation_locks, _task_env_overrides,
         _creation_locks_lock,
     )
     import time
+    config = _get_env_config()
+    overrides = _task_env_overrides.get(task_id, {})
+    safe_read_root = overrides.get("safe_read_root") or overrides.get("safe_write_root")
+    safe_write_root = overrides.get("safe_write_root")
+    effective_cwd = overrides.get("cwd") or config["cwd"]
+    path_aliases: list[tuple[str, str]] = []
+    for display_key, actual_root in (
+        ("display_cwd", effective_cwd),
+        ("display_safe_write_root", safe_write_root),
+        ("display_safe_read_root", safe_read_root),
+    ):
+        display_root = overrides.get(display_key)
+        if display_root and actual_root:
+            path_aliases.append((str(display_root), str(actual_root)))
 
     # Fast path: check cache -- but also verify the underlying environment
     # is still alive (it may have been killed by the cleanup thread).
@@ -250,11 +264,7 @@ def _get_file_ops(task_id: str = "default") -> ShellFileOperations:
                 terminal_env = None
 
         if terminal_env is None:
-            from tools.terminal_tool import _task_env_overrides
-
-            config = _get_env_config()
             env_type = config["env_type"]
-            overrides = _task_env_overrides.get(task_id, {})
 
             if env_type == "docker":
                 image = overrides.get("docker_image") or config["docker_image"]
@@ -267,7 +277,7 @@ def _get_file_ops(task_id: str = "default") -> ShellFileOperations:
             else:
                 image = ""
 
-            cwd = overrides.get("cwd") or config["cwd"]
+            cwd = effective_cwd
             logger.info("Creating new %s environment for task %s...", env_type, task_id[:8])
 
             container_config = None
@@ -316,7 +326,13 @@ def _get_file_ops(task_id: str = "default") -> ShellFileOperations:
             logger.info("%s environment ready for task %s", env_type, task_id[:8])
 
     # Build file_ops from the (guaranteed live) environment and cache it
-    file_ops = ShellFileOperations(terminal_env)
+    file_ops = ShellFileOperations(
+        terminal_env,
+        cwd=effective_cwd,
+        safe_read_root=safe_read_root,
+        safe_write_root=safe_write_root,
+        path_aliases=path_aliases,
+    )
     with _file_ops_lock:
         _file_ops_cache[task_id] = file_ops
     return file_ops

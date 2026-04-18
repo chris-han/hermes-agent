@@ -31,6 +31,7 @@ from gateway.platforms.api_server import (
     cors_middleware,
     security_headers_middleware,
 )
+from tools.tool_result_storage import maybe_persist_tool_result
 
 
 # ---------------------------------------------------------------------------
@@ -1244,6 +1245,66 @@ class TestResponsesStreaming:
                 assert '"call_id": "call_123"' in body
                 assert '"name": "read_file"' in body
                 assert '"output": [{"type": "input_text", "text": "{\\"content\\":\\"hello\\"}"}]' in body
+
+    @pytest.mark.asyncio
+    async def test_stream_emits_bounded_large_tool_output_item(self, adapter):
+        app = _create_app(adapter)
+        async with TestClient(TestServer(app)) as cli:
+            raw_large_result = "HEADER\n" + ("chunk-line\n" * 20_000) + "TAIL_SENTINEL_123456789"
+            bounded_result = maybe_persist_tool_result(
+                content=raw_large_result,
+                tool_name="web_search",
+                tool_use_id="call_123",
+                env=None,
+            )
+
+            async def _mock_run_agent(**kwargs):
+                start_cb = kwargs.get("tool_start_callback")
+                complete_cb = kwargs.get("tool_complete_callback")
+                text_cb = kwargs.get("stream_delta_callback")
+                if start_cb:
+                    start_cb("call_123", "web_search", {"query": "heavy result"})
+                if complete_cb:
+                    complete_cb("call_123", "web_search", {"query": "heavy result"}, bounded_result)
+                if text_cb:
+                    text_cb("Done.")
+                return (
+                    {
+                        "final_response": "Done.",
+                        "messages": [
+                            {
+                                "role": "assistant",
+                                "tool_calls": [
+                                    {
+                                        "id": "call_123",
+                                        "function": {
+                                            "name": "web_search",
+                                            "arguments": '{"query":"heavy result"}',
+                                        },
+                                    }
+                                ],
+                            },
+                            {
+                                "role": "tool",
+                                "tool_call_id": "call_123",
+                                "content": bounded_result,
+                            },
+                        ],
+                        "api_calls": 1,
+                    },
+                    {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+                )
+
+            with patch.object(adapter, "_run_agent", side_effect=_mock_run_agent):
+                resp = await cli.post(
+                    "/v1/responses",
+                    json={"model": "hermes-agent", "input": "read the heavy result", "stream": True},
+                )
+                assert resp.status == 200
+                body = await resp.text()
+                assert '"type": "function_call_output"' in body
+                assert "Truncated: tool response was" in body
+                assert "TAIL_SENTINEL_123456789" not in body
 
     @pytest.mark.asyncio
     async def test_streamed_response_is_stored_for_get(self, adapter):

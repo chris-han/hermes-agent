@@ -5,6 +5,7 @@ Ensures changes to one provider path don't silently break another.
 """
 
 import json
+import logging
 import os
 import sys
 import types
@@ -23,13 +24,35 @@ from run_agent import AIAgent
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _tool_defs(*names):
+    schema_by_name = {
+        "web_search": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+            },
+            "required": ["query"],
+        },
+        "terminal": {
+            "type": "object",
+            "properties": {
+                "command": {"type": "string"},
+                "background": {"type": "boolean"},
+                "timeout": {"type": "integer"},
+                "workdir": {"type": "string"},
+                "pty": {"type": "boolean"},
+                "notify_on_complete": {"type": "boolean"},
+                "watch_patterns": {"type": "array"},
+            },
+            "required": ["command"],
+        },
+    }
     return [
         {
             "type": "function",
             "function": {
                 "name": n,
                 "description": f"{n} tool",
-                "parameters": {"type": "object", "properties": {}},
+                "parameters": schema_by_name.get(n, {"type": "object", "properties": {}}),
             },
         }
         for n in names
@@ -432,6 +455,28 @@ class TestBuildApiKwargsCodex:
         assert "name" in tools[0]
         assert "function" not in tools[0]
 
+    def test_alibaba_codex_responses_uses_native_responses_format(self, monkeypatch):
+        agent = _make_agent(
+            monkeypatch,
+            "alibaba",
+            api_mode="codex_responses",
+            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            model="qwen3.5-plus",
+        )
+        agent.reasoning_config = {"enabled": False}
+        messages = [{"role": "user", "content": "hi"}]
+
+        kwargs = agent._build_api_kwargs(messages)
+
+        assert "input" in kwargs
+        assert "instructions" in kwargs
+        assert kwargs["store"] is False
+        assert "messages" not in kwargs
+        assert "reasoning" not in kwargs
+        assert "include" not in kwargs
+        assert kwargs["extra_body"] == {"enable_thinking": False}
+        assert "prompt_cache_key" not in kwargs
+
 
 # ── Message conversion tests ────────────────────────────────────────────────
 
@@ -605,6 +650,185 @@ class TestNormalizeCodexResponse:
         assert reason == "tool_calls"
         assert len(msg.tool_calls) == 1
         assert msg.tool_calls[0].function.name == "web_search"
+
+    def test_native_web_search_call_maps_to_hermes_web_search_tool(self, monkeypatch):
+        agent = self._make_codex_agent(monkeypatch)
+        response = SimpleNamespace(
+            output=[
+                SimpleNamespace(
+                    type="web_search_call",
+                    status="completed",
+                    id="ws_123",
+                    action=SimpleNamespace(
+                        query="latest Federal Reserve FOMC meeting minutes 2026",
+                        type="search",
+                        queries=None,
+                        sources=[],
+                    ),
+                ),
+            ],
+            status="completed",
+        )
+
+        msg, reason = agent._normalize_codex_response(response)
+
+        assert reason == "tool_calls"
+        assert len(msg.tool_calls) == 1
+        assert msg.tool_calls[0].function.name == "web_search"
+        assert msg.tool_calls[0].function.arguments == '{"query": "latest Federal Reserve FOMC meeting minutes 2026"}'
+
+    def test_native_web_search_call_translation_is_logged(self, monkeypatch, caplog):
+        agent = self._make_codex_agent(monkeypatch)
+        response = SimpleNamespace(
+            output=[
+                SimpleNamespace(
+                    type="web_search_call",
+                    status="completed",
+                    id="ws_123",
+                    action=SimpleNamespace(query="latest fed minutes", type="search"),
+                ),
+            ],
+            status="completed",
+        )
+
+        with caplog.at_level(logging.INFO, logger="run_agent"):
+            agent._normalize_codex_response(response)
+
+        assert any(
+            "Translated native Responses tool item web_search_call -> Hermes tool web_search" in record.getMessage()
+            for record in caplog.records
+        )
+
+    def test_native_shell_call_maps_to_terminal_tool(self, monkeypatch):
+        agent = self._make_codex_agent(monkeypatch)
+        response = SimpleNamespace(
+            output=[
+                SimpleNamespace(
+                    type="shell_call",
+                    status="completed",
+                    id="sh_123",
+                    action=SimpleNamespace(
+                        commands=["pwd", "ls -1"],
+                        timeout_ms=15000,
+                    ),
+                ),
+            ],
+            status="completed",
+        )
+
+        msg, reason = agent._normalize_codex_response(response)
+
+        assert reason == "tool_calls"
+        assert len(msg.tool_calls) == 1
+        assert msg.tool_calls[0].function.name == "terminal"
+        assert msg.tool_calls[0].function.arguments == '{"command": "set -e\\npwd\\nls -1", "timeout": 15}'
+
+    def test_native_web_search_call_self_heals_when_direct_translation_fails(self, monkeypatch, caplog):
+        agent = self._make_codex_agent(monkeypatch)
+        response = SimpleNamespace(
+            output=[
+                SimpleNamespace(
+                    type="web_search_call",
+                    status="completed",
+                    id="ws_123",
+                    action=SimpleNamespace(query=None, type="search"),
+                ),
+            ],
+            status="completed",
+        )
+        monkeypatch.setattr(
+            agent,
+            "_request_native_tool_translation_proposal",
+            lambda item, **kwargs: {
+                "tool_name": "web_search",
+                "arguments": {"query": "latest fed minutes"},
+                "confidence": 0.92,
+                "reason": "native query field was absent but the item clearly requested web search",
+            },
+        )
+
+        with caplog.at_level(logging.INFO, logger="run_agent"):
+            msg, reason = agent._normalize_codex_response(response)
+
+        assert reason == "tool_calls"
+        assert len(msg.tool_calls) == 1
+        assert msg.tool_calls[0].function.name == "web_search"
+        assert msg.tool_calls[0].function.arguments == '{"query": "latest fed minutes"}'
+        assert any(
+            "Self-healed native Responses tool item web_search_call -> Hermes tool web_search" in record.getMessage()
+            for record in caplog.records
+        )
+
+    def test_unsupported_native_tool_item_is_logged(self, monkeypatch, caplog):
+        agent = self._make_codex_agent(monkeypatch)
+        response = SimpleNamespace(
+            output=[
+                SimpleNamespace(
+                    type="file_search_call",
+                    status="completed",
+                    id="fs_123",
+                ),
+            ],
+            status="completed",
+        )
+
+        with caplog.at_level(logging.WARNING, logger="run_agent"):
+            msg, reason = agent._normalize_codex_response(response)
+
+        assert msg.tool_calls == []
+        assert reason == "stop"
+        assert any(
+            "Unsupported native Responses tool item file_search_call" in record.getMessage()
+            for record in caplog.records
+        )
+
+    def test_self_heal_translation_rejects_unknown_fields(self, monkeypatch):
+        agent = self._make_codex_agent(monkeypatch)
+
+        validated = agent._validate_native_tool_translation_proposal(
+            {
+                "tool_name": "web_search",
+                "arguments": {"query": "latest fed minutes", "unexpected": True},
+                "confidence": 0.99,
+                "reason": "bad",
+            },
+            item_type="web_search_call",
+            allowed_tools=frozenset({"web_search"}),
+        )
+
+        assert validated is None
+
+    def test_dict_shaped_message_items_are_normalized(self, monkeypatch):
+        agent = self._make_codex_agent(monkeypatch)
+        response = SimpleNamespace(
+            output=[
+                {
+                    "type": "reasoning",
+                    "summary": [{"type": "summary_text", "text": "Thinking about a reply"}],
+                    "encrypted_content": "enc_blob",
+                    "id": "rs_dict_1",
+                },
+                {
+                    "type": "message",
+                    "status": "completed",
+                    "phase": "final_answer",
+                    "content": [{"type": "output_text", "text": "Hello from dict output"}],
+                },
+            ],
+            status="completed",
+        )
+
+        msg, reason = agent._normalize_codex_response(response)
+
+        assert msg.content == "Hello from dict output"
+        assert "Thinking about a reply" in (msg.reasoning or "")
+        assert msg.codex_reasoning_items == [{
+            "type": "reasoning",
+            "encrypted_content": "enc_blob",
+            "id": "rs_dict_1",
+            "summary": [{"type": "summary_text", "text": "Thinking about a reply"}],
+        }]
+        assert reason == "stop"
 
 
 # ── Chat completions response handling (OpenRouter/Nous) ─────────────────────
