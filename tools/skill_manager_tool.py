@@ -76,12 +76,28 @@ def _security_scan_skill(skill_dir: Path) -> Optional[str]:
 import yaml
 
 
-# All skills live in ~/.hermes/skills/ (single source of truth)
-HERMES_HOME = get_hermes_home()
-SKILLS_DIR = HERMES_HOME / "skills"
+# All skills live in ~/.hermes/skills/ (single source of truth).
+# Keep these globals for tests that monkeypatch them, but resolve dynamically by
+# default so request/workspace-specific HERMES_HOME overrides are respected.
+_INITIAL_HERMES_HOME = get_hermes_home()
+HERMES_HOME = _INITIAL_HERMES_HOME
+SKILLS_DIR = _INITIAL_HERMES_HOME / "skills"
 
 MAX_NAME_LENGTH = 64
 MAX_DESCRIPTION_LENGTH = 1024
+
+
+def _get_hermes_home() -> Path:
+    if HERMES_HOME != _INITIAL_HERMES_HOME:
+        return HERMES_HOME
+    return get_hermes_home()
+
+
+def _get_skills_dir() -> Path:
+    initial_skills_dir = _INITIAL_HERMES_HOME / "skills"
+    if SKILLS_DIR != initial_skills_dir:
+        return SKILLS_DIR
+    return _get_hermes_home() / "skills"
 
 
 def _is_local_skill(skill_path: Path) -> bool:
@@ -90,7 +106,7 @@ def _is_local_skill(skill_path: Path) -> bool:
     Skills found in external_dirs are read-only from the agent's perspective.
     """
     try:
-        skill_path.resolve().relative_to(SKILLS_DIR.resolve())
+        skill_path.resolve().relative_to(_get_skills_dir().resolve())
         return True
     except ValueError:
         return False
@@ -203,9 +219,10 @@ def _validate_content_size(content: str, label: str = "SKILL.md") -> Optional[st
 
 def _resolve_skill_dir(name: str, category: str = None) -> Path:
     """Build the directory path for a new skill, optionally under a category."""
+    skills_dir = _get_skills_dir()
     if category:
-        return SKILLS_DIR / category / name
-    return SKILLS_DIR / name
+        return skills_dir / category / name
+    return skills_dir / name
 
 
 def _find_skill(name: str) -> Optional[Dict[str, Any]]:
@@ -346,7 +363,7 @@ def _create_skill(name: str, content: str, category: str = None) -> Dict[str, An
     result = {
         "success": True,
         "message": f"Skill '{name}' created.",
-        "path": str(skill_dir.relative_to(SKILLS_DIR)),
+        "path": str(skill_dir.relative_to(_get_skills_dir())),
         "skill_md": str(skill_md),
     }
     if category:
@@ -499,7 +516,7 @@ def _delete_skill(name: str) -> Dict[str, Any]:
 
     # Clean up empty category directories (don't remove SKILLS_DIR itself)
     parent = skill_dir.parent
-    if parent != SKILLS_DIR and parent.exists() and not any(parent.iterdir()):
+    if parent != _get_skills_dir() and parent.exists() and not any(parent.iterdir()):
         parent.rmdir()
 
     return {
