@@ -5,6 +5,7 @@ Ensures changes to one provider path don't silently break another.
 """
 
 import json
+import logging
 import os
 import sys
 import types
@@ -627,6 +628,77 @@ class TestNormalizeCodexResponse:
         assert reason == "tool_calls"
         assert len(msg.tool_calls) == 1
         assert msg.tool_calls[0].function.name == "web_search"
+
+    def test_native_web_search_call_maps_to_hermes_web_search_tool(self, monkeypatch):
+        agent = self._make_codex_agent(monkeypatch)
+        response = SimpleNamespace(
+            output=[
+                SimpleNamespace(
+                    type="web_search_call",
+                    status="completed",
+                    id="ws_123",
+                    action=SimpleNamespace(
+                        query="latest Federal Reserve FOMC meeting minutes 2026",
+                        type="search",
+                        queries=None,
+                        sources=[],
+                    ),
+                ),
+            ],
+            status="completed",
+        )
+
+        msg, reason = agent._normalize_codex_response(response)
+
+        assert reason == "tool_calls"
+        assert len(msg.tool_calls) == 1
+        assert msg.tool_calls[0].function.name == "web_search"
+        assert msg.tool_calls[0].function.arguments == '{"query": "latest Federal Reserve FOMC meeting minutes 2026"}'
+
+    def test_native_web_search_call_translation_is_logged(self, monkeypatch, caplog):
+        agent = self._make_codex_agent(monkeypatch)
+        response = SimpleNamespace(
+            output=[
+                SimpleNamespace(
+                    type="web_search_call",
+                    status="completed",
+                    id="ws_123",
+                    action=SimpleNamespace(query="latest fed minutes", type="search"),
+                ),
+            ],
+            status="completed",
+        )
+
+        with caplog.at_level(logging.INFO, logger="run_agent"):
+            agent._normalize_codex_response(response)
+
+        assert any(
+            "Translated native Responses tool item web_search_call -> Hermes tool web_search" in record.getMessage()
+            for record in caplog.records
+        )
+
+    def test_unsupported_native_tool_item_is_logged(self, monkeypatch, caplog):
+        agent = self._make_codex_agent(monkeypatch)
+        response = SimpleNamespace(
+            output=[
+                SimpleNamespace(
+                    type="file_search_call",
+                    status="completed",
+                    id="fs_123",
+                ),
+            ],
+            status="completed",
+        )
+
+        with caplog.at_level(logging.WARNING, logger="run_agent"):
+            msg, reason = agent._normalize_codex_response(response)
+
+        assert msg.tool_calls == []
+        assert reason == "stop"
+        assert any(
+            "Unsupported native Responses tool item file_search_call" in record.getMessage()
+            for record in caplog.records
+        )
 
     def test_dict_shaped_message_items_are_normalized(self, monkeypatch):
         agent = self._make_codex_agent(monkeypatch)
