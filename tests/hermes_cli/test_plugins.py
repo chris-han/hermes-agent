@@ -92,6 +92,33 @@ class TestPluginDiscovery:
 
         assert "proj_plugin" not in mgr._plugins
 
+    def test_discover_user_plugins_disabled_by_env(self, tmp_path, monkeypatch):
+        """User plugins are skipped when runtime disables workspace-local plugins."""
+        plugins_dir = tmp_path / "hermes_test" / "plugins"
+        _make_plugin_dir(plugins_dir, "hello_plugin")
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes_test"))
+        monkeypatch.setenv("HERMES_DISABLE_USER_PLUGINS", "1")
+
+        mgr = PluginManager()
+        mgr.discover_and_load()
+
+        assert "hello_plugin" not in mgr._plugins
+
+    def test_discover_project_plugins_disabled_even_when_opted_in(self, tmp_path, monkeypatch):
+        """Project plugins are skipped when runtime disables workspace-local plugins."""
+        project_dir = tmp_path / "project"
+        project_dir.mkdir()
+        monkeypatch.chdir(project_dir)
+        monkeypatch.setenv("HERMES_ENABLE_PROJECT_PLUGINS", "true")
+        monkeypatch.setenv("HERMES_DISABLE_PROJECT_PLUGINS", "1")
+        plugins_dir = project_dir / ".hermes" / "plugins"
+        _make_plugin_dir(plugins_dir, "proj_plugin")
+
+        mgr = PluginManager()
+        mgr.discover_and_load()
+
+        assert "proj_plugin" not in mgr._plugins
+
     def test_discover_is_idempotent(self, tmp_path, monkeypatch):
         """Calling discover_and_load() twice does not duplicate plugins."""
         plugins_dir = tmp_path / "hermes_test" / "plugins"

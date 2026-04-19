@@ -2133,13 +2133,16 @@ def _discover_dashboard_plugins() -> list:
     """
     plugins = []
     seen_names: set = set()
+    user_plugins_disabled = (os.getenv("HERMES_DISABLE_USER_PLUGINS") or "").strip().lower() not in ("", "0", "false", "off", "no", "none", "disabled")
+    project_plugins_disabled = (os.getenv("HERMES_DISABLE_PROJECT_PLUGINS") or "").strip().lower() not in ("", "0", "false", "off", "no", "none", "disabled")
 
     search_dirs = [
-        (get_hermes_home() / "plugins", "user"),
         (PROJECT_ROOT / "plugins" / "memory", "bundled"),
         (PROJECT_ROOT / "plugins", "bundled"),
     ]
-    if os.environ.get("HERMES_ENABLE_PROJECT_PLUGINS"):
+    if not user_plugins_disabled:
+        search_dirs.insert(0, (get_hermes_home() / "plugins", "user"))
+    if not project_plugins_disabled and os.environ.get("HERMES_ENABLE_PROJECT_PLUGINS"):
         search_dirs.append((Path.cwd() / ".hermes" / "plugins", "project"))
 
     for plugins_root, source in search_dirs:

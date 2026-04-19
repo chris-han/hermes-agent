@@ -1,5 +1,6 @@
 """Tests for hermes_constants module."""
 
+import contextvars
 import os
 from pathlib import Path
 from unittest.mock import patch
@@ -7,7 +8,13 @@ from unittest.mock import patch
 import pytest
 
 import hermes_constants
-from hermes_constants import get_default_hermes_root, is_container
+from hermes_constants import (
+    get_default_hermes_root,
+    get_hermes_home,
+    is_container,
+    reset_active_hermes_home,
+    set_active_hermes_home,
+)
 
 
 class TestGetDefaultHermesRoot:
@@ -111,3 +118,32 @@ class TestIsContainer:
         # Even if we make os.path.exists return False, cached value wins
         monkeypatch.setattr(os.path, "exists", lambda p: False)
         assert is_container() is True
+
+
+class TestActiveHermesHome:
+    """Tests for request-scoped HERMES_HOME overrides."""
+
+    def test_active_home_overrides_environment(self, tmp_path, monkeypatch):
+        env_home = tmp_path / "env-home"
+        active_home = tmp_path / "active-home"
+        monkeypatch.setenv("HERMES_HOME", str(env_home))
+
+        token = set_active_hermes_home(active_home)
+        try:
+            assert get_hermes_home() == active_home
+            assert get_default_hermes_root() == active_home
+        finally:
+            reset_active_hermes_home(token)
+
+        assert get_hermes_home() == env_home
+
+    def test_active_home_propagates_via_copy_context(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("HERMES_HOME", raising=False)
+        active_home = tmp_path / "tenant-home"
+
+        token = set_active_hermes_home(active_home)
+        try:
+            ctx = contextvars.copy_context()
+            assert ctx.run(get_hermes_home) == active_home
+        finally:
+            reset_active_hermes_home(token)

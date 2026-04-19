@@ -74,6 +74,18 @@ def _env_enabled(name: str) -> bool:
     return env_var_enabled(name)
 
 
+def _user_plugins_allowed() -> bool:
+    """Return whether plugins from HERMES_HOME/plugins are allowed."""
+    return not _env_enabled("HERMES_DISABLE_USER_PLUGINS")
+
+
+def _project_plugins_allowed() -> bool:
+    """Return whether project-local plugins are allowed."""
+    if _env_enabled("HERMES_DISABLE_PROJECT_PLUGINS"):
+        return False
+    return _env_enabled("HERMES_ENABLE_PROJECT_PLUGINS")
+
+
 def _get_disabled_plugins() -> set:
     """Read the disabled plugins list from config.yaml."""
     try:
@@ -421,11 +433,12 @@ class PluginManager:
         manifests: List[PluginManifest] = []
 
         # 1. User plugins (~/.hermes/plugins/)
-        user_dir = get_hermes_home() / "plugins"
-        manifests.extend(self._scan_directory(user_dir, source="user"))
+        if _user_plugins_allowed():
+            user_dir = get_hermes_home() / "plugins"
+            manifests.extend(self._scan_directory(user_dir, source="user"))
 
         # 2. Project plugins (./.hermes/plugins/)
-        if _env_enabled("HERMES_ENABLE_PROJECT_PLUGINS"):
+        if _project_plugins_allowed():
             project_dir = Path.cwd() / ".hermes" / "plugins"
             manifests.extend(self._scan_directory(project_dir, source="project"))
 

@@ -4,8 +4,28 @@ Import-safe module with no dependencies — can be imported from anywhere
 without risk of circular imports.
 """
 
+import contextvars
 import os
 from pathlib import Path
+
+
+_active_hermes_home: contextvars.ContextVar[Path | None] = contextvars.ContextVar(
+    "active_hermes_home", default=None
+)
+
+
+def set_active_hermes_home(path: Path) -> contextvars.Token:
+    """Override HERMES_HOME for the current context.
+
+    This is used by multi-tenant runtimes that need per-request filesystem
+    isolation without mutating the process-global environment.
+    """
+    return _active_hermes_home.set(Path(path))
+
+
+def reset_active_hermes_home(token: contextvars.Token) -> None:
+    """Reset the request-scoped HERMES_HOME override."""
+    _active_hermes_home.reset(token)
 
 
 def get_hermes_home() -> Path:
@@ -14,6 +34,9 @@ def get_hermes_home() -> Path:
     Reads HERMES_HOME env var, falls back to ~/.hermes.
     This is the single source of truth — all other copies should import this.
     """
+    active = _active_hermes_home.get()
+    if active is not None:
+        return Path(active)
     val = os.environ.get("HERMES_HOME", "").strip()
     return Path(val) if val else Path.home() / ".hermes"
 
@@ -35,10 +58,9 @@ def get_default_hermes_root() -> Path:
     Import-safe — no dependencies beyond stdlib.
     """
     native_home = Path.home() / ".hermes"
-    env_home = os.environ.get("HERMES_HOME", "")
-    if not env_home:
+    env_path = get_hermes_home()
+    if env_path == native_home and not os.environ.get("HERMES_HOME", "").strip():
         return native_home
-    env_path = Path(env_home)
     try:
         env_path.resolve().relative_to(native_home.resolve())
         # HERMES_HOME is under ~/.hermes (normal or profile mode)

@@ -29,7 +29,11 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
-DEFAULT_DB_PATH = get_hermes_home() / "state.db"
+def get_default_db_path() -> Path:
+    return get_hermes_home() / "state.db"
+
+
+DEFAULT_DB_PATH = get_default_db_path()
 
 SCHEMA_VERSION = 6
 
@@ -136,7 +140,7 @@ class SessionDB:
     _CHECKPOINT_EVERY_N_WRITES = 50
 
     def __init__(self, db_path: Path = None):
-        self.db_path = db_path or DEFAULT_DB_PATH
+        self.db_path = db_path or get_default_db_path()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
         self._lock = threading.Lock()

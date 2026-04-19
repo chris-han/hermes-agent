@@ -26,11 +26,30 @@ logger = logging.getLogger(__name__)
 _SUPPORTED_MANIFEST_VERSION = 1
 
 
+def _plugins_disabled() -> bool:
+    raw = (os.getenv("HERMES_DISABLE_USER_PLUGINS") or "").strip().lower()
+    return raw not in {"", "0", "false", "off", "no", "none", "disabled"}
+
+
 def _plugins_dir() -> Path:
     """Return the user plugins directory, creating it if needed."""
+    if _plugins_disabled():
+        raise RuntimeError(
+            "Workspace-local plugin installation is disabled in this runtime. "
+            "Vibe-Trading application plugins are delivered through shared installed entry points."
+        )
     plugins = get_hermes_home() / "plugins"
     plugins.mkdir(parents=True, exist_ok=True)
     return plugins
+
+
+def _plugins_dir_or_exit(console) -> Path:
+    """Return the plugins dir or exit with a user-facing error when disabled."""
+    try:
+        return _plugins_dir()
+    except RuntimeError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
 
 
 def _sanitize_plugin_name(name: str, plugins_dir: Path) -> Path:
@@ -301,7 +320,7 @@ def cmd_install(identifier: str, force: bool = False) -> None:
             "Consider using https:// or git@ for production installs."
         )
 
-    plugins_dir = _plugins_dir()
+    plugins_dir = _plugins_dir_or_exit(console)
 
     # Clone into a temp directory first so we can read plugin.yaml for the name
     with tempfile.TemporaryDirectory() as tmp:
@@ -401,7 +420,7 @@ def cmd_update(name: str) -> None:
     from rich.console import Console
 
     console = Console()
-    plugins_dir = _plugins_dir()
+    plugins_dir = _plugins_dir_or_exit(console)
 
     try:
         target = _require_installed_plugin(name, plugins_dir, console)
@@ -455,7 +474,7 @@ def cmd_remove(name: str) -> None:
     from rich.console import Console
 
     console = Console()
-    plugins_dir = _plugins_dir()
+    plugins_dir = _plugins_dir_or_exit(console)
 
     try:
         target = _require_installed_plugin(name, plugins_dir, console)
@@ -493,7 +512,7 @@ def cmd_enable(name: str) -> None:
     from rich.console import Console
 
     console = Console()
-    plugins_dir = _plugins_dir()
+    plugins_dir = _plugins_dir_or_exit(console)
 
     # Verify the plugin exists
     target = plugins_dir / name
@@ -516,7 +535,7 @@ def cmd_disable(name: str) -> None:
     from rich.console import Console
 
     console = Console()
-    plugins_dir = _plugins_dir()
+    plugins_dir = _plugins_dir_or_exit(console)
 
     # Verify the plugin exists
     target = plugins_dir / name
@@ -545,7 +564,7 @@ def cmd_list() -> None:
         yaml = None
 
     console = Console()
-    plugins_dir = _plugins_dir()
+    plugins_dir = _plugins_dir_or_exit(console)
 
     dirs = sorted(d for d in plugins_dir.iterdir() if d.is_dir())
     if not dirs:
@@ -748,7 +767,7 @@ def cmd_toggle() -> None:
         yaml = None
 
     console = Console()
-    plugins_dir = _plugins_dir()
+    plugins_dir = _plugins_dir_or_exit(console)
 
     # -- General plugins discovery --
     dirs = sorted(d for d in plugins_dir.iterdir() if d.is_dir())

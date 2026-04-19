@@ -12,6 +12,7 @@ import pytest
 import yaml
 
 from hermes_cli.plugins_cmd import (
+    _plugins_dir,
     _copy_example_files,
     _read_manifest,
     _repo_name_from_url,
@@ -154,6 +155,14 @@ class TestReadManifest:
         (tmp_path / "plugin.yaml").write_text("")
         result = _read_manifest(tmp_path)
         assert result == {}
+
+
+class TestPluginsDirPolicy:
+    def test_plugins_dir_blocked_when_user_plugins_disabled(self, monkeypatch):
+        monkeypatch.setenv("HERMES_DISABLE_USER_PLUGINS", "1")
+
+        with pytest.raises(RuntimeError, match="Workspace-local plugin installation is disabled"):
+            _plugins_dir()
 
 
 # ── cmd_install tests ─────────────────────────────────────────────────────────

@@ -497,6 +497,15 @@ class TestUserInstalledProviderDiscovery:
         names = [n for n, _, _ in providers]
         assert "notmemory" not in names
 
+    def test_user_memory_plugins_disabled_by_env(self, tmp_path, monkeypatch):
+        """Workspace-local memory plugins are skipped when user plugins are disabled."""
+        from plugins.memory import discover_memory_providers
+        self._make_user_memory_plugin(tmp_path, "myexternal")
+        monkeypatch.setenv("HERMES_DISABLE_USER_PLUGINS", "1")
+        providers = discover_memory_providers()
+        names = [n for n, _, _ in providers]
+        assert "myexternal" not in names
+
 
 # ---------------------------------------------------------------------------
 # Sequential dispatch routing tests

@@ -24,6 +24,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -33,12 +34,19 @@ logger = logging.getLogger(__name__)
 _MEMORY_PLUGINS_DIR = Path(__file__).parent
 
 
+def _env_enabled(name: str) -> bool:
+    raw = (os.getenv(name) or "").strip().lower()
+    return raw not in {"", "0", "false", "off", "no", "none", "disabled"}
+
+
 # ---------------------------------------------------------------------------
 # Directory helpers
 # ---------------------------------------------------------------------------
 
 def _get_user_plugins_dir() -> Optional[Path]:
     """Return ``$HERMES_HOME/plugins/`` or None if unavailable."""
+    if _env_enabled("HERMES_DISABLE_USER_PLUGINS"):
+        return None
     try:
         from hermes_constants import get_hermes_home
         d = get_hermes_home() / "plugins"
