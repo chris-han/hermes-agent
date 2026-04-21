@@ -15,6 +15,7 @@ from hermes_cli.config import (
     _EXTRA_ENV_KEYS,
     OPTIONAL_ENV_VARS,
 )
+from hermes_constants import reset_active_hermes_home, set_active_hermes_home
 
 
 # ---------------------------------------------------------------------------
@@ -586,6 +587,104 @@ class TestNewEndpoints:
                 "enabled": False,
             },
         ]
+
+    def test_skills_install_endpoint_installs_hub_skill(self, monkeypatch, tmp_path):
+        import tools.skills_guard as skills_guard
+        import tools.skills_hub as skills_hub
+        from tools.skills_guard import ScanResult
+        from tools.skills_hub import SkillBundle
+
+        class _FakeSource:
+            def inspect(self, identifier):
+                return None
+
+            def fetch(self, identifier):
+                if identifier != 'community/demo-skill':
+                    return None
+                return SkillBundle(
+                    name='demo-skill',
+                    source='github',
+                    identifier=identifier,
+                    trust_level='community',
+                    files={
+                        'SKILL.md': (
+                            '---\n'
+                            'name: demo-skill\n'
+                            'description: Demo skill\n'
+                            '---\n\n'
+                            '# Demo\n'
+                        ),
+                    },
+                    metadata={},
+                )
+
+        monkeypatch.setenv('HERMES_HOME', str(tmp_path / '.hermes'))
+        monkeypatch.setattr(skills_hub, 'GitHubAuth', lambda: None)
+        monkeypatch.setattr(skills_hub, 'create_source_router', lambda auth: [_FakeSource()])
+        monkeypatch.setattr(
+            skills_guard,
+            'scan_skill',
+            lambda path, source='community': ScanResult(
+                skill_name='demo-skill',
+                source=source,
+                trust_level='community',
+                verdict='safe',
+                findings=[],
+                scanned_at='2026-04-21T00:00:00Z',
+                summary='clean',
+            ),
+        )
+        monkeypatch.setattr(skills_guard, 'should_allow_install', lambda result, force=False: (True, 'ok'))
+
+        response = self.client.post(
+            '/api/skills/install',
+            json={'identifier': 'community/demo-skill'},
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()['ok'] is True
+        assert response.json()['install_path'] == 'demo-skill'
+        skill_file = tmp_path / '.hermes' / 'skills' / 'demo-skill' / 'SKILL.md'
+        assert skill_file.exists()
+
+    def test_skills_uninstall_endpoint_removes_hub_skill(self, monkeypatch, tmp_path):
+        from tools.skills_hub import HubLockFile
+
+        home = tmp_path / '.hermes'
+        skills_dir = home / 'skills'
+        skill_dir = skills_dir / 'demo-skill'
+        skill_dir.mkdir(parents=True)
+        (skill_dir / 'SKILL.md').write_text(
+            '---\nname: demo-skill\ndescription: Demo skill\n---\n\n# Demo\n',
+            encoding='utf-8',
+        )
+
+        token = set_active_hermes_home(home)
+        try:
+            HubLockFile().record_install(
+                name='demo-skill',
+                source='github',
+                identifier='community/demo-skill',
+                trust_level='community',
+                scan_verdict='safe',
+                skill_hash='sha256:test',
+                install_path='demo-skill',
+                files=['SKILL.md'],
+                metadata={},
+            )
+        finally:
+            reset_active_hermes_home(token)
+
+        monkeypatch.setenv('HERMES_HOME', str(home))
+
+        response = self.client.post(
+            '/api/skills/uninstall',
+            json={'name': 'demo-skill'},
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()['ok'] is True
+        assert not skill_dir.exists()
 
     def test_toolsets_list(self):
         resp = self.client.get("/api/tools/toolsets")

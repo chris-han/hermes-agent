@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import secrets
+import shutil
 import sys
 import threading
 import time
@@ -1864,6 +1865,149 @@ class SkillToggle(BaseModel):
     enabled: bool
 
 
+class SkillInstallRequest(BaseModel):
+    identifier: str
+    category: str = ""
+    force: bool = False
+    invalidate_cache: bool = True
+
+
+class SkillUninstallRequest(BaseModel):
+    name: str
+    invalidate_cache: bool = True
+
+
+def _clear_skills_prompt_cache() -> None:
+    try:
+        from agent.prompt_builder import clear_skills_system_prompt_cache
+
+        clear_skills_system_prompt_cache(clear_snapshot=True)
+    except Exception:
+        return
+
+
+def _resolve_short_skill_identifier(identifier: str, sources) -> str:
+    if "/" in identifier:
+        return identifier
+
+    from tools.skills_hub import unified_search
+
+    results = unified_search(identifier, sources, source_filter="all", limit=20)
+    exact_matches = [result for result in results if result.name.lower() == identifier.lower()]
+    if len(exact_matches) == 1:
+        return exact_matches[0].identifier
+    if len(exact_matches) > 1:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Multiple skills named '{identifier}' found. Use the full identifier to install a specific one."
+            ),
+        )
+    raise HTTPException(status_code=404, detail=f"No skill named '{identifier}' found in any source")
+
+
+def _install_skill_from_hub(
+    identifier: str,
+    *,
+    category: str = "",
+    force: bool = False,
+    invalidate_cache: bool = True,
+) -> dict[str, Any]:
+    from hermes_cli.skills_hub import _resolve_source_meta_and_bundle
+    from tools.skills_guard import scan_skill, should_allow_install
+    from tools.skills_hub import (
+        GitHubAuth,
+        HubLockFile,
+        append_audit_log,
+        create_source_router,
+        ensure_hub_dirs,
+        install_from_quarantine,
+        quarantine_bundle,
+    )
+
+    ensure_hub_dirs()
+
+    auth = GitHubAuth()
+    sources = create_source_router(auth)
+    resolved_identifier = _resolve_short_skill_identifier(identifier.strip(), sources)
+    meta, bundle, _matched_source = _resolve_source_meta_and_bundle(resolved_identifier, sources)
+
+    if not bundle:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Could not fetch '{resolved_identifier}' from any configured skill source",
+        )
+
+    if bundle.source == "official" and not category:
+        id_parts = bundle.identifier.split("/")
+        if len(id_parts) >= 3:
+            category = id_parts[1]
+
+    lock = HubLockFile()
+    existing = lock.get_installed(bundle.name)
+    if existing and not force:
+        raise HTTPException(
+            status_code=409,
+            detail=f"'{bundle.name}' is already installed at {existing['install_path']}. Use force=true to reinstall.",
+        )
+
+    try:
+        quarantine_path = quarantine_bundle(bundle)
+    except ValueError as exc:
+        append_audit_log("BLOCKED", bundle.name, bundle.source, bundle.trust_level, "invalid_path", str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    scan_source = getattr(bundle, "identifier", "") or getattr(meta, "identifier", "") or resolved_identifier
+    scan_result = scan_skill(quarantine_path, source=scan_source)
+    allowed, reason = should_allow_install(scan_result, force=force)
+    if not allowed:
+        shutil.rmtree(quarantine_path, ignore_errors=True)
+        append_audit_log(
+            "BLOCKED",
+            bundle.name,
+            bundle.source,
+            bundle.trust_level,
+            scan_result.verdict,
+            f"{len(scan_result.findings)}_findings",
+        )
+        raise HTTPException(status_code=403, detail=reason)
+
+    try:
+        install_dir = install_from_quarantine(quarantine_path, bundle.name, category, bundle, scan_result)
+    except ValueError as exc:
+        shutil.rmtree(quarantine_path, ignore_errors=True)
+        append_audit_log("BLOCKED", bundle.name, bundle.source, bundle.trust_level, "invalid_path", str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if invalidate_cache:
+        _clear_skills_prompt_cache()
+
+    skills_root = get_hermes_home() / "skills"
+    return {
+        "ok": True,
+        "name": bundle.name,
+        "identifier": bundle.identifier,
+        "category": category,
+        "enabled": True,
+        "scan_verdict": scan_result.verdict,
+        "trust_level": bundle.trust_level,
+        "install_path": str(install_dir.relative_to(skills_root)),
+    }
+
+
+def _uninstall_skill_from_hub(name: str, *, invalidate_cache: bool = True) -> dict[str, Any]:
+    from tools.skills_hub import uninstall_skill
+
+    ok, message = uninstall_skill(name)
+    if not ok:
+        raise HTTPException(status_code=400, detail=message)
+
+    if invalidate_cache:
+        _clear_skills_prompt_cache()
+
+    return {"ok": True, "name": name, "message": message}
+
+
 @app.get("/api/skills")
 async def get_skills():
     from tools.skills_tool import _find_all_skills
@@ -1887,6 +2031,27 @@ async def toggle_skill(body: SkillToggle):
         disabled.add(body.name)
     save_disabled_skills(config, disabled)
     return {"ok": True, "name": body.name, "enabled": body.enabled}
+
+
+@app.post("/api/skills/install")
+async def install_skill(body: SkillInstallRequest):
+    identifier = body.identifier.strip()
+    if not identifier:
+        raise HTTPException(status_code=400, detail="identifier is required")
+    return _install_skill_from_hub(
+        identifier,
+        category=body.category.strip(),
+        force=body.force,
+        invalidate_cache=body.invalidate_cache,
+    )
+
+
+@app.post("/api/skills/uninstall")
+async def uninstall_skill_api(body: SkillUninstallRequest):
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    return _uninstall_skill_from_hub(name, invalidate_cache=body.invalidate_cache)
 
 
 @app.get("/api/tools/toolsets")
