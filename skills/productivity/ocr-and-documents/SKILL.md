@@ -1,7 +1,7 @@
 ---
 name: ocr-and-documents
-description: Extract text from PDFs and scanned documents. Use web_extract for remote URLs, pymupdf for local text-based PDFs, marker-pdf for OCR/scanned docs. For DOCX use python-docx, for PPTX see the powerpoint skill.
-version: 2.3.0
+description: Extract text from PDFs and scanned documents. Use web_extract for remote URLs, pymupdf for local text-based PDFs, marker-pdf for OCR/scanned docs. For DOCX, prefer mammoth for complex layouts and python-docx for structure-aware parsing; for PPTX see the powerpoint skill.
+version: 2.3.1
 author: Hermes Agent
 license: MIT
 metadata:
@@ -12,9 +12,61 @@ metadata:
 
 # PDF & Document Extraction
 
-For DOCX: use `python-docx` (parses actual document structure, far better than OCR).
+For DOCX: prefer `mammoth` for resumes and other visually formatted Word files; use `python-docx` when you need paragraph/table/run structure.
 For PPTX: see the `powerpoint` skill (uses `python-pptx` with full slide/notes support).
 This skill covers **PDFs and scanned documents**.
+
+## DOCX Extraction
+
+Use this decision rule for Word documents:
+
+- Complex visual layout, resumes, mixed text boxes/images, or documents where `python-docx` returns mostly empty paragraphs: use `mammoth` first.
+- Structured extraction where you need paragraph, table, or run objects: use `python-docx`.
+- Do not OCR DOCX files unless both native approaches fail and the user explicitly wants an image-based fallback.
+
+### mammoth first for complex DOCX
+
+```bash
+pip install mammoth
+```
+
+```bash
+python3 -c "
+import mammoth
+with open('resume.docx', 'rb') as docx_file:
+    result = mammoth.extract_raw_text(docx_file)
+    print(result.value)
+"
+```
+
+If you need richer formatting preservation, convert to HTML instead:
+
+```bash
+python3 -c "
+import mammoth
+with open('resume.docx', 'rb') as docx_file:
+    result = mammoth.convert_to_html(docx_file)
+    print(result.value)
+"
+```
+
+### python-docx for structured DOCX
+
+```bash
+pip install python-docx
+```
+
+```bash
+python3 -c "
+from docx import Document
+doc = Document('document.docx')
+for para in doc.paragraphs:
+    if para.text.strip():
+        print(para.text)
+"
+```
+
+If `python-docx` shows empty paragraphs for a file that clearly contains text, switch to `mammoth` instead of retrying more `python-docx` variations.
 
 ## Step 1: Remote URL Available?
 
@@ -167,5 +219,5 @@ No extra dependencies needed — pymupdf covers split, merge, search, and text e
 - marker-pdf is for OCR, scanned docs, equations, complex layouts — install only when needed
 - Both helper scripts accept `--help` for full usage
 - marker-pdf downloads ~2.5GB of models to `~/.cache/huggingface/` on first use
-- For Word docs: `pip install python-docx` (better than OCR — parses actual structure)
+- For Word docs: use `mammoth` first for complex layouts; use `python-docx` for structure-aware parsing
 - For PowerPoint: see the `powerpoint` skill (uses python-pptx)
