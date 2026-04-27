@@ -381,6 +381,22 @@ class TestLoadGatewayConfig:
         import os
         assert os.environ.get("TELEGRAM_PROXY") == "socks5://from-env:1080"
 
+    def test_bridges_sessions_dir_from_config_yaml(self, tmp_path, monkeypatch):
+        hermes_home = tmp_path / ".hermes"
+        hermes_home.mkdir()
+        config_path = hermes_home / "config.yaml"
+        custom_dir = tmp_path / "custom_sessions"
+        config_path.write_text(
+            f"sessions_dir: {custom_dir}\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+
+        config = load_gateway_config()
+
+        assert config.sessions_dir == custom_dir
+
 
 class TestHomeChannelEnvOverrides:
     """Home channel env vars should apply even when the platform was already
