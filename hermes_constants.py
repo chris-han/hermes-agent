@@ -4,8 +4,28 @@ Import-safe module with no dependencies — can be imported from anywhere
 without risk of circular imports.
 """
 
+import contextvars
 import os
 from pathlib import Path
+
+
+_active_hermes_home: contextvars.ContextVar[Path | None] = contextvars.ContextVar(
+    "active_hermes_home", default=None
+)
+
+
+def set_active_hermes_home(path: Path) -> contextvars.Token:
+    """Override HERMES_HOME for the current context.
+
+    Used by multi-tenant wrappers that need per-request filesystem
+    isolation without mutating the process-global environment.
+    """
+    return _active_hermes_home.set(Path(path))
+
+
+def reset_active_hermes_home(token: contextvars.Token) -> None:
+    """Reset the request-scoped HERMES_HOME override."""
+    _active_hermes_home.reset(token)
 
 
 def get_hermes_home() -> Path:
@@ -14,6 +34,9 @@ def get_hermes_home() -> Path:
     Reads HERMES_HOME env var, falls back to ~/.hermes.
     This is the single source of truth — all other copies should import this.
     """
+    active = _active_hermes_home.get()
+    if active is not None:
+        return Path(active)
     val = os.environ.get("HERMES_HOME", "").strip()
     return Path(val) if val else Path.home() / ".hermes"
 
