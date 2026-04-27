@@ -1543,6 +1543,25 @@ class TestAdapterBehavior(unittest.TestCase):
         self.assertEqual(event.source.chat_name, "Feishu DM")
 
     @patch.dict(os.environ, {}, clear=True)
+    def test_resolve_sender_profile_prefers_open_id_when_user_id_is_malformed(self):
+        from gateway.config import PlatformConfig
+        from gateway.platforms.feishu import FeishuAdapter
+
+        adapter = FeishuAdapter(PlatformConfig())
+        adapter._resolve_sender_name_from_api = AsyncMock(return_value="张三")
+
+        profile = asyncio.run(
+            adapter._resolve_sender_profile(
+                SimpleNamespace(open_id="ou_user", user_id="be6a78b4", union_id="on_union")
+            )
+        )
+
+        self.assertEqual(profile["user_id"], "ou_user")
+        self.assertEqual(profile["user_name"], "张三")
+        self.assertEqual(profile["user_id_alt"], "on_union")
+        adapter._resolve_sender_name_from_api.assert_awaited_once_with("ou_user")
+
+    @patch.dict(os.environ, {}, clear=True)
     def test_text_batch_merges_rapid_messages_into_single_event(self):
         from gateway.config import PlatformConfig
         from gateway.platforms.base import MessageEvent, MessageType

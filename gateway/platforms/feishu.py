@@ -3462,8 +3462,9 @@ class FeishuAdapter(BasePlatformAdapter):
         open_id = getattr(sender_id, "open_id", None) or None
         user_id = getattr(sender_id, "user_id", None) or None
         union_id = getattr(sender_id, "union_id", None) or None
-        # Prefer tenant-scoped user_id; fall back to app-scoped open_id.
         primary_id = user_id or open_id
+        if open_id and user_id and not str(user_id).startswith("u_"):
+            primary_id = open_id
         display_name = await self._resolve_sender_name_from_api(primary_id or union_id)
         return {
             "user_id": primary_id,

@@ -42,14 +42,18 @@ def _make_source(platform=Platform.MATRIX):
 class _FakeSSEResponse:
     """Simulates an aiohttp response with SSE streaming."""
 
-    def __init__(self, status=200, sse_chunks=None, error_text=""):
+    def __init__(self, status=200, sse_chunks=None, error_text="", json_payload=None):
         self.status = status
         self._sse_chunks = sse_chunks or []
         self._error_text = error_text
+        self._json_payload = json_payload or {}
         self.content = self
 
     async def text(self):
         return self._error_text
+
+    async def json(self):
+        return self._json_payload
 
     async def iter_any(self):
         for chunk in self._sse_chunks:
@@ -132,6 +136,28 @@ class TestGetProxyUrl:
         runner = _make_runner()
         with patch("gateway.run._load_gateway_config", return_value={}):
             assert runner._get_proxy_url() is None
+
+
+class TestGetBackendProxyUrl:
+    """Test _get_backend_proxy_url() config resolution."""
+
+    def test_returns_none_when_not_configured(self, monkeypatch):
+        monkeypatch.delenv("HERMES_GATEWAY_BACKEND_PROXY_URL", raising=False)
+        runner = _make_runner()
+        with patch("gateway.run._load_gateway_config", return_value={}):
+            assert runner._get_backend_proxy_url() is None
+
+    def test_reads_from_env_var(self, monkeypatch):
+        monkeypatch.setenv("HERMES_GATEWAY_BACKEND_PROXY_URL", "http://127.0.0.1:8899/")
+        runner = _make_runner()
+        assert runner._get_backend_proxy_url() == "http://127.0.0.1:8899"
+
+    def test_reads_from_config_yaml(self, monkeypatch):
+        monkeypatch.delenv("HERMES_GATEWAY_BACKEND_PROXY_URL", raising=False)
+        runner = _make_runner()
+        cfg = {"gateway": {"backend_proxy_url": "http://backend:8899"}}
+        with patch("gateway.run._load_gateway_config", return_value=cfg):
+            assert runner._get_backend_proxy_url() == "http://backend:8899"
 
 
 class TestResolveProxyUrl:
@@ -224,6 +250,37 @@ class TestRunAgentProxyDispatch:
             except Exception:
                 pass  # Expected — bare runner can't create a real agent
 
+        runner._run_agent_via_proxy.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_run_agent_prefers_backend_proxy_over_remote_proxy(self, monkeypatch):
+        monkeypatch.setenv("HERMES_GATEWAY_BACKEND_PROXY_URL", "http://backend:8899")
+        monkeypatch.setenv("GATEWAY_PROXY_URL", "http://remote:8642")
+        runner = _make_runner()
+        source = _make_source()
+
+        expected_result = {
+            "final_response": "Hello from backend!",
+            "messages": [],
+            "api_calls": 0,
+            "tools": [],
+        }
+
+        runner._run_agent_via_backend_proxy = AsyncMock(return_value=expected_result)
+        runner._run_agent_via_proxy = AsyncMock()
+
+        result = await runner._run_agent(
+            message="hi",
+            context_prompt="",
+            history=[],
+            source=source,
+            session_id="test-session-123",
+            session_key="test-key",
+            run_generation=7,
+        )
+
+        assert result["final_response"] == "Hello from backend!"
+        runner._run_agent_via_backend_proxy.assert_called_once()
         runner._run_agent_via_proxy.assert_not_called()
 
 
@@ -409,6 +466,83 @@ class TestRunAgentViaProxy:
         assert result["history_offset"] == 2  # len(history)
         assert "session_id" in result
         assert result["session_id"] == "sess-123"
+
+
+class TestRunAgentViaBackendProxy:
+    """Test backend SessionService proxy forwarding."""
+
+    @pytest.mark.asyncio
+    async def test_builds_correct_request(self, monkeypatch):
+        monkeypatch.setenv("HERMES_GATEWAY_BACKEND_PROXY_URL", "http://backend:8899")
+        monkeypatch.setenv("GATEWAY_PROXY_KEY", "test-key-123")
+        monkeypatch.setenv("WORKSPACE_SLUG", "semantier")
+        runner = _make_runner()
+        source = _make_source(platform=Platform.FEISHU)
+
+        resp = _FakeSSEResponse(
+            status=200,
+            json_payload={"response": "Hello from SessionService"},
+        )
+        session = _FakeSession(resp)
+
+        with patch("gateway.run._load_gateway_config", return_value={}):
+            with _patch_aiohttp(session):
+                with patch("aiohttp.ClientTimeout"):
+                    result = await runner._run_agent_via_backend_proxy(
+                        message="How are you?",
+                        context_prompt="You are helpful.",
+                        history=[
+                            {"role": "user", "content": "Hello"},
+                            {"role": "assistant", "content": "Hi there!"},
+                        ],
+                        source=source,
+                        session_id="session-abc",
+                        session_key="session-key-xyz",
+                    )
+
+        assert session.captured_url == "http://backend:8899/internal/messaging/feishu/incoming"
+        assert session.captured_headers["Authorization"] == "Bearer test-key-123"
+        assert session.captured_json == {
+            "session_id": "session-abc",
+            "session_key": "session-key-xyz",
+            "user_message": "How are you?",
+            "platform": "feishu",
+            "workspace_slug": "semantier",
+            "source": {
+                "chat_id": "!room:server.org",
+                "user_id": "@user:server.org",
+                "user_name": "testuser",
+                "chat_type": "group",
+                "chat_name": "Test Room",
+                "thread_id": None,
+            },
+            "context_prompt": "You are helpful.",
+        }
+        assert result["final_response"] == "Hello from SessionService"
+
+    @pytest.mark.asyncio
+    async def test_handles_http_error(self, monkeypatch):
+        monkeypatch.setenv("HERMES_GATEWAY_BACKEND_PROXY_URL", "http://backend:8899")
+        monkeypatch.delenv("GATEWAY_PROXY_KEY", raising=False)
+        runner = _make_runner()
+        source = _make_source(platform=Platform.FEISHU)
+
+        resp = _FakeSSEResponse(status=502, error_text="Bad gateway")
+        session = _FakeSession(resp)
+
+        with patch("gateway.run._load_gateway_config", return_value={}):
+            with _patch_aiohttp(session):
+                with patch("aiohttp.ClientTimeout"):
+                    result = await runner._run_agent_via_backend_proxy(
+                        message="hi",
+                        context_prompt="",
+                        history=[],
+                        source=source,
+                        session_id="test",
+                    )
+
+        assert "Backend proxy error (502)" in result["final_response"]
+        assert result["api_calls"] == 0
 
     @pytest.mark.asyncio
     async def test_proxy_stale_generation_returns_empty_result(self, monkeypatch):
