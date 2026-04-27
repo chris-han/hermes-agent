@@ -3451,19 +3451,21 @@ class FeishuAdapter(BasePlatformAdapter):
         """Map Feishu's three-tier user IDs onto Hermes' SessionSource fields.
 
         Preference order for the primary ``user_id`` field:
-          1. user_id  (tenant-scoped, most stable — requires permission scope)
-          2. open_id  (app-scoped, always available — different per bot app)
+                    1. open_id  (app-scoped, always available — required by downstream
+                         Feishu meeting/calendar flows)
+                    2. user_id  (tenant-scoped, may be available with extra scope)
 
         ``user_id_alt`` carries the union_id (developer-scoped, stable across
         all apps by the same developer).  Session-key generation prefers
         user_id_alt when present, so participant isolation stays stable even
-        if the primary ID is the app-scoped open_id.
+                if the primary ID is the app-scoped open_id.
         """
         open_id = getattr(sender_id, "open_id", None) or None
         user_id = getattr(sender_id, "user_id", None) or None
         union_id = getattr(sender_id, "union_id", None) or None
-        # Prefer tenant-scoped user_id; fall back to app-scoped open_id.
-        primary_id = user_id or open_id
+                # SessionSource.user_id is consumed downstream as the sender's Feishu
+                # open_id (for example FEISHU_REQUESTER_OPEN_ID in meeting flows).
+                primary_id = open_id or user_id
         display_name = await self._resolve_sender_name_from_api(primary_id or union_id)
         return {
             "user_id": primary_id,
