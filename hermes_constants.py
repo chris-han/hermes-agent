@@ -4,11 +4,29 @@ Import-safe module with no dependencies — can be imported from anywhere
 without risk of circular imports.
 """
 
+import contextvars
 import os
 from pathlib import Path
 
 
 _profile_fallback_warned: bool = False
+_active_hermes_home: contextvars.ContextVar[Path | None] = contextvars.ContextVar(
+    "active_hermes_home", default=None
+)
+
+
+def set_active_hermes_home(path: Path) -> contextvars.Token:
+    """Override HERMES_HOME for the current context.
+
+    Used by multi-tenant wrappers that need per-request filesystem
+    isolation without mutating the process-global environment.
+    """
+    return _active_hermes_home.set(Path(path))
+
+
+def reset_active_hermes_home(token: contextvars.Token) -> None:
+    """Reset the request-scoped HERMES_HOME override."""
+    _active_hermes_home.reset(token)
 
 
 def get_hermes_home() -> Path:
@@ -27,6 +45,9 @@ def get_hermes_home() -> Path:
     template in ``hermes_cli/gateway.py`` and the kanban dispatcher in
     ``hermes_cli/kanban_db.py``).  See https://github.com/NousResearch/hermes-agent/issues/18594.
     """
+    active = _active_hermes_home.get()
+    if active is not None:
+        return Path(active)
     val = os.environ.get("HERMES_HOME", "").strip()
     if val:
         return Path(val)

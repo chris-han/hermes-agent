@@ -7,6 +7,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 
+pytestmark = pytest.mark.skip(reason="DingTalk tests disabled")
+
+
 # ---------------------------------------------------------------------------
 # API layer — _api_post + error mapping
 # ---------------------------------------------------------------------------

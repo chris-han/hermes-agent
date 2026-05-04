@@ -1,6 +1,7 @@
 """Tests for Matrix platform adapter (mautrix-python backend)."""
 import asyncio
 import json
+import os
 import re
 import sys
 import time
@@ -703,7 +704,16 @@ class TestMatrixModuleImport:
         classes don't share globals with the original — breaking patch.object
         in subsequent tests).
         """
+        from pathlib import Path
         import subprocess
+
+        project_root = Path(__file__).resolve().parents[2]
+        env = dict(os.environ)
+        existing_pythonpath = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = (
+            f"{project_root}:{existing_pythonpath}" if existing_pythonpath else str(project_root)
+        )
+
         result = subprocess.run(
             [sys.executable, "-c", (
                 "import sys\n"
@@ -720,6 +730,8 @@ class TestMatrixModuleImport:
                 "assert not check_matrix_requirements()\n"
                 "print('OK')\n"
             )],
+            cwd=str(project_root),
+            env=env,
             capture_output=True, text=True, timeout=10,
         )
         assert result.returncode == 0, (

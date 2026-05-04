@@ -219,9 +219,10 @@ def _fixed_temperature_for_model(
 _API_KEY_PROVIDER_AUX_MODELS: Dict[str, str] = {
     "gemini": "gemini-3-flash-preview",
     "zai": "glm-4.5-flash",
-    "kimi-coding": "kimi-k2-turbo-preview",
+    # Kimi Coding Plan (/coding Anthropic wire) expects coding aliases.
+    "kimi-coding": "kimi-for-coding",
     "stepfun": "step-3.5-flash",
-    "kimi-coding-cn": "kimi-k2-turbo-preview",
+    "kimi-coding-cn": "kimi-for-coding",
     "gmi": "google/gemini-3.1-flash-lite-preview",
     "minimax": "MiniMax-M2.7",
     "minimax-oauth": "MiniMax-M2.7-highspeed",
@@ -1667,6 +1668,27 @@ def _is_connection_error(exc: Exception) -> bool:
     )):
         return True
     return False
+
+
+def _is_resource_not_found_error(exc: Exception) -> bool:
+    """Detect provider 404s that indicate missing model/resource.
+
+    These are often transient routing mismatches in auto fallback chains
+    (e.g., provider selected but model not served on that endpoint).
+    """
+    status = getattr(exc, "status_code", None)
+    if status != 404:
+        return False
+    err_lower = str(exc).lower()
+    return any(marker in err_lower for marker in (
+        "resource_not_found",
+        "resource was not found",
+        "requested resource was not found",
+        "model_not_found",
+        "model not found",
+        "no such model",
+        "not found",
+    ))
 
 
 def _is_auth_error(exc: Exception) -> bool:
@@ -3597,38 +3619,54 @@ def call_llm(
                     return _validate_llm_response(
                         retry_client.chat.completions.create(**retry_kwargs), task)
 
-        # ── Payment / credit exhaustion fallback ──────────────────────
-        # When the resolved provider returns 402 or a credit-related error,
-        # try alternative providers instead of giving up.  This handles the
-        # common case where a user runs out of OpenRouter credits but has
-        # Codex OAuth or another provider available.
-        #
-        # ── Connection error fallback ────────────────────────────────
-        # When a provider endpoint is unreachable (DNS failure, connection
-        # refused, timeout), try alternative providers.  This handles stale
-        # Codex/OAuth tokens that authenticate but whose endpoint is down,
-        # and providers the user never configured that got picked up by
-        # the auto-detection chain.
-        should_fallback = _is_payment_error(first_err) or _is_connection_error(first_err)
-        # Only try alternative providers when the user didn't explicitly
-        # configure this task's provider.  Explicit provider = hard constraint;
-        # auto (the default) = best-effort fallback chain.  (#7559)
+        # ── Payment / connection / not-found fallback ─────────────────
+        # Auto mode is best-effort: if one provider fails, keep walking the
+        # chain.  This includes 404 model/resource mismatches that can happen
+        # when a provider endpoint is reachable but does not serve the chosen
+        # model alias.
         is_auto = resolved_provider in ("auto", "", None)
-        if should_fallback and is_auto:
-            reason = "payment error" if _is_payment_error(first_err) else "connection error"
-            logger.info("Auxiliary %s: %s on %s (%s), trying fallback",
-                        task or "call", reason, resolved_provider, first_err)
+        fallback_err = first_err
+        failed_label = resolved_provider or "auto"
+        while is_auto and (
+            _is_payment_error(fallback_err)
+            or _is_connection_error(fallback_err)
+            or _is_resource_not_found_error(fallback_err)
+        ):
+            if _is_payment_error(fallback_err):
+                reason = "payment error"
+            elif _is_connection_error(fallback_err):
+                reason = "connection error"
+            else:
+                reason = "resource not found"
+
+            logger.info(
+                "Auxiliary %s: %s on %s (%s), trying fallback",
+                task or "call",
+                reason,
+                failed_label,
+                fallback_err,
+            )
             fb_client, fb_model, fb_label = _try_payment_fallback(
-                resolved_provider, task, reason=reason)
-            if fb_client is not None:
-                fb_kwargs = _build_call_kwargs(
-                    fb_label, fb_model, messages,
-                    temperature=temperature, max_tokens=max_tokens,
-                    tools=tools, timeout=effective_timeout,
-                    extra_body=effective_extra_body,
-                    base_url=str(getattr(fb_client, "base_url", "") or ""))
+                failed_label,
+                task,
+                reason=reason,
+            )
+            if fb_client is None:
+                break
+
+            fb_kwargs = _build_call_kwargs(
+                fb_label, fb_model, messages,
+                temperature=temperature, max_tokens=max_tokens,
+                tools=tools, timeout=effective_timeout,
+                extra_body=effective_extra_body,
+                base_url=str(getattr(fb_client, "base_url", "") or ""))
+            try:
                 return _validate_llm_response(
                     fb_client.chat.completions.create(**fb_kwargs), task)
+            except Exception as fb_err:
+                fallback_err = fb_err
+                failed_label = fb_label
+                continue
         raise
 
 
@@ -3887,28 +3925,54 @@ async def async_call_llm(
                     return _validate_llm_response(
                         await retry_client.chat.completions.create(**retry_kwargs), task)
 
-        # ── Payment / connection fallback (mirrors sync call_llm) ─────
-        should_fallback = _is_payment_error(first_err) or _is_connection_error(first_err)
+        # ── Payment / connection / not-found fallback ─────────────────
         is_auto = resolved_provider in ("auto", "", None)
-        if should_fallback and is_auto:
-            reason = "payment error" if _is_payment_error(first_err) else "connection error"
-            logger.info("Auxiliary %s (async): %s on %s (%s), trying fallback",
-                        task or "call", reason, resolved_provider, first_err)
+        fallback_err = first_err
+        failed_label = resolved_provider or "auto"
+        while is_auto and (
+            _is_payment_error(fallback_err)
+            or _is_connection_error(fallback_err)
+            or _is_resource_not_found_error(fallback_err)
+        ):
+            if _is_payment_error(fallback_err):
+                reason = "payment error"
+            elif _is_connection_error(fallback_err):
+                reason = "connection error"
+            else:
+                reason = "resource not found"
+
+            logger.info(
+                "Auxiliary %s (async): %s on %s (%s), trying fallback",
+                task or "call",
+                reason,
+                failed_label,
+                fallback_err,
+            )
             fb_client, fb_model, fb_label = _try_payment_fallback(
-                resolved_provider, task, reason=reason)
-            if fb_client is not None:
-                fb_kwargs = _build_call_kwargs(
-                    fb_label, fb_model, messages,
-                    temperature=temperature, max_tokens=max_tokens,
-                    tools=tools, timeout=effective_timeout,
-                    extra_body=effective_extra_body,
-                    base_url=str(getattr(fb_client, "base_url", "") or ""))
-                # Convert sync fallback client to async
-                async_fb, async_fb_model = _to_async_client(
-                    fb_client, fb_model or "", is_vision=(task == "vision")
-                )
-                if async_fb_model and async_fb_model != fb_kwargs.get("model"):
-                    fb_kwargs["model"] = async_fb_model
+                failed_label,
+                task,
+                reason=reason,
+            )
+            if fb_client is None:
+                break
+
+            fb_kwargs = _build_call_kwargs(
+                fb_label, fb_model, messages,
+                temperature=temperature, max_tokens=max_tokens,
+                tools=tools, timeout=effective_timeout,
+                extra_body=effective_extra_body,
+                base_url=str(getattr(fb_client, "base_url", "") or ""))
+            # Convert sync fallback client to async
+            async_fb, async_fb_model = _to_async_client(
+                fb_client, fb_model or "", is_vision=(task == "vision")
+            )
+            if async_fb_model and async_fb_model != fb_kwargs.get("model"):
+                fb_kwargs["model"] = async_fb_model
+            try:
                 return _validate_llm_response(
                     await async_fb.chat.completions.create(**fb_kwargs), task)
+            except Exception as fb_err:
+                fallback_err = fb_err
+                failed_label = fb_label
+                continue
         raise

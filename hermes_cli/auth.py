@@ -463,7 +463,12 @@ def _resolve_kimi_base_url(api_key: str, default_url: str, env_override: str) ->
     Otherwise, sk-kimi- prefixed keys route to api.kimi.com/coding/v1.
     """
     if env_override:
-        return env_override
+        normalized_override = str(env_override).strip().rstrip("/")
+        # Kimi Coding Plan should be configured as /coding (no /v1) for the
+        # Anthropic SDK. /coding/v1 would become /coding/v1/v1/messages.
+        if normalized_override.lower().startswith("https://api.kimi.com/coding/v1"):
+            return KIMI_CODE_BASE_URL
+        return normalized_override
     # No key → nothing to infer from.  Return default without inspecting.
     if not api_key:
         return default_url

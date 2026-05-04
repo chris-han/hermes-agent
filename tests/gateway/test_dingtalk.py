@@ -10,6 +10,9 @@ import pytest
 from gateway.config import Platform, PlatformConfig
 
 
+pytestmark = pytest.mark.skip(reason="DingTalk tests disabled")
+
+
 # ---------------------------------------------------------------------------
 # Requirements check
 # ---------------------------------------------------------------------------

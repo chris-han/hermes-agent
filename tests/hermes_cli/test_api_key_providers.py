@@ -927,6 +927,15 @@ class TestResolveKimiBaseUrl:
         url = _resolve_kimi_base_url("sk-abc123", MOONSHOT_DEFAULT_URL, custom)
         assert url == custom
 
+    def test_kimi_official_coding_v1_override_is_normalized(self):
+        """Avoid /coding/v1/v1/messages on Anthropic SDK paths."""
+        url = _resolve_kimi_base_url(
+            "sk-kimi-abc123",
+            MOONSHOT_DEFAULT_URL,
+            "https://api.kimi.com/coding/v1",
+        )
+        assert url == KIMI_CODE_BASE_URL
+
 
 class TestKimiCodeStatusAutoDetect:
     """Test that get_api_key_provider_status auto-detects sk-kimi- keys."""

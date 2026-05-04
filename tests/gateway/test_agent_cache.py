@@ -11,6 +11,7 @@ Verifies that the agent cache correctly:
 
 import hashlib
 import json
+import os
 import threading
 from unittest.mock import MagicMock, patch
 
@@ -860,8 +861,9 @@ class TestAgentCacheSpilloverLive:
     def _real_agent(self):
         """A genuine AIAgent; no API calls are made during these tests."""
         from run_agent import AIAgent
+        os.environ.setdefault("OPENROUTER_API_KEY", "sk-or-v1-test")
         return AIAgent(
-            model="anthropic/claude-sonnet-4", api_key="test",
+            model="anthropic/claude-sonnet-4", api_key="sk-or-v1-test",
             base_url="https://openrouter.ai/api/v1", provider="openrouter",
             max_iterations=5, quiet_mode=True,
             skip_context_files=True, skip_memory=True,

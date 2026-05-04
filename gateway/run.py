@@ -11677,6 +11677,100 @@ class GatewayRunner:
     # Proxy mode: forward messages to a remote Hermes API server
     # ------------------------------------------------------------------
 
+    def _get_backend_proxy_url(self) -> Optional[str]:
+        """Return the backend proxy URL if SessionService proxy mode is configured."""
+        url = os.getenv("HERMES_GATEWAY_BACKEND_PROXY_URL", "").strip()
+        if url:
+            return url.rstrip("/")
+        cfg = _load_gateway_config()
+        url = (cfg.get("gateway") or {}).get("backend_proxy_url", "").strip()
+        if url:
+            return url.rstrip("/")
+        return None
+
+    async def _run_agent_via_backend_proxy(
+        self,
+        message: str,
+        context_prompt: str,
+        history: List[Dict[str, Any]],
+        source: "SessionSource",
+        session_id: str,
+        session_key: str = None,
+        event_message_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Forward a gateway turn to the Semantier backend SessionService."""
+        try:
+            from aiohttp import ClientSession as _AioClientSession, ClientTimeout
+        except ImportError:
+            return {
+                "final_response": "⚠️ Backend proxy mode requires aiohttp. Install with: pip install aiohttp",
+                "messages": [],
+                "api_calls": 0,
+                "tools": [],
+            }
+
+        proxy_url = self._get_backend_proxy_url()
+        if not proxy_url:
+            return {
+                "final_response": "⚠️ Backend proxy URL not configured",
+                "messages": [],
+                "api_calls": 0,
+                "tools": [],
+            }
+
+        proxy_key = os.getenv("GATEWAY_PROXY_KEY", "").strip()
+        platform_name = source.platform.value if source.platform else "unknown"
+        url = f"{proxy_url}/internal/messaging/{platform_name}/incoming"
+        payload = {
+            "session_id": session_id,
+            "session_key": session_key or "",
+            "user_message": message,
+            "platform": platform_name,
+            "workspace_slug": os.getenv("WORKSPACE_SLUG", "").strip(),
+            "source": {
+                "chat_id": source.chat_id,
+                "user_id": source.user_id,
+                "user_name": source.user_name,
+                "chat_type": source.chat_type,
+                "chat_name": source.chat_name,
+                "thread_id": source.thread_id,
+            },
+            "context_prompt": context_prompt,
+        }
+
+        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        if proxy_key:
+            headers["Authorization"] = f"Bearer {proxy_key}"
+
+        timeout = ClientTimeout(total=300)
+        try:
+            async with _AioClientSession() as session:
+                async with session.post(url, json=payload, headers=headers, timeout=timeout) as resp:
+                    if resp.status != 200:
+                        error_text = await resp.text()
+                        logger.warning("Backend proxy error (%s): %s", resp.status, error_text[:200])
+                        return {
+                            "final_response": f"⚠️ Backend proxy error ({resp.status}): {error_text[:200]}",
+                            "messages": [],
+                            "api_calls": 0,
+                            "tools": [],
+                        }
+                    data = await resp.json()
+                    return {
+                        "final_response": data.get("response", ""),
+                        "messages": [],
+                        "api_calls": 0,
+                        "tools": [],
+                    }
+        except Exception as e:
+            logger.warning("Backend proxy connection error: %s", e)
+            return {
+                "final_response": f"⚠️ Backend proxy connection error: {e}",
+                "messages": [],
+                "api_calls": 0,
+                "tools": [],
+            }
+
     def _get_proxy_url(self) -> Optional[str]:
         """Return the proxy URL if proxy mode is configured, else None.
 
@@ -12003,6 +12097,18 @@ class GatewayRunner:
         This is run in a thread pool to not block the event loop.
         Supports interruption via new messages.
         """
+        _backend_proxy_url = self._get_backend_proxy_url()
+        if _backend_proxy_url:
+            return await self._run_agent_via_backend_proxy(
+                message=message,
+                context_prompt=context_prompt,
+                history=history,
+                source=source,
+                session_id=session_id,
+                session_key=session_key,
+                event_message_id=event_message_id,
+            )
+
         # ---- Proxy mode: delegate to remote API server ----
         if self._get_proxy_url():
             return await self._run_agent_via_proxy(

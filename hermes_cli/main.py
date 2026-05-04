@@ -103,9 +103,18 @@ def _apply_profile_override() -> None:
     profile_name = None
     consume = 0
 
+    # Pytest uses `-p <plugin>`; only honor the short `-p` flag when argv[0]
+    # clearly indicates a Hermes CLI invocation.
+    argv0 = Path(sys.argv[0]).name.lower()
+    is_hermes_invocation = "hermes" in argv0
+
     # 1. Check for explicit -p / --profile flag
     for i, arg in enumerate(argv):
-        if arg in ("--profile", "-p") and i + 1 < len(argv):
+        if arg == "--profile" and i + 1 < len(argv):
+            profile_name = argv[i + 1]
+            consume = 2
+            break
+        elif arg == "-p" and is_hermes_invocation and i + 1 < len(argv):
             profile_name = argv[i + 1]
             consume = 2
             break
@@ -141,8 +150,18 @@ def _apply_profile_override() -> None:
 
             hermes_home = resolve_profile_env(profile_name)
         except (ValueError, FileNotFoundError) as exc:
-            print(f"Error: {exc}", file=sys.stderr)
-            sys.exit(1)
+            # If the profile was explicitly requested on the command line
+            # (consume > 0) we should fail fast with a non-zero exit so the
+            # CLI user gets immediate feedback. However, when this module is
+            # imported (for example during test collection) an absent profile
+            # discovered via the active_profile file should not cause import
+            # time termination. Treat non-explicit resolution as a warning.
+            if consume > 0:
+                print(f"Error: {exc}", file=sys.stderr)
+                sys.exit(1)
+            else:
+                print(f"Warning: {exc}; continuing with default profile", file=sys.stderr)
+                return
         except Exception as exc:
             # A bug in profiles.py must NEVER prevent hermes from starting
             print(

@@ -205,6 +205,19 @@ try:
         _MCP_SAMPLING_TYPES = True
     except ImportError:
         logger.debug("MCP sampling types not available -- sampling disabled")
+        # Expose fallback aliases so callers/tests can import the expected
+        # type names even when the mcp SDK doesn't provide them. Using
+        # `typing.Any` keeps runtime behavior permissive while satisfying
+        # import-time expectations.
+        from typing import Any as _Any
+
+        CreateMessageResult = _Any
+        CreateMessageResultWithTools = _Any
+        ErrorData = _Any
+        SamplingCapability = _Any
+        SamplingToolsCapability = _Any
+        TextContent = _Any
+        ToolUseContent = _Any
     # Notification types for dynamic tool discovery (tools/list_changed)
     try:
         from mcp.types import (
@@ -218,6 +231,21 @@ try:
         logger.debug("MCP notification types not available -- dynamic tool discovery disabled")
 except ImportError:
     logger.debug("mcp package not installed -- MCP tool support disabled")
+    # Provide fallback aliases for type names so callers/tests can import
+    # the expected symbols even when the mcp package is entirely absent.
+    from typing import Any as _Any
+
+    CreateMessageResult = _Any
+    CreateMessageResultWithTools = _Any
+    ErrorData = _Any
+    SamplingCapability = _Any
+    SamplingToolsCapability = _Any
+    TextContent = _Any
+    ToolUseContent = _Any
+    ServerNotification = _Any
+    ToolListChangedNotification = _Any
+    PromptListChangedNotification = _Any
+    ResourceListChangedNotification = _Any
 
 
 def _check_message_handler_support() -> bool:

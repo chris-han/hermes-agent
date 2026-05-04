@@ -215,6 +215,22 @@ class TestWeixinConfig:
         assert config.get_connected_platforms() == []
 
 
+class TestWeixinDiagnostics:
+    def test_network_diagnostic_helpers_capture_errno_chain_and_proxy_host(self):
+        with patch.dict(os.environ, {"HTTPS_PROXY": "http://proxy.example:8080"}, clear=False):
+            try:
+                try:
+                    raise ConnectionResetError(104, "Connection reset by peer")
+                except ConnectionResetError as inner:
+                    raise RuntimeError("long poll failed") from inner
+            except RuntimeError as exc:
+                assert weixin._exception_errno(exc) == 104
+                summary = weixin._exception_chain_summary(exc)
+                assert "RuntimeError: long poll failed" in summary
+                assert "ConnectionResetError: [Errno 104] Connection reset by peer" in summary
+                assert "HTTPS_PROXY=proxy.example" in weixin._proxy_host_summary()
+
+
 class TestWeixinStatePersistence:
     def test_save_weixin_account_preserves_existing_file_on_replace_failure(self, tmp_path, monkeypatch):
         account_path = tmp_path / "weixin" / "accounts" / "acct.json"

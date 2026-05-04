@@ -969,24 +969,35 @@ def check_all_command_guards(command: str, env_type: str,
 
     # --- Phase 1: Gather findings from both checks ---
 
-    # Tirith check — wrapper guarantees no raise for expected failures.
-    # Only catch ImportError (module not installed).
-    tirith_result = {"action": "allow", "findings": [], "summary": ""}
-    try:
-        from tools.tirith_security import check_command_security
-        tirith_result = check_command_security(command)
-    except ImportError:
-        pass  # tirith module not installed — allow
+    session_key = get_current_session_key()
 
-    # Dangerous command check (detection only, no approval)
+    # Dangerous command check (fast local regex path).
     is_dangerous, pattern_key, description = detect_dangerous_command(command)
+    dangerous_needs_prompt = bool(
+        is_dangerous and pattern_key and not is_approved(session_key, pattern_key)
+    )
+
+    # Tirith check — wrapper guarantees no raise for expected failures.
+    # In gateway/ask mode, when we already know a dangerous-command prompt
+    # is required and a notify callback is registered, skip Tirith so the
+    # blocking approval request reaches the user immediately.
+    tirith_result = {"action": "allow", "findings": [], "summary": ""}
+    skip_tirith = False
+    if dangerous_needs_prompt and (is_gateway or is_ask):
+        with _lock:
+            skip_tirith = session_key in _gateway_notify_cbs
+
+    if not skip_tirith:
+        try:
+            from tools.tirith_security import check_command_security
+            tirith_result = check_command_security(command)
+        except ImportError:
+            pass  # tirith module not installed — allow
 
     # --- Phase 2: Decide ---
 
     # Collect warnings that need approval
     warnings = []  # list of (pattern_key, description, is_tirith)
-
-    session_key = get_current_session_key()
 
     # Tirith block/warn → approvable warning with rich findings.
     # Previously, tirith "block" was a hard block with no approval prompt.
@@ -1001,7 +1012,7 @@ def check_all_command_guards(command: str, env_type: str,
             warnings.append((tirith_key, tirith_desc, True))
 
     if is_dangerous:
-        if not is_approved(session_key, pattern_key):
+        if dangerous_needs_prompt:
             warnings.append((pattern_key, description, False))
 
     # Nothing to warn about

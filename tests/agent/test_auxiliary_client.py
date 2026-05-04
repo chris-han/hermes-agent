@@ -20,6 +20,7 @@ from agent.auxiliary_client import (
     _read_codex_access_token,
     _get_provider_chain,
     _is_payment_error,
+    _is_resource_not_found_error,
     _normalize_aux_provider,
     _try_payment_fallback,
     _resolve_auto,
@@ -65,6 +66,14 @@ class TestNormalizeAuxProvider:
     def test_maps_github_copilot_acp_aliases(self):
         assert _normalize_aux_provider("github-copilot-acp") == "copilot-acp"
         assert _normalize_aux_provider("copilot-acp-agent") == "copilot-acp"
+
+
+class TestKimiAuxModelDefaults:
+    def test_kimi_coding_defaults_to_kimi_for_coding(self):
+        from agent.auxiliary_client import _API_KEY_PROVIDER_AUX_MODELS
+
+        assert _API_KEY_PROVIDER_AUX_MODELS["kimi-coding"] == "kimi-for-coding"
+        assert _API_KEY_PROVIDER_AUX_MODELS["kimi-coding-cn"] == "kimi-for-coding"
 
 
 class TestReadCodexAccessToken:
@@ -972,6 +981,59 @@ class TestIsConnectionError:
         err = Exception("Internal Server Error")
         err.status_code = 500
         assert _is_connection_error(err) is False
+
+
+class TestIsResourceNotFoundError:
+    """_is_resource_not_found_error detects 404 model/resource misses."""
+
+    def test_404_with_resource_not_found_marker(self):
+        err = Exception("Error code: 404 - {'error': {'type': 'resource_not_found_error'}}")
+        err.status_code = 404
+        assert _is_resource_not_found_error(err) is True
+
+    def test_non_404_is_not_resource_not_found(self):
+        err = Exception("resource_not_found_error")
+        err.status_code = 400
+        assert _is_resource_not_found_error(err) is False
+
+
+class TestCallLlmNotFoundFallback:
+    """call_llm should continue fallback chain after 404 on first fallback."""
+
+    def test_retries_next_fallback_when_first_fallback_404s(self):
+        primary_client = MagicMock(name="primary_client")
+        conn_err = Exception("Request timed out.")
+        primary_client.chat.completions.create.side_effect = conn_err
+
+        fallback_1 = MagicMock(name="fallback_1")
+        nf_err = Exception("Error code: 404 - resource_not_found_error")
+        nf_err.status_code = 404
+        fallback_1.chat.completions.create.side_effect = nf_err
+
+        fallback_2 = MagicMock(name="fallback_2")
+        ok_response = MagicMock(name="ok_response")
+        fallback_2.chat.completions.create.return_value = ok_response
+
+        with patch(
+            "agent.auxiliary_client._get_cached_client",
+            return_value=(primary_client, "qwen3.5-plus"),
+        ), patch(
+            "agent.auxiliary_client._resolve_task_provider_model",
+            return_value=("auto", "qwen3.5-plus", None, None, None),
+        ), patch(
+            "agent.auxiliary_client._try_payment_fallback",
+            side_effect=[
+                (fallback_1, "kimi-k2-turbo-preview", "api-key"),
+                (fallback_2, "google/gemini-3-flash-preview", "openrouter"),
+            ],
+        ) as mock_fb:
+            result = call_llm(
+                task="title_generation",
+                messages=[{"role": "user", "content": "hello"}],
+            )
+
+        assert result is ok_response
+        assert mock_fb.call_count == 2
 
 
 class TestKimiTemperatureOmitted:

@@ -131,6 +131,53 @@ def _make_ssl_connector() -> Optional["aiohttp.TCPConnector"]:
     ssl_ctx = ssl.create_default_context(cafile=certifi.where())
     return aiohttp.TCPConnector(ssl=ssl_ctx)
 
+
+def _proxy_host_summary() -> str:
+    hosts: List[str] = []
+    for key in ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "https_proxy", "http_proxy", "all_proxy"):
+        raw = str(os.getenv(key) or "").strip()
+        if not raw:
+            continue
+        parsed = urlparse(raw)
+        host = parsed.hostname or raw
+        entry = f"{key}={host}"
+        if entry not in hosts:
+            hosts.append(entry)
+    return ", ".join(hosts) if hosts else "none"
+
+
+def _unwrap_exception_chain(exc: BaseException) -> List[BaseException]:
+    chain: List[BaseException] = []
+    seen: set[int] = set()
+    current: Optional[BaseException] = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        chain.append(current)
+        current = getattr(current, "__cause__", None) or getattr(current, "__context__", None)
+    return chain
+
+
+def _exception_errno(exc: BaseException) -> Optional[int]:
+    for item in _unwrap_exception_chain(exc):
+        errno = getattr(item, "errno", None)
+        if isinstance(errno, int):
+            return errno
+        os_error = getattr(item, "os_error", None)
+        if os_error is not None:
+            nested_errno = getattr(os_error, "errno", None)
+            if isinstance(nested_errno, int):
+                return nested_errno
+    return None
+
+
+def _exception_chain_summary(exc: BaseException) -> str:
+    parts: List[str] = []
+    for item in _unwrap_exception_chain(exc):
+        msg = str(item).strip()
+        label = type(item).__name__
+        parts.append(f"{label}: {msg}" if msg else label)
+    return " <- ".join(parts)
+
 ITEM_TEXT = 1
 ITEM_IMAGE = 2
 ITEM_VOICE = 3
@@ -1310,7 +1357,20 @@ class WeixinAdapter(BasePlatformAdapter):
                 break
             except Exception as exc:
                 consecutive_failures += 1
-                logger.error("[%s] poll error (%d/%d): %s", self.name, consecutive_failures, MAX_CONSECUTIVE_FAILURES, exc)
+                logger.error(
+                    "[%s] poll error (%d/%d): %s | type=%s errno=%s host=%s endpoint=%s timeout_ms=%s trust_env=true proxy_hosts=%s chain=%s",
+                    self.name,
+                    consecutive_failures,
+                    MAX_CONSECUTIVE_FAILURES,
+                    exc,
+                    type(exc).__name__,
+                    _exception_errno(exc),
+                    urlparse(self._base_url).hostname or self._base_url,
+                    EP_GET_UPDATES,
+                    timeout_ms,
+                    _proxy_host_summary(),
+                    _exception_chain_summary(exc),
+                )
                 await asyncio.sleep(BACKOFF_DELAY_SECONDS if consecutive_failures >= MAX_CONSECUTIVE_FAILURES else RETRY_DELAY_SECONDS)
                 if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
                     consecutive_failures = 0

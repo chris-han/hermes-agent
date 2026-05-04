@@ -36,6 +36,24 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
 
+
+class _ModelObject:
+    """Tiny kwargs-backed object used by optional SDK fallbacks."""
+
+    def __init__(self, **kwargs):
+        self.__dict__.update(kwargs)
+
+
+def _model_ctor(**kwargs):
+    return _ModelObject(**kwargs)
+
+
+class _ModelNamespace:
+    """Expose arbitrary model names as lightweight kwargs constructors."""
+
+    def __getattr__(self, _name: str):
+        return _model_ctor
+
 try:
     import dingtalk_stream
     from dingtalk_stream import ChatbotMessage
@@ -45,7 +63,34 @@ try:
 except ImportError:
     DINGTALK_STREAM_AVAILABLE = False
     dingtalk_stream = None  # type: ignore[assignment]
-    ChatbotMessage = None  # type: ignore[assignment]
+
+    class _FallbackChatbotMessage:
+        """Minimal replacement when dingtalk_stream is unavailable."""
+
+        TOPIC = "chatbot"
+
+        @classmethod
+        def from_dict(cls, data):
+            payload = data if isinstance(data, dict) else {}
+            text_obj = payload.get("text") if isinstance(payload.get("text"), dict) else {}
+            return _ModelObject(
+                message_type=payload.get("msgtype") or payload.get("msgType") or "",
+                text=text_obj.get("content") if text_obj else payload.get("text", ""),
+                message_id=payload.get("msgId") or payload.get("messageId") or "",
+                conversation_id=payload.get("conversationId") or payload.get("conversation_id") or "",
+                conversation_type=payload.get("conversationType") or payload.get("conversation_type") or "",
+                sender_id=payload.get("senderId") or payload.get("sender_id") or "",
+                sender_staff_id=payload.get("senderStaffId") or payload.get("sender_staff_id") or "",
+                session_webhook=payload.get("sessionWebhook") or payload.get("session_webhook") or "",
+                session_webhook_expired_time=(
+                    payload.get("sessionWebhookExpiredTime")
+                    or payload.get("session_webhook_expired_time")
+                    or 0
+                ),
+                is_in_at_list=bool(payload.get("isInAtList") or payload.get("is_in_at_list")),
+            )
+
+    ChatbotMessage = _FallbackChatbotMessage  # type: ignore[assignment]
     CallbackMessage = None  # type: ignore[assignment]
     AckMessage = type(
         "AckMessage",
@@ -81,11 +126,17 @@ try:
 except ImportError:
     CARD_SDK_AVAILABLE = False
     dingtalk_card_client = None
-    dingtalk_card_models = None
+    dingtalk_card_models = _ModelNamespace()
     dingtalk_robot_client = None
-    dingtalk_robot_models = None
+    dingtalk_robot_models = _ModelNamespace()
     open_api_models = None
-    tea_util_models = None
+
+    class _TeaUtilFallback:
+        @staticmethod
+        def RuntimeOptions(**kwargs):
+            return _ModelObject(**kwargs)
+
+    tea_util_models = _TeaUtilFallback()
 
 from gateway.config import Platform, PlatformConfig
 from gateway.platforms.helpers import MessageDeduplicator

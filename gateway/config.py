@@ -692,6 +692,9 @@ def load_gateway_config() -> GatewayConfig:
             if "always_log_local" in yaml_cfg:
                 gw_data["always_log_local"] = yaml_cfg["always_log_local"]
 
+            if "sessions_dir" in yaml_cfg:
+                gw_data["sessions_dir"] = yaml_cfg["sessions_dir"]
+
             if "unauthorized_dm_behavior" in yaml_cfg:
                 gw_data["unauthorized_dm_behavior"] = _normalize_unauthorized_dm_behavior(
                     yaml_cfg.get("unauthorized_dm_behavior"),
