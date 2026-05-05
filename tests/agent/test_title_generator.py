@@ -95,6 +95,53 @@ class TestGenerateTitle:
         with patch("agent.title_generator.call_llm", side_effect=RuntimeError("nope")):
             assert generate_title("q", "a") is None
 
+    def test_timeout_error_does_not_invoke_failure_callback(self):
+        """Timeouts are transient; don't surface as user-visible auxiliary warnings."""
+        captured = []
+
+        def _cb(task, exc):
+            captured.append((task, exc))
+
+        with patch(
+            "agent.title_generator.call_llm",
+            side_effect=Exception("Request timed out."),
+        ), patch("agent.title_generator.time.sleep", return_value=None):
+            assert generate_title("q", "a", failure_callback=_cb) is None
+
+        assert captured == []
+
+    def test_timeout_retries_once_and_can_succeed(self):
+        """Title generation should retry once on timeout-like failures."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "Recovered Title"
+
+        with patch(
+            "agent.title_generator.call_llm",
+            side_effect=[Exception("Request timed out."), mock_response],
+        ) as mock_call, patch("agent.title_generator.time.sleep", return_value=None):
+            title = generate_title("q", "a")
+
+        assert title == "Recovered Title"
+        assert mock_call.call_count == 2
+
+    def test_timeout_then_non_timeout_retry_invokes_failure_callback(self):
+        """Non-timeout retry failure should still be surfaced via callback."""
+        captured = []
+
+        def _cb(task, exc):
+            captured.append((task, exc))
+
+        with patch(
+            "agent.title_generator.call_llm",
+            side_effect=[Exception("Request timed out."), RuntimeError("no provider")],
+        ), patch("agent.title_generator.time.sleep", return_value=None):
+            assert generate_title("q", "a", failure_callback=_cb) is None
+
+        assert len(captured) == 1
+        assert captured[0][0] == "title generation"
+        assert isinstance(captured[0][1], RuntimeError)
+
     def test_truncates_long_messages(self):
         """Long user/assistant messages should be truncated in the LLM request."""
         captured_kwargs = {}

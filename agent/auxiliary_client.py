@@ -3376,6 +3376,34 @@ def _validate_llm_response(response: Any, task: str = None) -> Any:
     return response
 
 
+def _create_with_task_retry_policy(client: Any, kwargs: Dict[str, Any], task: str = None) -> Any:
+    """Execute chat.completions.create() with task-specific retry behavior.
+
+    Title generation is a best-effort background task. OpenAI SDK default
+    retries can amplify a 30s timeout into ~90s wall time before surfacing an
+    error, so disable SDK retries for this task when supported.
+    """
+    request_client = client
+    if task == "title_generation":
+        client_cls = client.__class__
+        client_mod = str(getattr(client_cls, "__module__", ""))
+        client_name = str(getattr(client_cls, "__name__", ""))
+        is_openai_family = ("openai" in client_mod.lower()) or (
+            client_name in {"OpenAI", "AsyncOpenAI", "AzureOpenAI", "AsyncAzureOpenAI"}
+        )
+        with_options = getattr(client, "with_options", None)
+        if is_openai_family and callable(with_options):
+            try:
+                request_client = with_options(max_retries=0)
+            except Exception:
+                logger.debug(
+                    "Auxiliary %s: could not apply max_retries=0 via with_options",
+                    task,
+                    exc_info=True,
+                )
+    return request_client.chat.completions.create(**kwargs)
+
+
 def call_llm(
     task: str = None,
     *,
@@ -3505,7 +3533,7 @@ def call_llm(
     # then payment fallback.
     try:
         return _validate_llm_response(
-            client.chat.completions.create(**kwargs), task)
+            _create_with_task_retry_policy(client, kwargs, task), task)
     except Exception as first_err:
         if "temperature" in kwargs and _is_unsupported_temperature_error(first_err):
             retry_kwargs = dict(kwargs)
@@ -3516,7 +3544,7 @@ def call_llm(
             )
             try:
                 return _validate_llm_response(
-                    client.chat.completions.create(**retry_kwargs), task)
+                    _create_with_task_retry_policy(client, retry_kwargs, task), task)
             except Exception as retry_err:
                 retry_err_str = str(retry_err)
                 # If retry still fails, fall through to the max_tokens /
@@ -3544,7 +3572,7 @@ def call_llm(
             kwargs["max_completion_tokens"] = max_tokens
             try:
                 return _validate_llm_response(
-                    client.chat.completions.create(**kwargs), task)
+                    _create_with_task_retry_policy(client, kwargs, task), task)
             except Exception as retry_err:
                 # If the max_tokens retry also hits a payment or connection
                 # error, fall through to the fallback chain below.
@@ -3574,7 +3602,7 @@ def call_llm(
                 if refreshed_model and refreshed_model != kwargs.get("model"):
                     kwargs["model"] = refreshed_model
                 return _validate_llm_response(
-                    refreshed_client.chat.completions.create(**kwargs), task)
+                    _create_with_task_retry_policy(refreshed_client, kwargs, task), task)
 
         # ── Auth refresh retry ───────────────────────────────────────
         if (_is_auth_error(first_err)
@@ -3617,7 +3645,7 @@ def call_llm(
                     if _is_anthropic_compat_endpoint(resolved_provider, _retry_base):
                         retry_kwargs["messages"] = _convert_openai_images_to_anthropic(retry_kwargs["messages"])
                     return _validate_llm_response(
-                        retry_client.chat.completions.create(**retry_kwargs), task)
+                        _create_with_task_retry_policy(retry_client, retry_kwargs, task), task)
 
         # ── Payment / connection / not-found fallback ─────────────────
         # Auto mode is best-effort: if one provider fails, keep walking the
@@ -3662,7 +3690,7 @@ def call_llm(
                 base_url=str(getattr(fb_client, "base_url", "") or ""))
             try:
                 return _validate_llm_response(
-                    fb_client.chat.completions.create(**fb_kwargs), task)
+                    _create_with_task_retry_policy(fb_client, fb_kwargs, task), task)
             except Exception as fb_err:
                 fallback_err = fb_err
                 failed_label = fb_label

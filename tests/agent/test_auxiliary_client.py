@@ -1036,6 +1036,46 @@ class TestCallLlmNotFoundFallback:
         assert mock_fb.call_count == 2
 
 
+class TestTitleGenerationRetryPolicy:
+    """Title generation should not use SDK-level retry amplification."""
+
+    def test_title_generation_uses_max_retries_zero_when_available(self):
+        class _OpenAIStyleClient:
+            __module__ = "openai"
+
+            def __init__(self, wrapped):
+                self._wrapped = wrapped
+
+            def with_options(self, **kwargs):
+                self._with_options_kwargs = kwargs
+                return self._wrapped
+
+        wrapped_client = MagicMock(name="wrapped_client")
+        ok_response = MagicMock(name="ok_response")
+
+        base_client = _OpenAIStyleClient(wrapped_client)
+        wrapped_client.chat.completions.create.return_value = ok_response
+
+        with patch(
+            "agent.auxiliary_client._resolve_task_provider_model",
+            return_value=("auto", "qwen3.5-plus", None, None, None),
+        ), patch(
+            "agent.auxiliary_client._get_cached_client",
+            return_value=(base_client, "qwen3.5-plus"),
+        ), patch(
+            "agent.auxiliary_client._validate_llm_response",
+            side_effect=lambda resp, _task: resp,
+        ):
+            result = call_llm(
+                task="title_generation",
+                messages=[{"role": "user", "content": "hello"}],
+            )
+
+        assert result is ok_response
+        assert getattr(base_client, "_with_options_kwargs", None) == {"max_retries": 0}
+        wrapped_client.chat.completions.create.assert_called_once()
+
+
 class TestKimiTemperatureOmitted:
     """Kimi/Moonshot models should have temperature OMITTED from API kwargs.
 
