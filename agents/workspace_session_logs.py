@@ -19,6 +19,11 @@ def _session_jsonl_path(workspace_hermes_home: Path, session_id: str) -> Path:
     return _sessions_dir(workspace_hermes_home) / f"{quote(str(session_id), safe='-_.')}.jsonl"
 
 
+def _session_snapshot_path(workspace_hermes_home: Path, session_id: str) -> Path:
+    file_key = quote(str(session_id), safe="-_.")
+    return _sessions_dir(workspace_hermes_home) / f"session_{file_key}.json"
+
+
 def _index_path(workspace_hermes_home: Path) -> Path:
     return _sessions_dir(workspace_hermes_home) / "sessions.json"
 
@@ -78,6 +83,71 @@ def _utc_now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
+def _normalize_session_record(
+    existing: dict[str, Any] | None = None,
+    *,
+    workspace_id: str | None = None,
+    alias: str | None = None,
+    platform_session_key: str | None = None,
+    chat_id: str | None = None,
+    thread_id: str | None = None,
+    origin_user_id: str | None = None,
+    source: str | None = None,
+    platform: str | None = None,
+    title: str | None = None,
+    adapter_key: str | None = None,
+    delivery_adapter_key: str | None = None,
+    updated_at: str | None = None,
+) -> dict[str, Any]:
+    record = dict(existing or {})
+    normalized = {
+        "workspace_id": workspace_id if workspace_id is not None else record.get("workspace_id"),
+        "alias": alias if alias is not None else record.get("alias"),
+        "platform_session_key": (
+            platform_session_key if platform_session_key is not None else record.get("platform_session_key")
+        ),
+        "chat_id": chat_id if chat_id is not None else record.get("chat_id"),
+        "thread_id": thread_id if thread_id is not None else record.get("thread_id"),
+        "origin_user_id": origin_user_id if origin_user_id is not None else record.get("origin_user_id"),
+        "source": source if source is not None else record.get("source"),
+        "platform": platform if platform is not None else record.get("platform"),
+        "title": title if title is not None else record.get("title") or "",
+        "adapter_key": adapter_key if adapter_key is not None else record.get("adapter_key"),
+        "delivery_adapter_key": (
+            delivery_adapter_key if delivery_adapter_key is not None else record.get("delivery_adapter_key")
+        ),
+        "updated_at": updated_at or record.get("updated_at") or _utc_now_iso(),
+    }
+    return normalized
+
+
+def _save_session_snapshot(
+    workspace_hermes_home: Path,
+    session_id: str,
+    record: dict[str, Any],
+) -> None:
+    snapshot = {
+        "session_id": str(session_id),
+        "canonical_session_id": str(session_id),
+        "workspace_id": record.get("workspace_id"),
+        "alias": record.get("alias"),
+        "platform_session_key": record.get("platform_session_key"),
+        "platform": record.get("platform"),
+        "chat_id": record.get("chat_id"),
+        "thread_id": record.get("thread_id"),
+        "origin_user_id": record.get("origin_user_id"),
+        "source": record.get("source"),
+        "title": record.get("title") or "",
+        "adapter_key": record.get("adapter_key"),
+        "delivery_adapter_key": record.get("delivery_adapter_key"),
+        "updated_at": record.get("updated_at") or "",
+    }
+    _session_snapshot_path(workspace_hermes_home, session_id).write_text(
+        json.dumps(snapshot, ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+
 def _session_row(
     workspace_hermes_home: Path,
     session_id: str,
@@ -99,6 +169,8 @@ def _session_row(
         "thread_id": record.get("thread_id"),
         "origin_user_id": record.get("origin_user_id"),
         "workspace_id": record.get("workspace_id"),
+        "adapter_key": record.get("adapter_key"),
+        "delivery_adapter_key": record.get("delivery_adapter_key"),
         "workspace_hermes_home": Path(workspace_hermes_home).expanduser().resolve(),
         "updated_at": record.get("updated_at") or "",
         "title": record.get("title") or "",
@@ -135,23 +207,23 @@ def resolve_or_create_workspace_session_id(
     if preferred_session_id and (existing_session_id or str(preferred_session_id).strip() in sessions):
         session_id = str(preferred_session_id).strip()
         if session_id:
-            record = sessions.setdefault(session_id, {})
-            record.update(
-                {
-                    "workspace_id": workspace_id,
-                    "alias": alias,
-                    "platform_session_key": platform_session_key,
-                    "chat_id": chat_id,
-                    "thread_id": thread_id,
-                    "origin_user_id": origin_user_id,
-                    "source": source,
-                    "platform": platform,
-                    "updated_at": _utc_now_iso(),
-                }
+            record = _normalize_session_record(
+                sessions.get(session_id),
+                workspace_id=workspace_id,
+                alias=alias,
+                platform_session_key=platform_session_key,
+                chat_id=chat_id,
+                thread_id=thread_id,
+                origin_user_id=origin_user_id,
+                source=source,
+                platform=platform,
+                updated_at=_utc_now_iso(),
             )
+            sessions[session_id] = record
             for key in alias_keys:
                 aliases[key] = session_id
             _save_index(workspace_hermes_home, data)
+            _save_session_snapshot(workspace_hermes_home, session_id, record)
             return session_id
 
     if existing_session_id:
@@ -161,20 +233,21 @@ def resolve_or_create_workspace_session_id(
         return ""
 
     session_id = _new_session_id(workspace_id)
-    sessions[session_id] = {
-        "workspace_id": workspace_id,
-        "alias": alias,
-        "platform_session_key": platform_session_key,
-        "chat_id": chat_id,
-        "thread_id": thread_id,
-        "origin_user_id": origin_user_id,
-        "source": source,
-        "platform": platform,
-        "updated_at": _utc_now_iso(),
-    }
+    sessions[session_id] = _normalize_session_record(
+        workspace_id=workspace_id,
+        alias=alias,
+        platform_session_key=platform_session_key,
+        chat_id=chat_id,
+        thread_id=thread_id,
+        origin_user_id=origin_user_id,
+        source=source,
+        platform=platform,
+        updated_at=_utc_now_iso(),
+    )
     for key in alias_keys:
         aliases[key] = session_id
     _save_index(workspace_hermes_home, data)
+    _save_session_snapshot(workspace_hermes_home, session_id, sessions[session_id])
     return session_id
 
 
@@ -193,10 +266,14 @@ def update_workspace_session_title(
     title: str,
 ) -> bool:
     data = _load_index(workspace_hermes_home)
-    record = data["sessions"].setdefault(str(session_id), {})
-    record["title"] = str(title or "")
-    record["updated_at"] = _utc_now_iso()
+    record = _normalize_session_record(
+        data["sessions"].get(str(session_id)),
+        title=str(title or ""),
+        updated_at=_utc_now_iso(),
+    )
+    data["sessions"][str(session_id)] = record
     _save_index(workspace_hermes_home, data)
+    _save_session_snapshot(workspace_hermes_home, str(session_id), record)
     return True
 
 
