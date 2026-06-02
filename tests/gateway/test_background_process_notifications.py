@@ -114,6 +114,14 @@ class TestLoadBackgroundNotificationsMode:
         monkeypatch.delenv("HERMES_BACKGROUND_NOTIFICATIONS", raising=False)
         assert GatewayRunner._load_background_notifications_mode() == "all"
 
+    def test_invalid_yaml_raises(self, monkeypatch, tmp_path):
+        (tmp_path / "config.yaml").write_text("display: [\n", encoding="utf-8")
+        import gateway.run as gw
+        monkeypatch.setattr(gw, "_hermes_home", tmp_path)
+        monkeypatch.delenv("HERMES_BACKGROUND_NOTIFICATIONS", raising=False)
+        with pytest.raises(Exception):
+            GatewayRunner._load_background_notifications_mode()
+
 
 # ---------------------------------------------------------------------------
 # _run_process_watcher integration tests

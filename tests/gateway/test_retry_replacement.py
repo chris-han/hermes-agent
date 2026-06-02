@@ -19,6 +19,9 @@ async def test_gateway_retry_replaces_last_user_turn_in_transcript(tmp_path):
     store._loaded = True
 
     session_id = "retry_session"
+    workspace_home = tmp_path / ".hermes"
+    workspace_home.mkdir()
+    store.register_workspace_home(session_id, workspace_home)
     for msg in [
         {"role": "session_meta", "tools": []},
         {"role": "user", "content": "first question"},

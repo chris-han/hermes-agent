@@ -2086,8 +2086,18 @@ class GatewayRunner:
         if adapter is None:
             return None
         resolver = getattr(adapter, "resolve_for_source", None)
-        if callable(resolver):
+        if inspect.ismethod(resolver) or inspect.isfunction(resolver):
             resolved = resolver(source)
+            if inspect.isawaitable(resolved):
+                logger.debug(
+                    "Ignoring awaitable resolve_for_source result for platform=%s; expected sync adapter resolver",
+                    platform,
+                )
+                try:
+                    resolved.close()
+                except Exception:
+                    pass
+                resolved = None
             if resolved is not None:
                 return resolved
             if platform == Platform.WEIXIN:
@@ -3038,19 +3048,19 @@ class GatewayRunner:
         """
         mode = os.getenv("HERMES_BACKGROUND_NOTIFICATIONS", "")
         if not mode:
-            try:
-                import yaml as _y
-                cfg_path = _hermes_home / "config.yaml"
-                if cfg_path.exists():
-                    with open(cfg_path, encoding="utf-8") as _f:
-                        cfg = _y.safe_load(_f) or {}
-                    raw = cfg_get(cfg, "display", "background_process_notifications")
-                    if raw is False:
-                        mode = "off"
-                    elif raw not in {None, ""}:
-                        mode = str(raw)
-            except Exception:
-                pass
+            import yaml as _y
+
+            module_home = getattr(sys.modules.get("gateway.run"), "_hermes_home", None)
+            home_root = module_home if module_home is not None else _hermes_home
+            cfg_path = Path(home_root) / "config.yaml"
+            if cfg_path.exists():
+                with open(cfg_path, encoding="utf-8") as _f:
+                    cfg = _y.safe_load(_f) or {}
+                raw = cfg_get(cfg, "display", "background_process_notifications")
+                if raw is False:
+                    mode = "off"
+                elif raw not in {None, ""}:
+                    mode = str(raw)
         mode = (mode or "all").strip().lower()
         valid = {"all", "result", "error", "off"}
         if mode not in valid:
@@ -14754,6 +14764,11 @@ class GatewayRunner:
         platform_name = str(evt.get("platform") or derived_platform or "").strip().lower()
         chat_type = str(evt.get("chat_type") or derived_chat_type or "").strip().lower()
         chat_id = str(evt.get("chat_id") or derived_chat_id or "").strip()
+        if not chat_type and chat_id:
+            # Synthetic process watchers often persist only platform/chat_id.
+            # Default those minimal records to DM routing rather than dropping
+            # status notifications outright.
+            chat_type = "dm"
         if not platform_name or not chat_type or not chat_id:
             return None
 

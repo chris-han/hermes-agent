@@ -21,6 +21,7 @@ import threading
 import time
 from collections import defaultdict
 from typing import Callable, Dict, List, Optional, Any, Tuple
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -4396,7 +4397,13 @@ class DiscordAdapter(BasePlatformAdapter):
                 )
         return await cache_audio_from_url(att.url, ext=ext)
 
-    async def _cache_discord_document(self, att, ext: str) -> bytes:
+    async def _cache_discord_document(
+        self,
+        att,
+        ext: str,
+        *,
+        allow_trusted_discord_host_fallback: bool = False,
+    ) -> bytes:
         """Download a Discord document attachment and return the raw bytes.
 
         Primary path: ``att.read()`` (authenticated, no SSRF gate).
@@ -4412,7 +4419,14 @@ class DiscordAdapter(BasePlatformAdapter):
             return raw_bytes
 
         # Fallback: SSRF-gated URL download.
-        if not is_safe_url(att.url):
+        parsed = urlparse(str(getattr(att, "url", "") or ""))
+        trusted_discord_hosts = {"cdn.discordapp.com", "media.discordapp.net"}
+        is_trusted_discord_attachment = (
+            parsed.scheme == "https" and parsed.hostname in trusted_discord_hosts
+        )
+        if not (
+            allow_trusted_discord_host_fallback and is_trusted_discord_attachment
+        ) and not is_safe_url(att.url):
             raise ValueError(
                 f"Blocked unsafe attachment URL (SSRF protection): {att.url}"
             )
@@ -4676,7 +4690,11 @@ class DiscordAdapter(BasePlatformAdapter):
                         )
                     else:
                         try:
-                            raw_bytes = await self._cache_discord_document(att, ext)
+                            raw_bytes = await self._cache_discord_document(
+                                att,
+                                ext,
+                                allow_trusted_discord_host_fallback=True,
+                            )
                             cached_path = cache_document_from_bytes(
                                 raw_bytes, att.filename or f"document{ext or '.bin'}"
                             )

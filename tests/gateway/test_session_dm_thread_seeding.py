@@ -29,6 +29,16 @@ def store(tmp_path):
         s = SessionStore(sessions_dir=tmp_path, config=config)
     s._db = None
     s._loaded = True
+    workspace_home = tmp_path / ".hermes"
+    workspace_home.mkdir()
+    original_get_or_create = s.get_or_create_session
+
+    def _get_or_create_with_workspace(source):
+        entry = original_get_or_create(source)
+        s.register_workspace_home(entry.session_id, workspace_home)
+        return entry
+
+    s.get_or_create_session = _get_or_create_with_workspace
     return s
 
 

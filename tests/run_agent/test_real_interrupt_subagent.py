@@ -96,7 +96,8 @@ class TestRealSubagentInterrupt(unittest.TestCase):
                     MockOpenAI.return_value = mock_client
 
                     # Patch the instance method so it skips prompt assembly
-                    with patch.object(AIAgent, '_build_system_prompt', return_value="You are a test agent"):
+                    with patch("agent.context_compressor.get_model_context_length", return_value=128000), \
+                         patch.object(AIAgent, '_build_system_prompt', return_value="You are a test agent"):
                         # Signal when child starts
                         original_run = AIAgent.run_conversation
 

@@ -4902,7 +4902,7 @@ def call_llm(
         is_auto = resolved_provider in {"auto", "", None}
         is_capacity_error = _is_payment_error(first_err) or _is_connection_error(first_err)
         fallback_err = first_err
-        failed_label = resolved_provider or "auto"
+        failed_label = pool_provider or resolved_provider or "auto"
         while should_fallback and (is_auto or is_capacity_error) and (
             _is_payment_error(fallback_err)
             or _is_connection_error(fallback_err)
@@ -4910,6 +4910,7 @@ def call_llm(
             or _is_resource_not_found_error(fallback_err)
         ):
             if _is_payment_error(fallback_err):
+                _mark_provider_unhealthy(failed_label)
                 reason = "payment error"
             elif _is_rate_limit_error(fallback_err):
                 reason = "rate limit"
@@ -4948,6 +4949,8 @@ def call_llm(
                         or _is_resource_not_found_error(fb_err)
                     ):
                         raise
+                    if _is_payment_error(fb_err):
+                        _mark_provider_unhealthy(fb_label)
                     fallback_err = fb_err
                     failed_label = fb_label
                     continue
@@ -5274,7 +5277,7 @@ async def async_call_llm(
         is_auto = resolved_provider in {"auto", "", None}
         is_capacity_error = _is_payment_error(first_err) or _is_connection_error(first_err)
         fallback_err = first_err
-        failed_label = resolved_provider or "auto"
+        failed_label = pool_provider or resolved_provider or "auto"
         while should_fallback and (is_auto or is_capacity_error) and (
             _is_payment_error(fallback_err)
             or _is_connection_error(fallback_err)
@@ -5282,6 +5285,7 @@ async def async_call_llm(
             or _is_resource_not_found_error(fallback_err)
         ):
             if _is_payment_error(fallback_err):
+                _mark_provider_unhealthy(failed_label)
                 reason = "payment error"
             elif _is_rate_limit_error(fallback_err):
                 reason = "rate limit"
@@ -5325,6 +5329,8 @@ async def async_call_llm(
                         or _is_resource_not_found_error(fb_err)
                     ):
                         raise
+                    if _is_payment_error(fb_err):
+                        _mark_provider_unhealthy(fb_label)
                     fallback_err = fb_err
                     failed_label = fb_label
                     continue

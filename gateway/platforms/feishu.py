@@ -3763,9 +3763,11 @@ class FeishuAdapter(BasePlatformAdapter):
                 FeishuIngressOwnerNotFound,
                 resolve_feishu_ingress_owner,
             )
-        except ImportError as exc:
+        except ModuleNotFoundError as exc:
+            if exc.name != "agents.feishu_ingress_identity":
+                raise
             logger.error("[Feishu] Semantier owner resolver unavailable: %s", exc, exc_info=True)
-            raise
+            return ""
 
         open_id = getattr(sender_id, "open_id", None)
         union_id = getattr(sender_id, "union_id", None)

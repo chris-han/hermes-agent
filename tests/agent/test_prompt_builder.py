@@ -493,13 +493,14 @@ class TestBuildNousSubscriptionPrompt:
 class TestBuildContextFilesPrompt:
     def test_empty_dir_loads_seeded_global_soul(self, tmp_path):
         from unittest.mock import patch
+        from hermes_cli.default_soul import DEFAULT_SOUL_MD
 
         fake_home = tmp_path / "fake_home"
         fake_home.mkdir()
         with patch("pathlib.Path.home", return_value=fake_home):
             result = build_context_files_prompt(cwd=str(tmp_path))
         assert "Project Context" in result
-        assert "Hermes Agent" in result
+        assert DEFAULT_SOUL_MD in result
 
     def test_loads_agents_md(self, tmp_path):
         (tmp_path / "AGENTS.md").write_text("Use Ruff for linting.")
@@ -1192,6 +1193,5 @@ class TestOpenAIModelExecutionGuidance:
 # =========================================================================
 # Budget warning history stripping
 # =========================================================================
-
 
 

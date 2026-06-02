@@ -1601,7 +1601,7 @@ class TestAdapterBehavior(unittest.TestCase):
         self.assertEqual(profile["user_id"], "ou_user")
         self.assertEqual(profile["user_name"], "张三")
         self.assertEqual(profile["user_id_alt"], "on_union")
-        adapter._resolve_sender_name_from_api.assert_awaited_once_with("ou_user")
+        adapter._resolve_sender_name_from_api.assert_awaited_once_with("ou_user", is_bot=False)
 
     @patch.dict(os.environ, {}, clear=True)
     def test_text_batch_merges_rapid_messages_into_single_event(self):
