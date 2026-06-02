@@ -12,6 +12,25 @@ def test_ensure_auth_db_creates_auth_db_file(monkeypatch, tmp_path):
     assert path.exists()
 
 
+def test_ensure_auth_db_delegates_to_upstream(monkeypatch, tmp_path):
+    import agents.auth_db as shim
+
+    captured: dict[str, object] = {}
+
+    def fake_ensure(*, json_loader=None):
+        captured["json_loader"] = json_loader
+
+    target = tmp_path / ".hermes-local" / "auth.db"
+    monkeypatch.setattr(shim._UPSTREAM, "ensure_auth_db", fake_ensure)
+    monkeypatch.setattr(shim, "auth_db_path", lambda: target)
+
+    loader = lambda name: None
+    path = shim.ensure_auth_db(json_loader=loader)
+
+    assert captured == {"json_loader": loader}
+    assert path == target
+
+
 def test_weixin_user_scoped_home_channel_self_heals_missing_home(monkeypatch, tmp_path):
     monkeypatch.setenv("SEMANTIER_LOCAL_STATE_DIR", str(tmp_path / ".hermes-local"))
 

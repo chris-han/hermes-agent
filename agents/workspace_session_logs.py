@@ -1,67 +1,61 @@
-"""Minimal workspace-session log helpers for non-Semantier checkouts."""
+"""Thin compatibility wrapper around canonical workspace session storage."""
 
 from __future__ import annotations
 
+import importlib.util
 import json
-import time
+import sys
 from pathlib import Path
+from types import ModuleType
 from typing import Any, Iterable
-from urllib.parse import quote
 
 
-def _sessions_dir(workspace_hermes_home: Path) -> Path:
-    path = Path(workspace_hermes_home).expanduser().resolve() / "sessions"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+def _load_upstream_module() -> ModuleType:
+    module_path = Path(__file__).resolve().parents[2] / "src" / "agents" / "workspace_session_logs.py"
+    qualified_name = "_semantier_upstream_workspace_session_logs"
+    module = sys.modules.get(qualified_name)
+    if module is not None:
+        return module
+    spec = importlib.util.spec_from_file_location(qualified_name, module_path)
+    if spec is None or spec.loader is None:
+        raise ModuleNotFoundError(
+            f"Missing upstream workspace_session_logs implementation at {module_path}"
+        )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[qualified_name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
-def _session_jsonl_path(workspace_hermes_home: Path, session_id: str) -> Path:
-    return _sessions_dir(workspace_hermes_home) / f"{quote(str(session_id), safe='-_.')}.jsonl"
+_UPSTREAM = _load_upstream_module()
 
-
-def _session_snapshot_path(workspace_hermes_home: Path, session_id: str) -> Path:
-    file_key = quote(str(session_id), safe="-_.")
-    return _sessions_dir(workspace_hermes_home) / f"session_{file_key}.json"
+WorkspaceSessionRecord = _UPSTREAM.WorkspaceSessionRecord
+WorkspaceSessionResolutionError = _UPSTREAM.WorkspaceSessionResolutionError
+create_workspace_session_log = _UPSTREAM.create_workspace_session_log
+delete_workspace_session_log = _UPSTREAM.delete_workspace_session_log
+get_workspace_session_detail = _UPSTREAM.get_workspace_session_detail
+get_workspace_session_log_payload = _UPSTREAM.get_workspace_session_log_payload
+get_workspace_session_messages = _UPSTREAM.get_workspace_session_messages
+list_workspace_sessions = _UPSTREAM.list_workspace_sessions
+list_workspace_session_trajectory = _UPSTREAM.list_workspace_session_trajectory
+resolve_workspace_session_id = _UPSTREAM.resolve_workspace_session_id
+configure_agent_workspace_session_paths = _UPSTREAM.configure_agent_workspace_session_paths
+_sessions_dir = _UPSTREAM._sessions_dir
+_session_jsonl_path = _UPSTREAM._session_jsonl_path
 
 
 def _index_path(workspace_hermes_home: Path) -> Path:
-    return _sessions_dir(workspace_hermes_home) / "sessions.json"
+    return _UPSTREAM._session_index_path(workspace_hermes_home)
 
 
-def _load_index(workspace_hermes_home: Path) -> dict[str, Any]:
-    path = _index_path(workspace_hermes_home)
-    if not path.exists():
-        return {"sessions": {}, "aliases": {}}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"Invalid workspace session index JSON: {path}") from exc
-    if not isinstance(data, dict):
-        raise ValueError(f"Workspace session index must be a JSON object: {path}")
-    data.setdefault("sessions", {})
-    data.setdefault("aliases", {})
-    if not isinstance(data["sessions"], dict):
-        raise ValueError(f"Workspace session index 'sessions' must be an object: {path}")
-    if not isinstance(data["aliases"], dict):
-        raise ValueError(f"Workspace session index 'aliases' must be an object: {path}")
-    return data
-
-
-def _save_index(workspace_hermes_home: Path, data: dict[str, Any]) -> None:
-    _index_path(workspace_hermes_home).write_text(
-        json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
-
-
-def _new_session_id(workspace_id: str) -> str:
-    return f"{workspace_id}:session_{time.time_ns()}"
+def _session_snapshot_path(workspace_hermes_home: Path, session_id: str) -> Path:
+    return _UPSTREAM._session_log_path(workspace_hermes_home, session_id)
 
 
 def _workspace_root_candidates() -> list[Path]:
     candidates: list[Path] = []
     try:
-        from runtime_paths import _WORKSPACES_ROOT  # type: ignore
+        from runtime_paths import _WORKSPACES_ROOT  # type: ignore[attr-defined]
 
         candidates.append(Path(_WORKSPACES_ROOT))
     except ModuleNotFoundError:
@@ -79,109 +73,75 @@ def _workspace_root_candidates() -> list[Path]:
     return ordered
 
 
-def _utc_now_iso() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-
-
-def _normalize_session_record(
-    existing: dict[str, Any] | None = None,
-    *,
-    workspace_id: str | None = None,
-    alias: str | None = None,
-    platform_session_key: str | None = None,
-    chat_id: str | None = None,
-    thread_id: str | None = None,
-    origin_user_id: str | None = None,
-    source: str | None = None,
-    platform: str | None = None,
-    title: str | None = None,
-    adapter_key: str | None = None,
-    delivery_adapter_key: str | None = None,
-    updated_at: str | None = None,
-) -> dict[str, Any]:
-    record = dict(existing or {})
-    normalized = {
-        "workspace_id": workspace_id if workspace_id is not None else record.get("workspace_id"),
-        "alias": alias if alias is not None else record.get("alias"),
-        "platform_session_key": (
-            platform_session_key if platform_session_key is not None else record.get("platform_session_key")
-        ),
-        "chat_id": chat_id if chat_id is not None else record.get("chat_id"),
-        "thread_id": thread_id if thread_id is not None else record.get("thread_id"),
-        "origin_user_id": origin_user_id if origin_user_id is not None else record.get("origin_user_id"),
-        "source": source if source is not None else record.get("source"),
-        "platform": platform if platform is not None else record.get("platform"),
-        "title": title if title is not None else record.get("title") or "",
-        "adapter_key": adapter_key if adapter_key is not None else record.get("adapter_key"),
-        "delivery_adapter_key": (
-            delivery_adapter_key if delivery_adapter_key is not None else record.get("delivery_adapter_key")
-        ),
-        "updated_at": updated_at or record.get("updated_at") or _utc_now_iso(),
-    }
-    return normalized
-
-
-def _save_session_snapshot(
+def _session_record_from_payload(
     workspace_hermes_home: Path,
     session_id: str,
-    record: dict[str, Any],
-) -> None:
-    snapshot = {
-        "session_id": str(session_id),
-        "canonical_session_id": str(session_id),
-        "workspace_id": record.get("workspace_id"),
-        "alias": record.get("alias"),
-        "platform_session_key": record.get("platform_session_key"),
-        "platform": record.get("platform"),
-        "chat_id": record.get("chat_id"),
-        "thread_id": record.get("thread_id"),
-        "origin_user_id": record.get("origin_user_id"),
-        "source": record.get("source"),
-        "title": record.get("title") or "",
-        "adapter_key": record.get("adapter_key"),
-        "delivery_adapter_key": record.get("delivery_adapter_key"),
-        "updated_at": record.get("updated_at") or "",
-    }
-    _session_snapshot_path(workspace_hermes_home, session_id).write_text(
-        json.dumps(snapshot, ensure_ascii=False, indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
-
-
-def _session_row(
-    workspace_hermes_home: Path,
-    session_id: str,
-    record: dict[str, Any],
+    flat_index: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
-    origin = {
-        "platform": record.get("platform"),
-        "chat_id": record.get("chat_id"),
-        "thread_id": record.get("thread_id"),
-        "user_id": record.get("origin_user_id"),
-    }
+    payload = _UPSTREAM.get_workspace_session_log_payload(workspace_hermes_home, session_id) or {}
+    primary_entry = flat_index.get(session_id) if isinstance(flat_index.get(session_id), dict) else {}
+    aliases = [
+        key
+        for key, entry in flat_index.items()
+        if key != session_id and isinstance(entry, dict) and str(entry.get("session_id") or "") == session_id
+    ]
+    session_key = str(payload.get("session_key") or primary_entry.get("session_key") or session_id)
+    alias = aliases[0] if aliases else session_key
+    updated_at = str(payload.get("last_updated") or primary_entry.get("updated_at") or "")
+    workspace_id = str(payload.get("workspace_id") or "").strip()
+    if not workspace_id and ":" in session_id:
+        workspace_id = session_id.split(":", 1)[0]
+    source = payload.get("source")
+    if source == "api_server":
+        source = None
     return {
-        "canonical_session_id": str(session_id),
-        "session_id": str(session_id),
-        "session_key": str(record.get("platform_session_key") or record.get("alias") or session_id),
-        "index_key": str(record.get("alias") or record.get("platform_session_key") or session_id),
-        "platform": str(record.get("platform") or "").lower(),
-        "chat_id": record.get("chat_id"),
-        "thread_id": record.get("thread_id"),
-        "origin_user_id": record.get("origin_user_id"),
-        "workspace_id": record.get("workspace_id"),
-        "adapter_key": record.get("adapter_key"),
-        "delivery_adapter_key": record.get("delivery_adapter_key"),
-        "workspace_hermes_home": Path(workspace_hermes_home).expanduser().resolve(),
-        "updated_at": record.get("updated_at") or "",
-        "title": record.get("title") or "",
-        "display_name": record.get("title") or "",
-        "origin": origin,
-        "raw_entry": {
-            "origin": origin,
-            "chat_type": record.get("chat_type") or "dm",
-            "title": record.get("title") or "",
-        },
+        "workspace_id": workspace_id or None,
+        "alias": alias,
+        "platform_session_key": session_key,
+        "chat_id": payload.get("chat_id"),
+        "thread_id": payload.get("thread_id"),
+        "origin_user_id": payload.get("origin_user_id"),
+        "source": source,
+        "platform": payload.get("platform"),
+        "title": payload.get("title") or "",
+        "adapter_key": payload.get("adapter_key"),
+        "delivery_adapter_key": payload.get("delivery_adapter_key"),
+        "updated_at": updated_at,
     }
+
+
+def _load_index(workspace_hermes_home: Path) -> dict[str, Any]:
+    path = _index_path(workspace_hermes_home)
+    if not path.exists():
+        return {"sessions": {}, "aliases": {}}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid workspace session index JSON: {path}") from exc
+    if not isinstance(raw, dict):
+        raise ValueError(f"Workspace session index must be a JSON object: {path}")
+    if "sessions" in raw or "aliases" in raw:
+        if not isinstance(raw.get("sessions", {}), dict):
+            raise ValueError(f"Workspace session index 'sessions' must be an object: {path}")
+        if not isinstance(raw.get("aliases", {}), dict):
+            raise ValueError(f"Workspace session index 'aliases' must be an object: {path}")
+
+    flat_index = _UPSTREAM._load_session_index(workspace_hermes_home)
+    sessions: dict[str, dict[str, Any]] = {}
+    aliases: dict[str, str] = {}
+    for key, entry in flat_index.items():
+        if not isinstance(entry, dict):
+            continue
+        session_id = str(entry.get("session_id") or key).strip()
+        if not session_id:
+            continue
+        sessions.setdefault(
+            session_id,
+            _session_record_from_payload(workspace_hermes_home, session_id, flat_index),
+        )
+        if key != session_id:
+            aliases[str(key)] = session_id
+    return {"sessions": sessions, "aliases": aliases}
 
 
 def resolve_or_create_workspace_session_id(
@@ -200,70 +160,21 @@ def resolve_or_create_workspace_session_id(
     delivery_adapter_key: str | None = None,
     create_if_missing: bool = True,
 ) -> str:
-    data = _load_index(workspace_hermes_home)
-    aliases: dict[str, str] = data["aliases"]
-    sessions: dict[str, dict[str, Any]] = data["sessions"]
-    alias_keys = [x for x in (alias, platform_session_key) if isinstance(x, str) and x.strip()]
-    existing_session_id = next((aliases.get(key) for key in alias_keys if aliases.get(key)), "")
-
-    if preferred_session_id and (existing_session_id or str(preferred_session_id).strip() in sessions):
-        session_id = str(preferred_session_id).strip()
-        if session_id:
-            record = _normalize_session_record(
-                sessions.get(session_id),
-                workspace_id=workspace_id,
-                alias=alias,
-                platform_session_key=platform_session_key,
-                chat_id=chat_id,
-                thread_id=thread_id,
-                origin_user_id=origin_user_id,
-                source=source,
-                platform=platform,
-                adapter_key=adapter_key,
-                delivery_adapter_key=delivery_adapter_key,
-                updated_at=_utc_now_iso(),
-            )
-            sessions[session_id] = record
-            for key in alias_keys:
-                aliases[key] = session_id
-            _save_index(workspace_hermes_home, data)
-            _save_session_snapshot(workspace_hermes_home, session_id, record)
-            return session_id
-
-    if existing_session_id:
-        return existing_session_id
-
-    if not create_if_missing:
-        return ""
-
-    session_id = _new_session_id(workspace_id)
-    sessions[session_id] = _normalize_session_record(
+    return _UPSTREAM.resolve_or_create_workspace_session_id(
+        workspace_hermes_home,
         workspace_id=workspace_id,
         alias=alias,
+        preferred_session_id=preferred_session_id,
         platform_session_key=platform_session_key,
         chat_id=chat_id,
         thread_id=thread_id,
         origin_user_id=origin_user_id,
-        source=source,
-        platform=platform,
+        source=source or "api_server",
+        platform=platform or "webchat",
         adapter_key=adapter_key,
         delivery_adapter_key=delivery_adapter_key,
-        updated_at=_utc_now_iso(),
+        create_if_missing=create_if_missing,
     )
-    for key in alias_keys:
-        aliases[key] = session_id
-    _save_index(workspace_hermes_home, data)
-    _save_session_snapshot(workspace_hermes_home, session_id, sessions[session_id])
-    return session_id
-
-
-def configure_agent_workspace_session_paths(agent: Any, workspace_hermes_home: Path, session_id: str) -> None:
-    if hasattr(agent, "_session_db") and getattr(agent, "_session_db", None) is not None:
-        register = getattr(agent._session_db, "register_workspace_home", None)
-        if callable(register):
-            register(session_id, Path(workspace_hermes_home))
-    setattr(agent, "_workspace_hermes_home", Path(workspace_hermes_home))
-    setattr(agent, "session_id", session_id)
 
 
 def update_workspace_session_title(
@@ -271,16 +182,11 @@ def update_workspace_session_title(
     session_id: str,
     title: str,
 ) -> bool:
-    data = _load_index(workspace_hermes_home)
-    record = _normalize_session_record(
-        data["sessions"].get(str(session_id)),
-        title=str(title or ""),
-        updated_at=_utc_now_iso(),
-    )
-    data["sessions"][str(session_id)] = record
-    _save_index(workspace_hermes_home, data)
-    _save_session_snapshot(workspace_hermes_home, str(session_id), record)
-    return True
+    return _UPSTREAM.update_workspace_session_title(
+        workspace_hermes_home,
+        session_id,
+        title,
+    ) is not None
 
 
 def resolve_workspace_session_delivery_adapter_key(
@@ -288,29 +194,46 @@ def resolve_workspace_session_delivery_adapter_key(
     session_id: str,
     platform: str | None = None,
 ) -> str | None:
-    data = _load_index(workspace_hermes_home)
-    record = data["sessions"].get(str(session_id)) or {}
-    if platform:
-        record_platform = str(record.get("platform") or "").strip().lower()
-        if record_platform and record_platform != str(platform).strip().lower():
-            return None
-    return record.get("delivery_adapter_key")
+    return _UPSTREAM.resolve_workspace_session_delivery_adapter_key(
+        workspace_hermes_home,
+        session_id,
+        platform=platform,
+    )
 
 
-def list_all_workspace_session_index_entries() -> Iterable[dict[str, Any]]:
+def list_all_workspace_session_index_entries(
+    workspaces_root: Path | None = None,
+) -> Iterable[dict[str, Any]]:
+    if workspaces_root is not None:
+        roots = [workspaces_root]
+    else:
+        roots = _workspace_root_candidates()
+
     rows: list[dict[str, Any]] = []
-    for root in _workspace_root_candidates():
-        if not root.exists():
-            continue
-        for workspace_hermes_home in root.glob("*/.hermes"):
-            data = _load_index(workspace_hermes_home)
-            sessions = data.get("sessions") or {}
-            if not isinstance(sessions, dict):
-                continue
-            for session_id, record in sessions.items():
-                if not isinstance(record, dict):
-                    continue
-                rows.append(_session_row(workspace_hermes_home, str(session_id), record))
+    for root in roots:
+        for row in _UPSTREAM.list_all_workspace_session_index_entries(workspaces_root=root):
+            rows.append(
+                {
+                    "workspace_id": row.get("workspace_id"),
+                    "workspace_hermes_home": row.get("workspace_hermes_home"),
+                    "index_key": row.get("index_key"),
+                    "canonical_session_id": row.get("session_id"),
+                    "session_id": row.get("session_id"),
+                    "session_key": row.get("session_key"),
+                    "platform": row.get("platform"),
+                    "chat_id": row.get("chat_id"),
+                    "thread_id": row.get("thread_id"),
+                    "origin_user_id": row.get("origin_user_id"),
+                    "adapter_key": row.get("adapter_key"),
+                    "delivery_adapter_key": row.get("delivery_adapter_key"),
+                    "updated_at": row.get("updated_at"),
+                    "title": row.get("title"),
+                    "display_name": row.get("display_name"),
+                    "raw_entry": row.get("raw_entry"),
+                    "origin": row.get("origin"),
+                }
+            )
+    rows.sort(key=lambda row: str(row.get("updated_at") or ""), reverse=True)
     return rows
 
 
@@ -325,24 +248,46 @@ def find_workspace_session_index_matches(
     platform_session_key: str | None = None,
     workspaces_root: Path | None = None,
 ) -> list[dict[str, Any]]:
-    del workspaces_root
-    matches: list[dict[str, Any]] = []
-    for row in list_all_workspace_session_index_entries():
-        if canonical_session_id and str(row.get("session_id") or "") != str(canonical_session_id):
-            continue
-        if alias and str(row.get("index_key") or "") != str(alias):
-            continue
-        if platform_session_key and str(row.get("session_key") or "") != str(platform_session_key):
-            continue
-        if platform and str(row.get("platform") or "").lower() != str(platform).lower():
-            continue
-        if chat_id is not None and str(row.get("chat_id") or "") != str(chat_id):
-            continue
-        if thread_id is not None and str(row.get("thread_id") or "") != str(thread_id):
-            continue
-        if origin_user_id is not None and str(row.get("origin_user_id") or "") != str(origin_user_id):
-            continue
-        matches.append(row)
+    if workspaces_root is not None:
+        roots = [workspaces_root]
+    else:
+        roots = _workspace_root_candidates()
 
-    matches.sort(key=lambda row: str(row.get("updated_at") or ""), reverse=True)
-    return matches
+    matches: list[dict[str, Any]] = []
+    for root in roots:
+        matches.extend(
+            _UPSTREAM.find_workspace_session_index_matches(
+                canonical_session_id=canonical_session_id,
+                platform=platform,
+                chat_id=chat_id,
+                thread_id=thread_id,
+                origin_user_id=origin_user_id,
+                platform_session_key=platform_session_key or alias,
+                workspaces_root=root,
+            )
+        )
+
+    compat_rows = [
+        {
+            "workspace_id": row.get("workspace_id"),
+            "workspace_hermes_home": row.get("workspace_hermes_home"),
+            "index_key": row.get("index_key"),
+            "canonical_session_id": row.get("session_id"),
+            "session_id": row.get("session_id"),
+            "session_key": row.get("session_key"),
+            "platform": row.get("platform"),
+            "chat_id": row.get("chat_id"),
+            "thread_id": row.get("thread_id"),
+            "origin_user_id": row.get("origin_user_id"),
+            "adapter_key": row.get("adapter_key"),
+            "delivery_adapter_key": row.get("delivery_adapter_key"),
+            "updated_at": row.get("updated_at"),
+            "title": row.get("title"),
+            "display_name": row.get("display_name"),
+            "raw_entry": row.get("raw_entry"),
+            "origin": row.get("origin"),
+        }
+        for row in matches
+    ]
+    compat_rows.sort(key=lambda row: str(row.get("updated_at") or ""), reverse=True)
+    return compat_rows

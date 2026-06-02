@@ -93,3 +93,47 @@ def test_session_record_round_trips_canonical_metadata(tmp_path, monkeypatch):
     assert rows[0]["workspace_id"] == "ws-123"
     assert rows[0]["platform"] == "weixin"
     assert rows[0]["session_key"] == "agent:main:workspace:ws-123:weixin:dm:wx-user"
+
+
+def test_resolve_or_create_workspace_session_id_delegates_to_upstream(tmp_path, monkeypatch):
+    import agents.workspace_session_logs as shim
+
+    captured: dict[str, object] = {}
+
+    def fake_resolve(workspace_hermes_home, **kwargs):
+        captured["workspace_hermes_home"] = workspace_hermes_home
+        captured["kwargs"] = kwargs
+        return "ws-123:session_upstream"
+
+    monkeypatch.setattr(shim._UPSTREAM, "resolve_or_create_workspace_session_id", fake_resolve)
+
+    session_id = shim.resolve_or_create_workspace_session_id(
+        tmp_path / "ws-123" / ".hermes",
+        workspace_id="ws-123",
+        alias="agent:main:workspace:ws-123:weixin:dm:wx-user",
+        platform_session_key="agent:main:workspace:ws-123:weixin:dm:wx-user",
+        chat_id="wx-user",
+        thread_id="thread-1",
+        origin_user_id="wx-user",
+        platform="weixin",
+        adapter_key="weixin:ws-123:acct-1",
+        delivery_adapter_key="weixin:ws-123:acct-1",
+        create_if_missing=True,
+    )
+
+    assert session_id == "ws-123:session_upstream"
+    assert captured["workspace_hermes_home"] == tmp_path / "ws-123" / ".hermes"
+    assert captured["kwargs"] == {
+        "workspace_id": "ws-123",
+        "alias": "agent:main:workspace:ws-123:weixin:dm:wx-user",
+        "preferred_session_id": None,
+        "platform_session_key": "agent:main:workspace:ws-123:weixin:dm:wx-user",
+        "chat_id": "wx-user",
+        "thread_id": "thread-1",
+        "origin_user_id": "wx-user",
+        "source": "api_server",
+        "platform": "weixin",
+        "adapter_key": "weixin:ws-123:acct-1",
+        "delivery_adapter_key": "weixin:ws-123:acct-1",
+        "create_if_missing": True,
+    }
