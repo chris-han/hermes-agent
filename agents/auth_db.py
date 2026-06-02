@@ -61,12 +61,21 @@ def ensure_auth_db() -> Path:
     return _auth_db_path()
 
 
+def _decode_account_payload(payload_json: str, *, account_id: str) -> dict[str, Any]:
+    payload = json.loads(payload_json)
+    if not isinstance(payload, dict):
+        raise ValueError(
+            f"Weixin runtime account payload must be a JSON object: account_id={account_id}"
+        )
+    return payload
+
+
 def load_weixin_runtime_accounts() -> list[dict[str, Any]]:
     conn = _connect_auth_db()
     try:
         rows = conn.execute(
             """
-            SELECT payload_json
+            SELECT account_id, payload_json
             FROM weixin_runtime_accounts
             ORDER BY COALESCE(saved_at, ''), account_id
             """
@@ -76,9 +85,12 @@ def load_weixin_runtime_accounts() -> list[dict[str, Any]]:
 
     accounts: list[dict[str, Any]] = []
     for row in rows:
-        payload = json.loads(str(row["payload_json"]))
-        if isinstance(payload, dict):
-            accounts.append(payload)
+        accounts.append(
+            _decode_account_payload(
+                str(row["payload_json"]),
+                account_id=str(row["account_id"] or ""),
+            )
+        )
     return accounts
 
 
@@ -86,6 +98,8 @@ def save_weixin_runtime_account(account: dict[str, Any]) -> None:
     payload = dict(account)
     payload.setdefault("saved_at", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
     account_id = str(payload.get("account_id") or "").strip()
+    if not account_id:
+        raise ValueError("Weixin runtime account must include a non-empty account_id")
     row = (
         account_id,
         str(payload.get("owner_user_id") or ""),
@@ -128,5 +142,7 @@ def get_weixin_runtime_account(account_id: str) -> dict[str, Any] | None:
 
     if row is None:
         return None
-    payload = json.loads(str(row["payload_json"]))
-    return dict(payload) if isinstance(payload, dict) else None
+    return _decode_account_payload(
+        str(row["payload_json"]),
+        account_id=normalized,
+    )

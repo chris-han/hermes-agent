@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import os
+import sqlite3
 import sys
 import types
 from pathlib import Path
@@ -32,6 +33,46 @@ def _make_adapter() -> WeixinAdapter:
             extra={"account_id": "test-account"},
         )
     )
+
+
+def test_auth_db_invalid_payload_json_raises(monkeypatch, tmp_path):
+    monkeypatch.setenv("SEMANTIER_AUTH_DB_PATH", str(tmp_path / "auth.db"))
+
+    from agents.auth_db import ensure_auth_db, load_weixin_runtime_accounts
+
+    path = ensure_auth_db()
+    conn = sqlite3.connect(str(path))
+    try:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO weixin_runtime_accounts
+            (account_id, owner_user_id, owner_workspace_id, external_user_id,
+             runtime_session_state, runtime_session_updated_at, saved_at, payload_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("acct-1@im.bot", "user-1", "ws-123", "wx-user-1", "", "", "2026-05-17T00:00:00Z", "[]"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    with pytest.raises(ValueError, match="must be a JSON object"):
+        load_weixin_runtime_accounts()
+
+
+def test_repo_only_weixin_ingress_identity_fails_closed():
+    from agents.weixin_ingress_identity import (
+        WeixinIngressOwnerResolutionError,
+        resolve_weixin_ingress_owner,
+    )
+
+    with pytest.raises(WeixinIngressOwnerResolutionError, match="unavailable"):
+        resolve_weixin_ingress_owner(
+            account_id="acct-1@im.bot",
+            external_user_id="wx-user-1",
+            chat_id="wx-user-1",
+            platform_session_key="ctx-1",
+        )
 
 
 class TestWeixinFormatting:
