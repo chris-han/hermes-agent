@@ -45,28 +45,6 @@ _jobs_file_lock = threading.Lock()
 OUTPUT_DIR = CRON_DIR / "output"
 ONESHOT_GRACE_SECONDS = 120
 
-# Fields on a cron job that must never change after creation. ``id`` is used
-# as a filesystem path component under ``OUTPUT_DIR``; allowing it to be
-# updated lets an unsafe value (``../escape``, absolute path, nested) leak
-# into output writes/deletes.
-_IMMUTABLE_JOB_FIELDS = frozenset({"id"})
-
-
-def _job_output_dir(job_id: str) -> Path:
-    """Resolve a job's output directory, rejecting any path-escape attempt.
-
-    Job IDs are filesystem path components under ``OUTPUT_DIR``. A legacy or
-    crafted ID containing ``..``, absolute paths, or nested separators would
-    allow output writes/deletes to escape the cron output sandbox. Reject
-    anything that isn't a single safe path component.
-    """
-    text = str(job_id or "").strip()
-    if not text or text in {".", ".."} or "/" in text or "\\" in text:
-        raise ValueError(f"Invalid cron job id for output path: {job_id!r}")
-    if Path(text).is_absolute() or Path(text).drive:
-        raise ValueError(f"Invalid cron job id for output path: {job_id!r}")
-    return OUTPUT_DIR / text
-
 
 def _normalize_skill_list(skill: Optional[str] = None, skills: Optional[Any] = None) -> List[str]:
     """Normalize legacy/single-skill and multi-skill inputs into a unique ordered list."""
@@ -546,6 +524,7 @@ def create_job(
     workdir: Optional[str] = None,
     profile: Optional[str] = None,
     no_agent: bool = False,
+    delivery_binding: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Create a new cron job.
@@ -558,6 +537,9 @@ def create_job(
         repeat: How many times to run (None = forever, 1 = once)
         deliver: Where to deliver output ("origin", "local", "telegram", etc.)
         origin: Source info where job was created (for "origin" delivery)
+        delivery_binding: Optional user/workspace-scoped delivery binding used
+                only when ``deliver="origin"`` and the raw transport origin is
+                unavailable at fire time.
         skill: Optional legacy single skill name to load before running the prompt
         skills: Optional ordered list of skills to load before running the prompt
         model: Optional per-job model override
@@ -611,7 +593,7 @@ def create_job(
 
     # Default delivery to origin if available, otherwise local
     if deliver is None:
-        deliver = "origin" if origin else "local"
+        deliver = "origin" if (origin or delivery_binding) else "local"
 
     job_id = uuid.uuid4().hex[:12]
     now = _hermes_now().isoformat()
@@ -681,6 +663,7 @@ def create_job(
         # Delivery configuration
         "deliver": deliver,
         "origin": origin,  # Tracks where job was created for "origin" delivery
+        "delivery_binding": delivery_binding,
         "enabled_toolsets": normalized_toolsets,
         "workdir": normalized_workdir,
         "profile": normalized_profile,
@@ -750,15 +733,6 @@ def list_jobs(include_disabled: bool = False) -> List[Dict[str, Any]]:
 
 def update_job(job_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Update a job by ID, refreshing derived schedule fields when needed."""
-    # Block mutation of immutable fields. ``id`` in particular is a filesystem
-    # path component under OUTPUT_DIR — letting an update change it leaks
-    # path-escape values into output writes/deletes.
-    bad_fields = _IMMUTABLE_JOB_FIELDS.intersection(updates or {})
-    if bad_fields:
-        raise ValueError(
-            f"Cron job field(s) cannot be updated: {', '.join(sorted(bad_fields))}"
-        )
-
     jobs = load_jobs()
     for i, job in enumerate(jobs):
         if job["id"] != job_id:
@@ -876,12 +850,9 @@ def remove_job(job_id: str) -> bool:
     original_len = len(jobs)
     jobs = [j for j in jobs if j["id"] != canonical_id]
     if len(jobs) < original_len:
-        # Resolve the output dir BEFORE saving so a legacy unsafe ID (e.g.
-        # left over from before the create-time guard) fails closed without
-        # half-applying the removal.
-        job_output_dir = _job_output_dir(canonical_id)
         save_jobs(jobs)
         # Clean up output directory to prevent orphaned dirs accumulating
+        job_output_dir = OUTPUT_DIR / canonical_id
         if job_output_dir.exists():
             shutil.rmtree(job_output_dir)
         return True
@@ -1095,7 +1066,7 @@ def _get_due_jobs_locked() -> List[Dict[str, Any]]:
 def save_job_output(job_id: str, output: str):
     """Save job output to file."""
     ensure_dirs()
-    job_output_dir = _job_output_dir(job_id)
+    job_output_dir = OUTPUT_DIR / job_id
     job_output_dir.mkdir(parents=True, exist_ok=True)
     _secure_dir(job_output_dir)
     

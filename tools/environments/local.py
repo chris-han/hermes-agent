@@ -75,27 +75,6 @@ def _resolve_safe_cwd(cwd: str) -> str:
 # Hermes-internal env vars that should NOT leak into terminal subprocesses.
 _HERMES_PROVIDER_ENV_FORCE_PREFIX = "_HERMES_FORCE_"
 
-# Hermes-managed AWS *inference* credentials for ``auth_type="aws_sdk"``
-# providers (Bedrock).  Scoped DELIBERATELY NARROW: this lists only the
-# Bedrock-specific bearer token, which is a Hermes inference secret exactly
-# analogous to ``OPENAI_API_KEY`` — nobody drives the ``aws``/``terraform``/
-# ``boto3`` toolchain off it, so stripping it from terminal/execute_code
-# subprocesses costs no user capability.
-#
-# The GENERAL AWS credential chain (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
-# AWS_SESSION_TOKEN, AWS_PROFILE, and the config/role pointers) is INTENTIONALLY
-# left inheritable.  Per SECURITY.md §3.2 the local terminal is the user's
-# trusted operator shell; the agent having the same general AWS access the
-# user's own shell has is the intended posture, not a leak.  Hard-blocklisting
-# those vars would (a) regress every user who runs aws/terraform/cdk/boto3 in
-# the agent terminal — not just Bedrock users, since the registry is iterated
-# unconditionally — and (b) be unrecoverable, because env_passthrough.py
-# refuses to re-allow anything in this blocklist (GHSA-rhgp-j443-p4rf).  See
-# issue #32314 discussion.
-_AWS_SDK_CREDENTIAL_ENV_VARS = frozenset({
-    "AWS_BEARER_TOKEN_BEDROCK",
-})
-
 
 def _build_provider_env_blocklist() -> frozenset:
     """Derive the blocklist from provider, tool, and gateway config."""
@@ -105,8 +84,6 @@ def _build_provider_env_blocklist() -> frozenset:
         from hermes_cli.auth import PROVIDER_REGISTRY
         for pconfig in PROVIDER_REGISTRY.values():
             blocked.update(pconfig.api_key_env_vars)
-            if pconfig.auth_type == "aws_sdk":
-                blocked.update(_AWS_SDK_CREDENTIAL_ENV_VARS)
             if pconfig.base_url_env_var:
                 blocked.add(pconfig.base_url_env_var)
     except ImportError:
@@ -183,6 +160,10 @@ def _build_provider_env_blocklist() -> frozenset:
         "MODAL_TOKEN_ID",
         "MODAL_TOKEN_SECRET",
         "DAYTONA_API_KEY",
+        "VERCEL_OIDC_TOKEN",
+        "VERCEL_TOKEN",
+        "VERCEL_PROJECT_ID",
+        "VERCEL_TEAM_ID",
     })
     return frozenset(blocked)
 
@@ -226,11 +207,18 @@ def _sanitize_subprocess_env(base_env: dict | None, extra_env: dict | None = Non
 
     _inject_context_hermes_home(sanitized)
 
-    # Per-profile HOME isolation for background processes (same as _make_run_env).
-    from hermes_constants import get_subprocess_home
-    _profile_home = get_subprocess_home()
-    if _profile_home:
-        sanitized["HOME"] = _profile_home
+    # Per-profile HOME isolation for background processes.
+    # ContextVar (set by bind_workspace_env) takes priority via
+    # _inject_context_hermes_home above.  For non-gateway / single-tenant
+    # contexts where no ContextVar is active, fall back to os.environ so
+    # existing callers and tests that rely on the ambient HERMES_HOME still
+    # work.  When HERMES_HOME is absent entirely, skip HOME injection.
+    _san_hermes_home = sanitized.get("HERMES_HOME") or os.environ.get("HERMES_HOME", "")
+    _san_hermes_home = _san_hermes_home.strip()
+    if _san_hermes_home:
+        _san_profile_home = os.path.join(_san_hermes_home, "home")
+        if os.path.isdir(_san_profile_home):
+            sanitized["HOME"] = _san_profile_home
 
     return sanitized
 
@@ -331,15 +319,19 @@ def _make_run_env(env: dict) -> dict:
     # Per-profile HOME isolation: redirect system tool configs (git, ssh, gh,
     # npm …) into {HERMES_HOME}/home/ when that directory exists.  Only the
     # subprocess sees the override — the Python process keeps the real HOME.
-    from hermes_constants import get_subprocess_home
-    _profile_home = get_subprocess_home()
-    if _profile_home:
-        run_env["HOME"] = _profile_home
+    # ContextVar (via _inject_context_hermes_home) takes priority; os.environ
+    # is the fallback for non-gateway / single-tenant contexts.  If HERMES_HOME
+    # is absent entirely, skip HOME injection.
+    _run_hermes_home = run_env.get("HERMES_HOME", "").strip()
+    if _run_hermes_home:
+        _run_profile_home = os.path.join(_run_hermes_home, "home")
+        if os.path.isdir(_run_profile_home):
+            run_env["HOME"] = _run_profile_home
 
     # Inject ContextVar-based session vars into subprocess env.
     # ContextVars don't propagate to child processes, so we bridge them here.
     try:
-        from gateway.session_context import _UNSET, _VAR_MAP
+        from gateway.session_context import get_session_env, _UNSET, _VAR_MAP
         for var_name, var in _VAR_MAP.items():
             value = var.get()
             if value is not _UNSET and value:

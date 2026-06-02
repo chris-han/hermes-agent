@@ -23,6 +23,7 @@ import sys
 from collections.abc import Callable
 from types import SimpleNamespace
 from typing import cast
+from unittest.mock import MagicMock, patch
 
 import pytest
 

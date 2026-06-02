@@ -11,7 +11,7 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from hermes_cli.config import get_hermes_home
+from hermes_constants import get_hermes_home
 from utils import atomic_json_write
 
 logger = logging.getLogger(__name__)
@@ -208,32 +208,65 @@ async def _build_slack(adapter) -> List[Dict[str, Any]]:
     return channels
 
 
-def _build_from_sessions(platform_name: str) -> List[Dict[str, str]]:
-    """Pull known channels/contacts from sessions.json origin data."""
-    sessions_path = get_hermes_home() / "sessions" / "sessions.json"
-    if not sessions_path.exists():
+def _list_workspace_session_entries() -> list:
+    """Patchable wrapper for workspace session index enumeration.
+
+    Using a module-level wrapper allows hermes-agent tests to patch this
+    function directly without needing the 'agents' package on sys.path.
+    """
+    try:
+        from agents.workspace_session_logs import list_all_workspace_session_index_entries
+        return list(list_all_workspace_session_index_entries())
+    except Exception as e:
+        logger.debug("Channel directory: workspace session helper unavailable: %s", e)
         return []
 
-    entries = []
-    try:
-        with open(sessions_path, encoding="utf-8") as f:
-            data = json.load(f)
 
+def _build_from_sessions(platform_name: str) -> List[Dict[str, str]]:
+    """Pull known channels/contacts from workspace session indexes."""
+    entries: List[Dict[str, str]] = []
+    try:
         seen_ids = set()
-        for _key, session in data.items():
-            origin = session.get("origin") or {}
-            if origin.get("platform") != platform_name:
+        for row in _list_workspace_session_entries():
+            if (row.get("platform") or "") != platform_name:
                 continue
-            entry_id = _session_entry_id(origin)
+
+            raw_entry = row.get("raw_entry") if isinstance(row.get("raw_entry"), dict) else {}
+            origin = raw_entry.get("origin") if isinstance(raw_entry.get("origin"), dict) else None
+
+            if isinstance(origin, dict):
+                entry_id = _session_entry_id(origin)
+                name = _session_entry_name(origin)
+                thread_id = origin.get("thread_id")
+                chat_type = raw_entry.get("chat_type", "dm")
+            else:
+                index_key = str(row.get("index_key") or "").strip()
+                session_key = str(row.get("session_key") or "").strip()
+                session_id = str(row.get("session_id") or "").strip()
+                entry_id = index_key or session_key or session_id
+                if entry_id == session_id and session_key and session_key != session_id:
+                    entry_id = session_key
+                if not entry_id:
+                    continue
+                name = (
+                    str(row.get("display_name") or "").strip()
+                    or str(row.get("title") or "").strip()
+                    or entry_id
+                )
+                thread_id = None
+                chat_type = "dm"
+
             if not entry_id or entry_id in seen_ids:
                 continue
             seen_ids.add(entry_id)
-            entries.append({
-                "id": entry_id,
-                "name": _session_entry_name(origin),
-                "type": session.get("chat_type", "dm"),
-                "thread_id": origin.get("thread_id"),
-            })
+            entries.append(
+                {
+                    "id": entry_id,
+                    "name": name,
+                    "type": chat_type,
+                    "thread_id": thread_id,
+                }
+            )
     except Exception as e:
         logger.debug("Channel directory: failed to read sessions for %s: %s", platform_name, e)
 

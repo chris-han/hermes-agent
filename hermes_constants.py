@@ -4,6 +4,7 @@ Import-safe module with no dependencies — can be imported from anywhere
 without risk of circular imports.
 """
 
+import contextvars
 import os
 import sysconfig
 from contextvars import ContextVar, Token
@@ -38,6 +39,23 @@ def get_hermes_home_override() -> str | None:
     if override is _UNSET or not override:
         return None
     return str(override)
+_active_hermes_home: contextvars.ContextVar[Path | None] = contextvars.ContextVar(
+    "active_hermes_home", default=None
+)
+
+
+def set_active_hermes_home(path: Path) -> contextvars.Token:
+    """Override HERMES_HOME for the current context.
+
+    Used by multi-tenant wrappers that need per-request filesystem
+    isolation without mutating the process-global environment.
+    """
+    return _active_hermes_home.set(Path(path))
+
+
+def reset_active_hermes_home(token: contextvars.Token) -> None:
+    """Reset the request-scoped HERMES_HOME override."""
+    _active_hermes_home.reset(token)
 
 
 def get_hermes_home() -> Path:
@@ -59,7 +77,9 @@ def get_hermes_home() -> Path:
     override = get_hermes_home_override()
     if override:
         return Path(override)
-
+    active = _active_hermes_home.get()
+    if active is not None:
+        return Path(active)
     val = os.environ.get("HERMES_HOME", "").strip()
     if val:
         return Path(val)
@@ -174,25 +194,6 @@ def get_optional_skills_dir(default: Path | None = None) -> Path:
     return get_hermes_home() / "optional-skills"
 
 
-def get_optional_mcps_dir(default: Path | None = None) -> Path:
-    """Return the optional-mcps directory, honoring package-manager wrappers.
-
-    Mirrors :func:`get_optional_skills_dir` for the MCP catalog (Nous-approved
-    Model Context Protocol servers shipped with the repo but disabled by
-    default). Packaged installs may ship ``optional-mcps`` outside the Python
-    package tree and expose it via ``HERMES_OPTIONAL_MCPS``.
-    """
-    override = os.getenv("HERMES_OPTIONAL_MCPS", "").strip()
-    if override:
-        return Path(override)
-    packaged = _get_packaged_data_dir("optional-mcps")
-    if packaged is not None:
-        return packaged
-    if default is not None:
-        return default
-    return get_hermes_home() / "optional-mcps"
-
-
 def get_bundled_skills_dir(default: Path | None = None) -> Path:
     """Return the bundled skills directory for source and packaged installs.
 
@@ -254,24 +255,23 @@ def display_hermes_home() -> str:
         return str(home)
 
 
-def secure_parent_dir(path: Path) -> None:
-    """Chmod ``0o700`` on the parent directory of *path*, but only if safe.
+def get_gateway_trajectories_dir() -> Path:
+    """Return the shared gateway trajectory store directory.
 
-    Refuses to chmod ``/`` or any top-level directory (resolved parent with
-    fewer than 3 parts, i.e. ``/`` or any direct child like ``/usr``) to
-    prevent catastrophic host bricking when ``HERMES_HOME`` or other path
-    env vars resolve to an unexpected location.
-
-    See https://github.com/NousResearch/hermes-agent/issues/25821.
+    This store is for platform-level JSONL training/export artifacts and the
+    gateway's session-key index. It is intentionally separate from
+    workspace-owned Hermes session state under ``<workspace>/.hermes/sessions``.
     """
-    parent = path.parent.resolve()
-    # Refuse root and its direct children (/usr, /home, /var, /tmp, …).
-    if parent == Path("/") or len(parent.parts) < 3:
-        return
-    try:
-        os.chmod(parent, 0o700)
-    except OSError:
-        pass
+    return get_hermes_home() / "trajectories"
+
+
+def get_gateway_session_store_dir() -> Path:
+    """Return the gateway session store directory for non-workspace sessions.
+
+    This path is intentionally distinct from legacy shared session surfaces
+    under ``trajectories/`` and ``sessions/``.
+    """
+    return get_hermes_home() / "gateway-session-store"
 
 
 def get_subprocess_home() -> str | None:
@@ -451,13 +451,7 @@ def apply_ipv4_preference(force: bool = False) -> None:
     socket.getaddrinfo = _ipv4_getaddrinfo  # type: ignore[assignment]
 
 
-# ─── Streaming Response Constants ────────────────────────────────────────────
-
-# Response ID for partial stream stubs used during error recovery
-PARTIAL_STREAM_STUB_ID = "partial-stream-stub"
-
-FINISH_REASON_LENGTH = "length"
-
-
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_MODELS_URL = f"{OPENROUTER_BASE_URL}/models"
+
+AI_GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh/v1"

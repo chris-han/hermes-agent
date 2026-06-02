@@ -35,6 +35,7 @@ import logging
 import os
 import platform
 import shlex
+import signal
 import socket
 import subprocess
 import sys
@@ -45,8 +46,6 @@ import uuid
 
 _IS_WINDOWS = platform.system() == "Windows"
 from typing import Any, Dict, List, Optional
-
-from tools.thread_context import propagate_context_to_thread
 
 # Availability gate.  On Windows we fall back to loopback TCP for the
 # sandbox RPC transport (AF_UNIX is unreliable on Windows Python) — see
@@ -76,30 +75,13 @@ MAX_STDERR_BYTES = 10_000    # 10 KB
 
 # Environment variable scrubbing rules (shared between the local + remote
 # backends).  Secret-substring block is applied first; anything left must
-# match a safe prefix, the operational HERMES_ allowlist, or (on Windows) an
-# OS-essential name.
-#
-# NB: the broad "HERMES_" prefix was deliberately removed (#27303) — it leaked
-# HERMES_*-named config that lacks a secret substring (e.g. HERMES_BASE_URL,
-# HERMES_KANBAN_DB, HERMES_*_WEBHOOK).  The child only needs the few
-# location/profile vars in _HERMES_CHILD_ALLOWED below; HERMES_RPC_SOCKET /
-# HERMES_RPC_DIR / TZ / HOME are injected explicitly after scrubbing.
+# match either a safe prefix or, on Windows, an OS-essential name.
 _SAFE_ENV_PREFIXES = ("PATH", "HOME", "USER", "LANG", "LC_", "TERM",
                       "TMPDIR", "TMP", "TEMP", "SHELL", "LOGNAME",
-                      "XDG_", "PYTHONPATH", "VIRTUAL_ENV", "CONDA")
+                      "XDG_", "PYTHONPATH", "VIRTUAL_ENV", "CONDA",
+                      "HERMES_")
 _SECRET_SUBSTRINGS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL",
-                      "PASSWD", "AUTH", "DSN", "WEBHOOK")
-
-# Operational HERMES_* vars the child legitimately needs by exact name — these
-# are non-secret runtime-location flags (the same set hermes_cli treats as the
-# runtime location) that repo-root modules a sandbox script imports may read at
-# import time.  None match _SECRET_SUBSTRINGS.
-_HERMES_CHILD_ALLOWED = frozenset({
-    "HERMES_HOME",
-    "HERMES_PROFILE",
-    "HERMES_CONFIG",
-    "HERMES_ENV",
-})
+                      "PASSWD", "AUTH")
 
 # Windows-only: a handful of variables are required by the OS/CRT itself.
 # Without them, even stdlib calls like ``socket.socket()`` fail with
@@ -138,10 +120,9 @@ def _scrub_child_env(source_env, is_passthrough=None, is_windows=None):
 
     Rules (order matters):
       1. Passthrough vars (skill- or config-declared) always pass.
-      2. Secret-substring names (KEY/TOKEN/DSN/WEBHOOK/etc.) are blocked.
+      2. Secret-substring names (KEY/TOKEN/etc.) are blocked.
       3. Names matching a safe prefix pass.
-      4. Operational HERMES_* vars (_HERMES_CHILD_ALLOWED) pass by exact name.
-      5. On Windows, a small OS-essential allowlist passes by exact name
+      4. On Windows, a small OS-essential allowlist passes by exact name
          — without these the child can't even create a socket or spawn a
          subprocess.
 
@@ -158,14 +139,6 @@ def _scrub_child_env(source_env, is_passthrough=None, is_windows=None):
         is_windows = _IS_WINDOWS
 
     scrubbed = {}
-    # Non-secret HERMES_* vars dropped by the tightened allowlist (#27303). The
-    # broad "HERMES_" prefix used to pass these through; now only the
-    # operational set does. The drop is intentional (those vars can carry
-    # config like HERMES_KANBAN_DB / HERMES_BASE_URL), but a sandbox script
-    # that imports a repo module reading one at import time would otherwise see
-    # it silently unset. Surface the drop once so the behavior change is
-    # diagnosable and points at the env_passthrough opt-in escape hatch.
-    _dropped_hermes = []
     for k, v in source_env.items():
         if is_passthrough(k):
             scrubbed[k] = v
@@ -175,25 +148,8 @@ def _scrub_child_env(source_env, is_passthrough=None, is_windows=None):
         if any(k.startswith(p) for p in _SAFE_ENV_PREFIXES):
             scrubbed[k] = v
             continue
-        if k in _HERMES_CHILD_ALLOWED:
-            scrubbed[k] = v
-            continue
         if is_windows and k.upper() in _WINDOWS_ESSENTIAL_ENV_VARS:
             scrubbed[k] = v
-            continue
-        if k.startswith("HERMES_"):
-            # Non-secret (secrets were already dropped above) and not in any
-            # allowlist — a deliberately-dropped HERMES_* var.
-            _dropped_hermes.append(k)
-    if _dropped_hermes:
-        logger.debug(
-            "execute_code: dropped %d non-allowlisted HERMES_* var(s) from the "
-            "sandbox child env (%s). This is intentional hardening (#27303); if "
-            "a sandbox script legitimately needs one, declare it via "
-            "env_passthrough in the skill/config so it passes by explicit opt-in.",
-            len(_dropped_hermes),
-            ", ".join(sorted(_dropped_hermes)),
-        )
     return scrubbed
 
 
@@ -201,6 +157,21 @@ def check_sandbox_requirements() -> bool:
     """Code execution sandbox requires a POSIX OS for Unix domain sockets."""
     if not SANDBOX_AVAILABLE:
         return False
+
+    try:
+        from tools.terminal_tool import (
+            _check_vercel_sandbox_requirements,
+            _get_env_config,
+        )
+
+        config = _get_env_config()
+    except Exception:
+        logger.debug("Could not resolve terminal config for execute_code availability", exc_info=True)
+        return False
+
+    if config.get("env_type") == "vercel_sandbox":
+        return _check_vercel_sandbox_requirements(config)
+
     return True
 
 
@@ -231,9 +202,9 @@ _TOOL_STUBS = {
     ),
     "write_file": (
         "write_file",
-        "path: str, content: str, cross_profile: bool = False",
-        '"""Write content to a file (always overwrites). Returns dict with status. cross_profile=True opts out of the cross-Hermes-profile soft guard."""',
-        '{"path": path, "content": content, "cross_profile": cross_profile}',
+        "path: str, content: str",
+        '"""Write content to a file (always overwrites). Returns dict with status."""',
+        '{"path": path, "content": content}',
     ),
     "search_files": (
         "search_files",
@@ -243,9 +214,9 @@ _TOOL_STUBS = {
     ),
     "patch": (
         "patch",
-        'path: str = None, old_string: str = None, new_string: str = None, replace_all: bool = False, mode: str = "replace", patch: str = None, cross_profile: bool = False',
-        '"""Targeted find-and-replace (mode="replace") or V4A multi-file patches (mode="patch"). Returns dict with status. cross_profile=True opts out of the cross-Hermes-profile soft guard."""',
-        '{"path": path, "old_string": old_string, "new_string": new_string, "replace_all": replace_all, "mode": mode, "patch": patch, "cross_profile": cross_profile}',
+        'path: str = None, old_string: str = None, new_string: str = None, replace_all: bool = False, mode: str = "replace", patch: str = None',
+        '"""Targeted find-and-replace (mode="replace") or V4A multi-file patches (mode="patch"). Returns dict with status."""',
+        '{"path": path, "old_string": old_string, "new_string": new_string, "replace_all": replace_all, "mode": mode, "patch": patch}',
     ),
     "terminal": (
         "terminal",
@@ -328,6 +299,18 @@ def retry(fn, max_attempts=3, delay=2):
             if attempt < max_attempts - 1:
                 time.sleep(delay * (2 ** attempt))
     raise last_err
+
+
+def session_artifact_path(filename: str = "") -> str:
+    """Return the canonical per-session artifact path for sandbox output.
+    When filename is omitted, returns the session artifact directory itself.
+    """
+    base = (os.environ.get("HERMES_SESSION_ARTIFACTS_DIR") or "").strip()
+    if not base:
+        raise RuntimeError("HERMES_SESSION_ARTIFACTS_DIR is not set")
+    if not filename:
+        return base
+    return os.path.join(base, filename)
 
 '''
 
@@ -641,12 +624,13 @@ def _get_or_create_env(task_id: str):
         cwd = overrides.get("cwd") or config["cwd"]
 
         container_config = None
-        if env_type in {"docker", "singularity", "modal", "daytona"}:
+        if env_type in {"docker", "singularity", "modal", "daytona", "vercel_sandbox"}:
             container_config = {
                 "container_cpu": config.get("container_cpu", 1),
                 "container_memory": config.get("container_memory", 5120),
                 "container_disk": config.get("container_disk", 51200),
                 "container_persistent": config.get("container_persistent", True),
+                "vercel_runtime": config.get("vercel_runtime", ""),
                 "docker_volumes": config.get("docker_volumes", []),
                 "docker_run_as_host_user": config.get("docker_run_as_host_user", False),
             }
@@ -932,11 +916,9 @@ def _execute_remote(
         _ship_file_to_remote(env, f"{sandbox_dir}/hermes_tools.py", tools_src)
         _ship_file_to_remote(env, f"{sandbox_dir}/script.py", code)
 
-        # Wrapped so the thread inherits the turn's approval context + callbacks
-        # (see tools.thread_context) — else sandbox RPC tool calls lose approval
-        # routing (#33057).
+        # Start RPC polling thread
         rpc_thread = threading.Thread(
-            target=propagate_context_to_thread(_rpc_poll_loop),
+            target=_rpc_poll_loop,
             args=(
                 env, f"{sandbox_dir}/rpc", effective_task_id,
                 tool_call_log, tool_call_counter, max_tool_calls,
@@ -1093,24 +1075,24 @@ def execute_code(
     if not code or not code.strip():
         return tool_error("No code provided.")
 
+    # Cross-tool governance: redirect python payloads that reference the
+    # shared `.hermes-local/runs/<sub>` root to the bound workspace runs
+    # folder. Refuse only when no workspace authority is resolvable.
+    # See file_tools.redirect_shared_runs_in_text.
+    try:
+        from tools.file_tools import redirect_shared_runs_in_text as _redirect_text
+    except ImportError:
+        _redirect_text = None
+    if _redirect_text is not None:
+        rewritten, info = _redirect_text(code)
+        if rewritten is None and info is not None:
+            return tool_error(info)
+        if rewritten is not None:
+            code = rewritten
+
     # Dispatch: remote backends use file-based RPC, local uses UDS
     from tools.terminal_tool import _get_env_config
     env_type = _get_env_config()["env_type"]
-
-    # execute_code runs arbitrary Python (subprocess/os.system/...) that never
-    # passes through terminal()/DANGEROUS_PATTERNS, so guard the whole script
-    # here before either dispatch path spawns it. Runs synchronously in the
-    # caller (tool-executor) thread, which holds the session context (#30882).
-    from tools.approval import check_execute_code_guard
-    _guard = check_execute_code_guard(code, env_type)
-    if not _guard.get("approved", False):
-        return json.dumps({
-            "status": "error",
-            "error": _guard.get("message") or "execute_code blocked by approval guard.",
-            "tool_calls_made": 0,
-            "duration_seconds": 0,
-        }, ensure_ascii=False)
-
     if env_type != "local":
         return _execute_remote(code, task_id, enabled_tools)
 
@@ -1197,11 +1179,8 @@ def execute_code(
             os.chmod(sock_path, 0o600)
         server_sock.listen(1)
 
-        # Wrapped so the thread inherits the turn's approval context + callbacks
-        # (see tools.thread_context) — else gateway sandbox tool calls silently
-        # auto-approve dangerous commands (#33057, #30882).
         rpc_thread = threading.Thread(
-            target=propagate_context_to_thread(_rpc_server_loop),
+            target=_rpc_server_loop,
             args=(
                 server_sock, task_id, tool_call_log,
                 tool_call_counter, max_tool_calls, sandbox_tools,
@@ -1221,6 +1200,25 @@ def execute_code(
         # passed through — without those, the child can't create a socket
         # or spawn a subprocess.  See ``_scrub_child_env`` for the rules.
         child_env = _scrub_child_env(os.environ)
+        # Override workspace-scoped env in the child with context-local (ContextVar) values
+        # so concurrent requests don't cross-contaminate via the process-global os.environ.
+        # HERMES_HOME passes through _scrub_child_env (HERMES_ prefix) from ambient env;
+        # override it here with the per-request context value when available.
+        # SEMANTIER_WORKSPACE_RUNS_DIR is scrubbed by _scrub_child_env (no safe prefix),
+        # so inject it explicitly from the per-request context if set.
+        try:
+            from runtime_paths import (  # type: ignore
+                current_workspace_hermes_home as _cwh_ce,
+                current_workspace_runs_dir as _cwr_ce,
+            )
+            _ce_home = _cwh_ce()
+            _ce_runs = _cwr_ce()
+            if _ce_home:
+                child_env["HERMES_HOME"] = _ce_home
+            if _ce_runs:
+                child_env["SEMANTIER_WORKSPACE_RUNS_DIR"] = _ce_runs
+        except ImportError:
+            pass
         child_env["HERMES_RPC_SOCKET"] = rpc_endpoint
         child_env["PYTHONDONTWRITEBYTECODE"] = "1"
         # Force UTF-8 for the child's stdio and default file encoding.
@@ -1252,6 +1250,26 @@ def execute_code(
         if _existing_pp:
             _pp_parts.append(_existing_pp)
         child_env["PYTHONPATH"] = os.pathsep.join(_pp_parts)
+        if task_id:
+            child_env["HERMES_SESSION_ID"] = task_id
+        try:
+            # Use context-local home so concurrent requests resolve the correct workspace.
+            try:
+                from runtime_paths import current_workspace_hermes_home as _cwh_art  # type: ignore
+                hermes_home = (_cwh_art() or "").strip()
+            except ImportError:
+                hermes_home = os.environ.get("HERMES_HOME", "").strip()
+            if hermes_home and task_id:
+                artifacts_dir = os.path.join(
+                    hermes_home,
+                    "sessions",
+                    task_id,
+                    "artifacts",
+                )
+                os.makedirs(artifacts_dir, exist_ok=True)
+                child_env["HERMES_SESSION_ARTIFACTS_DIR"] = artifacts_dir
+        except Exception:
+            pass
         # Inject user's configured timezone so datetime.now() in sandboxed
         # code reflects the correct wall-clock time.  Only TZ is set —
         # HERMES_TIMEZONE is an internal Hermes setting and must not leak
@@ -1263,9 +1281,17 @@ def execute_code(
 
         # Per-profile HOME isolation: redirect system tool configs into
         # {HERMES_HOME}/home/ when that directory exists.
-        from hermes_constants import get_subprocess_home
-        _profile_home = get_subprocess_home()
-        if _profile_home:
+        # Derive from child_env["HERMES_HOME"] (already set to the context-local
+        # value above). Do not fall back to process-global discovery here:
+        # missing HERMES_HOME is a wiring error and should fail fast.
+        _ce_hermes_home = child_env.get("HERMES_HOME", "").strip()
+        if not _ce_hermes_home:
+            raise RuntimeError(
+                "Subprocess launch requires HERMES_HOME to be set in child_env. "
+                "Refusing to fall back to process-global discovery."
+            )
+        _profile_home = os.path.join(_ce_hermes_home, "home")
+        if os.path.isdir(_profile_home):
             child_env["HOME"] = _profile_home
 
         # Resolve interpreter + CWD based on execute_code mode.
@@ -1786,7 +1812,8 @@ def build_execute_code_schema(enabled_sandbox_tools: set = None,
         "Also available (no import needed — built into hermes_tools):\n"
         "  json_parse(text: str) — json.loads with strict=False; use for terminal() output with control chars\n"
         "  shell_quote(s: str) — shlex.quote(); use when interpolating dynamic strings into shell commands\n"
-        "  retry(fn, max_attempts=3, delay=2) — retry with exponential backoff for transient failures"
+        "  retry(fn, max_attempts=3, delay=2) — retry with exponential backoff for transient failures\n"
+        "  session_artifact_path(filename: str = '') — canonical per-session artifact path; write generated reports/files here instead of /tmp"
     )
 
     return {

@@ -72,6 +72,7 @@ from acp_adapter.events import (
 )
 from acp_adapter.permissions import make_approval_callback
 from acp_adapter.session import SessionManager, SessionState, _expand_acp_enabled_toolsets
+from acp_adapter.runtime_toolsets import resolve_semantier_acp_enabled_toolsets
 from acp_adapter.tools import build_tool_complete, build_tool_start
 
 logger = logging.getLogger(__name__)
@@ -787,9 +788,17 @@ class HermesACPAgent(acp.Agent):
         try:
             from model_tools import get_tool_definitions
 
-            enabled_toolsets = _expand_acp_enabled_toolsets(
-                getattr(state.agent, "enabled_toolsets", None) or ["hermes-acp"],
-                mcp_server_names=[server.name for server in mcp_servers],
+            base_toolsets = getattr(state.agent, "enabled_toolsets", None)
+            enabled_toolsets = (
+                _expand_acp_enabled_toolsets(
+                    base_toolsets,
+                    mcp_server_names=[server.name for server in mcp_servers],
+                )
+                if base_toolsets
+                else resolve_semantier_acp_enabled_toolsets(
+                    {},
+                    mcp_server_names=[server.name for server in mcp_servers],
+                )
             )
             state.agent.enabled_toolsets = enabled_toolsets
             disabled_toolsets = getattr(state.agent, "disabled_toolsets", None)
@@ -1517,11 +1526,38 @@ class HermesACPAgent(acp.Agent):
             try:
                 from agent.title_generator import maybe_auto_title
 
+                # Capture hermes_home at callback-creation time so the
+                # background thread doesn't race against HERMES_HOME changes.
+                from hermes_constants import get_hermes_home as _get_hermes_home
+                _acp_ws_home = _get_hermes_home()
+
                 def _notify_title_update(_title: str) -> None:
+                    # Notify the connected ACP client.
                     if conn:
                         loop.call_soon_threadsafe(
                             asyncio.create_task,
                             self._send_session_info_update(session_id),
+                        )
+                    # Sync generated title into the canonical workspace session log,
+                    # matching the Weixin gateway pattern (_build_gateway_auto_title_callback).
+                    try:
+                        from agents.workspace_session_logs import update_workspace_session_title
+
+                        _r = update_workspace_session_title(
+                            _acp_ws_home, session_id, _title
+                        )
+                        if _r is None:
+                            logger.warning(
+                                "Auto-title workspace sync: session not found "
+                                "[session=%s workspace=%s]",
+                                session_id,
+                                _acp_ws_home,
+                            )
+                    except Exception:
+                        logger.warning(
+                            "Failed to sync workspace session title for %s",
+                            session_id,
+                            exc_info=True,
                         )
 
                 maybe_auto_title(
@@ -1534,11 +1570,7 @@ class HermesACPAgent(acp.Agent):
                 )
             except Exception:
                 logger.debug("Failed to auto-title ACP session %s", session_id, exc_info=True)
-        if final_response and conn and (not streamed_message or result.get("response_transformed")):
-            # Deliver the final response when streaming did not already send it,
-            # or when a plugin hook transformed the response after streaming
-            # finished (e.g. transform_llm_output) — otherwise the appended /
-            # rewritten text never reaches the client.
+        if final_response and conn and not streamed_message:
             update = acp.update_agent_message_text(final_response)
             await conn.session_update(session_id, update)
 
@@ -1689,9 +1721,7 @@ class HermesACPAgent(acp.Agent):
     def _cmd_tools(self, args: str, state: SessionState) -> str:
         try:
             from model_tools import get_tool_definitions
-            toolsets = _expand_acp_enabled_toolsets(
-                getattr(state.agent, "enabled_toolsets", None) or ["hermes-acp"]
-            )
+            toolsets = getattr(state.agent, "enabled_toolsets", None) or resolve_semantier_acp_enabled_toolsets({})
             tools = get_tool_definitions(enabled_toolsets=toolsets, quiet_mode=True)
             if not tools:
                 return "No tools available."

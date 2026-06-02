@@ -9,12 +9,13 @@ Contributed by @PeterFile (PR #593), reimplemented on current main.
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from gateway.config import GatewayConfig, Platform
 from gateway.run import GatewayRunner, _parse_session_key
+from gateway.session import SessionSource
 
 
 # ---------------------------------------------------------------------------
@@ -444,6 +445,57 @@ def test_build_process_event_source_uses_cached_live_source_before_session_key_p
     assert source.thread_id == "42"
     assert source.user_id == "proc_owner"
     assert source.user_name == "alice"
+
+
+def test_build_process_event_source_resolves_historical_weixin_delivery_adapter_key(
+    monkeypatch, tmp_path
+):
+    runner = _build_runner(monkeypatch, tmp_path, "all")
+    session_key = "agent:main:weixin:dm:wx-chat"
+    runner.session_store._entries[session_key] = SimpleNamespace(
+        origin=SessionSource(
+            platform=Platform.WEIXIN,
+            chat_id="wx-chat",
+            chat_type="dm",
+            user_id="wx-user",
+            user_name="wx-user",
+            workspace_owner_id="ws-123",
+        )
+    )
+
+    monkeypatch.setattr(
+        "agents.workspace_session_logs.resolve_workspace_session_delivery_adapter_key",
+        lambda hermes_home, requested, platform=None: "weixin:ws-123:acct-1@im.bot",
+    )
+
+    source = runner._build_process_event_source(
+        {
+            "session_id": "proc_watch",
+            "session_key": session_key,
+        }
+    )
+
+    assert source is not None
+    assert source.platform == Platform.WEIXIN
+    assert source.adapter_key == "weixin:ws-123:acct-1@im.bot"
+    assert source.delivery_adapter_key == "weixin:ws-123:acct-1@im.bot"
+
+
+def test_adapter_for_source_rejects_platform_only_weixin_resolution(monkeypatch, tmp_path):
+    runner = _build_runner(monkeypatch, tmp_path, "all")
+    runner.adapters[Platform.WEIXIN] = SimpleNamespace(resolve_for_source=lambda source: None)
+
+    source = SessionSource(
+        platform=Platform.WEIXIN,
+        chat_id="wx-chat",
+        chat_type="dm",
+        user_id="wx-user",
+        user_name="wx-user",
+    )
+
+    adapter = runner._adapter_for_source(source)
+
+    assert adapter is None
 
 
 @pytest.mark.asyncio

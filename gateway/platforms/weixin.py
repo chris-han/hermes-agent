@@ -21,12 +21,13 @@ import mimetypes
 import os
 import re
 import secrets
+import sqlite3
 import struct
 import tempfile
 import textwrap
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote, urlparse
@@ -94,6 +95,9 @@ BACKOFF_DELAY_SECONDS = 30
 SESSION_EXPIRED_ERRCODE = -14
 RATE_LIMIT_ERRCODE = -2  # iLink frequency limit — backoff and retry
 MESSAGE_DEDUP_TTL_SECONDS = 300
+MAX_SESSION_EXPIRED_SEND_FAILURES = 3
+SESSION_EXPIRED_RECONNECT_DELAY_SECONDS = 30.0
+SESSION_EXPIRED_RECONNECT_THRESHOLD = 1
 
 
 def _is_stale_session_ret(
@@ -107,12 +111,20 @@ def _is_stale_session_ret(
     return (errmsg or "").lower() == "unknown error"
 
 
+def _is_session_expired_response(response: Dict[str, Any]) -> bool:
+    ret = response.get("ret")
+    errcode = response.get("errcode")
+    return (
+        ret == SESSION_EXPIRED_ERRCODE
+        or errcode == SESSION_EXPIRED_ERRCODE
+        or _is_stale_session_ret(ret, errcode, response.get("errmsg"))
+    )
+
+
 MEDIA_IMAGE = 1
 MEDIA_VIDEO = 2
 MEDIA_FILE = 3
 MEDIA_VOICE = 4
-
-_LIVE_ADAPTERS: Dict[str, Any] = {}
 
 
 def _make_ssl_connector() -> Optional["aiohttp.TCPConnector"]:
@@ -133,6 +145,53 @@ def _make_ssl_connector() -> Optional["aiohttp.TCPConnector"]:
         return None
     ssl_ctx = ssl.create_default_context(cafile=certifi.where())
     return aiohttp.TCPConnector(ssl=ssl_ctx)
+
+
+def _proxy_host_summary() -> str:
+    hosts: List[str] = []
+    for key in ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "https_proxy", "http_proxy", "all_proxy"):
+        raw = str(os.getenv(key) or "").strip()
+        if not raw:
+            continue
+        parsed = urlparse(raw)
+        host = parsed.hostname or raw
+        entry = f"{key}={host}"
+        if entry not in hosts:
+            hosts.append(entry)
+    return ", ".join(hosts) if hosts else "none"
+
+
+def _unwrap_exception_chain(exc: BaseException) -> List[BaseException]:
+    chain: List[BaseException] = []
+    seen: set[int] = set()
+    current: Optional[BaseException] = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        chain.append(current)
+        current = getattr(current, "__cause__", None) or getattr(current, "__context__", None)
+    return chain
+
+
+def _exception_errno(exc: BaseException) -> Optional[int]:
+    for item in _unwrap_exception_chain(exc):
+        errno = getattr(item, "errno", None)
+        if isinstance(errno, int):
+            return errno
+        os_error = getattr(item, "os_error", None)
+        if os_error is not None:
+            nested_errno = getattr(os_error, "errno", None)
+            if isinstance(nested_errno, int):
+                return nested_errno
+    return None
+
+
+def _exception_chain_summary(exc: BaseException) -> str:
+    parts: List[str] = []
+    for item in _unwrap_exception_chain(exc):
+        msg = str(item).strip()
+        label = type(item).__name__
+        parts.append(f"{label}: {msg}" if msg else label)
+    return " <- ".join(parts)
 
 ITEM_TEXT = 1
 ITEM_IMAGE = 2
@@ -221,14 +280,80 @@ def _headers(token: Optional[str], body: str) -> Dict[str, str]:
     return headers
 
 
-def _account_dir(hermes_home: str) -> Path:
-    path = Path(hermes_home) / "weixin" / "accounts"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+def _weixin_auth_db_path() -> Path:
+    raw = os.getenv("SEMANTIER_AUTH_DB_PATH")
+    if not raw:
+        raise RuntimeError(
+            "Weixin runtime persistence requires an explicit auth DB path. "
+            "Set SEMANTIER_AUTH_DB_PATH."
+        )
+    return Path(raw).expanduser()
 
 
-def _account_file(hermes_home: str, account_id: str) -> Path:
-    return _account_dir(hermes_home) / f"{account_id}.json"
+def _connect_weixin_auth_db() -> sqlite3.Connection:
+    db_path = _weixin_auth_db_path()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS weixin_runtime_accounts (
+            account_id TEXT PRIMARY KEY,
+            owner_user_id TEXT,
+            owner_workspace_id TEXT,
+            external_user_id TEXT,
+            runtime_session_state TEXT,
+            runtime_session_updated_at TEXT,
+            saved_at TEXT,
+            payload_json TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_weixin_runtime_accounts_owner
+        ON weixin_runtime_accounts(owner_user_id, owner_workspace_id);
+
+        CREATE TABLE IF NOT EXISTS weixin_sync_state (
+            account_id TEXT PRIMARY KEY,
+            get_updates_buf TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS weixin_context_tokens (
+            account_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            context_token TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY(account_id, user_id)
+        );
+        """
+    )
+    return conn
+
+
+def _update_weixin_account_runtime_state(
+    hermes_home: str,
+    *,
+    account_id: str,
+    session_state: str,
+    session_error: str | None = None,
+) -> None:
+    """Persist gateway runtime session state alongside Weixin account credentials."""
+    payload = load_weixin_account(hermes_home, account_id)
+    if not isinstance(payload, dict):
+        return
+    payload["runtime_session_state"] = session_state
+    payload["runtime_session_updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    if session_error:
+        payload["runtime_session_error"] = session_error
+    else:
+        payload.pop("runtime_session_error", None)
+
+    save_weixin_account(
+        hermes_home,
+        account_id=account_id,
+        token=str(payload.get("token") or ""),
+        base_url=str(payload.get("base_url") or ILINK_BASE_URL),
+        user_id=str(payload.get("user_id") or payload.get("external_user_id") or ""),
+        extra=payload,
+    )
 
 
 def save_weixin_account(
@@ -238,57 +363,82 @@ def save_weixin_account(
     token: str,
     base_url: str,
     user_id: str = "",
+    extra: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Persist account credentials for later reuse."""
-    payload = {
+    payload = dict(extra or {})
+    payload.update({
+        "account_id": account_id,
         "token": token,
         "base_url": base_url,
         "user_id": user_id,
-        "saved_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-    }
-    path = _account_file(hermes_home, account_id)
-    atomic_json_write(path, payload)
+    })
+    payload.setdefault("saved_at", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+    payload.setdefault("external_user_id", user_id)
+    row = (
+        account_id,
+        str(payload.get("owner_user_id") or ""),
+        str(payload.get("owner_workspace_id") or ""),
+        str(payload.get("external_user_id") or payload.get("user_id") or ""),
+        str(payload.get("runtime_session_state") or ""),
+        str(payload.get("runtime_session_updated_at") or ""),
+        str(payload.get("saved_at") or ""),
+        json.dumps(payload, ensure_ascii=False, sort_keys=True),
+    )
+    conn = _connect_weixin_auth_db()
     try:
-        path.chmod(0o600)
-    except OSError:
-        pass
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO weixin_runtime_accounts
+            (account_id, owner_user_id, owner_workspace_id, external_user_id,
+             runtime_session_state, runtime_session_updated_at, saved_at, payload_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            row,
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def load_weixin_account(hermes_home: str, account_id: str) -> Optional[Dict[str, Any]]:
     """Load persisted account credentials."""
-    path = _account_file(hermes_home, account_id)
-    if not path.exists():
-        return None
+    conn = _connect_weixin_auth_db()
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return None
+        row = conn.execute(
+            "SELECT payload_json FROM weixin_runtime_accounts WHERE account_id=?",
+            (account_id,),
+        ).fetchone()
+        return json.loads(str(row["payload_json"])) if row is not None else None
+    finally:
+        conn.close()
 
 
 class ContextTokenStore:
-    """Disk-backed ``context_token`` cache keyed by account + peer."""
+    """SQLite-backed ``context_token`` cache keyed by account + peer."""
 
     def __init__(self, hermes_home: str):
-        self._root = _account_dir(hermes_home)
         self._cache: Dict[str, str] = {}
-
-    def _path(self, account_id: str) -> Path:
-        return self._root / f"{account_id}.context-tokens.json"
 
     def _key(self, account_id: str, user_id: str) -> str:
         return f"{account_id}:{user_id}"
 
     def restore(self, account_id: str) -> None:
-        path = self._path(account_id)
-        if not path.exists():
-            return
+        conn = _connect_weixin_auth_db()
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            rows = conn.execute(
+                "SELECT user_id, context_token FROM weixin_context_tokens WHERE account_id=?",
+                (account_id,),
+            ).fetchall()
         except Exception as exc:
             logger.warning("weixin: failed to restore context tokens for %s: %s", _safe_id(account_id), exc)
             return
+        finally:
+            conn.close()
         restored = 0
-        for user_id, token in data.items():
+        for row in rows:
+            user_id = str(row["user_id"])
+            token = str(row["context_token"])
             if isinstance(token, str) and token:
                 self._cache[self._key(account_id, user_id)] = token
                 restored += 1
@@ -300,19 +450,22 @@ class ContextTokenStore:
 
     def set(self, account_id: str, user_id: str, token: str) -> None:
         self._cache[self._key(account_id, user_id)] = token
-        self._persist(account_id)
-
-    def _persist(self, account_id: str) -> None:
-        prefix = f"{account_id}:"
-        payload = {
-            key[len(prefix) :]: value
-            for key, value in self._cache.items()
-            if key.startswith(prefix)
-        }
+        updated_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        conn = _connect_weixin_auth_db()
         try:
-            atomic_json_write(self._path(account_id), payload)
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO weixin_context_tokens
+                (account_id, user_id, context_token, updated_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (account_id, user_id, token, updated_at),
+            )
+            conn.commit()
         except Exception as exc:
             logger.warning("weixin: failed to persist context tokens for %s: %s", _safe_id(account_id), exc)
+        finally:
+            conn.close()
 
 
 class TypingTicketCache:
@@ -378,16 +531,12 @@ async def _api_post(
 ) -> Dict[str, Any]:
     body = _json_dumps({**payload, "base_info": _base_info()})
     url = f"{base_url.rstrip('/')}/{endpoint}"
-    # Use asyncio.wait_for() instead of aiohttp ClientTimeout to avoid
-    # "Timeout context manager should be used inside a task" errors when
-    # invoked via asyncio.run_coroutine_threadsafe() from cron jobs.
-    async def _do() -> Dict[str, Any]:
-        async with session.post(url, data=body, headers=_headers(token, body)) as response:
-            raw = await response.text()
-            if not response.ok:
-                raise RuntimeError(f"iLink POST {endpoint} HTTP {response.status}: {raw[:200]}")
-            return json.loads(raw)
-    return await asyncio.wait_for(_do(), timeout=timeout_ms / 1000)
+    timeout = aiohttp.ClientTimeout(total=timeout_ms / 1000)
+    async with session.post(url, data=body, headers=_headers(token, body), timeout=timeout) as response:
+        raw = await response.text()
+        if not response.ok:
+            raise RuntimeError(f"iLink POST {endpoint} HTTP {response.status}: {raw[:200]}")
+        return json.loads(raw)
 
 
 async def _api_get(
@@ -402,16 +551,12 @@ async def _api_get(
         "iLink-App-Id": ILINK_APP_ID,
         "iLink-App-ClientVersion": str(ILINK_APP_CLIENT_VERSION),
     }
-    # Use asyncio.wait_for() instead of aiohttp ClientTimeout to avoid
-    # "Timeout context manager should be used inside a task" errors when
-    # invoked via asyncio.run_coroutine_threadsafe() from cron jobs.
-    async def _do() -> Dict[str, Any]:
-        async with session.get(url, headers=headers) as response:
-            raw = await response.text()
-            if not response.ok:
-                raise RuntimeError(f"iLink GET {endpoint} HTTP {response.status}: {raw[:200]}")
-            return json.loads(raw)
-    return await asyncio.wait_for(_do(), timeout=timeout_ms / 1000)
+    timeout = aiohttp.ClientTimeout(total=timeout_ms / 1000)
+    async with session.get(url, headers=headers, timeout=timeout) as response:
+        raw = await response.text()
+        if not response.ok:
+            raise RuntimeError(f"iLink GET {endpoint} HTTP {response.status}: {raw[:200]}")
+        return json.loads(raw)
 
 
 async def _get_updates(
@@ -470,6 +615,30 @@ async def _send_message(
         token=token,
         timeout_ms=API_TIMEOUT_MS,
     )
+
+
+def _extract_context_token_from_send_response(response: Dict[str, Any]) -> Optional[str]:
+    """Extract a possibly refreshed context token from sendmessage response."""
+    if not isinstance(response, dict):
+        return None
+
+    candidates: List[Optional[str]] = [
+        response.get("context_token"),
+        response.get("next_context_token"),
+    ]
+
+    for key in ("msg", "message", "data"):
+        nested = response.get(key)
+        if isinstance(nested, dict):
+            candidates.append(nested.get("context_token"))
+            candidates.append(nested.get("next_context_token"))
+
+    for token in candidates:
+        if isinstance(token, str):
+            token = token.strip()
+            if token:
+                return token
+    return None
 
 
 async def _send_typing(
@@ -664,6 +833,52 @@ def _split_table_row(line: str) -> List[str]:
     if row.endswith("|"):
         row = row[:-1]
     return [cell.strip() for cell in row.split("|")]
+
+
+def _rewrite_headers_for_weixin(line: str) -> str:
+    match = _HEADER_RE.match(line)
+    if not match:
+        return line.rstrip()
+    level = len(match.group(1))
+    title = match.group(2).strip()
+    if level == 1:
+        return f"【{title}】"
+    return f"**{title}**"
+
+
+def _rewrite_table_block_for_weixin(lines: List[str]) -> str:
+    if len(lines) < 2:
+        return "\n".join(lines)
+    headers = _split_table_row(lines[0])
+    body_rows = [_split_table_row(line) for line in lines[2:] if line.strip()]
+    if not headers or not body_rows:
+        return "\n".join(lines)
+
+    formatted_rows: List[str] = []
+    for row in body_rows:
+        pairs = []
+        for idx, header in enumerate(headers):
+            if idx >= len(row):
+                break
+            label = header or f"Column {idx + 1}"
+            value = row[idx].strip()
+            if value:
+                pairs.append((label, value))
+        if not pairs:
+            continue
+        if len(pairs) == 1:
+            label, value = pairs[0]
+            formatted_rows.append(f"- {label}: {value}")
+            continue
+        if len(pairs) == 2:
+            label, value = pairs[0]
+            other_label, other_value = pairs[1]
+            formatted_rows.append(f"- {label}: {value}")
+            formatted_rows.append(f"  {other_label}: {other_value}")
+            continue
+        summary = " | ".join(f"{label}: {value}" for label, value in pairs)
+        formatted_rows.append(f"- {summary}")
+    return "\n".join(formatted_rows) if formatted_rows else "\n".join(lines)
 
 
 def _normalize_markdown_blocks(content: str) -> str:
@@ -981,23 +1196,33 @@ def _message_type_from_media(media_types: List[str], text: str) -> MessageType:
     return MessageType.TEXT
 
 
-def _sync_buf_path(hermes_home: str, account_id: str) -> Path:
-    return _account_dir(hermes_home) / f"{account_id}.sync.json"
-
-
 def _load_sync_buf(hermes_home: str, account_id: str) -> str:
-    path = _sync_buf_path(hermes_home, account_id)
-    if not path.exists():
-        return ""
+    conn = _connect_weixin_auth_db()
     try:
-        return json.loads(path.read_text(encoding="utf-8")).get("get_updates_buf", "")
-    except Exception:
-        return ""
+        row = conn.execute(
+            "SELECT get_updates_buf FROM weixin_sync_state WHERE account_id=?",
+            (account_id,),
+        ).fetchone()
+        return str(row["get_updates_buf"]) if row is not None else ""
+    finally:
+        conn.close()
 
 
 def _save_sync_buf(hermes_home: str, account_id: str, sync_buf: str) -> None:
-    path = _sync_buf_path(hermes_home, account_id)
-    atomic_json_write(path, {"get_updates_buf": sync_buf})
+    updated_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    conn = _connect_weixin_auth_db()
+    try:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO weixin_sync_state
+            (account_id, get_updates_buf, updated_at)
+            VALUES (?, ?, ?)
+            """,
+            (account_id, sync_buf, updated_at),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 async def qr_login(
@@ -1155,6 +1380,10 @@ class WeixinAdapter(BasePlatformAdapter):
         self._send_session: Optional[aiohttp.ClientSession] = None
         self._poll_task: Optional[asyncio.Task] = None
         self._dedup = MessageDeduplicator(ttl_seconds=MESSAGE_DEDUP_TTL_SECONDS)
+        self._runtime_session_state: str | None = None
+        self._session_expired_send_failures = 0
+        self._session_expired_poll_failures = 0
+        self._transport_reconnect_lock = asyncio.Lock()
 
         self._account_id = str(extra.get("account_id") or os.getenv("WEIXIN_ACCOUNT_ID", "")).strip()
         self._token = str(config.token or extra.get("token") or os.getenv("WEIXIN_TOKEN", "")).strip()
@@ -1187,23 +1416,28 @@ class WeixinAdapter(BasePlatformAdapter):
             or os.getenv("WEIXIN_SPLIT_MULTILINE_MESSAGES"),
             default=False,
         )
-
-        # Text debounce batching (mirrors Telegram adapter pattern).
-        # iLink delivers messages individually, so rapid multi-message
-        # bursts (forwarded batches, paste-splits) each trigger a
-        # separate agent invocation.  Default 3s delay / 5s split delay
-        # are tuned for iLink's typical delivery cadence.  Tunable via
-        # config.yaml under
-        # ``gateway.platforms.weixin.extra.text_batch_delay_seconds`` /
-        # ``text_batch_split_delay_seconds``.
-        self._text_batch_delay_seconds = self._coerce_float_extra(
-            "text_batch_delay_seconds", 3.0
+        self._auto_reconnect_session_expired = _coerce_bool(
+            extra.get("auto_reconnect_session_expired")
+            or os.getenv("WEIXIN_AUTO_RECONNECT_SESSION_EXPIRED"),
+            default=True,
         )
-        self._text_batch_split_delay_seconds = self._coerce_float_extra(
-            "text_batch_split_delay_seconds", 5.0
+        self._session_expired_reconnect_threshold = max(
+            1,
+            int(
+                extra.get("session_expired_reconnect_threshold")
+                or os.getenv("WEIXIN_SESSION_EXPIRED_RECONNECT_THRESHOLD", str(SESSION_EXPIRED_RECONNECT_THRESHOLD))
+            ),
         )
-        self._pending_text_batches: Dict[str, MessageEvent] = {}
-        self._pending_text_batch_tasks: Dict[str, asyncio.Task] = {}
+        self._session_expired_reconnect_delay_seconds = max(
+            0.0,
+            float(
+                extra.get("session_expired_reconnect_delay_seconds")
+                or os.getenv(
+                    "WEIXIN_SESSION_EXPIRED_RECONNECT_DELAY_SECONDS",
+                    str(SESSION_EXPIRED_RECONNECT_DELAY_SECONDS),
+                )
+            ),
+        )
 
         if self._account_id and not self._token:
             persisted = load_weixin_account(hermes_home, self._account_id)
@@ -1211,24 +1445,23 @@ class WeixinAdapter(BasePlatformAdapter):
                 self._token = str(persisted.get("token") or "").strip()
                 self._base_url = str(persisted.get("base_url") or self._base_url).strip().rstrip("/")
 
-    def _coerce_float_extra(self, key: str, default: float) -> float:
-        """Read a float from ``config.extra``, guarding against bad/non-finite values.
-
-        The result is fed directly to ``asyncio.sleep()``, so NaN/Inf and
-        unparseable values fall back to ``default``.
-        """
-        import math
-
-        value = self.config.extra.get(key) if getattr(self.config, "extra", None) else None
-        if value is None:
-            return float(default)
-        try:
-            parsed = float(value)
-        except (TypeError, ValueError):
-            return float(default)
-        if not math.isfinite(parsed) or parsed < 0:
-            return float(default)
-        return parsed
+    def _reload_persisted_credentials(self) -> None:
+        if not self._account_id:
+            return
+        persisted = load_weixin_account(self._hermes_home, self._account_id)
+        if not isinstance(persisted, dict):
+            return
+        persisted_token = str(persisted.get("token") or "").strip()
+        persisted_base_url = str(persisted.get("base_url") or self._base_url).strip().rstrip("/")
+        if persisted_token and persisted_token != self._token:
+            logger.info(
+                "[%s] Loaded refreshed token for account=%s from persisted credentials",
+                self.name,
+                _safe_id(self._account_id),
+            )
+            self._token = persisted_token
+        if persisted_base_url:
+            self._base_url = persisted_base_url
 
     @staticmethod
     def _coerce_list(value: Any) -> List[str]:
@@ -1246,6 +1479,9 @@ class WeixinAdapter(BasePlatformAdapter):
             self._set_fatal_error("weixin_missing_dependency", message, retryable=False)
             logger.warning("[%s] %s", self.name, message)
             return False
+
+        self._reload_persisted_credentials()
+
         if not self._token:
             message = "Weixin startup failed: WEIXIN_TOKEN is required"
             self._set_fatal_error("weixin_missing_token", message, retryable=False)
@@ -1263,17 +1499,11 @@ class WeixinAdapter(BasePlatformAdapter):
         except Exception as exc:
             logger.debug("[%s] Token lock unavailable (non-fatal): %s", self.name, exc)
 
-        self._poll_session = aiohttp.ClientSession(trust_env=True, connector=_make_ssl_connector())
-        # Disable aiohttp's built-in ClientTimeout (total=None) to prevent
-        # "Timeout context manager should be used inside a task" errors when
-        # send() is invoked via asyncio.run_coroutine_threadsafe() from cron.
-        # Timeout is managed externally via asyncio.wait_for() in _api_post/_api_get.
-        _no_aiohttp_timeout = aiohttp.ClientTimeout(total=None, connect=None, sock_connect=None, sock_read=None)
-        self._send_session = aiohttp.ClientSession(trust_env=True, connector=_make_ssl_connector(), timeout=_no_aiohttp_timeout)
+        self._open_transport_sessions()
         self._token_store.restore(self._account_id)
         self._poll_task = asyncio.create_task(self._poll_loop(), name="weixin-poll")
         self._mark_connected()
-        _LIVE_ADAPTERS[self._token] = self
+        self._set_runtime_session_state("active")
         logger.info("[%s] Connected account=%s base=%s", self.name, _safe_id(self._account_id), self._base_url)
         if self._group_policy != "disabled":
             logger.warning(
@@ -1289,13 +1519,7 @@ class WeixinAdapter(BasePlatformAdapter):
         return True
 
     async def disconnect(self) -> None:
-        _LIVE_ADAPTERS.pop(self._token, None)
         self._running = False
-        for task in self._pending_text_batch_tasks.values():
-            if not task.done():
-                task.cancel()
-        self._pending_text_batches.clear()
-        self._pending_text_batch_tasks.clear()
         if self._poll_task and not self._poll_task.done():
             self._poll_task.cancel()
             try:
@@ -1312,6 +1536,62 @@ class WeixinAdapter(BasePlatformAdapter):
         self._release_platform_lock()
         self._mark_disconnected()
         logger.info("[%s] Disconnected", self.name)
+
+    def _open_transport_sessions(self) -> None:
+        self._poll_session = aiohttp.ClientSession(trust_env=True, connector=_make_ssl_connector())
+        # Disable aiohttp's built-in ClientTimeout (total=None) to prevent
+        # "Timeout context manager should be used inside a task" errors when
+        # send() is invoked via asyncio.run_coroutine_threadsafe() from cron.
+        # Timeout is managed externally via asyncio.wait_for() in _api_post/_api_get.
+        no_aiohttp_timeout = aiohttp.ClientTimeout(total=None, connect=None, sock_connect=None, sock_read=None)
+        self._send_session = aiohttp.ClientSession(
+            trust_env=True,
+            connector=_make_ssl_connector(),
+            timeout=no_aiohttp_timeout,
+        )
+
+    async def _close_transport_sessions(self) -> None:
+        if self._poll_session and not self._poll_session.closed:
+            await self._poll_session.close()
+        self._poll_session = None
+        if self._send_session and not self._send_session.closed:
+            await self._send_session.close()
+        self._send_session = None
+
+    async def _reopen_transport_sessions_for_session_expiry(self, reason: str) -> bool:
+        if not self._auto_reconnect_session_expired:
+            return False
+        async with self._transport_reconnect_lock:
+            old_token = self._token
+            self._set_runtime_session_state("reconnecting", session_error=reason)
+            self._write_runtime_status_safe(
+                "weixin-session-reconnecting",
+                platform_state="retrying",
+                error_code="weixin_session_expired",
+                error_message=reason,
+            )
+            self._reload_persisted_credentials()
+            await self._close_transport_sessions()
+            try:
+                self._open_transport_sessions()
+            except Exception as exc:
+                self._set_runtime_session_state("expired", session_error=str(exc))
+                self._write_runtime_status_safe(
+                    "weixin-session-reconnect-failed",
+                    platform_state="retrying",
+                    error_code="weixin_reconnect_failed",
+                    error_message=str(exc),
+                )
+                return False
+            self._token_store.restore(self._account_id)
+            self._write_runtime_status_safe(
+                "weixin-session-reconnected",
+                platform_state="connected",
+                error_code=None,
+                error_message=None,
+            )
+            logger.info("[%s] Reopened iLink transport sessions after session expiry", self.name)
+            return True
 
     async def _poll_loop(self) -> None:
         assert self._poll_session is not None
@@ -1334,11 +1614,24 @@ class WeixinAdapter(BasePlatformAdapter):
 
                 ret = response.get("ret", 0)
                 errcode = response.get("errcode", 0)
-                if ret not in {0, None} or errcode not in {0, None}:
-                    if (ret == SESSION_EXPIRED_ERRCODE or errcode == SESSION_EXPIRED_ERRCODE
-                            or _is_stale_session_ret(ret, errcode, response.get("errmsg"))):
-                        logger.error("[%s] Session expired; pausing for 10 minutes", self.name)
-                        await asyncio.sleep(600)
+                if ret not in (0, None) or errcode not in (0, None):
+                    if _is_session_expired_response(response):
+                        self._session_expired_poll_failures += 1
+                        session_error = str(response.get("errmsg") or "session expired").strip() or "session expired"
+                        self._set_runtime_session_state(
+                            "expired",
+                            session_error=session_error,
+                        )
+                        if self._session_expired_poll_failures >= self._session_expired_reconnect_threshold:
+                            logger.error(
+                                "[%s] Session expired; reopening iLink transport sessions",
+                                self.name,
+                            )
+                            await self._reopen_transport_sessions_for_session_expiry(session_error)
+                            self._session_expired_poll_failures = 0
+                        else:
+                            logger.error("[%s] Session expired; waiting before reconnect", self.name)
+                        await asyncio.sleep(self._session_expired_reconnect_delay_seconds)
                         consecutive_failures = 0
                         continue
                     consecutive_failures += 1
@@ -1357,6 +1650,9 @@ class WeixinAdapter(BasePlatformAdapter):
                     continue
 
                 consecutive_failures = 0
+                self._session_expired_send_failures = 0
+                self._session_expired_poll_failures = 0
+                self._set_runtime_session_state("active")
                 new_sync_buf = str(response.get("get_updates_buf") or "")
                 if new_sync_buf:
                     sync_buf = new_sync_buf
@@ -1368,7 +1664,20 @@ class WeixinAdapter(BasePlatformAdapter):
                 break
             except Exception as exc:
                 consecutive_failures += 1
-                logger.error("[%s] poll error (%d/%d): %s", self.name, consecutive_failures, MAX_CONSECUTIVE_FAILURES, exc)
+                logger.error(
+                    "[%s] poll error (%d/%d): %s | type=%s errno=%s host=%s endpoint=%s timeout_ms=%s trust_env=true proxy_hosts=%s chain=%s",
+                    self.name,
+                    consecutive_failures,
+                    MAX_CONSECUTIVE_FAILURES,
+                    exc,
+                    type(exc).__name__,
+                    _exception_errno(exc),
+                    urlparse(self._base_url).hostname or self._base_url,
+                    EP_GET_UPDATES,
+                    timeout_ms,
+                    _proxy_host_summary(),
+                    _exception_chain_summary(exc),
+                )
                 await asyncio.sleep(BACKOFF_DELAY_SECONDS if consecutive_failures >= MAX_CONSECUTIVE_FAILURES else RETRY_DELAY_SECONDS)
                 if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
                     consecutive_failures = 0
@@ -1427,12 +1736,52 @@ class WeixinAdapter(BasePlatformAdapter):
         if not text and not media_paths:
             return
 
+        try:
+            from agents.weixin_ingress_identity import (
+                WeixinIngressOwnerResolutionError,
+                resolve_weixin_ingress_owner,
+            )
+
+            owner_context = resolve_weixin_ingress_owner(
+                account_id=self._account_id,
+                external_user_id=sender_id,
+                chat_id=effective_chat_id,
+                platform_session_key=context_token or None,
+            )
+        except ImportError as exc:
+            logger.error(
+                "[%s] inbound weixin owner lookup unavailable for account=%s sender=%s: %s",
+                self.name,
+                _safe_id(self._account_id),
+                _safe_id(sender_id),
+                exc,
+            )
+            return
+        except WeixinIngressOwnerResolutionError as exc:
+            logger.warning(
+                "[%s] dropping inbound Weixin message without active owner correlation account=%s sender=%s chat=%s: %s",
+                self.name,
+                _safe_id(self._account_id),
+                _safe_id(sender_id),
+                _safe_id(effective_chat_id),
+                exc,
+            )
+            return
+
         source = self.build_source(
             chat_id=effective_chat_id,
             chat_type=chat_type,
             user_id=sender_id,
             user_name=sender_id,
+            workspace_owner_id=owner_context.owner_workspace_id,
         )
+        adapter_key = (
+            f"weixin:{owner_context.owner_workspace_id}:{self._account_id}"
+            if owner_context.owner_workspace_id and self._account_id
+            else None
+        )
+        source.adapter_key = adapter_key
+        source.delivery_adapter_key = adapter_key
         event = MessageEvent(
             text=text,
             message_type=_message_type_from_media(media_types, text),
@@ -1441,13 +1790,10 @@ class WeixinAdapter(BasePlatformAdapter):
             message_id=message_id or None,
             media_urls=media_paths,
             media_types=media_types,
-            timestamp=datetime.now(),
+            timestamp=datetime.now(timezone.utc),
         )
         logger.info("[%s] inbound from=%s type=%s media=%d", self.name, _safe_id(sender_id), source.chat_type, len(media_paths))
-        if event.message_type == MessageType.TEXT:
-            self._enqueue_text_event(event)
-        else:
-            await self.handle_message(event)
+        await self.handle_message(event)
 
     def _is_dm_allowed(self, sender_id: str) -> bool:
         if self._dm_policy == "disabled":
@@ -1455,76 +1801,6 @@ class WeixinAdapter(BasePlatformAdapter):
         if self._dm_policy == "allowlist":
             return sender_id in self._allow_from
         return True
-
-    @property
-    def enforces_own_access_policy(self) -> bool:
-        """Weixin gates DM/group access at intake via dm_policy/group_policy."""
-        return True
-
-    # ------------------------------------------------------------------
-    # Text debounce batching
-    # ------------------------------------------------------------------
-
-    _SPLIT_THRESHOLD = 1800  # iLink chunks at ~2048 chars
-
-    def _text_batch_key(self, event: MessageEvent) -> str:
-        """Session-scoped key for text message batching."""
-        from gateway.session import build_session_key
-        return build_session_key(
-            event.source,
-            group_sessions_per_user=self.config.extra.get("group_sessions_per_user", True),
-            thread_sessions_per_user=self.config.extra.get("thread_sessions_per_user", False),
-        )
-
-    def _enqueue_text_event(self, event: MessageEvent) -> None:
-        """Buffer a text event and reset the flush timer.
-
-        When users forward multiple messages or send rapid-fire texts
-        via WeChat, each arrives as a separate iLink message. This
-        concatenates them and waits for a short quiet period before
-        dispatching the combined message.
-        """
-        key = self._text_batch_key(event)
-        existing = self._pending_text_batches.get(key)
-        chunk_len = len(event.text or "")
-        if existing is None:
-            event._last_chunk_len = chunk_len  # type: ignore[attr-defined]
-            self._pending_text_batches[key] = event
-        else:
-            if event.text:
-                existing.text = f"{existing.text}\n{event.text}" if existing.text else event.text
-            existing._last_chunk_len = chunk_len  # type: ignore[attr-defined]
-            if event.media_urls:
-                existing.media_urls.extend(event.media_urls)
-                existing.media_types.extend(event.media_types)
-
-        prior_task = self._pending_text_batch_tasks.get(key)
-        if prior_task and not prior_task.done():
-            prior_task.cancel()
-        self._pending_text_batch_tasks[key] = asyncio.create_task(
-            self._flush_text_batch(key)
-        )
-
-    async def _flush_text_batch(self, key: str) -> None:
-        """Wait for quiet period then dispatch aggregated text."""
-        current_task = asyncio.current_task()
-        try:
-            pending = self._pending_text_batches.get(key)
-            last_len = getattr(pending, "_last_chunk_len", 0) if pending else 0
-            if last_len >= self._SPLIT_THRESHOLD:
-                delay = self._text_batch_split_delay_seconds
-            else:
-                delay = self._text_batch_delay_seconds
-            await asyncio.sleep(delay)
-            if self._pending_text_batch_tasks.get(key) is not current_task:
-                return
-            event = self._pending_text_batches.pop(key, None)
-            if not event:
-                return
-            await self.handle_message(event)
-        finally:
-            if self._pending_text_batch_tasks.get(key) is current_task:
-                self._pending_text_batch_tasks.pop(key, None)
 
     async def _collect_media(self, item: Dict[str, Any], media_paths: List[str], media_types: List[str]) -> None:
         item_type = item.get("type")
@@ -1652,7 +1928,7 @@ class WeixinAdapter(BasePlatformAdapter):
         chunk: str,
         context_token: Optional[str],
         client_id: str,
-    ) -> None:
+    ) -> Optional[str]:
         """Send a single text chunk with per-chunk retry and backoff.
 
         On session-expired errors (errcode -14), automatically retries
@@ -1677,12 +1953,18 @@ class WeixinAdapter(BasePlatformAdapter):
                 if resp and isinstance(resp, dict):
                     ret = resp.get("ret")
                     errcode = resp.get("errcode")
-                    if (ret is not None and ret not in {0,}) or (errcode is not None and errcode not in {0,}):
-                        is_session_expired = (
-                            ret == SESSION_EXPIRED_ERRCODE
-                            or errcode == SESSION_EXPIRED_ERRCODE
-                            or _is_stale_session_ret(ret, errcode, resp.get("errmsg"))
-                        )
+                    if (ret is not None and ret not in (0,)) or (errcode is not None and errcode not in (0,)):
+                        is_session_expired = _is_session_expired_response(resp)
+                        if is_session_expired:
+                            self._session_expired_send_failures += 1
+                            session_error = str(resp.get("errmsg") or "session expired").strip() or "session expired"
+                            self._set_runtime_session_state(
+                                "expired",
+                                session_error=session_error,
+                            )
+                            if self._session_expired_send_failures >= MAX_SESSION_EXPIRED_SEND_FAILURES:
+                                await self._reopen_transport_sessions_for_session_expiry(session_error)
+                                self._session_expired_send_failures = 0
                         # Session expired — strip token and retry once
                         if is_session_expired and not retried_without_token and context_token:
                             retried_without_token = True
@@ -1721,7 +2003,13 @@ class WeixinAdapter(BasePlatformAdapter):
                         raise RuntimeError(
                             f"iLink sendmessage error: ret={ret} errcode={errcode} errmsg={errmsg}"
                         )
-                return
+                refreshed_context_token = _extract_context_token_from_send_response(resp)
+                if refreshed_context_token:
+                    context_token = refreshed_context_token
+
+                self._set_runtime_session_state("active")
+                self._session_expired_send_failures = 0
+                return context_token
             except Exception as exc:
                 last_error = exc
                 if attempt >= self._send_chunk_retries:
@@ -1741,6 +2029,22 @@ class WeixinAdapter(BasePlatformAdapter):
         assert last_error is not None
         raise last_error
 
+    def _set_runtime_session_state(
+        self,
+        state: str,
+        *,
+        session_error: str | None = None,
+    ) -> None:
+        if self._runtime_session_state == state and not session_error:
+            return
+        _update_weixin_account_runtime_state(
+            self._hermes_home,
+            account_id=self._account_id,
+            session_state=state,
+            session_error=session_error,
+        )
+        self._runtime_session_state = state
+
     async def send(
         self,
         chat_id: str,
@@ -1755,10 +2059,8 @@ class WeixinAdapter(BasePlatformAdapter):
 
         # Extract MEDIA: tags and bare local file paths before text delivery.
         media_files, cleaned_content = self.extract_media(content)
-        media_files = self.filter_media_delivery_paths(media_files)
         _, image_cleaned = self.extract_images(cleaned_content)
         local_files, final_content = self.extract_local_files(image_cleaned)
-        local_files = self.filter_local_delivery_paths(local_files)
 
         _AUDIO_EXTS = {".ogg", ".opus", ".mp3", ".wav", ".m4a", ".flac"}
         _VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".3gp"}
@@ -1794,12 +2096,14 @@ class WeixinAdapter(BasePlatformAdapter):
             chunks = [c for c in self._split_text(self.format_message(final_content)) if c and c.strip()]
             for idx, chunk in enumerate(chunks):
                 client_id = f"hermes-weixin-{uuid.uuid4().hex}"
-                await self._send_text_chunk(
+                context_token = await self._send_text_chunk(
                     chat_id=chat_id,
                     chunk=chunk,
                     context_token=context_token,
                     client_id=client_id,
                 )
+                if context_token:
+                    self._token_store.set(self._account_id, chat_id, context_token)
                 last_message_id = client_id
                 if idx < len(chunks) - 1 and self._send_chunk_delay_seconds > 0:
                     await asyncio.sleep(self._send_chunk_delay_seconds)
@@ -2171,35 +2475,6 @@ async def send_weixin_direct(
     token_store = ContextTokenStore(str(get_hermes_home()))
     token_store.restore(account_id)
     context_token = token_store.get(account_id, chat_id)
-
-    live_adapter = _LIVE_ADAPTERS.get(resolved_token)
-    send_session = getattr(live_adapter, '_send_session', None)
-    if (live_adapter is not None and send_session is not None
-            and not send_session.closed
-            and send_session._loop is asyncio.get_running_loop()):
-        last_result: Optional[SendResult] = None
-        cleaned = live_adapter.format_message(message)
-        if cleaned:
-            last_result = await live_adapter.send(chat_id, cleaned)
-            if not last_result.success:
-                return {"error": f"Weixin send failed: {last_result.error}"}
-
-        for media_path, _is_voice in media_files or []:
-            ext = Path(media_path).suffix.lower()
-            if ext in {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}:
-                last_result = await live_adapter.send_image_file(chat_id, media_path)
-            else:
-                last_result = await live_adapter.send_document(chat_id, media_path)
-            if not last_result.success:
-                return {"error": f"Weixin media send failed: {last_result.error}"}
-
-        return {
-            "success": True,
-            "platform": "weixin",
-            "chat_id": chat_id,
-            "message_id": last_result.message_id if last_result else None,
-            "context_token_used": bool(context_token),
-        }
 
     async with aiohttp.ClientSession(trust_env=True, connector=_make_ssl_connector()) as session:
         adapter = WeixinAdapter(

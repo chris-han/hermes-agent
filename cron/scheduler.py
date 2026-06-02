@@ -57,29 +57,6 @@ class CronPromptInjectionBlocked(Exception):
     """
 
 
-def _resolve_cron_disabled_toolsets(cfg: dict) -> list[str]:
-    """Toolsets a cron-spawned agent must never receive.
-
-    Three protected toolsets are always disabled in cron context:
-      - ``cronjob`` — would let a cron-spawned agent schedule more cron jobs
-      - ``messaging`` — interactive, needs a live gateway session
-      - ``clarify`` — interactive, blocks waiting for user input
-
-    User-level ``agent.disabled_toolsets`` from config.yaml is layered on top
-    so per-job ``enabled_toolsets`` cannot bypass policy that applies to
-    ordinary agent runs (#25752 — LLM-supplied enabled_toolsets was widening
-    past config.yaml's denylist).
-    """
-    disabled = ["cronjob", "messaging", "clarify"]
-    agent_cfg = (cfg or {}).get("agent") or {}
-    user_disabled = agent_cfg.get("disabled_toolsets") or []
-    for name in user_disabled:
-        name = str(name).strip()
-        if name and name not in disabled:
-            disabled.append(name)
-    return disabled
-
-
 def _resolve_cron_enabled_toolsets(job: dict, cfg: dict) -> list[str] | None:
     """Resolve the toolset list for a cron job.
 
@@ -257,30 +234,6 @@ def _resolve_origin(job: dict) -> Optional[dict]:
     return None
 
 
-def _cron_job_origin_log_suffix(job: dict) -> str:
-    """Return safe provenance details for security warnings about a cron job.
-
-    The scheduler normally has no live HTTP request object when it detects a
-    bad stored ``context_from`` reference. Including the job's saved origin
-    makes future probe logs actionable without exposing secrets: platform/chat
-    metadata for gateway-created jobs, and optional source-IP fields for API
-    surfaces that persist them in origin metadata.
-    """
-    origin = job.get("origin")
-    if not isinstance(origin, dict):
-        return ""
-
-    fields = []
-    for key in ("platform", "chat_id", "thread_id", "source_ip", "remote", "forwarded_for"):
-        value = origin.get(key)
-        if value is None:
-            continue
-        text = str(value).replace("\r", " ").replace("\n", " ").strip()
-        if text:
-            fields.append(f"origin_{key}={text[:200]!r}")
-    return " " + " ".join(fields) if fields else ""
-
-
 def _plugin_cron_env_var(platform_name: str) -> str:
     """Return the cron home-channel env var registered by a plugin platform.
 
@@ -368,7 +321,8 @@ def _get_home_target_thread_id(platform_name: str) -> Optional[str]:
 def _iter_home_target_platforms():
     """Iterate built-in + plugin platform names that expose a home channel.
 
-    Used by the ``deliver=origin`` fallback when the job has no origin.
+    Used by routing intents such as ``all`` that explicitly expand to every
+    configured home channel.
     """
     for name in _HOME_TARGET_ENV_VARS:
         yield name
@@ -381,6 +335,73 @@ def _iter_home_target_platforms():
                 yield entry.name
     except Exception:
         pass
+
+
+def _resolve_user_scoped_delivery_target(job: dict) -> Optional[dict]:
+    """Resolve a per-user delivery target from a persisted delivery binding.
+
+    This is intentionally fail-closed. If the binding is missing, ambiguous, or
+    unsupported for the bound platform, return ``None`` rather than falling back
+    to any process-global home channel.
+    """
+    binding = job.get("delivery_binding")
+    if not isinstance(binding, dict):
+        return None
+
+    workspace_owner_id = str(binding.get("workspace_owner_id") or "").strip()
+    platform_name = str(binding.get("platform") or "").strip().lower()
+    source_user_id = str(binding.get("user_id") or "").strip()
+    if not workspace_owner_id or not platform_name:
+        return None
+
+    if platform_name != "weixin":
+        return None
+
+    try:
+        from agents.auth_db import load_weixin_runtime_accounts
+    except Exception:
+        return None
+
+    candidates = []
+    for account in load_weixin_runtime_accounts():
+        if str(account.get("owner_workspace_id") or "").strip() != workspace_owner_id:
+            continue
+        if source_user_id:
+            candidate_user_ids = {
+                str(account.get("external_user_id") or "").strip(),
+                str(account.get("user_id") or "").strip(),
+            }
+            if source_user_id not in candidate_user_ids:
+                continue
+        home_channel = str(account.get("home_channel") or "").strip()
+        if not home_channel:
+            continue
+        candidates.append(
+            {
+                "platform": "weixin",
+                "chat_id": home_channel,
+                "thread_id": None,
+                "account_id": str(account.get("account_id") or "").strip(),
+            }
+        )
+
+    if not candidates:
+        return None
+
+    unique_targets = {
+        (item["platform"], item["chat_id"], item["thread_id"])
+        for item in candidates
+    }
+    if len(unique_targets) != 1:
+        logger.warning(
+            "Job '%s' delivery binding resolved to ambiguous user-scoped Weixin targets; refusing delivery",
+            job.get("name", job.get("id", "?")),
+        )
+        return None
+
+    target = dict(candidates[0])
+    target.pop("account_id", None)
+    return target
 
 
 def _resolve_single_delivery_target(job: dict, deliver_value: str) -> Optional[dict]:
@@ -398,21 +419,18 @@ def _resolve_single_delivery_target(job: dict, deliver_value: str) -> Optional[d
                 "chat_id": str(origin["chat_id"]),
                 "thread_id": origin.get("thread_id"),
             }
-        # Origin missing (e.g. job created via API/script) — try each
-        # platform's home channel as a fallback instead of silently dropping.
-        for platform_name in _iter_home_target_platforms():
-            chat_id = _get_home_target_chat_id(platform_name)
-            if chat_id:
-                logger.info(
-                    "Job '%s' has deliver=origin but no origin; falling back to %s home channel",
-                    job.get("name", job.get("id", "?")),
-                    platform_name,
-                )
-                return {
-                    "platform": platform_name,
-                    "chat_id": chat_id,
-                    "thread_id": _get_home_target_thread_id(platform_name),
-                }
+        scoped_target = _resolve_user_scoped_delivery_target(job)
+        if scoped_target:
+            logger.info(
+                "Job '%s' has deliver=origin but no raw origin; using user-scoped %s delivery target",
+                job.get("name", job.get("id", "?")),
+                scoped_target["platform"],
+            )
+            return scoped_target
+        logger.warning(
+            "Job '%s' has deliver=origin but no origin; refusing global home-channel fallback",
+            job.get("name", job.get("id", "?")),
+        )
         return None
 
     if ":" in deliver_value:
@@ -576,9 +594,7 @@ def _send_media_via_adapter(
     """
     from pathlib import Path
 
-    from gateway.platforms.base import BasePlatformAdapter, should_send_media_as_audio
-
-    media_files = BasePlatformAdapter.filter_media_delivery_paths(media_files)
+    from gateway.platforms.base import should_send_media_as_audio
 
     for media_path, _is_voice in media_files:
         try:
@@ -663,7 +679,6 @@ def _deliver_result(job: dict, content: str, adapters=None, loop=None) -> Option
     # Extract MEDIA: tags so attachments are forwarded as files, not raw text
     from gateway.platforms.base import BasePlatformAdapter
     media_files, cleaned_delivery_content = BasePlatformAdapter.extract_media(delivery_content)
-    media_files = BasePlatformAdapter.filter_media_delivery_paths(media_files)
 
     try:
         config = load_gateway_config()
@@ -929,11 +944,9 @@ def _run_job_script(script_path: str) -> tuple[bool, str]:
     run_env = os.environ.copy()
     run_env["HERMES_HOME"] = str(_get_hermes_home())
     try:
-        from hermes_constants import get_subprocess_home
-
-        profile_home = get_subprocess_home()
-        if profile_home:
-            run_env["HOME"] = profile_home
+        _sched_profile_home = os.path.join(run_env["HERMES_HOME"], "home")
+        if os.path.isdir(_sched_profile_home):
+            run_env["HOME"] = _sched_profile_home
     except Exception:
         pass
 
@@ -1051,13 +1064,7 @@ def _build_job_prompt(job: dict, prerun_script: Optional[tuple] = None) -> str:
         for source_job_id in context_from:
             # Guard against path traversal — valid job IDs are 12-char hex strings
             if not source_job_id or not all(c in "0123456789abcdef" for c in source_job_id):
-                logger.warning(
-                    "context_from: skipping invalid job_id %r for job_id=%r name=%r%s",
-                    source_job_id,
-                    job.get("id"),
-                    job.get("name"),
-                    _cron_job_origin_log_suffix(job),
-                )
+                logger.warning("context_from: skipping invalid job_id %r", source_job_id)
                 continue
             try:
                 job_output_dir = OUTPUT_DIR / source_job_id
@@ -1111,7 +1118,7 @@ def _build_job_prompt(job: dict, prerun_script: Optional[tuple] = None) -> str:
 
     skill_names = [str(name).strip() for name in skills if str(name).strip()]
     if not skill_names:
-        return _scan_assembled_cron_prompt(prompt, job, has_skills=False)
+        return _scan_assembled_cron_prompt(prompt, job)
 
     from tools.skills_tool import skill_view
     from tools.skill_usage import bump_use
@@ -1159,37 +1166,23 @@ def _build_job_prompt(job: dict, prerun_script: Optional[tuple] = None) -> str:
 
     if prompt:
         parts.extend(["", f"The user has provided the following instruction alongside the skill invocation: {prompt}"])
-    return _scan_assembled_cron_prompt("\n".join(parts), job, has_skills=True)
+    return _scan_assembled_cron_prompt("\n".join(parts), job)
 
 
-def _scan_assembled_cron_prompt(assembled: str, job: dict, *, has_skills: bool = False) -> str:
-    """Scan the fully-assembled cron prompt for injection patterns. Raises
-    ``CronPromptInjectionBlocked`` when a match fires so ``run_job`` can
-    surface a clear refusal to the operator.
+def _scan_assembled_cron_prompt(assembled: str, job: dict) -> str:
+    """Scan the fully-assembled cron prompt (including skill content) for
+    injection patterns. Raises ``CronPromptInjectionBlocked`` when a match
+    fires so ``run_job`` can surface a clear refusal to the operator.
 
     Plugs the #3968 gap: ``_scan_cron_prompt`` runs on the user-supplied
     prompt at create/update, but skill content is loaded from disk at
     runtime and was never scanned. Since cron runs non-interactively
     (auto-approves tool calls), a malicious skill carrying an injection
     payload bypassed every gate.
-
-    Two pattern tiers:
-
-    - When ``has_skills=False`` (no skills attached) the assembled prompt
-      is essentially the user prompt + the cron hint, so the STRICT
-      ``_scan_cron_prompt`` patterns apply.
-    - When ``has_skills=True`` the assembled prompt includes loaded skill
-      markdown — often security docs / runbooks that *describe* attack
-      commands in prose. The LOOSER ``_scan_cron_skill_assembled``
-      pattern set is used: only unambiguous prompt-injection directives
-      and invisible unicode block, command-shape patterns are dropped
-      to avoid false-positives. Skill bodies are vetted at install time
-      by ``skills_guard.py``.
     """
-    from tools.cronjob_tools import _scan_cron_prompt, _scan_cron_skill_assembled
+    from tools.cronjob_tools import _scan_cron_prompt
 
-    scanner = _scan_cron_skill_assembled if has_skills else _scan_cron_prompt
-    scan_error = scanner(assembled)
+    scan_error = _scan_cron_prompt(assembled)
     if scan_error:
         job_label = job.get("name") or job.get("id") or "<unknown>"
         logger.warning(
@@ -1464,6 +1457,47 @@ def _run_job_impl(job: dict) -> tuple[bool, str, str, Optional[str]]:
         os.environ["TERMINAL_CWD"] = _job_workdir
         logger.info("Job '%s': using workdir %s", job_id, _job_workdir)
 
+    # Inject SEMANTIER_WORKSPACE_RUNS_DIR when the job workdir lives inside a
+    # Semantier workspace directory.  Cron jobs run under a profile-scoped
+    # HERMES_HOME and have no gateway request context, so the env var is
+    # normally unset.  Deriving it from the workdir allows skills that write
+    # governed artifacts (e.g. expense-reimbursement) to locate the correct
+    # per-workspace runs directory without failing their env-var gate check.
+    _prior_workspace_runs_dir = os.environ.get("SEMANTIER_WORKSPACE_RUNS_DIR", "_UNSET_")
+    _workspace_runs_dir_injected = False
+    if _job_workdir and (_prior_workspace_runs_dir == "_UNSET_" or not _prior_workspace_runs_dir):
+        try:
+            import sys as _sys
+            from pathlib import Path as _Path
+            _repo_root = _Path(__file__).resolve().parents[2]
+            _src = str(_repo_root / "src")
+            if _src not in _sys.path:
+                _sys.path.insert(0, _src)
+            from runtime_paths import workspace_runs_root_from_hermes_home as _wrf
+            # If workdir is workspaces/<id>/... then its .hermes sibling gives us the runs root.
+            _wd = _Path(_job_workdir).resolve()
+            _workspaces_root = _repo_root / "workspaces"
+            if _workspaces_root.resolve() in _wd.parents or _wd == _workspaces_root.resolve():
+                # workdir is inside a workspace dir; .hermes is at workspaces/<id>/.hermes
+                # Walk up to find the workspace root (direct child of workspaces/).
+                _candidate = _wd
+                while _candidate.parent.resolve() != _workspaces_root.resolve() and _candidate != _candidate.parent:
+                    _candidate = _candidate.parent
+                if _candidate.parent.resolve() == _workspaces_root.resolve():
+                    _hermes_home_candidate = _candidate / ".hermes"
+                    try:
+                        _runs = _wrf(_hermes_home_candidate)
+                        os.environ["SEMANTIER_WORKSPACE_RUNS_DIR"] = str(_runs)
+                        _workspace_runs_dir_injected = True
+                        logger.info(
+                            "Job '%s': injected SEMANTIER_WORKSPACE_RUNS_DIR=%s (derived from workdir)",
+                            job_id, _runs,
+                        )
+                    except ValueError:
+                        pass
+        except Exception as _wrd_exc:
+            logger.debug("Job '%s': SEMANTIER_WORKSPACE_RUNS_DIR derivation failed: %s", job_id, _wrd_exc)
+
     try:
         # Re-read .env and config.yaml fresh every run so provider/key
         # changes take effect without a gateway restart.
@@ -1641,7 +1675,7 @@ def _run_job_impl(job: dict) -> tuple[bool, str, str, Optional[str]]:
             provider_sort=pr.get("sort"),
             openrouter_min_coding_score=(_cfg.get("openrouter") or {}).get("min_coding_score"),
             enabled_toolsets=_resolve_cron_enabled_toolsets(job, _cfg),
-            disabled_toolsets=_resolve_cron_disabled_toolsets(_cfg),
+            disabled_toolsets=["cronjob", "messaging", "clarify"],
             quiet_mode=True,
             # Cron jobs should always inherit the user's SOUL.md identity from
             # HERMES_HOME. When a workdir is configured, also inject project
@@ -1821,6 +1855,12 @@ def _run_job_impl(job: dict) -> tuple[bool, str, str, Optional[str]]:
                 os.environ.pop("TERMINAL_CWD", None)
             else:
                 os.environ["TERMINAL_CWD"] = _prior_terminal_cwd
+        # Restore SEMANTIER_WORKSPACE_RUNS_DIR when we injected it for this job.
+        if _workspace_runs_dir_injected:
+            if _prior_workspace_runs_dir == "_UNSET_":
+                os.environ.pop("SEMANTIER_WORKSPACE_RUNS_DIR", None)
+            else:
+                os.environ["SEMANTIER_WORKSPACE_RUNS_DIR"] = _prior_workspace_runs_dir
         # Clean up ContextVar session/delivery state for this job.
         clear_session_vars(_ctx_tokens)
         for _var_name in _cron_delivery_vars:

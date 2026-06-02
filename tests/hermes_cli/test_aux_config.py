@@ -39,7 +39,7 @@ def test_title_generation_present_in_default_config():
     assert tg["provider"] == "auto"
     assert tg["model"] == ""
     assert tg["timeout"] > 0
-    assert tg["extra_body"] == {}
+    assert tg["extra_body"].get("enable_thinking") is False
 
 
 def test_session_search_no_longer_appears_in_auxiliary_model_config():

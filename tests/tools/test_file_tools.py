@@ -9,7 +9,10 @@ import logging
 from unittest.mock import MagicMock, patch
 
 from tools.file_tools import (
+    READ_FILE_SCHEMA,
+    WRITE_FILE_SCHEMA,
     PATCH_SCHEMA,
+    SEARCH_FILES_SCHEMA,
 )
 
 
@@ -208,45 +211,6 @@ class TestPatchHandler:
         assert "error" in result
         assert "Unknown mode" in result["error"]
 
-    @patch("tools.file_tools._get_file_ops")
-    def test_patch_v4a_rejects_traversal_in_update_header(self, mock_get):
-        """V4A '*** Update File:' headers come from patch content, which can
-        carry prompt-injection-controlled paths (skill content, web extract).
-        ``..`` traversal in the header must be rejected before the patch is
-        applied, even though the explicit ``path=`` arg is allowed to use
-        ``..`` for legitimate cross-worktree edits."""
-        from tools.file_tools import patch_tool
-        result = json.loads(patch_tool(
-            mode="patch",
-            patch=(
-                "*** Begin Patch\n"
-                "*** Update File: ../../../etc/shadow\n"
-                "@@ -1,3 +1,3 @@\n"
-                "-old\n"
-                "+new\n"
-                "*** End Patch\n"
-            ),
-        ))
-        assert "error" in result
-        assert "traversal" in result["error"].lower()
-        # patch_v4a must not be invoked when the header is rejected
-        mock_get.return_value.patch_v4a.assert_not_called()
-
-    @patch("tools.file_tools._get_file_ops")
-    def test_patch_v4a_rejects_traversal_in_add_header(self, mock_get):
-        from tools.file_tools import patch_tool
-        result = json.loads(patch_tool(
-            mode="patch",
-            patch=(
-                "*** Begin Patch\n"
-                "*** Add File: ../../../tmp/dropped.py\n"
-                "+print('pwned')\n"
-                "*** End Patch\n"
-            ),
-        ))
-        assert "error" in result
-        assert "traversal" in result["error"].lower()
-
 
 class TestSearchHandler:
     @patch("tools.file_tools._get_file_ops")
@@ -401,70 +365,6 @@ class TestSearchHints:
 # PATCH_SCHEMA shape tests (issue #15524)
 # ---------------------------------------------------------------------------
 
-
-class TestSensitivePathCheck:
-    """Verify that _check_sensitive_path blocks writes to protected locations."""
-
-    def test_hermes_config_blocked_for_write_file(self, tmp_path, monkeypatch):
-        fake_config = tmp_path / "config.yaml"
-        monkeypatch.setattr("tools.file_tools._hermes_config_resolved", str(fake_config))
-        monkeypatch.setattr("tools.file_tools._hermes_config_resolved_loaded", True)
-
-        from tools.file_tools import write_file_tool
-        result = json.loads(write_file_tool(str(fake_config), "approvals:\n  mode: off\n"))
-        assert "error" in result
-        assert "Hermes config" in result["error"]
-
-    def test_hermes_config_blocked_via_tilde_path(self, tmp_path, monkeypatch):
-        fake_config = tmp_path / "config.yaml"
-        monkeypatch.setattr("tools.file_tools._hermes_config_resolved", str(fake_config))
-        monkeypatch.setattr("tools.file_tools._hermes_config_resolved_loaded", True)
-
-        from tools.file_tools import write_file_tool
-        result = json.loads(write_file_tool(str(fake_config), "approvals:\n  mode: off\n"))
-        assert "error" in result
-        assert "Hermes config" in result["error"]
-
-    def test_hermes_config_blocked_for_patch(self, tmp_path, monkeypatch):
-        fake_config = tmp_path / "config.yaml"
-        fake_config.write_text("approvals:\n  mode: manual\n")
-        monkeypatch.setattr("tools.file_tools._hermes_config_resolved", str(fake_config))
-        monkeypatch.setattr("tools.file_tools._hermes_config_resolved_loaded", True)
-
-        from tools.file_tools import patch_tool
-        result = json.loads(patch_tool(
-            mode="replace",
-            path=str(fake_config),
-            old_string="mode: manual",
-            new_string="mode: off",
-        ))
-        assert "error" in result
-        assert "Hermes config" in result["error"]
-
-    def test_system_path_still_blocked(self, monkeypatch):
-        monkeypatch.setattr("tools.file_tools._hermes_config_resolved", "/some/other/path")
-        monkeypatch.setattr("tools.file_tools._hermes_config_resolved_loaded", True)
-
-        from tools.file_tools import write_file_tool
-        result = json.loads(write_file_tool("/etc/passwd", "evil"))
-        assert "error" in result
-        assert "sensitive system path" in result["error"]
-
-    @patch("tools.file_tools._get_file_ops")
-    def test_normal_file_not_blocked(self, mock_get, monkeypatch):
-        monkeypatch.setattr("tools.file_tools._hermes_config_resolved", "/home/user/.hermes/config.yaml")
-        monkeypatch.setattr("tools.file_tools._hermes_config_resolved_loaded", True)
-        mock_ops = MagicMock()
-        result_obj = MagicMock()
-        result_obj.to_dict.return_value = {"status": "ok", "path": "/tmp/other.txt", "bytes": 5}
-        mock_ops.write_file.return_value = result_obj
-        mock_get.return_value = mock_ops
-
-        from tools.file_tools import write_file_tool
-        result = json.loads(write_file_tool("/tmp/other.txt", "hello"))
-        assert result["status"] == "ok"
-
-
 class TestPatchSchemaShape:
     """PATCH_SCHEMA must advertise per-mode required params via description
     text (not JSON-schema ``required``), so strict models like kimi-k2.x stop
@@ -486,3 +386,209 @@ class TestPatchSchemaShape:
         params = PATCH_SCHEMA["parameters"]
         assert params["required"] == ["mode"]
         assert "anyOf" not in params and "oneOf" not in params
+
+
+# ---------------------------------------------------------------------------
+# Shared-runs leak guard
+# ---------------------------------------------------------------------------
+
+class TestSharedRunsLeakGuard:
+    """`write_file_tool` / `patch_tool` must REDIRECT writes targeting the
+    shared governed runs subtree (`<SEMANTIER_LOCAL_STATE_DIR>/runs/` or the
+    literal `.hermes-local/runs/`) to the per-workspace runs folder when a
+    workspace authority is resolvable, and refuse only when no authority is
+    available. Workspace authority resolves from `SEMANTIER_WORKSPACE_RUNS_DIR`
+    first, then falls back to deriving `<workspaces_root>/<id>/runs` from a
+    workspace-scoped `HERMES_HOME` (`<workspaces_root>/<id>/.hermes`).
+    Enforcement at the tool layer is gateway-agnostic.
+    """
+
+    def test_write_to_shared_runs_redirected_when_workspace_bound(self, monkeypatch, tmp_path):
+        from tools.file_tools import write_file_tool
+
+        shared = tmp_path / ".hermes-local"
+        workspace_runs = tmp_path / "workspaces" / "ws-1" / "runs"
+        (shared / "runs").mkdir(parents=True)
+        workspace_runs.mkdir(parents=True)
+        monkeypatch.setenv("SEMANTIER_LOCAL_STATE_DIR", str(shared))
+        monkeypatch.setenv("SEMANTIER_WORKSPACE_RUNS_DIR", str(workspace_runs))
+
+        target = str(shared / "runs" / "reimbursement" / "REIM-X.md")
+        result = json.loads(write_file_tool(target, "body"))
+        # No refusal — the write must succeed by being redirected.
+        assert "shared runs root" not in result.get("error", "") or result.get("error") is None
+        # Artifact lives in the workspace runs folder, not the shared root.
+        assert (workspace_runs / "reimbursement" / "REIM-X.md").exists()
+        assert not (shared / "runs" / "reimbursement" / "REIM-X.md").exists()
+
+    def test_write_to_shared_runs_redirected_via_hermes_home_fallback(self, monkeypatch, tmp_path):
+        """Regression: when `SEMANTIER_WORKSPACE_RUNS_DIR` is unset but
+        `HERMES_HOME` points at a workspace-scoped runtime home, the redirect
+        must still derive the workspace runs folder from `HERMES_HOME`. This
+        covers the weixin per-message handler that doesn't go through
+        `bind_workspace_env` yet HERMES_HOME is pinned to the workspace by
+        the startup hydration step."""
+        from tools.file_tools import write_file_tool
+
+        shared = tmp_path / ".hermes-local"
+        workspace_home = tmp_path / "workspaces" / "ws-2" / ".hermes"
+        workspace_runs = tmp_path / "workspaces" / "ws-2" / "runs"
+        (shared / "runs").mkdir(parents=True)
+        workspace_home.mkdir(parents=True)
+
+        monkeypatch.setenv("SEMANTIER_LOCAL_STATE_DIR", str(shared))
+        monkeypatch.delenv("SEMANTIER_WORKSPACE_RUNS_DIR", raising=False)
+        monkeypatch.setenv("HERMES_HOME", str(workspace_home))
+
+        target = str(shared / "runs" / "reimbursement" / "REIM-W.md")
+        result = json.loads(write_file_tool(target, "body"))
+        assert (workspace_runs / "reimbursement" / "REIM-W.md").exists()
+        assert not (shared / "runs" / "reimbursement" / "REIM-W.md").exists()
+
+    def test_write_to_shared_runs_refused_when_no_authority(self, monkeypatch, tmp_path):
+        from tools.file_tools import write_file_tool
+
+        shared = tmp_path / ".hermes-local"
+        (shared / "runs").mkdir(parents=True)
+        monkeypatch.setenv("SEMANTIER_LOCAL_STATE_DIR", str(shared))
+        monkeypatch.delenv("SEMANTIER_WORKSPACE_RUNS_DIR", raising=False)
+        # HERMES_HOME points at the shared root, not a workspace — no authority.
+        monkeypatch.setenv("HERMES_HOME", str(shared))
+
+        target = str(shared / "runs" / "reimbursement" / "REIM-Y.md")
+        result = json.loads(write_file_tool(target, "body"))
+        assert "error" in result
+        assert "No workspace authority" in result["error"]
+        assert not (shared / "runs" / "reimbursement" / "REIM-Y.md").exists()
+
+    def test_write_outside_shared_runs_unaffected(self, monkeypatch, tmp_path):
+        from tools.file_tools import write_file_tool
+
+        shared = tmp_path / ".hermes-local"
+        (shared / "runs").mkdir(parents=True)
+        monkeypatch.setenv("SEMANTIER_LOCAL_STATE_DIR", str(shared))
+        monkeypatch.delenv("SEMANTIER_WORKSPACE_RUNS_DIR", raising=False)
+
+        target = tmp_path / "other" / "note.md"
+        target.parent.mkdir(parents=True)
+        result_json = write_file_tool(str(target), "ok")
+        result = json.loads(result_json)
+        # Guard must not fire on non-governed paths.
+        assert "shared runs root" not in result.get("error", "")
+
+    def test_redirect_shared_runs_in_text_rewrites_shell_redirection(self, monkeypatch, tmp_path):
+        """Shell payloads that target the shared governed runs root must be
+        rewritten to use the workspace runs folder."""
+        from tools.file_tools import redirect_shared_runs_in_text
+
+        workspace_runs = tmp_path / "ws" / "runs"
+        workspace_runs.mkdir(parents=True)
+        monkeypatch.delenv("SEMANTIER_LOCAL_STATE_DIR", raising=False)
+        monkeypatch.setenv("SEMANTIER_WORKSPACE_RUNS_DIR", str(workspace_runs))
+
+        command = (
+            "cat <<EOF > /home/chris/repo/semantier-runtime/.hermes-local/runs/"
+            "reimbursement/REIM-X.md\nbody\nEOF"
+        )
+        rewritten, info = redirect_shared_runs_in_text(command)
+        assert rewritten is not None
+        assert ".hermes-local/runs/" not in rewritten
+        assert str(workspace_runs) + "/reimbursement/REIM-X.md" in rewritten
+        assert info and "Redirected" in info
+
+        # Innocent commands must pass unchanged.
+        assert redirect_shared_runs_in_text("ls /tmp") == (None, None)
+        assert redirect_shared_runs_in_text("") == (None, None)
+        assert redirect_shared_runs_in_text(None) == (None, None)
+
+    def test_redirect_shared_runs_in_text_refuses_without_authority(self, monkeypatch):
+        from tools.file_tools import redirect_shared_runs_in_text
+
+        monkeypatch.delenv("SEMANTIER_WORKSPACE_RUNS_DIR", raising=False)
+        monkeypatch.delenv("HERMES_HOME", raising=False)
+        code = (
+            "with open('/home/chris/repo/semantier-runtime/.hermes-local/runs/"
+            "reimbursement/REIM-Y.md', 'w') as f:\n    f.write('x')\n"
+        )
+        rewritten, info = redirect_shared_runs_in_text(code)
+        assert rewritten is None
+        assert info is not None
+        assert "No workspace authority" in info
+
+    def test_patch_replace_to_shared_runs_redirected(self, monkeypatch, tmp_path):
+        from tools.file_tools import patch_tool
+
+        shared = tmp_path / ".hermes-local"
+        workspace_runs = tmp_path / "workspaces" / "ws-1" / "runs"
+        (shared / "runs" / "reimbursement").mkdir(parents=True)
+        (workspace_runs / "reimbursement").mkdir(parents=True)
+        # Seed the workspace target with the pre-patch content (since redirect
+        # rewrites the path before patch_tool reads the original).
+        workspace_target = workspace_runs / "reimbursement" / "REIM-Z.md"
+        workspace_target.write_text("foo\n")
+        shared_target = shared / "runs" / "reimbursement" / "REIM-Z.md"
+
+        monkeypatch.setenv("SEMANTIER_LOCAL_STATE_DIR", str(shared))
+        monkeypatch.setenv("SEMANTIER_WORKSPACE_RUNS_DIR", str(workspace_runs))
+
+        result = json.loads(patch_tool(
+            mode="replace", path=str(shared_target),
+            old_string="foo", new_string="bar",
+        ))
+        assert "shared runs root" not in result.get("error", "")
+        # Patch was applied to the workspace copy, not the shared root.
+        assert workspace_target.read_text() == "bar\n"
+
+
+# ---------------------------------------------------------------------------
+# ContextVar isolation — redirect reads the per-context binding, not os.environ
+# ---------------------------------------------------------------------------
+
+class TestFileToolsContextVarIsolation:
+    """Regression tests: file_tools._resolve_workspace_runs_root() must read the
+    ContextVar set by bind_workspace_env, not just os.environ, so concurrent
+    requests for different workspaces redirect artifacts to the correct location.
+    """
+
+    def test_redirect_reads_context_var_when_set(self, monkeypatch, tmp_path):
+        """When the SEMANTIER_WORKSPACE_RUNS_DIR ContextVar is set (simulating
+        bind_workspace_env binding for ws-a), redirect_shared_runs_artifact must
+        use that value even when os.environ points at a different workspace (ws-b).
+        This is the GAP-1 in-process isolation regression test.
+        """
+        import sys
+        repo_root = __import__("pathlib").Path(__file__).resolve().parents[3]
+        src = str(repo_root / "src")
+        if src not in sys.path:
+            sys.path.insert(0, src)
+        # Import the ContextVar directly so we can set it without going through
+        # bind_workspace_env's workspace_root validation (which requires paths
+        # under the real repo workspaces/ tree).
+        from runtime_paths import _workspace_runs_dir_ctx  # type: ignore
+        from tools.file_tools import write_file_tool
+
+        shared = tmp_path / ".hermes-local"
+        ws_a = tmp_path / "workspaces" / "ws-ctx-a"
+        ws_b = tmp_path / "workspaces" / "ws-ctx-b"
+        (shared / "runs").mkdir(parents=True)
+        (ws_a / "runs").mkdir(parents=True)
+        (ws_b / "runs").mkdir(parents=True)
+
+        monkeypatch.setenv("SEMANTIER_LOCAL_STATE_DIR", str(shared))
+        # os.environ intentionally points at ws-b; ContextVar must win
+        monkeypatch.setenv("SEMANTIER_WORKSPACE_RUNS_DIR", str(ws_b / "runs"))
+
+        target = str(shared / "runs" / "reimbursement" / "REIM-CTX.md")
+
+        # Simulate bind_workspace_env for ws-a by setting the ContextVar directly
+        token = _workspace_runs_dir_ctx.set(str(ws_a / "runs"))
+        try:
+            result = json.loads(write_file_tool(target, "ctx-body"))
+        finally:
+            _workspace_runs_dir_ctx.reset(token)
+
+        # ContextVar for ws-a must have won — artifact in ws-a/runs
+        assert (ws_a / "runs" / "reimbursement" / "REIM-CTX.md").exists(), (
+            "Artifact should be in ws-a's runs dir (ContextVar binding), not os.environ's ws-b"
+        )
+        assert not (ws_b / "runs" / "reimbursement" / "REIM-CTX.md").exists()

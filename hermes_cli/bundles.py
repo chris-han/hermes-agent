@@ -15,7 +15,7 @@ Subcommands:
 from __future__ import annotations
 
 import sys
-from typing import List
+from typing import List, Optional
 
 from rich.console import Console
 from rich.table import Table

@@ -93,31 +93,15 @@ export const sessionCommands: SlashCommand[] = [
   },
 
   {
-    aliases: ['switch', 'session', 'resume'],
-    help: 'browse, switch, or resume sessions',
+    help: 'browse and resume previous sessions',
     name: 'sessions',
     run: (arg, ctx) => {
-      const trimmed = arg.trim()
-
-      // A new *live* session keeps the current one running in the background
-      // (it doesn't close it), so fanning out while busy is allowed — that's
-      // the whole point of multiple live sessions.
-      if (trimmed.toLowerCase() === 'new') {
-        return ctx.session.newLiveSession()
+      if (ctx.session.guardBusySessionSwitch('switch sessions')) {
+        return
       }
-
-      // `/resume <id|title>` (and `/sessions <id>`) load a cold session and
-      // CLOSE the current one, so guard it while a turn is in-flight to avoid
-      // corrupting streaming/busy state. Bare opens the overlay to browse.
-      if (trimmed) {
-        if (ctx.session.guardBusySessionSwitch('switch sessions')) {
-          return
-        }
-
-        return ctx.session.resumeById(trimmed)
+      if (!arg.trim()) {
+        return patchOverlayState({ picker: true })
       }
-
-      patchOverlayState({ sessions: true })
     }
   },
 
@@ -228,6 +212,7 @@ export const sessionCommands: SlashCommand[] = [
           void ctx.session.closeSession(prevSid)
           patchUiState({ sid: r.session_id })
           ctx.session.setSessionStartedAt(Date.now())
+          ctx.transcript.setHistoryItems([])
           ctx.transcript.sys(`branched → ${r.title ?? ''}`)
         })
       )
@@ -248,7 +233,6 @@ export const sessionCommands: SlashCommand[] = [
       ctx.gateway.rpc<VoiceToggleResponse>('voice.toggle', { action }).then(
         ctx.guarded<VoiceToggleResponse>(r => {
           ctx.voice.setVoiceEnabled(!!r.enabled)
-          ctx.voice.setVoiceTts(!!r.tts)
 
           // Render the configured record key (config.yaml ``voice.record_key``)
           // instead of hardcoded "Ctrl+B" — the gateway response carries the

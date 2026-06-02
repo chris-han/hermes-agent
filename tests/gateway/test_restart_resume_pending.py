@@ -26,13 +26,14 @@ PRs #9850, #9934, #7536):
 """
 
 import asyncio
+import json
 import time
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gateway.config import GatewayConfig, HomeChannel, Platform
+from gateway.config import GatewayConfig, HomeChannel, Platform, PlatformConfig
 from gateway.platforms.base import MessageEvent, MessageType, SendResult
 from gateway.run import (
     _auto_continue_freshness_window,
@@ -204,7 +205,7 @@ class TestSessionEntryResumeFields:
         restored = SessionEntry.from_dict(entry.to_dict())
         assert restored.resume_pending is True
         assert restored.resume_reason == "restart_timeout"
-        assert restored.last_resume_marked_at == now
+        assert restored.last_resume_marked_at == entry.last_resume_marked_at
 
     def test_from_dict_legacy_without_resume_fields(self):
         """Old sessions.json without the new fields deserialize cleanly."""
@@ -237,6 +238,55 @@ class TestSessionEntryResumeFields:
         assert restored.resume_pending is True
         assert restored.resume_reason == "restart_timeout"
         assert restored.last_resume_marked_at is None
+
+    def test_from_dict_normalizes_timestamps_to_aware_utc(self):
+        data = {
+            "session_key": "k",
+            "session_id": "sid",
+            "created_at": "2026-05-15T01:02:03+00:00",
+            "updated_at": "2026-05-15T01:02:04Z",
+            "resume_pending": True,
+            "resume_reason": "restart_interrupted",
+            "last_resume_marked_at": "2026-05-15T01:02:05+00:00",
+        }
+
+        restored = SessionEntry.from_dict(data)
+
+        assert restored.created_at.tzinfo is not None
+        assert restored.updated_at.tzinfo is not None
+        assert restored.last_resume_marked_at is not None
+        assert restored.last_resume_marked_at.tzinfo is not None
+        assert restored.created_at.isoformat().endswith("+00:00")
+
+    def test_resume_pending_with_aware_persisted_timestamp_does_not_crash(self, tmp_path):
+        source = make_restart_source()
+        store = SessionStore(sessions_dir=tmp_path, config=GatewayConfig())
+        session_key = store._generate_session_key(source)  # noqa: SLF001
+        (tmp_path / "sessions.json").write_text(
+            json.dumps(
+                {
+                    session_key: {
+                        "session_key": session_key,
+                        "session_id": "sid-aware",
+                        "created_at": "2026-05-15T01:02:03+00:00",
+                        "updated_at": "2026-05-15T01:02:04+00:00",
+                        "origin": source.to_dict(),
+                        "platform": source.platform.value,
+                        "chat_type": source.chat_type,
+                        "resume_pending": True,
+                        "resume_reason": "restart_interrupted",
+                        "last_resume_marked_at": "2026-05-15T01:02:05+00:00",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        entry = store.get_or_create_session(source)
+
+        assert entry.session_id == "sid-aware"
+        assert entry.updated_at.tzinfo is not None
+        assert entry.updated_at.isoformat().endswith("+00:00")
 
 
 # ---------------------------------------------------------------------------

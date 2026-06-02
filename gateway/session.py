@@ -15,7 +15,7 @@ import json
 import threading
 import uuid
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Any
 
@@ -23,8 +23,23 @@ logger = logging.getLogger(__name__)
 
 
 def _now() -> datetime:
-    """Return the current local time."""
-    return datetime.now()
+    """Return the current UTC time as a timezone-aware datetime."""
+    return datetime.now(timezone.utc)
+
+
+def _legacy_local_timezone():
+    return datetime.now().astimezone().tzinfo or timezone.utc
+
+
+def _coerce_session_datetime(value: Any) -> datetime:
+    """Coerce session timestamps to timezone-aware UTC datetimes."""
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if parsed.tzinfo is not None:
+        return parsed.astimezone(timezone.utc)
+    return parsed.replace(tzinfo=_legacy_local_timezone()).astimezone(timezone.utc)
 
 
 # ---------------------------------------------------------------------------
@@ -91,6 +106,9 @@ class SessionSource:
     guild_id: Optional[str] = None  # Discord guild / Slack workspace / Matrix server scope
     parent_chat_id: Optional[str] = None  # Parent channel when chat_id refers to a thread
     message_id: Optional[str] = None  # ID of the triggering message (for pin/reply/react)
+    workspace_owner_id: Optional[str] = None  # Semantier workspace owner scope
+    adapter_key: Optional[str] = None  # Transport runtime key for this inbound turn
+    delivery_adapter_key: Optional[str] = None  # Preferred outbound transport runtime key
     
     @property
     def description(self) -> str:
@@ -134,6 +152,12 @@ class SessionSource:
             d["parent_chat_id"] = self.parent_chat_id
         if self.message_id:
             d["message_id"] = self.message_id
+        if self.workspace_owner_id:
+            d["workspace_owner_id"] = self.workspace_owner_id
+        if self.adapter_key:
+            d["adapter_key"] = self.adapter_key
+        if self.delivery_adapter_key:
+            d["delivery_adapter_key"] = self.delivery_adapter_key
         return d
 
     @classmethod
@@ -152,6 +176,9 @@ class SessionSource:
             guild_id=data.get("guild_id"),
             parent_chat_id=data.get("parent_chat_id"),
             message_id=data.get("message_id"),
+            workspace_owner_id=data.get("workspace_owner_id"),
+            adapter_key=data.get("adapter_key"),
+            delivery_adapter_key=data.get("delivery_adapter_key"),
         )
     
 
@@ -490,6 +517,20 @@ class SessionEntry:
     resume_pending: bool = False
     resume_reason: Optional[str] = None  # e.g. "restart_timeout"
     last_resume_marked_at: Optional[datetime] = None
+    session_model_override: Optional[Dict[str, Any]] = None
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name in {"created_at", "updated_at", "last_resume_marked_at"} and value is not None:
+            value = _coerce_session_datetime(value)
+        super().__setattr__(name, value)
+
+    def __post_init__(self) -> None:
+        self.created_at = _coerce_session_datetime(self.created_at)
+        self.updated_at = _coerce_session_datetime(self.updated_at)
+        if self.last_resume_marked_at is not None:
+            self.last_resume_marked_at = _coerce_session_datetime(
+                self.last_resume_marked_at
+            )
 
     def to_dict(self) -> Dict[str, Any]:
         result = {
@@ -524,6 +565,8 @@ class SessionEntry:
         }
         if self.origin:
             result["origin"] = self.origin.to_dict()
+        if self.session_model_override:
+            result["session_model_override"] = dict(self.session_model_override)
         return result
     
     @classmethod
@@ -543,15 +586,15 @@ class SessionEntry:
         _lrma = data.get("last_resume_marked_at")
         if _lrma:
             try:
-                last_resume_marked_at = datetime.fromisoformat(_lrma)
+                last_resume_marked_at = _coerce_session_datetime(_lrma)
             except (TypeError, ValueError):
                 last_resume_marked_at = None
 
         return cls(
             session_key=data["session_key"],
             session_id=data["session_id"],
-            created_at=datetime.fromisoformat(data["created_at"]),
-            updated_at=datetime.fromisoformat(data["updated_at"]),
+            created_at=_coerce_session_datetime(data["created_at"]),
+            updated_at=_coerce_session_datetime(data["updated_at"]),
             origin=origin,
             display_name=data.get("display_name"),
             platform=platform,
@@ -569,6 +612,7 @@ class SessionEntry:
             resume_pending=data.get("resume_pending", False),
             resume_reason=data.get("resume_reason"),
             last_resume_marked_at=last_resume_marked_at,
+            session_model_override=data.get("session_model_override"),
             is_fresh_reset=data.get("is_fresh_reset", False),
             was_auto_reset=data.get("was_auto_reset", False),
             auto_reset_reason=data.get("auto_reset_reason"),
@@ -626,6 +670,11 @@ def build_session_key(
       - Without identifiers, messages fall back to one session per platform/chat_type.
     """
     platform = source.platform.value
+    scope_prefix = (
+        f"agent:main:workspace:{source.workspace_owner_id}"
+        if source.workspace_owner_id
+        else "agent:main"
+    )
     if source.chat_type == "dm":
         dm_chat_id = source.chat_id
         if source.platform == Platform.WHATSAPP:
@@ -633,11 +682,11 @@ def build_session_key(
 
         if dm_chat_id:
             if source.thread_id:
-                return f"agent:main:{platform}:dm:{dm_chat_id}:{source.thread_id}"
-            return f"agent:main:{platform}:dm:{dm_chat_id}"
+                return f"{scope_prefix}:{platform}:dm:{dm_chat_id}:{source.thread_id}"
+            return f"{scope_prefix}:{platform}:dm:{dm_chat_id}"
         if source.thread_id:
-            return f"agent:main:{platform}:dm:{source.thread_id}"
-        return f"agent:main:{platform}:dm"
+            return f"{scope_prefix}:{platform}:dm:{source.thread_id}"
+        return f"{scope_prefix}:{platform}:dm"
 
     participant_id = source.user_id_alt or source.user_id
     if participant_id and source.platform == Platform.WHATSAPP:
@@ -645,7 +694,7 @@ def build_session_key(
         # single group member gets two isolated per-user sessions when the
         # bridge reshuffles alias forms.
         participant_id = canonical_whatsapp_identifier(str(participant_id)) or participant_id
-    key_parts = ["agent:main", platform, source.chat_type]
+    key_parts = [scope_prefix, platform, source.chat_type]
 
     if source.chat_id:
         key_parts.append(source.chat_id)
@@ -665,6 +714,13 @@ def build_session_key(
     return ":".join(key_parts)
 
 
+def build_session_id(source: SessionSource, now: datetime) -> str:
+    base = f"{now.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+    if source.workspace_owner_id:
+        return f"{source.workspace_owner_id}:{base}"
+    return base
+
+
 class SessionStore:
     """
     Manages session storage and retrieval.
@@ -681,7 +737,13 @@ class SessionStore:
         self._loaded = False
         self._lock = threading.Lock()
         self._has_active_processes_fn = has_active_processes_fn
-        
+        # Maps canonical session_id -> workspace .hermes home for sessions that
+        # are bound to a specific workspace.  JSONL transcript writes for these
+        # sessions are redirected to the workspace-scoped sessions directory
+        # via workspace_session_logs so all gateway paths share the same
+        # storage architecture.
+        self._workspace_homes: Dict[str, Path] = {}
+
         # Initialize SQLite session database
         self._db = None
         try:
@@ -915,7 +977,7 @@ class SessionStore:
                 reset_had_activity = False
 
             # Create new session
-            session_id = f"{now.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+            session_id = build_session_id(source, now)
 
             entry = SessionEntry(
                 session_key=session_key,
@@ -1143,7 +1205,7 @@ class SessionStore:
             db_end_session_id = old_entry.session_id
 
             now = _now()
-            session_id = f"{now.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+            session_id = build_session_id(old_entry.origin, now)
 
             new_entry = SessionEntry(
                 session_key=session_key,
@@ -1248,15 +1310,58 @@ class SessionStore:
 
         return entries
     
+    def register_workspace_home(self, session_id: str, workspace_hermes_home: Path) -> None:
+        """Associate a canonical session_id with its workspace .hermes home.
+
+        Once registered, JSONL transcript writes for this session are redirected
+        to the workspace-scoped sessions directory instead of the shared
+        platform-level trajectories directory.
+        """
+        self._workspace_homes[session_id] = workspace_hermes_home
+
+    def get_transcript_path(self, session_id: str) -> Optional[Path]:
+        """Get the path to a session's JSONL transcript file.
+
+        For workspace-bound sessions (registered via register_workspace_home),
+        returns the workspace-scoped path under
+        ``workspaces/<id>/.hermes/sessions/`` using the canonical
+        workspace_session_logs naming so all gateway channels share one storage
+        architecture.
+
+        Returns ``None`` for sessions that are not bound to a workspace.
+        Non-workspace sessions must not receive JSONL transcript writes to any
+        shared filesystem path — SQLite (the primary store) already holds their
+        message history.
+        """
+        workspace_hermes_home = self._workspace_homes.get(session_id)
+        if workspace_hermes_home is not None:
+            try:
+                from agents.workspace_session_logs import _session_jsonl_path, _sessions_dir
+                _sessions_dir(workspace_hermes_home)  # ensure directory exists
+                return _session_jsonl_path(workspace_hermes_home, session_id)
+            except Exception as exc:
+                # Never fall back to shared sessions_dir for a workspace-bound
+                # session; preserve workspace ownership even if helper import fails.
+                logger.debug("Falling back to local workspace transcript path for %s: %s", session_id, exc)
+                from urllib.parse import quote
+
+                workspace_sessions_dir = workspace_hermes_home / "sessions"
+                workspace_sessions_dir.mkdir(parents=True, exist_ok=True)
+                return workspace_sessions_dir / f"{quote(session_id, safe='-_.')}.jsonl"
+        # No workspace home registered: no shared filesystem fallback.
+        # SQLite is the primary store and already holds this session's messages.
+        return None
+    
     def append_to_transcript(self, session_id: str, message: Dict[str, Any], skip_db: bool = False) -> None:
-        """Append a message to a session's transcript (SQLite).
+        """Append a message to a session's transcript (SQLite + legacy JSONL).
 
         Args:
-            skip_db: When True, skip the SQLite write. Used when the agent
-                     already persisted messages to SQLite via its own
-                     _flush_messages_to_session_db(), preventing the
-                     duplicate-write bug (#860).
+            skip_db: When True, only write to JSONL and skip the SQLite write.
+                     Used when the agent already persisted messages to SQLite
+                     via its own _flush_messages_to_session_db(), preventing
+                     the duplicate-write bug (#860).
         """
+        # Write to SQLite (unless the agent already handled it)
         if self._db and not skip_db:
             try:
                 self._db.append_message(
@@ -1271,95 +1376,102 @@ class SessionStore:
                     reasoning_details=message.get("reasoning_details") if message.get("role") == "assistant" else None,
                     codex_reasoning_items=message.get("codex_reasoning_items") if message.get("role") == "assistant" else None,
                     codex_message_items=message.get("codex_message_items") if message.get("role") == "assistant" else None,
-                    # Platform-side message id (yuanbao msg_id, telegram update_id, …).
-                    # Accept either explicit ``platform_message_id`` or the legacy
-                    # ``message_id`` key the JSONL transcript used.
-                    platform_message_id=(
-                        message.get("platform_message_id") or message.get("message_id")
-                    ),
-                    observed=bool(message.get("observed")),
                 )
             except Exception as e:
                 logger.debug("Session DB operation failed: %s", e)
+        
+        # Also write legacy JSONL for workspace-bound sessions only (keeps
+        # existing tooling working during transition).  Non-workspace sessions
+        # must not fall back to any shared filesystem path — SQLite above is
+        # the sole persistent store for those sessions.
+        transcript_path = self.get_transcript_path(session_id)
+        if transcript_path is not None:
+            try:
+                with self._lock:
+                    with open(transcript_path, "a", encoding="utf-8") as f:
+                        f.write(json.dumps(message, ensure_ascii=False) + "\n")
+            except OSError as e:
+                # Disk full / read-only fs / permission errors must not crash the
+                # message handler — the SQLite write above is the primary store.
+                logger.debug("Failed to write JSONL transcript for %s: %s", session_id, e)
     
     def rewrite_transcript(self, session_id: str, messages: List[Dict[str, Any]]) -> None:
         """Replace the entire transcript for a session with new messages.
-
-        Used by /retry, /undo, and /compress to persist modified conversation
-        history. state.db is the canonical store.
+        
+        Used by /retry, /undo, and /compress to persist modified conversation history.
+        Rewrites both SQLite and legacy JSONL storage.
         """
+        # SQLite: replace atomically so a mid-rewrite failure doesn't leave
+        # the session half-empty in the DB while JSONL still has history.
         if self._db:
             try:
                 self._db.replace_messages(session_id, messages)
             except Exception as e:
                 logger.debug("Failed to rewrite transcript in DB: %s", e)
+        
+        # JSONL: overwrite the file for workspace-bound sessions only.
+        transcript_path = self.get_transcript_path(session_id)
+        if transcript_path is None:
+            return
+        with open(transcript_path, "w", encoding="utf-8") as f:
+            for msg in messages:
+                f.write(json.dumps(msg, ensure_ascii=False) + "\n")
 
     def load_transcript(self, session_id: str) -> List[Dict[str, Any]]:
-        """Load all messages from a session's transcript.
+        """Load all messages from a session's transcript."""
+        db_messages = []
+        # Try SQLite first
+        if self._db:
+            try:
+                db_messages = self._db.get_messages_as_conversation(session_id)
+            except Exception as e:
+                logger.debug("Could not load messages from DB: %s", e)
 
-        state.db is the canonical store. The legacy JSONL fallback was removed
-        in spec 002 — pre-DB sessions on existing disks have already been
-        migrated (their DB row holds the full message history).
-        """
-        if not self._db:
-            return []
-        try:
-            return self._db.get_messages_as_conversation(session_id)
-        except Exception as e:
-            logger.debug("Could not load messages from DB: %s", e)
-            return []
+        # Load legacy JSONL transcript (may contain more history than SQLite
+        # for sessions created before the DB layer was introduced).
+        # Non-workspace sessions return None from get_transcript_path; in that
+        # case we rely entirely on SQLite.
+        transcript_path = self.get_transcript_path(session_id)
+        jsonl_messages = []
+        if transcript_path is not None and transcript_path.exists():
+            try:
+                with open(transcript_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            try:
+                                jsonl_messages.append(json.loads(line))
+                            except json.JSONDecodeError:
+                                logger.warning(
+                                    "Skipping corrupt line in transcript %s: %s",
+                                    session_id, line[:120],
+                                )
+            except OSError as e:
+                # JSONL is the legacy compatibility store. If it becomes
+                # unreadable, keep gateway recovery working by falling back to
+                # SQLite rows loaded above (or [] when no DB exists).
+                logger.debug("Failed to read JSONL transcript for %s: %s", session_id, e)
 
-    def rewind_session(self, session_id: str, n: int = 1) -> Optional[Dict[str, Any]]:
-        """Back up ``n`` user turns via soft-delete, keeping rows for audit.
+        # Prefer whichever source has more messages.
+        #
+        # Background: when a session pre-dates SQLite storage (or when the DB
+        # layer was added while a long-lived session was already active), the
+        # first post-migration turn writes only the *new* messages to SQLite
+        # (because _flush_messages_to_session_db skips messages already in
+        # conversation_history, assuming they're persisted).  On the *next*
+        # turn load_transcript returns those few SQLite rows and ignores the
+        # full JSONL history — the model sees a context of 1-4 messages instead
+        # of hundreds.  Using the longer source prevents this silent truncation.
+        if len(jsonl_messages) > len(db_messages):
+            if db_messages:
+                logger.debug(
+                    "Session %s: JSONL has %d messages vs SQLite %d — "
+                    "using JSONL (legacy session not yet fully migrated)",
+                    session_id, len(jsonl_messages), len(db_messages),
+                )
+            return jsonl_messages
 
-        Unlike :meth:`rewrite_transcript` (a hard replace used by /retry),
-        this flips the truncated rows to ``active=0`` in state.db so they
-        survive for audit and stay hidden from re-prompts and search. Mirrors
-        the CLI/TUI ``/undo [N]`` behavior via ``SessionDB.rewind_to_message``.
-
-        Returns a dict ``{"rewound_count", "turns_undone", "target_text"}`` on
-        success, or ``None`` if there's no DB or no user message to back up to.
-        ``n`` clamps to the oldest user turn when it exceeds the turn count.
-        """
-        if not self._db:
-            return None
-        if n < 1:
-            n = 1
-        try:
-            recents = self._db.list_recent_user_messages(session_id, limit=max(n, 10))
-        except Exception as e:
-            logger.debug("rewind_session: failed to list user messages: %s", e)
-            return None
-        if not recents:
-            return None
-        target_idx = min(n - 1, len(recents) - 1)
-        target_id = recents[target_idx]["id"]
-        try:
-            result = self._db.rewind_to_message(session_id, target_id)
-        except ValueError as e:
-            logger.debug("rewind_session: %s", e)
-            return None
-        except Exception as e:
-            logger.debug("rewind_session: rewind_to_message failed: %s", e)
-            return None
-        target_msg = result.get("target_message") or {}
-        content = target_msg.get("content") or ""
-        if isinstance(content, list):
-            parts = [
-                p.get("text", "")
-                for p in content
-                if isinstance(p, dict) and p.get("type") == "text"
-            ]
-            target_text = "\n".join(t for t in parts if t)
-        elif isinstance(content, str):
-            target_text = content
-        else:
-            target_text = ""
-        return {
-            "rewound_count": result.get("rewound_count", 0),
-            "turns_undone": target_idx + 1,
-            "target_text": target_text,
-        }
+        return db_messages
 
 
 def build_session_context(
@@ -1398,3 +1510,74 @@ def build_session_context(
         context.updated_at = session_entry.updated_at
     
     return context
+
+
+# ---------------------------------------------------------------------------
+# Workspace-scoped session resolution helpers (shared across all gateways)
+# ---------------------------------------------------------------------------
+
+def workspace_hermes_home_for_source(source: Any) -> "Path | None":
+    """Return the workspace .hermes home directory for *source*, or None.
+
+    Reads ``source.workspace_owner_id`` and delegates to
+    ``runtime_paths.workspace_hermes_home_path``.  Returns ``None`` when
+    the source carries no workspace ID or when the runtime_paths import
+    fails (e.g. standalone / plugin context).
+    """
+    workspace_id = str(getattr(source, "workspace_owner_id", "") or "").strip()
+    if not workspace_id:
+        return None
+    try:
+        from runtime_paths import workspace_hermes_home_path
+    except Exception:
+        return None
+    return workspace_hermes_home_path(workspace_id)
+
+
+def resolve_workspace_gateway_session(
+    source: Any,
+    *,
+    session_id: str,
+    session_key: str,
+    source_gateway: str,
+    create_if_missing: bool = True,
+) -> "tuple[str, Path | None]":
+    """Resolve the canonical workspace-scoped session ID for a gateway message.
+
+    All gateway channels (weixin, feishu, web, etc.) must call this function
+    instead of inlining workspace session resolution so the storage contract
+    is enforced uniformly.
+
+    Returns ``(canonical_session_id, workspace_hermes_home)``.  When the
+    source has no workspace binding both values are returned unchanged /
+    ``None``.
+
+    Args:
+        create_if_missing: When ``True`` (default) a new workspace session is
+            created if none exists for the given key.  Pass ``False`` for
+            read-only flows (e.g. Feishu document comment) that should not
+            create sessions.
+    """
+    workspace_hermes_home = workspace_hermes_home_for_source(source)
+    if workspace_hermes_home is None:
+        return session_id, None
+
+    try:
+        from agents.workspace_session_logs import resolve_or_create_workspace_session_id
+    except Exception:
+        return session_id, workspace_hermes_home
+
+    canonical_session_id = resolve_or_create_workspace_session_id(
+        workspace_hermes_home,
+        workspace_id=str(source.workspace_owner_id),
+        alias=session_key or None,
+        preferred_session_id=session_id or None,
+        platform_session_key=session_key or None,
+        chat_id=getattr(source, "chat_id", None),
+        thread_id=getattr(source, "thread_id", None),
+        origin_user_id=getattr(source, "user_id", None),
+        source=source_gateway,
+        platform=source_gateway,
+        create_if_missing=create_if_missing,
+    )
+    return canonical_session_id, workspace_hermes_home

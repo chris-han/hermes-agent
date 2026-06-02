@@ -15,7 +15,6 @@ from gateway.session import SessionSource, build_session_key
 class DummyTelegramAdapter(BasePlatformAdapter):
     def __init__(self):
         super().__init__(PlatformConfig(enabled=True, token="fake-token"), Platform.TELEGRAM)
-        self._busy_text_mode = ""
         self.sent = []
         self.typing = []
         self.processing_hooks = []

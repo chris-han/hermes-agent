@@ -5,6 +5,7 @@ adds latency to the user-facing reply.
 """
 
 import logging
+import time
 import threading
 from typing import Callable, Optional
 
@@ -24,6 +25,38 @@ _TITLE_PROMPT = (
     "following exchange. The title should capture the main topic or intent. "
     "Return ONLY the title text, nothing else. No quotes, no punctuation at the end, no prefixes."
 )
+
+_TITLE_RETRY_DELAY_SECONDS = 1.0
+
+
+def _clean_title_text(text: str) -> Optional[str]:
+    """Normalize a title candidate and keep it short."""
+    title = str(text or "").strip()
+    if not title:
+        return None
+    title = title.splitlines()[0].strip().strip('"\'')
+    if title.lower().startswith("title:"):
+        title = title[6:].strip()
+    title = " ".join(title.split())
+    if len(title) > 80:
+        title = title[:77] + "..."
+    return title or None
+
+
+def _is_timeout_like_error(exc: BaseException) -> bool:
+    """Return True for timeout/cancellation style failures.
+
+    Auto-title generation is best-effort and non-critical. Network timeouts are
+    transient and common in auxiliary paths, so we avoid surfacing them as
+    user-visible warnings.
+    """
+    if isinstance(exc, TimeoutError):
+        return True
+    name = exc.__class__.__name__.lower()
+    if "timeout" in name or "timedout" in name:
+        return True
+    detail = str(exc).lower()
+    return "timed out" in detail or "timeout" in detail
 
 
 def generate_title(
@@ -53,25 +86,44 @@ def generate_title(
         {"role": "user", "content": f"User: {user_snippet}\n\nAssistant: {assistant_snippet}"},
     ]
 
-    try:
+    def _call_once(request_timeout: float) -> Optional[str]:
         response = call_llm(
             task="title_generation",
             messages=messages,
             max_tokens=500,
             temperature=0.3,
-            timeout=timeout,
+            timeout=request_timeout,
             main_runtime=main_runtime,
         )
-        title = (response.choices[0].message.content or "").strip()
-        # Clean up: remove quotes, trailing punctuation, prefixes like "Title: "
-        title = title.strip('"\'')
-        if title.lower().startswith("title:"):
-            title = title[6:].strip()
-        # Enforce reasonable length
-        if len(title) > 80:
-            title = title[:77] + "..."
-        return title if title else None
+        return _clean_title_text(response.choices[0].message.content or "")
+
+    try:
+        return _call_once(timeout)
     except Exception as e:
+        # Timeouts are transient and expected in best-effort background title
+        # generation. Retry once with the same timeout budget — a shorter
+        # retry timeout against the same provider guarantees failure, so we
+        # match the first attempt to give the request a real chance.
+        if _is_timeout_like_error(e):
+            logger.info("Title generation timed out on first attempt: %s", e)
+            logger.debug("Title generation first-timeout traceback", exc_info=True)
+            try:
+                time.sleep(_TITLE_RETRY_DELAY_SECONDS)
+                return _call_once(timeout)
+            except Exception as retry_err:
+                if _is_timeout_like_error(retry_err):
+                    logger.info("Title generation timed out on retry: %s", retry_err)
+                    logger.debug("Title generation retry-timeout traceback", exc_info=True)
+                    return None
+                logger.warning("Title generation retry failed: %s", retry_err)
+                logger.debug("Title generation retry traceback", exc_info=True)
+                if failure_callback is not None:
+                    try:
+                        failure_callback("title generation", retry_err)
+                    except Exception:
+                        logger.debug("Title generation failure_callback raised", exc_info=True)
+                return None
+
         # Log at WARNING so this shows up in agent.log without debug mode.
         # Full detail at debug level for operators who need the stack.
         logger.warning("Title generation failed: %s", e)
@@ -120,14 +172,18 @@ def auto_title_session(
 
     try:
         session_db.set_session_title(session_id, title)
-        logger.debug("Auto-generated session title: %s", title)
+        logger.info("Auto-generated session title [session=%s]: %s", session_id, title)
         if title_callback is not None:
             try:
                 title_callback(title)
             except Exception:
-                logger.debug("Auto-title callback failed", exc_info=True)
+                logger.warning(
+                    "Auto-title workspace sync failed [session=%s]: callback raised",
+                    session_id,
+                    exc_info=True,
+                )
     except Exception as e:
-        logger.debug("Failed to set auto-generated title: %s", e)
+        logger.warning("Failed to set auto-generated title [session=%s]: %s", session_id, e, exc_info=True)
 
 
 def maybe_auto_title(

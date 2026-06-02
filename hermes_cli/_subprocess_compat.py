@@ -27,9 +27,11 @@ guarantee.
 
 from __future__ import annotations
 
+import os
 import shutil
+import subprocess
 import sys
-from typing import Sequence
+from typing import Optional, Sequence
 
 __all__ = [
     "IS_WINDOWS",

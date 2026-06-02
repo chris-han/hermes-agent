@@ -8,10 +8,6 @@ node_modules
 **/node_modules
 .venv
 **/.venv
-.notebooklm-cli-venv/
-.notebooklm-playwright/
-.pip-cache/
-.uv-cache/
 
 # Built artifacts that are regenerated inside the image.  Excluded so local
 # rebuilds on the developer's machine don't invalidate the npm-install layer
@@ -29,8 +25,6 @@ ui-tui/packages/hermes-ink/dist/
 
 # Runtime data (bind-mounted at /opt/data; must not leak into build context)
 data/
-.hermes-docker/
-.notebooklm-home/
 
 # Compose/profile runtime state (bind-mounted; avoid ownership/secret issues)
 hermes-config/

@@ -15,6 +15,7 @@ from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 
 from gateway.config import GatewayConfig, Platform, PlatformConfig
 from gateway.session import SessionEntry, SessionSource, build_session_key
@@ -184,6 +185,70 @@ class TestApplySessionModelOverride:
         )
 
         assert model == "anthropic/claude-sonnet-4"  # unchanged — wrong session key
+
+    def test_resolve_session_runtime_restores_persisted_override(self, monkeypatch):
+        runner = _make_runner()
+        sk = build_session_key(_make_source())
+        entry = runner.session_store._entries[sk]
+        entry.session_model_override = {
+            "model": "qwen3.6-plus",
+            "provider": "alibaba",
+            "api_key": "dashscope-key",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "api_mode": "chat_completions",
+        }
+        runner._session_model_overrides = {}
+
+        def _should_not_run(*_args, **_kwargs):
+            raise AssertionError("global runtime resolution should not run")
+
+        monkeypatch.setattr("gateway.run._resolve_runtime_agent_kwargs", _should_not_run)
+        monkeypatch.setattr("gateway.run._resolve_gateway_model", lambda _cfg: "qwen3.5-plus")
+
+        model, rt = runner._resolve_session_agent_runtime(
+            session_key=sk,
+            user_config={"model": {"default": "qwen3.5-plus", "provider": "alibaba"}},
+        )
+
+        assert model == "qwen3.6-plus"
+        assert rt["provider"] == "alibaba"
+        assert rt["base_url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        assert runner._session_model_overrides[sk]["model"] == "qwen3.6-plus"
+
+    def test_resolve_session_runtime_incomplete_override_keeps_model(self, monkeypatch):
+        runner = _make_runner()
+        sk = build_session_key(_make_source())
+        runner._session_model_overrides[sk] = {
+            "model": "qwen3.6-plus",
+            "provider": None,
+            "api_key": None,
+            "base_url": None,
+            "api_mode": None,
+        }
+        monkeypatch.setattr("gateway.run._resolve_gateway_model", lambda _cfg: "qwen3.5-plus")
+        captured = {}
+
+        def _fake_runtime(*, requested_provider=None, target_model=None):
+            captured["requested_provider"] = requested_provider
+            captured["target_model"] = target_model
+            return {
+                "provider": "alibaba",
+                "api_key": "dashscope-key",
+                "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "api_mode": "chat_completions",
+            }
+
+        monkeypatch.setattr("gateway.run._resolve_runtime_agent_kwargs", _fake_runtime)
+
+        model, rt = runner._resolve_session_agent_runtime(
+            session_key=sk,
+            user_config={"model": {"default": "qwen3.5-plus", "provider": "alibaba"}},
+        )
+
+        assert model == "qwen3.6-plus"
+        assert rt["provider"] == "alibaba"
+        assert captured["requested_provider"] == "alibaba"
+        assert captured["target_model"] == "qwen3.6-plus"
 
 
 # ---------------------------------------------------------------------------

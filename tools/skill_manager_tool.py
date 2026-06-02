@@ -40,7 +40,7 @@ import shutil
 import tempfile
 from pathlib import Path
 from hermes_constants import get_hermes_home, display_hermes_home
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple
 
 from utils import atomic_replace, is_truthy_value
 from hermes_cli.config import cfg_get
@@ -283,119 +283,52 @@ def _find_skill(name: str) -> Optional[Dict[str, Any]]:
     external dirs configured via skills.external_dirs.  Returns
     {"path": Path} or None.
     """
-    from agent.skill_utils import get_all_skills_dirs, is_excluded_skill_path
+    from agent.skill_utils import EXCLUDED_SKILL_DIRS, get_all_skills_dirs
     for skills_dir in get_all_skills_dirs():
         if not skills_dir.exists():
             continue
         for skill_md in skills_dir.rglob("SKILL.md"):
-            if is_excluded_skill_path(skill_md):
+            if any(part in EXCLUDED_SKILL_DIRS for part in skill_md.parts):
                 continue
             if skill_md.parent.name == name:
                 return {"path": skill_md.parent}
     return None
 
 
-def _find_skill_in_other_profiles(name: str) -> List[Tuple[str, Path]]:
-    """Look for ``name`` under SKILL.md across OTHER Hermes profiles.
-
-    Returns a list of ``(profile_name, skill_dir)`` pairs. Used to make
-    the "Skill X not found" error explain when the user is editing the
-    wrong profile. Empty list when no other profile has the skill (or
-    when profile discovery fails — fail-quiet, the caller falls back to
-    the plain "not found" error).
-    """
-    matches: List[Tuple[str, Path]] = []
+def _is_local_skill_dir(skill_dir: Path) -> bool:
     try:
-        from hermes_constants import get_default_hermes_root
-        from agent.skill_utils import is_excluded_skill_path
-    except Exception:
-        return matches
-
-    try:
-        root = get_default_hermes_root()
-    except Exception:
-        return matches
-
-    # Collect (profile_name, skills_dir) for every profile EXCEPT the
-    # one whose SKILLS_DIR we already searched in _find_skill().
-    active_dir = SKILLS_DIR.resolve() if SKILLS_DIR.exists() else SKILLS_DIR
-    candidates: List[Tuple[str, Path]] = []
-
-    # Default profile (~/.hermes/skills) — only consider when active is non-default.
-    default_skills = root / "skills"
-    try:
-        if default_skills.resolve() != active_dir:
-            candidates.append(("default", default_skills))
-    except (OSError, RuntimeError):
-        pass
-
-    # All named profiles (~/.hermes/profiles/*/skills)
-    profiles_root = root / "profiles"
-    if profiles_root.is_dir():
-        try:
-            for entry in profiles_root.iterdir():
-                if not entry.is_dir():
-                    continue
-                pskills = entry / "skills"
-                try:
-                    if pskills.resolve() == active_dir:
-                        continue
-                except (OSError, RuntimeError):
-                    continue
-                candidates.append((entry.name, pskills))
-        except OSError:
-            pass
-
-    for profile_name, skills_dir in candidates:
-        if not skills_dir.is_dir():
-            continue
-        try:
-            for skill_md in skills_dir.rglob("SKILL.md"):
-                if is_excluded_skill_path(skill_md):
-                    continue
-                if skill_md.parent.name == name:
-                    matches.append((profile_name, skill_md.parent))
-                    break  # one match per profile is enough
-        except OSError:
-            continue
-    return matches
+        skill_dir.resolve().relative_to(SKILLS_DIR.resolve())
+        return True
+    except (ValueError, OSError):
+        return False
 
 
-def _skill_not_found_error(name: str, suffix: str = "") -> str:
-    """Build a "skill not found" error that names other profiles holding
-    the same skill, so the agent can recognize a profile-scoping mistake.
+def _ensure_local_mutation_target(name: str) -> Optional[Dict[str, Any]]:
+    """Return a writable local skill directory, forking external skills when needed."""
+    existing = _find_skill(name)
+    if not existing:
+        return None
 
-    ``suffix`` is appended after the cross-profile hint if present
-    (e.g. ``" Create it first with action='create'."``).
-    """
-    from agent.file_safety import _resolve_active_profile_name
-    active = _resolve_active_profile_name()
-    base = f"Skill '{name}' not found in active profile '{active}'."
+    skill_dir = existing["path"]
+    if _is_local_skill_dir(skill_dir):
+        return {
+            "path": skill_dir,
+            "forked": False,
+            "source_path": skill_dir,
+        }
 
-    others = _find_skill_in_other_profiles(name)
-    if others:
-        if len(others) == 1:
-            other_profile, other_path = others[0]
-            base += (
-                f" A skill by that name exists in profile "
-                f"'{other_profile}' ({other_path}). To edit a skill in "
-                f"another profile, switch profiles (`hermes -p "
-                f"{other_profile}`) or operate via explicit file tools "
-                f"with ``cross_profile=True``."
-            )
-        else:
-            names = ", ".join(f"'{p}'" for p, _ in others)
-            base += (
-                f" Skills by that name exist in other profiles: {names}. "
-                f"Switch profiles (`hermes -p <name>`) to edit there, or "
-                f"operate via explicit file tools with ``cross_profile=True``."
-            )
-    else:
-        base += " Use skills_list() to see available skills."
+    source_root = _containing_skills_root(skill_dir)
+    rel_path = skill_dir.resolve().relative_to(source_root.resolve())
+    local_skill_dir = SKILLS_DIR / rel_path
+    if not local_skill_dir.exists():
+        local_skill_dir.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(skill_dir, local_skill_dir, dirs_exist_ok=True)
 
-    if suffix:
-        base += suffix
-    return base
+    return {
+        "path": local_skill_dir,
+        "forked": True,
+        "source_path": skill_dir,
+    }
 
 
 def _validate_file_path(file_path: str) -> Optional[str]:
@@ -540,9 +473,9 @@ def _edit_skill(name: str, content: str) -> Dict[str, Any]:
     if err:
         return {"success": False, "error": err}
 
-    existing = _find_skill(name)
+    existing = _ensure_local_mutation_target(name)
     if not existing:
-        return {"success": False, "error": _skill_not_found_error(name)}
+        return {"success": False, "error": f"Skill '{name}' not found. Use skills_list() to see available skills."}
 
     skill_md = existing["path"] / "SKILL.md"
     # Back up original content for rollback
@@ -556,11 +489,15 @@ def _edit_skill(name: str, content: str) -> Dict[str, Any]:
             _atomic_write_text(skill_md, original_content)
         return {"success": False, "error": scan_error}
 
-    return {
+    result = {
         "success": True,
         "message": f"Skill '{name}' updated.",
         "path": str(existing["path"]),
     }
+    if existing.get("forked"):
+        result["forked_from"] = str(existing["source_path"])
+        result["message"] += " Forked shared skill into local override first."
+    return result
 
 
 def _patch_skill(
@@ -580,9 +517,9 @@ def _patch_skill(
     if new_string is None:
         return {"success": False, "error": "new_string is required for 'patch'. Use an empty string to delete matched text."}
 
-    existing = _find_skill(name)
+    existing = _ensure_local_mutation_target(name)
     if not existing:
-        return {"success": False, "error": _skill_not_found_error(name)}
+        return {"success": False, "error": f"Skill '{name}' not found."}
 
     skill_dir = existing["path"]
 
@@ -651,10 +588,14 @@ def _patch_skill(
         _atomic_write_text(target, original_content)
         return {"success": False, "error": scan_error}
 
-    return {
+    result = {
         "success": True,
         "message": f"Patched {'SKILL.md' if not file_path else file_path} in skill '{name}' ({match_count} replacement{'s' if match_count > 1 else ''}).",
     }
+    if existing.get("forked"):
+        result["forked_from"] = str(existing["source_path"])
+        result["message"] += " Forked shared skill into local override first."
+    return result
 
 
 def _delete_skill(name: str, absorbed_into: Optional[str] = None) -> Dict[str, Any]:
@@ -671,7 +612,16 @@ def _delete_skill(name: str, absorbed_into: Optional[str] = None) -> Dict[str, A
     """
     existing = _find_skill(name)
     if not existing:
-        return {"success": False, "error": _skill_not_found_error(name)}
+        return {"success": False, "error": f"Skill '{name}' not found."}
+    if not _is_local_skill_dir(existing["path"]):
+        return {
+            "success": False,
+            "error": (
+                f"Skill '{name}' is provided by a shared external directory and cannot be "
+                "deleted directly. Delete a local override instead, or remove it from the "
+                "shared source-of-truth workflow."
+            ),
+        }
 
     pinned_err = _pinned_guard(name)
     if pinned_err:
@@ -738,9 +688,9 @@ def _write_file(name: str, file_path: str, file_content: str) -> Dict[str, Any]:
     if err:
         return {"success": False, "error": err}
 
-    existing = _find_skill(name)
+    existing = _ensure_local_mutation_target(name)
     if not existing:
-        return {"success": False, "error": _skill_not_found_error(name, " Create it first with action='create'.")}
+        return {"success": False, "error": f"Skill '{name}' not found. Create it first with action='create'."}
 
     target, err = _resolve_skill_target(existing["path"], file_path)
     if err:
@@ -759,11 +709,15 @@ def _write_file(name: str, file_path: str, file_content: str) -> Dict[str, Any]:
             target.unlink(missing_ok=True)
         return {"success": False, "error": scan_error}
 
-    return {
+    result = {
         "success": True,
         "message": f"File '{file_path}' written to skill '{name}'.",
         "path": str(target),
     }
+    if existing.get("forked"):
+        result["forked_from"] = str(existing["source_path"])
+        result["message"] += " Forked shared skill into local override first."
+    return result
 
 
 def _remove_file(name: str, file_path: str) -> Dict[str, Any]:
@@ -772,9 +726,9 @@ def _remove_file(name: str, file_path: str) -> Dict[str, Any]:
     if err:
         return {"success": False, "error": err}
 
-    existing = _find_skill(name)
+    existing = _ensure_local_mutation_target(name)
     if not existing:
-        return {"success": False, "error": _skill_not_found_error(name)}
+        return {"success": False, "error": f"Skill '{name}' not found."}
 
     skill_dir = existing["path"]
 
@@ -803,10 +757,14 @@ def _remove_file(name: str, file_path: str) -> Dict[str, Any]:
     if parent != skill_dir and parent.exists() and not any(parent.iterdir()):
         parent.rmdir()
 
-    return {
+    result = {
         "success": True,
         "message": f"File '{file_path}' removed from skill '{name}'.",
     }
+    if existing.get("forked"):
+        result["forked_from"] = str(existing["source_path"])
+        result["message"] += " Forked shared skill into local override first."
+    return result
 
 
 # =============================================================================

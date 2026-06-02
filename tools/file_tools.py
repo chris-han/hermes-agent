@@ -116,116 +116,32 @@ def _get_live_tracking_cwd(task_id: str = "default") -> str | None:
     return None
 
 
-def _resolve_base_dir(task_id: str = "default") -> Path:
-    """Return the ABSOLUTE base directory for resolving relative paths.
-
-    Resolution order:
-      1. The task's live terminal cwd (the directory the agent is actually
-         working in — e.g. a git worktree). Authoritative when known.
-      2. ``$TERMINAL_CWD`` from config/env.
-      3. The process cwd.
-
-    The returned base is ALWAYS absolute. This is the core invariant that
-    prevents the worktree-cwd divergence bug: a relative ``TERMINAL_CWD``
-    (commonly the literal ``"."`` from a stale config) is meaningless as a
-    resolution anchor — left to ``Path.resolve()`` it silently resolves
-    against whatever the agent PROCESS cwd happens to be (e.g. the main repo
-    while the terminal is in a worktree), routing edits to the wrong checkout.
-    Anchoring a relative base against the process cwd here makes the resolution
-    deterministic and inspectable rather than dependent on resolve()-time cwd.
-    """
-    live = _get_live_tracking_cwd(task_id)
-    if live:
-        base = Path(live).expanduser()
-    else:
-        raw = os.environ.get("TERMINAL_CWD")
-        base = Path(raw).expanduser() if raw else Path(os.getcwd())
-    if not base.is_absolute():
-        # A relative base (".", "./sub", "..") is anchored to the process cwd
-        # once, here, so the result no longer depends on cwd at resolve() time.
-        base = Path(os.getcwd()) / base
-    return base.resolve()
-
-
 def _resolve_path_for_task(filepath: str, task_id: str = "default") -> Path:
-    """Resolve *filepath* against the task's absolute base directory.
-
-    See :func:`_resolve_base_dir` for how the base is chosen. Absolute input
-    paths are returned resolved-but-unanchored.
-    """
+    """Resolve *filepath* against the task's live terminal cwd when possible."""
     p = Path(filepath).expanduser()
-    if p.is_absolute():
-        return p.resolve()
-    return (_resolve_base_dir(task_id) / p).resolve()
+    if not p.is_absolute():
+        base = _get_live_tracking_cwd(task_id) or os.environ.get(
+            "TERMINAL_CWD", os.getcwd()
+        )
+        p = Path(base) / p
+    return p.resolve()
 
 
-def _path_resolution_warning(filepath: str, resolved: Path, task_id: str = "default") -> str | None:
-    """Warn when a relative path resolved OUTSIDE the task's workspace root.
+def _is_blocked_device(filepath: str) -> bool:
+    """Return True if the path would hang the process (infinite output or blocking input).
 
-    Surfaces the worktree-cwd divergence the moment it would matter: if the
-    agent passes a relative path but it resolves under a directory that is not
-    the live terminal cwd (i.e. the edit is about to land in a different
-    checkout than the one the agent is working in), return a message naming the
-    absolute target. ``None`` when the path is absolute, the base is unknown,
-    or the resolved path is correctly under the workspace root.
+    Uses the *literal* path — no symlink resolution — because the model
+    specifies paths directly and realpath follows symlinks all the way
+    through (e.g. /dev/stdin → /proc/self/fd/0 → /dev/pts/0), defeating
+    the check.
     """
-    try:
-        if Path(filepath).expanduser().is_absolute():
-            return None
-        live = _get_live_tracking_cwd(task_id)
-        if not live:
-            return None  # No authoritative workspace root to compare against.
-        root = Path(live).expanduser().resolve()
-        # Is `resolved` inside `root`?
-        try:
-            resolved.relative_to(root)
-            return None  # Inside the workspace — expected.
-        except ValueError:
-            return (
-                f"Relative path {filepath!r} resolved to {str(resolved)!r}, which is "
-                f"OUTSIDE the active workspace ({str(root)!r}). The edit will land in "
-                f"a different directory than the terminal's cwd. If this is not "
-                f"intended (e.g. a git-worktree session writing into the main "
-                f"checkout), pass an absolute path under the workspace instead."
-            )
-    except Exception:
-        return None
-
-
-def _is_blocked_device_path(path: str) -> bool:
-    """Return True for concrete device/fd paths that can hang reads."""
-    normalized = os.path.expanduser(path)
+    normalized = os.path.expanduser(filepath)
     if normalized in _BLOCKED_DEVICE_PATHS:
         return True
     # /proc/self/fd/0-2 and /proc/<pid>/fd/0-2 are Linux aliases for stdio
     if normalized.startswith("/proc/") and normalized.endswith(
         ("/fd/0", "/fd/1", "/fd/2")
     ):
-        return True
-    # /proc/*/environ, /proc/*/cmdline, /proc/*/maps can leak secrets,
-    # command-line args, and memory layout from the host process (issue #4427)
-    if normalized.startswith("/proc/") and normalized.endswith(
-        ("/environ", "/cmdline", "/maps")
-    ):
-        return True
-    return False
-
-
-def _is_blocked_device(filepath: str) -> bool:
-    """Return True if the path would hang the process (infinite output or blocking input).
-
-    Check the literal path first so aliases like /dev/stdin are caught before
-    they resolve to terminal-specific paths. Then check the resolved path so a
-    workspace symlink to /dev/zero cannot bypass the guard.
-    """
-    normalized = os.path.expanduser(filepath)
-    if _is_blocked_device_path(normalized):
-        return True
-    try:
-        resolved = os.path.realpath(normalized)
-    except (OSError, ValueError):
-        return False
-    if resolved != normalized and _is_blocked_device_path(resolved):
         return True
     return False
 
@@ -237,26 +153,6 @@ _SENSITIVE_PATH_PREFIXES = (
     "/private/etc/", "/private/var/",
 )
 _SENSITIVE_EXACT_PATHS = {"/var/run/docker.sock", "/run/docker.sock"}
-
-_hermes_config_resolved: str | None = None
-_hermes_config_resolved_loaded = False
-
-
-def _get_hermes_config_resolved() -> str | None:
-    """Return the resolved absolute path of the Hermes config file (cached)."""
-    global _hermes_config_resolved, _hermes_config_resolved_loaded
-    if _hermes_config_resolved_loaded:
-        return _hermes_config_resolved
-    _hermes_config_resolved_loaded = True
-    try:
-        from hermes_cli.config import get_config_path
-        _hermes_config_resolved = str(get_config_path().resolve())
-    except Exception:
-        try:
-            _hermes_config_resolved = str(Path("~/.hermes/config.yaml").expanduser().resolve())
-        except Exception:
-            _hermes_config_resolved = None
-    return _hermes_config_resolved
 
 
 def _check_sensitive_path(filepath: str, task_id: str = "default") -> str | None:
@@ -275,64 +171,245 @@ def _check_sensitive_path(filepath: str, task_id: str = "default") -> str | None
             return _err
     if resolved in _SENSITIVE_EXACT_PATHS or normalized in _SENSITIVE_EXACT_PATHS:
         return _err
-    # Prevent agents from modifying the Hermes config file directly.
-    # approvals.mode and other security settings live here; a malicious or
-    # prompt-injected agent could silently disable exec approval by writing to
-    # this file.
-    hermes_config = _get_hermes_config_resolved()
-    if hermes_config and (resolved == hermes_config or normalized == hermes_config):
+    return None
+
+
+def _resolve_workspace_runs_root() -> Path | None:
+    """Deterministic workspace runs-root resolution for governed artifacts.
+
+    Resolution order:
+      1. `SEMANTIER_WORKSPACE_RUNS_DIR` env (set explicitly by gateways via
+         `runtime_paths.bind_workspace_env`).
+      2. Fallback: derive from `HERMES_HOME` when it looks like a per-workspace
+         runtime home (`<...>/workspaces/<id>/.hermes`). The canonical runs
+         root is then `<...>/workspaces/<id>/runs`.
+
+    The fallback closes a real bug class: long-lived gateway processes (e.g.
+    weixin) where `HERMES_HOME` is pinned to a workspace at startup but the
+    per-message handler doesn't go through `bind_workspace_env`, leaving
+    `SEMANTIER_WORKSPACE_RUNS_DIR` unset for tool calls. Without this
+    fallback the leak guard would refuse the write; with it the guard can
+    redirect the artifact into the correct workspace runs folder.
+    """
+    # Strategy 1: ContextVar set by bind_workspace_env (context-local, concurrent-safe).
+    # Falls back to os.environ for subprocess contexts that don't carry ContextVars.
+    try:
+        from runtime_paths import current_workspace_runs_dir as _cwr  # type: ignore
+        explicit = _cwr()
+    except ImportError:
+        explicit = os.environ.get("SEMANTIER_WORKSPACE_RUNS_DIR")
+    if explicit:
+        try:
+            return Path(explicit).expanduser()
+        except (OSError, ValueError):
+            pass
+
+    # Strategy 2: ContextVar-aware HERMES_HOME (context-local, concurrent-safe).
+    # Falls back to os.environ for subprocess contexts that don't carry ContextVars.
+    try:
+        from runtime_paths import current_workspace_hermes_home as _cwh  # type: ignore
+        hermes_home = _cwh()
+    except ImportError:
+        hermes_home = os.environ.get("HERMES_HOME")
+    if not hermes_home:
+        return None
+    try:
+        resolved = Path(hermes_home).expanduser().resolve()
+    except (OSError, ValueError):
+        return None
+    workspace_root = resolved.parent
+    # A workspace home is `<workspaces_root>/<workspace_id>/.hermes`.
+    if resolved.name != ".hermes" or workspace_root.parent.name != "workspaces":
+        return None
+    return workspace_root / "runs"
+
+
+def redirect_shared_runs_artifact(filepath: str) -> tuple[str | None, str | None]:
+    """Map a `.hermes-local/runs/<sub>` write to `<workspace_runs>/<sub>`.
+
+    Returns ``(redirected_path, info_message)`` if the input targets the
+    shared governed runs root and a workspace authority is resolvable.
+    Returns ``(None, refusal_message)`` if the input targets the shared root
+    but no workspace can be resolved (fail-closed). Returns ``(None, None)``
+    when the input is not a governed-runs write at all (allow as-is).
+    """
+    raw_text = str(filepath or "")
+    if not raw_text:
+        return (None, None)
+
+    expanded = str(Path(raw_text).expanduser())
+    normalized_candidates = [raw_text.replace(os.sep, "/"), expanded.replace(os.sep, "/")]
+
+    marker = ".hermes-local/runs/"
+    matched_text: str | None = None
+    sub_path: str | None = None
+    for candidate in normalized_candidates:
+        idx = candidate.find(marker)
+        if idx >= 0:
+            matched_text = candidate
+            sub_path = candidate[idx + len(marker):]
+            break
+
+    # Also check the env-resolved shared runs prefix when no literal match.
+    if matched_text is None:
+        shared_root = os.environ.get("SEMANTIER_LOCAL_STATE_DIR")
+        if shared_root:
+            try:
+                shared_runs = Path(shared_root).expanduser().resolve() / "runs"
+            except (OSError, ValueError):
+                shared_runs = None
+            if shared_runs is not None:
+                try:
+                    resolved_target = Path(raw_text).expanduser().resolve()
+                except (OSError, ValueError):
+                    resolved_target = None
+                if resolved_target is not None:
+                    try:
+                        rel = resolved_target.relative_to(shared_runs)
+                    except ValueError:
+                        rel = None
+                    if rel is not None:
+                        matched_text = str(resolved_target)
+                        sub_path = str(rel)
+
+    if matched_text is None or sub_path is None:
+        return (None, None)
+
+    workspace_runs = _resolve_workspace_runs_root()
+    if workspace_runs is None:
         return (
-            f"Refusing to write to Hermes config file: {filepath}\n"
-            "Agent cannot modify security-sensitive configuration. "
-            "Edit ~/.hermes/config.yaml directly or use 'hermes config' instead."
+            None,
+            (
+                f"Refusing to write governed artifact to the shared runs root: {filepath}\n"
+                "No workspace authority is resolvable (neither SEMANTIER_WORKSPACE_RUNS_DIR "
+                "nor a workspace-scoped HERMES_HOME is set). Stop and report that a governed "
+                "workspace must be bound before writing this artifact."
+            ),
+        )
+
+    redirected = workspace_runs / sub_path if sub_path else workspace_runs
+    try:
+        redirected.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+    info = (
+        f"Redirected governed artifact write from shared runs root to workspace runs root: "
+        f"{filepath} -> {redirected}"
+    )
+    return (str(redirected), info)
+
+
+def _check_shared_runs_leak(filepath: str, task_id: str = "default") -> str | None:
+    """Refusal-only wrapper retained for callers that don't redirect.
+
+    Prefer `redirect_shared_runs_artifact` for write paths so the artifact
+    deterministically lands in the workspace runs folder when authority is
+    resolvable. This wrapper only returns an error string and is used by code
+    paths where rewriting the target path isn't supported (e.g. legacy
+    callers and test surface). New write code should use the redirect helper.
+    """
+    redirected, message = redirect_shared_runs_artifact(filepath)
+    if redirected is None and message is not None:
+        # leak with no workspace authority → refuse
+        return message
+    if redirected is not None:
+        # leak with redirect available → still surface as error so callers
+        # that haven't been updated to redirect fail closed rather than
+        # silently writing to the shared root. write_file_tool / patch_tool
+        # call redirect_shared_runs_artifact directly and bypass this path.
+        return (
+            f"Refusing to write governed artifact to the shared runs root: {filepath}\n"
+            f"Workspace runs root is bound; use this path instead: {redirected}"
         )
     return None
 
 
-def _check_cross_profile_path(filepath: str, task_id: str = "default") -> str | None:
-    """Return a soft-guard warning when ``filepath`` lands in another Hermes
-    profile's scoped area or a sandbox-mirror of authoritative profile state.
 
-    Two detectors run in order:
+def check_shared_runs_leak_in_text(text: str) -> str | None:
+    """Scan an arbitrary text payload (shell command, python source) for any
+    write target under the shared governed runs root.
 
-    * cross-profile (#TBD) — writes that hit another profile's
-      ``skills/plugins/cron/memories`` directory.
-    * sandbox-mirror (#32049) — writes that hit the
-      ``…/sandboxes/<backend>/<task>/home/.hermes/…`` mirror created by a
-      non-local terminal backend (Docker, Daytona, etc.), where the host
-      Hermes process never reads the mirror and the authoritative file is
-      left untouched.
+    Used by `terminal_tool` and `code_execution_tool` to fail closed when the
+    LLM tries to bypass `write_file_tool` / `patch_tool` via shell redirection
+    (``echo > .hermes-local/runs/...``) or in-process `open()` calls inside
+    sandboxed Python.
 
-    Returns ``None`` when the write is in-scope or outside Hermes scope.
-    Both detectors are soft guards — the agent can override either by
-    passing ``cross_profile=True`` to its write tool after explicit user
-    direction. Defense-in-depth, NOT a security boundary — the terminal
-    tool runs as the same OS user and can write any of these paths
-    directly. See ``agent/file_safety.classify_cross_profile_target`` and
-    ``classify_sandbox_mirror_target`` for the detection rules.
+    The check is intentionally substring-level — accurate shell/python parsing
+    is out of scope and would still miss obfuscated forms. Any reference to
+    the canonical ``.hermes-local/runs/`` segment OR to the resolved
+    ``$SEMANTIER_LOCAL_STATE_DIR/runs/`` prefix triggers refusal.
     """
-    try:
-        from agent.file_safety import (
-            get_cross_profile_warning,
-            get_sandbox_mirror_warning,
+    rewritten, message = redirect_shared_runs_in_text(text)
+    if rewritten is None and message is not None:
+        return message
+    if rewritten is not None:
+        # Authority exists but we don't rewrite for the legacy refusal API —
+        # the caller is expected to use redirect_shared_runs_in_text instead.
+        return (
+            "Refusing to execute payload that targets the shared governed runs root. "
+            "Use the workspace runs root instead."
         )
-    except Exception:
-        # Fail open on import error — the existing sensitive-path guard
-        # plus the write_denied list still apply.
-        return None
+    return None
 
-    # Resolve via the task's cwd so a relative ``skills/foo/SKILL.md``
-    # in a session that cd'd into ``~/.hermes/profiles/other/`` is
-    # classified against the right base.
-    try:
-        resolved = str(_resolve_path_for_task(filepath, task_id))
-    except (OSError, ValueError):
-        resolved = filepath
 
-    warning = get_cross_profile_warning(resolved)
-    if warning is not None:
-        return warning
-    return get_sandbox_mirror_warning(resolved)
+def redirect_shared_runs_in_text(text: str) -> tuple[str | None, str | None]:
+    """Substring-rewrite shared-runs paths inside a shell/python payload.
+
+    Returns ``(rewritten_text, info)`` if the payload referenced the shared
+    runs root and a workspace authority is resolvable. Returns
+    ``(None, refusal)`` when leak detected but no authority is resolvable.
+    Returns ``(None, None)`` when payload is clean.
+
+    Replacement is purely textual — any occurrence of ``.hermes-local/runs/``
+    (and the env-resolved equivalent) is replaced with the workspace runs
+    folder followed by ``/``. This is sufficient for the dominant bypass
+    patterns (``echo > .hermes-local/runs/...``, ``open(".hermes-local/runs/...","w")``)
+    without attempting to parse the host language.
+    """
+    if not text:
+        return (None, None)
+    payload = str(text)
+    needles: list[str] = [".hermes-local/runs/"]
+    shared_root = os.environ.get("SEMANTIER_LOCAL_STATE_DIR")
+    if shared_root:
+        try:
+            resolved = str(Path(shared_root).expanduser().resolve() / "runs") + "/"
+        except (OSError, ValueError):
+            resolved = ""
+        if resolved and resolved not in needles:
+            needles.append(resolved)
+
+    matched_needle = next((n for n in needles if n in payload.replace(os.sep, "/")), None)
+    if matched_needle is None:
+        return (None, None)
+
+    workspace_runs = _resolve_workspace_runs_root()
+    if workspace_runs is None:
+        return (
+            None,
+            (
+                "Refusing to execute payload that targets the shared governed runs root "
+                f"(matched segment: {matched_needle!r}).\n"
+                "No workspace authority is resolvable (neither SEMANTIER_WORKSPACE_RUNS_DIR "
+                "nor a workspace-scoped HERMES_HOME is set). Stop and report that a governed "
+                "workspace must be bound before writing this artifact."
+            ),
+        )
+
+    workspace_prefix = str(workspace_runs).rstrip("/") + "/"
+    rewritten = payload
+    for needle in needles:
+        # Replace both forward-slash and OS-sep variants in the original text.
+        rewritten = rewritten.replace(needle, workspace_prefix)
+        if os.sep != "/":
+            rewritten = rewritten.replace(needle.replace("/", os.sep), workspace_prefix)
+
+    info = (
+        f"Redirected payload references from shared runs root to workspace runs root: "
+        f"{matched_needle!r} -> {workspace_prefix!r}"
+    )
+    return (rewritten, info)
+
 
 
 def _is_expected_write_exception(exc: Exception) -> bool:
@@ -364,43 +441,6 @@ _file_ops_cache: dict = {}
 #                      by the same task don't trigger false warnings.
 _read_tracker_lock = threading.Lock()
 _read_tracker: dict = {}
-
-# Track consecutive patch failures per (task_id, resolved_path).  Used to
-# escalate the hint when the model repeatedly fails to patch the same file
-# (typical cause: stale view of file contents, ambiguous old_string, or
-# the file was modified externally between the agent's read and patch
-# attempt).  Reset on a successful patch to that path.
-_patch_failure_lock = threading.Lock()
-_patch_failure_tracker: dict = {}  # {task_id: {resolved_path: count}}
-
-
-def _record_patch_failure(task_id: str, resolved_path: str) -> int:
-    """Increment and return the consecutive-failure count for this path."""
-    with _patch_failure_lock:
-        task_failures = _patch_failure_tracker.setdefault(task_id, {})
-        # Cap dict size per task to avoid unbounded growth in long sessions
-        # where the agent fails on many distinct files.  64 distinct
-        # failing files per task is generous; older entries get evicted.
-        if len(task_failures) >= 64 and resolved_path not in task_failures:
-            try:
-                first_key = next(iter(task_failures))
-                del task_failures[first_key]
-            except StopIteration:
-                pass
-        task_failures[resolved_path] = task_failures.get(resolved_path, 0) + 1
-        return task_failures[resolved_path]
-
-
-def _reset_patch_failures(task_id: str, resolved_paths: list) -> None:
-    """Clear consecutive-failure counts for the given paths."""
-    if not resolved_paths:
-        return
-    with _patch_failure_lock:
-        task_failures = _patch_failure_tracker.get(task_id)
-        if not task_failures:
-            return
-        for rp in resolved_paths:
-            task_failures.pop(rp, None)
 
 # Per-task bounds for the containers inside each _read_tracker[task_id].
 # A CLI session uses one stable task_id for its lifetime; without these
@@ -578,12 +618,13 @@ def _get_file_ops(task_id: str = "default") -> ShellFileOperations:
             logger.info("Creating new %s environment for task %s...", env_type, task_id[:8])
 
             container_config = None
-            if env_type in {"docker", "singularity", "modal", "daytona"}:
+            if env_type in {"docker", "singularity", "modal", "daytona", "vercel_sandbox"}:
                 container_config = {
                     "container_cpu": config.get("container_cpu", 1),
                     "container_memory": config.get("container_memory", 5120),
                     "container_disk": config.get("container_disk", 51200),
                     "container_persistent": config.get("container_persistent", True),
+                    "vercel_runtime": config.get("vercel_runtime", ""),
                     "docker_volumes": config.get("docker_volumes", []),
                     "docker_mount_cwd_to_workspace": config.get("docker_mount_cwd_to_workspace", False),
                     "docker_forward_env": config.get("docker_forward_env", []),
@@ -671,13 +712,8 @@ def read_file_tool(path: str, offset: int = 1, limit: int = 500, task_id: str = 
             })
 
         # ── Hermes internal path guard ────────────────────────────────
-        # Prevent prompt injection via catalog or hub metadata files,
-        # and block credential stores under HERMES_HOME.  Pass the
-        # already-resolved path so a relative-path read against
-        # TERMINAL_CWD == HERMES_HOME (e.g. "auth.json") still hits the
-        # denylist — get_read_block_error's own resolve() runs against
-        # the Python process cwd, which can differ.
-        block_error = get_read_block_error(str(_resolved))
+        # Prevent prompt injection via catalog or hub metadata files.
+        block_error = get_read_block_error(path)
         if block_error:
             return json.dumps({"error": block_error})
 
@@ -992,23 +1028,21 @@ def _check_file_staleness(filepath: str, task_id: str) -> str | None:
     return None
 
 
-def write_file_tool(path: str, content: str, task_id: str = "default",
-                    cross_profile: bool = False) -> str:
-    """Write content to a file.
-
-    ``cross_profile`` opts out of the soft cross-Hermes-profile guard. The
-    guard fires only on writes that land in another profile's
-    skills/plugins/cron/memories directory; everything else is unaffected.
-    Pass ``True`` after explicit user direction — same shape as ``force``
-    on the terminal tool.
-    """
+def write_file_tool(path: str, content: str, task_id: str = "default") -> str:
+    """Write content to a file."""
     sensitive_err = _check_sensitive_path(path, task_id)
     if sensitive_err:
         return tool_error(sensitive_err)
-    if not cross_profile:
-        cross_warning = _check_cross_profile_path(path, task_id)
-        if cross_warning:
-            return tool_error(cross_warning)
+    # Governed-artifact path normalization: if `path` targets the shared
+    # `.hermes-local/runs/` root, deterministically redirect to the bound
+    # workspace's runs folder. Only refuse when no workspace authority is
+    # resolvable.
+    redirected_path, redirect_info = redirect_shared_runs_artifact(path)
+    if redirected_path is None and redirect_info is not None:
+        return tool_error(redirect_info)
+    if redirected_path is not None:
+        logger.info(redirect_info)
+        path = redirected_path
     if _is_internal_file_status_text(content):
         return tool_error(
             "Refusing to write internal read_file status text as file content. "
@@ -1041,21 +1075,12 @@ def write_file_tool(path: str, content: str, task_id: str = "default",
             # fire — its message names the sibling subagent.
             cross_warning = file_state.check_stale(task_id, _resolved)
             stale_warning = _check_file_staleness(path, task_id)
-            # Workspace-divergence warning: relative path resolving outside the
-            # terminal's cwd (the worktree-cwd bug). Lowest priority of the three.
-            cwd_warning = _path_resolution_warning(path, Path(_resolved), task_id)
             file_ops = _get_file_ops(task_id)
-            result = file_ops.write_file(_resolved, content)
+            result = file_ops.write_file(path, content)
             result_dict = result.to_dict()
-            effective_warning = cross_warning or stale_warning or cwd_warning
+            effective_warning = cross_warning or stale_warning
             if effective_warning:
                 result_dict["_warning"] = effective_warning
-            # Always report the ABSOLUTE path actually written, so a wrong-cwd
-            # mismatch is visible in the response instead of silently routing
-            # the edit to the wrong checkout.
-            result_dict["resolved_path"] = _resolved
-            if not result_dict.get("error"):
-                result_dict["files_modified"] = [_resolved]
             # Refresh stamps after the successful write so consecutive
             # writes by this task don't trigger false staleness warnings.
             _update_read_timestamp(path, task_id)
@@ -1072,45 +1097,54 @@ def write_file_tool(path: str, content: str, task_id: str = "default",
 
 def patch_tool(mode: str = "replace", path: str = None, old_string: str = None,
                new_string: str = None, replace_all: bool = False, patch: str = None,
-               task_id: str = "default", cross_profile: bool = False) -> str:
-    """Patch a file using replace mode or V4A patch format.
-
-    ``cross_profile`` opts out of the soft cross-Hermes-profile guard for
-    targets under another profile's skills/plugins/cron/memories
-    directory. Same shape as ``write_file``'s flag.
-    """
+               task_id: str = "default") -> str:
+    """Patch a file using replace mode or V4A patch format."""
     # Check sensitive paths for both replace (explicit path) and V4A patch (extract paths)
     _paths_to_check = []
     if path:
         _paths_to_check.append(path)
     if mode == "patch" and patch:
         import re as _re
-        from tools.path_security import has_traversal_component
         for _m in _re.finditer(r'^\*\*\*\s+(?:Update|Add|Delete)\s+File:\s*(.+)$', patch, _re.MULTILINE):
-            v4a_path = _m.group(1).strip()
-            # V4A path headers come from patch CONTENT, not the explicit
-            # ``path=`` arg — so they're more attacker-influenceable (skill
-            # content, web extract, prompt injection). Reject ``..`` traversal
-            # in V4A headers: a legitimate multi-file patch from a single cwd
-            # can always emit absolute paths or paths relative to the agent's
-            # cwd without ``..``. The explicit ``path=`` arg is unchanged
-            # because the agent uses relative ``..`` paths legitimately
-            # (e.g. ``patch path="../other_module/x.py"`` from a worktree).
-            if has_traversal_component(v4a_path):
-                return tool_error(
-                    f"V4A patch header contains '..' traversal: {v4a_path!r}. "
-                    "Use the agent's cwd-relative path (no '..') or an absolute "
-                    "path in '*** Update File:' / '*** Add File:' / '*** Delete File:' headers."
-                )
-            _paths_to_check.append(v4a_path)
+            _paths_to_check.append(_m.group(1).strip())
     for _p in _paths_to_check:
         sensitive_err = _check_sensitive_path(_p, task_id)
         if sensitive_err:
             return tool_error(sensitive_err)
-        if not cross_profile:
-            cross_warning = _check_cross_profile_path(_p, task_id)
-            if cross_warning:
-                return tool_error(cross_warning)
+
+    # Governed-artifact redirect: rewrite any `.hermes-local/runs/<sub>` target
+    # to the bound workspace runs folder. For `replace` mode rewrite the
+    # `path` arg; for V4A `patch` mode rewrite the `*** Update/Add/Delete
+    # File:` directive lines in-place. Refuse only when no workspace
+    # authority is resolvable for any leaking target.
+    _path_rewrites: dict[str, str] = {}
+    for _p in _paths_to_check:
+        _new_p, _info = redirect_shared_runs_artifact(_p)
+        if _new_p is None and _info is not None:
+            return tool_error(_info)
+        if _new_p is not None:
+            logger.info(_info)
+            _path_rewrites[_p] = _new_p
+    if _path_rewrites:
+        if mode == "replace" and path and path in _path_rewrites:
+            path = _path_rewrites[path]
+        elif mode == "patch" and patch:
+            import re as _re_rw
+            def _rewrite(match):
+                directive = match.group(0)
+                original = match.group(1).strip()
+                replacement = _path_rewrites.get(original, original)
+                if replacement == original:
+                    return directive
+                return directive.replace(original, replacement, 1)
+            patch = _re_rw.sub(
+                r'^\*\*\*\s+(?:Update|Add|Delete)\s+File:\s*(.+)$',
+                _rewrite,
+                patch,
+                flags=_re_rw.MULTILINE,
+            )
+        # Rebuild check-list so downstream lock acquisition uses redirected paths.
+        _paths_to_check = [_path_rewrites.get(_p, _p) for _p in _paths_to_check]
     try:
         # Resolve paths for locking.  Ordered + deduplicated so concurrent
         # callers lock in the same order — prevents deadlock on overlapping
@@ -1147,10 +1181,6 @@ def patch_tool(mode: str = "replace", path: str = None, old_string: str = None,
                 _path_to_resolved[_p] = _r
                 _cross = file_state.check_stale(task_id, _r) if _r else None
                 _sw = _cross or _check_file_staleness(_p, task_id)
-                if not _sw and _r:
-                    # Workspace-divergence warning (worktree-cwd bug): relative
-                    # path resolving outside the terminal's cwd.
-                    _sw = _path_resolution_warning(_p, Path(_r), task_id)
                 if _sw:
                     stale_warnings.append(_sw)
 
@@ -1161,13 +1191,7 @@ def patch_tool(mode: str = "replace", path: str = None, old_string: str = None,
                     return tool_error("path required")
                 if old_string is None or new_string is None:
                     return tool_error("old_string and new_string required")
-                # Pass the resolved ABSOLUTE path to the shell layer so it
-                # operates on the exact file the tool layer resolved — the
-                # shell's own cwd may differ (worktree-cwd bug), and a relative
-                # path would let the two layers disagree about which file is
-                # being edited.
-                _replace_target = _path_to_resolved.get(path) or path
-                result = file_ops.patch_replace(_replace_target, old_string, new_string, replace_all)
+                result = file_ops.patch_replace(path, old_string, new_string, replace_all)
             elif mode == "patch":
                 if not patch:
                     return tool_error("patch content required")
@@ -1178,60 +1202,20 @@ def patch_tool(mode: str = "replace", path: str = None, old_string: str = None,
             result_dict = result.to_dict()
             if stale_warnings:
                 result_dict["_warning"] = stale_warnings[0] if len(stale_warnings) == 1 else " | ".join(stale_warnings)
-            # Report the ABSOLUTE path(s) actually patched so a wrong-cwd
-            # mismatch (e.g. a worktree session editing the main checkout) is
-            # visible in the response instead of silently landing elsewhere.
-            _resolved_modified = [
-                _path_to_resolved.get(_p) or _p for _p in _paths_to_check
-            ]
             # Refresh stored timestamps for all successfully-patched paths so
             # consecutive edits by this task don't trigger false warnings.
             if not result_dict.get("error"):
-                result_dict["files_modified"] = _resolved_modified
-                if len(_resolved_modified) == 1:
-                    result_dict["resolved_path"] = _resolved_modified[0]
                 for _p in _paths_to_check:
                     _update_read_timestamp(_p, task_id)
                     _r = _path_to_resolved.get(_p)
                     if _r:
                         file_state.note_write(task_id, _r)
-                # Successful patch: clear any prior consecutive-failure
-                # counters for the touched paths so a future failure on
-                # the same path starts the escalation cycle fresh.
-                _reset_patch_failures(task_id, [
-                    _r for _r in (_path_to_resolved.get(_p) for _p in _paths_to_check) if _r
-                ])
         # Hint when old_string not found — saves iterations where the agent
         # retries with stale content instead of re-reading the file.
         # Suppressed when patch_replace already attached a rich "Did you mean?"
         # snippet (which is strictly more useful than the generic hint).
         if result_dict.get("error") and "Could not find" in str(result_dict["error"]):
-            # Track per-file consecutive failures for replace mode.  The
-            # ``path`` arg only exists for replace mode; for V4A patches
-            # we'd need to walk the headers, but in practice V4A failures
-            # are far rarer and the existing _hint covers them adequately.
-            failure_count = 0
-            if mode == "replace" and path:
-                resolved = _path_to_resolved.get(path) or path
-                failure_count = _record_patch_failure(task_id, resolved)
-
-            if failure_count >= 3:
-                # Escalating hint after multiple consecutive failures on the
-                # same path.  Most common cause is a stale view of the file —
-                # the model is retrying with the same old_string against
-                # content that has since changed.  Surface the failure count
-                # so the model recognises it's in a loop and breaks out by
-                # re-reading or falling back to write_file.
-                result_dict["_hint"] = (
-                    f"This is failure #{failure_count} patching {path!r}. "
-                    "Stop retrying with variations of the same old_string. "
-                    "Either: (1) re-read the file fresh to verify current "
-                    "content, (2) use a longer / more unique old_string with "
-                    "surrounding context lines, or (3) use write_file to "
-                    "replace the entire file if the targeted region is hard "
-                    "to anchor."
-                )
-            elif "Did you mean one of these sections?" not in str(result_dict["error"]):
+            if "Did you mean one of these sections?" not in str(result_dict["error"]):
                 result_dict["_hint"] = (
                     "old_string not found. Use read_file to verify the current "
                     "content, or search_files to locate the text."
@@ -1345,12 +1329,7 @@ WRITE_FILE_SCHEMA = {
         "type": "object",
         "properties": {
             "path": {"type": "string", "description": "Path to the file to write (will be created if it doesn't exist, overwritten if it does)"},
-            "content": {"type": "string", "description": "Complete content to write to the file"},
-            "cross_profile": {
-                "type": "boolean",
-                "description": "Opt out of the cross-profile soft guard. Defaults to false. Set true ONLY after explicit user direction to edit another Hermes profile's skills/plugins/cron/memories — by default these writes are blocked with a warning because they affect a different profile than the one this session is running under.",
-                "default": False,
-            },
+            "content": {"type": "string", "description": "Complete content to write to the file"}
         },
         "required": ["path", "content"]
     }
@@ -1396,11 +1375,6 @@ PATCH_SCHEMA = {
             "patch": {
                 "type": "string",
                 "description": "REQUIRED when mode='patch'. V4A format patch content. Format:\n*** Begin Patch\n*** Update File: path/to/file\n@@ context hint @@\n context line\n-removed line\n+added line\n*** End Patch",
-            },
-            "cross_profile": {
-                "type": "boolean",
-                "description": "Opt out of the cross-profile soft guard. Defaults to false. Set true ONLY after explicit user direction to edit another Hermes profile's skills/plugins/cron/memories.",
-                "default": False,
             },
         },
         "required": ["mode"],
@@ -1452,10 +1426,7 @@ def _handle_write_file(args, **kw):
             f"write_file: 'content' must be a string, got "
             f"{type(args['content']).__name__}."
         )
-    return write_file_tool(
-        path=args["path"], content=args["content"], task_id=tid,
-        cross_profile=bool(args.get("cross_profile", False)),
-    )
+    return write_file_tool(path=args["path"], content=args["content"], task_id=tid)
 
 
 def _handle_patch(args, **kw):
@@ -1463,9 +1434,7 @@ def _handle_patch(args, **kw):
     return patch_tool(
         mode=args.get("mode", "replace"), path=args.get("path"),
         old_string=args.get("old_string"), new_string=args.get("new_string"),
-        replace_all=args.get("replace_all", False), patch=args.get("patch"), task_id=tid,
-        cross_profile=bool(args.get("cross_profile", False)),
-    )
+        replace_all=args.get("replace_all", False), patch=args.get("patch"), task_id=tid)
 
 
 def _handle_search_files(args, **kw):

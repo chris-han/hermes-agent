@@ -19,6 +19,7 @@ leaving WAL locks in place until Python actually exited.
 import threading
 from unittest.mock import MagicMock
 
+import pytest
 
 
 def _make_runner():

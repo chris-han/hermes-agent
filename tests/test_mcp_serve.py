@@ -15,7 +15,8 @@ import os
 import sqlite3
 import time
 import threading
-from unittest.mock import MagicMock
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -241,10 +242,23 @@ class _FakeFastMCP:
 
 
 @pytest.fixture
-def fake_mcp_server(populated_sessions_dir, mock_session_db, monkeypatch):
+def fake_mcp_server(populated_sessions_dir, sample_sessions, mock_session_db, monkeypatch):
     import mcp_serve
 
-    monkeypatch.setattr(mcp_serve, "_get_sessions_dir", lambda: populated_sessions_dir)
+    # Convert sample_sessions dict to workspace entry rows for _list_all_workspace_entries.
+    workspace_entries = [
+        {
+            "session_key": key,
+            "index_key": key,
+            "session_id": entry["session_id"],
+            "platform": entry.get("platform", ""),
+            "display_name": entry.get("display_name", ""),
+            "updated_at": entry.get("updated_at", ""),
+            "raw_entry": entry,
+        }
+        for key, entry in sample_sessions.items()
+    ]
+    monkeypatch.setattr(mcp_serve, "_list_all_workspace_entries", lambda: workspace_entries)
     monkeypatch.setattr(mcp_serve, "_get_session_db", lambda: mock_session_db)
     monkeypatch.setattr(mcp_serve, "_load_channel_directory", lambda: {})
     monkeypatch.setattr(mcp_serve, "_MCP_SERVER_AVAILABLE", True)
@@ -272,10 +286,18 @@ class TestImports:
 
 
 class TestHelpers:
-    def test_get_sessions_dir(self, tmp_path):
-        from mcp_serve import _get_sessions_dir
-        result = _get_sessions_dir()
-        assert result == tmp_path / "sessions"
+    def test_shared_sessions_dir_helper_removed(self):
+        """_get_sessions_dir was removed as part of shared session store elimination."""
+        import mcp_serve
+        assert not hasattr(mcp_serve, "_get_sessions_dir"), (
+            "_get_sessions_dir should no longer exist; sessions are discovered "
+            "from workspace indexes via _list_all_workspace_entries only"
+        )
+
+    def test_list_all_workspace_entries_is_patchable(self, monkeypatch):
+        import mcp_serve
+        monkeypatch.setattr(mcp_serve, "_list_all_workspace_entries", lambda: [{"session_id": "x"}])
+        assert mcp_serve._list_all_workspace_entries() == [{"session_id": "x"}]
 
     def test_coerce_int_handles_invalid_and_out_of_range_values(self):
         from mcp_serve import _coerce_int
@@ -288,20 +310,78 @@ class TestHelpers:
 
     def test_load_sessions_index_empty(self, sessions_dir, monkeypatch):
         import mcp_serve
-        monkeypatch.setattr(mcp_serve, "_get_sessions_dir", lambda: sessions_dir)
+        monkeypatch.setattr(mcp_serve, "_list_all_workspace_entries", lambda: [])
         assert mcp_serve._load_sessions_index() == {}
 
     def test_load_sessions_index_with_data(self, populated_sessions_dir, monkeypatch):
         import mcp_serve
-        monkeypatch.setattr(mcp_serve, "_get_sessions_dir", lambda: populated_sessions_dir)
+        # sessions.json fallback is no longer used; sessions come from workspace indexes only.
+        # This test verifies that workspace entries are returned and sessions.json is not consulted.
+        monkeypatch.setattr(mcp_serve, "_list_all_workspace_entries", lambda: [
+            {
+                "session_key": "agent:main:telegram:dm",
+                "session_id": "ws-a:session_1",
+                "platform": "telegram",
+                "updated_at": "2026-03-29T14:00:00",
+                "raw_entry": {"chat_type": "dm"},
+            },
+            {
+                "session_key": "agent:main:weixin:dm",
+                "session_id": "ws-b:session_2",
+                "platform": "weixin",
+                "updated_at": "2026-03-29T14:00:00",
+                "raw_entry": {"chat_type": "dm"},
+            },
+            {
+                "session_key": "agent:main:feishu:group",
+                "session_id": "ws-c:session_3",
+                "platform": "feishu",
+                "updated_at": "2026-03-29T14:00:00",
+                "raw_entry": {"chat_type": "group"},
+            },
+        ])
         result = mcp_serve._load_sessions_index()
         assert len(result) == 3
 
     def test_load_sessions_index_corrupt(self, sessions_dir, monkeypatch):
         (sessions_dir / "sessions.json").write_text("not json!")
         import mcp_serve
-        monkeypatch.setattr(mcp_serve, "_get_sessions_dir", lambda: sessions_dir)
+        # Corrupt sessions.json is irrelevant — we only use workspace indexes now.
+        monkeypatch.setattr(mcp_serve, "_list_all_workspace_entries", lambda: [])
         assert mcp_serve._load_sessions_index() == {}
+
+    def test_load_sessions_index_from_workspace_entries(self, monkeypatch):
+        import mcp_serve
+
+        monkeypatch.setattr(mcp_serve, "_list_all_workspace_entries", lambda: [
+                {
+                    "index_key": "agent:main:weixin:dm:wx_1",
+                    "session_key": "agent:main:weixin:dm:wx_1",
+                    "session_id": "ws-a:session_abc",
+                    "platform": "weixin",
+                    "display_name": "WeiXin User",
+                    "title": "WeiXin User",
+                    "updated_at": "2026-03-29T14:30:00",
+                    "raw_entry": {"chat_type": "dm", "origin": {"chat_id": "wx_1"}},
+                },
+                {
+                    "index_key": "agent:main:feishu:group:oc_123",
+                    "session_key": "agent:main:feishu:group:oc_123",
+                    "session_id": "ws-b:session_def",
+                    "platform": "feishu",
+                    "display_name": "Feishu Group",
+                    "title": "Feishu Group",
+                    "updated_at": "2026-03-29T15:00:00",
+                    "raw_entry": {"chat_type": "group", "origin": {"chat_id": "oc_123"}},
+                }
+            ],
+        )
+
+        result = mcp_serve._load_sessions_index()
+        assert "agent:main:weixin:dm:wx_1" in result
+        assert result["agent:main:weixin:dm:wx_1"]["session_id"] == "ws-a:session_abc"
+        assert "agent:main:feishu:group:oc_123" in result
+        assert result["agent:main:feishu:group:oc_123"]["platform"] == "feishu"
 
 
 class TestContentExtraction:
@@ -496,11 +576,24 @@ class TestEventBridge:
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
-def mcp_server_e2e(populated_sessions_dir, mock_session_db, monkeypatch):
+def mcp_server_e2e(populated_sessions_dir, sample_sessions, mock_session_db, monkeypatch):
     """Create a fully wired MCP server for E2E testing."""
     mcp = pytest.importorskip("mcp", reason="MCP SDK not installed")
     import mcp_serve
-    monkeypatch.setattr(mcp_serve, "_get_sessions_dir", lambda: populated_sessions_dir)
+
+    workspace_entries = [
+        {
+            "session_key": key,
+            "index_key": key,
+            "session_id": entry["session_id"],
+            "platform": entry.get("platform", ""),
+            "display_name": entry.get("display_name", ""),
+            "updated_at": entry.get("updated_at", ""),
+            "raw_entry": entry,
+        }
+        for key, entry in sample_sessions.items()
+    ]
+    monkeypatch.setattr(mcp_serve, "_list_all_workspace_entries", lambda: workspace_entries)
     monkeypatch.setattr(mcp_serve, "_get_session_db", lambda: mock_session_db)
     monkeypatch.setattr(mcp_serve, "_load_channel_directory", lambda: {})
 
@@ -948,16 +1041,16 @@ class TestToolRegistration:
 # ---------------------------------------------------------------------------
 
 class TestServerCreation:
-    def test_create_server(self, populated_sessions_dir, monkeypatch):
+    def test_create_server(self, monkeypatch):
         pytest.importorskip("mcp", reason="MCP SDK not installed")
         import mcp_serve
-        monkeypatch.setattr(mcp_serve, "_get_sessions_dir", lambda: populated_sessions_dir)
+        monkeypatch.setattr(mcp_serve, "_list_all_workspace_entries", lambda: [])
         assert mcp_serve.create_mcp_server() is not None
 
-    def test_create_with_bridge(self, populated_sessions_dir, monkeypatch):
+    def test_create_with_bridge(self, monkeypatch):
         pytest.importorskip("mcp", reason="MCP SDK not installed")
         import mcp_serve
-        monkeypatch.setattr(mcp_serve, "_get_sessions_dir", lambda: populated_sessions_dir)
+        monkeypatch.setattr(mcp_serve, "_list_all_workspace_entries", lambda: [])
         bridge = mcp_serve.EventBridge()
         assert mcp_serve.create_mcp_server(event_bridge=bridge) is not None
 
@@ -1020,22 +1113,22 @@ class TestCliIntegration:
 # ---------------------------------------------------------------------------
 
 class TestEdgeCases:
-    def test_empty_sessions_json(self, sessions_dir, monkeypatch):
-        (sessions_dir / "sessions.json").write_text("{}")
+    def test_empty_sessions_index(self, monkeypatch):
         import mcp_serve
-        monkeypatch.setattr(mcp_serve, "_get_sessions_dir", lambda: sessions_dir)
+        monkeypatch.setattr(mcp_serve, "_list_all_workspace_entries", lambda: [])
         assert mcp_serve._load_sessions_index() == {}
 
-    def test_sessions_without_origin(self, sessions_dir, monkeypatch):
-        data = {"agent:main:telegram:dm:111": {
-            "session_key": "agent:main:telegram:dm:111",
-            "session_id": "20260329_120000_xyz",
-            "platform": "telegram",
-            "updated_at": "2026-03-29T12:00:00",
-        }}
-        (sessions_dir / "sessions.json").write_text(json.dumps(data))
+    def test_sessions_without_origin(self, monkeypatch):
         import mcp_serve
-        monkeypatch.setattr(mcp_serve, "_get_sessions_dir", lambda: sessions_dir)
+        monkeypatch.setattr(mcp_serve, "_list_all_workspace_entries", lambda: [
+            {
+                "session_key": "agent:main:telegram:dm:111",
+                "session_id": "20260329_120000_xyz",
+                "platform": "telegram",
+                "updated_at": "2026-03-29T12:00:00",
+                "raw_entry": {},  # No origin in raw_entry
+            }
+        ])
         entries = mcp_serve._load_sessions_index()
         assert entries["agent:main:telegram:dm:111"]["platform"] == "telegram"
 
@@ -1058,29 +1151,30 @@ class TestEdgeCases:
 class TestEventBridgePollE2E:
     """End-to-end tests for the EventBridge polling loop with real files."""
 
+    def _make_session_entry(self, session_id, session_key, platform="telegram"):
+        return {
+            "session_key": session_key,
+            "session_id": session_id,
+            "platform": platform,
+            "updated_at": "2026-03-29T15:00:05",
+            "raw_entry": {
+                "chat_type": "dm",
+                "origin": {"platform": platform, "chat_id": session_key},
+            },
+        }
+
     def test_poll_detects_new_messages(self, tmp_path, monkeypatch):
-        """Write to SQLite + sessions.json, verify EventBridge picks it up."""
+        """Write to SQLite DB, verify EventBridge picks it up."""
         import mcp_serve
-        sessions_dir = tmp_path / "sessions"
-        sessions_dir.mkdir()
-        monkeypatch.setattr(mcp_serve, "_get_sessions_dir", lambda: sessions_dir)
+        # Set HERMES_HOME so _poll_once finds state.db at tmp_path / "state.db"
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
 
         session_id = "20260329_150000_poll_test"
         db_path = tmp_path / "state.db"
 
-        # Write sessions.json
-        sessions_data = {
-            "agent:main:telegram:dm:poll_test": {
-                "session_key": "agent:main:telegram:dm:poll_test",
-                "session_id": session_id,
-                "platform": "telegram",
-                "chat_type": "dm",
-                "display_name": "PollTest",
-                "updated_at": "2026-03-29T15:00:05",
-                "origin": {"platform": "telegram", "chat_id": "poll_test"},
-            }
-        }
-        (sessions_dir / "sessions.json").write_text(json.dumps(sessions_data))
+        # Inject workspace session entry
+        entry = self._make_session_entry(session_id, "agent:main:telegram:dm:poll_test")
+        monkeypatch.setattr(mcp_serve, "_list_all_workspace_entries", lambda: [entry])
 
         # Write messages to SQLite
         messages = [
@@ -1091,7 +1185,6 @@ class TestEventBridgePollE2E:
         ]
         _create_test_db(db_path, session_id, messages)
 
-        # Create a mock SessionDB that reads our test DB
         class TestDB:
             def get_messages(self, sid):
                 conn = sqlite3.connect(str(db_path))
@@ -1117,25 +1210,16 @@ class TestEventBridgePollE2E:
         assert result["events"][1]["role"] == "assistant"
 
     def test_poll_skips_when_unchanged(self, tmp_path, monkeypatch):
-        """Second poll with no file changes should be a no-op."""
+        """Second poll with no DB changes should be a no-op."""
         import mcp_serve
-        sessions_dir = tmp_path / "sessions"
-        sessions_dir.mkdir()
-        monkeypatch.setattr(mcp_serve, "_get_sessions_dir", lambda: sessions_dir)
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
 
         session_id = "20260329_150000_skip_test"
         db_path = tmp_path / "state.db"
 
-        sessions_data = {
-            "agent:main:telegram:dm:skip": {
-                "session_key": "agent:main:telegram:dm:skip",
-                "session_id": session_id,
-                "platform": "telegram",
-                "updated_at": "2026-03-29T15:00:05",
-                "origin": {"platform": "telegram", "chat_id": "skip"},
-            }
-        }
-        (sessions_dir / "sessions.json").write_text(json.dumps(sessions_data))
+        entry = self._make_session_entry(session_id, "agent:main:telegram:dm:skip")
+        monkeypatch.setattr(mcp_serve, "_list_all_workspace_entries", lambda: [entry])
+
         _create_test_db(db_path, session_id, [
             {"role": "user", "content": "Hello", "timestamp": "2026-03-29T15:00:01"},
         ])
@@ -1163,31 +1247,22 @@ class TestEventBridgePollE2E:
         first_calls = db.call_count
         assert first_calls >= 1
 
-        # Second poll — files unchanged, should skip entirely
+        # Second poll — DB unchanged, should skip entirely
         bridge._poll_once(db)
         assert db.call_count == first_calls, \
-            "Second poll should skip DB queries when files unchanged"
+            "Second poll should skip DB queries when state.db unchanged"
 
     def test_poll_detects_new_message_after_db_write(self, tmp_path, monkeypatch):
         """Write a new message to the DB after first poll, verify it's detected."""
         import mcp_serve
-        sessions_dir = tmp_path / "sessions"
-        sessions_dir.mkdir()
-        monkeypatch.setattr(mcp_serve, "_get_sessions_dir", lambda: sessions_dir)
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
 
         session_id = "20260329_150000_new_msg"
         db_path = tmp_path / "state.db"
 
-        sessions_data = {
-            "agent:main:telegram:dm:new": {
-                "session_key": "agent:main:telegram:dm:new",
-                "session_id": session_id,
-                "platform": "telegram",
-                "updated_at": "2026-03-29T15:00:05",
-                "origin": {"platform": "telegram", "chat_id": "new"},
-            }
-        }
-        (sessions_dir / "sessions.json").write_text(json.dumps(sessions_data))
+        entry = self._make_session_entry(session_id, "agent:main:telegram:dm:new")
+        monkeypatch.setattr(mcp_serve, "_list_all_workspace_entries", lambda: [entry])
+
         _create_test_db(db_path, session_id, [
             {"role": "user", "content": "First", "timestamp": "2026-03-29T15:00:01"},
         ])
@@ -1222,11 +1297,7 @@ class TestEventBridgePollE2E:
         # Touch the DB file to update mtime (WAL mode may not update mtime on small writes)
         os.utime(db_path, None)
 
-        # Update sessions.json updated_at to trigger re-check
-        sessions_data["agent:main:telegram:dm:new"]["updated_at"] = "2026-03-29T15:00:10"
-        (sessions_dir / "sessions.json").write_text(json.dumps(sessions_data))
-
-        # Second poll — should detect the new message
+        # Second poll — should detect the new message because state.db mtime changed
         bridge._poll_once(db)
         r2 = bridge.poll_events(after_cursor=r1["next_cursor"])
         assert len(r2["events"]) == 1

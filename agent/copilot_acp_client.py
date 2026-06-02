@@ -71,14 +71,28 @@ def _resolve_args() -> list[str]:
 def _resolve_home_dir() -> str:
     """Return a stable HOME for child ACP processes."""
 
+    # Prefer the context-local workspace home (set by bind_workspace_env /
+    # set_hermes_home_override) so concurrent requests don't cross-contaminate
+    # via the process-global os.getenv("HERMES_HOME").
     try:
-        from hermes_constants import get_subprocess_home
-
-        profile_home = get_subprocess_home()
-        if profile_home:
-            return profile_home
+        from runtime_paths import current_workspace_hermes_home as _cwh_acp  # type: ignore
+        _acp_hermes_home = (_cwh_acp() or "").strip()
+        if _acp_hermes_home:
+            _acp_profile_home = os.path.join(_acp_hermes_home, "home")
+            if os.path.isdir(_acp_profile_home):
+                return _acp_profile_home
     except Exception:
         pass
+
+    # ContextVar not active (non-gateway / single-tenant context): check
+    # os.environ directly.  This is safe here because _resolve_home_dir() is
+    # called once per subprocess launch, not per concurrent request, so there
+    # is no cross-tenant race on this read.
+    _env_hermes_home = os.environ.get("HERMES_HOME", "").strip()
+    if _env_hermes_home:
+        _env_profile_home = os.path.join(_env_hermes_home, "home")
+        if os.path.isdir(_env_profile_home):
+            return _env_profile_home
 
     home = os.environ.get("HOME", "").strip()
     if home:

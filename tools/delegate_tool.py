@@ -596,6 +596,20 @@ def _build_child_system_prompt(
             f"{workspace_path}\n"
             "Use this exact path for local repository/workdir operations unless the task explicitly says otherwise."
         )
+    try:
+        from runtime_paths import current_workspace_runs_dir as _cwr  # type: ignore
+        workspace_runs_dir = (_cwr() or "").strip()
+    except ImportError:
+        workspace_runs_dir = os.getenv("SEMANTIER_WORKSPACE_RUNS_DIR", "").strip()
+    if workspace_runs_dir:
+        parts.append(
+            "\nGOVERNED ARTIFACT RUNS DIRECTORY:\n"
+            f"{workspace_runs_dir}\n"
+            "All governed artifacts (documents, reimbursements, vouchers, reports, etc.) "
+            "MUST be written under this exact path and its subdirectories. "
+            "Do not write governed artifacts to any other location. "
+            "Do not use shell commands to bypass governed write tools when saving artifacts."
+        )
     parts.append(
         "\nComplete this task using the tools available to you. "
         "When finished, provide a clear, concise summary of:\n"

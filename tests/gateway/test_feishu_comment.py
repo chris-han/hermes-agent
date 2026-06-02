@@ -1,6 +1,9 @@
 """Tests for feishu_comment — event filtering, access control integration, wiki reverse lookup."""
 
 import asyncio
+import json
+from pathlib import Path
+import sys
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -254,6 +257,77 @@ class TestWikiReverseLookup(unittest.TestCase):
         # Second call should include wiki_token
         second_call_kwargs = mock_resolve.call_args_list[1]
         self.assertEqual(second_call_kwargs[1].get("wiki_token") or second_call_kwargs[0][3], "WIKI123")
+
+
+class TestWorkspaceSessionBinding(unittest.TestCase):
+    def test_run_comment_agent_uses_workspace_canonical_session(self):
+        from gateway.platforms.feishu_comment import _run_comment_agent
+
+        captured = {}
+
+        class FakeAgent:
+            def __init__(self, **kwargs):
+                captured["kwargs"] = kwargs
+                self.session_id = kwargs.get("session_id")
+
+            def run_conversation(self, prompt, conversation_history=None):
+                captured["prompt"] = prompt
+                captured["conversation_history"] = conversation_history
+                return {"final_response": "ok", "messages": [], "api_calls": 0}
+
+        fake_run_agent = SimpleNamespace(AIAgent=FakeAgent)
+        fake_doc_tool = SimpleNamespace(set_client=lambda _client: None)
+        fake_drive_tool = SimpleNamespace(set_client=lambda _client: None)
+        with patch.dict(
+            sys.modules,
+            {
+                "run_agent": fake_run_agent,
+                "tools.feishu_doc_tool": fake_doc_tool,
+                "tools.feishu_drive_tool": fake_drive_tool,
+            },
+        ):
+            with patch(
+                "gateway.platforms.feishu_comment._resolve_model_and_runtime",
+                return_value=("demo-model", {"provider": "openai", "base_url": "https://example.test", "api_key": "sk"}),
+            ):
+                with patch(
+                    "agents.workspace_session_logs.resolve_or_create_workspace_session_id",
+                    return_value="ws-123:session_abc",
+                ):
+                    with patch(
+                        "runtime_paths.workspace_hermes_home_path",
+                        return_value=Path("/tmp/feishu-comment-workspace"),
+                    ):
+                        result = _run_comment_agent(
+                            "hello",
+                            Mock(),
+                            "comment-doc:docx:token-1",
+                            "ws-123",
+                            "ou_user",
+                        )
+
+        assert result == "ok"
+        assert captured["kwargs"]["session_id"] == "ws-123:session_abc"
+        assert captured["kwargs"]["gateway_session_key"] == "comment-doc:docx:token-1"
+        assert captured["kwargs"]["platform"] == "feishu"
+        assert captured["kwargs"]["save_trajectories"] is True
+        assert captured["kwargs"]["user_id"] == "ou_user"
+        assert captured["kwargs"]["chat_id"] == "comment-doc:docx:token-1"
+        assert captured["conversation_history"] is None
+
+    def test_resolve_workspace_context_for_open_id_returns_workspace(self):
+        from gateway.platforms.feishu_comment import _resolve_workspace_context_for_open_id
+
+        with patch(
+            "agents.gateway_identity.list_user_records",
+            return_value=[
+                {"workspace_id": "ws-123", "user_id": "user-123", "feishu_open_id": "ou_match"},
+                {"workspace_id": "ws-999", "user_id": "user-999", "feishu_open_id": "ou_other"},
+            ],
+        ):
+            result = _resolve_workspace_context_for_open_id("ou_match")
+
+        assert result == {"workspace_id": "ws-123", "user_id": "user-123"}
 
 
 if __name__ == "__main__":

@@ -1,6 +1,8 @@
 """Tests for WSL detection and WSL-aware gateway behavior."""
 
+import io
 import subprocess
+import sys
 from types import SimpleNamespace
 from unittest.mock import patch, MagicMock, mock_open
 

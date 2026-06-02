@@ -8,12 +8,6 @@ Exposes an HTTP server with endpoints:
 - DELETE /v1/responses/{response_id} — Delete a stored response
 - GET  /v1/models                  — lists hermes-agent as an available model
 - GET  /v1/capabilities            — machine-readable API capabilities for external UIs
-- GET  /api/sessions               — list client-visible Hermes sessions
-- POST /api/sessions               — create an empty Hermes session
-- GET/PATCH/DELETE /api/sessions/{session_id} — read/update/delete a session
-- GET  /api/sessions/{session_id}/messages — read session message history
-- POST /api/sessions/{session_id}/fork — branch a session using SessionDB lineage
-- POST /api/sessions/{session_id}/chat[/stream] — chat with a persisted session
 - POST /v1/runs                    — start a run, returns run_id immediately (202)
 - GET  /v1/runs/{run_id}           — retrieve current run status
 - GET  /v1/runs/{run_id}/events    — SSE stream of structured lifecycle events
@@ -24,22 +18,24 @@ Exposes an HTTP server with endpoints:
 
 Any OpenAI-compatible frontend (Open WebUI, LobeChat, LibreChat,
 AnythingLLM, NextChat, ChatBox, etc.) can connect to hermes-agent
-through this adapter by pointing at http://localhost:8642/v1 and
-authenticating with API_SERVER_KEY.
+through this adapter by pointing at http://localhost:8642/v1.
 
 Requires:
 - aiohttp (already available in the gateway)
 """
 
 import asyncio
+import contextlib
 import hashlib
 import hmac
+import importlib
 import json
 import logging
 import os
 import socket as _socket
 import re
 import sqlite3
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -69,6 +65,133 @@ MAX_REQUEST_BYTES = 10_000_000  # 10 MB — accommodates long agent conversation
 CHAT_COMPLETIONS_SSE_KEEPALIVE_SECONDS = 30.0
 MAX_NORMALIZED_TEXT_LENGTH = 65_536  # 64 KB cap for normalized content parts
 MAX_CONTENT_LIST_SIZE = 1_000  # Max items when content is an array
+_SEMANTIER_HERMES_HOME_HEADER = "X-Semantier-Hermes-Home"
+
+
+def _bind_workspace_env_cm(target_home: Path):
+    """Acquire the cross-gateway workspace env binding from runtime_paths.
+
+    Returns a no-op nullcontext when runtime_paths isn't importable (e.g.
+    standalone hermes-agent dev environments without Semantier on sys.path).
+    """
+    try:
+        from runtime_paths import bind_workspace_env  # type: ignore
+    except Exception:
+        return contextlib.nullcontext()
+    return bind_workspace_env(target_home)
+
+
+@contextlib.contextmanager
+def _bound_request_hermes_home(raw_home: str | None):
+    """Bind HERMES_HOME for one API-server request when provided by a trusted wrapper."""
+    value = (raw_home or "").strip()
+    if not value:
+        yield
+        return
+
+    target_home = Path(value).expanduser().resolve()
+    target_home.mkdir(parents=True, exist_ok=True)
+
+    prev_env = os.environ.get("HERMES_HOME")
+    os.environ["HERMES_HOME"] = str(target_home)
+
+    gateway_run = sys.modules.get("gateway.run")
+    shared_runtime_root = Path(
+        (
+            os.environ.get("SEMANTIER_LOCAL_STATE_DIR")
+            or str(getattr(gateway_run, "_hermes_home", target_home))
+        )
+    ).expanduser().resolve()
+    if gateway_run is None and os.environ.get("SEMANTIER_LOCAL_STATE_DIR"):
+        # This request binds HERMES_HOME to a workspace for session/tool state.
+        # If gateway.run is first imported inside that bound request, its
+        # module-level config paths would otherwise point at the workspace and
+        # miss the shared model config. Import it once under the shared runtime
+        # root, then restore the workspace binding for the request.
+        os.environ["HERMES_HOME"] = str(shared_runtime_root)
+        try:
+            gateway_run = importlib.import_module("gateway.run")
+        finally:
+            os.environ["HERMES_HOME"] = str(target_home)
+
+    prev_gateway_run_state = None
+    if gateway_run is not None:
+        prev_gateway_run_state = {
+            "_hermes_home": getattr(gateway_run, "_hermes_home", None),
+            "_env_path": getattr(gateway_run, "_env_path", None),
+            "_config_path": getattr(gateway_run, "_config_path", None),
+        }
+        setattr(gateway_run, "_hermes_home", shared_runtime_root)
+        setattr(gateway_run, "_env_path", shared_runtime_root / ".env")
+        setattr(gateway_run, "_config_path", shared_runtime_root / "config.yaml")
+
+        gateway_runner = getattr(gateway_run, "GatewayRunner", None)
+        if gateway_runner is not None and hasattr(gateway_runner, "_VOICE_MODE_PATH"):
+            prev_gateway_run_state["_VOICE_MODE_PATH"] = getattr(
+                gateway_runner,
+                "_VOICE_MODE_PATH",
+                None,
+            )
+            setattr(
+                gateway_runner,
+                "_VOICE_MODE_PATH",
+                shared_runtime_root / "gateway_voice_mode.json",
+            )
+
+        reload_runtime_env = getattr(
+            gateway_run,
+            "_reload_runtime_env_preserving_config_authority",
+            None,
+        )
+        if callable(reload_runtime_env):
+            try:
+                reload_runtime_env()
+            except Exception:
+                pass
+
+    token = None
+    try:
+        from hermes_constants import reset_active_hermes_home, set_active_hermes_home
+
+        token = set_active_hermes_home(target_home)
+    except ImportError:
+        token = None
+
+    try:
+        # Cross-gateway env binding: runtime_paths.bind_workspace_env owns the
+        # HERMES_HOME + SEMANTIER_WORKSPACE_RUNS_DIR contract. Entering it after
+        # the runtime-env reload (which calls load_dotenv(..., override=True))
+        # re-asserts the workspace binding the reload would otherwise clobber.
+        with _bind_workspace_env_cm(target_home):
+            yield
+    finally:
+        if prev_env is None:
+            os.environ.pop("HERMES_HOME", None)
+        else:
+            os.environ["HERMES_HOME"] = prev_env
+
+        if gateway_run is not None and prev_gateway_run_state is not None:
+            setattr(gateway_run, "_hermes_home", prev_gateway_run_state["_hermes_home"])
+            setattr(gateway_run, "_env_path", prev_gateway_run_state["_env_path"])
+            setattr(gateway_run, "_config_path", prev_gateway_run_state["_config_path"])
+            gateway_runner = getattr(gateway_run, "GatewayRunner", None)
+            if (
+                gateway_runner is not None
+                and "_VOICE_MODE_PATH" in prev_gateway_run_state
+            ):
+                setattr(
+                    gateway_runner,
+                    "_VOICE_MODE_PATH",
+                    prev_gateway_run_state["_VOICE_MODE_PATH"],
+                )
+
+        if token is not None:
+            try:
+                from hermes_constants import reset_active_hermes_home
+
+                reset_active_hermes_home(token)
+            except ImportError:
+                pass
 
 
 def _coerce_port(value: Any, default: int = DEFAULT_PORT) -> int:
@@ -320,20 +443,6 @@ def _multimodal_validation_error(exc: ValueError, *, param: str) -> "web.Respons
     )
 
 
-def _session_chat_user_message(body: Dict[str, Any], *, param: str = "message") -> tuple[Any, Optional["web.Response"]]:
-    """Parse and normalize session chat ``message`` / ``input`` like chat completions."""
-    user_message = body.get("message") or body.get("input")
-    if not _content_has_visible_payload(user_message):
-        return None, web.json_response(
-            _openai_error("Missing 'message' field", code="missing_message"),
-            status=400,
-        )
-    try:
-        return _normalize_multimodal_content(user_message), None
-    except ValueError as exc:
-        return None, _multimodal_validation_error(exc, param=param)
-
-
 def check_api_server_requirements() -> bool:
     """Check if API server dependencies are available."""
     return AIOHTTP_AVAILABLE
@@ -359,12 +468,10 @@ class ResponseStore:
                 db_path = str(get_hermes_home() / "response_store.db")
             except Exception:
                 db_path = ":memory:"
-        self._db_path: Optional[str] = db_path if db_path != ":memory:" else None
         try:
             self._conn = sqlite3.connect(db_path, check_same_thread=False)
         except Exception:
             self._conn = sqlite3.connect(":memory:", check_same_thread=False)
-            self._db_path = None
         # Use shared WAL-fallback helper so response_store.db degrades
         # gracefully on NFS/SMB/FUSE-mounted HERMES_HOME (same filesystem
         # issue addressed for state.db/kanban.db — see
@@ -385,31 +492,6 @@ class ResponseStore:
             )"""
         )
         self._conn.commit()
-        # response_store.db contains conversation history (tool payloads,
-        # prompts, results). Tighten to owner-only after creation so other
-        # local users on a shared box can't read it. Run once at __init__
-        # rather than after every commit — chmod-on-every-write is wasted
-        # syscalls on a hot path.
-        self._tighten_file_permissions()
-
-    def _tighten_file_permissions(self) -> None:
-        """Force owner-only permissions on the DB and SQLite sidecars."""
-        if not self._db_path:
-            return
-        for candidate in (
-            Path(self._db_path),
-            Path(f"{self._db_path}-wal"),
-            Path(f"{self._db_path}-shm"),
-        ):
-            try:
-                if candidate.exists():
-                    candidate.chmod(0o600)
-            except OSError:
-                logger.debug(
-                    "Failed to restrict response store permissions for %s",
-                    candidate,
-                    exc_info=True,
-                )
 
     def get(self, response_id: str) -> Optional[Dict[str, Any]]:
         """Retrieve a stored response by ID (updates access time for LRU)."""
@@ -784,58 +866,6 @@ class APIServerAdapter(BasePlatformAdapter):
 
         return "*" in self._cors_origins or origin in self._cors_origins
 
-    @staticmethod
-    def _clean_log_value(value: Any, *, max_len: int = 200) -> str:
-        """Sanitize request metadata before it reaches security logs."""
-        if value is None:
-            return ""
-        text = str(value).replace("\r", " ").replace("\n", " ").strip()
-        return text[:max_len]
-
-    def _request_audit_context(self, request: "web.Request") -> Dict[str, str]:
-        """Return non-secret source metadata for security/audit warnings."""
-        peer_ip = ""
-        try:
-            peer = request.transport.get_extra_info("peername") if request.transport else None
-            if isinstance(peer, (tuple, list)) and peer:
-                peer_ip = str(peer[0])
-        except Exception:
-            peer_ip = ""
-
-        return {
-            "remote": self._clean_log_value(getattr(request, "remote", "") or peer_ip),
-            "peer_ip": self._clean_log_value(peer_ip),
-            "forwarded_for": self._clean_log_value(request.headers.get("X-Forwarded-For", "")),
-            "real_ip": self._clean_log_value(request.headers.get("X-Real-IP", "")),
-            "method": self._clean_log_value(request.method, max_len=16),
-            "path": self._clean_log_value(request.path_qs, max_len=500),
-            "user_agent": self._clean_log_value(request.headers.get("User-Agent", ""), max_len=300),
-        }
-
-    def _request_audit_log_suffix(self, request: "web.Request") -> str:
-        ctx = self._request_audit_context(request)
-        fields = [f"{key}={value!r}" for key, value in ctx.items() if value]
-        return " ".join(fields) if fields else "source='unknown'"
-
-    def _cron_origin_from_request(self, request: "web.Request") -> Dict[str, str]:
-        """Persist safe API source metadata on cron jobs created over HTTP."""
-        ctx = self._request_audit_context(request)
-        origin = {
-            "platform": "api_server",
-            "chat_id": "api",
-        }
-        if ctx.get("remote"):
-            origin["source_ip"] = ctx["remote"]
-        if ctx.get("peer_ip"):
-            origin["peer_ip"] = ctx["peer_ip"]
-        if ctx.get("forwarded_for"):
-            origin["forwarded_for"] = ctx["forwarded_for"]
-        if ctx.get("real_ip"):
-            origin["real_ip"] = ctx["real_ip"]
-        if ctx.get("user_agent"):
-            origin["user_agent"] = ctx["user_agent"]
-        return origin
-
     # ------------------------------------------------------------------
     # Auth helper
     # ------------------------------------------------------------------
@@ -845,11 +875,11 @@ class APIServerAdapter(BasePlatformAdapter):
         Validate Bearer token from Authorization header.
 
         Returns None if auth is OK, or a 401 web.Response on failure.
-        connect() refuses to start the API server without API_SERVER_KEY, so
-        the no-key branch only exists for tests or unsupported manual wiring.
+        If no API key is configured, all requests are allowed (only when API
+        server is local).
         """
         if not self._api_key:
-            return None
+            return None  # No key configured — allow all (local-only use)
 
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Bearer "):
@@ -857,10 +887,6 @@ class APIServerAdapter(BasePlatformAdapter):
             if hmac.compare_digest(token, self._api_key):
                 return None  # Auth OK
 
-        logger.warning(
-            "API server rejected invalid API key: %s",
-            self._request_audit_log_suffix(request),
-        )
         return web.json_response(
             {"error": {"message": "Invalid API key", "type": "invalid_request_error", "code": "invalid_api_key"}},
             status=401,
@@ -982,11 +1008,17 @@ class APIServerAdapter(BasePlatformAdapter):
         from gateway.run import _resolve_runtime_agent_kwargs, _resolve_gateway_model, _load_gateway_config, GatewayRunner
         from hermes_cli.tools_config import _get_platform_tools
 
-        runtime_kwargs = _resolve_runtime_agent_kwargs()
-        reasoning_config = GatewayRunner._load_reasoning_config()
-        model = _resolve_gateway_model()
-
         user_config = _load_gateway_config()
+        model = _resolve_gateway_model(user_config)
+        model_cfg = user_config.get("model") or {}
+        requested_provider = None
+        if isinstance(model_cfg, dict):
+            requested_provider = str(model_cfg.get("provider") or "").strip() or None
+        runtime_kwargs = _resolve_runtime_agent_kwargs(
+            requested_provider=requested_provider,
+            target_model=model or None,
+        )
+        reasoning_config = GatewayRunner._load_reasoning_config()
         enabled_toolsets = sorted(_get_platform_tools(user_config, "api_server"))
 
         max_iterations = int(os.getenv("HERMES_MAX_ITERATIONS", "90"))
@@ -1001,6 +1033,7 @@ class APIServerAdapter(BasePlatformAdapter):
             max_iterations=max_iterations,
             quiet_mode=True,
             verbose_logging=False,
+            save_trajectories=True,
             ephemeral_system_prompt=ephemeral_system_prompt or None,
             enabled_toolsets=enabled_toolsets,
             session_id=session_id,
@@ -1107,16 +1140,6 @@ class APIServerAdapter(BasePlatformAdapter):
                 "run_approval_response": True,
                 "tool_progress_events": True,
                 "approval_events": True,
-                "session_resources": True,
-                "session_chat": True,
-                "session_chat_streaming": True,
-                "session_fork": True,
-                "admin_config_rw": False,
-                "jobs_admin": False,
-                "memory_write_api": False,
-                "skills_api": True,
-                "audio_api": False,
-                "realtime_voice": False,
                 "session_continuity_header": "X-Hermes-Session-Id",
                 "session_key_header": "X-Hermes-Session-Key",
                 "cors": bool(self._cors_origins),
@@ -1132,541 +1155,8 @@ class APIServerAdapter(BasePlatformAdapter):
                 "run_events": {"method": "GET", "path": "/v1/runs/{run_id}/events"},
                 "run_approval": {"method": "POST", "path": "/v1/runs/{run_id}/approval"},
                 "run_stop": {"method": "POST", "path": "/v1/runs/{run_id}/stop"},
-                "skills": {"method": "GET", "path": "/v1/skills"},
-                "toolsets": {"method": "GET", "path": "/v1/toolsets"},
-                "sessions": {"method": "GET", "path": "/api/sessions"},
-                "session_create": {"method": "POST", "path": "/api/sessions"},
-                "session": {"method": "GET", "path": "/api/sessions/{session_id}"},
-                "session_update": {"method": "PATCH", "path": "/api/sessions/{session_id}"},
-                "session_delete": {"method": "DELETE", "path": "/api/sessions/{session_id}"},
-                "session_messages": {"method": "GET", "path": "/api/sessions/{session_id}/messages"},
-                "session_fork": {"method": "POST", "path": "/api/sessions/{session_id}/fork"},
-                "session_chat": {"method": "POST", "path": "/api/sessions/{session_id}/chat"},
-                "session_chat_stream": {"method": "POST", "path": "/api/sessions/{session_id}/chat/stream"},
             },
         })
-
-    async def _handle_skills(self, request: "web.Request") -> "web.Response":
-        """GET /v1/skills — list installed skills visible to the API-server agent.
-
-        Read-only listing intended for external clients that need to know
-        which skills are available without sending a chat message and asking
-        the model. Mirrors what the gateway/CLI surfaces through
-        ``/skills list``, but as a deterministic JSON payload.
-
-        Returns the same skill metadata (name, description, category) the
-        skills hub uses internally. Disabled skills are excluded so the
-        listing matches what the agent actually loads.
-        """
-        auth_err = self._check_auth(request)
-        if auth_err:
-            return auth_err
-
-        try:
-            from tools.skills_tool import _find_all_skills, _sort_skills
-            skills = _sort_skills(_find_all_skills(skip_disabled=False))
-        except Exception:
-            logger.exception("GET /v1/skills failed")
-            return web.json_response(
-                _openai_error("Failed to enumerate skills", err_type="server_error"),
-                status=500,
-            )
-
-        return web.json_response({
-            "object": "list",
-            "data": skills,
-        })
-
-    async def _handle_toolsets(self, request: "web.Request") -> "web.Response":
-        """GET /v1/toolsets — list toolsets and their resolved tools.
-
-        Returns the toolset surface the api_server platform actually exposes
-        to its agent: each toolset's enabled/configured state plus the
-        concrete tool names it expands to. This is the deterministic
-        equivalent of what a client would otherwise have to recover by
-        asking the model what tools it can call.
-        """
-        auth_err = self._check_auth(request)
-        if auth_err:
-            return auth_err
-
-        try:
-            from hermes_cli.config import load_config
-            from hermes_cli.tools_config import (
-                _get_effective_configurable_toolsets,
-                _get_platform_tools,
-                _toolset_has_keys,
-            )
-            from toolsets import resolve_toolset
-
-            config = load_config()
-            enabled_toolsets = _get_platform_tools(
-                config,
-                "api_server",
-                include_default_mcp_servers=False,
-            )
-            data: List[Dict[str, Any]] = []
-            for name, label, desc in _get_effective_configurable_toolsets():
-                try:
-                    tools = sorted(set(resolve_toolset(name)))
-                except Exception:
-                    tools = []
-                is_enabled = name in enabled_toolsets
-                data.append({
-                    "name": name,
-                    "label": label,
-                    "description": desc,
-                    "enabled": is_enabled,
-                    "configured": _toolset_has_keys(name, config),
-                    "tools": tools,
-                })
-        except Exception:
-            logger.exception("GET /v1/toolsets failed")
-            return web.json_response(
-                _openai_error("Failed to enumerate toolsets", err_type="server_error"),
-                status=500,
-            )
-
-        return web.json_response({
-            "object": "list",
-            "platform": "api_server",
-            "data": data,
-        })
-
-    # ------------------------------------------------------------------
-    # /api/sessions — thin client/session resource API
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _parse_nonnegative_int(value: Any, default: int, maximum: int) -> int:
-        try:
-            parsed = int(value)
-        except (TypeError, ValueError):
-            return default
-        if parsed < 0:
-            return default
-        return min(parsed, maximum)
-
-    @staticmethod
-    def _session_response(session: Dict[str, Any]) -> Dict[str, Any]:
-        """Return a stable, client-safe session representation."""
-        safe_keys = (
-            "id", "source", "user_id", "model", "title", "started_at", "ended_at",
-            "end_reason", "message_count", "tool_call_count", "input_tokens",
-            "output_tokens", "cache_read_tokens", "cache_write_tokens",
-            "reasoning_tokens", "estimated_cost_usd", "actual_cost_usd",
-            "api_call_count", "parent_session_id", "last_active", "preview",
-            "_lineage_root_id",
-        )
-        payload = {key: session.get(key) for key in safe_keys if key in session}
-        # Avoid exposing full system prompts/model_config through the client API;
-        # callers only need to know whether those snapshots exist.
-        payload["has_system_prompt"] = bool(session.get("system_prompt"))
-        payload["has_model_config"] = bool(session.get("model_config"))
-        return payload
-
-    @staticmethod
-    def _message_response(message: Dict[str, Any]) -> Dict[str, Any]:
-        safe_keys = (
-            "id", "session_id", "role", "content", "tool_call_id", "tool_calls",
-            "tool_name", "timestamp", "token_count", "finish_reason", "reasoning",
-            "reasoning_content",
-        )
-        return {key: message.get(key) for key in safe_keys if key in message}
-
-    async def _read_json_body(self, request: "web.Request") -> tuple[Dict[str, Any], Optional["web.Response"]]:
-        try:
-            body = await request.json()
-        except Exception:
-            return {}, web.json_response(_openai_error("Invalid JSON in request body"), status=400)
-        if not isinstance(body, dict):
-            return {}, web.json_response(_openai_error("Request body must be a JSON object"), status=400)
-        return body, None
-
-    def _get_existing_session_or_404(self, session_id: str) -> tuple[Optional[Dict[str, Any]], Optional["web.Response"]]:
-        db = self._ensure_session_db()
-        if db is None:
-            return None, web.json_response(_openai_error("Session database unavailable", code="session_db_unavailable"), status=503)
-        session = db.get_session(session_id)
-        if not session:
-            return None, web.json_response(_openai_error(f"Session not found: {session_id}", code="session_not_found"), status=404)
-        return session, None
-
-    def _conversation_history_for_session(self, session_id: str) -> List[Dict[str, Any]]:
-        db = self._ensure_session_db()
-        if db is None:
-            return []
-        try:
-            return db.get_messages_as_conversation(session_id)
-        except Exception as exc:
-            logger.warning("Failed to load session history for %s: %s", session_id, exc)
-            return []
-
-    async def _handle_list_sessions(self, request: "web.Request") -> "web.Response":
-        """GET /api/sessions — list persisted Hermes sessions."""
-        auth_err = self._check_auth(request)
-        if auth_err:
-            return auth_err
-
-        db = self._ensure_session_db()
-        if db is None:
-            return web.json_response(_openai_error("Session database unavailable", code="session_db_unavailable"), status=503)
-
-        limit = self._parse_nonnegative_int(request.query.get("limit"), default=50, maximum=200)
-        offset = self._parse_nonnegative_int(request.query.get("offset"), default=0, maximum=1_000_000)
-        source = request.query.get("source") or None
-        include_children = _coerce_request_bool(request.query.get("include_children"), default=False)
-        sessions = db.list_sessions_rich(
-            source=source,
-            limit=limit,
-            offset=offset,
-            include_children=include_children,
-            order_by_last_active=True,
-        )
-        return web.json_response({
-            "object": "list",
-            "data": [self._session_response(s) for s in sessions],
-            "limit": limit,
-            "offset": offset,
-            "has_more": len(sessions) == limit,
-        })
-
-    async def _handle_create_session(self, request: "web.Request") -> "web.Response":
-        """POST /api/sessions — create an empty Hermes session row."""
-        auth_err = self._check_auth(request)
-        if auth_err:
-            return auth_err
-        body, err = await self._read_json_body(request)
-        if err:
-            return err
-
-        db = self._ensure_session_db()
-        if db is None:
-            return web.json_response(_openai_error("Session database unavailable", code="session_db_unavailable"), status=503)
-
-        raw_id = body.get("id") or body.get("session_id")
-        session_id = str(raw_id).strip() if raw_id else f"api_{int(time.time())}_{uuid.uuid4().hex[:8]}"
-        if not session_id or re.search(r'[\r\n\x00]', session_id):
-            return web.json_response(_openai_error("Invalid session ID", code="invalid_session_id"), status=400)
-        if len(session_id) > self._MAX_SESSION_HEADER_LEN:
-            return web.json_response(_openai_error("Session ID too long", code="invalid_session_id"), status=400)
-        if db.get_session(session_id):
-            return web.json_response(_openai_error(f"Session already exists: {session_id}", code="session_exists"), status=409)
-
-        model = body.get("model") or self._model_name
-        system_prompt = body.get("system_prompt")
-        if system_prompt is not None and not isinstance(system_prompt, str):
-            return web.json_response(_openai_error("system_prompt must be a string", code="invalid_system_prompt"), status=400)
-        db.create_session(session_id, "api_server", model=str(model) if model else None, system_prompt=system_prompt)
-        title = body.get("title")
-        if title is not None:
-            try:
-                db.set_session_title(session_id, str(title))
-            except ValueError as exc:
-                db.delete_session(session_id)
-                return web.json_response(_openai_error(str(exc), code="invalid_title"), status=400)
-        session = db.get_session(session_id) or {"id": session_id, "source": "api_server", "model": model, "title": title}
-        return web.json_response({"object": "hermes.session", "session": self._session_response(session)}, status=201)
-
-    async def _handle_get_session(self, request: "web.Request") -> "web.Response":
-        """GET /api/sessions/{session_id}."""
-        auth_err = self._check_auth(request)
-        if auth_err:
-            return auth_err
-        session, err = self._get_existing_session_or_404(request.match_info["session_id"])
-        if err:
-            return err
-        return web.json_response({"object": "hermes.session", "session": self._session_response(session)})
-
-    async def _handle_patch_session(self, request: "web.Request") -> "web.Response":
-        """PATCH /api/sessions/{session_id} — update client-safe session metadata."""
-        auth_err = self._check_auth(request)
-        if auth_err:
-            return auth_err
-        session_id = request.match_info["session_id"]
-        session, err = self._get_existing_session_or_404(session_id)
-        if err:
-            return err
-        body, err = await self._read_json_body(request)
-        if err:
-            return err
-        allowed = {"title", "end_reason"}
-        unknown = sorted(set(body) - allowed)
-        if unknown:
-            return web.json_response(_openai_error(f"Unsupported session fields: {', '.join(unknown)}", code="unsupported_session_field"), status=400)
-
-        db = self._ensure_session_db()
-        if "title" in body:
-            try:
-                db.set_session_title(session_id, "" if body["title"] is None else str(body["title"]))
-            except ValueError as exc:
-                return web.json_response(_openai_error(str(exc), code="invalid_title"), status=400)
-        if body.get("end_reason"):
-            db.end_session(session_id, str(body["end_reason"]))
-        session = db.get_session(session_id) or session
-        return web.json_response({"object": "hermes.session", "session": self._session_response(session)})
-
-    async def _handle_delete_session(self, request: "web.Request") -> "web.Response":
-        """DELETE /api/sessions/{session_id}."""
-        auth_err = self._check_auth(request)
-        if auth_err:
-            return auth_err
-        session_id = request.match_info["session_id"]
-        session, err = self._get_existing_session_or_404(session_id)
-        if err:
-            return err
-        db = self._ensure_session_db()
-        deleted = db.delete_session(session_id)
-        return web.json_response({"object": "hermes.session.deleted", "id": session_id, "deleted": bool(deleted)})
-
-    async def _handle_session_messages(self, request: "web.Request") -> "web.Response":
-        """GET /api/sessions/{session_id}/messages."""
-        auth_err = self._check_auth(request)
-        if auth_err:
-            return auth_err
-        session_id = request.match_info["session_id"]
-        _, err = self._get_existing_session_or_404(session_id)
-        if err:
-            return err
-        db = self._ensure_session_db()
-        messages = db.get_messages(session_id)
-        return web.json_response({
-            "object": "list",
-            "session_id": session_id,
-            "data": [self._message_response(m) for m in messages],
-        })
-
-    async def _handle_fork_session(self, request: "web.Request") -> "web.Response":
-        """POST /api/sessions/{session_id}/fork — branch via current SessionDB primitives."""
-        auth_err = self._check_auth(request)
-        if auth_err:
-            return auth_err
-        source_id = request.match_info["session_id"]
-        source, err = self._get_existing_session_or_404(source_id)
-        if err:
-            return err
-        body, err = await self._read_json_body(request)
-        if err:
-            return err
-        db = self._ensure_session_db()
-        fork_id = str(body.get("id") or body.get("session_id") or f"api_{int(time.time())}_{uuid.uuid4().hex[:8]}").strip()
-        if not fork_id or re.search(r'[\r\n\x00]', fork_id):
-            return web.json_response(_openai_error("Invalid session ID", code="invalid_session_id"), status=400)
-        if db.get_session(fork_id):
-            return web.json_response(_openai_error(f"Session already exists: {fork_id}", code="session_exists"), status=409)
-
-        # Match the CLI /branch semantics: mark the original as branched, then
-        # create a child session that carries the transcript forward. This uses
-        # SessionDB's native parent_session_id/end_reason visibility model rather
-        # than inventing a parallel fork store.
-        db.end_session(source_id, "branched")
-        db.create_session(
-            fork_id,
-            "api_server",
-            model=source.get("model"),
-            system_prompt=source.get("system_prompt"),
-            parent_session_id=source_id,
-        )
-        messages = db.get_messages(source_id)
-        db.replace_messages(fork_id, messages)
-        title = body.get("title")
-        if title is None:
-            base = source.get("title") or "fork"
-            try:
-                title = db.get_next_title_in_lineage(base)
-            except Exception:
-                title = f"{base} fork"
-        try:
-            db.set_session_title(fork_id, str(title))
-        except ValueError as exc:
-            return web.json_response(_openai_error(str(exc), code="invalid_title"), status=400)
-        fork = db.get_session(fork_id) or {"id": fork_id, "parent_session_id": source_id}
-        return web.json_response({"object": "hermes.session", "session": self._session_response(fork)}, status=201)
-
-    async def _handle_session_chat(self, request: "web.Request") -> "web.Response":
-        """POST /api/sessions/{session_id}/chat — one synchronous agent turn."""
-        auth_err = self._check_auth(request)
-        if auth_err:
-            return auth_err
-        gateway_session_key, key_err = self._parse_session_key_header(request)
-        if key_err is not None:
-            return key_err
-        session_id = request.match_info["session_id"]
-        _, err = self._get_existing_session_or_404(session_id)
-        if err:
-            return err
-        body, err = await self._read_json_body(request)
-        if err:
-            return err
-        user_message, err = _session_chat_user_message(body)
-        if err is not None:
-            return err
-        system_prompt = body.get("system_message") or body.get("instructions")
-        if system_prompt is not None and not isinstance(system_prompt, str):
-            return web.json_response(_openai_error("system_message must be a string", code="invalid_system_message"), status=400)
-        history = self._conversation_history_for_session(session_id)
-        result, usage = await self._run_agent(
-            user_message=user_message,
-            conversation_history=history,
-            ephemeral_system_prompt=system_prompt,
-            session_id=session_id,
-            gateway_session_key=gateway_session_key,
-        )
-        effective_session_id = result.get("session_id") if isinstance(result, dict) else session_id
-        final_response = result.get("final_response", "") if isinstance(result, dict) else ""
-        headers = {"X-Hermes-Session-Id": effective_session_id or session_id}
-        if gateway_session_key:
-            headers["X-Hermes-Session-Key"] = gateway_session_key
-        return web.json_response(
-            {
-                "object": "hermes.session.chat.completion",
-                "session_id": effective_session_id or session_id,
-                "message": {"role": "assistant", "content": final_response},
-                "usage": usage,
-            },
-            headers=headers,
-        )
-
-    async def _handle_session_chat_stream(self, request: "web.Request") -> "web.StreamResponse":
-        """POST /api/sessions/{session_id}/chat/stream — SSE wrapper over _run_agent."""
-        auth_err = self._check_auth(request)
-        if auth_err:
-            return auth_err
-        gateway_session_key, key_err = self._parse_session_key_header(request)
-        if key_err is not None:
-            return key_err
-        session_id = request.match_info["session_id"]
-        _, err = self._get_existing_session_or_404(session_id)
-        if err:
-            return err
-        body, err = await self._read_json_body(request)
-        if err:
-            return err
-        user_message, err = _session_chat_user_message(body)
-        if err is not None:
-            return err
-        system_prompt = body.get("system_message") or body.get("instructions")
-        if system_prompt is not None and not isinstance(system_prompt, str):
-            return web.json_response(_openai_error("system_message must be a string", code="invalid_system_message"), status=400)
-
-        loop = asyncio.get_running_loop()
-        queue: "asyncio.Queue[Optional[tuple[str, Dict[str, Any]]]]" = asyncio.Queue()
-        message_id = f"msg_{uuid.uuid4().hex}"
-        run_id = f"run_{uuid.uuid4().hex}"
-        seq = 0
-
-        def _event_payload(name: str, payload: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
-            nonlocal seq
-            seq += 1
-            payload.setdefault("session_id", session_id)
-            payload.setdefault("run_id", run_id)
-            payload.setdefault("seq", seq)
-            payload.setdefault("ts", time.time())
-            return name, payload
-
-        def _enqueue(name: str, payload: Dict[str, Any]) -> None:
-            event = _event_payload(name, payload)
-            try:
-                running_loop = asyncio.get_running_loop()
-            except RuntimeError:
-                running_loop = None
-            try:
-                if running_loop is loop:
-                    queue.put_nowait(event)
-                else:
-                    loop.call_soon_threadsafe(queue.put_nowait, event)
-            except RuntimeError:
-                pass
-
-        def _delta(delta: str) -> None:
-            if delta:
-                _enqueue("assistant.delta", {"message_id": message_id, "delta": delta})
-
-        def _tool_progress(event_type: str, tool_name: str = None, preview: str = None, args=None, **kwargs) -> None:
-            if event_type == "reasoning.available":
-                _enqueue("tool.progress", {"message_id": message_id, "tool_name": tool_name or "_thinking", "delta": preview or ""})
-            elif event_type in {"tool.started", "tool.completed", "tool.failed"}:
-                event_name = event_type.replace("tool.", "tool.")
-                _enqueue(event_name, {"message_id": message_id, "tool_name": tool_name, "preview": preview, "args": args})
-
-        async def _run_and_signal() -> None:
-            try:
-                await queue.put(_event_payload("run.started", {"user_message": {"role": "user", "content": user_message}}))
-                await queue.put(_event_payload("message.started", {"message": {"id": message_id, "role": "assistant"}}))
-                history = self._conversation_history_for_session(session_id)
-                result, usage = await self._run_agent(
-                    user_message=user_message,
-                    conversation_history=history,
-                    ephemeral_system_prompt=system_prompt,
-                    session_id=session_id,
-                    stream_delta_callback=_delta,
-                    tool_progress_callback=_tool_progress,
-                    gateway_session_key=gateway_session_key,
-                )
-                final_response = result.get("final_response", "") if isinstance(result, dict) else ""
-                effective_session_id = result.get("session_id", session_id) if isinstance(result, dict) else session_id
-                turn_messages = self._turn_transcript_messages(history, user_message, result) if isinstance(result, dict) else []
-                await queue.put(_event_payload("assistant.completed", {
-                    "session_id": effective_session_id,
-                    "message_id": message_id,
-                    "content": final_response,
-                    "completed": True,
-                    "partial": False,
-                    "interrupted": False,
-                }))
-                await queue.put(_event_payload("run.completed", {
-                    "session_id": effective_session_id,
-                    "message_id": message_id,
-                    "completed": True,
-                    "messages": turn_messages,
-                    "usage": usage,
-                }))
-            except Exception as exc:
-                logger.exception("[api_server] session chat stream failed")
-                await queue.put(_event_payload("error", {"message": str(exc)}))
-            finally:
-                await queue.put(_event_payload("done", {}))
-                await queue.put(None)
-
-        task = asyncio.create_task(_run_and_signal())
-        try:
-            self._background_tasks.add(task)
-        except TypeError:
-            pass
-        if hasattr(task, "add_done_callback"):
-            task.add_done_callback(self._background_tasks.discard)
-
-        headers = {
-            "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-            "X-Hermes-Session-Id": session_id,
-        }
-        if gateway_session_key:
-            headers["X-Hermes-Session-Key"] = gateway_session_key
-        response = web.StreamResponse(status=200, headers=headers)
-        await response.prepare(request)
-        last_write = time.monotonic()
-        try:
-            while True:
-                try:
-                    item = await asyncio.wait_for(queue.get(), timeout=CHAT_COMPLETIONS_SSE_KEEPALIVE_SECONDS)
-                except asyncio.TimeoutError:
-                    await response.write(b": keepalive\n\n")
-                    last_write = time.monotonic()
-                    continue
-                if item is None:
-                    break
-                name, payload = item
-                data = json.dumps(payload, ensure_ascii=False)
-                await response.write(f"event: {name}\ndata: {data}\n\n".encode("utf-8"))
-                last_write = time.monotonic()
-        except (asyncio.CancelledError, ConnectionResetError):
-            task.cancel()
-            raise
-        except Exception as exc:
-            logger.debug("[api_server] session SSE stream error: %s", exc)
-        return response
 
     async def _handle_chat_completions(self, request: "web.Request") -> "web.Response":
         """POST /v1/chat/completions — OpenAI Chat Completions format."""
@@ -1857,6 +1347,7 @@ class APIServerAdapter(BasePlatformAdapter):
             # side-by-side with ``tool_start_callback``/``tool_complete_callback``.
             # The structured callbacks are strictly richer (they carry the
             # tool_call id), so they own the chat-completions SSE channel.
+            request_hermes_home = request.headers.get(_SEMANTIER_HERMES_HOME_HEADER, "").strip() or None
             agent_ref = [None]
             agent_task = asyncio.ensure_future(self._run_agent(
                 user_message=user_message,
@@ -1868,6 +1359,7 @@ class APIServerAdapter(BasePlatformAdapter):
                 tool_complete_callback=_on_tool_complete,
                 agent_ref=agent_ref,
                 gateway_session_key=gateway_session_key,
+                request_hermes_home=request_hermes_home,
             ))
             # Ensure SSE drain loops can terminate without relying on polling
             # agent_task.done(), which can race with queue timeout checks.
@@ -1880,6 +1372,7 @@ class APIServerAdapter(BasePlatformAdapter):
             )
 
         # Non-streaming: run the agent (with optional Idempotency-Key)
+        request_hermes_home = request.headers.get(_SEMANTIER_HERMES_HOME_HEADER, "").strip() or None
         async def _compute_completion():
             return await self._run_agent(
                 user_message=user_message,
@@ -1887,6 +1380,7 @@ class APIServerAdapter(BasePlatformAdapter):
                 ephemeral_system_prompt=system_prompt,
                 session_id=session_id,
                 gateway_session_key=gateway_session_key,
+                request_hermes_home=request_hermes_home,
             )
 
         idempotency_key = request.headers.get("Idempotency-Key")
@@ -2888,6 +2382,7 @@ class APIServerAdapter(BasePlatformAdapter):
                     "result": function_result,
                 }))
 
+            request_hermes_home = request.headers.get(_SEMANTIER_HERMES_HOME_HEADER, "").strip() or None
             agent_ref = [None]
             agent_task = asyncio.ensure_future(self._run_agent(
                 user_message=user_message,
@@ -2900,6 +2395,7 @@ class APIServerAdapter(BasePlatformAdapter):
                 tool_complete_callback=_on_tool_complete,
                 agent_ref=agent_ref,
                 gateway_session_key=gateway_session_key,
+                request_hermes_home=request_hermes_home,
             ))
             # Ensure SSE drain loops can terminate without relying on polling
             # agent_task.done(), which can race with queue timeout checks.
@@ -2926,6 +2422,7 @@ class APIServerAdapter(BasePlatformAdapter):
                 gateway_session_key=gateway_session_key,
             )
 
+        request_hermes_home = request.headers.get(_SEMANTIER_HERMES_HOME_HEADER, "").strip() or None
         async def _compute_response():
             return await self._run_agent(
                 user_message=user_message,
@@ -2933,6 +2430,7 @@ class APIServerAdapter(BasePlatformAdapter):
                 ephemeral_system_prompt=instructions,
                 session_id=session_id,
                 gateway_session_key=gateway_session_key,
+                request_hermes_home=request_hermes_home,
             )
 
         idempotency_key = request.headers.get("Idempotency-Key")
@@ -3074,11 +2572,6 @@ class APIServerAdapter(BasePlatformAdapter):
         """Validate and extract job_id. Returns (job_id, error_response)."""
         job_id = request.match_info["job_id"]
         if not self._JOB_ID_RE.fullmatch(job_id):
-            logger.warning(
-                "Cron jobs API rejected invalid job_id %r: %s",
-                job_id,
-                self._request_audit_log_suffix(request),
-            )
             return job_id, web.json_response(
                 {"error": "Invalid job ID format"}, status=400,
             )
@@ -3136,7 +2629,6 @@ class APIServerAdapter(BasePlatformAdapter):
                 "schedule": schedule,
                 "name": name,
                 "deliver": deliver,
-                "origin": self._cron_origin_from_request(request),
             }
             if skills:
                 kwargs["skills"] = skills
@@ -3331,44 +2823,6 @@ class APIServerAdapter(BasePlatformAdapter):
             return len(prior)
         return 0
 
-    @classmethod
-    def _turn_transcript_messages(
-        cls,
-        conversation_history: List[Dict[str, Any]],
-        user_message: Any,
-        result: Dict[str, Any],
-    ) -> List[Dict[str, Any]]:
-        """Return this turn's assistant/tool messages in client-safe shape.
-
-        The streaming SSE contract delivers all assistant text as
-        ``assistant.delta`` events under one ``message_id`` interleaved with
-        ``tool.*`` events, and a single ``assistant.completed`` carrying only
-        the final reply.  A client that accumulates deltas into one buffer
-        cannot reconstruct *intermediate* assistant text segments that preceded
-        tool calls — so when the page is re-opened mid/post-stream those
-        segments appear lost, even though state.db persisted them correctly.
-
-        Emitting the authoritative per-turn transcript on ``run.completed`` lets
-        any SSE consumer reconcile its live view against ground truth without a
-        separate ``GET /messages`` round-trip.  Purely additive: clients that
-        ignore the field are unaffected.  Refs #34703.
-        """
-        agent_messages = result.get("messages") if isinstance(result, dict) else None
-        if not isinstance(agent_messages, list) or not agent_messages:
-            return []
-        start = cls._response_messages_turn_start_index(
-            conversation_history, user_message, result
-        )
-        turn = agent_messages[start:]
-        out: List[Dict[str, Any]] = []
-        for msg in turn:
-            if not isinstance(msg, dict):
-                continue
-            if msg.get("role") not in {"assistant", "tool"}:
-                continue
-            out.append(cls._message_response(msg))
-        return out
-
     @staticmethod
     def _extract_output_items(result: Dict[str, Any], start_index: int = 0) -> List[Dict[str, Any]]:
         """
@@ -3435,6 +2889,7 @@ class APIServerAdapter(BasePlatformAdapter):
         tool_complete_callback=None,
         agent_ref: Optional[list] = None,
         gateway_session_key: Optional[str] = None,
+        request_hermes_home: Optional[str] = None,
     ) -> tuple:
         """
         Create an agent and run a conversation in a thread executor.
@@ -3450,35 +2905,102 @@ class APIServerAdapter(BasePlatformAdapter):
         loop = asyncio.get_running_loop()
 
         def _run():
-            agent = self._create_agent(
-                ephemeral_system_prompt=ephemeral_system_prompt,
-                session_id=session_id,
-                stream_delta_callback=stream_delta_callback,
-                tool_progress_callback=tool_progress_callback,
-                tool_start_callback=tool_start_callback,
-                tool_complete_callback=tool_complete_callback,
-                gateway_session_key=gateway_session_key,
-            )
-            if agent_ref is not None:
-                agent_ref[0] = agent
-            effective_task_id = session_id or str(uuid.uuid4())
-            result = agent.run_conversation(
-                user_message=user_message,
-                conversation_history=conversation_history,
-                task_id=effective_task_id,
-            )
-            usage = {
-                "input_tokens": getattr(agent, "session_prompt_tokens", 0) or 0,
-                "output_tokens": getattr(agent, "session_completion_tokens", 0) or 0,
-                "total_tokens": getattr(agent, "session_total_tokens", 0) or 0,
-            }
-            # Include the effective session ID in the result so callers
-            # (e.g. X-Hermes-Session-Id header) can track compression-
-            # triggered session rotations. (#16938)
-            _eff_sid = getattr(agent, "session_id", session_id)
-            if isinstance(_eff_sid, str) and _eff_sid:
-                result["session_id"] = _eff_sid
-            return result, usage
+            with _bound_request_hermes_home(request_hermes_home):
+                agent = self._create_agent(
+                    ephemeral_system_prompt=ephemeral_system_prompt,
+                    session_id=session_id,
+                    stream_delta_callback=stream_delta_callback,
+                    tool_progress_callback=tool_progress_callback,
+                    tool_start_callback=tool_start_callback,
+                    tool_complete_callback=tool_complete_callback,
+                    gateway_session_key=gateway_session_key,
+                )
+                if agent_ref is not None:
+                    agent_ref[0] = agent
+                effective_task_id = session_id or str(uuid.uuid4())
+                result = agent.run_conversation(
+                    user_message=user_message,
+                    conversation_history=conversation_history,
+                    task_id=effective_task_id,
+                )
+                usage = {
+                    "input_tokens": getattr(agent, "session_prompt_tokens", 0) or 0,
+                    "output_tokens": getattr(agent, "session_completion_tokens", 0) or 0,
+                    "total_tokens": getattr(agent, "session_total_tokens", 0) or 0,
+                }
+                # Include the effective session ID in the result so callers
+                # (e.g. X-Hermes-Session-Id header) can track compression-
+                # triggered session rotations. (#16938)
+                _eff_sid = getattr(agent, "session_id", session_id)
+                if isinstance(_eff_sid, str) and _eff_sid:
+                    result["session_id"] = _eff_sid
+
+                # Auto-title: fire-and-forget, matching the Weixin gateway pattern.
+                # Capture the workspace home path NOW (inside the bound context)
+                # so the background thread doesn't race against env changes.
+                _final_resp = result.get("final_response", "")
+                if _final_resp and user_message:
+                    try:
+                        from agent.title_generator import maybe_auto_title as _maybe_auto_title
+
+                        _ws_home = (
+                            Path(request_hermes_home).resolve()
+                            if request_hermes_home
+                            else None
+                        )
+
+                        def _workspace_title_cb(_title: str) -> None:
+                            if _ws_home is None:
+                                return
+                            try:
+                                from agents.workspace_session_logs import (
+                                    update_workspace_session_title,
+                                )
+
+                                _r = update_workspace_session_title(
+                                    _ws_home, _eff_sid, _title
+                                )
+                                if _r is None:
+                                    logger.warning(
+                                        "Auto-title workspace sync: session not found "
+                                        "[session=%s workspace=%s]",
+                                        _eff_sid,
+                                        _ws_home,
+                                    )
+                            except Exception:
+                                logger.warning(
+                                    "Failed to sync workspace session title for %s",
+                                    _eff_sid,
+                                    exc_info=True,
+                                )
+
+                        try:
+                            from hermes_state import SessionDB as _SessionDB
+
+                            _title_db = (
+                                _SessionDB(db_path=_ws_home / "state.db")
+                                if _ws_home is not None
+                                else self._ensure_session_db()
+                            )
+                        except Exception:
+                            _title_db = self._ensure_session_db()
+
+                        _maybe_auto_title(
+                            _title_db,
+                            _eff_sid,
+                            user_message,
+                            _final_resp,
+                            result.get("messages", []),
+                            title_callback=_workspace_title_cb if _ws_home else None,
+                        )
+                    except Exception:
+                        logger.debug(
+                            "Failed to queue auto-title for session %s",
+                            session_id,
+                            exc_info=True,
+                        )
+
+                return result, usage
 
         return await loop.run_in_executor(None, _run)
 
@@ -4088,24 +3610,12 @@ class APIServerAdapter(BasePlatformAdapter):
         try:
             mws = [mw for mw in (cors_middleware, body_limit_middleware, security_headers_middleware) if mw is not None]
             self._app = web.Application(middlewares=mws, client_max_size=MAX_REQUEST_BYTES)
-            assert self._app is not None
+            self._app["api_server_adapter"] = self
             self._app.router.add_get("/health", self._handle_health)
             self._app.router.add_get("/health/detailed", self._handle_health_detailed)
             self._app.router.add_get("/v1/health", self._handle_health)
             self._app.router.add_get("/v1/models", self._handle_models)
             self._app.router.add_get("/v1/capabilities", self._handle_capabilities)
-            self._app.router.add_get("/v1/skills", self._handle_skills)
-            self._app.router.add_get("/v1/toolsets", self._handle_toolsets)
-            # Session/client control surface (thin wrappers over SessionDB + _run_agent)
-            self._app.router.add_get("/api/sessions", self._handle_list_sessions)
-            self._app.router.add_post("/api/sessions", self._handle_create_session)
-            self._app.router.add_get("/api/sessions/{session_id}", self._handle_get_session)
-            self._app.router.add_patch("/api/sessions/{session_id}", self._handle_patch_session)
-            self._app.router.add_delete("/api/sessions/{session_id}", self._handle_delete_session)
-            self._app.router.add_get("/api/sessions/{session_id}/messages", self._handle_session_messages)
-            self._app.router.add_post("/api/sessions/{session_id}/fork", self._handle_fork_session)
-            self._app.router.add_post("/api/sessions/{session_id}/chat", self._handle_session_chat)
-            self._app.router.add_post("/api/sessions/{session_id}/chat/stream", self._handle_session_chat_stream)
             self._app.router.add_post("/v1/chat/completions", self._handle_chat_completions)
             self._app.router.add_post("/v1/responses", self._handle_responses)
             self._app.router.add_get("/v1/responses/{response_id}", self._handle_get_response)
@@ -4125,12 +3635,6 @@ class APIServerAdapter(BasePlatformAdapter):
             self._app.router.add_get("/v1/runs/{run_id}/events", self._handle_run_events)
             self._app.router.add_post("/v1/runs/{run_id}/approval", self._handle_run_approval)
             self._app.router.add_post("/v1/runs/{run_id}/stop", self._handle_stop_run)
-            # Store the adapter after native routes are registered. Local Hermes-Relay
-            # bootstrap shims use this key as a feature-detection hook; registering
-            # native routes first lets those shims no-op instead of shadowing the
-            # upstream session-control handlers.
-            self._app["api_server_adapter"] = self
-
             # Start background sweep to clean up orphaned (unconsumed) run streams
             sweep_task = asyncio.create_task(self._sweep_orphaned_runs())
             try:
@@ -4140,13 +3644,11 @@ class APIServerAdapter(BasePlatformAdapter):
             if hasattr(sweep_task, "add_done_callback"):
                 sweep_task.add_done_callback(self._background_tasks.discard)
 
-            # Refuse to start without authentication. The API server can
-            # dispatch terminal-capable agent work, so every deployment needs
-            # an explicit API_SERVER_KEY regardless of bind address.
-            if not self._api_key:
+            # Refuse to start network-accessible without authentication
+            if is_network_accessible(self._host) and not self._api_key:
                 logger.error(
-                    "[%s] Refusing to start: API_SERVER_KEY is required for the API server, "
-                    "including loopback-only binds on %s.",
+                    "[%s] Refusing to start: binding to %s requires API_SERVER_KEY. "
+                    "Set API_SERVER_KEY or use the default 127.0.0.1.",
                     self.name, self._host,
                 )
                 return False
@@ -4184,6 +3686,14 @@ class APIServerAdapter(BasePlatformAdapter):
             await self._site.start()
 
             self._mark_connected()
+            if not self._api_key:
+                logger.warning(
+                    "[%s] ⚠️  No API key configured (API_SERVER_KEY / platforms.api_server.key). "
+                    "All requests will be accepted without authentication. "
+                    "Set an API key for production deployments to prevent "
+                    "unauthorized access to sessions, responses, and cron jobs.",
+                    self.name,
+                )
             logger.info(
                 "[%s] API server listening on http://%s:%d (model: %s)",
                 self.name, self._host, self._port, self._model_name,

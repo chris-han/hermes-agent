@@ -142,17 +142,9 @@ def _expand_acp_enabled_toolsets(
     mcp_server_names: List[str] | None = None,
 ) -> List[str]:
     """Return ACP toolsets plus explicit MCP server toolsets for this session."""
-    expanded: List[str] = []
-    for name in list(toolsets or ["hermes-acp"]):
-        if name and name not in expanded:
-            expanded.append(name)
+    from acp_adapter.runtime_toolsets import expand_enabled_toolsets
 
-    for server_name in list(mcp_server_names or []):
-        toolset_name = f"mcp-{server_name}"
-        if server_name and toolset_name not in expanded:
-            expanded.append(toolset_name)
-
-    return expanded
+    return expand_enabled_toolsets(toolsets or ["hermes-acp"], mcp_server_names=mcp_server_names)
 
 
 def _clear_task_cwd(task_id: str) -> None:
@@ -592,11 +584,12 @@ class SessionManager:
             for name, cfg in (config.get("mcp_servers") or {}).items()
             if not isinstance(cfg, dict) or cfg.get("enabled", True) is not False
         ]
+        from acp_adapter.runtime_toolsets import resolve_semantier_acp_enabled_toolsets
 
         kwargs = {
             "platform": "acp",
-            "enabled_toolsets": _expand_acp_enabled_toolsets(
-                ["hermes-acp"],
+            "enabled_toolsets": resolve_semantier_acp_enabled_toolsets(
+                config,
                 mcp_server_names=configured_mcp_servers,
             ),
             "quiet_mode": True,

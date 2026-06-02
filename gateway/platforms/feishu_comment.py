@@ -1044,7 +1044,32 @@ def _save_session_history(key: str, messages: List[Dict[str, Any]]) -> None:
         logger.info("[Feishu-Comment] Session saved: %s (%d messages)", key, len(cleaned))
 
 
-def _run_comment_agent(prompt: str, client: Any, session_key: str = "") -> str:
+def _resolve_workspace_context_for_open_id(open_id: str) -> Dict[str, str] | None:
+    normalized_open_id = str(open_id or "").strip()
+    if not normalized_open_id:
+        return None
+    try:
+        from agents.gateway_identity import list_user_records
+    except Exception:
+        return None
+
+    for user in list_user_records():
+        if str(user.get("feishu_open_id") or "").strip() != normalized_open_id:
+            continue
+        workspace_id = str(user.get("workspace_id") or "").strip()
+        user_id = str(user.get("user_id") or "").strip()
+        if workspace_id and user_id:
+            return {"workspace_id": workspace_id, "user_id": user_id}
+    return None
+
+
+def _run_comment_agent(
+    prompt: str,
+    client: Any,
+    session_key: str = "",
+    workspace_id: str = "",
+    origin_user_id: str = "",
+) -> str:
     """Create an AIAgent with feishu tools and run the prompt.
 
     If *session_key* is provided, loads/saves conversation history for
@@ -1065,8 +1090,30 @@ def _run_comment_agent(prompt: str, client: Any, session_key: str = "") -> str:
         logger.info("[Feishu-Comment] _run_comment_agent: model=%s provider=%s base_url=%s",
                     model, runtime_kwargs.get("provider"), (runtime_kwargs.get("base_url") or "")[:50])
 
-        # Load session history for cross-card memory
-        history = _load_session_history(session_key) if session_key else []
+        workspace_hermes_home = None
+        canonical_session_id = ""
+        normalized_workspace_id = str(workspace_id or "").strip()
+        if normalized_workspace_id:
+            from gateway.session import resolve_workspace_gateway_session
+
+            class _FeishuSource:
+                workspace_owner_id = normalized_workspace_id
+                chat_id = session_key or None
+                thread_id = None
+                user_id = origin_user_id or None
+
+            canonical_session_id, workspace_hermes_home = resolve_workspace_gateway_session(
+                _FeishuSource(),
+                session_id="",
+                session_key=session_key or "",
+                source_gateway="feishu",
+                create_if_missing=False,
+            )
+
+        # Legacy in-memory history is only retained for non-workspace flows.
+        history = []
+        if not canonical_session_id and session_key:
+            history = _load_session_history(session_key)
         if history:
             logger.info("[Feishu-Comment] _run_comment_agent: loaded %d history messages from session %s",
                         len(history), session_key)
@@ -1083,7 +1130,16 @@ def _run_comment_agent(prompt: str, client: Any, session_key: str = "") -> str:
             skip_memory=True,
             max_iterations=15,
             enabled_toolsets=["feishu_doc", "feishu_drive"],
+            save_trajectories=True,
+            session_id=canonical_session_id or None,
+            platform="feishu",
+            gateway_session_key=session_key or None,
+            user_id=origin_user_id or None,
+            chat_id=session_key or None,
         )
+        if workspace_hermes_home is not None:
+            from agents.workspace_session_logs import configure_agent_workspace_session_paths
+            configure_agent_workspace_session_paths(agent, workspace_hermes_home, canonical_session_id)
         logger.info("[Feishu-Comment] _run_comment_agent: calling run_conversation (prompt=%d chars, history=%d)",
                     len(prompt), len(history))
         result = agent.run_conversation(prompt, conversation_history=history or None)
@@ -1093,7 +1149,7 @@ def _run_comment_agent(prompt: str, client: Any, session_key: str = "") -> str:
                     api_calls, len(response), response[:200])
 
         # Save updated history
-        if session_key:
+        if session_key and not canonical_session_id:
             new_messages = result.get("messages", [])
             if new_messages:
                 _save_session_history(session_key, new_messages)
@@ -1349,9 +1405,16 @@ async def handle_drive_comment_event(
     # Step 4: Run agent in a thread (run_conversation is synchronous)
     # Session key groups all comment cards on the same document
     sess_key = _session_key(file_type, file_token)
+    workspace_ctx = _resolve_workspace_context_for_open_id(from_open_id)
     loop = asyncio.get_running_loop()
     response = await loop.run_in_executor(
-        None, _run_comment_agent, prompt, client, sess_key,
+        None,
+        _run_comment_agent,
+        prompt,
+        client,
+        sess_key,
+        str((workspace_ctx or {}).get("workspace_id") or ""),
+        from_open_id,
     )
 
     if not response or _NO_REPLY_SENTINEL in response:

@@ -1,6 +1,7 @@
 """Tests for empty model fallback — when provider is configured but model is missing."""
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
+import pytest
 
 
 class TestGetDefaultModelForProvider:
@@ -29,6 +30,15 @@ class TestGetDefaultModelForProvider:
         from hermes_cli.models import get_default_model_for_provider
         # Custom providers don't have entries in _PROVIDER_MODELS
         assert get_default_model_for_provider("some-random-custom") == ""
+
+    def test_alibaba_default_pins_qwen35plus(self):
+        # The generally-available DashScope key tier is entitled to qwen3.5-plus;
+        # qwen3.6-plus requires explicit account entitlement and yields HTTP 403
+        # Model.AccessDenied when used as the implicit default. Keep qwen3.5-plus
+        # first for both alibaba and alibaba-coding-plan providers.
+        from hermes_cli.models import get_default_model_for_provider
+        assert get_default_model_for_provider("alibaba") == "qwen3.5-plus"
+        assert get_default_model_for_provider("alibaba-coding-plan") == "qwen3.5-plus"
 
 
 class TestGatewayEmptyModelFallback:
@@ -98,6 +108,14 @@ class TestGatewayEmptyModelFallback:
 class TestResolveGatewayModel:
     """Test _resolve_gateway_model reads model from config correctly."""
 
+    @pytest.fixture(autouse=True)
+    def _clear_model_env(self, monkeypatch):
+        # Isolate config-driven resolution from any HERMES_MODEL leaking
+        # in from the developer/CI shell; the env-precedence behaviour is
+        # exercised in its own test below.
+        monkeypatch.delenv("HERMES_MODEL", raising=False)
+        monkeypatch.delenv("HERMES_INFERENCE_MODEL", raising=False)
+
     def test_returns_default_key(self):
         from gateway.run import _resolve_gateway_model
         assert _resolve_gateway_model({"model": {"default": "gpt-5.4"}}) == "gpt-5.4"
@@ -117,3 +135,26 @@ class TestResolveGatewayModel:
     def test_string_model_config(self):
         from gateway.run import _resolve_gateway_model
         assert _resolve_gateway_model({"model": "my-model"}) == "my-model"
+
+    def test_env_hermes_model_used_when_config_missing(self, monkeypatch):
+        # Deployment scenario: compose env sets HERMES_MODEL but the
+        # container has no ~/.hermes/config.yaml. The gateway must honour
+        # the env value rather than dropping through to the provider-
+        # catalog default (which can yield 403 Model.AccessDenied when the
+        # entitled model differs from the catalog's first entry).
+        from gateway.run import _resolve_gateway_model
+        monkeypatch.setenv("HERMES_MODEL", "qwen3.5-plus")
+        assert _resolve_gateway_model({}) == "qwen3.5-plus"
+        assert _resolve_gateway_model({"model": {}}) == "qwen3.5-plus"
+
+    def test_env_hermes_inference_model_used_when_hermes_model_missing(self, monkeypatch):
+        from gateway.run import _resolve_gateway_model
+        monkeypatch.setenv("HERMES_INFERENCE_MODEL", "qwen3.5-plus")
+        assert _resolve_gateway_model({}) == "qwen3.5-plus"
+
+    def test_config_default_wins_over_env(self, monkeypatch):
+        # Operators who explicitly pin model.default in config.yaml keep
+        # that value even when HERMES_MODEL is set in the environment.
+        from gateway.run import _resolve_gateway_model
+        monkeypatch.setenv("HERMES_MODEL", "qwen3.5-plus")
+        assert _resolve_gateway_model({"model": {"default": "gpt-5.4"}}) == "gpt-5.4"

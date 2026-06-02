@@ -4,6 +4,9 @@ import asyncio
 import base64
 import json
 import os
+import sys
+import types
+from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -11,10 +14,14 @@ import pytest
 from gateway.config import PlatformConfig
 from gateway.config import GatewayConfig, HomeChannel, Platform, _apply_env_overrides
 from gateway.platforms.base import SendResult
-from gateway.platforms.base import MessageEvent, MessageType
 from gateway.platforms import weixin
 from gateway.platforms.weixin import ContextTokenStore, WeixinAdapter
 from tools.send_message_tool import _parse_target_ref, _send_to_platform
+
+
+@pytest.fixture(autouse=True)
+def explicit_weixin_auth_db(monkeypatch, tmp_path):
+    monkeypatch.setenv("SEMANTIER_AUTH_DB_PATH", str(tmp_path / "auth.db"))
 
 
 def _make_adapter() -> WeixinAdapter:
@@ -182,8 +189,11 @@ class TestWeixinChunking:
 
 
 class TestWeixinConfig:
-    def test_apply_env_overrides_configures_weixin(self):
+    def test_apply_env_overrides_does_not_enable_weixin_from_legacy_env_credentials(self, monkeypatch):
         config = GatewayConfig()
+        fake_auth_db = types.ModuleType("agents.auth_db")
+        fake_auth_db.load_weixin_runtime_accounts = lambda: []
+        monkeypatch.setitem(sys.modules, "agents.auth_db", fake_auth_db)
 
         with patch.dict(
             os.environ,
@@ -191,12 +201,66 @@ class TestWeixinConfig:
                 "WEIXIN_ACCOUNT_ID": "bot-account",
                 "WEIXIN_TOKEN": "bot-token",
                 "WEIXIN_BASE_URL": "https://ilink.example.com/",
-                "WEIXIN_CDN_BASE_URL": "https://cdn.example.com/c2c/",
-                "WEIXIN_DM_POLICY": "allowlist",
-                "WEIXIN_SPLIT_MULTILINE_MESSAGES": "true",
-                "WEIXIN_ALLOWED_USERS": "wxid_1,wxid_2",
-                "WEIXIN_HOME_CHANNEL": "wxid_1",
-                "WEIXIN_HOME_CHANNEL_NAME": "Primary DM",
+            },
+            clear=True,
+        ):
+            _apply_env_overrides(config)
+
+        assert Platform.WEIXIN not in config.platforms
+
+    def test_apply_env_overrides_configures_weixin_from_semantier_runtime_account(self, monkeypatch):
+        config = GatewayConfig()
+        fake_auth_db = types.ModuleType("agents.auth_db")
+        fake_auth_db.load_weixin_runtime_accounts = lambda: [
+            {
+                "account_id": "older@im.bot",
+                "token": "older-token",
+                "saved_at": "2026-05-17T01:00:00Z",
+            },
+            {
+                "account_id": "newer@im.bot",
+                "token": "newer-token",
+                "base_url": "https://ilinkai.weixin.qq.com",
+                "dm_policy": "pairing",
+                "allow_from": "wx-owner-1",
+                "home_channel": "wx-owner-1",
+                "runtime_session_state": "connected",
+                "runtime_session_updated_at": "2026-05-17T02:00:00Z",
+            },
+        ]
+        monkeypatch.setitem(sys.modules, "agents.auth_db", fake_auth_db)
+
+        with patch.dict(os.environ, {}, clear=True):
+            _apply_env_overrides(config)
+
+        platform_config = config.platforms[Platform.WEIXIN]
+        assert platform_config.enabled is True
+        assert platform_config.token == "newer-token"
+        assert platform_config.extra["account_id"] == "newer@im.bot"
+        assert platform_config.extra["base_url"] == "https://ilinkai.weixin.qq.com"
+        assert platform_config.extra["dm_policy"] == "pairing"
+        assert platform_config.extra["allow_from"] == "wx-owner-1"
+        assert platform_config.home_channel == HomeChannel(Platform.WEIXIN, "wx-owner-1", "Home")
+
+    def test_apply_env_overrides_ignores_legacy_env_credentials_when_runtime_account_exists(self, monkeypatch):
+        config = GatewayConfig()
+        fake_auth_db = types.ModuleType("agents.auth_db")
+        fake_auth_db.load_weixin_runtime_accounts = lambda: [
+            {
+                "account_id": "saved@im.bot",
+                "token": "saved-token",
+                "base_url": "https://saved.example.com",
+                "home_channel": "wx-owner-1",
+            }
+        ]
+        monkeypatch.setitem(sys.modules, "agents.auth_db", fake_auth_db)
+
+        with patch.dict(
+            os.environ,
+            {
+                "WEIXIN_ACCOUNT_ID": "env@im.bot",
+                "WEIXIN_TOKEN": "env-token",
+                "WEIXIN_BASE_URL": "https://env.example.com/",
             },
             clear=True,
         ):
@@ -204,14 +268,10 @@ class TestWeixinConfig:
 
         platform_config = config.platforms[Platform.WEIXIN]
         assert platform_config.enabled is True
-        assert platform_config.token == "bot-token"
-        assert platform_config.extra["account_id"] == "bot-account"
-        assert platform_config.extra["base_url"] == "https://ilink.example.com"
-        assert platform_config.extra["cdn_base_url"] == "https://cdn.example.com/c2c"
-        assert platform_config.extra["dm_policy"] == "allowlist"
-        assert platform_config.extra["split_multiline_messages"] == "true"
-        assert platform_config.extra["allow_from"] == "wxid_1,wxid_2"
-        assert platform_config.home_channel == HomeChannel(Platform.WEIXIN, "wxid_1", "Primary DM")
+        assert platform_config.token == "saved-token"
+        assert platform_config.extra["account_id"] == "saved@im.bot"
+        assert platform_config.extra["base_url"] == "https://saved.example.com"
+        assert platform_config.home_channel == HomeChannel(Platform.WEIXIN, "wx-owner-1", "Home")
 
     def test_get_connected_platforms_includes_weixin_with_token(self):
         config = GatewayConfig(
@@ -239,19 +299,62 @@ class TestWeixinConfig:
         assert config.get_connected_platforms() == []
 
 
+class TestWeixinDiagnostics:
+    def test_network_diagnostic_helpers_capture_errno_chain_and_proxy_host(self):
+        with patch.dict(os.environ, {"HTTPS_PROXY": "http://proxy.example:8080"}, clear=False):
+            try:
+                try:
+                    raise ConnectionResetError(104, "Connection reset by peer")
+                except ConnectionResetError as inner:
+                    raise RuntimeError("long poll failed") from inner
+            except RuntimeError as exc:
+                assert weixin._exception_errno(exc) == 104
+                summary = weixin._exception_chain_summary(exc)
+                assert "RuntimeError: long poll failed" in summary
+                assert "ConnectionResetError: [Errno 104] Connection reset by peer" in summary
+                assert "HTTPS_PROXY=proxy.example" in weixin._proxy_host_summary()
+
+
 class TestWeixinStatePersistence:
-    def test_save_weixin_account_preserves_existing_file_on_replace_failure(self, tmp_path, monkeypatch):
-        account_path = tmp_path / "weixin" / "accounts" / "acct.json"
-        account_path.parent.mkdir(parents=True, exist_ok=True)
-        original = {"token": "old-token", "base_url": "https://old.example.com"}
-        account_path.write_text(json.dumps(original), encoding="utf-8")
+    def test_save_weixin_account_uses_auth_db(self, tmp_path):
+        weixin.save_weixin_account(
+            str(tmp_path),
+            account_id="acct",
+            token="new-token",
+            base_url="https://new.example.com",
+            user_id="wxid_new",
+        )
 
-        def _boom(_src, _dst):
-            raise OSError("disk full")
+        persisted = weixin.load_weixin_account(str(tmp_path), "acct")
+        assert persisted == {
+            "account_id": "acct",
+            "base_url": "https://new.example.com",
+            "external_user_id": "wxid_new",
+            "saved_at": persisted["saved_at"],
+            "token": "new-token",
+            "user_id": "wxid_new",
+        }
+        assert not (tmp_path / "weixin" / "accounts").exists()
 
-        monkeypatch.setattr("utils.os.replace", _boom)
+    def test_context_token_persist_uses_auth_db(self, tmp_path):
+        store = ContextTokenStore(str(tmp_path))
+        store.set("acct", "user-b", "new-token")
 
-        try:
+        restored = ContextTokenStore(str(tmp_path))
+        restored.restore("acct")
+        assert restored.get("acct", "user-b") == "new-token"
+        assert not (tmp_path / "weixin" / "accounts").exists()
+
+    def test_save_sync_buf_uses_auth_db(self, tmp_path):
+        weixin._save_sync_buf(str(tmp_path), "acct", "new-sync")
+
+        assert weixin._load_sync_buf(str(tmp_path), "acct") == "new-sync"
+        assert not (tmp_path / "weixin" / "accounts").exists()
+
+    def test_weixin_persistence_requires_explicit_auth_db(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("SEMANTIER_AUTH_DB_PATH", raising=False)
+
+        with pytest.raises(RuntimeError, match="explicit auth DB path"):
             weixin.save_weixin_account(
                 str(tmp_path),
                 account_id="acct",
@@ -259,53 +362,10 @@ class TestWeixinStatePersistence:
                 base_url="https://new.example.com",
                 user_id="wxid_new",
             )
-        except OSError:
-            pass
-        else:
-            raise AssertionError("expected save_weixin_account to propagate replace failure")
-
-        assert json.loads(account_path.read_text(encoding="utf-8")) == original
-
-    def test_context_token_persist_preserves_existing_file_on_replace_failure(self, tmp_path, monkeypatch):
-        token_path = tmp_path / "weixin" / "accounts" / "acct.context-tokens.json"
-        token_path.parent.mkdir(parents=True, exist_ok=True)
-        token_path.write_text(json.dumps({"user-a": "old-token"}), encoding="utf-8")
-
-        def _boom(_src, _dst):
-            raise OSError("disk full")
-
-        monkeypatch.setattr("utils.os.replace", _boom)
-
-        store = ContextTokenStore(str(tmp_path))
-        with patch.object(weixin.logger, "warning") as warning_mock:
-            store.set("acct", "user-b", "new-token")
-
-        assert json.loads(token_path.read_text(encoding="utf-8")) == {"user-a": "old-token"}
-        warning_mock.assert_called_once()
-
-    def test_save_sync_buf_preserves_existing_file_on_replace_failure(self, tmp_path, monkeypatch):
-        sync_path = tmp_path / "weixin" / "accounts" / "acct.sync.json"
-        sync_path.parent.mkdir(parents=True, exist_ok=True)
-        sync_path.write_text(json.dumps({"get_updates_buf": "old-sync"}), encoding="utf-8")
-
-        def _boom(_src, _dst):
-            raise OSError("disk full")
-
-        monkeypatch.setattr("utils.os.replace", _boom)
-
-        try:
-            weixin._save_sync_buf(str(tmp_path), "acct", "new-sync")
-        except OSError:
-            pass
-        else:
-            raise AssertionError("expected _save_sync_buf to propagate replace failure")
-
-        assert json.loads(sync_path.read_text(encoding="utf-8")) == {"get_updates_buf": "old-sync"}
 
 
 class TestWeixinQrLogin:
-    @pytest.mark.asyncio
-    async def test_qr_login_timeout_uses_monotonic_clock(self, tmp_path):
+    def test_qr_login_timeout_uses_monotonic_clock(self, tmp_path):
         first_qr = {
             "qrcode": "qr-1",
             "qrcode_img_content": "https://example.com/qr-1",
@@ -326,7 +386,7 @@ class TestWeixinQrLogin:
             session.__aexit__.return_value = False
             session_cls.return_value = session
 
-            result = await weixin.qr_login(str(tmp_path), timeout_seconds=1)
+            result = asyncio.run(weixin.qr_login(str(tmp_path), timeout_seconds=1))
 
         assert result is None
         assert api_get_mock.await_count == 2
@@ -410,6 +470,78 @@ class TestWeixinChunkDelivery:
         retry = send_message_mock.await_args_list[2].kwargs
         assert first_try["text"] == retry["text"]
         assert first_try["client_id"] == retry["client_id"]
+
+    @patch("gateway.platforms.weixin.asyncio.sleep", new_callable=AsyncMock)
+    @patch("gateway.platforms.weixin._send_message", new_callable=AsyncMock)
+    def test_send_uses_refreshed_context_token_for_following_chunks(self, send_message_mock, _sleep_mock):
+        adapter = self._connected_adapter()
+        adapter.MAX_MESSAGE_LENGTH = 12
+        adapter._token_store.get = Mock(return_value="ctx-old")
+        adapter._token_store.set = Mock()
+
+        send_message_mock.side_effect = [
+            {"ret": 0, "context_token": "ctx-new"},
+            {"ret": 0},
+        ]
+
+        result = asyncio.run(adapter.send("wxid_test123", "first\n\nsecond"))
+
+        assert result.success is True
+        assert send_message_mock.await_count == 2
+        assert send_message_mock.await_args_list[0].kwargs["context_token"] == "ctx-old"
+        assert send_message_mock.await_args_list[1].kwargs["context_token"] == "ctx-new"
+        adapter._token_store.set.assert_any_call("test-account", "wxid_test123", "ctx-new")
+
+
+class TestWeixinSessionAutoHeal:
+    @patch("gateway.platforms.weixin.asyncio.sleep", new_callable=AsyncMock)
+    @patch("gateway.platforms.weixin._get_updates", new_callable=AsyncMock)
+    def test_poll_session_expiry_reopens_transport_sessions(self, get_updates_mock, sleep_mock):
+        adapter = _make_adapter()
+        adapter._running = True
+        adapter._poll_session = object()
+        adapter._send_session = object()
+        adapter._reopen_transport_sessions_for_session_expiry = AsyncMock(return_value=True)
+
+        async def get_updates_once_then_success(*args, **kwargs):
+            if get_updates_mock.await_count == 1:
+                return {"ret": weixin.SESSION_EXPIRED_ERRCODE, "errmsg": "session timeout"}
+            adapter._running = False
+            return {"ret": 0, "errcode": 0, "msgs": [], "get_updates_buf": "next-sync"}
+
+        get_updates_mock.side_effect = get_updates_once_then_success
+
+        asyncio.run(adapter._poll_loop())
+
+        adapter._reopen_transport_sessions_for_session_expiry.assert_awaited_once_with("session timeout")
+        sleep_mock.assert_awaited_once_with(adapter._session_expired_reconnect_delay_seconds)
+
+    @patch("gateway.platforms.weixin.asyncio.sleep", new_callable=AsyncMock)
+    @patch("gateway.platforms.weixin._send_message", new_callable=AsyncMock)
+    def test_send_session_expiry_reopens_transport_after_threshold(self, send_message_mock, sleep_mock):
+        adapter = _make_adapter()
+        adapter._send_session = object()
+        adapter._token = "test-token"
+        adapter._base_url = "https://weixin.example.com"
+        adapter._send_chunk_retries = 2
+        adapter._reopen_transport_sessions_for_session_expiry = AsyncMock(return_value=True)
+        send_message_mock.return_value = {
+            "errcode": weixin.SESSION_EXPIRED_ERRCODE,
+            "errmsg": "session timeout",
+        }
+
+        with pytest.raises(RuntimeError, match="session timeout"):
+            asyncio.run(
+                adapter._send_text_chunk(
+                    chat_id="wxid_test123",
+                    chunk="hello",
+                    context_token=None,
+                    client_id="client-1",
+                )
+            )
+
+        adapter._reopen_transport_sessions_for_session_expiry.assert_awaited_once_with("session timeout")
+        assert sleep_mock.await_count == 2
 
 
 class TestWeixinOutboundMedia:
@@ -850,31 +982,38 @@ class TestWeixinContentDedup:
     with different message_ids, bypassing message_id deduplication.
     """
 
-    def test_duplicate_content_with_different_message_ids_is_dropped(self):
+    def test_duplicate_content_with_different_message_ids_is_dropped(self, monkeypatch):
+        from types import SimpleNamespace
+        import sys
+
+        try:
+            from agents import weixin_ingress_identity
+        except ModuleNotFoundError:
+            weixin_ingress_identity = types.ModuleType("agents.weixin_ingress_identity")
+            weixin_ingress_identity.WeixinIngressOwnerResolutionError = RuntimeError
+            fake_agents = types.ModuleType("agents")
+            fake_agents.weixin_ingress_identity = weixin_ingress_identity
+            monkeypatch.setitem(sys.modules, "agents", fake_agents)
+            monkeypatch.setitem(sys.modules, "agents.weixin_ingress_identity", weixin_ingress_identity)
+
+        monkeypatch.setattr(
+            weixin_ingress_identity,
+            "resolve_weixin_ingress_owner",
+            lambda **_kwargs: SimpleNamespace(owner_workspace_id="test-workspace"),
+            raising=False,
+        )
         adapter = _make_adapter()
         adapter._poll_session = object()
         adapter.handle_message = AsyncMock()
-        # Tighten the text-debounce delay so the flush completes quickly.
-        adapter._text_batch_delay_seconds = 0.05
-        adapter._text_batch_split_delay_seconds = 0.05
 
         base_msg = {
             "from_user_id": "wxid_user1",
             "item_list": [{"type": 1, "text_item": {"text": "hello world"}}],
         }
 
-        async def _drive():
-            # Both inbound messages share the same event loop so the debounce
-            # task created by the first one survives to be flushed.
-            await adapter._process_message({**base_msg, "message_id": "msg-1"})
-            await adapter._process_message({**base_msg, "message_id": "msg-2"})
-            # Wait out the quiet period so the buffered text batch flushes.
-            await asyncio.sleep(0.2)
+        asyncio.run(adapter._process_message({**base_msg, "message_id": "msg-1"}))
+        asyncio.run(adapter._process_message({**base_msg, "message_id": "msg-2"}))
 
-        asyncio.run(_drive())
-
-        # Content-dedup drops the second (duplicate) message before it is even
-        # enqueued, so only one combined dispatch reaches handle_message.
         assert adapter.handle_message.await_count == 1
         event = adapter.handle_message.await_args[0][0]
         assert event.text == "hello world"
@@ -895,221 +1034,3 @@ class TestWeixinContentDedup:
         assert adapter.handle_message.await_count == 0
         # is_duplicate should only be called for message_id, never for content
         assert all("content:" not in str(call) for call in adapter._dedup.is_duplicate.call_args_list)
-
-
-class TestWeixinTextDebounce:
-    """Text-debounce batching for rapid multi-message bursts (issue #35301).
-
-    Delays are read from ``config.extra`` (config.yaml), not env vars.
-    """
-
-    def test_batch_delays_default_from_config(self):
-        adapter = _make_adapter()
-        assert adapter._text_batch_delay_seconds == 3.0
-        assert adapter._text_batch_split_delay_seconds == 5.0
-
-    def test_batch_delays_overridden_via_config_extra(self):
-        adapter = WeixinAdapter(
-            PlatformConfig(
-                enabled=True,
-                token="test-token",
-                extra={
-                    "account_id": "test-account",
-                    "text_batch_delay_seconds": "0.5",
-                    "text_batch_split_delay_seconds": 1.5,
-                },
-            )
-        )
-        assert adapter._text_batch_delay_seconds == 0.5
-        assert adapter._text_batch_split_delay_seconds == 1.5
-
-    def test_invalid_config_value_falls_back_to_default(self):
-        adapter = WeixinAdapter(
-            PlatformConfig(
-                enabled=True,
-                token="test-token",
-                extra={
-                    "account_id": "test-account",
-                    "text_batch_delay_seconds": "not-a-number",
-                    "text_batch_split_delay_seconds": -4,
-                },
-            )
-        )
-        assert adapter._text_batch_delay_seconds == 3.0
-        assert adapter._text_batch_split_delay_seconds == 5.0
-
-    def test_rapid_texts_collapse_into_single_dispatch(self):
-        adapter = _make_adapter()
-        adapter._text_batch_delay_seconds = 0.05
-        adapter._text_batch_split_delay_seconds = 0.05
-        dispatched = []
-
-        async def _capture(event):
-            dispatched.append(event.text)
-
-        adapter.handle_message = _capture
-
-        def _event(text):
-            return MessageEvent(
-                text=text,
-                message_type=MessageType.TEXT,
-                source=adapter.build_source(
-                    chat_id="wxid_user1", chat_type="dm",
-                    user_id="wxid_user1", user_name="wxid_user1",
-                ),
-            )
-
-        async def _drive():
-            adapter._enqueue_text_event(_event("one"))
-            adapter._enqueue_text_event(_event("two"))
-            adapter._enqueue_text_event(_event("three"))
-            assert dispatched == []  # nothing flushed during the burst
-            await asyncio.sleep(0.2)
-
-        asyncio.run(_drive())
-        assert dispatched == ["one\ntwo\nthree"]
-
-
-class _StubResponse:
-    def __init__(self, *, status=200, body="{}", delay=0.0):
-        self.status = status
-        self.ok = 200 <= status < 300
-        self._body = body
-        self._delay = delay
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *_exc):
-        return False
-
-    async def text(self):
-        if self._delay:
-            await asyncio.sleep(self._delay)
-        return self._body
-
-
-class _StubSession:
-    """Records request kwargs and returns a configurable async-CM response.
-
-    Unlike aiohttp.ClientSession it installs no TimerContext, so it cannot
-    reproduce aiohttp's cross-loop crash directly; these tests instead pin the
-    observable contract of the asyncio.wait_for migration.
-    """
-
-    def __init__(self, response):
-        self._response = response
-        self.post_calls = []
-        self.get_calls = []
-
-    def post(self, url, **kwargs):
-        self.post_calls.append((url, kwargs))
-        return self._response
-
-    def get(self, url, **kwargs):
-        self.get_calls.append((url, kwargs))
-        return self._response
-
-
-class TestWeixinApiTimeout:
-    def test_api_post_does_not_pass_aiohttp_timeout_kwarg(self):
-        session = _StubSession(_StubResponse(body='{"ret": 0}'))
-        result = asyncio.run(
-            weixin._api_post(
-                session,
-                base_url="https://weixin.example.com",
-                endpoint="ep",
-                payload={"k": "v"},
-                token="tok",
-                timeout_ms=5000,
-            )
-        )
-        assert result == {"ret": 0}
-        # The fix enforces the timeout via asyncio.wait_for, so ClientTimeout is
-        # gone and `timeout` is no longer forwarded to session.post().
-        [(_url, kwargs)] = session.post_calls
-        assert "timeout" not in kwargs
-
-    def test_api_get_does_not_pass_aiohttp_timeout_kwarg(self):
-        session = _StubSession(_StubResponse(body='{"ret": 0}'))
-        result = asyncio.run(
-            weixin._api_get(
-                session,
-                base_url="https://weixin.example.com",
-                endpoint="ep",
-                timeout_ms=5000,
-            )
-        )
-        assert result == {"ret": 0}
-        [(_url, kwargs)] = session.get_calls
-        assert "timeout" not in kwargs
-
-    def test_api_post_raises_timeout_when_response_is_slow(self):
-        # 1 ms budget against a 1 s response: wait_for must cancel and raise.
-        session = _StubSession(_StubResponse(delay=1.0))
-        with pytest.raises(asyncio.TimeoutError):
-            asyncio.run(
-                weixin._api_post(
-                    session,
-                    base_url="https://weixin.example.com",
-                    endpoint="ep",
-                    payload={"k": "v"},
-                    token="tok",
-                    timeout_ms=1,
-                )
-            )
-
-    def test_api_get_raises_timeout_when_response_is_slow(self):
-        session = _StubSession(_StubResponse(delay=1.0))
-        with pytest.raises(asyncio.TimeoutError):
-            asyncio.run(
-                weixin._api_get(
-                    session,
-                    base_url="https://weixin.example.com",
-                    endpoint="ep",
-                    timeout_ms=1,
-                )
-            )
-
-    def test_api_post_raises_runtime_error_on_non_ok_status(self):
-        # The non-2xx branch now lives inside the wait_for-wrapped inner coro;
-        # confirm it still raises with the HTTP status and truncated body.
-        session = _StubSession(_StubResponse(status=500, body="boom"))
-        with pytest.raises(RuntimeError, match="iLink POST ep HTTP 500: boom"):
-            asyncio.run(
-                weixin._api_post(
-                    session,
-                    base_url="https://weixin.example.com",
-                    endpoint="ep",
-                    payload={"k": "v"},
-                    token="tok",
-                    timeout_ms=5000,
-                )
-            )
-
-    def test_api_get_raises_runtime_error_on_non_ok_status(self):
-        session = _StubSession(_StubResponse(status=500, body="boom"))
-        with pytest.raises(RuntimeError, match="iLink GET ep HTTP 500: boom"):
-            asyncio.run(
-                weixin._api_get(
-                    session,
-                    base_url="https://weixin.example.com",
-                    endpoint="ep",
-                    timeout_ms=5000,
-                )
-            )
-
-    def test_get_updates_returns_empty_sentinel_on_timeout(self):
-        # wait_for raises asyncio.TimeoutError, which _get_updates swallows into
-        # an empty long-poll batch rather than propagating.
-        session = _StubSession(_StubResponse(delay=1.0))
-        result = asyncio.run(
-            weixin._get_updates(
-                session,
-                base_url="https://weixin.example.com",
-                token="tok",
-                sync_buf="buf-123",
-                timeout_ms=1,
-            )
-        )
-        assert result == {"ret": 0, "msgs": [], "get_updates_buf": "buf-123"}

@@ -31,6 +31,7 @@ def _force_local_terminal(monkeypatch):
     """
     monkeypatch.setenv("TERMINAL_ENV", "local")
 import sys
+import time
 import threading
 import unittest
 from unittest.mock import patch, MagicMock
@@ -76,6 +77,7 @@ class TestSandboxRequirements(unittest.TestCase):
         self.assertEqual(EXECUTE_CODE_SCHEMA["name"], "execute_code")
         self.assertIn("code", EXECUTE_CODE_SCHEMA["parameters"]["properties"])
         self.assertIn("code", EXECUTE_CODE_SCHEMA["parameters"]["required"])
+        self.assertIn("session_artifact_path", EXECUTE_CODE_SCHEMA["description"])
 
 
 class TestHermesToolsGeneration(unittest.TestCase):
@@ -108,11 +110,13 @@ class TestHermesToolsGeneration(unittest.TestCase):
         self.assertIn("def _call(", src)
 
     def test_convenience_helpers_present(self):
-        """Verify json_parse, shell_quote, and retry helpers are generated."""
+        """Verify json_parse, shell_quote, retry, and session artifact helpers."""
         src = generate_hermes_tools_module(["terminal"])
         self.assertIn("def json_parse(", src)
         self.assertIn("def shell_quote(", src)
         self.assertIn("def retry(", src)
+        self.assertIn("def session_artifact_path(", src)
+        self.assertIn("HERMES_SESSION_ARTIFACTS_DIR", src)
         self.assertIn("import json, os, socket, shlex, threading, time", src)
 
     def test_file_transport_uses_tempfile_fallback_for_rpc_dir(self):
@@ -443,6 +447,23 @@ except ValueError as e:
         result = self._run(code)
         self.assertEqual(result["status"], "success")
         self.assertIn("caught: nope", result["output"])
+
+    def test_session_artifact_path_helper_uses_session_scoped_dir(self):
+        code = """
+from hermes_tools import session_artifact_path
+print(session_artifact_path("tax_report.md"))
+"""
+        with patch.dict(
+            os.environ,
+            {"HERMES_HOME": "/tmp/hermes-home"},
+            clear=False,
+        ):
+            result = self._run(code)
+        self.assertEqual(result["status"], "success")
+        self.assertIn(
+            "/tmp/hermes-home/sessions/test-task/artifacts/tax_report.md",
+            result["output"],
+        )
 
 
 class TestStubSchemaDrift(unittest.TestCase):

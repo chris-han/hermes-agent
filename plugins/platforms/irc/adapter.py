@@ -49,7 +49,8 @@ from gateway.platforms.base import (
     MessageEvent,
     MessageType,
 )
-from gateway.config import Platform
+from gateway.session import SessionSource
+from gateway.config import PlatformConfig, Platform
 
 
 # ---------------------------------------------------------------------------

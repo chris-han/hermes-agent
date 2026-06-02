@@ -115,10 +115,7 @@ _SKILL_REVIEW_PROMPT = (
     "Protected skills (DO NOT edit these):\n"
     "  • Bundled skills (shipped with Hermes, e.g. 'hermes-agent').\n"
     "  • Hub-installed skills (installed via 'hermes skills install').\n"
-    "Pinned skills (marked via 'hermes curator pin') CAN be improved — "
-    "pin only blocks deletion/archive/consolidation by the curator, not "
-    "content updates. Patch them when a pitfall or missing step turns up, "
-    "same as any other agent-created skill.\n"
+    "  • Pinned skills (marked via 'hermes curator pin').\n"
     "If the only skills that need updating are protected, say\n"
     "'Nothing to save.' and stop.\n\n"
     "Do NOT capture (these become persistent self-imposed constraints "
@@ -201,10 +198,7 @@ _COMBINED_REVIEW_PROMPT = (
     "Protected skills (DO NOT edit these):\n"
     "  • Bundled skills (shipped with Hermes, e.g. 'hermes-agent').\n"
     "  • Hub-installed skills (installed via 'hermes skills install').\n"
-    "Pinned skills (marked via 'hermes curator pin') CAN be improved — "
-    "pin only blocks deletion/archive/consolidation by the curator, not "
-    "content updates. Patch them when a pitfall or missing step turns up, "
-    "same as any other agent-created skill.\n"
+    "  • Pinned skills (marked via 'hermes curator pin').\n"
     "If the only skills that need updating are protected, say\n"
     "'Nothing to save.' and stop.\n\n"
     "Do NOT capture as skills (these become persistent self-imposed "
@@ -396,9 +390,6 @@ def _run_review_in_thread(
             # parent below so memory(action="add") writes from
             # the review still land on disk; the review just
             # has zero side effects on external providers.
-            # Match parent's toolset config so ``tools[]`` is byte-identical
-            # in the request body — Anthropic's cache key includes it.
-            # (The runtime whitelist below still restricts dispatch.)
             review_agent = AIAgent(
                 model=agent.model,
                 max_iterations=16,
@@ -410,8 +401,6 @@ def _run_review_in_thread(
                 api_key=_parent_runtime.get("api_key") or None,
                 credential_pool=getattr(agent, "_credential_pool", None),
                 parent_session_id=agent.session_id,
-                enabled_toolsets=getattr(agent, "enabled_toolsets", None),
-                disabled_toolsets=getattr(agent, "disabled_toolsets", None),
                 skip_memory=True,
             )
             review_agent._memory_write_origin = "background_review"
@@ -483,11 +472,6 @@ def _run_review_in_thread(
             finally:
                 clear_thread_tool_whitelist()
 
-            # Snapshot review actions before teardown. close() is allowed to
-            # clean per-session state, but the user-visible self-improvement
-            # summary still needs the completed review agent's tool results.
-            review_messages = list(getattr(review_agent, "_session_messages", []))
-
             # Tear down memory providers while stdout is still
             # redirected so background thread teardown (Honcho flush,
             # Hindsight sync, etc.) stays silent.  The finally block
@@ -500,6 +484,7 @@ def _run_review_in_thread(
                 review_agent.close()
             except Exception:
                 pass
+            review_messages = list(getattr(review_agent, "_session_messages", []))
             review_agent = None
 
         # Scan the review agent's messages for successful tool actions

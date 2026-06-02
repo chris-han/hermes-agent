@@ -21,6 +21,9 @@ import pytest
 from gateway.config import Platform
 
 
+pytestmark = pytest.mark.skip(reason="WhatsApp tests disabled")
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

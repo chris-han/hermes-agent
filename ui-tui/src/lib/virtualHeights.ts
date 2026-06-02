@@ -1,4 +1,3 @@
-import { TERMUX_TUI_MODE } from '../config/env.js'
 import type { Msg } from '../types.js'
 
 import { transcriptBodyWidth } from './inputMetrics.js'
@@ -72,15 +71,11 @@ export const estimatedMsgHeight = (
   {
     compact,
     details,
-    thinkingVisible = details,
-    toolsVisible = details,
     userPrompt = '',
     withSeparator = false
   }: {
     compact: boolean
     details: boolean
-    thinkingVisible?: boolean
-    toolsVisible?: boolean
     userPrompt?: string
     withSeparator?: boolean
   }
@@ -101,7 +96,7 @@ export const estimatedMsgHeight = (
     return Math.max(2, msg.todos.length + 2)
   }
 
-  const bodyWidth = transcriptBodyWidth(cols, msg.role, userPrompt, TERMUX_TUI_MODE)
+  const bodyWidth = transcriptBodyWidth(cols, msg.role, userPrompt)
   const text = msg.text
   let h = wrappedLines(text || ' ', bodyWidth)
 
@@ -115,17 +110,7 @@ export const estimatedMsgHeight = (
   }
 
   if (details) {
-    const hasVisibleTools = toolsVisible && Boolean(msg.tools?.length)
-    const hasVisibleThinking = thinkingVisible && /\S/.test(msg.thinking ?? '')
-    const hasVisibleDetails = hasVisibleTools || hasVisibleThinking
-
-    if (hasVisibleDetails) {
-      h += (hasVisibleTools ? (msg.tools?.length ?? 0) : 0) + (hasVisibleThinking ? wrappedLines(msg.thinking ?? '', bodyWidth) : 0)
-
-      if (msg.role === 'assistant' && /\S/.test(msg.text)) {
-        h += 2
-      }
-    }
+    h += (msg.tools?.length ?? 0) + wrappedLines(msg.thinking ?? '', bodyWidth)
   }
 
   if (msg.role === 'user' || msg.kind === 'diff') {

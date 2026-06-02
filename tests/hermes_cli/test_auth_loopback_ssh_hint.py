@@ -11,6 +11,7 @@ import io
 import contextlib
 import socket
 
+import pytest
 
 from hermes_cli import auth as auth_mod
 

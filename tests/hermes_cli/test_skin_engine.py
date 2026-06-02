@@ -1,6 +1,10 @@
 """Tests for hermes_cli.skin_engine — the data-driven skin/theme system."""
 
+import json
+import os
 import pytest
+from pathlib import Path
+from unittest.mock import patch
 
 
 @pytest.fixture(autouse=True)
@@ -181,7 +185,7 @@ class TestSkinManagement:
 
 class TestUserSkins:
     def test_load_user_skin_from_yaml(self, tmp_path, monkeypatch):
-        from hermes_cli.skin_engine import load_skin
+        from hermes_cli.skin_engine import load_skin, _skins_dir
         # Create a user skin YAML
         skins_dir = tmp_path / "skins"
         skins_dir.mkdir()

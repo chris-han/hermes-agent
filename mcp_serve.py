@@ -59,13 +59,19 @@ except ImportError:
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _get_sessions_dir() -> Path:
-    """Return the sessions directory using HERMES_HOME."""
+def _list_all_workspace_entries() -> list:
+    """Return all session index rows from workspace-scoped session indexes.
+
+    Performs a lazy import of agents.workspace_session_logs so that mcp_serve
+    remains importable in Hermes-only contexts where the Semantier package is
+    not on sys.path.  Patchable by tests as ``mcp_serve._list_all_workspace_entries``.
+    """
     try:
-        from hermes_constants import get_hermes_home
-        return get_hermes_home() / "sessions"
-    except ImportError:
-        return Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes")) / "sessions"
+        from agents.workspace_session_logs import list_all_workspace_session_index_entries
+        return list(list_all_workspace_session_index_entries())
+    except Exception as e:
+        logger.debug("Failed to load workspace session indexes: %s", e)
+        return []
 
 
 def _get_session_db():
@@ -79,20 +85,47 @@ def _get_session_db():
 
 
 def _load_sessions_index() -> dict:
-    """Load the gateway sessions.json index directly.
+    """Load gateway sessions index from workspace-scoped session indexes.
 
     Returns a dict of session_key -> entry_dict with platform routing info.
-    This avoids importing the full SessionStore which needs GatewayConfig.
+    Only workspace session indexes are consulted; there is no fallback to a
+    shared ``sessions.json`` — preserving the contract that no shared
+    filesystem session store is an active runtime surface.
     """
-    sessions_file = _get_sessions_dir() / "sessions.json"
-    if not sessions_file.exists():
-        return {}
-    try:
-        with open(sessions_file, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        logger.debug("Failed to load sessions.json: %s", e)
-        return {}
+    merged: dict = {}
+
+    for row in _list_all_workspace_entries():
+        session_key = (
+            str(row.get("session_key") or "").strip()
+            or str(row.get("index_key") or "").strip()
+            or str(row.get("session_id") or "").strip()
+        )
+        session_id = str(row.get("session_id") or "").strip()
+        if not session_key or not session_id:
+            continue
+
+        existing = merged.get(session_key, {})
+        existing_updated = str(existing.get("updated_at") or "")
+        row_updated = str(row.get("updated_at") or "")
+        if existing and existing_updated >= row_updated:
+            continue
+
+        raw_entry = row.get("raw_entry") if isinstance(row.get("raw_entry"), dict) else {}
+        merged[session_key] = {
+            "session_key": session_key,
+            "session_id": session_id,
+            "platform": row.get("platform") or raw_entry.get("platform") or "",
+            "chat_type": raw_entry.get("chat_type") or "",
+            "display_name": row.get("display_name") or row.get("title") or raw_entry.get("display_name") or "",
+            "updated_at": row.get("updated_at") or raw_entry.get("updated_at") or "",
+            "created_at": raw_entry.get("created_at") or "",
+            "origin": raw_entry.get("origin") if isinstance(raw_entry.get("origin"), dict) else {},
+            "input_tokens": row.get("input_tokens") or raw_entry.get("input_tokens") or 0,
+            "output_tokens": row.get("output_tokens") or raw_entry.get("output_tokens") or 0,
+            "total_tokens": row.get("total_tokens") or raw_entry.get("total_tokens") or 0,
+        }
+
+    return merged
 
 
 def _load_channel_directory() -> dict:
@@ -219,8 +252,7 @@ class EventBridge:
         self._last_poll_timestamps: Dict[str, float] = {}  # session_key -> unix timestamp
         # In-memory approval tracking (populated from events)
         self._pending_approvals: Dict[str, dict] = {}
-        # mtime cache — skip expensive work when files haven't changed
-        self._sessions_json_mtime: float = 0.0
+        # mtime cache — skip expensive work when state.db hasn't changed
         self._state_db_mtime: float = 0.0
         self._cached_sessions_index: dict = {}
 
@@ -346,20 +378,10 @@ class EventBridge:
     def _poll_once(self, db):
         """Check for new messages across all sessions.
 
-        Uses mtime checks on sessions.json and state.db to skip work
-        when nothing has changed — makes 200ms polling essentially free.
+        Uses an mtime check on state.db to skip work when nothing has changed
+        — makes 200ms polling essentially free.  Sessions are discovered only
+        from workspace session indexes; no shared sessions.json is watched.
         """
-        # Check if sessions.json has changed (mtime check is ~1μs)
-        sessions_file = _get_sessions_dir() / "sessions.json"
-        try:
-            sj_mtime = sessions_file.stat().st_mtime if sessions_file.exists() else 0.0
-        except OSError:
-            sj_mtime = 0.0
-
-        if sj_mtime != self._sessions_json_mtime:
-            self._sessions_json_mtime = sj_mtime
-            self._cached_sessions_index = _load_sessions_index()
-
         # Check if state.db has changed
         try:
             from hermes_constants import get_hermes_home
@@ -372,7 +394,12 @@ class EventBridge:
         except OSError:
             db_mtime = 0.0
 
-        if db_mtime == self._state_db_mtime and sj_mtime == self._sessions_json_mtime:
+        db_changed = db_mtime != self._state_db_mtime
+
+        if db_changed or not self._cached_sessions_index:
+            self._cached_sessions_index = _load_sessions_index()
+
+        if not db_changed:
             return  # Nothing changed since last poll — skip entirely
 
         self._state_db_mtime = db_mtime
