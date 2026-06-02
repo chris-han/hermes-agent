@@ -2,6 +2,16 @@ from gateway.session import SessionSource
 from gateway.config import Platform
 
 
+def test_ensure_auth_db_creates_auth_db_file(monkeypatch, tmp_path):
+    monkeypatch.setenv("SEMANTIER_LOCAL_STATE_DIR", str(tmp_path / ".hermes-local"))
+
+    from agents.auth_db import ensure_auth_db
+
+    path = ensure_auth_db()
+    assert path.name == "auth.db"
+    assert path.exists()
+
+
 def test_weixin_user_scoped_home_channel_self_heals_missing_home(monkeypatch, tmp_path):
     monkeypatch.setenv("SEMANTIER_LOCAL_STATE_DIR", str(tmp_path / ".hermes-local"))
 
