@@ -670,9 +670,10 @@ def build_session_key(
       - Without identifiers, messages fall back to one session per platform/chat_type.
     """
     platform = source.platform.value
+    workspace_owner_id = str(getattr(source, "workspace_owner_id", "") or "").strip()
     scope_prefix = (
-        f"agent:main:workspace:{source.workspace_owner_id}"
-        if source.workspace_owner_id
+        f"agent:main:workspace:{workspace_owner_id}"
+        if workspace_owner_id
         else "agent:main"
     )
     if source.chat_type == "dm":
@@ -1578,6 +1579,8 @@ def resolve_workspace_gateway_session(
         origin_user_id=getattr(source, "user_id", None),
         source=source_gateway,
         platform=source_gateway,
+        adapter_key=getattr(source, "adapter_key", None),
+        delivery_adapter_key=getattr(source, "delivery_adapter_key", None),
         create_if_missing=create_if_missing,
     )
     return canonical_session_id, workspace_hermes_home

@@ -196,6 +196,8 @@ def resolve_or_create_workspace_session_id(
     origin_user_id: str | None = None,
     source: str | None = None,
     platform: str | None = None,
+    adapter_key: str | None = None,
+    delivery_adapter_key: str | None = None,
     create_if_missing: bool = True,
 ) -> str:
     data = _load_index(workspace_hermes_home)
@@ -217,6 +219,8 @@ def resolve_or_create_workspace_session_id(
                 origin_user_id=origin_user_id,
                 source=source,
                 platform=platform,
+                adapter_key=adapter_key,
+                delivery_adapter_key=delivery_adapter_key,
                 updated_at=_utc_now_iso(),
             )
             sessions[session_id] = record
@@ -242,6 +246,8 @@ def resolve_or_create_workspace_session_id(
         origin_user_id=origin_user_id,
         source=source,
         platform=platform,
+        adapter_key=adapter_key,
+        delivery_adapter_key=delivery_adapter_key,
         updated_at=_utc_now_iso(),
     )
     for key in alias_keys:

@@ -102,6 +102,43 @@ def test_resolve_workspace_gateway_session_rebinds_alias_to_fresh_preferred_sess
     assert rebound_home == hermes_home
 
 
+def test_resolve_workspace_gateway_session_persists_weixin_delivery_adapter_key(tmp_path):
+    from agents.workspace_session_logs import resolve_workspace_session_delivery_adapter_key
+    from gateway.config import Platform
+    from gateway.run import _resolve_workspace_gateway_session
+    from gateway.session import SessionSource
+
+    hermes_home = tmp_path / ".hermes"
+    source = SessionSource(
+        platform=Platform.WEIXIN,
+        chat_id="wx-user",
+        chat_type="dm",
+        user_id="wx-user",
+        workspace_owner_id="ws-123",
+        adapter_key="weixin:ws-123:acct-1@im.bot",
+        delivery_adapter_key="weixin:ws-123:acct-1@im.bot",
+    )
+    session_key = "agent:main:workspace:ws-123:weixin:dm:wx-user"
+
+    with patch("runtime_paths.workspace_hermes_home_path", return_value=hermes_home):
+        resolved_session_id, resolved_home = _resolve_workspace_gateway_session(
+            source,
+            session_id="",
+            session_key=session_key,
+            source_gateway="weixin",
+        )
+
+    assert resolved_home == hermes_home
+    assert (
+        resolve_workspace_session_delivery_adapter_key(
+            hermes_home,
+            resolved_session_id,
+            platform="weixin",
+        )
+        == "weixin:ws-123:acct-1@im.bot"
+    )
+
+
 class TestAgentConfigSignature:
     """Config signature produces stable, distinct keys."""
 

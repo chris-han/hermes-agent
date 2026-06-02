@@ -1017,6 +1017,8 @@ class TestWeixinContentDedup:
         assert adapter.handle_message.await_count == 1
         event = adapter.handle_message.await_args[0][0]
         assert event.text == "hello world"
+        assert event.source.adapter_key == "weixin:test-workspace:test-account"
+        assert event.source.delivery_adapter_key == "weixin:test-workspace:test-account"
 
     def test_content_dedup_not_called_for_messages_without_text(self):
         adapter = _make_adapter()
