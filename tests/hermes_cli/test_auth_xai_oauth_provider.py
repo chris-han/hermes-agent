@@ -491,6 +491,8 @@ def test_resolve_xai_runtime_credentials_returns_singleton_state(tmp_path, monke
 
 
 def test_resolve_xai_runtime_credentials_refreshes_expiring_token(tmp_path, monkeypatch):
+    from hermes_cli import auth as auth_mod
+
     hermes_home = tmp_path / "hermes"
     expiring = _jwt_with_exp(int(time.time()) - 10)
     _setup_hermes_auth(
@@ -511,14 +513,16 @@ def test_resolve_xai_runtime_credentials_refreshes_expiring_token(tmp_path, monk
         updated["refresh_token"] = "rt-new"
         return updated
 
-    monkeypatch.setattr("hermes_cli.auth._refresh_xai_oauth_tokens", _fake_refresh)
+    monkeypatch.setattr(auth_mod, "_refresh_xai_oauth_tokens", _fake_refresh)
 
-    creds = resolve_xai_oauth_runtime_credentials()
+    creds = auth_mod.resolve_xai_oauth_runtime_credentials()
     assert called["count"] == 1
     assert creds["api_key"] == new_access
 
 
 def test_resolve_xai_runtime_credentials_force_refresh(tmp_path, monkeypatch):
+    from hermes_cli import auth as auth_mod
+
     hermes_home = tmp_path / "hermes"
     fresh = _jwt_with_exp(int(time.time()) + 2 * 60 * 60)
     _setup_hermes_auth(
@@ -537,9 +541,9 @@ def test_resolve_xai_runtime_credentials_force_refresh(tmp_path, monkeypatch):
         updated["access_token"] = forced
         return updated
 
-    monkeypatch.setattr("hermes_cli.auth._refresh_xai_oauth_tokens", _fake_refresh)
+    monkeypatch.setattr(auth_mod, "_refresh_xai_oauth_tokens", _fake_refresh)
 
-    creds = resolve_xai_oauth_runtime_credentials(force_refresh=True, refresh_if_expiring=False)
+    creds = auth_mod.resolve_xai_oauth_runtime_credentials(force_refresh=True, refresh_if_expiring=False)
     assert called["count"] == 1
     assert creds["api_key"] == forced
 
@@ -718,6 +722,8 @@ def test_resolve_credentials_quarantines_dead_tokens_on_terminal_refresh_failure
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from hermes_cli import auth as auth_mod
+
     """Terminal refresh failure (relogin_required=True, code=xai_refresh_failed)
     must clear access_token/refresh_token from auth.json and write a
     last_auth_error marker so subsequent calls fail fast without a network retry.
@@ -728,17 +734,17 @@ def test_resolve_credentials_quarantines_dead_tokens_on_terminal_refresh_failure
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
     def _terminal_refresh(tokens, **kwargs):
-        raise AuthError(
+        raise auth_mod.AuthError(
             "xAI token refresh failed. Response: invalid_grant",
             provider="xai-oauth",
             code="xai_refresh_failed",
             relogin_required=True,
         )
 
-    monkeypatch.setattr("hermes_cli.auth._refresh_xai_oauth_tokens", _terminal_refresh)
+    monkeypatch.setattr(auth_mod, "_refresh_xai_oauth_tokens", _terminal_refresh)
 
-    with pytest.raises(AuthError) as exc_info:
-        resolve_xai_oauth_runtime_credentials(force_refresh=True)
+    with pytest.raises(auth_mod.AuthError) as exc_info:
+        auth_mod.resolve_xai_oauth_runtime_credentials(force_refresh=True)
 
     assert exc_info.value.code == "xai_refresh_failed"
     assert exc_info.value.relogin_required is True
@@ -770,6 +776,8 @@ def test_resolve_credentials_does_not_quarantine_on_transient_refresh_failure(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from hermes_cli import auth as auth_mod
+
     """Transient refresh failure (relogin_required=False, e.g. 429 / 5xx) must
     NOT trigger the quarantine path — tokens stay on disk for the next attempt.
     """
@@ -778,17 +786,17 @@ def test_resolve_credentials_does_not_quarantine_on_transient_refresh_failure(
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
     def _transient_refresh(tokens, **kwargs):
-        raise AuthError(
+        raise auth_mod.AuthError(
             "xAI token refresh failed: connection error",
             provider="xai-oauth",
             code="xai_refresh_failed",
             relogin_required=False,
         )
 
-    monkeypatch.setattr("hermes_cli.auth._refresh_xai_oauth_tokens", _transient_refresh)
+    monkeypatch.setattr(auth_mod, "_refresh_xai_oauth_tokens", _transient_refresh)
 
-    with pytest.raises(AuthError) as exc_info:
-        resolve_xai_oauth_runtime_credentials(force_refresh=True)
+    with pytest.raises(auth_mod.AuthError) as exc_info:
+        auth_mod.resolve_xai_oauth_runtime_credentials(force_refresh=True)
 
     assert exc_info.value.relogin_required is False
 
@@ -994,7 +1002,7 @@ def test_xai_oauth_discovery_raises_typed_error_on_malformed_json(monkeypatch):
     HTML), surface a typed AuthError rather than letting the
     ``json.JSONDecodeError`` escape — so the message reads as an auth
     problem instead of an internal parsing crash."""
-    from hermes_cli.auth import _xai_oauth_discovery
+    from hermes_cli import auth as auth_mod
 
     class _BadJSON:
         status_code = 200
@@ -1002,12 +1010,9 @@ def test_xai_oauth_discovery_raises_typed_error_on_malformed_json(monkeypatch):
         def json(self):
             raise ValueError("Expecting value: line 1 column 1 (char 0)")
 
-    monkeypatch.setattr(
-        "hermes_cli.auth.httpx.get",
-        lambda *a, **kw: _BadJSON(),
-    )
-    with pytest.raises(AuthError) as exc:
-        _xai_oauth_discovery()
+    monkeypatch.setattr(auth_mod.httpx, "get", lambda *a, **kw: _BadJSON())
+    with pytest.raises(auth_mod.AuthError) as exc:
+        auth_mod._xai_oauth_discovery()
     assert exc.value.code == "xai_discovery_invalid_json"
 
 
@@ -1016,7 +1021,7 @@ def test_xai_oauth_discovery_raises_typed_error_on_non_object_payload(monkeypatc
     bare string or array) must not slip through and trigger an
     ``AttributeError`` on ``payload.get(...)`` later.  Reject loudly
     with the same incomplete-response code the missing-endpoint path uses."""
-    from hermes_cli.auth import _xai_oauth_discovery
+    from hermes_cli import auth as auth_mod
 
     class _StubResponse:
         status_code = 200
@@ -1024,12 +1029,9 @@ def test_xai_oauth_discovery_raises_typed_error_on_non_object_payload(monkeypatc
         def json(self):
             return ["not", "an", "object"]
 
-    monkeypatch.setattr(
-        "hermes_cli.auth.httpx.get",
-        lambda *a, **kw: _StubResponse(),
-    )
-    with pytest.raises(AuthError) as exc:
-        _xai_oauth_discovery()
+    monkeypatch.setattr(auth_mod.httpx, "get", lambda *a, **kw: _StubResponse())
+    with pytest.raises(auth_mod.AuthError) as exc:
+        auth_mod._xai_oauth_discovery()
     assert exc.value.code == "xai_discovery_incomplete"
 
 
@@ -1105,7 +1107,7 @@ def test_xai_oauth_discovery_validates_endpoints(monkeypatch):
     attacker-controlled ``token_endpoint``. (The persistence is what makes
     this attack worth defending against — one MITM = forever credential
     leak.)"""
-    from hermes_cli.auth import _xai_oauth_discovery
+    from hermes_cli import auth as auth_mod
 
     class _StubGetResponse:
         status_code = 200
@@ -1122,9 +1124,9 @@ def test_xai_oauth_discovery_validates_endpoints(monkeypatch):
             "token_endpoint": "https://evil.example.com/token",  # poisoned
         })
 
-    monkeypatch.setattr("hermes_cli.auth.httpx.get", _fake_get)
-    with pytest.raises(AuthError) as exc:
-        _xai_oauth_discovery()
+    monkeypatch.setattr(auth_mod.httpx, "get", _fake_get)
+    with pytest.raises(auth_mod.AuthError) as exc:
+        auth_mod._xai_oauth_discovery()
     assert exc.value.code == "xai_discovery_invalid"
 
 
@@ -1137,7 +1139,7 @@ def test_xai_oauth_discovery_validates_authorization_endpoint(monkeypatch):
     Both endpoints must be validated independently. This test pins the
     parity so nobody can later "optimise" by validating only the token
     endpoint and silently lose authorization-endpoint defense."""
-    from hermes_cli.auth import _xai_oauth_discovery
+    from hermes_cli import auth as auth_mod
 
     class _StubGetResponse:
         status_code = 200
@@ -1154,9 +1156,9 @@ def test_xai_oauth_discovery_validates_authorization_endpoint(monkeypatch):
             "token_endpoint": "https://auth.x.ai/oauth2/token",
         })
 
-    monkeypatch.setattr("hermes_cli.auth.httpx.get", _fake_get)
-    with pytest.raises(AuthError) as exc:
-        _xai_oauth_discovery()
+    monkeypatch.setattr(auth_mod.httpx, "get", _fake_get)
+    with pytest.raises(auth_mod.AuthError) as exc:
+        auth_mod._xai_oauth_discovery()
     assert exc.value.code == "xai_discovery_invalid"
 
 

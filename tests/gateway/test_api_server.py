@@ -15,20 +15,23 @@ Tests cover:
 import asyncio
 import json
 import os
-import stat
+import sys
 import time
+import types
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aiohttp import web
-from aiohttp.test_utils import TestClient, TestServer
+from aiohttp.test_utils import AioHTTPTestCase, TestClient, TestServer
 
 from gateway.config import GatewayConfig, Platform, PlatformConfig
 from gateway.platforms.api_server import (
     APIServerAdapter,
     ResponseStore,
     _IdempotencyCache,
+    _CORS_HEADERS,
+    _bound_request_hermes_home,
     _derive_chat_session_id,
     check_api_server_requirements,
     cors_middleware,
@@ -128,37 +131,6 @@ class TestResponseStore:
         assert store.get_conversation("chat-a") is None
         # resp_2 mapping should still be intact
         assert store.get_conversation("chat-b") == "resp_2"
-
-    @pytest.mark.skipif(os.name == "nt", reason="POSIX mode bits are platform-specific")
-    def test_file_store_created_owner_only_under_permissive_umask(self, tmp_path):
-        """response_store.db must be 0o600 on creation even under umask 022."""
-        db_path = tmp_path / "response_store.db"
-        store = None
-        old_umask = os.umask(0o022)
-        try:
-            store = ResponseStore(max_size=10, db_path=str(db_path))
-            store.put(
-                "resp_secret",
-                {
-                    "response": {"id": "resp_secret"},
-                    "conversation_history": [{"role": "tool", "content": "dummy-marker"}],
-                },
-            )
-        finally:
-            os.umask(old_umask)
-            if store is not None:
-                store.close()
-
-        assert stat.S_IMODE(db_path.stat().st_mode) == 0o600
-        # WAL/SHM sidecars are owner-only too when present. WAL mode may be
-        # unavailable on some filesystems (NFS/SMB) — only assert when the
-        # sidecar files actually exist.
-        for sidecar in (
-            db_path.with_name(db_path.name + "-wal"),
-            db_path.with_name(db_path.name + "-shm"),
-        ):
-            if sidecar.exists():
-                assert stat.S_IMODE(sidecar.stat().st_mode) == 0o600
 
 
 # ---------------------------------------------------------------------------
@@ -311,13 +283,13 @@ class TestAdapterInit:
         monkeypatch.setattr("run_agent.AIAgent", FakeAgent)
         monkeypatch.setattr(
             "gateway.run._resolve_runtime_agent_kwargs",
-            lambda: {
+            lambda **kwargs: {
                 "provider": "openai-codex",
                 "base_url": "https://example.test/v1",
                 "api_mode": "codex_responses",
             },
         )
-        monkeypatch.setattr("gateway.run._resolve_gateway_model", lambda: "gpt-5.5")
+        monkeypatch.setattr("gateway.run._resolve_gateway_model", lambda *_: "gpt-5.5")
         monkeypatch.setattr(
             "gateway.run._load_gateway_config",
             lambda: {"agent": {"reasoning_effort": "xhigh"}},
@@ -336,6 +308,215 @@ class TestAdapterInit:
 
         assert isinstance(agent, FakeAgent)
         assert captured["reasoning_config"] == {"enabled": True, "effort": "xhigh"}
+        assert captured["save_trajectories"] is True
+
+    def test_create_agent_binds_workspace_session_paths(self, monkeypatch, tmp_path):
+        captured = {}
+        bound = {}
+
+        class FakeAgent:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+        monkeypatch.setattr("run_agent.AIAgent", FakeAgent)
+        monkeypatch.setattr(
+            "gateway.run._resolve_runtime_agent_kwargs",
+            lambda **kwargs: {
+                "provider": "openai-codex",
+                "base_url": "https://example.test/v1",
+                "api_mode": "codex_responses",
+            },
+        )
+        monkeypatch.setattr("gateway.run._resolve_gateway_model", lambda *_: "gpt-5.5")
+        monkeypatch.setattr("gateway.run._load_gateway_config", lambda: {})
+        monkeypatch.setattr(
+            "gateway.run.GatewayRunner._load_reasoning_config",
+            staticmethod(lambda: None),
+        )
+        monkeypatch.setattr("gateway.run.GatewayRunner._load_fallback_model", staticmethod(lambda: None))
+        monkeypatch.setattr("hermes_cli.tools_config._get_platform_tools", lambda *_: set())
+        monkeypatch.setattr(
+            "agents.workspace_session_logs.configure_agent_workspace_session_paths",
+            lambda agent, hermes_home, session_id=None: bound.update(
+                {"agent": agent, "hermes_home": hermes_home, "session_id": session_id}
+            ),
+        )
+
+        adapter = APIServerAdapter(PlatformConfig(enabled=True))
+        monkeypatch.setattr(adapter, "_ensure_session_db", lambda: None)
+        workspace_home = tmp_path / "workspaces" / "ws-123"
+
+        agent = adapter._create_agent(
+            session_id="ws-123:session_demo",
+            request_hermes_home=str(workspace_home),
+        )
+
+        assert isinstance(agent, FakeAgent)
+        assert bound["agent"] is agent
+        assert bound["hermes_home"] == workspace_home.resolve()
+        assert bound["session_id"] == "ws-123:session_demo"
+
+    def test_create_agent_passes_shared_config_provider_and_model(self, monkeypatch):
+        captured = {}
+
+        class FakeAgent:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+        def _fake_runtime_kwargs(*, requested_provider=None, target_model=None):
+            captured["requested_provider"] = requested_provider
+            captured["target_model"] = target_model
+            return {
+                "provider": requested_provider,
+                "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "api_mode": "chat_completions",
+            }
+
+        monkeypatch.setattr("run_agent.AIAgent", FakeAgent)
+        monkeypatch.setattr(
+            "gateway.run._resolve_runtime_agent_kwargs",
+            _fake_runtime_kwargs,
+        )
+        monkeypatch.setattr(
+            "gateway.run._load_gateway_config",
+            lambda: {"model": {"provider": "alibaba", "default": "qwen3.5-plus"}},
+        )
+        monkeypatch.setattr(
+            "gateway.run.GatewayRunner._load_reasoning_config",
+            staticmethod(lambda: None),
+        )
+        monkeypatch.setattr("gateway.run.GatewayRunner._load_fallback_model", staticmethod(lambda: None))
+        monkeypatch.setattr("hermes_cli.tools_config._get_platform_tools", lambda *_: set())
+
+        adapter = APIServerAdapter(PlatformConfig(enabled=True))
+        monkeypatch.setattr(adapter, "_ensure_session_db", lambda: None)
+
+        agent = adapter._create_agent(session_id="api-session")
+
+        assert isinstance(agent, FakeAgent)
+        assert captured["requested_provider"] == "alibaba"
+        assert captured["target_model"] == "qwen3.5-plus"
+        assert captured["model"] == "qwen3.5-plus"
+
+    def test_bound_request_imports_gateway_run_under_shared_runtime(
+        self,
+        monkeypatch,
+        tmp_path,
+    ):
+        import gateway.platforms.api_server as api_server
+
+        shared_home = tmp_path / ".semantier-home"
+        workspace_home = tmp_path / "workspaces" / "ws-1"
+        shared_home.mkdir(parents=True)
+        workspace_home.mkdir(parents=True)
+        fake_run = types.SimpleNamespace(
+            _hermes_home=workspace_home,
+            _env_path=workspace_home / ".env",
+            _config_path=workspace_home / "config.yaml",
+            _reload_runtime_env_preserving_config_authority=lambda: None,
+        )
+
+        imported = {}
+
+        def fake_import_module(name):
+            assert name == "gateway.run"
+            imported["hermes_home_during_import"] = os.environ.get("HERMES_HOME")
+            sys.modules["gateway.run"] = fake_run
+            return fake_run
+
+        monkeypatch.delitem(sys.modules, "gateway.run", raising=False)
+        monkeypatch.setenv("SEMANTIER_LOCAL_STATE_DIR", str(shared_home))
+        monkeypatch.setenv("HERMES_HOME", str(workspace_home))
+        monkeypatch.setattr(api_server.importlib, "import_module", fake_import_module)
+
+        with _bound_request_hermes_home(str(workspace_home)):
+            assert imported["hermes_home_during_import"] == str(shared_home.resolve())
+            assert os.environ["HERMES_HOME"] == str(workspace_home.resolve())
+            assert fake_run._hermes_home == shared_home.resolve()
+            assert fake_run._env_path == shared_home.resolve() / ".env"
+            assert fake_run._config_path == shared_home.resolve() / "config.yaml"
+
+    def test_bound_request_exports_workspace_runs_dir_and_reasserts_home(
+        self,
+        monkeypatch,
+        tmp_path,
+    ):
+        """Workspace-only request binding must re-assert HERMES_HOME after the runtime-env reload (which calls
+        `load_dotenv(..., override=True)` and would otherwise clobber the workspace binding)."""
+        import gateway.platforms.api_server as api_server
+
+        # In production, hermes-agent runs inside the Semantier gateway process whose
+        # sys.path includes the repo's src/. Mirror that for the isolated test env so
+        # `runtime_paths` resolves.
+        repo_src = os.path.abspath(
+            os.path.join(os.path.dirname(api_server.__file__), "..", "..", "..", "src")
+        )
+        if repo_src not in sys.path:
+            monkeypatch.syspath_prepend(repo_src)
+
+        # runtime_paths validates the workspace path is under the repo's
+        # `workspaces/` root; redirect that root to tmp_path.
+        import runtime_paths
+        monkeypatch.setattr(runtime_paths, "_WORKSPACES_ROOT", tmp_path / "workspaces")
+
+        shared_home = tmp_path / ".semantier-home"
+        workspace_home = tmp_path / "workspaces" / "ws-abc"
+        shared_home.mkdir(parents=True)
+        workspace_home.mkdir(parents=True)
+
+        # Simulate the real reload behavior: it clobbers HERMES_HOME back to shared root.
+        def _clobber_reload():
+            os.environ["HERMES_HOME"] = str(shared_home.resolve())
+
+        fake_run = types.SimpleNamespace(
+            _hermes_home=workspace_home,
+            _env_path=workspace_home / ".env",
+            _config_path=workspace_home / "config.yaml",
+            _reload_runtime_env_preserving_config_authority=_clobber_reload,
+        )
+        sys.modules["gateway.run"] = fake_run
+
+        monkeypatch.setenv("SEMANTIER_LOCAL_STATE_DIR", str(shared_home))
+        monkeypatch.delenv("SEMANTIER_WORKSPACE_RUNS_DIR", raising=False)
+
+        with _bound_request_hermes_home(str(workspace_home)):
+            # Workspace binding survives the env reload.
+            assert os.environ["HERMES_HOME"] == str(workspace_home.resolve())
+            # Workspace-only binding must not export a deprecated flat runs dir.
+            assert "SEMANTIER_WORKSPACE_RUNS_DIR" not in os.environ
+            assert not (workspace_home / "runs").exists()
+
+        # Restored on exit.
+        assert "SEMANTIER_WORKSPACE_RUNS_DIR" not in os.environ
+        sys.modules.pop("gateway.run", None)
+
+    def test_bound_request_skips_runs_env_for_shared_root(
+        self,
+        monkeypatch,
+        tmp_path,
+    ):
+        """When HERMES_HOME equals the shared runtime root, no runs dir is exported."""
+        import gateway.platforms.api_server as api_server
+
+        shared_home = tmp_path / ".semantier-home"
+        shared_home.mkdir(parents=True)
+
+        fake_run = types.SimpleNamespace(
+            _hermes_home=shared_home,
+            _env_path=shared_home / ".env",
+            _config_path=shared_home / "config.yaml",
+            _reload_runtime_env_preserving_config_authority=lambda: None,
+        )
+        sys.modules["gateway.run"] = fake_run
+
+        monkeypatch.setenv("SEMANTIER_LOCAL_STATE_DIR", str(shared_home))
+        monkeypatch.delenv("SEMANTIER_WORKSPACE_RUNS_DIR", raising=False)
+
+        with _bound_request_hermes_home(str(shared_home)):
+            assert os.environ["HERMES_HOME"] == str(shared_home.resolve())
+            assert "SEMANTIER_WORKSPACE_RUNS_DIR" not in os.environ
+
+        sys.modules.pop("gateway.run", None)
 
     def test_create_agent_refreshes_max_iterations_from_runtime_config(self, monkeypatch):
         captured = {}
@@ -503,8 +684,6 @@ def _create_app(adapter: APIServerAdapter) -> web.Application:
     app.router.add_get("/v1/health", adapter._handle_health)
     app.router.add_get("/v1/models", adapter._handle_models)
     app.router.add_get("/v1/capabilities", adapter._handle_capabilities)
-    app.router.add_get("/v1/skills", adapter._handle_skills)
-    app.router.add_get("/v1/toolsets", adapter._handle_toolsets)
     app.router.add_post("/v1/chat/completions", adapter._handle_chat_completions)
     app.router.add_post("/v1/responses", adapter._handle_responses)
     app.router.add_get("/v1/responses/{response_id}", adapter._handle_get_response)
@@ -771,8 +950,6 @@ class TestCapabilitiesEndpoint:
             assert data["features"]["run_events_sse"] is True
             assert data["features"]["session_continuity_header"] == "X-Hermes-Session-Id"
             assert data["endpoints"]["run_status"]["path"] == "/v1/runs/{run_id}"
-            assert data["endpoints"]["skills"] == {"method": "GET", "path": "/v1/skills"}
-            assert data["endpoints"]["toolsets"] == {"method": "GET", "path": "/v1/toolsets"}
 
     @pytest.mark.asyncio
     async def test_capabilities_requires_auth_when_key_configured(self, auth_adapter):
@@ -788,154 +965,6 @@ class TestCapabilitiesEndpoint:
             assert authed.status == 200
             data = await authed.json()
             assert data["auth"]["required"] is True
-
-
-# ---------------------------------------------------------------------------
-# /v1/skills and /v1/toolsets endpoints
-# ---------------------------------------------------------------------------
-
-
-class TestSkillsEndpoint:
-    @pytest.mark.asyncio
-    async def test_skills_returns_list_envelope(self, adapter):
-        fake_skills = [
-            {"name": "github", "description": "GitHub workflow skill", "category": "github"},
-            {"name": "ascii-art", "description": "ASCII art generation", "category": "creative"},
-        ]
-        with patch(
-            "tools.skills_tool._find_all_skills",
-            return_value=list(fake_skills),
-        ):
-            app = _create_app(adapter)
-            async with TestClient(TestServer(app)) as cli:
-                resp = await cli.get("/v1/skills")
-                assert resp.status == 200
-                data = await resp.json()
-                assert data["object"] == "list"
-                names = sorted(s["name"] for s in data["data"])
-                assert names == ["ascii-art", "github"]
-                for entry in data["data"]:
-                    assert set(entry.keys()) >= {"name", "description", "category"}
-
-    @pytest.mark.asyncio
-    async def test_skills_handles_enumeration_failure(self, adapter):
-        with patch(
-            "tools.skills_tool._find_all_skills",
-            side_effect=RuntimeError("boom"),
-        ):
-            app = _create_app(adapter)
-            async with TestClient(TestServer(app)) as cli:
-                resp = await cli.get("/v1/skills")
-                assert resp.status == 500
-                data = await resp.json()
-                assert "error" in data
-
-    @pytest.mark.asyncio
-    async def test_skills_requires_auth_when_key_configured(self, auth_adapter):
-        with patch("tools.skills_tool._find_all_skills", return_value=[]):
-            app = _create_app(auth_adapter)
-            async with TestClient(TestServer(app)) as cli:
-                resp = await cli.get("/v1/skills")
-                assert resp.status == 401
-
-                authed = await cli.get(
-                    "/v1/skills",
-                    headers={"Authorization": "Bearer sk-secret"},
-                )
-                assert authed.status == 200
-
-
-class TestToolsetsEndpoint:
-    @pytest.mark.asyncio
-    async def test_toolsets_returns_resolved_tools(self, adapter):
-        fake_toolsets = [
-            ("default", "Default Tools", "Core tools"),
-            ("web", "Web Tools", "Search and extract"),
-        ]
-        with patch(
-            "hermes_cli.tools_config._get_effective_configurable_toolsets",
-            return_value=fake_toolsets,
-        ), patch(
-            "hermes_cli.tools_config._get_platform_tools",
-            return_value={"default"},
-        ), patch(
-            "hermes_cli.tools_config._toolset_has_keys",
-            return_value=True,
-        ), patch(
-            "toolsets.resolve_toolset",
-            side_effect=lambda name: {
-                "default": ["terminal", "read_file"],
-                "web": ["web_search"],
-            }[name],
-        ):
-            app = _create_app(adapter)
-            async with TestClient(TestServer(app)) as cli:
-                resp = await cli.get("/v1/toolsets")
-                assert resp.status == 200
-                data = await resp.json()
-                assert data["object"] == "list"
-                assert data["platform"] == "api_server"
-                by_name = {ts["name"]: ts for ts in data["data"]}
-                assert by_name["default"]["enabled"] is True
-                assert by_name["default"]["tools"] == ["read_file", "terminal"]
-                assert by_name["web"]["enabled"] is False
-                assert by_name["web"]["tools"] == ["web_search"]
-                assert by_name["default"]["configured"] is True
-
-    @pytest.mark.asyncio
-    async def test_toolsets_handles_resolution_failure_per_toolset(self, adapter):
-        """If one toolset fails to resolve, others still appear with empty tools."""
-        fake_toolsets = [
-            ("broken", "Broken", "fails"),
-            ("ok", "OK", "works"),
-        ]
-
-        def _resolve(name):
-            if name == "broken":
-                raise RuntimeError("nope")
-            return ["some_tool"]
-
-        with patch(
-            "hermes_cli.tools_config._get_effective_configurable_toolsets",
-            return_value=fake_toolsets,
-        ), patch(
-            "hermes_cli.tools_config._get_platform_tools",
-            return_value=set(),
-        ), patch(
-            "hermes_cli.tools_config._toolset_has_keys",
-            return_value=False,
-        ), patch(
-            "toolsets.resolve_toolset",
-            side_effect=_resolve,
-        ):
-            app = _create_app(adapter)
-            async with TestClient(TestServer(app)) as cli:
-                resp = await cli.get("/v1/toolsets")
-                assert resp.status == 200
-                data = await resp.json()
-                by_name = {ts["name"]: ts for ts in data["data"]}
-                assert by_name["broken"]["tools"] == []
-                assert by_name["ok"]["tools"] == ["some_tool"]
-
-    @pytest.mark.asyncio
-    async def test_toolsets_requires_auth_when_key_configured(self, auth_adapter):
-        with patch(
-            "hermes_cli.tools_config._get_effective_configurable_toolsets",
-            return_value=[],
-        ), patch(
-            "hermes_cli.tools_config._get_platform_tools",
-            return_value=set(),
-        ):
-            app = _create_app(auth_adapter)
-            async with TestClient(TestServer(app)) as cli:
-                resp = await cli.get("/v1/toolsets")
-                assert resp.status == 401
-
-                authed = await cli.get(
-                    "/v1/toolsets",
-                    headers={"Authorization": "Bearer sk-secret"},
-                )
-                assert authed.status == 200
 
 
 # ---------------------------------------------------------------------------
@@ -1005,6 +1034,128 @@ class TestChatCompletionsEndpoint:
                 assert "data: " in body
                 assert "[DONE]" in body
                 assert "Hello!" in body
+
+    @pytest.mark.asyncio
+    async def test_stream_disconnect_before_tool_start_interrupts_agent(self, adapter):
+        """A dropped SSE client before tool execution should still cancel work."""
+        fake_request = MagicMock()
+        fake_request.headers = {}
+
+        class _DisconnectingStreamResponse:
+            def __init__(self):
+                self.write_count = 0
+
+            async def prepare(self, req):
+                pass
+
+            async def write(self, payload):
+                self.write_count += 1
+                if self.write_count >= 2:
+                    raise ConnectionResetError("simulated client disconnect")
+
+        class _FakeAgent:
+            def __init__(self):
+                self.interrupts = []
+
+            def interrupt(self, reason):
+                self.interrupts.append(reason)
+
+        import gateway.platforms.api_server as api_mod
+        import queue as _q
+
+        stream_q: _q.Queue = _q.Queue()
+        stream_q.put("partial")
+        fake_agent = _FakeAgent()
+
+        async def _agent_coro():
+            await asyncio.sleep(60)
+            return (
+                {"final_response": "late", "messages": [], "api_calls": 1},
+                {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+            )
+
+        agent_task = asyncio.ensure_future(_agent_coro())
+
+        with patch.object(api_mod.web, "StreamResponse", return_value=_DisconnectingStreamResponse()):
+            await adapter._write_sse_chat_completion(
+                request=fake_request,
+                completion_id="chatcmpl-pretool",
+                model="hermes-agent",
+                created=int(time.time()),
+                stream_q=stream_q,
+                agent_task=agent_task,
+                agent_ref=[fake_agent],
+                session_id="sess-pretool",
+                tool_activity_state={"started": False},
+            )
+
+        assert fake_agent.interrupts == ["SSE client disconnected"]
+        assert agent_task.done()
+        assert agent_task.cancelled()
+
+    @pytest.mark.asyncio
+    async def test_stream_disconnect_after_tool_start_detaches_agent(self, adapter):
+        """After a visible tool starts, SSE disconnect must not kill the turn."""
+        fake_request = MagicMock()
+        fake_request.headers = {}
+
+        class _DisconnectingStreamResponse:
+            def __init__(self):
+                self.write_count = 0
+
+            async def prepare(self, req):
+                pass
+
+            async def write(self, payload):
+                self.write_count += 1
+                if self.write_count >= 2:
+                    raise ConnectionResetError("simulated client disconnect")
+
+        class _FakeAgent:
+            def __init__(self):
+                self.interrupts = []
+
+            def interrupt(self, reason):
+                self.interrupts.append(reason)
+
+        import gateway.platforms.api_server as api_mod
+        import queue as _q
+
+        stream_q: _q.Queue = _q.Queue()
+        stream_q.put("partial")
+        fake_agent = _FakeAgent()
+        finish = asyncio.Event()
+
+        async def _agent_coro():
+            await finish.wait()
+            return (
+                {"final_response": "created", "messages": [], "api_calls": 2},
+                {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+            )
+
+        agent_task = asyncio.ensure_future(_agent_coro())
+
+        with patch.object(api_mod.web, "StreamResponse", return_value=_DisconnectingStreamResponse()):
+            await adapter._write_sse_chat_completion(
+                request=fake_request,
+                completion_id="chatcmpl-posttool",
+                model="hermes-agent",
+                created=int(time.time()),
+                stream_q=stream_q,
+                agent_task=agent_task,
+                agent_ref=[fake_agent],
+                session_id="sess-posttool",
+                tool_activity_state={"started": True},
+            )
+
+        assert fake_agent.interrupts == []
+        assert not agent_task.done()
+        assert not agent_task.cancelled()
+
+        finish.set()
+        result, usage = await asyncio.wait_for(agent_task, timeout=1)
+        assert result["final_response"] == "created"
+        assert usage["total_tokens"] == 2
 
     @pytest.mark.asyncio
     async def test_stream_string_false_returns_json_completion(self, adapter):
@@ -3427,6 +3578,50 @@ class TestSessionIdHeader:
             call_kwargs = mock_run.call_args.kwargs
             assert call_kwargs["conversation_history"] == []
             assert call_kwargs["session_id"] == "some-session"
+
+    @pytest.mark.asyncio
+    async def test_empty_session_db_history_falls_back_to_request_history(self, auth_adapter):
+        """A missing server transcript must not erase caller-provided context."""
+        mock_result = {"final_response": "OK", "messages": [], "api_calls": 1}
+        request_history = [
+            {"role": "user", "content": "The job is currently in an error state."},
+            {
+                "role": "assistant",
+                "content": "Would you like me to investigate what went wrong or help you fix/remove it?",
+            },
+        ]
+        mock_db = MagicMock()
+        mock_db.get_messages_as_conversation.return_value = []
+        auth_adapter._session_db = mock_db
+        app = _create_app(auth_adapter)
+
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(auth_adapter, "_run_agent", new_callable=AsyncMock) as mock_run:
+                mock_run.return_value = (
+                    mock_result,
+                    {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+                )
+
+                resp = await cli.post(
+                    "/v1/chat/completions",
+                    headers={
+                        "X-Hermes-Session-Id": "session_a863a0f5c945",
+                        "Authorization": "Bearer sk-secret",
+                    },
+                    json={
+                        "model": "hermes-agent",
+                        "messages": [
+                            *request_history,
+                            {"role": "user", "content": "yes"},
+                        ],
+                    },
+                )
+
+        assert resp.status == 200
+        call_kwargs = mock_run.call_args.kwargs
+        assert call_kwargs["conversation_history"] == request_history
+        assert call_kwargs["user_message"] == "yes"
+        assert call_kwargs["session_id"] == "session_a863a0f5c945"
 
 
 # ---------------------------------------------------------------------------

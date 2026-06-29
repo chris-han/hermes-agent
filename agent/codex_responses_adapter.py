@@ -312,16 +312,9 @@ def _chat_messages_to_responses_input(
 ) -> List[Dict[str, Any]]:
     """Convert internal chat-style messages to Responses input items.
 
-    ``is_xai_responses`` is kept for transport signature compatibility but
-    no longer suppresses encrypted reasoning replay.  Earlier (PR #26644,
-    May 2026) we believed xAI's OAuth/SuperGrok ``/v1/responses`` surface
-    rejected replayed ``encrypted_content`` reasoning items minted by
-    prior turns, and we stripped them.  That decision was wrong — xAI
-    explicitly relies on Hermes threading encrypted reasoning back across
-    turns for cross-turn coherence (the whole point of their partnership
-    integration).  We now replay encrypted reasoning on every Responses
-    transport (xAI, native Codex, custom relays) and let xAI tell us
-    explicitly if a specific surface ever rejects a payload.
+    ``is_xai_responses`` suppresses encrypted reasoning replay for xAI's
+    OAuth Responses surface.  Native Codex still replays encrypted reasoning;
+    Grok keeps cross-turn coherence through visible assistant text.
 
     ``replay_encrypted_reasoning`` is the per-session kill switch.  Some
     OpenAI-compatible relays accept the request but later reject the
@@ -374,7 +367,7 @@ def _chat_messages_to_responses_input(
                 # for the May 2026 reversal of the earlier xAI gate.
                 codex_reasoning = (
                     msg.get("codex_reasoning_items")
-                    if replay_encrypted_reasoning
+                    if replay_encrypted_reasoning and not is_xai_responses
                     else None
                 )
                 has_codex_reasoning = False

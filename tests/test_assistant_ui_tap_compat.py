@@ -103,6 +103,12 @@ def test_assistant_ui_cluster_agrees_on_one_tap() -> None:
     (or a similar API split) breaks ``vite build``.
     """
     packages = _lock_packages()
+    if not any(
+        key.rsplit("node_modules/", 1)[-1].startswith("@assistant-ui/")
+        for key in packages
+    ):
+        pytest.skip("package-lock.json has no @assistant-ui dependency cluster")
+
     tap_version = _hoisted_tap_version(packages)
 
     offenders: list[str] = []

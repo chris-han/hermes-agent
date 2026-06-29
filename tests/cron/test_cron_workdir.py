@@ -13,6 +13,7 @@ Covers:
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -277,10 +278,19 @@ class TestRunJobTerminalCwd:
                 observed["terminal_cwd_during_init"] = os.environ.get(
                     "TERMINAL_CWD", "_UNSET_"
                 )
+                observed["sandbox_env_during_init"] = os.environ.get(
+                    "SEMANTIER_SANDBOX_KEY", "_UNSET_"
+                )
 
             def run_conversation(self, *_a, **_kw):
+                from agents.sandbox_scope import current_sandbox_key
+
                 observed["terminal_cwd_during_run"] = os.environ.get(
                     "TERMINAL_CWD", "_UNSET_"
+                )
+                observed["sandbox_key_during_run"] = current_sandbox_key()
+                observed["sandbox_env_during_run"] = os.environ.get(
+                    "SEMANTIER_SANDBOX_KEY", "_UNSET_"
                 )
                 return {"final_response": "done", "messages": []}
 
@@ -323,19 +333,23 @@ class TestRunJobTerminalCwd:
     ):
         import os
         import cron.scheduler as sched
+        from runtime_paths import workspace_hermes_home_path
 
         # Make sure the test's TERMINAL_CWD starts at a known non-workdir value.
         # Use monkeypatch.setenv so it's restored on teardown regardless of
         # whatever other tests in this xdist worker have left behind.
         monkeypatch.setenv("TERMINAL_CWD", "/original/cwd")
+        monkeypatch.delenv("SEMANTIER_SANDBOX_KEY", raising=False)
 
         observed: dict = {}
         self._install_stubs(monkeypatch, observed)
+        workspace_workdir = workspace_hermes_home_path("ws-cron").parent / "project"
+        workspace_workdir.mkdir(parents=True, exist_ok=True)
 
         job = {
             "id": "abc",
             "name": "wd-job",
-            "workdir": str(tmp_path),
+            "workdir": str(workspace_workdir),
             "schedule_display": "manual",
         }
 
@@ -346,8 +360,12 @@ class TestRunJobTerminalCwd:
         assert observed["skip_context_files"] is False
         assert observed["load_soul_identity"] is True
         # TERMINAL_CWD was pointing at the job workdir while the agent ran.
-        assert observed["terminal_cwd_during_init"] == str(tmp_path.resolve())
-        assert observed["terminal_cwd_during_run"] == str(tmp_path.resolve())
+        assert observed["terminal_cwd_during_init"] == str(workspace_workdir.resolve())
+        assert observed["terminal_cwd_during_run"] == str(workspace_workdir.resolve())
+        assert observed["sandbox_env_during_init"].startswith("ws:")
+        assert observed["sandbox_key_during_run"] == observed["sandbox_env_during_run"]
+        assert observed["sandbox_key_during_run"].startswith("ws:")
+        assert observed["sandbox_key_during_run"].startswith("ws:ws-cron:cron:abc:")
 
         # And it was restored to the original value in finally.
         assert os.environ["TERMINAL_CWD"] == "/original/cwd"
@@ -366,6 +384,7 @@ class TestRunJobTerminalCwd:
         # Pin TERMINAL_CWD to a sentinel via monkeypatch so we control both
         # the before-value and the after-value regardless of cross-test state.
         monkeypatch.setenv("TERMINAL_CWD", "/cron-test-sentinel")
+        monkeypatch.delenv("SEMANTIER_SANDBOX_KEY", raising=False)
         before = os.environ["TERMINAL_CWD"]
 
         observed: dict = {}
@@ -387,6 +406,9 @@ class TestRunJobTerminalCwd:
         assert observed["load_soul_identity"] is True
         # TERMINAL_CWD saw the same value during init as it had before.
         assert observed["terminal_cwd_during_init"] == before
+        # Without workspace authority, cron must not invent a sandbox scope.
+        assert observed["sandbox_key_during_run"] is None
+        assert observed["sandbox_env_during_run"] == "_UNSET_"
         # And after run_job completes, it's still the sentinel (nothing
         # overwrote or cleared it).
         assert os.environ["TERMINAL_CWD"] == before

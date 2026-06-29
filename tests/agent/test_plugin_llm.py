@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
@@ -778,6 +779,7 @@ plugins:
 
 class TestPluginContextIntegration:
     def test_ctx_llm_is_lazy_singleton(self):
+        from agent import plugin_llm
         from hermes_cli.plugins import PluginContext, PluginManifest, PluginManager
 
         manifest = PluginManifest(name="test-plugin", source="test", key="test-plugin")
@@ -786,7 +788,7 @@ class TestPluginContextIntegration:
         first = ctx.llm
         second = ctx.llm
         assert first is second
-        assert isinstance(first, PluginLlm)
+        assert isinstance(first, plugin_llm.PluginLlm)
         assert first._plugin_id == "test-plugin"  # type: ignore[attr-defined]
 
     def test_ctx_llm_uses_manifest_key_for_policy(self):

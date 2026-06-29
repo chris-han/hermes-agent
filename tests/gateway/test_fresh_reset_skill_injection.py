@@ -25,6 +25,7 @@ a "Session automatically reset due to inactivity" user-facing notice and
 a context-note prepend into the agent's prompt — both wrong for an explicit
 /new or /reset.
 """
+import pytest
 
 from gateway.config import GatewayConfig, Platform
 from gateway.session import SessionEntry, SessionSource, SessionStore
@@ -168,13 +169,13 @@ class TestVanillaBehaviorUnaffected:
 
 
 # ---------------------------------------------------------------------------
-# Persistence through sessions.json round-trip
+# Resume flags round-trip
 # ---------------------------------------------------------------------------
 
 class TestPersistence:
     def test_is_fresh_reset_survives_to_dict_from_dict(self, tmp_path):
-        """Protect against the gateway restarting between /reset and the
-        next message — the flag must be persisted in sessions.json.
+        """Protect against session-state transitions between /reset and the
+        next message — flags are round-tripped through to_dict/from_dict.
         """
         store = _make_store(tmp_path)
         source = _make_source()
@@ -198,3 +199,39 @@ class TestPersistence:
         }
         entry = SessionEntry.from_dict(data)
         assert entry.is_fresh_reset is False
+
+
+# ---------------------------------------------------------------------------
+# SQLite lifecycle: end old row + create fresh row on reset
+# ---------------------------------------------------------------------------
+
+class TestResetSessionDbLifecycle:
+    def test_reset_session_ends_previous_and_creates_fresh_db_session(self, tmp_path):
+        store = _make_store(tmp_path)
+        source = _make_source(chat_id="dm-a", user_id="user-a")
+        old_entry = store.get_or_create_session(source)
+        session_key = store._generate_session_key(source)
+
+        class _FakeSessionDb:
+            def __init__(self):
+                self.end_calls = []
+                self.create_calls = []
+
+            def end_session(self, session_id, end_reason):
+                self.end_calls.append((session_id, end_reason))
+
+            def create_session(self, **kwargs):
+                self.create_calls.append(kwargs)
+
+        fake_db = _FakeSessionDb()
+        store._db = fake_db
+
+        new_entry = store.reset_session(session_key)
+
+        assert new_entry is not None
+        assert new_entry.session_id != old_entry.session_id
+        assert fake_db.end_calls == [(old_entry.session_id, "session_reset")]
+        assert len(fake_db.create_calls) == 1
+        assert fake_db.create_calls[0]["session_id"] == new_entry.session_id
+        assert fake_db.create_calls[0]["source"] == source.platform.value
+        assert fake_db.create_calls[0]["user_id"] == source.user_id

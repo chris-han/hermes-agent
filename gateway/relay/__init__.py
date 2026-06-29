@@ -19,7 +19,20 @@ that don't set it are unaffected — exactly the same shape as ``gateway.proxy_u
 from __future__ import annotations
 
 import os
+import importlib
 from typing import Optional
+
+
+def _gateway_run_module():
+    """Return the canonical gateway.run module, avoiding stale sys.modules test doubles."""
+    try:
+        import gateway as gateway_pkg
+        module = getattr(gateway_pkg, "run", None)
+        if module is not None and getattr(module, "__name__", None) == "gateway.run":
+            return module
+    except Exception:
+        pass
+    return importlib.import_module("gateway.run")
 
 
 def relay_url() -> Optional[str]:
@@ -33,9 +46,7 @@ def relay_url() -> Optional[str]:
     if url:
         return url.rstrip("/")
     try:
-        from gateway.run import _load_gateway_config  # late import to avoid cycle
-
-        cfg = _load_gateway_config()
+        cfg = _gateway_run_module()._load_gateway_config()
         url = (cfg.get("gateway") or {}).get("relay_url", "").strip()
         if url:
             return url.rstrip("/")
@@ -135,9 +146,7 @@ def relay_connection_auth() -> tuple[Optional[str], Optional[str]]:
     secret = os.environ.get("GATEWAY_RELAY_SECRET", "").strip()
     if not (gateway_id and secret):
         try:
-            from gateway.run import _load_gateway_config  # late import to avoid cycle
-
-            cfg = (_load_gateway_config().get("gateway") or {})
+            cfg = (_gateway_run_module()._load_gateway_config().get("gateway") or {})
             gateway_id = gateway_id or str(cfg.get("relay_id", "") or "").strip()
             secret = secret or str(cfg.get("relay_secret", "") or "").strip()
         except Exception:  # noqa: BLE001 - config absence/parse must never crash registration
@@ -162,9 +171,7 @@ def relay_endpoint() -> Optional[str]:
     url = os.environ.get("GATEWAY_RELAY_ENDPOINT", "").strip()
     if not url:
         try:
-            from gateway.run import _load_gateway_config  # late import to avoid cycle
-
-            cfg = (_load_gateway_config().get("gateway") or {})
+            cfg = (_gateway_run_module()._load_gateway_config().get("gateway") or {})
             url = str(cfg.get("relay_endpoint", "") or "").strip()
         except Exception:  # noqa: BLE001 - config absence/parse must never crash boot
             url = ""
@@ -185,9 +192,7 @@ def relay_route_keys() -> list[str]:
     raw = os.environ.get("GATEWAY_RELAY_ROUTE_KEYS", "").strip()
     if not raw:
         try:
-            from gateway.run import _load_gateway_config  # late import to avoid cycle
-
-            cfg = (_load_gateway_config().get("gateway") or {})
+            cfg = (_gateway_run_module()._load_gateway_config().get("gateway") or {})
             val = cfg.get("relay_route_keys", "")
             if isinstance(val, (list, tuple)):
                 return [str(k).strip() for k in val if str(k).strip()]
@@ -215,9 +220,7 @@ def relay_instance_id() -> Optional[str]:
     value = os.environ.get("GATEWAY_RELAY_INSTANCE_ID", "").strip()
     if not value:
         try:
-            from gateway.run import _load_gateway_config  # late import to avoid cycle
-
-            cfg = (_load_gateway_config().get("gateway") or {})
+            cfg = (_gateway_run_module()._load_gateway_config().get("gateway") or {})
             value = str(cfg.get("relay_instance_id", "") or "").strip()
         except Exception:  # noqa: BLE001 - config absence/parse must never crash boot
             value = ""
@@ -246,9 +249,7 @@ def relay_wake_url() -> Optional[str]:
     value = os.environ.get("GATEWAY_RELAY_WAKE_URL", "").strip()
     if not value:
         try:
-            from gateway.run import _load_gateway_config  # late import to avoid cycle
-
-            cfg = (_load_gateway_config().get("gateway") or {})
+            cfg = (_gateway_run_module()._load_gateway_config().get("gateway") or {})
             value = str(cfg.get("relay_wake_url", "") or "").strip()
         except Exception:  # noqa: BLE001 - config absence/parse must never crash boot
             value = ""
@@ -320,9 +321,7 @@ def relay_relevance_policy(platform: Optional[str] = None) -> Optional[dict]:
     require_mention = None
     free_response: list[str] = []
     try:
-        from gateway.run import _load_gateway_config  # late import to avoid cycle
-
-        cfg = _load_gateway_config() or {}
+        cfg = _gateway_run_module()._load_gateway_config() or {}
         plat_cfg = cfg.get(platform)
         if not isinstance(plat_cfg, dict):
             plat_cfg = ((cfg.get("gateway") or {}).get("platforms") or {}).get(platform)

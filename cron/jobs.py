@@ -7,6 +7,7 @@ Output is saved to ~/.hermes/cron/output/{job_id}/{timestamp}.md
 
 import contextlib
 import copy
+import hashlib
 import json
 import logging
 import shutil
@@ -52,6 +53,9 @@ except ImportError:
 HERMES_DIR = get_hermes_home().resolve()
 CRON_DIR = HERMES_DIR / "cron"
 JOBS_FILE = CRON_DIR / "jobs.json"
+_DEFAULT_HERMES_DIR = HERMES_DIR
+_DEFAULT_CRON_DIR = CRON_DIR
+_DEFAULT_JOBS_FILE = JOBS_FILE
 # Heartbeat file the in-process ticker touches on every loop iteration. The
 # gateway process and the (separate) ``hermes cron status`` process share it
 # so status can tell whether the ticker THREAD is alive, not just whether the
@@ -73,11 +77,49 @@ TICKER_INTERVAL_SECONDS = 60
 _jobs_file_lock = threading.RLock()
 _jobs_lock_state = threading.local()
 OUTPUT_DIR = CRON_DIR / "output"
+_DEFAULT_OUTPUT_DIR = OUTPUT_DIR
+
+
+def _refresh_default_paths() -> None:
+    """Follow context-local Hermes home while default globals are in use."""
+    global HERMES_DIR, CRON_DIR, JOBS_FILE, OUTPUT_DIR
+    current_home = get_hermes_home().resolve()
+    if (
+        CRON_DIR == HERMES_DIR / "cron"
+        and JOBS_FILE == CRON_DIR / "jobs.json"
+        and OUTPUT_DIR == CRON_DIR / "output"
+        and HERMES_DIR != current_home
+    ):
+        HERMES_DIR = current_home
+        CRON_DIR = HERMES_DIR / "cron"
+        JOBS_FILE = CRON_DIR / "jobs.json"
+        OUTPUT_DIR = CRON_DIR / "output"
 ONESHOT_GRACE_SECONDS = 120
+
+
+def output_dir() -> Path:
+    _refresh_default_paths()
+    return OUTPUT_DIR
+
+
+def _normalize_profile(profile: Optional[str]) -> Optional[str]:
+    text = str(profile or "").strip().lower()
+    if not text:
+        return None
+    try:
+        from hermes_cli import profiles as profiles_mod
+
+        profiles_mod.validate_profile_name(text)
+        if text != "default" and not profiles_mod.profile_exists(text):
+            raise FileNotFoundError(f"Hermes profile '{text}' does not exist")
+    except ValueError:
+        raise
+    return text
 
 
 def _jobs_lock_file() -> Path:
     """Return the advisory lock path for the current cron directory."""
+    _refresh_default_paths()
     return CRON_DIR / ".jobs.lock"
 
 
@@ -270,10 +312,23 @@ def _secure_file(path: Path):
 
 def ensure_dirs():
     """Ensure cron directories exist with secure permissions."""
+    _refresh_default_paths()
     CRON_DIR.mkdir(parents=True, exist_ok=True)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     _secure_dir(CRON_DIR)
     _secure_dir(OUTPUT_DIR)
+
+
+def _cron_storage_scope_id() -> str:
+    """Return the SQLite storage scope for the active cron home."""
+    _refresh_default_paths()
+    home = CRON_DIR.parent.expanduser().resolve()
+    if home.name and home.parent.name == "workspaces":
+        workspace_id = home.name.strip()
+        if workspace_id:
+            return f"workspace:{workspace_id}"
+    digest = hashlib.sha256(str(home).encode("utf-8")).hexdigest()[:24]
+    return f"hermes_home:{digest}"
 
 
 # =============================================================================
@@ -789,6 +844,7 @@ def create_job(
     workdir: Optional[str] = None,
     no_agent: bool = False,
     attach_to_session: Optional[bool] = None,
+    profile: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Create a new cron job.
@@ -866,6 +922,7 @@ def create_job(
     normalized_toolsets = [str(t).strip() for t in enabled_toolsets if str(t).strip()] if enabled_toolsets else None
     normalized_toolsets = normalized_toolsets or None
     normalized_workdir = _normalize_workdir(workdir)
+    normalized_profile = _normalize_profile(profile)
     normalized_no_agent = bool(no_agent)
     normalized_attach = attach_to_session if isinstance(attach_to_session, bool) else None
 
@@ -967,6 +1024,7 @@ def create_job(
         "origin": origin,  # Tracks where job was created for "origin" delivery
         "enabled_toolsets": normalized_toolsets,
         "workdir": normalized_workdir,
+        "profile": normalized_profile,
     }
     # Only persist attach_to_session when explicitly set, so existing jobs and
     # the common case stay byte-identical (absent key => fall back to the
@@ -1063,8 +1121,23 @@ def update_job(job_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]
                 else:
                     updates["workdir"] = _normalize_workdir(_wd)
 
+            if "profile" in updates:
+                updates["profile"] = _normalize_profile(updates["profile"])
+
             updated = _apply_skill_fields({**job, **updates})
             schedule_changed = "schedule" in updates
+
+            if "repeat" in updates:
+                raw_repeat = updates["repeat"]
+                repeat_times = None
+                if raw_repeat is not None:
+                    try:
+                        repeat_int = int(raw_repeat)
+                    except (TypeError, ValueError):
+                        repeat_int = None
+                    if repeat_int and repeat_int > 0:
+                        repeat_times = repeat_int
+                updated["repeat"] = {"times": repeat_times, "completed": 0}
 
             if "skills" in updates or "skill" in updates:
                 normalized_skills = _normalize_skill_list(updated.get("skill"), updated.get("skills"))
@@ -1085,6 +1158,15 @@ def update_job(job_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]
                 )
                 if updated.get("state") != "paused":
                     updated["next_run_at"] = compute_next_run(updated_schedule)
+                old_repeat = job.get("repeat") if isinstance(job.get("repeat"), dict) else {}
+                if (
+                    "repeat" not in updates
+                    and job.get("schedule", {}).get("kind") == "once"
+                    and updated_schedule.get("kind") != "once"
+                    and old_repeat.get("times") == 1
+                    and old_repeat.get("completed", 0) == 0
+                ):
+                    updated["repeat"] = {"times": None, "completed": 0}
 
             if updated.get("enabled", True) and updated.get("state") != "paused" and not updated.get("next_run_at"):
                 updated["next_run_at"] = compute_next_run(updated["schedule"])
@@ -1166,6 +1248,7 @@ def remove_job(job_id: str) -> bool:
             # Clean up output directory to prevent orphaned dirs accumulating
             if job_output_dir.exists():
                 shutil.rmtree(job_output_dir)
+            delete_job_outputs(canonical_id)
             return True
     return False
 
@@ -1487,7 +1570,7 @@ def _get_due_jobs_locked() -> List[Dict[str, Any]]:
                             rj["next_run_at"] = new_next
                             needs_save = True
                             break
-                    # Fall through to due.append(job) — execute once now
+                    continue
 
             due.append(job)
 
@@ -1574,6 +1657,27 @@ def save_job_output(job_id: str, output: str):
     _prune_job_output(job_output_dir, _cron_output_keep())
 
     return output_file
+
+
+def save_job_output_record(job_id: str, output: str) -> None:
+    """Persist latest cron output in the SQLite cron store."""
+    from agents import cron_store
+
+    cron_store.save_output(_cron_storage_scope_id(), job_id, output)
+
+
+def get_latest_job_output(job_id: str) -> Optional[str]:
+    """Return latest SQLite-backed cron output for the active cron scope."""
+    from agents import cron_store
+
+    return cron_store.latest_output(_cron_storage_scope_id(), job_id)
+
+
+def delete_job_outputs(job_id: str) -> None:
+    """Delete SQLite-backed cron outputs for the active cron scope."""
+    from agents import cron_store
+
+    cron_store.delete_outputs(_cron_storage_scope_id(), job_id)
 
 
 # =============================================================================

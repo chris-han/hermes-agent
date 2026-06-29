@@ -1,5 +1,6 @@
 from pathlib import Path
 from subprocess import CalledProcessError
+import sys
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -786,24 +787,34 @@ def _setup_setting_test(monkeypatch, tmp_path, mode):
     mode."""
     _setup_update_mocks(monkeypatch, tmp_path)
     monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/uv" if name == "uv" else None)
-    monkeypatch.setattr(
-        hermes_main, "_stash_local_changes_if_needed",
-        lambda *a, **kw: "abc123deadbeef",
+    fake_stash = lambda *a, **kw: "abc123deadbeef"
+    monkeypatch.setattr(hermes_main, "_stash_local_changes_if_needed", fake_stash)
+    monkeypatch.setitem(
+        hermes_main._cmd_update_impl.__globals__,
+        "_stash_local_changes_if_needed",
+        fake_stash,
     )
     restore_calls = []
     discard_calls = []
-    monkeypatch.setattr(
-        hermes_main, "_restore_stashed_changes",
-        lambda *a, **kw: restore_calls.append(1) or True,
+    fake_restore = lambda *a, **kw: restore_calls.append(1) or True
+    fake_discard = lambda *a, **kw: discard_calls.append(1) or True
+    monkeypatch.setattr(hermes_main, "_restore_stashed_changes", fake_restore)
+    monkeypatch.setattr(hermes_main, "_discard_stashed_changes", fake_discard)
+    monkeypatch.setitem(
+        hermes_main._cmd_update_impl.__globals__,
+        "_restore_stashed_changes",
+        fake_restore,
     )
-    monkeypatch.setattr(
-        hermes_main, "_discard_stashed_changes",
-        lambda *a, **kw: discard_calls.append(1) or True,
+    monkeypatch.setitem(
+        hermes_main._cmd_update_impl.__globals__,
+        "_discard_stashed_changes",
+        fake_discard,
     )
-    monkeypatch.setattr(
-        hermes_config, "load_config",
-        lambda *a, **kw: {"updates": {"non_interactive_local_changes": mode}},
-    )
+    fake_load_config = lambda *a, **kw: {
+        "updates": {"non_interactive_local_changes": mode}
+    }
+    monkeypatch.setattr(hermes_config, "load_config", fake_load_config)
+    monkeypatch.setattr(sys.modules["hermes_cli.config"], "load_config", fake_load_config)
     side_effect, recorded = _make_update_side_effect()
     monkeypatch.setattr(hermes_main.subprocess, "run", side_effect)
     return restore_calls, discard_calls, recorded

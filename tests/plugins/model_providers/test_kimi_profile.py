@@ -32,33 +32,28 @@ def kimi_profile():
 
 
 class TestKimiReasoningWireShape:
-    """``build_api_kwargs_extras`` never emits thinking + reasoning_effort together."""
+    """``build_api_kwargs_extras`` follows the Kimi CLI reasoning defaults."""
 
-    def test_no_config_enables_thinking_without_effort(self, kimi_profile):
-        """No reasoning_config → thinking on, server picks the depth.
-
-        Regression guard: this path previously also sent
-        ``reasoning_effort="medium"``, pairing thinking + effort on every
-        default call.
-        """
+    def test_no_config_enables_thinking_with_default_effort(self, kimi_profile):
+        """No reasoning_config → thinking on at Kimi CLI's medium effort."""
         extra_body, top_level = kimi_profile.build_api_kwargs_extras(reasoning_config=None)
         assert extra_body == {"thinking": {"type": "enabled"}}
-        assert top_level == {}
+        assert top_level == {"reasoning_effort": "medium"}
 
     @pytest.mark.parametrize("effort", ["low", "medium", "high"])
-    def test_explicit_effort_sends_effort_only(self, kimi_profile, effort):
+    def test_explicit_effort_sends_thinking_and_effort(self, kimi_profile, effort):
         extra_body, top_level = kimi_profile.build_api_kwargs_extras(
             reasoning_config={"enabled": True, "effort": effort}
         )
+        assert extra_body == {"thinking": {"type": "enabled"}}
         assert top_level == {"reasoning_effort": effort}
-        assert "thinking" not in extra_body
 
-    def test_enabled_without_effort_falls_back_to_thinking(self, kimi_profile):
+    def test_enabled_without_effort_falls_back_to_medium(self, kimi_profile):
         extra_body, top_level = kimi_profile.build_api_kwargs_extras(
             reasoning_config={"enabled": True}
         )
         assert extra_body == {"thinking": {"type": "enabled"}}
-        assert top_level == {}
+        assert top_level == {"reasoning_effort": "medium"}
 
     @pytest.mark.parametrize("effort", ["", "garbage", "xhigh", "max"])
     def test_unrecognized_effort_falls_back_to_thinking(self, kimi_profile, effort):
@@ -68,7 +63,7 @@ class TestKimiReasoningWireShape:
             reasoning_config={"enabled": True, "effort": effort}
         )
         assert extra_body == {"thinking": {"type": "enabled"}}
-        assert top_level == {}
+        assert top_level == {"reasoning_effort": "medium"}
 
     def test_disabled_sends_thinking_disabled_only(self, kimi_profile):
         extra_body, top_level = kimi_profile.build_api_kwargs_extras(
@@ -95,12 +90,15 @@ class TestKimiReasoningWireShape:
             {"enabled": False, "effort": "low"},
         ],
     )
-    def test_never_emits_both(self, kimi_profile, reasoning_config):
-        """The core invariant: thinking and reasoning_effort are never both set."""
+    def test_disabled_is_only_case_without_both(self, kimi_profile, reasoning_config):
         extra_body, top_level = kimi_profile.build_api_kwargs_extras(
             reasoning_config=reasoning_config
         )
-        assert not ("thinking" in extra_body and "reasoning_effort" in top_level)
+        if isinstance(reasoning_config, dict) and reasoning_config.get("enabled") is False:
+            assert top_level == {}
+        else:
+            assert extra_body == {"thinking": {"type": "enabled"}}
+            assert top_level["reasoning_effort"] in {"low", "medium", "high"}
 
 
 class TestKimiFullKwargsIntegration:
@@ -119,12 +117,12 @@ class TestKimiFullKwargsIntegration:
             provider_name="kimi-coding",
         )
 
-    def test_explicit_effort_omits_thinking(self, kimi_profile):
+    def test_explicit_effort_includes_thinking(self, kimi_profile):
         kwargs = self._build(kimi_profile, {"enabled": True, "effort": "high"})
         assert kwargs["reasoning_effort"] == "high"
-        assert "thinking" not in kwargs.get("extra_body", {})
+        assert kwargs["extra_body"] == {"thinking": {"type": "enabled"}}
 
-    def test_no_config_omits_effort(self, kimi_profile):
+    def test_no_config_uses_medium_effort(self, kimi_profile):
         kwargs = self._build(kimi_profile, None)
-        assert "reasoning_effort" not in kwargs
+        assert kwargs["reasoning_effort"] == "medium"
         assert kwargs["extra_body"] == {"thinking": {"type": "enabled"}}

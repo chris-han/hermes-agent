@@ -1,10 +1,13 @@
 """Tests for the Microsoft Teams platform adapter plugin."""
 
+import asyncio
 import json
+import os
 import sys
 import types
+from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -226,7 +229,7 @@ class TestTeamsRequirements:
         monkeypatch.setattr(
             "tools.lazy_deps.ensure_and_bind", _fake_ensure_and_bind
         )
-        assert check_teams_requirements() is True
+        assert _teams_mod.check_teams_requirements() is True
         assert called["ensure_and_bind"] == 0
 
     def test_check_teams_requirements_lazy_installs_when_missing(self, monkeypatch):
@@ -243,7 +246,7 @@ class TestTeamsRequirements:
         monkeypatch.setattr(
             "tools.lazy_deps.ensure_and_bind", _fake_ensure_and_bind
         )
-        assert check_teams_requirements() is True
+        assert _teams_mod.check_teams_requirements() is True
         assert seen["feature"] == "platform.teams"
 
     def test_validate_config_with_env(self, monkeypatch):

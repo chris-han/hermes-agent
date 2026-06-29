@@ -1,5 +1,6 @@
 import sys
 from types import ModuleType, SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 from acp.schema import TextContentBlock
@@ -112,6 +113,51 @@ def test_acp_real_agent_gets_session_db_for_recall(monkeypatch):
     assert captured["session_db"] is sentinel_db
     assert captured["platform"] == "acp"
     assert captured["session_id"] == "acp-session"
+
+
+def test_session_manager_make_agent_uses_shared_api_server_toolsets():
+    captured: dict[str, object] = {}
+
+    class CaptureAgent:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+            self.enabled_toolsets = kwargs.get("enabled_toolsets")
+            self._print_fn = None
+
+    manager = SessionManager(db=NoopDb())
+
+    with patch("hermes_cli.config.load_config") as mock_config, \
+         patch("hermes_cli.runtime_provider.resolve_runtime_provider") as mock_runtime, \
+         patch("run_agent.AIAgent", CaptureAgent):
+        mock_config.return_value = {
+            "platform_toolsets": {
+                "api_server": ["hermes-api-server", "business_analytics"],
+            },
+            "mcp_servers": {
+                "demo": {"enabled": True},
+            },
+        }
+        mock_runtime.return_value = {
+            "provider": "openrouter",
+            "api_mode": None,
+            "base_url": None,
+            "api_key": None,
+            "command": None,
+            "args": [],
+        }
+
+        agent = manager._make_agent(
+            session_id="acp-session-1",
+            cwd=".",
+            model="demo/model",
+        )
+
+    assert agent.enabled_toolsets == [
+        "business_analytics",
+        "hermes-api-server",
+        "mcp-demo",
+    ]
+    assert captured["platform"] == "acp"
 
 
 @pytest.mark.asyncio

@@ -1044,7 +1044,33 @@ def _save_session_history(key: str, messages: List[Dict[str, Any]]) -> None:
         logger.info("[Feishu-Comment] Session saved: %s (%d messages)", key, len(cleaned))
 
 
-def _run_comment_agent(prompt: str, client: Any, session_key: str = "") -> str:
+def _resolve_workspace_context_for_open_id(open_id: str) -> Optional[Dict[str, str]]:
+    """Resolve governed workspace/user context for a Feishu open_id."""
+    wanted = str(open_id or "").strip()
+    if not wanted:
+        return None
+    try:
+        from agents.gateway_identity import list_user_records
+
+        for record in list_user_records():
+            if str(record.get("feishu_open_id") or "").strip() != wanted:
+                continue
+            workspace_id = str(record.get("workspace_id") or "").strip()
+            user_id = str(record.get("user_id") or "").strip()
+            if workspace_id and user_id:
+                return {"workspace_id": workspace_id, "user_id": user_id}
+    except Exception:
+        logger.debug("[Feishu-Comment] workspace context lookup failed", exc_info=True)
+    return None
+
+
+def _run_comment_agent(
+    prompt: str,
+    client: Any,
+    session_key: str = "",
+    workspace_id: str = "",
+    user_open_id: str = "",
+) -> str:
     """Create an AIAgent with feishu tools and run the prompt.
 
     If *session_key* is provided, loads/saves conversation history for
@@ -1065,8 +1091,36 @@ def _run_comment_agent(prompt: str, client: Any, session_key: str = "") -> str:
         logger.info("[Feishu-Comment] _run_comment_agent: model=%s provider=%s base_url=%s",
                     model, runtime_kwargs.get("provider"), (runtime_kwargs.get("base_url") or "")[:50])
 
-        # Load session history for cross-card memory
-        history = _load_session_history(session_key) if session_key else []
+        canonical_session_id = None
+        sandbox_scope = None
+        if workspace_id:
+            from agents.sandbox_scope import SandboxScope
+            from agents.workspace_session_logs import resolve_or_create_workspace_session_id
+            from runtime_paths import workspace_hermes_home_path
+
+            workspace_home = workspace_hermes_home_path(workspace_id)
+            canonical_session_id = resolve_or_create_workspace_session_id(
+                workspace_home,
+                workspace_id=workspace_id,
+                alias=session_key or None,
+                platform_session_key=session_key or None,
+                chat_id=session_key or None,
+                origin_user_id=user_open_id or None,
+                source="feishu_comment",
+                platform="feishu",
+            )
+            sandbox_scope = SandboxScope(
+                workspace_id=workspace_id,
+                lane="interactive_session",
+                scope_id=canonical_session_id,
+                adapter_key=None,
+                network_enabled=False,
+            )
+
+        # Load session history for cross-card memory. Workspace-backed comment
+        # sessions rely on the canonical transcript store instead of this
+        # in-memory per-document cache.
+        history = [] if workspace_id else (_load_session_history(session_key) if session_key else [])
         if history:
             logger.info("[Feishu-Comment] _run_comment_agent: loaded %d history messages from session %s",
                         len(history), session_key)
@@ -1083,10 +1137,22 @@ def _run_comment_agent(prompt: str, client: Any, session_key: str = "") -> str:
             skip_memory=True,
             max_iterations=15,
             enabled_toolsets=["feishu_doc", "feishu_drive"],
+            save_trajectories=True,
+            session_id=canonical_session_id,
+            gateway_session_key=session_key or None,
+            platform="feishu",
+            user_id=user_open_id or None,
+            chat_id=session_key or None,
         )
         logger.info("[Feishu-Comment] _run_comment_agent: calling run_conversation (prompt=%d chars, history=%d)",
                     len(prompt), len(history))
-        result = agent.run_conversation(prompt, conversation_history=history or None)
+        if sandbox_scope is not None:
+            from agents.sandbox_scope import bind_sandbox_scope
+
+            with bind_sandbox_scope(sandbox_scope):
+                result = agent.run_conversation(prompt, conversation_history=history or None)
+        else:
+            result = agent.run_conversation(prompt, conversation_history=history or None)
         response = (result.get("final_response") or "").strip()
         api_calls = result.get("api_calls", 0)
         logger.info("[Feishu-Comment] _run_comment_agent: done api_calls=%d response_len=%d response=%s",

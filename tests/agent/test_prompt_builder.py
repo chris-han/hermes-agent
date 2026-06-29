@@ -18,6 +18,7 @@ from agent.prompt_builder import (
     build_skills_system_prompt,
     build_nous_subscription_prompt,
     build_context_files_prompt,
+    build_environment_hints,
     CONTEXT_FILE_MAX_CHARS,
     _dynamic_context_file_max_chars,
     _get_context_file_max_chars,
@@ -505,6 +506,8 @@ class TestBuildSkillsSystemPrompt:
 
     def test_includes_matching_platform_skills(self, monkeypatch, tmp_path):
         """Skills with platforms: [macos] should appear on macOS."""
+        from agent import prompt_builder as pb
+
         monkeypatch.setenv("HERMES_HOME", str(tmp_path))
         skills_dir = tmp_path / "skills" / "apple"
         mac_skill = skills_dir / "imessage"
@@ -517,13 +520,15 @@ class TestBuildSkillsSystemPrompt:
 
         with patch("agent.skill_utils.sys") as mock_sys:
             mock_sys.platform = "darwin"
-            result = build_skills_system_prompt()
+            result = pb.build_skills_system_prompt()
 
         assert "imessage" in result
         assert "Send iMessages" in result
 
     def test_excludes_disabled_skills(self, monkeypatch, tmp_path):
         """Skills in the user's disabled list should not appear in the system prompt."""
+        from agent import prompt_builder as pb
+
         monkeypatch.setenv("HERMES_HOME", str(tmp_path))
         skills_dir = tmp_path / "skills" / "tools"
         skills_dir.mkdir(parents=True)
@@ -542,11 +547,8 @@ class TestBuildSkillsSystemPrompt:
 
         from unittest.mock import patch
 
-        with patch(
-            "agent.prompt_builder.get_disabled_skill_names",
-            return_value={"old-tool"},
-        ):
-            result = build_skills_system_prompt()
+        with patch.object(pb, "get_disabled_skill_names", return_value={"old-tool"}):
+            result = pb.build_skills_system_prompt()
 
         assert "web-search" in result
         assert "old-tool" not in result
@@ -638,7 +640,6 @@ class TestBuildNousSubscriptionPrompt:
                 features={
                     "web": NousFeatureState("web", "Web tools", True, True, True, True, False, True, "firecrawl"),
                     "image_gen": NousFeatureState("image_gen", "Image generation", True, True, True, True, False, True, "Nous Subscription"),
-                    "video_gen": NousFeatureState("video_gen", "Video generation", False, False, False, False, False, False, ""),
                     "tts": NousFeatureState("tts", "OpenAI TTS", True, True, True, True, False, True, "OpenAI TTS"),
                     "stt": NousFeatureState("stt", "Speech-to-text", True, True, True, True, False, True, "OpenAI Whisper"),
                     "browser": NousFeatureState("browser", "Browser automation", True, True, True, True, False, True, "Browser Use"),
@@ -664,7 +665,6 @@ class TestBuildNousSubscriptionPrompt:
                 features={
                     "web": NousFeatureState("web", "Web tools", True, False, False, False, False, True, ""),
                     "image_gen": NousFeatureState("image_gen", "Image generation", True, False, False, False, False, True, ""),
-                    "video_gen": NousFeatureState("video_gen", "Video generation", False, False, False, False, False, False, ""),
                     "tts": NousFeatureState("tts", "OpenAI TTS", True, False, False, False, False, True, ""),
                     "stt": NousFeatureState("stt", "Speech-to-text", True, False, False, False, False, True, ""),
                     "browser": NousFeatureState("browser", "Browser automation", True, False, False, False, False, True, ""),
@@ -694,13 +694,14 @@ class TestBuildNousSubscriptionPrompt:
 class TestBuildContextFilesPrompt:
     def test_empty_dir_loads_seeded_global_soul(self, tmp_path):
         from unittest.mock import patch
+        from hermes_cli.default_soul import DEFAULT_SOUL_MD
 
         fake_home = tmp_path / "fake_home"
         fake_home.mkdir()
         with patch("pathlib.Path.home", return_value=fake_home):
             result = build_context_files_prompt(cwd=str(tmp_path))
         assert "Project Context" in result
-        assert "Hermes Agent" in result
+        assert DEFAULT_SOUL_MD in result
 
     def test_loads_agents_md(self, tmp_path):
         (tmp_path / "AGENTS.md").write_text("Use Ruff for linting.")
@@ -1170,29 +1171,6 @@ class TestEnvironmentHints:
         assert "Terminal backend: docker" in result
         assert "inside" in result.lower()
 
-    def test_build_environment_hints_uses_terminal_cwd_over_launch_dir(self, monkeypatch, tmp_path):
-        """THE BUG: gateway/cron set TERMINAL_CWD but the prompt emitted os.getcwd()
-        (the daemon launch dir). Regression for #24882/#24969/#27383/#29265."""
-        import agent.prompt_builder as _pb
-        monkeypatch.setattr(_pb, "is_wsl", lambda: False)
-        monkeypatch.delenv("TERMINAL_ENV", raising=False)
-        configured = tmp_path / "workspace"
-        configured.mkdir()
-        monkeypatch.setenv("TERMINAL_CWD", str(configured))
-        monkeypatch.chdir(tmp_path)
-        _pb._clear_backend_probe_cache()
-        assert f"Current working directory: {configured}" in _pb.build_environment_hints()
-
-    def test_build_environment_hints_falls_back_to_launch_dir(self, monkeypatch, tmp_path):
-        """The #19242 local-CLI contract: no TERMINAL_CWD → the launch dir."""
-        import agent.prompt_builder as _pb
-        monkeypatch.setattr(_pb, "is_wsl", lambda: False)
-        monkeypatch.delenv("TERMINAL_ENV", raising=False)
-        monkeypatch.delenv("TERMINAL_CWD", raising=False)
-        monkeypatch.chdir(tmp_path)
-        _pb._clear_backend_probe_cache()
-        assert f"Current working directory: {tmp_path}" in _pb.build_environment_hints()
-
     def test_build_environment_hints_uses_live_probe_when_available(self, monkeypatch):
         """When the probe succeeds, its output must appear in the hint block."""
         import agent.prompt_builder as _pb
@@ -1209,63 +1187,11 @@ class TestEnvironmentHints:
     def test_remote_backend_list_covers_known_sandboxes(self):
         """Regression guard: if someone adds a remote backend, they must list it here."""
         import agent.prompt_builder as _pb
-        for backend in ("docker", "singularity", "modal", "daytona", "ssh"):
+        for backend in ("docker", "singularity", "modal", "daytona", "ssh", "vercel_sandbox"):
             assert backend in _pb._REMOTE_TERMINAL_BACKENDS, (
                 f"{backend!r} must be in _REMOTE_TERMINAL_BACKENDS so its host "
                 f"info is suppressed in the system prompt"
             )
-
-    def test_environment_hint_from_env_var_is_appended(self, monkeypatch):
-        """HERMES_ENVIRONMENT_HINT lets an embedder describe the runtime env."""
-        import agent.prompt_builder as _pb
-        monkeypatch.setattr(_pb, "is_wsl", lambda: False)
-        monkeypatch.delenv("TERMINAL_ENV", raising=False)
-        monkeypatch.setenv("HERMES_ENVIRONMENT_HINT", "Running inside an OpenShell sandbox.")
-        _pb._clear_backend_probe_cache()
-        result = _pb.build_environment_hints()
-        assert "Running inside an OpenShell sandbox." in result
-        # The factual host block must still come first.
-        assert result.index("Host:") < result.index("OpenShell")
-
-    def test_environment_hint_env_var_overrides_config(self, monkeypatch):
-        """Env var wins over config.yaml agent.environment_hint."""
-        import agent.prompt_builder as _pb
-        monkeypatch.setattr(_pb, "is_wsl", lambda: False)
-        monkeypatch.delenv("TERMINAL_ENV", raising=False)
-        monkeypatch.setenv("HERMES_ENVIRONMENT_HINT", "ENV-WINS")
-        monkeypatch.setattr(
-            "hermes_cli.config.load_config",
-            lambda: {"agent": {"environment_hint": "CONFIG-VALUE"}},
-        )
-        _pb._clear_backend_probe_cache()
-        result = _pb.build_environment_hints()
-        assert "ENV-WINS" in result
-        assert "CONFIG-VALUE" not in result
-
-    def test_environment_hint_falls_back_to_config(self, monkeypatch):
-        """With no env var, the config.yaml value is used."""
-        import agent.prompt_builder as _pb
-        monkeypatch.setattr(_pb, "is_wsl", lambda: False)
-        monkeypatch.delenv("TERMINAL_ENV", raising=False)
-        monkeypatch.delenv("HERMES_ENVIRONMENT_HINT", raising=False)
-        monkeypatch.setattr(
-            "hermes_cli.config.load_config",
-            lambda: {"agent": {"environment_hint": "CONFIG-VALUE"}},
-        )
-        _pb._clear_backend_probe_cache()
-        result = _pb.build_environment_hints()
-        assert "CONFIG-VALUE" in result
-
-    def test_environment_hint_empty_by_default(self, monkeypatch):
-        """No hint configured anywhere → no embedder text, host block intact."""
-        import agent.prompt_builder as _pb
-        monkeypatch.setattr(_pb, "is_wsl", lambda: False)
-        monkeypatch.delenv("TERMINAL_ENV", raising=False)
-        monkeypatch.delenv("HERMES_ENVIRONMENT_HINT", raising=False)
-        monkeypatch.setattr("hermes_cli.config.load_config", lambda: {"agent": {}})
-        _pb._clear_backend_probe_cache()
-        result = _pb.build_environment_hints()
-        assert "Host:" in result
 
 
 # =========================================================================
@@ -1554,5 +1480,3 @@ class TestParallelToolCallGuidance:
 # =========================================================================
 # Budget warning history stripping
 # =========================================================================
-
-

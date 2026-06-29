@@ -24,10 +24,15 @@ from typing import Any, Dict, List, Optional
 
 from agent.usage_pricing import (
     CanonicalUsage,
+    DEFAULT_PRICING,
     estimate_usage_cost,
     format_duration_compact,
     has_known_pricing,
 )
+
+_DEFAULT_PRICING = DEFAULT_PRICING
+_format_duration = format_duration_compact
+_has_known_pricing = has_known_pricing
 
 
 

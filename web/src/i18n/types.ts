@@ -95,6 +95,7 @@ export interface Translations {
       keys: string;
       logs: string;
       models: string;
+      organization: string;
       profiles: string;
       plugins: string;
       sessions: string;
@@ -154,8 +155,6 @@ export interface Translations {
   // ── Sessions page ──
   sessions: {
     title: string;
-    history: string;
-    overview: string;
     searchPlaceholder: string;
     noSessions: string;
     noMatch: string;
@@ -415,6 +414,58 @@ export interface Translations {
     activeSetHint?: string;
   };
 
+  organization: {
+    eyebrow: string;
+    title: string;
+    subtitle: string;
+    statusLabel: string;
+    statuses: {
+      unassigned: string;
+      pending: string;
+      active: string;
+      suspended: string;
+      revoked: string;
+    };
+    currentAccess: string;
+    currentOrg: string;
+    current: string;
+    noneAssigned: string;
+    personalOnlyMode: string;
+    roleLabel: string;
+    sharingTitle: string;
+    sharingDescription: string;
+    sharingEnabled: string;
+    sharingDisabled: string;
+    createOrganization: string;
+    joinOrganization: string;
+    namePlaceholder: string;
+    idPlaceholder: string;
+    joinHint: string;
+    nameRequired: string;
+    idRequired: string;
+    joinRequested: string;
+    created: string;
+    membershipsTitle: string;
+    noMemberships: string;
+    switchAction: string;
+    switched: string;
+    membersTitle: string;
+    activeMembers: string;
+    pendingMembers: string;
+    memberApproved: string;
+    memberRemoved: string;
+    auditAndInvites: string;
+    inviteTitle: string;
+    invitePlaceholder: string;
+    inviteAction: string;
+    inviteCreated: string;
+    inviteeRequired: string;
+    auditTitle: string;
+    noAuditEvents: string;
+    actorLabel: string;
+    subjectLabel: string;
+  };
+
   // ── Skills page ──
   skills: {
     title: string;
@@ -498,8 +549,6 @@ export interface Translations {
     providersConfigured: string;
     replaceCurrentValue: string;
     showAdvanced: string;
-    showLess: string;
-    showMore: string;
     showValue: string;
   };
 

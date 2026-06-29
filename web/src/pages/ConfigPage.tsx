@@ -4,6 +4,7 @@ import {
   Download,
   FormInput,
   RotateCcw,
+  Save,
   Search,
   Upload,
   X,
@@ -38,15 +39,15 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { getNestedValue, setNestedValue } from "@/lib/nested";
-import { useToast } from "@nous-research/ui/hooks/use-toast";
-import { Toast } from "@nous-research/ui/ui/components/toast";
+import { useToast } from "@/hooks/useToast";
+import { Toast } from "@/components/Toast";
 import { AutoField } from "@/components/AutoField";
 import { Button } from "@nous-research/ui/ui/components/button";
 import { ListItem } from "@nous-research/ui/ui/components/list-item";
 import { Spinner } from "@nous-research/ui/ui/components/spinner";
-import { Card, CardContent, CardHeader, CardTitle } from "@nous-research/ui/ui/components/card";
-import { ConfirmDialog } from "@nous-research/ui/ui/components/confirm-dialog";
-import { Input } from "@nous-research/ui/ui/components/input";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { Input } from "@/components/ui/input";
 import { Badge } from "@nous-research/ui/ui/components/badge";
 import { useI18n } from "@/i18n";
 import { usePageHeader } from "@/contexts/usePageHeader";
@@ -394,7 +395,7 @@ export default function ConfigPage() {
                 category={cat}
                 className="h-4 w-4 text-muted-foreground"
               />
-              <span className="font-mondwest text-display text-xs font-semibold tracking-wider text-muted-foreground">
+              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 {prettyCategoryName(cat)}
               </span>
               <div className="flex-1 border-t border-border" />
@@ -402,7 +403,7 @@ export default function ConfigPage() {
           )}
           {showSection && (
             <div className="flex items-center gap-2 pt-4 pb-2 first:pt-0">
-              <span className="font-mondwest text-display text-xs font-semibold tracking-wider text-muted-foreground">
+              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 {section.replace(/_/g, " ")}
               </span>
               <div className="flex-1 border-t border-border" />
@@ -495,18 +496,18 @@ export default function ConfigPage() {
           {yamlMode ? (
             <Button
               size="sm"
-              className="uppercase"
               onClick={handleYamlSave}
               disabled={yamlSaving}
+              prefix={<Save />}
             >
               {yamlSaving ? t.common.saving : t.common.save}
             </Button>
           ) : (
             <Button
               size="sm"
-              className="uppercase"
               onClick={handleSave}
               disabled={saving}
+              prefix={<Save />}
             >
               {saving ? t.common.saving : t.common.save}
             </Button>
@@ -543,13 +544,13 @@ export default function ConfigPage() {
             <div className="sm:sticky sm:top-4">
               <div className="flex flex-col border border-border bg-muted/20">
                 <div className="hidden sm:flex items-center gap-2 px-3 py-2 border-b border-border">
-                  <Filter className="h-3 w-3 text-text-tertiary" />
-                  <span className="font-mondwest text-display text-xs tracking-[0.12em] text-text-secondary">
+                  <Filter className="h-3 w-3 text-muted-foreground" />
+                  <span className="font-mondwest text-[0.65rem] tracking-[0.12em] uppercase text-muted-foreground">
                     {t.config.filters}
                   </span>
                 </div>
 
-                <div className="hidden sm:block px-3 pt-2 pb-1 font-mondwest text-display text-xs tracking-[0.12em] text-text-tertiary">
+                <div className="hidden sm:block px-3 pt-2 pb-1 font-mondwest text-[0.6rem] tracking-[0.12em] uppercase text-muted-foreground/70">
                   {t.config.sections}
                 </div>
 
@@ -565,7 +566,7 @@ export default function ConfigPage() {
                           setSearchQuery("");
                           setActiveCategory(cat);
                         }}
-                        className="rounded-none whitespace-nowrap px-2 py-1 text-xs"
+                        className="rounded-sm whitespace-nowrap px-2 py-1 text-[11px]"
                       >
                         <CategoryIcon
                           category={cat}
@@ -575,10 +576,10 @@ export default function ConfigPage() {
                           {prettyCategoryName(cat)}
                         </span>
                         <span
-                          className={`text-xs tabular-nums ${
+                          className={`text-[10px] tabular-nums ${
                             isActive
-                              ? "text-text-secondary"
-                              : "text-text-tertiary"
+                              ? "text-foreground/60"
+                              : "text-muted-foreground/50"
                           }`}
                         >
                           {categoryCounts[cat] || 0}
@@ -600,7 +601,7 @@ export default function ConfigPage() {
                       <Search className="h-4 w-4" />
                       {t.config.searchResults}
                     </CardTitle>
-                    <Badge tone="secondary" className="text-xs">
+                    <Badge tone="secondary" className="text-[10px]">
                       {searchMatchedFields.length}{" "}
                       {t.config.fields.replace(
                         "{s}",
@@ -631,7 +632,7 @@ export default function ConfigPage() {
                       />
                       {prettyCategoryName(activeCategory)}
                     </CardTitle>
-                    <Badge tone="secondary" className="text-xs">
+                    <Badge tone="secondary" className="text-[10px]">
                       {activeFields.length}{" "}
                       {t.config.fields.replace(
                         "{s}",

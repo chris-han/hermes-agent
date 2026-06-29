@@ -32,14 +32,17 @@ Requires:
 """
 
 import asyncio
+import contextlib
 import hashlib
 import hmac
+import importlib
 import json
 import logging
 import os
 import socket as _socket
 import re
 import sqlite3
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -60,6 +63,77 @@ from gateway.platforms.base import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _bind_workspace_env_cm(target_home: Path, session_id: str | None = None):
+    try:
+        from runtime_paths import bind_workspace_env, bind_workspace_session_env
+    except Exception:
+        return contextlib.nullcontext()
+    try:
+        if session_id:
+            return bind_workspace_session_env(target_home, session_id)
+        return bind_workspace_env(target_home)
+    except ValueError:
+        return contextlib.nullcontext()
+
+
+@contextlib.contextmanager
+def _bound_request_hermes_home(raw_home: str | None, session_id: str | None = None):
+    """Bind HERMES_HOME for one trusted API-server request."""
+    value = (raw_home or "").strip()
+    if not value:
+        yield
+        return
+
+    target_home = Path(value).expanduser().resolve()
+    prev_home = os.environ.get("HERMES_HOME")
+    prev_runs = os.environ.get("SEMANTIER_WORKSPACE_RUNS_DIR")
+    gateway_run = sys.modules.get("gateway.run")
+
+    shared_root_raw = os.environ.get("SEMANTIER_LOCAL_STATE_DIR")
+    shared_runtime_root = (
+        Path(shared_root_raw).expanduser().resolve()
+        if shared_root_raw
+        else target_home
+    )
+    if gateway_run is None and os.environ.get("SEMANTIER_LOCAL_STATE_DIR"):
+        os.environ["HERMES_HOME"] = str(shared_runtime_root)
+        try:
+            gateway_run = importlib.import_module("gateway.run")
+        finally:
+            os.environ["HERMES_HOME"] = str(target_home)
+    elif gateway_run is None:
+        try:
+            gateway_run = importlib.import_module("gateway.run")
+        except Exception:
+            gateway_run = None
+
+    try:
+        if gateway_run is not None and shared_runtime_root:
+            gateway_run._hermes_home = shared_runtime_root
+            gateway_run._env_path = shared_runtime_root / ".env"
+            gateway_run._config_path = shared_runtime_root / "config.yaml"
+        os.environ["HERMES_HOME"] = str(target_home)
+        reload_env = getattr(
+            gateway_run,
+            "_reload_runtime_env_preserving_config_authority",
+            None,
+        )
+        if callable(reload_env):
+            reload_env()
+        os.environ["HERMES_HOME"] = str(target_home)
+        with _bind_workspace_env_cm(target_home, session_id=session_id):
+            yield
+    finally:
+        if prev_home is None:
+            os.environ.pop("HERMES_HOME", None)
+        else:
+            os.environ["HERMES_HOME"] = prev_home
+        if prev_runs is None:
+            os.environ.pop("SEMANTIER_WORKSPACE_RUNS_DIR", None)
+        else:
+            os.environ["SEMANTIER_WORKSPACE_RUNS_DIR"] = prev_runs
 
 
 def _hermes_version() -> str:
@@ -366,6 +440,18 @@ def _session_chat_user_message(body: Dict[str, Any], *, param: str = "message") 
 def check_api_server_requirements() -> bool:
     """Check if API server dependencies are available."""
     return AIOHTTP_AVAILABLE
+
+
+def _gateway_run_module() -> Any:
+    """Return the canonical gateway.run module, avoiding stale sys.modules test doubles."""
+    try:
+        import gateway as gateway_pkg
+        module = getattr(gateway_pkg, "run", None)
+        if module is not None and getattr(module, "__name__", None) == "gateway.run":
+            return module
+    except Exception:
+        pass
+    return importlib.import_module("gateway.run")
 
 
 class ResponseStore:
@@ -1069,6 +1155,7 @@ class APIServerAdapter(BasePlatformAdapter):
         tool_start_callback=None,
         tool_complete_callback=None,
         gateway_session_key: Optional[str] = None,
+        request_hermes_home: Optional[str] = None,
     ) -> Any:
         """
         Create an AIAgent instance using the gateway's runtime config.
@@ -1086,32 +1173,62 @@ class APIServerAdapter(BasePlatformAdapter):
         — matching the semantics of the native gateway's ``session_key``.
         """
         from run_agent import AIAgent
-        from gateway.run import (
-            _current_max_iterations,
-            _resolve_runtime_agent_kwargs,
-            _resolve_gateway_model,
-            _load_gateway_config,
-            GatewayRunner,
-        )
         from hermes_cli.tools_config import _get_platform_tools
 
-        runtime_kwargs = _resolve_runtime_agent_kwargs()
-        reasoning_config = GatewayRunner._load_reasoning_config()
-        model = _resolve_gateway_model()
+        gateway_run = _gateway_run_module()
+        user_config = gateway_run._load_gateway_config()
+        tool_config = user_config
+        if request_hermes_home:
+            try:
+                from hermes_cli.config import read_raw_config
+                from hermes_cli.plugins import discover_plugins
 
-        user_config = _load_gateway_config()
-        enabled_toolsets = sorted(_get_platform_tools(user_config, "api_server"))
+                discover_plugins(force=True)
+                workspace_config = read_raw_config()
+                if isinstance(workspace_config, dict) and workspace_config:
+                    tool_config = workspace_config
+            except Exception as exc:
+                logger.debug(
+                    "Workspace plugin/tool config discovery failed for %s: %s",
+                    request_hermes_home,
+                    exc,
+                )
+        try:
+            model = gateway_run._resolve_gateway_model(user_config)
+        except TypeError:
+            model = gateway_run._resolve_gateway_model()
+        model_cfg = user_config.get("model") or {}
+        requested_provider = None
+        if isinstance(model_cfg, dict):
+            requested_provider = str(model_cfg.get("provider") or "").strip() or None
+        try:
+            runtime_kwargs = gateway_run._resolve_runtime_agent_kwargs(
+                requested_provider=requested_provider,
+                target_model=model or None,
+            )
+        except TypeError:
+            runtime_kwargs = gateway_run._resolve_runtime_agent_kwargs()
+        reasoning_config = gateway_run.GatewayRunner._load_reasoning_config()
+        enabled_toolsets = sorted(_get_platform_tools(tool_config, "api_server"))
 
-        max_iterations = _current_max_iterations()
+        max_iterations = gateway_run._current_max_iterations()
+        try:
+            agent_cfg = user_config.get("agent") if isinstance(user_config, dict) else None
+            raw_max_turns = agent_cfg.get("max_turns") if isinstance(agent_cfg, dict) else None
+            if raw_max_turns is not None:
+                max_iterations = max(1, int(raw_max_turns))
+        except (TypeError, ValueError):
+            pass
 
         # Load fallback provider chain so the API server platform has the
         # same fallback behaviour as Telegram/Discord/Slack (fixes #4954).
-        fallback_model = GatewayRunner._load_fallback_model()
+        fallback_model = gateway_run.GatewayRunner._load_fallback_model()
 
         agent = AIAgent(
             model=model,
             **runtime_kwargs,
             max_iterations=max_iterations,
+            save_trajectories=True,
             quiet_mode=True,
             verbose_logging=False,
             ephemeral_system_prompt=ephemeral_system_prompt or None,
@@ -1127,6 +1244,21 @@ class APIServerAdapter(BasePlatformAdapter):
             reasoning_config=reasoning_config,
             gateway_session_key=gateway_session_key,
         )
+        if request_hermes_home:
+            try:
+                from agents.workspace_session_logs import configure_agent_workspace_session_paths
+
+                configure_agent_workspace_session_paths(
+                    agent,
+                    Path(request_hermes_home).resolve(),
+                    session_id,
+                )
+            except Exception:
+                logger.debug(
+                    "Failed to bind workspace session paths for API session %s",
+                    session_id,
+                    exc_info=True,
+                )
         return agent
 
     # ------------------------------------------------------------------
@@ -1906,7 +2038,9 @@ class APIServerAdapter(BasePlatformAdapter):
             try:
                 db = self._ensure_session_db()
                 if db is not None:
-                    history = db.get_messages_as_conversation(session_id)
+                    db_history = db.get_messages_as_conversation(session_id)
+                    if db_history:
+                        history = db_history
             except Exception as e:
                 logger.warning("Failed to load session history for %s: %s", session_id, e)
                 history = []
@@ -2133,7 +2267,7 @@ class APIServerAdapter(BasePlatformAdapter):
     async def _write_sse_chat_completion(
         self, request: "web.Request", completion_id: str, model: str,
         created: int, stream_q, agent_task, agent_ref=None, session_id: str = None,
-        gateway_session_key: str = None,
+        gateway_session_key: str = None, tool_activity_state: Optional[dict] = None,
     ) -> "web.StreamResponse":
         """Write real streaming SSE from agent's stream_delta_callback queue.
 
@@ -2250,13 +2384,14 @@ class APIServerAdapter(BasePlatformAdapter):
             # Client disconnected mid-stream.  Interrupt the agent so it
             # stops making LLM API calls at the next loop iteration, then
             # cancel the asyncio task wrapper.
+            tool_started = bool((tool_activity_state or {}).get("started"))
             agent = agent_ref[0] if agent_ref else None
-            if agent is not None:
+            if agent is not None and not tool_started:
                 try:
                     agent.interrupt("SSE client disconnected")
                 except Exception:
                     pass
-            if not agent_task.done():
+            if not agent_task.done() and not tool_started:
                 agent_task.cancel()
                 try:
                     await agent_task

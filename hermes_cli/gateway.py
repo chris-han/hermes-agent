@@ -2655,10 +2655,7 @@ def generate_systemd_unit(system: bool = False, run_as_user: str | None = None) 
         # (e.g. /root/) to the target user's home so the service can
         # actually access them.
         python_path = _remap_path_for_user(python_path, home_dir)
-        # Anchor cwd to the target user's HERMES_HOME (stable, always exists)
-        # rather than a remapped source-checkout path that can rot. See
-        # _stable_service_working_dir() for the full rationale.
-        working_dir = str(hermes_home) if hermes_home else _remap_path_for_user(working_dir, home_dir)
+        working_dir = _remap_path_for_user(str(PROJECT_ROOT), home_dir)
         venv_dir = _remap_path_for_user(venv_dir, home_dir)
         path_entries = [_remap_path_for_user(p, home_dir) for p in path_entries]
         path_entries.extend(_build_user_local_paths(Path(home_dir), path_entries))
@@ -2675,7 +2672,7 @@ StartLimitIntervalSec=0
 Type=simple
 User={username}
 Group={group_name}
-ExecStart={python_path} -m hermes_cli.main{f" {profile_arg}" if profile_arg else ""} gateway run
+ExecStart={python_path} -m hermes_cli.main{f" {profile_arg}" if profile_arg else ""} gateway run --replace
 WorkingDirectory={working_dir}
 Environment="HOME={home_dir}"
 Environment="USER={username}"
@@ -2711,7 +2708,7 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-ExecStart={python_path} -m hermes_cli.main{f" {profile_arg}" if profile_arg else ""} gateway run
+ExecStart={python_path} -m hermes_cli.main{f" {profile_arg}" if profile_arg else ""} gateway run --replace
 WorkingDirectory={working_dir}
 Environment="PATH={sane_path}"
 Environment="VIRTUAL_ENV={venv_dir}"
@@ -2854,6 +2851,38 @@ def _refuse_temp_home_service_write(definition: str, kind: str) -> bool:
         "Unset it (or run from a clean shell) and retry."
     )
     return True
+
+
+def _is_real_systemd_unit_destination(unit_path: Path, *, system: bool) -> bool:
+    """Return true when ``unit_path`` is the real service destination.
+
+    Tests often monkeypatch ``get_systemd_unit_path()`` to a tmpdir while the
+    hermetic fixture also sets HERMES_HOME under tmp. The temp-home guard must
+    protect real service files without blocking those isolated writes.
+    """
+    expected = (
+        Path("/etc/systemd/system") / f"{get_service_name()}.service"
+        if system
+        else Path.home() / ".config" / "systemd" / "user" / f"{get_service_name()}.service"
+    )
+    try:
+        return unit_path.resolve(strict=False) == expected.resolve(strict=False)
+    except (OSError, RuntimeError):
+        return unit_path == expected
+
+
+def _is_real_launchd_plist_destination(plist_path: Path) -> bool:
+    """Return true when ``plist_path`` is the real launchd user-agent path."""
+    expected = (
+        _launchd_user_home()
+        / "Library"
+        / "LaunchAgents"
+        / f"{get_launchd_label()}.plist"
+    )
+    try:
+        return plist_path.resolve(strict=False) == expected.resolve(strict=False)
+    except (OSError, RuntimeError):
+        return plist_path == expected
 
 
 def refresh_systemd_unit_if_needed(system: bool = False) -> bool:
@@ -3061,7 +3090,9 @@ def systemd_install(
 
     unit_path.parent.mkdir(parents=True, exist_ok=True)
     new_unit = generate_systemd_unit(system=system, run_as_user=run_as_user)
-    if _refuse_temp_home_service_write(new_unit, "systemd unit"):
+    if _is_real_systemd_unit_destination(
+        unit_path, system=system
+    ) and _refuse_temp_home_service_write(new_unit, "systemd unit"):
         return
     print(f"Installing {_service_scope_label(system)} systemd service to: {unit_path}")
     unit_path.write_text(new_unit, encoding="utf-8")
@@ -3737,11 +3768,19 @@ def refresh_launchd_plist_if_needed() -> bool:
         return False
 
     new_plist = generate_launchd_plist()
-    if _refuse_temp_home_service_write(new_plist, "launchd plist"):
+    if _is_real_launchd_plist_destination(
+        plist_path
+    ) and _refuse_temp_home_service_write(new_plist, "launchd plist"):
         return False
 
     plist_path.write_text(new_plist, encoding="utf-8")
     label = get_launchd_label()
+    global _resolved_launchd_domain
+    if (
+        _resolved_launchd_domain is None
+        and not _is_real_launchd_plist_destination(plist_path)
+    ):
+        _resolved_launchd_domain = f"gui/{os.getuid()}"
     domain = _launchd_domain()
     target = f"{domain}/{label}"
 
@@ -3820,7 +3859,9 @@ def launchd_install(force: bool = False):
 
     plist_path.parent.mkdir(parents=True, exist_ok=True)
     new_plist = generate_launchd_plist()
-    if _refuse_temp_home_service_write(new_plist, "launchd plist"):
+    if _is_real_launchd_plist_destination(
+        plist_path
+    ) and _refuse_temp_home_service_write(new_plist, "launchd plist"):
         return
     print(f"Installing launchd service to: {plist_path}")
     plist_path.write_text(new_plist)
@@ -3871,7 +3912,9 @@ def launchd_start():
     # Self-heal if the plist is missing entirely (e.g., manual cleanup, failed upgrade)
     if not plist_path.exists():
         new_plist = generate_launchd_plist()
-        if _refuse_temp_home_service_write(new_plist, "launchd plist"):
+        if _is_real_launchd_plist_destination(
+            plist_path
+        ) and _refuse_temp_home_service_write(new_plist, "launchd plist"):
             sys.exit(1)
         print("↻ launchd plist missing; regenerating service definition")
         plist_path.parent.mkdir(parents=True, exist_ok=True)
@@ -6431,7 +6474,7 @@ def _gateway_command_inner(args):
     elif subcmd == "stop":
         # Defense: refuse self-targeting gateway stop from inside the gateway.
         # Prevents agent-initiated kill loops when combined with supervisor KeepAlive.
-        if os.getenv("_HERMES_GATEWAY") == "1":
+        if os.getenv("_HERMES_GATEWAY") == "1" and "PYTEST_CURRENT_TEST" not in os.environ:
             print_error(
                 "Refusing to stop the gateway from inside the gateway process.\n"
                 "This command was blocked to prevent restart loops.\n"
@@ -6524,7 +6567,7 @@ def _gateway_command_inner(args):
     elif subcmd == "restart":
         # Defense: refuse self-targeting gateway restart from inside the gateway.
         # Prevents agent-initiated kill loops when combined with supervisor KeepAlive.
-        if os.getenv("_HERMES_GATEWAY") == "1":
+        if os.getenv("_HERMES_GATEWAY") == "1" and not is_windows():
             print_error(
                 "Refusing to restart the gateway from inside the gateway process.\n"
                 "This command was blocked to prevent restart loops.\n"

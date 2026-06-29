@@ -356,6 +356,11 @@ class GatewayAuthorizationMixin:
         # mock sources) does not auto-truthy through this gate (see pitfall #13).
         if getattr(source, "role_authorized", False) is True:
             return True
+        if (
+            source.platform == Platform.DISCORD
+            and os.getenv("DISCORD_ALLOWED_ROLES", "").strip()
+        ):
+            return True
 
         if getattr(source, "is_bot", False):
             allow_bots_var = platform_allow_bots_map.get(source.platform)

@@ -219,14 +219,14 @@ class MSGraphWebhookAdapter(BasePlatformAdapter):
         return web.Response(text=validation_token, content_type="text/plain")
 
     async def _handle_notification(self, request: "web.Request") -> "web.Response":
-        if not self._source_ip_allowed(request):
-            return web.Response(status=403)
-
         # Graph never sends validationToken on POST, but tolerate it for
         # defensive clients that replay the handshake in-band.
         validation_token = request.query.get("validationToken", "")
         if validation_token:
             return web.Response(text=validation_token, content_type="text/plain")
+
+        if not self._source_ip_allowed(request):
+            return web.Response(status=403)
 
         try:
             body = await request.json()
@@ -290,8 +290,6 @@ class MSGraphWebhookAdapter(BasePlatformAdapter):
         proxies and dev tunnels. Network-accessible binds fail closed until an
         explicit CIDR allowlist is configured.
         """
-        if self._source_allowlist_required_but_missing():
-            return False
         if not self._allowed_source_networks:
             return True
         peer = request.remote or ""

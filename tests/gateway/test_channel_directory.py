@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -15,6 +16,7 @@ from gateway.channel_directory import (
     _apply_channel_aliases,
     _build_from_sessions,
     _build_slack,
+    DIRECTORY_PATH,
 )
 
 
@@ -82,6 +84,48 @@ class TestBuildChannelDirectoryWrites:
             result = load_directory()
 
         assert result == previous
+
+
+class TestBuildFromSessions:
+    def test_skips_session_alias_when_transport_metadata_missing(self):
+        rows = [
+            {
+                "platform": "feishu",
+                "index_key": "20260615_031731_0b3edf9f",
+                "session_key": "20260615_031731_0b3edf9f",
+                "session_id": "ws-a:20260615_054359_4a426565",
+                "chat_id": None,
+                "origin_user_id": None,
+                "raw_entry": {},
+            }
+        ]
+
+        with patch("gateway.channel_directory._list_workspace_session_entries", return_value=rows):
+            assert _build_from_sessions("feishu") == []
+
+    def test_uses_chat_id_when_origin_metadata_missing(self):
+        rows = [
+            {
+                "platform": "feishu",
+                "index_key": "agent:main:workspace:ws-a:feishu:dm:ou-a",
+                "session_key": "agent:main:workspace:ws-a:feishu:dm:ou-a",
+                "session_id": "ws-a:20260615_054359_4a426565",
+                "chat_id": "oc-a",
+                "origin_user_id": "ou-a",
+                "display_name": "Finance DM",
+                "raw_entry": {},
+            }
+        ]
+
+        with patch("gateway.channel_directory._list_workspace_session_entries", return_value=rows):
+            assert _build_from_sessions("feishu") == [
+                {
+                    "id": "oc-a",
+                    "name": "Finance DM",
+                    "type": "dm",
+                    "thread_id": None,
+                }
+            ]
 
 
 class TestResolveChannelName:
@@ -188,14 +232,25 @@ class TestResolveChannelName:
 
 
 class TestBuildFromSessions:
-    def _write_sessions(self, tmp_path, sessions_data):
-        """Write sessions.json at the path _build_from_sessions expects."""
-        sessions_path = tmp_path / "sessions" / "sessions.json"
-        sessions_path.parent.mkdir(parents=True)
-        sessions_path.write_text(json.dumps(sessions_data))
+    def _rows(self, sessions_data):
+        rows = []
+        for key, session in sessions_data.items():
+            origin = session.get("origin") or {}
+            rows.append(
+                {
+                    "index_key": key,
+                    "session_key": key,
+                    "session_id": session.get("session_id") or key,
+                    "platform": origin.get("platform") or session.get("platform"),
+                    "display_name": session.get("display_name"),
+                    "title": session.get("title"),
+                    "raw_entry": session,
+                }
+            )
+        return rows
 
     def test_builds_from_sessions_json(self, tmp_path):
-        self._write_sessions(tmp_path, {
+        rows = self._rows({
             "session_1": {
                 "origin": {
                     "platform": "telegram",
@@ -220,7 +275,7 @@ class TestBuildFromSessions:
             },
         })
 
-        with patch.dict(os.environ, {"HERMES_HOME": str(tmp_path)}):
+        with patch("gateway.channel_directory._list_workspace_session_entries", return_value=rows):
             entries = _build_from_sessions("telegram")
 
         assert len(entries) == 2
@@ -229,23 +284,23 @@ class TestBuildFromSessions:
         assert "Bob" in names
 
     def test_missing_sessions_file(self, tmp_path):
-        with patch.dict(os.environ, {"HERMES_HOME": str(tmp_path)}):
+        with patch("gateway.channel_directory._list_workspace_session_entries", return_value=[]):
             entries = _build_from_sessions("telegram")
         assert entries == []
 
     def test_deduplication_by_chat_id(self, tmp_path):
-        self._write_sessions(tmp_path, {
+        rows = self._rows({
             "s1": {"origin": {"platform": "telegram", "chat_id": "123", "chat_name": "X"}},
             "s2": {"origin": {"platform": "telegram", "chat_id": "123", "chat_name": "X"}},
         })
 
-        with patch.dict(os.environ, {"HERMES_HOME": str(tmp_path)}):
+        with patch("gateway.channel_directory._list_workspace_session_entries", return_value=rows):
             entries = _build_from_sessions("telegram")
 
         assert len(entries) == 1
 
     def test_keeps_distinct_topics_with_same_chat_id(self, tmp_path):
-        self._write_sessions(tmp_path, {
+        rows = self._rows({
             "group_root": {
                 "origin": {"platform": "telegram", "chat_id": "-1001", "chat_name": "Coaching Chat"},
                 "chat_type": "group",
@@ -270,7 +325,7 @@ class TestBuildFromSessions:
             },
         })
 
-        with patch.dict(os.environ, {"HERMES_HOME": str(tmp_path)}):
+        with patch("gateway.channel_directory._list_workspace_session_entries", return_value=rows):
             entries = _build_from_sessions("telegram")
 
         ids = {entry["id"] for entry in entries}
@@ -279,6 +334,25 @@ class TestBuildFromSessions:
         assert "Coaching Chat" in names
         assert "Coaching Chat / topic 17585" in names
         assert "Coaching Chat / topic 17587" in names
+
+    def test_builds_feishu_entries_from_workspace_sessions(self, tmp_path):
+        rows = self._rows({
+            "fs_1": {
+                "origin": {
+                    "platform": "feishu",
+                    "chat_id": "oc_123",
+                    "chat_name": "Finance Chat",
+                },
+                "chat_type": "group",
+            }
+        })
+
+        with patch("gateway.channel_directory._list_workspace_session_entries", return_value=rows):
+            entries = _build_from_sessions("feishu")
+
+        assert len(entries) == 1
+        assert entries[0]["id"] == "oc_123"
+        assert entries[0]["name"] == "Finance Chat"
 
 
 class TestFormatDirectoryForDisplay:
@@ -380,14 +454,29 @@ def _make_slack_client(pages):
 class TestBuildSlack:
     """_build_slack actually calls users.conversations on each workspace client."""
 
-    def test_no_team_clients_falls_back_to_sessions(self, tmp_path):
-        sessions_path = tmp_path / "sessions" / "sessions.json"
-        sessions_path.parent.mkdir(parents=True)
-        sessions_path.write_text(json.dumps({
-            "s1": {"origin": {"platform": "slack", "chat_id": "D123", "chat_name": "Alice"}},
-        }))
+    @staticmethod
+    def _slack_rows(*sessions):
+        rows = []
+        for idx, session in enumerate(sessions, start=1):
+            origin = session.get("origin") or {}
+            rows.append(
+                {
+                    "index_key": f"s{idx}",
+                    "session_key": f"s{idx}",
+                    "session_id": session.get("session_id") or f"sess_{idx}",
+                    "platform": origin.get("platform") or "slack",
+                    "raw_entry": session,
+                }
+            )
+        return rows
 
-        with patch.dict(os.environ, {"HERMES_HOME": str(tmp_path)}):
+    def test_no_team_clients_falls_back_to_sessions(self, tmp_path):
+        rows = self._slack_rows(
+            {"origin": {"platform": "slack", "chat_id": "D123", "chat_name": "Alice"}}
+        )
+
+        with patch.dict(os.environ, {"HERMES_HOME": str(tmp_path)}), \
+             patch("gateway.channel_directory._list_workspace_session_entries", return_value=rows):
             entries = asyncio.run(_build_slack(_make_slack_adapter({})))
 
         assert len(entries) == 1
@@ -449,12 +538,10 @@ class TestBuildSlack:
         assert {e["id"] for e in entries} == {"C999"}
 
     def test_session_dms_merged_when_not_in_api_results(self, tmp_path):
-        sessions_path = tmp_path / "sessions" / "sessions.json"
-        sessions_path.parent.mkdir(parents=True)
-        sessions_path.write_text(json.dumps({
-            "s1": {"origin": {"platform": "slack", "chat_id": "D456", "chat_name": "Bob"}},
-            "dup": {"origin": {"platform": "slack", "chat_id": "C001", "chat_name": "first"}},
-        }))
+        rows = self._slack_rows(
+            {"origin": {"platform": "slack", "chat_id": "D456", "chat_name": "Bob"}},
+            {"origin": {"platform": "slack", "chat_id": "C001", "chat_name": "first"}},
+        )
         client = _make_slack_client([
             {
                 "ok": True,
@@ -462,7 +549,8 @@ class TestBuildSlack:
                 "response_metadata": {},
             },
         ])
-        with patch.dict(os.environ, {"HERMES_HOME": str(tmp_path)}):
+        with patch.dict(os.environ, {"HERMES_HOME": str(tmp_path)}), \
+             patch("gateway.channel_directory._list_workspace_session_entries", return_value=rows):
             entries = asyncio.run(_build_slack(_make_slack_adapter({"T1": client})))
 
         ids = {e["id"] for e in entries}

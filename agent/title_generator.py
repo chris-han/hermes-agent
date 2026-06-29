@@ -6,6 +6,7 @@ adds latency to the user-facing reply.
 
 import logging
 import threading
+import time
 from typing import Callable, Optional
 
 from agent.auxiliary_client import call_llm
@@ -78,15 +79,41 @@ def generate_title(
         {"role": "user", "content": f"User: {user_snippet}\n\nAssistant: {assistant_snippet}"},
     ]
 
+    last_timeout_error: Exception | None = None
+    for attempt in range(2):
+        try:
+            response = call_llm(
+                task="title_generation",
+                messages=messages,
+                max_tokens=500,
+                temperature=0.3,
+                timeout=timeout,
+                main_runtime=main_runtime,
+            )
+            break
+        except Exception as e:
+            if "timed out" in str(e).lower() or "timeout" in str(e).lower():
+                last_timeout_error = e
+                if attempt == 0:
+                    time.sleep(0.25)
+                    continue
+                logger.warning("Title generation failed: %s", e)
+                logger.debug("Title generation traceback", exc_info=True)
+                return None
+            logger.warning("Title generation failed: %s", e)
+            logger.debug("Title generation traceback", exc_info=True)
+            if failure_callback is not None:
+                try:
+                    failure_callback("title generation", e)
+                except Exception:
+                    logger.debug("Title generation failure_callback raised", exc_info=True)
+            return None
+    else:
+        if last_timeout_error is not None:
+            logger.warning("Title generation failed: %s", last_timeout_error)
+        return None
+
     try:
-        response = call_llm(
-            task="title_generation",
-            messages=messages,
-            max_tokens=500,
-            temperature=0.3,
-            timeout=timeout,
-            main_runtime=main_runtime,
-        )
         title = (response.choices[0].message.content or "").strip()
         # Clean up: remove quotes, trailing punctuation, prefixes like "Title: "
         title = title.strip('"\'')

@@ -74,6 +74,45 @@ _IMAGE_URL_RE = re.compile(
     re.IGNORECASE,
 )
 
+_native_image_paths_by_session: Dict[str, List[str]] = {}
+
+
+def register_native_image_paths(session_key: str, image_paths: List[str]) -> None:
+    """Remember native image paths for later tool placeholder resolution."""
+    key = str(session_key or "").strip()
+    if not key:
+        return
+    paths = [str(path) for path in image_paths or [] if str(path or "").strip()]
+    if not paths:
+        return
+    existing = _native_image_paths_by_session.setdefault(key, [])
+    for path in paths:
+        if path not in existing:
+            existing.append(path)
+
+
+def clear_native_image_paths(session_key: str) -> None:
+    """Clear remembered native image paths for a session."""
+    key = str(session_key or "").strip()
+    if key:
+        _native_image_paths_by_session.pop(key, None)
+
+
+def resolve_native_image_path(candidate: str, *, session_key: str) -> Optional[str]:
+    """Resolve a generated/native-image placeholder to a session image path."""
+    paths = _native_image_paths_by_session.get(str(session_key or "").strip()) or []
+    if not paths:
+        return None
+
+    candidate_name = Path(str(candidate or "")).name
+    for path in reversed(paths):
+        if Path(path).name == candidate_name:
+            return path
+
+    if candidate_name.lower().startswith("user_image_") and len(paths) == 1:
+        return paths[0]
+    return None
+
 
 def extract_image_refs(text: str) -> Tuple[List[str], List[str]]:
     """Scan free-form text for image references the model should see.
@@ -537,4 +576,7 @@ __all__ = [
     "decide_image_input_mode",
     "build_native_content_parts",
     "extract_image_refs",
+    "register_native_image_paths",
+    "clear_native_image_paths",
+    "resolve_native_image_path",
 ]

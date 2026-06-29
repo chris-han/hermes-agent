@@ -104,6 +104,39 @@ def _session_entry_name(origin: Dict[str, Any]) -> str:
     return f"{base_name} / {topic_label}"
 
 
+def _list_workspace_session_entries() -> List[Dict[str, Any]]:
+    """Return normalized session rows used for channel discovery."""
+    sessions_path = get_hermes_home() / "sessions" / "sessions.json"
+    if not sessions_path.exists():
+        return []
+
+    rows: List[Dict[str, Any]] = []
+    with open(sessions_path, encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        return rows
+
+    for key, session in data.items():
+        if str(key).startswith("_") or not isinstance(session, dict):
+            continue
+        origin = session.get("origin") or {}
+        if not isinstance(origin, dict):
+            origin = {}
+        rows.append({
+            "index_key": key,
+            "session_key": key,
+            "session_id": session.get("session_id") or key,
+            "platform": origin.get("platform") or session.get("platform"),
+            "chat_id": origin.get("chat_id") or session.get("chat_id"),
+            "origin_user_id": origin.get("user_id"),
+            "display_name": session.get("display_name"),
+            "title": session.get("title"),
+            "chat_type": session.get("chat_type", "dm"),
+            "raw_entry": session,
+        })
+    return rows
+
+
 # ---------------------------------------------------------------------------
 # Build / refresh
 # ---------------------------------------------------------------------------
@@ -264,32 +297,29 @@ async def _build_slack(adapter) -> List[Dict[str, Any]]:
 
 def _build_from_sessions(platform_name: str) -> List[Dict[str, str]]:
     """Pull known channels/contacts from sessions.json origin data."""
-    sessions_path = get_hermes_home() / "sessions" / "sessions.json"
-    if not sessions_path.exists():
-        return []
-
     entries = []
     try:
-        with open(sessions_path, encoding="utf-8") as f:
-            data = json.load(f)
-
         seen_ids = set()
-        for _key, session in data.items():
-            # Skip documentation/metadata sentinels (keys starting with "_",
-            # e.g. the gateway's "_README" note) — not session entries.
-            if str(_key).startswith("_") or not isinstance(session, dict):
+        for row in _list_workspace_session_entries():
+            if not isinstance(row, dict) or row.get("platform") != platform_name:
                 continue
-            origin = session.get("origin") or {}
-            if origin.get("platform") != platform_name:
-                continue
-            entry_id = _session_entry_id(origin)
+            raw_entry = row.get("raw_entry") if isinstance(row.get("raw_entry"), dict) else {}
+            origin = raw_entry.get("origin") if isinstance(raw_entry, dict) else {}
+            if not isinstance(origin, dict):
+                origin = {}
+            entry_id = _session_entry_id(origin) or row.get("chat_id")
             if not entry_id or entry_id in seen_ids:
                 continue
             seen_ids.add(entry_id)
+            entry_name = (
+                _session_entry_name(origin)
+                if origin.get("chat_id")
+                else row.get("display_name") or row.get("title") or str(entry_id)
+            )
             entries.append({
-                "id": entry_id,
-                "name": _session_entry_name(origin),
-                "type": session.get("chat_type", "dm"),
+                "id": str(entry_id),
+                "name": str(entry_name),
+                "type": row.get("chat_type") or raw_entry.get("chat_type", "dm"),
                 "thread_id": origin.get("thread_id"),
             })
     except Exception as e:

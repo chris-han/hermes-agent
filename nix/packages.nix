@@ -2,12 +2,7 @@
 { inputs, ... }:
 {
   perSystem =
-    {
-      pkgs,
-      lib,
-      inputs',
-      ...
-    }:
+    { pkgs, inputs', ... }:
     let
       minimal = pkgs.callPackage ./hermes-agent.nix {
         inherit (inputs) uv2nix pyproject-nix pyproject-build-systems;
@@ -44,20 +39,13 @@
     in
     {
       packages = {
-        default = full;
+        default = hermesAgent;
+        tui = hermesAgent.hermesTui;
+        web = hermesAgent.hermesWeb;
 
-        inherit minimal;
-
-        # Ships discord.py + python-telegram-bot + slack-sdk so a plain
-        # `nix profile install .#messaging` connects to Discord/Telegram/Slack
-        # on first run — lazy-install can't write to the read-only /nix/store.
-        messaging = minimal.override {
-          extraDependencyGroups = [ "messaging" ];
+        fix-lockfiles = hermesAgent.hermesNpmLib.mkFixLockfiles {
+          packages = [ hermesAgent.hermesTui hermesAgent.hermesWeb ];
         };
-
-        tui = full.hermesTui;
-        web = full.hermesWeb;
-        desktop = full.hermesDesktop;
       };
     };
 }

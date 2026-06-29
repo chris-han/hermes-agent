@@ -12,7 +12,6 @@ logger = logging.getLogger(__name__)
 
 from hermes_cli import auth as auth_mod
 from agent.credential_pool import CredentialPool, PooledCredential, get_custom_provider_pool_key, load_pool
-from agent.secret_scope import get_secret as _get_secret
 from hermes_cli.auth import (
     AuthError,
     DEFAULT_CODEX_BASE_URL,
@@ -44,7 +43,9 @@ def _getenv(name: str, default: str = "") -> str:
     read ``os.environ``. Keeps the ``(name, default) -> str`` contract every
     call site here already relies on.
     """
-    val = _get_secret(name, default)
+    from agent.secret_scope import get_secret
+
+    val = get_secret(name, default)
     return val if val is not None else default
 
 
@@ -829,7 +830,12 @@ def _resolve_named_custom_runtime(
         if pool_result:
             pool_result["source"] = "direct-alias"
             return pool_result
-        _da_is_openai_url   = base_url_host_matches(base_url, "openai.com") or base_url_host_matches(base_url, "openai.azure.com")
+        _da_is_loopback = _loopback_hostname(base_url_hostname(base_url))
+        _da_is_openai_url   = (
+            base_url_host_matches(base_url, "openai.com")
+            or base_url_host_matches(base_url, "openai.azure.com")
+            or _da_is_loopback
+        )
         _da_is_openrouter   = base_url_host_matches(base_url, "openrouter.ai")
         api_key_candidates = [
             (explicit_api_key or "").strip(),
@@ -883,7 +889,12 @@ def _resolve_named_custom_runtime(
             }
         return pool_result
 
-    _cp_is_openai_url   = base_url_host_matches(base_url, "openai.com") or base_url_host_matches(base_url, "openai.azure.com")
+    _cp_is_loopback = _loopback_hostname(base_url_hostname(base_url))
+    _cp_is_openai_url   = (
+        base_url_host_matches(base_url, "openai.com")
+        or base_url_host_matches(base_url, "openai.azure.com")
+        or _cp_is_loopback
+    )
     _cp_is_openrouter   = base_url_host_matches(base_url, "openrouter.ai")
     api_key_candidates = [
         (explicit_api_key or "").strip(),
@@ -1004,6 +1015,7 @@ def _resolve_openrouter_runtime(
         # hostname is a look-alike (ollama.com.attacker.test) must not
         # receive the Ollama credential. See GHSA-76xc-57q6-vm5m.
         _is_ollama_url    = base_url_host_matches(base_url, "ollama.com")
+        _is_loopback_url  = _loopback_hostname(base_url_hostname(base_url))
         _is_openai_url    = base_url_host_matches(base_url, "openai.com")
         _is_openai_azure  = base_url_host_matches(base_url, "openai.azure.com")
         # Gate each provider key on its own host — sending OPENAI_API_KEY or
@@ -1014,7 +1026,16 @@ def _resolve_openrouter_runtime(
             explicit_api_key,
             (cfg_api_key if use_config_base_url else ""),
             (_getenv("OLLAMA_API_KEY")     if _is_ollama_url                       else ""),
-            (_getenv("OPENAI_API_KEY")     if (_is_openai_url or _is_openai_azure) else ""),
+            (
+                _getenv("OPENAI_API_KEY")
+                if (
+                    _is_openai_url
+                    or _is_openai_azure
+                    or _is_loopback_url
+                    or cfg_provider == "custom"
+                )
+                else ""
+            ),
             (_getenv("OPENROUTER_API_KEY") if _is_openrouter_url                   else ""),
             # Bonus (#28660): derive `<VENDOR>_API_KEY` from the host so users
             # who set DEEPSEEK_API_KEY / GROQ_API_KEY / MISTRAL_API_KEY get the

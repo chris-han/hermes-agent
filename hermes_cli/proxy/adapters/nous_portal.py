@@ -59,6 +59,10 @@ class NousPortalAdapter(UpstreamAdapter):
         return "Nous Portal"
 
     @property
+    def auth_hint(self) -> str:
+        return "hermes login nous"
+
+    @property
     def allowed_paths(self) -> FrozenSet[str]:
         return _ALLOWED_PATHS
 
@@ -82,30 +86,35 @@ class NousPortalAdapter(UpstreamAdapter):
         failed_credential: UpstreamCredential,
         status_code: int,
     ) -> Optional[UpstreamCredential]:
-        _ = failed_credential
         if status_code != 401:
+            return None
+        if failed_credential.bearer.count(".") != 2:
             return None
         logger.info("proxy: Nous upstream rejected bearer; force-refreshing invoke JWT")
         return self._get_credential(
             force_refresh=True,
+            inference_auth_mode="legacy",
         )
 
     def _get_credential(
         self,
         *,
         force_refresh: bool = False,
+        inference_auth_mode: str | None = None,
     ) -> UpstreamCredential:
         with self._lock:
             state = self._read_state()
             if state is None:
                 raise RuntimeError(
-                    "Not logged into Nous Portal. Run `hermes auth add nous` first."
+                    "Not logged into Nous Portal. Run `hermes login nous` "
+                    "or `hermes auth add nous` first."
                 )
 
             try:
-                refreshed = resolve_nous_runtime_credentials(
-                    force_refresh=force_refresh,
-                )
+                resolve_kwargs: dict[str, Any] = {"force_refresh": force_refresh}
+                if inference_auth_mode:
+                    resolve_kwargs["inference_auth_mode"] = inference_auth_mode
+                refreshed = resolve_nous_runtime_credentials(**resolve_kwargs)
             except AuthError as exc:
                 if _is_terminal_nous_refresh_error(exc):
                     _quarantine_nous_oauth_state(
@@ -129,8 +138,8 @@ class NousPortalAdapter(UpstreamAdapter):
             runtime_key = refreshed.get("api_key")
             if not runtime_key:
                 raise RuntimeError(
-                    "Nous Portal refresh did not return a usable inference JWT. "
-                    "Try `hermes auth add nous` to re-authenticate."
+                    "Nous Portal refresh did not return a usable agent_key/inference JWT. "
+                    "Try `hermes login nous` or `hermes auth add nous` to re-authenticate."
                 )
 
             # base_url returned by resolve_nous_runtime_credentials() already

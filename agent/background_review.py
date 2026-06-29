@@ -638,21 +638,26 @@ def _run_review_in_thread(
             # Match parent's toolset config so ``tools[]`` is byte-identical
             # in the request body — Anthropic's cache key includes it.
             # (The runtime whitelist below still restricts dispatch.)
-            review_agent = AIAgent(
-                model=_rt.get("model") or agent.model,
-                max_iterations=16,
-                quiet_mode=True,
-                platform=agent.platform,
-                provider=_rt.get("provider") or agent.provider,
-                api_mode=_rt.get("api_mode"),
-                base_url=_rt.get("base_url") or None,
-                api_key=_rt.get("api_key") or None,
-                credential_pool=getattr(agent, "_credential_pool", None),
-                parent_session_id=agent.session_id,
-                enabled_toolsets=getattr(agent, "enabled_toolsets", None),
-                disabled_toolsets=getattr(agent, "disabled_toolsets", None),
-                skip_memory=True,
-            )
+            _review_kwargs = {
+                "model": _rt.get("model") or agent.model,
+                "max_iterations": 16,
+                "quiet_mode": True,
+                "platform": agent.platform,
+                "provider": _rt.get("provider") or agent.provider,
+                "api_mode": _rt.get("api_mode"),
+                "base_url": _rt.get("base_url") or None,
+                "api_key": _rt.get("api_key") or None,
+                "credential_pool": getattr(agent, "_credential_pool", None),
+                "parent_session_id": agent.session_id,
+                "skip_memory": True,
+            }
+            _enabled_toolsets = getattr(agent, "enabled_toolsets", None)
+            if _enabled_toolsets is not None:
+                _review_kwargs["enabled_toolsets"] = _enabled_toolsets
+            _disabled_toolsets = getattr(agent, "disabled_toolsets", None)
+            if _disabled_toolsets is not None:
+                _review_kwargs["disabled_toolsets"] = _disabled_toolsets
+            review_agent = AIAgent(**_review_kwargs)
             review_agent._memory_write_origin = "background_review"
             review_agent._memory_write_context = "background_review"
             # The review fork pins the parent's cached system prompt and keeps

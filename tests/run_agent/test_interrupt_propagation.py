@@ -4,26 +4,33 @@ Reproduces the CLI scenario: user sends a message while delegate_task is
 running, main thread calls parent.interrupt(), child should stop.
 """
 
+import json
+import importlib
 import threading
 import time
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch, PropertyMock
 
-from tools.interrupt import set_interrupt, is_interrupted
+
+def _interrupt_mod():
+    return importlib.import_module("tools.interrupt")
 
 
 class TestInterruptPropagationToChild(unittest.TestCase):
     """Verify interrupt propagates from parent to child agent."""
 
     def setUp(self):
-        set_interrupt(False)
+        _interrupt_mod().set_interrupt(False)
 
     def tearDown(self):
-        set_interrupt(False)
+        _interrupt_mod().set_interrupt(False)
 
     def _make_bare_agent(self):
         """Create a bare AIAgent via __new__ with all interrupt-related attrs."""
+        import run_agent
         from run_agent import AIAgent
+
+        run_agent._set_interrupt = _interrupt_mod().set_interrupt
         agent = AIAgent.__new__(AIAgent)
         agent._interrupt_requested = False
         agent._interrupt_message = None
@@ -51,7 +58,7 @@ class TestInterruptPropagationToChild(unittest.TestCase):
         assert parent._interrupt_requested is True
         assert child._interrupt_requested is True
         assert child._interrupt_message == "new user message"
-        assert is_interrupted() is False
+        assert _interrupt_mod().is_interrupted() is False
         assert parent._interrupt_thread_signal_pending is True
 
     def test_child_clear_interrupt_at_start_clears_thread(self):
@@ -64,13 +71,13 @@ class TestInterruptPropagationToChild(unittest.TestCase):
         child._execution_thread_id = threading.current_thread().ident
 
         # Interrupt for current thread is set
-        set_interrupt(True)
-        assert is_interrupted() is True
+        _interrupt_mod().set_interrupt(True)
+        assert _interrupt_mod().is_interrupted() is True
 
         # child.clear_interrupt() clears both instance flag and thread flag
         child.clear_interrupt()
         assert child._interrupt_requested is False
-        assert is_interrupted() is False
+        assert _interrupt_mod().is_interrupted() is False
 
     def test_interrupt_during_child_api_call_detected(self):
         """Interrupt set during _interruptible_api_call is detected within 0.5s."""
@@ -105,7 +112,7 @@ class TestInterruptPropagationToChild(unittest.TestCase):
             assert elapsed < 1.0, f"Took {elapsed:.2f}s to detect interrupt (expected < 1.0s)"
         finally:
             t.join(timeout=2)
-            set_interrupt(False)
+            _interrupt_mod().set_interrupt(False)
 
     def test_concurrent_interrupt_propagation(self):
         """Simulates exact CLI flow: parent runs delegate in thread, main thread interrupts."""
@@ -133,7 +140,7 @@ class TestInterruptPropagationToChild(unittest.TestCase):
         detected = child_detected.wait(timeout=1.0)
         assert detected, "Child never detected the interrupt!"
         child_thread.join(timeout=1)
-        set_interrupt(False)
+        _interrupt_mod().set_interrupt(False)
 
     def test_prestart_interrupt_binds_to_execution_thread(self):
         """An interrupt that arrives before startup should bind to the agent thread."""
@@ -144,7 +151,7 @@ class TestInterruptPropagationToChild(unittest.TestCase):
         agent.interrupt("stop before start")
         assert agent._interrupt_requested is True
         assert agent._interrupt_thread_signal_pending is True
-        assert is_interrupted() is False
+        assert _interrupt_mod().is_interrupted() is False
 
         def run_thread():
             from tools.interrupt import set_interrupt as _set_interrupt_for_test
@@ -155,7 +162,7 @@ class TestInterruptPropagationToChild(unittest.TestCase):
                 _set_interrupt_for_test(True, agent._execution_thread_id)
                 agent._interrupt_thread_signal_pending = False
             barrier.wait(timeout=5)
-            result["thread_interrupted"] = is_interrupted()
+            result["thread_interrupted"] = _interrupt_mod().is_interrupted()
 
         t = threading.Thread(target=run_thread)
         t.start()
@@ -175,10 +182,10 @@ class TestPerThreadInterruptIsolation(unittest.TestCase):
     """
 
     def setUp(self):
-        set_interrupt(False)
+        _interrupt_mod().set_interrupt(False)
 
     def tearDown(self):
-        set_interrupt(False)
+        _interrupt_mod().set_interrupt(False)
 
     def test_interrupt_only_affects_target_thread(self):
         """set_interrupt(True, tid) only makes is_interrupted() True on that thread."""
@@ -191,7 +198,7 @@ class TestPerThreadInterruptIsolation(unittest.TestCase):
             results["a_tid"] = tid
             barrier.wait(timeout=5)  # sync with thread B
             time.sleep(0.2)  # let the interrupt arrive
-            results["a_interrupted"] = is_interrupted()
+            results["a_interrupted"] = _interrupt_mod().is_interrupted()
 
         def thread_b():
             """Agent B's execution thread — should NOT be affected."""
@@ -199,7 +206,7 @@ class TestPerThreadInterruptIsolation(unittest.TestCase):
             results["b_tid"] = tid
             barrier.wait(timeout=5)  # sync with thread A
             time.sleep(0.2)
-            results["b_interrupted"] = is_interrupted()
+            results["b_interrupted"] = _interrupt_mod().is_interrupted()
 
         ta = threading.Thread(target=thread_a)
         tb = threading.Thread(target=thread_b)
@@ -212,7 +219,7 @@ class TestPerThreadInterruptIsolation(unittest.TestCase):
             time.sleep(0.01)
 
         # Interrupt ONLY thread A (simulates gateway interrupting agent A)
-        set_interrupt(True, results["a_tid"])
+        _interrupt_mod().set_interrupt(True, results["a_tid"])
 
         ta.join(timeout=3)
         tb.join(timeout=3)
@@ -224,11 +231,11 @@ class TestPerThreadInterruptIsolation(unittest.TestCase):
         """Clearing one thread's interrupt doesn't clear another's."""
         tid_a = 99990001
         tid_b = 99990002
-        set_interrupt(True, tid_a)
-        set_interrupt(True, tid_b)
+        _interrupt_mod().set_interrupt(True, tid_a)
+        _interrupt_mod().set_interrupt(True, tid_b)
 
         # Clear only A
-        set_interrupt(False, tid_a)
+        _interrupt_mod().set_interrupt(False, tid_a)
 
         # Simulate checking from thread B's perspective
         from tools.interrupt import _interrupted_threads, _lock
@@ -237,7 +244,7 @@ class TestPerThreadInterruptIsolation(unittest.TestCase):
             assert tid_b in _interrupted_threads
 
         # Cleanup
-        set_interrupt(False, tid_b)
+        _interrupt_mod().set_interrupt(False, tid_b)
 
 
 if __name__ == "__main__":

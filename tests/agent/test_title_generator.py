@@ -1,7 +1,9 @@
 """Tests for agent.title_generator — auto-generated session titles."""
 
+import threading
 from unittest.mock import MagicMock, patch
 
+import pytest
 
 from agent.title_generator import (
     generate_title,
@@ -129,6 +131,99 @@ class TestGenerateTitle:
         """Omitting failure_callback preserves the silent-None return."""
         with patch("agent.title_generator.call_llm", side_effect=RuntimeError("nope")):
             assert generate_title("q", "a") is None
+
+    def test_timeout_error_does_not_invoke_failure_callback(self):
+        """Timeouts are transient; don't surface as user-visible auxiliary warnings."""
+        captured = []
+
+        def _cb(task, exc):
+            captured.append((task, exc))
+
+        with patch(
+            "agent.title_generator.call_llm",
+            side_effect=Exception("Request timed out."),
+        ), patch("agent.title_generator.time.sleep", return_value=None):
+            assert generate_title("q", "a", failure_callback=_cb) is None
+
+        assert captured == []
+
+    def test_timeout_retries_once_and_can_succeed(self):
+        """Title generation should retry once on timeout-like failures."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "Recovered Title"
+
+        with patch(
+            "agent.title_generator.call_llm",
+            side_effect=[Exception("Request timed out."), mock_response],
+        ) as mock_call, patch("agent.title_generator.time.sleep", return_value=None):
+            title = generate_title("q", "a")
+
+        assert title == "Recovered Title"
+        assert mock_call.call_count == 2
+
+    def test_retry_uses_same_timeout_as_first_attempt(self):
+        """Retry must use the same timeout budget as the first call, not a shorter value.
+
+        Previously _TITLE_RETRY_TIMEOUT_SECONDS = 12.0 was used for retries.
+        Since both calls go to the same provider endpoint, a shorter retry
+        timeout (12s) after a 30s first-attempt timeout virtually guarantees
+        failure.  The retry should match the first-attempt timeout.
+        """
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "My Title"
+
+        recorded_timeouts = []
+
+        def _mock_llm(**kwargs):
+            recorded_timeouts.append(kwargs.get("timeout"))
+            if len(recorded_timeouts) == 1:
+                raise Exception("Request timed out.")
+            return mock_response
+
+        with patch(
+            "agent.title_generator.call_llm",
+            side_effect=_mock_llm,
+        ), patch("agent.title_generator.time.sleep", return_value=None):
+            title = generate_title("q", "a", timeout=45.0)
+
+        assert title == "My Title"
+        assert recorded_timeouts == [45.0, 45.0], (
+            "Retry must use the same timeout as the first attempt — "
+            f"got {recorded_timeouts}"
+        )
+
+    def test_timeout_then_non_timeout_retry_invokes_failure_callback(self):
+        """Non-timeout retry failure should still be surfaced via callback."""
+        captured = []
+
+        def _cb(task, exc):
+            captured.append((task, exc))
+
+        with patch(
+            "agent.title_generator.call_llm",
+            side_effect=[Exception("Request timed out."), RuntimeError("no provider")],
+        ), patch("agent.title_generator.time.sleep", return_value=None):
+            assert generate_title("q", "a", failure_callback=_cb) is None
+
+        assert len(captured) == 1
+        assert captured[0][0] == "title generation"
+        assert isinstance(captured[0][1], RuntimeError)
+
+    def test_timeout_exhaustion_returns_none(self):
+        """Repeated timeout should return None rather than fall back to first-message text.
+
+        Using the first user message as a proxy title is misleading for long sessions
+        that span multiple topics. An untitled session is preferable to a wrong title.
+        """
+        with patch(
+            "agent.title_generator.call_llm",
+            side_effect=[Exception("Request timed out."), Exception("Request timed out.")],
+        ), patch("agent.title_generator.time.sleep", return_value=None):
+            title = generate_title("hi", "hello")
+
+        assert title is None
 
     def test_truncates_long_messages(self):
         """Long user/assistant messages should be truncated in the LLM request."""

@@ -6,6 +6,7 @@ resolve_qwen_runtime_credentials, get_qwen_auth_status.
 """
 
 import json
+import os
 import stat
 import time
 from pathlib import Path
@@ -67,6 +68,7 @@ def _write_qwen_creds(tmp_path, tokens=None):
 def qwen_env(tmp_path, monkeypatch):
     """Redirect _qwen_cli_auth_path to tmp_path/.qwen/oauth_creds.json."""
     creds_path = tmp_path / ".qwen" / "oauth_creds.json"
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
     monkeypatch.setattr(
         "hermes_cli.auth._qwen_cli_auth_path", lambda: creds_path
     )
@@ -181,6 +183,8 @@ def test_expiring_token_non_numeric_returns_true():
 # ---------------------------------------------------------------------------
 
 def test_refresh_qwen_cli_tokens_success(qwen_env):
+    from hermes_cli import auth as auth_mod
+
     tokens = _make_qwen_tokens(refresh_token="old-refresh")
 
     resp = MagicMock()
@@ -191,9 +195,9 @@ def test_refresh_qwen_cli_tokens_success(qwen_env):
         "expires_in": 7200,
     }
 
-    with patch("hermes_cli.auth.httpx") as mock_httpx:
+    with patch.object(auth_mod, "httpx") as mock_httpx:
         mock_httpx.post.return_value = resp
-        result = _refresh_qwen_cli_tokens(tokens)
+        result = auth_mod._refresh_qwen_cli_tokens(tokens)
 
     assert result["access_token"] == "new-access"
     assert result["refresh_token"] == "new-refresh"
@@ -201,6 +205,8 @@ def test_refresh_qwen_cli_tokens_success(qwen_env):
 
 
 def test_refresh_qwen_cli_tokens_preserves_old_refresh_if_not_in_response(qwen_env):
+    from hermes_cli import auth as auth_mod
+
     tokens = _make_qwen_tokens(refresh_token="keep-me")
 
     resp = MagicMock()
@@ -211,83 +217,95 @@ def test_refresh_qwen_cli_tokens_preserves_old_refresh_if_not_in_response(qwen_e
         "expires_in": 3600,
     }
 
-    with patch("hermes_cli.auth.httpx") as mock_httpx:
+    with patch.object(auth_mod, "httpx") as mock_httpx:
         mock_httpx.post.return_value = resp
-        result = _refresh_qwen_cli_tokens(tokens)
+        result = auth_mod._refresh_qwen_cli_tokens(tokens)
 
     assert result["refresh_token"] == "keep-me"
 
 
 def test_refresh_qwen_cli_tokens_missing_refresh_token():
+    from hermes_cli import auth as auth_mod
+
     tokens = {"access_token": "at", "refresh_token": ""}
-    with pytest.raises(AuthError) as exc:
-        _refresh_qwen_cli_tokens(tokens)
+    with pytest.raises(auth_mod.AuthError) as exc:
+        auth_mod._refresh_qwen_cli_tokens(tokens)
     assert exc.value.code == "qwen_refresh_token_missing"
 
 
 def test_refresh_qwen_cli_tokens_http_error(qwen_env):
+    from hermes_cli import auth as auth_mod
+
     tokens = _make_qwen_tokens()
 
     resp = MagicMock()
     resp.status_code = 401
     resp.text = "unauthorized"
 
-    with patch("hermes_cli.auth.httpx") as mock_httpx:
+    with patch.object(auth_mod, "httpx") as mock_httpx:
         mock_httpx.post.return_value = resp
-        with pytest.raises(AuthError) as exc:
-            _refresh_qwen_cli_tokens(tokens)
+        with pytest.raises(auth_mod.AuthError) as exc:
+            auth_mod._refresh_qwen_cli_tokens(tokens)
     assert exc.value.code == "qwen_refresh_failed"
 
 
 def test_refresh_qwen_cli_tokens_network_error(qwen_env):
+    from hermes_cli import auth as auth_mod
+
     tokens = _make_qwen_tokens()
 
-    with patch("hermes_cli.auth.httpx") as mock_httpx:
+    with patch.object(auth_mod, "httpx") as mock_httpx:
         mock_httpx.post.side_effect = ConnectionError("timeout")
-        with pytest.raises(AuthError) as exc:
-            _refresh_qwen_cli_tokens(tokens)
+        with pytest.raises(auth_mod.AuthError) as exc:
+            auth_mod._refresh_qwen_cli_tokens(tokens)
     assert exc.value.code == "qwen_refresh_failed"
 
 
 def test_refresh_qwen_cli_tokens_invalid_json_response(qwen_env):
+    from hermes_cli import auth as auth_mod
+
     tokens = _make_qwen_tokens()
 
     resp = MagicMock()
     resp.status_code = 200
     resp.json.side_effect = ValueError("bad json")
 
-    with patch("hermes_cli.auth.httpx") as mock_httpx:
+    with patch.object(auth_mod, "httpx") as mock_httpx:
         mock_httpx.post.return_value = resp
-        with pytest.raises(AuthError) as exc:
-            _refresh_qwen_cli_tokens(tokens)
+        with pytest.raises(auth_mod.AuthError) as exc:
+            auth_mod._refresh_qwen_cli_tokens(tokens)
     assert exc.value.code == "qwen_refresh_invalid_json"
 
 
 def test_refresh_qwen_cli_tokens_missing_access_token_in_response(qwen_env):
+    from hermes_cli import auth as auth_mod
+
     tokens = _make_qwen_tokens()
 
     resp = MagicMock()
     resp.status_code = 200
     resp.json.return_value = {"something": "but no access_token"}
 
-    with patch("hermes_cli.auth.httpx") as mock_httpx:
+    with patch.object(auth_mod, "httpx") as mock_httpx:
         mock_httpx.post.return_value = resp
-        with pytest.raises(AuthError) as exc:
-            _refresh_qwen_cli_tokens(tokens)
+        with pytest.raises(auth_mod.AuthError) as exc:
+            auth_mod._refresh_qwen_cli_tokens(tokens)
     assert exc.value.code == "qwen_refresh_invalid_response"
 
 
 def test_refresh_qwen_cli_tokens_default_expires_in(qwen_env):
     """When expires_in is missing, default to 6 hours."""
+    from hermes_cli import auth as auth_mod
+
     tokens = _make_qwen_tokens()
 
     resp = MagicMock()
     resp.status_code = 200
     resp.json.return_value = {"access_token": "new"}
 
-    with patch("hermes_cli.auth.httpx") as mock_httpx:
+    with patch.object(auth_mod, "httpx") as mock_httpx:
         mock_httpx.post.return_value = resp
-        result = _refresh_qwen_cli_tokens(tokens)
+        result = auth_mod._refresh_qwen_cli_tokens(tokens)
 
     # Verify expiry_date is roughly now + 6h (within 60s tolerance)
     expected_ms = int(time.time() * 1000) + 6 * 60 * 60 * 1000
@@ -295,6 +313,8 @@ def test_refresh_qwen_cli_tokens_default_expires_in(qwen_env):
 
 
 def test_refresh_qwen_cli_tokens_saves_to_disk(qwen_env):
+    from hermes_cli import auth as auth_mod
+
     tokens = _make_qwen_tokens()
 
     resp = MagicMock()
@@ -304,9 +324,9 @@ def test_refresh_qwen_cli_tokens_saves_to_disk(qwen_env):
         "expires_in": 3600,
     }
 
-    with patch("hermes_cli.auth.httpx") as mock_httpx:
+    with patch.object(auth_mod, "httpx") as mock_httpx:
         mock_httpx.post.return_value = resp
-        _refresh_qwen_cli_tokens(tokens)
+        auth_mod._refresh_qwen_cli_tokens(tokens)
 
     # Verify it was persisted
     creds_path = qwen_env / ".qwen" / "oauth_creds.json"
@@ -320,10 +340,12 @@ def test_refresh_qwen_cli_tokens_saves_to_disk(qwen_env):
 # ---------------------------------------------------------------------------
 
 def test_resolve_qwen_runtime_credentials_fresh_token(qwen_env):
+    from hermes_cli import auth as auth_mod
+
     tokens = _make_qwen_tokens(access_token="fresh-at")
     _write_qwen_creds(qwen_env, tokens)
 
-    creds = resolve_qwen_runtime_credentials(refresh_if_expiring=False)
+    creds = auth_mod.resolve_qwen_runtime_credentials(refresh_if_expiring=False)
     assert creds["provider"] == "qwen-oauth"
     assert creds["api_key"] == "fresh-at"
     assert creds["base_url"] == DEFAULT_QWEN_BASE_URL
@@ -331,6 +353,8 @@ def test_resolve_qwen_runtime_credentials_fresh_token(qwen_env):
 
 
 def test_resolve_qwen_runtime_credentials_triggers_refresh(qwen_env):
+    from hermes_cli import auth as auth_mod
+
     # Write an expired token
     expired_ms = int((time.time() - 3600) * 1000)
     tokens = _make_qwen_tokens(access_token="old", expiry_date=expired_ms)
@@ -338,43 +362,45 @@ def test_resolve_qwen_runtime_credentials_triggers_refresh(qwen_env):
 
     refreshed = _make_qwen_tokens(access_token="refreshed-at")
 
-    with patch(
-        "hermes_cli.auth._refresh_qwen_cli_tokens", return_value=refreshed
-    ) as mock_refresh:
-        creds = resolve_qwen_runtime_credentials()
+    with patch.object(auth_mod, "_refresh_qwen_cli_tokens", return_value=refreshed) as mock_refresh:
+        creds = auth_mod.resolve_qwen_runtime_credentials()
     mock_refresh.assert_called_once()
     assert creds["api_key"] == "refreshed-at"
 
 
 def test_resolve_qwen_runtime_credentials_force_refresh(qwen_env):
+    from hermes_cli import auth as auth_mod
+
     tokens = _make_qwen_tokens(access_token="old-at")
     _write_qwen_creds(qwen_env, tokens)
 
     refreshed = _make_qwen_tokens(access_token="force-refreshed")
 
-    with patch(
-        "hermes_cli.auth._refresh_qwen_cli_tokens", return_value=refreshed
-    ) as mock_refresh:
-        creds = resolve_qwen_runtime_credentials(force_refresh=True)
+    with patch.object(auth_mod, "_refresh_qwen_cli_tokens", return_value=refreshed) as mock_refresh:
+        creds = auth_mod.resolve_qwen_runtime_credentials(force_refresh=True)
     mock_refresh.assert_called_once()
     assert creds["api_key"] == "force-refreshed"
 
 
 def test_resolve_qwen_runtime_credentials_missing_access_token(qwen_env):
+    from hermes_cli import auth as auth_mod
+
     tokens = _make_qwen_tokens(access_token="")
     _write_qwen_creds(qwen_env, tokens)
 
-    with pytest.raises(AuthError) as exc:
-        resolve_qwen_runtime_credentials(refresh_if_expiring=False)
+    with pytest.raises(auth_mod.AuthError) as exc:
+        auth_mod.resolve_qwen_runtime_credentials(refresh_if_expiring=False)
     assert exc.value.code == "qwen_access_token_missing"
 
 
 def test_resolve_qwen_runtime_credentials_base_url_env_override(qwen_env, monkeypatch):
+    from hermes_cli import auth as auth_mod
+
     tokens = _make_qwen_tokens(access_token="at")
     _write_qwen_creds(qwen_env, tokens)
     monkeypatch.setenv("HERMES_QWEN_BASE_URL", "https://custom.qwen.ai/v1")
 
-    creds = resolve_qwen_runtime_credentials(refresh_if_expiring=False)
+    creds = auth_mod.resolve_qwen_runtime_credentials(refresh_if_expiring=False)
     assert creds["base_url"] == "https://custom.qwen.ai/v1"
 
 
@@ -391,84 +417,8 @@ def test_get_qwen_auth_status_logged_in(qwen_env):
     assert status["api_key"] == "status-at"
 
 
-def test_get_qwen_auth_status_refreshes_expired_token(qwen_env):
-    expired_ms = int((time.time() - 3600) * 1000)
-    tokens = _make_qwen_tokens(access_token="old-at", expiry_date=expired_ms)
-    _write_qwen_creds(qwen_env, tokens)
-
-    refreshed = _make_qwen_tokens(access_token="refreshed-at")
-
-    with patch(
-        "hermes_cli.auth._refresh_qwen_cli_tokens", return_value=refreshed
-    ) as mock_refresh:
-        status = get_qwen_auth_status()
-
-    mock_refresh.assert_called_once()
-    assert status["logged_in"] is True
-    assert status["api_key"] == "refreshed-at"
-
-
-def test_get_qwen_auth_status_expired_unrefreshable_token_is_not_logged_in(qwen_env):
-    expired_ms = int((time.time() - 3600) * 1000)
-    tokens = _make_qwen_tokens(access_token="dead-at", expiry_date=expired_ms)
-    _write_qwen_creds(qwen_env, tokens)
-
-    with patch(
-        "hermes_cli.auth._refresh_qwen_cli_tokens",
-        side_effect=AuthError(
-            "Qwen refresh rejected. Re-run 'qwen auth qwen-oauth'.",
-            provider="qwen-oauth",
-            code="qwen_refresh_failed",
-        ),
-    ) as mock_refresh:
-        status = get_qwen_auth_status()
-
-    mock_refresh.assert_called_once()
-    assert status["logged_in"] is False
-    assert "qwen auth qwen-oauth" in status["error"]
-
-
 def test_get_qwen_auth_status_not_logged_in(qwen_env):
     # No credentials file
     status = get_qwen_auth_status()
     assert status["logged_in"] is False
     assert "error" in status
-
-
-def test_model_flow_qwen_oauth_stale_token_shows_reauth_guidance(qwen_env, monkeypatch, capsys):
-    from hermes_cli.main import _model_flow_qwen_oauth
-
-    expired_ms = int((time.time() - 3600) * 1000)
-    tokens = _make_qwen_tokens(access_token="dead-at", expiry_date=expired_ms)
-    _write_qwen_creds(qwen_env, tokens)
-
-    monkeypatch.setattr(
-        "hermes_cli.auth._refresh_qwen_cli_tokens",
-        lambda *args, **kwargs: (_ for _ in ()).throw(
-            AuthError(
-                "Qwen refresh rejected. Re-run 'qwen auth qwen-oauth'.",
-                provider="qwen-oauth",
-                code="qwen_refresh_failed",
-            )
-        ),
-    )
-
-    prompt_called = {"value": False}
-    update_called = {"value": False}
-
-    monkeypatch.setattr(
-        "hermes_cli.auth._prompt_model_selection",
-        lambda *args, **kwargs: prompt_called.__setitem__("value", True),
-    )
-    monkeypatch.setattr(
-        "hermes_cli.auth._update_config_for_provider",
-        lambda *args, **kwargs: update_called.__setitem__("value", True),
-    )
-
-    _model_flow_qwen_oauth({}, current_model="qwen3-coder-plus")
-
-    out = capsys.readouterr().out
-    assert "Run: qwen auth qwen-oauth" in out
-    assert "Qwen refresh rejected" in out
-    assert prompt_called["value"] is False
-    assert update_called["value"] is False

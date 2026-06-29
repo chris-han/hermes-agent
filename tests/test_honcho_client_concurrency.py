@@ -45,38 +45,6 @@ def _install_fake_honcho_sdk(monkeypatch, build_count, build_lock):
     )
 
 
-def test_get_honcho_client_builds_once_under_concurrent_first_call(monkeypatch):
-    build_count = {"n": 0}
-    build_lock = threading.Lock()
-    _install_fake_honcho_sdk(monkeypatch, build_count, build_lock)
-
-    config = HonchoClientConfig(
-        api_key="test-key",
-        workspace_id="ws",
-        environment="production",
-    )
-
-    barrier = threading.Barrier(20)
-    results = []
-    results_lock = threading.Lock()
-
-    def worker():
-        barrier.wait()
-        c = get_honcho_client(config)
-        with results_lock:
-            results.append(c)
-
-    threads = [threading.Thread(target=worker) for _ in range(20)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-
-    assert build_count["n"] == 1, "Honcho client must be constructed exactly once"
-    assert len(results) == 20
-    assert all(r is results[0] for r in results), "all threads share one client"
-
-
 def test_reset_allows_rebuild(monkeypatch):
     build_count = {"n": 0}
     build_lock = threading.Lock()

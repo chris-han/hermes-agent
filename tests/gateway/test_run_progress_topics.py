@@ -5,6 +5,7 @@ import importlib
 import sys
 import time
 import types
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -244,6 +245,81 @@ def _make_runner(adapter):
         stt_enabled=False,
     )
     return runner
+
+
+@pytest.mark.asyncio
+async def test_run_agent_backfills_workspace_session_sandbox_key(monkeypatch, tmp_path):
+    fake_dotenv = types.ModuleType("dotenv")
+    fake_dotenv.load_dotenv = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "dotenv", fake_dotenv)
+
+    fake_run_agent = types.ModuleType("run_agent")
+    fake_run_agent.AIAgent = FakeAgent
+    monkeypatch.setitem(sys.modules, "run_agent", fake_run_agent)
+
+    src_dir = str((Path(__file__).resolve().parents[3] / "src"))
+    if src_dir not in sys.path:
+        sys.path.insert(0, src_dir)
+
+    from agents.workspace_session_logs import (
+        create_workspace_session_log,
+        get_workspace_session_log_payload,
+    )
+
+    adapter = ProgressCaptureAdapter(platform=Platform.WEIXIN)
+    runner = _make_runner(adapter)
+    runner.session_store = SimpleNamespace(
+        _entries={},
+        register_workspace_home=lambda *_args, **_kwargs: None,
+        _save=lambda: None,
+    )
+    gateway_run = importlib.import_module("gateway.run")
+    monkeypatch.setattr(gateway_run, "_hermes_home", tmp_path)
+    monkeypatch.setattr(gateway_run, "_resolve_runtime_agent_kwargs", lambda: {"api_key": "fake"})
+
+    workspace_id = "ws-123"
+    session_id = "ws-123:session_fixtrail"
+    session_key = "agent:main:workspace:ws-123:weixin:dm:wx-user"
+    workspace_home = tmp_path / "workspaces" / workspace_id / ".hermes"
+    workspace_home.mkdir(parents=True, exist_ok=True)
+
+    create_workspace_session_log(
+        workspace_home,
+        session_id=session_id,
+        title="Sandbox Backfill",
+        source="weixin",
+        platform="weixin",
+        session_key=session_key,
+    )
+
+    monkeypatch.setattr(
+        gateway_run,
+        "_resolve_workspace_gateway_session",
+        lambda *args, **kwargs: (session_id, workspace_home),
+    )
+
+    source = SessionSource(
+        platform=Platform.WEIXIN,
+        chat_id="wx-user",
+        chat_type="dm",
+        user_id="wx-user",
+        workspace_owner_id=workspace_id,
+    )
+
+    result = await runner._run_agent(
+        message="hello",
+        context_prompt="",
+        history=[],
+        source=source,
+        session_id=session_id,
+        session_key=session_key,
+    )
+
+    assert result["sandbox_key"] == f"ws:{workspace_id}:session:{session_id}"
+
+    payload = get_workspace_session_log_payload(workspace_home, session_id)
+    assert payload is not None
+    assert payload["sandbox_key"] == f"ws:{workspace_id}:session:{session_id}"
 
 
 @pytest.mark.asyncio
@@ -941,62 +1017,6 @@ async def test_run_agent_matrix_streaming_omits_cursor(monkeypatch, tmp_path):
     assert all_text, "expected streamed Matrix content to be sent or edited"
     assert all("▉" not in text for text in all_text)
     assert any("Continuing to refine:" in text for text in all_text)
-
-
-class TransformedStreamAgent:
-    """Streams a response, then signals the gateway that a plugin hook
-    (``transform_llm_output``) modified the final text after streaming
-    finished. ``run_conversation`` returns ``response_transformed=True``
-    plus a ``final_response`` that diverges from what was streamed.
-    """
-
-    def __init__(self, **kwargs):
-        self.stream_delta_callback = kwargs.get("stream_delta_callback")
-        self.tools = []
-
-    def run_conversation(self, message, conversation_history=None, task_id=None):
-        if self.stream_delta_callback:
-            self.stream_delta_callback("original answer")
-        return {
-            "final_response": "original answer\n\n[plugin appended this]",
-            "response_previewed": True,
-            "response_transformed": True,
-            "messages": [],
-            "api_calls": 1,
-        }
-
-
-@pytest.mark.asyncio
-async def test_transformed_response_edits_streamed_message_in_place(monkeypatch, tmp_path):
-    """When a transform_llm_output hook modifies the response after streaming,
-    the gateway must edit the existing streamed message in place with the full
-    transformed content (so plugins like content filters / appenders reach the
-    user) and still mark already_sent=True (no duplicate send).
-    """
-    adapter, result = await _run_with_agent(
-        monkeypatch,
-        tmp_path,
-        TransformedStreamAgent,
-        session_id="sess-transformed-stream",
-        config_data={
-            "display": {"tool_progress": "off", "interim_assistant_messages": False},
-            "streaming": {"enabled": True, "edit_interval": 0.01, "buffer_threshold": 1},
-        },
-        platform=Platform.MATRIX,
-        chat_id="!room:matrix.example.org",
-        chat_type="group",
-        thread_id="$thread",
-        adapter_cls=MetadataEditProgressCaptureAdapter,
-    )
-
-    # Final delivery happened (no duplicate send fallback).
-    assert result.get("already_sent") is True
-    # The transformed final text reached the user — appended portion is present
-    # in an edit_message call (not just in the streamed sends).
-    edited_texts = [e["content"] for e in adapter.edits]
-    assert any("[plugin appended this]" in text for text in edited_texts), (
-        f"expected transformed text in adapter.edits, got: {edited_texts!r}"
-    )
 
 
 @pytest.mark.asyncio

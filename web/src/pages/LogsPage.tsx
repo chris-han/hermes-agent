@@ -12,8 +12,8 @@ import { Button } from "@nous-research/ui/ui/components/button";
 import { FilterGroup, Segmented } from "@nous-research/ui/ui/components/segmented";
 import { Spinner } from "@nous-research/ui/ui/components/spinner";
 import { Switch } from "@nous-research/ui/ui/components/switch";
-import { Card, CardContent, CardHeader, CardTitle } from "@nous-research/ui/ui/components/card";
-import { Label } from "@nous-research/ui/ui/components/label";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
 import { useI18n } from "@/i18n";
 import { usePageHeader } from "@/contexts/usePageHeader";
 import { PluginSlot } from "@/plugins";
@@ -40,13 +40,11 @@ const LINE_COLORS: Record<string, string> = {
   error: "text-destructive",
   warning: "text-warning",
   info: "text-foreground",
-  debug: "text-text-tertiary",
+  debug: "text-muted-foreground/60",
 };
 
-const formatFilterLabel = (value: string) => value.toUpperCase();
-
-const toSegmentOptions = <T extends string>(values: readonly T[]) =>
-  values.map((v) => ({ value: v, label: formatFilterLabel(v) }));
+const toOptions = <T extends string>(values: readonly T[]) =>
+  values.map((v) => ({ value: v, label: v }));
 
 const filterGroupClass =
   "flex min-w-0 w-full flex-col items-start gap-1.5 sm:w-auto sm:max-w-full sm:flex-row sm:items-center";
@@ -87,42 +85,41 @@ export default function LogsPage() {
 
   useLayoutEffect(() => {
     setAfterTitle(
-      <span className="flex items-center gap-1.5">
-        <Badge tone="secondary" className="text-xs">
-          {formatFilterLabel(file)} · {formatFilterLabel(level)} ·{" "}
-          {formatFilterLabel(component)}
+      <span className="flex items-center gap-2">
+        {loading && <Spinner className="shrink-0 text-base text-primary" />}
+        <Badge tone="secondary" className="text-[10px]">
+          {file} · {level} · {component}
         </Badge>
-        <Button
-          type="button"
-          ghost
-          size="icon"
-          className="text-muted-foreground hover:text-foreground"
-          onClick={fetchLogs}
-          disabled={loading}
-          aria-label={t.common.refresh}
-        >
-          {loading ? <Spinner /> : <RefreshCw />}
-        </Button>
       </span>,
     );
     setEnd(
-      <div className="flex w-full min-w-0 flex-wrap items-center justify-start gap-2 sm:justify-end sm:gap-3">
+      <div className="flex w-full min-w-0 flex-wrap items-center justify-start gap-2 sm:gap-3">
         <div className="flex items-center gap-2">
-          <Label htmlFor="logs-auto-refresh" className="text-xs cursor-pointer">
-            {t.logs.autoRefresh}
-          </Label>
           <Switch
             checked={autoRefresh}
             onCheckedChange={setAutoRefresh}
             id="logs-auto-refresh"
           />
+          <Label htmlFor="logs-auto-refresh" className="text-xs cursor-pointer">
+            {t.logs.autoRefresh}
+          </Label>
           {autoRefresh && (
-            <Badge tone="success" className="text-xs">
+            <Badge tone="success" className="text-[10px]">
               <span className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
               {t.common.live}
             </Badge>
           )}
         </div>
+        <Button
+          type="button"
+          size="sm"
+          outlined
+          onClick={fetchLogs}
+          disabled={loading}
+          prefix={loading ? <Spinner /> : <RefreshCw />}
+        >
+          {t.common.refresh}
+        </Button>
       </div>,
     );
     return () => {
@@ -166,7 +163,7 @@ export default function LogsPage() {
             className={segmentedClass}
             value={file}
             onChange={setFile}
-            options={toSegmentOptions(FILES)}
+            options={toOptions(FILES)}
           />
         </FilterGroup>
 
@@ -175,7 +172,7 @@ export default function LogsPage() {
             className={segmentedClass}
             value={level}
             onChange={setLevel}
-            options={toSegmentOptions(LEVELS)}
+            options={toOptions(LEVELS)}
           />
         </FilterGroup>
 
@@ -184,7 +181,7 @@ export default function LogsPage() {
             className={segmentedClass}
             value={component}
             onChange={setComponent}
-            options={toSegmentOptions(COMPONENTS)}
+            options={toOptions(COMPONENTS)}
           />
         </FilterGroup>
 

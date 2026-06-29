@@ -586,8 +586,13 @@ class SignalAdapter(BasePlatformAdapter):
             return
 
         # Check for group message
+        group_v2 = data_message.get("groupV2")
+        if not isinstance(group_v2, dict):
+            group_v2 = {}
         group_info = data_message.get("groupInfo")
-        group_id = group_info.get("groupId") if group_info else None
+        if not isinstance(group_info, dict):
+            group_info = {}
+        group_id = group_v2.get("id") or group_info.get("groupId")
         is_group = bool(group_id)
 
         # Group message filtering — derived from SIGNAL_GROUP_ALLOWED_USERS:

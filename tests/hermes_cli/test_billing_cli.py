@@ -9,6 +9,7 @@ Plus role/kill-switch gating and logged-out handling.
 from __future__ import annotations
 
 from decimal import Decimal
+import importlib
 
 import pytest
 
@@ -28,8 +29,13 @@ def _boom_modal(*a, **kw):
     raise AssertionError("modal must NOT be called in non-interactive mode")
 
 
+def _patch_billing_state(monkeypatch, state):
+    live_bv = importlib.import_module("agent.billing_view")
+    monkeypatch.setattr(live_bv, "build_billing_state", lambda *a, **kw: state)
+
+
 def test_billing_logged_out(cli, monkeypatch, capsys):
-    monkeypatch.setattr(bv, "build_billing_state", lambda *a, **kw: BillingState(logged_in=False))
+    _patch_billing_state(monkeypatch, BillingState(logged_in=False))
     cli._show_billing("/billing")
     out = capsys.readouterr().out
     assert "Not logged into Nous Portal" in out
@@ -49,7 +55,7 @@ def test_billing_overview_non_interactive_renders_text_not_modal(cli, monkeypatc
                                is_default_ceiling=True),
         portal_url="https://portal/billing?topup=open",
     )
-    monkeypatch.setattr(bv, "build_billing_state", lambda *a, **kw: state)
+    _patch_billing_state(monkeypatch, state)
     cli._show_billing("/billing")
     out = capsys.readouterr().out
     assert "Usage credits" in out
@@ -69,7 +75,7 @@ def test_billing_member_cannot_charge(cli, monkeypatch, capsys):
         logged_in=True, role="MEMBER", balance_usd=Decimal("10"),
         cli_billing_enabled=True, portal_url="https://portal/billing",
     )
-    monkeypatch.setattr(bv, "build_billing_state", lambda *a, **kw: state)
+    _patch_billing_state(monkeypatch, state)
     cli._show_billing("/billing")
     out = capsys.readouterr().out
     assert "require an org admin/owner" in out
@@ -80,7 +86,7 @@ def test_billing_killswitch_off_blocks(cli, monkeypatch, capsys):
         logged_in=True, role="OWNER", balance_usd=Decimal("10"),
         cli_billing_enabled=False, portal_url="https://portal/billing",
     )
-    monkeypatch.setattr(bv, "build_billing_state", lambda *a, **kw: state)
+    _patch_billing_state(monkeypatch, state)
     cli._show_billing("/billing")
     out = capsys.readouterr().out
     assert "turned off for this org" in out
@@ -93,7 +99,7 @@ def test_billing_limit_screen_readonly(cli, monkeypatch, capsys):
                                is_default_ceiling=True),
         portal_url="https://portal/billing",
     )
-    monkeypatch.setattr(bv, "build_billing_state", lambda *a, **kw: state)
+    _patch_billing_state(monkeypatch, state)
     # ZERO sub-commands: the limit screen is reached via the menu, never a
     # sub-command — call it directly the way the overview menu would.
     cli._billing_limit_screen(state)
@@ -112,7 +118,7 @@ def test_billing_sub_arg_ignored_opens_overview(cli, monkeypatch, capsys):
         cli_billing_enabled=True, charge_presets=(Decimal("25"),),
         portal_url="https://portal/billing",
     )
-    monkeypatch.setattr(bv, "build_billing_state", lambda *a, **kw: state)
+    _patch_billing_state(monkeypatch, state)
     cli._show_billing("/billing buy")  # arg is ignored
     out = capsys.readouterr().out
     assert "Usage credits" in out  # overview, NOT the buy screen
@@ -127,7 +133,7 @@ def test_billing_buy_non_interactive_defers_to_portal(cli, monkeypatch, capsys):
         card=CardInfo(brand="visa", last4="4242"),
         portal_url="https://portal/billing",
     )
-    monkeypatch.setattr(bv, "build_billing_state", lambda *a, **kw: state)
+    _patch_billing_state(monkeypatch, state)
     # Reached via the menu in real use; non-interactively it defers to the portal.
     cli._billing_buy_flow(state)
     out = capsys.readouterr().out

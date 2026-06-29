@@ -5,16 +5,21 @@ interpolation) rather than mocking it, proving the property that matters: two
 profiles with different keys never see each other's, and an unscoped read in
 multiplex mode fails closed instead of leaking.
 """
+import importlib
+
 import pytest
 
-from agent import secret_scope as ss
+
+def _secret_scope():
+    return importlib.import_module("agent.secret_scope")
 
 
 @pytest.fixture(autouse=True)
 def _reset(monkeypatch):
+    ss = _secret_scope()
     ss.set_multiplex_active(False)
     yield
-    ss.set_multiplex_active(False)
+    _secret_scope().set_multiplex_active(False)
 
 
 class TestRuntimeProviderUsesScope:
@@ -22,6 +27,7 @@ class TestRuntimeProviderUsesScope:
 
     def test_getenv_reads_scope_under_multiplex(self, monkeypatch):
         from hermes_cli.runtime_provider import _getenv
+        ss = _secret_scope()
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-global-leak")
         ss.set_multiplex_active(True)
         tok = ss.set_secret_scope({"ANTHROPIC_API_KEY": "sk-profileA"})
@@ -32,6 +38,7 @@ class TestRuntimeProviderUsesScope:
 
     def test_getenv_two_profiles_isolated(self, monkeypatch):
         from hermes_cli.runtime_provider import _getenv
+        ss = _secret_scope()
         ss.set_multiplex_active(True)
 
         tok_a = ss.set_secret_scope({"OPENAI_API_KEY": "sk-A"})
@@ -48,6 +55,7 @@ class TestRuntimeProviderUsesScope:
 
     def test_getenv_fails_closed_unscoped(self, monkeypatch):
         from hermes_cli.runtime_provider import _getenv
+        ss = _secret_scope()
         monkeypatch.setenv("OPENROUTER_API_KEY", "sk-leak")
         ss.set_multiplex_active(True)
         with pytest.raises(ss.UnscopedSecretError):
@@ -55,6 +63,7 @@ class TestRuntimeProviderUsesScope:
 
     def test_getenv_global_var_still_reads_environ(self, monkeypatch):
         from hermes_cli.runtime_provider import _getenv
+        ss = _secret_scope()
         monkeypatch.setenv("HERMES_MAX_ITERATIONS", "42")
         ss.set_multiplex_active(True)
         # global var: no scope needed, no raise
@@ -66,6 +75,7 @@ class TestMcpInterpolationUsesScope:
 
     def test_interpolation_reads_scope(self, monkeypatch):
         from tools.mcp_tool import _interpolate_env_vars
+        ss = _secret_scope()
         monkeypatch.setenv("MY_MCP_TOKEN", "global-token")
         ss.set_multiplex_active(True)
         tok = ss.set_secret_scope({"MY_MCP_TOKEN": "profile-token"})

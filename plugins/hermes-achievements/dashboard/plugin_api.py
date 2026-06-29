@@ -984,10 +984,11 @@ def evaluate_all(force: bool = False) -> Dict[str, Any]:
         return _build_pending_snapshot(now)
 
     # Non-force path: serve whatever we have and refresh in background.
-    if _SNAPSHOT_CACHE is not None:
+    snapshot = _SNAPSHOT_CACHE
+    if snapshot is not None:
         if not _cache_is_fresh(now):
             _start_background_scan()
-        return _SNAPSHOT_CACHE
+        return snapshot
 
     # First-ever run on this machine — no snapshot yet. Kick off a scan
     # and return a pending placeholder. The UI polls /scan-status and

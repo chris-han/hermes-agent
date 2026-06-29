@@ -1306,7 +1306,9 @@ def _model_flow_named_custom(config, provider_info):
                 searchable=True,
             )
             print()
-            if idx < 0 or idx >= len(models):
+            if idx < 0:
+                raise OSError("interactive model picker unavailable")
+            if idx >= len(models):
                 print("Cancelled.")
                 return
             model_name = models[idx]
@@ -1347,14 +1349,12 @@ def _model_flow_named_custom(config, provider_info):
             print("No model specified. Cancelled.")
             return
 
-    # Activate and save the model to the custom_providers entry
-    _save_model_choice(model_name)
-
     cfg = load_config()
     model = cfg.get("model")
     if not isinstance(model, dict):
         model = {"default": model} if model else {}
         cfg["model"] = model
+    model["default"] = model_name
     if provider_key:
         model["provider"] = provider_key
         model.pop("base_url", None)

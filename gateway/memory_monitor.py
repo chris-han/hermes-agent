@@ -49,6 +49,25 @@ _interval_seconds: float = 300.0  # 5 minutes
 _lock = threading.Lock()
 
 
+def _iter_logger_handlers(current: logging.Logger) -> list[logging.Handler]:
+    handlers: list[logging.Handler] = []
+    logger_cursor: logging.Logger | None = current
+    while logger_cursor is not None:
+        handlers.extend(logger_cursor.handlers)
+        if not logger_cursor.propagate:
+            break
+        logger_cursor = logger_cursor.parent
+    return handlers
+
+
+def _logging_streams_available() -> bool:
+    for handler in _iter_logger_handlers(logger):
+        stream = getattr(handler, "stream", None)
+        if stream is not None and getattr(stream, "closed", False):
+            return False
+    return True
+
+
 def _get_rss_mb() -> Optional[int]:
     """Return current process resident set size in MB, or None if unavailable.
 
@@ -107,6 +126,8 @@ def log_memory_usage(prefix: str = "") -> None:
         thread_count = 0
 
     tag = f"{prefix} " if prefix else ""
+    if not _logging_streams_available():
+        return
     if rss is None:
         logger.info(
             "[MEMORY] %srss=unavailable gc=%s threads=%d uptime=%ds",
@@ -186,10 +207,11 @@ def start_memory_monitoring(interval_seconds: float = 300.0) -> bool:
         )
         _monitor_thread.start()
 
-        logger.info(
-            "[MEMORY] Periodic memory monitoring started (interval: %ds)",
-            int(_interval_seconds),
-        )
+        if _logging_streams_available():
+            logger.info(
+                "[MEMORY] Periodic memory monitoring started (interval: %ds)",
+                int(_interval_seconds),
+            )
         return True
 
 
@@ -221,7 +243,8 @@ def stop_memory_monitoring(timeout: float = 2.0) -> None:
     except Exception:
         pass
 
-    logger.info("[MEMORY] Periodic memory monitoring stopped")
+    if _logging_streams_available():
+        logger.info("[MEMORY] Periodic memory monitoring stopped")
 
 
 def is_running() -> bool:

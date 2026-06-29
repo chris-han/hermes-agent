@@ -1,12 +1,17 @@
 """Tests for gateway session management."""
+
+import builtins
+import importlib
 import json
 import pytest
+from types import SimpleNamespace
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import AsyncMock, patch, MagicMock
 from gateway.config import Platform, HomeChannel, GatewayConfig, PlatformConfig
 from gateway.platforms.base import MessageEvent
 from gateway.session import (
     SessionSource,
+    SessionEntry,
     SessionStore,
     build_session_context,
     build_session_context_prompt,
@@ -18,6 +23,16 @@ from gateway.session import (
 # canonical_whatsapp_identifier.  Keep the tests referencing the old name
 # working without duplicating the suite.
 normalize_whatsapp_identifier = canonical_whatsapp_identifier
+
+
+class TestGatewayConfigTrajectoryStore:
+    def test_gateway_config_does_not_default_to_shared_trajectory_store(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        config = GatewayConfig()
+        assert config.sessions_dir != tmp_path / "trajectories"
+        assert config.sessions_dir != tmp_path / "gateway-session-store"
+        # The new default is the local sessions subdir under HERMES_HOME.
+        assert config.sessions_dir == tmp_path / "sessions"
 
 
 class TestSessionSourceRoundtrip:
@@ -60,6 +75,24 @@ class TestSessionSourceRoundtrip:
         assert restored.chat_topic == "Planning and coordination for Project X"
         assert restored.chat_name == "Server / #project-planning"
 
+    def test_roundtrip_preserves_adapter_keys(self):
+        source = SessionSource(
+            platform=Platform.WEIXIN,
+            chat_id="wx-a",
+            user_id="wx-a",
+            workspace_owner_id="owner-1",
+            adapter_key="weixin:ws-123:acct-a",
+            delivery_adapter_key="weixin:ws-123:acct-b",
+        )
+
+        d = source.to_dict()
+        restored = SessionSource.from_dict(d)
+
+        assert d["adapter_key"] == "weixin:ws-123:acct-a"
+        assert d["delivery_adapter_key"] == "weixin:ws-123:acct-b"
+        assert restored.adapter_key == "weixin:ws-123:acct-a"
+        assert restored.delivery_adapter_key == "weixin:ws-123:acct-b"
+
     def test_minimal_roundtrip(self):
         source = SessionSource(platform=Platform.LOCAL, chat_id="cli")
         d = source.to_dict()
@@ -97,6 +130,33 @@ class TestSessionSourceRoundtrip:
         """
         with pytest.raises(ValueError):
             SessionSource.from_dict({"platform": "nonexistent", "chat_id": "1"})
+
+
+class TestSessionEntryRoundtrip:
+    def test_session_model_override_roundtrip(self):
+        from gateway.session import SessionEntry
+
+        entry = SessionEntry(
+            session_key="agent:main:weixin:dm:c1",
+            session_id="sess-1",
+            created_at="2026-05-20T00:00:00Z",
+            updated_at="2026-05-20T00:00:01Z",
+            platform=Platform.WEIXIN,
+            chat_type="dm",
+            session_model_override={
+                "model": "qwen3.6-plus",
+                "provider": "alibaba",
+                "api_key": "dashscope-key",
+                "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "api_mode": "chat_completions",
+            },
+        )
+
+        restored = SessionEntry.from_dict(entry.to_dict())
+
+        assert restored.session_model_override is not None
+        assert restored.session_model_override["model"] == "qwen3.6-plus"
+        assert restored.session_model_override["provider"] == "alibaba"
 
 
 class TestSessionSourceDescription:
@@ -501,19 +561,23 @@ class TestSenderPrefixWithBackfill:
 
 
 class TestSessionStoreRewriteTranscript:
-    """Regression: /retry and /undo must persist truncated history to DB."""
+    """Regression: /retry and /undo must persist truncated history to disk."""
 
     @pytest.fixture()
-    def store(self, tmp_path, monkeypatch):
-        import hermes_state
-        monkeypatch.setattr(hermes_state, "DEFAULT_DB_PATH", tmp_path / "state.db")
+    def store(self, tmp_path):
         config = GatewayConfig()
-        s = SessionStore(sessions_dir=tmp_path, config=config)
+        with patch("gateway.session.SessionStore._ensure_loaded"):
+            s = SessionStore(sessions_dir=tmp_path, config=config)
+        s._db = None  # no SQLite for these tests
+        s._loaded = True
         return s
 
-    def test_rewrite_replaces_transcript(self, store, tmp_path):
+    def test_rewrite_replaces_jsonl(self, store, tmp_path):
         session_id = "test_session_1"
-        store._db.create_session(session_id=session_id, source="test")
+        # Register as workspace-bound so JSONL writes are enabled
+        ws_home = tmp_path / "workspaces" / "test_session_1" / ".hermes"
+        ws_home.mkdir(parents=True)
+        store.register_workspace_home(session_id, ws_home)
         # Write initial transcript
         for msg in [
             {"role": "user", "content": "hello"},
@@ -534,9 +598,11 @@ class TestSessionStoreRewriteTranscript:
         assert reloaded[0]["content"] == "hello"
         assert reloaded[1]["content"] == "hi"
 
-    def test_rewrite_with_empty_list(self, store):
+    def test_rewrite_with_empty_list(self, store, tmp_path):
         session_id = "test_session_2"
-        store._db.create_session(session_id=session_id, source="test")
+        ws_home = tmp_path / "workspaces" / "test_session_2" / ".hermes"
+        ws_home.mkdir(parents=True)
+        store.register_workspace_home(session_id, ws_home)
         store.append_to_transcript(session_id, {"role": "user", "content": "hi"})
 
         store.rewrite_transcript(session_id, [])
@@ -545,28 +611,189 @@ class TestSessionStoreRewriteTranscript:
         assert reloaded == []
 
 
-class TestLoadTranscriptDBOnly:
-    """After spec 002, load_transcript reads only from state.db."""
+class TestLoadTranscriptCorruptLines:
+    """Regression: corrupt JSONL lines (e.g. from mid-write crash) must be
+    skipped instead of crashing the entire transcript load.  GH-1193."""
 
-    def test_db_only_returns_empty_for_nonexistent(self, tmp_path, monkeypatch):
-        import hermes_state
-        monkeypatch.setattr(hermes_state, "DEFAULT_DB_PATH", tmp_path / "state.db")
+    @pytest.fixture()
+    def store(self, tmp_path):
         config = GatewayConfig()
-        store = SessionStore(sessions_dir=tmp_path, config=config)
-        result = store.load_transcript("nonexistent")
+        with patch("gateway.session.SessionStore._ensure_loaded"):
+            s = SessionStore(sessions_dir=tmp_path, config=config)
+        s._db = None
+        s._loaded = True
+        return s
+
+    def test_corrupt_line_skipped(self, store, tmp_path):
+        session_id = "corrupt_test"
+        ws_home = tmp_path / "workspaces" / "corrupt_test" / ".hermes"
+        ws_home.mkdir(parents=True)
+        store.register_workspace_home(session_id, ws_home)
+        transcript_path = store.get_transcript_path(session_id)
+        transcript_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(transcript_path, "w") as f:
+            f.write('{"role": "user", "content": "hello"}\n')
+            f.write('{"role": "assistant", "content": "hi th')  # truncated
+            f.write("\n")
+            f.write('{"role": "user", "content": "goodbye"}\n')
+
+        messages = store.load_transcript(session_id)
+        assert len(messages) == 2
+        assert messages[0]["content"] == "hello"
+        assert messages[1]["content"] == "goodbye"
+
+    def test_all_lines_corrupt_returns_empty(self, store, tmp_path):
+        session_id = "all_corrupt"
+        ws_home = tmp_path / "workspaces" / "all_corrupt" / ".hermes"
+        ws_home.mkdir(parents=True)
+        store.register_workspace_home(session_id, ws_home)
+        transcript_path = store.get_transcript_path(session_id)
+        transcript_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(transcript_path, "w") as f:
+            f.write("not json at all\n")
+            f.write("{truncated\n")
+
+        messages = store.load_transcript(session_id)
+        assert messages == []
+
+    def test_valid_transcript_unaffected(self, store, tmp_path):
+        session_id = "valid_test"
+        ws_home = tmp_path / "workspaces" / "valid_test" / ".hermes"
+        ws_home.mkdir(parents=True)
+        store.register_workspace_home(session_id, ws_home)
+        store.append_to_transcript(session_id, {"role": "user", "content": "a"})
+        store.append_to_transcript(session_id, {"role": "assistant", "content": "b"})
+
+        messages = store.load_transcript(session_id)
+        assert len(messages) == 2
+        assert messages[0]["content"] == "a"
+        assert messages[1]["content"] == "b"
+
+
+class TestLoadTranscriptPreferLongerSource:
+    """Regression: load_transcript must return whichever source (SQLite or JSONL)
+    has more messages to prevent silent truncation.  GH-3212."""
+
+    @pytest.fixture()
+    def store_with_db(self, tmp_path):
+        """SessionStore with both SQLite and JSONL active."""
+        from hermes_state import SessionDB
+
+        config = GatewayConfig()
+        with patch("gateway.session.SessionStore._ensure_loaded"):
+            s = SessionStore(sessions_dir=tmp_path, config=config)
+        s._db = SessionDB(db_path=tmp_path / "state.db")
+        s._loaded = True
+        return s
+
+    def test_jsonl_longer_than_sqlite_returns_jsonl(self, store_with_db, tmp_path):
+        """Legacy session: JSONL has full history, SQLite has only recent turn."""
+        sid = "legacy_session"
+        ws_home = tmp_path / "workspaces" / "legacy_session" / ".hermes"
+        ws_home.mkdir(parents=True)
+        store_with_db.register_workspace_home(sid, ws_home)
+        store_with_db._db.create_session(session_id=sid, source="gateway", model="m")
+        # JSONL has 10 messages (legacy history — written before SQLite existed)
+        for i in range(10):
+            role = "user" if i % 2 == 0 else "assistant"
+            store_with_db.append_to_transcript(
+                sid, {"role": role, "content": f"msg-{i}"}, skip_db=True,
+            )
+        # SQLite has only 2 messages (recent turn after migration)
+        store_with_db._db.append_message(session_id=sid, role="user", content="new-q")
+        store_with_db._db.append_message(session_id=sid, role="assistant", content="new-a")
+
+        result = store_with_db.load_transcript(sid)
+        assert len(result) == 10
+        assert result[0]["content"] == "msg-0"
+
+    def test_sqlite_longer_than_jsonl_returns_sqlite(self, store_with_db):
+        """Fully migrated session: SQLite has more (JSONL stopped growing)."""
+        sid = "migrated_session"
+        store_with_db._db.create_session(session_id=sid, source="gateway", model="m")
+        # JSONL has 2 old messages
+        store_with_db.append_to_transcript(
+            sid, {"role": "user", "content": "old-q"}, skip_db=True,
+        )
+        store_with_db.append_to_transcript(
+            sid, {"role": "assistant", "content": "old-a"}, skip_db=True,
+        )
+        # SQLite has 4 messages (superset after migration)
+        for i in range(4):
+            role = "user" if i % 2 == 0 else "assistant"
+            store_with_db._db.append_message(session_id=sid, role=role, content=f"db-{i}")
+
+        result = store_with_db.load_transcript(sid)
+        assert len(result) == 4
+        assert result[0]["content"] == "db-0"
+
+    def test_sqlite_empty_falls_back_to_jsonl(self, store_with_db, tmp_path):
+        """No SQLite rows — falls back to JSONL (original behavior preserved)."""
+        sid = "no_db_rows"
+        ws_home = tmp_path / "workspaces" / "no_db_rows" / ".hermes"
+        ws_home.mkdir(parents=True)
+        store_with_db.register_workspace_home(sid, ws_home)
+        store_with_db.append_to_transcript(
+            sid, {"role": "user", "content": "hello"}, skip_db=True,
+        )
+        store_with_db.append_to_transcript(
+            sid, {"role": "assistant", "content": "hi"}, skip_db=True,
+        )
+
+        result = store_with_db.load_transcript(sid)
+        assert len(result) == 2
+        assert result[0]["content"] == "hello"
+
+    def test_both_empty_returns_empty(self, store_with_db):
+        """Neither source has data — returns empty list."""
+        result = store_with_db.load_transcript("nonexistent")
         assert result == []
 
-    def test_db_only_returns_messages(self, tmp_path, monkeypatch):
-        import hermes_state
-        monkeypatch.setattr(hermes_state, "DEFAULT_DB_PATH", tmp_path / "state.db")
-        config = GatewayConfig()
-        store = SessionStore(sessions_dir=tmp_path, config=config)
-        sid = "db_only_session"
-        store._db.create_session(session_id=sid, source="gateway", model="m")
-        store._db.append_message(session_id=sid, role="user", content="db-q")
-        store._db.append_message(session_id=sid, role="assistant", content="db-a")
+    def test_equal_length_prefers_sqlite(self, store_with_db):
+        """When both have same count, SQLite wins (has richer fields like reasoning)."""
+        sid = "equal_session"
+        store_with_db._db.create_session(session_id=sid, source="gateway", model="m")
+        # Write 2 messages to JSONL only
+        store_with_db.append_to_transcript(
+            sid, {"role": "user", "content": "jsonl-q"}, skip_db=True,
+        )
+        store_with_db.append_to_transcript(
+            sid, {"role": "assistant", "content": "jsonl-a"}, skip_db=True,
+        )
+        # Write 2 different messages to SQLite only
+        store_with_db._db.append_message(session_id=sid, role="user", content="db-q")
+        store_with_db._db.append_message(session_id=sid, role="assistant", content="db-a")
 
-        result = store.load_transcript(sid)
+        result = store_with_db.load_transcript(sid)
+        assert len(result) == 2
+        # Should be the SQLite version (equal count → prefers SQLite)
+        assert result[0]["content"] == "db-q"
+
+    def test_unreadable_jsonl_returns_sqlite(self, store_with_db, monkeypatch, tmp_path):
+        """Unreadable legacy JSONL must not hide valid SQLite history."""
+        sid = "unreadable_jsonl"
+        ws_home = tmp_path / "workspaces" / "unreadable_jsonl" / ".hermes"
+        ws_home.mkdir(parents=True)
+        store_with_db.register_workspace_home(sid, ws_home)
+        store_with_db._db.create_session(session_id=sid, source="gateway", model="m")
+        store_with_db._db.append_message(session_id=sid, role="user", content="db-q")
+        store_with_db._db.append_message(session_id=sid, role="assistant", content="db-a")
+
+        transcript_path = store_with_db.get_transcript_path(sid)
+        transcript_path.parent.mkdir(parents=True, exist_ok=True)
+        transcript_path.write_text('{"role": "user", "content": "jsonl-q"}\n', encoding="utf-8")
+
+        real_open = builtins.open
+
+        def raise_for_transcript(path, *args, **kwargs):
+            mode = args[0] if args else kwargs.get("mode", "r")
+            if Path(path) == transcript_path and "r" in mode:
+                raise OSError("simulated unreadable transcript")
+            return real_open(path, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "open", raise_for_transcript)
+
+        result = store_with_db.load_transcript(sid)
         assert len(result) == 2
         assert result[0]["content"] == "db-q"
         assert result[1]["content"] == "db-a"
@@ -1400,3 +1627,329 @@ class TestRewriteTranscriptPreservesReasoning:
             "before user",
             "before assistant",
         ]
+
+
+class TestWorkspaceScopedTranscriptRouting:
+    """Regression: workspace-bound gateway sessions must write JSONL transcripts
+    to the workspace-scoped sessions directory, not the shared platform-level
+    trajectories directory.
+
+    See docs/canonical/architecture.md §0.4A — workspace-bound session JSONL belongs in
+    ``workspaces/<workspace_id>/.hermes/sessions/`` via workspace_session_logs.
+    """
+
+    @pytest.fixture()
+    def store(self, tmp_path):
+        config = GatewayConfig()
+        platform_sessions_dir = tmp_path / "trajectories"
+        with patch("gateway.session.SessionStore._ensure_loaded"):
+            s = SessionStore(sessions_dir=platform_sessions_dir, config=config)
+        s._db = None
+        s._loaded = True
+        return s, platform_sessions_dir
+
+    def test_unregistered_session_returns_none(self, store, tmp_path):
+        s, platform_sessions_dir = store
+        session_id = "unbound_session"
+        path = s.get_transcript_path(session_id)
+        assert path is None, (
+            "Non-workspace sessions must not receive a shared filesystem path; "
+            "SQLite is the primary store for these sessions."
+        )
+
+    def test_registered_workspace_uses_workspace_dir(self, store, tmp_path):
+        """After register_workspace_home, transcript path must point to workspace dir."""
+        import sys, os
+        # Ensure agents package is importable from src/
+        src_dir = str(Path(__file__).resolve().parents[3] / "src")
+        if src_dir not in sys.path:
+            sys.path.insert(0, src_dir)
+
+        s, platform_sessions_dir = store
+        workspace_id = "abc123"
+        workspace_hermes_home = tmp_path / "workspaces" / workspace_id
+        workspace_hermes_home.mkdir(parents=True)
+
+        session_id = f"{workspace_id}:session_testdeadbeef"
+        s.register_workspace_home(session_id, workspace_hermes_home)
+
+        path = s.get_transcript_path(session_id)
+        # Must be inside the workspace sessions dir, NOT the platform dir
+        assert platform_sessions_dir not in path.parents
+        assert (workspace_hermes_home / "sessions") in path.parents or \
+               path.parent == workspace_hermes_home / "sessions"
+
+    def test_workspace_bound_session_never_falls_back_to_shared_trajectory_jsonl(self, tmp_path):
+        config = GatewayConfig(sessions_dir=tmp_path / "forbidden-shared")
+        s = SessionStore(sessions_dir=config.sessions_dir, config=config)
+        s._db = None
+
+        workspace_home = tmp_path / "workspaces" / "ws-123" / ".hermes"
+        workspace_home.mkdir(parents=True, exist_ok=True)
+
+        session_id = "ws-123:session_abc"
+        s.register_workspace_home(session_id, workspace_home)
+
+        path = s.get_transcript_path(session_id)
+        assert "forbidden-shared" not in str(path)
+        assert str(path).endswith("/workspaces/ws-123/.hermes/sessions/ws-123%3Asession_abc.jsonl")
+
+    def test_append_to_transcript_writes_to_workspace_dir(self, store, tmp_path):
+        """append_to_transcript for a workspace-bound session must write to workspace dir."""
+        import sys
+        src_dir = str(Path(__file__).resolve().parents[3] / "src")
+        if src_dir not in sys.path:
+            sys.path.insert(0, src_dir)
+
+        s, platform_sessions_dir = store
+        workspace_id = "ws_deadbeef01"
+        workspace_hermes_home = tmp_path / "workspaces" / workspace_id / ".hermes"
+        workspace_hermes_home.mkdir(parents=True)
+
+        session_id = f"{workspace_id}:session_abc123456789"
+        s.register_workspace_home(session_id, workspace_hermes_home)
+        s.append_to_transcript(session_id, {"role": "user", "content": "hello from weixin"})
+
+        expected_path = s.get_transcript_path(session_id)
+        assert expected_path.exists(), f"Expected transcript at {expected_path}"
+
+        # Must NOT have written to the platform-level dir
+        platform_path = platform_sessions_dir / f"{session_id}.jsonl"
+        assert not platform_path.exists(), \
+            f"JSONL must not be in platform dir but found {platform_path}"
+
+        lines = expected_path.read_text(encoding="utf-8").strip().splitlines()
+        assert len(lines) == 1
+        import json
+        msg = json.loads(lines[0])
+        assert msg["content"] == "hello from weixin"
+
+    def test_workspace_session_meta_persists_sandbox_key_log_trail(self, store, tmp_path):
+        """A sandbox-bound gateway session must leave its sandbox key in the JSONL audit trail."""
+        import sys
+
+        src_dir = str(Path(__file__).resolve().parents[3] / "src")
+        if src_dir not in sys.path:
+            sys.path.insert(0, src_dir)
+
+        from agents.sandbox_scope import SandboxScope, bind_sandbox_scope, current_sandbox_key
+
+        s, platform_sessions_dir = store
+        workspace_id = "ws_sandboxtrail01"
+        workspace_hermes_home = tmp_path / "workspaces" / workspace_id / ".hermes"
+        workspace_hermes_home.mkdir(parents=True)
+
+        session_id = f"{workspace_id}:session_abc123456789"
+        s.register_workspace_home(session_id, workspace_hermes_home)
+
+        scope = SandboxScope(
+            workspace_id=workspace_id,
+            lane="interactive_session",
+            scope_id=session_id,
+            adapter_key=None,
+            network_enabled=False,
+        )
+        with bind_sandbox_scope(scope):
+            s.append_to_transcript(
+                session_id,
+                {
+                    "role": "session_meta",
+                    "tools": [],
+                    "model": "qwen3.5-plus",
+                    "platform": "weixin",
+                    "sandbox_key": current_sandbox_key(),
+                },
+                skip_db=True,
+            )
+
+        expected_path = s.get_transcript_path(session_id)
+        assert expected_path.exists(), f"Expected transcript at {expected_path}"
+        assert not (platform_sessions_dir / f"{session_id}.jsonl").exists()
+
+        lines = expected_path.read_text(encoding="utf-8").strip().splitlines()
+        assert len(lines) == 1
+        msg = json.loads(lines[0])
+        assert msg["role"] == "session_meta"
+        assert msg["sandbox_key"] == f"ws:{workspace_id}:session:{session_id}"
+
+    def test_session_meta_prefers_agent_result_sandbox_key(self, monkeypatch):
+        gateway_run = importlib.import_module("gateway.run")
+        sandbox_key = "ws:ws_gatewaysandbox01:session:ws_gatewaysandbox01:session_test123456"
+
+        monkeypatch.setattr("agents.sandbox_scope.current_sandbox_key", lambda: None)
+
+        assert gateway_run._resolve_session_meta_sandbox_key({"sandbox_key": sandbox_key}) == sandbox_key
+        assert gateway_run._resolve_session_meta_sandbox_key({}) is None
+
+    def test_persist_workspace_session_sandbox_key_backfills_canonical_log(self, tmp_path):
+        import sys
+
+        src_dir = str(Path(__file__).resolve().parents[3] / "src")
+        if src_dir not in sys.path:
+            sys.path.insert(0, src_dir)
+
+        from agents.workspace_session_logs import (
+            create_workspace_session_log,
+            get_workspace_session_log_payload,
+        )
+
+        gateway_run = importlib.import_module("gateway.run")
+
+        workspace_id = "ws_backfilltrail01"
+        session_id = f"{workspace_id}:session_abc123456789"
+        sandbox_key = f"ws:{workspace_id}:session:{session_id}"
+        workspace_hermes_home = tmp_path / "workspaces" / workspace_id / ".hermes"
+        workspace_hermes_home.mkdir(parents=True, exist_ok=True)
+
+        create_workspace_session_log(
+            workspace_hermes_home,
+            session_id=session_id,
+            title="Backfill Trail",
+            source="weixin",
+            platform="weixin",
+        )
+
+        gateway_run._persist_workspace_session_sandbox_key(
+            workspace_hermes_home,
+            session_id,
+            sandbox_key,
+        )
+
+        payload = get_workspace_session_log_payload(workspace_hermes_home, session_id)
+        assert payload is not None
+        assert payload["sandbox_key"] == sandbox_key
+
+    @pytest.mark.asyncio
+    async def test_handle_message_first_turn_uses_workspace_home_without_nameerror(self, tmp_path, monkeypatch):
+        gateway_run = importlib.import_module("gateway.run")
+        GatewayRunner = gateway_run.GatewayRunner
+
+        config = GatewayConfig()
+        store = SessionStore(sessions_dir=tmp_path / "trajectories", config=config)
+        store._db = None
+        store._loaded = True
+
+        workspace_id = "ws_nameerrorfix01"
+        workspace_home = tmp_path / "workspaces" / workspace_id
+        workspace_home.mkdir(parents=True, exist_ok=True)
+        session_id = f"{workspace_id}:session_abc123456789"
+        sandbox_key = f"ws:{workspace_id}:session:{session_id}"
+
+        entry = SessionEntry(
+            session_key="agent:main:workspace:ws_nameerrorfix01:weixin:dm:wx-user",
+            session_id=session_id,
+            created_at="2026-06-03T10:00:00Z",
+            updated_at="2026-06-03T10:00:00Z",
+            platform=Platform.WEIXIN,
+            chat_type="dm",
+        )
+        store.register_workspace_home(session_id, workspace_home)
+        store.get_or_create_session = lambda _source: entry
+        store.load_transcript = lambda _session_id: []
+        store.update_session = lambda *_args, **_kwargs: None
+
+        runner = object.__new__(GatewayRunner)
+        runner.session_store = store
+        runner.config = config
+        runner.hooks = SimpleNamespace(loaded_hooks=False, emit=AsyncMock())
+        runner._session_db = None
+        runner._session_model_overrides = {}
+        runner._pending_model_notes = {}
+        runner._pending_skills_reload_notes = {}
+        runner._cache_session_source = lambda *_args, **_kwargs: None
+        runner._is_telegram_topic_lane = lambda *_args, **_kwargs: False
+        runner._recover_telegram_topic_thread_id = lambda _source: None
+        runner._set_session_env = lambda _context: ()
+        runner._clear_session_env = lambda _tokens: None
+        runner._adapter_for_source = lambda _source: None
+        runner._thread_metadata_for_source = lambda *_args, **_kwargs: None
+        runner._reply_anchor_for_event = lambda _event: None
+        runner._should_send_voice_reply = lambda *_args, **_kwargs: False
+        runner._set_session_reasoning_override = lambda *_args, **_kwargs: None
+        runner._evict_cached_agent = lambda *_args, **_kwargs: None
+        runner._clear_restart_failure_count = lambda *_args, **_kwargs: None
+        runner._is_session_run_current = lambda *_args, **_kwargs: True
+        runner._bind_adapter_run_generation = lambda *_args, **_kwargs: None
+        runner._prepare_inbound_message_text = AsyncMock(return_value="hello")
+        runner._deliver_platform_notice = AsyncMock()
+        runner._run_agent = AsyncMock(
+            return_value={
+                "final_response": "done",
+                "messages": [],
+                "tools": [],
+                "api_calls": 1,
+                "sandbox_key": sandbox_key,
+                "session_id": session_id,
+            }
+        )
+
+        monkeypatch.setattr(gateway_run, "_load_gateway_config", lambda: {})
+        monkeypatch.setattr(gateway_run, "_workspace_hermes_home_for_source", lambda _source: workspace_home)
+        monkeypatch.setattr(gateway_run, "_weixin_source_has_user_scoped_home_channel", lambda _source: False)
+
+        source = SessionSource(
+            platform=Platform.WEIXIN,
+            chat_id="wx-user",
+            chat_type="dm",
+            user_id="wx-user",
+            workspace_owner_id=workspace_id,
+        )
+        event = MessageEvent(text="hello", source=source, message_id="msg-1")
+
+        await GatewayRunner._handle_message_with_agent(
+            runner,
+            event,
+            source,
+            "quick-key",
+            1,
+        )
+
+        transcript_path = store.get_transcript_path(session_id)
+        assert transcript_path is not None
+        assert transcript_path.exists()
+        lines = transcript_path.read_text(encoding="utf-8").strip().splitlines()
+        assert lines
+        msg = json.loads(lines[0])
+        assert msg["role"] == "session_meta"
+        assert msg["sandbox_key"] == sandbox_key
+
+    def test_authenticated_gateway_turn_binds_workspace_session_paths_before_first_write(self, tmp_path):
+        workspace_home = tmp_path / "workspaces" / "ws-123"
+        shared_dir = tmp_path / ".semantier-home" / "trajectories"
+        shared_dir.mkdir(parents=True, exist_ok=True)
+
+        config = GatewayConfig(sessions_dir=shared_dir)
+        s = SessionStore(sessions_dir=config.sessions_dir, config=config)
+        s._db = None
+
+        session_id = "ws-123:session_abc"
+        s.register_workspace_home(session_id, workspace_home)
+        s.append_to_transcript(session_id, {"role": "user", "content": "hi"}, skip_db=True)
+
+        assert not (shared_dir / f"{session_id}.jsonl").exists()
+        assert (workspace_home / "sessions" / "ws-123%3Asession_abc.jsonl").exists()
+
+    def test_other_sessions_unaffected_after_registration(self, store, tmp_path):
+        """Registering a workspace home for one session must not affect others."""
+        import sys
+        src_dir = str(Path(__file__).resolve().parents[3] / "src")
+        if src_dir not in sys.path:
+            sys.path.insert(0, src_dir)
+
+        s, platform_sessions_dir = store
+        workspace_id = "ws_only_for_one"
+        workspace_hermes_home = tmp_path / "workspaces" / workspace_id
+        workspace_hermes_home.mkdir(parents=True)
+
+        workspace_session_id = f"{workspace_id}:session_bound"
+        other_session_id = "standalone_session"
+
+        s.register_workspace_home(workspace_session_id, workspace_hermes_home)
+
+        # The other session has no workspace registration — must return None
+        # (no shared-filesystem fallback is allowed)
+        other_path = s.get_transcript_path(other_session_id)
+        assert other_path is None, (
+            "Unregistered sessions must not receive a shared filesystem path; "
+            "got: " + str(other_path)
+        )

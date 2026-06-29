@@ -35,6 +35,20 @@ def reset_hermes_home_override(token: Token) -> None:
     _HERMES_HOME_OVERRIDE.reset(token)
 
 
+def set_active_hermes_home(path: str | Path | None) -> Token:
+    """Compatibility alias for context-local Hermes home binding."""
+    if path is not None:
+        value = Path(path)
+        if value.name == ".hermes":
+            path = value.with_name(".semantier-home")
+    return set_hermes_home_override(path)
+
+
+def reset_active_hermes_home(token: Token) -> None:
+    """Compatibility alias for resetting active Hermes home binding."""
+    reset_hermes_home_override(token)
+
+
 def get_hermes_home_override() -> str | None:
     """Return the active context-local Hermes home override, if any."""
     override = _HERMES_HOME_OVERRIDE.get()
@@ -972,3 +986,5 @@ FINISH_REASON_LENGTH = "length"
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_MODELS_URL = f"{OPENROUTER_BASE_URL}/models"
+
+AI_GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh/v1"

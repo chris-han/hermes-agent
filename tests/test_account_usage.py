@@ -50,20 +50,23 @@ class _RoutingClient:
 
 
 def test_fetch_account_usage_codex(monkeypatch):
-    monkeypatch.setattr(
-        "agent.account_usage.resolve_codex_runtime_credentials",
+    monkeypatch.setitem(
+        fetch_account_usage.__globals__,
+        "resolve_codex_runtime_credentials",
         lambda refresh_if_expiring=True: {
             "provider": "openai-codex",
             "base_url": "https://chatgpt.com/backend-api/codex",
             "api_key": "access-token",
         },
     )
-    monkeypatch.setattr(
-        "agent.account_usage._read_codex_tokens",
+    monkeypatch.setitem(
+        fetch_account_usage.__globals__,
+        "_read_codex_tokens",
         lambda: {"tokens": {"account_id": "acct_123"}},
     )
     monkeypatch.setattr(
-        "agent.account_usage.httpx.Client",
+        fetch_account_usage.__globals__["httpx"],
+        "Client",
         lambda timeout=15.0: _Client(
             {
                 "plan_type": "pro",
@@ -119,8 +122,9 @@ def test_render_account_usage_lines_includes_reset_and_provider():
 
 
 def test_fetch_account_usage_openrouter_uses_limit_remaining_and_ignores_deprecated_rate_limit(monkeypatch):
-    monkeypatch.setattr(
-        "agent.account_usage.resolve_runtime_provider",
+    monkeypatch.setitem(
+        fetch_account_usage.__globals__,
+        "resolve_runtime_provider",
         lambda requested, explicit_base_url=None, explicit_api_key=None: {
             "provider": "openrouter",
             "base_url": "https://openrouter.ai/api/v1",
@@ -128,7 +132,8 @@ def test_fetch_account_usage_openrouter_uses_limit_remaining_and_ignores_depreca
         },
     )
     monkeypatch.setattr(
-        "agent.account_usage.httpx.Client",
+        fetch_account_usage.__globals__["httpx"],
+        "Client",
         lambda timeout=10.0: _RoutingClient(
             {
                 "https://openrouter.ai/api/v1/credits": {
@@ -166,8 +171,9 @@ def test_fetch_account_usage_openrouter_uses_limit_remaining_and_ignores_depreca
 
 
 def test_fetch_account_usage_openrouter_omits_quota_window_when_key_has_no_limit(monkeypatch):
-    monkeypatch.setattr(
-        "agent.account_usage.resolve_runtime_provider",
+    monkeypatch.setitem(
+        fetch_account_usage.__globals__,
+        "resolve_runtime_provider",
         lambda requested, explicit_base_url=None, explicit_api_key=None: {
             "provider": "openrouter",
             "base_url": "https://openrouter.ai/api/v1",
@@ -175,7 +181,8 @@ def test_fetch_account_usage_openrouter_omits_quota_window_when_key_has_no_limit
         },
     )
     monkeypatch.setattr(
-        "agent.account_usage.httpx.Client",
+        fetch_account_usage.__globals__["httpx"],
+        "Client",
         lambda timeout=10.0: _RoutingClient(
             {
                 "https://openrouter.ai/api/v1/credits": {

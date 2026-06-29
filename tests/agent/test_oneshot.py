@@ -7,7 +7,6 @@ import pytest
 from agent.oneshot import (
     PROMPT_TEMPLATES,
     render_template,
-    run_oneshot,
     _strip_code_fence,
     _truncate,
 )
@@ -62,11 +61,12 @@ class TestRunOneshot:
         return resp
 
     def test_template_path_calls_llm_with_rendered_prompt(self):
+        import agent.oneshot as oneshot
         with patch(
             "agent.oneshot.call_llm",
             return_value=self._mock_response("feat: add thing"),
         ) as llm:
-            out = run_oneshot(template="commit_message", variables={"diff": "d"})
+            out = oneshot.run_oneshot(template="commit_message", variables={"diff": "d"})
 
         assert out == "feat: add thing"
         messages = llm.call_args.kwargs["messages"]
@@ -74,11 +74,12 @@ class TestRunOneshot:
         assert messages[1]["role"] == "user"
 
     def test_explicit_instructions_path(self):
+        import agent.oneshot as oneshot
         with patch(
             "agent.oneshot.call_llm",
             return_value=self._mock_response("hello"),
         ) as llm:
-            out = run_oneshot(instructions="be brief", user_input="say hi")
+            out = oneshot.run_oneshot(instructions="be brief", user_input="say hi")
 
         assert out == "hello"
         messages = llm.call_args.kwargs["messages"]
@@ -86,15 +87,17 @@ class TestRunOneshot:
         assert messages[1]["content"] == "say hi"
 
     def test_requires_template_or_prompt(self):
+        import agent.oneshot as oneshot
         with pytest.raises(ValueError):
-            run_oneshot()
+            oneshot.run_oneshot()
 
     def test_strips_wrapping_code_fence(self):
+        import agent.oneshot as oneshot
         with patch(
             "agent.oneshot.call_llm",
             return_value=self._mock_response("```\nfix: bug\n```"),
         ):
-            assert run_oneshot(instructions="x", user_input="y") == "fix: bug"
+            assert oneshot.run_oneshot(instructions="x", user_input="y") == "fix: bug"
 
 
 class TestHelpers:

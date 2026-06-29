@@ -85,6 +85,48 @@ export default defineConfig({
   build: {
     outDir: "../hermes_cli/web_dist",
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return undefined;
+
+          if (
+            id.includes("/node_modules/react/") ||
+            id.includes("/node_modules/react-dom/") ||
+            id.includes("/node_modules/react-router/") ||
+            id.includes("/node_modules/react-router-dom/")
+          ) {
+            return "vendor-react";
+          }
+
+          if (
+            id.includes("/node_modules/@xterm/") ||
+            id.includes("/node_modules/unicode-animations/")
+          ) {
+            return "vendor-chat";
+          }
+
+          if (
+            id.includes("/node_modules/@nous-research/ui/") ||
+            id.includes("/node_modules/lucide-react/")
+          ) {
+            return "vendor-ui";
+          }
+
+          if (
+            id.includes("/node_modules/@observablehq/plot/") ||
+            id.includes("/node_modules/@react-three/") ||
+            id.includes("/node_modules/three/") ||
+            id.includes("/node_modules/gsap/") ||
+            id.includes("/node_modules/leva/")
+          ) {
+            return "vendor-visual";
+          }
+ 
+          return undefined;
+        },
+      },
+    },
   },
   server: {
     proxy: {

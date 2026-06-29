@@ -7,6 +7,9 @@ Exercises the full flow through the ACP server layer:
     session_update events arrive at the mock client
 """
 
+import asyncio
+from collections import deque
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

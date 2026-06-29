@@ -85,7 +85,7 @@ def _ensure_discord_mock():
 
 _ensure_discord_mock()
 
-from plugins.platforms.discord.adapter import DiscordAdapter  # noqa: E402
+from gateway.platforms.discord import DiscordAdapter  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -141,9 +141,9 @@ def _make_interaction(
     response = SimpleNamespace(send_message=AsyncMock(), defer=AsyncMock())
 
     if in_dm:
-        channel = discord.DMChannel()
+        channel = object.__new__(discord.DMChannel)
     elif in_thread:
-        channel = discord.Thread()
+        channel = object.__new__(discord.Thread)
         channel.id = channel_id
         channel.parent_id = parent_channel_id
     elif channel_id is None:

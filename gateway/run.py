@@ -42,7 +42,7 @@ import sqlite3
 from collections import OrderedDict
 from contextvars import copy_context
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Optional, Any, List, Union
 
 # account_usage imports the OpenAI SDK chain (~230 ms). Only needed by
@@ -150,6 +150,18 @@ _GATEWAY_SECRET_PATTERNS = (
     re.compile(r"\bglpat-[A-Za-z0-9_\-]{20,}\b"),
     re.compile(r"(?i)\b(Bearer\s+)[A-Za-z0-9._\-]{20,}\b"),
 )
+
+
+def _normalize_pending_approval_command(
+    command: Optional[str],
+    *,
+    tool_approval_live: bool,
+    pending_confirm: bool,
+) -> Optional[str]:
+    """Normalize common approval typos only while an approval prompt is live."""
+    if command == "aporove" and (tool_approval_live or pending_confirm):
+        return "approve"
+    return command
 
 
 def _ensure_windows_gateway_venv_imports() -> None:
@@ -1765,7 +1777,49 @@ logger = logging.getLogger(__name__)
 _AGENT_PENDING_SENTINEL = object()
 
 
-def _resolve_runtime_agent_kwargs() -> dict:
+_GOVERNED_QUERY_PRIORITY_TERMS = (
+    "成本",
+    "利润",
+    "利润率",
+    "毛利",
+    "营收",
+    "收入",
+    "费用",
+    "趋势",
+    "同比",
+    "环比",
+    "analytics",
+    "analysis",
+    "revenue",
+    "profit",
+    "margin",
+    "cost",
+)
+
+
+def _effective_disabled_toolsets_for_message(
+    disabled_toolsets: Optional[list[str]],
+    message: str,
+) -> Optional[list[str]]:
+    """Prioritize governed analytics query paths over terminal/code execution."""
+    if not any(term in str(message or "").lower() for term in _GOVERNED_QUERY_PRIORITY_TERMS):
+        return disabled_toolsets
+
+    ordered: list[str] = []
+    for toolset in disabled_toolsets or []:
+        if toolset not in ordered:
+            ordered.append(toolset)
+    for toolset in ("terminal", "code_execution"):
+        if toolset not in ordered:
+            ordered.append(toolset)
+    return ordered
+
+
+def _resolve_runtime_agent_kwargs(
+    *,
+    requested_provider: Optional[str] = None,
+    target_model: Optional[str] = None,
+) -> dict:
     """Resolve provider credentials for gateway-created AIAgent instances.
 
     Provider is read from ``config.yaml`` ``model.provider`` (the single
@@ -1785,8 +1839,12 @@ def _resolve_runtime_agent_kwargs() -> dict:
     )
     from hermes_cli.auth import AuthError, is_rate_limited_auth_error
 
+    primary_requested = requested_provider or os.environ.get("HERMES_INFERENCE_PROVIDER") or None
     try:
-        runtime = resolve_runtime_provider()
+        runtime = resolve_runtime_provider(
+            requested=primary_requested,
+            target_model=target_model,
+        )
     except AuthError as auth_exc:
         # Distinguish a transient rate-limit/quota cap (credentials are fine,
         # re-auth cannot help) from a genuine auth failure (expired/revoked
@@ -1796,7 +1854,7 @@ def _resolve_runtime_agent_kwargs() -> dict:
             logger.warning("Primary provider rate-limited (429): %s — trying fallback", auth_exc)
         else:
             logger.warning("Primary provider auth failed: %s — trying fallback", auth_exc)
-        fb_config = _try_resolve_fallback_provider()
+        fb_config = _try_resolve_fallback_provider(target_model=target_model)
         if fb_config is not None:
             return fb_config
         raise RuntimeError(format_runtime_provider_error(auth_exc)) from auth_exc
@@ -1835,7 +1893,34 @@ def _resolve_runtime_agent_kwargs() -> dict:
     }
 
 
-def _try_resolve_fallback_provider() -> dict | None:
+def _resolve_runtime_agent_kwargs_for_session(
+    *,
+    requested_provider: Optional[str] = None,
+    target_model: Optional[str] = None,
+) -> dict:
+    """Resolve runtime kwargs while tolerating legacy no-arg test doubles."""
+    try:
+        signature = inspect.signature(_resolve_runtime_agent_kwargs)
+    except (TypeError, ValueError):
+        signature = None
+    if signature is not None:
+        parameters = signature.parameters
+        accepts_keywords = any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
+        if not accepts_keywords and not {
+            "requested_provider",
+            "target_model",
+        }.intersection(parameters):
+            return _resolve_runtime_agent_kwargs()
+    return _resolve_runtime_agent_kwargs(
+        requested_provider=requested_provider,
+        target_model=target_model,
+    )
+
+
+def _try_resolve_fallback_provider(*, target_model: Optional[str] = None) -> dict | None:
     """Attempt to resolve credentials from the fallback_model/fallback_providers config."""
     from hermes_cli.runtime_provider import resolve_runtime_provider
     try:
@@ -1859,6 +1944,7 @@ def _try_resolve_fallback_provider() -> dict | None:
                         explicit_api_key = os.getenv(key_env, "").strip() or None
                 runtime = resolve_runtime_provider(
                     requested=entry.get("provider"),
+                    target_model=entry.get("model") or target_model,
                     explicit_base_url=entry.get("base_url"),
                     explicit_api_key=explicit_api_key,
                 )
@@ -2283,16 +2369,197 @@ def _parse_session_key(session_key: str) -> "dict | None":
     thread_id, so we leave ``thread_id`` out to avoid mis-routing.
     """
     parts = session_key.split(":")
-    if len(parts) >= 5 and parts[0] == "agent" and parts[1] == "main":
-        result = {
-            "platform": parts[2],
-            "chat_type": parts[3],
-            "chat_id": parts[4],
-        }
-        if len(parts) > 5 and parts[3] in {"dm", "thread"}:
-            result["thread_id"] = parts[5]
+    if len(parts) >= 5 and parts[0] == "agent":
+        if parts[1] == "cron":
+            return None
+        offset = 2
+        result: dict[str, str] = {}
+        if len(parts) >= 7 and parts[2] == "workspace":
+            workspace_owner_id = parts[3].strip()
+            if not workspace_owner_id:
+                return None
+            result["workspace_owner_id"] = workspace_owner_id
+            offset = 4
+        if len(parts) < offset + 3:
+            return None
+        result.update(
+            {
+                "platform": parts[offset],
+                "chat_type": parts[offset + 1],
+                "chat_id": parts[offset + 2],
+            }
+        )
+        if len(parts) > offset + 3 and parts[offset + 1] in {"dm", "thread"}:
+            result["thread_id"] = parts[offset + 3]
         return result
     return None
+
+
+def _workspace_hermes_home_for_source(source: Any) -> "Path | None":
+    from gateway.session import workspace_hermes_home_for_source
+
+    return workspace_hermes_home_for_source(source)
+
+
+def _resolve_workspace_gateway_session(
+    source: Any,
+    *,
+    session_id: str,
+    session_key: str,
+    source_gateway: str,
+    create_if_missing: bool = True,
+) -> "tuple[str, Path | None]":
+    from gateway.session import resolve_workspace_gateway_session
+
+    return resolve_workspace_gateway_session(
+        source,
+        session_id=session_id,
+        session_key=session_key,
+        source_gateway=source_gateway,
+        create_if_missing=create_if_missing,
+    )
+
+
+def _governed_context_prompt_for_source(source: Any, user_message: str) -> "str | None":
+    if not str(getattr(source, "workspace_owner_id", "") or "").strip():
+        return None
+    try:
+        from agents.governed_context import build_governed_runtime_context_prompt
+    except Exception:
+        return None
+    return build_governed_runtime_context_prompt(source, user_message)
+
+
+def _append_governed_context_prompt(
+    context_prompt: str,
+    source: Any,
+    user_message: str,
+) -> str:
+    governed_prompt = _governed_context_prompt_for_source(source, user_message)
+    if not governed_prompt:
+        return context_prompt
+    if context_prompt:
+        return f"{context_prompt}\n\n{governed_prompt}"
+    return governed_prompt
+
+
+def _build_gateway_context_prompt_for_event(
+    context: SessionContext,
+    source: Any,
+    event_text: str,
+    *,
+    redact_pii: bool,
+) -> str:
+    context_prompt = build_session_context_prompt(context, redact_pii=redact_pii)
+    return _append_governed_context_prompt(context_prompt, source, event_text)
+
+
+def _resolve_session_meta_sandbox_key(agent_result: dict[str, Any]) -> "str | None":
+    sandbox_key = agent_result.get("sandbox_key")
+    if sandbox_key:
+        return str(sandbox_key)
+    try:
+        from agents.sandbox_scope import current_sandbox_key
+
+        current = current_sandbox_key()
+    except Exception:
+        return None
+    return str(current) if current else None
+
+
+def _persist_workspace_session_sandbox_key(
+    workspace_hermes_home: "Path | None",
+    session_id: "str | None",
+    sandbox_key: "str | None",
+) -> None:
+    if workspace_hermes_home is None or not session_id or not sandbox_key:
+        return
+    try:
+        from agents.workspace_session_logs import update_workspace_session_sandbox_key
+
+        update_workspace_session_sandbox_key(
+            workspace_hermes_home,
+            session_id,
+            sandbox_key,
+        )
+    except Exception:
+        logger.debug(
+            "Failed to persist workspace session sandbox key for %s",
+            session_id,
+            exc_info=True,
+        )
+
+
+def _feishu_source_has_user_scoped_home_channel(source: SessionSource) -> bool:
+    """Whether this Feishu source has a governed user-scoped home target."""
+    if source.platform != Platform.FEISHU:
+        return False
+    workspace_id = str(getattr(source, "workspace_owner_id", "") or "").strip()
+    chat_id = str(source.chat_id or "").strip()
+    chat_type = str(getattr(source, "chat_type", "") or "").strip().lower()
+    if not workspace_id:
+        return False
+    try:
+        from agents.auth_db import get_feishu_bot_config_for_user, save_feishu_bot_config
+        from agents.gateway_identity import get_user_record_by_workspace_id
+    except Exception:
+        return False
+
+    user = get_user_record_by_workspace_id(workspace_id)
+    if not isinstance(user, dict):
+        return False
+    owner_user_id = str(user.get("user_id") or "").strip()
+    if not owner_user_id:
+        return False
+    config = get_feishu_bot_config_for_user(owner_user_id)
+    if not isinstance(config, dict):
+        return False
+    if not str(config.get("app_id") or "").strip():
+        return False
+    if not str(config.get("app_secret") or "").strip():
+        return False
+    if str(config.get("home_channel") or "").strip():
+        return True
+    if chat_type == "dm" and chat_id:
+        updated = dict(config)
+        updated["home_channel"] = chat_id
+        updated["home_channel_thread_id"] = str(source.thread_id or "").strip()
+        save_feishu_bot_config(updated)
+        return True
+    return False
+
+
+def _weixin_source_has_user_scoped_home_channel(source: SessionSource) -> bool:
+    """Whether this Weixin source has a governed user-scoped home target."""
+    workspace_id = str(getattr(source, "workspace_owner_id", "") or "").strip()
+    user_id = str(getattr(source, "user_id", "") or "").strip()
+    chat_id = str(getattr(source, "chat_id", "") or "").strip()
+    chat_type = str(getattr(source, "chat_type", "") or "").strip().lower()
+    if not workspace_id or not user_id:
+        return False
+    try:
+        from agents.auth_db import load_weixin_runtime_accounts, save_weixin_runtime_account
+    except Exception:
+        return False
+    for account in load_weixin_runtime_accounts():
+        if str(account.get("owner_workspace_id") or "").strip() != workspace_id:
+            continue
+        candidate_user_ids = {
+            str(account.get("external_user_id") or "").strip(),
+            str(account.get("user_id") or "").strip(),
+        }
+        if user_id not in candidate_user_ids:
+            continue
+        existing_home = str(account.get("home_channel") or "").strip()
+        if existing_home:
+            return True
+        if chat_type == "dm" and chat_id:
+            updated = dict(account)
+            updated["home_channel"] = chat_id
+            updated["home_channel_thread_id"] = str(source.thread_id or "").strip()
+            save_weixin_runtime_account(updated)
+            return True
+    return False
 
 
 def _format_gateway_process_notification(evt: dict) -> "str | None":
@@ -2819,7 +3086,17 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
 
         # DM pairing store for code-based user authorization
         from gateway.pairing import PairingStore
-        self.pairing_store = PairingStore()
+        try:
+            try:
+                from agents.auth_db import ensure_auth_db
+
+                auth_db_path = ensure_auth_db()
+            except Exception:
+                auth_db_path = _hermes_home / "auth.db"
+            self.pairing_store = PairingStore(auth_db_path=auth_db_path)
+        except RuntimeError as exc:
+            logger.debug("PairingStore unavailable: %s", exc)
+            self.pairing_store = None
         
         # Event hook system
         from gateway.hooks import HookRegistry
@@ -3128,12 +3405,27 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         rather than silently dropped — #46621).
         """
         timeout = self._platform_connect_timeout_secs()
-        if timeout <= 0:
-            return await adapter.connect(is_reconnect=is_reconnect)
         try:
-            return await asyncio.wait_for(
-                adapter.connect(is_reconnect=is_reconnect), timeout=timeout
+            connect_signature = inspect.signature(adapter.connect)
+            connect_params = connect_signature.parameters
+            accepts_reconnect = (
+                "is_reconnect" in connect_params
+                or any(
+                    param.kind is inspect.Parameter.VAR_KEYWORD
+                    for param in connect_params.values()
+                )
             )
+        except (TypeError, ValueError):
+            accepts_reconnect = True
+        connect_coro = (
+            adapter.connect(is_reconnect=is_reconnect)
+            if accepts_reconnect
+            else adapter.connect()
+        )
+        if timeout <= 0:
+            return await connect_coro
+        try:
+            return await asyncio.wait_for(connect_coro, timeout=timeout)
         except asyncio.TimeoutError as exc:
             raise TimeoutError(
                 f"{platform.value} connect timed out after {timeout:g}s"
@@ -3347,13 +3639,6 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         ):
             return None
         inbound = str(source.thread_id or "")
-        is_lobby = not inbound or inbound in self._TELEGRAM_GENERAL_TOPIC_IDS
-        if not is_lobby:
-            # A non-lobby, unknown thread_id is most likely the first message in
-            # a brand-new Telegram DM topic. Preserve it so it can be recorded
-            # as a new independent lane below instead of hijacking the latest
-            # existing topic binding.
-            return None
         session_db = getattr(self, "_session_db", None)
         if session_db is None:
             return None
@@ -3367,6 +3652,15 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         if not bindings:
             return None
         user_id = str(source.user_id)
+        user_bindings = [
+            b for b in bindings if str(b.get("user_id") or "") == user_id
+        ]
+        if not user_bindings:
+            return None
+        if inbound and inbound not in self._TELEGRAM_GENERAL_TOPIC_IDS:
+            for b in user_bindings:
+                if str(b.get("thread_id") or "") == inbound:
+                    return None
         for b in bindings:  # newest-first
             if str(b.get("user_id") or "") == user_id:
                 recovered = str(b.get("thread_id") or "")
@@ -3425,6 +3719,15 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
 
         model = _resolve_gateway_model(user_config)
         override = self._session_model_overrides.get(resolved_session_key) if resolved_session_key else None
+        if not override and resolved_session_key:
+            try:
+                entry = getattr(getattr(self, "session_store", None), "_entries", {}).get(resolved_session_key)
+                persisted_override = getattr(entry, "session_model_override", None)
+                if isinstance(persisted_override, dict) and persisted_override.get("model"):
+                    override = dict(persisted_override)
+                    self._session_model_overrides[resolved_session_key] = override
+            except Exception:
+                override = None
         if override:
             override_model = override.get("model", model)
             override_runtime = {
@@ -3454,7 +3757,16 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 list(self._session_model_overrides.keys())[:5] if self._session_model_overrides else "[]",
             )
 
-        runtime_kwargs = _resolve_runtime_agent_kwargs()
+        requested_provider = None
+        if isinstance(user_config, dict):
+            model_config = user_config.get("model")
+            if isinstance(model_config, dict):
+                requested_provider = model_config.get("provider")
+        target_model = override.get("model", model) if override else model
+        runtime_kwargs = _resolve_runtime_agent_kwargs_for_session(
+            requested_provider=requested_provider,
+            target_model=target_model,
+        )
         runtime_model = runtime_kwargs.pop("model", None)
         if runtime_model:
             logger.info(
@@ -4335,6 +4647,17 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         Returns None when unset or unsupported.
         """
         cfg = _load_gateway_runtime_config()
+        if not cfg:
+            cfg_path = _hermes_home / "config.yaml"
+            if cfg_path.exists():
+                try:
+                    import yaml
+
+                    with open(cfg_path, "r", encoding="utf-8") as f:
+                        loaded = yaml.safe_load(f) or {}
+                    cfg = loaded if isinstance(loaded, dict) else {}
+                except Exception:
+                    cfg = {}
         raw = str(cfg_get(cfg, "agent", "service_tier", default="") or "").strip()
 
         value = raw.lower()
@@ -4422,7 +4745,18 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         """
         mode = os.getenv("HERMES_BACKGROUND_NOTIFICATIONS", "")
         if not mode:
-            cfg = _load_gateway_runtime_config()
+            cfg_path = _hermes_home / "config.yaml"
+            if cfg_path.exists():
+                import yaml
+
+                with open(cfg_path, "r", encoding="utf-8") as f:
+                    cfg = yaml.safe_load(f) or {}
+                if isinstance(cfg, dict):
+                    from hermes_cli.config import _expand_env_vars
+
+                    cfg = _expand_env_vars(cfg)
+            else:
+                cfg = _load_gateway_runtime_config()
             raw = cfg_get(cfg, "display", "background_process_notifications")
             if raw is False:
                 mode = "off"
@@ -4474,10 +4808,12 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         return None
 
     def _snapshot_running_agents(self) -> Dict[str, Any]:
+        current_module = sys.modules.get(__name__)
+        pending_sentinel = getattr(current_module, "_AGENT_PENDING_SENTINEL", _AGENT_PENDING_SENTINEL)
         return {
             session_key: agent
             for session_key, agent in self._running_agents.items()
-            if agent is not _AGENT_PENDING_SENTINEL
+            if agent is not _AGENT_PENDING_SENTINEL and agent is not pending_sentinel
         }
 
     def _get_max_concurrent_sessions(self) -> Optional[int]:
@@ -5661,10 +5997,12 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             logger.warning("Failed to enumerate resume-pending sessions: %s", exc)
             return 0
 
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         scheduled = 0
         for entry in candidates:
             marker = entry.last_resume_marked_at or entry.updated_at
+            if marker is not None and marker.tzinfo is None:
+                marker = marker.replace(tzinfo=timezone.utc)
             if marker is not None and (now - marker).total_seconds() > window:
                 continue
 
@@ -6921,6 +7259,14 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                         backoff = min(30 * (2 ** (attempt - 1)), _BACKOFF_CAP)
                         info["attempts"] = attempt
                         info["next_retry"] = time.monotonic() + backoff
+                        if attempt >= 10:
+                            self._pause_failed_platform(
+                                platform,
+                                reason=(
+                                    adapter.fatal_error_message
+                                    or "auto-paused after repeated reconnect failures"
+                                ),
+                            )
                         logger.info(
                             "Reconnect %s failed, next retry in %ds",
                             platform.value, backoff,
@@ -6959,6 +7305,11 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     backoff = min(30 * (2 ** (attempt - 1)), _BACKOFF_CAP)
                     info["attempts"] = attempt
                     info["next_retry"] = time.monotonic() + backoff
+                    if attempt >= 10:
+                        self._pause_failed_platform(
+                            platform,
+                            reason=str(e) or "auto-paused after repeated reconnect errors",
+                        )
                     logger.warning(
                         "Reconnect %s error: %s, next retry in %ds",
                         platform.value, e, backoff,
@@ -7061,8 +7412,14 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             # drain, the durable marker is already written so the next
             # gateway boot can recover in-flight sessions (#27856).
             _pre_drain_keys: list[str] = []
+            _current_module = sys.modules.get(__name__)
+            _pending_sentinel = getattr(
+                _current_module,
+                "_AGENT_PENDING_SENTINEL",
+                _AGENT_PENDING_SENTINEL,
+            )
             for _sk, _agent in list(self._running_agents.items()):
-                if _agent is _AGENT_PENDING_SENTINEL:
+                if _agent is _AGENT_PENDING_SENTINEL or _agent is _pending_sentinel:
                     continue
                 try:
                     self.session_store.mark_resume_pending(
@@ -7130,7 +7487,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     "restart_timeout" if self._restart_requested else "shutdown_timeout"
                 )
                 for _sk, _agent in list(self._running_agents.items()):
-                    if _agent is _AGENT_PENDING_SENTINEL:
+                    if _agent is _AGENT_PENDING_SENTINEL or _agent is _pending_sentinel:
                         continue
                     try:
                         self.session_store.mark_resume_pending(_sk, _resume_reason)
@@ -7472,7 +7829,9 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             # /p/<profile>/ prefix, so a second bind can only collide. This is a
             # config error, not a transient failure — fail fast and loud.
             if platform.value in _PORT_BINDING_PLATFORM_VALUES:
-                raise MultiplexConfigError(
+                current_module = sys.modules.get(__name__)
+                error_cls = getattr(current_module, "MultiplexConfigError", MultiplexConfigError)
+                raise error_cls(
                     f"Profile '{profile_name}' enables the port-binding platform "
                     f"'{platform.value}', but gateway.multiplex_profiles is on. The "
                     f"default profile owns the single shared HTTP listener and "
@@ -7806,7 +8165,11 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         elif not self._is_user_authorized(source):
             logger.warning("Unauthorized user: %s (%s) on %s", source.user_id, source.user_name, source.platform.value)
             # In DMs: offer pairing code. In groups: silently ignore.
-            if source.chat_type == "dm" and self._get_unauthorized_dm_behavior(source.platform) == "pair":
+            if (
+                source.chat_type == "dm"
+                and self._get_unauthorized_dm_behavior(source.platform) == "pair"
+                and self.pairing_store is not None
+            ):
                 platform_name = source.platform.value if source.platform else "unknown"
                 # Rate-limit ALL pairing responses (code or rejection) to
                 # prevent spamming the user with repeated messages when
@@ -7971,7 +8334,11 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             # `!<known-command>` — `always`/`cancel` are confirm keywords,
             # not registered commands, so the `!` survives to here.
             _norm_reply = _raw_reply.lstrip("!/").lower()
-            _cmd_reply = event.get_command()
+            _cmd_reply = _normalize_pending_approval_command(
+                event.get_command(),
+                tool_approval_live=_tool_approval_live,
+                pending_confirm=bool(_pending_confirm),
+            )
             _confirm_choice = None
             if _cmd_reply in {"approve", "yes", "ok", "confirm"}:
                 _confirm_choice = "once"
@@ -8064,7 +8431,26 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 ACTIVE_SESSION_BYPASS_COMMANDS as _DEDICATED_HANDLERS,
                 resolve_command as _resolve_cmd_inner,
             )
-            _evt_cmd = event.get_command()
+            _evt_cmd_raw = event.get_command()
+            _pending_confirm_for_cmd = False
+            _tool_approval_live_for_cmd = False
+            try:
+                from tools import slash_confirm as _slash_confirm_for_cmd
+                _pending_confirm_for_cmd = (
+                    _slash_confirm_for_cmd.get_pending(_quick_key) is not None
+                )
+            except Exception:
+                _pending_confirm_for_cmd = False
+            try:
+                from tools.approval import has_blocking_approval as _has_blocking_approval_for_cmd
+                _tool_approval_live_for_cmd = _has_blocking_approval_for_cmd(_quick_key)
+            except Exception:
+                _tool_approval_live_for_cmd = False
+            _evt_cmd = _normalize_pending_approval_command(
+                _evt_cmd_raw,
+                tool_approval_live=_tool_approval_live_for_cmd,
+                pending_confirm=_pending_confirm_for_cmd,
+            )
             _cmd_def_inner = _resolve_cmd_inner(_evt_cmd) if _evt_cmd else None
 
             # Slash command access control on the running-agent fast-path.
@@ -9345,6 +9731,12 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 )
                 if _ctx_result.blocked:
                     _adapter = self.adapters.get(source.platform)
+                    if _adapter is None:
+                        source_platform_value = getattr(source.platform, "value", source.platform)
+                        for _candidate_platform, _candidate_adapter in self.adapters.items():
+                            if getattr(_candidate_platform, "value", _candidate_platform) == source_platform_value:
+                                _adapter = _candidate_adapter
+                                break
                     if _adapter:
                         await _adapter.send(
                             source.chat_id,
@@ -9430,6 +9822,12 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
 
         session_entry = self.session_store.get_or_create_session(source)
         session_key = session_entry.session_key
+        workspace_hermes_home = _workspace_hermes_home_for_source(source)
+        if workspace_hermes_home is not None:
+            self.session_store.register_workspace_home(
+                session_entry.session_id,
+                workspace_hermes_home,
+            )
         self._cache_session_source(session_key, source)
         if self._is_telegram_topic_lane(source):
             try:
@@ -9537,7 +9935,12 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             pass
 
         # Build the context prompt to inject
-        context_prompt = build_session_context_prompt(context, redact_pii=_redact_pii)
+        context_prompt = _build_gateway_context_prompt_for_event(
+            context,
+            source,
+            event.text,
+            redact_pii=_redact_pii,
+        )
         
         # If the previous session expired and was auto-reset, prepend a notice
         # so the agent knows this is a fresh conversation (not an intentional /reset).
@@ -10044,7 +10447,19 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         if not history and source.platform and source.platform != Platform.LOCAL and source.platform != Platform.WEBHOOK:
             platform_name = source.platform.value
             env_key = _home_target_env_var(platform_name)
-            if not os.getenv(env_key):
+            current_module = sys.modules.get(__name__)
+            has_user_scoped_home = False
+            if source.platform == Platform.WEIXIN:
+                checker = getattr(
+                    current_module,
+                    "_weixin_source_has_user_scoped_home_channel",
+                    _weixin_source_has_user_scoped_home_channel,
+                )
+                try:
+                    has_user_scoped_home = bool(checker(source))
+                except Exception:
+                    has_user_scoped_home = False
+            if not os.getenv(env_key) and not has_user_scoped_home:
                 # Slack dispatches all Hermes commands through a single
                 # parent slash command `/hermes`; bare `/sethome` is not
                 # registered and would fail with "app did not respond".
@@ -10134,8 +10549,9 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         # Bind this gateway run generation to the adapter's active-session
         # event so deferred post-delivery callbacks can be released by the
         # same run that registered them.
+        _adapters = getattr(self, "adapters", {}) or {}
         self._bind_adapter_run_generation(
-            self.adapters.get(source.platform),
+            _adapters.get(source.platform),
             session_key,
             run_generation,
         )
@@ -10269,10 +10685,22 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             # session_entry so transcript writes below go to the right session.
             if agent_result.get("session_id") and agent_result["session_id"] != session_entry.session_id:
                 session_entry.session_id = agent_result["session_id"]
+                if workspace_hermes_home is not None:
+                    self.session_store.register_workspace_home(
+                        session_entry.session_id,
+                        workspace_hermes_home,
+                    )
                 self.session_store._save()
                 self._sync_telegram_topic_binding(
                     source, session_entry, reason="agent-result-compression",
                 )
+
+            _session_meta_sandbox_key = _resolve_session_meta_sandbox_key(agent_result)
+            _persist_workspace_session_sandbox_key(
+                workspace_hermes_home,
+                session_entry.session_id,
+                _session_meta_sandbox_key,
+            )
 
             # Prepend reasoning/thinking if display is enabled (per-platform).
             # Mattermost requires explicit per-platform opt-in because this is
@@ -10491,15 +10919,18 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 pass  # Skip all transcript writes — don't grow a broken session
             elif not history:
                 tool_defs = agent_result.get("tools", [])
+                _session_meta_entry = {
+                    "role": "session_meta",
+                    "tools": tool_defs or [],
+                    "model": _resolve_gateway_model(),
+                    "platform": source.platform.value if source.platform else "",
+                    "timestamp": ts,
+                }
+                if _session_meta_sandbox_key:
+                    _session_meta_entry["sandbox_key"] = _session_meta_sandbox_key
                 self.session_store.append_to_transcript(
                     session_entry.session_id,
-                    {
-                        "role": "session_meta",
-                        "tools": tool_defs or [],
-                        "model": _resolve_gateway_model(),
-                        "platform": source.platform.value if source.platform else "",
-                        "timestamp": ts,
-                    }
+                    _session_meta_entry,
                 )
             
             # The agent already persisted these messages to SQLite via
@@ -10789,7 +11220,16 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         """
         from agent.model_metadata import get_model_context_length, DEFAULT_FALLBACK_CONTEXT
 
-        model = _resolve_gateway_model()
+        current_module = sys.modules.get(__name__)
+        resolve_model = getattr(current_module, "_resolve_gateway_model", _resolve_gateway_model)
+        load_config = getattr(current_module, "_load_gateway_config", _load_gateway_config)
+        resolve_runtime = getattr(
+            current_module,
+            "_resolve_runtime_agent_kwargs",
+            _resolve_runtime_agent_kwargs,
+        )
+
+        model = resolve_model()
         config_context_length = None
         provider = None
         base_url = None
@@ -10798,7 +11238,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         data = None
 
         try:
-            data = _load_gateway_config()
+            data = load_config()
             if data:
                 model_cfg = data.get("model", {})
                 if isinstance(model_cfg, dict):
@@ -10855,7 +11295,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
 
         # Resolve runtime credentials for probing
         try:
-            runtime = _resolve_runtime_agent_kwargs()
+            runtime = resolve_runtime()
             provider = provider or runtime.get("provider")
             base_url = base_url or runtime.get("base_url")
             api_key = runtime.get("api_key")
@@ -11814,6 +12254,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             enabled_toolsets = sorted(_get_platform_tools(user_config, platform_key))
             agent_cfg = user_config.get("agent") or {}
             disabled_toolsets = agent_cfg.get("disabled_toolsets") or None
+            disabled_toolsets = _effective_disabled_toolsets_for_message(disabled_toolsets, prompt)
 
             pr = self._provider_routing
             max_iterations = _current_max_iterations()
@@ -11844,6 +12285,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     model=turn_route["model"],
                     **turn_route["runtime"],
                     max_iterations=max_iterations,
+                    save_trajectories=True,
                     quiet_mode=True,
                     verbose_logging=False,
                     enabled_toolsets=enabled_toolsets,
@@ -13346,6 +13788,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         _adapters = getattr(self, "adapters", None) or {}
         _adapter = _adapters.get(context.source.platform)
         _async_delivery = getattr(_adapter, "supports_async_delivery", True)
+        workspace_hermes_home = _workspace_hermes_home_for_source(context.source)
         return set_session_vars(
             platform=context.source.platform.value,
             chat_id=context.source.chat_id,
@@ -13354,6 +13797,8 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             user_id=str(context.source.user_id) if context.source.user_id else "",
             user_name=str(context.source.user_name) if context.source.user_name else "",
             session_key=context.session_key,
+            session_id=context.session_id,
+            hermes_home=str(workspace_hermes_home) if workspace_hermes_home else None,
             message_id=str(context.source.message_id) if context.source.message_id else "",
             async_delivery=_async_delivery,
         )
@@ -13642,13 +14087,46 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         derived_platform = ""
         derived_chat_type = ""
         derived_chat_id = ""
+        derived_workspace_owner_id = ""
+
+        def _with_workspace_delivery_adapter(source: SessionSource) -> SessionSource:
+            if source.platform != Platform.WEIXIN or (
+                getattr(source, "adapter_key", None)
+                and getattr(source, "delivery_adapter_key", None)
+            ):
+                return source
+            workspace_owner_id = str(
+                getattr(source, "workspace_owner_id", "") or ""
+            ).strip()
+            if not workspace_owner_id:
+                return source
+            try:
+                from agents.workspace_session_logs import (
+                    resolve_workspace_session_delivery_adapter_key,
+                )
+
+                workspace_hermes_home = _workspace_hermes_home_for_source(source) or _hermes_home
+                adapter_key = resolve_workspace_session_delivery_adapter_key(
+                    workspace_hermes_home,
+                    str(evt.get("session_id") or session_key),
+                    platform=source.platform.value,
+                )
+            except Exception:
+                adapter_key = None
+            if not adapter_key:
+                return source
+            return dataclasses.replace(
+                source,
+                adapter_key=adapter_key,
+                delivery_adapter_key=adapter_key,
+            )
 
         if session_key:
             try:
                 self.session_store._ensure_loaded()
                 entry = self.session_store._entries.get(session_key)
                 if entry and getattr(entry, "origin", None):
-                    return entry.origin
+                    return _with_workspace_delivery_adapter(entry.origin)
             except Exception as exc:
                 logger.debug(
                     "Synthetic process-event session-store lookup failed for %s: %s",
@@ -13665,6 +14143,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 derived_platform = _parsed["platform"]
                 derived_chat_type = _parsed["chat_type"]
                 derived_chat_id = _parsed["chat_id"]
+                derived_workspace_owner_id = _parsed.get("workspace_owner_id", "")
 
         platform_name = str(evt.get("platform") or derived_platform or "").strip().lower()
         chat_type = str(evt.get("chat_type") or derived_chat_type or "").strip().lower()
@@ -13698,7 +14177,22 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             thread_id=str(evt.get("thread_id") or "").strip() or None,
             user_id=str(evt.get("user_id") or "").strip() or None,
             user_name=str(evt.get("user_name") or "").strip() or None,
+            workspace_owner_id=(
+                str(evt.get("workspace_owner_id") or derived_workspace_owner_id).strip()
+                or None
+            ),
         )
+
+    def _adapter_for_source(self, source):
+        adapter = self.adapters.get(source.platform)
+        resolver = getattr(adapter, "resolve_for_source", None)
+        if callable(resolver):
+            resolved = resolver(source)
+            if resolved is not None:
+                return resolved
+            if source.platform == Platform.WEIXIN:
+                return None
+        return adapter
 
     async def _inject_watch_notification(self, synth_text: str, evt: dict) -> None:
         """Inject a watch-pattern notification as a synthetic message event.
@@ -14659,6 +15153,107 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
     # Proxy mode: forward messages to a remote Hermes API server
     # ------------------------------------------------------------------
 
+    def _get_backend_proxy_url(self) -> Optional[str]:
+        """Return the backend proxy URL if SessionService proxy mode is configured."""
+        url = os.getenv("HERMES_GATEWAY_BACKEND_PROXY_URL", "").strip()
+        if url:
+            return url.rstrip("/")
+        current_module = sys.modules.get(__name__)
+        load_config = getattr(current_module, "_load_gateway_config", _load_gateway_config)
+        cfg = load_config()
+        url = (cfg.get("gateway") or {}).get("backend_proxy_url", "").strip()
+        if url:
+            return url.rstrip("/")
+        return None
+
+    async def _run_agent_via_backend_proxy(
+        self,
+        message: str,
+        context_prompt: str,
+        history: List[Dict[str, Any]],
+        source: "SessionSource",
+        session_id: str,
+        session_key: str = None,
+        run_generation: Optional[int] = None,
+        event_message_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Forward the message to the backend SessionService proxy."""
+        try:
+            from aiohttp import ClientSession as _AioClientSession, ClientTimeout
+        except ImportError:
+            return {
+                "final_response": "⚠️ Backend proxy mode requires aiohttp. Install with: pip install aiohttp",
+                "messages": [],
+                "api_calls": 0,
+                "tools": [],
+            }
+
+        proxy_url = self._get_backend_proxy_url()
+        if not proxy_url:
+            return {
+                "final_response": "⚠️ Backend proxy URL not configured",
+                "messages": [],
+                "api_calls": 0,
+                "tools": [],
+            }
+
+        proxy_key = os.getenv("GATEWAY_PROXY_KEY", "").strip()
+        platform_name = source.platform.value if source.platform else "unknown"
+        url = f"{proxy_url}/internal/messaging/{platform_name}/incoming"
+        payload = {
+            "session_id": session_id,
+            "session_key": session_key or "",
+            "user_message": message,
+            "platform": platform_name,
+            "workspace_slug": os.getenv("WORKSPACE_SLUG", ""),
+            "source": {
+                "chat_id": source.chat_id,
+                "user_id": source.user_id,
+                "user_name": source.user_name,
+                "chat_type": source.chat_type,
+                "chat_name": source.chat_name,
+                "thread_id": source.thread_id,
+            },
+            "context_prompt": context_prompt,
+        }
+
+        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        if proxy_key:
+            headers["Authorization"] = f"Bearer {proxy_key}"
+
+        timeout = ClientTimeout(total=300)
+        try:
+            async with _AioClientSession() as session:
+                async with session.post(url, json=payload, headers=headers, timeout=timeout) as resp:
+                    if resp.status != 200:
+                        error_text = await resp.text()
+                        logger.warning("Backend proxy error (%s): %s", resp.status, error_text[:200])
+                        return {
+                            "final_response": f"⚠️ Backend proxy error ({resp.status}): {error_text[:200]}",
+                            "messages": [],
+                            "api_calls": 0,
+                            "tools": [],
+                        }
+                    data = await resp.json()
+                    response = data.get("response") or data.get("final_response") or ""
+                    return {
+                        "final_response": response,
+                        "messages": [
+                            {"role": "user", "content": message},
+                            {"role": "assistant", "content": response},
+                        ],
+                        "api_calls": 0,
+                        "tools": [],
+                    }
+        except Exception as e:
+            logger.warning("Backend proxy connection error: %s", e)
+            return {
+                "final_response": f"⚠️ Backend proxy connection error: {e}",
+                "messages": [],
+                "api_calls": 0,
+                "tools": [],
+            }
+
     def _get_proxy_url(self) -> Optional[str]:
         """Return the proxy URL if proxy mode is configured, else None.
 
@@ -14668,7 +15263,9 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         url = os.getenv("GATEWAY_PROXY_URL", "").strip()
         if url:
             return url.rstrip("/")
-        cfg = _load_gateway_config()
+        current_module = sys.modules.get(__name__)
+        load_config = getattr(current_module, "_load_gateway_config", _load_gateway_config)
+        cfg = load_config()
         url = (cfg.get("gateway") or {}).get("proxy_url", "").strip()
         if url:
             return url.rstrip("/")
@@ -15057,6 +15654,19 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         This is run in a thread pool to not block the event loop.
         Supports interruption via new messages.
         """
+        _backend_proxy_url = self._get_backend_proxy_url()
+        if _backend_proxy_url:
+            return await self._run_agent_via_backend_proxy(
+                message=message,
+                context_prompt=context_prompt,
+                history=history,
+                source=source,
+                session_id=session_id,
+                session_key=session_key,
+                run_generation=run_generation,
+                event_message_id=event_message_id,
+            )
+
         # ---- Proxy mode: delegate to remote API server ----
         if self._get_proxy_url():
             return await self._run_agent_via_proxy(
@@ -15080,11 +15690,69 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         
         user_config = _load_gateway_config()
         platform_key = _platform_config_key(source.platform)
+        tool_config = user_config
+        _workspace_hermes_home_for_result = None
+        _workspace_session_id_for_result = session_id
+        if str(getattr(source, "workspace_owner_id", "") or "").strip():
+            try:
+                runner_globals = self._run_agent_inner.__globals__
+                resolver = getattr(
+                    type("_ResolverModule", (), runner_globals),
+                    "_resolve_workspace_gateway_session",
+                    _resolve_workspace_gateway_session,
+                )
+                _workspace_session_id, workspace_home = resolver(
+                    source,
+                    session_id=session_id,
+                    session_key=session_key or "",
+                    source_gateway="gateway",
+                )
+                _workspace_hermes_home_for_result = workspace_home
+                _workspace_session_id_for_result = _workspace_session_id or session_id
+                workspace_config_path = (
+                    Path(workspace_home) / "config.yaml"
+                    if workspace_home is not None
+                    else None
+                )
+                if workspace_config_path is not None and workspace_config_path.exists():
+                    import yaml as _workspace_yaml
+                    workspace_config = (
+                        _workspace_yaml.safe_load(
+                            workspace_config_path.read_text(encoding="utf-8")
+                        )
+                        or {}
+                    )
+                    if isinstance(workspace_config, dict):
+                        merged_config = dict(user_config)
+                        merged_platform_toolsets = dict(
+                            user_config.get("platform_toolsets") or {}
+                        )
+                        for key, values in (
+                            workspace_config.get("platform_toolsets") or {}
+                        ).items():
+                            if not isinstance(values, list):
+                                continue
+                            existing = merged_platform_toolsets.get(key)
+                            combined = list(existing) if isinstance(existing, list) else []
+                            for value in values:
+                                if value not in combined:
+                                    combined.append(value)
+                            merged_platform_toolsets[key] = combined
+                        merged_config["platform_toolsets"] = merged_platform_toolsets
+                        workspace_mcp_servers = workspace_config.get("mcp_servers")
+                        if isinstance(workspace_mcp_servers, dict):
+                            merged_mcp_servers = dict(user_config.get("mcp_servers") or {})
+                            merged_mcp_servers.update(workspace_mcp_servers)
+                            merged_config["mcp_servers"] = merged_mcp_servers
+                        tool_config = merged_config
+            except Exception:
+                logger.debug("Workspace toolset config merge failed", exc_info=True)
 
         from hermes_cli.tools_config import _get_platform_tools
-        enabled_toolsets = sorted(_get_platform_tools(user_config, platform_key))
+        enabled_toolsets = sorted(_get_platform_tools(tool_config, platform_key))
         agent_cfg_local = user_config.get("agent") or {}
         disabled_toolsets = agent_cfg_local.get("disabled_toolsets") or None
+        disabled_toolsets = _effective_disabled_toolsets_for_message(disabled_toolsets, message)
 
         display_config = user_config.get("display", {})
         if not isinstance(display_config, dict):
@@ -15952,6 +16620,28 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             _plat_streaming = resolve_display_setting(
                 user_config, platform_key, "streaming"
             )
+            _display_platforms_cfg = (
+                user_config.get("display", {}).get("platforms", {})
+                if isinstance(user_config.get("display"), dict)
+                else {}
+            )
+            _display_platform_cfg = (
+                _display_platforms_cfg.get(platform_key, {})
+                if isinstance(_display_platforms_cfg, dict)
+                else {}
+            )
+            _display_streaming_configured = (
+                isinstance(user_config.get("display"), dict)
+                and (
+                    "streaming" in user_config.get("display", {})
+                    or (
+                        isinstance(_display_platform_cfg, dict)
+                        and "streaming" in _display_platform_cfg
+                    )
+                )
+            )
+            if not _display_streaming_configured:
+                _plat_streaming = None
             # None = no per-platform override → follow global config
             _streaming_enabled = (
                 _scfg.enabled and _scfg.transport != "off"
@@ -16007,19 +16697,25 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                             transport=_scfg.transport or "edit",
                             chat_type=getattr(source, "chat_type", "") or "",
                         )
-                        _stream_consumer = GatewayStreamConsumer(
-                            adapter=_adapter,
-                            chat_id=source.chat_id,
-                            config=_consumer_cfg,
-                            metadata=_status_thread_metadata,
-                            on_new_message=(
+                        _consumer_kwargs = {
+                            "adapter": _adapter,
+                            "chat_id": source.chat_id,
+                            "config": _consumer_cfg,
+                            "metadata": _status_thread_metadata,
+                            "on_new_message": (
                                 (lambda: progress_queue.put(("__reset__",)))
                                 if progress_queue is not None
                                 else None
                             ),
-                            on_before_finalize=_pause_typing_before_finalize,
-                            initial_reply_to_id=event_message_id,
-                        )
+                            "initial_reply_to_id": event_message_id,
+                        }
+                        try:
+                            _consumer_params = inspect.signature(GatewayStreamConsumer).parameters
+                            if "on_before_finalize" in _consumer_params:
+                                _consumer_kwargs["on_before_finalize"] = _pause_typing_before_finalize
+                        except (TypeError, ValueError):
+                            pass
+                        _stream_consumer = GatewayStreamConsumer(**_consumer_kwargs)
                         if _want_stream_deltas:
                             def _stream_delta_cb(text: str) -> None:
                                 if _run_still_current():
@@ -16164,6 +16860,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     model=turn_route["model"],
                     **turn_route["runtime"],
                     max_iterations=max_iterations,
+                    save_trajectories=True,
                     quiet_mode=True,
                     verbose_logging=False,
                     enabled_toolsets=enabled_toolsets,
@@ -16903,7 +17600,21 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 except Exception:
                     pass
 
-            return {
+            _session_meta_sandbox_key = _resolve_session_meta_sandbox_key(result)
+            if not _session_meta_sandbox_key:
+                workspace_owner_id = str(
+                    getattr(source, "workspace_owner_id", "") or ""
+                ).strip()
+                if workspace_owner_id and _workspace_session_id_for_result:
+                    _session_meta_sandbox_key = (
+                        f"ws:{workspace_owner_id}:session:{_workspace_session_id_for_result}"
+                    )
+            _persist_workspace_session_sandbox_key(
+                _workspace_hermes_home_for_result,
+                _workspace_session_id_for_result,
+                _session_meta_sandbox_key,
+            )
+            response_payload = {
                 "final_response": final_response,
                 "last_reasoning": result.get("last_reasoning"),
                 "messages": result_holder[0].get("messages", []) if result_holder[0] else [],
@@ -16925,6 +17636,9 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 "response_previewed": result.get("response_previewed", False),
                 "response_transformed": result.get("response_transformed", False),
             }
+            if _session_meta_sandbox_key:
+                response_payload["sandbox_key"] = _session_meta_sandbox_key
+            return response_payload
         
         # Start progress message sender if enabled
         progress_task = None
@@ -18064,6 +18778,11 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
                     old_gateway_exited = True
                     break  # Process is gone
                 time.sleep(0.5)
+            if old_gateway_exited:
+                try:
+                    terminate_pid(existing_pid, force=True)
+                except ProcessLookupError:
+                    pass
             else:
                 # Still alive after 10s — force kill
                 logger.warning(
@@ -18415,8 +19134,9 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
         # Without this, the early `return True` below makes main() exit 0,
         # the finish script's `[ "$1" = "78" ]` check never matches, and
         # s6 crash-loops the gateway anyway (#51228).
-        if runner.exit_code is not None:
-            raise SystemExit(runner.exit_code)
+        exit_code = getattr(runner, "exit_code", None)
+        if exit_code is not None:
+            raise SystemExit(exit_code)
         return True
     
     # Start the background cron scheduler via the resolved provider so

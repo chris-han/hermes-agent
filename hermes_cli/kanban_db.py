@@ -83,6 +83,7 @@ import sys
 import threading
 import logging
 import time
+import yaml
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -2483,11 +2484,7 @@ def create_task(
     # task would point cleanup at the user's source tree (#28818). The
     # containment guard in ``_cleanup_workspace`` is the safety rail, but
     # we also stop the bad state from being created in the first place.
-    if (
-        workspace_path is None
-        and project_repo is None
-        and workspace_kind in {"dir", "worktree"}
-    ):
+    if workspace_path is None and project_repo is None:
         board_slug = board if board else get_current_board()
         board_meta = read_board_metadata(board_slug)
         board_default = board_meta.get("default_workdir")
@@ -3255,24 +3252,9 @@ def recompute_ready(
             ).fetchall()
             if all(p["status"] in ("done", "archived") for p in parents):
                 if cur_status == "blocked":
-                    # Don't auto-recover tasks that have hit the
-                    # circuit-breaker failure limit.  Without this
-                    # guard, a task that repeatedly exhausts its
-                    # iteration budget would cycle forever:
-                    # block → auto-recover → respawn → budget
-                    # exhausted → block → …  The counter must also
-                    # be preserved so the breaker can accumulate
-                    # across recovery cycles.
-                    failures = int(row["consecutive_failures"] or 0)
-                    task_limit = row["max_retries"]
-                    effective_limit = (
-                        int(task_limit) if task_limit is not None
-                        else int(failure_limit)
-                    )
-                    if failures >= effective_limit:
-                        continue
                     conn.execute(
-                        "UPDATE tasks SET status = 'ready' "
+                        "UPDATE tasks SET status = 'ready', "
+                        "consecutive_failures = 0, last_failure_error = NULL "
                         "WHERE id = ? AND status = 'blocked'",
                         (task_id,),
                     )
@@ -5415,11 +5397,7 @@ def _resolve_worktree_workspace(
 
     repo_root = _repo_root_for_worktree_target(requested.parent)
     if repo_root is None:
-        raise ValueError(
-            f"task {task.id} worktree path {task.workspace_path!r} is not inside a git repo "
-            "and does not point at a git repo root"
-        )
-    _ensure_git_worktree(repo_root, requested, branch_name)
+        return requested_resolved, branch_name
     return requested, branch_name
 
 
@@ -6312,14 +6290,6 @@ def detect_crashed_workers(conn: sqlite3.Connection) -> list[str]:
             lock = row["claim_lock"] or ""
             if not lock.startswith(host_prefix):
                 continue
-            # Skip liveness check inside the launch-window grace period
-            # so a freshly-spawned worker isn't reclaimed before its PID
-            # is visible on /proc.
-            started_at = row["started_at"] if "started_at" in row.keys() else None
-            if started_at is not None:
-                grace = _resolve_crash_grace_seconds()
-                if time.time() - started_at < grace:
-                    continue
             if _pid_alive(row["worker_pid"]):
                 continue
 
@@ -7560,6 +7530,19 @@ def _resolve_worker_cli_toolsets(hermes_home: Optional[str]) -> Optional[list[st
     if not hermes_home:
         return None
     try:
+        explicit_cfg = yaml.safe_load(
+            (Path(hermes_home) / "config.yaml").read_text(encoding="utf-8")
+        ) or {}
+        platform_toolsets = explicit_cfg.get("platform_toolsets") or {}
+        cli_toolsets = platform_toolsets.get("cli")
+        if isinstance(cli_toolsets, list):
+            resolved = sorted(
+                {str(name) for name in cli_toolsets if str(name).strip()} | {"kanban"}
+            )
+            return resolved or None
+    except Exception:
+        pass
+    try:
         from hermes_constants import reset_hermes_home_override, set_hermes_home_override
         from hermes_cli.config import load_config
         from hermes_cli.tools_config import _get_platform_tools
@@ -7578,6 +7561,26 @@ def _resolve_worker_cli_toolsets(hermes_home: Optional[str]) -> Optional[list[st
             exc,
         )
         return None
+
+
+def _kanban_worker_skill_available(hermes_home: Optional[str]) -> bool:
+    """Return True when the bundled kanban-worker skill is resolvable."""
+    candidates: list[Path] = []
+    if hermes_home:
+        candidates.append(Path(hermes_home).expanduser() / "skills" / "kanban-worker")
+    try:
+        from hermes_constants import get_hermes_home
+
+        candidates.append(get_hermes_home() / "skills" / "kanban-worker")
+    except Exception:
+        pass
+    candidates.extend(
+        [
+            Path(__file__).resolve().parents[1] / "skills" / "kanban-worker",
+            Path(__file__).resolve().parents[1] / "devops" / "kanban-worker",
+        ]
+    )
+    return any((candidate / "SKILL.md").exists() for candidate in candidates)
 
 
 def _default_spawn(
@@ -7703,10 +7706,17 @@ def _default_spawn(
     # accepts both forms (action='append' + comma-split), but
     # per-name pairs are easier to read in `ps` output and avoid any
     # quoting ambiguity if a skill name ever contains unusual chars.
+    worker_skills: list[str] = []
+    if _kanban_worker_skill_available(env.get("HERMES_HOME")):
+        worker_skills.append("kanban-worker")
     if task.skills:
-        for sk in task.skills:
-            if sk:
-                cmd.extend(["--skills", sk])
+        worker_skills.extend(sk for sk in task.skills if sk)
+    seen_skills: set[str] = set()
+    for sk in worker_skills:
+        if sk in seen_skills:
+            continue
+        seen_skills.add(sk)
+        cmd.extend(["--skills", sk])
     if task.model_override:
         cmd.extend(["-m", task.model_override])
     worker_toolsets = _resolve_worker_cli_toolsets(env.get("HERMES_HOME"))

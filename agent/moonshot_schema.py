@@ -69,7 +69,10 @@ def _repair_schema(node: Any, is_schema: bool = True) -> Any:
         elif key in _SCHEMA_NODE_KEYS:
             # items / not / additionalProperties: single nested schema.
             # additionalProperties can also be a bool — leave those alone.
-            if isinstance(value, dict):
+            if key == "items" and isinstance(value, list):
+                first_item = value[0] if value else {}
+                repaired[key] = _repair_schema(first_item, is_schema=True)
+            elif isinstance(value, dict):
                 repaired[key] = _repair_schema(value, is_schema=True)
             else:
                 repaired[key] = value
@@ -109,11 +112,15 @@ def _repair_schema(node: Any, is_schema: bool = True) -> Any:
     # parameter schemas — strip it.
     repaired.pop("nullable", None)
 
+    # Rule 4: Moonshot rejects sibling keywords on $ref schema nodes. Keep the
+    # reference itself; the referenced definition retains its own metadata.
+    if "$ref" in repaired:
+        return {"$ref": repaired["$ref"]}
+
     # Rule 1: property schemas without type need one.  $ref nodes are exempt
     # — their type comes from the referenced definition.
     # Fill missing type BEFORE Rule 3 so enum cleanup can check the type.
-    if "$ref" not in repaired:
-        repaired = _fill_missing_type(repaired)
+    repaired = _fill_missing_type(repaired)
 
     # Rule 3: Moonshot rejects null/empty-string values inside enum arrays
     # when the parent type is a scalar (string, integer, etc.).  The error:

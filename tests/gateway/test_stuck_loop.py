@@ -6,6 +6,7 @@ is auto-suspended on startup so the user gets a clean slate.
 """
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -16,8 +17,15 @@ from tests.gateway.restart_test_helpers import make_restart_runner
 @pytest.fixture
 def runner_with_home(tmp_path, monkeypatch):
     """Create a runner with a writable HERMES_HOME."""
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     monkeypatch.setattr("gateway.run._hermes_home", tmp_path)
     runner, adapter = make_restart_runner()
+    for method in (
+        runner._increment_restart_failure_counts,
+        runner._suspend_stuck_loop_sessions,
+        runner._clear_restart_failure_count,
+    ):
+        monkeypatch.setitem(method.__func__.__globals__, "_hermes_home", tmp_path)
     return runner, tmp_path
 
 

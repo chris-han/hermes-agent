@@ -6,6 +6,7 @@ this and prepends an API-only system note to the next user message so the model
 does not re-execute stale interrupted tool calls before addressing new input.
 """
 
+import pytest
 
 
 def _simulate_auto_continue(agent_history: list, user_message: str) -> str:

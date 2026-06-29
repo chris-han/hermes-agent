@@ -356,13 +356,16 @@ def scan_skill_commands() -> Dict[str, Dict[str, Any]]:
     _skill_commands = {}
     try:
         from tools.skills_tool import SKILLS_DIR, _parse_frontmatter, skill_matches_platform, skill_matches_environment, _get_disabled_skill_names
-        from agent.skill_utils import get_external_skills_dirs, iter_skill_index_files
+        from agent.skill_utils import get_external_skills_dirs, get_skills_dir, iter_skill_index_files
         disabled = _get_disabled_skill_names()
         seen_names: set = set()
 
         # Scan local dir first, then external dirs
         dirs_to_scan = []
-        if SKILLS_DIR.exists():
+        local_skills_dir = get_skills_dir()
+        if local_skills_dir.exists():
+            dirs_to_scan.append(local_skills_dir)
+        if SKILLS_DIR.exists() and SKILLS_DIR not in dirs_to_scan:
             dirs_to_scan.append(SKILLS_DIR)
         dirs_to_scan.extend(get_external_skills_dirs())
 

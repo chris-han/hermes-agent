@@ -8,12 +8,16 @@ and that a misbehaving hook callback never breaks the transition.
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 
 import pytest
 
 from hermes_cli import kanban_db as kb
-from hermes_cli.plugins import VALID_HOOKS, get_plugin_manager
+
+
+def _plugins_mod():
+    return importlib.import_module("hermes_cli.plugins")
 
 
 @pytest.fixture
@@ -33,7 +37,7 @@ def captured_hooks(monkeypatch):
     Patches the plugin manager's _hooks dict directly (the same registry
     invoke_hook reads) and restores it afterward.
     """
-    mgr = get_plugin_manager()
+    mgr = _plugins_mod().get_plugin_manager()
     events: list[tuple[str, dict]] = []
     saved = {k: list(v) for k, v in mgr._hooks.items()}
     for hook in ("kanban_task_claimed", "kanban_task_completed", "kanban_task_blocked"):
@@ -48,9 +52,10 @@ def captured_hooks(monkeypatch):
 
 def test_hooks_are_registered_as_valid():
     """The three lifecycle hook names are part of VALID_HOOKS."""
-    assert "kanban_task_claimed" in VALID_HOOKS
-    assert "kanban_task_completed" in VALID_HOOKS
-    assert "kanban_task_blocked" in VALID_HOOKS
+    valid_hooks = _plugins_mod().VALID_HOOKS
+    assert "kanban_task_claimed" in valid_hooks
+    assert "kanban_task_completed" in valid_hooks
+    assert "kanban_task_blocked" in valid_hooks
 
 
 def test_claim_fires_hook(kanban_home, captured_hooks):
@@ -114,7 +119,7 @@ def test_no_hook_on_failed_transition(kanban_home, captured_hooks):
 
 def test_misbehaving_hook_does_not_break_transition(kanban_home, monkeypatch):
     """A hook callback that raises must not break the board transition."""
-    mgr = get_plugin_manager()
+    mgr = _plugins_mod().get_plugin_manager()
     saved = {k: list(v) for k, v in mgr._hooks.items()}
 
     def _boom(**kw):

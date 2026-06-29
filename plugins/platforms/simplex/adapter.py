@@ -838,7 +838,7 @@ class SimplexAdapter(BasePlatformAdapter):
                 )
                 cmd_str = f"/_send #{chat_id[6:]} json {composed}"
             else:
-                cmd_str = f"@{chat_id} {content}"
+                cmd_str = f"@[{chat_id}] {content}"
 
             await self._send_ws({"corrId": corr_id, "cmd": cmd_str})
 

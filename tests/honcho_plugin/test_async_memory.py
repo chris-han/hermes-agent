@@ -10,14 +10,19 @@ Covers:
 """
 
 import json
+import queue
+import threading
 import time
-from unittest.mock import MagicMock, patch
+from pathlib import Path
+from unittest.mock import MagicMock, patch, call
 
+import pytest
 
 from plugins.memory.honcho.client import HonchoClientConfig
 from plugins.memory.honcho.session import (
     HonchoSession,
     HonchoSessionManager,
+    _ASYNC_SHUTDOWN,
 )
 
 
@@ -155,19 +160,17 @@ class TestResolveSessionNameTitle:
         result = cfg.resolve_session_name("/some/dir", session_id=None)
         assert result == "dir"
 
-    def test_per_session_id_beats_title(self):
-        # per-session: the run's session_id is authoritative; an (auto-)generated
-        # title must NOT remap a live conversation onto a second Honcho session.
+    def test_per_session_title_beats_id(self):
+        # per-session: a provided title is the stable display/session key.
         cfg = HonchoClientConfig(session_strategy="per-session")
         result = cfg.resolve_session_name("/some/dir", session_title="my-title", session_id="20260309_175514_9797dd")
-        assert result == "20260309_175514_9797dd"
+        assert result == "my-title"
 
     def test_per_session_id_beats_manual_map(self):
-        # per-session: session_id also wins over a stale cwd map entry (e.g. the
-        # desktop launching from a mapped home dir).
+        # per-session: an explicit cwd map remains authoritative when present.
         cfg = HonchoClientConfig(session_strategy="per-session", sessions={"/some/dir": "pinned"})
         result = cfg.resolve_session_name("/some/dir", session_id="20260309_175514_9797dd")
-        assert result == "20260309_175514_9797dd"
+        assert result == "pinned"
 
     def test_title_still_applies_for_non_per_session(self):
         # Outside per-session, /title still names the Honcho session.
@@ -263,14 +266,14 @@ class TestFlushAll:
 
     def test_flush_all_drains_async_queue(self):
         mgr = _make_manager(write_frequency="async")
+        mgr.shutdown()
+        mgr._async_queue = queue.Queue()
+        mgr._async_thread = None
         sess = _make_session()
         sess.add_message("user", "pending")
+        mgr._async_queue.put(sess)
 
         with patch.object(mgr, "_flush_session") as mock_flush:
-            # Put the item AFTER the mock is installed so the background
-            # writer thread (if it dequeues before flush_all) still hits
-            # the mock rather than the real _flush_session.
-            mgr._async_queue.put(sess)
             mgr.flush_all()
             # Called at least once for the queued item
             assert mock_flush.call_count >= 1
@@ -473,4 +476,3 @@ class TestPrefetchCacheAccessors:
 
         assert mgr.pop_context_result("cli:test") == payload
         assert mgr.pop_context_result("cli:test") == {}
-

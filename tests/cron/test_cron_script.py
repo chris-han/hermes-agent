@@ -9,9 +9,11 @@ Tests cover:
 
 import json
 import os
+import stat
 import sys
 import textwrap
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -446,6 +448,25 @@ class TestCronjobToolScriptValidation:
         ))
         assert result["success"] is False
         assert "relative" in result["error"].lower() or "absolute" in result["error"].lower()
+
+    def test_inline_script_command_materializes_under_active_scripts_directory(self, cron_env, monkeypatch):
+        monkeypatch.setenv("HERMES_INTERACTIVE", "1")
+        from tools.cronjob_tools import cronjob
+
+        result = json.loads(cronjob(
+            action="create",
+            schedule="every 1h",
+            name="time-reporter",
+            prompt="Report time",
+            script="date '+Current time: %Y-%m-%d %H:%M:%S %Z'",
+        ))
+
+        assert result["success"] is True
+        script_name = result["job"]["script"]
+        assert script_name.startswith("time-reporter-")
+        script_path = cron_env / "scripts" / script_name
+        assert script_path.exists()
+        assert "date '+Current time: %Y-%m-%d %H:%M:%S %Z'" in script_path.read_text()
 
     def test_create_with_traversal_script_rejected(self, cron_env, monkeypatch):
         monkeypatch.setenv("HERMES_INTERACTIVE", "1")

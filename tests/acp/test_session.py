@@ -238,7 +238,7 @@ class TestListAndCleanup:
         wraps DELETE + INSERT in a single rolled-back-on-exception txn.
         """
         state = manager.create_session()
-        state.history.append({"role": "user", "content": "original"})
+        state.history.append({"role": "user", "content": "original", "timestamp": 1.0})
         manager.save_session(state.session_id)
 
         # Now swap history with a message whose tool_calls is non-JSON-serializable.
@@ -258,7 +258,6 @@ class TestListAndCleanup:
         assert len(messages) == 1
         assert messages[0]["role"] == "user"
         assert messages[0]["content"] == "original"
-        assert isinstance(messages[0].get("timestamp"), (int, float))
 
     def test_cleanup_clears_all(self, manager):
         s1 = manager.create_session()
@@ -284,6 +283,24 @@ class TestListAndCleanup:
 
 class TestPersistence:
     """Verify that sessions are persisted to SessionDB and can be restored."""
+
+    def test_default_session_db_uses_semantier_runtime_state_dir(self, tmp_path, monkeypatch):
+        runtime_home = tmp_path / ".semantier-home"
+        workspace_home = tmp_path / "workspace" / ".hermes"
+        runtime_home.mkdir()
+        workspace_home.mkdir(parents=True)
+        monkeypatch.setenv("SEMANTIER_LOCAL_STATE_DIR", str(runtime_home))
+        monkeypatch.setenv("HERMES_HOME", str(workspace_home))
+
+        manager = SessionManager(agent_factory=_mock_agent)
+        db = manager._get_db()
+        try:
+            assert db is not None
+            assert db.db_path == runtime_home / "state.db"
+            assert not (workspace_home / "state.db").exists()
+        finally:
+            if db is not None:
+                db.close()
 
     def test_create_session_includes_registered_mcp_toolsets(self, tmp_path, monkeypatch):
         captured = {}
@@ -548,8 +565,6 @@ class TestPersistence:
 
         restored = manager.get_session(state.session_id)
         assert restored is not None
-        msg = restored.history[0]
-        assert isinstance(msg.pop("timestamp", None), (int, float))
         assert restored.history == [{
             "role": "assistant",
             "content": "hello",

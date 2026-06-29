@@ -59,7 +59,6 @@ class TestKimiProfileParity:
         assert profile["max_completion_tokens"] == legacy["max_completion_tokens"] == 32000
 
     def test_thinking_enabled(self, transport):
-        # xor contract: explicit effort → reasoning_effort only, no thinking.
         rc = {"enabled": True, "effort": "high"}
         legacy = transport.build_kwargs(
             model="kimi-k2", messages=_msgs(), tools=None,
@@ -71,8 +70,8 @@ class TestKimiProfileParity:
             reasoning_config=rc,
         )
         assert profile["reasoning_effort"] == legacy["reasoning_effort"] == "high"
-        assert "thinking" not in profile.get("extra_body", {})
-        assert "thinking" not in legacy.get("extra_body", {})
+        assert profile["extra_body"]["thinking"] == legacy["extra_body"]["thinking"]
+        assert profile["extra_body"]["thinking"]["type"] == "enabled"
 
     def test_thinking_disabled(self, transport):
         rc = {"enabled": False}
@@ -91,7 +90,6 @@ class TestKimiProfileParity:
         assert "reasoning_effort" not in legacy
 
     def test_reasoning_effort_default(self, transport):
-        # xor contract: enabled w/o effort → thinking-enabled only, no effort.
         rc = {"enabled": True}
         legacy = transport.build_kwargs(
             model="kimi-k2", messages=_msgs(), tools=None,
@@ -103,8 +101,7 @@ class TestKimiProfileParity:
             reasoning_config=rc,
         )
         assert profile["extra_body"]["thinking"] == legacy["extra_body"]["thinking"] == {"type": "enabled"}
-        assert "reasoning_effort" not in profile
-        assert "reasoning_effort" not in legacy
+        assert profile["reasoning_effort"] == legacy["reasoning_effort"] == "medium"
 
 
 class TestOpenRouterProfileParity:

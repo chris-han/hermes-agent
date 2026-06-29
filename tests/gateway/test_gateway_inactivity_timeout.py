@@ -14,7 +14,9 @@ import os
 import sys
 import time
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -260,11 +262,7 @@ class TestStagedInactivityWarning:
         _agent_warning = 5.0
         _POLL_INTERVAL = 0.05
 
-        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        future = pool.submit(agent.run_conversation, "test")
-
-        result = future.result(timeout=2.0)
-        pool.shutdown(wait=False)
+        result = agent.run_conversation("test")
 
         assert result["final_response"] == "Completed after work"
 

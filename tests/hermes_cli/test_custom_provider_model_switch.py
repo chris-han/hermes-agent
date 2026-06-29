@@ -6,7 +6,8 @@ immediately when provider_info had a saved ``model`` field, making it
 impossible to switch models on multi-model endpoints.
 """
 
-from unittest.mock import patch
+import os
+from unittest.mock import patch, MagicMock, call
 
 import pytest
 
@@ -45,7 +46,7 @@ class TestCustomProviderModelSwitch:
         }
 
         with patch("hermes_cli.models.fetch_api_models", return_value=["model-A", "model-B"]) as mock_fetch, \
-             patch("hermes_cli.curses_ui.curses_radiolist", side_effect=ImportError), \
+             patch.dict("sys.modules", {"simple_term_menu": None}), \
              patch("builtins.input", return_value="2"), \
              patch("builtins.print"):
             _model_flow_named_custom({}, provider_info)
@@ -70,7 +71,7 @@ class TestCustomProviderModelSwitch:
         }
 
         with patch("hermes_cli.models.fetch_api_models", return_value=["model-A", "model-B"]), \
-             patch("hermes_cli.curses_ui.curses_radiolist", side_effect=ImportError), \
+             patch.dict("sys.modules", {"simple_term_menu": None}), \
              patch("builtins.input", return_value="2"), \
              patch("builtins.print"):
             _model_flow_named_custom({}, provider_info)
@@ -116,7 +117,7 @@ class TestCustomProviderModelSwitch:
         }
 
         with patch("hermes_cli.models.fetch_api_models", return_value=["model-X"]), \
-             patch("hermes_cli.curses_ui.curses_radiolist", side_effect=ImportError), \
+             patch.dict("sys.modules", {"simple_term_menu": None}), \
              patch("builtins.input", return_value="1"), \
              patch("builtins.print"):
             _model_flow_named_custom({}, provider_info)
@@ -140,7 +141,7 @@ class TestCustomProviderModelSwitch:
         }
 
         with patch("hermes_cli.models.fetch_api_models", return_value=["claude-3"]) as mock_fetch, \
-             patch("hermes_cli.curses_ui.curses_radiolist", side_effect=ImportError), \
+             patch.dict("sys.modules", {"simple_term_menu": None}), \
              patch("builtins.input", return_value="1"), \
              patch("builtins.print"):
             _model_flow_named_custom({}, provider_info)
@@ -173,7 +174,7 @@ class TestCustomProviderModelSwitch:
         }
 
         with patch("hermes_cli.models.fetch_api_models", return_value=["llama-3"]), \
-             patch("hermes_cli.curses_ui.curses_radiolist", side_effect=ImportError), \
+             patch.dict("sys.modules", {"simple_term_menu": None}), \
              patch("builtins.input", return_value="1"), \
              patch("builtins.print"):
             _model_flow_named_custom({}, provider_info)
@@ -210,7 +211,7 @@ class TestCustomProviderModelSwitch:
         }
 
         with patch("hermes_cli.models.fetch_api_models", return_value=["qwen3.6-35b-fast"]) as mock_fetch, \
-             patch("hermes_cli.curses_ui.curses_radiolist", side_effect=ImportError), \
+             patch.dict("sys.modules", {"simple_term_menu": None}), \
              patch("builtins.input", return_value="1"), \
              patch("builtins.print"):
             _model_flow_named_custom({}, provider_info)
@@ -251,7 +252,7 @@ class TestCustomProviderModelSwitch:
         }
 
         with patch("hermes_cli.models.fetch_api_models", return_value=["qwen3.6-35b-fast"]), \
-             patch("hermes_cli.curses_ui.curses_radiolist", side_effect=ImportError), \
+             patch.dict("sys.modules", {"simple_term_menu": None}), \
              patch("builtins.input", return_value="1"), \
              patch("builtins.print"):
             _model_flow_named_custom({}, provider_info)
@@ -309,7 +310,7 @@ class TestCustomProviderModelSwitch:
                    side_effect=_pick_neuralwatt), \
              patch("hermes_cli.models.fetch_api_models",
                    return_value=["qwen3.6-35b-fast"]) as mock_fetch, \
-             patch("hermes_cli.curses_ui.curses_radiolist", side_effect=ImportError), \
+             patch.dict("sys.modules", {"simple_term_menu": None}), \
              patch("builtins.input", return_value="1"), \
              patch("builtins.print"):
             select_provider_and_model()
@@ -422,7 +423,7 @@ class TestCustomProviderModelSwitch:
                    side_effect=_pick_neuralwatt), \
              patch("hermes_cli.models.fetch_api_models",
                    return_value=["qwen3.6-35b-fast"]) as mock_fetch, \
-             patch("hermes_cli.curses_ui.curses_radiolist", side_effect=ImportError), \
+             patch.dict("sys.modules", {"simple_term_menu": None}), \
              patch("builtins.input", return_value="1"), \
              patch("builtins.print"):
             select_provider_and_model()
@@ -486,7 +487,7 @@ class TestCustomProviderModelSwitch:
             "hermes_cli.models.fetch_api_models",
             return_value=["claude-opus-4-7"],
         ) as mock_fetch, \
-             patch("hermes_cli.curses_ui.curses_radiolist", side_effect=ImportError), \
+             patch.dict("sys.modules", {"simple_term_menu": None}), \
              patch("builtins.input", return_value="1"), \
              patch("builtins.print"):
             _model_flow_named_custom({}, provider_info)
@@ -551,7 +552,7 @@ class TestCustomProviderModelSwitch:
             "hermes_cli.models.fetch_api_models",
             return_value=["claude-opus-4-7"],
         ), \
-             patch("hermes_cli.curses_ui.curses_radiolist", side_effect=ImportError), \
+             patch.dict("sys.modules", {"simple_term_menu": None}), \
              patch("builtins.input", return_value="1"), \
              patch("builtins.print"):
             _model_flow_named_custom({}, provider_info)

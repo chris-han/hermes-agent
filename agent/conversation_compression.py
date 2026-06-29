@@ -924,12 +924,21 @@ def try_shrink_image_parts_in_messages(
             try:
                 tmp.write(raw)
                 tmp.close()
-                resized = _resize_image_for_vision(
-                    Path(tmp.name),
-                    mime_type=mime,
-                    max_base64_bytes=target_bytes,
-                    max_dimension=max_dimension,
-                )
+                try:
+                    resized = _resize_image_for_vision(
+                        Path(tmp.name),
+                        mime_type=mime,
+                        max_base64_bytes=target_bytes,
+                        max_dimension=max_dimension,
+                    )
+                except TypeError as exc:
+                    if "max_dimension" not in str(exc):
+                        raise
+                    resized = _resize_image_for_vision(
+                        Path(tmp.name),
+                        mime_type=mime,
+                        max_base64_bytes=target_bytes,
+                    )
             finally:
                 try:
                     Path(tmp.name).unlink(missing_ok=True)

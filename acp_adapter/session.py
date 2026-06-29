@@ -1,14 +1,12 @@
 """ACP session manager — maps ACP sessions to Hermes AIAgent instances.
 
-Sessions are persisted to the shared SessionDB (``~/.hermes/state.db``) so they
+Sessions are persisted to the shared SessionDB so they
 survive process restarts and appear in ``session_search``.  When the editor
 reconnects after idle/restart, the ``load_session`` / ``resume_session`` calls
 find the persisted session in the database and restore the full conversation
 history.
 """
 from __future__ import annotations
-
-from hermes_constants import get_hermes_home
 
 import copy
 import json
@@ -142,17 +140,9 @@ def _expand_acp_enabled_toolsets(
     mcp_server_names: List[str] | None = None,
 ) -> List[str]:
     """Return ACP toolsets plus explicit MCP server toolsets for this session."""
-    expanded: List[str] = []
-    for name in list(toolsets or ["hermes-acp"]):
-        if name and name not in expanded:
-            expanded.append(name)
+    from acp_adapter.runtime_toolsets import expand_enabled_toolsets
 
-    for server_name in list(mcp_server_names or []):
-        toolset_name = f"mcp-{server_name}"
-        if server_name and toolset_name not in expanded:
-            expanded.append(toolset_name)
-
-    return expanded
+    return expand_enabled_toolsets(toolsets or ["hermes-acp"], mcp_server_names=mcp_server_names)
 
 
 def _clear_task_cwd(task_id: str) -> None:
@@ -198,7 +188,7 @@ class SessionManager:
                            Used by tests. When omitted, a real AIAgent is created
                            using the current Hermes runtime provider configuration.
             db:            Optional SessionDB instance. When omitted, the default
-                           SessionDB (``~/.hermes/state.db``) is lazily created.
+                           SessionDB is lazily created.
         """
         self._sessions: Dict[str, SessionState] = {}
         self._lock = Lock()
@@ -218,7 +208,7 @@ class SessionManager:
             session_id=session_id,
             agent=agent,
             cwd=cwd,
-            model=getattr(agent, "model", "") or "",
+            model=getattr(agent, "model", "") if isinstance(getattr(agent, "model", ""), str) else "",
             cancel_event=threading.Event(),
         )
         with self._lock:
@@ -413,8 +403,7 @@ class SessionManager:
             return self._db_instance
         try:
             from hermes_state import SessionDB
-            hermes_home = get_hermes_home()
-            self._db_instance = SessionDB(db_path=hermes_home / "state.db")
+            self._db_instance = SessionDB()
             return self._db_instance
         except Exception:
             logger.debug("SessionDB unavailable for ACP persistence", exc_info=True)
@@ -431,7 +420,7 @@ class SessionManager:
             return
 
         # Ensure model is a plain string (not a MagicMock or other proxy).
-        model_str = str(state.model) if state.model else None
+        model_str = state.model if isinstance(state.model, str) and state.model else None
         session_meta = {"cwd": state.cwd}
         provider = getattr(state.agent, "provider", None)
         base_url = getattr(state.agent, "base_url", None)
@@ -587,11 +576,12 @@ class SessionManager:
             for name, cfg in (config.get("mcp_servers") or {}).items()
             if not isinstance(cfg, dict) or cfg.get("enabled", True) is not False
         ]
+        from acp_adapter.runtime_toolsets import resolve_semantier_acp_enabled_toolsets
 
         kwargs = {
             "platform": "acp",
-            "enabled_toolsets": _expand_acp_enabled_toolsets(
-                ["hermes-acp"],
+            "enabled_toolsets": resolve_semantier_acp_enabled_toolsets(
+                config,
                 mcp_server_names=configured_mcp_servers,
             ),
             "quiet_mode": True,

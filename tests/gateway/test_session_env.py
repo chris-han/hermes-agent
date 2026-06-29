@@ -3,6 +3,7 @@ import os
 
 import pytest
 
+import gateway.run as gateway_run
 from gateway.config import Platform
 from gateway.run import GatewayRunner
 from gateway.session import SessionContext, SessionSource
@@ -242,6 +243,72 @@ def test_set_session_env_includes_session_key():
     # The exact post-clear value depends on context propagation from other
     # tests, so only check that our value was removed, not what replaced it.
     assert get_session_env("HERMES_SESSION_KEY") != "tg:-1001:17585"
+
+
+def test_set_session_env_includes_session_id_and_hermes_home():
+    """_set_session_env should propagate session_id for cron origin capture."""
+    runner = object.__new__(GatewayRunner)
+    source = SessionSource(
+        platform=Platform.TELEGRAM,
+        chat_id="-1001",
+        chat_type="group",
+    )
+    context = SessionContext(
+        source=source,
+        connected_platforms=[],
+        home_channels={},
+        session_key="tg:-1001",
+        session_id="telegram:session_abc",
+    )
+
+    tokens = runner._set_session_env(context)
+    assert get_session_env("HERMES_SESSION_ID") == "telegram:session_abc"
+    runner._clear_session_env(tokens)
+    assert get_session_env("HERMES_SESSION_ID") == ""
+
+
+def test_set_session_env_includes_workspace_hermes_home(monkeypatch, tmp_path):
+    runner = object.__new__(GatewayRunner)
+    workspace_home = tmp_path / "workspaces" / "ws-123" / ".hermes"
+    source = SessionSource(
+        platform=Platform.WEIXIN,
+        chat_id="wx-user",
+        chat_type="dm",
+        workspace_owner_id="ws-123",
+    )
+    context = SessionContext(
+        source=source,
+        connected_platforms=[],
+        home_channels={},
+        session_key="agent:main:workspace:ws-123:weixin:dm:wx-user",
+        session_id="ws-123:20260615_015813_494a06f6",
+    )
+    monkeypatch.setattr(
+        gateway_run,
+        "_workspace_hermes_home_for_source",
+        lambda _source: workspace_home,
+    )
+
+    tokens = runner._set_session_env(context)
+    assert get_session_env("HERMES_SESSION_HERMES_HOME") == str(workspace_home)
+    runner._clear_session_env(tokens)
+    assert get_session_env("HERMES_SESSION_HERMES_HOME") == ""
+
+
+def test_set_session_vars_can_bind_api_session_origin_context(tmp_path):
+    tokens = set_session_vars(
+        platform="api_server",
+        session_key="webchat:session_api",
+        session_id="ws-123:session_api",
+        hermes_home=str(tmp_path / ".hermes"),
+    )
+    try:
+        assert get_session_env("HERMES_SESSION_PLATFORM") == "api_server"
+        assert get_session_env("HERMES_SESSION_KEY") == "webchat:session_api"
+        assert get_session_env("HERMES_SESSION_ID") == "ws-123:session_api"
+        assert get_session_env("HERMES_SESSION_HERMES_HOME") == str(tmp_path / ".hermes")
+    finally:
+        clear_session_vars(tokens)
 
 
 def test_session_key_no_race_condition_with_contextvars(monkeypatch):

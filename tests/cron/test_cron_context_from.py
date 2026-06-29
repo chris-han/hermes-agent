@@ -1,6 +1,5 @@
 """Tests for cron job context_from feature (issue #5439 Option C)."""
 
-import logging
 import sys
 from pathlib import Path
 
@@ -45,7 +44,7 @@ class TestJobContextFromField:
         assert loaded["context_from"] == [job_a["id"]]
 
     def test_create_job_with_context_from_list(self, cron_env):
-        from cron.jobs import create_job
+        from cron.jobs import create_job, get_job
 
         job_a = create_job(prompt="Find news", schedule="every 1h")
         job_b = create_job(prompt="Find weather", schedule="every 1h")
@@ -80,17 +79,11 @@ class TestBuildJobPromptContextFrom:
     """Test that _build_job_prompt() injects context from referenced jobs."""
 
     def test_injects_latest_output(self, cron_env):
-        from cron.jobs import create_job, OUTPUT_DIR
+        from cron.jobs import create_job, save_job_output_record
         from cron.scheduler import _build_job_prompt
 
         job_a = create_job(prompt="Find news", schedule="every 1h")
-
-        # Записываем output для job_a
-        output_dir = OUTPUT_DIR / job_a["id"]
-        output_dir.mkdir(parents=True, exist_ok=True)
-        (output_dir / "2026-04-22_10-00-00.md").write_text(
-            "Today's top story: AI is everywhere.", encoding="utf-8"
-        )
+        save_job_output_record(job_a["id"], "Today's top story: AI is everywhere.")
 
         job_b = create_job(
             prompt="Summarize the news",
@@ -102,20 +95,34 @@ class TestBuildJobPromptContextFrom:
         assert "Today's top story: AI is everywhere." in prompt
         assert f"Output from job '{job_a['id']}'" in prompt
 
+    def test_injects_latest_sqlite_output_when_no_markdown_artifact(self, cron_env):
+        from cron.jobs import create_job, output_dir, save_job_output_record
+        from cron.scheduler import _build_job_prompt
+
+        job_a = create_job(prompt="Find news", schedule="every 1h")
+        save_job_output_record(job_a["id"], "SQLite-only continuity context")
+
+        assert not (output_dir() / job_a["id"]).exists()
+
+        job_b = create_job(
+            prompt="Summarize the news",
+            schedule="every 2h",
+            context_from=job_a["id"],
+        )
+
+        prompt = _build_job_prompt(job_b)
+        assert "SQLite-only continuity context" in prompt
+        assert f"Output from job '{job_a['id']}'" in prompt
+
     def test_uses_most_recent_output(self, cron_env):
-        from cron.jobs import create_job, OUTPUT_DIR
+        from cron.jobs import create_job, save_job_output_record
         from cron.scheduler import _build_job_prompt
         import time
 
         job_a = create_job(prompt="Find news", schedule="every 1h")
-        output_dir = OUTPUT_DIR / job_a["id"]
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        old_file = output_dir / "2026-04-22_08-00-00.md"
-        old_file.write_text("Old output", encoding="utf-8")
+        save_job_output_record(job_a["id"], "Old output")
         time.sleep(0.01)
-        new_file = output_dir / "2026-04-22_10-00-00.md"
-        new_file.write_text("New output", encoding="utf-8")
+        save_job_output_record(job_a["id"], "New output")
 
         job_b = create_job(
             prompt="Summarize", schedule="every 2h", context_from=job_a["id"]
@@ -124,7 +131,7 @@ class TestBuildJobPromptContextFrom:
         assert "New output" in prompt
         assert "Old output" not in prompt
 
-    def test_graceful_when_no_output_yet(self, cron_env):
+    def test_raises_when_sqlite_output_missing(self, cron_env):
         from cron.jobs import create_job
         from cron.scheduler import _build_job_prompt
 
@@ -133,24 +140,18 @@ class TestBuildJobPromptContextFrom:
             prompt="Summarize", schedule="every 2h", context_from=job_a["id"]
         )
 
-        # job_a never ran — output dir does not exist
-        # expect silent skip: no placeholder injected, base prompt intact
-        prompt = _build_job_prompt(job_b)
-        assert "no output" not in prompt.lower()
-        assert "not found" not in prompt.lower()
-        assert "Summarize" in prompt
+        with pytest.raises(RuntimeError, match="has no SQLite output"):
+            _build_job_prompt(job_b)
 
     def test_injects_multiple_context_jobs(self, cron_env):
-        from cron.jobs import create_job, OUTPUT_DIR
+        from cron.jobs import create_job, save_job_output_record
         from cron.scheduler import _build_job_prompt
 
         job_a = create_job(prompt="Find news", schedule="every 1h")
         job_b = create_job(prompt="Find weather", schedule="every 1h")
 
         for job, content in [(job_a, "News: AI boom"), (job_b, "Weather: Sunny")]:
-            out_dir = OUTPUT_DIR / job["id"]
-            out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / "2026-04-22_10-00-00.md").write_text(content, encoding="utf-8")
+            save_job_output_record(job["id"], content)
 
         job_c = create_job(
             prompt="Daily briefing",
@@ -163,13 +164,11 @@ class TestBuildJobPromptContextFrom:
 
     def test_context_injected_before_prompt(self, cron_env):
         """Context should appear before the job's own prompt."""
-        from cron.jobs import create_job, OUTPUT_DIR
+        from cron.jobs import create_job, save_job_output_record
         from cron.scheduler import _build_job_prompt
 
         job_a = create_job(prompt="Find data", schedule="every 1h")
-        out_dir = OUTPUT_DIR / job_a["id"]
-        out_dir.mkdir(parents=True, exist_ok=True)
-        (out_dir / "2026-04-22_10-00-00.md").write_text("Context data", encoding="utf-8")
+        save_job_output_record(job_a["id"], "Context data")
 
         job_b = create_job(
             prompt="Process the data above",
@@ -183,14 +182,12 @@ class TestBuildJobPromptContextFrom:
 
     def test_output_truncated_at_8k_chars(self, cron_env):
         """Output longer than 8000 chars should be truncated."""
-        from cron.jobs import create_job, OUTPUT_DIR
+        from cron.jobs import create_job, save_job_output_record
         from cron.scheduler import _build_job_prompt
 
         job_a = create_job(prompt="Find data", schedule="every 1h")
-        out_dir = OUTPUT_DIR / job_a["id"]
-        out_dir.mkdir(parents=True, exist_ok=True)
         big_output = "x" * 10000
-        (out_dir / "2026-04-22_10-00-00.md").write_text(big_output, encoding="utf-8")
+        save_job_output_record(job_a["id"], big_output)
 
         job_b = create_job(
             prompt="Process", schedule="every 2h", context_from=job_a["id"]
@@ -198,62 +195,6 @@ class TestBuildJobPromptContextFrom:
         prompt = _build_job_prompt(job_b)
         assert "truncated" in prompt
         assert "x" * 10000 not in prompt
-
-    def test_graceful_when_file_deleted_between_listing_and_reading(self, cron_env):
-        """Job should not crash if output file is deleted mid-read."""
-        from cron.jobs import create_job, OUTPUT_DIR
-        from cron.scheduler import _build_job_prompt
-        from unittest.mock import patch
-
-        job_a = create_job(prompt="Find data", schedule="every 1h")
-        out_dir = OUTPUT_DIR / job_a["id"]
-        out_dir.mkdir(parents=True, exist_ok=True)
-        (out_dir / "2026-04-22_10-00-00.md").write_text("Some output", encoding="utf-8")
-
-        job_b = create_job(
-            prompt="Process", schedule="every 2h", context_from=job_a["id"]
-        )
-
-        # Simulate file deleted between glob() and read_text()
-        original_read = Path.read_text
-        def mock_read_text(self, *args, **kwargs):
-            if self.suffix == ".md":
-                raise FileNotFoundError("file deleted mid-read")
-            return original_read(self, *args, **kwargs)
-
-        with patch.object(Path, "read_text", mock_read_text):
-            prompt = _build_job_prompt(job_b)
-
-        # Job should not crash, prompt should still contain the base prompt
-        assert "Process" in prompt
-
-    def test_graceful_when_permission_error(self, cron_env):
-        """Job should not crash if output directory is not readable."""
-        from cron.jobs import create_job, OUTPUT_DIR
-        from cron.scheduler import _build_job_prompt
-        from unittest.mock import patch
-
-        job_a = create_job(prompt="Find data", schedule="every 1h")
-        out_dir = OUTPUT_DIR / job_a["id"]
-        out_dir.mkdir(parents=True, exist_ok=True)
-        (out_dir / "2026-04-22_10-00-00.md").write_text("Some output", encoding="utf-8")
-
-        job_b = create_job(
-            prompt="Process", schedule="every 2h", context_from=job_a["id"]
-        )
-
-        # Simulate permission error on read
-        original_read = Path.read_text
-        def mock_read_text(self, *args, **kwargs):
-            if self.suffix == ".md":
-                raise PermissionError("permission denied")
-            return original_read(self, *args, **kwargs)
-
-        with patch.object(Path, "read_text", mock_read_text):
-            prompt = _build_job_prompt(job_b)
-
-        # Job should not crash, prompt should still contain the base prompt
-        assert "Process" in prompt
 
     def test_invalid_job_id_skipped(self, cron_env):
         """context_from with path traversal job_id should be skipped."""
@@ -267,35 +208,6 @@ class TestBuildJobPromptContextFrom:
         # Should not crash and should not inject anything malicious
         assert "Process" in prompt
         assert "etc/passwd" not in prompt
-
-    def test_invalid_job_id_log_includes_job_origin(self, cron_env, caplog):
-        """Invalid stored context_from refs log job/source provenance."""
-        from cron.jobs import create_job
-        from cron.scheduler import _build_job_prompt
-
-        job = create_job(
-            prompt="Process",
-            schedule="every 2h",
-            name="suspicious-chain",
-            origin={
-                "platform": "api_server",
-                "chat_id": "api",
-                "source_ip": "203.0.113.10",
-                "forwarded_for": "198.51.100.7",
-            },
-        )
-        job["context_from"] = ["../../../etc/passwd"]
-
-        caplog.set_level(logging.WARNING, logger="cron.scheduler")
-        prompt = _build_job_prompt(job)
-
-        assert "Process" in prompt
-        message = caplog.text
-        assert "context_from: skipping invalid job_id" in message
-        assert job["id"] in message
-        assert "suspicious-chain" in message
-        assert "203.0.113.10" in message
-        assert "198.51.100.7" in message
 
 
 

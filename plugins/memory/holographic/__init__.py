@@ -13,13 +13,19 @@ Config in $HERMES_HOME/config.yaml (profile-scoped):
       default_trust: 0.5
       min_trust_threshold: 0.3
       temporal_decay_half_life: 0
+
+Semantier authenticated runtime requests override db_path to a shared
+.semantier-home memory path segmented by governed user/workspace identity.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import hashlib
+import os
 import re
+from pathlib import Path
 from typing import Any, Dict, List
 
 from agent.memory_provider import MemoryProvider
@@ -108,6 +114,62 @@ def _load_plugin_config() -> dict:
         return {}
 
 
+_SAFE_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+
+def _safe_segment(value: str) -> str:
+    normalized = str(value or "").strip()
+    if normalized and _SAFE_SEGMENT_RE.match(normalized):
+        return normalized
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:32]
+    return f"id-{digest}"
+
+
+def _semantier_user_id_for_workspace(workspace_id: str) -> str:
+    user_id = str(os.environ.get("SEMANTIER_USER_ID") or "").strip()
+    if user_id:
+        return user_id
+    try:
+        from agents.gateway_identity import get_user_record_by_workspace_id
+
+        user = get_user_record_by_workspace_id(workspace_id)
+        resolved = str((user or {}).get("user_id") or "").strip()
+        if resolved:
+            return resolved
+    except Exception:
+        pass
+    return ""
+
+
+def _semantier_shared_memory_db_path() -> str | None:
+    """Return Semantier's shared holographic DB path for authenticated runs.
+
+    Standalone Hermes keeps the upstream profile-scoped default. Semantier
+    authenticated requests expose governed identity through environment
+    variables set by the wrapper/gateway boundary; when present, holographic
+    memory is stored under the shared runtime root and segmented by the
+    governed user/workspace identifiers instead of by workspace HERMES_HOME.
+    """
+    workspace_id = str(os.environ.get("SEMANTIER_WORKSPACE_ID") or "").strip()
+    if not workspace_id:
+        return None
+    runtime_root = str(os.environ.get("SEMANTIER_LOCAL_STATE_DIR") or "").strip()
+    if not runtime_root:
+        return None
+    user_id = _semantier_user_id_for_workspace(workspace_id)
+    if not user_id:
+        return None
+    return str(
+        Path(runtime_root).expanduser()
+        / "memory"
+        / "users"
+        / _safe_segment(user_id)
+        / "workspaces"
+        / _safe_segment(workspace_id)
+        / "memory_store.db"
+    )
+
+
 # ---------------------------------------------------------------------------
 # MemoryProvider implementation
 # ---------------------------------------------------------------------------
@@ -159,7 +221,9 @@ class HolographicMemoryProvider(MemoryProvider):
         from hermes_constants import get_hermes_home
         _hermes_home = str(get_hermes_home())
         _default_db = _hermes_home + "/memory_store.db"
-        db_path = self._config.get("db_path", _default_db)
+        db_path = _semantier_shared_memory_db_path() or self._config.get(
+            "db_path", _default_db
+        )
         # Expand $HERMES_HOME in user-supplied paths so config values like
         # "$HERMES_HOME/memory_store.db" or "~/.hermes/memory_store.db" both
         # resolve to the active profile's directory.

@@ -1,6 +1,9 @@
 """Tests for hermes-api-server toolset and API server tool availability."""
+import os
+import json
 from unittest.mock import patch, MagicMock
 
+import pytest
 
 from toolsets import resolve_toolset, get_toolset, validate_toolset
 
@@ -124,3 +127,43 @@ class TestApiServerAdapterToolset:
             call_kwargs = mock_agent_cls.call_args
             toolsets = call_kwargs.kwargs.get("enabled_toolsets")
             assert sorted(toolsets) == ["terminal", "web"]
+
+    @patch("gateway.platforms.api_server.AIOHTTP_AVAILABLE", True)
+    def test_create_agent_uses_workspace_config_for_request_plugins(self, tmp_path):
+        """Workspace-bound API requests resolve plugin toolsets from workspace config."""
+        from gateway.platforms.api_server import APIServerAdapter
+        from gateway.config import PlatformConfig
+
+        adapter = APIServerAdapter(PlatformConfig())
+
+        with patch("gateway.run._resolve_runtime_agent_kwargs") as mock_kwargs, \
+             patch("gateway.run._resolve_gateway_model") as mock_model, \
+             patch("gateway.run._load_gateway_config") as mock_config, \
+             patch("hermes_cli.config.read_raw_config") as mock_workspace_config, \
+             patch("hermes_cli.plugins.discover_plugins") as mock_discover_plugins, \
+             patch("run_agent.AIAgent") as mock_agent_cls:
+
+            mock_kwargs.return_value = {"api_key": "test-key", "base_url": None,
+                                        "provider": None, "api_mode": None,
+                                        "command": None, "args": []}
+            mock_model.return_value = "test/model"
+            mock_config.return_value = {
+                "model": {"provider": "shared", "default": "test/model"},
+                "platform_toolsets": {"api_server": ["hermes-api-server"]},
+            }
+            mock_workspace_config.return_value = {
+                "plugins": {"enabled": ["auto_resume_screening"]},
+                "platform_toolsets": {
+                    "api_server": ["hermes-api-server", "auto_resume_screening"]
+                },
+            }
+            mock_agent_cls.return_value = MagicMock()
+
+            adapter._create_agent(request_hermes_home=str(tmp_path))
+
+            mock_discover_plugins.assert_any_call(force=True)
+            mock_model.assert_called_once_with(mock_config.return_value)
+            call_kwargs = mock_agent_cls.call_args
+            toolsets = call_kwargs.kwargs.get("enabled_toolsets")
+            assert "auto_resume_screening" in toolsets
+            assert call_kwargs.kwargs.get("model") == "test/model"

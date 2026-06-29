@@ -41,21 +41,23 @@ class _FakeSource:
 
 
 def _install_fake_sources(monkeypatch, *, github_count, claude_count=40,
-                          well_known_count=10, github_rate_limited=False):
-    monkeypatch.setattr(build_mod, "SkillsShSource", lambda auth: _FakeSource("skills.sh", 15000))
-    monkeypatch.setattr(build_mod, "OptionalSkillSource", lambda: _FakeSource("official", 95))
+                          well_known_count=10, optional_count=95,
+                          skills_sh_count=15000,
+                          clawhub_count=69000, lobehub_count=500,
+                          github_rate_limited=False):
+    monkeypatch.setattr(build_mod, "SkillsShSource", lambda auth: _FakeSource("skills.sh", skills_sh_count))
+    monkeypatch.setattr(build_mod, "OptionalSkillSource", lambda: _FakeSource("official", optional_count))
     monkeypatch.setattr(build_mod, "WellKnownSkillSource", lambda: _FakeSource("well-known", well_known_count))
     monkeypatch.setattr(
         build_mod, "GitHubSource",
         lambda auth: _FakeSource("github", github_count, rate_limited=github_rate_limited),
     )
-    monkeypatch.setattr(build_mod, "ClawHubSource", lambda: _FakeSource("clawhub", 69000))
+    monkeypatch.setattr(build_mod, "ClawHubSource", lambda: _FakeSource("clawhub", clawhub_count))
     monkeypatch.setattr(
         build_mod, "ClaudeMarketplaceSource",
         lambda auth: _FakeSource("claude-marketplace", claude_count, rate_limited=github_rate_limited),
     )
-    monkeypatch.setattr(build_mod, "LobeHubSource", lambda: _FakeSource("lobehub", 500))
-    monkeypatch.setattr(build_mod, "BrowseShSource", lambda: _FakeSource("browse-sh", 380))
+    monkeypatch.setattr(build_mod, "LobeHubSource", lambda: _FakeSource("lobehub", lobehub_count))
     monkeypatch.setattr(
         build_mod, "crawl_skills_sh",
         lambda source: [build_mod._meta_to_dict(m) for m in source.search("", 0)],
@@ -72,7 +74,10 @@ def test_degenerate_crawl_exits_nonzero_and_writes_no_file(tmp_path, monkeypatch
     out = tmp_path / "skills-index.json"
     monkeypatch.setattr(build_mod, "OUTPUT_PATH", str(out))
     _install_fake_sources(monkeypatch, github_count=0, claude_count=0,
-                          well_known_count=0, github_rate_limited=True)
+                          well_known_count=0, optional_count=0,
+                          skills_sh_count=0,
+                          clawhub_count=0, lobehub_count=0,
+                          github_rate_limited=True)
 
     with pytest.raises(SystemExit) as exc:
         build_mod.main()

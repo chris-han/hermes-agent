@@ -101,6 +101,19 @@ class TestReconfigureWritesProvider:
             "get_env_value",
             lambda key: "sk-fake" if key == "XAI_FAKE_API_KEY" else "",
         )
+        monkeypatch.setattr(
+            tools_config,
+            "_plugin_video_gen_catalog",
+            lambda plugin_name: (
+                {
+                    "xai_fake-video-v1": {
+                        "id": "xai_fake-video-v1",
+                        "display": "xai_fake v1",
+                    }
+                },
+                "xai_fake-video-v1",
+            ),
+        )
 
         config: dict = {}
         provider_row = {
@@ -133,6 +146,19 @@ class TestReconfigureWritesProvider:
             },
         ))
         monkeypatch.setattr(tools_config, "_prompt_choice", lambda *a, **kw: 0)
+        monkeypatch.setattr(
+            tools_config,
+            "_plugin_video_gen_catalog",
+            lambda plugin_name: (
+                {
+                    "noenv_video-video-v1": {
+                        "id": "noenv_video-video-v1",
+                        "display": "noenv_video v1",
+                    }
+                },
+                "noenv_video-video-v1",
+            ),
+        )
 
         config: dict = {}
         provider_row = {

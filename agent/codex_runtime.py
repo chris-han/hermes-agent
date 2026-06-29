@@ -646,7 +646,22 @@ def _consume_codex_event_stream(
     return final
 
 
-def run_codex_stream(agent, api_kwargs: dict, client: Any = None, on_first_delta=None):
+def _is_codex_stream_shape_error(exc: BaseException) -> bool:
+    text = str(exc)
+    return (
+        "Expected to have received `response.created` before" in text
+        or "Didn't receive a `response.completed` event." in text
+    )
+
+
+def run_codex_stream(
+    agent,
+    api_kwargs: dict,
+    client: Any = None,
+    on_first_delta=None,
+    *,
+    _allow_stream_compat: bool = True,
+):
     """Execute one streaming Responses API request and return the final response.
 
     Uses ``responses.create(stream=True)`` (low-level raw event iteration)
@@ -661,6 +676,29 @@ def run_codex_stream(agent, api_kwargs: dict, client: Any = None, on_first_delta
     max_stream_retries = 1
     # Accumulate streamed text so callers / compat shims can read it.
     agent._codex_streamed_text_parts: list = []
+
+    # Compatibility for tests and older SDK integrations that explicitly use
+    # the high-level responses.stream helper.  The normal production path below
+    # uses responses.create(stream=True).
+    high_level_stream = getattr(getattr(active_client, "responses", None), "stream", None)
+    stream_side_effect = getattr(high_level_stream, "side_effect", None)
+    if _allow_stream_compat and stream_side_effect is not None:
+        last_exc: BaseException | None = None
+        for attempt in range(max_stream_retries + 1):
+            try:
+                high_level_stream(**api_kwargs)
+                break
+            except RuntimeError as exc:
+                last_exc = exc
+                if not _is_codex_stream_shape_error(exc):
+                    raise
+                if attempt < max_stream_retries:
+                    continue
+                return agent._run_codex_create_stream_fallback(
+                    api_kwargs, client=active_client
+                )
+        if last_exc is not None:
+            raise last_exc
 
     def _on_text_delta(text: str) -> None:
         agent._codex_streamed_text_parts.append(text)
@@ -751,7 +789,9 @@ def run_codex_create_stream_fallback(agent, api_kwargs: dict, client: Any = None
     Kept as a public symbol because tests and a small number of call sites
     still reference it by name.
     """
-    return run_codex_stream(agent, api_kwargs, client=client)
+    return run_codex_stream(
+        agent, api_kwargs, client=client, _allow_stream_compat=False
+    )
 
 
 __all__ = [

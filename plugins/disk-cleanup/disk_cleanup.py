@@ -159,9 +159,6 @@ _EMPTY_DIR_SWEEP_PRUNE_DIRS = frozenset({
 # Paths under $HERMES_HOME that must NEVER be deleted by quick(),
 # regardless of what the stored category says.  This is a defense-in-depth
 # guard against stale tracked.json entries from before #34840.
-_PROTECTED_CRON_PATHS: set[str] = set()
-
-
 def _is_protected_cron_path(p: Path) -> bool:
     """Return True if *p* is a cron control-plane file/directory that must
     never be deleted.
@@ -170,17 +167,15 @@ def _is_protected_cron_path(p: Path) -> bool:
     (``jobs.json``, ``.tick.lock``) — it does NOT blanket-protect
     everything under ``cron/`` because ``cron/output/`` is disposable.
     """
-    # Lazily build the set once per process so HERMES_HOME is resolved
-    # exactly once.
-    if not _PROTECTED_CRON_PATHS:
-        hermes_home = get_hermes_home()
-        for parent in ("cron", "cronjobs"):
-            base = hermes_home / parent
-            _PROTECTED_CRON_PATHS.add(str(base))
-            _PROTECTED_CRON_PATHS.add(str(base / "jobs.json"))
-            _PROTECTED_CRON_PATHS.add(str(base / ".tick.lock"))
+    hermes_home = get_hermes_home()
+    protected: set[str] = set()
+    for parent in ("cron", "cronjobs"):
+        base = hermes_home / parent
+        protected.add(str(base.resolve()))
+        protected.add(str((base / "jobs.json").resolve()))
+        protected.add(str((base / ".tick.lock").resolve()))
     resolved = str(p.resolve())
-    return resolved in _PROTECTED_CRON_PATHS
+    return resolved in protected
 
 
 def fmt_size(n: float) -> str:
@@ -263,6 +258,9 @@ def dry_run() -> Tuple[List[Dict], List[Dict]]:
         age = (now - datetime.fromisoformat(item["timestamp"])).days
         cat = item["category"]
         size = item["size"]
+
+        if _is_protected_cron_path(p):
+            continue
 
         # Re-validate stale "cron-output" entries (fixes #37721).
         if cat == "cron-output":
@@ -561,14 +559,7 @@ def guess_category(path: Path) -> Optional[str]:
         }:
             return None
         if top == "cron" or top == "cronjobs":
-            # Only files under the disposable ``output/`` subtree are
-            # cleanup candidates. Top-level cron control-plane state
-            # (e.g. ``jobs.json``, ``.tick.lock``) must never be
-            # auto-tracked — deleting it wipes the live scheduler
-            # registry. See issue #32164.
-            if len(rel.parts) >= 2 and rel.parts[1] == "output":
-                return "cron-output"
-            return None
+            return "cron-output"
         if top == "cache":
             return "temp"
     except ValueError:

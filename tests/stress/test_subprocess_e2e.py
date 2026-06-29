@@ -10,6 +10,7 @@ This validates the IPC + lifecycle story that mocks can't:
   - crash detection works against a real dead PID
 """
 
+import json
 import os
 from pathlib import Path
 import subprocess

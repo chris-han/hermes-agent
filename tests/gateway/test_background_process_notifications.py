@@ -9,12 +9,13 @@ Contributed by @PeterFile (PR #593), reimplemented on current main.
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from gateway.config import GatewayConfig, Platform
-from gateway.run import GatewayRunner, _parse_session_key
+from gateway.run import _parse_session_key
+from gateway.session import SessionSource
 
 
 # ---------------------------------------------------------------------------
@@ -36,7 +37,7 @@ class _FakeRegistry:
         return False
 
 
-def _build_runner(monkeypatch, tmp_path, mode: str) -> GatewayRunner:
+def _build_runner(monkeypatch, tmp_path, mode: str):
     """Create a GatewayRunner with a fake config for the given mode."""
     (tmp_path / "config.yaml").write_text(
         f"display:\n  background_process_notifications: {mode}\n",
@@ -47,7 +48,7 @@ def _build_runner(monkeypatch, tmp_path, mode: str) -> GatewayRunner:
 
     monkeypatch.setattr(gateway_run, "_hermes_home", tmp_path)
 
-    runner = GatewayRunner(GatewayConfig())
+    runner = gateway_run.GatewayRunner(GatewayConfig())
     adapter = SimpleNamespace(send=AsyncMock(), handle_message=AsyncMock())
     runner.adapters[Platform.TELEGRAM] = adapter
     return runner
@@ -75,7 +76,7 @@ class TestLoadBackgroundNotificationsMode:
         import gateway.run as gw
         monkeypatch.setattr(gw, "_hermes_home", tmp_path)
         monkeypatch.delenv("HERMES_BACKGROUND_NOTIFICATIONS", raising=False)
-        assert GatewayRunner._load_background_notifications_mode() == "all"
+        assert gw.GatewayRunner._load_background_notifications_mode() == "all"
 
     def test_reads_config_yaml(self, monkeypatch, tmp_path):
         (tmp_path / "config.yaml").write_text(
@@ -84,7 +85,7 @@ class TestLoadBackgroundNotificationsMode:
         import gateway.run as gw
         monkeypatch.setattr(gw, "_hermes_home", tmp_path)
         monkeypatch.delenv("HERMES_BACKGROUND_NOTIFICATIONS", raising=False)
-        assert GatewayRunner._load_background_notifications_mode() == "error"
+        assert gw.GatewayRunner._load_background_notifications_mode() == "error"
 
     def test_env_var_overrides_config(self, monkeypatch, tmp_path):
         (tmp_path / "config.yaml").write_text(
@@ -93,7 +94,7 @@ class TestLoadBackgroundNotificationsMode:
         import gateway.run as gw
         monkeypatch.setattr(gw, "_hermes_home", tmp_path)
         monkeypatch.setenv("HERMES_BACKGROUND_NOTIFICATIONS", "off")
-        assert GatewayRunner._load_background_notifications_mode() == "off"
+        assert gw.GatewayRunner._load_background_notifications_mode() == "off"
 
     def test_false_value_maps_to_off(self, monkeypatch, tmp_path):
         (tmp_path / "config.yaml").write_text(
@@ -102,7 +103,7 @@ class TestLoadBackgroundNotificationsMode:
         import gateway.run as gw
         monkeypatch.setattr(gw, "_hermes_home", tmp_path)
         monkeypatch.delenv("HERMES_BACKGROUND_NOTIFICATIONS", raising=False)
-        assert GatewayRunner._load_background_notifications_mode() == "off"
+        assert gw.GatewayRunner._load_background_notifications_mode() == "off"
 
     def test_invalid_value_defaults_to_all(self, monkeypatch, tmp_path):
         (tmp_path / "config.yaml").write_text(
@@ -111,7 +112,15 @@ class TestLoadBackgroundNotificationsMode:
         import gateway.run as gw
         monkeypatch.setattr(gw, "_hermes_home", tmp_path)
         monkeypatch.delenv("HERMES_BACKGROUND_NOTIFICATIONS", raising=False)
-        assert GatewayRunner._load_background_notifications_mode() == "all"
+        assert gw.GatewayRunner._load_background_notifications_mode() == "all"
+
+    def test_invalid_yaml_raises(self, monkeypatch, tmp_path):
+        (tmp_path / "config.yaml").write_text("display: [\n", encoding="utf-8")
+        import gateway.run as gw
+        monkeypatch.setattr(gw, "_hermes_home", tmp_path)
+        monkeypatch.delenv("HERMES_BACKGROUND_NOTIFICATIONS", raising=False)
+        with pytest.raises(Exception):
+            gw.GatewayRunner._load_background_notifications_mode()
 
 
 # ---------------------------------------------------------------------------
@@ -412,6 +421,29 @@ def test_build_process_event_source_falls_back_to_session_key_chat_type(monkeypa
     assert source.user_name == "Emiliyan"
 
 
+def test_build_process_event_source_workspace_session_key_propagates_workspace_owner(
+    monkeypatch, tmp_path
+):
+    runner = _build_runner(monkeypatch, tmp_path, "all")
+
+    evt = {
+        "session_id": "proc_watch",
+        "session_key": "agent:main:workspace:ws-123:weixin:dm:wx-user",
+        "platform": "weixin",
+        "chat_id": "wx-user",
+        "user_id": "wx-user",
+        "user_name": "wx-user",
+    }
+
+    source = runner._build_process_event_source(evt)
+
+    assert source is not None
+    assert source.platform == Platform.WEIXIN
+    assert source.chat_id == "wx-user"
+    assert source.chat_type == "dm"
+    assert source.workspace_owner_id == "ws-123"
+
+
 def test_build_process_event_source_uses_cached_live_source_before_session_key_parse(
     monkeypatch, tmp_path
 ):
@@ -444,6 +476,57 @@ def test_build_process_event_source_uses_cached_live_source_before_session_key_p
     assert source.thread_id == "42"
     assert source.user_id == "proc_owner"
     assert source.user_name == "alice"
+
+
+def test_build_process_event_source_resolves_historical_weixin_delivery_adapter_key(
+    monkeypatch, tmp_path
+):
+    runner = _build_runner(monkeypatch, tmp_path, "all")
+    session_key = "agent:main:weixin:dm:wx-chat"
+    runner.session_store._entries[session_key] = SimpleNamespace(
+        origin=SessionSource(
+            platform=Platform.WEIXIN,
+            chat_id="wx-chat",
+            chat_type="dm",
+            user_id="wx-user",
+            user_name="wx-user",
+            workspace_owner_id="ws-123",
+        )
+    )
+
+    monkeypatch.setattr(
+        "agents.workspace_session_logs.resolve_workspace_session_delivery_adapter_key",
+        lambda hermes_home, requested, platform=None: "weixin:ws-123:acct-1@im.bot",
+    )
+
+    source = runner._build_process_event_source(
+        {
+            "session_id": "proc_watch",
+            "session_key": session_key,
+        }
+    )
+
+    assert source is not None
+    assert source.platform == Platform.WEIXIN
+    assert source.adapter_key == "weixin:ws-123:acct-1@im.bot"
+    assert source.delivery_adapter_key == "weixin:ws-123:acct-1@im.bot"
+
+
+def test_adapter_for_source_rejects_platform_only_weixin_resolution(monkeypatch, tmp_path):
+    runner = _build_runner(monkeypatch, tmp_path, "all")
+    runner.adapters[Platform.WEIXIN] = SimpleNamespace(resolve_for_source=lambda source: None)
+
+    source = SessionSource(
+        platform=Platform.WEIXIN,
+        chat_id="wx-chat",
+        chat_type="dm",
+        user_id="wx-user",
+        user_name="wx-user",
+    )
+
+    adapter = runner._adapter_for_source(source)
+
+    assert adapter is None
 
 
 @pytest.mark.asyncio
@@ -546,6 +629,16 @@ def test_parse_session_key_thread_chat_type():
     """Thread-typed keys use parts[5] as thread_id unambiguously."""
     result = _parse_session_key("agent:main:discord:thread:chan1:thread99")
     assert result == {"platform": "discord", "chat_type": "thread", "chat_id": "chan1", "thread_id": "thread99"}
+
+
+def test_parse_session_key_workspace_scoped():
+    result = _parse_session_key("agent:main:workspace:ws-123:weixin:dm:wx-user")
+    assert result == {
+        "workspace_owner_id": "ws-123",
+        "platform": "weixin",
+        "chat_type": "dm",
+        "chat_id": "wx-user",
+    }
 
 
 def test_parse_session_key_too_short():

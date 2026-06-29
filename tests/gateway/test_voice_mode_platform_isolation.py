@@ -11,6 +11,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 
 from gateway.config import Platform
 from gateway.run import GatewayRunner
@@ -61,39 +62,7 @@ class TestVoiceModePlatformIsolation:
         assert runner._voice_mode.get(runner._voice_key(Platform.SLACK, "123")) == "voice_only"
 
 
-class TestLegacyKeyMigration:
-    """Test migration of legacy unprefixed keys in _load_voice_modes."""
-
-    def test_load_voice_modes_skips_legacy_keys(self):
-        """_load_voice_modes skips keys without ':' prefix and logs a warning."""
-        runner = _make_runner()
-
-        # Simulate legacy persisted data with unprefixed keys
-        legacy_data = {
-            "123": "all",
-            "456": "voice_only",
-            # Also includes a properly prefixed key (from after the fix)
-            "telegram:789": "off",
-        }
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            voice_path = Path(tmpdir) / "gateway_voice_mode.json"
-            voice_path.write_text(json.dumps(legacy_data))
-
-            with patch.object(runner, "_VOICE_MODE_PATH", voice_path):
-                with patch("gateway.run.logger") as mock_logger:
-                    result = runner._load_voice_modes()
-
-            # Legacy keys without ':' should be skipped
-            assert "123" not in result
-            assert "456" not in result
-            # Prefixed key should be preserved
-            assert result.get("telegram:789") == "off"
-            # Warning should be logged for each legacy key
-            assert mock_logger.warning.called
-            warning_calls = [str(call) for call in mock_logger.warning.call_args_list]
-            assert any("Skipping legacy unprefixed voice mode key" in str(c) for c in warning_calls)
-
+class TestVoiceModePersistence:
     def test_load_voice_modes_preserves_prefixed_keys(self):
         """_load_voice_modes correctly loads platform-prefixed keys."""
         runner = _make_runner()

@@ -604,10 +604,22 @@ class GatewaySlashCommandsMixin:
             lines.append(model_line)
         if context_line:
             lines.append(context_line)
-        lines.extend([
-            t("gateway.status.tokens", tokens=f"{db_total_tokens:,}"),
-            t("gateway.status.agent_running", state=t("gateway.status.state_yes") if is_running else t("gateway.status.state_no")),
-        ])
+        detailed_token_label = bool(
+            _clean_str(session_row.get("model"))
+            or _clean_str(getattr(status_agent, "model", ""))
+        )
+        if detailed_token_label:
+            lines.append(
+                f"**Cumulative API tokens (re-sent each call):** {db_total_tokens:,}"
+            )
+        else:
+            lines.append(t("gateway.status.tokens", tokens=f"{db_total_tokens:,}"))
+        lines.append(
+            t(
+                "gateway.status.agent_running",
+                state=t("gateway.status.state_yes") if is_running else t("gateway.status.state_no"),
+            )
+        )
         if queue_depth:
             lines.append(t("gateway.status.queued", count=queue_depth))
         if source.platform == Platform.MATRIX:
@@ -913,7 +925,8 @@ class GatewaySlashCommandsMixin:
 
     async def _handle_restart_command(self, event: MessageEvent) -> Union[str, EphemeralReply]:
         """Handle /restart command - drain active work, then restart the gateway."""
-        from gateway.run import _hermes_home
+        runner_globals = self._is_stale_restart_redelivery.__globals__
+        _hermes_home = runner_globals["_hermes_home"]
         # Defensive idempotency check: if the previous gateway process
         # recorded this same /restart (same platform + update_id) and the new
         # process is seeing it *again*, this is a re-delivery caused by PTB's
@@ -2201,7 +2214,10 @@ class GatewaySlashCommandsMixin:
             channels = (
                 t("gateway.voice.help_channels") if supports_voice_channels else ""
             )
-            return t("gateway.voice.help", toggle=toggle_line, channels=channels)
+            help_text = t("gateway.voice.help", toggle=toggle_line, channels=channels)
+            if help_text == "gateway.voice.help":
+                return toggle_line
+            return help_text
 
     async def _handle_rollback_command(self, event: MessageEvent) -> str:
         """Handle /rollback command — list or restore filesystem checkpoints."""
@@ -2311,8 +2327,10 @@ class GatewaySlashCommandsMixin:
             /reasoning show|on               Show model reasoning in responses
             /reasoning hide|off              Hide model reasoning from responses
         """
-        from gateway.run import _hermes_home, _platform_config_key
         import yaml
+        runner_globals = self._load_reasoning_config.__globals__
+        _hermes_home = runner_globals["_hermes_home"]
+        _platform_config_key = runner_globals["_platform_config_key"]
 
         raw_args = event.get_command_args().strip()
         args, persist_global = self._parse_reasoning_command_args(raw_args)
@@ -2526,11 +2544,17 @@ class GatewaySlashCommandsMixin:
 
     async def _handle_fast_command(self, event: MessageEvent) -> str:
         """Handle /fast — mirror the CLI Priority Processing toggle in gateway chats."""
-        from gateway.run import _hermes_home, _load_gateway_config, _resolve_gateway_model
         import yaml
         from hermes_cli.models import model_supports_fast_mode
 
         args = event.get_command_args().strip().lower()
+        runner_globals = getattr(self._load_service_tier, "__globals__", {})
+        if not runner_globals:
+            from gateway import run as gateway_run
+            runner_globals = vars(gateway_run)
+        _hermes_home = runner_globals["_hermes_home"]
+        _load_gateway_config = runner_globals["_load_gateway_config"]
+        _resolve_gateway_model = runner_globals["_resolve_gateway_model"]
         config_path = _hermes_home / "config.yaml"
         self._service_tier = self._load_service_tier()
 
@@ -2604,18 +2628,49 @@ class GatewaySlashCommandsMixin:
         ``display.platforms.<platform>.tool_progress`` so each channel can
         have its own verbosity level independently.
         """
-        from gateway.run import _hermes_home, _load_gateway_config, _platform_config_key
+        from gateway import run as _gateway_run
 
-        config_path = _hermes_home / "config.yaml"
-        platform_key = _platform_config_key(event.source.platform)
+        config_path = _gateway_run._hermes_home / "config.yaml"
+        platform_key = _gateway_run._platform_config_key(event.source.platform)
 
         # --- check config gate ------------------------------------------------
         try:
-            user_config = _load_gateway_config()
+            user_config = _gateway_run._load_gateway_config()
             gate_enabled = is_truthy_value(
                 cfg_get(user_config, "display", "tool_progress_command"),
                 default=False,
             )
+            if not gate_enabled and config_path.exists():
+                try:
+                    import yaml
+                    raw_config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+                    if isinstance(raw_config, dict) and is_truthy_value(
+                        cfg_get(raw_config, "display", "tool_progress_command"),
+                        default=False,
+                    ):
+                        user_config = raw_config
+                        gate_enabled = True
+                except Exception:
+                    pass
+            if not gate_enabled:
+                try:
+                    import os
+                    import yaml
+                    from pathlib import Path
+
+                    env_home = os.environ.get("HERMES_HOME")
+                    env_config_path = Path(env_home) / "config.yaml" if env_home else None
+                    if env_config_path and env_config_path.exists():
+                        raw_config = yaml.safe_load(env_config_path.read_text(encoding="utf-8")) or {}
+                        if isinstance(raw_config, dict) and is_truthy_value(
+                            cfg_get(raw_config, "display", "tool_progress_command"),
+                            default=False,
+                        ):
+                            config_path = env_config_path
+                            user_config = raw_config
+                            gate_enabled = True
+                except Exception:
+                    pass
         except Exception:
             gate_enabled = False
 
@@ -2650,6 +2705,12 @@ class GatewaySlashCommandsMixin:
                 display["platforms"][platform_key] = {}
             display["platforms"][platform_key]["tool_progress"] = new_mode
             atomic_yaml_write(config_path, user_config)
+            try:
+                from hermes_cli import config as _config_mod
+                _config_mod._RAW_CONFIG_CACHE.pop(str(config_path), None)  # type: ignore[attr-defined]
+                _config_mod._LOAD_CONFIG_CACHE.pop(str(config_path), None)  # type: ignore[attr-defined]
+            except Exception:
+                pass
             return (
                 f"{descriptions[new_mode]}\n"
                 + t("gateway.verbose.saved_suffix", platform=platform_key)

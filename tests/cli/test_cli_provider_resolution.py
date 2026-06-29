@@ -271,10 +271,7 @@ def test_codex_provider_replaces_incompatible_default_model(monkeypatch):
 
 
 def test_model_flow_nous_prints_subscription_guidance_without_mutating_explicit_tts(monkeypatch, capsys):
-    monkeypatch.setattr(
-        "hermes_cli.nous_subscription.managed_nous_tools_enabled",
-        lambda *args, **kwargs: True,
-    )
+    monkeypatch.setattr("hermes_cli.nous_subscription.managed_nous_tools_enabled", lambda: True)
     config = {
         "model": {"provider": "nous", "default": "claude-opus-4-6"},
         "tts": {"provider": "elevenlabs"},
@@ -472,28 +469,8 @@ def test_model_flow_anthropic_clears_stale_custom_key_and_mode(tmp_path, monkeyp
 
 
 def test_model_flow_nous_offers_tool_gateway_prompt_when_unconfigured(monkeypatch, capsys):
-    from hermes_cli.nous_account import NousPortalAccountInfo
-
-    # Entitled account (paid → all tools eligible) drives the offer; the prompt
-    # is a per-tool checklist now, so capture the call rather than scrape stdout.
-    monkeypatch.setattr(
-        "hermes_cli.nous_subscription.get_nous_portal_account_info",
-        lambda **kwargs: NousPortalAccountInfo(
-            logged_in=True,
-            source="account_api",
-            fresh=True,
-            paid_service_access=True,
-        ),
-    )
-    captured = {}
-
-    def _fake_checklist(title, items, pre_selected=None):
-        captured["title"] = title
-        captured["items"] = list(items)
-        return []  # decline; we only assert the prompt was offered
-
-    monkeypatch.setattr("hermes_cli.setup.prompt_checklist", _fake_checklist, raising=False)
-
+    monkeypatch.setattr("hermes_cli.nous_subscription.managed_nous_tools_enabled", lambda: True)
+    prompt_calls = []
     config = {
         "model": {"provider": "nous", "default": "claude-opus-4-6"},
         "tts": {"provider": "edge"},
@@ -517,11 +494,12 @@ def test_model_flow_nous_offers_tool_gateway_prompt_when_unconfigured(monkeypatc
     monkeypatch.setattr("hermes_cli.auth._prompt_model_selection", lambda model_ids, current_model="", pricing=None, **kw: "claude-opus-4-6")
     monkeypatch.setattr("hermes_cli.auth._save_model_choice", lambda model: None)
     monkeypatch.setattr("hermes_cli.auth._update_config_for_provider", lambda provider, url: None)
+    monkeypatch.setattr("hermes_cli.nous_subscription.prompt_enable_tool_gateway", lambda cfg: prompt_calls.append(cfg))
     hermes_main._model_flow_nous(config, current_model="claude-opus-4-6")
 
-    # The per-tool Tool Gateway checklist was offered.
-    assert "title" in captured
-    assert "Tool Gateway" in captured["title"] or "tool pool" in captured["title"].lower()
+    out = capsys.readouterr().out
+    assert "Default model set to: claude-opus-4-6 (via Nous Portal)" in out
+    assert len(prompt_calls) == 1
 
 
 def test_codex_provider_uses_config_model(monkeypatch):
@@ -720,7 +698,7 @@ def test_model_flow_custom_saves_verified_v1_base_url(monkeypatch, capsys):
     # then display name. The api_mode prompt also runs before model selection.
     answers = iter(["http://localhost:8000", "local-key", "", "", "", "", ""])
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
-    monkeypatch.setattr("hermes_cli.secret_prompt.masked_secret_prompt", lambda _prompt="": next(answers))
+    monkeypatch.setattr("getpass.getpass", lambda _prompt="": next(answers))
 
     hermes_main._model_flow_custom({})
     output = capsys.readouterr().out
@@ -778,7 +756,7 @@ def test_model_flow_custom_persists_selected_api_mode(monkeypatch):
         ]
     )
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
-    monkeypatch.setattr("hermes_cli.secret_prompt.masked_secret_prompt", lambda _prompt="": "test-key")
+    monkeypatch.setattr("getpass.getpass", lambda _prompt="": "test-key")
 
     hermes_main._model_flow_custom({"model": {"provider": "custom"}})
 
@@ -820,7 +798,7 @@ def test_cmd_model_forwards_nous_login_tls_options(monkeypatch):
         SimpleNamespace(
             portal_url="https://portal.nousresearch.com",
             inference_url="https://inference.nousresearch.com/v1",
-            client_id="hermes-local",
+            client_id="semantier-home",
             scope="openid profile",
             no_browser=True,
             timeout=7.5,
@@ -832,7 +810,7 @@ def test_cmd_model_forwards_nous_login_tls_options(monkeypatch):
     assert captured == {
         "portal_url": "https://portal.nousresearch.com",
         "inference_url": "https://inference.nousresearch.com/v1",
-        "client_id": "hermes-local",
+        "client_id": "semantier-home",
         "scope": "openid profile",
         "no_browser": True,
         "timeout": 7.5,

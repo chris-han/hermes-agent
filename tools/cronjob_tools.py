@@ -9,6 +9,7 @@ import json
 import logging
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -484,6 +485,30 @@ def _validate_cron_script_path(script: Optional[str]) -> Optional[str]:
     return None
 
 
+def _materialize_inline_script(script: str, name: Optional[str]) -> str:
+    from hermes_constants import get_hermes_home
+
+    raw = str(script or "").strip()
+    if not raw:
+        return raw
+    if raw.startswith(("/", "~")) or (len(raw) >= 2 and raw[1] == ":"):
+        return raw
+    scripts_dir = get_hermes_home() / "scripts"
+    candidate = scripts_dir / raw
+    if candidate.exists() and "\n" not in raw:
+        return raw
+    if "\n" not in raw and re.fullmatch(r"[A-Za-z0-9._/-]+", raw):
+        return raw
+    safe_base = re.sub(r"[^A-Za-z0-9_.-]+", "-", (name or "cron-script").strip()).strip("-")
+    safe_base = safe_base or "cron-script"
+    filename = f"{safe_base}-{int(time.time())}.sh"
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    path = scripts_dir / filename
+    path.write_text("#!/bin/sh\n" + raw + "\n", encoding="utf-8")
+    path.chmod(path.stat().st_mode | 0o111)
+    return filename
+
+
 def _format_job(job: Dict[str, Any]) -> Dict[str, Any]:
     prompt = str(job.get("prompt") or "")
     skills = _canonical_skills(job.get("skill"), job.get("skills"))
@@ -518,6 +543,8 @@ def _format_job(job: Dict[str, Any]) -> Dict[str, Any]:
         result["enabled_toolsets"] = job["enabled_toolsets"]
     if job.get("workdir"):
         result["workdir"] = job["workdir"]
+    if job.get("profile"):
+        result["profile"] = job["profile"]
     return result
 
 
@@ -587,6 +614,7 @@ def cronjob(
     workdir: Optional[str] = None,
     no_agent: Optional[bool] = None,
     attach_to_session: Optional[bool] = None,
+    profile: Optional[str] = None,
     task_id: str = None,
 ) -> str:
     """Unified cron job management tool."""
@@ -621,6 +649,7 @@ def cronjob(
 
             # Validate script path before storing
             if script:
+                script = _materialize_inline_script(script, name)
                 script_error = _validate_cron_script_path(script)
                 if script_error:
                     return tool_error(script_error, success=False)
@@ -638,13 +667,13 @@ def cronjob(
                         )
 
             job = create_job(
-                prompt=prompt or "",
+                prompt="" if _no_agent else (prompt or ""),
                 schedule=schedule,
                 name=name,
                 repeat=repeat,
                 deliver=_normalize_deliver_param(deliver),
                 origin=_origin_from_env(),
-                skills=canonical_skills,
+                skills=[] if _no_agent else canonical_skills,
                 model=_normalize_optional_job_value(model),
                 provider=_normalize_optional_job_value(provider),
                 base_url=_normalize_optional_job_value(base_url, strip_trailing_slash=True),
@@ -654,6 +683,7 @@ def cronjob(
                 workdir=_normalize_optional_job_value(workdir),
                 no_agent=_no_agent,
                 attach_to_session=attach_to_session,
+                profile=profile,
             )
             _notify_provider_jobs_changed_safe()
             _create_message = f"Cron job '{job['name']}' created."
@@ -812,6 +842,8 @@ def cronjob(
                 # Empty string clears the field (restores old behaviour);
                 # otherwise pass raw — update_job() validates / normalizes.
                 updates["workdir"] = _normalize_optional_job_value(workdir) or None
+            if profile is not None:
+                updates["profile"] = profile
             if no_agent is not None:
                 # Toggling no_agent on/off at update time. If flipping to True,
                 # we need a script to already exist on the job (or be part of
@@ -901,6 +933,10 @@ Important safety rule: cron-run sessions should not recursively schedule more cr
             "deliver": {
                 "type": "string",
                 "description": "Omit this parameter to auto-deliver back to the current chat and topic (recommended). Auto-detection preserves thread/topic context. Only set explicitly when the user asks to deliver somewhere OTHER than the current conversation. Values: 'origin' (same as omitting), 'local' (no delivery, save only), 'all' (fan out to every connected home channel), or platform:chat_id:thread_id for a specific destination. Combine with comma: 'origin,all' delivers to the origin plus every other connected channel. Examples: 'telegram:-1001234567890:17585', 'discord:#engineering', 'sms:+15551234567', 'all'. WARNING: 'platform:chat_id' without :thread_id loses topic targeting. 'all' resolves at fire time, so a job created before a channel was wired up will pick it up automatically once connected."
+            },
+            "profile": {
+                "type": "string",
+                "description": "Optional Hermes profile id for this cron job. Profile execution is context-local and subprocess-safe: cron resolves that profile's home/config for the job without temporarily setting HERMES_HOME process-wide."
             },
             "skills": {
                 "type": "array",

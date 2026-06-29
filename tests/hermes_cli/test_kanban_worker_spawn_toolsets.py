@@ -108,6 +108,10 @@ toolsets:
     monkeypatch.setenv("HERMES_HOME", str(root))
 
     from hermes_cli import kanban_db as kb
+    from hermes_cli import config as cfg
+
+    cfg._LOAD_CONFIG_CACHE.clear()
+    cfg._RAW_CONFIG_CACHE.clear()
 
     resolved = kb._resolve_worker_cli_toolsets(str(profile))
 

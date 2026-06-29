@@ -4,8 +4,9 @@ Tests the _handle_title_command handler (set/show session titles)
 across all gateway messenger platforms.
 """
 
+import os
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -100,8 +101,8 @@ class TestHandleTitleCommand:
         db.close()
 
     @pytest.mark.asyncio
-    async def test_title_conflict(self, tmp_path):
-        """Setting a title already used by another session returns error."""
+    async def test_duplicate_title_allowed(self, tmp_path):
+        """Different sessions can share the same title."""
         from hermes_state import SessionDB
         db = SessionDB(db_path=tmp_path / "state.db")
         db.create_session("other_session", "telegram")
@@ -111,8 +112,9 @@ class TestHandleTitleCommand:
         runner = _make_runner(session_db=db)
         event = _make_event(text="/title Taken Title")
         result = await runner._handle_title_command(event)
-        assert "already in use" in result
-        assert "⚠️" in result
+        assert "Taken Title" in result
+        assert "✏️" in result
+        assert db.get_session_title("test_session_123") == "Taken Title"
         db.close()
 
     @pytest.mark.asyncio

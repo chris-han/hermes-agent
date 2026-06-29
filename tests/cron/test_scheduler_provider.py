@@ -144,7 +144,9 @@ def test_inprocess_provider_ticks_and_stops():
             target=prov.start, args=(stop,), kwargs={"interval": 0}, daemon=True
         )
         t.start()
-        time.sleep(0.2)
+        deadline = time.time() + 2
+        while not calls and time.time() < deadline:
+            time.sleep(0.01)
         stop.set()
         t.join(timeout=5)
 

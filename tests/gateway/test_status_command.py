@@ -99,7 +99,7 @@ async def test_status_command_reports_running_agent_without_interrupt(monkeypatc
     result = await runner._handle_message(_make_event("/status"))
 
     assert "**Session ID:** `sess-1`" in result
-    assert "**Cumulative API tokens (re-sent each call):** 321" in result
+    assert "**Tokens:** 321" in result
     assert "**Agent Running:** Yes ⚡" in result
     assert "**Title:**" not in result
     running_agent.interrupt.assert_not_called()
@@ -152,7 +152,7 @@ async def test_status_command_reads_token_totals_from_session_db():
     result = await runner._handle_message(_make_event("/status"))
 
     # 1000 + 250 + 500 + 100 + 50 = 1,900
-    assert "**Cumulative API tokens (re-sent each call):** 1,900" in result
+    assert "**Tokens:** 1,900" in result
 
 
 @pytest.mark.asyncio
@@ -173,7 +173,7 @@ async def test_status_command_tokens_zero_when_session_db_row_missing():
 
     result = await runner._handle_message(_make_event("/status"))
 
-    assert "**Cumulative API tokens (re-sent each call):** 0" in result
+    assert "**Tokens:** 0" in result
 
 
 @pytest.mark.asyncio
@@ -474,6 +474,48 @@ async def test_first_run_non_slack_home_channel_onboarding_keeps_direct_command(
 
 
 @pytest.mark.asyncio
+async def test_first_run_weixin_home_channel_onboarding_suppressed_for_user_scoped_home(monkeypatch):
+    import gateway.run as gateway_run
+
+    session_entry = SessionEntry(
+        session_key=build_session_key(_make_source(Platform.WEIXIN)),
+        session_id="sess-1",
+        created_at=datetime.now(),
+        updated_at=datetime.now(),
+        platform=Platform.WEIXIN,
+        chat_type="dm",
+    )
+    runner = _make_runner(session_entry, platform=Platform.WEIXIN)
+    runner.session_store.load_transcript.return_value = []
+    runner.session_store.has_any_sessions.return_value = False
+    runner._run_agent = AsyncMock(
+        return_value={
+            "final_response": "ok",
+            "messages": [],
+            "tools": [],
+            "history_offset": 0,
+            "last_prompt_tokens": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "model": "openai/test-model",
+        }
+    )
+
+    monkeypatch.delenv("WEIXIN_HOME_CHANNEL", raising=False)
+    monkeypatch.setattr(gateway_run, "_resolve_runtime_agent_kwargs", lambda: {"api_key": "***"})
+    monkeypatch.setattr(gateway_run, "_weixin_source_has_user_scoped_home_channel", lambda _source: True)
+    monkeypatch.setattr(
+        "agent.model_metadata.get_model_context_length",
+        lambda *_args, **_kwargs: 100000,
+    )
+
+    result = await runner._handle_message(_make_event("hello", platform=Platform.WEIXIN))
+
+    assert result == "ok"
+    runner.adapters[Platform.WEIXIN].send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_handle_message_discards_stale_result_after_session_invalidation(monkeypatch):
     import gateway.run as gateway_run
 
@@ -596,7 +638,7 @@ async def test_status_command_bypasses_active_session_guard():
     import asyncio
     from gateway.platforms.base import BasePlatformAdapter, MessageEvent, MessageType
     from gateway.session import build_session_key
-    from gateway.config import Platform, PlatformConfig
+    from gateway.config import Platform, PlatformConfig, GatewayConfig
 
     source = _make_source()
     session_key = build_session_key(source)

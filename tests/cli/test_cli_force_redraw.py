@@ -71,71 +71,43 @@ class TestForceFullRedraw:
             "invalidate",
         ]
 
-    def test_resize_recovery_skips_clear_when_width_unchanged(self, bare_cli, monkeypatch):
-        """A rows-only resize (same width) must NOT clear the screen.
-
-        prompt_toolkit's built-in Application._on_resize() starts with
-        renderer.erase(leave_alternate_screen=False), which uses the renderer's
-        cached cursor position to move back to the live prompt origin before
-        erase_down(). With no column reflow there is no ghost chrome to wipe,
-        so we delegate straight to prompt_toolkit and avoid an extra repaint.
-        """
+    def test_resize_recovery_resets_renderer_without_clearing_screen(self, bare_cli):
+        """Resize recovery resets prompt_toolkit state without clearing scrollback."""
         app = MagicMock()
         events = []
         app.renderer.reset.side_effect = lambda **_: events.append("renderer_reset")
         app.invalidate.side_effect = lambda: events.append("invalidate")
         original_on_resize = lambda: events.append("original_resize")
 
-        # bare_cli skips __init__, so seed attributes the way __init__ would.
         bare_cli._status_bar_suppressed_after_resize = False
-        bare_cli._last_resize_width = 120
-        # Same width on this resize → rows-only change.
-        monkeypatch.setattr(bare_cli, "_get_tui_terminal_width", lambda: 120)
-        monkeypatch.setattr(bare_cli, "_schedule_status_bar_unsuppress", lambda *_: None)
 
         bare_cli._recover_after_resize(app, original_on_resize)
 
-        assert events == ["original_resize"]
-        app.renderer.reset.assert_not_called()
-        app.invalidate.assert_not_called()
-        # Must NOT clear the screen or scrollback — those destroy the banner.
+        assert events == ["renderer_reset", "invalidate", "original_resize"]
+        app.renderer.reset.assert_called_once_with(leave_alternate_screen=False)
+        app.invalidate.assert_called_once()
         app.renderer.output.erase_screen.assert_not_called()
         app.renderer.output.write_raw.assert_not_called()
         app.renderer.output.cursor_goto.assert_not_called()
-        # Status bar / input rules must be suppressed until the next prompt.
         assert bare_cli._status_bar_suppressed_after_resize is True
 
-    def test_resize_recovery_clears_viewport_on_width_change(self, bare_cli, monkeypatch):
-        """A WIDTH change must wipe the visible viewport (CSI 2J) and replay.
-
-        On column shrink the terminal reflows the old full-width chrome into
-        extra rows that prompt_toolkit's stale-cursor erase cannot reach,
-        leaving a duplicated status bar (#19280/#5474 class). We route through
-        the same recovery as Ctrl+L: erase_screen (2J) + replay transcript.
-        It must be banner-safe — CSI 3J (write_raw) must NOT fire.
-        """
+    def test_resize_recovery_never_wipes_scrollback(self, bare_cli):
+        """Resize recovery must be banner-safe and leave scrollback intact."""
         app = MagicMock()
         events = []
         app.renderer.output.erase_screen.side_effect = lambda: events.append("erase")
         app.renderer.output.write_raw.side_effect = lambda *_: events.append("scrollback_wipe")
+        app.renderer.reset.side_effect = lambda **_: events.append("renderer_reset")
+        app.invalidate.side_effect = lambda: events.append("invalidate")
         original_on_resize = lambda: events.append("original_resize")
 
         bare_cli._status_bar_suppressed_after_resize = False
-        bare_cli._last_resize_width = 200
-        monkeypatch.setattr(bare_cli, "_get_tui_terminal_width", lambda: 90)
-        monkeypatch.setattr(bare_cli, "_schedule_status_bar_unsuppress", lambda *_: None)
-        monkeypatch.setattr(cli_mod, "_replay_output_history", lambda: events.append("replay"))
 
         bare_cli._recover_after_resize(app, original_on_resize)
 
-        # Viewport cleared and transcript replayed BEFORE prompt_toolkit's resize.
-        assert "erase" in events
-        assert "replay" in events
-        assert events.index("erase") < events.index("original_resize")
-        # Banner-safe: scrollback (CSI 3J) must never be wiped on a resize.
+        assert events == ["renderer_reset", "invalidate", "original_resize"]
+        assert "erase" not in events
         assert "scrollback_wipe" not in events
-        # New width recorded for the next comparison.
-        assert bare_cli._last_resize_width == 90
         assert bare_cli._status_bar_suppressed_after_resize is True
 
     def test_force_redraw_uses_full_screen_clear_without_scrollback_clear(self, bare_cli):

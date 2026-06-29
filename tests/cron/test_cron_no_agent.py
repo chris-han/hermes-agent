@@ -12,6 +12,7 @@ Covers:
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -126,6 +127,51 @@ def test_cronjob_tool_create_no_agent_with_script_succeeds(hermes_env):
     assert result.get("success") is True
     assert result["job"]["no_agent"] is True
     assert result["job"]["script"] == "alert.sh"
+
+
+def test_cronjob_tool_create_no_agent_drops_prompt_and_skills(hermes_env):
+    from tools.cronjob_tools import cronjob
+
+    script_path = hermes_env / "scripts" / "alert.sh"
+    script_path.write_text("#!/bin/bash\necho alert\n")
+
+    result = json.loads(
+        cronjob(
+            action="create",
+            schedule="every 5m",
+            prompt="This prompt must not be stored for script-only jobs",
+            skills=["some-skill"],
+            script="alert.sh",
+            no_agent=True,
+            deliver="local",
+        )
+    )
+
+    assert result.get("success") is True
+    assert result["job"]["no_agent"] is True
+    assert result["job"]["prompt_preview"] == ""
+    assert result["job"]["skills"] == []
+
+
+def test_cronjob_tool_create_no_agent_materializes_inline_script_command(hermes_env):
+    from tools.cronjob_tools import cronjob
+
+    result = json.loads(
+        cronjob(
+            action="create",
+            name="minute-time-report",
+            schedule="every 5m",
+            script="date '+Current time: %Y-%m-%d %H:%M:%S %Z'",
+            no_agent=True,
+            deliver="local",
+        )
+    )
+
+    assert result.get("success") is True
+    assert result["job"]["script"].startswith("minute-time-report-")
+    script_path = hermes_env / "scripts" / result["job"]["script"]
+    assert script_path.exists()
+    assert "date '+Current time: %Y-%m-%d %H:%M:%S %Z'" in script_path.read_text()
 
 
 def test_cronjob_tool_update_toggles_no_agent(hermes_env):

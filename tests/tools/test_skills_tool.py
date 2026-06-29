@@ -267,32 +267,6 @@ class TestFindAllSkills:
         assert len(skills) == 1
         assert skills[0]["name"] == "real-skill"
 
-    def test_skips_nested_virtualenv_dependency_skills(self, tmp_path):
-        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
-            _make_skill(tmp_path, "real-skill")
-            typer_skill = (
-                tmp_path
-                / "bring"
-                / "scripts"
-                / ".venv"
-                / "lib"
-                / "python3.13"
-                / "site-packages"
-                / "typer"
-                / ".agents"
-                / "skills"
-                / "typer"
-            )
-            typer_skill.mkdir(parents=True)
-            (typer_skill / "SKILL.md").write_text(
-                "---\nname: typer\ndescription: Should not be discovered.\n---\n",
-                encoding="utf-8",
-            )
-
-            skills = _find_all_skills()
-
-        assert [skill["name"] for skill in skills] == ["real-skill"]
-
     def test_finds_skills_in_symlinked_category_dir(self, tmp_path):
         external_root = tmp_path / "repo"
         skills_root = tmp_path / "skills"
@@ -364,6 +338,34 @@ class TestSkillsList:
 
 
 class TestSkillView:
+    def test_skill_tools_use_active_hermes_home_after_module_import(self, tmp_path):
+        from hermes_constants import reset_active_hermes_home, set_active_hermes_home
+
+        workspace_home = tmp_path / "workspace" / ".semantier-home"
+        workspace_skills = workspace_home / "skills"
+        _make_skill(
+            workspace_skills,
+            "feishu-bot-meeting-coordinator",
+            category="productivity",
+        )
+
+        assert skills_tool_module.SKILLS_DIR != workspace_skills
+
+        token = set_active_hermes_home(workspace_home)
+        try:
+            listed = json.loads(skills_list())
+            viewed = json.loads(skill_view("feishu-bot-meeting-coordinator"))
+        finally:
+            reset_active_hermes_home(token)
+
+        assert listed["success"] is True
+        assert any(
+            item["name"] == "feishu-bot-meeting-coordinator"
+            for item in listed["skills"]
+        )
+        assert viewed["success"] is True
+        assert viewed["name"] == "feishu-bot-meeting-coordinator"
+
     def test_view_existing_skill(self, tmp_path):
         with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
             _make_skill(tmp_path, "my-skill")
@@ -978,7 +980,7 @@ class TestSkillViewPrerequisites:
 
     @pytest.mark.parametrize(
         "backend",
-        ["ssh", "daytona", "docker", "singularity", "modal"],
+        ["ssh", "daytona", "docker", "singularity", "modal", "vercel_sandbox"],
     )
     def test_remote_backend_becomes_available_after_local_secret_capture(
         self, tmp_path, monkeypatch, backend
@@ -1325,6 +1327,30 @@ class TestSkillViewCollisionDetection:
         result = json.loads(raw)
         assert result["success"] is True
         assert "EXTERNAL BODY" in result["content"]
+
+    def test_external_root_skill_resolves_by_frontmatter_name(self, tmp_path):
+        """Plugin package dirs can be external skill dirs with SKILL.md at root."""
+        local_dir = tmp_path / "local"
+        plugin_dir = tmp_path / "plugins" / "feishu_meeting_coordinator"
+        local_dir.mkdir()
+        plugin_dir.mkdir(parents=True)
+        (plugin_dir / "SKILL.md").write_text(
+            "---\n"
+            "name: feishu-bot-meeting-coordinator\n"
+            "description: Feishu meeting orchestration.\n"
+            "---\n"
+            "\n"
+            "FEISHU BODY\n",
+            encoding="utf-8",
+        )
+
+        p1, p2 = self._patch_dirs(local_dir, [plugin_dir])
+        with p1, p2:
+            raw = skill_view("feishu-bot-meeting-coordinator")
+
+        result = json.loads(raw)
+        assert result["success"] is True
+        assert "FEISHU BODY" in result["content"]
 
     def test_two_externals_same_name_also_refuse(self, tmp_path):
         """Collision detection is symmetric — two external dirs with

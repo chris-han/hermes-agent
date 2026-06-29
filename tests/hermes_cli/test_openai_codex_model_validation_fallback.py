@@ -25,9 +25,13 @@ def test_openai_codex_unknown_but_plausible_model_is_accepted_with_warning():
     """If the Codex listing is incomplete, `/model` should soft-accept the model
     with a warning instead of hard-rejecting it.
     """
-    with patch(
-        "hermes_cli.models.provider_model_ids",
-        return_value=["gpt-5.5", "gpt-5.4", "gpt-5.3-codex"],
+    with patch.dict(
+        validate_requested_model.__globals__,
+        {
+            "provider_model_ids": (
+                lambda _provider: ["gpt-5.5", "gpt-5.4", "gpt-5.3-codex"]
+            )
+        },
     ):
         result = validate_requested_model("gpt-5.3-codex-spark", "openai-codex")
 

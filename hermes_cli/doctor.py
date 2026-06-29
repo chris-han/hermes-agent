@@ -8,6 +8,7 @@ import os
 import sys
 import subprocess
 import shutil
+import importlib
 from pathlib import Path
 
 from hermes_cli.config import get_project_root, get_hermes_home, get_env_path
@@ -159,6 +160,12 @@ def _has_healthy_oauth_fallback_for_apikey_provider(provider_label: str) -> bool
     that direct-key problem into the final blocking summary.
     """
     normalized = (provider_label or "").strip().lower()
+    if normalized in {"gemini", "google", "google-ai-studio"}:
+        try:
+            from hermes_cli.auth import get_gemini_oauth_auth_status
+            return bool((get_gemini_oauth_auth_status() or {}).get("logged_in"))
+        except Exception:
+            return False
     if normalized == "minimax":
         try:
             from hermes_cli.auth import get_minimax_oauth_auth_status
@@ -788,7 +795,7 @@ def run_doctor(args):
                     provider_ids_to_accept.add(catalog_provider)
 
             if provider and provider != "auto":
-                if catalog_provider is None or (
+                if (catalog_provider is None and provider not in valid_provider_ids) or (
                     known_providers
                     and not (provider_ids_to_accept & valid_provider_ids)
                 ):
@@ -813,6 +820,7 @@ def run_doctor(args):
             providers_accepting_vendor_slugs = {
                 "openrouter",
                 "auto",
+                "ai-gateway",
                 "kilocode",
                 "opencode-zen",
                 "huggingface",
@@ -1072,6 +1080,7 @@ def run_doctor(args):
         from hermes_cli.auth import (
             get_nous_auth_status,
             get_codex_auth_status,
+            get_gemini_oauth_auth_status,
             get_minimax_oauth_auth_status,
         )
 
@@ -1098,6 +1107,12 @@ def run_doctor(args):
                     "(optional — only required to import tokens "
                     "from an existing Codex CLI login)"
                 )
+
+        gemini_status = get_gemini_oauth_auth_status()
+        if gemini_status.get("logged_in"):
+            check_ok("Gemini OAuth", "(logged in)")
+        else:
+            check_warn("Gemini OAuth", "(not logged in)")
 
         minimax_status = get_minimax_oauth_auth_status()
         if minimax_status.get("logged_in"):
@@ -1517,6 +1532,52 @@ def run_doctor(args):
                 "Install daytona SDK: pip install daytona",
                 issues,
             )
+
+    if terminal_env == "vercel_sandbox":
+        runtime = os.getenv("TERMINAL_VERCEL_RUNTIME", "").strip() or "python3"
+        check_ok("Vercel runtime", runtime)
+
+        disk = os.getenv("TERMINAL_CONTAINER_DISK", "").strip()
+        if disk:
+            check_warn(
+                "Vercel custom disk unsupported",
+                "snapshot filesystem only",
+            )
+            issues.append(
+                "Remove TERMINAL_CONTAINER_DISK for TERMINAL_ENV=vercel_sandbox; "
+                "Vercel sandboxes use snapshot filesystem only."
+            )
+
+        if importlib.util.find_spec("vercel") is not None:
+            check_ok("vercel SDK", "(installed)")
+        else:
+            check_warn("vercel SDK not installed", "(pip install vercel)")
+
+        required_env = ("VERCEL_TOKEN", "VERCEL_PROJECT_ID", "VERCEL_TEAM_ID")
+        present_env = [name for name in required_env if os.getenv(name)]
+        missing_env = [name for name in required_env if not os.getenv(name)]
+        if missing_env:
+            check_warn(
+                "Vercel auth incomplete",
+                f"(missing {', '.join(missing_env)})",
+            )
+            mode = (
+                "incomplete access token"
+                if os.getenv("VERCEL_TOKEN")
+                else "missing access token"
+            )
+            check_info(f"Vercel auth mode: {mode}")
+            check_info(
+                "Vercel auth present env: "
+                + (", ".join(present_env) if present_env else "(none)")
+            )
+            check_info(f"Vercel auth missing env: {', '.join(missing_env)}")
+            issues.append(
+                "Set Vercel auth environment variables: "
+                + ", ".join(missing_env)
+            )
+        else:
+            check_ok("Vercel auth", "(configured)")
 
     # Node.js + agent-browser (for browser automation tools)
     if _safe_which("node"):

@@ -26,13 +26,14 @@ PRs #9850, #9934, #7536):
 """
 
 import asyncio
+import json
 import time
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gateway.config import GatewayConfig, HomeChannel, Platform
+from gateway.config import GatewayConfig, HomeChannel, Platform, PlatformConfig
 from gateway.platforms.base import MessageEvent, MessageType, SendResult
 from gateway.run import (
     _AGENT_PENDING_SENTINEL,
@@ -42,7 +43,7 @@ from gateway.run import (
     _last_transcript_timestamp,
     _should_clear_resume_pending_after_turn,
 )
-from gateway.session import SessionEntry, SessionSource, SessionStore
+from gateway.session import SessionEntry, SessionSource, build_session_key, SessionStore
 from tests.gateway.restart_test_helpers import (
     make_restart_runner,
     make_restart_source,
@@ -215,7 +216,7 @@ class TestSessionEntryResumeFields:
         restored = SessionEntry.from_dict(entry.to_dict())
         assert restored.resume_pending is True
         assert restored.resume_reason == "restart_timeout"
-        assert restored.last_resume_marked_at == now
+        assert restored.last_resume_marked_at == entry.last_resume_marked_at
 
     def test_from_dict_legacy_without_resume_fields(self):
         """Old sessions.json without the new fields deserialize cleanly."""
@@ -248,6 +249,48 @@ class TestSessionEntryResumeFields:
         assert restored.resume_pending is True
         assert restored.resume_reason == "restart_timeout"
         assert restored.last_resume_marked_at is None
+
+    def test_from_dict_normalizes_timestamps_to_aware_utc(self):
+        data = {
+            "session_key": "k",
+            "session_id": "sid",
+            "created_at": "2026-05-15T01:02:03+00:00",
+            "updated_at": "2026-05-15T01:02:04Z",
+            "resume_pending": True,
+            "resume_reason": "restart_interrupted",
+            "last_resume_marked_at": "2026-05-15T01:02:05+00:00",
+        }
+
+        restored = SessionEntry.from_dict(data)
+
+        assert restored.created_at.tzinfo is not None
+        assert restored.updated_at.tzinfo is not None
+        assert restored.last_resume_marked_at is not None
+        assert restored.last_resume_marked_at.tzinfo is not None
+        assert restored.created_at.isoformat().endswith("+00:00")
+
+    def test_resume_pending_with_aware_persisted_timestamp_does_not_crash(self):
+        source = make_restart_source()
+        session_key = build_session_key(source)
+
+        entry = SessionEntry.from_dict(
+            {
+                "session_key": session_key,
+                "session_id": "sid-aware",
+                "created_at": "2026-05-15T01:02:03+00:00",
+                "updated_at": "2026-05-15T01:02:04+00:00",
+                "origin": source.to_dict(),
+                "platform": source.platform.value,
+                "chat_type": source.chat_type,
+                "resume_pending": True,
+                "resume_reason": "restart_interrupted",
+                "last_resume_marked_at": "2026-05-15T01:02:05+00:00",
+            }
+        )
+
+        assert entry.session_id == "sid-aware"
+        assert entry.updated_at.tzinfo is not None
+        assert entry.updated_at.isoformat().endswith("+00:00")
 
 
 # ---------------------------------------------------------------------------
@@ -291,18 +334,20 @@ class TestMarkResumePending:
         assert e.suspended is True
         assert e.resume_pending is False
 
-    def test_survives_roundtrip_through_json(self, tmp_path):
+    def test_resume_state_is_runtime_only_without_compat_json(self, tmp_path):
         store = _make_store(tmp_path)
         source = _make_source()
         entry = store.get_or_create_session(source)
         store.mark_resume_pending(entry.session_key, reason="restart_timeout")
 
-        # Reload from disk
-        store2 = _make_store(tmp_path)
-        store2._ensure_loaded()
-        reloaded = store2._entries[entry.session_key]
-        assert reloaded.resume_pending is True
-        assert reloaded.resume_reason == "restart_timeout"
+        assert entry.resume_pending is True
+        assert entry.resume_reason == "restart_timeout"
+
+        # New SessionStore instances do not load legacy session-index JSON by
+        # default now that compatibility persistence is retired.
+        rehydrated = _make_store(tmp_path)
+        rehydrated._ensure_loaded()
+        assert rehydrated._entries.get(entry.session_key) is None
 
 
 class TestClearResumePending:

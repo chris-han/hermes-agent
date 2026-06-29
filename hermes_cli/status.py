@@ -6,6 +6,7 @@ Shows the status of all Hermes Agent components.
 
 import os
 import sys
+import importlib
 import subprocess  # noqa: F401 — re-exported for tests that monkeypatch status.subprocess to guard against regressions
 from pathlib import Path
 
@@ -413,6 +414,28 @@ def show_status(args):
     elif terminal_env == "daytona":
         daytona_image = os.getenv("TERMINAL_DAYTONA_IMAGE", "nikolaik/python-nodejs:python3.11-nodejs20")
         print(f"  Daytona Image: {daytona_image}")
+    elif terminal_env == "vercel_sandbox":
+        runtime = os.getenv("TERMINAL_VERCEL_RUNTIME") or terminal_cfg.get("vercel_runtime", "python3.12")
+        persistent = os.getenv(
+            "TERMINAL_CONTAINER_PERSISTENT",
+            str(terminal_cfg.get("container_persistent", True)),
+        ).lower() in {"1", "true", "yes", "y"}
+        print(f"  Runtime:      {runtime}")
+        if os.getenv("VERCEL_OIDC_TOKEN"):
+            print("  Auth:         OIDC token via VERCEL_OIDC_TOKEN")
+            print("  Auth detail:  mode: OIDC")
+            print("  Auth detail:  active env: VERCEL_OIDC_TOKEN")
+        elif os.getenv("VERCEL_TOKEN"):
+            print("  Auth:         access token via VERCEL_TOKEN")
+            print("  Auth detail:  mode: access token")
+            print("  Auth detail:  active env: VERCEL_TOKEN")
+        else:
+            print("  Auth:         not configured")
+        if persistent:
+            print("  Filesystem:   snapshot filesystem persists between commands")
+        else:
+            print("  Filesystem:   ephemeral snapshot filesystem")
+        print("  Processes:    live processes do not survive between commands")
 
     sudo_password = os.getenv("SUDO_PASSWORD", "")
     print(f"  Sudo:         {check_mark(bool(sudo_password))} {'enabled' if sudo_password else 'disabled'}")

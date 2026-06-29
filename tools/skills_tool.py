@@ -69,7 +69,7 @@ Usage:
 import json
 import logging
 
-from hermes_constants import get_hermes_home, display_hermes_home
+from hermes_constants import get_hermes_home, get_skills_dir, display_hermes_home
 import os
 import re
 from enum import Enum
@@ -109,6 +109,15 @@ _REMOTE_ENV_BACKENDS = frozenset(
     {"docker", "singularity", "modal", "ssh", "daytona"}
 )
 _secret_capture_callback = None
+
+
+def _local_skill_dirs() -> List[Path]:
+    """Return current local skill roots, preserving module-level test overrides."""
+    dirs: List[Path] = []
+    for path in (get_skills_dir(), SKILLS_DIR):
+        if path not in dirs:
+            dirs.append(path)
+    return dirs
 
 
 def _skill_lookup_path_error(name: str) -> Optional[str]:
@@ -501,7 +510,7 @@ def _get_category_from_path(skill_path: Path) -> Optional[str]:
     """
     # Try the module-level SKILLS_DIR first (respects monkeypatching in tests),
     # then fall back to external dirs from config.
-    dirs_to_check = [SKILLS_DIR]
+    dirs_to_check = _local_skill_dirs()
     try:
         from agent.skill_utils import get_external_skills_dirs
         dirs_to_check.extend(get_external_skills_dirs())
@@ -619,9 +628,7 @@ def _find_all_skills(*, skip_disabled: bool = False) -> List[Dict[str, Any]]:
     disabled = set() if skip_disabled else _get_disabled_skill_names()
 
     # Scan local dir first, then external dirs (local takes precedence)
-    dirs_to_scan = []
-    if SKILLS_DIR.exists():
-        dirs_to_scan.append(SKILLS_DIR)
+    dirs_to_scan = [path for path in _local_skill_dirs() if path.exists()]
     dirs_to_scan.extend(get_external_skills_dirs())
 
     for scan_dir in dirs_to_scan:
@@ -981,9 +988,7 @@ def skill_view(
                 )
 
         # Build list of all skill directories to search
-        all_dirs = []
-        if SKILLS_DIR.exists():
-            all_dirs.append(SKILLS_DIR)
+        all_dirs = [path for path in _local_skill_dirs() if path.exists()]
         all_dirs.extend(get_external_skills_dirs())
 
         if not all_dirs:
@@ -1133,9 +1138,11 @@ def skill_view(
         # Security: warn if skill is loaded from outside trusted directories
         # (local skills dir + configured external_dirs are all trusted)
         _outside_skills_dir = True
-        _trusted_dirs = [SKILLS_DIR.resolve()]
+        _trusted_dirs = [d.resolve() for d in _local_skill_dirs()]
         try:
-            _trusted_dirs.extend(d.resolve() for d in all_dirs[1:])
+            _trusted_dirs.extend(
+                d.resolve() for d in all_dirs if d not in _local_skill_dirs()
+            )
         except Exception:
             pass
         for _td in _trusted_dirs:
@@ -1362,7 +1369,15 @@ def skill_view(
             linked_files["scripts"] = script_files
 
         try:
-            rel_path = str(skill_md.relative_to(SKILLS_DIR))
+            rel_path = None
+            for local_dir in _local_skill_dirs():
+                try:
+                    rel_path = str(skill_md.relative_to(local_dir))
+                    break
+                except ValueError:
+                    continue
+            if rel_path is None:
+                raise ValueError
         except ValueError:
             # External skill — use path relative to the skill's own parent dir
             rel_path = str(skill_md.relative_to(skill_md.parent.parent)) if skill_md.parent.parent else skill_md.name

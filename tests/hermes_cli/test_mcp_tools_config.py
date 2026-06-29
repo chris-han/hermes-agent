@@ -1,13 +1,21 @@
 """Tests for MCP tools interactive configuration in hermes_cli.tools_config."""
 
-from unittest.mock import patch
+from contextlib import contextmanager
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 from hermes_cli.tools_config import _configure_mcp_tools_interactive
 
 # Patch targets: imports happen inside the function body, so patch at source
 _PROBE = "tools.mcp_tool.probe_mcp_server_tools"
 _CHECKLIST = "hermes_cli.curses_ui.curses_checklist"
-_SAVE = "hermes_cli.tools_config.save_config"
+
+
+@contextmanager
+def _patch_save_config():
+    mock_save = MagicMock()
+    with patch.dict(_configure_mcp_tools_interactive.__globals__, {"save_config": mock_save}):
+        yield mock_save
 
 
 def test_no_mcp_servers_prints_info(capsys):
@@ -60,20 +68,15 @@ def test_no_changes_when_checklist_cancelled(capsys):
 
     with patch(_PROBE, return_value={"github": tools}), \
          patch(_CHECKLIST, return_value={0, 1}), \
-         patch(_SAVE) as mock_save:
+         _patch_save_config() as mock_save:
         _configure_mcp_tools_interactive(config)
     mock_save.assert_not_called()
     captured = capsys.readouterr()
     assert "no changes" in captured.out.lower()
 
 
-def test_disabling_tool_writes_include_list(capsys):
-    """Unchecking a tool produces an include list of the still-chosen tools.
-
-    Standardized on tools.include (whitelist) across the codebase — the
-    catalog flow, `hermes mcp configure`, and this UI all write the same
-    shape so users don\'t see config drift across UIs.
-    """
+def test_disabling_tool_writes_exclude_list(capsys):
+    """Unchecking a tool adds it to the exclude list."""
     config = {
         "mcp_servers": {
             "github": {"command": "npx"},
@@ -88,13 +91,13 @@ def test_disabling_tool_writes_include_list(capsys):
     # User unchecks delete_repo (index 1)
     with patch(_PROBE, return_value={"github": tools}), \
          patch(_CHECKLIST, return_value={0, 2}), \
-         patch(_SAVE) as mock_save:
+         _patch_save_config() as mock_save:
         _configure_mcp_tools_interactive(config)
 
     mock_save.assert_called_once()
     tools_cfg = config["mcp_servers"]["github"]["tools"]
-    assert tools_cfg["include"] == ["create_issue", "search_repos"]
-    assert "exclude" not in tools_cfg
+    assert tools_cfg["exclude"] == ["delete_repo"]
+    assert "include" not in tools_cfg
 
 
 def test_enabling_all_clears_filters(capsys):
@@ -113,7 +116,7 @@ def test_enabling_all_clears_filters(capsys):
     # so returning {0, 1} is a change
     with patch(_PROBE, return_value={"github": tools}), \
          patch(_CHECKLIST, return_value={0, 1}), \
-         patch(_SAVE) as mock_save:
+         _patch_save_config() as mock_save:
         _configure_mcp_tools_interactive(config)
 
     mock_save.assert_called_once()
@@ -141,7 +144,7 @@ def test_pre_selection_respects_existing_exclude(capsys):
 
     with patch(_PROBE, return_value={"github": tools}), \
          patch(_CHECKLIST, side_effect=fake_checklist), \
-         patch(_SAVE):
+         _patch_save_config():
         _configure_mcp_tools_interactive(config)
 
     # create_issue (0) and search (2) should be pre-selected, delete_repo (1) should not
@@ -167,7 +170,7 @@ def test_pre_selection_respects_existing_include(capsys):
 
     with patch(_PROBE, return_value={"github": tools}), \
          patch(_CHECKLIST, side_effect=fake_checklist), \
-         patch(_SAVE):
+         _patch_save_config():
         _configure_mcp_tools_interactive(config)
 
     # Only search (2) should be pre-selected
@@ -195,7 +198,7 @@ def test_multiple_servers_each_get_checklist(capsys):
             "slack": [("send_message", "Send")],
         },
     ), patch(_CHECKLIST, side_effect=fake_checklist), \
-         patch(_SAVE):
+         _patch_save_config():
         _configure_mcp_tools_interactive(config)
 
     assert len(checklist_calls) == 2
@@ -216,7 +219,7 @@ def test_failed_server_shows_warning(capsys):
     with patch(
         _PROBE, return_value={"github": [("create_issue", "Create")]},
     ), patch(_CHECKLIST, return_value={0}), \
-         patch(_SAVE):
+         _patch_save_config():
         _configure_mcp_tools_interactive(config)
 
     captured = capsys.readouterr()
@@ -240,7 +243,7 @@ def test_description_truncation_in_labels():
     with patch(
         _PROBE, return_value={"github": [("my_tool", long_desc)]},
     ), patch(_CHECKLIST, side_effect=fake_checklist), \
-         patch(_SAVE):
+         _patch_save_config():
         _configure_mcp_tools_interactive(config)
 
     label = captured_labels["value"][0]
@@ -248,9 +251,8 @@ def test_description_truncation_in_labels():
     assert len(label) < len(long_desc) + 30  # truncated + tool name + parens
 
 
-def test_modifying_include_stays_in_include_mode(capsys):
-    """Changing the selection updates the include list — never switches
-    to exclude mode. Standardized on include-mode writes across the codebase."""
+def test_switching_from_include_to_exclude(capsys):
+    """When user modifies selection, include list is replaced by exclude list."""
     config = {
         "mcp_servers": {
             "github": {
@@ -261,15 +263,16 @@ def test_modifying_include_stays_in_include_mode(capsys):
     }
     tools = [("create_issue", "Create"), ("search", "Search"), ("delete", "Delete")]
 
-    # User adds search to the selection (deselects delete which was never on)
+    # User selects create_issue and search (deselects delete)
+    # pre_selected would be {0} (only create_issue from include), so {0, 1} is a change
     with patch(_PROBE, return_value={"github": tools}), \
          patch(_CHECKLIST, return_value={0, 1}), \
-         patch(_SAVE):
+         _patch_save_config():
         _configure_mcp_tools_interactive(config)
 
     tools_cfg = config["mcp_servers"]["github"]["tools"]
-    assert tools_cfg["include"] == ["create_issue", "search"]
-    assert "exclude" not in tools_cfg
+    assert tools_cfg["exclude"] == ["delete"]
+    assert "include" not in tools_cfg
 
 
 def test_empty_tools_server_skipped(capsys):
@@ -287,7 +290,7 @@ def test_empty_tools_server_skipped(capsys):
 
     with patch(_PROBE, return_value={"empty": []}), \
          patch(_CHECKLIST, side_effect=fake_checklist), \
-         patch(_SAVE):
+         _patch_save_config():
         _configure_mcp_tools_interactive(config)
 
     assert len(checklist_calls) == 0

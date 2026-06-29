@@ -1,5 +1,6 @@
 """Tests for gateway /verbose command (config-gated tool progress cycling)."""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -41,6 +42,19 @@ def _make_runner():
     return runner
 
 
+def _set_gateway_home(monkeypatch, hermes_home):
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+    monkeypatch.setattr(gateway_run, "_hermes_home", hermes_home)
+
+    def _load_temp_config():
+        path = hermes_home / "config.yaml"
+        if not path.exists():
+            return {}
+        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+    monkeypatch.setattr(gateway_run, "_load_gateway_config", _load_temp_config)
+
+
 class TestVerboseCommand:
     """Tests for _handle_verbose_command in the gateway."""
 
@@ -52,7 +66,7 @@ class TestVerboseCommand:
         config_path = hermes_home / "config.yaml"
         config_path.write_text("display:\n  tool_progress: all\n", encoding="utf-8")
 
-        monkeypatch.setattr(gateway_run, "_hermes_home", hermes_home)
+        _set_gateway_home(monkeypatch, hermes_home)
 
         runner = _make_runner()
         result = await runner._handle_verbose_command(_make_event())
@@ -71,7 +85,7 @@ class TestVerboseCommand:
             encoding="utf-8",
         )
 
-        monkeypatch.setattr(gateway_run, "_hermes_home", hermes_home)
+        _set_gateway_home(monkeypatch, hermes_home)
 
         runner = _make_runner()
         result = await runner._handle_verbose_command(_make_event())
@@ -95,7 +109,7 @@ class TestVerboseCommand:
             encoding="utf-8",
         )
 
-        monkeypatch.setattr(gateway_run, "_hermes_home", hermes_home)
+        _set_gateway_home(monkeypatch, hermes_home)
 
         runner = _make_runner()
         result = await runner._handle_verbose_command(_make_event())
@@ -114,7 +128,7 @@ class TestVerboseCommand:
             encoding="utf-8",
         )
 
-        monkeypatch.setattr(gateway_run, "_hermes_home", hermes_home)
+        _set_gateway_home(monkeypatch, hermes_home)
         runner = _make_runner()
 
         # off -> new -> all -> verbose -> off
@@ -127,14 +141,8 @@ class TestVerboseCommand:
                 f"Expected {mode}, got {actual}"
 
     @pytest.mark.asyncio
-    async def test_defaults_to_platform_default_when_no_tool_progress_set(self, tmp_path, monkeypatch):
-        """When tool_progress is not in config, starts from platform default then cycles.
-
-        Telegram's tier-1 preset overrides ``tool_progress`` to ``"off"`` so the
-        platform stays final-answer-first by default on mobile inboxes.  The
-        first ``/verbose`` invocation therefore cycles ``off → new``, not
-        ``all → ...``.
-        """
+    async def test_defaults_to_all_when_no_tool_progress_set(self, tmp_path, monkeypatch):
+        """When tool_progress is not in config, defaults to platform default then cycles."""
         hermes_home = tmp_path / "hermes"
         hermes_home.mkdir()
         config_path = hermes_home / "config.yaml"
@@ -143,23 +151,22 @@ class TestVerboseCommand:
             encoding="utf-8",
         )
 
-        monkeypatch.setattr(gateway_run, "_hermes_home", hermes_home)
+        _set_gateway_home(monkeypatch, hermes_home)
 
         runner = _make_runner()
         result = await runner._handle_verbose_command(_make_event())
 
-        # Telegram platform default is "off" → cycles to "new"
-        assert "NEW" in result
+        # Telegram platform default is "new" → cycles to "all"
+        assert "ALL" in result
         saved = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-        assert saved["display"]["platforms"]["telegram"]["tool_progress"] == "new"
+        assert saved["display"]["platforms"]["telegram"]["tool_progress"] == "all"
 
     @pytest.mark.asyncio
     async def test_per_platform_isolation(self, tmp_path, monkeypatch):
         """Cycling /verbose on Telegram doesn't change Slack's setting.
 
         Without a global tool_progress, each platform uses its built-in
-        default — Telegram = 'off' (tier-1 inbox override), Slack = 'off'
-        (quiet Slack default). Both cycle to 'new' on first /verbose.
+        default: Telegram = 'new' (overridden high tier), Slack = 'off' (quiet Slack default).
         """
         hermes_home = tmp_path / "hermes"
         hermes_home.mkdir()
@@ -170,7 +177,7 @@ class TestVerboseCommand:
             encoding="utf-8",
         )
 
-        monkeypatch.setattr(gateway_run, "_hermes_home", hermes_home)
+        _set_gateway_home(monkeypatch, hermes_home)
         runner = _make_runner()
 
         # Cycle on Telegram
@@ -184,8 +191,8 @@ class TestVerboseCommand:
 
         saved = yaml.safe_load(config_path.read_text(encoding="utf-8"))
         platforms = saved["display"]["platforms"]
-        # Telegram: off -> new (platform default = off, tier-1 inbox override)
-        assert platforms["telegram"]["tool_progress"] == "new"
+        # Telegram: new -> all (platform default = new)
+        assert platforms["telegram"]["tool_progress"] == "all"
         # Slack: off -> new (first /verbose cycle from quiet default)
         assert platforms["slack"]["tool_progress"] == "new"
 
@@ -196,7 +203,7 @@ class TestVerboseCommand:
         hermes_home.mkdir()
         # No config.yaml
 
-        monkeypatch.setattr(gateway_run, "_hermes_home", hermes_home)
+        _set_gateway_home(monkeypatch, hermes_home)
 
         runner = _make_runner()
         result = await runner._handle_verbose_command(_make_event())

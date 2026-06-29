@@ -1,6 +1,7 @@
 """Tests for gateway /yolo session scoping."""
 
 import os
+import importlib
 
 import pytest
 
@@ -8,18 +9,23 @@ import gateway.run as gateway_run
 from gateway.config import Platform
 from gateway.platforms.base import MessageEvent
 from gateway.session import SessionSource
-from tools.approval import disable_session_yolo, is_session_yolo_enabled
+
+
+def _approval():
+    return importlib.import_module("tools.approval")
 
 
 @pytest.fixture(autouse=True)
 def _clean_yolo_state(monkeypatch):
     monkeypatch.delenv("HERMES_YOLO_MODE", raising=False)
-    disable_session_yolo("agent:main:telegram:dm:chat-a")
-    disable_session_yolo("agent:main:telegram:dm:chat-b")
+    approval = _approval()
+    approval.disable_session_yolo("agent:main:telegram:dm:chat-a")
+    approval.disable_session_yolo("agent:main:telegram:dm:chat-b")
     yield
     monkeypatch.delenv("HERMES_YOLO_MODE", raising=False)
-    disable_session_yolo("agent:main:telegram:dm:chat-a")
-    disable_session_yolo("agent:main:telegram:dm:chat-b")
+    approval = _approval()
+    approval.disable_session_yolo("agent:main:telegram:dm:chat-a")
+    approval.disable_session_yolo("agent:main:telegram:dm:chat-b")
 
 
 def _make_runner():
@@ -51,12 +57,13 @@ async def test_yolo_command_toggles_only_current_session(monkeypatch):
     result_on = await runner._handle_yolo_command(event_a)
 
     assert "ON" in result_on
-    assert is_session_yolo_enabled(session_a) is True
-    assert is_session_yolo_enabled(session_b) is False
+    approval = _approval()
+    assert approval.is_session_yolo_enabled(session_a) is True
+    assert approval.is_session_yolo_enabled(session_b) is False
     assert os.environ.get("HERMES_YOLO_MODE") is None
 
     result_off = await runner._handle_yolo_command(event_a)
 
     assert "OFF" in result_off
-    assert is_session_yolo_enabled(session_a) is False
+    assert _approval().is_session_yolo_enabled(session_a) is False
     assert os.environ.get("HERMES_YOLO_MODE") is None

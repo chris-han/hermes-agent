@@ -75,7 +75,7 @@ def _ensure_discord_mock():
 
 _ensure_discord_mock()
 
-from plugins.platforms.discord.adapter import DiscordAdapter  # noqa: E402
+from gateway.platforms.discord import DiscordAdapter  # noqa: E402
 
 
 class FakeTree:
@@ -676,13 +676,6 @@ class _FakeTextChannel:
         self.guild = SimpleNamespace(name=guild_name, id=1)
         self.topic = None
 
-    def history(self, *args, **kwargs):
-        async def _empty():
-            return
-            yield  # pragma: no cover — make this an async generator
-
-        return _empty()
-
 
 class _FakeThreadChannel(_discord_mod.Thread):
     """isinstance(ch, discord.Thread) → True."""
@@ -693,14 +686,11 @@ class _FakeThreadChannel(_discord_mod.Thread):
         self.name = name
         self.guild = SimpleNamespace(name=guild_name, id=1)
         self.topic = None
-        self.parent = SimpleNamespace(id=parent_id, name="general", guild=SimpleNamespace(name=guild_name, id=1))
+        self._test_parent = SimpleNamespace(id=parent_id, name="general", guild=SimpleNamespace(name=guild_name, id=1))
 
-    def history(self, *args, **kwargs):
-        async def _empty():
-            return
-            yield  # pragma: no cover — make this an async generator
-
-        return _empty()
+    @property
+    def parent(self):
+        return self._test_parent
 
 
 def _fake_message(channel, *, content="Hello", author_id=42, display_name="Jezza"):
@@ -1046,4 +1036,3 @@ def test_register_skill_command_autocomplete_filters_by_name_and_description(ada
     # (covered in other tests). The autocomplete filter itself is exercised
     # via direct function call in the real-discord integration path.
     assert skill_cmd.callback is not None
-

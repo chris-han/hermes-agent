@@ -11,17 +11,11 @@
   callPackage,
   python312,
   nodejs_22,
-  electron,
   ripgrep,
   git,
   openssh,
   ffmpeg,
   tirith,
-
-  # linux-only deps
-  wl-clipboard,
-  xclip,
-
   # Flake inputs — passed explicitly by packages.nix and overlays.nix
   uv2nix,
   pyproject-nix,
@@ -93,10 +87,6 @@ let
     openssh
     ffmpeg
     tirith
-  ]
-  ++ lib.optionals stdenv.isLinux [
-    wl-clipboard
-    xclip
   ];
 
   runtimePath = lib.makeBinPath runtimeDeps;
@@ -150,7 +140,7 @@ let
     print('No collisions found.')
   '';
 in
-stdenv.mkDerivation (finalAttrs: {
+stdenv.mkDerivation {
   pname = "hermes-agent";
   version = (fromTOML (builtins.readFile ../pyproject.toml)).project.version;
 
@@ -208,18 +198,6 @@ stdenv.mkDerivation (finalAttrs: {
       hermesVenv
       ;
 
-    # `hermesDesktop` references `finalAttrs.finalPackage` (this whole
-    # derivation, after all overrides are applied) so the desktop wrapper
-    # can prepend its `/bin` to PATH.  The desktop's resolver step 4
-    # ("existing hermes on PATH") then picks up the fully wrapped
-    # `hermes` binary — venv with all deps, bundled skills/plugins,
-    # runtime PATH (ripgrep/git/ffmpeg/etc).  No re-implementation
-    # of the agent resolution in the desktop wrapper.
-    hermesDesktop = callPackage ./desktop.nix {
-      inherit hermesNpmLib electron;
-      hermesAgent = finalAttrs.finalPackage;
-    };
-
     devShellHook = ''
       export HERMES_PYTHON=${hermesVenv}/bin/python3
     '';
@@ -234,4 +212,4 @@ stdenv.mkDerivation (finalAttrs: {
     license = licenses.mit;
     platforms = platforms.unix;
   };
-})
+}

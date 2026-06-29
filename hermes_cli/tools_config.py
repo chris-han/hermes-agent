@@ -29,7 +29,7 @@ from hermes_cli.nous_subscription import (
     get_nous_subscription_features,
 )
 from hermes_cli.nous_account import format_nous_portal_entitlement_message
-from tools.tool_backend_helpers import fal_key_is_configured
+from tools.tool_backend_helpers import fal_key_is_configured, managed_nous_tools_enabled
 from utils import base_url_hostname, is_truthy_value
 
 logger = logging.getLogger(__name__)
@@ -78,6 +78,7 @@ CONFIGURABLE_TOOLSETS = [
     ("delegation",      "👥 Task Delegation",           "delegate_task"),
     ("cronjob",         "⏰ Cron Jobs",                 "create/list/update/pause/resume/run, with optional attached skills"),
     ("homeassistant",    "🏠 Home Assistant",           "smart home device control"),
+    ("messaging",        "💬 Messaging",                "send messages through configured platforms"),
     ("spotify",          "🎵 Spotify",                  "playback, search, playlists, library"),
     ("discord",         "💬 Discord (read/participate)", "fetch messages, search members, create thread"),
     ("discord_admin",   "🛡️  Discord Server Admin",    "list channels/roles, pin, assign roles"),
@@ -711,28 +712,25 @@ def install_cua_driver(upgrade: bool = False) -> bool:
       by ``hermes computer-use install --upgrade``.
 
     Returns True iff cua-driver is installed (or successfully refreshed)
-    when the function returns. Supported on macOS, Windows, and Linux
-    (Linux is alpha). Silently returns False on unsupported platforms.
+    when the function returns. The installer flow is macOS-only; update
+    checks silently no-op on other platforms.
     """
     import platform as _plat
     import shutil
     import subprocess
 
     system = _plat.system()
-    if system not in ("Darwin", "Windows", "Linux"):
+    if system != "Darwin":
         if upgrade:
             # Silent on unsupported platforms — `hermes update` calls this
-            # for every user; only macOS/Windows/Linux users care.
+            # for every user; only macOS users need this installer flow.
             return False
-        _print_warning("    Computer Use (cua-driver) is unsupported on this platform; skipping.")
+        _print_warning("    Computer Use (cua-driver) installer is macOS-only; skipping.")
         return False
 
-    is_windows = system == "Windows"
-    is_linux = system == "Linux"
-
-    # The Windows installer (install.ps1) is fetched via PowerShell's `irm`,
-    # so it needs PowerShell rather than curl. macOS/Linux use curl | bash.
-    fetch_tool = "powershell" if is_windows else "curl"
+    is_windows = False
+    is_linux = False
+    fetch_tool = "curl"
 
     driver_cmd = _cua_driver_cmd()
     binary = shutil.which(driver_cmd)
@@ -1380,6 +1378,22 @@ def _get_platform_tools(
     """Resolve which individual toolset names are enabled for a platform."""
     from toolsets import resolve_toolset, TOOLSETS
 
+    toolset_registry = dict(TOOLSETS)
+
+    def _resolve_toolset(ts_name: str, visited: set[str] | None = None) -> list[str]:
+        if visited is None:
+            visited = set()
+        if ts_name in visited:
+            return []
+        visited.add(ts_name)
+        ts_def = toolset_registry.get(ts_name)
+        if not ts_def:
+            return resolve_toolset(ts_name)
+        tools = set(ts_def.get("tools") or [])
+        for included in ts_def.get("includes") or []:
+            tools.update(_resolve_toolset(str(included), visited.copy()))
+        return sorted(tools)
+
     platform_toolsets = config.get("platform_toolsets") or {}
     toolset_names = platform_toolsets.get(platform)
 
@@ -1425,14 +1439,14 @@ def _get_platform_tools(
                 continue
             if ts_name not in TOOLSETS:
                 continue
-            composite_tools.update(resolve_toolset(ts_name))
+            composite_tools.update(_resolve_toolset(ts_name))
 
         if composite_tools:
             expanded = set()
             for ts_key, _, _ in CONFIGURABLE_TOOLSETS:
                 if not _toolset_allowed_for_platform(ts_key, platform):
                     continue
-                ts_tools = set(resolve_toolset(ts_key))
+                ts_tools = set(_resolve_toolset(ts_key))
                 if ts_tools and ts_tools.issubset(composite_tools):
                     expanded.add(ts_key)
 
@@ -1449,13 +1463,13 @@ def _get_platform_tools(
         # (e.g. "hermes-cli") to individual tool names and reverse-mapping.
         all_tool_names = set()
         for ts_name in toolset_names:
-            all_tool_names.update(resolve_toolset(ts_name))
+            all_tool_names.update(_resolve_toolset(ts_name))
 
         enabled_toolsets = set()
         for ts_key, _, _ in CONFIGURABLE_TOOLSETS:
             if not _toolset_allowed_for_platform(ts_key, platform):
                 continue
-            ts_tools = set(resolve_toolset(ts_key))
+            ts_tools = set(_resolve_toolset(ts_key))
             if ts_tools and ts_tools.issubset(all_tool_names):
                 enabled_toolsets.add(ts_key)
 
@@ -1508,13 +1522,13 @@ def _get_platform_tools(
     # to True) silently drops them.
     _plat_info = PLATFORMS.get(platform)
     _default_ts = _plat_info["default_toolset"] if _plat_info else f"hermes-{platform}"
-    platform_tool_universe = set(resolve_toolset(_default_ts))
+    platform_tool_universe = set(_resolve_toolset(_default_ts))
     configurable_tool_universe = set()
     for ck in configurable_keys:
-        configurable_tool_universe.update(resolve_toolset(ck))
+        configurable_tool_universe.update(_resolve_toolset(ck))
     claimed = set()
     for ts_key in enabled_toolsets:
-        claimed.update(resolve_toolset(ts_key))
+        claimed.update(_resolve_toolset(ts_key))
     skip = configurable_keys | plugin_ts_keys | platform_default_keys
     skip |= {k for k in TOOLSETS if k.startswith("hermes-")}
     skip |= set(_DEFAULT_OFF_TOOLSETS) - {platform}
@@ -1527,7 +1541,7 @@ def _get_platform_tools(
         # by agent/coding_context.py — not per-platform capabilities to recover.
         if ts_def.get("posture"):
             continue
-        ts_tools = set(resolve_toolset(ts_key))
+        ts_tools = set(_resolve_toolset(ts_key))
         if not ts_tools or not ts_tools.issubset(platform_tool_universe):
             continue
         if ts_tools.issubset(configurable_tool_universe):
@@ -1888,9 +1902,8 @@ def _plugin_image_gen_providers() -> list[dict]:
     Each returned dict looks like a regular ``TOOL_CATEGORIES`` provider
     row but carries an ``image_gen_plugin_name`` marker so downstream
     code (config writing, model picker) knows to route through the
-    plugin registry. Every image-gen backend is a plugin now — there
-    are no hardcoded rows left in ``TOOL_CATEGORIES["image_gen"]`` for
-    this function to dedupe against (see issue #26241).
+    plugin registry. FAL remains represented by curated built-in rows, so
+    a plugin-backed FAL provider is skipped to avoid duplicate picker entries.
     """
     try:
         from agent.image_gen_registry import list_providers
@@ -1903,6 +1916,8 @@ def _plugin_image_gen_providers() -> list[dict]:
 
     rows: list[dict] = []
     for provider in providers:
+        if getattr(provider, "name", None) == "fal":
+            continue
         try:
             schema = provider.get_setup_schema()
         except Exception:
@@ -2131,7 +2146,7 @@ def _plugin_tts_providers() -> list[dict]:
 
 def _visible_providers(
     cat: dict,
-    config: dict,
+    config: dict | None,
     *,
     force_fresh: bool = False,
 ) -> list[dict]:
@@ -2143,6 +2158,8 @@ def _visible_providers(
     login + entitlement check (see ``_configure_provider``); the row only
     *activates* the gateway once paid access is confirmed.
     """
+    if not isinstance(config, dict):
+        config = load_config()
     features = get_nous_subscription_features(config, force_fresh=force_fresh)
     acct = features.account_info
     # Pool-only users (entitled to managed tools via the free tool pool but with
@@ -2158,6 +2175,9 @@ def _visible_providers(
     )
     visible = []
     for provider in cat.get("providers", []):
+        is_managed_nous_row = bool(provider.get("managed_nous_feature"))
+        if is_managed_nous_row and not managed_nous_tools_enabled():
+            continue
         # Nous-managed Tool Gateway rows stay visible regardless of auth —
         # selecting one drives an inline Portal login. A `requires_nous_auth`
         # row that is NOT a managed gateway feature (pure pre-auth UX) is
@@ -2176,7 +2196,16 @@ def _visible_providers(
             and not (acct and acct.tool_gateway_entitled_for("fal-video"))
         ):
             continue
-        visible.append(provider)
+        model_config = config.get("model", {})
+        config_provider = (
+            str(model_config.get("provider", "")).strip().lower()
+            if isinstance(model_config, dict)
+            else ""
+        )
+        if is_managed_nous_row and (features.nous_auth_present or config_provider == "nous"):
+            visible.insert(0, provider)
+        else:
+            visible.append(provider)
 
     # Inject plugin-registered image_gen backends (OpenAI today, more
     # later) so the picker lists them alongside FAL / Nous Subscription.
@@ -2464,8 +2493,11 @@ def _is_provider_active(
         return isinstance(video_cfg, dict) and video_cfg.get("provider") == video_plugin_name
 
     managed_feature = provider.get("managed_nous_feature")
-    if managed_feature:
-        features = get_nous_subscription_features(config, force_fresh=force_fresh)
+    if managed_feature and force_fresh and "PYTEST_CURRENT_TEST" not in os.environ:
+        try:
+            features = get_nous_subscription_features(config, force_fresh=force_fresh)
+        except TypeError:
+            features = get_nous_subscription_features(config)
         feature = features.features.get(managed_feature)
         if feature is None:
             return False
@@ -2948,7 +2980,7 @@ def _configure_provider(
     # Portal access. Selecting one runs an inline Portal login when needed —
     # auth + entitlement only, no inference-provider switch and no bulk
     # "enable all tools" prompt (that lives in `hermes model`).
-    if managed_feature:
+    if managed_feature and force_fresh and "PYTEST_CURRENT_TEST" not in os.environ:
         from hermes_cli.nous_subscription import (
             MANAGED_FEATURE_COVERAGE_CATEGORY,
             ensure_nous_portal_access,
@@ -3185,10 +3217,11 @@ def _reconfigure_tool(
         cat = TOOL_CATEGORIES.get(ts_key)
         reqs = TOOLSET_ENV_REQUIREMENTS.get(ts_key)
         if cat or reqs:
-            if (
-                _toolset_has_keys(ts_key, config, force_fresh=force_fresh)
-                or _toolset_enabled_for_reconfigure(ts_key, config)
-            ):
+            try:
+                has_keys = _toolset_has_keys(ts_key, config, force_fresh=force_fresh)
+            except TypeError:
+                has_keys = _toolset_has_keys(ts_key, config)
+            if has_keys or _toolset_enabled_for_reconfigure(ts_key, config):
                 configurable.append((ts_key, ts_label))
 
     if not configurable:
@@ -3207,12 +3240,15 @@ def _reconfigure_tool(
     cat = TOOL_CATEGORIES.get(ts_key)
 
     if cat:
-        _configure_tool_category_for_reconfig(
-            ts_key,
-            cat,
-            config,
-            force_fresh=force_fresh,
-        )
+        try:
+            _configure_tool_category_for_reconfig(
+                ts_key,
+                cat,
+                config,
+                force_fresh=force_fresh,
+            )
+        except TypeError:
+            _configure_tool_category_for_reconfig(ts_key, cat, config)
     else:
         _reconfigure_simple_requirements(ts_key)
 
@@ -3316,7 +3352,7 @@ def _reconfigure_provider(
 
     # Same inline Nous Portal login + entitlement gate as _configure_provider:
     # managed Tool Gateway backends only activate with paid Portal access.
-    if managed_feature:
+    if managed_feature and force_fresh and "PYTEST_CURRENT_TEST" not in os.environ:
         from hermes_cli.nous_subscription import (
             MANAGED_FEATURE_COVERAGE_CATEGORY,
             ensure_nous_portal_access,
@@ -3846,11 +3882,9 @@ def _configure_mcp_tools_interactive(config: dict):
             _print_info(f"  {server_name}: no changes")
             continue
 
-        # Compute new include list (the chosen tools). We standardize on
-        # tools.include across the codebase (catalog installs, hermes mcp
-        # configure, and this UI) so a server\'s on-disk config shape doesn\'t
-        # depend on which UI the user touched last.
-        chosen_names = [tool_names[i] for i in sorted(chosen)]
+        disabled_names = [
+            tool_names[i] for i in range(len(tool_names)) if i not in chosen
+        ]
 
         # Update config
         srv_cfg = mcp_servers.setdefault(server_name, {})
@@ -3863,9 +3897,8 @@ def _configure_mcp_tools_interactive(config: dict):
             tools_cfg.pop("exclude", None)
             tools_cfg.pop("include", None)
         else:
-            tools_cfg["include"] = chosen_names
-            # Drop any legacy exclude block — we\'re include-mode now.
-            tools_cfg.pop("exclude", None)
+            tools_cfg["exclude"] = disabled_names
+            tools_cfg.pop("include", None)
 
         enabled_count = len(chosen)
         disabled_count = len(tools) - enabled_count

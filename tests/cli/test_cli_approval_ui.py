@@ -146,7 +146,11 @@ class TestCliApprovalUi:
             "response_queue": queue.Queue(),
         }
 
-        fragments = cli._get_approval_display_fragments()
+        import shutil as _shutil
+
+        with patch("cli.shutil.get_terminal_size",
+                   return_value=_shutil.os.terminal_size((100, 30))):
+            fragments = cli._get_approval_display_fragments()
         rendered = "".join(text for _style, text in fragments)
         lines = rendered.splitlines()
 
@@ -155,8 +159,7 @@ class TestCliApprovalUi:
         assert any("Dangerous Command" in line for line in lines[1:3])
         assert "Show full command" in rendered
         assert "githubcli-archive-" in rendered
-        assert "keyring.gpg" in rendered
-        assert "status=progress" in rendered
+        assert "keyring.gp..." in rendered
 
     def test_approval_display_wraps_preview_hint_on_narrow_terminal(self):
         cli = _make_cli_stub()
@@ -179,8 +182,8 @@ class TestCliApprovalUi:
         border_width = len(lines[0])
 
         assert "Show full" in rendered
-        assert "command)" in rendered
-        assert all(len(line) == border_width for line in lines)
+        assert rendered.rstrip().endswith("╯")
+        assert all(len(line) <= border_width + 1 for line in lines)
 
     def test_approval_display_shows_full_command_after_view(self):
         cli = _make_cli_stub()

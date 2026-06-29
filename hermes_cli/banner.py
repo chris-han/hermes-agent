@@ -340,7 +340,7 @@ def check_for_updates() -> Optional[int]:
             if (
                 now - cached.get("ts", 0) < _UPDATE_CHECK_CACHE_SECONDS
                 and cached.get("rev") == embedded_rev
-                and cached.get("ver") == VERSION
+                and cached.get("ver", VERSION) == VERSION
             ):
                 return cached.get("behind")
     except Exception:

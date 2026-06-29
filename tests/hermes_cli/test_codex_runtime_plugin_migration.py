@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 
 import pytest
 
 from hermes_cli.codex_runtime_plugin_migration import (
     MIGRATION_MARKER,
     MIGRATION_END_MARKER,
+    MigrationReport,
     _build_hermes_tools_mcp_entry,
     _format_toml_value,
     _looks_like_test_tempdir,
@@ -349,11 +351,11 @@ class TestMigrate:
         def fake_query(codex_home=None, timeout=8.0):
             return [
                 {"name": "google-calendar", "marketplace": "openai-curated",
-                 "enabled": True},
+                 "installed": True, "enabled": True},
                 {"name": "github", "marketplace": "openai-curated",
-                 "enabled": True},
+                 "installed": True, "enabled": True},
             ], None
-        monkeypatch.setattr(crpm, "_query_codex_plugins", fake_query)
+        monkeypatch.setitem(migrate.__globals__, "_query_codex_plugins", fake_query)
 
         report = migrate({}, codex_home=tmp_path, discover_plugins=True)
         text = (tmp_path / "config.toml").read_text()

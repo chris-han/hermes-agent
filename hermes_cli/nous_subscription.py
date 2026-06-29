@@ -7,8 +7,10 @@ from pathlib import Path
 from typing import Dict, Iterable, Optional, Set
 
 from hermes_cli.config import get_env_value, load_config
+from hermes_cli.auth import get_nous_auth_status
 from hermes_cli.nous_account import (
     NousPortalAccountInfo,
+    NousToolAccessInfo,
     format_nous_portal_entitlement_message,
     get_nous_portal_account_info,
 )
@@ -76,38 +78,53 @@ class NousSubscriptionFeatures:
     features: Dict[str, NousFeatureState]
     account_info: Optional[NousPortalAccountInfo] = None
 
+    def _feature(self, key: str) -> NousFeatureState:
+        return self.features.get(
+            key,
+            NousFeatureState(
+                key=key,
+                label=key.replace("_", " ").title(),
+                included_by_default=False,
+                available=False,
+                active=False,
+                managed_by_nous=False,
+                direct_override=False,
+                toolset_enabled=False,
+            ),
+        )
+
     @property
     def web(self) -> NousFeatureState:
-        return self.features["web"]
+        return self._feature("web")
 
     @property
     def image_gen(self) -> NousFeatureState:
-        return self.features["image_gen"]
+        return self._feature("image_gen")
 
     @property
     def tts(self) -> NousFeatureState:
-        return self.features["tts"]
+        return self._feature("tts")
 
     @property
     def stt(self) -> NousFeatureState:
-        return self.features["stt"]
+        return self._feature("stt")
 
     @property
     def browser(self) -> NousFeatureState:
-        return self.features["browser"]
+        return self._feature("browser")
 
     @property
     def video_gen(self) -> NousFeatureState:
-        return self.features["video_gen"]
+        return self._feature("video_gen")
 
     @property
     def modal(self) -> NousFeatureState:
-        return self.features["modal"]
+        return self._feature("modal")
 
     def items(self) -> Iterable[NousFeatureState]:
         ordered = ("web", "image_gen", "video_gen", "tts", "stt", "browser", "modal")
         for key in ordered:
-            yield self.features[key]
+            yield self._feature(key)
 
 
 def _model_config_dict(config: Dict[str, object]) -> Dict[str, object]:
@@ -170,6 +187,48 @@ def _has_agent_browser() -> bool:
         Path(__file__).parent.parent / "node_modules" / ".bin" / "agent-browser"
     )
     return agent_browser_runnable(str(local_bin)) if local_bin.exists() else False
+
+
+def _legacy_managed_tools_account_info() -> Optional[NousPortalAccountInfo]:
+    """Build a compatibility entitlement from legacy auth/tool-gateway state."""
+    try:
+        _ = get_nous_auth_status()
+    except Exception:
+        pass
+    if not managed_nous_tools_enabled():
+        return None
+    coverage = {
+        "firecrawl": True,
+        "fal": True,
+        "fal-video": False,
+        "openai-audio": True,
+        "browser-use": True,
+        "modal": True,
+    }
+    return NousPortalAccountInfo(
+        logged_in=True,
+        source="none",
+        fresh=False,
+        paid_service_access=False,
+        tool_access=NousToolAccessInfo(enabled=True, coverage=coverage),
+        raw_claims={"legacy_managed_tools": True},
+    )
+
+
+def _get_nous_subscription_account_info(
+    *,
+    force_fresh: bool = False,
+) -> Optional[NousPortalAccountInfo]:
+    try:
+        if force_fresh:
+            account_info = get_nous_portal_account_info(force_fresh=True)
+        else:
+            account_info = get_nous_portal_account_info()
+    except Exception:
+        account_info = None
+    if account_info and account_info.logged_in:
+        return account_info
+    return _legacy_managed_tools_account_info()
 
 
 def _local_browser_runnable() -> bool:
@@ -337,13 +396,7 @@ def get_nous_subscription_features(
     model_cfg = _model_config_dict(config)
     provider_is_nous = str(model_cfg.get("provider") or "").strip().lower() == "nous"
 
-    try:
-        if force_fresh:
-            account_info = get_nous_portal_account_info(force_fresh=True)
-        else:
-            account_info = get_nous_portal_account_info()
-    except Exception:
-        account_info = None
+    account_info = _get_nous_subscription_account_info(force_fresh=force_fresh)
 
     # Coarse "entitled to any managed tool" gate: paid access OR a live free
     # tool pool. Per-backend availability is then narrowed by coverage below
@@ -925,10 +978,7 @@ def get_gateway_eligible_tools(
     # Fetch entitlement once: it gates the offer (paid access OR a live free tool
     # pool) AND tells us which categories are covered (the pool funds image but
     # not video, etc.). Fails closed on any error.
-    try:
-        account_info = get_nous_portal_account_info(force_fresh=force_fresh)
-    except Exception:
-        return [], [], []
+    account_info = _get_nous_subscription_account_info(force_fresh=force_fresh)
     if not (account_info and account_info.logged_in and account_info.tool_gateway_entitled):
         return [], [], []
 
@@ -958,7 +1008,12 @@ def get_gateway_eligible_tools(
     unconfigured: list[str] = []
     has_direct: list[str] = []
     already_managed: list[str] = []
-    for key in _ALL_GATEWAY_KEYS:
+    gateway_keys = _ALL_GATEWAY_KEYS
+    raw_claims = account_info.raw_claims if isinstance(account_info.raw_claims, dict) else {}
+    if raw_claims.get("legacy_managed_tools"):
+        gateway_keys = ("web", "image_gen", "tts", "browser")
+
+    for key in gateway_keys:
         # Only offer tools the user's entitlement actually covers. For a free
         # tool pool that means image but not video; paid users are covered for
         # everything.

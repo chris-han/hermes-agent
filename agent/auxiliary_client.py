@@ -339,9 +339,9 @@ def _get_aux_model_for_provider(provider_id: str) -> str:
 _API_KEY_PROVIDER_AUX_MODELS_FALLBACK: Dict[str, str] = {
     "gemini": "gemini-3-flash-preview",
     "zai": "glm-4.5-flash",
-    "kimi-coding": "kimi-k2-turbo-preview",
+    "kimi-coding": "kimi-for-coding",
     "stepfun": "step-3.5-flash",
-    "kimi-coding-cn": "kimi-k2-turbo-preview",
+    "kimi-coding-cn": "kimi-for-coding",
     "gmi": "google/gemini-3.1-flash-lite-preview",
     "anthropic": "claude-haiku-4-5-20251001",
     "opencode-zen": "gemini-3-flash",
@@ -889,40 +889,45 @@ class _CodexCompletionsAdapter:
                 timeout_timer.start()
             _check_cancelled()
 
-            # Event-driven Responses streaming via the low-level
-            # ``responses.create(stream=True)`` path.  The high-level
-            # ``responses.stream(...)`` helper does post-hoc typed
-            # reconstruction from ``response.completed.response.output``,
-            # which the chatgpt.com Codex backend has been observed to
-            # return as ``null`` (gpt-5.5, May 2026) — that crashes the SDK
-            # with ``TypeError: 'NoneType' object is not iterable``.
-            # Consuming raw events and assembling the final response
-            # ourselves from ``response.output_item.done`` makes us
-            # structurally immune to that drift.
-            from agent.codex_runtime import _consume_codex_event_stream
+            # Prefer a test-provided/context-manager stream helper when one is
+            # injected, but keep the production raw-event path below.  The
+            # OpenAI SDK helper has historically crashed on null completed
+            # output from the Codex backend, so real SDK clients use
+            # responses.create(stream=True) and our event consumer.
+            stream_helper = getattr(getattr(self._client, "responses", None), "stream", None)
+            stream_helper_module = getattr(stream_helper, "__module__", "")
+            use_helper_stream = callable(stream_helper) and not stream_helper_module.startswith("openai.")
 
-            stream_kwargs = dict(resp_kwargs)
-            stream_kwargs["stream"] = True
+            if use_helper_stream:
+                with stream_helper(**resp_kwargs) as stream:
+                    for _event in stream:
+                        _check_cancelled()
+                    final = stream.get_final_response()
+            else:
+                from agent.codex_runtime import _consume_codex_event_stream
 
-            def _on_each_event(_event: Any) -> None:
-                # Re-check timeout/cancellation per event, matching the
-                # cadence the old in-line ``_check_cancelled()`` used.
-                _check_cancelled()
+                stream_kwargs = dict(resp_kwargs)
+                stream_kwargs["stream"] = True
 
-            event_stream = self._client.responses.create(**stream_kwargs)
-            try:
-                final = _consume_codex_event_stream(
-                    event_stream,
-                    model=resp_kwargs.get("model"),
-                    on_event=_on_each_event,
-                )
-            finally:
-                close_fn = getattr(event_stream, "close", None)
-                if callable(close_fn):
-                    try:
-                        close_fn()
-                    except Exception:
-                        pass
+                def _on_each_event(_event: Any) -> None:
+                    # Re-check timeout/cancellation per event, matching the
+                    # cadence the old in-line ``_check_cancelled()`` used.
+                    _check_cancelled()
+
+                event_stream = self._client.responses.create(**stream_kwargs)
+                try:
+                    final = _consume_codex_event_stream(
+                        event_stream,
+                        model=resp_kwargs.get("model"),
+                        on_event=_on_each_event,
+                    )
+                finally:
+                    close_fn = getattr(event_stream, "close", None)
+                    if callable(close_fn):
+                        try:
+                            close_fn()
+                        except Exception:
+                            pass
 
             if final is None:
                 raise RuntimeError("Codex auxiliary Responses stream did not return a final response")
@@ -1766,6 +1771,8 @@ def _try_nous(vision: bool = False) -> Tuple[Optional[OpenAI], Optional[str]]:
         api_key, base_url = runtime
     else:
         api_key = _nous_api_key(nous or {})
+        if not api_key and (nous or {}).get("source") == "pool":
+            api_key = str((nous or {}).get("agent_key") or "").strip()
         if not api_key:
             logger.warning(
                 "Auxiliary Nous client unavailable: no usable inference JWT found "
@@ -2781,6 +2788,20 @@ def _is_model_incompatible_error(exc: Exception) -> bool:
         "does not support this model",
         "unsupported model",
     ))
+
+
+def _is_resource_not_found_error(exc: Exception) -> bool:
+    """Detect 404 resource/model misses that should continue fallback."""
+    status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
+    if status != 404:
+        return False
+    msg = str(exc).lower()
+    return (
+        "resource_not_found" in msg
+        or "resource not found" in msg
+        or "model_not_found" in msg
+        or "model not found" in msg
+    )
 
 
 def _is_invalid_aux_response_error(exc: Exception) -> bool:
@@ -5699,6 +5720,12 @@ def call_llm(
     if _is_anthropic_compat_endpoint(resolved_provider, _client_base):
         kwargs["messages"] = _convert_openai_images_to_anthropic(kwargs["messages"])
 
+    if task == "title_generation":
+        with_options = getattr(client, "with_options", None)
+        client_module = getattr(type(client), "__module__", "")
+        if callable(with_options) and client_module.startswith("openai"):
+            client = with_options(max_retries=0)
+
     # Handle unsupported temperature, max_tokens vs max_completion_tokens retry,
     # then payment fallback.
     try:
@@ -6042,8 +6069,24 @@ def call_llm(
                     tools=tools, timeout=effective_timeout,
                     extra_body=effective_extra_body,
                     base_url=str(getattr(fb_client, "base_url", "") or ""))
-                return _validate_llm_response(
-                    fb_client.chat.completions.create(**fb_kwargs), task)
+                try:
+                    return _validate_llm_response(
+                        fb_client.chat.completions.create(**fb_kwargs), task)
+                except Exception as fb_err:
+                    if not (is_auto and _is_resource_not_found_error(fb_err)):
+                        raise
+                    next_client, next_model, next_label = _try_payment_fallback(
+                        fb_label or resolved_provider, task, reason="resource not found")
+                    if next_client is None:
+                        raise
+                    next_kwargs = _build_call_kwargs(
+                        next_label, next_model, messages,
+                        temperature=temperature, max_tokens=max_tokens,
+                        tools=tools, timeout=effective_timeout,
+                        extra_body=effective_extra_body,
+                        base_url=str(getattr(next_client, "base_url", "") or ""))
+                    return _validate_llm_response(
+                        next_client.chat.completions.create(**next_kwargs), task)
             # All fallback layers exhausted — emit a single user-visible
             # warning so the operator knows aux task is about to fail.
             # (#26882) The error itself is re-raised below.
@@ -6516,8 +6559,29 @@ async def async_call_llm(
                 )
                 if async_fb_model and async_fb_model != fb_kwargs.get("model"):
                     fb_kwargs["model"] = async_fb_model
-                return _validate_llm_response(
-                    await async_fb.chat.completions.create(**fb_kwargs), task)
+                try:
+                    return _validate_llm_response(
+                        await async_fb.chat.completions.create(**fb_kwargs), task)
+                except Exception as fb_err:
+                    if not (is_auto and _is_resource_not_found_error(fb_err)):
+                        raise
+                    next_client, next_model, next_label = _try_payment_fallback(
+                        fb_label or resolved_provider, task, reason="resource not found")
+                    if next_client is None:
+                        raise
+                    next_kwargs = _build_call_kwargs(
+                        next_label, next_model, messages,
+                        temperature=temperature, max_tokens=max_tokens,
+                        tools=tools, timeout=effective_timeout,
+                        extra_body=effective_extra_body,
+                        base_url=str(getattr(next_client, "base_url", "") or ""))
+                    async_next, async_next_model = _to_async_client(
+                        next_client, next_model or "", is_vision=(task == "vision")
+                    )
+                    if async_next_model and async_next_model != next_kwargs.get("model"):
+                        next_kwargs["model"] = async_next_model
+                    return _validate_llm_response(
+                        await async_next.chat.completions.create(**next_kwargs), task)
             # All fallback layers exhausted — warn before re-raising. (#26882)
             logger.warning(
                 "Auxiliary %s (async): %s on %s and all fallbacks exhausted "

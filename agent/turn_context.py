@@ -321,14 +321,15 @@ def build_turn_context(
     agent._ensure_db_session()
 
     # Crash-resilience: persist the inbound user turn as soon as the session row exists.
-    try:
-        agent._persist_session(messages, conversation_history)
-    except Exception:
-        logger.warning(
-            "Early turn-start session persistence failed for session=%s",
-            agent.session_id or "none",
-            exc_info=True,
-        )
+    if conversation_history is None:
+        try:
+            agent._persist_session(messages, conversation_history)
+        except Exception:
+            logger.warning(
+                "Early turn-start session persistence failed for session=%s",
+                agent.session_id or "none",
+                exc_info=True,
+            )
 
     # ── Preflight context compression ──
     # Gate the (expensive) full token estimate behind a cheap pre-check.

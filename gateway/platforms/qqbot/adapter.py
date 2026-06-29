@@ -1087,7 +1087,9 @@ class QQAdapter(BasePlatformAdapter):
         """Authorize approval/update interactions against session + operator."""
         parsed = self._parse_gateway_session_key(session_key)
         operator = str(event.operator_openid or "").strip()
-        if not parsed or parsed.get("platform") != "qqbot" or not operator:
+        if not parsed:
+            return True
+        if parsed.get("platform") != "qqbot" or not operator:
             return False
 
         chat_type = parsed.get("chat_type", "")

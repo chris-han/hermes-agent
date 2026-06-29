@@ -131,7 +131,7 @@ from gateway.platforms.base import (
 )
 from gateway.platforms.helpers import ThreadParticipationTracker
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("gateway.platforms.matrix")
 
 _MATRIX_BANG_COMMAND_RE = re.compile(
     r"^!([A-Za-z][A-Za-z0-9_-]*)(?=$|\s)(.*)$",

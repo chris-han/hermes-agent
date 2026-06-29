@@ -364,6 +364,80 @@ class TestReasoningCommand:
         assert "exa" in enabled_toolsets
         assert "web-search-prime" in enabled_toolsets
 
+    def test_run_agent_merges_workspace_toolsets_without_scoping_error(self, tmp_path, monkeypatch):
+        hermes_home = tmp_path / "shared-hermes"
+        workspace_home = tmp_path / "workspace" / ".hermes"
+        hermes_home.mkdir()
+        workspace_home.mkdir(parents=True)
+        (hermes_home / "config.yaml").write_text(
+            "platform_toolsets:\n"
+            "  feishu: [hermes-feishu]\n",
+            encoding="utf-8",
+        )
+        (workspace_home / "config.yaml").write_text(
+            "platform_toolsets:\n"
+            "  feishu: [meeting-coordinator]\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.setattr(gateway_run, "_hermes_home", hermes_home)
+        monkeypatch.setattr(gateway_run, "_env_path", hermes_home / ".env")
+        monkeypatch.setattr(gateway_run, "load_dotenv", lambda *args, **kwargs: None)
+        monkeypatch.setattr(
+            gateway_run,
+            "_resolve_workspace_gateway_session",
+            lambda source, *, session_id, session_key, source_gateway: (
+                session_id,
+                workspace_home,
+            ),
+        )
+        monkeypatch.setattr(
+            gateway_run,
+            "_resolve_runtime_agent_kwargs",
+            lambda: {
+                "provider": "openrouter",
+                "api_mode": "chat_completions",
+                "base_url": "https://openrouter.ai/api/v1",
+                "api_key": "test-key",
+            },
+        )
+        fake_run_agent = types.ModuleType("run_agent")
+        fake_run_agent.AIAgent = _CapturingAgent
+        monkeypatch.setitem(sys.modules, "run_agent", fake_run_agent)
+
+        _CapturingAgent.last_init = None
+        runner = _make_runner()
+        runner.session_store = types.SimpleNamespace(
+            _entries={},
+            _save=lambda: None,
+            register_workspace_home=lambda *_args, **_kwargs: None,
+        )
+
+        source = SessionSource(
+            platform=Platform.FEISHU,
+            chat_id="oc_123",
+            chat_name="Feishu DM",
+            chat_type="dm",
+            user_id="ou_123",
+            workspace_owner_id="workspace",
+        )
+
+        result = asyncio.run(
+            runner._run_agent(
+                message="ping",
+                context_prompt="",
+                history=[],
+                source=source,
+                session_id="workspace:session_477a0a8c9e81",
+                session_key="agent:main:workspace:workspace:feishu:dm:oc_123",
+            )
+        )
+
+        assert result["final_response"] == "ok"
+        assert _CapturingAgent.last_init is not None
+        enabled_toolsets = set(_CapturingAgent.last_init["enabled_toolsets"])
+        assert "meeting-coordinator" in enabled_toolsets
+
     def test_run_agent_homeassistant_uses_default_platform_toolset(self, tmp_path, monkeypatch):
         hermes_home = tmp_path / "hermes"
         hermes_home.mkdir()

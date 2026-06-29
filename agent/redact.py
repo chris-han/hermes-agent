@@ -171,6 +171,10 @@ _JWT_RE = re.compile(
 # Negative lookahead prevents matching hex strings or identifiers
 _SIGNAL_PHONE_RE = re.compile(r"(\+[1-9]\d{6,14})(?![A-Za-z0-9])")
 
+# Discord user mentions: <@snowflake> and <@!snowflake>. Snowflakes are 17-20
+# digits today; keep the regex narrow so Slack-style <@U...> mentions survive.
+_DISCORD_MENTION_RE = re.compile(r"<@(!?)(\d{17,20})>")
+
 # URLs containing query strings — matches `scheme://...?...[# or end]`.
 # Used to scan text for URLs whose query params may contain secrets.
 # Ported from nearai/ironclaw#2529.
@@ -427,6 +431,13 @@ def redact_sensitive_text(text: str, *, force: bool = False, code_file: bool = F
     if "eyJ" in text:
         text = _JWT_RE.sub(lambda m: _mask_token(m.group(0)), text)
 
+    if "://" in text:
+        text = _redact_url_userinfo(text)
+        text = _redact_url_query_params(text)
+
+    if "?" in text:
+        text = _redact_http_request_target_query_params(text)
+
     # NOTE: Web-URL redaction (query params + userinfo + HTTP access-log
     # request targets) is intentionally OFF. Many legitimate workflows pass
     # opaque tokens through query strings — magic-link checkouts, OAuth
@@ -448,6 +459,9 @@ def redact_sensitive_text(text: str, *, force: bool = False, code_file: bool = F
                 return phone[:2] + "****" + phone[-2:]
             return phone[:4] + "****" + phone[-4:]
         text = _SIGNAL_PHONE_RE.sub(_redact_phone, text)
+
+    if "<@" in text:
+        text = _DISCORD_MENTION_RE.sub(lambda m: f"<@{m.group(1)}***>", text)
 
     return text
 

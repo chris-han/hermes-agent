@@ -999,6 +999,17 @@ class GatewayKanbanWatchersMixin:
                     conn = _kb.connect(board=slug)
                     if _kb.has_spawnable_ready(conn):
                         return True
+                except Exception:
+                    pass
+                finally:
+                    if conn is not None:
+                        try:
+                            conn.close()
+                        except Exception:
+                            pass
+                conn = None
+                try:
+                    conn = _kb.connect(board=slug)
                     if _kb.has_spawnable_review(conn):
                         return True
                 except Exception:
@@ -1050,6 +1061,8 @@ class GatewayKanbanWatchersMixin:
             successes = 0
             for b in boards:
                 slug = b.get("slug") or _kb.DEFAULT_BOARD
+                if slug in disabled_corrupt_boards:
+                    continue
                 if attempted >= auto_decompose_per_tick:
                     break
                 # Pin this board for the duration of the call — same
@@ -1114,7 +1127,7 @@ class GatewayKanbanWatchersMixin:
             try:
                 # Reap zombie children before per-board work so a board DB
                 # failure cannot block cleanup of unrelated workers.
-                pids = await asyncio.to_thread(_kb.reap_worker_zombies)
+                pids = _kb.reap_worker_zombies()
                 if pids:
                     logger.info(
                         "kanban dispatcher: reaped %d zombie worker(s), pids=%s",
@@ -1128,10 +1141,10 @@ class GatewayKanbanWatchersMixin:
                 # Re-read the auto-decompose toggle live each tick so a user
                 # flipping kanban.auto_decompose=false to STOP runaway fan-out
                 # takes effect on the next tick, not on gateway restart (#49638).
+                results = await asyncio.to_thread(_tick_once)
                 _ad_enabled, _ad_per_tick = _read_auto_decompose_settings()
                 if _ad_enabled:
                     await asyncio.to_thread(_auto_decompose_tick, _ad_per_tick)
-                results = await asyncio.to_thread(_tick_once)
                 any_spawned = False
                 for slug, res in (results or []):
                     if res is not None and getattr(res, "spawned", None):

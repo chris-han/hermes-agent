@@ -80,8 +80,6 @@ class TestKimiParity:
         assert kw["max_completion_tokens"] == 32000
 
     def test_thinking_enabled(self, transport):
-        # xor contract (fix ce4e74b3): an explicit recognized effort sends
-        # reasoning_effort ONLY — never paired with extra_body.thinking.
         kw = transport.build_kwargs(
             model="kimi-k2",
             messages=_simple_messages(),
@@ -90,10 +88,9 @@ class TestKimiParity:
             reasoning_config={"enabled": True, "effort": "high"},
         )
         assert kw.get("reasoning_effort") == "high"
-        assert "thinking" not in kw.get("extra_body", {})
+        assert kw["extra_body"]["thinking"] == {"type": "enabled"}
 
     def test_thinking_enabled_without_effort(self, transport):
-        # enabled but no effort → fall back to the thinking toggle, no effort.
         kw = transport.build_kwargs(
             model="kimi-k2",
             messages=_simple_messages(),
@@ -102,7 +99,7 @@ class TestKimiParity:
             reasoning_config={"enabled": True},
         )
         assert kw["extra_body"]["thinking"] == {"type": "enabled"}
-        assert "reasoning_effort" not in kw
+        assert kw["reasoning_effort"] == "medium"
 
     def test_thinking_disabled(self, transport):
         kw = transport.build_kwargs(
@@ -128,9 +125,6 @@ class TestKimiParity:
         assert "reasoning_effort" not in kw.get("extra_body", {})
 
     def test_reasoning_effort_default_no_effort(self, transport):
-        # xor contract: enabled with no effort falls back to thinking-enabled
-        # and emits NO top-level reasoning_effort (previously defaulted to
-        # "medium" alongside thinking — the pairing this fix removes).
         kw = transport.build_kwargs(
             model="kimi-k2",
             messages=_simple_messages(),
@@ -138,7 +132,7 @@ class TestKimiParity:
             provider_profile=get_provider_profile("kimi-coding"),
             reasoning_config={"enabled": True},
         )
-        assert "reasoning_effort" not in kw
+        assert kw["reasoning_effort"] == "medium"
         assert kw["extra_body"]["thinking"] == {"type": "enabled"}
 
 
@@ -270,7 +264,7 @@ class TestQwenParity:
 
 
 class TestCustomOllamaParity:
-    """Custom/Ollama: num_ctx, thinking controls — now tested via profile."""
+    """Custom/Ollama: num_ctx, think=false — now tested via profile."""
 
     def test_ollama_num_ctx(self, transport):
         kw = transport.build_kwargs(

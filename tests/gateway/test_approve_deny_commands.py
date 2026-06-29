@@ -8,6 +8,7 @@ Supports multiple concurrent approvals (parallel subagents, execute_code)
 via a per-session queue.
 """
 
+import asyncio
 import os
 import threading
 import time
@@ -18,7 +19,7 @@ import pytest
 
 from gateway.config import GatewayConfig, Platform, PlatformConfig
 from gateway.platforms.base import MessageEvent
-from gateway.session import SessionSource
+from gateway.session import SessionEntry, SessionSource, build_session_key
 
 
 def _make_source() -> SessionSource:
@@ -71,6 +72,7 @@ def _clear_approval_state():
     from tools import approval as mod
     mod._gateway_queues.clear()
     mod._gateway_notify_cbs.clear()
+    mod._session_yolo.clear()
     mod._session_approved.clear()
     mod._permanent_approved.clear()
     mod._pending.clear()
@@ -351,6 +353,70 @@ class TestBareTextNoLongerApproves:
         assert not entry.event.is_set()
 
 
+class TestPendingApprovalCommandNormalization:
+
+    def test_aporove_normalizes_when_tool_approval_is_live(self):
+        from gateway.run import _normalize_pending_approval_command
+
+        resolved = _normalize_pending_approval_command(
+            "aporove",
+            tool_approval_live=True,
+            pending_confirm=False,
+        )
+
+        assert resolved == "approve"
+
+    def test_aporove_normalizes_when_slash_confirm_is_pending(self):
+        from gateway.run import _normalize_pending_approval_command
+
+        resolved = _normalize_pending_approval_command(
+            "aporove",
+            tool_approval_live=False,
+            pending_confirm=True,
+        )
+
+        assert resolved == "approve"
+
+    def test_aporove_does_not_normalize_without_pending_context(self):
+        from gateway.run import _normalize_pending_approval_command
+
+        resolved = _normalize_pending_approval_command(
+            "aporove",
+            tool_approval_live=False,
+            pending_confirm=False,
+        )
+
+        assert resolved == "aporove"
+
+
+class TestPendingApprovalCommandRouting:
+
+    @pytest.mark.asyncio
+    async def test_running_agent_routes_aporove_to_approve_when_blocked(self):
+        """When approval is pending, /aporove should route through /approve."""
+        from tools.approval import _ApprovalEntry, _gateway_queues
+
+        _clear_approval_state()
+        runner = _make_runner()
+        source = _make_source()
+        event = _make_event("/aporove")
+        session_key = runner._session_key_for_source(source)
+
+        # Simulate an active in-flight run with a blocked dangerous command.
+        runner._running_agents[session_key] = object()
+        runner._running_agents_ts = {session_key: 0.0}
+        runner._check_slash_access = lambda *_args, **_kwargs: None
+        runner._handle_approve_command = AsyncMock(return_value="approved via typo")
+
+        entry = _ApprovalEntry({"command": "curl -s https://wttr.in/北京?format=%C+%t"})
+        _gateway_queues[session_key] = [entry]
+
+        result = await runner._handle_message(event)
+
+        assert result == "approved via typo"
+        runner._handle_approve_command.assert_awaited_once()
+
+
 # ------------------------------------------------------------------
 # End-to-end blocking flow
 # ------------------------------------------------------------------
@@ -361,11 +427,19 @@ class TestBlockingApprovalE2E:
 
     def setup_method(self):
         _clear_approval_state()
+        self._tirith_patch = patch(
+            "tools.tirith_security.check_command_security",
+            return_value={"action": "allow", "findings": [], "summary": ""},
+        )
+        self._tirith_patch.start()
         os.environ.pop("HERMES_YOLO_MODE", None)
         os.environ.pop("HERMES_INTERACTIVE", None)
         os.environ.pop("HERMES_GATEWAY_SESSION", None)
         os.environ.pop("HERMES_EXEC_ASK", None)
         os.environ.pop("HERMES_SESSION_KEY", None)
+
+    def teardown_method(self):
+        self._tirith_patch.stop()
 
     def test_blocking_approval_approve_once(self):
         """check_all_command_guards blocks until resolve_gateway_approval is called."""
@@ -634,7 +708,7 @@ class TestFallbackNoCallback:
         to ``pending_approval`` to make the state distinguishable from a
         failed tool call.
         """
-        from tools.approval import check_all_command_guards
+        from tools.approval import check_all_command_guards, _pending
 
         os.environ["HERMES_EXEC_ASK"] = "1"
         os.environ["HERMES_SESSION_KEY"] = "no-callback-test"

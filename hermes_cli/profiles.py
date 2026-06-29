@@ -100,25 +100,16 @@ _CLONE_ALL_DEFAULT_EXCLUDE_ROOT: frozenset[str] = frozenset({
     "node_modules",
 })
 
-# Per-profile history artifacts excluded from --clone-all regardless of the
-# source profile.  A new profile is a fresh workspace — inheriting the source
-# profile's session history, backup archives, or quick-backup snapshots is
-# never useful (restoring one inside the clone would resurrect the SOURCE
-# profile's state) and can balloon the copy by tens of GB.  Unlike
-# ``_CLONE_ALL_DEFAULT_EXCLUDE_ROOT`` this set is NOT gated on the default
-# profile: named profiles accumulate the same artifacts.
+# Per-profile archive artifacts excluded from --clone-all regardless of the
+# source profile.  Clone-all preserves live profile state (state.db and
+# sessions) but skips backup/snapshot trees that can balloon the copy and are
+# meant to restore the source profile.
 #
 # Rationale per item:
-#   state.db (+wal/shm) — SQLite session store (can reach many GB)
-#   sessions            — per-session transcript/data dirs
 #   backups             — `hermes backup` archives
 #   state-snapshots     — quick-backup snapshot trees
 #   checkpoints         — session checkpoint data
 _CLONE_ALL_HISTORY_EXCLUDE_ROOT: frozenset[str] = frozenset({
-    "state.db",
-    "state.db-wal",
-    "state.db-shm",
-    "sessions",
     "backups",
     "state-snapshots",
     "checkpoints",
@@ -422,8 +413,7 @@ def create_wrapper_script(name: str, target: Optional[str] = None) -> Optional[P
     else:
         wrapper_path = wrapper_dir / canon
         try:
-            hermes_exe = shutil.which("hermes") or "hermes"
-            wrapper_path.write_text(f'#!/bin/sh\nexec {shlex.quote(hermes_exe)} -p {profile} "$@"\n')
+            wrapper_path.write_text(f'#!/bin/sh\nexec hermes -p {profile} "$@"\n')
             wrapper_path.chmod(wrapper_path.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
             return wrapper_path
         except OSError as e:
@@ -971,7 +961,7 @@ def create_profile(
     # environment — users reasonably read that as "the new profile reads
     # the root .env". Skipped when --clone/--clone-all already copied one.
     env_path = profile_dir / ".env"
-    if not env_path.exists():
+    if source_dir is None and not env_path.exists():
         try:
             env_path.write_text(
                 "# Per-profile secrets for this Hermes profile.\n"
@@ -1011,7 +1001,7 @@ def create_profile(
     # desktop/status surfaces don't warn that a just-created profile is
     # v0/outdated. Leave --clone-all snapshots byte-for-byte apart from the
     # explicit runtime/history stripping above.
-    if not clone_all:
+    if source_dir is None:
         _migrate_profile_config_if_outdated(profile_dir)
 
     # Persist description if the caller provided one. Done last so a
@@ -1748,7 +1738,7 @@ def _migrate_honcho_profile_host(old_name: str, new_name: str, new_dir: Path) ->
     """Rename Honcho host blocks for a renamed profile without changing peers."""
     old_host = f"hermes_{old_name}"
     legacy_old_host = f"hermes.{old_name}"
-    new_host = f"hermes_{new_name}"
+    new_host = f"hermes.{new_name}"
 
     candidates = [
         new_dir / "honcho.json",

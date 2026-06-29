@@ -377,8 +377,9 @@ def detect_install_method(project_root: Optional[Path] = None) -> str:
        backward compatibility, but a ``docker`` value is IGNORED when we are
        not actually running inside a container (see below).
     3. HERMES_MANAGED env / .managed marker (NixOS, Homebrew)
-    4. .git directory presence -> 'git'
-    5. Fallback -> 'pip'
+    4. Container runtime detection -> 'docker'
+    5. .git directory presence -> 'git'
+    6. Fallback -> 'pip'
 
     Why the stamp is code-scoped, not home-scoped (issue: shared ``~/.hermes``)
     --------------------------------------------------------------------------
@@ -400,14 +401,13 @@ def detect_install_method(project_root: Optional[Path] = None) -> str:
     through to managed/.git/pip detection instead — so existing shared-home
     setups recover without the user touching anything.
 
-    Note: running inside a container is NOT treated as "docker" on its own.
-    The supported installs self-identify via the code-scoped stamp:
+    A container runtime without an explicit stamp is treated as ``docker`` for
+    backward-compatible update/banner behavior. The supported installs normally
+    self-identify via the code-scoped stamp:
       - the curl installer (scripts/install.sh, the README/website install
         command) git-clones the repo and stamps ``git`` next to the code;
       - the published ``nousresearch/hermes-agent`` image bakes a ``docker``
         stamp into ``/opt/hermes`` at build time.
-    An unsupported manual install dropped into a container (no stamp) falls
-    through to the ``.git``/pip checks and behaves like any off-path install.
     See issue #34397.
     """
     root = _install_method_project_root(project_root)
@@ -439,6 +439,8 @@ def detect_install_method(project_root: Optional[Path] = None) -> str:
     managed = get_managed_system()
     if managed:
         return managed.lower().replace(" ", "-")
+    if _running_in_container():
+        return "docker"
     if (root / ".git").is_dir():
         return "git"
     return "pip"
@@ -669,15 +671,21 @@ def get_container_exec_info() -> Optional[dict]:
 # =============================================================================
 
 # Re-export from hermes_constants — canonical definition lives there.
-from hermes_constants import get_hermes_home  # noqa: F811,E402
+from hermes_constants import get_hermes_home, get_hermes_home_override  # noqa: F811,E402
 from utils import atomic_replace
 
 def get_config_path() -> Path:
     """Get the main config file path."""
+    env_home = os.environ.get("HERMES_HOME", "").strip()
+    if env_home and not get_hermes_home_override():
+        return Path(env_home).expanduser() / "config.yaml"
     return get_hermes_home() / "config.yaml"
 
 def get_env_path() -> Path:
     """Get the .env file path (for API keys)."""
+    env_home = os.environ.get("HERMES_HOME", "").strip()
+    if env_home and not get_hermes_home_override():
+        return Path(env_home).expanduser() / ".env"
     return get_hermes_home() / ".env"
 
 def get_project_root() -> Path:
@@ -1485,7 +1493,7 @@ DEFAULT_CONFIG = {
             "base_url": "",
             "api_key": "",
             "timeout": 30,
-            "extra_body": {},
+            "extra_body": {"enable_thinking": False},
             "language": "",
         },
         "tts_audio_tags": {
@@ -5888,6 +5896,7 @@ TERMINAL_CONFIG_ENV_MAP = {
     "docker_run_as_host_user": "TERMINAL_DOCKER_RUN_AS_HOST_USER",
     "docker_persist_across_processes": "TERMINAL_DOCKER_PERSIST_ACROSS_PROCESSES",
     "docker_orphan_reaper": "TERMINAL_DOCKER_ORPHAN_REAPER",
+    "vercel_runtime": "TERMINAL_VERCEL_RUNTIME",
     "sandbox_dir": "TERMINAL_SANDBOX_DIR",
     "persistent_shell": "TERMINAL_PERSISTENT_SHELL",
 }

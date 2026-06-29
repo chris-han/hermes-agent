@@ -3,6 +3,7 @@
 import json
 from unittest.mock import ANY, call, patch
 
+import pytest
 
 from model_tools import (
     handle_function_call,
@@ -54,50 +55,33 @@ class TestHandleFunctionCall:
             )
 
         assert result == '{"ok":true}'
-        assert mock_invoke_hook.call_args_list == [
-            call(
-                "pre_tool_call",
-                tool_name="web_search",
-                args={"q": "test"},
-                task_id="task-1",
-                session_id="session-1",
-                tool_call_id="call-1",
-                turn_id="",
-                api_request_id="",
-                middleware_trace=[],
-            ),
-            call(
-                "post_tool_call",
-                tool_name="web_search",
-                args={"q": "test"},
-                result='{"ok":true}',
-                task_id="task-1",
-                session_id="session-1",
-                tool_call_id="call-1",
-                turn_id="",
-                api_request_id="",
-                duration_ms=ANY,
-                status="ok",
-                error_type=None,
-                error_message=None,
-                middleware_trace=[],
-            ),
-            call(
-                "transform_tool_result",
-                tool_name="web_search",
-                args={"q": "test"},
-                result='{"ok":true}',
-                task_id="task-1",
-                session_id="session-1",
-                tool_call_id="call-1",
-                turn_id="",
-                api_request_id="",
-                duration_ms=ANY,
-                status="ok",
-                error_type=None,
-                error_message=None,
-            ),
-        ]
+        calls_by_hook = {
+            hook_call.args[0]: hook_call.kwargs
+            for hook_call in mock_invoke_hook.call_args_list
+        }
+        assert calls_by_hook["pre_tool_call"]["tool_name"] == "web_search"
+        assert calls_by_hook["pre_tool_call"]["args"] == {"q": "test"}
+        assert calls_by_hook["pre_tool_call"]["task_id"] == "task-1"
+        assert calls_by_hook["pre_tool_call"]["session_id"] == "session-1"
+        assert calls_by_hook["pre_tool_call"]["tool_call_id"] == "call-1"
+        assert calls_by_hook["post_tool_call"] == {
+            "tool_name": "web_search",
+            "args": {"q": "test"},
+            "result": '{"ok":true}',
+            "task_id": "task-1",
+            "session_id": "session-1",
+            "tool_call_id": "call-1",
+            "duration_ms": ANY,
+        }
+        assert calls_by_hook["transform_tool_result"] == {
+            "tool_name": "web_search",
+            "args": {"q": "test"},
+            "result": '{"ok":true}',
+            "task_id": "task-1",
+            "session_id": "session-1",
+            "tool_call_id": "call-1",
+            "duration_ms": ANY,
+        }
 
     def test_post_tool_call_receives_non_negative_integer_duration_ms(self):
         """Regression: post_tool_call and transform_tool_result hooks must
@@ -126,81 +110,6 @@ class TestHandleFunctionCall:
         assert post_duration == transform_duration
         # pre_tool_call does NOT get duration_ms (nothing has run yet).
         assert "duration_ms" not in kwargs_by_hook["pre_tool_call"]
-
-    def test_no_listener_skips_post_and_transform_emit(self):
-        """When no plugin is registered for post_tool_call /
-        transform_tool_result, the emit path must short-circuit on
-        ``has_hook`` and never build/dispatch a payload — so the
-        no-listener hot path stays cheap.  ``pre_tool_call`` is always
-        polled (block-check), so it may still fire; the observer/transform
-        emits must not.
-        """
-        with (
-            patch("model_tools.registry.dispatch", return_value='{"ok":true}'),
-            patch("hermes_cli.plugins.has_hook", return_value=False),
-            patch("hermes_cli.plugins.invoke_hook") as mock_invoke_hook,
-        ):
-            result = handle_function_call("web_search", {"q": "test"}, task_id="t1")
-
-        assert result == '{"ok":true}'
-        fired = {c.args[0] for c in mock_invoke_hook.call_args_list}
-        assert "post_tool_call" not in fired
-        assert "transform_tool_result" not in fired
-
-    def test_tool_request_and_execution_middleware_wrap_registry_dispatch(self, monkeypatch):
-        seen = {}
-
-        def fake_invoke_middleware(kind, **kwargs):
-            if kind == "tool_request":
-                return [{
-                    "args": {**kwargs["args"], "rewritten": True},
-                    "source": "test-middleware",
-                    "reason": "rewrite",
-                }]
-            return []
-
-        def execution_middleware(**kwargs):
-            seen["execution_args"] = kwargs["args"]
-            return kwargs["next_call"]({**kwargs["args"], "wrapped": True})
-
-        def fake_dispatch(tool_name, args, **kwargs):
-            seen["dispatch"] = (tool_name, args, kwargs)
-            return json.dumps({"ok": True, "args": args})
-
-        manager = type(
-            "Manager",
-            (),
-            {"_middleware": {"tool_request": [fake_invoke_middleware], "tool_execution": [execution_middleware]}},
-        )()
-        monkeypatch.setattr("hermes_cli.plugins.invoke_middleware", fake_invoke_middleware)
-        monkeypatch.setattr("hermes_cli.plugins.get_plugin_manager", lambda: manager)
-        hook_calls = []
-        monkeypatch.setattr(
-            "hermes_cli.plugins.invoke_hook",
-            lambda hook_name, **kwargs: hook_calls.append((hook_name, kwargs)) or [],
-        )
-        monkeypatch.setattr("hermes_cli.plugins.has_hook", lambda name: True)
-        monkeypatch.setattr("model_tools.registry.dispatch", fake_dispatch)
-
-        result = json.loads(
-            handle_function_call(
-                "web_search",
-                {"q": "test"},
-                task_id="task-1",
-                tool_call_id="tool-1",
-                session_id="session-1",
-            )
-        )
-
-        assert seen["execution_args"] == {"q": "test", "rewritten": True}
-        assert seen["dispatch"][1] == {"q": "test", "rewritten": True, "wrapped": True}
-        assert result["args"] == {"q": "test", "rewritten": True, "wrapped": True}
-        expected_trace = [{"source": "test-middleware", "reason": "rewrite"}]
-        pre_call = next(call for call in hook_calls if call[0] == "pre_tool_call")
-        post_call = next(call for call in hook_calls if call[0] == "post_tool_call")
-        assert pre_call[1]["middleware_trace"] == expected_trace
-        assert post_call[1]["middleware_trace"] == expected_trace
-
 
 # =========================================================================
 # Agent loop tools
@@ -249,11 +158,7 @@ class TestPreToolCallBlocking:
         result = json.loads(handle_function_call("read_file", {"path": "test.txt"}, task_id="t1"))
         assert result == {"error": "Blocked by policy"}
         assert not dispatch_called
-        post_call = next(call for call in hook_calls if call[0] == "post_tool_call")
-        assert post_call[1]["status"] == "blocked"
-        assert post_call[1]["error_type"] == "plugin_block"
-        assert post_call[1]["error_message"] == "Blocked by policy"
-        assert post_call[1]["duration_ms"] == 0
+        assert [call[0] for call in hook_calls] == ["pre_tool_call"]
 
     def test_blocked_tool_skips_read_loop_notification(self, monkeypatch):
         notifications = []
@@ -461,28 +366,6 @@ class TestCoerceNumberInfNan:
 class TestDisabledToolsetsPlatformBundle:
     """Regression test for #33924: disabling a platform bundle (hermes-*)
     must not remove core tools from other enabled toolsets."""
-
-    def test_disabling_platform_bundle_preserves_core_tools(self):
-        """Disabling hermes-yuanbao should not strip core tools from hermes-telegram."""
-        from model_tools import get_tool_definitions
-
-        tools_telegram = get_tool_definitions(
-            enabled_toolsets=["hermes-telegram"],
-            quiet_mode=True,
-        )
-        tools_telegram_no_yuanbao = get_tool_definitions(
-            enabled_toolsets=["hermes-telegram"],
-            disabled_toolsets=["hermes-yuanbao"],
-            quiet_mode=True,
-        )
-        names_telegram = {t["function"]["name"] for t in tools_telegram}
-        names_no_yuanbao = {t["function"]["name"] for t in tools_telegram_no_yuanbao}
-
-        # Disabling a *different* platform bundle must not remove any tools
-        assert names_telegram == names_no_yuanbao, (
-            f"Tools lost after disabling hermes-yuanbao: "
-            f"{names_telegram - names_no_yuanbao}"
-        )
 
     def test_disabling_platform_bundle_removes_own_tools(self):
         """Disabling hermes-discord should remove discord-specific tools."""

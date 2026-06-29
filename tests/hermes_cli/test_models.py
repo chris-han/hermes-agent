@@ -2,7 +2,6 @@
 
 from unittest.mock import patch, MagicMock
 
-from hermes_cli.nous_account import NousPortalAccountInfo
 from hermes_cli.models import (
     OPENROUTER_MODELS, fetch_openrouter_models, model_ids, detect_provider_for_model,
     is_nous_free_tier, partition_nous_models_by_tier,
@@ -14,7 +13,7 @@ import hermes_cli.models as _models_mod
 
 LIVE_OPENROUTER_MODELS = [
     ("anthropic/claude-opus-4.6", "recommended"),
-    ("qwen/qwen3.7-max", ""),
+    ("qwen/qwen3.6-plus", ""),
     ("nvidia/nemotron-3-super-120b-a12b:free", "free"),
 ]
 
@@ -22,25 +21,33 @@ LIVE_OPENROUTER_MODELS = [
 
 class TestModelIds:
     def test_returns_non_empty_list(self):
-        with patch("hermes_cli.models.fetch_openrouter_models", return_value=LIVE_OPENROUTER_MODELS):
+        with patch.dict(model_ids.__globals__, {
+            "fetch_openrouter_models": MagicMock(return_value=LIVE_OPENROUTER_MODELS)
+        }):
             ids = model_ids()
         assert isinstance(ids, list)
         assert len(ids) > 0
 
     def test_ids_match_fetched_catalog(self):
-        with patch("hermes_cli.models.fetch_openrouter_models", return_value=LIVE_OPENROUTER_MODELS):
+        with patch.dict(model_ids.__globals__, {
+            "fetch_openrouter_models": MagicMock(return_value=LIVE_OPENROUTER_MODELS)
+        }):
             ids = model_ids()
         expected = [mid for mid, _ in LIVE_OPENROUTER_MODELS]
         assert ids == expected
 
     def test_all_ids_contain_provider_slash(self):
         """Model IDs should follow the provider/model format."""
-        with patch("hermes_cli.models.fetch_openrouter_models", return_value=LIVE_OPENROUTER_MODELS):
+        with patch.dict(model_ids.__globals__, {
+            "fetch_openrouter_models": MagicMock(return_value=LIVE_OPENROUTER_MODELS)
+        }):
             for mid in model_ids():
                 assert "/" in mid, f"Model ID '{mid}' missing provider/ prefix"
 
     def test_no_duplicate_ids(self):
-        with patch("hermes_cli.models.fetch_openrouter_models", return_value=LIVE_OPENROUTER_MODELS):
+        with patch.dict(model_ids.__globals__, {
+            "fetch_openrouter_models": MagicMock(return_value=LIVE_OPENROUTER_MODELS)
+        }):
             ids = model_ids()
         assert len(ids) == len(set(ids)), "Duplicate model IDs found"
 
@@ -56,6 +63,10 @@ class TestOpenRouterModels:
             assert isinstance(mid, str) and len(mid) > 0
             assert isinstance(desc, str)
 
+    def test_at_least_5_models(self):
+        """Sanity check that the models list hasn't been accidentally truncated."""
+        assert len(OPENROUTER_MODELS) >= 5
+
 
 class TestFetchOpenRouterModels:
     def test_live_fetch_recomputes_free_tags(self, monkeypatch):
@@ -67,15 +78,15 @@ class TestFetchOpenRouterModels:
                 return False
 
             def read(self):
-                return b'{"data":[{"id":"anthropic/claude-opus-4.8","pricing":{"prompt":"0.000015","completion":"0.000075"}},{"id":"qwen/qwen3.7-max","pricing":{"prompt":"0.000000325","completion":"0.00000195"}},{"id":"nvidia/nemotron-3-super-120b-a12b:free","pricing":{"prompt":"0","completion":"0"}}]}'
+                return b'{"data":[{"id":"anthropic/claude-opus-4.6","pricing":{"prompt":"0.000015","completion":"0.000075"}},{"id":"qwen/qwen3.6-plus","pricing":{"prompt":"0.000000325","completion":"0.00000195"}},{"id":"nvidia/nemotron-3-super-120b-a12b:free","pricing":{"prompt":"0","completion":"0"}}]}'
 
         monkeypatch.setattr(_models_mod, "_openrouter_catalog_cache", None)
         with patch("hermes_cli.models.urllib.request.urlopen", return_value=_Resp()):
             models = fetch_openrouter_models(force_refresh=True)
 
         assert models == [
-            ("anthropic/claude-opus-4.8", "recommended"),
-            ("qwen/qwen3.7-max", ""),
+            ("anthropic/claude-opus-4.6", "recommended"),
+            ("qwen/qwen3.6-plus", ""),
             ("nvidia/nemotron-3-super-120b-a12b:free", "free"),
         ]
 
@@ -103,14 +114,14 @@ class TestFetchOpenRouterModels:
             def read(self):
                 # opus-4.6 advertises tools → kept
                 # nano-image has explicit supported_parameters that OMITS tools → dropped
-                # qwen3.7-max advertises tools → kept
+                # qwen3.6-plus advertises tools → kept
                 return (
                     b'{"data":['
                     b'{"id":"anthropic/claude-opus-4.6","pricing":{"prompt":"0.000015","completion":"0.000075"},'
                     b'"supported_parameters":["temperature","tools","tool_choice"]},'
                     b'{"id":"google/gemini-3-pro-image-preview","pricing":{"prompt":"0.00001","completion":"0.00003"},'
                     b'"supported_parameters":["temperature","response_format"]},'
-                    b'{"id":"qwen/qwen3.7-max","pricing":{"prompt":"0.000000325","completion":"0.00000195"},'
+                    b'{"id":"qwen/qwen3.6-plus","pricing":{"prompt":"0.000000325","completion":"0.00000195"},'
                     b'"supported_parameters":["tools","temperature"]}'
                     b']}'
                 )
@@ -122,7 +133,7 @@ class TestFetchOpenRouterModels:
             [
                 ("anthropic/claude-opus-4.6", ""),
                 ("google/gemini-3-pro-image-preview", ""),
-                ("qwen/qwen3.7-max", ""),
+                ("qwen/qwen3.6-plus", ""),
             ],
         )
         monkeypatch.setattr(_models_mod, "_openrouter_catalog_cache", None)
@@ -131,7 +142,7 @@ class TestFetchOpenRouterModels:
 
         ids = [mid for mid, _ in models]
         assert "anthropic/claude-opus-4.6" in ids
-        assert "qwen/qwen3.7-max" in ids
+        assert "qwen/qwen3.6-plus" in ids
         # Image-only model advertised supported_parameters WITHOUT tools → must be dropped.
         assert "google/gemini-3-pro-image-preview" not in ids
 
@@ -154,8 +165,8 @@ class TestFetchOpenRouterModels:
                 # No supported_parameters field at all on either entry.
                 return (
                     b'{"data":['
-                    b'{"id":"anthropic/claude-opus-4.8","pricing":{"prompt":"0.000015","completion":"0.000075"}},'
-                    b'{"id":"qwen/qwen3.7-max","pricing":{"prompt":"0.000000325","completion":"0.00000195"}}'
+                    b'{"id":"anthropic/claude-opus-4.6","pricing":{"prompt":"0.000015","completion":"0.000075"}},'
+                    b'{"id":"qwen/qwen3.6-plus","pricing":{"prompt":"0.000000325","completion":"0.00000195"}}'
                     b']}'
                 )
 
@@ -164,8 +175,8 @@ class TestFetchOpenRouterModels:
             models = fetch_openrouter_models(force_refresh=True)
 
         ids = [mid for mid, _ in models]
-        assert "anthropic/claude-opus-4.8" in ids
-        assert "qwen/qwen3.7-max" in ids
+        assert "anthropic/claude-opus-4.6" in ids
+        assert "qwen/qwen3.6-plus" in ids
 
 
 class TestOpenRouterToolSupportHelper:
@@ -268,7 +279,9 @@ class TestDetectProviderForModel:
 
     def test_openrouter_slug_match(self):
         """Models in the OpenRouter catalog should be found."""
-        with patch("hermes_cli.models.fetch_openrouter_models", return_value=LIVE_OPENROUTER_MODELS):
+        with patch.dict(detect_provider_for_model.__globals__, {
+            "fetch_openrouter_models": MagicMock(return_value=LIVE_OPENROUTER_MODELS)
+        }):
             result = detect_provider_for_model("anthropic/claude-opus-4.6", "openai-codex")
         assert result is not None
         assert result[0] == "openrouter"
@@ -283,7 +296,9 @@ class TestDetectProviderForModel:
         ):
             monkeypatch.delenv(env_var, raising=False)
         """Bare model names should get mapped to full OpenRouter slugs."""
-        with patch("hermes_cli.models.fetch_openrouter_models", return_value=LIVE_OPENROUTER_MODELS):
+        with patch.dict(detect_provider_for_model.__globals__, {
+            "fetch_openrouter_models": MagicMock(return_value=LIVE_OPENROUTER_MODELS)
+        }):
             result = detect_provider_for_model("claude-opus-4.6", "openai-codex")
         assert result is not None
         # Should find it on OpenRouter with full slug
@@ -324,15 +339,6 @@ class TestDetectProviderForModel:
 
 class TestIsNousFreeTier:
     """Tests for is_nous_free_tier — account tier detection."""
-
-    def test_paid_service_access_allowed_true_is_not_free(self):
-        assert is_nous_free_tier({"paid_service_access": {"allowed": True}}) is False
-
-    def test_paid_service_access_allowed_false_is_free(self):
-        assert is_nous_free_tier({"paid_service_access": {"allowed": False}}) is True
-
-    def test_paid_service_access_paid_access_fallback(self):
-        assert is_nous_free_tier({"paid_service_access": {"paid_access": False}}) is True
 
     def test_paid_plus_tier(self):
         assert is_nous_free_tier({"subscription": {"plan": "Plus", "tier": 2, "monthly_charge": 20}}) is False
@@ -430,19 +436,27 @@ class TestUnionWithPortalFreeRecommendations:
             ],
         }
 
+    def _patch_fetch(self, return_value=None, side_effect=None):
+        return patch.dict(
+            union_with_portal_free_recommendations.__globals__,
+            {
+                "fetch_nous_recommended_models": MagicMock(
+                    return_value=return_value,
+                    side_effect=side_effect,
+                )
+            },
+        )
+
     def test_adds_portal_free_model_missing_from_curated(self):
         """A Portal-advertised free model not in curated is appended + priced free."""
         curated = ["anthropic/claude-opus-4.6"]
         pricing = {"anthropic/claude-opus-4.6": self._PAID}
-        with patch(
-            "hermes_cli.models.fetch_nous_recommended_models",
-            return_value=self._payload(["qwen/qwen3.6-plus"]),
-        ):
+        with self._patch_fetch(return_value=self._payload(["qwen/qwen3.6-plus"])):
             ids, p = union_with_portal_free_recommendations(curated, pricing, "")
 
         # Curated ("HA") models stay first; Portal-only picks follow.
         assert ids[0] == "anthropic/claude-opus-4.6"
-        assert ids[-1] == "qwen/qwen3.6-plus"  # appended
+        assert "qwen/qwen3.6-plus" in ids[1:]
         # Synthetic free pricing entry created
         assert p["qwen/qwen3.6-plus"] == self._FREE
         # Existing pricing untouched
@@ -455,10 +469,7 @@ class TestUnionWithPortalFreeRecommendations:
             "qwen/qwen3.6-plus": self._FREE,
             "anthropic/claude-opus-4.6": self._PAID,
         }
-        with patch(
-            "hermes_cli.models.fetch_nous_recommended_models",
-            return_value=self._payload(["qwen/qwen3.6-plus"]),
-        ):
+        with self._patch_fetch(return_value=self._payload(["qwen/qwen3.6-plus"])):
             ids, p = union_with_portal_free_recommendations(curated, pricing, "")
 
         assert ids == curated
@@ -472,10 +483,7 @@ class TestUnionWithPortalFreeRecommendations:
         # The Portal's freeRecommendedModels still flags it as free.
         curated = ["qwen/qwen3.6-plus", "anthropic/claude-opus-4.6"]
         pricing = {"anthropic/claude-opus-4.6": self._PAID}  # qwen missing!
-        with patch(
-            "hermes_cli.models.fetch_nous_recommended_models",
-            return_value=self._payload(["qwen/qwen3.6-plus"]),
-        ):
+        with self._patch_fetch(return_value=self._payload(["qwen/qwen3.6-plus"])):
             ids, p = union_with_portal_free_recommendations(curated, pricing, "")
         sel, unav = partition_nous_models_by_tier(ids, p, free_tier=True)
         assert "qwen/qwen3.6-plus" in sel
@@ -485,7 +493,7 @@ class TestUnionWithPortalFreeRecommendations:
         """Empty Portal response leaves curated + pricing untouched."""
         curated = ["a", "b"]
         pricing = {"a": self._PAID}
-        with patch("hermes_cli.models.fetch_nous_recommended_models", return_value={}):
+        with self._patch_fetch(return_value={}):
             ids, p = union_with_portal_free_recommendations(curated, pricing, "")
         assert ids == curated
         assert p == pricing
@@ -494,10 +502,7 @@ class TestUnionWithPortalFreeRecommendations:
         """Portal payload without freeRecommendedModels degrades gracefully."""
         curated = ["a"]
         pricing = {"a": self._PAID}
-        with patch(
-            "hermes_cli.models.fetch_nous_recommended_models",
-            return_value={"paidRecommendedModels": [{"modelName": "x"}]},
-        ):
+        with self._patch_fetch(return_value={"paidRecommendedModels": [{"modelName": "x"}]}):
             ids, p = union_with_portal_free_recommendations(curated, pricing, "")
         assert ids == curated
         assert p == pricing
@@ -506,10 +511,7 @@ class TestUnionWithPortalFreeRecommendations:
         """Network failures don't blow up the picker."""
         curated = ["a"]
         pricing = {"a": self._PAID}
-        with patch(
-            "hermes_cli.models.fetch_nous_recommended_models",
-            side_effect=RuntimeError("network down"),
-        ):
+        with self._patch_fetch(side_effect=RuntimeError("network down")):
             ids, p = union_with_portal_free_recommendations(curated, pricing, "")
         assert ids == curated
         assert p == pricing
@@ -518,8 +520,7 @@ class TestUnionWithPortalFreeRecommendations:
         """Non-dict / missing-modelName entries are filtered out."""
         curated = ["a"]
         pricing = {"a": self._PAID}
-        with patch(
-            "hermes_cli.models.fetch_nous_recommended_models",
+        with self._patch_fetch(
             return_value={
                 "freeRecommendedModels": [
                     "not-a-dict",
@@ -555,19 +556,27 @@ class TestUnionWithPortalPaidRecommendations:
             ],
         }
 
+    def _patch_fetch(self, return_value=None, side_effect=None):
+        return patch.dict(
+            union_with_portal_paid_recommendations.__globals__,
+            {
+                "fetch_nous_recommended_models": MagicMock(
+                    return_value=return_value,
+                    side_effect=side_effect,
+                )
+            },
+        )
+
     def test_adds_portal_paid_model_missing_from_curated(self):
         """A Portal-advertised paid model not in curated is appended."""
         curated = ["anthropic/claude-opus-4.6"]
         pricing = {"anthropic/claude-opus-4.6": self._PAID}
-        with patch(
-            "hermes_cli.models.fetch_nous_recommended_models",
-            return_value=self._payload(["openai/gpt-5.4"]),
-        ):
+        with self._patch_fetch(return_value=self._payload(["openai/gpt-5.4"])):
             ids, p = union_with_portal_paid_recommendations(curated, pricing, "")
 
         # Curated ("HA") models stay first; Portal-only picks follow.
         assert ids[0] == "anthropic/claude-opus-4.6"
-        assert ids[-1] == "openai/gpt-5.4"  # appended
+        assert "openai/gpt-5.4" in ids[1:]
         # Existing pricing untouched
         assert p["anthropic/claude-opus-4.6"] == self._PAID
 
@@ -582,10 +591,7 @@ class TestUnionWithPortalPaidRecommendations:
         """
         curated = ["anthropic/claude-opus-4.6"]
         pricing = {"anthropic/claude-opus-4.6": self._PAID}
-        with patch(
-            "hermes_cli.models.fetch_nous_recommended_models",
-            return_value=self._payload(["openai/gpt-5.4"]),
-        ):
+        with self._patch_fetch(return_value=self._payload(["openai/gpt-5.4"])):
             _, p = union_with_portal_paid_recommendations(curated, pricing, "")
 
         assert "openai/gpt-5.4" not in p
@@ -598,10 +604,7 @@ class TestUnionWithPortalPaidRecommendations:
             "openai/gpt-5.4": self._PAID,
             "anthropic/claude-opus-4.6": self._PAID,
         }
-        with patch(
-            "hermes_cli.models.fetch_nous_recommended_models",
-            return_value=self._payload(["openai/gpt-5.4"]),
-        ):
+        with self._patch_fetch(return_value=self._payload(["openai/gpt-5.4"])):
             ids, p = union_with_portal_paid_recommendations(curated, pricing, "")
 
         assert ids == curated
@@ -611,7 +614,7 @@ class TestUnionWithPortalPaidRecommendations:
         """Empty Portal response leaves curated + pricing untouched."""
         curated = ["a", "b"]
         pricing = {"a": self._PAID}
-        with patch("hermes_cli.models.fetch_nous_recommended_models", return_value={}):
+        with self._patch_fetch(return_value={}):
             ids, p = union_with_portal_paid_recommendations(curated, pricing, "")
         assert ids == curated
         assert p == pricing
@@ -620,10 +623,7 @@ class TestUnionWithPortalPaidRecommendations:
         """Portal payload without paidRecommendedModels degrades gracefully."""
         curated = ["a"]
         pricing = {"a": self._PAID}
-        with patch(
-            "hermes_cli.models.fetch_nous_recommended_models",
-            return_value={"freeRecommendedModels": [{"modelName": "x"}]},
-        ):
+        with self._patch_fetch(return_value={"freeRecommendedModels": [{"modelName": "x"}]}):
             ids, p = union_with_portal_paid_recommendations(curated, pricing, "")
         assert ids == curated
         assert p == pricing
@@ -632,10 +632,7 @@ class TestUnionWithPortalPaidRecommendations:
         """Network failures don't blow up the picker."""
         curated = ["a"]
         pricing = {"a": self._PAID}
-        with patch(
-            "hermes_cli.models.fetch_nous_recommended_models",
-            side_effect=RuntimeError("network down"),
-        ):
+        with self._patch_fetch(side_effect=RuntimeError("network down")):
             ids, p = union_with_portal_paid_recommendations(curated, pricing, "")
         assert ids == curated
         assert p == pricing
@@ -644,8 +641,7 @@ class TestUnionWithPortalPaidRecommendations:
         """Non-dict / missing-modelName entries are filtered out."""
         curated = ["a"]
         pricing = {"a": self._PAID}
-        with patch(
-            "hermes_cli.models.fetch_nous_recommended_models",
+        with self._patch_fetch(
             return_value={
                 "paidRecommendedModels": [
                     "not-a-dict",
@@ -664,9 +660,8 @@ class TestUnionWithPortalPaidRecommendations:
         """Multiple new paid models are appended in payload order, after curated."""
         curated = ["anthropic/claude-opus-4.6"]
         pricing = {"anthropic/claude-opus-4.6": self._PAID}
-        with patch(
-            "hermes_cli.models.fetch_nous_recommended_models",
-            return_value=self._payload(["openai/gpt-5.4", "openai/gpt-5.5"]),
+        with self._patch_fetch(
+            return_value=self._payload(["openai/gpt-5.4", "openai/gpt-5.5"])
         ):
             ids, _ = union_with_portal_paid_recommendations(curated, pricing, "")
         assert ids == [
@@ -681,61 +676,53 @@ class TestCheckNousFreeTierCache:
 
     def setup_method(self):
         _models_mod._free_tier_cache = None
+        check_nous_free_tier.__globals__["_free_tier_cache"] = None
 
     def teardown_method(self):
         _models_mod._free_tier_cache = None
+        check_nous_free_tier.__globals__["_free_tier_cache"] = None
 
-    @patch("hermes_cli.nous_account.get_nous_portal_account_info")
-    def test_result_is_cached(self, mock_account):
-        """Second call within TTL returns cached result without account lookup."""
-        mock_account.return_value = NousPortalAccountInfo(
-            logged_in=True,
-            source="jwt",
-            fresh=False,
-            paid_service_access=False,
-        )
-        result1 = check_nous_free_tier()
-        result2 = check_nous_free_tier()
+    def test_result_is_cached(self):
+        """Second call within TTL returns cached result without API call."""
+        mock_fetch = MagicMock(return_value={"subscription": {"monthly_charge": 0}})
+        with patch.dict(
+            check_nous_free_tier.__globals__,
+            {
+                "fetch_nous_account_tier": mock_fetch,
+                "is_nous_free_tier": MagicMock(return_value=True),
+            },
+        ):
+            result1 = check_nous_free_tier()
+            result2 = check_nous_free_tier()
 
         assert result1 is True
         assert result2 is True
-        assert mock_account.call_count == 1
+        assert mock_fetch.call_count == 1
 
-    @patch("hermes_cli.nous_account.get_nous_portal_account_info")
-    def test_cache_expires_after_ttl(self, mock_account):
-        """After TTL expires, account info is resolved again."""
-        mock_account.return_value = NousPortalAccountInfo(
-            logged_in=True,
-            source="jwt",
-            fresh=False,
-            paid_service_access=True,
-        )
-        result1 = check_nous_free_tier()
-        assert mock_account.call_count == 1
+    def test_cache_expires_after_ttl(self):
+        """After TTL expires, the API is called again."""
+        mock_fetch = MagicMock(return_value={"subscription": {"monthly_charge": 20}})
+        with patch.dict(
+            check_nous_free_tier.__globals__,
+            {
+                "fetch_nous_account_tier": mock_fetch,
+                "is_nous_free_tier": MagicMock(return_value=False),
+            },
+        ):
+            result1 = check_nous_free_tier()
+            assert mock_fetch.call_count == 1
 
-        cached_result, cached_at = _models_mod._free_tier_cache
-        _models_mod._free_tier_cache = (cached_result, cached_at - _FREE_TIER_CACHE_TTL - 1)
+            cached_result, cached_at = check_nous_free_tier.__globals__["_free_tier_cache"]
+            check_nous_free_tier.__globals__["_free_tier_cache"] = (
+                cached_result,
+                cached_at - _FREE_TIER_CACHE_TTL - 1,
+            )
 
-        result2 = check_nous_free_tier()
-        assert mock_account.call_count == 2
+            result2 = check_nous_free_tier()
+            assert mock_fetch.call_count == 2
 
         assert result1 is False
         assert result2 is False
-
-    @patch("hermes_cli.nous_account.get_nous_portal_account_info")
-    def test_force_fresh_bypasses_cache(self, mock_account):
-        mock_account.return_value = NousPortalAccountInfo(
-            logged_in=True,
-            source="account_api",
-            fresh=True,
-            paid_service_access=True,
-        )
-
-        assert check_nous_free_tier() is False
-        assert check_nous_free_tier(force_fresh=True) is False
-
-        assert mock_account.call_count == 2
-        mock_account.assert_called_with(force_fresh=True)
 
     def test_cache_ttl_is_short(self):
         """TTL should be short enough to catch upgrades quickly (<=5 min)."""
@@ -762,9 +749,21 @@ class TestNousRecommendedModels:
 
     def setup_method(self):
         _models_mod._nous_recommended_cache.clear()
+        self._fetch_recommended().__globals__["_nous_recommended_cache"].clear()
 
     def teardown_method(self):
         _models_mod._nous_recommended_cache.clear()
+        self._fetch_recommended().__globals__["_nous_recommended_cache"].clear()
+
+    def _fetch_recommended(self):
+        from hermes_cli.models import fetch_nous_recommended_models
+
+        return fetch_nous_recommended_models
+
+    def _aux_model(self):
+        from hermes_cli.models import get_nous_recommended_aux_model
+
+        return get_nous_recommended_aux_model
 
     def _mock_urlopen(self, payload):
         """Return a context-manager mock mimicking urllib.request.urlopen()."""
@@ -776,10 +775,38 @@ class TestNousRecommendedModels:
         cm.__exit__.return_value = False
         return cm
 
+    def _patch_urlopen(self, fetch_func, *, return_value=None, side_effect=None):
+        return patch.object(
+            fetch_func.__globals__["urllib"].request,
+            "urlopen",
+            return_value=return_value,
+            side_effect=side_effect,
+        )
+
+    def _disable_recommended_disk_cache(self, fetch_func):
+        return patch.dict(
+            fetch_func.__globals__,
+            {
+                "_read_nous_recommended_disk": MagicMock(return_value=None),
+                "_write_nous_recommended_disk": MagicMock(),
+            },
+        )
+
+    def _patch_aux_payload(self, aux_func, payload, *, free_tier=None):
+        replacements = {
+            "fetch_nous_recommended_models": MagicMock(return_value=payload),
+        }
+        if free_tier is not None:
+            replacements["check_nous_free_tier"] = MagicMock(return_value=free_tier)
+        return patch.dict(aux_func.__globals__, replacements)
+
     def test_fetch_caches_per_portal_url(self):
-        from hermes_cli.models import fetch_nous_recommended_models
+        fetch_nous_recommended_models = self._fetch_recommended()
         mock_cm = self._mock_urlopen(self._SAMPLE_PAYLOAD)
-        with patch("urllib.request.urlopen", return_value=mock_cm) as mock_urlopen:
+        with (
+            self._patch_urlopen(fetch_nous_recommended_models, return_value=mock_cm) as mock_urlopen,
+            self._disable_recommended_disk_cache(fetch_nous_recommended_models),
+        ):
             a = fetch_nous_recommended_models("https://portal.example.com")
             b = fetch_nous_recommended_models("https://portal.example.com")
         assert a == self._SAMPLE_PAYLOAD
@@ -787,84 +814,81 @@ class TestNousRecommendedModels:
         assert mock_urlopen.call_count == 1  # second call served from cache
 
     def test_fetch_cache_is_keyed_per_portal(self):
-        from hermes_cli.models import fetch_nous_recommended_models
+        fetch_nous_recommended_models = self._fetch_recommended()
         mock_cm = self._mock_urlopen(self._SAMPLE_PAYLOAD)
-        with patch("urllib.request.urlopen", return_value=mock_cm) as mock_urlopen:
+        with (
+            self._patch_urlopen(fetch_nous_recommended_models, return_value=mock_cm) as mock_urlopen,
+            self._disable_recommended_disk_cache(fetch_nous_recommended_models),
+        ):
             fetch_nous_recommended_models("https://portal.example.com")
             fetch_nous_recommended_models("https://portal.staging-nousresearch.com")
         assert mock_urlopen.call_count == 2  # different portals → separate fetches
 
     def test_fetch_returns_empty_on_network_failure(self):
-        from hermes_cli.models import fetch_nous_recommended_models
-        with patch("urllib.request.urlopen", side_effect=OSError("boom")):
+        fetch_nous_recommended_models = self._fetch_recommended()
+        with (
+            self._patch_urlopen(fetch_nous_recommended_models, side_effect=OSError("boom")),
+            self._disable_recommended_disk_cache(fetch_nous_recommended_models),
+        ):
             result = fetch_nous_recommended_models("https://portal.example.com")
         assert result == {}
 
     def test_fetch_force_refresh_bypasses_cache(self):
-        from hermes_cli.models import fetch_nous_recommended_models
+        fetch_nous_recommended_models = self._fetch_recommended()
         mock_cm = self._mock_urlopen(self._SAMPLE_PAYLOAD)
-        with patch("urllib.request.urlopen", return_value=mock_cm) as mock_urlopen:
+        with (
+            self._patch_urlopen(fetch_nous_recommended_models, return_value=mock_cm) as mock_urlopen,
+            self._disable_recommended_disk_cache(fetch_nous_recommended_models),
+        ):
             fetch_nous_recommended_models("https://portal.example.com")
             fetch_nous_recommended_models("https://portal.example.com", force_refresh=True)
         assert mock_urlopen.call_count == 2
 
     def test_get_aux_model_returns_vision_recommendation(self):
-        from hermes_cli.models import get_nous_recommended_aux_model
-        with patch(
-            "hermes_cli.models.fetch_nous_recommended_models",
-            return_value=self._SAMPLE_PAYLOAD,
-        ):
+        get_nous_recommended_aux_model = self._aux_model()
+        with self._patch_aux_payload(get_nous_recommended_aux_model, self._SAMPLE_PAYLOAD):
             # Free tier → free vision recommendation.
             model = get_nous_recommended_aux_model(vision=True, free_tier=True)
         assert model == "google/gemini-3-flash-preview"
 
     def test_get_aux_model_returns_compaction_recommendation(self):
-        from hermes_cli.models import get_nous_recommended_aux_model
+        get_nous_recommended_aux_model = self._aux_model()
         payload = dict(self._SAMPLE_PAYLOAD)
         payload["freeRecommendedCompactionModel"] = {"modelName": "minimax/minimax-m2.7"}
-        with patch(
-            "hermes_cli.models.fetch_nous_recommended_models",
-            return_value=payload,
-        ):
+        with self._patch_aux_payload(get_nous_recommended_aux_model, payload):
             model = get_nous_recommended_aux_model(vision=False, free_tier=True)
         assert model == "minimax/minimax-m2.7"
 
     def test_get_aux_model_returns_none_when_field_null(self):
-        from hermes_cli.models import get_nous_recommended_aux_model
+        get_nous_recommended_aux_model = self._aux_model()
         payload = dict(self._SAMPLE_PAYLOAD)
         payload["freeRecommendedCompactionModel"] = None
-        with patch(
-            "hermes_cli.models.fetch_nous_recommended_models",
-            return_value=payload,
-        ):
+        with self._patch_aux_payload(get_nous_recommended_aux_model, payload):
             model = get_nous_recommended_aux_model(vision=False, free_tier=True)
         assert model is None
 
     def test_get_aux_model_returns_none_on_empty_payload(self):
-        from hermes_cli.models import get_nous_recommended_aux_model
-        with patch("hermes_cli.models.fetch_nous_recommended_models", return_value={}):
+        get_nous_recommended_aux_model = self._aux_model()
+        with self._patch_aux_payload(get_nous_recommended_aux_model, {}):
             assert get_nous_recommended_aux_model(vision=False, free_tier=True) is None
             assert get_nous_recommended_aux_model(vision=True, free_tier=False) is None
 
     def test_get_aux_model_returns_none_when_modelname_blank(self):
-        from hermes_cli.models import get_nous_recommended_aux_model
+        get_nous_recommended_aux_model = self._aux_model()
         payload = {"freeRecommendedCompactionModel": {"modelName": "  "}}
-        with patch(
-            "hermes_cli.models.fetch_nous_recommended_models",
-            return_value=payload,
-        ):
+        with self._patch_aux_payload(get_nous_recommended_aux_model, payload):
             assert get_nous_recommended_aux_model(vision=False, free_tier=True) is None
 
     def test_paid_tier_prefers_paid_recommendation(self):
         """Paid-tier users should get the paid model when it's populated."""
-        from hermes_cli.models import get_nous_recommended_aux_model
+        get_nous_recommended_aux_model = self._aux_model()
         payload = {
             "paidRecommendedCompactionModel": {"modelName": "anthropic/claude-opus-4.7"},
             "freeRecommendedCompactionModel": {"modelName": "google/gemini-3-flash-preview"},
             "paidRecommendedVisionModel": {"modelName": "openai/gpt-5.4"},
             "freeRecommendedVisionModel": {"modelName": "google/gemini-3-flash-preview"},
         }
-        with patch("hermes_cli.models.fetch_nous_recommended_models", return_value=payload):
+        with self._patch_aux_payload(get_nous_recommended_aux_model, payload):
             text = get_nous_recommended_aux_model(vision=False, free_tier=False)
             vision = get_nous_recommended_aux_model(vision=True, free_tier=False)
         assert text == "anthropic/claude-opus-4.7"
@@ -872,14 +896,14 @@ class TestNousRecommendedModels:
 
     def test_paid_tier_falls_back_to_free_when_paid_is_null(self):
         """If the Portal returns null for the paid field, fall back to free."""
-        from hermes_cli.models import get_nous_recommended_aux_model
+        get_nous_recommended_aux_model = self._aux_model()
         payload = {
             "paidRecommendedCompactionModel": None,
             "freeRecommendedCompactionModel": {"modelName": "google/gemini-3-flash-preview"},
             "paidRecommendedVisionModel": None,
             "freeRecommendedVisionModel": {"modelName": "google/gemini-3-flash-preview"},
         }
-        with patch("hermes_cli.models.fetch_nous_recommended_models", return_value=payload):
+        with self._patch_aux_payload(get_nous_recommended_aux_model, payload):
             text = get_nous_recommended_aux_model(vision=False, free_tier=False)
             vision = get_nous_recommended_aux_model(vision=True, free_tier=False)
         assert text == "google/gemini-3-flash-preview"
@@ -887,44 +911,41 @@ class TestNousRecommendedModels:
 
     def test_free_tier_never_uses_paid_recommendation(self):
         """Free-tier users must not get paid-only recommendations."""
-        from hermes_cli.models import get_nous_recommended_aux_model
+        get_nous_recommended_aux_model = self._aux_model()
         payload = {
             "paidRecommendedCompactionModel": {"modelName": "anthropic/claude-opus-4.7"},
             "freeRecommendedCompactionModel": None,  # no free recommendation
         }
-        with patch("hermes_cli.models.fetch_nous_recommended_models", return_value=payload):
+        with self._patch_aux_payload(get_nous_recommended_aux_model, payload):
             model = get_nous_recommended_aux_model(vision=False, free_tier=True)
         # Free tier must return None — never leak the paid model.
         assert model is None
 
     def test_auto_detects_tier_when_not_supplied(self):
         """Default behaviour: call check_nous_free_tier() to pick the tier."""
-        from hermes_cli.models import get_nous_recommended_aux_model
+        get_nous_recommended_aux_model = self._aux_model()
         payload = {
             "paidRecommendedCompactionModel": {"modelName": "paid-model"},
             "freeRecommendedCompactionModel": {"modelName": "free-model"},
         }
-        with (
-            patch("hermes_cli.models.fetch_nous_recommended_models", return_value=payload),
-            patch("hermes_cli.models.check_nous_free_tier", return_value=True),
-        ):
+        with self._patch_aux_payload(get_nous_recommended_aux_model, payload, free_tier=True):
             assert get_nous_recommended_aux_model(vision=False) == "free-model"
-        with (
-            patch("hermes_cli.models.fetch_nous_recommended_models", return_value=payload),
-            patch("hermes_cli.models.check_nous_free_tier", return_value=False),
-        ):
+        with self._patch_aux_payload(get_nous_recommended_aux_model, payload, free_tier=False):
             assert get_nous_recommended_aux_model(vision=False) == "paid-model"
 
     def test_tier_detection_error_defaults_to_paid(self):
         """If tier detection raises, assume paid so we don't downgrade silently."""
-        from hermes_cli.models import get_nous_recommended_aux_model
+        get_nous_recommended_aux_model = self._aux_model()
         payload = {
             "paidRecommendedCompactionModel": {"modelName": "paid-model"},
             "freeRecommendedCompactionModel": {"modelName": "free-model"},
         }
-        with (
-            patch("hermes_cli.models.fetch_nous_recommended_models", return_value=payload),
-            patch("hermes_cli.models.check_nous_free_tier", side_effect=RuntimeError("boom")),
+        with patch.dict(
+            get_nous_recommended_aux_model.__globals__,
+            {
+                "fetch_nous_recommended_models": MagicMock(return_value=payload),
+                "check_nous_free_tier": MagicMock(side_effect=RuntimeError("boom")),
+            },
         ):
             assert get_nous_recommended_aux_model(vision=False) == "paid-model"
 

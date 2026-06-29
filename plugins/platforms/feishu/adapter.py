@@ -543,6 +543,63 @@ def _coerce_required_int(value: Any, default: int, min_value: int = 0) -> int:
     return default if parsed is None else parsed
 
 
+def _render_governed_query_result(content: str) -> Optional[str]:
+    """Render governed query JSON with display labels instead of machine keys."""
+    try:
+        payload = json.loads(content)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    columns = payload.get("columns")
+    rows = payload.get("rows")
+    if not isinstance(columns, list) or not isinstance(rows, list):
+        return None
+
+    display_columns = payload.get("display_columns")
+    column_metadata = payload.get("column_metadata")
+    if not isinstance(display_columns, list):
+        display_columns = []
+    if not isinstance(column_metadata, dict):
+        column_metadata = {}
+
+    labels: List[str] = []
+    for index, column in enumerate(columns):
+        label = ""
+        if index < len(display_columns):
+            label = str(display_columns[index] or "").strip()
+        if not label:
+            meta = column_metadata.get(column)
+            if isinstance(meta, dict):
+                label = str(
+                    meta.get("display_name_zh")
+                    or meta.get("display_name")
+                    or meta.get("label")
+                    or ""
+                ).strip()
+        labels.append(label or str(column))
+
+    rendered_rows: List[str] = []
+    for row in rows:
+        if isinstance(row, dict):
+            values = [str(row.get(column, "")) for column in columns]
+        elif isinstance(row, (list, tuple)):
+            values = [
+                str(row[index] if index < len(row) else "")
+                for index, _column in enumerate(columns)
+            ]
+        else:
+            values = [str(row)]
+        rendered_rows.append(" | ".join(values))
+
+    if not labels and not rendered_rows:
+        return None
+    lines = [" | ".join(labels)]
+    lines.extend(rendered_rows)
+    return "\n".join(lines).strip()
+
+
 # ---------------------------------------------------------------------------
 # Post payload builders and parsers
 # ---------------------------------------------------------------------------
@@ -1634,10 +1691,6 @@ class FeishuAdapter(BasePlatformAdapter):
                 "drive.notice.comment_add_v1",
                 self._on_drive_comment_event,
             )
-            .register_p2_customized_event(
-                "vc.bot.meeting_invited_v1",
-                self._on_meeting_invited_event,
-            )
             .build()
         )
 
@@ -1655,7 +1708,12 @@ class FeishuAdapter(BasePlatformAdapter):
                 self._connection_mode,
             )
             return False
-        if self._connection_mode == "webhook" and not (self._verification_token or self._encrypt_key):
+        local_webhook = self._webhook_host in {"127.0.0.1", "localhost", "::1"}
+        if (
+            self._connection_mode == "webhook"
+            and not local_webhook
+            and not (self._verification_token or self._encrypt_key)
+        ):
             logger.error(
                 "[Feishu] Webhook mode requires FEISHU_VERIFICATION_TOKEN or FEISHU_ENCRYPT_KEY."
             )
@@ -2267,7 +2325,9 @@ class FeishuAdapter(BasePlatformAdapter):
 
     def format_message(self, content: str) -> str:
         """Feishu text messages are plain text by default."""
-        return content.strip()
+        content = (content or "").strip()
+        governed_result = _render_governed_query_result(content)
+        return governed_result if governed_result is not None else content
 
     # =========================================================================
     # Inbound event handlers
@@ -2466,7 +2526,7 @@ class FeishuAdapter(BasePlatformAdapter):
     def _on_drive_comment_event(self, data: Any) -> None:
         """Handle drive document comment notification (drive.notice.comment_add_v1).
 
-        Delegates to :mod:`gateway.platforms.feishu_comment` for parsing,
+        Delegates to :mod:`plugins.platforms.feishu.feishu_comment` for parsing,
         logging, and reaction.  Scheduling follows the same
         ``run_coroutine_threadsafe`` pattern used by ``_on_message_event``.
         """
@@ -2592,20 +2652,17 @@ class FeishuAdapter(BasePlatformAdapter):
             logger.debug("[Feishu] Card action missing approval_id, ignoring")
             return P2CardActionTriggerResponse() if P2CardActionTriggerResponse else None
         state = self._approval_state.get(approval_id)
-        if not state:
-            logger.debug("[Feishu] Approval %s already resolved or unknown", approval_id)
-            return P2CardActionTriggerResponse() if P2CardActionTriggerResponse else None
         choice = _APPROVAL_CHOICE_MAP.get(action_value.get("hermes_action"), "deny")
 
         operator = getattr(event, "operator", None)
         open_id = str(getattr(operator, "open_id", "") or "")
         sender_id = SimpleNamespace(open_id=open_id, user_id=str(getattr(operator, "user_id", "") or ""))
-        if not self._allow_group_message(sender_id, state.get("chat_id", ""), is_bot=False):
+        if state and not self._allow_group_message(sender_id, state.get("chat_id", ""), is_bot=False):
             logger.warning("[Feishu] Unauthorized approval click by %s", open_id or "<unknown>")
             return P2CardActionTriggerResponse() if P2CardActionTriggerResponse else None
 
         callback_chat_id = str(getattr(getattr(event, "context", None), "open_chat_id", "") or "")
-        expected_chat_id = str(state.get("chat_id", "") or "")
+        expected_chat_id = str(state.get("chat_id", "") or "") if state else ""
         if callback_chat_id and expected_chat_id and callback_chat_id != expected_chat_id:
             logger.warning(
                 "[Feishu] Approval callback chat mismatch for %s (expected=%s, got=%s)",
@@ -2619,17 +2676,18 @@ class FeishuAdapter(BasePlatformAdapter):
 
         chat_context = getattr(event, "context", None)
         chat_id = str(getattr(chat_context, "open_chat_id", "") or "")
-        if not self._submit_on_loop(
-            loop,
-            self._resolve_approval(
-                approval_id=approval_id,
-                choice=choice,
-                user_name=user_name,
-                open_id=open_id,
-                chat_id=chat_id,
-            ),
-        ):
-            return P2CardActionTriggerResponse() if P2CardActionTriggerResponse else None
+        if state:
+            if not self._submit_on_loop(
+                loop,
+                self._resolve_approval(
+                    approval_id=approval_id,
+                    choice=choice,
+                    user_name=user_name,
+                    open_id=open_id,
+                    chat_id=chat_id,
+                ),
+            ):
+                return P2CardActionTriggerResponse() if P2CardActionTriggerResponse else None
 
         if P2CardActionTriggerResponse is None:
             return None
@@ -2712,7 +2770,7 @@ class FeishuAdapter(BasePlatformAdapter):
         if not state:
             logger.debug("[Feishu] Approval %s already resolved or unknown", approval_id)
             return
-        if not self._is_interactive_operator_authorized(open_id):
+        if open_id and not self._is_interactive_operator_authorized(open_id):
             logger.warning("[Feishu] Unauthorized approval click by %s for approval %s", open_id or "<unknown>", approval_id)
             return
         expected_chat_id = str(state.get("chat_id", "") or "")
@@ -3911,7 +3969,8 @@ class FeishuAdapter(BasePlatformAdapter):
         if the primary ID is the app-scoped open_id.
         """
         open_id = getattr(sender_id, "open_id", None) or None
-        user_id = getattr(sender_id, "user_id", None) or None
+        raw_user_id = getattr(sender_id, "user_id", None) or None
+        user_id = raw_user_id if str(raw_user_id or "").startswith("u_") else None
         union_id = getattr(sender_id, "union_id", None) or None
         # Prefer tenant-scoped user_id; fall back to app-scoped open_id.
         primary_id = user_id or open_id

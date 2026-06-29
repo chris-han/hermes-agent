@@ -766,6 +766,53 @@ def setup_model_provider(config: dict, *, quick: bool = False):
     if isinstance(_m, dict):
         selected_provider = _m.get("provider")
 
+    if selected_provider and _supports_same_provider_pool_setup(str(selected_provider)):
+        try:
+            from agent.credential_pool import load_pool
+
+            provider_key = str(selected_provider)
+            entries = list(load_pool(provider_key).entries())
+            if len(entries) == 1 and prompt_yes_no(
+                "Add another credential for same-provider fallback?",
+                False,
+            ):
+                try:
+                    from argparse import Namespace
+                    from hermes_cli.auth_commands import auth_add_command
+
+                    auth_add_command(Namespace(provider=provider_key))
+                    entries = list(load_pool(provider_key).entries())
+                except Exception as exc:
+                    logger.debug("same-provider credential add failed: %s", exc)
+            if entries:
+                manual_count = sum(
+                    1
+                    for entry in entries
+                    if str(getattr(entry, "source", "") or "").strip().lower() == "manual"
+                )
+                auto_count = len(entries) - manual_count
+                print_info(
+                    f"Current pooled credentials for {provider_key}: "
+                    f"{len(entries)} ({manual_count} manual, "
+                    f"{auto_count} auto-detected from env/shared auth)"
+                )
+            if len(entries) >= 2:
+                strategy_idx = prompt_choice(
+                    "Select same-provider rotation strategy:",
+                    [
+                        "Fill first credential before falling back",
+                        "Round robin across credentials",
+                    ],
+                    0,
+                )
+                _set_credential_pool_strategy(
+                    config,
+                    provider_key,
+                    "round_robin" if strategy_idx == 1 else "fill_first",
+                )
+        except Exception:
+            pass
+
     # Credential rotation, vision-backend selection, and TTS provider are no
     # longer prompted here. They have safe defaults (rotation off, vision
     # auto-detected from the main provider, TTS = Edge) and are configurable
@@ -1183,6 +1230,11 @@ def setup_terminal_backend(config: dict):
     backend_to_idx = {"local": 0, "docker": 1, "modal": 2, "ssh": 3, "daytona": 4}
 
     next_idx = 5
+    terminal_choices.append("Vercel Sandbox - managed serverless sandbox")
+    idx_to_backend[next_idx] = "vercel_sandbox"
+    backend_to_idx["vercel_sandbox"] = next_idx
+    next_idx += 1
+
     if is_linux:
         terminal_choices.append("Singularity/Apptainer - HPC-friendly container")
         idx_to_backend[next_idx] = "singularity"
@@ -1446,6 +1498,63 @@ def setup_terminal_backend(config: dict):
             else:
                 print_warning(f"  SSH connection failed: {result.stderr.strip()}")
                 print_info("  Check your SSH key and host settings.")
+
+    elif selected_backend == "vercel_sandbox":
+        print_success("Terminal backend: Vercel Sandbox")
+        terminal = config.setdefault("terminal", {})
+        runtime = prompt(
+            "    Vercel runtime",
+            terminal.get("vercel_runtime", "python3.12"),
+        )
+        if runtime:
+            terminal["vercel_runtime"] = runtime
+            save_env_value("TERMINAL_VERCEL_RUNTIME", runtime)
+
+        persist = prompt(
+            "  Persist filesystem across sessions? (yes/no)",
+            "yes" if terminal.get("container_persistent", True) else "no",
+        )
+        terminal["container_persistent"] = persist.lower() in {"yes", "true", "y", "1"}
+
+        cpu = prompt("  CPU cores", str(terminal.get("container_cpu", 1)))
+        try:
+            terminal["container_cpu"] = float(cpu)
+        except ValueError:
+            pass
+
+        memory = prompt("  Memory in MB (5120 = 5GB)", str(terminal.get("container_memory", 5120)))
+        try:
+            terminal["container_memory"] = int(memory)
+        except ValueError:
+            pass
+        terminal["container_disk"] = 51200
+
+        token = prompt("    Vercel access token", get_env_value("VERCEL_TOKEN") or "", password=True)
+        if token:
+            save_env_value("VERCEL_TOKEN", token)
+        remove_env_value("VERCEL_OIDC_TOKEN")
+
+        linked_project = ""
+        linked_team = ""
+        for parent in [Path.cwd(), *Path.cwd().parents]:
+            link_file = parent / ".vercel" / "project.json"
+            if link_file.is_file():
+                try:
+                    import json
+
+                    linked = json.loads(link_file.read_text(encoding="utf-8"))
+                    linked_project = str(linked.get("projectId") or "")
+                    linked_team = str(linked.get("orgId") or "")
+                except Exception:
+                    pass
+                break
+
+        project_id = prompt("    Vercel project ID", get_env_value("VERCEL_PROJECT_ID") or linked_project)
+        team_id = prompt("    Vercel team ID", get_env_value("VERCEL_TEAM_ID") or linked_team)
+        if project_id:
+            save_env_value("VERCEL_PROJECT_ID", project_id)
+        if team_id:
+            save_env_value("VERCEL_TEAM_ID", team_id)
 
     # Sync terminal backend to .env so terminal_tool picks it up directly.
     # config.yaml is the source of truth, but terminal_tool reads TERMINAL_ENV.
@@ -1831,6 +1940,29 @@ def _setup_telegram():
 # _setup_slack and _write_slack_manifest_and_instruct moved to the slack
 # plugin: plugins/platforms/slack/adapter.py::interactive_setup (registered
 # via setup_fn and dispatched through the plugin path). #41112 / #3823.
+def _write_slack_manifest_and_instruct():
+    """Legacy test/extension hook retained after Slack setup moved to plugin."""
+    return None
+
+
+def _setup_slack():
+    """Legacy Slack setup flow retained for callers patching setup.py hooks."""
+    _write_slack_manifest_and_instruct()
+    bot_token = prompt("Slack Bot Token (xoxb-...)", password=True)
+    if not bot_token:
+        return
+    save_env_value("SLACK_BOT_TOKEN", bot_token)
+    app_token = prompt("Slack App Token (xapp-...)", password=True)
+    if app_token:
+        save_env_value("SLACK_APP_TOKEN", app_token)
+    allowed_users = prompt(
+        "Allowed user IDs (comma-separated, leave empty to deny everyone except paired users)"
+    )
+    if allowed_users:
+        save_env_value("SLACK_ALLOWED_USERS", allowed_users.replace(" ", ""))
+    home_channel = prompt("Home channel ID (leave empty to set later with /set-home)")
+    if home_channel:
+        save_env_value("SLACK_HOME_CHANNEL", home_channel.strip())
 
 
 # _setup_matrix moved to plugins/platforms/matrix/adapter.py::interactive_setup
@@ -1982,6 +2114,8 @@ def setup_gateway(config: dict):
         return
 
     for idx in selected:
+        if _platform_status(platforms[idx]) == "configured":
+            continue
         _configure_platform(platforms[idx])
 
     # ── Gateway Service Setup ──
@@ -2921,7 +3055,9 @@ def run_setup_wizard(args):
     # Section 3: Agent Settings — no longer prompted. First installs get the
     # recommended defaults silently; existing installs keep whatever they have.
     # Tune later with `hermes setup agent`.
-    if not is_existing:
+    if is_existing:
+        setup_agent_settings(config)
+    else:
         _apply_default_agent_settings(config)
 
     # Section 4: Messaging Platforms

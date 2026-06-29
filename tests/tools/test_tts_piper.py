@@ -7,6 +7,7 @@ without requiring the ``piper-tts`` package to actually be installed
 """
 
 import json
+import os
 import sys
 import types
 from pathlib import Path

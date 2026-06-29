@@ -265,13 +265,7 @@ class ResponsesApiTransport(ProviderTransport):
         if reasoning_enabled and is_xai_responses:
             from agent.model_metadata import grok_supports_reasoning_effort
 
-            # Ask xAI to echo back encrypted reasoning items so we can
-            # replay them on subsequent turns for cross-turn coherence.
-            # See agent/codex_responses_adapter._chat_messages_to_responses_input
-            # for the May 2026 reversal of the earlier suppression gate.
-            kwargs["include"] = (
-                ["reasoning.encrypted_content"] if replay_encrypted_reasoning else []
-            )
+            kwargs["include"] = []
             # xAI rejects `reasoning.effort` on grok-4 / grok-4-fast / grok-3
             # / grok-code-fast / grok-4.20-0309-* with HTTP 400 even though
             # those models reason natively. Only send the effort dial when

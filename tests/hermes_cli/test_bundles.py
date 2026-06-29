@@ -1,6 +1,8 @@
 """Tests for hermes_cli/bundles.py — the `hermes bundles` CLI subcommand."""
 
 import argparse
+import sys
+from pathlib import Path
 
 import pytest
 

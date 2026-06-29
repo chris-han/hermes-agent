@@ -1,5 +1,6 @@
 """Tests for TelegramPlatform._merge_caption caption deduplication logic."""
 
+import pytest
 
 from plugins.platforms.telegram.adapter import TelegramAdapter
 

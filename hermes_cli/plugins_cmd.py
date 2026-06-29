@@ -149,7 +149,7 @@ _GITHUB_BROWSER_SEGMENTS = {
 }
 
 
-def _resolve_git_url(identifier: str) -> tuple[str, Optional[str]]:
+def _resolve_git_location(identifier: str) -> tuple[str, Optional[str]]:
     """Turn an identifier into a cloneable Git URL and optional subdirectory.
 
     Returns ``(git_url, subdir)`` where ``subdir`` is the path within the
@@ -214,6 +214,26 @@ def _resolve_git_url(identifier: str) -> tuple[str, Optional[str]]:
         "Use a Git URL or 'owner/repo' shorthand (optionally with a subdirectory: "
         "'owner/repo/path/to/plugin')."
     )
+
+
+def _resolve_git_url(identifier: str) -> str:
+    """Turn an identifier into a cloneable Git URL.
+
+    This helper keeps the historical string return contract used by tests and
+    callers that only need the repository URL. Install paths that support a
+    repository subdirectory use :func:`_resolve_git_location`.
+    """
+    parts = [p for p in identifier.strip("/").split("/") if p]
+    is_url = identifier.startswith(
+        ("https://", "http://", "git@", "ssh://", "file://")
+    )
+    if not is_url and len(parts) > 2:
+        raise ValueError(
+            f"Invalid plugin identifier: '{identifier}'. "
+            "Use a Git URL or 'owner/repo' shorthand."
+        )
+    git_url, _subdir = _resolve_git_location(identifier)
+    return git_url
 
 
 def _resolve_subdir_within(clone_root: Path, subdir: str) -> Path:
@@ -454,7 +474,7 @@ def _install_plugin_core(identifier: str, *, force: bool) -> tuple[Path, dict, s
     import tempfile
 
     try:
-        git_url, subdir = _resolve_git_url(identifier)
+        git_url, subdir = _resolve_git_location(identifier)
     except ValueError as e:
         raise PluginOperationError(str(e)) from e
 
@@ -561,7 +581,7 @@ def cmd_install(
     console = Console()
 
     try:
-        git_url, _subdir = _resolve_git_url(identifier)
+        git_url, _subdir = _resolve_git_location(identifier)
     except ValueError as e:
         console.print(f"[red]Error:[/red] {e}")
         sys.exit(1)
@@ -866,6 +886,8 @@ def _read_manifest_info(d: Path, prefix: str):
         except Exception:
             pass
     key = f"{prefix}/{d.name}" if prefix else name
+    if prefix and name == d.name:
+        name = key
     return name, version, description, key
 
 
@@ -1566,7 +1588,7 @@ def dashboard_install_plugin(
     """Non-interactive install for the web dashboard. Returns a JSON-serializable dict."""
     warnings: list[str] = []
     try:
-        git_url, _subdir = _resolve_git_url(identifier)
+        git_url, _subdir = _resolve_git_location(identifier)
         if git_url.startswith(("http://", "file://")):
             warnings.append(
                 "Insecure URL scheme; prefer https:// or git@ for production installs.",

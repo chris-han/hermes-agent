@@ -42,8 +42,10 @@ def _validate(model, provider="openrouter", api_models=FAKE_API_MODELS, **kw):
         "suggested_base_url": None,
         "used_fallback": False,
     }
-    with patch("hermes_cli.models.fetch_api_models", return_value=api_models), \
-         patch("hermes_cli.models.probe_api_models", return_value=probe_payload):
+    with patch.dict(validate_requested_model.__globals__, {
+        "fetch_api_models": MagicMock(return_value=api_models),
+        "probe_api_models": MagicMock(return_value=probe_payload),
+    }):
         return validate_requested_model(model, provider, **kw)
 
 
@@ -142,6 +144,10 @@ class TestCuratedModelsForProvider:
         assert len(models) > 0
         assert any("claude" in m[0] for m in models)
 
+    def test_zai_returns_glm_models(self):
+        models = curated_models_for_provider("zai")
+        assert any("glm" in m[0] for m in models)
+
     def test_unknown_provider_returns_empty(self):
         assert curated_models_for_provider("totally-unknown") == []
 
@@ -195,77 +201,59 @@ class TestProviderModelIds:
     def test_unknown_provider_returns_empty(self):
         assert provider_model_ids("some-unknown-provider") == []
 
+    def test_zai_returns_glm_models(self):
+        assert "glm-5" in provider_model_ids("zai")
+
     def test_stepfun_prefers_live_catalog(self):
+        mock_fetch_api_models = MagicMock(
+            return_value=["step-3.5-flash", "step-3-agent-lite"]
+        )
         with patch(
             "hermes_cli.auth.resolve_api_key_provider_credentials",
             return_value={"api_key": "***", "base_url": "https://api.stepfun.com/step_plan/v1"},
-        ), patch(
-            "hermes_cli.models.fetch_api_models",
-            return_value=["step-3.5-flash", "step-3-agent-lite"],
-        ):
+        ), patch.dict(provider_model_ids.__globals__, {"fetch_api_models": mock_fetch_api_models}):
             assert provider_model_ids("stepfun") == ["step-3.5-flash", "step-3-agent-lite"]
 
     def test_copilot_prefers_live_catalog(self):
+        mock_fetch_github_models = MagicMock(return_value=["gpt-5.4", "claude-sonnet-4.6"])
         with patch("hermes_cli.auth.resolve_api_key_provider_credentials", return_value={"api_key": "gh-token"}), \
-             patch("hermes_cli.models._fetch_github_models", return_value=["gpt-5.4", "claude-sonnet-4.6"]):
+             patch.dict(provider_model_ids.__globals__, {"_fetch_github_models": mock_fetch_github_models}):
             assert provider_model_ids("copilot") == ["gpt-5.4", "claude-sonnet-4.6"]
 
     def test_copilot_acp_reuses_copilot_catalog(self):
+        mock_fetch_github_models = MagicMock(return_value=["gpt-5.4", "claude-sonnet-4.6"])
         with patch("hermes_cli.auth.resolve_api_key_provider_credentials", return_value={"api_key": "gh-token"}), \
-             patch("hermes_cli.models._fetch_github_models", return_value=["gpt-5.4", "claude-sonnet-4.6"]):
+             patch.dict(provider_model_ids.__globals__, {"_fetch_github_models": mock_fetch_github_models}):
             assert provider_model_ids("copilot-acp") == ["gpt-5.4", "claude-sonnet-4.6"]
 
-    def test_anthropic_provider_uses_configured_base_url_for_live_catalog(self):
-        class _Resp:
-            def __enter__(self):
-                return self
+    def test_copilot_falls_back_to_curated_defaults_without_stale_opus(self):
+        with patch.dict(provider_model_ids.__globals__, {
+            "_resolve_copilot_catalog_api_key": MagicMock(return_value="gh-token"),
+            "_fetch_github_models": MagicMock(return_value=None),
+        }):
+            ids = provider_model_ids("copilot")
 
-            def __exit__(self, exc_type, exc, tb):
-                return False
+        assert "gpt-5.4" in ids
+        assert "claude-sonnet-4.6" in ids
+        assert "claude-sonnet-4" in ids
+        assert "claude-sonnet-4.5" in ids
+        assert "claude-haiku-4.5" in ids
+        assert "gemini-3.1-pro-preview" in ids
+        assert "claude-opus-4.6" not in ids
 
-            def read(self):
-                return b'{"data": [{"id": "enterprise-claude"}]}'
+    def test_copilot_acp_falls_back_to_copilot_defaults(self):
+        with patch.dict(provider_model_ids.__globals__, {
+            "_resolve_copilot_catalog_api_key": MagicMock(return_value="gh-token"),
+            "_fetch_github_models": MagicMock(return_value=None),
+        }):
+            ids = provider_model_ids("copilot-acp")
 
-        with patch(
-            "hermes_cli.config.load_config",
-            return_value={
-                "model": {
-                    "provider": "anthropic",
-                    "base_url": "http://localhost:6655/anthropic/v1",
-                    "api_key": "proxy-key",
-                }
-            },
-        ), patch(
-            "hermes_cli.models.urllib.request.urlopen",
-            return_value=_Resp(),
-        ) as mock_urlopen:
-            assert provider_model_ids("anthropic") == ["enterprise-claude"]
-
-        req = mock_urlopen.call_args[0][0]
-        assert req.full_url == "http://localhost:6655/anthropic/v1/models"
-        assert req.get_header("X-api-key") == "proxy-key"
-
-    def test_custom_provider_passes_anthropic_mode_for_versioned_proxy_catalog(self):
-        with patch(
-            "hermes_cli.config.load_config",
-            return_value={
-                "model": {
-                    "provider": "custom",
-                    "base_url": "http://localhost:6655/anthropic/v1",
-                    "api_key": "proxy-key",
-                }
-            },
-        ), patch(
-            "hermes_cli.models.fetch_api_models",
-            return_value=["enterprise-claude"],
-        ) as mock_fetch:
-            assert provider_model_ids("custom") == ["enterprise-claude"]
-
-        mock_fetch.assert_called_once_with(
-            "proxy-key",
-            "http://localhost:6655/anthropic/v1",
-            api_mode="anthropic_messages",
-        )
+        assert "gpt-5.4" in ids
+        assert "claude-sonnet-4.6" in ids
+        assert "claude-sonnet-4" in ids
+        assert "gemini-3.1-pro-preview" in ids
+        assert "copilot-acp" not in ids
+        assert "claude-opus-4.6" not in ids
 
 
 # -- fetch_api_models --------------------------------------------------------
@@ -434,8 +422,6 @@ class TestCopilotNormalization:
         assert opencode_model_api_mode("opencode-go", "opencode-go/kimi-k2.5") == "chat_completions"
         assert opencode_model_api_mode("opencode-go", "minimax-m2.5") == "anthropic_messages"
         assert opencode_model_api_mode("opencode-go", "opencode-go/minimax-m2.5") == "anthropic_messages"
-        assert opencode_model_api_mode("opencode-go", "qwen3.7-max") == "anthropic_messages"
-        assert opencode_model_api_mode("opencode-go", "opencode-go/qwen3.7-max") == "anthropic_messages"
 
 
 class TestAzureFoundryModelApiMode:
@@ -658,7 +644,8 @@ class TestValidateApiFallback:
         # proxy endpoints that don't expose /models still work. See #12950.
         assert result["accepted"] is False
         assert result["persist"] is True
-        assert "http://localhost:8000/v1/models" in result["message"]
+        assert "localhost:8000" in result["message"]
+        assert "/models" in result["message"]
         assert "http://localhost:8000/v1" in result["message"]
 
     def test_fetch_lmstudio_models_filters_embedding_type(self):

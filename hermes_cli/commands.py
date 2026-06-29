@@ -523,6 +523,8 @@ def telegram_bot_commands() -> list[tuple[str, str]]:
     for cmd in COMMAND_REGISTRY:
         if not _is_gateway_available(cmd, overrides):
             continue
+        if cmd.name in _NATIVE_MENU_OMIT:
+            continue
         # Built-in arg-taking commands are included — their handlers show
         # usage text when invoked without arguments, and hiding them from
         # the menu hurts discoverability (issue #24312).
@@ -1143,7 +1145,7 @@ _SLACK_RESERVED_COMMANDS = frozenset({
 # would otherwise get, and the Telegram-parity test fails when a canonical
 # gets clamped ("reset" was unpinned for exactly that — /new keeps its
 # native slot, the alias spelling stays reachable via /hermes reset).
-_SLACK_PRIORITY_ALIASES = ("btw", "bg")
+_SLACK_PRIORITY_ALIASES = ("btw", "bg", "reset", "q")
 
 # Canonical commands intentionally NOT given a native Slack slash slot. Slack
 # caps apps at 50 slash commands and the registry is at that ceiling; rather
@@ -1158,7 +1160,8 @@ _SLACK_PRIORITY_ALIASES = ("btw", "bg")
 #   - moa: high-cost slash mode, available through /hermes moa to avoid
 #     displacing existing native Slack slash commands at the 50-command cap.
 #   - debug: the log/report upload surface; reached via /hermes debug on Slack.
-_SLACK_VIA_HERMES_ONLY = frozenset({"credits", "billing", "moa", "debug"})
+_SLACK_VIA_HERMES_ONLY = frozenset()
+_NATIVE_MENU_OMIT = frozenset({"debug", "insights", "platform", "update", "version"})
 
 
 def _sanitize_slack_name(raw: str) -> str:
@@ -1231,6 +1234,16 @@ def slack_native_slashes() -> list[tuple[str, str, str]]:
         cmd = _alias_to_cmd.get(alias)
         if cmd is not None:
             _add(alias, f"Alias for /{cmd.name} — {cmd.description}", cmd.args_hint or "")
+
+    telegram_visible = {
+        name.replace("_", "-")
+        for name, _description in telegram_bot_commands()
+    }
+    for cmd in COMMAND_REGISTRY:
+        if not _is_gateway_available(cmd, overrides):
+            continue
+        if _sanitize_slack_name(cmd.name) in telegram_visible:
+            _add(cmd.name, cmd.description, cmd.args_hint or "")
 
     # First pass: canonical names (so they win slots if we hit the cap).
     for cmd in COMMAND_REGISTRY:

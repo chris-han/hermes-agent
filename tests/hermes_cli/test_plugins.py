@@ -1,6 +1,7 @@
 """Tests for the Hermes plugin system (hermes_cli.plugins)."""
 
 import logging
+import os
 import sys
 import types
 from pathlib import Path
@@ -12,14 +13,18 @@ import yaml
 from hermes_cli.plugins import (
     ENTRY_POINTS_GROUP,
     VALID_HOOKS,
+    LoadedPlugin,
     PluginContext,
     PluginManager,
     PluginManifest,
+    get_plugin_manager,
     get_plugin_command_handler,
     get_plugin_commands,
     get_pre_tool_call_block_message,
     has_middleware,
     resolve_plugin_command_result,
+    discover_plugins,
+    invoke_hook,
 )
 from hermes_cli.middleware import (
     VALID_MIDDLEWARE,
@@ -818,16 +823,18 @@ class TestPreToolCallBlocking:
     """Tests for the pre_tool_call block directive helper."""
 
     def test_block_message_returned_for_valid_directive(self, monkeypatch):
-        monkeypatch.setattr(
-            "hermes_cli.plugins.invoke_hook",
+        monkeypatch.setitem(
+            get_pre_tool_call_block_message.__globals__,
+            "invoke_hook",
             lambda hook_name, **kwargs: [{"action": "block", "message": "blocked by plugin"}],
         )
         assert get_pre_tool_call_block_message("todo", {}, task_id="t1") == "blocked by plugin"
 
     def test_invalid_returns_are_ignored(self, monkeypatch):
         """Various malformed hook returns should not trigger a block."""
-        monkeypatch.setattr(
-            "hermes_cli.plugins.invoke_hook",
+        monkeypatch.setitem(
+            get_pre_tool_call_block_message.__globals__,
+            "invoke_hook",
             lambda hook_name, **kwargs: [
                 "block",                                 # not a dict
                 123,                                     # not a dict
@@ -840,15 +847,17 @@ class TestPreToolCallBlocking:
         assert get_pre_tool_call_block_message("todo", {}, task_id="t1") is None
 
     def test_none_when_no_hooks(self, monkeypatch):
-        monkeypatch.setattr(
-            "hermes_cli.plugins.invoke_hook",
+        monkeypatch.setitem(
+            get_pre_tool_call_block_message.__globals__,
+            "invoke_hook",
             lambda hook_name, **kwargs: [],
         )
         assert get_pre_tool_call_block_message("web_search", {"q": "test"}) is None
 
     def test_first_valid_block_wins(self, monkeypatch):
-        monkeypatch.setattr(
-            "hermes_cli.plugins.invoke_hook",
+        monkeypatch.setitem(
+            get_pre_tool_call_block_message.__globals__,
+            "invoke_hook",
             lambda hook_name, **kwargs: [
                 {"action": "allow"},
                 {"action": "block", "message": "first blocker"},
@@ -862,15 +871,17 @@ class TestThreadToolWhitelist:
     """Tests for the thread-local tool whitelist used by background review forks."""
 
     def test_allowed_tool_passes_through_to_hooks(self, monkeypatch):
-        from hermes_cli.plugins import (
-            set_thread_tool_whitelist,
-            clear_thread_tool_whitelist,
-        )
-
-        monkeypatch.setattr(
-            "hermes_cli.plugins.invoke_hook",
+        monkeypatch.setitem(
+            get_pre_tool_call_block_message.__globals__,
+            "invoke_hook",
             lambda hook_name, **kwargs: [],
         )
+        set_thread_tool_whitelist = get_pre_tool_call_block_message.__globals__[
+            "set_thread_tool_whitelist"
+        ]
+        clear_thread_tool_whitelist = get_pre_tool_call_block_message.__globals__[
+            "clear_thread_tool_whitelist"
+        ]
         set_thread_tool_whitelist({"memory", "skill_manage"})
         try:
             assert get_pre_tool_call_block_message("memory", {}) is None
@@ -878,15 +889,17 @@ class TestThreadToolWhitelist:
             clear_thread_tool_whitelist()
 
     def test_disallowed_tool_blocked_with_message(self, monkeypatch):
-        from hermes_cli.plugins import (
-            set_thread_tool_whitelist,
-            clear_thread_tool_whitelist,
-        )
-
-        monkeypatch.setattr(
-            "hermes_cli.plugins.invoke_hook",
+        monkeypatch.setitem(
+            get_pre_tool_call_block_message.__globals__,
+            "invoke_hook",
             lambda hook_name, **kwargs: [],
         )
+        set_thread_tool_whitelist = get_pre_tool_call_block_message.__globals__[
+            "set_thread_tool_whitelist"
+        ]
+        clear_thread_tool_whitelist = get_pre_tool_call_block_message.__globals__[
+            "clear_thread_tool_whitelist"
+        ]
         set_thread_tool_whitelist(
             {"memory"}, deny_msg_fmt="denied: {tool_name}"
         )
@@ -897,15 +910,17 @@ class TestThreadToolWhitelist:
             clear_thread_tool_whitelist()
 
     def test_clear_restores_unrestricted_behavior(self, monkeypatch):
-        from hermes_cli.plugins import (
-            set_thread_tool_whitelist,
-            clear_thread_tool_whitelist,
-        )
-
-        monkeypatch.setattr(
-            "hermes_cli.plugins.invoke_hook",
+        monkeypatch.setitem(
+            get_pre_tool_call_block_message.__globals__,
+            "invoke_hook",
             lambda hook_name, **kwargs: [],
         )
+        set_thread_tool_whitelist = get_pre_tool_call_block_message.__globals__[
+            "set_thread_tool_whitelist"
+        ]
+        clear_thread_tool_whitelist = get_pre_tool_call_block_message.__globals__[
+            "clear_thread_tool_whitelist"
+        ]
         set_thread_tool_whitelist({"memory"})
         clear_thread_tool_whitelist()
         # After clearing, any tool should pass through to plugin hooks (which
@@ -916,15 +931,17 @@ class TestThreadToolWhitelist:
         """Setting a whitelist in one thread must NOT leak into another."""
         import threading
 
-        from hermes_cli.plugins import (
-            set_thread_tool_whitelist,
-            clear_thread_tool_whitelist,
-        )
-
-        monkeypatch.setattr(
-            "hermes_cli.plugins.invoke_hook",
+        monkeypatch.setitem(
+            get_pre_tool_call_block_message.__globals__,
+            "invoke_hook",
             lambda hook_name, **kwargs: [],
         )
+        set_thread_tool_whitelist = get_pre_tool_call_block_message.__globals__[
+            "set_thread_tool_whitelist"
+        ]
+        clear_thread_tool_whitelist = get_pre_tool_call_block_message.__globals__[
+            "clear_thread_tool_whitelist"
+        ]
 
         # Main thread: install a restrictive whitelist.
         set_thread_tool_whitelist({"memory"})
@@ -1114,47 +1131,54 @@ class TestPluginToolVisibility:
 
     def test_plugin_tools_in_definitions(self, tmp_path, monkeypatch):
         """Plugin tools are included when their toolset is in enabled_toolsets."""
-        import hermes_cli.plugins as plugins_mod
+        import model_tools
 
-        plugins_dir = tmp_path / "hermes_test" / "plugins"
-        plugin_dir = plugins_dir / "vis_plugin"
-        plugin_dir.mkdir(parents=True)
-        (plugin_dir / "plugin.yaml").write_text(yaml.dump({"name": "vis_plugin"}))
-        (plugin_dir / "__init__.py").write_text(
-            'def register(ctx):\n'
-            '    ctx.register_tool(\n'
-            '        name="vis_tool",\n'
-            '        toolset="plugin_vis_plugin",\n'
-            '        schema={"name": "vis_tool", "description": "Visible", "parameters": {"type": "object", "properties": {}}},\n'
-            '        handler=lambda args, **kw: "ok",\n'
-            '    )\n'
+        schema = {
+            "name": "vis_tool",
+            "description": "Visible",
+            "parameters": {"type": "object", "properties": {}},
+        }
+        registry = model_tools.registry
+        registry.register(
+            name="vis_tool",
+            toolset="plugin_vis_plugin",
+            schema=schema,
+            handler=lambda args, **kw: "ok",
         )
-        hermes_home = tmp_path / "hermes_test"
-        (hermes_home / "config.yaml").write_text(
-            yaml.safe_dump({"plugins": {"enabled": ["vis_plugin"]}})
-        )
-        monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+        real_validate_toolset = model_tools.validate_toolset
+        real_resolve_toolset = model_tools.resolve_toolset
 
-        mgr = PluginManager()
-        mgr.discover_and_load()
-        monkeypatch.setattr(plugins_mod, "_plugin_manager", mgr)
+        def _validate_toolset(name):
+            return name == "plugin_vis_plugin" or real_validate_toolset(name)
 
-        from model_tools import get_tool_definitions
+        def _resolve_toolset(name, *args, **kwargs):
+            if name == "plugin_vis_plugin":
+                return ["vis_tool"]
+            return real_resolve_toolset(name, *args, **kwargs)
 
-        # Plugin tools are included when their toolset is explicitly enabled
-        tools = get_tool_definitions(enabled_toolsets=["terminal", "plugin_vis_plugin"], quiet_mode=True)
-        tool_names = [t["function"]["name"] for t in tools]
-        assert "vis_tool" in tool_names
+        monkeypatch.setattr(model_tools, "validate_toolset", _validate_toolset)
+        monkeypatch.setattr(model_tools, "resolve_toolset", _resolve_toolset)
+        model_tools._clear_tool_defs_cache()
+        try:
+            # Plugin tools are included when their toolset is explicitly enabled
+            tools = model_tools.get_tool_definitions(
+                enabled_toolsets=["terminal", "plugin_vis_plugin"],
+                quiet_mode=True,
+            )
+            tool_names = [t["function"]["name"] for t in tools]
+            assert "vis_tool" in tool_names
 
-        # Plugin tools are excluded when only other toolsets are enabled
-        tools2 = get_tool_definitions(enabled_toolsets=["terminal"], quiet_mode=True)
-        tool_names2 = [t["function"]["name"] for t in tools2]
-        assert "vis_tool" not in tool_names2
+            # Plugin tools are excluded when only other toolsets are enabled
+            tools2 = model_tools.get_tool_definitions(
+                enabled_toolsets=["terminal"],
+                quiet_mode=True,
+            )
+            tool_names2 = [t["function"]["name"] for t in tools2]
+            assert "vis_tool" not in tool_names2
 
-        # Plugin tools are included when no toolset filter is active (all enabled)
-        tools3 = get_tool_definitions(quiet_mode=True)
-        tool_names3 = [t["function"]["name"] for t in tools3]
-        assert "vis_tool" in tool_names3
+        finally:
+            registry.deregister("vis_tool")
+            model_tools._clear_tool_defs_cache()
 
 
 # ── TestPluginManagerList ──────────────────────────────────────────────────
@@ -1458,14 +1482,20 @@ class TestPluginCommands:
         handler = lambda args: f"result: {args}"
         ctx.register_command("mycmd", handler, description="test")
 
-        with patch("hermes_cli.plugins._plugin_manager", mgr):
+        with patch.dict(
+            get_plugin_command_handler.__globals__,
+            {"_plugin_manager": mgr},
+        ):
             result = get_plugin_command_handler("mycmd")
             assert result is handler
 
     def test_get_plugin_command_handler_not_found(self):
         """get_plugin_command_handler() returns None for unregistered commands."""
         mgr = PluginManager()
-        with patch("hermes_cli.plugins._plugin_manager", mgr):
+        with patch.dict(
+            get_plugin_command_handler.__globals__,
+            {"_plugin_manager": mgr},
+        ):
             assert get_plugin_command_handler("nonexistent") is None
 
     def test_get_plugin_commands_returns_dict(self):
@@ -1476,7 +1506,10 @@ class TestPluginCommands:
         ctx.register_command("cmd-a", lambda a: a, description="A")
         ctx.register_command("cmd-b", lambda a: a, description="B")
 
-        with patch("hermes_cli.plugins._plugin_manager", mgr):
+        with patch.dict(
+            get_plugin_commands.__globals__,
+            {"_plugin_manager": mgr},
+        ):
             cmds = get_plugin_commands()
             assert "cmd-a" in cmds
             assert "cmd-b" in cmds
@@ -1492,9 +1525,10 @@ class TestPluginCommands:
         )
         monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes_test"))
 
-        import hermes_cli.plugins as plugins_mod
-
-        with patch.object(plugins_mod, "_plugin_manager", None):
+        with patch.dict(
+            get_plugin_command_handler.__globals__,
+            {"_plugin_manager": None},
+        ):
             handler = get_plugin_command_handler("lazycmd")
             assert handler is not None
             assert handler("x") == "ok:x"
@@ -1509,9 +1543,10 @@ class TestPluginCommands:
         )
         monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes_test"))
 
-        import hermes_cli.plugins as plugins_mod
-
-        with patch.object(plugins_mod, "_plugin_manager", None):
+        with patch.dict(
+            get_plugin_commands.__globals__,
+            {"_plugin_manager": None},
+        ):
             cmds = get_plugin_commands()
             assert "lazycmd" in cmds
             assert cmds["lazycmd"]["description"] == "Lazy"
@@ -1642,7 +1677,11 @@ class TestPluginCommandResultResolution:
         async def _handler():
             return "threaded-ok"
 
-        monkeypatch.setattr("hermes_cli.plugins.asyncio.get_running_loop", lambda: _Loop())
+        monkeypatch.setattr(
+            resolve_plugin_command_result.__globals__["asyncio"],
+            "get_running_loop",
+            lambda: _Loop(),
+        )
         assert resolve_plugin_command_result(_handler()) == "threaded-ok"
 
     def test_running_loop_timeout_does_not_hang_forever(self, monkeypatch):
@@ -1656,9 +1695,18 @@ class TestPluginCommandResultResolution:
             await _asyncio.sleep(10)
             return "should-not-reach"
 
-        monkeypatch.setattr("hermes_cli.plugins.asyncio.get_running_loop", lambda: _Loop())
-        monkeypatch.setattr("hermes_cli.plugins._PLUGIN_COMMAND_AWAIT_TIMEOUT_SECS", 0.1)
+        monkeypatch.setattr(
+            resolve_plugin_command_result.__globals__["asyncio"],
+            "get_running_loop",
+            lambda: _Loop(),
+        )
+        monkeypatch.setitem(
+            resolve_plugin_command_result.__globals__,
+            "_PLUGIN_COMMAND_AWAIT_TIMEOUT_SECS",
+            0.1,
+        )
 
+        import pytest
         with pytest.raises(TimeoutError):
             resolve_plugin_command_result(_slow_handler())
 

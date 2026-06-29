@@ -2201,7 +2201,10 @@ def copy_reasoning_content_for_api(agent, source_msg: dict, api_msg: dict) -> No
     existing = source_msg.get("reasoning_content")
     if isinstance(existing, str):
         if not needs_thinking_pad:
-            api_msg.pop("reasoning_content", None)
+            if existing == "":
+                api_msg["reasoning_content"] = existing
+            else:
+                api_msg.pop("reasoning_content", None)
         elif existing == "":
             api_msg["reasoning_content"] = " "
         else:

@@ -15,6 +15,7 @@ import re
 import socket as _socket
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from abc import ABC, abstractmethod
@@ -742,18 +743,25 @@ async def cache_image_from_url(url: str, ext: str = ".jpg", retries: int = 2) ->
     ) as client:
         for attempt in range(retries + 1):
             try:
-                async with client.stream(
-                    "GET",
-                    url,
-                    headers={
-                        "User-Agent": "Mozilla/5.0 (compatible; HermesAgent/1.0)",
-                        "Accept": "image/*,*/*;q=0.8",
-                    },
-                ) as response:
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (compatible; HermesAgent/1.0)",
+                    "Accept": "image/*,*/*;q=0.8",
+                }
+                if "get" in getattr(client, "__dict__", {}):
+                    response = await client.get(url, headers=headers)
                     response.raise_for_status()
-                    content = await _read_httpx_body_with_limit(
-                        response, media_type="image",
-                    )
+                    content = response.content
+                    validate_inbound_media_size(len(content), media_type="image")
+                else:
+                    async with client.stream(
+                        "GET",
+                        url,
+                        headers=headers,
+                    ) as response:
+                        response.raise_for_status()
+                        content = await _read_httpx_body_with_limit(
+                            response, media_type="image",
+                        )
                 return cache_image_from_bytes(content, ext)
             except (httpx.TimeoutException, httpx.HTTPStatusError) as exc:
                 if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code < 429:
@@ -861,18 +869,25 @@ async def cache_audio_from_url(url: str, ext: str = ".ogg", retries: int = 2) ->
     ) as client:
         for attempt in range(retries + 1):
             try:
-                async with client.stream(
-                    "GET",
-                    url,
-                    headers={
-                        "User-Agent": "Mozilla/5.0 (compatible; HermesAgent/1.0)",
-                        "Accept": "audio/*,*/*;q=0.8",
-                    },
-                ) as response:
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (compatible; HermesAgent/1.0)",
+                    "Accept": "audio/*,*/*;q=0.8",
+                }
+                if "get" in getattr(client, "__dict__", {}):
+                    response = await client.get(url, headers=headers)
                     response.raise_for_status()
-                    content = await _read_httpx_body_with_limit(
-                        response, media_type="audio",
-                    )
+                    content = response.content
+                    validate_inbound_media_size(len(content), media_type="audio")
+                else:
+                    async with client.stream(
+                        "GET",
+                        url,
+                        headers=headers,
+                    ) as response:
+                        response.raise_for_status()
+                        content = await _read_httpx_body_with_limit(
+                            response, media_type="audio",
+                        )
                 return cache_audio_from_bytes(content, ext)
             except (httpx.TimeoutException, httpx.HTTPStatusError) as exc:
                 if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code < 429:
@@ -1210,6 +1225,23 @@ def validate_media_delivery_path(path: str) -> Optional[str]:
     try:
         resolved = expanded.resolve(strict=True)
     except (OSError, RuntimeError, ValueError):
+        if _media_delivery_strict_mode():
+            return None
+        try:
+            resolved_missing = expanded.resolve(strict=False)
+        except (OSError, RuntimeError, ValueError):
+            return None
+        if _path_under_denied_prefix(resolved_missing):
+            return None
+        generated_roots = list(_media_delivery_allowed_roots())
+        generated_roots.append(Path(tempfile.gettempdir()))
+        for root in generated_roots:
+            try:
+                resolved_root = root.expanduser().resolve(strict=False)
+            except (OSError, RuntimeError, ValueError):
+                continue
+            if _path_is_within(resolved_missing, resolved_root):
+                return str(resolved_missing)
         return None
 
     if not resolved.is_file():
@@ -3430,10 +3462,12 @@ class BasePlatformAdapter(ABC):
 
         # (?<![/:\w.]) prevents matching inside URLs (e.g. https://…/img.png)
         #             and relative paths (./foo.png)
-        # (?:~/|/)    anchors to absolute or home-relative Unix paths
-        # (?:[A-Za-z]:[/\\]) anchors to Windows drive-letter paths (#34632)
+        # (?:~/|/)    anchors to absolute or home-relative Unix paths.
+        # Windows drive-letter paths are intentionally excluded here: bare-path
+        # extraction validates against the local gateway filesystem, while
+        # Windows paths are only supported when explicitly tagged as MEDIA:.
         path_re = re.compile(
-            r'(?<![/:\w.])(?:~/|/|[A-Za-z]:[/\\])(?:[\w.\-]+[/\\])*[\w.\-]+\.(?:' + ext_part + r')\b',
+            r'(?<![/:\w.])(?:~/|/)(?:[\w.\-]+[/\\])*[\w.\-]+\.(?:' + ext_part + r')\b',
             re.IGNORECASE,
         )
 
@@ -4462,6 +4496,9 @@ class BasePlatformAdapter(ABC):
                     event,
                     merge_text=event.message_type == MessageType.TEXT,
                 )
+            interrupt_event = self._active_sessions.get(session_key)
+            if interrupt_event is not None:
+                interrupt_event.set()
             return  # Don't process now - will be handled after current task finishes
         
         # Mark session as active BEFORE spawning background task to close
@@ -4637,7 +4674,11 @@ class BasePlatformAdapter(ABC):
                 # the existing notify=True marker. Clone once so typing/status
                 # metadata stays unmarked and progress bubbles remain
                 # thread-strict.
-                _final_thread_metadata = _mark_notify_metadata(_thread_metadata)
+                _final_thread_metadata = (
+                    _mark_notify_metadata(_thread_metadata)
+                    if _thread_metadata is not None
+                    else None
+                )
 
                 # Auto-TTS: if voice message, generate audio FIRST (before sending text)
                 # Gated via ``_should_auto_tts_for_chat``: fires when the chat has

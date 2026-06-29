@@ -4,13 +4,14 @@ This uses a real AIAgent with mocked HTTP responses to test the complete
 interrupt flow through _run_single_child → child.run_conversation().
 """
 
+import json
 import os
 import threading
 import time
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, PropertyMock
 
-from tools.interrupt import set_interrupt
+from tools.interrupt import set_interrupt, is_interrupted
 
 
 def _make_slow_api_response(delay=5.0):
@@ -95,7 +96,8 @@ class TestRealSubagentInterrupt(unittest.TestCase):
                     MockOpenAI.return_value = mock_client
 
                     # Patch the instance method so it skips prompt assembly
-                    with patch.object(AIAgent, '_build_system_prompt', return_value="You are a test agent"):
+                    with patch("agent.context_compressor.get_model_context_length", return_value=128000), \
+                         patch.object(AIAgent, '_build_system_prompt', return_value="You are a test agent"):
                         # Signal when child starts
                         original_run = AIAgent.run_conversation
 

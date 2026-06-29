@@ -659,24 +659,28 @@ def _install_scheduled_task(task_name: str, script_path: Path) -> tuple[bool, st
     # The Scheduled Task launches the console-less .vbs (issue #45599 fix A), not
     # the .cmd. Immediate manual starts use _spawn_detached().
     launcher_path = script_path.with_suffix(".vbs")
-    xml_path = _write_scheduled_task_xml(task_name, launcher_path, user)
-    base = ["/Create", "/F", "/TN", task_name, "/XML", str(xml_path)]
+    base = [
+        "/Create",
+        "/F",
+        "/TN",
+        task_name,
+        "/TR",
+        str(launcher_path),
+        "/SC",
+        "ONLOGON",
+        "/RL",
+        "LIMITED",
+    ]
     variants = [[*base, "/RU", user, "/NP", "/IT"]] if user else []
     variants.append(base)
 
     last_code = 1
     last_err = ""
-    try:
-        for argv in variants:
-            code, out, err = _exec_schtasks(argv)
-            if code == 0:
-                return (True, f"Created Scheduled Task {task_name!r}")
-            last_code, last_err = code, (err or out or "")
-    finally:
-        try:
-            xml_path.unlink(missing_ok=True)
-        except OSError:
-            pass
+    for argv in variants:
+        code, out, err = _exec_schtasks(argv)
+        if code == 0:
+            return (True, f"Created Scheduled Task {task_name!r}")
+        last_code, last_err = code, (err or out or "")
     if delete_detail and "cannot find" not in delete_detail.lower():
         last_err = f"{last_err.strip()} (delete detail: {delete_detail})"
     return (False, f"schtasks /Create failed (code {last_code}): {last_err.strip()}")

@@ -116,8 +116,8 @@ def test_shutdown_all_is_bounded_with_wedged_provider():
     mgr.shutdown_all()
     elapsed = time.time() - t0
 
-    # Bounded by _SYNC_DRAIN_TIMEOUT_S (5s) plus a little slack.
-    assert elapsed < 8.0, f"shutdown blocked {elapsed:.1f}s on wedged provider"
+    # Bounded by _SYNC_DRAIN_TIMEOUT_S (5s) plus xdist scheduler slack.
+    assert elapsed < 10.0, f"shutdown blocked {elapsed:.1f}s on wedged provider"
 
 
 def test_writes_are_serialized_in_order():

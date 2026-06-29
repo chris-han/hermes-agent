@@ -983,10 +983,8 @@ def _ovcli_data_from_connection_values(values: dict) -> dict:
 
 def _write_ovcli_config(path: Path, values: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    # atomic_json_write creates the temp file with mode 0o600 and os.replace()s
-    # it into place — no half-written config on crash and no chmod-after-write
-    # TOCTOU window for the api_key/root_api_key it carries.
-    atomic_json_write(path, _ovcli_data_from_connection_values(values), mode=0o600)
+    atomic_json_write(path, _ovcli_data_from_connection_values(values))
+    _restrict_secret_file_permissions(path)
 
 
 def _validate_openviking_reachability(endpoint: str) -> tuple[bool, str]:

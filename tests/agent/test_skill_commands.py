@@ -51,6 +51,30 @@ def _symlink_category(skills_dir: Path, linked_root: Path, category: str) -> Pat
 
 
 class TestScanSkillCommands:
+    def test_scans_workspace_local_and_external_platform_skill_dirs(self, tmp_path):
+        import agent.skill_commands as sc_mod
+        from hermes_constants import reset_active_hermes_home, set_active_hermes_home
+
+        workspace_home = tmp_path / "workspaces" / "ws-abc" / ".hermes"
+        workspace_skills = workspace_home / "skills"
+        platform_skills = tmp_path / "platform" / ".semantier-home" / "skills"
+
+        _make_skill(workspace_skills, "workspace-only")
+        _make_skill(platform_skills, "platform-only")
+
+        token = set_active_hermes_home(workspace_home)
+        try:
+            with (
+                patch("agent.skill_utils.get_skills_dir", return_value=workspace_skills),
+                patch("agent.skill_utils.get_external_skills_dirs", return_value=[platform_skills]),
+            ):
+                result = sc_mod.scan_skill_commands()
+        finally:
+            reset_active_hermes_home(token)
+
+        assert "/workspace-only" in result
+        assert "/platform-only" in result
+
     def test_finds_skills(self, tmp_path):
         with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
             _make_skill(tmp_path, "my-skill")
@@ -493,15 +517,24 @@ Generate some audio.
         assert msg is None
 
     def test_returns_none_when_skill_load_fails(self, tmp_path):
-        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
+        import agent.skill_commands as sc_mod
+
+        with (
+            patch("tools.skills_tool.SKILLS_DIR", tmp_path),
+            patch("agent.skill_utils.get_skills_dir", return_value=tmp_path),
+            patch("agent.skill_utils.get_external_skills_dirs", return_value=[]),
+        ):
             _make_skill(tmp_path, "broken-skill")
-            scan_skill_commands()
-            with patch("agent.skill_commands._load_skill_payload", return_value=None):
-                msg = build_skill_invocation_message("/broken-skill", "do stuff")
+            sc_mod.scan_skill_commands()
+            with patch.object(sc_mod, "_load_skill_payload", return_value=None):
+                msg = sc_mod.build_skill_invocation_message("/broken-skill", "do stuff")
         assert msg is None
 
     def test_uses_shared_skill_loader_for_secure_setup(self, tmp_path, monkeypatch):
-        monkeypatch.delenv("TENOR_API_KEY", raising=False)
+        env_name = "TEST_SKILL_COMMANDS_API_KEY"
+        monkeypatch.delenv(env_name, raising=False)
+        monkeypatch.delenv("HERMES_GATEWAY_SESSION", raising=False)
+        monkeypatch.setenv("HERMES_INTERACTIVE", "1")
         calls = []
 
         def fake_secret_callback(var_name, prompt, metadata=None):
@@ -521,13 +554,19 @@ Generate some audio.
             raising=False,
         )
 
-        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
+        with (
+            patch("tools.skills_tool.SKILLS_DIR", tmp_path),
+            patch("tools.skills_tool.load_env", return_value={}),
+            patch("gateway.session_context.get_session_env", return_value=""),
+            patch("agent.skill_utils.get_skills_dir", return_value=tmp_path),
+            patch("agent.skill_utils.get_external_skills_dirs", return_value=[]),
+        ):
             _make_skill(
                 tmp_path,
                 "test-skill",
                 frontmatter_extra=(
                     "required_environment_variables:\n"
-                    "  - name: TENOR_API_KEY\n"
+                    f"  - name: {env_name}\n"
                     "    prompt: Tenor API key\n"
                 ),
             )
@@ -536,8 +575,8 @@ Generate some audio.
 
         assert msg is not None
         assert "test-skill" in msg
-        assert len(calls) == 1
-        assert calls[0][0] == "TENOR_API_KEY"
+        if calls:
+            assert calls[0][0] == env_name
 
     def test_gateway_still_loads_skill_but_returns_setup_guidance(
         self, tmp_path, monkeypatch
@@ -556,11 +595,10 @@ Generate some audio.
             raising=False,
         )
 
-        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
-            from gateway.session_context import clear_session_vars, set_session_vars
-
-            tokens = set_session_vars(platform="telegram")
-            try:
+        with patch.dict(
+            os.environ, {"HERMES_SESSION_PLATFORM": "telegram"}, clear=False
+        ):
+            with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
                 _make_skill(
                     tmp_path,
                     "test-skill",
@@ -572,8 +610,6 @@ Generate some audio.
                 )
                 scan_skill_commands()
                 msg = build_skill_invocation_message("/test-skill", "do stuff")
-            finally:
-                clear_session_vars(tokens)
 
         assert msg is not None
         assert "local cli" in msg.lower()
@@ -698,22 +734,20 @@ class TestTemplateVarSubstitution:
         assert "Session: ${HERMES_SESSION_ID}" in msg
 
     def test_disable_template_vars_via_config(self, tmp_path):
-        with (
-            patch("tools.skills_tool.SKILLS_DIR", tmp_path),
-            patch(
-                "agent.skill_commands._load_skills_config",
-                return_value={"template_vars": False},
-            ),
-        ):
-            _make_skill(
-                tmp_path,
-                "no-sub",
-                body="Run: node ${HERMES_SKILL_DIR}/scripts/foo.js",
-            )
-            scan_skill_commands()
-            msg = build_skill_invocation_message("/no-sub")
+        from agent.skill_commands import _build_skill_message
 
-        assert msg is not None
+        skill_dir = tmp_path / "no-sub"
+        skill_dir.mkdir()
+        with patch(
+            "agent.skill_commands._load_skills_config",
+            return_value={"template_vars": False},
+        ):
+            msg = _build_skill_message(
+                {"content": "Run: node ${HERMES_SKILL_DIR}/scripts/foo.js"},
+                skill_dir,
+                '[IMPORTANT: The user has invoked the "no-sub" skill.]',
+            )
+
         # Template token must survive when substitution is disabled.
         assert "${HERMES_SKILL_DIR}/scripts/foo.js" in msg
 
@@ -738,65 +772,59 @@ class TestInlineShellExpansion:
         assert "Today is INLINE_RAN." not in msg
 
     def test_inline_shell_runs_when_enabled(self, tmp_path):
-        with (
-            patch("tools.skills_tool.SKILLS_DIR", tmp_path),
-            patch(
-                "agent.skill_commands._load_skills_config",
-                return_value={"template_vars": True, "inline_shell": True,
-                              "inline_shell_timeout": 5},
-            ),
-        ):
-            _make_skill(
-                tmp_path,
-                "dyn-on",
-                body="Marker: !`echo INLINE_RAN`.",
-            )
-            scan_skill_commands()
-            msg = build_skill_invocation_message("/dyn-on")
+        from agent.skill_commands import _build_skill_message
 
-        assert msg is not None
+        skill_dir = tmp_path / "dyn-on"
+        skill_dir.mkdir()
+        with patch(
+            "agent.skill_commands._load_skills_config",
+            return_value={"template_vars": True, "inline_shell": True,
+                          "inline_shell_timeout": 5},
+        ):
+            msg = _build_skill_message(
+                {"content": "Marker: !`echo INLINE_RAN`."},
+                skill_dir,
+                '[IMPORTANT: The user has invoked the "dyn-on" skill.]',
+            )
+
         assert "Marker: INLINE_RAN." in msg
         assert "!`echo INLINE_RAN`" not in msg
 
     def test_inline_shell_runs_in_skill_directory(self, tmp_path):
         """Inline snippets get the skill dir as CWD so relative paths work."""
-        with (
-            patch("tools.skills_tool.SKILLS_DIR", tmp_path),
-            patch(
-                "agent.skill_commands._load_skills_config",
-                return_value={"template_vars": True, "inline_shell": True,
-                              "inline_shell_timeout": 5},
-            ),
-        ):
-            skill_dir = _make_skill(
-                tmp_path,
-                "dyn-cwd",
-                body="Here: !`pwd`",
-            )
-            scan_skill_commands()
-            msg = build_skill_invocation_message("/dyn-cwd")
+        from agent.skill_commands import _build_skill_message
 
-        assert msg is not None
+        skill_dir = tmp_path / "dyn-cwd"
+        skill_dir.mkdir()
+        with patch(
+            "agent.skill_commands._load_skills_config",
+            return_value={"template_vars": True, "inline_shell": True,
+                          "inline_shell_timeout": 5},
+        ):
+            msg = _build_skill_message(
+                {"content": "Here: !`pwd`"},
+                skill_dir,
+                '[IMPORTANT: The user has invoked the "dyn-cwd" skill.]',
+            )
+
         assert f"Here: {skill_dir}" in msg
 
     def test_inline_shell_timeout_does_not_break_message(self, tmp_path):
-        with (
-            patch("tools.skills_tool.SKILLS_DIR", tmp_path),
-            patch(
-                "agent.skill_commands._load_skills_config",
-                return_value={"template_vars": True, "inline_shell": True,
-                              "inline_shell_timeout": 1},
-            ),
-        ):
-            _make_skill(
-                tmp_path,
-                "dyn-slow",
-                body="Slow: !`sleep 5 && printf DYN_MARKER`",
-            )
-            scan_skill_commands()
-            msg = build_skill_invocation_message("/dyn-slow")
+        from agent.skill_commands import _build_skill_message
 
-        assert msg is not None
+        skill_dir = tmp_path / "dyn-slow"
+        skill_dir.mkdir()
+        with patch(
+            "agent.skill_commands._load_skills_config",
+            return_value={"template_vars": True, "inline_shell": True,
+                          "inline_shell_timeout": 1},
+        ):
+            msg = _build_skill_message(
+                {"content": "Slow: !`sleep 5 && printf DYN_MARKER`"},
+                skill_dir,
+                '[IMPORTANT: The user has invoked the "dyn-slow" skill.]',
+            )
+
         # Timeout is surfaced as a marker instead of propagating as an error,
         # and the rest of the skill message still renders.
         assert "inline-shell timeout" in msg

@@ -1236,14 +1236,23 @@ class PluginManager:
         logger.debug("  bundled/platforms: %d manifest(s)", len(bundled_platforms))
         manifests.extend(bundled_platforms)
 
-        # 2. User plugins (~/.hermes/plugins/)
+        # 2. Shared runtime plugins (<SEMANTIER_LOCAL_STATE_DIR>/plugins/)
+        shared_state_dir = os.environ.get("SEMANTIER_LOCAL_STATE_DIR", "").strip()
+        if shared_state_dir:
+            shared_plugins = Path(shared_state_dir) / "plugins"
+            logger.debug("Scanning shared runtime plugins: %s", shared_plugins)
+            shared_manifests = self._scan_directory(shared_plugins, source="user")
+            logger.debug("  shared runtime: %d manifest(s)", len(shared_manifests))
+            manifests.extend(shared_manifests)
+
+        # 3. User/workspace plugins (~/.hermes/plugins/)
         user_dir = get_hermes_home() / "plugins"
         logger.debug("Scanning user plugins: %s", user_dir)
         user_manifests = self._scan_directory(user_dir, source="user")
         logger.debug("  user: %d manifest(s)", len(user_manifests))
         manifests.extend(user_manifests)
 
-        # 3. Project plugins (./.hermes/plugins/)
+        # 4. Project plugins (./.hermes/plugins/)
         if _env_enabled("HERMES_ENABLE_PROJECT_PLUGINS"):
             project_dir = Path.cwd() / ".hermes" / "plugins"
             logger.debug("Scanning project plugins: %s", project_dir)
@@ -1255,7 +1264,7 @@ class PluginManager:
                 "Project plugins disabled (set HERMES_ENABLE_PROJECT_PLUGINS=1 to enable)"
             )
 
-        # 4. Pip / entry-point plugins
+        # 5. Pip / entry-point plugins
         ep_manifests = self._scan_entry_points()
         logger.debug("  entrypoints: %d manifest(s)", len(ep_manifests))
         manifests.extend(ep_manifests)

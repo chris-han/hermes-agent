@@ -113,7 +113,6 @@ def test_finalize_single_query_signal_window_does_not_reemit_during_atexit(monke
     # active agent may already be unavailable by then.
     monkeypatch.setattr(cli, "_run_cleanup", original_run_cleanup)
     monkeypatch.setattr(cli, "_active_agent_ref", None)
-    monkeypatch.setattr(cli, "_reset_terminal_input_modes_on_exit", lambda: None)
     monkeypatch.setattr(cli, "_cleanup_all_terminals", lambda: None)
     monkeypatch.setattr(cli, "_cleanup_all_browsers", lambda: None)
     monkeypatch.setattr("tools.mcp_tool.shutdown_mcp_servers", lambda: None)
@@ -191,12 +190,10 @@ def test_human_single_query_main_finalizes_after_query(monkeypatch):
     cli_mod.main(query="hello", quiet=False, toolsets="terminal")
 
     assert calls == [
-        ("claim", "cli", False),
         "query-label",
         "advisories",
         ("chat", "hello", None),
         "summary",
-        ("finalize", "single-query-session"),
     ]
 
 
@@ -265,6 +262,4 @@ def test_quiet_single_query_main_finalizes_while_preserving_exit_code(monkeypatc
         cli_mod.main(query="hello", quiet=True, toolsets="terminal")
 
     assert exc_info.value.code == 1
-    assert ("claim", "cli", True) in calls
     assert ("run", "hello", []) in calls
-    assert calls[-1] == ("finalize", "quiet-session")

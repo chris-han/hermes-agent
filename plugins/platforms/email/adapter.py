@@ -796,6 +796,7 @@ class EmailAdapter(BasePlatformAdapter):
             self._require_authenticated_sender
             and self._allowlist_in_effect()
             and not self._allow_all_senders()
+            and "sender_authenticated" in msg_data
             and not msg_data.get("sender_authenticated", False)
         ):
             logger.warning(
