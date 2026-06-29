@@ -95,6 +95,29 @@ def get_safe_write_roots() -> set[str]:
     return roots
 
 
+def get_allowed_write_roots() -> set[str]:
+    """Return resolved HERMES_WRITE_ALLOWED_ROOTS paths.
+
+    Runtime bindings currently publish this env as a comma-separated list.
+    We also accept ``os.pathsep`` as a compatibility fallback.
+    """
+    env = os.getenv("HERMES_WRITE_ALLOWED_ROOTS", "")
+    if not env:
+        return set()
+    roots: set[str] = set()
+    raw_parts = [part for part in env.split(",") if part]
+    if len(raw_parts) == 1 and os.pathsep in raw_parts[0]:
+        raw_parts = [part for part in raw_parts[0].split(os.pathsep) if part]
+    for path in raw_parts:
+        try:
+            resolved = os.path.realpath(os.path.expanduser(path.strip()))
+            if resolved:
+                roots.add(resolved)
+        except (OSError, ValueError):
+            continue
+    return roots
+
+
 def is_write_denied(path: str) -> bool:
     """Return True if path is blocked by the write denylist or safe root."""
     home = os.path.realpath(os.path.expanduser("~"))
@@ -132,6 +155,14 @@ def is_write_denied(path: str) -> bool:
             pass
 
     safe_roots = get_safe_write_roots()
+    allowed_roots = get_allowed_write_roots()
+
+    if allowed_roots:
+        for allowed_root in allowed_roots:
+            if resolved == allowed_root or resolved.startswith(allowed_root + os.sep):
+                return False
+        return True
+
     if safe_roots:
         allowed = False
         for safe_root in safe_roots:

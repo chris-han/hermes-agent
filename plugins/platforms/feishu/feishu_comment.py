@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -1095,19 +1096,20 @@ def _run_comment_agent(
         sandbox_scope = None
         if workspace_id:
             from agents.sandbox_scope import SandboxScope
-            from agents.workspace_session_logs import resolve_or_create_workspace_session_id
-            from runtime_paths import workspace_hermes_home_path
+            from gateway.session import resolve_workspace_gateway_session
 
-            workspace_home = workspace_hermes_home_path(workspace_id)
-            canonical_session_id = resolve_or_create_workspace_session_id(
-                workspace_home,
-                workspace_id=workspace_id,
-                alias=session_key or None,
-                platform_session_key=session_key or None,
+            source = SimpleNamespace(
+                workspace_owner_id=workspace_id,
                 chat_id=session_key or None,
-                origin_user_id=user_open_id or None,
-                source="feishu_comment",
-                platform="feishu",
+                thread_id=None,
+                user_id=user_open_id or None,
+            )
+            canonical_session_id, _workspace_home = resolve_workspace_gateway_session(
+                source,
+                session_id="",
+                session_key=session_key or "",
+                source_gateway="feishu",
+                create_if_missing=False,
             )
             sandbox_scope = SandboxScope(
                 workspace_id=workspace_id,

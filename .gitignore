@@ -71,7 +71,6 @@ mini-swe-agent/
 .nix-stamps/
 result
 website/static/api/skills-index.json
-<<<<<<< HEAD
 # skills.json + skills-meta.json are build artifacts emitted by
 # website/scripts/extract-skills.py during prebuild — keep them out of
 # git for the same reason as skills-index.json (large, generated, change
@@ -81,13 +80,10 @@ website/static/api/skills-meta.json
 # automation-blueprints-index.json is a build artifact emitted by
 # website/scripts/extract-automation-blueprints.py during prebuild.
 website/static/api/automation-blueprints-index.json
-=======
->>>>>>> 2e405b513 (feat: flatten Chris Han changes after upstream base)
 models-dev-upstream/
 hermes_cli/tui_dist/*
 hermes_cli/scripts/
 docs/superpowers/*
-<<<<<<< HEAD
 # Working directory for the Hermes Agent's session state (~/.hermes/ at runtime;
 # also created in-repo when an agent operates in this checkout). Plans, audit
 # logs, and per-session caches are never artifacts of the codebase.
@@ -118,7 +114,6 @@ RELEASE_v*.md
 # Desktop demo-run scratch output (hermes writes demo/*.txt during recorded
 # walkthroughs). Throwaway artifacts, never part of the app.
 apps/desktop/demo/
-=======
 build/
 .semantier-home/auth.db
->>>>>>> 2e405b513 (feat: flatten Chris Han changes after upstream base)
+.semantier-home/state.db

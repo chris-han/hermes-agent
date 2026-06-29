@@ -331,6 +331,69 @@ def _cron_storage_scope_id() -> str:
     return f"hermes_home:{digest}"
 
 
+def _sqlite_cron_store():
+    """Return the Semantier SQLite cron store module when available."""
+    try:
+        from agents import cron_store
+
+        return cron_store
+    except Exception:
+        return None
+
+
+def _use_sqlite_cron_authority() -> bool:
+    """Use SQLite as cron authority when Semantier runtime state is configured."""
+    return bool(os.environ.get("SEMANTIER_LOCAL_STATE_DIR")) and _sqlite_cron_store() is not None
+
+
+def _load_jobs_from_file() -> List[Dict[str, Any]]:
+    """Load jobs from legacy jobs.json storage."""
+    ensure_dirs()
+    if not JOBS_FILE.exists():
+        return []
+
+    _strict_retry = False  # track whether we used the strict=False fallback
+
+    try:
+        with open(JOBS_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except json.JSONDecodeError:
+        # Retry with strict=False to handle bare control chars in string values
+        _strict_retry = True
+        try:
+            with open(JOBS_FILE, 'r', encoding='utf-8') as f:
+                data = json.loads(f.read(), strict=False)
+        except Exception as e:
+            logger.error("Failed to auto-repair jobs.json: %s", e)
+            raise RuntimeError(f"Cron database corrupted and unrepairable: {e}") from e
+    except IOError as e:
+        logger.error("IOError reading jobs.json: %s", e)
+        raise RuntimeError(f"Failed to read cron database: {e}") from e
+
+    # Validate the top-level JSON shape: accept a dict (expected) or a bare
+    # list (auto-repair). Anything else (str/number/null) is corruption that
+    # would otherwise raise an uncaught AttributeError on ``.get()`` and take
+    # down the whole cron subsystem.
+    if isinstance(data, dict):
+        jobs = data.get("jobs", [])
+        if _strict_retry and jobs:
+            # Hit control-character corruption — rewrite with proper escaping.
+            save_jobs(jobs)
+            logger.warning("Auto-repaired jobs.json (had invalid control characters)")
+        return jobs
+    if isinstance(data, list):
+        # Bare array — likely saved/edited outside save_jobs(). Wrap it back
+        # into the expected {"jobs": [...]} structure.
+        if data:
+            save_jobs(data)
+            logger.warning("Auto-repaired jobs.json (bare list wrapped as dict)")
+        return data
+
+    raise RuntimeError(
+        f"Cron database corrupted: expected {{'jobs': [...]}}, got {type(data).__name__}"
+    )
+
+
 # =============================================================================
 # Schedule Parsing
 # =============================================================================
@@ -683,50 +746,23 @@ def get_ticker_success_age() -> Optional[float]:
 
 def load_jobs() -> List[Dict[str, Any]]:
     """Load all jobs from storage."""
-    ensure_dirs()
-    if not JOBS_FILE.exists():
+    if _use_sqlite_cron_authority():
+        cron_store = _sqlite_cron_store()
+        assert cron_store is not None
+        scope_id = _cron_storage_scope_id()
+        jobs = cron_store.list_jobs(scope_id)
+        if jobs:
+            return jobs
+        # Explicit one-time compatibility import from legacy file storage.
+        if JOBS_FILE.exists() and not cron_store.legacy_import_marked(scope_id):
+            legacy_jobs = _load_jobs_from_file()
+            if legacy_jobs:
+                cron_store.replace_jobs(scope_id, legacy_jobs)
+            cron_store.mark_legacy_imported(scope_id)
+            return legacy_jobs
         return []
 
-    _strict_retry = False  # track whether we used the strict=False fallback
-
-    try:
-        with open(JOBS_FILE, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-    except json.JSONDecodeError:
-        # Retry with strict=False to handle bare control chars in string values
-        _strict_retry = True
-        try:
-            with open(JOBS_FILE, 'r', encoding='utf-8') as f:
-                data = json.loads(f.read(), strict=False)
-        except Exception as e:
-            logger.error("Failed to auto-repair jobs.json: %s", e)
-            raise RuntimeError(f"Cron database corrupted and unrepairable: {e}") from e
-    except IOError as e:
-        logger.error("IOError reading jobs.json: %s", e)
-        raise RuntimeError(f"Failed to read cron database: {e}") from e
-
-    # Validate the top-level JSON shape: accept a dict (expected) or a bare
-    # list (auto-repair). Anything else (str/number/null) is corruption that
-    # would otherwise raise an uncaught AttributeError on ``.get()`` and take
-    # down the whole cron subsystem.
-    if isinstance(data, dict):
-        jobs = data.get("jobs", [])
-        if _strict_retry and jobs:
-            # Hit control-character corruption — rewrite with proper escaping.
-            save_jobs(jobs)
-            logger.warning("Auto-repaired jobs.json (had invalid control characters)")
-        return jobs
-    if isinstance(data, list):
-        # Bare array — likely saved/edited outside save_jobs(). Wrap it back
-        # into the expected {"jobs": [...]} structure.
-        if data:
-            save_jobs(data)
-            logger.warning("Auto-repaired jobs.json (bare list wrapped as dict)")
-        return data
-
-    raise RuntimeError(
-        f"Cron database corrupted: expected {{'jobs': [...]}}, got {type(data).__name__}"
-    )
+    return _load_jobs_from_file()
 
 
 def _save_jobs_unlocked(jobs: List[Dict[str, Any]]):
@@ -750,6 +786,12 @@ def _save_jobs_unlocked(jobs: List[Dict[str, Any]]):
 
 def save_jobs(jobs: List[Dict[str, Any]]):
     """Save all jobs to storage."""
+    if _use_sqlite_cron_authority():
+        cron_store = _sqlite_cron_store()
+        assert cron_store is not None
+        scope_id = _cron_storage_scope_id()
+        cron_store.replace_jobs(scope_id, jobs)
+        return
     with _jobs_lock():
         _save_jobs_unlocked(jobs)
 

@@ -105,7 +105,7 @@ def workspace_runtime_home_path(workspace_id: str) -> Path:
 
 
 def workspace_hermes_home_path(workspace_id: str) -> Path:
-    return workspace_runtime_home_path(workspace_id) / ".semantier-home"
+    return workspace_runtime_home_path(workspace_id)
 
 
 def workspace_sessions_root(workspace_id: str) -> Path:
@@ -265,14 +265,14 @@ def _bind_workspace_env_impl(resolved_home: Path) -> Iterator[None]:
         _hc_token = _set_ahh(resolved_home)
         _hho_token = _set_hho(resolved_home)
     except Exception:
-        if _reset_ahh is not None and _hc_token is not None:
-            try:
-                _reset_ahh(_hc_token)
-            except Exception:
-                pass
         if _reset_hho is not None and _hho_token is not None:
             try:
                 _reset_hho(_hho_token)
+            except Exception:
+                pass
+        if _reset_ahh is not None and _hc_token is not None:
+            try:
+                _reset_ahh(_hc_token)
             except Exception:
                 pass
         _hc_token = None
@@ -284,14 +284,14 @@ def _bind_workspace_env_impl(resolved_home: Path) -> Iterator[None]:
         _workspace_hermes_home_ctx.reset(home_token)
         if runs_token is not None:
             _workspace_runs_dir_ctx.reset(runs_token)
-        if _reset_ahh is not None and _hc_token is not None:
-            try:
-                _reset_ahh(_hc_token)
-            except Exception:
-                pass
         if _reset_hho is not None and _hho_token is not None:
             try:
                 _reset_hho(_hho_token)
+            except Exception:
+                pass
+        if _reset_ahh is not None and _hc_token is not None:
+            try:
+                _reset_ahh(_hc_token)
             except Exception:
                 pass
         if prev_home is None:

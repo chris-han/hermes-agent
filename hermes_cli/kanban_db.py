@@ -817,6 +817,8 @@ class Task:
     claim_lock: Optional[str]
     claim_expires: Optional[int]
     tenant: Optional[str]
+    user_id: Optional[str] = None
+    workspace_id: Optional[str] = None
     branch_name: Optional[str] = None
     project_id: Optional[str] = None
     result: Optional[str] = None
@@ -898,6 +900,8 @@ class Task:
             status=row["status"],
             priority=row["priority"],
             created_by=row["created_by"],
+            user_id=row["user_id"] if "user_id" in keys else None,
+            workspace_id=row["workspace_id"] if "workspace_id" in keys else None,
             created_at=row["created_at"],
             started_at=row["started_at"],
             completed_at=row["completed_at"],
@@ -1064,6 +1068,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     status               TEXT NOT NULL,
     priority             INTEGER DEFAULT 0,
     created_by           TEXT,
+    user_id              TEXT,
+    workspace_id         TEXT,
     created_at           INTEGER NOT NULL,
     started_at           INTEGER,
     completed_at         INTEGER,
@@ -1820,6 +1826,10 @@ def _migrate_add_optional_columns(conn: sqlite3.Connection) -> None:
     cols = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)")}
     if "tenant" not in cols:
         _add_column_if_missing(conn, "tasks", "tenant", "tenant TEXT")
+    if "user_id" not in cols:
+        _add_column_if_missing(conn, "tasks", "user_id", "user_id TEXT")
+    if "workspace_id" not in cols:
+        _add_column_if_missing(conn, "tasks", "workspace_id", "workspace_id TEXT")
     if "result" not in cols:
         _add_column_if_missing(conn, "tasks", "result", "result TEXT")
     if "branch_name" not in cols:
@@ -2312,6 +2322,8 @@ def create_task(
     body: Optional[str] = None,
     assignee: Optional[str] = None,
     created_by: Optional[str] = None,
+    user_id: Optional[str] = None,
+    workspace_id: Optional[str] = None,
     workspace_kind: str = "scratch",
     workspace_path: Optional[str] = None,
     branch_name: Optional[str] = None,
@@ -2550,11 +2562,11 @@ def create_task(
                     """
                     INSERT INTO tasks (
                         id, title, body, assignee, status, priority,
-                        created_by, created_at, workspace_kind, workspace_path,
+                        created_by, user_id, workspace_id, created_at, workspace_kind, workspace_path,
                         branch_name, project_id, tenant, idempotency_key,
                         max_runtime_seconds,
                         skills, max_retries, goal_mode, goal_max_turns, session_id
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         task_id,
@@ -2564,6 +2576,8 @@ def create_task(
                         task_status,
                         priority,
                         created_by,
+                        user_id,
+                        workspace_id,
                         now,
                         workspace_kind,
                         workspace_path,
