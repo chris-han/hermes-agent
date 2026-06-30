@@ -46,7 +46,7 @@ import sys
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 try:
     from aiohttp import web
@@ -2108,12 +2108,36 @@ class APIServerAdapter(BasePlatformAdapter):
             request.headers.get(_SEMANTIER_UPLOAD_SESSION_ID_HEADER, "").strip()
             or session_id
         )
-        preflight_error = self._semantier_provider_preflight_response(
-            request_hermes_home=request_hermes_home,
-            session_id=request_upload_session_id,
+        require_boundary = bool(
+            getattr(self, "_semantier_embedded_boundary_required", False)
         )
-        if preflight_error is not None:
-            return preflight_error
+        try:
+            execution_boundary = self._resolve_execution_boundary_for_api(
+                source="api_server.chat_completions",
+                session_id=request_upload_session_id,
+                require_boundary=require_boundary,
+                headers=request.headers,
+                metadata={
+                    "transport": "embedded" if require_boundary else "standalone",
+                    "trusted_internal_boundary": require_boundary,
+                },
+            )
+        except Exception as exc:
+            from gateway.execution_boundary import GovernedExecutionBoundaryRequired
+
+            if isinstance(exc, GovernedExecutionBoundaryRequired):
+                return web.json_response(
+                    _openai_error(str(exc), err_type="server_error"),
+                    status=500,
+                )
+            raise
+        if not require_boundary:
+            preflight_error = self._semantier_provider_preflight_response(
+                request_hermes_home=request_hermes_home,
+                session_id=request_upload_session_id,
+            )
+            if preflight_error is not None:
+                return preflight_error
 
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:29]}"
         model_name = body.get("model", self._model_name)
@@ -2200,6 +2224,7 @@ class APIServerAdapter(BasePlatformAdapter):
                 request_upload_session_id=request_upload_session_id,
                 request_user_id=request_user_id,
                 request_workspace_id=request_workspace_id,
+                execution_boundary=execution_boundary,
                 stream_delta_callback=_on_delta,
                 tool_start_callback=_on_tool_start,
                 tool_complete_callback=_on_tool_complete,
@@ -2227,6 +2252,7 @@ class APIServerAdapter(BasePlatformAdapter):
                 request_upload_session_id=request_upload_session_id,
                 request_user_id=request_user_id,
                 request_workspace_id=request_workspace_id,
+                execution_boundary=execution_boundary,
                 gateway_session_key=gateway_session_key,
             )
 
@@ -3200,12 +3226,36 @@ class APIServerAdapter(BasePlatformAdapter):
             request.headers.get(_SEMANTIER_UPLOAD_SESSION_ID_HEADER, "").strip()
             or session_id
         )
-        preflight_error = self._semantier_provider_preflight_response(
-            request_hermes_home=request_hermes_home,
-            session_id=request_upload_session_id,
+        require_boundary = bool(
+            getattr(self, "_semantier_embedded_boundary_required", False)
         )
-        if preflight_error is not None:
-            return preflight_error
+        try:
+            execution_boundary = self._resolve_execution_boundary_for_api(
+                source="api_server.responses",
+                session_id=request_upload_session_id,
+                require_boundary=require_boundary,
+                headers=request.headers,
+                metadata={
+                    "transport": "embedded" if require_boundary else "standalone",
+                    "trusted_internal_boundary": require_boundary,
+                },
+            )
+        except Exception as exc:
+            from gateway.execution_boundary import GovernedExecutionBoundaryRequired
+
+            if isinstance(exc, GovernedExecutionBoundaryRequired):
+                return web.json_response(
+                    _openai_error(str(exc), err_type="server_error"),
+                    status=500,
+                )
+            raise
+        if not require_boundary:
+            preflight_error = self._semantier_provider_preflight_response(
+                request_hermes_home=request_hermes_home,
+                session_id=request_upload_session_id,
+            )
+            if preflight_error is not None:
+                return preflight_error
 
         stream = _coerce_request_bool(body.get("stream"), default=False)
         if stream:
@@ -3258,6 +3308,7 @@ class APIServerAdapter(BasePlatformAdapter):
                 request_upload_session_id=request_upload_session_id,
                 request_user_id=request_user_id,
                 request_workspace_id=request_workspace_id,
+                execution_boundary=execution_boundary,
                 stream_delta_callback=_on_delta,
                 tool_progress_callback=_on_tool_progress,
                 tool_start_callback=_on_tool_start,
@@ -3300,6 +3351,7 @@ class APIServerAdapter(BasePlatformAdapter):
                 request_upload_session_id=request_upload_session_id,
                 request_user_id=request_user_id,
                 request_workspace_id=request_workspace_id,
+                execution_boundary=execution_boundary,
                 gateway_session_key=gateway_session_key,
             )
 
@@ -3921,6 +3973,35 @@ class APIServerAdapter(BasePlatformAdapter):
             )
         return None
 
+    def _resolve_execution_boundary_for_api(
+        self,
+        *,
+        source: str,
+        session_id: str | None,
+        require_boundary: bool,
+        headers: Mapping[str, str] | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ):
+        from gateway.execution_boundary import (
+            ExecutionBoundaryRequest,
+            GovernedExecutionBoundaryRequired,
+            resolve_execution_boundary,
+        )
+
+        boundary = resolve_execution_boundary(
+            ExecutionBoundaryRequest(
+                source=source,
+                session_id=session_id,
+                headers=dict(headers or {}),
+                metadata=dict(metadata or {}),
+            )
+        )
+        if boundary is None and require_boundary:
+            raise GovernedExecutionBoundaryRequired(
+                f"Execution boundary required for {source} session={session_id or ''}"
+            )
+        return boundary
+
     @staticmethod
     def _bind_api_server_session(
         *,
@@ -3975,6 +4056,7 @@ class APIServerAdapter(BasePlatformAdapter):
         request_upload_session_id: Optional[str] = None,
         request_user_id: Optional[str] = None,
         request_workspace_id: Optional[str] = None,
+        execution_boundary=None,
     ) -> tuple:
         """
         Create an agent and run a conversation in a thread executor.
@@ -4000,7 +4082,7 @@ class APIServerAdapter(BasePlatformAdapter):
                 workspace_owner_id=request_workspace_id or "",
             )
             try:
-                if request_hermes_home:
+                if request_hermes_home and execution_boundary is None:
                     gateway_run = _gateway_run_module()
                     preflight = getattr(
                         gateway_run,
@@ -4042,13 +4124,16 @@ class APIServerAdapter(BasePlatformAdapter):
                 clear_session_vars(tokens)
 
         def _run():
-            if request_hermes_home:
-                with _bound_request_hermes_home(
-                    request_hermes_home,
-                    session_id=request_upload_session_id or session_id,
-                ):
-                    return _run_bound()
-            return _run_bound()
+            from gateway.execution_boundary import bind_execution_boundary
+
+            with bind_execution_boundary(execution_boundary):
+                if request_hermes_home:
+                    with _bound_request_hermes_home(
+                        request_hermes_home,
+                        session_id=request_upload_session_id or session_id,
+                    ):
+                        return _run_bound()
+                return _run_bound()
 
         self._inflight_agent_runs += 1
         try:
@@ -4210,12 +4295,36 @@ class APIServerAdapter(BasePlatformAdapter):
             request.headers.get(_SEMANTIER_UPLOAD_SESSION_ID_HEADER, "").strip()
             or session_id
         )
-        preflight_error = self._semantier_provider_preflight_response(
-            request_hermes_home=request_hermes_home,
-            session_id=request_upload_session_id,
+        require_boundary = bool(
+            getattr(self, "_semantier_embedded_boundary_required", False)
         )
-        if preflight_error is not None:
-            return preflight_error
+        try:
+            execution_boundary = self._resolve_execution_boundary_for_api(
+                source="api_server.runs",
+                session_id=request_upload_session_id,
+                require_boundary=require_boundary,
+                headers=request.headers,
+                metadata={
+                    "transport": "embedded" if require_boundary else "standalone",
+                    "trusted_internal_boundary": require_boundary,
+                },
+            )
+        except Exception as exc:
+            from gateway.execution_boundary import GovernedExecutionBoundaryRequired
+
+            if isinstance(exc, GovernedExecutionBoundaryRequired):
+                return web.json_response(
+                    _openai_error(str(exc), err_type="server_error"),
+                    status=500,
+                )
+            raise
+        if not require_boundary:
+            preflight_error = self._semantier_provider_preflight_response(
+                request_hermes_home=request_hermes_home,
+                session_id=request_upload_session_id,
+            )
+            if preflight_error is not None:
+                return preflight_error
         approval_session_key = gateway_session_key or session_id or run_id
         ephemeral_system_prompt = instructions
         loop = asyncio.get_running_loop()
@@ -4260,7 +4369,9 @@ class APIServerAdapter(BasePlatformAdapter):
                     if request_hermes_home
                     else contextlib.nullcontext()
                 )
-                with create_cm:
+                from gateway.execution_boundary import bind_execution_boundary
+
+                with bind_execution_boundary(execution_boundary), create_cm:
                     agent = self._create_agent(
                         ephemeral_system_prompt=ephemeral_system_prompt,
                         session_id=session_id,
@@ -4318,7 +4429,9 @@ class APIServerAdapter(BasePlatformAdapter):
                             if request_hermes_home
                             else contextlib.nullcontext()
                         )
-                        with run_cm:
+                        from gateway.execution_boundary import bind_execution_boundary
+
+                        with bind_execution_boundary(execution_boundary), run_cm:
                             # Bind approval/session identity for this API run via
                             # contextvars so concurrent runs do not share process
                             # environment state.
