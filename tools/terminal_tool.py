@@ -1280,7 +1280,19 @@ def _safe_getcwd() -> str:
     try:
         return os.getcwd()
     except FileNotFoundError:
-        return os.getenv("TERMINAL_CWD") or os.path.expanduser("~")
+        return _current_terminal_cwd_env() or os.path.expanduser("~")
+
+
+def _current_terminal_cwd_env(default: str | None = None) -> str | None:
+    try:
+        from gateway.execution_boundary import current_execution_boundary
+
+        boundary = current_execution_boundary()
+        if boundary is not None and boundary.paths.terminal_cwd is not None:
+            return str(boundary.paths.terminal_cwd)
+    except Exception:
+        pass
+    return os.getenv("TERMINAL_CWD", default)
 
 
 # Path prefixes that identify a *host* working directory which cannot exist
@@ -1361,12 +1373,12 @@ def _get_env_config() -> Dict[str, Any]:
     # If Docker cwd passthrough is explicitly enabled, remap the host path to
     # /workspace and track the original host path separately. Otherwise keep the
     # normal sandbox behavior and discard host paths.
-    cwd = os.getenv("TERMINAL_CWD", default_cwd)
+    cwd = _current_terminal_cwd_env(default_cwd)
     if cwd:
         cwd = os.path.expanduser(cwd)
     host_cwd = None
     if env_type == "docker" and mount_docker_cwd:
-        docker_cwd_source = os.getenv("TERMINAL_CWD") or _safe_getcwd()
+        docker_cwd_source = _current_terminal_cwd_env() or _safe_getcwd()
         candidate = os.path.abspath(os.path.expanduser(docker_cwd_source))
         if (
             any(candidate.startswith(p) for p in _HOST_CWD_PREFIXES)

@@ -16,11 +16,7 @@ from typing import Iterator, Optional
 
 _DEFAULT_RUNTIME_ROOT = ".semantier-home"
 _REPO_ROOT = Path(__file__).resolve().parent
-_DEFAULT_WORKSPACES_ROOT = (
-    _REPO_ROOT.parent / "workspaces"
-    if _REPO_ROOT.name == "hermes-agent" and (_REPO_ROOT.parent / "src").exists()
-    else _REPO_ROOT / "workspaces"
-)
+_DEFAULT_WORKSPACES_ROOT = _REPO_ROOT / "workspaces"
 _WORKSPACES_ROOT = _DEFAULT_WORKSPACES_ROOT
 
 _HERMES_HOME_ENV = "HERMES_HOME"
@@ -41,6 +37,14 @@ _workspace_runs_dir_ctx: ContextVar[Optional[str]] = ContextVar(
 
 
 def current_workspace_hermes_home() -> Optional[str]:
+    try:
+        from gateway.execution_boundary import current_execution_boundary
+
+        boundary = current_execution_boundary()
+        if boundary is not None and boundary.paths.hermes_home is not None:
+            return str(boundary.paths.hermes_home)
+    except Exception:
+        pass
     ctx_val = _workspace_hermes_home_ctx.get()
     if ctx_val is not None:
         return ctx_val
@@ -48,10 +52,25 @@ def current_workspace_hermes_home() -> Optional[str]:
 
 
 def current_workspace_runs_dir() -> Optional[str]:
+    boundary_runs = current_boundary_runs_root()
+    if boundary_runs is not None:
+        return str(boundary_runs)
     ctx_val = _workspace_runs_dir_ctx.get()
     if ctx_val is not None:
         return ctx_val
     return os.environ.get(_WORKSPACE_RUNS_DIR_ENV)
+
+
+def current_boundary_runs_root() -> Path | None:
+    try:
+        from gateway.execution_boundary import current_execution_boundary
+
+        boundary = current_execution_boundary()
+        if boundary is None:
+            return None
+        return boundary.paths.runs_root
+    except Exception:
+        return None
 
 
 def _validate_workspace_id(workspace_id: str) -> str:
@@ -108,8 +127,7 @@ def workspace_root_path(workspace_id: str) -> Path:
 
 
 def _workspaces_root() -> Path:
-    raw = os.environ.get("SEMANTIER_WORKSPACES_ROOT", "").strip()
-    return Path(raw).expanduser() if raw else _WORKSPACES_ROOT
+    return _WORKSPACES_ROOT
 
 
 def workspace_runtime_home_path(workspace_id: str) -> Path:
