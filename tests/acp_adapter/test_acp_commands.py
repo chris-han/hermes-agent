@@ -115,7 +115,7 @@ def test_acp_real_agent_gets_session_db_for_recall(monkeypatch):
     assert captured["session_id"] == "acp-session"
 
 
-def test_session_manager_make_agent_uses_shared_api_server_toolsets():
+def test_session_manager_make_agent_uses_shared_acp_toolsets():
     captured: dict[str, object] = {}
 
     class CaptureAgent:
@@ -131,7 +131,8 @@ def test_session_manager_make_agent_uses_shared_api_server_toolsets():
          patch("run_agent.AIAgent", CaptureAgent):
         mock_config.return_value = {
             "platform_toolsets": {
-                "api_server": ["hermes-api-server", "business_analytics"],
+                "acp": ["hermes-acp", "governed_analytics"],
+                "api_server": ["hermes-api-server"],
             },
             "mcp_servers": {
                 "demo": {"enabled": True},
@@ -153,8 +154,8 @@ def test_session_manager_make_agent_uses_shared_api_server_toolsets():
         )
 
     assert agent.enabled_toolsets == [
-        "business_analytics",
-        "hermes-api-server",
+        "hermes-acp",
+        "governed_analytics",
         "mcp-demo",
     ]
     assert captured["platform"] == "acp"

@@ -61,6 +61,7 @@ def _run_with_current_provider(job, current_provider, tmp_path):
                  "base_url": "https://example.invalid/v1",
                  "provider": current_provider,
                  "api_mode": "chat_completions",
+                 "model": "test-model",
              },
          ), \
          patch("run_agent.AIAgent") as mock_agent_cls:
@@ -245,9 +246,12 @@ class TestCreateJobSnapshot:
 def _run_with_current_provider_and_model(job, current_provider, current_model, tmp_path):
     """Drive run_job with resolved provider pinned and config.yaml model.default
     set to ``current_model`` (the unpinned-model fire-time source)."""
+    from hermes_cli.model_normalize import normalize_model_for_provider
+
     (tmp_path / "config.yaml").write_text(
         f"model:\n  default: {current_model}\n"
     )
+    runtime_model = normalize_model_for_provider(current_model, current_provider)
     fake_db = MagicMock()
     with patch("cron.scheduler._hermes_home", tmp_path), \
          patch("cron.scheduler._get_hermes_home", return_value=tmp_path), \
@@ -261,6 +265,7 @@ def _run_with_current_provider_and_model(job, current_provider, current_model, t
                  "base_url": "https://example.invalid/v1",
                  "provider": current_provider,
                  "api_mode": "chat_completions",
+                 "model": runtime_model,
              },
          ), \
          patch("run_agent.AIAgent") as mock_agent_cls:
@@ -307,6 +312,77 @@ class TestModelDriftGuard:
             )
         assert agent_constructed is True
         assert success is True
+
+
+class TestCronModelResolution:
+    """Cron must never construct an agent with an empty model after resolving a provider."""
+
+    def test_cron_uses_hermes_inference_model_env(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("HERMES_MODEL", raising=False)
+        monkeypatch.setenv("HERMES_INFERENCE_MODEL", "qwen3.5-plus")
+        fake_db = MagicMock()
+        job = _base_job(provider_snapshot="alibaba")
+
+        with patch("cron.scheduler._hermes_home", tmp_path), \
+             patch("cron.scheduler._resolve_origin", return_value=None), \
+             patch("dotenv.load_dotenv"), \
+             patch("hermes_state.SessionDB", return_value=fake_db), \
+             patch(
+                 "hermes_cli.runtime_provider.resolve_runtime_provider",
+                 return_value={
+                     "api_key": "test-key",
+                     "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                     "provider": "alibaba",
+                     "api_mode": "chat_completions",
+                     "model": "qwen3.5-plus",
+                 },
+             ), \
+             patch("run_agent.AIAgent") as mock_agent_cls:
+            mock_agent = MagicMock()
+            mock_agent.run_conversation.return_value = {"final_response": "ok"}
+            mock_agent_cls.return_value = mock_agent
+
+            success, _output, final_response, error = run_job(job)
+
+        assert success is True
+        assert error is None
+        assert final_response == "ok"
+        assert mock_agent_cls.call_args.kwargs["model"] == "qwen3.5-plus"
+
+    def test_cron_fails_fast_when_provider_resolves_without_model(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("HERMES_MODEL", raising=False)
+        monkeypatch.delenv("HERMES_INFERENCE_MODEL", raising=False)
+        fake_db = MagicMock()
+        job = _base_job(provider_snapshot="alibaba")
+
+        with patch("cron.scheduler._hermes_home", tmp_path), \
+             patch("cron.scheduler._resolve_origin", return_value=None), \
+             patch("dotenv.load_dotenv"), \
+             patch("hermes_state.SessionDB", return_value=fake_db), \
+             patch(
+                 "hermes_cli.runtime_provider.resolve_runtime_provider",
+                 return_value={
+                     "api_key": "test-key",
+                     "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                     "provider": "alibaba",
+                     "api_mode": "chat_completions",
+                 },
+             ), \
+             patch("run_agent.AIAgent") as mock_agent_cls:
+            mock_agent = MagicMock()
+            mock_agent.run_conversation.return_value = {"final_response": "ok"}
+            mock_agent_cls.return_value = mock_agent
+
+            success, _output, final_response, error = run_job(job)
+
+        assert success is False
+        assert final_response == ""
+        assert error is not None
+        assert mock_agent_cls.called is False
+        blob = error.lower()
+        assert "resolved without a model" in blob
+        assert "alibaba" in blob
+        assert "hermes_inference_model" in blob
 
     def test_pinned_model_bypasses_guard(self, tmp_path):
         # Explicit job["model"] → not unpinned → no model-drift skip even if the

@@ -88,6 +88,32 @@ def _resolve_cron_enabled_toolsets(job: dict, cfg: dict) -> list[str] | None:
         )
         return None
 
+
+def _resolve_cron_model_request(job: dict, cfg: dict | None = None) -> str:
+    """Resolve the raw model request cron passes into provider resolution.
+
+    The provider layer owns provider-specific model normalization.  Cron only
+    gathers explicit/user configuration and then fails fast if the provider
+    cannot turn it into a concrete runtime model.
+    """
+    explicit_model = str(job.get("model") or "").strip()
+    if explicit_model:
+        return explicit_model
+
+    env_model = (
+        os.getenv("HERMES_MODEL", "")
+        or os.getenv("HERMES_INFERENCE_MODEL", "")
+    ).strip()
+    if env_model:
+        return env_model
+
+    model_cfg = (cfg or {}).get("model", {})
+    if isinstance(model_cfg, str):
+        return model_cfg.strip()
+    if isinstance(model_cfg, dict):
+        return str(model_cfg.get("default") or model_cfg.get("model") or "").strip()
+    return ""
+
 # Valid delivery platforms — used to validate user-supplied platform names
 # in cron delivery targets, preventing env var enumeration via crafted names.
 _KNOWN_DELIVERY_PLATFORMS = frozenset({
@@ -2012,8 +2038,6 @@ def _run_job_impl(job: dict) -> tuple[bool, str, str, Optional[str]]:
                     else str(delivery_target["thread_id"])
                 )
 
-            model = job.get("model") or os.getenv("HERMES_MODEL") or ""
-
             # Load config.yaml for model, reasoning, prefill, toolsets, provider routing
             _cfg = {}
             try:
@@ -2023,14 +2047,10 @@ def _run_job_impl(job: dict) -> tuple[bool, str, str, Optional[str]]:
                     with open(_cfg_path, encoding="utf-8") as _f:
                         _cfg = yaml.safe_load(_f) or {}
                     _cfg = _expand_env_vars(_cfg)
-                    _model_cfg = _cfg.get("model", {})
-                    if not job.get("model"):
-                        if isinstance(_model_cfg, str):
-                            model = _model_cfg
-                        elif isinstance(_model_cfg, dict):
-                            model = _model_cfg.get("default", model)
             except Exception as e:
                 logger.warning("Job '%s': failed to load config.yaml, using defaults: %s", job_id, e)
+
+            requested_model = _resolve_cron_model_request(job, _cfg)
 
             # Apply IPv4 preference if configured.
             try:
@@ -2072,11 +2092,13 @@ def _run_job_impl(job: dict) -> tuple[bool, str, str, Optional[str]]:
             from hermes_cli.runtime_provider import (
                 resolve_runtime_provider,
                 format_runtime_provider_error,
+                resolve_runtime_model_for_provider,
             )
             from hermes_cli.auth import AuthError
             try:
                 runtime_kwargs = {
                     "requested": job.get("provider"),
+                    "target_model": requested_model or None,
                 }
                 if job.get("base_url"):
                     runtime_kwargs["explicit_base_url"] = job.get("base_url")
@@ -2090,7 +2112,10 @@ def _run_job_impl(job: dict) -> tuple[bool, str, str, Optional[str]]:
                     if not isinstance(entry, dict):
                         continue
                     try:
-                        fb_kwargs = {"requested": entry.get("provider")}
+                        fb_kwargs = {
+                            "requested": entry.get("provider"),
+                            "target_model": requested_model or None,
+                        }
                         if entry.get("base_url"):
                             fb_kwargs["explicit_base_url"] = entry["base_url"]
                         if entry.get("api_key"):
@@ -2109,6 +2134,7 @@ def _run_job_impl(job: dict) -> tuple[bool, str, str, Optional[str]]:
             fallback_model = _cfg.get("fallback_providers") or _cfg.get("fallback_model") or None
             credential_pool = None
             runtime_provider = str(runtime.get("provider") or "").strip().lower()
+            model = str(runtime.get("model") or "").strip()
             provider_snapshot = str(job.get("provider_snapshot") or "").strip().lower()
             if provider_snapshot and not job.get("provider") and runtime_provider != provider_snapshot:
                 current_provider = runtime_provider or "<unknown>"
@@ -2128,8 +2154,35 @@ def _run_job_impl(job: dict) -> tuple[bool, str, str, Optional[str]]:
                 )
                 return False, blocked_doc, "", message
 
+            if not model:
+                provider_label = runtime_provider or "<unknown>"
+                message = (
+                    f"Cron model resolution failed for job '{job_name}': provider "
+                    f"{provider_label!r} resolved without a model. Configure an explicit "
+                    f"job model, HERMES_INFERENCE_MODEL, HERMES_MODEL, or model.default "
+                    f"in config.yaml. No inference call was made."
+                )
+                blocked_doc = (
+                    f"# Cron Job: {job_name} (FAILED)\n\n"
+                    f"**Job ID:** {job_id}\n"
+                    f"**Run Time:** {_hermes_now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                    f"**Status:** model resolution failed\n\n"
+                    f"{message}\n"
+                )
+                return False, blocked_doc, "", message
+
             model_snapshot = str(job.get("model_snapshot") or "").strip()
-            if model_snapshot and not job.get("model") and str(model or "").strip() != model_snapshot:
+            normalized_model_snapshot = model_snapshot
+            if model_snapshot and runtime_provider:
+                normalized_model_snapshot = (
+                    resolve_runtime_model_for_provider(
+                        runtime_provider,
+                        model_cfg={},
+                        target_model=model_snapshot,
+                    )
+                    or model_snapshot
+                )
+            if model_snapshot and not job.get("model") and str(model or "").strip() != normalized_model_snapshot:
                 current_model = str(model or "<unknown>").strip()
                 message = (
                     f"Cron model drift guard #44585 blocked job '{job_name}': "

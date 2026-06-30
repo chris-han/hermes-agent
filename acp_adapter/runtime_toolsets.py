@@ -4,7 +4,6 @@ from typing import Any, Iterable
 
 
 _SEMANTIER_ACP_DEFAULT_TOOLSETS = ("hermes-acp",)
-_API_SERVER_DEFAULT_TOOLSET = "hermes-api-server"
 
 
 try:
@@ -73,31 +72,10 @@ def resolve_semantier_acp_enabled_toolsets(
     *,
     mcp_server_names: Iterable[str] | None = None,
 ) -> list[str]:
-    """Resolve ACP toolsets with an ACP-native default and api_server overrides.
-
-    ACP sessions share the api_server override surface in config, but when no
-    explicit override is present they must retain the ACP-specific default
-    toolset contract (`hermes-acp`) rather than inheriting `hermes-api-server`.
-    """
-    platform_toolsets = config.get("platform_toolsets") if isinstance(config, dict) else None
-    if not isinstance(platform_toolsets, dict) or "api_server" not in platform_toolsets:
-        expanded = list(_SEMANTIER_ACP_DEFAULT_TOOLSETS)
-        for server_name in list(mcp_server_names or ()):
-            toolset_name = f"mcp-{server_name}"
-            if server_name and toolset_name not in expanded:
-                expanded.append(toolset_name)
-        return expanded
-
-    resolved = resolve_platform_enabled_toolsets(
+    """Resolve ACP toolsets from the ACP platform profile."""
+    return resolve_platform_enabled_toolsets(
         config,
-        runtime_platform="api_server",
+        runtime_platform="acp",
         fallback_toolsets=_SEMANTIER_ACP_DEFAULT_TOOLSETS,
         mcp_server_names=mcp_server_names,
     )
-    if _API_SERVER_DEFAULT_TOOLSET not in resolved:
-        return resolved
-
-    non_mcp_toolsets = [name for name in resolved if not str(name).startswith("mcp-")]
-    mcp_toolsets = [name for name in resolved if str(name).startswith("mcp-")]
-    explicit_non_default = [name for name in non_mcp_toolsets if name != _API_SERVER_DEFAULT_TOOLSET]
-    return explicit_non_default + [_API_SERVER_DEFAULT_TOOLSET] + mcp_toolsets

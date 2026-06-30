@@ -218,6 +218,61 @@ def _get_model_config() -> Dict[str, Any]:
     return {}
 
 
+def resolve_runtime_model_for_provider(
+    provider: str,
+    *,
+    model_cfg: Optional[Dict[str, Any]] = None,
+    target_model: Optional[str] = None,
+) -> str:
+    """Resolve and normalize the effective model for a provider.
+
+    This is intentionally provider-owned: callers should not duplicate
+    provider-specific name-normalization rules.  Precedence is explicit target
+    model, process-level model env, then config.yaml model.  Missing model
+    remains missing so runtime callers can fail fast before making an API call.
+    """
+    model_cfg = _get_model_config() if model_cfg is None else model_cfg
+    raw_model = str(target_model or "").strip()
+    if not raw_model:
+        raw_model = (
+            _getenv("HERMES_MODEL", "").strip()
+            or _getenv("HERMES_INFERENCE_MODEL", "").strip()
+        )
+    if not raw_model:
+        raw_model = str(
+            model_cfg.get("default") or model_cfg.get("model") or ""
+        ).strip()
+    if not raw_model:
+        return ""
+    try:
+        from hermes_cli.model_normalize import normalize_model_for_provider
+
+        return normalize_model_for_provider(raw_model, provider)
+    except Exception:
+        return raw_model
+
+
+def _attach_resolved_runtime_model(
+    runtime: Dict[str, Any],
+    *,
+    model_cfg: Optional[Dict[str, Any]] = None,
+    target_model: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Attach a provider-normalized model to a runtime dict when known."""
+    provider = str(runtime.get("provider") or "").strip()
+    if not provider:
+        return runtime
+    existing_model = str(runtime.get("model") or "").strip()
+    model = resolve_runtime_model_for_provider(
+        provider,
+        model_cfg=model_cfg,
+        target_model=existing_model or target_model,
+    )
+    if model:
+        runtime["model"] = model
+    return runtime
+
+
 def _provider_supports_explicit_api_mode(provider: Optional[str], configured_provider: Optional[str] = None) -> bool:
     """Check whether a persisted api_mode should be honored for a given provider.
 
@@ -1422,14 +1477,14 @@ def resolve_runtime_provider(
     requested_provider = resolve_requested_provider(requested)
 
     if requested_provider == "moa":
-        return {
+        return _attach_resolved_runtime_model({
             "provider": "moa",
             "api_mode": "chat_completions",
             "base_url": "http://127.0.0.1/v1",
             "api_key": "moa-virtual-provider",
             "source": "moa-virtual-provider",
             "requested_provider": requested_provider,
-        }
+        }, model_cfg=_get_model_config(), target_model=target_model)
 
     # Azure Anthropic short-circuit: when explicitly targeting an Azure endpoint
     # with provider="anthropic", bypass _resolve_named_custom_runtime (which would
@@ -1442,14 +1497,14 @@ def resolve_runtime_provider(
             or _getenv("AZURE_ANTHROPIC_KEY", "").strip()
             or _getenv("ANTHROPIC_API_KEY", "").strip()
         )
-        return {
+        return _attach_resolved_runtime_model({
             "provider": "anthropic",
             "api_mode": "anthropic_messages",
             "base_url": _eff_base.rstrip("/"),
             "api_key": _azure_key,
             "source": "azure-explicit",
             "requested_provider": requested_provider,
-        }
+        }, model_cfg=_get_model_config(), target_model=target_model)
 
     # Azure Foundry: user-configured endpoint with selectable API mode
     # (OpenAI-style chat_completions or Anthropic-style anthropic_messages).
@@ -1464,7 +1519,11 @@ def resolve_runtime_provider(
             explicit_base_url=explicit_base_url,
             target_model=target_model,
         )
-        return azure_runtime
+        return _attach_resolved_runtime_model(
+            azure_runtime,
+            model_cfg=_get_model_config(),
+            target_model=target_model,
+        )
 
     custom_runtime = _resolve_named_custom_runtime(
         requested_provider=requested_provider,
@@ -1473,7 +1532,11 @@ def resolve_runtime_provider(
     )
     if custom_runtime:
         custom_runtime["requested_provider"] = requested_provider
-        return custom_runtime
+        return _attach_resolved_runtime_model(
+            custom_runtime,
+            model_cfg=_get_model_config(),
+            target_model=target_model,
+        )
 
     provider = resolve_provider(
         requested_provider,
@@ -1489,7 +1552,11 @@ def resolve_runtime_provider(
         explicit_base_url=explicit_base_url,
     )
     if explicit_runtime:
-        return explicit_runtime
+        return _attach_resolved_runtime_model(
+            explicit_runtime,
+            model_cfg=model_cfg,
+            target_model=target_model,
+        )
 
     should_use_pool = provider != "openrouter"
     if provider == "openrouter":
@@ -1558,12 +1625,16 @@ def resolve_runtime_provider(
                     logger.debug("Nous pool entry agent_key still unavailable, falling through to runtime resolution")
                     pool_api_key = ""
         if entry is not None and pool_api_key:
-            return _resolve_runtime_from_pool_entry(
+            return _attach_resolved_runtime_model(
+                _resolve_runtime_from_pool_entry(
                 provider=provider,
                 entry=entry,
                 requested_provider=requested_provider,
                 model_cfg=model_cfg,
                 pool=pool,
+                target_model=target_model,
+                ),
+                model_cfg=model_cfg,
                 target_model=target_model,
             )
 
@@ -1572,7 +1643,7 @@ def resolve_runtime_provider(
             creds = resolve_nous_runtime_credentials(
                 timeout_seconds=float(_getenv("HERMES_NOUS_TIMEOUT_SECONDS", "15")),
             )
-            return {
+            return _attach_resolved_runtime_model({
                 "provider": "nous",
                 "api_mode": "chat_completions",
                 "base_url": creds.get("base_url", "").rstrip("/"),
@@ -1580,7 +1651,7 @@ def resolve_runtime_provider(
                 "source": creds.get("source", "portal"),
                 "expires_at": creds.get("expires_at"),
                 "requested_provider": requested_provider,
-            }
+            }, model_cfg=model_cfg, target_model=target_model)
         except AuthError:
             if requested_provider != "auto":
                 raise
@@ -1592,7 +1663,7 @@ def resolve_runtime_provider(
     if provider == "openai-codex":
         try:
             creds = resolve_codex_runtime_credentials()
-            return {
+            return _attach_resolved_runtime_model({
                 "provider": "openai-codex",
                 "api_mode": "codex_responses",
                 "base_url": creds.get("base_url", "").rstrip("/"),
@@ -1600,7 +1671,7 @@ def resolve_runtime_provider(
                 "source": creds.get("source", "hermes-auth-store"),
                 "last_refresh": creds.get("last_refresh"),
                 "requested_provider": requested_provider,
-            }
+            }, model_cfg=model_cfg, target_model=target_model)
         except AuthError:
             if requested_provider != "auto":
                 raise
@@ -1612,7 +1683,7 @@ def resolve_runtime_provider(
     if provider == "xai-oauth":
         try:
             creds = resolve_xai_oauth_runtime_credentials()
-            return {
+            return _attach_resolved_runtime_model({
                 "provider": "xai-oauth",
                 "api_mode": "codex_responses",
                 "base_url": (creds.get("base_url") or "").rstrip("/") or DEFAULT_XAI_OAUTH_BASE_URL,
@@ -1620,7 +1691,7 @@ def resolve_runtime_provider(
                 "source": creds.get("source", "hermes-auth-store"),
                 "last_refresh": creds.get("last_refresh"),
                 "requested_provider": requested_provider,
-            }
+            }, model_cfg=model_cfg, target_model=target_model)
         except AuthError:
             if requested_provider != "auto":
                 raise
@@ -1630,7 +1701,7 @@ def resolve_runtime_provider(
     if provider == "qwen-oauth":
         try:
             creds = resolve_qwen_runtime_credentials()
-            return {
+            return _attach_resolved_runtime_model({
                 "provider": "qwen-oauth",
                 "api_mode": "chat_completions",
                 "base_url": creds.get("base_url", "").rstrip("/"),
@@ -1638,7 +1709,7 @@ def resolve_runtime_provider(
                 "source": creds.get("source", "qwen-cli"),
                 "expires_at_ms": creds.get("expires_at_ms"),
                 "requested_provider": requested_provider,
-            }
+            }, model_cfg=model_cfg, target_model=target_model)
         except AuthError:
             if requested_provider != "auto":
                 raise
@@ -1650,18 +1721,18 @@ def resolve_runtime_provider(
         if pconfig and pconfig.auth_type == "oauth_minimax":
             from hermes_cli.auth import resolve_minimax_oauth_runtime_credentials
             creds = resolve_minimax_oauth_runtime_credentials()
-            return {
+            return _attach_resolved_runtime_model({
                 "provider": provider,
                 "api_mode": "anthropic_messages",
                 "base_url": creds["base_url"],
                 "api_key": creds["api_key"],
                 "source": creds.get("source", "oauth"),
                 "requested_provider": requested_provider,
-            }
+            }, model_cfg=model_cfg, target_model=target_model)
 
     if provider == "copilot-acp":
         creds = resolve_external_process_provider_credentials(provider)
-        return {
+        return _attach_resolved_runtime_model({
             "provider": "copilot-acp",
             "api_mode": "chat_completions",
             "base_url": creds.get("base_url", "").rstrip("/"),
@@ -1670,7 +1741,7 @@ def resolve_runtime_provider(
             "args": list(creds.get("args") or []),
             "source": creds.get("source", "process"),
             "requested_provider": requested_provider,
-        }
+        }, model_cfg=model_cfg, target_model=target_model)
 
     # Anthropic (native Messages API)
     if provider == "anthropic":
@@ -1730,14 +1801,14 @@ def resolve_runtime_provider(
                     "No Anthropic credentials found. Set ANTHROPIC_TOKEN or ANTHROPIC_API_KEY, "
                     "run 'claude setup-token', or authenticate with 'claude /login'."
                 )
-        return {
+        return _attach_resolved_runtime_model({
             "provider": "anthropic",
             "api_mode": "anthropic_messages",
             "base_url": base_url,
             "api_key": token,
             "source": "env",
             "requested_provider": requested_provider,
-        }
+        }, model_cfg=model_cfg, target_model=target_model)
 
     # AWS Bedrock (native Converse API via boto3)
     if provider == "bedrock":
@@ -1807,7 +1878,11 @@ def resolve_runtime_provider(
             }
         if guardrail_config:
             runtime["guardrail_config"] = guardrail_config
-        return runtime
+        return _attach_resolved_runtime_model(
+            runtime,
+            model_cfg=model_cfg,
+            target_model=target_model,
+        )
 
     # API-key providers (z.ai/GLM, Kimi, MiniMax, MiniMax-CN)
     pconfig = PROVIDER_REGISTRY.get(provider)
@@ -1855,14 +1930,14 @@ def resolve_runtime_provider(
         # Strip trailing /v1 for OpenCode Anthropic models (see comment above).
         if api_mode == "anthropic_messages" and provider in {"opencode-zen", "opencode-go"}:
             base_url = re.sub(r"/v1/?$", "", base_url)
-        return {
+        return _attach_resolved_runtime_model({
             "provider": provider,
             "api_mode": api_mode,
             "base_url": base_url,
             "api_key": creds.get("api_key", ""),
             "source": creds.get("source", "env"),
             "requested_provider": requested_provider,
-        }
+        }, model_cfg=model_cfg, target_model=target_model)
 
     runtime = _resolve_openrouter_runtime(
         requested_provider=requested_provider,
@@ -1870,7 +1945,11 @@ def resolve_runtime_provider(
         explicit_base_url=explicit_base_url,
     )
     runtime["requested_provider"] = requested_provider
-    return runtime
+    return _attach_resolved_runtime_model(
+        runtime,
+        model_cfg=model_cfg,
+        target_model=target_model,
+    )
 
 
 def format_runtime_provider_error(error: Exception) -> str:

@@ -1266,6 +1266,20 @@ def test_alibaba_default_coding_intl_endpoint_uses_chat_completions(monkeypatch)
     assert resolved["base_url"] == "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 
 
+def test_alibaba_runtime_provider_attaches_normalized_env_model(monkeypatch):
+    monkeypatch.setattr(rp, "resolve_provider", lambda *a, **k: "alibaba")
+    monkeypatch.setattr(rp, "_get_model_config", lambda: {})
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "test-dashscope-key")
+    monkeypatch.setenv("HERMES_INFERENCE_MODEL", "alibaba/qwen3.5-plus")
+    monkeypatch.delenv("HERMES_MODEL", raising=False)
+    monkeypatch.delenv("DASHSCOPE_BASE_URL", raising=False)
+
+    resolved = rp.resolve_runtime_provider(requested="alibaba")
+
+    assert resolved["provider"] == "alibaba"
+    assert resolved["model"] == "qwen3.5-plus"
+
+
 def test_alibaba_anthropic_endpoint_override_uses_anthropic_messages(monkeypatch):
     """Alibaba with /apps/anthropic URL override should auto-detect anthropic_messages mode."""
     monkeypatch.setattr(rp, "resolve_provider", lambda *a, **k: "alibaba")
