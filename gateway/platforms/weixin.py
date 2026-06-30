@@ -239,9 +239,10 @@ def _require_weixin_auth_db_path() -> Path:
             "Weixin runtime persistence requires an explicit auth DB path. "
             "Set SEMANTIER_AUTH_DB_PATH."
         )
-    from agents.auth_db import ensure_auth_db
+    from agents.auth_db import auth_db_path, ensure_auth_db
 
-    return ensure_auth_db()
+    ensure_auth_db()
+    return auth_db_path()
 
 
 def _auth_db_conn() -> sqlite3.Connection:
