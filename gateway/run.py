@@ -2535,14 +2535,18 @@ def _weixin_source_has_user_scoped_home_channel(source: SessionSource) -> bool:
     user_id = str(getattr(source, "user_id", "") or "").strip()
     chat_id = str(getattr(source, "chat_id", "") or "").strip()
     chat_type = str(getattr(source, "chat_type", "") or "").strip().lower()
-    if not workspace_id or not user_id:
+    if not user_id:
         return False
     try:
         from agents.auth_db import load_weixin_runtime_accounts, save_weixin_runtime_account
     except Exception:
         return False
+    matching_accounts = []
     for account in load_weixin_runtime_accounts():
-        if str(account.get("owner_workspace_id") or "").strip() != workspace_id:
+        account_workspace_id = str(
+            account.get("owner_workspace_id") or account.get("workspace_id") or ""
+        ).strip()
+        if workspace_id and account_workspace_id != workspace_id:
             continue
         candidate_user_ids = {
             str(account.get("external_user_id") or "").strip(),
@@ -2550,6 +2554,14 @@ def _weixin_source_has_user_scoped_home_channel(source: SessionSource) -> bool:
         }
         if user_id not in candidate_user_ids:
             continue
+        matching_accounts.append(account)
+
+    if not matching_accounts:
+        return False
+    if not workspace_id and len(matching_accounts) != 1:
+        return False
+
+    for account in matching_accounts:
         existing_home = str(account.get("home_channel") or "").strip()
         if existing_home:
             return True
@@ -13151,13 +13163,22 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         reply_to_message_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Build the metadata dict platforms need for thread-aware replies."""
-        return self._thread_metadata_for_target(
+        metadata = self._thread_metadata_for_target(
             getattr(source, "platform", None),
             getattr(source, "chat_id", None),
             getattr(source, "thread_id", None),
             chat_type=getattr(source, "chat_type", None),
             reply_to_message_id=reply_to_message_id or getattr(source, "message_id", None),
         )
+        adapter_key = str(getattr(source, "adapter_key", "") or "").strip()
+        delivery_adapter_key = str(getattr(source, "delivery_adapter_key", "") or "").strip()
+        if adapter_key or delivery_adapter_key:
+            metadata = dict(metadata or {})
+            if adapter_key:
+                metadata["adapter_key"] = adapter_key
+            if delivery_adapter_key:
+                metadata["delivery_adapter_key"] = delivery_adapter_key
+        return metadata
 
     def _thread_metadata_for_target(
         self,

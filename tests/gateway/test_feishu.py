@@ -2889,6 +2889,10 @@ class TestHydrateBotIdentity(unittest.TestCase):
 
         asyncio.run(adapter._hydrate_bot_identity())
 
+        request = adapter._client.request.call_args.args[0]
+        from plugins.platforms.feishu.adapter import AccessTokenType
+
+        self.assertEqual(request.token_types, {AccessTokenType.TENANT})
         self.assertEqual(adapter._bot_open_id, "ou_hermes_hydrated")
         self.assertEqual(adapter._bot_name, "Hermes Bot")
 

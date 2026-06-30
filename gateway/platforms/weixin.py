@@ -248,6 +248,26 @@ def _auth_db_conn() -> sqlite3.Connection:
     path = _require_weixin_auth_db_path()
     conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row
+    # Defensively ensure adapter-owned runtime tables exist. This keeps reconnect
+    # resilient even if upstream schema initialization is skipped in-process.
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS weixin_sync_state (
+            account_id TEXT PRIMARY KEY,
+            get_updates_buf TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS weixin_context_tokens (
+            account_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            context_token TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY(account_id, user_id)
+        );
+        """
+    )
+    conn.commit()
     return conn
 
 
@@ -1491,11 +1511,12 @@ class WeixinAdapter(BasePlatformAdapter):
         self._pending_text_batches.clear()
         self._pending_text_batch_tasks.clear()
         if self._poll_task and not self._poll_task.done():
-            self._poll_task.cancel()
-            try:
-                await self._poll_task
-            except asyncio.CancelledError:
-                pass
+            if self._poll_task is not asyncio.current_task():
+                self._poll_task.cancel()
+                try:
+                    await self._poll_task
+                except asyncio.CancelledError:
+                    pass
         self._poll_task = None
         if self._poll_session and not self._poll_session.closed:
             await self._poll_session.close()
@@ -1531,11 +1552,24 @@ class WeixinAdapter(BasePlatformAdapter):
                 if ret not in {0, None} or errcode not in {0, None}:
                     if (ret == SESSION_EXPIRED_ERRCODE or errcode == SESSION_EXPIRED_ERRCODE
                             or _is_stale_session_ret(ret, errcode, response.get("errmsg"))):
-                        logger.error("[%s] Session expired; pausing for 10 minutes", self.name)
-                        await self._reopen_transport_sessions_for_session_expiry(
-                            str(response.get("errmsg") or response.get("msg") or "session expired")
+                        reason = str(response.get("errmsg") or response.get("msg") or "session expired")
+                        if not getattr(self, "_session_expired_notice_logged", False):
+                            logger.warning(
+                                "[%s] Session expired; refreshing transport sessions and retrying in %.0fs",
+                                self.name,
+                                self._session_expired_reconnect_delay_seconds,
+                            )
+                            self._session_expired_notice_logged = True
+                        else:
+                            logger.debug(
+                                "[%s] Session still expired; retrying in %.0fs",
+                                self.name,
+                                self._session_expired_reconnect_delay_seconds,
+                            )
+                        await self._reopen_transport_sessions_for_session_expiry(reason)
+                        await asyncio.sleep(
+                            self._session_expired_reconnect_delay_seconds
                         )
-                        await asyncio.sleep(self._session_expired_reconnect_delay_seconds)
                         consecutive_failures = 0
                         continue
                     consecutive_failures += 1

@@ -326,6 +326,7 @@ def _bind_workspace_env_impl(resolved_home: Path) -> Iterator[None]:
 def bind_workspace_session_env(
     target_home: Path | str | None, session_id: str | None
 ) -> Iterator[None]:
+    """Bind workspace env and allow writes to active session run/upload/artifact roots."""
     with bind_workspace_env(target_home):
         if target_home and session_id:
             workspace_root = Path(target_home).expanduser().resolve()
@@ -336,10 +337,16 @@ def bind_workspace_session_env(
             uploads_root.mkdir(parents=True, exist_ok=True)
             runs_root = session_root / "runs"
             runs_root.mkdir(parents=True, exist_ok=True)
+            artifacts_root = session_root / "artifacts"
+            artifacts_root.mkdir(parents=True, exist_ok=True)
             previous = os.environ.get(_WRITE_ALLOWED_ROOTS_ENV)
             previous_runs = os.environ.get(_WORKSPACE_RUNS_DIR_ENV)
             os.environ[_WRITE_ALLOWED_ROOTS_ENV] = ",".join(
-                [str(runs_root.resolve()), str(uploads_root.resolve())]
+                [
+                    str(runs_root.resolve()),
+                    str(uploads_root.resolve()),
+                    str(artifacts_root.resolve()),
+                ]
             )
             os.environ[_WORKSPACE_RUNS_DIR_ENV] = str(runs_root.resolve())
             runs_token = _workspace_runs_dir_ctx.set(str(runs_root.resolve()))

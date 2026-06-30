@@ -42,6 +42,9 @@ list_workspace_session_trajectory = _UPSTREAM.list_workspace_session_trajectory
 resolve_workspace_session_id = _UPSTREAM.resolve_workspace_session_id
 update_workspace_session_sandbox_key = _UPSTREAM.update_workspace_session_sandbox_key
 configure_agent_workspace_session_paths = _UPSTREAM.configure_agent_workspace_session_paths
+workspace_session_dir = _UPSTREAM.workspace_session_dir
+workspace_session_artifacts_dir = _UPSTREAM.workspace_session_artifacts_dir
+append_workspace_session_trajectory = _UPSTREAM.append_workspace_session_trajectory
 _sessions_dir = _UPSTREAM._sessions_dir
 _session_jsonl_path = _UPSTREAM._session_jsonl_path
 
@@ -161,7 +164,7 @@ def resolve_or_create_workspace_session_id(
     adapter_key: str | None = None,
     delivery_adapter_key: str | None = None,
     workspace_owner_id: str | None = None,
-    create_if_missing: bool = True,
+    create_if_missing: bool = False,
 ) -> str:
     return _UPSTREAM.resolve_or_create_workspace_session_id(
         workspace_hermes_home,

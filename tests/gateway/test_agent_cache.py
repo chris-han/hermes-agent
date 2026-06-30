@@ -161,6 +161,70 @@ def test_resolve_workspace_gateway_session_raises_without_workspace_owner_id():
         )
 
 
+@pytest.mark.parametrize(
+    ("platform_name", "platform"),
+    [
+        ("weixin", "WEIXIN"),
+        ("feishu", "FEISHU"),
+        ("telegram", "TELEGRAM"),
+        ("discord", "DISCORD"),
+    ],
+)
+def test_gateway_session_resolution_is_workspace_scoped_for_all_gateways(
+    tmp_path,
+    platform_name,
+    platform,
+):
+    from agents.workspace_session_logs import resolve_workspace_session_id
+    from gateway.config import Platform
+    from gateway.run import _resolve_workspace_gateway_session
+    from gateway.session import SessionSource
+
+    platform_enum = getattr(Platform, platform)
+    chat_id = f"{platform_name}-chat"
+    user_id = f"{platform_name}-user"
+    session_key = f"agent:main:workspace:ws-123:{platform_name}:dm:{chat_id}"
+    shared_runtime_home = tmp_path / ".semantier-home"
+    workspace_home = tmp_path / "workspaces" / "ws-123" / ".hermes"
+
+    unscoped_source = SessionSource(
+        platform=platform_enum,
+        chat_id=chat_id,
+        chat_type="dm",
+        user_id=user_id,
+        workspace_owner_id=None,
+    )
+    with pytest.raises(ValueError, match="workspace_owner_id is required"):
+        _resolve_workspace_gateway_session(
+            unscoped_source,
+            session_id="session_legacy",
+            session_key=session_key.replace("workspace:ws-123:", ""),
+            source_gateway=platform_name,
+        )
+
+    scoped_source = SessionSource(
+        platform=platform_enum,
+        chat_id=chat_id,
+        chat_type="dm",
+        user_id=user_id,
+        workspace_owner_id="ws-123",
+        adapter_key=f"{platform_name}:ws-123:adapter-1",
+        delivery_adapter_key=f"{platform_name}:ws-123:adapter-1",
+    )
+    with patch("runtime_paths.workspace_hermes_home_path", return_value=workspace_home):
+        resolved_session_id, resolved_home = _resolve_workspace_gateway_session(
+            scoped_source,
+            session_id="",
+            session_key=session_key,
+            source_gateway=platform_name,
+        )
+
+    assert resolved_home == workspace_home
+    assert resolved_session_id.startswith("ws-123:session_")
+    assert resolve_workspace_session_id(workspace_home, session_key) == resolved_session_id
+    assert not (shared_runtime_home / "sessions").exists()
+
+
 def test_gateway_runner_user_sessions_enable_trajectory_export():
     from pathlib import Path
 

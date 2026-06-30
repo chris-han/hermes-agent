@@ -426,6 +426,36 @@ class TestWeixinStatePersistence:
         assert restored.get("acct", "user-b") == "new-token"
         assert not (tmp_path / "weixin" / "accounts").exists()
 
+    def test_context_token_store_recovers_from_missing_table(self, tmp_path, monkeypatch):
+        db_path = tmp_path / "auth.db"
+        conn = sqlite3.connect(str(db_path))
+        try:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS weixin_sync_state (
+                    account_id TEXT PRIMARY KEY,
+                    get_updates_buf TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        import agents.auth_db as auth_db
+
+        monkeypatch.setenv("SEMANTIER_AUTH_DB_PATH", str(db_path))
+        monkeypatch.setattr(auth_db, "ensure_auth_db", lambda **_: None)
+
+        store = ContextTokenStore(str(tmp_path))
+        store.restore("acct")
+        store.set("acct", "user-c", "token-c")
+
+        restored = ContextTokenStore(str(tmp_path))
+        restored.restore("acct")
+        assert restored.get("acct", "user-c") == "token-c"
+
     def test_save_sync_buf_uses_auth_db(self, tmp_path):
         weixin._save_sync_buf(str(tmp_path), "acct", "new-sync")
 
@@ -597,6 +627,7 @@ class TestWeixinSessionAutoHeal:
 
         adapter._reopen_transport_sessions_for_session_expiry.assert_awaited_once_with("session timeout")
         sleep_mock.assert_awaited_once_with(adapter._session_expired_reconnect_delay_seconds)
+        assert adapter.fatal_error_code is None
 
     @patch("gateway.platforms.weixin.asyncio.sleep", new_callable=AsyncMock)
     @patch("gateway.platforms.weixin._send_message", new_callable=AsyncMock)

@@ -738,6 +738,102 @@ def _coerce_boolean(value: str):
     return value
 
 
+def _tool_hook_kwargs(
+    *,
+    function_name: str,
+    function_args: Dict[str, Any],
+    task_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    tool_call_id: Optional[str] = None,
+    turn_id: Optional[str] = None,
+    api_request_id: Optional[str] = None,
+    duration_ms: Optional[int] = None,
+    status: Optional[str] = None,
+    error_type: Optional[str] = None,
+    error_message: Optional[str] = None,
+    middleware_trace: Optional[List[Dict[str, Any]]] = None,
+    result: Optional[str] = None,
+) -> Dict[str, Any]:
+    kwargs: Dict[str, Any] = {
+        "tool_name": function_name,
+        "args": function_args,
+        "task_id": task_id or "",
+        "session_id": session_id or "",
+        "tool_call_id": tool_call_id or "",
+    }
+    if result is not None:
+        kwargs["result"] = result
+    if duration_ms is not None:
+        kwargs["duration_ms"] = duration_ms
+    if turn_id:
+        kwargs["turn_id"] = turn_id
+    if api_request_id:
+        kwargs["api_request_id"] = api_request_id
+    if status:
+        kwargs["status"] = status
+    if error_type:
+        kwargs["error_type"] = error_type
+    if error_message:
+        kwargs["error_message"] = error_message
+    if middleware_trace:
+        kwargs["middleware_trace"] = list(middleware_trace)
+    return kwargs
+
+
+def _emit_post_tool_call_hook(
+    *,
+    function_name: str,
+    function_args: Dict[str, Any],
+    result: str,
+    task_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    tool_call_id: Optional[str] = None,
+    turn_id: Optional[str] = None,
+    api_request_id: Optional[str] = None,
+    duration_ms: Optional[int] = None,
+    status: Optional[str] = None,
+    error_type: Optional[str] = None,
+    error_message: Optional[str] = None,
+    middleware_trace: Optional[List[Dict[str, Any]]] = None,
+) -> str:
+    """Emit post/transform tool hooks and return the possibly transformed result."""
+    hook_kwargs = _tool_hook_kwargs(
+        function_name=function_name,
+        function_args=function_args,
+        result=result,
+        task_id=task_id,
+        session_id=session_id,
+        tool_call_id=tool_call_id,
+        turn_id=turn_id,
+        api_request_id=api_request_id,
+        duration_ms=duration_ms,
+        status=status,
+        error_type=error_type,
+        error_message=error_message,
+        middleware_trace=middleware_trace,
+    )
+
+    try:
+        from hermes_cli.plugins import invoke_hook
+
+        invoke_hook("post_tool_call", **hook_kwargs)
+    except Exception as _hook_err:
+        logger.debug("post_tool_call hook error: %s", _hook_err)
+
+    try:
+        from hermes_cli.plugins import invoke_hook
+
+        hook_results = invoke_hook("transform_tool_result", **hook_kwargs)
+        for hook_result in hook_results:
+            if isinstance(hook_result, str):
+                result = hook_result
+                break
+    except Exception as _hook_err:
+        logger.debug("transform_tool_result hook error: %s", _hook_err)
+
+    return result
+
+
 def handle_function_call(
     function_name: str,
     function_args: Dict[str, Any],
@@ -747,6 +843,12 @@ def handle_function_call(
     user_task: Optional[str] = None,
     enabled_tools: Optional[List[str]] = None,
     skip_pre_tool_call_hook: bool = False,
+    turn_id: Optional[str] = None,
+    api_request_id: Optional[str] = None,
+    skip_tool_request_middleware: bool = False,
+    enabled_toolsets: Optional[List[str]] = None,
+    disabled_toolsets: Optional[List[str]] = None,
+    tool_request_middleware_trace: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     """
     Main function call dispatcher that routes calls to the tool registry.
@@ -760,16 +862,46 @@ def handle_function_call(
                        execute_code uses this list to determine which sandbox
                        tools to generate.  Falls back to the process-global
                        ``_last_resolved_tool_names`` for backward compat.
+        turn_id: Optional current conversation turn id for plugin hooks.
+        api_request_id: Optional current model API request id for plugin hooks.
+        skip_tool_request_middleware: True when the caller has already applied
+                                      tool-request middleware.
+        enabled_toolsets: Caller-visible toolset scope; accepted for the current
+                          tool-executor calling convention.
+        disabled_toolsets: Caller-visible disabled toolsets; accepted for the
+                           current tool-executor calling convention.
+        tool_request_middleware_trace: Trace from upstream tool-request
+                                       middleware to forward to plugin hooks.
 
     Returns:
         Function result as a JSON string.
     """
     # Coerce string arguments to their schema-declared types (e.g. "42"→42)
     function_args = coerce_tool_args(function_name, function_args)
+    middleware_trace = list(tool_request_middleware_trace or [])
 
     try:
         if function_name in _AGENT_LOOP_TOOLS:
             return json.dumps({"error": f"{function_name} must be handled by the agent loop"})
+
+        try:
+            from hermes_cli.middleware import apply_tool_request_middleware
+
+            if not skip_tool_request_middleware:
+                tool_request_mw = apply_tool_request_middleware(
+                    function_name,
+                    function_args,
+                    task_id=task_id or "",
+                    session_id=session_id or "",
+                    tool_call_id=tool_call_id or "",
+                    turn_id=turn_id or "",
+                    api_request_id=api_request_id or "",
+                )
+                if isinstance(tool_request_mw.payload, dict):
+                    function_args = tool_request_mw.payload
+                middleware_trace = list(tool_request_mw.trace)
+        except Exception as _mw_err:
+            logger.debug("tool_request middleware error: %s", _mw_err)
 
         # Check plugin hooks for a block directive (unless caller already
         # checked — e.g. run_agent._invoke_tool passes skip=True to
@@ -791,6 +923,9 @@ def handle_function_call(
                     task_id=task_id or "",
                     session_id=session_id or "",
                     tool_call_id=tool_call_id or "",
+                    turn_id=turn_id or "",
+                    api_request_id=api_request_id or "",
+                    middleware_trace=list(middleware_trace),
                 )
             except Exception as _hook_err:
                 logger.debug("pre_tool_call hook error: %s", _hook_err)
@@ -846,45 +981,24 @@ def handle_function_call(
             )
         duration_ms = int((time.monotonic() - _dispatch_start) * 1000)
 
-        try:
-            from hermes_cli.plugins import invoke_hook
-            invoke_hook(
-                "post_tool_call",
-                tool_name=function_name,
-                args=function_args,
-                result=result,
-                task_id=task_id or "",
-                session_id=session_id or "",
-                tool_call_id=tool_call_id or "",
-                duration_ms=duration_ms,
-            )
-        except Exception as _hook_err:
-            logger.debug("post_tool_call hook error: %s", _hook_err)
-
         # Generic tool-result canonicalization seam: plugins receive the
         # final result string (JSON, usually) and may replace it by
         # returning a string from transform_tool_result. Runs after
         # post_tool_call (which stays observational) and before the result
         # is appended back into conversation context. Fail-open; the first
         # valid string return wins; non-string returns are ignored.
-        try:
-            from hermes_cli.plugins import invoke_hook
-            hook_results = invoke_hook(
-                "transform_tool_result",
-                tool_name=function_name,
-                args=function_args,
-                result=result,
-                task_id=task_id or "",
-                session_id=session_id or "",
-                tool_call_id=tool_call_id or "",
-                duration_ms=duration_ms,
-            )
-            for hook_result in hook_results:
-                if isinstance(hook_result, str):
-                    result = hook_result
-                    break
-        except Exception as _hook_err:
-            logger.debug("transform_tool_result hook error: %s", _hook_err)
+        result = _emit_post_tool_call_hook(
+            function_name=function_name,
+            function_args=function_args,
+            result=result,
+            task_id=task_id,
+            session_id=session_id,
+            tool_call_id=tool_call_id,
+            turn_id=turn_id,
+            api_request_id=api_request_id,
+            duration_ms=duration_ms,
+            middleware_trace=list(middleware_trace),
+        )
 
         return result
 

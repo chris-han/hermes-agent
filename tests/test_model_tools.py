@@ -111,6 +111,59 @@ class TestHandleFunctionCall:
         # pre_tool_call does NOT get duration_ms (nothing has run yet).
         assert "duration_ms" not in kwargs_by_hook["pre_tool_call"]
 
+    def test_current_tool_executor_kwargs_dispatch_plugin_tool(self):
+        from tools.registry import registry
+
+        def _handler(args, **kwargs):
+            assert kwargs == {"task_id": "task-1", "user_task": None}
+            return json.dumps({"ok": True, "args": args})
+
+        registry.register(
+            name="semantier_test_plugin_tool",
+            toolset="semantier_test_plugin",
+            schema={
+                "type": "object",
+                "properties": {"value": {"type": "string"}},
+            },
+            handler=_handler,
+        )
+        try:
+            with (
+                patch("hermes_cli.plugins.has_hook", return_value=True),
+                patch("hermes_cli.plugins.invoke_hook") as mock_invoke_hook,
+            ):
+                result = handle_function_call(
+                    "semantier_test_plugin_tool",
+                    {"value": "x"},
+                    task_id="task-1",
+                    tool_call_id="call-1",
+                    session_id="session-1",
+                    turn_id="turn-1",
+                    api_request_id="api-1",
+                    enabled_tools=["semantier_test_plugin_tool"],
+                    skip_pre_tool_call_hook=True,
+                    skip_tool_request_middleware=True,
+                    enabled_toolsets=["semantier_test_plugin"],
+                    disabled_toolsets=None,
+                    tool_request_middleware_trace=[
+                        {"middleware": "test", "action": "allow"}
+                    ],
+                )
+        finally:
+            registry.deregister("semantier_test_plugin_tool")
+
+        assert json.loads(result) == {"ok": True, "args": {"value": "x"}}
+        calls_by_hook = {
+            hook_call.args[0]: hook_call.kwargs
+            for hook_call in mock_invoke_hook.call_args_list
+        }
+        for hook_name in ("post_tool_call", "transform_tool_result"):
+            assert calls_by_hook[hook_name]["turn_id"] == "turn-1"
+            assert calls_by_hook[hook_name]["api_request_id"] == "api-1"
+            assert calls_by_hook[hook_name]["middleware_trace"] == [
+                {"middleware": "test", "action": "allow"}
+            ]
+
 # =========================================================================
 # Agent loop tools
 # =========================================================================
