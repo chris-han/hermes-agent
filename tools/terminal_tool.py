@@ -37,6 +37,7 @@ import logging
 import os
 import platform
 import re
+import shlex
 import time
 import threading
 import atexit
@@ -289,6 +290,104 @@ def _validate_workdir(workdir: str) -> str | None:
                     "Use a simple filesystem path without shell metacharacters."
                 )
         return "Blocked: workdir contains disallowed characters."
+    return None
+
+
+def _unquote_shell_token(token: str) -> str:
+    try:
+        parts = shlex.split(token)
+        if parts:
+            return parts[0]
+    except ValueError:
+        pass
+    return token.strip().strip("'\"")
+
+
+def _redirection_target_error(target: str) -> str | None:
+    target = _unquote_shell_token(target)
+    if not target or target.startswith("&") or target.isdigit():
+        return None
+    try:
+        from agent.file_safety import get_allowed_write_roots, is_write_denied
+    except Exception:
+        return None
+    if not get_allowed_write_roots():
+        return None
+    expanded = os.path.expanduser(target)
+    if not os.path.isabs(expanded):
+        return None
+    if is_write_denied(expanded):
+        return (
+            f"Command denied: shell redirection target {target!r} is outside the "
+            "active workspace session write roots. Write generated files under "
+            "$SEMANTIER_WORKSPACE_RUNS_DIR or the session artifacts directory."
+        )
+    return None
+
+
+def _workspace_redirection_guard(command: str) -> str | None:
+    """Block explicit shell redirections to paths outside governed write roots."""
+    i = 0
+    n = len(command)
+
+    def _read_target(pos: int) -> tuple[str, int]:
+        while pos < n and command[pos].isspace():
+            pos += 1
+        if pos >= n:
+            return "", pos
+        token, next_pos = _read_shell_token(command, pos)
+        return token, next_pos
+
+    while i < n:
+        ch = command[i]
+        if ch.isspace() or ch in ";|()":
+            i += 1
+            continue
+        if ch in {"'", '"'}:
+            _, i = _read_shell_token(command, i)
+            continue
+        if ch == "\\" and i + 1 < n:
+            i += 2
+            continue
+
+        op_start = i
+        if ch == "&" and i + 1 < n and command[i + 1] == ">":
+            i += 2
+            if i < n and command[i] == ">":
+                i += 1
+            target, i = _read_target(i)
+            err = _redirection_target_error(target)
+            if err:
+                return err
+            continue
+
+        if ch.isdigit():
+            j = i
+            while j < n and command[j].isdigit():
+                j += 1
+            if j < n and command[j] == ">":
+                i = j + 1
+                if i < n and command[i] == ">":
+                    i += 1
+                target, i = _read_target(i)
+                err = _redirection_target_error(target)
+                if err:
+                    return err
+                continue
+
+        if ch == ">":
+            i += 1
+            if i < n and command[i] == ">":
+                i += 1
+            target, i = _read_target(i)
+            err = _redirection_target_error(target)
+            if err:
+                return err
+            continue
+
+        token, next_i = _read_shell_token(command, op_start)
+        i = max(next_i, op_start + 1)
+
     return None
 
 
@@ -2096,6 +2195,15 @@ def terminal_tool(
                     "error": guidance,
                     "status": "error",
                 }, ensure_ascii=False)
+
+        redirection_error = _workspace_redirection_guard(command)
+        if redirection_error:
+            return json.dumps({
+                "output": "",
+                "exit_code": -1,
+                "error": redirection_error,
+                "status": "blocked",
+            }, ensure_ascii=False)
 
         # Start cleanup thread
         _start_cleanup_thread()

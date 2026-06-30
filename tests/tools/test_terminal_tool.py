@@ -1,5 +1,7 @@
 """Regression tests for sudo detection and sudo password handling."""
 
+import json
+
 import tools.terminal_tool as terminal_tool
 
 
@@ -200,6 +202,31 @@ def test_validate_workdir_blocks_shell_metacharacters_in_windows_paths():
     assert terminal_tool._validate_workdir(r"C:\Users\Alice\project; rm -rf /")
     assert terminal_tool._validate_workdir(r"C:\Users\Alice\project$(whoami)")
     assert terminal_tool._validate_workdir("C:\\Users\\Alice\\project\nwhoami")
+
+
+def test_terminal_blocks_absolute_redirection_outside_session_roots(monkeypatch, tmp_path):
+    allowed = tmp_path / "workspace" / "sessions" / "session_abc" / "artifacts"
+    allowed.mkdir(parents=True)
+    outside = tmp_path / "business_analytics_report.py"
+    monkeypatch.setenv("HERMES_WRITE_ALLOWED_ROOTS", str(allowed))
+
+    result = json.loads(
+        terminal_tool.terminal_tool(
+            command=f"python script.py 2>&1 > {outside}",
+        )
+    )
+
+    assert result["status"] == "blocked"
+    assert "outside the active workspace session write roots" in result["error"]
+
+
+def test_terminal_allows_redirection_inside_session_roots(monkeypatch, tmp_path):
+    allowed = tmp_path / "workspace" / "sessions" / "session_abc" / "artifacts"
+    allowed.mkdir(parents=True)
+    target = allowed / "report.txt"
+    monkeypatch.setenv("HERMES_WRITE_ALLOWED_ROOTS", str(allowed))
+
+    assert terminal_tool._workspace_redirection_guard(f"echo ok > {target}") is None
 
 
 def test_get_env_config_ignores_bad_docker_json_for_local_backend(monkeypatch):

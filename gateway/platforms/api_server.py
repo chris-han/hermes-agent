@@ -64,6 +64,11 @@ from gateway.platforms.base import (
 
 logger = logging.getLogger(__name__)
 
+_SEMANTIER_HERMES_HOME_HEADER = "X-Semantier-Hermes-Home"
+_SEMANTIER_UPLOAD_SESSION_ID_HEADER = "X-Semantier-Upload-Session-Id"
+_SEMANTIER_USER_ID_HEADER = "X-Semantier-User-Id"
+_SEMANTIER_WORKSPACE_ID_HEADER = "X-Semantier-Workspace-Id"
+
 
 def _bind_workspace_env_cm(target_home: Path, session_id: str | None = None):
     try:
@@ -134,6 +139,45 @@ def _bound_request_hermes_home(raw_home: str | None, session_id: str | None = No
             os.environ.pop("SEMANTIER_WORKSPACE_RUNS_DIR", None)
         else:
             os.environ["SEMANTIER_WORKSPACE_RUNS_DIR"] = prev_runs
+
+
+@contextlib.contextmanager
+def _bound_request_sandbox_key(raw_key: str | None):
+    """Bind the Semantier sandbox key for one trusted API-server request."""
+    value = (raw_key or "").strip()
+    previous = os.environ.get("SEMANTIER_SANDBOX_KEY")
+    try:
+        if value:
+            os.environ["SEMANTIER_SANDBOX_KEY"] = value
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("SEMANTIER_SANDBOX_KEY", None)
+        else:
+            os.environ["SEMANTIER_SANDBOX_KEY"] = previous
+
+
+@contextlib.contextmanager
+def _bound_semantier_identity(user_id: str | None, workspace_id: str | None):
+    """Bind governed Semantier request identity for one API-server request."""
+    previous = {
+        "SEMANTIER_USER_ID": os.environ.get("SEMANTIER_USER_ID"),
+        "SEMANTIER_WORKSPACE_ID": os.environ.get("SEMANTIER_WORKSPACE_ID"),
+    }
+    try:
+        normalized_user_id = (user_id or "").strip()
+        normalized_workspace_id = (workspace_id or "").strip()
+        if normalized_user_id:
+            os.environ["SEMANTIER_USER_ID"] = normalized_user_id
+        if normalized_workspace_id:
+            os.environ["SEMANTIER_WORKSPACE_ID"] = normalized_workspace_id
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 def _hermes_version() -> str:
@@ -2006,6 +2050,10 @@ class APIServerAdapter(BasePlatformAdapter):
         if key_err is not None:
             return key_err
 
+        request_hermes_home = request.headers.get(_SEMANTIER_HERMES_HOME_HEADER, "").strip() or None
+        request_user_id = request.headers.get(_SEMANTIER_USER_ID_HEADER, "").strip() or None
+        request_workspace_id = request.headers.get(_SEMANTIER_WORKSPACE_ID_HEADER, "").strip() or None
+
         # Allow caller to continue an existing session by passing X-Hermes-Session-Id.
         # When provided, history is loaded from state.db instead of from the request body.
         #
@@ -2056,6 +2104,10 @@ class APIServerAdapter(BasePlatformAdapter):
                     break
             session_id = _derive_chat_session_id(system_prompt, first_user)
             # history already set from request body above
+        request_upload_session_id = (
+            request.headers.get(_SEMANTIER_UPLOAD_SESSION_ID_HEADER, "").strip()
+            or session_id
+        )
 
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:29]}"
         model_name = body.get("model", self._model_name)
@@ -2138,6 +2190,10 @@ class APIServerAdapter(BasePlatformAdapter):
                 conversation_history=history,
                 ephemeral_system_prompt=system_prompt,
                 session_id=session_id,
+                request_hermes_home=request_hermes_home,
+                request_upload_session_id=request_upload_session_id,
+                request_user_id=request_user_id,
+                request_workspace_id=request_workspace_id,
                 stream_delta_callback=_on_delta,
                 tool_start_callback=_on_tool_start,
                 tool_complete_callback=_on_tool_complete,
@@ -2161,6 +2217,10 @@ class APIServerAdapter(BasePlatformAdapter):
                 conversation_history=history,
                 ephemeral_system_prompt=system_prompt,
                 session_id=session_id,
+                request_hermes_home=request_hermes_home,
+                request_upload_session_id=request_upload_session_id,
+                request_user_id=request_user_id,
+                request_workspace_id=request_workspace_id,
                 gateway_session_key=gateway_session_key,
             )
 
@@ -3028,6 +3088,9 @@ class APIServerAdapter(BasePlatformAdapter):
         gateway_session_key, key_err = self._parse_session_key_header(request)
         if key_err is not None:
             return key_err
+        request_hermes_home = request.headers.get(_SEMANTIER_HERMES_HOME_HEADER, "").strip() or None
+        request_user_id = request.headers.get(_SEMANTIER_USER_ID_HEADER, "").strip() or None
+        request_workspace_id = request.headers.get(_SEMANTIER_WORKSPACE_ID_HEADER, "").strip() or None
 
         # Parse request body
         try:
@@ -3127,6 +3190,10 @@ class APIServerAdapter(BasePlatformAdapter):
         # Reuse session from previous_response_id chain so the dashboard
         # groups the entire conversation under one session entry.
         session_id = stored_session_id or str(uuid.uuid4())
+        request_upload_session_id = (
+            request.headers.get(_SEMANTIER_UPLOAD_SESSION_ID_HEADER, "").strip()
+            or session_id
+        )
 
         stream = _coerce_request_bool(body.get("stream"), default=False)
         if stream:
@@ -3175,6 +3242,10 @@ class APIServerAdapter(BasePlatformAdapter):
                 conversation_history=conversation_history,
                 ephemeral_system_prompt=instructions,
                 session_id=session_id,
+                request_hermes_home=request_hermes_home,
+                request_upload_session_id=request_upload_session_id,
+                request_user_id=request_user_id,
+                request_workspace_id=request_workspace_id,
                 stream_delta_callback=_on_delta,
                 tool_progress_callback=_on_tool_progress,
                 tool_start_callback=_on_tool_start,
@@ -3213,6 +3284,10 @@ class APIServerAdapter(BasePlatformAdapter):
                 conversation_history=conversation_history,
                 ephemeral_system_prompt=instructions,
                 session_id=session_id,
+                request_hermes_home=request_hermes_home,
+                request_upload_session_id=request_upload_session_id,
+                request_user_id=request_user_id,
+                request_workspace_id=request_workspace_id,
                 gateway_session_key=gateway_session_key,
             )
 
@@ -3806,6 +3881,8 @@ class APIServerAdapter(BasePlatformAdapter):
         chat_id: str = "",
         session_key: str = "",
         session_id: str = "",
+        user_id: str = "",
+        workspace_owner_id: str = "",
     ) -> list:
         """Bind session contextvars for an API-server agent run.
 
@@ -3827,8 +3904,12 @@ class APIServerAdapter(BasePlatformAdapter):
         return set_session_vars(
             platform="api_server",
             chat_id=chat_id,
+            user_id=user_id,
+            workspace_owner_id=workspace_owner_id,
             session_key=session_key,
             session_id=session_id,
+            hermes_home=os.environ.get("HERMES_HOME") or None,
+            cwd=os.environ.get("TERMINAL_CWD") or "",
             async_delivery=False,
         )
 
@@ -3844,6 +3925,10 @@ class APIServerAdapter(BasePlatformAdapter):
         tool_complete_callback=None,
         agent_ref: Optional[list] = None,
         gateway_session_key: Optional[str] = None,
+        request_hermes_home: Optional[str] = None,
+        request_upload_session_id: Optional[str] = None,
+        request_user_id: Optional[str] = None,
+        request_workspace_id: Optional[str] = None,
     ) -> tuple:
         """
         Create an agent and run a conversation in a thread executor.
@@ -3858,13 +3943,15 @@ class APIServerAdapter(BasePlatformAdapter):
         """
         loop = asyncio.get_running_loop()
 
-        def _run():
+        def _run_bound():
             from gateway.session_context import clear_session_vars
 
             tokens = self._bind_api_server_session(
                 chat_id=session_id or "",
                 session_key=gateway_session_key or session_id or "",
                 session_id=session_id or "",
+                user_id=request_user_id or "",
+                workspace_owner_id=request_workspace_id or "",
             )
             try:
                 agent = self._create_agent(
@@ -3875,6 +3962,7 @@ class APIServerAdapter(BasePlatformAdapter):
                     tool_start_callback=tool_start_callback,
                     tool_complete_callback=tool_complete_callback,
                     gateway_session_key=gateway_session_key,
+                    request_hermes_home=request_hermes_home,
                 )
                 if agent_ref is not None:
                     agent_ref[0] = agent
@@ -3898,6 +3986,15 @@ class APIServerAdapter(BasePlatformAdapter):
                 return result, usage
             finally:
                 clear_session_vars(tokens)
+
+        def _run():
+            if request_hermes_home:
+                with _bound_request_hermes_home(
+                    request_hermes_home,
+                    session_id=request_upload_session_id or session_id,
+                ):
+                    return _run_bound()
+            return _run_bound()
 
         self._inflight_agent_runs += 1
         try:
@@ -3983,6 +4080,9 @@ class APIServerAdapter(BasePlatformAdapter):
         gateway_session_key, key_err = self._parse_session_key_header(request)
         if key_err is not None:
             return key_err
+        request_hermes_home = request.headers.get(_SEMANTIER_HERMES_HOME_HEADER, "").strip() or None
+        request_user_id = request.headers.get(_SEMANTIER_USER_ID_HEADER, "").strip() or None
+        request_workspace_id = request.headers.get(_SEMANTIER_WORKSPACE_ID_HEADER, "").strip() or None
 
         # Enforce concurrency limit (shared across all agent-serving
         # endpoints; configurable via gateway.api_server.max_concurrent_runs).
@@ -4052,6 +4152,10 @@ class APIServerAdapter(BasePlatformAdapter):
 
         run_id = f"run_{uuid.uuid4().hex}"
         session_id = body.get("session_id") or stored_session_id or run_id
+        request_upload_session_id = (
+            request.headers.get(_SEMANTIER_UPLOAD_SESSION_ID_HEADER, "").strip()
+            or session_id
+        )
         approval_session_key = gateway_session_key or session_id or run_id
         ephemeral_system_prompt = instructions
         loop = asyncio.get_running_loop()
@@ -4088,13 +4192,23 @@ class APIServerAdapter(BasePlatformAdapter):
         async def _run_and_close():
             try:
                 self._set_run_status(run_id, "running")
-                agent = self._create_agent(
-                    ephemeral_system_prompt=ephemeral_system_prompt,
-                    session_id=session_id,
-                    stream_delta_callback=_text_cb,
-                    tool_progress_callback=event_cb,
-                    gateway_session_key=gateway_session_key,
+                create_cm = (
+                    _bound_request_hermes_home(
+                        request_hermes_home,
+                        session_id=request_upload_session_id or session_id,
+                    )
+                    if request_hermes_home
+                    else contextlib.nullcontext()
                 )
+                with create_cm:
+                    agent = self._create_agent(
+                        ephemeral_system_prompt=ephemeral_system_prompt,
+                        session_id=session_id,
+                        stream_delta_callback=_text_cb,
+                        tool_progress_callback=event_cb,
+                        gateway_session_key=gateway_session_key,
+                        request_hermes_home=request_hermes_home,
+                    )
                 self._active_run_agents[run_id] = agent
 
                 def _approval_notify(approval_data: Dict[str, Any]) -> None:
@@ -4136,19 +4250,31 @@ class APIServerAdapter(BasePlatformAdapter):
                     approval_token = None
                     session_tokens = []
                     try:
-                        # Bind approval/session identity for this API run via
-                        # contextvars so concurrent runs do not share process
-                        # environment state.
-                        approval_token = set_current_session_key(approval_session_key)
-                        session_tokens = self._bind_api_server_session(
-                            session_key=approval_session_key,
+                        run_cm = (
+                            _bound_request_hermes_home(
+                                request_hermes_home,
+                                session_id=request_upload_session_id or effective_task_id,
+                            )
+                            if request_hermes_home
+                            else contextlib.nullcontext()
                         )
-                        register_gateway_notify(approval_session_key, _approval_notify)
-                        r = agent.run_conversation(
-                            user_message=user_message,
-                            conversation_history=conversation_history,
-                            task_id=effective_task_id,
-                        )
+                        with run_cm:
+                            # Bind approval/session identity for this API run via
+                            # contextvars so concurrent runs do not share process
+                            # environment state.
+                            approval_token = set_current_session_key(approval_session_key)
+                            session_tokens = self._bind_api_server_session(
+                                session_key=approval_session_key,
+                                session_id=effective_task_id,
+                                user_id=request_user_id or "",
+                                workspace_owner_id=request_workspace_id or "",
+                            )
+                            register_gateway_notify(approval_session_key, _approval_notify)
+                            r = agent.run_conversation(
+                                user_message=user_message,
+                                conversation_history=conversation_history,
+                                task_id=effective_task_id,
+                            )
                     finally:
                         try:
                             unregister_gateway_notify(approval_session_key)

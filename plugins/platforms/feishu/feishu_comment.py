@@ -23,6 +23,7 @@ Flow:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 from types import SimpleNamespace
@@ -1094,6 +1095,7 @@ def _run_comment_agent(
 
         canonical_session_id = None
         sandbox_scope = None
+        workspace_env_scope = contextlib.nullcontext()
         if workspace_id:
             from agents.sandbox_scope import SandboxScope
             from gateway.session import resolve_workspace_gateway_session
@@ -1111,6 +1113,15 @@ def _run_comment_agent(
                 source_gateway="feishu",
                 create_if_missing=False,
             )
+            try:
+                from runtime_paths import bind_workspace_session_env
+
+                workspace_env_scope = bind_workspace_session_env(
+                    _workspace_home,
+                    canonical_session_id,
+                )
+            except Exception:
+                logger.debug("[Feishu-Comment] workspace env binding unavailable", exc_info=True)
             sandbox_scope = SandboxScope(
                 workspace_id=workspace_id,
                 lane="interactive_session",
@@ -1127,34 +1138,35 @@ def _run_comment_agent(
             logger.info("[Feishu-Comment] _run_comment_agent: loaded %d history messages from session %s",
                         len(history), session_key)
 
-        agent = AIAgent(
-            model=model,
-            base_url=runtime_kwargs.get("base_url"),
-            api_key=runtime_kwargs.get("api_key"),
-            provider=runtime_kwargs.get("provider"),
-            api_mode=runtime_kwargs.get("api_mode"),
-            credential_pool=runtime_kwargs.get("credential_pool"),
-            quiet_mode=True,
-            skip_context_files=True,
-            skip_memory=True,
-            max_iterations=15,
-            enabled_toolsets=["feishu_doc", "feishu_drive"],
-            save_trajectories=True,
-            session_id=canonical_session_id,
-            gateway_session_key=session_key or None,
-            platform="feishu",
-            user_id=user_open_id or None,
-            chat_id=session_key or None,
-        )
-        logger.info("[Feishu-Comment] _run_comment_agent: calling run_conversation (prompt=%d chars, history=%d)",
-                    len(prompt), len(history))
-        if sandbox_scope is not None:
-            from agents.sandbox_scope import bind_sandbox_scope
+        with workspace_env_scope:
+            agent = AIAgent(
+                model=model,
+                base_url=runtime_kwargs.get("base_url"),
+                api_key=runtime_kwargs.get("api_key"),
+                provider=runtime_kwargs.get("provider"),
+                api_mode=runtime_kwargs.get("api_mode"),
+                credential_pool=runtime_kwargs.get("credential_pool"),
+                quiet_mode=True,
+                skip_context_files=True,
+                skip_memory=True,
+                max_iterations=15,
+                enabled_toolsets=["feishu_doc", "feishu_drive"],
+                save_trajectories=True,
+                session_id=canonical_session_id,
+                gateway_session_key=session_key or None,
+                platform="feishu",
+                user_id=user_open_id or None,
+                chat_id=session_key or None,
+            )
+            logger.info("[Feishu-Comment] _run_comment_agent: calling run_conversation (prompt=%d chars, history=%d)",
+                        len(prompt), len(history))
+            if sandbox_scope is not None:
+                from agents.sandbox_scope import bind_sandbox_scope
 
-            with bind_sandbox_scope(sandbox_scope):
+                with bind_sandbox_scope(sandbox_scope):
+                    result = agent.run_conversation(prompt, conversation_history=history or None)
+            else:
                 result = agent.run_conversation(prompt, conversation_history=history or None)
-        else:
-            result = agent.run_conversation(prompt, conversation_history=history or None)
         response = (result.get("final_response") or "").strip()
         api_calls = result.get("api_calls", 0)
         logger.info("[Feishu-Comment] _run_comment_agent: done api_calls=%d response_len=%d response=%s",
@@ -1251,6 +1263,7 @@ async def handle_drive_comment_event(
         return
 
     logger.info("[Feishu-Comment] Access granted: user=%s policy=%s rule=%s", from_open_id, rule.policy, rule.match_source)
+    workspace_context = _resolve_workspace_context_for_open_id(from_open_id)
     if reply_id:
         asyncio.ensure_future(
             add_comment_reaction(
@@ -1419,7 +1432,13 @@ async def handle_drive_comment_event(
     sess_key = _session_key(file_type, file_token)
     loop = asyncio.get_running_loop()
     response = await loop.run_in_executor(
-        None, _run_comment_agent, prompt, client, sess_key,
+        None,
+        _run_comment_agent,
+        prompt,
+        client,
+        sess_key,
+        (workspace_context or {}).get("workspace_id", ""),
+        (workspace_context or {}).get("user_id", "") or from_open_id,
     )
 
     if not response or _NO_REPLY_SENTINEL in response:

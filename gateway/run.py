@@ -13817,6 +13817,11 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             thread_id=str(context.source.thread_id) if context.source.thread_id else "",
             user_id=str(context.source.user_id) if context.source.user_id else "",
             user_name=str(context.source.user_name) if context.source.user_name else "",
+            workspace_owner_id=(
+                str(context.source.workspace_owner_id)
+                if context.source.workspace_owner_id
+                else ""
+            ),
             session_key=context.session_key,
             session_id=context.session_id,
             hermes_home=str(workspace_hermes_home) if workspace_hermes_home else None,
@@ -13833,7 +13838,33 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         """Run blocking work in the thread pool while preserving session contextvars."""
         loop = asyncio.get_running_loop()
         ctx = copy_context()
-        return await loop.run_in_executor(None, ctx.run, func, *args)
+
+        def _run_bound():
+            def _invoke():
+                try:
+                    from gateway.session_context import get_session_env
+
+                    hermes_home = get_session_env("HERMES_HOME", "") or get_session_env(
+                        "HERMES_SESSION_HERMES_HOME", ""
+                    )
+                    session_id = get_session_env("HERMES_SESSION_ID", "")
+                except Exception:
+                    hermes_home = ""
+                    session_id = ""
+
+                if hermes_home and session_id:
+                    try:
+                        from runtime_paths import bind_workspace_session_env
+
+                        with bind_workspace_session_env(hermes_home, session_id):
+                            return func(*args)
+                    except ValueError:
+                        pass
+                return func(*args)
+
+            return ctx.run(_invoke)
+
+        return await loop.run_in_executor(None, _run_bound)
 
     def _decide_image_input_mode(self) -> str:
         """Resolve the image-input routing for the currently active model.
