@@ -64,12 +64,6 @@ from gateway.platforms.base import (
 
 logger = logging.getLogger(__name__)
 
-_SEMANTIER_HERMES_HOME_HEADER = "X-Semantier-Hermes-Home"
-_SEMANTIER_UPLOAD_SESSION_ID_HEADER = "X-Semantier-Upload-Session-Id"
-_SEMANTIER_USER_ID_HEADER = "X-Semantier-User-Id"
-_SEMANTIER_WORKSPACE_ID_HEADER = "X-Semantier-Workspace-Id"
-
-
 def _bind_workspace_env_cm(target_home: Path, session_id: str | None = None):
     try:
         from runtime_paths import bind_workspace_env, bind_workspace_session_env
@@ -2050,9 +2044,9 @@ class APIServerAdapter(BasePlatformAdapter):
         if key_err is not None:
             return key_err
 
-        request_hermes_home = request.headers.get(_SEMANTIER_HERMES_HOME_HEADER, "").strip() or None
-        request_user_id = request.headers.get(_SEMANTIER_USER_ID_HEADER, "").strip() or None
-        request_workspace_id = request.headers.get(_SEMANTIER_WORKSPACE_ID_HEADER, "").strip() or None
+        request_hermes_home = None
+        request_user_id = None
+        request_workspace_id = None
 
         # Allow caller to continue an existing session by passing X-Hermes-Session-Id.
         # When provided, history is loaded from state.db instead of from the request body.
@@ -2104,10 +2098,7 @@ class APIServerAdapter(BasePlatformAdapter):
                     break
             session_id = _derive_chat_session_id(system_prompt, first_user)
             # history already set from request body above
-        request_upload_session_id = (
-            request.headers.get(_SEMANTIER_UPLOAD_SESSION_ID_HEADER, "").strip()
-            or session_id
-        )
+        request_upload_session_id = session_id
         require_boundary = bool(
             getattr(self, "_semantier_embedded_boundary_required", False)
         )
@@ -2138,6 +2129,10 @@ class APIServerAdapter(BasePlatformAdapter):
             )
             if preflight_error is not None:
                 return preflight_error
+        if execution_boundary is not None:
+            request_upload_session_id = execution_boundary.session_id or request_upload_session_id
+            request_user_id = execution_boundary.user_id
+            request_workspace_id = execution_boundary.workspace_id
 
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:29]}"
         model_name = body.get("model", self._model_name)
@@ -3120,9 +3115,9 @@ class APIServerAdapter(BasePlatformAdapter):
         gateway_session_key, key_err = self._parse_session_key_header(request)
         if key_err is not None:
             return key_err
-        request_hermes_home = request.headers.get(_SEMANTIER_HERMES_HOME_HEADER, "").strip() or None
-        request_user_id = request.headers.get(_SEMANTIER_USER_ID_HEADER, "").strip() or None
-        request_workspace_id = request.headers.get(_SEMANTIER_WORKSPACE_ID_HEADER, "").strip() or None
+        request_hermes_home = None
+        request_user_id = None
+        request_workspace_id = None
 
         # Parse request body
         try:
@@ -3222,10 +3217,7 @@ class APIServerAdapter(BasePlatformAdapter):
         # Reuse session from previous_response_id chain so the dashboard
         # groups the entire conversation under one session entry.
         session_id = stored_session_id or str(uuid.uuid4())
-        request_upload_session_id = (
-            request.headers.get(_SEMANTIER_UPLOAD_SESSION_ID_HEADER, "").strip()
-            or session_id
-        )
+        request_upload_session_id = session_id
         require_boundary = bool(
             getattr(self, "_semantier_embedded_boundary_required", False)
         )
@@ -3256,6 +3248,10 @@ class APIServerAdapter(BasePlatformAdapter):
             )
             if preflight_error is not None:
                 return preflight_error
+        if execution_boundary is not None:
+            request_upload_session_id = execution_boundary.session_id or request_upload_session_id
+            request_user_id = execution_boundary.user_id
+            request_workspace_id = execution_boundary.workspace_id
 
         stream = _coerce_request_bool(body.get("stream"), default=False)
         if stream:
@@ -4219,9 +4215,9 @@ class APIServerAdapter(BasePlatformAdapter):
         gateway_session_key, key_err = self._parse_session_key_header(request)
         if key_err is not None:
             return key_err
-        request_hermes_home = request.headers.get(_SEMANTIER_HERMES_HOME_HEADER, "").strip() or None
-        request_user_id = request.headers.get(_SEMANTIER_USER_ID_HEADER, "").strip() or None
-        request_workspace_id = request.headers.get(_SEMANTIER_WORKSPACE_ID_HEADER, "").strip() or None
+        request_hermes_home = None
+        request_user_id = None
+        request_workspace_id = None
 
         # Enforce concurrency limit (shared across all agent-serving
         # endpoints; configurable via gateway.api_server.max_concurrent_runs).
@@ -4291,10 +4287,7 @@ class APIServerAdapter(BasePlatformAdapter):
 
         run_id = f"run_{uuid.uuid4().hex}"
         session_id = body.get("session_id") or stored_session_id or run_id
-        request_upload_session_id = (
-            request.headers.get(_SEMANTIER_UPLOAD_SESSION_ID_HEADER, "").strip()
-            or session_id
-        )
+        request_upload_session_id = session_id
         require_boundary = bool(
             getattr(self, "_semantier_embedded_boundary_required", False)
         )
@@ -4325,6 +4318,10 @@ class APIServerAdapter(BasePlatformAdapter):
             )
             if preflight_error is not None:
                 return preflight_error
+        if execution_boundary is not None:
+            request_upload_session_id = execution_boundary.session_id or request_upload_session_id
+            request_user_id = execution_boundary.user_id
+            request_workspace_id = execution_boundary.workspace_id
         approval_session_key = gateway_session_key or session_id or run_id
         ephemeral_system_prompt = instructions
         loop = asyncio.get_running_loop()
