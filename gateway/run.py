@@ -13852,9 +13852,57 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                         "HERMES_SESSION_HERMES_HOME", ""
                     )
                     session_id = get_session_env("HERMES_SESSION_ID", "")
+                    user_id = get_session_env("HERMES_SESSION_USER_ID", "")
+                    workspace_id = get_session_env(
+                        "HERMES_SESSION_WORKSPACE_OWNER_ID",
+                        "",
+                    )
+                    platform = get_session_env("HERMES_SESSION_PLATFORM", "")
+                    chat_id = get_session_env("HERMES_SESSION_CHAT_ID", "")
+                    session_key = get_session_env("HERMES_SESSION_KEY", "")
                 except Exception:
                     hermes_home = ""
                     session_id = ""
+                    user_id = ""
+                    workspace_id = ""
+                    platform = ""
+                    chat_id = ""
+                    session_key = ""
+
+                require_boundary = bool(
+                    getattr(self, "_semantier_embedded_boundary_required", False)
+                )
+                from gateway.execution_boundary import (
+                    ExecutionBoundaryRequest,
+                    GovernedExecutionBoundaryRequired,
+                    bind_execution_boundary,
+                    resolve_execution_boundary,
+                )
+
+                boundary = resolve_execution_boundary(
+                    ExecutionBoundaryRequest(
+                        source="gateway_runner",
+                        session_id=session_id or None,
+                        user_id=user_id or None,
+                        workspace_id=workspace_id or None,
+                        metadata={
+                            "platform": platform,
+                            "chat_id": chat_id,
+                            "session_key": session_key,
+                            "transport": "embedded"
+                            if require_boundary
+                            else "standalone",
+                            "trusted_internal_boundary": require_boundary,
+                        },
+                    )
+                )
+                if boundary is None and require_boundary:
+                    raise GovernedExecutionBoundaryRequired(
+                        "Execution boundary required for gateway_runner"
+                    )
+                if boundary is not None:
+                    with bind_execution_boundary(boundary):
+                        return func(*args)
 
                 if hermes_home and session_id:
                     try:
