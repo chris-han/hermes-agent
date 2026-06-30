@@ -2431,7 +2431,11 @@ def _governed_context_prompt_for_source(source: Any, user_message: str) -> "str 
         from agents.governed_context import build_governed_runtime_context_prompt
     except Exception:
         return None
-    return build_governed_runtime_context_prompt(source, user_message)
+    return build_governed_runtime_context_prompt(
+        workspace_id=str(getattr(source, "workspace_owner_id", "") or "").strip() or None,
+        user_id=None,
+        user_message=user_message,
+    )
 
 
 def _append_governed_context_prompt(

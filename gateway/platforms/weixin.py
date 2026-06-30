@@ -1676,6 +1676,7 @@ class WeixinAdapter(BasePlatformAdapter):
             )
             workspace_id = str(getattr(owner, "owner_workspace_id", "") or "").strip()
             if workspace_id:
+                source.workspace_owner_id = workspace_id
                 adapter_key = f"weixin:{workspace_id}:{self._account_id}"
                 source.adapter_key = adapter_key
                 source.delivery_adapter_key = adapter_key
@@ -1698,7 +1699,7 @@ class WeixinAdapter(BasePlatformAdapter):
         )
         logger.info("[%s] inbound from=%s type=%s media=%d", self.name, _safe_id(sender_id), source.chat_type, len(media_paths))
         if event.message_type == MessageType.TEXT:
-            if self._text_batch_delay_seconds <= 0:
+            if getattr(self, "_text_batch_delay_seconds", 0.0) <= 0:
                 await self.handle_message(event)
             else:
                 self._enqueue_text_event(event)

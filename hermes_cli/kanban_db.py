@@ -349,6 +349,9 @@ def kanban_home() -> Path:
     override = os.environ.get("HERMES_KANBAN_HOME", "").strip()
     if override:
         return Path(override).expanduser()
+    semantier_root = os.environ.get("SEMANTIER_LOCAL_STATE_DIR", "").strip()
+    if semantier_root:
+        return Path(semantier_root).expanduser()
     from hermes_constants import get_default_hermes_root
     return get_default_hermes_root()
 
@@ -2372,6 +2375,8 @@ def create_task(
         raise ValueError(
             f"initial_status must be one of {sorted(VALID_INITIAL_STATUSES)}"
         )
+    user_id = user_id or os.environ.get("SEMANTIER_USER_ID") or None
+    workspace_id = workspace_id or os.environ.get("SEMANTIER_WORKSPACE_ID") or None
     if workspace_kind not in VALID_WORKSPACE_KINDS:
         raise ValueError(
             f"workspace_kind must be one of {sorted(VALID_WORKSPACE_KINDS)}, "
@@ -2659,6 +2664,8 @@ def list_tasks(
     assignee: Optional[str] = None,
     status: Optional[str] = None,
     tenant: Optional[str] = None,
+    user_id: Optional[str] = None,
+    workspace_id: Optional[str] = None,
     session_id: Optional[str] = None,
     include_archived: bool = False,
     limit: Optional[int] = None,
@@ -2679,6 +2686,12 @@ def list_tasks(
     if tenant is not None:
         query += " AND tenant = ?"
         params.append(tenant)
+    if user_id is not None:
+        query += " AND user_id = ?"
+        params.append(user_id)
+    if workspace_id is not None:
+        query += " AND workspace_id = ?"
+        params.append(workspace_id)
     if session_id is not None:
         query += " AND session_id = ?"
         params.append(session_id)
