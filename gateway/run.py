@@ -1828,9 +1828,10 @@ def _resolve_runtime_agent_kwargs(
     not consult environment variables for behavioral config — config.yaml
     is authoritative.
 
-    If the primary provider fails with an authentication error, attempt to
-    resolve credentials using the fallback provider chain from config.yaml
-    before giving up.
+    If the primary provider fails with an authentication error, generic Hermes
+    deployments may use the fallback provider chain from config.yaml. Semantier
+    governed execution disables that path so missing tenant/provider authority
+    fails at the boundary instead of silently switching credentials.
     """
     from hermes_cli.runtime_provider import (
         resolve_runtime_provider,
@@ -1846,6 +1847,9 @@ def _resolve_runtime_agent_kwargs(
             target_model=target_model,
         )
     except AuthError as auth_exc:
+        if os.getenv("SEMANTIER_DISABLE_PROVIDER_FALLBACK", "").strip().lower() in {"1", "true", "yes"}:
+            logger.error("Provider auth failed in governed execution: %s", auth_exc)
+            raise RuntimeError(format_runtime_provider_error(auth_exc)) from auth_exc
         # Distinguish a transient rate-limit/quota cap (credentials are fine,
         # re-auth cannot help) from a genuine auth failure (expired/revoked
         # token). Both fall through to the fallback chain, but the log message

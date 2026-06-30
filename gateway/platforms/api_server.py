@@ -2108,6 +2108,12 @@ class APIServerAdapter(BasePlatformAdapter):
             request.headers.get(_SEMANTIER_UPLOAD_SESSION_ID_HEADER, "").strip()
             or session_id
         )
+        preflight_error = self._semantier_provider_preflight_response(
+            request_hermes_home=request_hermes_home,
+            session_id=request_upload_session_id,
+        )
+        if preflight_error is not None:
+            return preflight_error
 
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:29]}"
         model_name = body.get("model", self._model_name)
@@ -3194,6 +3200,12 @@ class APIServerAdapter(BasePlatformAdapter):
             request.headers.get(_SEMANTIER_UPLOAD_SESSION_ID_HEADER, "").strip()
             or session_id
         )
+        preflight_error = self._semantier_provider_preflight_response(
+            request_hermes_home=request_hermes_home,
+            session_id=request_upload_session_id,
+        )
+        if preflight_error is not None:
+            return preflight_error
 
         stream = _coerce_request_bool(body.get("stream"), default=False)
         if stream:
@@ -3875,6 +3887,40 @@ class APIServerAdapter(BasePlatformAdapter):
             )
         return None
 
+    def _semantier_provider_preflight_response(
+        self,
+        *,
+        request_hermes_home: Optional[str],
+        session_id: Optional[str],
+    ) -> Optional["web.Response"]:
+        """Fail fast when governed workspace execution lacks provider authority."""
+        if not request_hermes_home:
+            return None
+        try:
+            with _bound_request_hermes_home(request_hermes_home, session_id=session_id):
+                gateway_run = _gateway_run_module()
+                preflight = getattr(
+                    gateway_run,
+                    "_resolve_runtime_agent_kwargs_for_session",
+                    gateway_run._resolve_runtime_agent_kwargs,
+                )
+                preflight()
+        except Exception as exc:
+            logger.error(
+                "Semantier governed provider preflight failed for session %s: %s",
+                session_id or "",
+                exc,
+                exc_info=True,
+            )
+            return web.json_response(
+                _openai_error(
+                    f"Provider configuration error: {exc}",
+                    err_type="server_error",
+                ),
+                status=500,
+            )
+        return None
+
     @staticmethod
     def _bind_api_server_session(
         *,
@@ -3954,6 +4000,14 @@ class APIServerAdapter(BasePlatformAdapter):
                 workspace_owner_id=request_workspace_id or "",
             )
             try:
+                if request_hermes_home:
+                    gateway_run = _gateway_run_module()
+                    preflight = getattr(
+                        gateway_run,
+                        "_resolve_runtime_agent_kwargs_for_session",
+                        gateway_run._resolve_runtime_agent_kwargs,
+                    )
+                    preflight()
                 agent = self._create_agent(
                     ephemeral_system_prompt=ephemeral_system_prompt,
                     session_id=session_id,
@@ -4156,6 +4210,12 @@ class APIServerAdapter(BasePlatformAdapter):
             request.headers.get(_SEMANTIER_UPLOAD_SESSION_ID_HEADER, "").strip()
             or session_id
         )
+        preflight_error = self._semantier_provider_preflight_response(
+            request_hermes_home=request_hermes_home,
+            session_id=request_upload_session_id,
+        )
+        if preflight_error is not None:
+            return preflight_error
         approval_session_key = gateway_session_key or session_id or run_id
         ephemeral_system_prompt = instructions
         loop = asyncio.get_running_loop()

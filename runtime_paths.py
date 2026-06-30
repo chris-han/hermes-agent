@@ -16,7 +16,12 @@ from typing import Iterator, Optional
 
 _DEFAULT_RUNTIME_ROOT = ".semantier-home"
 _REPO_ROOT = Path(__file__).resolve().parent
-_WORKSPACES_ROOT = _REPO_ROOT / "workspaces"
+_DEFAULT_WORKSPACES_ROOT = (
+    _REPO_ROOT.parent / "workspaces"
+    if _REPO_ROOT.name == "hermes-agent" and (_REPO_ROOT.parent / "src").exists()
+    else _REPO_ROOT / "workspaces"
+)
+_WORKSPACES_ROOT = _DEFAULT_WORKSPACES_ROOT
 
 _HERMES_HOME_ENV = "HERMES_HOME"
 _WORKSPACE_RUNS_DIR_ENV = "SEMANTIER_WORKSPACE_RUNS_DIR"
@@ -24,6 +29,7 @@ _WRITE_SAFE_ROOT_ENV = "HERMES_WRITE_SAFE_ROOT"
 _WRITE_ALLOWED_ROOTS_ENV = "HERMES_WRITE_ALLOWED_ROOTS"
 _TERMINAL_CWD_ENV = "TERMINAL_CWD"
 _SEMANTIER_WORKSPACE_ID_ENV = "SEMANTIER_WORKSPACE_ID"
+_SEMANTIER_DISABLE_PROVIDER_FALLBACK_ENV = "SEMANTIER_DISABLE_PROVIDER_FALLBACK"
 _SESSION_SEGMENT_RE = re.compile(r"^[A-Za-z0-9._:-]+$")
 
 _workspace_hermes_home_ctx: ContextVar[Optional[str]] = ContextVar(
@@ -93,11 +99,17 @@ def platform_runtime_root() -> Path:
 
 def workspace_root_path(workspace_id: str) -> Path:
     normalized = _validate_workspace_id(workspace_id)
-    base = _WORKSPACES_ROOT.resolve()
-    root = (_WORKSPACES_ROOT / normalized).resolve()
+    workspaces_root = _workspaces_root()
+    base = workspaces_root.resolve()
+    root = (workspaces_root / normalized).resolve()
     if root != base and base not in root.parents:
         raise ValueError("workspace path escapes workspaces root")
     return root
+
+
+def _workspaces_root() -> Path:
+    raw = os.environ.get("SEMANTIER_WORKSPACES_ROOT", "").strip()
+    return Path(raw).expanduser() if raw else _WORKSPACES_ROOT
 
 
 def workspace_runtime_home_path(workspace_id: str) -> Path:
@@ -160,7 +172,7 @@ def _workspace_root_from_hermes_home(hermes_home: Path) -> Path:
     resolved = Path(hermes_home).expanduser().resolve()
     if resolved == platform_runtime_root().resolve():
         raise ValueError("not a workspace runtime home")
-    workspaces_root = _WORKSPACES_ROOT.resolve()
+    workspaces_root = _workspaces_root().resolve()
     if resolved.parent == workspaces_root:
         return resolved
     raise ValueError("not a workspace runtime home")
@@ -341,6 +353,7 @@ def bind_workspace_session_env(
             artifacts_root.mkdir(parents=True, exist_ok=True)
             previous = os.environ.get(_WRITE_ALLOWED_ROOTS_ENV)
             previous_runs = os.environ.get(_WORKSPACE_RUNS_DIR_ENV)
+            previous_provider_fallback = os.environ.get(_SEMANTIER_DISABLE_PROVIDER_FALLBACK_ENV)
             os.environ[_WRITE_ALLOWED_ROOTS_ENV] = ",".join(
                 [
                     str(runs_root.resolve()),
@@ -349,6 +362,7 @@ def bind_workspace_session_env(
                 ]
             )
             os.environ[_WORKSPACE_RUNS_DIR_ENV] = str(runs_root.resolve())
+            os.environ[_SEMANTIER_DISABLE_PROVIDER_FALLBACK_ENV] = "1"
             runs_token = _workspace_runs_dir_ctx.set(str(runs_root.resolve()))
             try:
                 yield
@@ -362,5 +376,9 @@ def bind_workspace_session_env(
                     os.environ.pop(_WORKSPACE_RUNS_DIR_ENV, None)
                 else:
                     os.environ[_WORKSPACE_RUNS_DIR_ENV] = previous_runs
+                if previous_provider_fallback is None:
+                    os.environ.pop(_SEMANTIER_DISABLE_PROVIDER_FALLBACK_ENV, None)
+                else:
+                    os.environ[_SEMANTIER_DISABLE_PROVIDER_FALLBACK_ENV] = previous_provider_fallback
         else:
             yield

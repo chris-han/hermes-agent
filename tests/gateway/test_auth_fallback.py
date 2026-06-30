@@ -101,3 +101,35 @@ class TestResolveRuntimeAgentKwargsAuthFallback:
             from gateway.run import _resolve_runtime_agent_kwargs
             with pytest.raises(RuntimeError):
                 _resolve_runtime_agent_kwargs()
+
+    def test_semantier_boundary_disables_provider_fallback(self, tmp_path, monkeypatch):
+        """Governed execution must fail fast instead of switching credentials."""
+        from hermes_cli.auth import AuthError
+
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "model:\n  provider: openai-codex\n"
+            "fallback_model:\n  provider: openrouter\n"
+            "  model: meta-llama/llama-4-maverick\n"
+        )
+
+        monkeypatch.setattr("gateway.run._hermes_home", tmp_path)
+        monkeypatch.setenv("HERMES_INFERENCE_PROVIDER", "openai-codex")
+        monkeypatch.setenv("SEMANTIER_DISABLE_PROVIDER_FALLBACK", "1")
+
+        call_count = {"n": 0}
+
+        def _mock_resolve(**kwargs):
+            call_count["n"] += 1
+            raise AuthError("No inference provider configured")
+
+        with patch(
+            "hermes_cli.runtime_provider.resolve_runtime_provider",
+            side_effect=_mock_resolve,
+        ):
+            from gateway.run import _resolve_runtime_agent_kwargs
+
+            with pytest.raises(RuntimeError, match="No inference provider configured"):
+                _resolve_runtime_agent_kwargs()
+
+        assert call_count["n"] == 1
