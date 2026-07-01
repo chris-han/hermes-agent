@@ -2133,6 +2133,8 @@ class APIServerAdapter(BasePlatformAdapter):
             request_upload_session_id = execution_boundary.session_id or request_upload_session_id
             request_user_id = execution_boundary.user_id
             request_workspace_id = execution_boundary.workspace_id
+            if execution_boundary.paths.hermes_home is not None:
+                request_hermes_home = str(execution_boundary.paths.hermes_home)
 
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:29]}"
         model_name = body.get("model", self._model_name)
@@ -3252,6 +3254,8 @@ class APIServerAdapter(BasePlatformAdapter):
             request_upload_session_id = execution_boundary.session_id or request_upload_session_id
             request_user_id = execution_boundary.user_id
             request_workspace_id = execution_boundary.workspace_id
+            if execution_boundary.paths.hermes_home is not None:
+                request_hermes_home = str(execution_boundary.paths.hermes_home)
 
         stream = _coerce_request_bool(body.get("stream"), default=False)
         if stream:
@@ -4066,6 +4070,14 @@ class APIServerAdapter(BasePlatformAdapter):
         another thread to stop in-progress LLM calls.
         """
         loop = asyncio.get_running_loop()
+        if request_hermes_home is None and execution_boundary is not None:
+            boundary_home = getattr(
+                getattr(execution_boundary, "paths", None),
+                "hermes_home",
+                None,
+            )
+            if boundary_home is not None:
+                request_hermes_home = str(boundary_home)
 
         def _run_bound():
             from gateway.session_context import clear_session_vars
@@ -4123,7 +4135,7 @@ class APIServerAdapter(BasePlatformAdapter):
             from gateway.execution_boundary import bind_execution_boundary
 
             with bind_execution_boundary(execution_boundary):
-                if request_hermes_home:
+                if request_hermes_home and execution_boundary is None:
                     with _bound_request_hermes_home(
                         request_hermes_home,
                         session_id=request_upload_session_id or session_id,
@@ -4322,6 +4334,8 @@ class APIServerAdapter(BasePlatformAdapter):
             request_upload_session_id = execution_boundary.session_id or request_upload_session_id
             request_user_id = execution_boundary.user_id
             request_workspace_id = execution_boundary.workspace_id
+            if execution_boundary.paths.hermes_home is not None:
+                request_hermes_home = str(execution_boundary.paths.hermes_home)
         approval_session_key = gateway_session_key or session_id or run_id
         ephemeral_system_prompt = instructions
         loop = asyncio.get_running_loop()
@@ -4363,7 +4377,7 @@ class APIServerAdapter(BasePlatformAdapter):
                         request_hermes_home,
                         session_id=request_upload_session_id or session_id,
                     )
-                    if request_hermes_home
+                    if request_hermes_home and execution_boundary is None
                     else contextlib.nullcontext()
                 )
                 from gateway.execution_boundary import bind_execution_boundary
@@ -4423,7 +4437,7 @@ class APIServerAdapter(BasePlatformAdapter):
                                 request_hermes_home,
                                 session_id=request_upload_session_id or effective_task_id,
                             )
-                            if request_hermes_home
+                            if request_hermes_home and execution_boundary is None
                             else contextlib.nullcontext()
                         )
                         from gateway.execution_boundary import bind_execution_boundary
