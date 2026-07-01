@@ -96,7 +96,8 @@ def _validate_session_segment(session_id: str) -> str:
     return normalized
 
 
-def _workspace_session_segment(workspace_id: str, session_id: str) -> str:
+def workspace_session_segment(workspace_id: str, session_id: str) -> str:
+    """Return the safe filesystem segment for a workspace-scoped session."""
     workspace = _validate_workspace_id(workspace_id)
     normalized = _validate_session_segment(session_id)
     prefix = f"{workspace}:"
@@ -106,8 +107,12 @@ def _workspace_session_segment(workspace_id: str, session_id: str) -> str:
     return normalized
 
 
+def _workspace_session_segment(workspace_id: str, session_id: str) -> str:
+    return workspace_session_segment(workspace_id, session_id)
+
+
 def _session_segment_from_workspace_home(workspace_home: Path, session_id: str) -> str:
-    return _workspace_session_segment(workspace_home.name, session_id)
+    return workspace_session_segment(workspace_home.name, session_id)
 
 
 def platform_runtime_root() -> Path:

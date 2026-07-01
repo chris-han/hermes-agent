@@ -6,6 +6,7 @@ import pytest
 from agents.workspace_session_logs import (
     _index_path,
     _load_index,
+    _session_jsonl_path,
     _session_snapshot_path,
     find_workspace_session_index_matches,
     resolve_or_create_workspace_session_id,
@@ -93,6 +94,18 @@ def test_session_record_round_trips_canonical_metadata(tmp_path, monkeypatch):
     assert rows[0]["workspace_id"] == "ws-123"
     assert rows[0]["platform"] == "weixin"
     assert rows[0]["session_key"] == "agent:main:workspace:ws-123:weixin:dm:wx-user"
+
+
+def test_workspace_session_paths_use_normalized_session_segment(tmp_path):
+    workspace_home = tmp_path / "workspaces" / "ws-123" / ".hermes"
+    session_id = "ws-123:session_abc"
+
+    assert _session_snapshot_path(workspace_home, session_id) == (
+        workspace_home / "sessions" / "session_abc" / "logs" / "session_abc.json"
+    )
+    assert _session_jsonl_path(workspace_home, session_id) == (
+        workspace_home / "sessions" / "session_abc" / "logs" / "session_abc.jsonl"
+    )
 
 
 def test_resolve_or_create_workspace_session_id_delegates_to_upstream(tmp_path, monkeypatch):

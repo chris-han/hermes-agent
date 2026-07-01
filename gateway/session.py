@@ -1425,11 +1425,9 @@ class SessionStore:
         """
         workspace_hermes_home = self._workspace_homes.get(session_id)
         if workspace_hermes_home is not None:
-            from urllib.parse import quote
+            from agents.workspace_session_logs import _session_jsonl_path
 
-            workspace_sessions_dir = workspace_hermes_home / "sessions"
-            workspace_sessions_dir.mkdir(parents=True, exist_ok=True)
-            return workspace_sessions_dir / f"{quote(session_id, safe='-_.')}.jsonl"
+            return _session_jsonl_path(workspace_hermes_home, session_id)
         # No workspace home registered: no shared filesystem fallback.
         # SQLite is the primary store and already holds this session's messages.
         return None

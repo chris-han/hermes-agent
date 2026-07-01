@@ -394,6 +394,129 @@ async def test_run_in_executor_with_context_preserves_session_env(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_run_in_executor_with_context_binds_normalized_workspace_boundary(tmp_path):
+    from gateway.execution_boundary import (
+        BoundaryPaths,
+        BoundaryPolicy,
+        ExecutionBoundary,
+        ExecutionBoundaryRequest,
+        clear_execution_boundary_provider,
+        replace_execution_boundary_provider,
+    )
+
+    workspace = tmp_path / "workspaces" / "ws-123"
+
+    class Provider:
+        def resolve(self, request: ExecutionBoundaryRequest) -> ExecutionBoundary | None:
+            if request.workspace_id != "ws-123":
+                return None
+            session_segment = "session_abc"
+            return ExecutionBoundary(
+                source=request.source,
+                session_id=request.session_id,
+                user_id=request.user_id,
+                workspace_id=request.workspace_id,
+                paths=BoundaryPaths(
+                    hermes_home=workspace,
+                    terminal_cwd=workspace,
+                    runs_root=workspace / "sessions" / session_segment / "runs",
+                    uploads_root=workspace / "sessions" / session_segment / "uploads",
+                    artifacts_root=workspace / "sessions" / session_segment / "artifacts",
+                ),
+                policy=BoundaryPolicy(
+                    provider_fallback_enabled=False,
+                    require_boundary=True,
+                ),
+            )
+
+    runner = object.__new__(GatewayRunner)
+    runner._semantier_embedded_boundary_required = True
+    replace_execution_boundary_provider(Provider())
+
+    source = SessionSource(
+        platform=Platform.WEIXIN,
+        chat_id="wx-user",
+        chat_type="dm",
+        user_id="wx-user",
+        workspace_owner_id="ws-123",
+    )
+    context = SessionContext(
+        source=source,
+        connected_platforms=[],
+        home_channels={},
+        session_key="agent:main:workspace:ws-123:weixin:dm:wx-user",
+        session_id="ws-123:session_abc",
+    )
+
+    tokens = runner._set_session_env(context)
+    try:
+        result = await runner._run_in_executor_with_context(
+            lambda: {
+                "artifacts": os.environ.get("SEMANTIER_WORKSPACE_ARTIFACTS_DIR"),
+                "fallback": os.environ.get("HERMES_PROVIDER_FALLBACK_ENABLED"),
+                "write_roots": os.environ.get("HERMES_WRITE_ALLOWED_ROOTS"),
+            }
+        )
+    finally:
+        runner._clear_session_env(tokens)
+        clear_execution_boundary_provider()
+
+    expected_artifacts = workspace / "sessions" / "session_abc" / "artifacts"
+    assert result["artifacts"] == str(expected_artifacts)
+    assert result["fallback"] == "0"
+    assert str(workspace / "sessions" / "ws-123:session_abc") not in result["write_roots"]
+    assert str(expected_artifacts) in result["write_roots"]
+
+
+@pytest.mark.asyncio
+async def test_run_in_executor_with_context_requires_boundary_before_invoking_callable():
+    from gateway.execution_boundary import (
+        ExecutionBoundaryRequest,
+        GovernedExecutionBoundaryRequired,
+        clear_execution_boundary_provider,
+        replace_execution_boundary_provider,
+    )
+
+    class Provider:
+        def resolve(self, request: ExecutionBoundaryRequest):
+            return None
+
+    runner = object.__new__(GatewayRunner)
+    runner._semantier_embedded_boundary_required = True
+    replace_execution_boundary_provider(Provider())
+    called = False
+
+    source = SessionSource(
+        platform=Platform.WEIXIN,
+        chat_id="wx-user",
+        chat_type="dm",
+        user_id="wx-user",
+        workspace_owner_id="ws-123",
+    )
+    context = SessionContext(
+        source=source,
+        connected_platforms=[],
+        home_channels={},
+        session_key="agent:main:workspace:ws-123:weixin:dm:wx-user",
+        session_id="ws-123:session_abc",
+    )
+
+    def should_not_run():
+        nonlocal called
+        called = True
+
+    tokens = runner._set_session_env(context)
+    try:
+        with pytest.raises(GovernedExecutionBoundaryRequired):
+            await runner._run_in_executor_with_context(should_not_run)
+    finally:
+        runner._clear_session_env(tokens)
+        clear_execution_boundary_provider()
+
+    assert called is False
+
+
+@pytest.mark.asyncio
 async def test_run_in_executor_with_context_forwards_args():
     """_run_in_executor_with_context should forward *args to the callable."""
     runner = object.__new__(GatewayRunner)

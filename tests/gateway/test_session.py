@@ -1692,7 +1692,10 @@ class TestWorkspaceScopedTranscriptRouting:
 
         path = s.get_transcript_path(session_id)
         assert "forbidden-shared" not in str(path)
-        assert str(path).endswith("/workspaces/ws-123/.hermes/sessions/ws-123%3Asession_abc.jsonl")
+        assert path == (
+            workspace_home / "sessions" / "session_abc" / "logs" / "session_abc.jsonl"
+        )
+        assert not (workspace_home / "sessions" / "ws-123%3Asession_abc.jsonl").exists()
 
     def test_append_to_transcript_writes_to_workspace_dir(self, store, tmp_path):
         """append_to_transcript for a workspace-bound session must write to workspace dir."""
@@ -1711,12 +1714,22 @@ class TestWorkspaceScopedTranscriptRouting:
         s.append_to_transcript(session_id, {"role": "user", "content": "hello from weixin"})
 
         expected_path = s.get_transcript_path(session_id)
+        assert expected_path == (
+            workspace_hermes_home
+            / "sessions"
+            / "session_abc123456789"
+            / "logs"
+            / "session_abc123456789.jsonl"
+        )
         assert expected_path.exists(), f"Expected transcript at {expected_path}"
 
         # Must NOT have written to the platform-level dir
         platform_path = platform_sessions_dir / f"{session_id}.jsonl"
         assert not platform_path.exists(), \
             f"JSONL must not be in platform dir but found {platform_path}"
+        assert not (
+            workspace_hermes_home / "sessions" / f"{workspace_id}%3Asession_abc123456789.jsonl"
+        ).exists()
 
         lines = expected_path.read_text(encoding="utf-8").strip().splitlines()
         assert len(lines) == 1
@@ -1886,6 +1899,7 @@ class TestWorkspaceScopedTranscriptRouting:
         monkeypatch.setattr(gateway_run, "_load_gateway_config", lambda: {})
         monkeypatch.setattr(gateway_run, "_workspace_hermes_home_for_source", lambda _source: workspace_home)
         monkeypatch.setattr(gateway_run, "_weixin_source_has_user_scoped_home_channel", lambda _source: False)
+        monkeypatch.setattr(gateway_run, "_governed_context_prompt_for_source", lambda *_args: None)
 
         source = SessionSource(
             platform=Platform.WEIXIN,
@@ -1927,7 +1941,10 @@ class TestWorkspaceScopedTranscriptRouting:
         s.append_to_transcript(session_id, {"role": "user", "content": "hi"}, skip_db=True)
 
         assert not (shared_dir / f"{session_id}.jsonl").exists()
-        assert (workspace_home / "sessions" / "ws-123%3Asession_abc.jsonl").exists()
+        assert (
+            workspace_home / "sessions" / "session_abc" / "logs" / "session_abc.jsonl"
+        ).exists()
+        assert not (workspace_home / "sessions" / "ws-123%3Asession_abc.jsonl").exists()
 
     def test_other_sessions_unaffected_after_registration(self, store, tmp_path):
         """Registering a workspace home for one session must not affect others."""
