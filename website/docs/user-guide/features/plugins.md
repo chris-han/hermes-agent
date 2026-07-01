@@ -144,6 +144,12 @@ User plugins at `~/.hermes/plugins/model-providers/<name>/` and `~/.hermes/plugi
 
 Sub-category plugins surface in `hermes plugins list` and the interactive `hermes plugins` UI under their **path-derived key** — e.g. `observability/langfuse`, `image_gen/openai`, `platforms/teams`. That key (not the bare manifest `name:`) is the value you pass to `hermes plugins enable …` / `disable …` and the string to add under `plugins.enabled` in `config.yaml`.
 
+### Gateway workspace discovery
+
+Gateway runs bind the active workspace runtime home before plugin discovery and tool resolution. This applies to API server requests and messaging platforms such as Weixin and Feishu, so plugin-registered toolsets are available consistently across gateway entrypoints.
+
+The binding does not make tenant-installed arbitrary plugins trusted by default. It gives platform-installed and enabled plugins a workspace-scoped runtime context for config, memory, profiles, runs, uploads, artifacts, and logs.
+
 ## Plugins are opt-in (with a few exceptions)
 
 **General plugins and user-installed backends are disabled by default** — discovery finds them (so they show up in `hermes plugins` and `/plugins`), but nothing with hooks or tools loads until you add the plugin's name to `plugins.enabled` in `~/.hermes/config.yaml`. This stops third-party code from running without your explicit consent.

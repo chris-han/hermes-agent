@@ -31,12 +31,12 @@ from gateway.platforms.api_server import (
     ResponseStore,
     _IdempotencyCache,
     _CORS_HEADERS,
-    _bound_request_hermes_home,
     _derive_chat_session_id,
     check_api_server_requirements,
     cors_middleware,
     security_headers_middleware,
 )
+from gateway.workspace_runtime import bound_workspace_hermes_home
 
 
 # ---------------------------------------------------------------------------
@@ -429,7 +429,7 @@ class TestAdapterInit:
         monkeypatch.setenv("HERMES_HOME", str(workspace_home))
         monkeypatch.setattr(api_server.importlib, "import_module", fake_import_module)
 
-        with _bound_request_hermes_home(str(workspace_home)):
+        with bound_workspace_hermes_home(str(workspace_home)):
             assert imported["hermes_home_during_import"] == str(shared_home.resolve())
             assert os.environ["HERMES_HOME"] == str(workspace_home.resolve())
             assert fake_run._hermes_home == shared_home.resolve()
@@ -479,7 +479,7 @@ class TestAdapterInit:
         monkeypatch.setenv("SEMANTIER_LOCAL_STATE_DIR", str(shared_home))
         monkeypatch.delenv("SEMANTIER_WORKSPACE_RUNS_DIR", raising=False)
 
-        with _bound_request_hermes_home(str(workspace_home)):
+        with bound_workspace_hermes_home(str(workspace_home)):
             # Workspace binding survives the env reload.
             assert os.environ["HERMES_HOME"] == str(workspace_home.resolve())
             # Workspace-only binding must not export a deprecated flat runs dir.
@@ -512,7 +512,7 @@ class TestAdapterInit:
         monkeypatch.setenv("SEMANTIER_LOCAL_STATE_DIR", str(shared_home))
         monkeypatch.delenv("SEMANTIER_WORKSPACE_RUNS_DIR", raising=False)
 
-        with _bound_request_hermes_home(str(shared_home)):
+        with bound_workspace_hermes_home(str(shared_home)):
             assert os.environ["HERMES_HOME"] == str(shared_home.resolve())
             assert "SEMANTIER_WORKSPACE_RUNS_DIR" not in os.environ
 

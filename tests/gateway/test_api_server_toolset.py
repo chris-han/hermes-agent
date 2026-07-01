@@ -173,11 +173,9 @@ class TestApiServerAdapterToolset:
         self, monkeypatch, tmp_path
     ):
         """Workspace tool registry discovery must use the request workspace config."""
-        from gateway.platforms.api_server import (
-            APIServerAdapter,
-            _bound_request_hermes_home,
-        )
+        from gateway.platforms.api_server import APIServerAdapter
         from gateway.config import PlatformConfig
+        from gateway.workspace_runtime import bound_workspace_hermes_home
 
         monkeypatch.setenv("SEMANTIER_LOCAL_STATE_DIR", str(tmp_path / ".semantier-home"))
         workspace_home = tmp_path / "semantier-runtime" / "workspaces" / "ws-governed"
@@ -209,7 +207,7 @@ class TestApiServerAdapterToolset:
             }
             mock_agent_cls.return_value = MagicMock()
 
-            with _bound_request_hermes_home(
+            with bound_workspace_hermes_home(
                 str(workspace_home),
                 session_id="session_governed",
             ):
@@ -221,12 +219,12 @@ class TestApiServerAdapterToolset:
 
     def test_request_home_binder_accepts_external_semantier_workspace_root(self, tmp_path):
         """API request binding must honor the trusted request home, not Hermes' package-local root."""
-        from gateway.platforms.api_server import _bound_request_hermes_home
+        from gateway.workspace_runtime import bound_workspace_hermes_home
 
         workspace_home = tmp_path / "semantier-runtime" / "workspaces" / "ws-external"
         workspace_home.mkdir(parents=True)
 
-        with _bound_request_hermes_home(str(workspace_home), session_id="session-x"):
+        with bound_workspace_hermes_home(str(workspace_home), session_id="session-x"):
             assert os.environ["HERMES_HOME"] == str(workspace_home.resolve())
             assert os.environ["SEMANTIER_WORKSPACE_RUNS_DIR"] == str(
                 (workspace_home / "sessions" / "session-x" / "runs").resolve()

@@ -42,7 +42,6 @@ import os
 import socket as _socket
 import re
 import sqlite3
-import sys
 import time
 import uuid
 from pathlib import Path
@@ -64,141 +63,7 @@ from gateway.platforms.base import (
 
 logger = logging.getLogger(__name__)
 
-def _session_segment_for_request_home(target_home: Path, session_id: str) -> str:
-    segment = str(session_id or "").strip()
-    prefix = f"{target_home.name}:"
-    if segment.startswith(prefix):
-        segment = segment[len(prefix) :]
-    if not segment or segment in {".", ".."}:
-        raise ValueError("session_id required")
-    if not re.fullmatch(r"[A-Za-z0-9._:-]+", segment):
-        raise ValueError("session_id must be an ASCII-stable path segment")
-    if segment != Path(segment).name or any(sep in segment for sep in ("/", "\\")):
-        raise ValueError("session_id must be a safe single path segment")
-    return segment
-
-
-@contextlib.contextmanager
-def _bind_explicit_request_session_env(target_home: Path, session_id: str | None = None):
-    """Bind session IO roots from the trusted API request home when Hermes path helpers do not own it."""
-    if not session_id:
-        yield
-        return
-    segment = _session_segment_for_request_home(target_home, session_id)
-    session_root = target_home / "sessions" / segment
-    uploads_root = session_root / "uploads"
-    runs_root = session_root / "runs"
-    artifacts_root = session_root / "artifacts"
-    for root in (uploads_root, runs_root, artifacts_root):
-        root.mkdir(parents=True, exist_ok=True)
-
-    updates = {
-        "TERMINAL_CWD": str(target_home),
-        "HERMES_WRITE_ALLOWED_ROOTS": ",".join(
-            [
-                str(runs_root.resolve()),
-                str(uploads_root.resolve()),
-                str(artifacts_root.resolve()),
-            ]
-        ),
-        "SEMANTIER_WORKSPACE_RUNS_DIR": str(runs_root.resolve()),
-        "SEMANTIER_WORKSPACE_ARTIFACTS_DIR": str(artifacts_root.resolve()),
-        "SEMANTIER_DISABLE_PROVIDER_FALLBACK": "1",
-    }
-    previous = {key: os.environ.get(key) for key in updates}
-    try:
-        os.environ.update(updates)
-        yield
-    finally:
-        for key, value in previous.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
-
-
-@contextlib.contextmanager
-def _bind_workspace_env_cm(target_home: Path, session_id: str | None = None):
-    try:
-        from runtime_paths import bind_workspace_env, bind_workspace_session_env
-    except Exception:
-        with _bind_explicit_request_session_env(target_home, session_id=session_id):
-            yield
-        return
-    try:
-        cm = (
-            bind_workspace_session_env(target_home, session_id)
-            if session_id
-            else bind_workspace_env(target_home)
-        )
-        with cm:
-            yield
-    except ValueError:
-        with _bind_explicit_request_session_env(target_home, session_id=session_id):
-            yield
-
-
-@contextlib.contextmanager
-def _bound_request_hermes_home(raw_home: str | None, session_id: str | None = None):
-    """Bind HERMES_HOME for one trusted API-server request."""
-    value = (raw_home or "").strip()
-    if not value:
-        yield
-        return
-
-    target_home = Path(value).expanduser().resolve()
-    prev_home = os.environ.get("HERMES_HOME")
-    prev_runs = os.environ.get("SEMANTIER_WORKSPACE_RUNS_DIR")
-    prev_artifacts = os.environ.get("SEMANTIER_WORKSPACE_ARTIFACTS_DIR")
-    gateway_run = sys.modules.get("gateway.run")
-
-    shared_root_raw = os.environ.get("SEMANTIER_LOCAL_STATE_DIR")
-    shared_runtime_root = (
-        Path(shared_root_raw).expanduser().resolve()
-        if shared_root_raw
-        else target_home
-    )
-    if gateway_run is None and os.environ.get("SEMANTIER_LOCAL_STATE_DIR"):
-        os.environ["HERMES_HOME"] = str(shared_runtime_root)
-        try:
-            gateway_run = importlib.import_module("gateway.run")
-        finally:
-            os.environ["HERMES_HOME"] = str(target_home)
-    elif gateway_run is None:
-        try:
-            gateway_run = importlib.import_module("gateway.run")
-        except Exception:
-            gateway_run = None
-
-    try:
-        if gateway_run is not None and shared_runtime_root:
-            gateway_run._hermes_home = shared_runtime_root
-            gateway_run._env_path = shared_runtime_root / ".env"
-            gateway_run._config_path = shared_runtime_root / "config.yaml"
-        os.environ["HERMES_HOME"] = str(target_home)
-        reload_env = getattr(
-            gateway_run,
-            "_reload_runtime_env_preserving_config_authority",
-            None,
-        )
-        if callable(reload_env):
-            reload_env()
-        os.environ["HERMES_HOME"] = str(target_home)
-        with _bind_workspace_env_cm(target_home, session_id=session_id):
-            yield
-    finally:
-        if prev_home is None:
-            os.environ.pop("HERMES_HOME", None)
-        else:
-            os.environ["HERMES_HOME"] = prev_home
-        if prev_runs is None:
-            os.environ.pop("SEMANTIER_WORKSPACE_RUNS_DIR", None)
-        else:
-            os.environ["SEMANTIER_WORKSPACE_RUNS_DIR"] = prev_runs
-        if prev_artifacts is None:
-            os.environ.pop("SEMANTIER_WORKSPACE_ARTIFACTS_DIR", None)
-        else:
-            os.environ["SEMANTIER_WORKSPACE_ARTIFACTS_DIR"] = prev_artifacts
+from gateway import workspace_runtime as _workspace_runtime
 
 
 @contextlib.contextmanager
@@ -1301,13 +1166,14 @@ class APIServerAdapter(BasePlatformAdapter):
         tool_config = user_config
         if request_hermes_home:
             try:
-                from hermes_cli.config import read_raw_config
-                from hermes_cli.plugins import discover_plugins
+                from gateway.workspace_runtime import discover_workspace_plugins_and_config
 
-                discover_plugins(force=True)
-                workspace_config = read_raw_config()
-                if isinstance(workspace_config, dict) and workspace_config:
-                    tool_config = workspace_config
+                tool_config = discover_workspace_plugins_and_config(
+                    user_config,
+                    request_hermes_home,
+                    session_id=session_id,
+                    merge=False,
+                )
             except Exception as exc:
                 logger.debug(
                     "Workspace plugin/tool config discovery failed for %s: %s",
@@ -4032,7 +3898,10 @@ class APIServerAdapter(BasePlatformAdapter):
         if not request_hermes_home:
             return None
         try:
-            with _bound_request_hermes_home(request_hermes_home, session_id=session_id):
+            with _workspace_runtime.bound_workspace_hermes_home(
+                request_hermes_home,
+                session_id=session_id,
+            ):
                 gateway_run = _gateway_run_module()
                 preflight = getattr(
                     gateway_run,
@@ -4219,7 +4088,7 @@ class APIServerAdapter(BasePlatformAdapter):
 
             with bind_execution_boundary(execution_boundary), _non_cron_api_request_env():
                 if request_hermes_home:
-                    with _bound_request_hermes_home(
+                    with _workspace_runtime.bound_workspace_hermes_home(
                         request_hermes_home,
                         session_id=request_upload_session_id or session_id,
                     ):
@@ -4456,7 +4325,7 @@ class APIServerAdapter(BasePlatformAdapter):
             try:
                 self._set_run_status(run_id, "running")
                 create_cm = (
-                    _bound_request_hermes_home(
+                    _workspace_runtime.bound_workspace_hermes_home(
                         request_hermes_home,
                         session_id=request_upload_session_id or session_id,
                     )
@@ -4516,7 +4385,7 @@ class APIServerAdapter(BasePlatformAdapter):
                     session_tokens = []
                     try:
                         run_cm = (
-                            _bound_request_hermes_home(
+                            _workspace_runtime.bound_workspace_hermes_home(
                                 request_hermes_home,
                                 session_id=request_upload_session_id or effective_task_id,
                             )

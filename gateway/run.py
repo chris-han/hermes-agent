@@ -12271,6 +12271,16 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             platform_key = _platform_config_key(source.platform)
 
             from hermes_cli.tools_config import _get_platform_tools
+            workspace_home = _workspace_hermes_home_for_source(source)
+            if workspace_home is not None:
+                from gateway.workspace_runtime import discover_workspace_plugins_and_config
+
+                user_config = discover_workspace_plugins_and_config(
+                    user_config,
+                    workspace_home,
+                    session_id=task_id,
+                    merge=True,
+                )
             enabled_toolsets = sorted(_get_platform_tools(user_config, platform_key))
             agent_cfg = user_config.get("agent") or {}
             disabled_toolsets = agent_cfg.get("disabled_toolsets") or None
@@ -15817,42 +15827,15 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 )
                 _workspace_hermes_home_for_result = workspace_home
                 _workspace_session_id_for_result = _workspace_session_id or session_id
-                workspace_config_path = (
-                    Path(workspace_home) / "config.yaml"
-                    if workspace_home is not None
-                    else None
-                )
-                if workspace_config_path is not None and workspace_config_path.exists():
-                    import yaml as _workspace_yaml
-                    workspace_config = (
-                        _workspace_yaml.safe_load(
-                            workspace_config_path.read_text(encoding="utf-8")
-                        )
-                        or {}
+                if workspace_home is not None:
+                    from gateway.workspace_runtime import discover_workspace_plugins_and_config
+
+                    tool_config = discover_workspace_plugins_and_config(
+                        user_config,
+                        workspace_home,
+                        session_id=_workspace_session_id_for_result,
+                        merge=True,
                     )
-                    if isinstance(workspace_config, dict):
-                        merged_config = dict(user_config)
-                        merged_platform_toolsets = dict(
-                            user_config.get("platform_toolsets") or {}
-                        )
-                        for key, values in (
-                            workspace_config.get("platform_toolsets") or {}
-                        ).items():
-                            if not isinstance(values, list):
-                                continue
-                            existing = merged_platform_toolsets.get(key)
-                            combined = list(existing) if isinstance(existing, list) else []
-                            for value in values:
-                                if value not in combined:
-                                    combined.append(value)
-                            merged_platform_toolsets[key] = combined
-                        merged_config["platform_toolsets"] = merged_platform_toolsets
-                        workspace_mcp_servers = workspace_config.get("mcp_servers")
-                        if isinstance(workspace_mcp_servers, dict):
-                            merged_mcp_servers = dict(user_config.get("mcp_servers") or {})
-                            merged_mcp_servers.update(workspace_mcp_servers)
-                            merged_config["mcp_servers"] = merged_mcp_servers
-                        tool_config = merged_config
             except Exception:
                 logger.debug("Workspace toolset config merge failed", exc_info=True)
 

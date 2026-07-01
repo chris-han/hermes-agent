@@ -1,5 +1,6 @@
 """Tests for gateway /fast support and Priority Processing routing."""
 
+import os
 import sys
 import threading
 import types
@@ -184,3 +185,70 @@ async def test_run_agent_passes_priority_processing_to_gateway_agent(monkeypatch
     assert result["final_response"] == "ok"
     assert _CapturingAgent.last_init["service_tier"] == "priority"
     assert _CapturingAgent.last_init["request_overrides"] == {"service_tier": "priority"}
+
+
+@pytest.mark.asyncio
+async def test_run_agent_discovers_workspace_plugin_toolsets_for_gateway_source(monkeypatch, tmp_path):
+    _install_fake_agent(monkeypatch)
+    runner = _make_runner()
+    workspace_home = tmp_path / "semantier-runtime" / "workspaces" / "ws-governed"
+    workspace_home.mkdir(parents=True)
+
+    monkeypatch.setattr(gateway_run, "_hermes_home", tmp_path / ".semantier-home")
+    monkeypatch.setattr(gateway_run, "_env_path", tmp_path / ".semantier-home" / ".env")
+    monkeypatch.setattr(gateway_run, "load_dotenv", lambda *args, **kwargs: None)
+    monkeypatch.setattr(gateway_run, "_load_gateway_config", lambda: {})
+    monkeypatch.setattr(gateway_run, "_resolve_gateway_model", lambda config=None: "gpt-5.4")
+    monkeypatch.setattr(
+        gateway_run,
+        "_resolve_runtime_agent_kwargs",
+        lambda: {
+            "provider": "openrouter",
+            "api_mode": "chat_completions",
+            "base_url": "https://openrouter.ai/api/v1",
+            "api_key": "***",
+        },
+    )
+    monkeypatch.setattr(
+        gateway_run,
+        "_resolve_workspace_gateway_session",
+        lambda *args, **kwargs: ("session-governed", workspace_home),
+    )
+
+    def fake_workspace_config():
+        assert os.environ["HERMES_HOME"] == str(workspace_home.resolve())
+        return {
+            "plugins": {"enabled": ["governed_analytics"]},
+            "platform_toolsets": {
+                "telegram": ["hermes-telegram", "governed_analytics"],
+            },
+        }
+
+    import hermes_cli.config as hermes_config
+    import hermes_cli.plugins as hermes_plugins
+
+    discover_calls = []
+    monkeypatch.setattr(hermes_plugins, "discover_plugins", lambda force=False: discover_calls.append(force))
+    monkeypatch.setattr(hermes_config, "read_raw_config", fake_workspace_config)
+
+    source = SessionSource(
+        platform=Platform.TELEGRAM,
+        chat_id="12345",
+        chat_type="dm",
+        user_id="user-1",
+        workspace_owner_id="ws-governed",
+    )
+
+    _CapturingAgent.last_init = None
+    result = await runner._run_agent(
+        message="hi",
+        context_prompt="",
+        history=[],
+        source=source,
+        session_id="session-1",
+        session_key="agent:main:workspace:ws-governed:telegram:dm:12345",
+    )
+
+    assert result["final_response"] == "ok"
+    assert True in discover_calls
+    assert "governed_analytics" in _CapturingAgent.last_init["enabled_toolsets"]

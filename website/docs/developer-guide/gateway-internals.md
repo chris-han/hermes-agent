@@ -13,6 +13,7 @@ The messaging gateway is the long-running process that connects Hermes to 20+ ex
 | File | Purpose |
 |------|---------|
 | `gateway/run.py` | `GatewayRunner` — main loop, slash commands, message dispatch (large file; check git for current LOC) |
+| `gateway/workspace_runtime.py` | Shared workspace `HERMES_HOME` binding, plugin discovery, and workspace config merge for all gateway entrypoints |
 | `gateway/session.py` | `SessionStore` — conversation persistence and session key construction |
 | `gateway/delivery.py` | Outbound message delivery to target platforms/channels |
 | `gateway/pairing.py` | DM pairing flow for user authorization |
@@ -140,6 +141,14 @@ The gateway reads configuration from multiple sources:
 | Environment variables | Override any of the above |
 
 Unlike the CLI (which uses `load_cli_config()` with hardcoded defaults), the gateway reads `config.yaml` directly via YAML loader. This means config keys that exist in the CLI's defaults dict but not in the user's config file may behave differently between CLI and gateway.
+
+### Workspace Runtime Binding
+
+Before a gateway creates `AIAgent`, it binds the active workspace runtime home through `gateway/workspace_runtime.py`. This shared path is used by API server requests, foreground messaging runs, and background gateway tasks.
+
+The binding sets workspace `HERMES_HOME` plus session-scoped runs, uploads, artifacts, and logs roots, then forces plugin discovery and reads workspace config in that bound context. Plugin-registered toolsets therefore resolve the same way for API server, Weixin, Feishu, and other gateway platforms.
+
+For generic messaging gateways, workspace `platform_toolsets`, `mcp_servers`, and `plugins` are merged into the process config before tool resolution. API server request handling uses the same binding/discovery helper but keeps the workspace config authoritative for the request.
 
 ## Platform Adapters
 
