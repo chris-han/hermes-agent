@@ -180,6 +180,22 @@ def _write_to_sandbox(content: str, remote_path: str, env) -> bool:
     return result.get("returncode", 1) == 0
 
 
+def _write_to_governed_root(content: str, remote_path: str) -> bool:
+    """Write directly when the target is already inside the governed root."""
+    governed_root = _resolve_governed_artifacts_root()
+    if governed_root is None:
+        return False
+    if not _is_under_root(remote_path, governed_root):
+        raise GovernedToolResultStorageError(
+            "GOVERNED_TOOL_RESULT_PATH_OUT_OF_BOUNDARY: "
+            f"{remote_path} is outside {governed_root}"
+        )
+    target = Path(remote_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+    return True
+
+
 def _build_persisted_message(
     preview: str,
     has_more: bool,
@@ -246,9 +262,23 @@ def maybe_persist_tool_result(
     governed_required = _is_governed_storage_required()
 
     if governed_required and env is None:
+        try:
+            if _write_to_governed_root(content, remote_path):
+                logger.info(
+                    "Persisted large governed tool result directly: %s (%s, %d chars -> %s)",
+                    tool_name, tool_use_id, len(content), remote_path,
+                )
+                return _build_persisted_message(preview, has_more, len(content), remote_path)
+        except GovernedToolResultStorageError:
+            raise
+        except Exception as exc:
+            raise GovernedToolResultStorageError(
+                "GOVERNED_TOOL_RESULT_WRITE_FAILED: "
+                f"failed to persist {tool_use_id} under {storage_dir}: {exc}"
+            ) from exc
         raise GovernedToolResultStorageError(
-            "GOVERNED_TOOL_RESULT_ENV_REQUIRED: "
-            "cannot persist governed tool result without an execution environment"
+            "GOVERNED_TOOL_RESULT_ARTIFACTS_ROOT_REQUIRED: "
+            "cannot persist governed tool result without artifacts_root"
         )
 
     if env is not None:

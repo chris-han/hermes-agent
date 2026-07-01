@@ -348,7 +348,7 @@ class TestMaybePersistToolResult:
         assert str(artifacts.resolve() / "tmp" / "hermes-results") in cmd
         assert "Full output saved to: /tmp/hermes-results" not in result
 
-    def test_governed_boundary_no_env_fails_closed(self, tmp_path):
+    def test_governed_boundary_no_env_persists_directly_under_artifacts_root(self, tmp_path):
         artifacts = tmp_path / "workspaces" / "ws-1" / "sessions" / "session-a" / "artifacts"
         boundary = ExecutionBoundary(
             source="api_server",
@@ -358,16 +358,21 @@ class TestMaybePersistToolResult:
             paths=BoundaryPaths(artifacts_root=artifacts),
             policy=BoundaryPolicy(require_boundary=True, provider_fallback_enabled=False),
         )
+        content = "x" * 60_000
 
         with bind_execution_boundary(boundary):
-            with pytest.raises(GovernedToolResultStorageError, match="ENV_REQUIRED"):
-                maybe_persist_tool_result(
-                    content="x" * 60_000,
-                    tool_name="terminal",
-                    tool_use_id="tc_no_env",
-                    env=None,
-                    threshold=30_000,
-                )
+            result = maybe_persist_tool_result(
+                content=content,
+                tool_name="terminal",
+                tool_use_id="tc_no_env",
+                env=None,
+                threshold=30_000,
+            )
+
+        expected = artifacts.resolve() / "tmp" / "hermes-results" / "tc_no_env.txt"
+        assert PERSISTED_OUTPUT_TAG in result
+        assert str(expected) in result
+        assert expected.read_text(encoding="utf-8") == content
 
     def test_env_write_failure_falls_back_to_truncation(self):
         env = MagicMock()
