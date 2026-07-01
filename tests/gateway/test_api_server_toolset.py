@@ -167,3 +167,74 @@ class TestApiServerAdapterToolset:
             toolsets = call_kwargs.kwargs.get("enabled_toolsets")
             assert "auto_resume_screening" in toolsets
             assert call_kwargs.kwargs.get("model") == "test/model"
+
+    @patch("gateway.platforms.api_server.AIOHTTP_AVAILABLE", True)
+    def test_workspace_plugin_discovery_reads_under_bound_workspace_home(
+        self, monkeypatch, tmp_path
+    ):
+        """Workspace tool registry discovery must use the request workspace config."""
+        from gateway.platforms.api_server import (
+            APIServerAdapter,
+            _bound_request_hermes_home,
+        )
+        from gateway.config import PlatformConfig
+
+        monkeypatch.setenv("SEMANTIER_LOCAL_STATE_DIR", str(tmp_path / ".semantier-home"))
+        workspace_home = tmp_path / "semantier-runtime" / "workspaces" / "ws-governed"
+        workspace_home.mkdir(parents=True, exist_ok=True)
+        adapter = APIServerAdapter(PlatformConfig())
+
+        def fake_workspace_config():
+            assert os.environ["HERMES_HOME"] == str(workspace_home.resolve())
+            return {
+                "plugins": {"enabled": ["governed_analytics"]},
+                "platform_toolsets": {
+                    "api_server": ["hermes-api-server", "governed_analytics"]
+                },
+            }
+
+        with patch("gateway.run._resolve_runtime_agent_kwargs") as mock_kwargs, \
+             patch("gateway.run._resolve_gateway_model") as mock_model, \
+             patch("gateway.run._load_gateway_config") as mock_config, \
+             patch("hermes_cli.config.read_raw_config", side_effect=fake_workspace_config), \
+             patch("hermes_cli.plugins.discover_plugins") as mock_discover_plugins, \
+             patch("run_agent.AIAgent") as mock_agent_cls:
+
+            mock_kwargs.return_value = {"api_key": "test-key", "base_url": None,
+                                        "provider": None, "api_mode": None,
+                                        "command": None, "args": []}
+            mock_model.return_value = "test/model"
+            mock_config.return_value = {
+                "platform_toolsets": {"api_server": ["hermes-api-server"]},
+            }
+            mock_agent_cls.return_value = MagicMock()
+
+            with _bound_request_hermes_home(
+                str(workspace_home),
+                session_id="session_governed",
+            ):
+                adapter._create_agent(request_hermes_home=str(workspace_home))
+
+            mock_discover_plugins.assert_any_call(force=True)
+            toolsets = mock_agent_cls.call_args.kwargs.get("enabled_toolsets")
+            assert "governed_analytics" in toolsets
+
+    def test_request_home_binder_accepts_external_semantier_workspace_root(self, tmp_path):
+        """API request binding must honor the trusted request home, not Hermes' package-local root."""
+        from gateway.platforms.api_server import _bound_request_hermes_home
+
+        workspace_home = tmp_path / "semantier-runtime" / "workspaces" / "ws-external"
+        workspace_home.mkdir(parents=True)
+
+        with _bound_request_hermes_home(str(workspace_home), session_id="session-x"):
+            assert os.environ["HERMES_HOME"] == str(workspace_home.resolve())
+            assert os.environ["SEMANTIER_WORKSPACE_RUNS_DIR"] == str(
+                (workspace_home / "sessions" / "session-x" / "runs").resolve()
+            )
+            assert os.environ["SEMANTIER_WORKSPACE_ARTIFACTS_DIR"] == str(
+                (workspace_home / "sessions" / "session-x" / "artifacts").resolve()
+            )
+            roots = os.environ["HERMES_WRITE_ALLOWED_ROOTS"].split(",")
+            assert str((workspace_home / "sessions" / "session-x" / "runs").resolve()) in roots
+            assert str((workspace_home / "sessions" / "session-x" / "uploads").resolve()) in roots
+            assert str((workspace_home / "sessions" / "session-x" / "artifacts").resolve()) in roots

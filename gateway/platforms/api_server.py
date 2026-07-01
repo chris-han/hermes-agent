@@ -64,17 +64,78 @@ from gateway.platforms.base import (
 
 logger = logging.getLogger(__name__)
 
+def _session_segment_for_request_home(target_home: Path, session_id: str) -> str:
+    segment = str(session_id or "").strip()
+    prefix = f"{target_home.name}:"
+    if segment.startswith(prefix):
+        segment = segment[len(prefix) :]
+    if not segment or segment in {".", ".."}:
+        raise ValueError("session_id required")
+    if not re.fullmatch(r"[A-Za-z0-9._:-]+", segment):
+        raise ValueError("session_id must be an ASCII-stable path segment")
+    if segment != Path(segment).name or any(sep in segment for sep in ("/", "\\")):
+        raise ValueError("session_id must be a safe single path segment")
+    return segment
+
+
+@contextlib.contextmanager
+def _bind_explicit_request_session_env(target_home: Path, session_id: str | None = None):
+    """Bind session IO roots from the trusted API request home when Hermes path helpers do not own it."""
+    if not session_id:
+        yield
+        return
+    segment = _session_segment_for_request_home(target_home, session_id)
+    session_root = target_home / "sessions" / segment
+    uploads_root = session_root / "uploads"
+    runs_root = session_root / "runs"
+    artifacts_root = session_root / "artifacts"
+    for root in (uploads_root, runs_root, artifacts_root):
+        root.mkdir(parents=True, exist_ok=True)
+
+    updates = {
+        "TERMINAL_CWD": str(target_home),
+        "HERMES_WRITE_ALLOWED_ROOTS": ",".join(
+            [
+                str(runs_root.resolve()),
+                str(uploads_root.resolve()),
+                str(artifacts_root.resolve()),
+            ]
+        ),
+        "SEMANTIER_WORKSPACE_RUNS_DIR": str(runs_root.resolve()),
+        "SEMANTIER_WORKSPACE_ARTIFACTS_DIR": str(artifacts_root.resolve()),
+        "SEMANTIER_DISABLE_PROVIDER_FALLBACK": "1",
+    }
+    previous = {key: os.environ.get(key) for key in updates}
+    try:
+        os.environ.update(updates)
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+@contextlib.contextmanager
 def _bind_workspace_env_cm(target_home: Path, session_id: str | None = None):
     try:
         from runtime_paths import bind_workspace_env, bind_workspace_session_env
     except Exception:
-        return contextlib.nullcontext()
+        with _bind_explicit_request_session_env(target_home, session_id=session_id):
+            yield
+        return
     try:
-        if session_id:
-            return bind_workspace_session_env(target_home, session_id)
-        return bind_workspace_env(target_home)
+        cm = (
+            bind_workspace_session_env(target_home, session_id)
+            if session_id
+            else bind_workspace_env(target_home)
+        )
+        with cm:
+            yield
     except ValueError:
-        return contextlib.nullcontext()
+        with _bind_explicit_request_session_env(target_home, session_id=session_id):
+            yield
 
 
 @contextlib.contextmanager
@@ -88,6 +149,7 @@ def _bound_request_hermes_home(raw_home: str | None, session_id: str | None = No
     target_home = Path(value).expanduser().resolve()
     prev_home = os.environ.get("HERMES_HOME")
     prev_runs = os.environ.get("SEMANTIER_WORKSPACE_RUNS_DIR")
+    prev_artifacts = os.environ.get("SEMANTIER_WORKSPACE_ARTIFACTS_DIR")
     gateway_run = sys.modules.get("gateway.run")
 
     shared_root_raw = os.environ.get("SEMANTIER_LOCAL_STATE_DIR")
@@ -133,6 +195,27 @@ def _bound_request_hermes_home(raw_home: str | None, session_id: str | None = No
             os.environ.pop("SEMANTIER_WORKSPACE_RUNS_DIR", None)
         else:
             os.environ["SEMANTIER_WORKSPACE_RUNS_DIR"] = prev_runs
+        if prev_artifacts is None:
+            os.environ.pop("SEMANTIER_WORKSPACE_ARTIFACTS_DIR", None)
+        else:
+            os.environ["SEMANTIER_WORKSPACE_ARTIFACTS_DIR"] = prev_artifacts
+
+
+@contextlib.contextmanager
+def _non_cron_api_request_env():
+    """Prevent stale cron-only process env from controlling API request approvals."""
+    cron_keys = ("HERMES_CRON_SESSION", "HERMES_CRON_JOB_ID")
+    previous = {key: os.environ.get(key) for key in cron_keys}
+    try:
+        for key in cron_keys:
+            os.environ.pop(key, None)
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 @contextlib.contextmanager
@@ -4134,8 +4217,8 @@ class APIServerAdapter(BasePlatformAdapter):
         def _run():
             from gateway.execution_boundary import bind_execution_boundary
 
-            with bind_execution_boundary(execution_boundary):
-                if request_hermes_home and execution_boundary is None:
+            with bind_execution_boundary(execution_boundary), _non_cron_api_request_env():
+                if request_hermes_home:
                     with _bound_request_hermes_home(
                         request_hermes_home,
                         session_id=request_upload_session_id or session_id,
@@ -4377,12 +4460,12 @@ class APIServerAdapter(BasePlatformAdapter):
                         request_hermes_home,
                         session_id=request_upload_session_id or session_id,
                     )
-                    if request_hermes_home and execution_boundary is None
+                    if request_hermes_home
                     else contextlib.nullcontext()
                 )
                 from gateway.execution_boundary import bind_execution_boundary
 
-                with bind_execution_boundary(execution_boundary), create_cm:
+                with bind_execution_boundary(execution_boundary), _non_cron_api_request_env(), create_cm:
                     agent = self._create_agent(
                         ephemeral_system_prompt=ephemeral_system_prompt,
                         session_id=session_id,
@@ -4437,12 +4520,12 @@ class APIServerAdapter(BasePlatformAdapter):
                                 request_hermes_home,
                                 session_id=request_upload_session_id or effective_task_id,
                             )
-                            if request_hermes_home and execution_boundary is None
+                            if request_hermes_home
                             else contextlib.nullcontext()
                         )
                         from gateway.execution_boundary import bind_execution_boundary
 
-                        with bind_execution_boundary(execution_boundary), run_cm:
+                        with bind_execution_boundary(execution_boundary), _non_cron_api_request_env(), run_cm:
                             # Bind approval/session identity for this API run via
                             # contextvars so concurrent runs do not share process
                             # environment state.

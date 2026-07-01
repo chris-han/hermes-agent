@@ -4,6 +4,12 @@ from pathlib import Path
 import pytest
 
 from hermes_cli import web_server
+from gateway.execution_boundary import (
+    BoundaryPaths,
+    BoundaryPolicy,
+    ExecutionBoundary,
+    bind_execution_boundary,
+)
 
 pytest.importorskip("starlette.testclient")
 from starlette.testclient import TestClient
@@ -107,6 +113,34 @@ def test_fs_read_text_flags_binary(client, tmp_path):
     assert body["text"].startswith("hello")
 
 
+def test_fs_read_text_respects_execution_boundary(client, tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    inside = workspace / "inside.txt"
+    inside.write_text("ok")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("nope")
+    boundary = ExecutionBoundary(
+        source="api_server",
+        session_id="session-a",
+        paths=BoundaryPaths(
+            hermes_home=workspace,
+            terminal_cwd=workspace,
+            artifacts_root=workspace / "sessions" / "session-a" / "artifacts",
+        ),
+        policy=BoundaryPolicy(require_boundary=True),
+    )
+
+    with bind_execution_boundary(boundary):
+        allowed = client.get("/api/fs/read-text", params={"path": str(inside)})
+        blocked = client.get("/api/fs/read-text", params={"path": str(outside)})
+
+    assert allowed.status_code == 200
+    assert allowed.json()["text"] == "ok"
+    assert blocked.status_code == 403
+    assert "outside the active Semantier execution boundary" in blocked.json()["detail"]
+
+
 def test_fs_read_data_url_returns_capped_data_url(client, tmp_path, monkeypatch):
     monkeypatch.setattr(web_server, "_FS_DATA_URL_MAX_BYTES", 16)
     target = tmp_path / "image.png"
@@ -116,6 +150,42 @@ def test_fs_read_data_url_returns_capped_data_url(client, tmp_path, monkeypatch)
 
     assert response.status_code == 200
     assert response.json() == {"dataUrl": "data:image/png;base64," + base64.b64encode(b"pngbytes").decode("ascii")}
+
+
+def test_fs_write_text_respects_execution_boundary(client, tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    artifacts = workspace / "sessions" / "session-a" / "artifacts"
+    artifacts.mkdir(parents=True)
+    inside = artifacts / "inside.txt"
+    inside.write_text("old")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("old")
+    boundary = ExecutionBoundary(
+        source="api_server",
+        session_id="session-a",
+        paths=BoundaryPaths(
+            hermes_home=workspace,
+            terminal_cwd=workspace,
+            artifacts_root=artifacts,
+        ),
+        policy=BoundaryPolicy(require_boundary=True),
+    )
+
+    with bind_execution_boundary(boundary):
+        allowed = client.post(
+            "/api/fs/write-text",
+            json={"path": str(inside), "content": "new"},
+        )
+        blocked = client.post(
+            "/api/fs/write-text",
+            json={"path": str(outside), "content": "leak"},
+        )
+
+    assert allowed.status_code == 200
+    assert inside.read_text() == "new"
+    assert blocked.status_code == 403
+    assert outside.read_text() == "old"
 
 
 def test_fs_read_data_url_rejects_over_cap(client, tmp_path, monkeypatch):

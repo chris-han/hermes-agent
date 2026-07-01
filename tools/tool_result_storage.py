@@ -8,12 +8,11 @@ Defense against context-window overflow operates at three levels:
 
 2. **Per-result persistence** (maybe_persist_tool_result): After a tool
    returns, if its output exceeds the tool's registered threshold
-   (registry.get_max_result_size), the full output is written INTO THE
-   SANDBOX temp dir (for example /tmp/hermes-results/{tool_use_id}.txt on
-   standard Linux, or $TMPDIR/hermes-results/{tool_use_id}.txt on Termux)
-   via env.execute(). The in-context content is replaced with a preview +
-   file path reference. The model can read_file to access the full output
-   on any backend.
+   (registry.get_max_result_size), the full output is written to the active
+   governed execution boundary's artifact root when one is present. Standalone
+   Hermes runs without a governed boundary keep the historical sandbox temp-dir
+   behavior. The in-context content is replaced with a preview + file path
+   reference. The model can read_file to access the full output on any backend.
 
 3. **Per-turn aggregate budget** (enforce_turn_budget): After all tool
    results in a single assistant turn are collected, if the total exceeds
@@ -24,6 +23,7 @@ Defense against context-window overflow operates at three levels:
 
 import logging
 import os
+from pathlib import Path
 import shlex
 import uuid
 
@@ -39,10 +39,81 @@ PERSISTED_OUTPUT_CLOSING_TAG = "</persisted-output>"
 STORAGE_DIR = "/tmp/hermes-results"
 HEREDOC_MARKER = "HERMES_PERSIST_EOF"
 _BUDGET_TOOL_NAME = "__budget_enforcement__"
+_GOVERNED_ARTIFACTS_ENV = "SEMANTIER_WORKSPACE_ARTIFACTS_DIR"
+
+
+class GovernedToolResultStorageError(RuntimeError):
+    """Raised when governed tool-result persistence cannot stay in-boundary."""
+
+
+def _current_boundary():
+    try:
+        from gateway.execution_boundary import current_execution_boundary
+    except Exception:
+        return None
+    return current_execution_boundary()
+
+
+def _is_governed_storage_required() -> bool:
+    boundary = _current_boundary()
+    if boundary is not None:
+        return True
+    return bool(os.environ.get(_GOVERNED_ARTIFACTS_ENV))
+
+
+def _resolve_governed_artifacts_root() -> str | None:
+    boundary = _current_boundary()
+    if boundary is not None:
+        root = boundary.paths.artifacts_root
+        if root is None:
+            raise GovernedToolResultStorageError(
+                "GOVERNED_TOOL_RESULT_ARTIFACTS_ROOT_REQUIRED: "
+                "active execution boundary has no artifacts_root"
+            )
+        return str(Path(root).resolve())
+
+    raw = os.environ.get(_GOVERNED_ARTIFACTS_ENV)
+    if raw:
+        return str(Path(raw).expanduser().resolve())
+    return None
+
+
+def _is_under_root(path: str, root: str) -> bool:
+    try:
+        Path(path).resolve().relative_to(Path(root).resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def _mirror_path_under_governed_root(path: str, governed_root: str) -> str:
+    """Map an absolute sandbox path beneath the governed artifacts root.
+
+    Example: /tmp/hermes-results -> <artifacts_root>/tmp/hermes-results.
+    This preserves the original backend subpath while keeping disk IO inside
+    the session artifact boundary.
+    """
+    source = Path(path)
+    if not source.is_absolute():
+        raise GovernedToolResultStorageError(
+            "GOVERNED_TOOL_RESULT_ABSOLUTE_PATH_REQUIRED: "
+            f"{path} is not absolute"
+        )
+    relative_parts = source.parts[1:]
+    if not relative_parts:
+        raise GovernedToolResultStorageError(
+            "GOVERNED_TOOL_RESULT_PATH_REQUIRED: cannot mirror filesystem root"
+        )
+    return str(Path(governed_root, *relative_parts).resolve())
 
 
 def _resolve_storage_dir(env) -> str:
-    """Return the best temp-backed storage dir for this environment."""
+    """Return the storage dir for persisted tool results.
+
+    Governed Semantier execution must store spill files under the active
+    session artifact root. The temp-dir fallback is only for standalone Hermes
+    execution without a governed boundary.
+    """
     if env is not None:
         get_temp_dir = getattr(env, "get_temp_dir", None)
         if callable(get_temp_dir):
@@ -51,9 +122,17 @@ def _resolve_storage_dir(env) -> str:
             except Exception as exc:
                 logger.debug("Could not resolve env temp dir: %s", exc)
             else:
-                if temp_dir:
+                if isinstance(temp_dir, str) and temp_dir:
                     temp_dir = temp_dir.rstrip("/") or "/"
-                    return f"{temp_dir}/hermes-results"
+                    storage_dir = f"{temp_dir}/hermes-results"
+                    governed_root = _resolve_governed_artifacts_root()
+                    if governed_root is not None:
+                        return _mirror_path_under_governed_root(storage_dir, governed_root)
+                    return storage_dir
+
+    governed_root = _resolve_governed_artifacts_root()
+    if governed_root is not None:
+        return _mirror_path_under_governed_root(STORAGE_DIR, governed_root)
     return STORAGE_DIR
 
 
@@ -88,6 +167,13 @@ def _write_to_sandbox(content: str, remote_path: str, env) -> bool:
     existing API-body sized limit, which is orders of magnitude larger than
     the exec-arg ceiling.
     """
+    governed_root = _resolve_governed_artifacts_root()
+    if governed_root is not None and not _is_under_root(remote_path, governed_root):
+        raise GovernedToolResultStorageError(
+            "GOVERNED_TOOL_RESULT_PATH_OUT_OF_BOUNDARY: "
+            f"{remote_path} is outside {governed_root}"
+        )
+
     storage_dir = os.path.dirname(remote_path)
     cmd = f"mkdir -p {shlex.quote(storage_dir)} && cat > {shlex.quote(remote_path)}"
     result = env.execute(cmd, timeout=30, stdin_data=content)
@@ -130,8 +216,10 @@ def maybe_persist_tool_result(
     """Layer 2: persist oversized result into the sandbox, return preview + path.
 
     Writes via env.execute() so the file is accessible from any backend
-    (local, Docker, SSH, Modal, Daytona). Falls back to inline truncation
-    if write fails or no env is available.
+    (local, Docker, SSH, Modal, Daytona). Governed Semantier execution must
+    write under the active session artifact root or fail closed; standalone
+    Hermes execution falls back to inline truncation if persistence is not
+    available.
 
     Args:
         content: Raw tool result string.
@@ -155,6 +243,13 @@ def maybe_persist_tool_result(
     storage_dir = _resolve_storage_dir(env)
     remote_path = f"{storage_dir}/{tool_use_id}.txt"
     preview, has_more = generate_preview(content, max_chars=config.preview_size)
+    governed_required = _is_governed_storage_required()
+
+    if governed_required and env is None:
+        raise GovernedToolResultStorageError(
+            "GOVERNED_TOOL_RESULT_ENV_REQUIRED: "
+            "cannot persist governed tool result without an execution environment"
+        )
 
     if env is not None:
         try:
@@ -165,7 +260,18 @@ def maybe_persist_tool_result(
                 )
                 return _build_persisted_message(preview, has_more, len(content), remote_path)
         except Exception as exc:
+            if governed_required:
+                raise GovernedToolResultStorageError(
+                    "GOVERNED_TOOL_RESULT_WRITE_FAILED: "
+                    f"failed to persist {tool_use_id} under {storage_dir}: {exc}"
+                ) from exc
             logger.warning("Sandbox write failed for %s: %s", tool_use_id, exc)
+
+    if governed_required:
+        raise GovernedToolResultStorageError(
+            "GOVERNED_TOOL_RESULT_WRITE_FAILED: "
+            f"failed to persist {tool_use_id} under {storage_dir}"
+        )
 
     logger.info(
         "Inline-truncating large tool result: %s (%d chars, no sandbox write)",

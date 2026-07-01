@@ -1214,6 +1214,24 @@ def _fs_path(raw_path: str) -> Path:
         raise HTTPException(status_code=400, detail="Invalid path")
 
 
+def _fs_enforce_read_allowed(path: Path) -> None:
+    from agent.file_safety import get_read_block_error
+
+    block_error = get_read_block_error(str(path))
+    if block_error:
+        raise HTTPException(status_code=403, detail=block_error)
+
+
+def _fs_enforce_write_allowed(path: Path) -> None:
+    from agent.file_safety import is_write_denied
+
+    if is_write_denied(str(path)):
+        raise HTTPException(
+            status_code=403,
+            detail="Write denied: path is outside the active Semantier execution boundary.",
+        )
+
+
 def _fs_mime_type(path: Path) -> str:
     suffix = path.suffix.lower()
     if suffix in _FS_MIME_TYPES:
@@ -1233,6 +1251,7 @@ def _fs_looks_binary(data: bytes) -> bool:
 
 def _fs_regular_file(path: Path) -> tuple[Path, os.stat_result]:
     target = _fs_path(str(path))
+    _fs_enforce_read_allowed(target)
     try:
         st = target.stat()
     except FileNotFoundError:
@@ -1860,6 +1879,7 @@ async def fs_write_text(payload: FsWriteText):
     so both transports behave identically.
     """
     target = _fs_path(payload.path)
+    _fs_enforce_write_allowed(target)
     text = payload.content or ""
     if len(text.encode("utf-8")) > _FS_TEXT_WRITE_MAX_BYTES:
         raise HTTPException(status_code=413, detail="Content too large")

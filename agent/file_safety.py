@@ -6,6 +6,8 @@ import os
 from pathlib import Path
 from typing import Optional
 
+_SHARED_RUNTIME_READ_DIRS = frozenset({"plugins", "skills", "tools", "datasets", "dataset"})
+
 
 def _hermes_home_path() -> Path:
     """Resolve the active HERMES_HOME (profile-aware) without circular imports."""
@@ -118,6 +120,84 @@ def get_allowed_write_roots() -> set[str]:
     return roots
 
 
+def _boundary_write_roots() -> tuple[bool, set[str]]:
+    """Return active execution-boundary write roots without relying on env fallback."""
+    try:
+        from gateway.execution_boundary import current_execution_boundary
+
+        boundary = current_execution_boundary()
+    except Exception:
+        return False, set()
+    if boundary is None:
+        return False, set()
+    roots: set[str] = set()
+    for root in (
+        boundary.paths.runs_root,
+        boundary.paths.uploads_root,
+        boundary.paths.artifacts_root,
+    ):
+        if root is None:
+            continue
+        try:
+            roots.add(os.path.realpath(os.path.expanduser(str(root))))
+        except (OSError, ValueError):
+            continue
+    return True, roots
+
+
+def _path_is_under(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return True
+
+
+def _boundary_read_roots() -> tuple[bool, set[Path]]:
+    """Return active execution-boundary read roots.
+
+    Governed Semantier sessions read tenant-local files from the active
+    workspace by default. Shared runtime reads are limited to reviewed
+    non-secret asset roots such as plugins, skills, tools, and datasets.
+    """
+    try:
+        from gateway.execution_boundary import current_execution_boundary
+
+        boundary = current_execution_boundary()
+    except Exception:
+        return False, set()
+    if boundary is None:
+        return False, set()
+
+    roots: set[Path] = set()
+    for root in (
+        boundary.paths.hermes_home,
+        boundary.paths.terminal_cwd,
+        boundary.paths.runs_root,
+        boundary.paths.uploads_root,
+        boundary.paths.artifacts_root,
+    ):
+        if root is None:
+            continue
+        try:
+            roots.add(Path(root).expanduser().resolve())
+        except (OSError, RuntimeError, ValueError):
+            continue
+
+    shared_runtime = os.environ.get("SEMANTIER_LOCAL_STATE_DIR", "").strip()
+    shared_candidates = [Path(shared_runtime).expanduser()] if shared_runtime else []
+    shared_candidates.append(_hermes_root_path())
+    for shared_root in shared_candidates:
+        try:
+            resolved_shared_root = shared_root.resolve()
+        except (OSError, RuntimeError, ValueError):
+            continue
+        for dirname in _SHARED_RUNTIME_READ_DIRS:
+            roots.add(resolved_shared_root / dirname)
+
+    return True, roots
+
+
 def is_write_denied(path: str) -> bool:
     """Return True if path is blocked by the write denylist or safe root."""
     home = os.path.realpath(os.path.expanduser("~"))
@@ -156,11 +236,18 @@ def is_write_denied(path: str) -> bool:
 
     safe_roots = get_safe_write_roots()
     allowed_roots = get_allowed_write_roots()
+    boundary_active, boundary_roots = _boundary_write_roots()
+    if boundary_roots:
+        allowed_roots = set(allowed_roots)
+        allowed_roots.update(boundary_roots)
 
     if allowed_roots:
         for allowed_root in allowed_roots:
             if resolved == allowed_root or resolved.startswith(allowed_root + os.sep):
                 return False
+        return True
+
+    if boundary_active:
         return True
 
     if safe_roots:
@@ -330,6 +417,17 @@ def get_read_block_error(path: str) -> Optional[str]:
             "and cannot be read to prevent credential leakage. "
             "If you need to check the file structure, read .env.example instead. "
             "(Defense-in-depth — not a security boundary; the terminal tool can still bypass.)"
+        )
+
+    boundary_active, read_roots = _boundary_read_roots()
+    if boundary_active:
+        if any(_path_is_under(resolved, root) for root in read_roots):
+            return None
+        return (
+            f"Access denied: {path} is outside the active Semantier execution "
+            "boundary. Governed sessions may read the active workspace/session "
+            "roots, plus reviewed shared runtime plugins, skills, tools, and "
+            "datasets."
         )
 
     return None

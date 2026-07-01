@@ -3,6 +3,12 @@
 import pytest
 from unittest.mock import MagicMock, patch
 
+from gateway.execution_boundary import (
+    BoundaryPaths,
+    BoundaryPolicy,
+    ExecutionBoundary,
+    bind_execution_boundary,
+)
 from tools.budget_config import (
     DEFAULT_RESULT_SIZE_CHARS,
     DEFAULT_TURN_BUDGET_CHARS,
@@ -14,6 +20,7 @@ from tools.tool_result_storage import (
     PERSISTED_OUTPUT_TAG,
     PERSISTED_OUTPUT_CLOSING_TAG,
     STORAGE_DIR,
+    GovernedToolResultStorageError,
     _build_persisted_message,
     _heredoc_marker,
     _resolve_storage_dir,
@@ -155,6 +162,24 @@ class TestWriteToSandbox:
         # The semicolons must be inside quotes, not acting as command separators
         assert "'/tmp/x; rm -rf /; echo .txt'" in cmd
 
+    def test_governed_boundary_rejects_out_of_artifact_root_write(self, tmp_path):
+        artifacts = tmp_path / "workspaces" / "ws-1" / "sessions" / "session-a" / "artifacts"
+        boundary = ExecutionBoundary(
+            source="api_server",
+            session_id="session-a",
+            user_id="user-a",
+            workspace_id="ws-1",
+            paths=BoundaryPaths(artifacts_root=artifacts),
+            policy=BoundaryPolicy(require_boundary=True, provider_fallback_enabled=False),
+        )
+        env = MagicMock()
+
+        with bind_execution_boundary(boundary):
+            with pytest.raises(GovernedToolResultStorageError, match="PATH_OUT_OF_BOUNDARY"):
+                _write_to_sandbox("content", "/tmp/hermes-results/outside.txt", env)
+
+        env.execute.assert_not_called()
+
 
 class TestResolveStorageDir:
     def test_defaults_to_storage_dir_without_env(self):
@@ -164,6 +189,33 @@ class TestResolveStorageDir:
         env = MagicMock()
         env.get_temp_dir.return_value = "/data/data/com.termux/files/usr/tmp"
         assert _resolve_storage_dir(env) == "/data/data/com.termux/files/usr/tmp/hermes-results"
+
+    def test_governed_boundary_uses_artifacts_root(self, tmp_path):
+        artifacts = tmp_path / "workspaces" / "ws-1" / "sessions" / "session-a" / "artifacts"
+        boundary = ExecutionBoundary(
+            source="api_server",
+            session_id="session-a",
+            user_id="user-a",
+            workspace_id="ws-1",
+            paths=BoundaryPaths(artifacts_root=artifacts),
+            policy=BoundaryPolicy(require_boundary=True, provider_fallback_enabled=False),
+        )
+
+        with bind_execution_boundary(boundary):
+            assert _resolve_storage_dir(None) == str(artifacts.resolve() / "tmp" / "hermes-results")
+
+    def test_governed_boundary_requires_artifacts_root(self):
+        boundary = ExecutionBoundary(
+            source="api_server",
+            session_id="session-a",
+            user_id="user-a",
+            workspace_id="ws-1",
+            policy=BoundaryPolicy(require_boundary=True, provider_fallback_enabled=False),
+        )
+
+        with bind_execution_boundary(boundary):
+            with pytest.raises(GovernedToolResultStorageError, match="ARTIFACTS_ROOT_REQUIRED"):
+                _resolve_storage_dir(None)
 
 
 # ── _build_persisted_message ──────────────────────────────────────────
@@ -267,6 +319,56 @@ class TestMaybePersistToolResult:
         assert "Truncated" in result
         assert len(result) < len(content)
 
+    def test_governed_boundary_persists_under_artifacts_root(self, tmp_path):
+        artifacts = tmp_path / "workspaces" / "ws-1" / "sessions" / "session-a" / "artifacts"
+        boundary = ExecutionBoundary(
+            source="api_server",
+            session_id="session-a",
+            user_id="user-a",
+            workspace_id="ws-1",
+            paths=BoundaryPaths(artifacts_root=artifacts),
+            policy=BoundaryPolicy(require_boundary=True, provider_fallback_enabled=False),
+        )
+        env = MagicMock()
+        env.execute.return_value = {"output": "", "returncode": 0}
+        content = "x" * 60_000
+
+        with bind_execution_boundary(boundary):
+            result = maybe_persist_tool_result(
+                content=content,
+                tool_name="terminal",
+                tool_use_id="tc_governed",
+                env=env,
+                threshold=30_000,
+            )
+
+        expected = artifacts.resolve() / "tmp" / "hermes-results" / "tc_governed.txt"
+        assert str(expected) in result
+        cmd = env.execute.call_args[0][0]
+        assert str(artifacts.resolve() / "tmp" / "hermes-results") in cmd
+        assert "Full output saved to: /tmp/hermes-results" not in result
+
+    def test_governed_boundary_no_env_fails_closed(self, tmp_path):
+        artifacts = tmp_path / "workspaces" / "ws-1" / "sessions" / "session-a" / "artifacts"
+        boundary = ExecutionBoundary(
+            source="api_server",
+            session_id="session-a",
+            user_id="user-a",
+            workspace_id="ws-1",
+            paths=BoundaryPaths(artifacts_root=artifacts),
+            policy=BoundaryPolicy(require_boundary=True, provider_fallback_enabled=False),
+        )
+
+        with bind_execution_boundary(boundary):
+            with pytest.raises(GovernedToolResultStorageError, match="ENV_REQUIRED"):
+                maybe_persist_tool_result(
+                    content="x" * 60_000,
+                    tool_name="terminal",
+                    tool_use_id="tc_no_env",
+                    env=None,
+                    threshold=30_000,
+                )
+
     def test_env_write_failure_falls_back_to_truncation(self):
         env = MagicMock()
         env.execute.return_value = {"output": "disk full", "returncode": 1}
@@ -280,6 +382,29 @@ class TestMaybePersistToolResult:
         )
         assert PERSISTED_OUTPUT_TAG not in result
         assert "Truncated" in result
+
+    def test_governed_boundary_write_failure_fails_closed(self, tmp_path):
+        artifacts = tmp_path / "workspaces" / "ws-1" / "sessions" / "session-a" / "artifacts"
+        boundary = ExecutionBoundary(
+            source="api_server",
+            session_id="session-a",
+            user_id="user-a",
+            workspace_id="ws-1",
+            paths=BoundaryPaths(artifacts_root=artifacts),
+            policy=BoundaryPolicy(require_boundary=True, provider_fallback_enabled=False),
+        )
+        env = MagicMock()
+        env.execute.return_value = {"output": "disk full", "returncode": 1}
+
+        with bind_execution_boundary(boundary):
+            with pytest.raises(GovernedToolResultStorageError, match="WRITE_FAILED"):
+                maybe_persist_tool_result(
+                    content="x" * 60_000,
+                    tool_name="terminal",
+                    tool_use_id="tc_fail_governed",
+                    env=env,
+                    threshold=30_000,
+                )
 
     def test_env_execute_exception_falls_back(self):
         env = MagicMock()

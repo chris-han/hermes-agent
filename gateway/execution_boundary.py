@@ -108,6 +108,8 @@ def _boundary_env(boundary: ExecutionBoundary) -> dict[str, str]:
     safe_roots = [str(path) for path in roots if path is not None]
     if safe_roots:
         env["HERMES_WRITE_ALLOWED_ROOTS"] = ",".join(safe_roots)
+    if boundary.paths.artifacts_root is not None:
+        env["SEMANTIER_WORKSPACE_ARTIFACTS_DIR"] = str(boundary.paths.artifacts_root)
     env["HERMES_PROVIDER_FALLBACK_ENABLED"] = (
         "1" if boundary.policy.provider_fallback_enabled else "0"
     )
