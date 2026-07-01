@@ -42,39 +42,55 @@ def _assigns_false(node: ast.AST, attr: str) -> bool:
     return False
 
 
-def test_run_consumes_was_auto_reset_in_cleanup_block():
-    """The auto-reset cleanup block in gateway/run.py must set
-    `session_entry.was_auto_reset = False` so the cleanup (which pops the
-    session model/reasoning overrides) cannot re-fire on the next message and
-    wipe an override stored between turns (#48031)."""
+def _find_run_auto_reset_cleanup_block() -> ast.If:
     tree = ast.parse(inspect.getsource(gateway_run))
 
     # Find the cleanup branch: an `if <flag>:` block that pops a model/reasoning
-    # override AND clears the flag. We assert at least one such block sets
-    # was_auto_reset False.
-    found = False
+    # override. This is the transient-state cleanup after get_or_create_session
+    # returns a fresh auto-reset SessionEntry.
     for node in ast.walk(tree):
         if not isinstance(node, ast.If):
             continue
-        names = {
-            n.attr
-            for n in ast.walk(node)
-            if isinstance(n, ast.Attribute)
-        }
         calls = {
             n.func.attr
             for n in ast.walk(node)
             if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
         }
-        # The cleanup block references the reasoning-override setter and pops
-        # pending model notes — fingerprint of the transient-state cleanup.
-        if "_set_session_reasoning_override" in calls and _assigns_false(node, "was_auto_reset"):
-            found = True
-            break
+        if "_set_session_reasoning_override" in calls:
+            return node
+    raise AssertionError("Could not find gateway/run.py auto-reset cleanup block")
+
+
+def test_run_consumes_was_auto_reset_in_cleanup_block():
+    """The auto-reset cleanup block in gateway/run.py must set
+    `session_entry.was_auto_reset = False` so the cleanup (which pops the
+    session model/reasoning overrides) cannot re-fire on the next message and
+    wipe an override stored between turns (#48031)."""
+    found = _assigns_false(
+        _find_run_auto_reset_cleanup_block(),
+        "was_auto_reset",
+    )
     assert found, (
         "gateway/run.py auto-reset cleanup block must consume "
         "`was_auto_reset` (set it False) so it can't re-fire and wipe a "
         "model override stored between turns (#48031)."
+    )
+
+
+def test_run_evicts_cached_agent_on_auto_reset_cleanup():
+    """Auto-reset rotates session_id behind a stable gateway session_key.
+    The cached AIAgent is keyed by session_key, so the cleanup block must evict
+    it or the next turn may reuse an agent bound to the deleted/old session."""
+    block = _find_run_auto_reset_cleanup_block()
+    calls = {
+        n.func.attr
+        for n in ast.walk(block)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+    }
+    assert "_evict_cached_agent" in calls, (
+        "gateway/run.py auto-reset cleanup block must evict the cached agent "
+        "because auto-reset/external delete changes session_id while preserving "
+        "the gateway session_key."
     )
 
 

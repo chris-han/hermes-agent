@@ -235,3 +235,27 @@ class TestResetSessionDbLifecycle:
         assert fake_db.create_calls[0]["session_id"] == new_entry.session_id
         assert fake_db.create_calls[0]["source"] == source.platform.value
         assert fake_db.create_calls[0]["user_id"] == source.user_id
+
+
+class TestExternalSessionDeletion:
+    def test_next_gateway_message_rotates_after_api_delete(
+        self, monkeypatch, tmp_path
+    ):
+        runtime_home = tmp_path / ".semantier-home"
+        runtime_home.mkdir(parents=True)
+        monkeypatch.setenv("SEMANTIER_LOCAL_STATE_DIR", str(runtime_home))
+
+        store = _make_store(tmp_path / "gateway-sessions")
+        source = _make_source(chat_id="weixin-dm", user_id="weixin-user")
+
+        old_entry = store.get_or_create_session(source)
+        assert store._db is not None
+        assert store._db.get_session(old_entry.session_id) is not None
+
+        store._db.delete_session(old_entry.session_id)
+
+        new_entry = store.get_or_create_session(source)
+
+        assert new_entry.session_id != old_entry.session_id
+        assert new_entry.auto_reset_reason == "external_delete"
+        assert store._db.get_session(new_entry.session_id) is not None

@@ -9913,11 +9913,14 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             # Treat auto-reset as a full conversation boundary — drop every
             # session-scoped transient state so the fresh session does not
             # inherit the previous conversation's model/reasoning overrides
-            # or a queued "/model switched" note.
+            # or a queued "/model switched" note. The AIAgent cache is keyed
+            # by session_key, so it must also be evicted when the SessionStore
+            # rotates to a new session_id behind that stable gateway key.
             self._session_model_overrides.pop(session_key, None)
             self._set_session_reasoning_override(session_key, None)
             if hasattr(self, "_pending_model_notes"):
                 self._pending_model_notes.pop(session_key, None)
+            self._evict_cached_agent(session_key)
             session_entry.was_auto_reset = False
         
         # Emit session:start for new or auto-reset sessions

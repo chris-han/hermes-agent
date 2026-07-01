@@ -1025,8 +1025,23 @@ class SessionStore:
                 # so repeated interrupted restarts that escalate via the
                 # existing ``.restart_failure_counts`` stuck-loop counter
                 # still converge to a clean slate.
+                external_deleted = False
+                if self._db:
+                    try:
+                        external_deleted = self._db.get_session(entry.session_id) is None
+                    except Exception as exc:
+                        logger.debug("Session DB existence check failed: %s", exc)
+
                 if entry.suspended:
                     reset_reason = "suspended"
+                elif external_deleted:
+                    # Another gateway surface, usually the authenticated web
+                    # API, can delete the authoritative SessionDB row while
+                    # this long-running gateway still has the SessionEntry in
+                    # memory. Do not route the next inbound message into that
+                    # deleted session; rotate to a fresh session for the same
+                    # transport source.
+                    reset_reason = "external_delete"
                 elif entry.resume_pending:
                     # Restart-interrupted session: preserve the session_id
                     # and return the existing entry so the transcript
