@@ -1838,22 +1838,30 @@ def test_auth_remove_copilot_suppresses_all_variants(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
     from types import SimpleNamespace
+    from agent.credential_pool import CredentialPool
+    from agent.credential_pool import PooledCredential
     from hermes_cli.auth import is_source_suppressed
-    from hermes_cli.auth import write_credential_pool
-    from hermes_cli.auth_commands import auth_remove_command
+    from hermes_cli import auth_commands
 
-    write_credential_pool(
+    pool = CredentialPool(
         "copilot",
-        [{
-            "id": "c1",
-            "label": "gh auth token",
-            "auth_type": "api_key",
-            "priority": 0,
-            "source": "gh_cli",
-            "access_token": "ghp_fake",
-        }],
+        [
+            PooledCredential.from_dict(
+                "copilot",
+                {
+                    "id": "c1",
+                    "label": "gh auth token",
+                    "auth_type": "api_key",
+                    "priority": 0,
+                    "source": "gh_cli",
+                    "access_token": "ghp_fake",
+                },
+            )
+        ],
     )
-    auth_remove_command(SimpleNamespace(provider="copilot", target="1"))
+    monkeypatch.setattr(auth_commands, "load_pool", lambda provider: pool)
+
+    auth_commands.auth_remove_command(SimpleNamespace(provider="copilot", target="1"))
 
     assert is_source_suppressed("copilot", "gh_cli")
     assert is_source_suppressed("copilot", "env:COPILOT_GITHUB_TOKEN")
