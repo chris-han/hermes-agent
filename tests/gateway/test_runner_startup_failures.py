@@ -196,17 +196,26 @@ async def test_start_gateway_replace_force_uses_terminate_pid(monkeypatch, tmp_p
     # get_running_pid returns 42 before we kill the old gateway, then None
     # after remove_pid_file() clears the record (reflects real behavior).
     _pid_state = {"alive": True}
+
     def _mock_get_running_pid():
         return 42 if _pid_state["alive"] else None
+
     def _mock_remove_pid_file():
         _pid_state["alive"] = False
+
+    def _mock_terminate_pid(pid, force=False):
+        calls.append((pid, force))
+        if force:
+            _pid_state["alive"] = False
+
     monkeypatch.setattr("gateway.status.get_running_pid", _mock_get_running_pid)
+    monkeypatch.setattr("gateway.status._pid_exists", lambda pid: _pid_state["alive"])
     monkeypatch.setattr("gateway.status.remove_pid_file", _mock_remove_pid_file)
     monkeypatch.setattr(
         "gateway.status.release_all_scoped_locks",
         lambda **kwargs: 0,
     )
-    monkeypatch.setattr("gateway.status.terminate_pid", lambda pid, force=False: calls.append((pid, force)))
+    monkeypatch.setattr("gateway.status.terminate_pid", _mock_terminate_pid)
     monkeypatch.setattr("gateway.run.os.getpid", lambda: 100)
     monkeypatch.setattr("gateway.run.os.kill", lambda pid, sig: None)
     monkeypatch.setattr("time.sleep", lambda _: None)
