@@ -3780,7 +3780,7 @@ def refresh_launchd_plist_if_needed() -> bool:
         _resolved_launchd_domain is None
         and not _is_real_launchd_plist_destination(plist_path)
     ):
-        _resolved_launchd_domain = f"gui/{os.getuid()}"
+        _resolved_launchd_domain = f"gui/{os.getuid()}"  # windows-footgun: ok — POSIX launchd (macOS) helper, never invoked on Windows
     domain = _launchd_domain()
     target = f"{domain}/{label}"
 
