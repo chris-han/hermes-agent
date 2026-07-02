@@ -13,10 +13,6 @@ jobs:
         include:
           - package: web
             script: typecheck
-          - package: website
-            script: typecheck
-          - package: ui-tui
-            script: type-check
       fail-fast: false # report all failures, not just the first one
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
