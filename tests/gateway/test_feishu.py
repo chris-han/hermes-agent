@@ -104,6 +104,30 @@ class TestFeishuMessageNormalization(unittest.TestCase):
         self.assertIn("12.5", rendered)
         self.assertNotIn("amount_10k", rendered)
 
+    def test_markdown_table_outbound_payload_uses_chat_friendly_post_blocks(self):
+        from plugins.platforms.feishu.adapter import FeishuAdapter
+
+        adapter = object.__new__(FeishuAdapter)
+        msg_type, payload = adapter._build_outbound_payload(
+            "结果如下：\n"
+            "| 指标 | 值 |\n"
+            "| --- | ---: |\n"
+            "| 保费收入 | 1200 |\n"
+            "| 赔付率 | 61% |\n"
+            "\n请确认。"
+        )
+
+        self.assertEqual(msg_type, "post")
+        decoded = json.loads(payload)
+        content = decoded["zh_cn"]["content"]
+        self.assertEqual(content[0][0]["tag"], "text")
+        self.assertEqual(content[1][0]["text"], "指标: 保费收入\n值: 1200")
+        self.assertEqual(content[2][0]["text"], "指标: 赔付率\n值: 61%")
+        self.assertEqual(content[3][0]["text"], "请确认。")
+        rendered_payload = json.dumps(decoded, ensure_ascii=False)
+        self.assertNotIn("| --- | ---: |", rendered_payload)
+        self.assertNotIn('"msg_type": "text"', rendered_payload)
+
     def test_normalize_merge_forward_preserves_summary_lines(self):
         from plugins.platforms.feishu.adapter import normalize_feishu_message
 

@@ -529,6 +529,98 @@ def _strip_markdown_to_plain_text(text: str) -> str:
     return plain
 
 
+def _is_markdown_table_separator(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped.startswith("|") or not stripped.endswith("|"):
+        return False
+    cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+    if not cells:
+        return False
+    return all(cell and set(cell) <= {"-", ":"} for cell in cells)
+
+
+def _split_markdown_table_row(line: str) -> List[str]:
+    return [cell.strip() for cell in line.strip().strip("|").split("|")]
+
+
+def _render_markdown_table_as_text_block(table_lines: List[str]) -> List[str]:
+    if len(table_lines) < 2 or not _is_markdown_table_separator(table_lines[1]):
+        return [_strip_markdown_to_plain_text(line) for line in table_lines]
+
+    headers = _split_markdown_table_row(table_lines[0])
+    rendered_rows: List[str] = []
+    for row_line in table_lines[2:]:
+        values = _split_markdown_table_row(row_line)
+        fields: List[str] = []
+        for index, header in enumerate(headers):
+            value = values[index] if index < len(values) else ""
+            label = _strip_markdown_to_plain_text(header).strip()
+            text = _strip_markdown_to_plain_text(value).strip()
+            if label and text:
+                fields.append(f"{label}: {text}")
+            elif text:
+                fields.append(text)
+        if fields:
+            rendered_rows.append("\n".join(fields))
+
+    if rendered_rows:
+        return rendered_rows
+
+    header_text = " | ".join(
+        _strip_markdown_to_plain_text(header).strip() for header in headers
+    ).strip()
+    return [header_text] if header_text else []
+
+
+def _build_table_friendly_post_rows(content: str) -> List[List[Dict[str, str]]]:
+    rows: List[List[Dict[str, str]]] = []
+    pending_text: List[str] = []
+    table_lines: List[str] = []
+
+    def _flush_text() -> None:
+        nonlocal pending_text
+        text = _strip_markdown_to_plain_text("\n".join(pending_text)).strip()
+        if text:
+            rows.append([{"tag": "text", "text": text}])
+        pending_text = []
+
+    def _flush_table() -> None:
+        nonlocal table_lines
+        for block in _render_markdown_table_as_text_block(table_lines):
+            block = block.strip()
+            if block:
+                rows.append([{"tag": "text", "text": block}])
+        table_lines = []
+
+    for line in (content or "").replace("\r\n", "\n").splitlines():
+        stripped = line.strip()
+        is_table_line = stripped.startswith("|") and stripped.endswith("|")
+        if is_table_line:
+            if not table_lines:
+                _flush_text()
+            table_lines.append(line)
+            continue
+        if table_lines:
+            _flush_table()
+        pending_text.append(line)
+
+    if table_lines:
+        _flush_table()
+    _flush_text()
+    return rows or [[{"tag": "text", "text": _strip_markdown_to_plain_text(content or "")}]]
+
+
+def _build_table_friendly_post_payload(content: str) -> str:
+    return json.dumps(
+        {
+            "zh_cn": {
+                "content": _build_table_friendly_post_rows(content),
+            }
+        },
+        ensure_ascii=False,
+    )
+
+
 def _coerce_int(value: Any, default: Optional[int] = None, min_value: int = 0) -> Optional[int]:
     """Coerce value to int with optional default and minimum constraint."""
     try:
@@ -4493,12 +4585,8 @@ class FeishuAdapter(BasePlatformAdapter):
     # =========================================================================
 
     def _build_outbound_payload(self, content: str) -> tuple[str, str]:
-        # Feishu post-type 'md' elements do not render markdown tables; sending
-        # table content as post causes the message to appear blank on the client.
-        # Force plain text for anything that looks like a markdown table.
         if _MARKDOWN_TABLE_RE.search(content):
-            text_payload = {"text": content}
-            return "text", json.dumps(text_payload, ensure_ascii=False)
+            return "post", _build_table_friendly_post_payload(content)
         if _MARKDOWN_HINT_RE.search(content):
             return "post", _build_markdown_post_payload(content)
         text_payload = {"text": content}
