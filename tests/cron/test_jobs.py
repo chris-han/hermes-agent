@@ -518,6 +518,53 @@ class TestMarkJobRun:
         updated = get_job(job["id"])
         assert updated["last_status"] == "error"
         assert updated["last_error"] == "timeout"
+        assert updated["failure_count"] == 1
+
+    def test_failed_run_does_not_consume_repeat_cycle(self, tmp_cron_dir):
+        job = create_job(prompt="Fail", schedule="every 1h", repeat=3)
+        mark_job_run(job["id"], success=False, error="timeout")
+        updated = get_job(job["id"])
+        assert updated["failure_count"] == 1
+        assert updated["repeat"] == {"times": 3, "completed": 0}
+
+    def test_disables_after_three_consecutive_failures(self, tmp_cron_dir):
+        job = create_job(prompt="Fail", schedule="every 1h")
+
+        mark_job_run(job["id"], success=False, error="timeout 1")
+        first = get_job(job["id"])
+        assert first["enabled"] is True
+        assert first["failure_count"] == 1
+
+        mark_job_run(job["id"], success=False, error="timeout 2")
+        second = get_job(job["id"])
+        assert second["enabled"] is True
+        assert second["failure_count"] == 2
+
+        mark_job_run(job["id"], success=False, error="timeout 3")
+        updated = get_job(job["id"])
+        assert updated["enabled"] is False
+        assert updated["state"] == "failed"
+        assert updated["next_run_at"] is None
+        assert updated["failure_count"] == 3
+        assert updated["last_status"] == "error"
+        assert updated["last_error"] == "timeout 3"
+        assert "3 consecutive failed runs" in updated["paused_reason"]
+
+    def test_success_resets_consecutive_failure_count(self, tmp_cron_dir):
+        job = create_job(prompt="Flaky", schedule="every 1h")
+
+        mark_job_run(job["id"], success=False, error="timeout 1")
+        mark_job_run(job["id"], success=False, error="timeout 2")
+        mark_job_run(job["id"], success=True)
+        updated = get_job(job["id"])
+        assert updated["failure_count"] == 0
+        assert updated["enabled"] is True
+        assert updated["last_status"] == "ok"
+
+        mark_job_run(job["id"], success=False, error="timeout 3")
+        updated = get_job(job["id"])
+        assert updated["enabled"] is True
+        assert updated["failure_count"] == 1
 
     def test_delivery_error_tracked_separately(self, tmp_cron_dir):
         """Agent succeeds but delivery fails — both tracked independently."""

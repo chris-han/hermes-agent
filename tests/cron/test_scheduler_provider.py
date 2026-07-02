@@ -11,29 +11,29 @@ No production code is exercised beyond the two ticker entry points:
   - gateway/run.py::_start_cron_ticker        (production gateway ticker)
   - hermes_cli/web_server.py::_start_desktop_cron_ticker  (desktop fallback)
 
-Both call `cron.scheduler.tick(...)` on a loop and exit when their stop_event
-is set. We patch `cron.scheduler.tick` (both tickers import it locally as
-`cron_tick`, so the module-attribute patch is observed) and assert the loop
-drives it and stops promptly.
+Both use the built-in provider, which calls
+`cron.scheduler.tick_known_homes(...)` so Semantier workspace-scoped cron jobs
+are included. We patch that module attribute and assert the loops drive it and
+stop promptly.
 """
 import threading
 import time
 from unittest.mock import patch
 
 
-def test_ticker_calls_tick_at_least_once_then_stops():
-    """The gateway in-process ticker loop calls cron.scheduler.tick repeatedly
-    and exits promptly once the stop_event is set."""
+def test_ticker_calls_tick_known_homes_at_least_once_then_stops():
+    """The gateway in-process ticker loop calls cron.scheduler.tick_known_homes
+    repeatedly and exits promptly once the stop_event is set."""
     from gateway.run import _start_cron_ticker
 
     calls = []
     stop = threading.Event()
 
-    def fake_tick(*args, **kwargs):
+    def fake_tick_known_homes(*args, **kwargs):
         calls.append(kwargs)
         return 0
 
-    with patch("cron.scheduler.tick", side_effect=fake_tick):
+    with patch("cron.scheduler.tick_known_homes", side_effect=fake_tick_known_homes):
         # interval=0 keeps the loop tight; stop after a brief beat.
         t = threading.Thread(
             target=_start_cron_ticker,
@@ -47,26 +47,23 @@ def test_ticker_calls_tick_at_least_once_then_stops():
         t.join(timeout=5)
 
     assert not t.is_alive(), "ticker did not exit after stop_event was set"
-    assert len(calls) >= 1, "ticker never called tick()"
-    # Contract: the ticker invokes tick with sync=False (fire-and-forget from
-    # the background thread, never the synchronous CLI path).
-    assert calls[0].get("sync") is False
+    assert len(calls) >= 1, "ticker never called tick_known_homes()"
+    assert calls[0]["verbose"] is False
 
 
-def test_desktop_ticker_calls_tick_then_stops():
-    """The desktop dashboard ticker loop calls cron.scheduler.tick and exits
-    once the stop_event is set. Desktop has no live adapters, so it ticks with
-    no adapters/loop."""
+def test_desktop_ticker_calls_tick_known_homes_then_stops():
+    """The desktop dashboard ticker loop calls cron.scheduler.tick_known_homes
+    and exits once the stop_event is set."""
     from hermes_cli.web_server import _start_desktop_cron_ticker
 
     calls = []
     stop = threading.Event()
 
-    def fake_tick(*args, **kwargs):
+    def fake_tick_known_homes(*args, **kwargs):
         calls.append(kwargs)
         return 0
 
-    with patch("cron.scheduler.tick", side_effect=fake_tick):
+    with patch("cron.scheduler.tick_known_homes", side_effect=fake_tick_known_homes):
         t = threading.Thread(
             target=_start_desktop_cron_ticker,
             args=(stop,),
@@ -79,8 +76,8 @@ def test_desktop_ticker_calls_tick_then_stops():
         t.join(timeout=5)
 
     assert not t.is_alive(), "desktop ticker did not exit after stop_event was set"
-    assert len(calls) >= 1, "desktop ticker never called tick()"
-    assert calls[0].get("sync") is False
+    assert len(calls) >= 1, "desktop ticker never called tick_known_homes()"
+    assert calls[0]["verbose"] is False
 
 
 # ── Phase 1: CronScheduler ABC + InProcessCronScheduler ──────────────────────
@@ -128,10 +125,9 @@ def test_abc_growth_stays_additive():
     )
 
 
-def test_inprocess_provider_ticks_and_stops():
-    """The built-in provider drives cron.scheduler.tick(sync=False) on a loop
-    and exits promptly when stop_event is set — same contract as the raw
-    ticker characterized above."""
+def test_inprocess_provider_ticks_known_homes_and_stops():
+    """The built-in provider drives cron.scheduler.tick_known_homes on a loop
+    and exits promptly when stop_event is set."""
     from cron.scheduler_provider import InProcessCronScheduler
 
     calls = []
@@ -139,7 +135,7 @@ def test_inprocess_provider_ticks_and_stops():
     prov = InProcessCronScheduler()
     assert prov.name == "builtin"
 
-    with patch("cron.scheduler.tick", side_effect=lambda *a, **k: calls.append(k) or 0):
+    with patch("cron.scheduler.tick_known_homes", side_effect=lambda *a, **k: calls.append(k) or 0):
         t = threading.Thread(
             target=prov.start, args=(stop,), kwargs={"interval": 0}, daemon=True
         )
@@ -151,8 +147,8 @@ def test_inprocess_provider_ticks_and_stops():
         t.join(timeout=5)
 
     assert not t.is_alive(), "provider did not exit after stop_event was set"
-    assert len(calls) >= 1, "provider never called tick()"
-    assert calls[0].get("sync") is False
+    assert len(calls) >= 1, "provider never called tick_known_homes()"
+    assert calls[0]["verbose"] is False
 
 
 def test_inprocess_provider_stop_is_noop():
@@ -161,6 +157,17 @@ def test_inprocess_provider_stop_is_noop():
     from cron.scheduler_provider import InProcessCronScheduler
 
     assert InProcessCronScheduler().stop() is None
+
+
+def test_known_cron_homes_uses_registered_provider(tmp_path):
+    from cron import scheduler
+
+    home = tmp_path / "ws-a"
+    previous = scheduler.replace_cron_home_provider(lambda: [home])
+    try:
+        assert scheduler._known_cron_homes() == [home.resolve()]
+    finally:
+        scheduler.replace_cron_home_provider(previous)
 
 
 # ── Phase 2: config key, discovery, resolver ─────────────────────────────────
@@ -376,7 +383,7 @@ def test_ticker_survives_baseexception_from_tick():
 
     stop = threading.Event()
     prov = InProcessCronScheduler()
-    with patch("cron.scheduler.tick", side_effect=_boom), \
+    with patch("cron.scheduler.tick_known_homes", side_effect=_boom), \
          patch("cron.jobs.record_ticker_heartbeat"):
         t = threading.Thread(target=prov.start, args=(stop,), kwargs={"interval": 0}, daemon=True)
         t.start()
@@ -396,7 +403,7 @@ def test_ticker_records_heartbeat_each_iteration():
     beats = []  # (success,) per call
     stop = threading.Event()
     prov = InProcessCronScheduler()
-    with patch("cron.scheduler.tick", side_effect=lambda *a, **k: 0), \
+    with patch("cron.scheduler.tick_known_homes", side_effect=lambda *a, **k: 0), \
          patch("cron.jobs.record_ticker_heartbeat",
                side_effect=lambda success=False: beats.append(success)):
         t = threading.Thread(target=prov.start, args=(stop,), kwargs={"interval": 0}, daemon=True)
@@ -419,7 +426,7 @@ def test_failing_tick_records_liveness_but_not_success():
     beats = []
     stop = threading.Event()
     prov = InProcessCronScheduler()
-    with patch("cron.scheduler.tick", side_effect=RuntimeError("every tick fails")), \
+    with patch("cron.scheduler.tick_known_homes", side_effect=RuntimeError("every tick fails")), \
          patch("cron.jobs.record_ticker_heartbeat",
                side_effect=lambda success=False: beats.append(success)):
         t = threading.Thread(target=prov.start, args=(stop,), kwargs={"interval": 0}, daemon=True)

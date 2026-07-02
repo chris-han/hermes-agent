@@ -165,7 +165,7 @@ class InProcessCronScheduler(CronScheduler):
 
     def start(self, stop_event, *, adapters=None, loop=None, interval=60):
         import logging
-        from cron.scheduler import tick as cron_tick
+        from cron import scheduler as cron_scheduler
         from cron.jobs import record_ticker_heartbeat
 
         logger = logging.getLogger("cron.scheduler_provider")
@@ -176,7 +176,7 @@ class InProcessCronScheduler(CronScheduler):
         while not stop_event.is_set():
             ok = False
             try:
-                cron_tick(verbose=False, adapters=adapters, loop=loop, sync=False)
+                cron_scheduler.tick_known_homes(verbose=False, adapters=adapters, loop=loop)
                 ok = True
             except BaseException as e:
                 # Catch BaseException (not just Exception) so a SystemExit from

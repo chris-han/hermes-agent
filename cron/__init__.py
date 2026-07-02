@@ -26,7 +26,14 @@ from cron.jobs import (
     trigger_job,
     JOBS_FILE,
 )
-from cron.scheduler import tick
+
+
+def __getattr__(name: str):
+    if name == "tick":
+        from cron.scheduler import tick
+
+        return tick
+    raise AttributeError(name)
 
 __all__ = [
     "create_job",

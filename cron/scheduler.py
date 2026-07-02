@@ -159,6 +159,7 @@ from cron.jobs import (
     save_job_output,
     save_job_output_record,
 )
+from cron.home_provider import get_cron_home_provider, replace_cron_home_provider
 
 # Sentinel: when a cron agent has nothing new to report, it can start its
 # response with this marker to suppress delivery. Output artifacts are only
@@ -290,19 +291,12 @@ def _bound_cron_home(hermes_home: Path):
 def _known_cron_homes() -> list[Path]:
     """Return Hermes homes the scheduler should tick.
 
-    In Semantier's multi-tenant runtime, cron jobs are tenant workspace state
-    and must not be read from the shared .semantier-home home. In standalone
-    Hermes, runtime_paths is absent and the current Hermes home remains the
-    only scheduler target.
+    Embedding runtimes may register a neutral provider. Standalone Hermes uses
+    the current Hermes home.
     """
-    try:
-        from agents.workspace_session_logs import iter_workspace_hermes_homes  # type: ignore
-
-        homes = [Path(home).expanduser().resolve() for home in iter_workspace_hermes_homes()]
-        if homes:
-            return homes
-    except Exception:
-        pass
+    provider = get_cron_home_provider()
+    if provider is not None:
+        return [Path(home).expanduser().resolve() for home in provider()]
     return [_get_hermes_home().expanduser().resolve()]
 
 

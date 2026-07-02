@@ -56,6 +56,7 @@ JOBS_FILE = CRON_DIR / "jobs.json"
 _DEFAULT_HERMES_DIR = HERMES_DIR
 _DEFAULT_CRON_DIR = CRON_DIR
 _DEFAULT_JOBS_FILE = JOBS_FILE
+MAX_CONSECUTIVE_JOB_FAILURES = 3
 # Heartbeat file the in-process ticker touches on every loop iteration. The
 # gateway process and the (separate) ``hermes cron status`` process share it
 # so status can tell whether the ticker THREAD is alive, not just whether the
@@ -1314,14 +1315,19 @@ def mark_job_run(job_id: str, success: bool, error: Optional[str] = None,
                 job["last_run_at"] = now
                 job["last_status"] = "ok" if success else "error"
                 job["last_error"] = error if not success else None
+                if success:
+                    job["failure_count"] = 0
+                else:
+                    job["failure_count"] = int(job.get("failure_count") or 0) + 1
                 # Track delivery failures separately — cleared on successful delivery
                 job["last_delivery_error"] = delivery_error
                 # Clear any external-fire claim so a re-armed recurring job can
                 # be claimed again on its next fire (Phase 4C CAS).
                 job["fire_claim"] = None
                 
-                # Increment completed count
-                if job.get("repeat"):
+                # Repeat cycles count completed runs. Failed runs are governed
+                # by failure_count/MAX_CONSECUTIVE_JOB_FAILURES instead.
+                if success and job.get("repeat"):
                     job["repeat"]["completed"] = job["repeat"].get("completed", 0) + 1
                     
                     # Check if we've hit the repeat limit
@@ -1335,6 +1341,17 @@ def mark_job_run(job_id: str, success: bool, error: Optional[str] = None,
                 
                 # Compute next run
                 job["next_run_at"] = compute_next_run(job["schedule"], now)
+
+                if not success and int(job.get("failure_count") or 0) >= MAX_CONSECUTIVE_JOB_FAILURES:
+                    job["enabled"] = False
+                    job["state"] = "failed"
+                    job["next_run_at"] = None
+                    job["paused_at"] = now
+                    job["paused_reason"] = (
+                        f"disabled after {MAX_CONSECUTIVE_JOB_FAILURES} consecutive failed runs"
+                    )
+                    save_jobs(jobs)
+                    return
 
                 # If no next run, decide whether this is terminal completion
                 # (one-shot) or a transient failure (recurring schedule couldn't
