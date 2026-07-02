@@ -24,6 +24,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: ${{ matrix.package }}/package-lock.json
       # --ignore-scripts: typecheck only needs the TS sources + type defs, not
       # native builds. Skipping install scripts drops node-pty's node-gyp
       # header fetch — the transient flake that killed this job pre-`tsc` — and
@@ -31,4 +32,6 @@ jobs:
       - uses: ./.github/actions/retry
         with:
           command: npm ci --ignore-scripts
-      - run: npm run --prefix ${{ matrix.package }} ${{ matrix.script }}
+          working-directory: ${{ matrix.package }}
+      - run: npm run ${{ matrix.script }}
+        working-directory: ${{ matrix.package }}

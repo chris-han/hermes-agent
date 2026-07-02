@@ -1,0 +1,27 @@
+# hadolint configuration for the Hermes Agent Dockerfile.
+# See https://github.com/hadolint/hadolint#configure for rules.
+#
+# We want hadolint to surface new Dockerfile lint regressions, but we
+# don't want to rewrite the existing image to silence rules that are
+# either intentional or pragmatic tradeoffs for this project. Each
+# ignore below has a one-line justification.
+failure-threshold: warning
+
+ignored:
+  # Pin versions in apt get install. We intentionally don't pin common
+  # tools (curl, git, openssh-client, etc.); security updates flow in
+  # via periodic base-image rebuilds.
+  - DL3008
+  # Use WORKDIR to switch to a directory. Inline subshells for one-off
+  # build steps keep later Dockerfile context explicit.
+  - DL3003
+  # Multiple consecutive RUN instructions. Some split layers are kept
+  # intentionally for cache behavior.
+  - DL3059
+  # Last USER should not be root. /init runs as root so the stage2 hook
+  # can adjust runtime UID/GID before supervised services drop privileges.
+  - DL3002
+
+trustedRegistries:
+  - docker.io
+  - ghcr.io
