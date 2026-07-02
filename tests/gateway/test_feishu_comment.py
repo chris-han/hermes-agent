@@ -299,17 +299,13 @@ class TestWorkspaceSessionBinding(unittest.TestCase):
                     "agents.workspace_session_logs.resolve_or_create_workspace_session_id",
                     return_value="ws-123:session_abc",
                 ):
-                    with patch(
-                        "runtime_paths.workspace_hermes_home_path",
-                        return_value=Path("/tmp/feishu-comment-workspace"),
-                    ):
-                        result = _run_comment_agent(
-                            "hello",
-                            Mock(),
-                            "comment-doc:docx:token-1",
-                            "ws-123",
-                            "ou_user",
-                        )
+                    result = _run_comment_agent(
+                        "hello",
+                        Mock(),
+                        "comment-doc:docx:token-1",
+                        "ws-123",
+                        "ou_user",
+                    )
 
         assert result == "ok"
         assert captured["kwargs"]["session_id"] == "ws-123:session_abc"
