@@ -42,6 +42,7 @@ import os
 import socket as _socket
 import re
 import sqlite3
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -97,6 +98,31 @@ def _bound_request_sandbox_key(raw_key: str | None):
             os.environ.pop("SEMANTIER_SANDBOX_KEY", None)
         else:
             os.environ["SEMANTIER_SANDBOX_KEY"] = previous
+
+
+def _refresh_gateway_run_runtime_env() -> None:
+    gateway_run = sys.modules.get("gateway.run")
+    refresh = getattr(gateway_run, "_reload_runtime_env_preserving_config_authority", None)
+    if callable(refresh):
+        refresh()
+
+
+@contextlib.contextmanager
+def _bound_request_hermes_home(raw_home: str | None):
+    """Bind HERMES_HOME for one trusted API-server request."""
+    value = (raw_home or "").strip()
+    previous = os.environ.get("HERMES_HOME")
+    try:
+        if value:
+            os.environ["HERMES_HOME"] = value
+            _refresh_gateway_run_runtime_env()
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("HERMES_HOME", None)
+        else:
+            os.environ["HERMES_HOME"] = previous
+        _refresh_gateway_run_runtime_env()
 
 
 @contextlib.contextmanager
