@@ -27,11 +27,11 @@ jobs:
           cache-dependency-path: ${{ matrix.package }}/package-lock.json
       # --ignore-scripts: typecheck only needs the TS sources + type defs, not
       # native builds. Skipping install scripts drops node-pty's node-gyp
-      # header fetch — the transient flake that killed this job pre-`tsc` — and
-      # is faster. retry covers the remaining registry blips.
+      # header fetch. Use install instead of ci because some package locks lag
+      # package.json in this branch and ci fails before tsc can run.
       - uses: ./.github/actions/retry
         with:
-          command: npm ci --ignore-scripts
+          command: npm install --ignore-scripts
           working-directory: ${{ matrix.package }}
       - run: npm run ${{ matrix.script }}
         working-directory: ${{ matrix.package }}

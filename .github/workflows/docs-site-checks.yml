@@ -21,7 +21,7 @@ jobs:
       - name: Install website dependencies
         uses: ./.github/actions/retry
         with:
-          command: npm ci
+          command: npm install
           working-directory: website
 
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
