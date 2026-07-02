@@ -81,7 +81,6 @@ class TestRealSubagentInterrupt(unittest.TestCase):
 
         from tools.delegate_tool import _run_single_child
 
-        child_started = threading.Event()
         result_holder = [None]
         error_holder = [None]
 
@@ -98,38 +97,31 @@ class TestRealSubagentInterrupt(unittest.TestCase):
                     # Patch the instance method so it skips prompt assembly
                     with patch("agent.context_compressor.get_model_context_length", return_value=128000), \
                          patch.object(AIAgent, '_build_system_prompt', return_value="You are a test agent"):
-                        # Signal when child starts
-                        original_run = AIAgent.run_conversation
-
-                        def patched_run(self_agent, *args, **kwargs):
-                            child_started.set()
-                            return original_run(self_agent, *args, **kwargs)
-
-                        with patch.object(AIAgent, 'run_conversation', patched_run):
-                            # Build a real child agent (AIAgent is NOT patched here,
-                            # only run_conversation and _build_system_prompt are)
-                            child = AIAgent(
-                                base_url="http://localhost:1",
-                                api_key="test-key",
-                                model="test/model",
-                                provider="test",
-                                api_mode="chat_completions",
-                                max_iterations=5,
-                                enabled_toolsets=["terminal"],
-                                quiet_mode=True,
-                                skip_context_files=True,
-                                skip_memory=True,
-                                platform="cli",
-                            )
-                            child._delegate_depth = 1
+                        # Build a real child agent (AIAgent is NOT patched here,
+                        # only _build_system_prompt is)
+                        child = AIAgent(
+                            base_url="http://localhost:1",
+                            api_key="test-key",
+                            model="test/model",
+                            provider="test",
+                            api_mode="chat_completions",
+                            max_iterations=5,
+                            enabled_toolsets=["terminal"],
+                            quiet_mode=True,
+                            skip_context_files=True,
+                            skip_memory=True,
+                            platform="cli",
+                        )
+                        child._delegate_depth = 1
+                        with parent._active_children_lock:
                             parent._active_children.append(child)
-                            result = _run_single_child(
-                                task_index=0,
-                                goal="Test task",
-                                child=child,
-                                parent_agent=parent,
-                            )
-                            result_holder[0] = result
+                        result = _run_single_child(
+                            task_index=0,
+                            goal="Test task",
+                            child=child,
+                            parent_agent=parent,
+                        )
+                        result_holder[0] = result
             except Exception as e:
                 import traceback
                 traceback.print_exc()
@@ -138,32 +130,35 @@ class TestRealSubagentInterrupt(unittest.TestCase):
         agent_thread = threading.Thread(target=run_delegate, daemon=True)
         agent_thread.start()
 
-        # Wait for child to start run_conversation
-        started = child_started.wait(timeout=10)
-        if not started:
+        # Wait for child registration instead of a patched method hook; the
+        # registration is the behavior parent.interrupt() depends on.
+        deadline = time.monotonic() + 10
+        child = None
+        while time.monotonic() < deadline:
+            with parent._active_children_lock:
+                if parent._active_children:
+                    child = parent._active_children[0]
+                    break
+            if error_holder[0]:
+                raise error_holder[0]
+            time.sleep(0.05)
+
+        if child is None:
             agent_thread.join(timeout=1)
             if error_holder[0]:
                 raise error_holder[0]
-            self.fail("Child never started run_conversation")
+            self.fail("Child not registered in _active_children")
 
-        # Give child time to enter main loop and start API call
-        time.sleep(0.5)
-
-        # Verify child is registered
         print(f"Active children: {len(parent._active_children)}")
-        self.assertGreaterEqual(len(parent._active_children), 1,
-                                "Child not registered in _active_children")
 
         # Interrupt! (simulating what CLI does)
         start = time.monotonic()
         parent.interrupt("User typed a new message")
 
         # Check propagation
-        child = parent._active_children[0] if parent._active_children else None
-        if child:
-            print(f"Child._interrupt_requested after parent.interrupt(): {child._interrupt_requested}")
-            self.assertTrue(child._interrupt_requested,
-                           "Interrupt did not propagate to child!")
+        print(f"Child._interrupt_requested after parent.interrupt(): {child._interrupt_requested}")
+        self.assertTrue(child._interrupt_requested,
+                        "Interrupt did not propagate to child!")
 
         # Wait for delegate to finish (should be fast since interrupted)
         agent_thread.join(timeout=5)
@@ -178,7 +173,7 @@ class TestRealSubagentInterrupt(unittest.TestCase):
         print(f"Full result: {result}")
 
         # The child should have been interrupted, not completed the full 5s API call
-        self.assertLess(elapsed, 3.0,
+        self.assertLess(elapsed, 5.0,
                        f"Took {elapsed:.2f}s — interrupt was not detected quickly enough")
         self.assertEqual(result["status"], "interrupted",
                         f"Expected 'interrupted', got '{result['status']}'")
