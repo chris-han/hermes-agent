@@ -52,6 +52,7 @@ def _patch_oauth_flow(
             capture_auth_url["url"] = url
         return True
 
+    monkeypatch.setattr("hermes_cli.auth._can_open_graphical_browser", lambda: True)
     monkeypatch.setattr("webbrowser.open", fake_open)
     monkeypatch.setattr("builtins.input", lambda *_a, **_kw: callback_code)
 
