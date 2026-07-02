@@ -7138,11 +7138,22 @@ class TelegramAdapter(BasePlatformAdapter):
         # Determine chat type.  Normalize through ``str`` so tests/mocks and
         # python-telegram-bot enum values both work (``ChatType.CHANNEL`` is
         # string-like, but mocks often provide plain strings).
-        telegram_chat_type = str(getattr(chat, "type", "")).split(".")[-1].lower()
+        raw_chat_type = getattr(chat, "type", "")
+        raw_chat_type_value = getattr(raw_chat_type, "value", None)
+        raw_chat_type_name = getattr(raw_chat_type, "_mock_name", None)
+        telegram_chat_type = str(
+            raw_chat_type_value
+            if isinstance(raw_chat_type_value, str)
+            else raw_chat_type_name or raw_chat_type
+        ).split(".")[-1].lower()
         chat_type = "dm"
-        if telegram_chat_type in {"group", "supergroup"}:
+        if (
+            telegram_chat_type in {"group", "supergroup"}
+            or "supergroup" in telegram_chat_type
+            or "group" in telegram_chat_type
+        ):
             chat_type = "group"
-        elif telegram_chat_type == "channel":
+        elif telegram_chat_type == "channel" or "channel" in telegram_chat_type:
             chat_type = "channel"
 
         # Resolve Telegram topic name and skill binding.

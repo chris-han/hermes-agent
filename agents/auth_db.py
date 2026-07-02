@@ -10,7 +10,12 @@ from typing import Any, Callable
 
 
 def _load_upstream_module() -> ModuleType:
-    module_path = Path(__file__).resolve().parents[2] / "src" / "agents" / "auth_db.py"
+    current_path = Path(__file__).resolve()
+    module_candidates = [
+        current_path.parents[2] / "src" / "agents" / "auth_db.py",
+        current_path.parents[1] / "src" / "agents" / "auth_db.py",
+    ]
+    module_path = next((candidate for candidate in module_candidates if candidate.exists()), module_candidates[0])
     qualified_name = "_semantier_upstream_agents_auth_db"
     module = sys.modules.get(qualified_name)
     if module is not None:

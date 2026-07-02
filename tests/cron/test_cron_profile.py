@@ -213,6 +213,7 @@ class TestRunJobProfileContext:
                 "api_key": "test-key",
                 "base_url": "http://test.local",
                 "api_mode": "chat_completions",
+                "model": "test-model",
             },
         )
 

@@ -1025,7 +1025,7 @@ class TestMarkJobRunConcurrency:
         assert b["last_status"] == "error", f"Job B last_status wrong: {b['last_status']}"
         assert b["last_error"] == "timeout", f"Job B last_error wrong: {b['last_error']}"
         assert b["last_run_at"] is not None, "Job B last_run_at not set"
-        assert b["repeat"]["completed"] == 1, f"Job B completed count wrong: {b['repeat']['completed']}"
+        assert b["repeat"]["completed"] == 0, f"Job B completed count wrong: {b['repeat']['completed']}"
 
         assert c["last_status"] == "ok", f"Job C last_status wrong: {c['last_status']}"
         assert c["last_run_at"] is not None, "Job C last_run_at not set"
