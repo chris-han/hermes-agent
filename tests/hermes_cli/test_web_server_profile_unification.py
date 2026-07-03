@@ -12,6 +12,9 @@ import types
 import yaml
 
 
+pytestmark = pytest.mark.timeout(90)
+
+
 @pytest.fixture
 def isolated_profiles(tmp_path, monkeypatch, _isolate_hermes_home):
     """Isolated default home + one named profile, each with config + .env."""

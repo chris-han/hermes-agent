@@ -16,7 +16,12 @@ The fix adds two safeguards:
 
 from unittest.mock import patch, MagicMock
 
+import pytest
+
 from agent.context_compressor import ContextCompressor, _CHARS_PER_TOKEN
+
+
+pytestmark = pytest.mark.timeout(90)
 
 
 # ---------------------------------------------------------------------------

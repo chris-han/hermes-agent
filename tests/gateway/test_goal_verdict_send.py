@@ -20,6 +20,9 @@ from gateway.config import GatewayConfig, Platform, PlatformConfig
 from gateway.session import SessionEntry, SessionSource, build_session_key
 
 
+pytestmark = pytest.mark.timeout(90)
+
+
 @pytest.fixture()
 def hermes_home(tmp_path, monkeypatch):
     home = tmp_path / ".hermes"

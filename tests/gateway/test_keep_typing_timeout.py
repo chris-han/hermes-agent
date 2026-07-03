@@ -34,6 +34,9 @@ from gateway.platforms.base import (
 )
 
 
+pytestmark = pytest.mark.timeout(90)
+
+
 class _StubAdapter(BasePlatformAdapter):
     def __init__(self):
         super().__init__(PlatformConfig(enabled=True, token="test"), Platform.TELEGRAM)
