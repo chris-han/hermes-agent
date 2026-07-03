@@ -7,6 +7,8 @@ reads/writes land in the REQUESTED profile, the dashboard's own profile
 stays untouched, and the chat PTY env is scoped via HERMES_HOME.
 """
 import pytest
+import sys
+import types
 import yaml
 
 
@@ -515,40 +517,35 @@ class TestProfileScopedTelegramOnboarding:
 
 
 class TestProfileScopedChatPty:
-    def test_chat_argv_scopes_hermes_home(self, isolated_profiles, monkeypatch):
+    @staticmethod
+    def _install_fake_main(monkeypatch, tmp_path):
+        fake_main = types.ModuleType("hermes_cli.main")
+        fake_main.PROJECT_ROOT = tmp_path
+        fake_main._make_tui_argv = lambda root, tui_dev=False: (["cat"], None)
+        monkeypatch.setitem(sys.modules, "hermes_cli.main", fake_main)
+
+    def test_chat_argv_scopes_hermes_home(self, isolated_profiles, monkeypatch, tmp_path):
         import hermes_cli.web_server as web_server
 
-        monkeypatch.setattr(
-            "hermes_cli.main._make_tui_argv",
-            lambda root, tui_dev=False: (["cat"], None),
-            raising=False,
-        )
+        self._install_fake_main(monkeypatch, tmp_path)
         argv, cwd, env = web_server._resolve_chat_argv(profile="worker_beta")
         assert env is not None
         assert env["HERMES_HOME"] == str(isolated_profiles["worker_beta"])
         # Scoped chat must NOT attach to the dashboard's in-memory gateway.
         assert "HERMES_TUI_GATEWAY_URL" not in env
 
-    def test_chat_argv_unscoped_keeps_legacy_env(self, isolated_profiles, monkeypatch):
+    def test_chat_argv_unscoped_keeps_legacy_env(self, isolated_profiles, monkeypatch, tmp_path):
         import hermes_cli.web_server as web_server
 
-        monkeypatch.setattr(
-            "hermes_cli.main._make_tui_argv",
-            lambda root, tui_dev=False: (["cat"], None),
-            raising=False,
-        )
+        self._install_fake_main(monkeypatch, tmp_path)
         argv, cwd, env = web_server._resolve_chat_argv()
         assert env is not None
         assert env.get("HERMES_HOME") != str(isolated_profiles["worker_beta"])
 
-    def test_chat_argv_unknown_profile_raises(self, isolated_profiles, monkeypatch):
+    def test_chat_argv_unknown_profile_raises(self, isolated_profiles, monkeypatch, tmp_path):
         import hermes_cli.web_server as web_server
 
-        monkeypatch.setattr(
-            "hermes_cli.main._make_tui_argv",
-            lambda root, tui_dev=False: (["cat"], None),
-            raising=False,
-        )
+        self._install_fake_main(monkeypatch, tmp_path)
         # Reuse the HTTPException class web_server itself raises — avoids a
         # direct fastapi import (unresolvable in the ty lint environment).
         with pytest.raises(web_server.HTTPException) as exc:

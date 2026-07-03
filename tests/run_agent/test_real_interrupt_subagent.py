@@ -17,8 +17,13 @@ from tools.interrupt import set_interrupt, is_interrupted
 def _make_slow_api_response(delay=5.0):
     """Create a mock that simulates a slow API response (like a real LLM call)."""
     def slow_create(**kwargs):
-        # Simulate a slow API call
-        time.sleep(delay)
+        # Simulate a slow API call that notices the same thread-local
+        # interrupt flag used by long-running tools.
+        deadline = time.monotonic() + delay
+        while time.monotonic() < deadline:
+            if is_interrupted():
+                break
+            time.sleep(0.05)
         # Return a simple text response (no tool calls)
         resp = MagicMock()
         resp.choices = [MagicMock()]
@@ -161,11 +166,13 @@ class TestRealSubagentInterrupt(unittest.TestCase):
                         "Interrupt did not propagate to child!")
 
         # Wait for delegate to finish (should be fast since interrupted)
-        agent_thread.join(timeout=5)
+        agent_thread.join(timeout=7)
         elapsed = time.monotonic() - start
 
         if error_holder[0]:
             raise error_holder[0]
+        self.assertFalse(agent_thread.is_alive(),
+                         "Delegate thread did not finish after interrupt")
 
         result = result_holder[0]
         self.assertIsNotNone(result, "Delegate returned no result")

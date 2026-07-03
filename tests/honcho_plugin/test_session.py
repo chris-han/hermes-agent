@@ -1349,6 +1349,8 @@ class TestDialecticLiveness:
              patch("hermes_constants.get_hermes_home", return_value=MagicMock()):
             provider.initialize(session_id="test-liveness")
         _settle_prewarm(provider)
+        provider._session_initialized = True
+        provider._init_thread = None
         return provider
 
     def test_stale_thread_is_treated_as_dead(self):

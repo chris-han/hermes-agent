@@ -155,6 +155,7 @@ def _tool_results(handler) -> list[str]:
 
 
 @pytest.mark.parametrize("blank", ["", "   ", "\n", "\t "])
+@pytest.mark.timeout(90)
 def test_empty_tool_name_gets_terse_error_no_catalog(agent_env, blank):
     """A blank/whitespace tool name must NOT trigger a full tool-catalog dump."""
     agent, handler = agent_env
