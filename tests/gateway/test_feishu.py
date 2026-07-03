@@ -213,45 +213,25 @@ class TestFeishuMessageNormalization(unittest.TestCase):
 class TestFeishuAdapterMessaging(unittest.TestCase):
     def test_semantier_meeting_negotiation_bridge_consumes_correlated_reply(self):
         from plugins.platforms.feishu.adapter import FeishuAdapter
+        from tools.registry import registry
 
         adapter = object.__new__(FeishuAdapter)
-        seen = {}
-        provider_message_ids = []
+        calls = []
 
-        class FakeStore:
-            def get_outbound_negotiation_message_by_provider_id(self, *, provider_message_id):
-                provider_message_ids.append(provider_message_id)
-                if provider_message_id != "msg_out":
-                    raise KeyError(provider_message_id)
-                return {
-                    "message_event_id": "out_evt_1",
-                    "negotiation_id": "neg_1",
-                    "participant_user_id": "ou_a",
-                }
+        def fake_dispatch(name, args):
+            calls.append({"name": name, "args": dict(args)})
+            root_message_id = args.get("root_message_id")
+            sender_open_id = args.get("sender_open_id")
+            if root_message_id == "msg_out" and sender_open_id == "ou_a":
+                return json.dumps({"ok": True, "result": {"status": "accepted", "accepted": True}})
+            if root_message_id == "msg_out" and sender_open_id == "ou_other":
+                return json.dumps({"ok": True, "result": {"status": "rejected", "reason": "uncorrelated_message"}})
+            return json.dumps({"ok": True, "result": {"status": "not_correlated", "reason": "outbound_not_found"}})
 
-            def get_negotiation(self, negotiation_id):
-                return {"negotiation_id": negotiation_id, "workspace_id": "ws_1"}
-
-        def submit_negotiation_reply(payload, *, store):
-            seen["payload"] = payload
-            seen["store"] = store
-            return {"accepted": True}
-
-        store_module = types.ModuleType("agents.meeting_coordinator_store")
-        store_module.MeetingCoordinatorStore = FakeStore
-        gateway_module = types.ModuleType("agents.meeting_coordinator_gateway")
-        gateway_module.submit_negotiation_reply = submit_negotiation_reply
-        agents_module = types.ModuleType("agents")
-        agents_module.meeting_coordinator_store = store_module
-        agents_module.meeting_coordinator_gateway = gateway_module
-
-        prior_agents = sys.modules.get("agents")
-        prior_store = sys.modules.get("agents.meeting_coordinator_store")
-        prior_gateway = sys.modules.get("agents.meeting_coordinator_gateway")
-        sys.modules["agents"] = agents_module
-        sys.modules["agents.meeting_coordinator_store"] = store_module
-        sys.modules["agents.meeting_coordinator_gateway"] = gateway_module
-        try:
+        with (
+            patch.object(registry, "get_entry", return_value=SimpleNamespace()),
+            patch.object(registry, "dispatch", side_effect=fake_dispatch),
+        ):
             with patch.dict(os.environ, {"SEMANTIER_LOCAL_STATE_DIR": "/tmp/state", "SEMANTIER_WORKSPACE_ID": "ws_1"}, clear=False):
                 consumed = asyncio.run(
                     adapter._try_handle_semantier_meeting_negotiation_reply(
@@ -262,6 +242,17 @@ class TestFeishuAdapterMessaging(unittest.TestCase):
                             reply_to_message_id="msg_out",
                         ),
                         sender_open_id="ou_a",
+                    )
+                )
+                rejected_sender = asyncio.run(
+                    adapter._try_handle_semantier_meeting_negotiation_reply(
+                        MessageEvent(
+                            text="yes",
+                            message_type=MessageType.TEXT,
+                            message_id="msg_bad_sender",
+                            reply_to_message_id="msg_out",
+                        ),
+                        sender_open_id="ou_other",
                     )
                 )
                 uncorrelated = asyncio.run(
@@ -275,33 +266,22 @@ class TestFeishuAdapterMessaging(unittest.TestCase):
                         sender_open_id="ou_a",
                     )
                 )
-        finally:
-            if prior_agents is None:
-                sys.modules.pop("agents", None)
-            else:
-                sys.modules["agents"] = prior_agents
-            if prior_store is None:
-                sys.modules.pop("agents.meeting_coordinator_store", None)
-            else:
-                sys.modules["agents.meeting_coordinator_store"] = prior_store
-            if prior_gateway is None:
-                sys.modules.pop("agents.meeting_coordinator_gateway", None)
-            else:
-                sys.modules["agents.meeting_coordinator_gateway"] = prior_gateway
 
         self.assertTrue(consumed)
+        self.assertTrue(rejected_sender)
         self.assertFalse(uncorrelated)
-        self.assertEqual(provider_message_ids, ["msg_out", "ordinary_msg"])
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(calls[0]["name"], "feishu_meeting_negotiation_case_submit_reply")
         self.assertEqual(
-            seen["payload"],
+            calls[0]["args"],
             {
-                "negotiation_id": "neg_1",
-                "participant_user_id": "ou_a",
-                "message_id": "msg_in",
-                "reply_text": "yes",
-                "outbound_message_event_id": "out_evt_1",
                 "callback_origin": True,
                 "callback_signature_valid": True,
+                "root_message_id": "msg_out",
+                "provider_message_id": "msg_in",
+                "sender_open_id": "ou_a",
+                "workspace_id": "ws_1",
+                "raw_text": "yes",
             },
         )
 

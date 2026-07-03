@@ -3358,10 +3358,11 @@ class FeishuAdapter(BasePlatformAdapter):
     ) -> bool:
         """Consume verified replies to Semantier meeting-negotiation prompts.
 
-        This bridge is intentionally correlation-first. Uncorrelated Feishu chat
-        remains ordinary Hermes input; correlated replies are delegated to the
-        Semantier runtime submit path so callback/websocket ingress and Web API
-        replies share one state machine.
+        The adapter only checks that this is a reply to a prior outbound provider
+        message and builds a verified envelope. All correlation, participant
+        validation, tenant checks, and state transitions are delegated to the
+        plugin tool ``feishu_meeting_negotiation_case_submit_reply`` so callback,
+        websocket, and Web API reply paths share one state machine.
         """
         if not os.getenv("SEMANTIER_LOCAL_STATE_DIR"):
             return False
@@ -3370,14 +3371,7 @@ class FeishuAdapter(BasePlatformAdapter):
         if not reply_to_message_id or not message_id:
             return False
         try:
-            from agents import meeting_coordinator_gateway, meeting_coordinator_store
-
-            store = meeting_coordinator_store.MeetingCoordinatorStore()
-            outbound = store.get_outbound_negotiation_message_by_provider_id(
-                provider_message_id=reply_to_message_id,
-            )
-        except KeyError:
-            return False
+            from tools.registry import registry
         except Exception:
             logger.debug(
                 "[Feishu] Semantier meeting negotiation reply bridge unavailable",
@@ -3385,50 +3379,70 @@ class FeishuAdapter(BasePlatformAdapter):
             )
             return False
 
-        negotiation_id = str(outbound["negotiation_id"])
-        participant_user_id = str(outbound["participant_user_id"])
-        workspace_id = str(os.getenv("SEMANTIER_WORKSPACE_ID") or "").strip()
-        try:
-            negotiation = store.get_negotiation(negotiation_id)
-            if workspace_id and str(negotiation.get("workspace_id") or "") != workspace_id:
-                store.record_inbound_reply_rejected(
-                    negotiation_id=negotiation_id,
-                    participant_user_id=sender_open_id or "unknown",
-                    message_id=message_id,
-                    reason="tenant_mismatch",
-                )
-                return True
-            if sender_open_id and sender_open_id != participant_user_id:
-                store.record_inbound_reply_rejected(
-                    negotiation_id=negotiation_id,
-                    participant_user_id=sender_open_id,
-                    message_id=message_id,
-                    reason="unknown_sender",
-                )
-                return True
-            meeting_coordinator_gateway.submit_negotiation_reply(
-                {
-                    "negotiation_id": negotiation_id,
-                    "participant_user_id": participant_user_id,
-                    "message_id": message_id,
-                    "reply_text": event.text or "",
-                    "outbound_message_event_id": outbound["message_event_id"],
-                    "callback_origin": True,
-                    "callback_signature_valid": True,
-                },
-                store=store,
+        tool_name = "feishu_meeting_negotiation_case_submit_reply"
+        if registry.get_entry(tool_name) is None:
+            logger.debug(
+                "[Feishu] Plugin tool %s is not registered; passing reply to normal dispatch",
+                tool_name,
             )
+            return False
+
+        workspace_id = str(os.getenv("SEMANTIER_WORKSPACE_ID") or "").strip()
+        envelope = {
+            "callback_origin": True,
+            "callback_signature_valid": True,
+            "root_message_id": reply_to_message_id,
+            "provider_message_id": message_id,
+            "sender_open_id": sender_open_id,
+            "workspace_id": workspace_id,
+            "raw_text": event.text or "",
+        }
+        result_json = registry.dispatch(tool_name, envelope)
+        try:
+            result = json.loads(result_json)
         except Exception:
             logger.info(
-                "[Feishu] Correlated Semantier meeting negotiation reply consumed with non-success state",
+                "[Feishu] Correlated Semantier meeting negotiation reply returned non-JSON result",
                 exc_info=True,
             )
             return True
-        logger.info(
-            "[Feishu] Routed correlated Semantier meeting negotiation reply %s to %s",
-            message_id,
-            negotiation_id,
-        )
+
+        if not result.get("ok"):
+            # Unexpected tool error; consume the reply rather than leaking it.
+            logger.info(
+                "[Feishu] Correlated Semantier meeting negotiation reply %s consumed with tool error: %s",
+                message_id,
+                result.get("error"),
+            )
+            return True
+
+        tool_result = result.get("result") or {}
+        status = tool_result.get("status")
+        if status == "accepted":
+            logger.info(
+                "[Feishu] Routed correlated Semantier meeting negotiation reply %s",
+                message_id,
+            )
+            return True
+        if status == "not_correlated":
+            return False
+        if status == "rejected":
+            # Outbound message was found but the reply failed authorization,
+            # workspace, or state checks. Consume it so it does not leak into
+            # normal Hermes chat.
+            logger.info(
+                "[Feishu] Correlated Semantier meeting negotiation reply %s consumed with rejected state: %s",
+                message_id,
+                tool_result.get("reason"),
+            )
+            return True
+
+        # Defensive fallback for older or unknown tool result shapes: treat a
+        # successful ok result as consumed and leave uncorrelated-looking errors
+        # to fall through.
+        error = str(result.get("error") or "").lower()
+        if "uncorrelated" in error:
+            return False
         return True
 
     async def _dispatch_inbound_event(self, event: MessageEvent) -> None:
