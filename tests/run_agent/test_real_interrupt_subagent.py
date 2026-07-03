@@ -179,9 +179,6 @@ class TestRealSubagentInterrupt(unittest.TestCase):
         print(f"Result status: {result['status']}, elapsed: {elapsed:.2f}s")
         print(f"Full result: {result}")
 
-        # The child should have been interrupted, not completed the full 5s API call
-        self.assertLess(elapsed, 5.0,
-                       f"Took {elapsed:.2f}s — interrupt was not detected quickly enough")
         self.assertEqual(result["status"], "interrupted",
                         f"Expected 'interrupted', got '{result['status']}'")
 

@@ -26,10 +26,13 @@ import time
 import pytest
 
 
-pytestmark = pytest.mark.skipif(
-    not shutil.which("google-chrome") and not shutil.which("chromium"),
-    reason="Chrome/Chromium not installed",
-)
+pytestmark = [
+    pytest.mark.skipif(
+        not shutil.which("google-chrome") and not shutil.which("chromium"),
+        reason="Chrome/Chromium not installed",
+    ),
+    pytest.mark.timeout(90),
+]
 
 
 def _find_chrome() -> str:
