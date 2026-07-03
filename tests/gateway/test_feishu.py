@@ -8,10 +8,12 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+import sys
+import types
 from typing import Dict
 from unittest.mock import AsyncMock, Mock, patch
 
-from gateway.platforms.base import ProcessingOutcome
+from gateway.platforms.base import MessageEvent, MessageType, ProcessingOutcome
 
 try:
     import lark_oapi
@@ -209,6 +211,100 @@ class TestFeishuMessageNormalization(unittest.TestCase):
 
 
 class TestFeishuAdapterMessaging(unittest.TestCase):
+    def test_semantier_meeting_negotiation_bridge_consumes_correlated_reply(self):
+        from plugins.platforms.feishu.adapter import FeishuAdapter
+
+        adapter = object.__new__(FeishuAdapter)
+        seen = {}
+        provider_message_ids = []
+
+        class FakeStore:
+            def get_outbound_negotiation_message_by_provider_id(self, *, provider_message_id):
+                provider_message_ids.append(provider_message_id)
+                if provider_message_id != "msg_out":
+                    raise KeyError(provider_message_id)
+                return {
+                    "message_event_id": "out_evt_1",
+                    "negotiation_id": "neg_1",
+                    "participant_user_id": "ou_a",
+                }
+
+            def get_negotiation(self, negotiation_id):
+                return {"negotiation_id": negotiation_id, "workspace_id": "ws_1"}
+
+        def submit_negotiation_reply(payload, *, store):
+            seen["payload"] = payload
+            seen["store"] = store
+            return {"accepted": True}
+
+        store_module = types.ModuleType("agents.meeting_coordinator_store")
+        store_module.MeetingCoordinatorStore = FakeStore
+        gateway_module = types.ModuleType("agents.meeting_coordinator_gateway")
+        gateway_module.submit_negotiation_reply = submit_negotiation_reply
+        agents_module = types.ModuleType("agents")
+        agents_module.meeting_coordinator_store = store_module
+        agents_module.meeting_coordinator_gateway = gateway_module
+
+        prior_agents = sys.modules.get("agents")
+        prior_store = sys.modules.get("agents.meeting_coordinator_store")
+        prior_gateway = sys.modules.get("agents.meeting_coordinator_gateway")
+        sys.modules["agents"] = agents_module
+        sys.modules["agents.meeting_coordinator_store"] = store_module
+        sys.modules["agents.meeting_coordinator_gateway"] = gateway_module
+        try:
+            with patch.dict(os.environ, {"SEMANTIER_LOCAL_STATE_DIR": "/tmp/state", "SEMANTIER_WORKSPACE_ID": "ws_1"}, clear=False):
+                consumed = asyncio.run(
+                    adapter._try_handle_semantier_meeting_negotiation_reply(
+                        MessageEvent(
+                            text="yes",
+                            message_type=MessageType.TEXT,
+                            message_id="msg_in",
+                            reply_to_message_id="msg_out",
+                        ),
+                        sender_open_id="ou_a",
+                    )
+                )
+                uncorrelated = asyncio.run(
+                    adapter._try_handle_semantier_meeting_negotiation_reply(
+                        MessageEvent(
+                            text="hello",
+                            message_type=MessageType.TEXT,
+                            message_id="msg_chat",
+                            reply_to_message_id="ordinary_msg",
+                        ),
+                        sender_open_id="ou_a",
+                    )
+                )
+        finally:
+            if prior_agents is None:
+                sys.modules.pop("agents", None)
+            else:
+                sys.modules["agents"] = prior_agents
+            if prior_store is None:
+                sys.modules.pop("agents.meeting_coordinator_store", None)
+            else:
+                sys.modules["agents.meeting_coordinator_store"] = prior_store
+            if prior_gateway is None:
+                sys.modules.pop("agents.meeting_coordinator_gateway", None)
+            else:
+                sys.modules["agents.meeting_coordinator_gateway"] = prior_gateway
+
+        self.assertTrue(consumed)
+        self.assertFalse(uncorrelated)
+        self.assertEqual(provider_message_ids, ["msg_out", "ordinary_msg"])
+        self.assertEqual(
+            seen["payload"],
+            {
+                "negotiation_id": "neg_1",
+                "participant_user_id": "ou_a",
+                "message_id": "msg_in",
+                "reply_text": "yes",
+                "outbound_message_event_id": "out_evt_1",
+                "callback_origin": True,
+                "callback_signature_valid": True,
+            },
+        )
+
     @patch.dict(os.environ, {
         "FEISHU_APP_ID": "cli_app",
         "FEISHU_APP_SECRET": "secret_app",

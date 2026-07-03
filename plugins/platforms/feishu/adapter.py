@@ -3343,7 +3343,93 @@ class FeishuAdapter(BasePlatformAdapter):
             reply_to_text=reply_to_text,
             timestamp=datetime.now(),
         )
+        if await self._try_handle_semantier_meeting_negotiation_reply(
+            normalized,
+            sender_open_id=sender_primary,
+        ):
+            return
         await self._dispatch_inbound_event(normalized)
+
+    async def _try_handle_semantier_meeting_negotiation_reply(
+        self,
+        event: MessageEvent,
+        *,
+        sender_open_id: str,
+    ) -> bool:
+        """Consume verified replies to Semantier meeting-negotiation prompts.
+
+        This bridge is intentionally correlation-first. Uncorrelated Feishu chat
+        remains ordinary Hermes input; correlated replies are delegated to the
+        Semantier runtime submit path so callback/websocket ingress and Web API
+        replies share one state machine.
+        """
+        if not os.getenv("SEMANTIER_LOCAL_STATE_DIR"):
+            return False
+        reply_to_message_id = str(getattr(event, "reply_to_message_id", "") or "").strip()
+        message_id = str(getattr(event, "message_id", "") or "").strip()
+        if not reply_to_message_id or not message_id:
+            return False
+        try:
+            from agents import meeting_coordinator_gateway, meeting_coordinator_store
+
+            store = meeting_coordinator_store.MeetingCoordinatorStore()
+            outbound = store.get_outbound_negotiation_message_by_provider_id(
+                provider_message_id=reply_to_message_id,
+            )
+        except KeyError:
+            return False
+        except Exception:
+            logger.debug(
+                "[Feishu] Semantier meeting negotiation reply bridge unavailable",
+                exc_info=True,
+            )
+            return False
+
+        negotiation_id = str(outbound["negotiation_id"])
+        participant_user_id = str(outbound["participant_user_id"])
+        workspace_id = str(os.getenv("SEMANTIER_WORKSPACE_ID") or "").strip()
+        try:
+            negotiation = store.get_negotiation(negotiation_id)
+            if workspace_id and str(negotiation.get("workspace_id") or "") != workspace_id:
+                store.record_inbound_reply_rejected(
+                    negotiation_id=negotiation_id,
+                    participant_user_id=sender_open_id or "unknown",
+                    message_id=message_id,
+                    reason="tenant_mismatch",
+                )
+                return True
+            if sender_open_id and sender_open_id != participant_user_id:
+                store.record_inbound_reply_rejected(
+                    negotiation_id=negotiation_id,
+                    participant_user_id=sender_open_id,
+                    message_id=message_id,
+                    reason="unknown_sender",
+                )
+                return True
+            meeting_coordinator_gateway.submit_negotiation_reply(
+                {
+                    "negotiation_id": negotiation_id,
+                    "participant_user_id": participant_user_id,
+                    "message_id": message_id,
+                    "reply_text": event.text or "",
+                    "outbound_message_event_id": outbound["message_event_id"],
+                    "callback_origin": True,
+                    "callback_signature_valid": True,
+                },
+                store=store,
+            )
+        except Exception:
+            logger.info(
+                "[Feishu] Correlated Semantier meeting negotiation reply consumed with non-success state",
+                exc_info=True,
+            )
+            return True
+        logger.info(
+            "[Feishu] Routed correlated Semantier meeting negotiation reply %s to %s",
+            message_id,
+            negotiation_id,
+        )
+        return True
 
     async def _dispatch_inbound_event(self, event: MessageEvent) -> None:
         """Apply Feishu-specific burst protection before entering the base adapter."""
