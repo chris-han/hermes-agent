@@ -511,12 +511,24 @@ class TestSegmentBreakOnToolBoundary:
     async def test_edit_failure_sends_only_unsent_tail_at_finish(self):
         """If an edit fails mid-stream, send only the missing tail once at finish."""
         adapter = MagicMock()
+        first_send = asyncio.Event()
+        edit_attempted = asyncio.Event()
         send_results = [
             SimpleNamespace(success=True, message_id="msg_1"),
             SimpleNamespace(success=True, message_id="msg_2"),
         ]
-        adapter.send = AsyncMock(side_effect=send_results)
-        adapter.edit_message = AsyncMock(return_value=SimpleNamespace(success=False, error="flood_control:6"))
+        send_iter = iter(send_results)
+
+        async def send_side_effect(**kwargs):
+            first_send.set()
+            return next(send_iter)
+
+        async def edit_side_effect(**kwargs):
+            edit_attempted.set()
+            return SimpleNamespace(success=False, error="message not editable")
+
+        adapter.send = AsyncMock(side_effect=send_side_effect)
+        adapter.edit_message = AsyncMock(side_effect=edit_side_effect)
         adapter.MAX_MESSAGE_LENGTH = 4096
 
         config = StreamConsumerConfig(edit_interval=0.01, buffer_threshold=5, cursor=" ▉")
@@ -524,9 +536,9 @@ class TestSegmentBreakOnToolBoundary:
 
         consumer.on_delta("Hello")
         task = asyncio.create_task(consumer.run())
-        await asyncio.sleep(0.08)
+        await asyncio.wait_for(first_send.wait(), timeout=2)
         consumer.on_delta(" world")
-        await asyncio.sleep(0.08)
+        await asyncio.wait_for(edit_attempted.wait(), timeout=2)
         consumer.finish()
         await task
 
@@ -1780,4 +1792,3 @@ class TestUtf16OverflowDetection:
         # auto-attr mock. Verified indirectly by all the other tests in
         # this file passing — they all use MagicMock adapters.
         assert consumer is not None
-
