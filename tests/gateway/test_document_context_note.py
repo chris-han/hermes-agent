@@ -44,6 +44,12 @@ class TestBinaryDocumentNote:
         assert "/cache/doc_contract.pdf" in note
         # Tells the agent to read it by extracting the text...
         assert "extract" in note.lower()
+        assert "registered document extraction tool" in note.lower()
+        assert "governed session uploads" in note.lower()
+        assert "terminal commands" in note.lower()
+        assert "generated python" in note.lower()
+        assert "host-path reads" in note.lower()
+        assert "unless the registered document extraction tool is not found" in note.lower()
         # ...and does NOT steer it into punting back to the user (the bug).
         assert "ask the user" not in note.lower()
         assert "paste" in note.lower()

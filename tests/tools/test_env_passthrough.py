@@ -109,6 +109,26 @@ class TestConfigPassthrough:
 class TestExecuteCodeIntegration:
     """Verify that the passthrough is checked in execute_code's env filtering."""
 
+    def test_semantier_workspace_artifact_env_passes_by_default(self):
+        from tools.code_execution_tool import _scrub_child_env
+
+        child_env = _scrub_child_env(
+            {
+                "PATH": "/usr/bin",
+                "SEMANTIER_WORKSPACE_ARTIFACTS_DIR": "/workspace/sessions/s1/artifacts",
+                "SEMANTIER_WORKSPACE_RUNS_DIR": "/workspace/sessions/s1/runs",
+                "HERMES_WRITE_ALLOWED_ROOTS": "/workspace/sessions/s1/artifacts",
+            },
+            is_windows=False,
+        )
+
+        assert (
+            child_env["SEMANTIER_WORKSPACE_ARTIFACTS_DIR"]
+            == "/workspace/sessions/s1/artifacts"
+        )
+        assert child_env["SEMANTIER_WORKSPACE_RUNS_DIR"] == "/workspace/sessions/s1/runs"
+        assert child_env["HERMES_WRITE_ALLOWED_ROOTS"] == "/workspace/sessions/s1/artifacts"
+
     def test_secret_substring_blocked_by_default(self):
         """TENOR_API_KEY should be blocked without passthrough."""
         _SAFE_ENV_PREFIXES = ("PATH", "HOME", "USER", "LANG", "LC_", "TERM",

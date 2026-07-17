@@ -2024,9 +2024,12 @@ def _build_document_context_note(display_name: str, agent_path: str, mtype: str)
     return (
         f"[The user sent a document: '{display_name}'. It is saved at: {agent_path}. "
         f"Its text is not inlined here (it's a binary format such as PDF or DOCX). "
-        f"To read it, extract the document's text yourself — for example with the "
-        f"terminal tool or the ocr-and-documents skill — before answering, instead "
-        f"of asking the user to paste the contents.]"
+        f"To read it in a Semantier workspace, pass this saved path to the registered "
+        f"document extraction tool so it can import the file into governed session "
+        f"uploads before parsing. Do not use terminal commands, generated Python, or "
+        f"host-path reads unless the registered document extraction tool is not found. "
+        f"Extract the document before "
+        f"answering instead of asking the user to paste the contents.]"
     )
 
 

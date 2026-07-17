@@ -99,6 +99,9 @@ _HERMES_CHILD_ALLOWED = frozenset({
     "HERMES_PROFILE",
     "HERMES_CONFIG",
     "HERMES_ENV",
+    "HERMES_WRITE_ALLOWED_ROOTS",
+    "SEMANTIER_WORKSPACE_RUNS_DIR",
+    "SEMANTIER_WORKSPACE_ARTIFACTS_DIR",
 })
 
 # Windows-only: a handful of variables are required by the OS/CRT itself.
