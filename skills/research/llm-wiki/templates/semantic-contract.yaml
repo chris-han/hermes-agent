@@ -1,0 +1,14 @@
+contract_id: example-contract
+version: v1
+authority_owner: owner-or-team
+scope:
+  authority_domain: example-domain
+  applies_to:
+    - concepts/example-page.md
+required_claims:
+  - claim: Example required claim.
+    evidence: raw/example-source.md
+prohibited_claims:
+  - claim: Example prohibited claim.
+severity: BLOCKING_CONFLICT
+sha256: replace-with-contract-body-sha256

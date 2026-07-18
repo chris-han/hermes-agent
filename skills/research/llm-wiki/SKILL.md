@@ -148,6 +148,78 @@ Adapt to the user's domain. The schema constrains agent behavior and ensures con
 topics. Lint surfaces `contested: true` and `confidence: low` pages for review so weak claims
 don't silently harden into accepted wiki fact.
 
+### Governed Semantier Sidecar
+
+When this skill runs inside authenticated Semantier workspace execution,
+`WIKI_PATH` is bound to `<workspace_root>/wiki` by the runtime boundary. Do not
+fall back to host-global `~/wiki` in authenticated Semantier handoffs. The
+governance sidecar lives under:
+
+```text
+$WIKI_PATH/.governance/
+├── contracts/
+├── reports/
+├── dependency-graph.json
+├── state.json
+└── audit-log.jsonl
+```
+
+The sidecar is metadata and assurance infrastructure only. Wiki markdown and
+sidecar reports are analyst curation/context material; they are not governed
+runtime authority and must be promoted through typed Semantier KGL/governance
+before they can affect executable policy, projection, validation, approval, or
+replay authority.
+
+Optional governed frontmatter fields:
+
+```yaml
+authority: canonical | derived | operational | reference
+depends_on: [page-id]
+governs: [page-id]
+semantic_contracts: [contract-id]
+upstream_bindings:
+  page-id:
+    revision: string
+    sha256: string
+alignment_state: CURRENT | REVIEW_REQUIRED | ALIGNED | EXEMPT
+```
+
+Use `templates/governed-frontmatter.yaml` when adding governed fields and
+`templates/semantic-contract.yaml` when creating contracts under
+`.governance/contracts/`. Explicit `depends_on` edges are synchronization
+dependencies. Ordinary wikilinks remain navigational unless also declared in
+governed frontmatter.
+
+Run the deterministic sidecar utility from this skill directory:
+
+```bash
+python wiki_governance.py rebuild-graph --wiki "$WIKI_PATH"
+python wiki_governance.py audit --wiki "$WIKI_PATH"
+python wiki_governance.py canonical-change --wiki "$WIKI_PATH" --page concepts/example.md
+```
+
+Governance behavior:
+
+- Rebuild and persist `.governance/dependency-graph.json` from governed
+  frontmatter and wikilinks.
+- On canonical-page changes, run `canonical-change` immediately so downstream
+  explicit dependents are marked `REVIEW_REQUIRED` and an impact report is
+  written under `.governance/reports/`.
+- Assurance lint classifies findings as `AUTO_FIX`, `PROPOSE_FIX`, or
+  `BLOCKING_CONFLICT`. The agent must not silently rewrite canonical doctrine.
+- Checks include dependency cycles, missing authorities, missing dependencies,
+  unresolved semantic-contract references, required/prohibited claim conflicts,
+  and canonical/derived direction reversal.
+- Append-only audit entries are emitted for graph rebuilds, assurance audits,
+  impact reports, and alignment-state transitions.
+
+Cron/sleep-time assurance is a third line of defense, not the primary
+synchronization mechanism:
+
+- Run targeted `canonical-change` on every canonical change.
+- Run changed-page `audit` daily.
+- Run full dependency and semantic-contract `audit` weekly.
+
 ### raw/ Frontmatter
 
 Raw sources ALSO get a small frontmatter block so re-ingests can detect drift:
