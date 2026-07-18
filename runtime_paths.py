@@ -25,6 +25,7 @@ _WORKSPACE_ARTIFACTS_DIR_ENV = "SEMANTIER_WORKSPACE_ARTIFACTS_DIR"
 _WRITE_SAFE_ROOT_ENV = "HERMES_WRITE_SAFE_ROOT"
 _WRITE_ALLOWED_ROOTS_ENV = "HERMES_WRITE_ALLOWED_ROOTS"
 _TERMINAL_CWD_ENV = "TERMINAL_CWD"
+_WIKI_PATH_ENV = "WIKI_PATH"
 _SEMANTIER_WORKSPACE_ID_ENV = "SEMANTIER_WORKSPACE_ID"
 _SEMANTIER_DISABLE_PROVIDER_FALLBACK_ENV = "SEMANTIER_DISABLE_PROVIDER_FALLBACK"
 _SESSION_SEGMENT_RE = re.compile(r"^[A-Za-z0-9._:-]+$")
@@ -262,18 +263,21 @@ def _bind_workspace_env_impl(resolved_home: Path) -> Iterator[None]:
     prev_write_safe_root = os.environ.get(_WRITE_SAFE_ROOT_ENV)
     prev_write_allowed_roots = os.environ.get(_WRITE_ALLOWED_ROOTS_ENV)
     prev_terminal_cwd = os.environ.get(_TERMINAL_CWD_ENV)
+    prev_wiki_path = os.environ.get(_WIKI_PATH_ENV)
     prev_workspace_id = os.environ.get(_SEMANTIER_WORKSPACE_ID_ENV)
     runs_root = None
     workspace_root_env_set = False
     workspace_id_env_set = False
     workspace_root = _workspace_root_from_hermes_home(resolved_home)
     workspace_id = workspace_root.name
+    wiki_root = workspace_root / "wiki"
     workspace_root.mkdir(parents=True, exist_ok=True)
     os.environ[_SEMANTIER_WORKSPACE_ID_ENV] = workspace_id
     os.environ[_WRITE_SAFE_ROOT_ENV] = str(workspace_root)
     os.environ.pop(_WORKSPACE_RUNS_DIR_ENV, None)
     os.environ.pop(_WRITE_ALLOWED_ROOTS_ENV, None)
     os.environ[_TERMINAL_CWD_ENV] = str(workspace_root)
+    os.environ[_WIKI_PATH_ENV] = str(wiki_root)
     workspace_root_env_set = True
     workspace_id_env_set = True
 
@@ -351,6 +355,10 @@ def _bind_workspace_env_impl(resolved_home: Path) -> Iterator[None]:
                 os.environ.pop(_TERMINAL_CWD_ENV, None)
             else:
                 os.environ[_TERMINAL_CWD_ENV] = prev_terminal_cwd
+            if prev_wiki_path is None:
+                os.environ.pop(_WIKI_PATH_ENV, None)
+            else:
+                os.environ[_WIKI_PATH_ENV] = prev_wiki_path
         if workspace_id_env_set:
             if prev_workspace_id is None:
                 os.environ.pop(_SEMANTIER_WORKSPACE_ID_ENV, None)
