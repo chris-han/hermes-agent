@@ -666,14 +666,22 @@ def test_command_dispatch_retry_handles_multipart_content(server):
 
 def test_command_dispatch_returns_skill_payload(server):
     """command.dispatch returns structured skill payload for the TUI to send()."""
+    from agent.skill_commands import DynamicSkillInvocation
+
     sid = "test-session"
     server._sessions[sid] = {"session_key": sid}
 
     fake_skills = {"/hermes-agent-dev": {"name": "hermes-agent-dev", "description": "Dev workflow"}}
     fake_msg = "Loaded skill content here"
+    fake_invocation = DynamicSkillInvocation(
+        command_key="/hermes-agent-dev",
+        skill_name="hermes-agent-dev",
+        user_instruction="",
+        expanded_message=fake_msg,
+    )
 
     with patch("agent.skill_commands.scan_skill_commands", return_value=fake_skills), \
-         patch("agent.skill_commands.build_skill_invocation_message", return_value=fake_msg):
+         patch("agent.skill_commands.expand_dynamic_skill_command", return_value=fake_invocation):
         resp = server.handle_request({
             "id": "r2",
             "method": "command.dispatch",

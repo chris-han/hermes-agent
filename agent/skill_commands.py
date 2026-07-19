@@ -8,8 +8,9 @@ import json
 import logging
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Literal, Optional
 
 from hermes_constants import display_hermes_home
 from agent.skill_preprocessing import (
@@ -25,6 +26,37 @@ _skill_commands_platform: Optional[str] = None
 # Patterns for sanitizing skill names into clean hyphen-separated slugs.
 _SKILL_INVALID_CHARS = re.compile(r"[^a-z0-9-]")
 _SKILL_MULTI_HYPHEN = re.compile(r"-{2,}")
+_LEADING_SLASH_COMMAND_RE = re.compile(r"^/([A-Za-z0-9_-]+)(.*)$", re.DOTALL)
+
+SlashCommandKind = Literal[
+    "built_in",
+    "plugin",
+    "dynamic_skill",
+    "disabled_skill",
+    "platform_incompatible_skill",
+    "unknown",
+]
+
+
+@dataclass(frozen=True)
+class DynamicSkillInvocation:
+    command_key: str
+    skill_name: str
+    user_instruction: str
+    expanded_message: str
+
+
+class DynamicSkillPayloadBuildError(ValueError):
+    pass
+
+
+@dataclass(frozen=True)
+class SlashCommandClassification:
+    kind: SlashCommandKind
+    command: str
+    command_key: str | None = None
+    skill_name: str | None = None
+    message: str | None = None
 
 # ---------------------------------------------------------------------------
 # Skill-scaffolding markers and the canonical extractor.
@@ -431,6 +463,166 @@ def get_skill_commands() -> Dict[str, Dict[str, Any]]:
     ):
         scan_skill_commands()
     return _skill_commands
+
+
+def _normalize_skill_command_name(command: str) -> str:
+    normalized = (command or "").strip().lower().replace("_", "-").replace(" ", "-")
+    normalized = _SKILL_INVALID_CHARS.sub("", normalized)
+    return _SKILL_MULTI_HYPHEN.sub("-", normalized).strip("-")
+
+
+def _parse_leading_slash_command(message: str) -> tuple[str, str] | None:
+    if not isinstance(message, str) or not message.startswith("/"):
+        return None
+    match = _LEADING_SLASH_COMMAND_RE.match(message)
+    if match is None:
+        return None
+    command = _normalize_skill_command_name(match.group(1))
+    if not command:
+        return None
+    remainder = match.group(2) or ""
+    if remainder and not remainder[0].isspace():
+        return None
+    return command, remainder
+
+
+def _skill_frontmatter_for_command(command: str) -> tuple[dict[str, Any], Path] | None:
+    normalized = _normalize_skill_command_name(command)
+    if not normalized:
+        return None
+    try:
+        from agent.skill_utils import (
+            get_all_skills_dirs,
+            is_excluded_skill_path,
+            parse_frontmatter,
+        )
+
+        for skills_dir in get_all_skills_dirs():
+            if not skills_dir.exists():
+                continue
+            for skill_md in skills_dir.rglob("SKILL.md"):
+                if is_excluded_skill_path(skill_md):
+                    continue
+                try:
+                    frontmatter, _body = parse_frontmatter(
+                        skill_md.read_text(encoding="utf-8")
+                    )
+                except Exception:
+                    continue
+                declared_name = str(frontmatter.get("name") or skill_md.parent.name)
+                if _normalize_skill_command_name(declared_name) == normalized:
+                    return frontmatter, skill_md
+    except Exception:
+        return None
+    return None
+
+
+def _classify_inactive_skill(command: str, *, platform: str | None = None) -> SlashCommandClassification | None:
+    found = _skill_frontmatter_for_command(command)
+    if found is None:
+        return None
+    frontmatter, _skill_md = found
+    skill_name = str(frontmatter.get("name") or command)
+    try:
+        from agent.skill_utils import get_disabled_skill_names, skill_matches_platform
+
+        if skill_name in get_disabled_skill_names(platform=platform):
+            return SlashCommandClassification(
+                kind="disabled_skill",
+                command=command,
+                skill_name=skill_name,
+                message=(
+                    f"The **{skill_name}** skill is installed but disabled.\n"
+                    "Enable it with: `hermes skills config`"
+                ),
+            )
+        if not skill_matches_platform(frontmatter):
+            return SlashCommandClassification(
+                kind="platform_incompatible_skill",
+                command=command,
+                skill_name=skill_name,
+                message=f"The **{skill_name}** skill is not compatible with this platform.",
+            )
+    except Exception:
+        return None
+    return None
+
+
+def classify_slash_command(
+    message: str,
+    *,
+    built_in_commands: set[str] | frozenset[str] | None = None,
+    plugin_command_resolver: Callable[[str], Any] | None = None,
+    platform: str | None = None,
+) -> SlashCommandClassification | None:
+    """Classify a leading slash command without executing it."""
+    parsed = _parse_leading_slash_command(message)
+    if parsed is None:
+        return None
+    command, _instruction = parsed
+
+    normalized_command = command.replace("_", "-")
+    if built_in_commands and normalized_command in {
+        item.lstrip("/").replace("_", "-") for item in built_in_commands
+    }:
+        return SlashCommandClassification(kind="built_in", command=command)
+
+    if plugin_command_resolver is not None:
+        try:
+            if plugin_command_resolver(normalized_command):
+                return SlashCommandClassification(kind="plugin", command=command)
+        except Exception:
+            pass
+
+    command_key = resolve_skill_command_key(command)
+    if command_key is not None:
+        info = get_skill_commands().get(command_key) or {}
+        return SlashCommandClassification(
+            kind="dynamic_skill",
+            command=command,
+            command_key=command_key,
+            skill_name=str(info.get("name") or command_key.lstrip("/")),
+        )
+
+    inactive = _classify_inactive_skill(command, platform=platform)
+    if inactive is not None:
+        return inactive
+
+    return SlashCommandClassification(kind="unknown", command=command)
+
+
+def expand_dynamic_skill_command(
+    message: str,
+    *,
+    task_id: str | None = None,
+) -> DynamicSkillInvocation | None:
+    parsed = _parse_leading_slash_command(message)
+    if parsed is None:
+        return None
+    command, remainder = parsed
+    command_key = resolve_skill_command_key(command)
+    if command_key is None:
+        return None
+
+    skill_info = get_skill_commands().get(command_key) or {}
+    user_instruction = remainder
+    if user_instruction and user_instruction[0].isspace():
+        user_instruction = user_instruction[1:]
+    expanded = build_skill_invocation_message(
+        command_key,
+        user_instruction=user_instruction,
+        task_id=task_id,
+    )
+    if expanded is None:
+        raise DynamicSkillPayloadBuildError(
+            f"Failed to build skill invocation payload for {command_key}"
+        )
+    return DynamicSkillInvocation(
+        command_key=command_key,
+        skill_name=str(skill_info.get("name") or command_key.lstrip("/")),
+        user_instruction=user_instruction,
+        expanded_message=expanded,
+    )
 
 
 def reload_skills() -> Dict[str, Any]:

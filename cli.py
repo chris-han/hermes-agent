@@ -2720,7 +2720,7 @@ def _looks_like_slash_command(text: str) -> bool:
 from agent.skill_commands import (
     scan_skill_commands,
     get_skill_commands,
-    build_skill_invocation_message,
+    expand_dynamic_skill_command,
     build_preloaded_skills_prompt,
 )
 from agent.skill_bundles import (
@@ -8534,15 +8534,15 @@ class HermesCLI:
                     )
             # Check for skill slash commands (/gif-search, /axolotl, etc.)
             elif base_cmd in _skill_commands:
-                user_instruction = cmd_original[len(base_cmd):].strip()
-                msg = build_skill_invocation_message(
-                    base_cmd, user_instruction, task_id=self.session_id
+                invocation = expand_dynamic_skill_command(
+                    cmd_original,
+                    task_id=self.session_id,
                 )
-                if msg:
-                    skill_name = _skill_commands[base_cmd]["name"]
+                if invocation:
+                    skill_name = invocation.skill_name
                     print(f"\n⚡ Loading skill: {skill_name}")
                     if hasattr(self, '_pending_input'):
-                        self._pending_input.put(msg)
+                        self._pending_input.put(invocation.expanded_message)
                 else:
                     ChatConsole().print(f"[bold red]Failed to load skill for {base_cmd}[/]")
             else:

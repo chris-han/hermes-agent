@@ -8,8 +8,11 @@ import pytest
 
 import tools.skills_tool as skills_tool_module
 from agent.skill_commands import (
+    DynamicSkillPayloadBuildError,
     build_preloaded_skills_prompt,
     build_skill_invocation_message,
+    classify_slash_command,
+    expand_dynamic_skill_command,
     resolve_skill_command_key,
     scan_skill_commands,
 )
@@ -447,6 +450,141 @@ class TestResolveSkillCommandKey:
             assert resolve_skill_command_key("foo-bar") == "/foo-bar"
             # Underscore form also works (Telegram round-trip)
             assert resolve_skill_command_key("foo_bar") == "/foo-bar"
+
+
+class TestExpandDynamicSkillCommand:
+    def test_expands_installed_skill_and_preserves_instruction(self, tmp_path):
+        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
+            _make_skill(tmp_path, "test-skill")
+            scan_skill_commands()
+            result = expand_dynamic_skill_command("/test-skill  keep  spacing  ")
+
+        assert result is not None
+        assert result.command_key == "/test-skill"
+        assert result.skill_name == "test-skill"
+        assert result.user_instruction == " keep  spacing  "
+        assert " keep  spacing  " in result.expanded_message
+
+    def test_expands_empty_instruction(self, tmp_path):
+        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
+            _make_skill(tmp_path, "empty-skill")
+            scan_skill_commands()
+            result = expand_dynamic_skill_command("/empty-skill")
+
+        assert result is not None
+        assert result.user_instruction == ""
+        assert "empty-skill" in result.expanded_message
+
+    def test_resolves_underscore_form_to_hyphen_command(self, tmp_path):
+        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
+            _make_skill(tmp_path, "hyphen-skill")
+            scan_skill_commands()
+            result = expand_dynamic_skill_command("/hyphen_skill do it")
+
+        assert result is not None
+        assert result.command_key == "/hyphen-skill"
+        assert result.user_instruction == "do it"
+
+    def test_returns_none_for_ordinary_text(self, tmp_path):
+        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
+            scan_skill_commands()
+            assert expand_dynamic_skill_command("hello /test-skill") is None
+
+    def test_returns_none_for_built_in_command(self, tmp_path):
+        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
+            _make_skill(tmp_path, "test-skill")
+            scan_skill_commands()
+            assert expand_dynamic_skill_command("/help") is None
+
+    def test_raises_when_payload_build_fails_after_resolution(self, tmp_path):
+        import agent.skill_commands as sc_mod
+
+        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
+            _make_skill(tmp_path, "broken-skill")
+            scan_skill_commands()
+            with patch.object(sc_mod, "build_skill_invocation_message", return_value=None):
+                with pytest.raises(DynamicSkillPayloadBuildError):
+                    expand_dynamic_skill_command("/broken-skill do it")
+
+
+class TestClassifySlashCommand:
+    def test_classifies_built_in_before_dynamic_skill(self, tmp_path):
+        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
+            _make_skill(tmp_path, "help")
+            scan_skill_commands()
+            result = classify_slash_command("/help", built_in_commands={"help"})
+
+        assert result is not None
+        assert result.kind == "built_in"
+
+    def test_classifies_plugin_before_dynamic_skill(self, tmp_path):
+        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
+            _make_skill(tmp_path, "plugin-command")
+            scan_skill_commands()
+            result = classify_slash_command(
+                "/plugin-command arg",
+                plugin_command_resolver=lambda command: command == "plugin-command",
+            )
+
+        assert result is not None
+        assert result.kind == "plugin"
+
+    def test_classifies_dynamic_skill(self, tmp_path):
+        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
+            _make_skill(tmp_path, "plan")
+            scan_skill_commands()
+            result = classify_slash_command("/plan do it")
+
+        assert result is not None
+        assert result.kind == "dynamic_skill"
+        assert result.command_key == "/plan"
+        assert result.skill_name == "plan"
+
+    def test_classifies_disabled_skill(self, tmp_path):
+        with (
+            patch("tools.skills_tool.SKILLS_DIR", tmp_path),
+            patch("agent.skill_utils.get_skills_dir", return_value=tmp_path),
+            patch("agent.skill_utils.get_external_skills_dirs", return_value=[]),
+            patch("agent.skill_utils.get_disabled_skill_names", return_value={"disabled-skill"}),
+            patch("tools.skills_tool._get_disabled_skill_names", return_value={"disabled-skill"}),
+        ):
+            _make_skill(tmp_path, "disabled-skill")
+            scan_skill_commands()
+            result = classify_slash_command("/disabled-skill")
+
+        assert result is not None
+        assert result.kind == "disabled_skill"
+        assert result.skill_name == "disabled-skill"
+
+    def test_classifies_platform_incompatible_skill(self, tmp_path):
+        with (
+            patch("tools.skills_tool.SKILLS_DIR", tmp_path),
+            patch("agent.skill_utils.get_skills_dir", return_value=tmp_path),
+            patch("agent.skill_utils.get_external_skills_dirs", return_value=[]),
+            patch("agent.skill_utils.sys") as mock_sys,
+            patch("tools.skills_tool._get_disabled_skill_names", return_value=set()),
+        ):
+            mock_sys.platform = "linux"
+            _make_skill(tmp_path, "mac-only", frontmatter_extra="platforms: [macos]\n")
+            scan_skill_commands()
+            result = classify_slash_command("/mac-only")
+
+        assert result is not None
+        assert result.kind == "platform_incompatible_skill"
+        assert result.skill_name == "mac-only"
+
+    def test_classifies_unknown(self, tmp_path):
+        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
+            scan_skill_commands()
+            result = classify_slash_command("/missing")
+
+        assert result is not None
+        assert result.kind == "unknown"
+
+    def test_ordinary_text_is_not_a_slash_command(self, tmp_path):
+        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
+            scan_skill_commands()
+            assert classify_slash_command("hello") is None
 
 
 class TestBuildPreloadedSkillsPrompt:

@@ -9322,7 +9322,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             try:
                 from agent.skill_commands import (
                     get_skill_commands,
-                    build_skill_invocation_message,
+                    expand_dynamic_skill_command,
                     resolve_skill_command_key,
                 )
                 skill_cmds = get_skill_commands()
@@ -9341,12 +9341,12 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                                 f"The **{_skill_name}** skill is disabled for {_plat}.\n"
                                 f"Enable it with: `hermes skills config`"
                             )
-                    user_instruction = event.get_command_args().strip()
-                    msg = build_skill_invocation_message(
-                        cmd_key, user_instruction, task_id=_quick_key
+                    invocation = expand_dynamic_skill_command(
+                        event.text,
+                        task_id=_quick_key,
                     )
-                    if msg:
-                        event.text = msg
+                    if invocation:
+                        event.text = invocation.expanded_message
                         # Fall through to normal message processing with skill content
                 else:
                     # Not an active skill — check if it's a known-but-disabled or

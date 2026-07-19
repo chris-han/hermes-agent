@@ -4684,22 +4684,23 @@ def _(rid, params: dict) -> dict:
     try:
         from agent.skill_commands import (
             scan_skill_commands,
-            build_skill_invocation_message,
+            expand_dynamic_skill_command,
         )
 
         cmds = scan_skill_commands()
         key = f"/{name}"
         if key in cmds:
-            msg = build_skill_invocation_message(
-                key, arg, task_id=session.get("session_key", "") if session else ""
+            invocation = expand_dynamic_skill_command(
+                f"{key} {arg}".rstrip(),
+                task_id=session.get("session_key", "") if session else "",
             )
-            if msg:
+            if invocation:
                 return _ok(
                     rid,
                     {
                         "type": "skill",
-                        "message": msg,
-                        "name": cmds[key].get("name", name),
+                        "message": invocation.expanded_message,
+                        "name": invocation.skill_name,
                     },
                 )
     except Exception:

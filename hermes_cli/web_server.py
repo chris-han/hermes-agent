@@ -16,6 +16,7 @@ import base64
 import binascii
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import cmp_to_key
 import hmac
 import importlib.util
 import json
@@ -9132,6 +9133,97 @@ class MemoryReset(BaseModel):
     target: str = "all"
 
 
+class MemoryWrite(BaseModel):
+    path: str
+    content: str = ""
+
+
+def _is_browser_memory_path(relative_path: str) -> bool:
+    return (
+        relative_path == "MEMORY.md"
+        or relative_path.startswith("memory/")
+        or relative_path.startswith("memories/")
+    )
+
+
+def _normalize_memory_relative_path(input_path: str) -> str:
+    relative_path = str(input_path or "").replace("\\", "/").strip()
+    if not relative_path:
+        raise HTTPException(status_code=400, detail="Path is required")
+    if relative_path.startswith("/") or Path(relative_path).is_absolute():
+        raise HTTPException(status_code=400, detail="Absolute paths are not allowed")
+    if ".." in relative_path.split("/"):
+        raise HTTPException(status_code=400, detail="Path traversal is not allowed")
+    if not relative_path.lower().endswith(".md"):
+        raise HTTPException(status_code=400, detail="Only Markdown files are allowed")
+    return relative_path
+
+
+def _resolve_memory_file_path(input_path: str) -> tuple[str, Path]:
+    relative_path = _normalize_memory_relative_path(input_path)
+    workspace_root = get_hermes_home().resolve()
+    full_path = (workspace_root / relative_path).resolve()
+    try:
+        full_path.relative_to(workspace_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Resolved path is outside workspace") from exc
+    return relative_path, full_path
+
+
+def _memory_file_meta(workspace_root: Path, full_path: Path) -> dict[str, Any] | None:
+    if full_path.suffix.lower() != ".md":
+        return None
+    try:
+        stats = full_path.stat()
+    except OSError:
+        return None
+    if not full_path.is_file():
+        return None
+    relative_path = full_path.relative_to(workspace_root).as_posix()
+    if not _is_browser_memory_path(relative_path):
+        return None
+    return {
+        "path": relative_path,
+        "name": full_path.name,
+        "size": stats.st_size,
+        "modified": datetime.fromtimestamp(stats.st_mtime, timezone.utc).isoformat(),
+    }
+
+
+def _compare_memory_files(a: dict[str, Any], b: dict[str, Any]) -> int:
+    a_path = str(a.get("path") or "")
+    b_path = str(b.get("path") or "")
+    if a_path == "MEMORY.md" and b_path != "MEMORY.md":
+        return -1
+    if b_path == "MEMORY.md" and a_path != "MEMORY.md":
+        return 1
+
+    a_is_daily = bool(re.match(r"^memories?/\d{4}-\d{2}-\d{2}\.md$", a_path))
+    b_is_daily = bool(re.match(r"^memories?/\d{4}-\d{2}-\d{2}\.md$", b_path))
+    if a_is_daily and b_is_daily:
+        return -1 if a_path > b_path else 1 if a_path < b_path else 0
+
+    a_modified = str(a.get("modified") or "")
+    b_modified = str(b.get("modified") or "")
+    if a_modified != b_modified:
+        return -1 if a_modified > b_modified else 1
+    return -1 if a_path < b_path else 1 if a_path > b_path else 0
+
+
+def _list_memory_files() -> list[dict[str, Any]]:
+    workspace_root = get_hermes_home().resolve()
+    results: list[dict[str, Any]] = []
+    for full_path in workspace_root.rglob("*.md"):
+        if any(part in {".git", "node_modules"} for part in full_path.parts):
+            continue
+        meta = _memory_file_meta(workspace_root, full_path)
+        if meta is not None:
+            results.append(meta)
+
+    results.sort(key=cmp_to_key(_compare_memory_files))
+    return results
+
+
 @app.get("/api/memory")
 async def get_memory_status():
     from plugins.memory import discover_memory_providers
@@ -9165,6 +9257,57 @@ async def get_memory_status():
         "providers": providers,
         "builtin_files": files,
     }
+
+
+@app.get("/api/memory/list")
+async def list_memory_files():
+    return {"files": _list_memory_files()}
+
+
+@app.get("/api/memory/read")
+async def read_memory_file(path: str = ""):
+    relative_path, full_path = _resolve_memory_file_path(path)
+    try:
+        content = full_path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"path": relative_path, "content": content}
+
+
+@app.get("/api/memory/search")
+async def search_memory_files(q: str = ""):
+    needle = q.strip().lower()
+    if not needle:
+        return {"results": []}
+
+    matches = []
+    for file_meta in _list_memory_files():
+        path_value = str(file_meta.get("path") or "")
+        try:
+            _relative_path, full_path = _resolve_memory_file_path(path_value)
+            content = full_path.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        for index, line in enumerate(content.splitlines(), start=1):
+            if needle not in line.lower():
+                continue
+            matches.append({"path": path_value, "line": index, "text": line})
+            if len(matches) >= 200:
+                return {"results": matches}
+    return {"results": matches}
+
+
+@app.post("/api/memory/write")
+async def write_memory_file(body: MemoryWrite):
+    relative_path, full_path = _resolve_memory_file_path(body.path)
+    try:
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+        full_path.write_text(body.content or "", encoding="utf-8")
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"success": True, "path": relative_path}
 
 
 @app.put("/api/memory/provider")
