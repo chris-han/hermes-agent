@@ -35,12 +35,12 @@ Use this skill when the user:
 
 ## Wiki Location
 
-**Location:** Set via `WIKI_PATH` environment variable (e.g. in `${HERMES_HOME:-~/.hermes}/.env`).
-
-If unset, defaults to `~/wiki`.
+**Location:** Set via `WIKI_PATH` environment variable. In authenticated
+Semantier workspace execution, the runtime boundary binds this to
+`<workspace_root>/wiki`.
 
 ```bash
-WIKI="${WIKI_PATH:-$HOME/wiki}"
+WIKI="$WIKI_PATH"
 ```
 
 The wiki is just a directory of markdown files — open it in Obsidian, VS Code, or
@@ -78,7 +78,7 @@ When the user has an existing wiki, **always orient yourself before doing anythi
 ③ **Scan recent `log.md`** — read the last 20-30 entries to understand recent activity.
 
 ```bash
-WIKI="${WIKI_PATH:-$HOME/wiki}"
+WIKI="$WIKI_PATH"
 # Orientation reads at session start
 read_file "$WIKI/SCHEMA.md"
 read_file "$WIKI/index.md"
@@ -98,7 +98,7 @@ at hand before creating anything new.
 
 When the user asks to create or start a wiki:
 
-1. Determine the wiki path (from `$WIKI_PATH` env var, or ask the user; default `~/wiki`)
+1. Determine the wiki path from `$WIKI_PATH`; if it is unset, ask for an explicit governed path
 2. Create the directory structure above
 3. Ask the user what domain the wiki covers — be specific
 4. Write `SCHEMA.md` customized to the domain (see template below)
@@ -153,7 +153,11 @@ don't silently harden into accepted wiki fact.
 When this skill runs inside authenticated Semantier workspace execution,
 `WIKI_PATH` is bound to `<workspace_root>/wiki` by the runtime boundary. Do not
 fall back to host-global `~/wiki` in authenticated Semantier handoffs. The
-governance sidecar lives under:
+boundary-bound wiki path is the authorized source for wiki markdown reads and
+queries in that workspace; read those files directly when answering wiki
+questions, while still rejecting arbitrary host-global paths.
+
+The governance sidecar lives under:
 
 ```text
 $WIKI_PATH/.governance/
@@ -507,8 +511,8 @@ ob login --email <email> --password '<password>'
 # Create a remote vault for the wiki
 ob sync-create-remote --name "LLM Wiki"
 
-# Connect the wiki directory to the vault
-cd ~/wiki
+# Connect the governed wiki directory to the vault
+cd "$WIKI_PATH"
 ob sync-setup --vault "<vault-id>"
 
 # Initial sync
@@ -527,8 +531,9 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
+Environment=WIKI_PATH=/path/to/governed/wiki
 ExecStart=/path/to/ob sync --continuous
-WorkingDirectory=/home/user/wiki
+WorkingDirectory=/path/to/governed/wiki
 Restart=on-failure
 RestartSec=10
 
@@ -543,7 +548,7 @@ systemctl --user enable --now obsidian-wiki-sync
 sudo loginctl enable-linger $USER
 ```
 
-This lets the agent write to `~/wiki` on a server while you browse the same
+This lets the agent write to the governed wiki path on a server while you browse the same
 vault in Obsidian on your laptop/phone — changes appear within seconds.
 
 ## Pitfalls

@@ -50,7 +50,9 @@ def wiki_root_from_env_or_arg(raw: str | None) -> Path:
     env = os.environ.get("WIKI_PATH")
     if env:
         return Path(env).expanduser().resolve()
-    return (Path.home() / "wiki").resolve()
+    raise RuntimeError(
+        "llm-wiki requires an explicit --wiki path or governed WIKI_PATH environment"
+    )
 
 
 def governance_root(wiki_root: Path) -> Path:
