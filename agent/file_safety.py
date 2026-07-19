@@ -131,11 +131,13 @@ def _boundary_write_roots() -> tuple[bool, set[str]]:
     if boundary is None:
         return False, set()
     roots: set[str] = set()
-    for root in (
+    configured_roots = tuple(boundary.policy.allowed_write_roots) or (
         boundary.paths.runs_root,
         boundary.paths.uploads_root,
         boundary.paths.artifacts_root,
-    ):
+        boundary.paths.logs_root,
+    )
+    for root in configured_roots:
         if root is None:
             continue
         try:
@@ -170,13 +172,14 @@ def _boundary_read_roots() -> tuple[bool, set[Path]]:
         return False, set()
 
     roots: set[Path] = set()
-    for root in (
+    configured_roots = tuple(boundary.policy.allowed_read_roots) or (
         boundary.paths.hermes_home,
         boundary.paths.terminal_cwd,
         boundary.paths.runs_root,
         boundary.paths.uploads_root,
         boundary.paths.artifacts_root,
-    ):
+    )
+    for root in configured_roots:
         if root is None:
             continue
         try:

@@ -25,12 +25,16 @@ class BoundaryPaths:
     runs_root: Path | None = None
     uploads_root: Path | None = None
     artifacts_root: Path | None = None
+    logs_root: Path | None = None
 
 
 @dataclass(frozen=True)
 class BoundaryPolicy:
     provider_fallback_enabled: bool = True
     require_boundary: bool = False
+    allowed_read_roots: tuple[Path, ...] = ()
+    allowed_write_roots: tuple[Path, ...] = ()
+    scratch_roots: tuple[Path, ...] = (Path("/tmp"),)
 
 
 @dataclass(frozen=True)
@@ -46,6 +50,10 @@ class ExecutionBoundary:
 
 
 class GovernedExecutionBoundaryRequired(RuntimeError):
+    pass
+
+
+class BoundaryPathRejected(RuntimeError):
     pass
 
 
@@ -100,16 +108,19 @@ def _boundary_env(boundary: ExecutionBoundary) -> dict[str, str]:
         env["HERMES_HOME"] = str(boundary.paths.hermes_home)
     if boundary.paths.terminal_cwd is not None:
         env["TERMINAL_CWD"] = str(boundary.paths.terminal_cwd)
-    roots = [
+    roots = list(boundary.policy.allowed_write_roots) or [
         boundary.paths.runs_root,
         boundary.paths.uploads_root,
         boundary.paths.artifacts_root,
+        boundary.paths.logs_root,
     ]
     safe_roots = [str(path) for path in roots if path is not None]
     if safe_roots:
         env["HERMES_WRITE_ALLOWED_ROOTS"] = ",".join(safe_roots)
     if boundary.paths.artifacts_root is not None:
         env["SEMANTIER_WORKSPACE_ARTIFACTS_DIR"] = str(boundary.paths.artifacts_root)
+    if boundary.paths.runs_root is not None:
+        env["SEMANTIER_WORKSPACE_RUNS_DIR"] = str(boundary.paths.runs_root)
     env["HERMES_PROVIDER_FALLBACK_ENABLED"] = (
         "1" if boundary.policy.provider_fallback_enabled else "0"
     )
@@ -136,3 +147,128 @@ def bind_execution_boundary(boundary: ExecutionBoundary | None) -> Iterator[None
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
+
+
+def _resolve_path(path: str | Path) -> Path:
+    return Path(path).expanduser().resolve()
+
+
+def _is_under(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+class DiskIOBoundaryGuard:
+    """Resolve Semantier-authenticated file IO through an execution boundary."""
+
+    def __init__(self, boundary: ExecutionBoundary | None) -> None:
+        if boundary is None:
+            raise GovernedExecutionBoundaryRequired(
+                "SEMANTIER_EXECUTION_BOUNDARY_REQUIRED: active execution boundary required"
+            )
+        self.boundary = boundary
+
+    @classmethod
+    def current(cls) -> "DiskIOBoundaryGuard":
+        return cls(current_execution_boundary())
+
+    def _read_roots(self) -> tuple[Path, ...]:
+        roots = list(self.boundary.policy.allowed_read_roots)
+        if not roots:
+            roots.extend(
+                root
+                for root in (
+                    self.boundary.paths.hermes_home,
+                    self.boundary.paths.terminal_cwd,
+                    self.boundary.paths.uploads_root,
+                    self.boundary.paths.artifacts_root,
+                )
+                if root is not None
+            )
+        return tuple(_resolve_path(root) for root in roots)
+
+    def _write_roots(self) -> tuple[Path, ...]:
+        roots = list(self.boundary.policy.allowed_write_roots)
+        if not roots:
+            roots.extend(
+                root
+                for root in (
+                    self.boundary.paths.runs_root,
+                    self.boundary.paths.uploads_root,
+                    self.boundary.paths.artifacts_root,
+                    self.boundary.paths.logs_root,
+                )
+                if root is not None
+            )
+        return tuple(_resolve_path(root) for root in roots)
+
+    def _scratch_roots(self) -> tuple[Path, ...]:
+        return tuple(_resolve_path(root) for root in self.boundary.policy.scratch_roots)
+
+    def resolve_read_path(
+        self,
+        requested_path: str | Path,
+        *,
+        purpose: str = "read",
+        manifest_allowed_files: set[Path] | None = None,
+    ) -> Path:
+        resolved = _resolve_path(requested_path)
+        if purpose == "skill_asset":
+            allowed = {
+                _resolve_path(path)
+                for path in (manifest_allowed_files or set())
+            }
+            if resolved in allowed:
+                return resolved
+            raise BoundaryPathRejected(
+                f"BOUNDARY_READ_REJECTED: {resolved} is not pinned in the bundled skill manifest"
+            )
+        if any(_is_under(resolved, root) for root in self._read_roots()):
+            return resolved
+        raise BoundaryPathRejected(
+            f"BOUNDARY_READ_REJECTED: {resolved} is outside the active execution boundary"
+        )
+
+    def resolve_write_path(
+        self,
+        requested_path: str | Path,
+        *,
+        purpose: str = "write",
+    ) -> Path:
+        resolved = _resolve_path(requested_path)
+        if any(_is_under(resolved, root) for root in self._write_roots()):
+            return resolved
+
+        protected_roots = [
+            root
+            for root in (
+                self.boundary.paths.hermes_home,
+                self.boundary.paths.terminal_cwd,
+                self.boundary.paths.runs_root,
+                self.boundary.paths.uploads_root,
+                self.boundary.paths.artifacts_root,
+                self.boundary.paths.logs_root,
+                self.boundary.paths.hermes_home.parent
+                if self.boundary.paths.hermes_home is not None
+                else None,
+            )
+            if root is not None
+        ]
+        if any(_is_under(resolved, _resolve_path(root)) for root in protected_roots):
+            raise BoundaryPathRejected(
+                f"BOUNDARY_WRITE_REJECTED: {resolved} is outside the active execution boundary"
+            )
+
+        artifacts_root = self.boundary.paths.artifacts_root
+        if artifacts_root is not None:
+            for scratch_root in self._scratch_roots():
+                if _is_under(resolved, scratch_root):
+                    rel = resolved.relative_to(scratch_root)
+                    return (_resolve_path(artifacts_root) / scratch_root.name / rel).resolve()
+
+        raise BoundaryPathRejected(
+            f"BOUNDARY_WRITE_REJECTED: {resolved} is outside the active execution boundary"
+        )
