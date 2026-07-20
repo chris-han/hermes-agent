@@ -2285,6 +2285,33 @@ class TestConcurrentToolExecution:
         assert json.loads(result) == {"error": "Blocked"}
         assert agent._turns_since_memory == 5
 
+    def test_memory_tool_requires_explicit_user_request(self, agent):
+        messages = [{"role": "user", "content": "I prefer concise answers."}]
+
+        with patch("tools.memory_tool.memory_tool", side_effect=AssertionError("should not run")):
+            result = agent._invoke_tool(
+                "memory",
+                {"action": "add", "target": "memory", "content": "I prefer concise answers."},
+                "task-1",
+                messages=messages,
+            )
+
+        assert json.loads(result)["error"].startswith("Memory writes require an explicit user request")
+
+    def test_memory_tool_allows_explicit_user_request(self, agent):
+        messages = [{"role": "user", "content": "Please save to memory: I prefer concise answers."}]
+
+        with patch("tools.memory_tool.memory_tool", return_value='{"success": true}') as mock_memory:
+            result = agent._invoke_tool(
+                "memory",
+                {"action": "add", "target": "memory", "content": "I prefer concise answers."},
+                "task-1",
+                messages=messages,
+            )
+
+        mock_memory.assert_called_once()
+        assert json.loads(result) == {"success": True}
+
 
 class TestPathsOverlap:
     """Unit tests for the _paths_overlap helper."""

@@ -26,6 +26,7 @@ Design:
 import json
 import logging
 import os
+import re
 import tempfile
 import time
 from contextlib import contextmanager
@@ -58,6 +59,16 @@ def get_memory_dir() -> Path:
 
 ENTRY_DELIMITER = "\n§\n"
 
+_EXPLICIT_MEMORY_REQUEST_PATTERNS = (
+    r"\bsave\s+(?:this|that|it|these|those|the following)?\s*(?:to|in|into)?\s*memory\b",
+    r"\bremember\s+(?:this|that|it|these|those)\b",
+    r"\bremember\s+to\s+memory\b",
+    r"\bstore\s+(?:this|that|it|these|those|the following)?\s+(?:in|into)\s+memory\b",
+    r"\bnote\s+(?:this|that|it|these|those|the following)?\s+(?:in|into)?\s+memory\b",
+    r"\bwrite\s+(?:this|that|it|these|those|the following)?\s+(?:to|in|into)\s+memory\b",
+    r"\bkeep\s+(?:this|that|it|these|those|the following)?\s+(?:in|into)\s+memory\b",
+)
+
 
 # ---------------------------------------------------------------------------
 # Memory content scanning — lightweight check for injection/exfiltration
@@ -78,6 +89,52 @@ from tools.threat_patterns import first_threat_message as _first_threat_message
 def _scan_memory_content(content: str) -> Optional[str]:
     """Scan memory content for injection/exfil patterns. Returns error string if blocked."""
     return _first_threat_message(content, scope="strict")
+
+
+def _coerce_message_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: List[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "\n".join(parts)
+    return ""
+
+
+def _latest_user_message(messages: Optional[List[Dict[str, Any]]]) -> str:
+    for msg in reversed(messages or []):
+        if isinstance(msg, dict) and msg.get("role") == "user":
+            return _coerce_message_text(msg.get("content")).strip()
+    return ""
+
+
+def _looks_like_explicit_memory_request(text: str) -> bool:
+    normalized = " ".join((text or "").strip().lower().split())
+    if not normalized:
+        return False
+    if re.search(r"\b(?:don't|do not|never|no)\b.{0,24}\b(?:save|store|write|keep|remember|note)\b", normalized):
+        return False
+    return any(re.search(pattern, normalized) for pattern in _EXPLICIT_MEMORY_REQUEST_PATTERNS)
+
+
+def memory_write_requires_explicit_request(
+    messages: Optional[List[Dict[str, Any]]],
+) -> Optional[str]:
+    """Return an error string unless the latest user message explicitly asks to save memory."""
+    user_message = _latest_user_message(messages)
+    if _looks_like_explicit_memory_request(user_message):
+        return None
+    return tool_error(
+        "Memory writes require an explicit user request such as 'save to memory' or 'remember this'. "
+        "Ask the user to say one of those phrases before writing.",
+        success=False,
+    )
 
 
 def _drift_error(path: "Path", bak_path: str) -> Dict[str, Any]:
@@ -1014,10 +1071,9 @@ MEMORY_SCHEMA = {
         "reports current/limit chars and confirms completion; one batch call finishes the "
         "update, so don't repeat it. Use the bare action/content/old_text fields only for a "
         "single lone change.\n\n"
-        "WHEN: save proactively when the user states a preference, correction, or personal "
-        "detail, or you learn a stable fact about their environment, conventions, or workflow. "
-        "Priority: user preferences & corrections > environment facts > procedures. The best "
-        "memory stops the user repeating themselves.\n\n"
+        "WHEN: save only when the user explicitly asks to save to memory, remember this, or "
+        "otherwise clearly opt in to persistence. Priority: user preferences & corrections > "
+        "environment facts > procedures. The best memory stops the user repeating themselves.\n\n"
         "IF FULL: an add is rejected with the current entries shown. Reissue as ONE batch that "
         "removes or shortens enough stale entries and adds the new one together.\n\n"
         "TARGETS: 'user' = who the user is (name, role, preferences, style). 'memory' = your "
