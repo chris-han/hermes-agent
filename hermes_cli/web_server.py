@@ -9141,9 +9141,36 @@ class MemoryWrite(BaseModel):
 def _is_browser_memory_path(relative_path: str) -> bool:
     return (
         relative_path == "MEMORY.md"
+        or relative_path == "USER.md"
         or relative_path.startswith("memory/")
         or relative_path.startswith("memories/")
     )
+
+
+def _is_curated_memory_path(relative_path: str) -> bool:
+    return re.match(
+        r"^(?:memories/)?(?:MEMORY|USER)\.md$",
+        relative_path,
+    ) is not None
+
+
+def _format_curated_memory_content(content: str) -> str:
+    normalized = (content or "").replace("\r\n", "\n").replace("\r", "\n")
+    entries = [entry.strip() for entry in re.split(r"\n\s*§\s*\n", normalized)]
+    return "\n§\n".join(entry for entry in entries if entry)
+
+
+def _curated_memory_write_content(
+    existing_content: str,
+    next_content: str,
+) -> str:
+    formatted_existing = _format_curated_memory_content(existing_content)
+    formatted_next = _format_curated_memory_content(next_content)
+    if not formatted_existing or not formatted_next:
+        return formatted_next
+    if formatted_existing in formatted_next:
+        return formatted_next
+    return f"{formatted_existing}\n§\n{formatted_next}"
 
 
 def _normalize_memory_relative_path(input_path: str) -> str:
@@ -9304,7 +9331,15 @@ async def write_memory_file(body: MemoryWrite):
     relative_path, full_path = _resolve_memory_file_path(body.path)
     try:
         full_path.parent.mkdir(parents=True, exist_ok=True)
-        full_path.write_text(body.content or "", encoding="utf-8")
+        existing_content = (
+            full_path.read_text(encoding="utf-8") if full_path.exists() else ""
+        )
+        next_content = (
+            _curated_memory_write_content(existing_content, body.content or "")
+            if _is_curated_memory_path(relative_path)
+            else body.content or ""
+        )
+        full_path.write_text(next_content, encoding="utf-8")
     except OSError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {"success": True, "path": relative_path}
