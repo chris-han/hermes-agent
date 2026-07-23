@@ -9188,8 +9188,11 @@ def _normalize_memory_relative_path(input_path: str) -> str:
 
 def _resolve_memory_file_path(input_path: str) -> tuple[str, Path]:
     relative_path = _normalize_memory_relative_path(input_path)
+    storage_relative_path = relative_path
+    if relative_path in {"MEMORY.md", "USER.md"}:
+        storage_relative_path = f"memories/{relative_path}"
     workspace_root = get_hermes_home().resolve()
-    full_path = (workspace_root / relative_path).resolve()
+    full_path = (workspace_root / storage_relative_path).resolve()
     try:
         full_path.relative_to(workspace_root)
     except ValueError as exc:
@@ -9297,6 +9300,8 @@ async def read_memory_file(path: str = ""):
     try:
         content = full_path.read_text(encoding="utf-8")
     except FileNotFoundError as exc:
+        if _is_curated_memory_path(relative_path):
+            return {"path": relative_path, "content": ""}
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except OSError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
