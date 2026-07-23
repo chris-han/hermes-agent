@@ -201,6 +201,52 @@ def _boundary_read_roots() -> tuple[bool, set[Path]]:
     return True, roots
 
 
+def _active_session_output_read_error(path: Path, display_path: str) -> str | None:
+    """Reject reads of another session's governed output roots.
+
+    The workspace root is a legitimate read root for authenticated Semantier
+    turns, but per-session uploads/runs/artifacts/logs are still scoped to the
+    active session. Without this check, an absolute or workspace-relative path
+    under ``sessions/<other>/uploads`` could be admitted by the broader
+    workspace root.
+    """
+    try:
+        from gateway.execution_boundary import current_execution_boundary
+
+        boundary = current_execution_boundary()
+    except Exception:
+        return None
+    if boundary is None or boundary.paths.hermes_home is None:
+        return None
+
+    active_roots = tuple(
+        root.resolve()
+        for root in (
+            boundary.paths.runs_root,
+            boundary.paths.uploads_root,
+            boundary.paths.artifacts_root,
+            boundary.paths.logs_root,
+        )
+        if root is not None
+    )
+    if any(_path_is_under(path, root) for root in active_roots):
+        return None
+
+    try:
+        workspace_root = boundary.paths.hermes_home.resolve()
+        rel = path.resolve().relative_to(workspace_root / "sessions")
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+    if len(rel.parts) >= 2 and rel.parts[1] in {"runs", "uploads", "artifacts", "logs"}:
+        return (
+            f"Access denied: {display_path} targets a different Semantier "
+            "session output root. Governed session file references must use "
+            "the active session's runs, uploads, artifacts, or logs roots."
+        )
+    return None
+
+
 def is_write_denied(path: str) -> bool:
     """Return True if path is blocked by the write denylist or safe root."""
     home = os.path.realpath(os.path.expanduser("~"))
@@ -424,6 +470,9 @@ def get_read_block_error(path: str) -> Optional[str]:
 
     boundary_active, read_roots = _boundary_read_roots()
     if boundary_active:
+        session_output_error = _active_session_output_read_error(resolved, path)
+        if session_output_error:
+            return session_output_error
         if any(_path_is_under(resolved, root) for root in read_roots):
             return None
         return (

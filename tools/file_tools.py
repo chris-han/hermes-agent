@@ -291,7 +291,52 @@ def _resolve_path_for_task(filepath: str, task_id: str = "default") -> Path:
     p = Path(_expand_tilde(filepath))
     if p.is_absolute():
         return p.resolve()
+    boundary_path = _resolve_execution_boundary_relative_path(p)
+    if boundary_path is not None:
+        return boundary_path
     return (_resolve_base_dir(task_id) / p).resolve()
+
+
+def _resolve_execution_boundary_relative_path(path: Path) -> Path | None:
+    """Resolve active-session folder aliases without widening tenant scope.
+
+    Semantier web sessions keep ``TERMINAL_CWD`` at the workspace root while
+    session uploads/artifacts live under ``sessions/<session_id>/``. Models and
+    UI hints commonly use ``uploads/foo.md``. Treat only the first path segment
+    as a governed alias and resolve it through the active execution boundary so
+    ``uploads/...`` cannot escape into a sibling workspace or host-global path.
+    """
+    if path.is_absolute() or not path.parts:
+        return None
+    first = path.parts[0]
+    if first in {".", ".."}:
+        return None
+    try:
+        from gateway.execution_boundary import current_execution_boundary
+
+        boundary = current_execution_boundary()
+    except Exception:
+        return None
+    if boundary is None:
+        return None
+
+    roots = {
+        "runs": boundary.paths.runs_root,
+        "uploads": boundary.paths.uploads_root,
+        "artifacts": boundary.paths.artifacts_root,
+        "logs": boundary.paths.logs_root,
+    }
+    if first not in roots:
+        return None
+    root = roots[first]
+    if root is None:
+        raise ValueError(f"{first} root is not available in the active execution boundary")
+    candidate = (root / Path(*path.parts[1:])).resolve()
+    try:
+        candidate.relative_to(Path(root).resolve())
+    except ValueError:
+        raise ValueError(f"{first} path escaped the active session root")
+    return candidate
 
 
 def _path_resolution_warning(filepath: str, resolved: Path, task_id: str = "default") -> str | None:
@@ -1038,7 +1083,7 @@ def read_file_tool(path: str, offset: int = 1, limit: int = 500, task_id: str = 
 
         # ── Perform the read ──────────────────────────────────────────
         file_ops = _get_file_ops(task_id)
-        result = file_ops.read_file(path, offset, limit)
+        result = file_ops.read_file(resolved_str, offset, limit)
         result_dict = result.to_dict()
 
         # ── Character-count guard ─────────────────────────────────────
@@ -1094,7 +1139,7 @@ def read_file_tool(path: str, offset: int = 1, limit: int = 500, task_id: str = 
             # reset its hit counter.  (File either changed or stat failed
             # earlier and we fell through.)
             task_data["dedup_hits"].pop(dedup_key, None)
-            task_data["read_history"].add((path, offset, limit))
+            task_data["read_history"].add((resolved_str, offset, limit))
             if task_data["last_key"] == read_key:
                 task_data["consecutive"] += 1
             else:
@@ -1619,9 +1664,14 @@ def search_tool(pattern: str, target: str = "content", path: str = ".",
                 "already_searched": count,
             }, ensure_ascii=False)
 
+        resolved_path = _resolve_path_for_task(path, task_id)
+        block_error = get_read_block_error(str(resolved_path))
+        if block_error:
+            return json.dumps({"error": block_error}, ensure_ascii=False)
+
         file_ops = _get_file_ops(task_id)
         result = file_ops.search(
-            pattern=pattern, path=path, target=target, file_glob=file_glob,
+            pattern=pattern, path=str(resolved_path), target=target, file_glob=file_glob,
             limit=limit, offset=offset, output_mode=output_mode, context=context
         )
         if hasattr(result, 'matches'):

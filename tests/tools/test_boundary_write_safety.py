@@ -10,6 +10,7 @@ from gateway.execution_boundary import (
 )
 from tools.file_tools import write_file_tool
 from tools.file_tools import read_file_tool
+from tools.file_tools import search_tool
 
 
 def _boundary(tmp_path, *, with_roots: bool = True) -> ExecutionBoundary:
@@ -82,6 +83,64 @@ def test_boundary_allows_workspace_read(tmp_path):
         result = json.loads(read_file_tool(str(target)))
 
     assert "ok" in result["content"]
+
+
+def test_boundary_resolves_session_upload_alias_for_read(tmp_path):
+    upload = tmp_path / "workspace" / "sessions" / "session-a" / "uploads" / "report (6).md"
+    upload.parent.mkdir(parents=True)
+    upload.write_text("uploaded report\n")
+
+    with bind_execution_boundary(_boundary(tmp_path)):
+        result = json.loads(read_file_tool("uploads/report (6).md"))
+
+    assert result.get("error") is None
+    assert "uploaded report" in result["content"]
+
+
+def test_boundary_resolves_session_upload_alias_for_search(tmp_path):
+    upload = tmp_path / "workspace" / "sessions" / "session-a" / "uploads" / "report.md"
+    upload.parent.mkdir(parents=True)
+    upload.write_text("needle in upload\n")
+
+    with bind_execution_boundary(_boundary(tmp_path)):
+        result = json.loads(search_tool("needle", path="uploads"))
+
+    assert result.get("error") is None
+    assert result["total_count"] == 1
+    assert result["matches"][0]["path"].endswith("report.md")
+
+
+def test_boundary_upload_alias_escape_fails_closed(tmp_path):
+    sibling = tmp_path / "workspace" / "sessions" / "session-b" / "uploads" / "secret.md"
+    sibling.parent.mkdir(parents=True)
+    sibling.write_text("other session\n")
+
+    with bind_execution_boundary(_boundary(tmp_path)):
+        result = json.loads(read_file_tool("uploads/../session-b/uploads/secret.md"))
+
+    assert "escaped the active session root" in result["error"]
+
+
+def test_boundary_denies_direct_read_of_other_session_output_root(tmp_path):
+    sibling = tmp_path / "workspace" / "sessions" / "session-b" / "uploads" / "secret.md"
+    sibling.parent.mkdir(parents=True)
+    sibling.write_text("other session\n")
+
+    with bind_execution_boundary(_boundary(tmp_path)):
+        result = json.loads(read_file_tool("sessions/session-b/uploads/secret.md"))
+
+    assert "different Semantier session output root" in result["error"]
+
+
+def test_boundary_denies_search_of_other_session_output_root(tmp_path):
+    sibling = tmp_path / "workspace" / "sessions" / "session-b" / "uploads" / "secret.md"
+    sibling.parent.mkdir(parents=True)
+    sibling.write_text("other session\n")
+
+    with bind_execution_boundary(_boundary(tmp_path)):
+        result = json.loads(search_tool("other", path="sessions/session-b/uploads"))
+
+    assert "different Semantier session output root" in result["error"]
 
 
 def test_boundary_allows_reviewed_shared_runtime_asset_reads(monkeypatch, tmp_path):
