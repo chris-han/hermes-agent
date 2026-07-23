@@ -167,6 +167,31 @@ def test_same_tool_varying_args_warns_by_default_without_halting():
     assert controller.halt_decision is None
 
 
+def test_non_recoverable_skill_manage_failures_halt_by_default():
+    controller = ToolCallGuardrailController(
+        ToolCallGuardrailConfig(same_tool_failure_warn_after=2)
+    )
+
+    first = controller.after_call(
+        "skill_manage",
+        {"action": "update", "name": "missing-skill"},
+        '{"success":false,"error":"Skill not found"}',
+        failed=True,
+    )
+    second = controller.after_call(
+        "skill_manage",
+        {"action": "update", "name": "another-missing-skill"},
+        '{"success":false,"error":"Skill not found"}',
+        failed=True,
+    )
+
+    assert first.action == "allow"
+    assert second.action == "halt"
+    assert second.code == "non_recoverable_tool_failure_halt"
+    assert second.count == 2
+    assert controller.halt_decision == second
+
+
 def test_hard_stop_enabled_halts_same_tool_varying_args_failure_streak():
     controller = ToolCallGuardrailController(
         ToolCallGuardrailConfig(

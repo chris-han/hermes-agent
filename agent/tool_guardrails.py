@@ -59,14 +59,21 @@ MUTATING_TOOL_NAMES = frozenset(
     }
 )
 
+NON_RECOVERABLE_FAILURE_TOOL_NAMES = frozenset(
+    {
+        "skill_manage",
+    }
+)
+
 
 @dataclass(frozen=True)
 class ToolCallGuardrailConfig:
     """Thresholds for per-turn tool-call loop detection.
 
     Warnings are enabled by default and never prevent tool execution. Hard stops
-    are explicit opt-in so interactive CLI/TUI sessions get a gentle nudge unless
-    the user enables circuit-breaker behavior in config.yaml.
+    are explicit opt-in for general tool use so interactive CLI/TUI sessions get
+    a gentle nudge unless the user enables circuit-breaker behavior in
+    config.yaml. Non-recoverable tool classes can still halt by default.
     """
 
     warnings_enabled: bool = True
@@ -77,6 +84,9 @@ class ToolCallGuardrailConfig:
     same_tool_failure_halt_after: int = 8
     no_progress_warn_after: int = 2
     no_progress_block_after: int = 5
+    non_recoverable_failure_tools: frozenset[str] = field(
+        default_factory=lambda: NON_RECOVERABLE_FAILURE_TOOL_NAMES
+    )
     idempotent_tools: frozenset[str] = field(default_factory=lambda: IDEMPOTENT_TOOL_NAMES)
     mutating_tools: frozenset[str] = field(default_factory=lambda: MUTATING_TOOL_NAMES)
 
@@ -302,6 +312,25 @@ class ToolCallGuardrailController:
 
             same_count = self._same_tool_failure_counts.get(tool_name, 0) + 1
             self._same_tool_failure_counts[tool_name] = same_count
+
+            if (
+                tool_name in self.config.non_recoverable_failure_tools
+                and same_count >= self.config.same_tool_failure_warn_after
+            ):
+                decision = ToolGuardrailDecision(
+                    action="halt",
+                    code="non_recoverable_tool_failure_halt",
+                    message=(
+                        f"Stopped {tool_name}: it failed {same_count} times this turn. "
+                        "This failure is not expected to recover by retrying the same "
+                        "tool; stop using it in this turn and choose a different path."
+                    ),
+                    tool_name=tool_name,
+                    count=same_count,
+                    signature=signature,
+                )
+                self._halt_decision = decision
+                return decision
 
             if self.config.hard_stop_enabled and same_count >= self.config.same_tool_failure_halt_after:
                 decision = ToolGuardrailDecision(

@@ -272,6 +272,9 @@ def generate_hermes_tools_module(enabled_tools: List[str],
                    ``"file"`` for file-based RPC (remote backends).
     """
     tools_to_generate = sorted(SANDBOX_ALLOWED_TOOLS & set(enabled_tools))
+    disabled_tools = sorted(
+        (SANDBOX_ALLOWED_TOOLS - set(tools_to_generate)) & set(_TOOL_STUBS)
+    )
 
     stub_functions = []
     export_names = []
@@ -283,6 +286,13 @@ def generate_hermes_tools_module(enabled_tools: List[str],
             f"def {func_name}({sig}):\n"
             f"    {doc}\n"
             f"    return _call({func_name!r}, {args_expr})\n"
+        )
+        export_names.append(func_name)
+    for tool_name in disabled_tools:
+        func_name, sig, _doc, _args_expr = _TOOL_STUBS[tool_name]
+        stub_functions.append(
+            f"def {func_name}({sig}):\n"
+            f"    return {{'error': {func_name!r} + ' is not available in this session'}}\n"
         )
         export_names.append(func_name)
 

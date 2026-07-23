@@ -40,6 +40,7 @@ from tools.code_execution_tool import (
     _resolve_child_python,
     build_execute_code_schema,
     execute_code,
+    generate_hermes_tools_module,
 )
 
 
@@ -263,6 +264,17 @@ class TestModeAwareSchema(unittest.TestCase):
         with _mock_mode("project"):
             desc = build_execute_code_schema()["description"]
             self.assertIn("session", desc)
+
+    def test_disabled_sandbox_tool_import_returns_structured_error(self):
+        namespace = {}
+        exec(generate_hermes_tools_module(["read_file"]), namespace)
+
+        result = namespace["web_search"]("query")
+
+        self.assertEqual(
+            result,
+            {"error": "web_search is not available in this session"},
+        )
 
 
 # ---------------------------------------------------------------------------
