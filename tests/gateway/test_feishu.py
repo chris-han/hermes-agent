@@ -575,6 +575,31 @@ class TestFeishuAdapterMessaging(unittest.TestCase):
         self.assertEqual(info["type"], "group")
 
 class TestAdapterModule(unittest.TestCase):
+    def test_check_requirements_lazy_installs_when_websockets_missing(self):
+        import plugins.platforms.feishu.adapter as feishu_adapter
+
+        with (
+            patch.object(feishu_adapter, "FEISHU_AVAILABLE", True),
+            patch.object(feishu_adapter, "FEISHU_WEBSOCKET_AVAILABLE", False),
+            patch("tools.lazy_deps.ensure_and_bind", return_value=True) as ensure_and_bind,
+        ):
+            self.assertTrue(feishu_adapter.check_feishu_requirements())
+
+        ensure_and_bind.assert_called_once()
+        self.assertEqual(ensure_and_bind.call_args.args[0], "platform.feishu")
+
+    def test_check_requirements_skips_lazy_install_when_websocket_ready(self):
+        import plugins.platforms.feishu.adapter as feishu_adapter
+
+        with (
+            patch.object(feishu_adapter, "FEISHU_AVAILABLE", True),
+            patch.object(feishu_adapter, "FEISHU_WEBSOCKET_AVAILABLE", True),
+            patch("tools.lazy_deps.ensure_and_bind") as ensure_and_bind,
+        ):
+            self.assertTrue(feishu_adapter.check_feishu_requirements())
+
+        ensure_and_bind.assert_not_called()
+
     def test_load_settings_uses_sdk_defaults_for_invalid_ws_reconnect_values(self):
         from plugins.platforms.feishu.adapter import FeishuAdapter
 

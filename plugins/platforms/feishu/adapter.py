@@ -1496,13 +1496,15 @@ def _run_official_feishu_ws_client(ws_client: Any, adapter: Any) -> None:
 def check_feishu_requirements() -> bool:
     """Check if Feishu/Lark dependencies are available.
 
-    Lazy-installs lark-oapi via ``tools.lazy_deps.ensure("platform.feishu")``
-    on first call if not present. Rebinds all module-level globals on success.
+    Lazy-installs Feishu websocket dependencies via
+    ``tools.lazy_deps.ensure("platform.feishu")`` on first call if not
+    present. Rebinds all module-level globals on success.
     """
-    if FEISHU_AVAILABLE:
+    if FEISHU_AVAILABLE and FEISHU_WEBSOCKET_AVAILABLE:
         return True
 
     def _import():
+        import websockets
         import lark_oapi as lark
         from lark_oapi.api.application.v6 import GetApplicationRequest
         from lark_oapi.api.im.v1 import (
@@ -1549,6 +1551,8 @@ def check_feishu_requirements() -> bool:
             "EventDispatcherHandler": EventDispatcherHandler,
             "FeishuWSClient": FeishuWSClient,
             "FEISHU_AVAILABLE": True,
+            "websockets": websockets,
+            "FEISHU_WEBSOCKET_AVAILABLE": True,
         }
 
     from tools.lazy_deps import ensure_and_bind
