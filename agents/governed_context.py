@@ -1,30 +1,68 @@
-"""Minimal governed-context helpers for non-Semantier checkouts."""
+"""Semantier-bound governed-context bridge.
+
+This Hermes Agent checkout is embedded in the Semantier runtime repository.
+Governed context authority belongs to the parent Semantier implementation at
+``src/agents/governed_context.py``. Missing parent runtime code is a packaging
+error, not a standalone fallback mode.
+"""
 
 from __future__ import annotations
 
-import re
+import importlib.util
+from pathlib import Path
+import sys
 from typing import Any
 
-_ANALYTICS_PATTERNS = (
-    re.compile(
-        r"(analytics|analysis|profit|margin|revenue|cost|forecast|trend|sql|query|dashboard|kpi)",
-        re.IGNORECASE,
-    ),
-    re.compile(r"(成本|利润率|趋势|营收|收入|毛利|分析|报表|指标|查询|数据)"),
+
+def _load_semantier_governed_context() -> object:
+    repo_root = Path(__file__).resolve().parents[2]
+    repo_agents_root = repo_root / "src" / "agents"
+    repo_governed_context = repo_agents_root / "governed_context.py"
+    if not repo_governed_context.exists():
+        raise RuntimeError(
+            "Semantier governed context implementation is required at "
+            f"{repo_governed_context}"
+        )
+    agents_pkg = sys.modules.get("agents")
+    package_path = getattr(agents_pkg, "__path__", None)
+    if package_path is not None and str(repo_agents_root) not in package_path:
+        package_path.append(str(repo_agents_root))
+    spec = importlib.util.spec_from_file_location(
+        "_semantier_repo_governed_context",
+        repo_governed_context,
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(
+            "Unable to load Semantier governed context implementation from "
+            f"{repo_governed_context}"
+        )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_SEMANTIER_GOVERNED_CONTEXT = _load_semantier_governed_context()
+
+build_governed_runtime_context_prompt = getattr(
+    _SEMANTIER_GOVERNED_CONTEXT,
+    "build_governed_runtime_context_prompt",
+)
+is_analytics_query_message = getattr(
+    _SEMANTIER_GOVERNED_CONTEXT,
+    "is_analytics_query_message",
+)
+resolve_governed_activation_context = getattr(
+    _SEMANTIER_GOVERNED_CONTEXT,
+    "resolve_governed_activation_context",
+)
+resolve_user_id_for_workspace = getattr(
+    _SEMANTIER_GOVERNED_CONTEXT,
+    "resolve_user_id_for_workspace",
 )
 
-
-def is_analytics_query_message(user_message: str) -> bool:
-    text = str(user_message or "").strip()
-    if not text:
-        return False
-    return any(pattern.search(text) for pattern in _ANALYTICS_PATTERNS)
-
-
-def build_governed_runtime_context_prompt(source: Any, user_message: str) -> str | None:
-    if not is_analytics_query_message(user_message):
-        return None
-    return (
-        "Governed analytics intent detected. Prefer governed query surfaces and "
-        "avoid shell or code-execution detours when answering this request."
-    )
+__all__ = [
+    "build_governed_runtime_context_prompt",
+    "is_analytics_query_message",
+    "resolve_governed_activation_context",
+    "resolve_user_id_for_workspace",
+]
