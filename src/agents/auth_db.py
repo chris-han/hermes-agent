@@ -50,8 +50,17 @@ def _quarantine_invalid_auth_db(path: Path) -> Path | None:
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(auth_db_path()))
+    conn = sqlite3.connect(str(auth_db_path()), timeout=30.0)
     conn.row_factory = sqlite3.Row
+    # WAL lets /auth/context readers proceed while an unrelated writer (e.g.
+    # embedded gateway cron) holds the DB, preventing transient
+    # "database is locked" errors from being misread as an expired session.
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=30000")
+        conn.execute("PRAGMA synchronous=NORMAL")
+    except sqlite3.DatabaseError:
+        pass
     return conn
 
 
