@@ -681,6 +681,26 @@ def _openai_error(message: str, err_type: str = "invalid_request_error", param: 
     }
 
 
+def _format_agent_failure_message(result: Dict[str, Any]) -> str:
+    """Return the clearest user-facing failure detail from an agent result."""
+    final_response = str(result.get("final_response") or "").strip()
+    error = str(result.get("error") or "").strip()
+    failure_reason = str(result.get("failure_reason") or "").strip().lower()
+    message = final_response or error or "agent run failed"
+    message_lower = message.lower()
+    timeout_markers = (
+        "timeout",
+        "timed out",
+        "request timed out",
+        "read timeout",
+        "connection timeout",
+    )
+    if failure_reason == "timeout" or any(marker in message_lower for marker in timeout_markers):
+        if not message_lower.startswith("llm provider timeout"):
+            return f"LLM provider timeout: {message}"
+    return message
+
+
 if AIOHTTP_AVAILABLE:
     @web.middleware
     async def body_limit_middleware(request, handler):
@@ -4463,7 +4483,7 @@ class APIServerAdapter(BasePlatformAdapter):
                 # 401/400 return failed=True instead of raising, so the except
                 # block below never fires — issue #15561).
                 if isinstance(result, dict) and result.get("failed"):
-                    error_msg = result.get("error") or "agent run failed"
+                    error_msg = _format_agent_failure_message(result)
                     q.put_nowait({
                         "event": "run.failed",
                         "run_id": run_id,
