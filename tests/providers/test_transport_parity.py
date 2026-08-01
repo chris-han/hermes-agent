@@ -99,7 +99,21 @@ class TestKimiParity:
             reasoning_config={"enabled": True},
         )
         assert kw["extra_body"]["thinking"] == {"type": "enabled"}
-        assert kw["reasoning_effort"] == "medium"
+        assert kw["reasoning_effort"] == "high"
+
+    @pytest.mark.parametrize(
+        ("effort", "expected"),
+        [("medium", "high"), ("low", "low"), ("xhigh", "max")],
+    )
+    def test_k3_reasoning_effort_aliases(self, transport, effort, expected):
+        kw = transport.build_kwargs(
+            model="k3",
+            messages=_simple_messages(),
+            tools=None,
+            provider_profile=get_provider_profile("kimi-coding"),
+            reasoning_config={"enabled": True, "effort": effort},
+        )
+        assert kw["reasoning_effort"] == expected
 
     def test_thinking_disabled(self, transport):
         kw = transport.build_kwargs(
@@ -132,7 +146,7 @@ class TestKimiParity:
             provider_profile=get_provider_profile("kimi-coding"),
             reasoning_config={"enabled": True},
         )
-        assert kw["reasoning_effort"] == "medium"
+        assert kw["reasoning_effort"] == "high"
         assert kw["extra_body"]["thinking"] == {"type": "enabled"}
 
 

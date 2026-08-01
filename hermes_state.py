@@ -15,6 +15,7 @@ Key design decisions:
 """
 
 import json
+import hashlib
 import logging
 import os
 import random
@@ -23,6 +24,7 @@ import shutil
 import sqlite3
 import threading
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -88,6 +90,100 @@ def _coerce_message_timestamp(value: Any) -> float:
                 pass
     return time.time()
 
+
+def _uuid7_from_unix_ms_entropy(unix_ms: int, entropy: int) -> str:
+    value = (unix_ms & ((1 << 48) - 1)) << 80
+    value |= 0x7 << 76
+    value |= ((entropy >> 62) & 0xFFF) << 64
+    value |= 0x2 << 62
+    value |= entropy & ((1 << 62) - 1)
+    return str(uuid.UUID(int=value))
+
+
+def _new_message_uuid7() -> str:
+    entropy = uuid.uuid4().int & ((1 << 74) - 1)
+    return _uuid7_from_unix_ms_entropy(int(time.time() * 1000), entropy)
+
+
+def _legacy_message_uuid7(
+    session_id: str,
+    row_id: int,
+    timestamp: float,
+    sequence: int,
+) -> str:
+    seed = f"{session_id}\0{row_id}\0{timestamp:.6f}\0{sequence}".encode("utf-8")
+    digest = hashlib.sha256(seed).digest()
+    entropy = int.from_bytes(digest, "big") & ((1 << 74) - 1)
+    return _uuid7_from_unix_ms_entropy(int(timestamp * 1000), entropy)
+
+
+def _backfill_stable_message_identity(cursor: sqlite3.Cursor) -> None:
+    rows = cursor.execute(
+        """
+        SELECT id, session_id, timestamp
+        FROM messages
+        WHERE message_id IS NULL OR message_sequence IS NULL
+        ORDER BY session_id, timestamp, id
+        """
+    ).fetchall()
+    if not rows:
+        return
+
+    tie_rows = cursor.execute(
+        """
+        SELECT session_id, timestamp
+        FROM messages
+        GROUP BY session_id, timestamp
+        HAVING COUNT(*) > 1
+        """
+    ).fetchall()
+    tie_keys = {
+        (
+            row["session_id"] if isinstance(row, sqlite3.Row) else row[0],
+            row["timestamp"] if isinstance(row, sqlite3.Row) else row[1],
+        )
+        for row in tie_rows
+    }
+    next_sequence_by_session = {
+        row["session_id"] if isinstance(row, sqlite3.Row) else row[0]: int(
+            row["max_sequence"] if isinstance(row, sqlite3.Row) else row[1]
+        )
+        for row in cursor.execute(
+            """
+            SELECT session_id, COALESCE(MAX(message_sequence), 0) AS max_sequence
+            FROM messages
+            GROUP BY session_id
+            """
+        ).fetchall()
+    }
+
+    for row in rows:
+        row_id = int(row["id"] if isinstance(row, sqlite3.Row) else row[0])
+        session_id = row["session_id"] if isinstance(row, sqlite3.Row) else row[1]
+        timestamp = float(row["timestamp"] if isinstance(row, sqlite3.Row) else row[2])
+        next_sequence_by_session[session_id] = next_sequence_by_session.get(session_id, 0) + 1
+        sequence = next_sequence_by_session[session_id]
+        status = (
+            "legacy_timestamp_tie"
+            if (session_id, timestamp) in tie_keys
+            else "legacy_backfilled"
+        )
+        cursor.execute(
+            """
+            UPDATE messages
+            SET message_id = COALESCE(message_id, ?),
+                message_sequence = COALESCE(message_sequence, ?),
+                message_identity_status = COALESCE(message_identity_status, ?)
+            WHERE id = ?
+            """,
+            (
+                _legacy_message_uuid7(session_id, row_id, timestamp, sequence),
+                sequence,
+                status,
+                row_id,
+            ),
+        )
+
 T = TypeVar("T")
 
 def _default_db_path() -> Path:
@@ -99,7 +195,7 @@ def _default_db_path() -> Path:
 
 DEFAULT_DB_PATH = _default_db_path()
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 # ---------------------------------------------------------------------------
 # WAL-compatibility fallback
@@ -393,7 +489,10 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id TEXT,
     session_id TEXT NOT NULL REFERENCES sessions(id),
+    message_sequence INTEGER,
+    message_identity_status TEXT,
     role TEXT NOT NULL,
     content TEXT,
     tool_call_id TEXT,
@@ -430,6 +529,10 @@ CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source);
 CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, timestamp);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_session_message_id
+    ON messages(session_id, message_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_session_message_sequence
+    ON messages(session_id, message_sequence);
 CREATE INDEX IF NOT EXISTS idx_messages_platform_message
     ON messages(session_id, platform_message_id);
 """
@@ -854,6 +957,8 @@ class SessionDB:
                     "COALESCE(tool_calls, '') "
                     "FROM messages"
                 )
+            if current_version < 13:
+                _backfill_stable_message_identity(cursor)
             if current_version < SCHEMA_VERSION:
                 cursor.execute(
                     "UPDATE schema_version SET version = ?",
@@ -1640,6 +1745,16 @@ class SessionDB:
                 return content
         return content
 
+    @staticmethod
+    def _next_message_sequence(conn: sqlite3.Connection, session_id: str) -> int:
+        row = conn.execute(
+            "SELECT COALESCE(MAX(message_sequence), 0) AS max_sequence "
+            "FROM messages WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        max_sequence = row["max_sequence"] if isinstance(row, sqlite3.Row) else row[0]
+        return int(max_sequence or 0) + 1
+
     def append_message(
         self,
         session_id: str,
@@ -1689,14 +1804,19 @@ class SessionDB:
             num_tool_calls = len(tool_calls) if isinstance(tool_calls, list) else 1
 
         def _do(conn):
+            message_sequence = self._next_message_sequence(conn, session_id)
             cursor = conn.execute(
-                """INSERT INTO messages (session_id, role, content, tool_call_id,
+                """INSERT INTO messages (message_id, session_id, message_sequence,
+                   message_identity_status, role, content, tool_call_id,
                    tool_calls, tool_name, timestamp, token_count, finish_reason,
                    reasoning, reasoning_content, reasoning_details, codex_reasoning_items,
                    codex_message_items, platform_message_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
+                    _new_message_uuid7(),
                     session_id,
+                    message_sequence,
+                    "stable",
                     role,
                     stored_content,
                     tool_call_id,
@@ -1743,6 +1863,21 @@ class SessionDB:
                 (session_id, platform_message_id),
             ).fetchone()
         return row is not None
+
+    def get_message_identity(self, row_id: int) -> dict[str, Any] | None:
+        """Return the stable boundary identity for a persisted message row."""
+        if row_id is None:
+            return None
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT id, message_id, session_id, message_sequence,
+                       message_identity_status, role, content, finish_reason
+                FROM messages WHERE id=?
+                """,
+                (row_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
 
     def try_acquire_compression_lock(self, session_id: str, holder: str) -> bool:
         """Atomically acquire the per-session compression lock if free."""
@@ -1804,6 +1939,7 @@ class SessionDB:
             now_ts = time.time()
             total_messages = 0
             total_tool_calls = 0
+            next_message_sequence = 1
             for msg in messages:
                 role = msg.get("role", "unknown")
                 tool_calls = msg.get("tool_calls")
@@ -1825,15 +1961,21 @@ class SessionDB:
                     json.dumps(codex_message_items) if codex_message_items else None
                 )
                 tool_calls_json = json.dumps(tool_calls) if tool_calls else None
+                message_sequence = msg.get("message_sequence") or next_message_sequence
+                next_message_sequence = max(next_message_sequence, int(message_sequence) + 1)
 
                 conn.execute(
-                    """INSERT INTO messages (session_id, role, content, tool_call_id,
+                    """INSERT INTO messages (message_id, session_id, message_sequence,
+                       message_identity_status, role, content, tool_call_id,
                        tool_calls, tool_name, timestamp, token_count, finish_reason,
                        reasoning, reasoning_content, reasoning_details, codex_reasoning_items,
                        codex_message_items)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
+                        msg.get("message_id") or _new_message_uuid7(),
                         session_id,
+                        message_sequence,
+                        msg.get("message_identity_status") or "stable",
                         role,
                         self._encode_content(msg.get("content")),
                         msg.get("tool_call_id"),
@@ -1875,6 +2017,7 @@ class SessionDB:
             now_ts = time.time()
             total_messages = 0
             total_tool_calls = 0
+            next_message_sequence = self._next_message_sequence(conn, session_id)
             for msg in messages:
                 role = msg.get("role", "unknown")
                 tool_calls = msg.get("tool_calls")
@@ -1887,13 +2030,17 @@ class SessionDB:
                     msg.get("codex_message_items") if role == "assistant" else None
                 )
                 conn.execute(
-                    """INSERT INTO messages (session_id, role, content, tool_call_id,
+                    """INSERT INTO messages (message_id, session_id, message_sequence,
+                       message_identity_status, role, content, tool_call_id,
                        tool_calls, tool_name, timestamp, token_count, finish_reason,
                        reasoning, reasoning_content, reasoning_details, codex_reasoning_items,
                        codex_message_items, active, compacted)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0)""",
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0)""",
                     (
+                        _new_message_uuid7(),
                         session_id,
+                        next_message_sequence,
+                        "stable",
                         role,
                         self._encode_content(msg.get("content")),
                         msg.get("tool_call_id"),
@@ -1909,6 +2056,7 @@ class SessionDB:
                         json.dumps(codex_message_items) if codex_message_items else None,
                     ),
                 )
+                next_message_sequence += 1
                 total_messages += 1
                 if tool_calls is not None:
                     total_tool_calls += (

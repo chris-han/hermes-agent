@@ -235,6 +235,7 @@ def init_agent(
     checkpoint_max_total_size_mb: int = 500,
     checkpoint_max_file_size_mb: int = 10,
     pass_session_id: bool = False,
+    effective_context_sink: Optional[Callable[[dict], None]] = None,
 ):
     """
     Initialize the AI Agent.
@@ -317,6 +318,10 @@ def init_agent(
     agent.skip_context_files = skip_context_files
     agent.load_soul_identity = load_soul_identity
     agent.pass_session_id = pass_session_id
+    # Optional Semantier boundary sink. It receives only the durable Hermes
+    # message identity; tenant and authority context must be supplied by the
+    # authenticated integration layer.
+    agent._effective_context_sink = effective_context_sink
     agent._credential_pool = credential_pool
     agent.log_prefix_chars = log_prefix_chars
     agent.log_prefix = f"{log_prefix} " if log_prefix else ""

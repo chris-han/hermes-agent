@@ -101,7 +101,7 @@ class TestKimiProfileParity:
             reasoning_config=rc,
         )
         assert profile["extra_body"]["thinking"] == legacy["extra_body"]["thinking"] == {"type": "enabled"}
-        assert profile["reasoning_effort"] == legacy["reasoning_effort"] == "medium"
+        assert profile["reasoning_effort"] == legacy["reasoning_effort"] == "high"
 
 
 class TestOpenRouterProfileParity:

@@ -30,9 +30,10 @@ class KimiProfile(ProviderProfile):
         top_level = {}
 
         if not reasoning_config or not isinstance(reasoning_config, dict):
-            # No config → Kimi CLI default: thinking enabled at medium effort.
+            # K3 defaults to high effort. Kimi accepts low/high/max; medium is
+            # a compatibility alias for high in third-party clients.
             extra_body["thinking"] = {"type": "enabled"}
-            top_level["reasoning_effort"] = "medium"
+            top_level["reasoning_effort"] = "high"
             return extra_body, top_level
 
         enabled = reasoning_config.get("enabled", True)
@@ -40,14 +41,16 @@ class KimiProfile(ProviderProfile):
             extra_body["thinking"] = {"type": "disabled"}
             return extra_body, top_level
 
-        # Enabled: use a recognized explicit effort, otherwise the Kimi CLI
-        # default medium effort.
+        # K3 accepts low/high/max. Preserve common client aliases using the
+        # mapping documented by Kimi Code.
         extra_body["thinking"] = {"type": "enabled"}
         effort = (reasoning_config.get("effort") or "").strip().lower()
-        if effort in {"low", "medium", "high"}:
-            top_level["reasoning_effort"] = effort
+        if effort in {"max", "ultra", "xhigh"}:
+            top_level["reasoning_effort"] = "max"
+        elif effort in {"low", "minimum", "light"}:
+            top_level["reasoning_effort"] = "low"
         else:
-            top_level["reasoning_effort"] = "medium"
+            top_level["reasoning_effort"] = "high"
 
         return extra_body, top_level
 

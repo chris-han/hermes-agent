@@ -426,6 +426,7 @@ class AIAgent:
         checkpoint_max_total_size_mb: int = 500,
         checkpoint_max_file_size_mb: int = 10,
         pass_session_id: bool = False,
+        effective_context_sink: Optional[Callable[[dict], None]] = None,
     ):
         """Forwarder — see ``agent.agent_init.init_agent``."""
         from agent.agent_init import init_agent
@@ -501,6 +502,7 @@ class AIAgent:
             checkpoint_max_total_size_mb=checkpoint_max_total_size_mb,
             checkpoint_max_file_size_mb=checkpoint_max_file_size_mb,
             pass_session_id=pass_session_id,
+            effective_context_sink=effective_context_sink,
         )
 
     def _get_session_db_for_recall(self):
@@ -1682,7 +1684,7 @@ class AIAgent:
                     ]
                 elif isinstance(msg.get("tool_calls"), list):
                     tool_calls_data = msg["tool_calls"]
-                self._session_db.append_message(
+                persisted_row_id = self._session_db.append_message(
                     session_id=self.session_id,
                     role=role,
                     content=content,
@@ -1697,6 +1699,14 @@ class AIAgent:
                     codex_message_items=msg.get("codex_message_items") if role == "assistant" else None,
                     timestamp=msg.get("timestamp"),
                 )
+                sink = getattr(self, "_effective_context_sink", None)
+                if sink is not None:
+                    try:
+                        identity = self._session_db.get_message_identity(persisted_row_id)
+                        if identity is not None:
+                            sink(identity)
+                    except Exception:
+                        logger.warning("Effective-context message sink failed", exc_info=True)
                 flushed_ids.add(msg_id)
             self._last_flushed_db_idx = len(messages)
         except Exception as e:
