@@ -84,3 +84,35 @@ def test_archive_and_compact_allocates_new_monotonic_identity(tmp_path):
     assert [m["message_sequence"] for m in active] == [3, 4]
     assert [m["message_sequence"] for m in all_messages] == [1, 2, 3, 4]
     assert all(UUIDV7_RE.match(m["message_id"]) for m in all_messages)
+
+
+def test_branch_session_copies_inclusive_stable_transcript_idempotently(tmp_path):
+    db = SessionDB(tmp_path / "state.db")
+    db.create_session("source", source="cli")
+    db.append_message("source", role="user", content="one")
+    db.append_message("source", role="assistant", content="two")
+    db.append_message("source", role="user", content="later")
+    boundary = db.get_messages("source")[1]
+
+    result = db.branch_session_at_message(
+        "source",
+        "child",
+        title="Branch",
+        branch_point_message_id=boundary["message_id"],
+        branch_point_sequence=boundary["message_sequence"],
+    )
+    assert result["message_count"] == 2
+    child = db.get_messages("child")
+    assert [message["content"] for message in child] == ["one", "two"]
+    assert [message["message_id"] for message in child] == [
+        message["message_id"] for message in db.get_messages("source")[:2]
+    ]
+
+    replay = db.branch_session_at_message(
+        "source",
+        "child",
+        title="Branch",
+        branch_point_message_id=boundary["message_id"],
+        branch_point_sequence=boundary["message_sequence"],
+    )
+    assert replay["idempotent"] is True

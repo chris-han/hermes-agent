@@ -461,6 +461,12 @@ CREATE TABLE IF NOT EXISTS sessions (
     model_config TEXT,
     system_prompt TEXT,
     parent_session_id TEXT,
+    lineage_root_id TEXT,
+    branch_point_message_id TEXT,
+    branch_point_sequence INTEGER,
+    branched_at REAL,
+    branch_idempotency_key TEXT,
+    branch_request_hash TEXT,
     started_at REAL NOT NULL,
     ended_at REAL,
     end_reason TEXT,
@@ -1023,6 +1029,141 @@ class SessionDB:
         """Create a new session record. Returns the session_id."""
         self._insert_session_row(session_id, source, **kwargs)
         return session_id
+
+    def branch_session_at_message(
+        self,
+        source_session_id: str,
+        child_session_id: str,
+        *,
+        title: str,
+        branch_point_message_id: str,
+        branch_point_sequence: int,
+        idempotency_key: str | None = None,
+        request_hash: str | None = None,
+    ) -> Dict[str, Any]:
+        """Create an inclusive child transcript at a stable assistant boundary.
+
+        The source remains readable while the child receives immutable message
+        identities and metadata through one transaction. Repeating the same
+        child request is idempotent only when its source, cursor, and title
+        match exactly.
+        """
+        if not source_session_id or not child_session_id or source_session_id == child_session_id:
+            raise ValueError("INVALID_BRANCH_SESSION")
+        if not isinstance(branch_point_sequence, int) or branch_point_sequence < 1:
+            raise ValueError("BRANCH_POINT_NOT_PERSISTED")
+
+        def _do(conn):
+            source = conn.execute(
+                "SELECT * FROM sessions WHERE id = ?", (source_session_id,)
+            ).fetchone()
+            if source is None:
+                raise KeyError("SOURCE_SESSION_NOT_FOUND")
+            boundary = conn.execute(
+                """SELECT * FROM messages
+                   WHERE session_id = ? AND message_id = ?
+                     AND message_sequence = ? AND active = 1
+                   LIMIT 1""",
+                (source_session_id, branch_point_message_id, branch_point_sequence),
+            ).fetchone()
+            if boundary is None or boundary["role"] != "assistant":
+                raise KeyError("BRANCH_POINT_NOT_FOUND")
+
+            existing = conn.execute(
+                "SELECT * FROM sessions WHERE id = ?", (child_session_id,)
+            ).fetchone()
+            if existing is not None:
+                if (
+                    existing["parent_session_id"] != source_session_id
+                    or existing["branch_point_message_id"] != branch_point_message_id
+                    or existing["branch_point_sequence"] != branch_point_sequence
+                    or (existing["title"] or "") != (title or "")
+                    or (
+                        request_hash is not None
+                        and existing["branch_request_hash"] != request_hash
+                    )
+                ):
+                    raise ValueError("IDEMPOTENCY_CONFLICT")
+                copied = conn.execute(
+                    "SELECT COUNT(*) AS c FROM messages WHERE session_id = ? AND active = 1",
+                    (child_session_id,),
+                ).fetchone()["c"]
+                return {
+                    "id": child_session_id,
+                    "session_id": child_session_id,
+                    "parent_session_id": existing["parent_session_id"],
+                    "lineage_root_id": existing["lineage_root_id"],
+                    "branch_point_message_id": existing["branch_point_message_id"],
+                    "branch_point_sequence": existing["branch_point_sequence"],
+                    "message_count": int(copied),
+                    "idempotent": True,
+                }
+
+            lineage_root_id = source["lineage_root_id"] or source_session_id
+            now = time.time()
+            conn.execute(
+                """INSERT INTO sessions (
+                    id, source, user_id, model, model_config, system_prompt,
+                    parent_session_id, lineage_root_id, branch_point_message_id,
+                    branch_point_sequence, branched_at, started_at, title,
+                    branch_idempotency_key, branch_request_hash, message_count,
+                    tool_call_count
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)""",
+                (
+                    child_session_id, source["source"], source["user_id"], source["model"],
+                    source["model_config"], source["system_prompt"], source_session_id,
+                    lineage_root_id, branch_point_message_id, branch_point_sequence,
+                    now, now, title, idempotency_key, request_hash,
+                ),
+            )
+            rows = conn.execute(
+                """SELECT * FROM messages
+                   WHERE session_id = ? AND active = 1 AND message_sequence <= ?
+                   ORDER BY message_sequence""",
+                (source_session_id, branch_point_sequence),
+            ).fetchall()
+            tool_count = 0
+            # Copy the rows with explicit parameters to keep the SQL column order clear.
+            for row in rows:
+                conn.execute(
+                    """INSERT INTO messages (
+                        message_id, session_id, message_sequence, message_identity_status,
+                        role, content, tool_call_id, tool_calls, tool_name, timestamp,
+                        token_count, finish_reason, reasoning, reasoning_content,
+                        reasoning_details, codex_reasoning_items, codex_message_items,
+                        platform_message_id, active, compacted
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0)""",
+                    (
+                        row["message_id"], child_session_id, row["message_sequence"],
+                        row["message_identity_status"], row["role"], row["content"],
+                        row["tool_call_id"], row["tool_calls"], row["tool_name"], row["timestamp"],
+                        row["token_count"], row["finish_reason"], row["reasoning"],
+                        row["reasoning_content"], row["reasoning_details"],
+                        row["codex_reasoning_items"], row["codex_message_items"],
+                        row["platform_message_id"],
+                    )
+                )
+                if row["role"] == "tool" or row["tool_calls"]:
+                    try:
+                        tool_count += len(json.loads(row["tool_calls"])) if row["tool_calls"] else 1
+                    except (TypeError, json.JSONDecodeError):
+                        tool_count += 1
+            conn.execute(
+                "UPDATE sessions SET message_count = ?, tool_call_count = ? WHERE id = ?",
+                (len(rows), tool_count, child_session_id),
+            )
+            return {
+                "id": child_session_id,
+                "session_id": child_session_id,
+                "parent_session_id": source_session_id,
+                "lineage_root_id": lineage_root_id,
+                "branch_point_message_id": branch_point_message_id,
+                "branch_point_sequence": branch_point_sequence,
+                "message_count": len(rows),
+                "idempotent": False,
+            }
+
+        return self._execute_write(_do)
     def end_session(self, session_id: str, end_reason: str) -> None:
         """Mark a session as ended.
 
