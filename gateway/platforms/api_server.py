@@ -1230,6 +1230,13 @@ class APIServerAdapter(BasePlatformAdapter):
             model = gateway_run._resolve_gateway_model(user_config)
         except TypeError:
             model = gateway_run._resolve_gateway_model()
+        # Embedded Semantier API clients intentionally omit a per-request
+        # model.  Keep the API server's advertised/default model as the
+        # authoritative fallback when a profile/config loader returns an
+        # empty gateway model; otherwise the provider client emits a request
+        # without ``model`` and rejects the authenticated chat turn.
+        if not model:
+            model = self._model_name
         model_cfg = user_config.get("model") or {}
         requested_provider = None
         if isinstance(model_cfg, dict):
