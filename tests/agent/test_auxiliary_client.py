@@ -1,5 +1,6 @@
 """Tests for agent.auxiliary_client resolution chain, provider overrides, and model overrides."""
 
+import asyncio
 import json
 import logging
 import os
@@ -1159,6 +1160,75 @@ class TestCallLlmPaymentFallback:
             )
         # Fallback client should have been used
         assert fallback_client.chat.completions.create.called
+
+
+class TestCallLlmFallbackDisabled:
+    def _payment_error(self):
+        exc = Exception("Payment Required: insufficient credits")
+        exc.status_code = 402
+        return exc
+
+    def test_sync_pins_current_agent_and_does_not_fallback(self):
+        primary_client = MagicMock()
+        primary_client.chat.completions.create.side_effect = self._payment_error()
+
+        with patch(
+            "agent.auxiliary_client._resolve_task_provider_model",
+            return_value=("auto", None, None, None, None),
+        ), patch(
+            "agent.auxiliary_client._read_main_provider", return_value="alibaba"
+        ), patch(
+            "agent.auxiliary_client._read_main_model", return_value="qwen3.5-plus"
+        ), patch(
+            "agent.auxiliary_client._get_cached_client",
+            return_value=(primary_client, "qwen3.5-plus"),
+        ) as cached, patch(
+            "agent.auxiliary_client._try_payment_fallback"
+        ) as payment_fallback, patch(
+            "agent.auxiliary_client._try_main_agent_model_fallback"
+        ) as main_fallback:
+            with pytest.raises(Exception, match="Payment Required"):
+                call_llm(
+                    messages=[{"role": "user", "content": "hello"}],
+                    allow_fallback=False,
+                )
+
+        assert cached.call_args.args[:2] == ("alibaba", "qwen3.5-plus")
+        payment_fallback.assert_not_called()
+        main_fallback.assert_not_called()
+
+    def test_async_pins_current_agent_and_does_not_fallback(self):
+        primary_client = MagicMock()
+        primary_client.chat.completions.create = AsyncMock(
+            side_effect=self._payment_error()
+        )
+
+        with patch(
+            "agent.auxiliary_client._resolve_task_provider_model",
+            return_value=("auto", None, None, None, None),
+        ), patch(
+            "agent.auxiliary_client._read_main_provider", return_value="alibaba"
+        ), patch(
+            "agent.auxiliary_client._read_main_model", return_value="qwen3.5-plus"
+        ), patch(
+            "agent.auxiliary_client._get_cached_client",
+            return_value=(primary_client, "qwen3.5-plus"),
+        ) as cached, patch(
+            "agent.auxiliary_client._try_payment_fallback"
+        ) as payment_fallback, patch(
+            "agent.auxiliary_client._try_main_agent_model_fallback"
+        ) as main_fallback:
+            with pytest.raises(Exception, match="Payment Required"):
+                asyncio.run(
+                    async_call_llm(
+                        messages=[{"role": "user", "content": "hello"}],
+                        allow_fallback=False,
+                    )
+                )
+
+        assert cached.call_args.args[:2] == ("alibaba", "qwen3.5-plus")
+        payment_fallback.assert_not_called()
+        main_fallback.assert_not_called()
 
 
 class TestAuxiliaryFallbackLayering:

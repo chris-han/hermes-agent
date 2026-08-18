@@ -5600,6 +5600,7 @@ def call_llm(
     tools: list = None,
     timeout: float = None,
     extra_body: dict = None,
+    allow_fallback: bool = True,
 ) -> Any:
     """Centralized synchronous LLM call.
 
@@ -5618,6 +5619,9 @@ def call_llm(
         tools: Tool definitions (for function calling).
         timeout: Request timeout in seconds (None = read from auxiliary.{task}.timeout config).
         extra_body: Additional request body fields.
+        allow_fallback: When false, pin the call to the configured main
+            provider/model and propagate provider failures without trying
+            another provider.
 
     Returns:
         Response object with .choices[0].message.content
@@ -5627,6 +5631,13 @@ def call_llm(
     """
     resolved_provider, resolved_model, resolved_base_url, resolved_api_key, resolved_api_mode = _resolve_task_provider_model(
         task, provider, model, base_url, api_key)
+    if not allow_fallback and resolved_provider in {None, "", "auto"}:
+        resolved_provider = _read_main_provider()
+        resolved_model = resolved_model or _read_main_model()
+        if not resolved_provider or resolved_provider == "auto" or not resolved_model:
+            raise RuntimeError(
+                "Current-agent provider/model is not configured; provider fallback is disabled."
+            )
     effective_extra_body = _get_task_extra_body(task)
     effective_extra_body.update(extra_body or {})
 
@@ -5670,7 +5681,7 @@ def call_llm(
             # tasks because fallback entries may use OAuth / credential-pool
             # auth (for example openai-codex).
             _explicit = (resolved_provider or "").strip().lower()
-            if _explicit and _explicit not in {"auto", "openrouter", "custom"}:
+            if allow_fallback and _explicit and _explicit not in {"auto", "openrouter", "custom"}:
                 fb_client, fb_model, fb_label = _try_configured_fallback_for_unavailable_client(
                     task, _explicit,
                 )
@@ -5688,7 +5699,7 @@ def call_llm(
             # Pass model=None so each provider uses its own default —
             # resolved_model may be an OpenRouter-format slug that doesn't
             # work on other providers.
-            if client is None and not resolved_base_url:
+            if allow_fallback and client is None and not resolved_base_url:
                 logger.info("Auxiliary %s: provider %s unavailable, trying auto-detection chain",
                             task or "call", resolved_provider)
                 client, final_model = _get_cached_client("auto", main_runtime=main_runtime, task=task)
@@ -6019,7 +6030,7 @@ def call_llm(
             or _is_model_incompatible_error(first_err)
             or _is_invalid_aux_response_error(first_err)
         )
-        if should_fallback and (is_auto or is_capacity_error):
+        if allow_fallback and should_fallback and (is_auto or is_capacity_error):
             if _is_payment_error(first_err):
                 reason = "payment error"
                 # Resolve the actual provider label (resolved_provider may be
@@ -6179,6 +6190,7 @@ async def async_call_llm(
     tools: list = None,
     timeout: float = None,
     extra_body: dict = None,
+    allow_fallback: bool = True,
 ) -> Any:
     """Centralized asynchronous LLM call.
 
@@ -6186,6 +6198,13 @@ async def async_call_llm(
     """
     resolved_provider, resolved_model, resolved_base_url, resolved_api_key, resolved_api_mode = _resolve_task_provider_model(
         task, provider, model, base_url, api_key)
+    if not allow_fallback and resolved_provider in {None, "", "auto"}:
+        resolved_provider = _read_main_provider()
+        resolved_model = resolved_model or _read_main_model()
+        if not resolved_provider or resolved_provider == "auto" or not resolved_model:
+            raise RuntimeError(
+                "Current-agent provider/model is not configured; provider fallback is disabled."
+            )
     effective_extra_body = _get_task_extra_body(task)
     effective_extra_body.update(extra_body or {})
 
@@ -6224,7 +6243,7 @@ async def async_call_llm(
         )
         if client is None:
             _explicit = (resolved_provider or "").strip().lower()
-            if _explicit and _explicit not in {"auto", "openrouter", "custom"}:
+            if allow_fallback and _explicit and _explicit not in {"auto", "openrouter", "custom"}:
                 fb_client, fb_model, fb_label = _try_configured_fallback_for_unavailable_client(
                     task, _explicit,
                 )
@@ -6239,7 +6258,7 @@ async def async_call_llm(
                         f"was found. Set the {_explicit.upper()}_API_KEY environment "
                         f"variable, or switch to a different provider with `hermes model`."
                     )
-            if client is None and not resolved_base_url:
+            if allow_fallback and client is None and not resolved_base_url:
                 logger.info("Auxiliary %s: provider %s unavailable, trying auto-detection chain",
                             task or "call", resolved_provider)
                 client, final_model = _get_cached_client("auto", async_mode=True, main_runtime=main_runtime, task=task)
@@ -6507,7 +6526,7 @@ async def async_call_llm(
             or _is_model_incompatible_error(first_err)
             or _is_invalid_aux_response_error(first_err)
         )
-        if should_fallback and (is_auto or is_capacity_error):
+        if allow_fallback and should_fallback and (is_auto or is_capacity_error):
             if _is_payment_error(first_err):
                 reason = "payment error"
                 _mark_provider_unhealthy(

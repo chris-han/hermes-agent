@@ -14,6 +14,7 @@ import json
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -69,6 +70,32 @@ def _trusted_policy(plugin_id: str = "trusted-plugin", **overrides: Any) -> _Tru
     )
     defaults.update(overrides)
     return _TrustPolicy(plugin_id=plugin_id, **defaults)
+
+
+def test_plugin_llm_routes_through_configured_auxiliary_task():
+    llm = PluginLlm(
+        plugin_id="contextgraph",
+        policy_loader=lambda plugin_id: _TrustPolicy(plugin_id=plugin_id),
+        allow_fallback=False,
+        auxiliary_task="contextgraph_ai_ground",
+    )
+    response = _fake_response('{"results": []}')
+    response.model = "qwen3.5-plus"
+
+    with patch(
+        "agent.auxiliary_client.async_call_llm",
+        new=AsyncMock(return_value=response),
+    ) as call:
+        asyncio.run(
+            llm.acomplete_structured(
+                instructions="ground",
+                input=[PluginLlmTextInput(text="{}")],
+                json_mode=True,
+            )
+        )
+
+    assert call.await_args.kwargs["task"] == "contextgraph_ai_ground"
+    assert call.await_args.kwargs["allow_fallback"] is False
 
 
 # ---------------------------------------------------------------------------

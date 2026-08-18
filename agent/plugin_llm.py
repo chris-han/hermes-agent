@@ -611,11 +611,21 @@ class PluginLlm:
         policy_loader: Optional[Callable[[str], _TrustPolicy]] = None,
         sync_caller: Optional[Callable[..., Any]] = None,
         async_caller: Optional[Callable[..., Awaitable[Any]]] = None,
+        allow_fallback: bool = True,
+        auxiliary_task: Optional[str] = None,
     ) -> None:
+        """Create a host-owned plugin LLM facade.
+
+        ``allow_fallback=False`` pins calls to the current provider/model. It
+        is intended for governed host integrations whose persisted lineage
+        must not change providers after a quota, auth, or transport failure.
+        """
         self._plugin_id = plugin_id
         self._policy_loader = policy_loader or _resolve_trust_policy
         self._sync_caller = sync_caller
         self._async_caller = async_caller
+        self._allow_fallback = allow_fallback
+        self._auxiliary_task = (auxiliary_task or "").strip() or None
 
     # -- public sync API ----------------------------------------------------
 
@@ -947,7 +957,7 @@ class PluginLlm:
         if profile_override:
             merged_extra.setdefault("metadata", {})["auth_profile"] = profile_override
         response = call_llm(
-            task=None,
+            task=self._auxiliary_task,
             provider=provider_override,
             model=model_override,
             messages=messages,
@@ -955,6 +965,7 @@ class PluginLlm:
             max_tokens=max_tokens,
             timeout=timeout,
             extra_body=merged_extra or None,
+            allow_fallback=self._allow_fallback,
         )
         provider, model = _resolve_attribution(
             provider_override=provider_override,
@@ -991,7 +1002,7 @@ class PluginLlm:
         if profile_override:
             merged_extra.setdefault("metadata", {})["auth_profile"] = profile_override
         response = await async_call_llm(
-            task=None,
+            task=self._auxiliary_task,
             provider=provider_override,
             model=model_override,
             messages=messages,
@@ -999,6 +1010,7 @@ class PluginLlm:
             max_tokens=max_tokens,
             timeout=timeout,
             extra_body=merged_extra or None,
+            allow_fallback=self._allow_fallback,
         )
         provider, model = _resolve_attribution(
             provider_override=provider_override,
