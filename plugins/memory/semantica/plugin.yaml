@@ -1,0 +1,5 @@
+name: semantica
+version: 0.1.0
+description: "Semantica memory provider using workspace-scoped native ContextGraph and version stores."
+hooks:
+  - on_session_switch
