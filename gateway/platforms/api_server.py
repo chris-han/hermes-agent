@@ -1250,6 +1250,8 @@ class APIServerAdapter(BasePlatformAdapter):
             runtime_kwargs = gateway_run._resolve_runtime_agent_kwargs()
         reasoning_config = gateway_run.GatewayRunner._load_reasoning_config()
         enabled_toolsets = sorted(_get_platform_tools(tool_config, "api_server"))
+        if "memory" not in enabled_toolsets:
+            enabled_toolsets.append("memory")
 
         max_iterations = gateway_run._current_max_iterations()
         try:
@@ -1264,26 +1266,64 @@ class APIServerAdapter(BasePlatformAdapter):
         # same fallback behaviour as Telegram/Discord/Slack (fixes #4954).
         fallback_model = gateway_run.GatewayRunner._load_fallback_model()
 
-        agent = AIAgent(
-            model=model,
-            **runtime_kwargs,
-            max_iterations=max_iterations,
-            save_trajectories=True,
-            quiet_mode=True,
-            verbose_logging=False,
-            ephemeral_system_prompt=ephemeral_system_prompt or None,
-            enabled_toolsets=enabled_toolsets,
-            session_id=session_id,
-            platform="api_server",
-            stream_delta_callback=stream_delta_callback,
-            tool_progress_callback=tool_progress_callback,
-            tool_start_callback=tool_start_callback,
-            tool_complete_callback=tool_complete_callback,
-            session_db=self._ensure_session_db(),
-            fallback_model=fallback_model,
-            reasoning_config=reasoning_config,
-            gateway_session_key=gateway_session_key,
-        )
+        # AIAgent loads memory-provider configuration during construction.
+        # Keep the request workspace bound for that construction; discovery
+        # above alone is insufficient because its context manager has ended.
+        previous_hermes_home = os.environ.get("HERMES_HOME")
+        if request_hermes_home:
+            os.environ["HERMES_HOME"] = str(Path(request_hermes_home).resolve())
+        try:
+            agent = AIAgent(
+                model=model,
+                **runtime_kwargs,
+                max_iterations=max_iterations,
+                save_trajectories=True,
+                quiet_mode=True,
+                verbose_logging=False,
+                ephemeral_system_prompt=ephemeral_system_prompt or None,
+                enabled_toolsets=enabled_toolsets,
+                session_id=session_id,
+                platform="api_server",
+                stream_delta_callback=stream_delta_callback,
+                tool_progress_callback=tool_progress_callback,
+                tool_start_callback=tool_start_callback,
+                tool_complete_callback=tool_complete_callback,
+                session_db=self._ensure_session_db(),
+                fallback_model=fallback_model,
+                reasoning_config=reasoning_config,
+                gateway_session_key=gateway_session_key,
+            )
+        finally:
+            if previous_hermes_home is None:
+                os.environ.pop("HERMES_HOME", None)
+            else:
+                os.environ["HERMES_HOME"] = previous_hermes_home
+
+        # Workspace config can be unavailable while an authenticated API
+        # request is constructing its agent. Ensure the configured Semantica
+        # provider still reaches the chat tool surface in that case.
+        if getattr(agent, "_memory_manager", None) is None:
+            try:
+                from agent.memory_manager import MemoryManager, inject_memory_provider_tools
+                from plugins.memory.semantica import SemanticaMemoryProvider
+
+                provider = SemanticaMemoryProvider()
+                if provider is not None and provider.is_available():
+                    memory_manager = MemoryManager()
+                    memory_manager.add_provider(provider)
+                    memory_manager.initialize_all(
+                        session_id=session_id or "",
+                        hermes_home=request_hermes_home,
+                        workspace_id=gateway_session_key or session_id or "default",
+                    )
+                    agent._memory_manager = memory_manager
+                    inject_memory_provider_tools(agent)
+            except Exception:
+                logger.debug(
+                    "Semantica memory provider fallback unavailable for API session %s",
+                    session_id,
+                    exc_info=True,
+                )
         if request_hermes_home:
             try:
                 from agents.workspace_session_logs import configure_agent_workspace_session_paths
