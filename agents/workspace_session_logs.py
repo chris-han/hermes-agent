@@ -36,6 +36,9 @@ _UPSTREAM = _load_upstream_module()
 
 WorkspaceSessionRecord = _UPSTREAM.WorkspaceSessionRecord
 WorkspaceSessionResolutionError = _UPSTREAM.WorkspaceSessionResolutionError
+WorkspaceLearningOutcome = _UPSTREAM.WorkspaceLearningOutcome
+LearningOutcomeCommitResult = _UPSTREAM.LearningOutcomeCommitResult
+commit_workspace_session_learning_outcome = _UPSTREAM.commit_workspace_session_learning_outcome
 create_workspace_session_log = _UPSTREAM.create_workspace_session_log
 delete_workspace_session_log = _UPSTREAM.delete_workspace_session_log
 derive_workspace_session_transport_metadata = _UPSTREAM.derive_workspace_session_transport_metadata
@@ -50,6 +53,7 @@ configure_agent_workspace_session_paths = _UPSTREAM.configure_agent_workspace_se
 workspace_session_dir = _UPSTREAM.workspace_session_dir
 workspace_session_artifacts_dir = _UPSTREAM.workspace_session_artifacts_dir
 append_workspace_session_trajectory = _UPSTREAM.append_workspace_session_trajectory
+copy_workspace_session_trajectory_at_message = _UPSTREAM.copy_workspace_session_trajectory_at_message
 _sessions_dir = _UPSTREAM._sessions_dir
 _session_jsonl_path = _UPSTREAM._session_jsonl_path
 
@@ -164,6 +168,7 @@ def resolve_or_create_workspace_session_id(
     chat_id: str | None = None,
     thread_id: str | None = None,
     origin_user_id: str | None = None,
+    title: str | None = None,
     source: str | None = None,
     platform: str | None = None,
     adapter_key: str | None = None,
@@ -180,6 +185,7 @@ def resolve_or_create_workspace_session_id(
         chat_id=chat_id,
         thread_id=thread_id,
         origin_user_id=origin_user_id,
+        title=title,
         source=source or "api_server",
         platform=platform or "webchat",
         adapter_key=adapter_key,
@@ -205,11 +211,13 @@ def resolve_workspace_session_delivery_adapter_key(
     workspace_hermes_home: Path,
     session_id: str,
     platform: str | None = None,
+    runtime_accounts: list[dict[str, Any]] | None = None,
 ) -> str | None:
     return _UPSTREAM.resolve_workspace_session_delivery_adapter_key(
         workspace_hermes_home,
         session_id,
         platform=platform,
+        runtime_accounts=runtime_accounts,
     )
 
 
