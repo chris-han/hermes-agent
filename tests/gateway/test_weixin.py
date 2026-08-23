@@ -630,6 +630,24 @@ class TestWeixinSessionAutoHeal:
         assert adapter.fatal_error_code is None
 
     @patch("gateway.platforms.weixin.asyncio.sleep", new_callable=AsyncMock)
+    @patch("gateway.platforms.weixin._get_updates", new_callable=AsyncMock)
+    def test_poll_session_expiry_escalates_to_fatal_after_max_retries(self, get_updates_mock, sleep_mock):
+        adapter = _make_adapter()
+        adapter._running = True
+        adapter._poll_session = object()
+        adapter._send_session = object()
+        adapter._reopen_transport_sessions_for_session_expiry = AsyncMock(return_value=True)
+
+        get_updates_mock.return_value = {"ret": weixin.SESSION_EXPIRED_ERRCODE, "errmsg": "session timeout"}
+
+        asyncio.run(adapter._poll_loop())
+
+        assert get_updates_mock.await_count == weixin.SESSION_EXPIRED_MAX_RETRIES
+        assert adapter._reopen_transport_sessions_for_session_expiry.await_count == weixin.SESSION_EXPIRED_MAX_RETRIES - 1
+        assert adapter.fatal_error_code == "weixin_session_expired"
+        assert adapter._running is False
+
+    @patch("gateway.platforms.weixin.asyncio.sleep", new_callable=AsyncMock)
     @patch("gateway.platforms.weixin._send_message", new_callable=AsyncMock)
     def test_send_session_expiry_reopens_transport_after_threshold(self, send_message_mock, sleep_mock):
         adapter = _make_adapter()

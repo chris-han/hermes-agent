@@ -93,6 +93,10 @@ MAX_CONSECUTIVE_FAILURES = 3
 RETRY_DELAY_SECONDS = 2
 BACKOFF_DELAY_SECONDS = 30
 SESSION_EXPIRED_ERRCODE = -14
+# After this many consecutive session-expired responses the persisted iLink
+# token is dead on the server side; reopening transport sessions cannot heal
+# it, so escalate to a fatal error requiring QR re-login instead of looping.
+SESSION_EXPIRED_MAX_RETRIES = 3
 RATE_LIMIT_ERRCODE = -2  # iLink frequency limit — backoff and retry
 MESSAGE_DEDUP_TTL_SECONDS = 300
 
@@ -1534,6 +1538,7 @@ class WeixinAdapter(BasePlatformAdapter):
         sync_buf = _load_sync_buf(self._hermes_home, self._account_id)
         timeout_ms = LONG_POLL_TIMEOUT_MS
         consecutive_failures = 0
+        session_expired_retries = 0
 
         while self._running:
             try:
@@ -1554,6 +1559,16 @@ class WeixinAdapter(BasePlatformAdapter):
                     if (ret == SESSION_EXPIRED_ERRCODE or errcode == SESSION_EXPIRED_ERRCODE
                             or _is_stale_session_ret(ret, errcode, response.get("errmsg"))):
                         reason = str(response.get("errmsg") or response.get("msg") or "session expired")
+                        session_expired_retries += 1
+                        if session_expired_retries >= SESSION_EXPIRED_MAX_RETRIES:
+                            message = (
+                                f"Weixin session expired {session_expired_retries} times; "
+                                f"the persisted iLink token is no longer valid ({reason}). "
+                                "Re-authenticate via QR login to obtain a new token."
+                            )
+                            logger.error("[%s] %s", self.name, message)
+                            self._set_fatal_error("weixin_session_expired", message, retryable=False)
+                            return
                         if not getattr(self, "_session_expired_notice_logged", False):
                             logger.warning(
                                 "[%s] Session expired; refreshing transport sessions and retrying in %.0fs",
@@ -1589,6 +1604,7 @@ class WeixinAdapter(BasePlatformAdapter):
                     continue
 
                 consecutive_failures = 0
+                session_expired_retries = 0
                 new_sync_buf = str(response.get("get_updates_buf") or "")
                 if new_sync_buf:
                     sync_buf = new_sync_buf
