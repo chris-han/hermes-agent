@@ -15,6 +15,7 @@ Tests cover:
 import asyncio
 import json
 import os
+import socket
 import sys
 import time
 import types
@@ -37,6 +38,56 @@ from gateway.platforms.api_server import (
     security_headers_middleware,
 )
 from gateway.workspace_runtime import bound_workspace_hermes_home
+
+
+def test_connect_uses_bind_as_authority_when_port_probe_false_positives(monkeypatch):
+    """A misleading connect probe must not prevent a real free-port bind."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as reservation:
+        reservation.bind(("127.0.0.1", 0))
+        port = reservation.getsockname()[1]
+
+    class FalsePositiveProbe:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def settimeout(self, _timeout):
+            pass
+
+        def connect(self, _address):
+            pass
+
+    fake_socket_module = types.SimpleNamespace(
+        AF_INET=socket.AF_INET,
+        SOCK_STREAM=socket.SOCK_STREAM,
+        socket=lambda *_args, **_kwargs: FalsePositiveProbe(),
+    )
+    monkeypatch.setattr(
+        "gateway.platforms.api_server._socket",
+        fake_socket_module,
+        raising=False,
+    )
+
+    adapter = APIServerAdapter(
+        PlatformConfig(
+            enabled=True,
+            extra={
+                "host": "127.0.0.1",
+                "port": port,
+                "key": "test-api-key-with-sufficient-entropy",
+            },
+        )
+    )
+
+    async def exercise_adapter():
+        try:
+            assert await adapter.connect() is True
+        finally:
+            await adapter.disconnect()
+
+    asyncio.run(exercise_adapter())
 
 
 # ---------------------------------------------------------------------------
