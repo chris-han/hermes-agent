@@ -85,6 +85,7 @@ _EXPLICIT_MEMORY_REQUEST_PATTERNS = (
     r"\bnote\s+(?:this|that|it|these|those|the following)?\s+(?:in|into)?\s+memory\b",
     r"\bwrite\s+(?:this|that|it|these|those|the following)?\s+(?:to|in|into)\s+memory\b",
     r"\bkeep\s+(?:this|that|it|these|those|the following)?\s+(?:in|into)\s+memory\b",
+    r"\b(?:forget|remove|delete)\s+(?:this|that|it|these|those|the following)?.{0,48}\b(?:from\s+)?memory\b",
 )
 
 
@@ -1435,6 +1436,5 @@ registry.register(
     emoji="🧠",
     dynamic_schema_overrides=_build_memory_schema_overrides,
 )
-
 
 

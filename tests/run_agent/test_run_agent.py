@@ -1736,7 +1736,9 @@ class TestExecuteToolCalls:
             call_id="mem-1",
         )
         mock_msg = _mock_assistant_msg(content="", tool_calls=[tc])
-        messages = []
+        messages = [
+            {"role": "user", "content": "Please remove this stale preference from memory."}
+        ]
         calls = []
 
         class FakeMemoryManager(MemoryManager):
