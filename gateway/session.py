@@ -1139,7 +1139,7 @@ def build_session_key(
     """
     ns = _session_key_namespace(profile)
     platform = source.platform.value
-    workspace_owner_id = str(source.workspace_owner_id or "").strip()
+    workspace_owner_id = str(getattr(source, "workspace_owner_id", None) or "").strip()
     namespace_parts = [ns]
     if workspace_owner_id:
         namespace_parts.extend(["workspace", workspace_owner_id])
