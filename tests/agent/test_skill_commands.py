@@ -8,8 +8,11 @@ import pytest
 
 import tools.skills_tool as skills_tool_module
 from agent.skill_commands import (
+    DynamicSkillPayloadBuildError,
     build_preloaded_skills_prompt,
     build_skill_invocation_message,
+    classify_slash_command,
+    expand_dynamic_skill_command,
     resolve_skill_command_key,
     scan_skill_commands,
 )
@@ -503,6 +506,83 @@ class TestResolveSkillCommandKey:
             scan_skill_commands()
             assert resolve_skill_command_key("does_not_exist") is None
             assert resolve_skill_command_key("does-not-exist") is None
+
+
+class TestExpandDynamicSkillCommand:
+    def test_expands_installed_skill_and_preserves_instruction(self, tmp_path):
+        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
+            _make_skill(tmp_path, "test-skill")
+            scan_skill_commands()
+            result = expand_dynamic_skill_command("/test-skill  keep  spacing  ")
+
+        assert result is not None
+        assert result.command_key == "/test-skill"
+        assert result.skill_name == "test-skill"
+        assert result.user_instruction == " keep  spacing  "
+        assert " keep  spacing  " in result.expanded_message
+
+    def test_raises_when_payload_build_fails_after_resolution(self, tmp_path):
+        import agent.skill_commands as sc_mod
+
+        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
+            _make_skill(tmp_path, "broken-skill")
+            scan_skill_commands()
+            with patch.object(sc_mod, "build_skill_invocation_message", return_value=None):
+                with pytest.raises(DynamicSkillPayloadBuildError):
+                    expand_dynamic_skill_command("/broken-skill do it")
+
+
+class TestClassifySlashCommand:
+    def test_precedence_is_built_in_then_plugin_then_dynamic(self, tmp_path):
+        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
+            _make_skill(tmp_path, "workflow-guide")
+            _make_skill(tmp_path, "plugin-command")
+            scan_skill_commands()
+
+            built_in = classify_slash_command("/help", built_in_commands={"help"})
+            plugin = classify_slash_command(
+                "/plugin-command arg",
+                plugin_command_resolver=lambda command: command == "plugin-command",
+            )
+            dynamic = classify_slash_command("/workflow-guide do it")
+
+        assert built_in is not None and built_in.kind == "built_in"
+        assert plugin is not None and plugin.kind == "plugin"
+        assert dynamic is not None and dynamic.kind == "dynamic_skill"
+        assert dynamic.command_key == "/workflow-guide"
+
+    def test_classifies_disabled_skill(self, tmp_path):
+        with (
+            patch("tools.skills_tool.SKILLS_DIR", tmp_path),
+            patch("agent.skill_utils.get_skills_dir", return_value=tmp_path),
+            patch("agent.skill_utils.get_external_skills_dirs", return_value=[]),
+            patch("agent.skill_utils.get_disabled_skill_names", return_value={"disabled-skill"}),
+            patch("tools.skills_tool._get_disabled_skill_names", return_value={"disabled-skill"}),
+        ):
+            _make_skill(tmp_path, "disabled-skill")
+            scan_skill_commands()
+            result = classify_slash_command("/disabled-skill")
+
+        assert result is not None
+        assert result.kind == "disabled_skill"
+        assert result.skill_name == "disabled-skill"
+
+    def test_classifies_platform_incompatible_skill(self, tmp_path):
+        with (
+            patch("tools.skills_tool.SKILLS_DIR", tmp_path),
+            patch("agent.skill_utils.get_skills_dir", return_value=tmp_path),
+            patch("agent.skill_utils.get_external_skills_dirs", return_value=[]),
+            patch("agent.skill_utils.sys") as mock_sys,
+            patch("tools.skills_tool._get_disabled_skill_names", return_value=set()),
+        ):
+            mock_sys.platform = "linux"
+            _make_skill(tmp_path, "mac-only", frontmatter_extra="platforms: [macos]\n")
+            scan_skill_commands()
+            result = classify_slash_command("/mac-only")
+
+        assert result is not None
+        assert result.kind == "platform_incompatible_skill"
+        assert result.skill_name == "mac-only"
 
 
 
