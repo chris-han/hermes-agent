@@ -7027,6 +7027,23 @@ def _weixin_source_has_user_scoped_home_channel(source: SessionSource) -> bool:
     return False
 
 
+def _governed_context_prompt_for_source(
+    source: SessionSource,
+    user_message: str,
+) -> Optional[str]:
+    """Resolve per-turn Semantier context only for governed workspace sessions."""
+    workspace_id = str(getattr(source, "workspace_owner_id", "") or "").strip()
+    if not workspace_id:
+        return None
+    from agents.governed_context import build_governed_runtime_context_prompt
+
+    return build_governed_runtime_context_prompt(
+        workspace_id=workspace_id,
+        user_id=None,
+        user_message=user_message,
+    )
+
+
 class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, GatewaySlashCommandsMixin):
     """
     Main gateway controller.
@@ -20063,6 +20080,12 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         # ride the current user message via the api_content sidecar instead
         # (staged below, consumed in run_sync → build_turn_context).
         turn_sidecar_notes: List[str] = []
+        governed_context_note = _governed_context_prompt_for_source(
+            source,
+            str(getattr(event, "text", "") or ""),
+        )
+        if governed_context_note:
+            turn_sidecar_notes.append(governed_context_note)
 
         # If the previous session expired and was auto-reset, deliver a notice
         # so the agent knows this is a fresh conversation (not an intentional /reset).

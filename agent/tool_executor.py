@@ -2163,6 +2163,10 @@ def execute_tool_calls_sequential(agent, assistant_message, messages: list, effe
             def _execute(next_args: dict) -> Any:
                 target = next_args.get("target", "memory")
                 operations = next_args.get("operations")
+                from tools.memory_tool import memory_write_requires_explicit_request
+                gate_error = memory_write_requires_explicit_request(messages)
+                if gate_error is not None:
+                    return gate_error
                 from tools.memory_tool import memory_tool as _memory_tool
                 result = _memory_tool(
                     action=next_args.get("action"),

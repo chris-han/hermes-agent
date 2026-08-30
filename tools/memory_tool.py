@@ -26,6 +26,7 @@ Design:
 import copy
 import json
 import logging
+import re
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -76,6 +77,52 @@ MEMORY_BLOCK_HEADERS = {
 }
 
 ENTRY_DELIMITER = "\n§\n"
+
+_EXPLICIT_MEMORY_REQUEST_PATTERNS = (
+    r"\bsave\s+(?:this|that|it|these|those|the following)?\s*(?:to|in|into)?\s*memory\b",
+    r"\bremember\s+(?:this|that|it|these|those)\b",
+    r"\bstore\s+(?:this|that|it|these|those|the following)?\s+(?:in|into)\s+memory\b",
+    r"\bnote\s+(?:this|that|it|these|those|the following)?\s+(?:in|into)?\s+memory\b",
+    r"\bwrite\s+(?:this|that|it|these|those|the following)?\s+(?:to|in|into)\s+memory\b",
+    r"\bkeep\s+(?:this|that|it|these|those|the following)?\s+(?:in|into)\s+memory\b",
+)
+
+
+def _coerce_message_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(
+            str(part.get("text", ""))
+            for part in content
+            if isinstance(part, dict) and part.get("type") == "text"
+        )
+    return ""
+
+
+def memory_write_requires_explicit_request(
+    messages: Optional[List[Dict[str, Any]]],
+) -> Optional[str]:
+    """Reject durable memory writes not requested by the latest user turn."""
+    user_message = ""
+    for message in reversed(messages or []):
+        if isinstance(message, dict) and message.get("role") == "user":
+            user_message = _coerce_message_text(message.get("content")).strip()
+            break
+    normalized = " ".join(user_message.lower().split())
+    negated = re.search(
+        r"\b(?:don't|do not|never|no)\b.{0,24}\b(?:save|store|write|keep|remember|note)\b",
+        normalized,
+    )
+    if normalized and not negated and any(
+        re.search(pattern, normalized) for pattern in _EXPLICIT_MEMORY_REQUEST_PATTERNS
+    ):
+        return None
+    return tool_error(
+        "Memory writes require an explicit user request such as 'save to memory' or "
+        "'remember this'. Ask the user to make that request before writing.",
+        success=False,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1271,8 +1318,8 @@ MEMORY_SCHEMA = {
         "reports current/limit chars and confirms completion; one batch call finishes the "
         "update, so don't repeat it. Use the bare action/content/old_text fields only for a "
         "single lone change.\n\n"
-        "WHEN: save proactively when the user states a preference, correction, or personal "
-        "detail, or you learn a stable fact about their environment, conventions, or workflow. "
+        "WHEN: only when the user explicitly asks to save or remember a preference, correction, "
+        "personal detail, or stable fact about their environment, conventions, or workflow. "
         "Priority: user preferences & corrections > environment facts > procedures. The best "
         "memory stops the user repeating themselves.\n\n"
         "IF FULL: an add is rejected with the current entries shown. Reissue as ONE batch that "
@@ -1388,7 +1435,6 @@ registry.register(
     emoji="🧠",
     dynamic_schema_overrides=_build_memory_schema_overrides,
 )
-
 
 
 

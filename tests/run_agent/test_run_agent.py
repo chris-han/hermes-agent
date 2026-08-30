@@ -2370,6 +2370,53 @@ class TestConcurrentToolExecution:
         assert json.loads(result) == {"error": "Blocked"}
         assert agent._turns_since_memory == 5
 
+    def test_memory_tool_requires_explicit_user_request(self, agent):
+        messages = [{"role": "user", "content": "I prefer concise answers."}]
+
+        with patch("tools.memory_tool.memory_tool", side_effect=AssertionError("should not run")):
+            result = agent._invoke_tool(
+                "memory",
+                {"action": "add", "target": "memory", "content": "I prefer concise answers."},
+                "task-1",
+                messages=messages,
+            )
+
+        assert json.loads(result)["error"].startswith(
+            "Memory writes require an explicit user request"
+        )
+
+    def test_memory_tool_allows_explicit_user_request(self, agent):
+        messages = [
+            {"role": "user", "content": "Please save to memory: I prefer concise answers."}
+        ]
+
+        with patch("tools.memory_tool.memory_tool", return_value='{"success": true}') as memory:
+            result = agent._invoke_tool(
+                "memory",
+                {"action": "add", "target": "memory", "content": "I prefer concise answers."},
+                "task-1",
+                messages=messages,
+            )
+
+        memory.assert_called_once()
+        assert json.loads(result) == {"success": True}
+
+    def test_sequential_memory_tool_requires_explicit_user_request(self, agent):
+        tool_call = _mock_tool_call(
+            name="memory",
+            arguments='{"action":"add","target":"memory","content":"concise"}',
+            call_id="memory-implicit",
+        )
+        assistant = _mock_assistant_msg(content="", tool_calls=[tool_call])
+        messages = [{"role": "user", "content": "I prefer concise answers."}]
+
+        with patch("tools.memory_tool.memory_tool", side_effect=AssertionError("should not run")):
+            agent._execute_tool_calls_sequential(assistant, messages, "task-1")
+
+        assert json.loads(messages[-1]["content"])["error"].startswith(
+            "Memory writes require an explicit user request"
+        )
+
 
 
 

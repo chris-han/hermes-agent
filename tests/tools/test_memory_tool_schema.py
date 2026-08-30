@@ -19,7 +19,7 @@ backends reject.
 
 import json
 
-from tools.memory_tool import MEMORY_SCHEMA
+from tools.memory_tool import MEMORY_SCHEMA, memory_write_requires_explicit_request
 
 
 _FORBIDDEN_TOP_LEVEL_KEYS = ("allOf", "anyOf", "oneOf", "enum", "not")
@@ -38,3 +38,31 @@ def test_memory_schema_has_no_forbidden_top_level_combinators():
 
 def test_memory_schema_is_json_serializable():
     json.dumps(MEMORY_SCHEMA)
+
+
+def test_memory_write_guard_blocks_implicit_request():
+    result = memory_write_requires_explicit_request([
+        {"role": "user", "content": "I prefer concise answers and bullet points."},
+    ])
+
+    assert json.loads(result)["error"].startswith(
+        "Memory writes require an explicit user request"
+    )
+
+
+def test_memory_write_guard_allows_explicit_request():
+    result = memory_write_requires_explicit_request([
+        {
+            "role": "user",
+            "content": "Please save to memory: I prefer concise answers and bullet points.",
+        },
+    ])
+
+    assert result is None
+
+
+def test_memory_schema_does_not_instruct_proactive_implicit_writes():
+    description = MEMORY_SCHEMA["description"].lower()
+
+    assert "only when the user explicitly asks" in description
+    assert "save proactively" not in description

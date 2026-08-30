@@ -33,7 +33,23 @@ def bound_workspace_hermes_home(
         yield None
         return
     target_home = Path(value).expanduser().resolve()
-    updates = {"HERMES_HOME": str(target_home), "TERMINAL_CWD": str(target_home)}
+    wiki_root = target_home / "wiki"
+    wiki_governance_root = wiki_root / ".governance"
+    wiki_contracts_root = wiki_governance_root / "contracts"
+    wiki_reports_root = wiki_governance_root / "reports"
+    for root in (wiki_contracts_root, wiki_reports_root):
+        root.mkdir(parents=True, exist_ok=True)
+    updates = {
+        "HERMES_HOME": str(target_home),
+        "TERMINAL_CWD": str(target_home),
+        "WIKI_PATH": str(wiki_root.resolve()),
+        "WIKI_GOVERNANCE_PATH": str(wiki_governance_root.resolve()),
+        "WIKI_CONTRACTS_PATH": str(wiki_contracts_root.resolve()),
+        "WIKI_REPORTS_PATH": str(wiki_reports_root.resolve()),
+        "WIKI_DEPENDENCY_GRAPH_PATH": str(
+            (wiki_governance_root / "dependency-graph.json").resolve()
+        ),
+    }
     if session_id:
         segment = _session_segment(target_home, session_id)
         session_root = target_home / "sessions" / segment
