@@ -18,8 +18,11 @@ Config in $HERMES_HOME/config.yaml (profile-scoped):
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
+import os
 import re
+from pathlib import Path
 from typing import Any, Dict, List
 
 from agent.memory_provider import MemoryProvider
@@ -30,6 +33,33 @@ from .retrieval import FactRetriever
 from hermes_cli.config import cfg_get
 
 logger = logging.getLogger(__name__)
+
+_SAFE_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+
+def _safe_segment(value: str) -> str:
+    normalized = str(value or "").strip()
+    if normalized and _SAFE_SEGMENT_RE.fullmatch(normalized):
+        return normalized
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:32]
+    return f"id-{digest}"
+
+
+def _semantier_shared_memory_db_path() -> str | None:
+    workspace_id = str(os.environ.get("SEMANTIER_WORKSPACE_ID") or "").strip()
+    runtime_root = str(os.environ.get("SEMANTIER_LOCAL_STATE_DIR") or "").strip()
+    user_id = str(os.environ.get("SEMANTIER_USER_ID") or "").strip()
+    if not (workspace_id and runtime_root and user_id):
+        return None
+    return str(
+        Path(runtime_root).expanduser()
+        / "memory"
+        / "users"
+        / _safe_segment(user_id)
+        / "workspaces"
+        / _safe_segment(workspace_id)
+        / "memory_store.db"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +187,9 @@ class HolographicMemoryProvider(MemoryProvider):
         from hermes_constants import get_hermes_home
         _hermes_home = str(get_hermes_home())
         _default_db = _hermes_home + "/memory_store.db"
-        db_path = self._config.get("db_path", _default_db)
+        db_path = _semantier_shared_memory_db_path() or self._config.get(
+            "db_path", _default_db
+        )
         # Expand $HERMES_HOME in user-supplied paths so config values like
         # "$HERMES_HOME/memory_store.db" or "~/.hermes/memory_store.db" both
         # resolve to the active profile's directory.

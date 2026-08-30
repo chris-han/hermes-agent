@@ -4574,6 +4574,25 @@ class PluginManager:
         logger.debug("  user: %d manifest(s)", len(user_manifests))
         manifests.extend(user_manifests)
 
+        # Semantier installs repo-owned platform plugins into its shared
+        # launcher-managed runtime root. They are immutable platform inputs,
+        # not workspace-owned state, so authenticated workspace bindings must
+        # continue to discover them alongside profile-local user plugins.
+        semantier_root = os.environ.get("SEMANTIER_LOCAL_STATE_DIR", "").strip()
+        semantier_path = Path(semantier_root).expanduser() if semantier_root else None
+        if semantier_path is not None and semantier_path.is_absolute():
+            shared_dir = semantier_path.resolve() / "plugins"
+            if shared_dir != user_dir.expanduser().resolve():
+                shared_manifests = self._scan_directory(
+                    shared_dir,
+                    source="semantier-runtime",
+                )
+                logger.debug(
+                    "  semantier runtime: %d manifest(s)",
+                    len(shared_manifests),
+                )
+                manifests.extend(shared_manifests)
+
         # 3. Project plugins (./.hermes/plugins/), only when explicitly opted
         # in. This must match the full discovery gate exactly.
         if _env_enabled("HERMES_ENABLE_PROJECT_PLUGINS"):
