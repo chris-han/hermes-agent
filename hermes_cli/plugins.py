@@ -5288,7 +5288,7 @@ class PluginManager:
             preloaded = self._predeclared_modules.pop(plugin_key, None)
             if preloaded is not None:
                 module = preloaded
-            elif manifest.source in {"user", "project", "bundled"}:
+            elif manifest.source in {"user", "project", "bundled", "semantier-runtime"}:
                 module = self._load_directory_module(
                     manifest, module_name=_module_name
                 )
