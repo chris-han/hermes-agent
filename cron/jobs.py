@@ -7,6 +7,7 @@ Output is saved to ~/.hermes/cron/output/{job_id}/{timestamp}.md
 
 import contextlib
 import copy
+import hashlib
 from contextvars import ContextVar
 from dataclasses import dataclass
 import json
@@ -768,6 +769,29 @@ def ensure_dirs():
     _ensure_cron_dir(store.output_dir)
     _secure_dir(store.cron_dir)
     _secure_dir(store.output_dir)
+
+
+def _cron_storage_scope_id() -> str:
+    """Return the stable authority scope for the active upstream cron store."""
+    home = _current_cron_store().cron_dir.parent.expanduser().resolve()
+    workspace_id = str(os.environ.get("SEMANTIER_WORKSPACE_ID") or "").strip()
+    if workspace_id:
+        return f"workspace:{workspace_id}"
+    digest = hashlib.sha256(str(home).encode("utf-8")).hexdigest()[:24]
+    return f"hermes_home:{digest}"
+
+
+def _sqlite_cron_store():
+    try:
+        from agents import cron_store
+
+        return cron_store
+    except Exception:
+        return None
+
+
+def _use_sqlite_cron_authority() -> bool:
+    return bool(os.environ.get("SEMANTIER_LOCAL_STATE_DIR")) and _sqlite_cron_store() is not None
 
 
 # =============================================================================
@@ -1626,6 +1650,10 @@ def _parse_jobs_file(jobs_file: Path) -> Tuple[Any, bool]:
 
 def load_jobs() -> List[Dict[str, Any]]:
     """Load all jobs from storage."""
+    if _use_sqlite_cron_authority():
+        cron_store = _sqlite_cron_store()
+        assert cron_store is not None
+        return cron_store.list_jobs(_cron_storage_scope_id())
     jobs_file = _current_cron_store().jobs_file
     ensure_dirs()
     # Stamp BEFORE reading (fail-safe direction — see _record_load_stamp):
@@ -1976,6 +2004,11 @@ def save_jobs(
     See ``_save_jobs_unlocked`` for ``removed_ids`` / ``replace`` semantics
     (shrink-merge guard against concurrent-create clobber, #80624).
     """
+    if _use_sqlite_cron_authority():
+        cron_store = _sqlite_cron_store()
+        assert cron_store is not None
+        cron_store.replace_jobs(_cron_storage_scope_id(), jobs)
+        return
     with _jobs_lock():
         _save_jobs_unlocked(jobs, removed_ids=removed_ids, replace=replace)
 
