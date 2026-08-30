@@ -22,12 +22,20 @@ def _runtime_root() -> Path:
 
 
 def _load_semantier_governed_context() -> object:
-    repo_agents_root = _runtime_root() / "src" / "agents"
+    repo_src_root = _runtime_root() / "src"
+    repo_agents_root = repo_src_root / "agents"
     implementation = repo_agents_root / "governed_context.py"
     agents_pkg = sys.modules.get("agents")
     package_path = getattr(agents_pkg, "__path__", None)
     if package_path is not None and str(repo_agents_root) not in package_path:
         package_path.append(str(repo_agents_root))
+    # The delegated module imports other Semantier-owned top-level packages
+    # (for example ``eos``).  Loading only the agents package path makes those
+    # imports depend on the caller already having the parent runtime on
+    # PYTHONPATH, which is not true for Hermes' hermetic test runner or other
+    # standalone embedding processes.
+    if str(repo_src_root) not in sys.path:
+        sys.path.insert(0, str(repo_src_root))
     spec = importlib.util.spec_from_file_location(
         "_semantier_repo_governed_context",
         implementation,
