@@ -1139,6 +1139,10 @@ def build_session_key(
     """
     ns = _session_key_namespace(profile)
     platform = source.platform.value
+    workspace_owner_id = str(source.workspace_owner_id or "").strip()
+    namespace_parts = [ns]
+    if workspace_owner_id:
+        namespace_parts.extend(["workspace", workspace_owner_id])
     slack_scope_id = (
         str(source.scope_id)
         if source.platform == Platform.SLACK and source.scope_id
@@ -1149,7 +1153,7 @@ def build_session_key(
         if source.platform == Platform.WHATSAPP:
             dm_chat_id = canonical_whatsapp_identifier(source.chat_id)
 
-        dm_parts = [ns, platform, "dm"]
+        dm_parts = [*namespace_parts, platform, "dm"]
         if slack_scope_id:
             dm_parts.append(slack_scope_id)
         if dm_chat_id:
@@ -1201,7 +1205,7 @@ def build_session_key(
     chat_type_slot = source.chat_type
     if source.prospective_thread_id and not source.thread_id:
         chat_type_slot = "thread"
-    key_parts = [ns, platform, chat_type_slot]
+    key_parts = [*namespace_parts, platform, chat_type_slot]
 
     if slack_scope_id:
         key_parts.append(slack_scope_id)
