@@ -570,6 +570,23 @@ class InProcessCronScheduler(CronScheduler):
         logger = logging.getLogger("cron.scheduler_provider")
         logger.info("In-process cron scheduler started (interval=%ds)", interval)
 
+        from cron.home_provider import get_cron_home_provider
+
+        home_provider = get_cron_home_provider()
+        if home_provider is not None:
+            provided_homes = home_provider()
+            combined = list(profile_homes or [])
+            existing = {
+                str((entry[1] if isinstance(entry, tuple) else entry).resolve())
+                for entry in combined
+            }
+            for index, home in enumerate(provided_homes):
+                resolved = Path(home).expanduser().resolve()
+                if str(resolved) not in existing:
+                    combined.append((f"semantier-{index}", resolved))
+                    existing.add(str(resolved))
+            profile_homes = combined
+
         # ── Multiplex profiles ────────────────────────────────────────────
         # When profile_homes is set (multiplex_profiles on), tick EACH profile's
         # cron store on every tick cycle so secondary-profile jobs actually fire

@@ -2208,6 +2208,13 @@ def resolve_runtime_provider(
                 raise
             logger.info("Qwen OAuth credentials failed; "
                         "falling through to next provider.")
+            runtime = _resolve_openrouter_runtime(
+                requested_provider="openrouter",
+                explicit_api_key=explicit_api_key,
+                explicit_base_url=explicit_base_url,
+            )
+            runtime["requested_provider"] = requested_provider
+            return runtime
 
     if provider == "minimax-oauth":
         pconfig = PROVIDER_REGISTRY.get(provider)

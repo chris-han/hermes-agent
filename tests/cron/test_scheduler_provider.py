@@ -20,6 +20,8 @@ import threading
 import time
 from unittest.mock import patch
 
+import pytest
+
 
 def _wait_until(predicate, timeout=10.0, interval=0.005):
     """Block until ``predicate()`` is truthy or ``timeout`` elapses.
@@ -188,6 +190,48 @@ def test_inprocess_provider_ticks_and_stops():
     assert not t.is_alive(), "provider did not exit after stop_event was set"
     assert len(calls) >= 1, "provider never called tick()"
     assert calls[0].get("sync") is False
+
+
+def test_inprocess_provider_uses_registered_authoritative_cron_homes(monkeypatch, tmp_path):
+    from cron.home_provider import replace_cron_home_provider
+    from cron.scheduler_provider import InProcessCronScheduler
+
+    workspace_home = tmp_path / "workspaces/ws-a"
+    workspace_home.mkdir(parents=True)
+    captured = {}
+    provider = InProcessCronScheduler()
+    monkeypatch.setattr(
+        provider,
+        "_start_multiplex",
+        lambda _stop, **kwargs: captured.update(kwargs),
+    )
+    previous = replace_cron_home_provider(lambda: [workspace_home])
+    stop = threading.Event()
+    stop.set()
+    try:
+        provider.start(stop, interval=0)
+    finally:
+        replace_cron_home_provider(previous)
+
+    assert captured["profile_homes"] == [("semantier-0", workspace_home.resolve())]
+
+
+@pytest.mark.integration
+def test_authoritative_cron_home_initializes_real_scoped_store(tmp_path):
+    from cron.home_provider import replace_cron_home_provider
+    from cron.scheduler_provider import InProcessCronScheduler
+
+    workspace_home = tmp_path / "workspaces/ws-a"
+    workspace_home.mkdir(parents=True)
+    stop = threading.Event()
+    stop.set()
+    previous = replace_cron_home_provider(lambda: [workspace_home])
+    try:
+        InProcessCronScheduler().start(stop, interval=0)
+    finally:
+        replace_cron_home_provider(previous)
+
+    assert (workspace_home / "cron").is_dir()
 
 
 # ── Phase 2: config key, discovery, resolver ─────────────────────────────────
