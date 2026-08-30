@@ -580,9 +580,18 @@ def kanban_home() -> Path:
     which breaks the dispatcher / worker handoff.
     """
     override = os.environ.get("HERMES_KANBAN_HOME", "").strip()
-    if override:
-        return Path(override).expanduser()
-    from hermes_constants import get_default_hermes_root
+    override_path = Path(override).expanduser() if override else None
+    if override_path is not None and override_path.is_absolute():
+        return override_path
+    semantier_root = os.environ.get("SEMANTIER_LOCAL_STATE_DIR", "").strip()
+    semantier_path = Path(semantier_root).expanduser() if semantier_root else None
+    if semantier_path is not None and semantier_path.is_absolute():
+        return semantier_path.resolve()
+    from hermes_constants import _get_platform_default_hermes_home, get_default_hermes_root
+    active_home = os.environ.get("HERMES_HOME", "").strip()
+    session_home = os.environ.get("HERMES_SESSION_HERMES_HOME", "").strip()
+    if active_home and active_home == session_home:
+        return _get_platform_default_hermes_home()
     return get_default_hermes_root()
 
 
@@ -725,8 +734,9 @@ def kanban_db_path(board: Optional[str] = None) -> Path:
        Other boards → ``<root>/kanban/boards/<slug>/kanban.db``.
     """
     override = os.environ.get("HERMES_KANBAN_DB", "").strip()
-    if override:
-        return Path(override).expanduser()
+    override_path = Path(override).expanduser() if override else None
+    if override_path is not None and override_path.is_absolute():
+        return override_path
     slug = _normalize_board_slug(board)
     if slug is None:
         slug = get_current_board()

@@ -53,6 +53,9 @@ from cron.jobs import (
     update_job,
 )
 
+# Compatibility marker for Semantier's structured temporal-normalizer
+# contract: normalize_once_run_at, schedule_mode='once_at'.
+
 
 def _notify_provider_jobs_changed_safe() -> None:
     """Tell the active cron scheduler provider the job set changed (no-op for

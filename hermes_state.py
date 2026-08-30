@@ -406,6 +406,10 @@ def _default_db_path() -> Path:
     """
     if DEFAULT_DB_PATH != _IMPORT_DEFAULT_DB_PATH:
         return DEFAULT_DB_PATH
+    semantier_root = os.environ.get("SEMANTIER_LOCAL_STATE_DIR", "").strip()
+    semantier_path = Path(semantier_root).expanduser() if semantier_root else None
+    if semantier_path is not None and semantier_path.is_absolute():
+        return semantier_path.resolve() / "state.db"
     return get_hermes_home() / "state.db"
 
 
