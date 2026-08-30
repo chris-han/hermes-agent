@@ -6,6 +6,8 @@ import os
 from pathlib import Path
 from typing import Optional
 
+_SHARED_RUNTIME_READ_DIRS = frozenset({"plugins", "skills", "tools", "datasets", "dataset"})
+
 
 def _hermes_home_path() -> Path:
     """Resolve the active HERMES_HOME (profile-aware) without circular imports."""
@@ -108,6 +110,101 @@ def get_safe_write_roots() -> set[str]:
     return roots
 
 
+def _path_is_under(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return True
+
+
+def _boundary_write_roots() -> tuple[bool, set[str]]:
+    try:
+        from gateway.execution_boundary import current_execution_boundary
+
+        boundary = current_execution_boundary()
+    except Exception:
+        return False, set()
+    if boundary is None:
+        return False, set()
+    configured = tuple(boundary.policy.allowed_write_roots) or (
+        boundary.paths.runs_root,
+        boundary.paths.uploads_root,
+        boundary.paths.artifacts_root,
+        boundary.paths.logs_root,
+    )
+    roots = {
+        os.path.realpath(os.path.expanduser(str(root)))
+        for root in configured
+        if root is not None
+    }
+    return True, roots
+
+
+def _boundary_read_roots() -> tuple[bool, set[Path]]:
+    try:
+        from gateway.execution_boundary import current_execution_boundary
+
+        boundary = current_execution_boundary()
+    except Exception:
+        return False, set()
+    if boundary is None:
+        return False, set()
+    configured = tuple(boundary.policy.allowed_read_roots) or (
+        boundary.paths.hermes_home,
+        boundary.paths.terminal_cwd,
+        boundary.paths.runs_root,
+        boundary.paths.uploads_root,
+        boundary.paths.artifacts_root,
+        boundary.paths.logs_root,
+    )
+    roots = {Path(root).expanduser().resolve() for root in configured if root is not None}
+    shared_runtime = os.environ.get("SEMANTIER_LOCAL_STATE_DIR", "").strip()
+    shared_candidates = [Path(shared_runtime).expanduser()] if shared_runtime else []
+    shared_candidates.append(_hermes_root_path())
+    for shared_root in shared_candidates:
+        try:
+            resolved = shared_root.resolve()
+        except (OSError, RuntimeError, ValueError):
+            continue
+        roots.update(resolved / dirname for dirname in _SHARED_RUNTIME_READ_DIRS)
+    return True, roots
+
+
+def _active_session_output_read_error(path: Path, display_path: str) -> str | None:
+    try:
+        from gateway.execution_boundary import current_execution_boundary
+
+        boundary = current_execution_boundary()
+    except Exception:
+        return None
+    if boundary is None or boundary.paths.hermes_home is None:
+        return None
+    active_roots = tuple(
+        Path(root).resolve()
+        for root in (
+            boundary.paths.runs_root,
+            boundary.paths.uploads_root,
+            boundary.paths.artifacts_root,
+            boundary.paths.logs_root,
+        )
+        if root is not None
+    )
+    if any(_path_is_under(path, root) for root in active_roots):
+        return None
+    try:
+        rel = path.resolve().relative_to(Path(boundary.paths.hermes_home).resolve() / "sessions")
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if len(rel.parts) >= 2 and rel.parts[1] in {"runs", "uploads", "artifacts", "logs"}:
+        return (
+            f"Access denied: {display_path} targets a different Semantier session "
+            "output root. Governed session file references must use the active "
+            "session's runs, uploads, artifacts, or logs roots."
+        )
+    return None
+
+
 def build_write_approval_paths(home: str) -> set[str]:
     """Return paths that require human APPROVAL to write, but are not
     hard-denied credentials.
@@ -159,6 +256,13 @@ def _classify_write_denial(path: str) -> Optional[str]:
         except Exception:
             continue
 
+    boundary_active, boundary_roots = _boundary_write_roots()
+    if boundary_active and any(
+        resolved == root or resolved.startswith(root + os.sep)
+        for root in boundary_roots
+    ):
+        return None
+
     for base_real in hermes_dirs:
         # Session transcripts are application-owned state.  Letting the agent's
         # generic file tools rewrite state.db or legacy JSON snapshots can
@@ -183,6 +287,9 @@ def _classify_write_denial(path: str) -> Optional[str]:
                 return "credential"
         except Exception:
             pass
+
+    if boundary_active:
+        return "execution_boundary"
 
     safe_roots = get_safe_write_roots()
     if safe_roots:
@@ -213,6 +320,8 @@ def get_write_denied_error(path: str, *, verb: str = "Write") -> Optional[str]:
             f"{verb} denied: '{path}' is outside HERMES_WRITE_SAFE_ROOT "
             f"({roots_display}). Unset the variable or add this path's directory prefix."
         )
+    if denial == "execution_boundary":
+        return f"{verb} denied: '{path}' is outside the active Semantier execution boundary."
     return f"{verb} denied: '{path}' is a protected system/credential file."
 
 
@@ -413,6 +522,19 @@ def get_read_block_error(path: str) -> Optional[str]:
             "and cannot be read to prevent credential leakage. "
             "If you need to check the file structure, read .env.example instead. "
             "(Defense-in-depth — not a security boundary; the terminal tool can still bypass.)"
+        )
+
+    boundary_active, read_roots = _boundary_read_roots()
+    if boundary_active:
+        session_output_error = _active_session_output_read_error(resolved, path)
+        if session_output_error:
+            return session_output_error
+        if any(_path_is_under(resolved, root) for root in read_roots):
+            return None
+        return (
+            f"Access denied: {path} is outside the active Semantier execution "
+            "boundary. Governed sessions may read the active workspace/session "
+            "roots, plus reviewed shared runtime plugins, skills, tools, and datasets."
         )
 
     return None

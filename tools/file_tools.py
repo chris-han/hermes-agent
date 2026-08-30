@@ -370,6 +370,40 @@ def _resolve_base_dir(
     return base.resolve()
 
 
+def _resolve_execution_boundary_relative_path(path: Path) -> Path | None:
+    """Resolve governed session-root aliases without widening tenant scope."""
+    if path.is_absolute() or not path.parts:
+        return None
+    first = path.parts[0]
+    if first in {".", ".."}:
+        return None
+    try:
+        from gateway.execution_boundary import current_execution_boundary
+
+        boundary = current_execution_boundary()
+    except Exception:
+        return None
+    if boundary is None:
+        return None
+    roots = {
+        "runs": boundary.paths.runs_root,
+        "uploads": boundary.paths.uploads_root,
+        "artifacts": boundary.paths.artifacts_root,
+        "logs": boundary.paths.logs_root,
+    }
+    if first not in roots:
+        return None
+    root = roots[first]
+    if root is None:
+        raise ValueError(f"{first} root is not available in the active execution boundary")
+    candidate = (Path(root) / Path(*path.parts[1:])).resolve()
+    try:
+        candidate.relative_to(Path(root).resolve())
+    except ValueError as exc:
+        raise ValueError(f"{first} path escaped the active session root") from exc
+    return candidate
+
+
 def _resolve_path_for_task(filepath: str, task_id: str = "default") -> Path | PurePosixPath:
     """Resolve *filepath* against the task's absolute base directory.
 
@@ -380,6 +414,10 @@ def _resolve_path_for_task(filepath: str, task_id: str = "default") -> Path | Pu
     translated to ``C:\\Users\\...`` before resolution so file tools don't
     treat them as relative ``\\c\\Users\\...`` under the process cwd.
     """
+    boundary_path = _resolve_execution_boundary_relative_path(Path(_expand_tilde(filepath)))
+    if boundary_path is not None:
+        return boundary_path
+
     container_paths = _uses_container_paths(task_id)
     if container_paths:
         expanded = _expand_tilde(filepath)
@@ -1845,7 +1883,7 @@ def read_file_tool(path: str, offset: int = 1, limit: int = 2000, task_id: str =
 
         # ── Perform the read ──────────────────────────────────────────
         file_ops = _get_file_ops(task_id)
-        result = file_ops.read_file(path, offset, limit)
+        result = file_ops.read_file(resolved_str, offset, limit)
         result_dict = result.to_dict()
 
         # ── Populate negative-result cache on not-found ───────────────
@@ -2610,7 +2648,7 @@ def search_tool(pattern: str, target: str = "content", path: str = ".",
 
         file_ops = _get_file_ops(task_id)
         result = file_ops.search(
-            pattern=pattern, path=path, target=target, file_glob=file_glob,
+            pattern=pattern, path=resolved_search_path, target=target, file_glob=file_glob,
             limit=limit, offset=offset, output_mode=output_mode, context=context
         )
         omitted = _filter_read_blocked_search_results(result, task_id)

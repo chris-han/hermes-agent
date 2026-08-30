@@ -25639,7 +25639,11 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             user_id_alt=str(context.source.user_id_alt) if context.source.user_id_alt else "",
             user_name=str(context.source.user_name) if context.source.user_name else "",
             scope_id=str(getattr(context.source, "scope_id", "") or ""),
+            workspace_owner_id=str(
+                getattr(context.source, "workspace_owner_id", "") or ""
+            ),
             session_key=context.session_key,
+            session_id=str(getattr(context, "session_id", "") or ""),
             message_id=str(context.source.message_id) if context.source.message_id else "",
             profile=getattr(context.source, "profile", "") or "",
             async_delivery=_async_delivery,
@@ -25655,11 +25659,50 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         """Run blocking work in the thread pool while preserving session contextvars."""
         loop = asyncio.get_running_loop()
         ctx = copy_context()
+
+        def _run_bound():
+            def _invoke():
+                from gateway.execution_boundary import (
+                    ExecutionBoundaryRequest,
+                    GovernedExecutionBoundaryRequired,
+                    bind_execution_boundary,
+                    resolve_execution_boundary,
+                )
+                from gateway.session_context import get_session_env
+
+                require_boundary = bool(
+                    getattr(self, "_semantier_embedded_boundary_required", False)
+                )
+                boundary = resolve_execution_boundary(
+                    ExecutionBoundaryRequest(
+                        source="gateway_runner",
+                        session_id=get_session_env("HERMES_SESSION_ID", "") or None,
+                        user_id=get_session_env("HERMES_SESSION_USER_ID", "") or None,
+                        workspace_id=get_session_env(
+                            "HERMES_SESSION_WORKSPACE_OWNER_ID", ""
+                        )
+                        or None,
+                        metadata={
+                            "platform": get_session_env("HERMES_SESSION_PLATFORM", ""),
+                            "chat_id": get_session_env("HERMES_SESSION_CHAT_ID", ""),
+                            "session_key": get_session_env("HERMES_SESSION_KEY", ""),
+                            "transport": "embedded" if require_boundary else "standalone",
+                            "trusted_internal_boundary": require_boundary,
+                        },
+                    )
+                )
+                if boundary is None and require_boundary:
+                    raise GovernedExecutionBoundaryRequired(
+                        "Execution boundary required for gateway_runner"
+                    )
+                with bind_execution_boundary(boundary):
+                    return func(*args)
+
+            return ctx.run(_invoke)
+
         return await loop.run_in_executor(
             self._get_executor(),
-            ctx.run,
-            func,
-            *args,
+            _run_bound,
         )
 
     def _get_executor(self) -> concurrent.futures.ThreadPoolExecutor:
