@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import secrets
+import sqlite3
 import tempfile
 import threading
 import time
@@ -448,10 +449,18 @@ class PairingStore:
     is the global pairing directory for the current HERMES_HOME.
     """
 
-    def __init__(self, profile: Optional[str] = None):
+    def __init__(
+        self,
+        profile: Optional[str] = None,
+        *,
+        pairing_dir: Optional[Path] = None,
+        auth_db_path: Optional[Path | str] = None,
+    ):
         # Resolve storage directory lazily — tests use a temp HERMES_HOME
         # and PairingStore may be constructed before the env is set.
-        if profile:
+        if pairing_dir is not None:
+            self._dir = Path(pairing_dir).expanduser().resolve()
+        elif profile:
             root = get_default_hermes_root()
             profile_home = (
                 root
@@ -479,6 +488,66 @@ class PairingStore:
         # platform adapters concurrently in threads sharing one PairingStore.
         self._lock = threading.RLock()
         self._profile = profile  # for diagnostics / log lines
+        self._semantier_db_path = (
+            Path(auth_db_path).expanduser().resolve()
+            if auth_db_path is not None
+            else None
+        )
+        self._semantier_scope = str(self._dir.expanduser().resolve())
+        if self._semantier_db_path is not None:
+            self._semantier_db_path.parent.mkdir(parents=True, exist_ok=True)
+            self._ensure_semantier_schema()
+
+    def _semantier_connect(self) -> sqlite3.Connection:
+        if self._semantier_db_path is None:
+            raise RuntimeError("Semantier pairing DB is not configured")
+        conn = sqlite3.connect(str(self._semantier_db_path))
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _ensure_semantier_schema(self) -> None:
+        with self._semantier_connect() as conn:
+            conn.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS gateway_pairing_pending (
+                    scope TEXT NOT NULL,
+                    platform TEXT NOT NULL,
+                    code TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    user_name TEXT,
+                    created_at REAL NOT NULL,
+                    code_hash TEXT,
+                    salt TEXT,
+                    PRIMARY KEY(scope, platform, code)
+                );
+                CREATE TABLE IF NOT EXISTS gateway_pairing_approved (
+                    scope TEXT NOT NULL,
+                    platform TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    user_name TEXT,
+                    approved_at REAL NOT NULL,
+                    PRIMARY KEY(scope, platform, user_id)
+                );
+                CREATE TABLE IF NOT EXISTS gateway_pairing_limits (
+                    scope TEXT NOT NULL,
+                    key TEXT NOT NULL,
+                    value REAL NOT NULL,
+                    PRIMARY KEY(scope, key)
+                );
+                """
+            )
+            columns = {
+                str(row[1])
+                for row in conn.execute("PRAGMA table_info(gateway_pairing_pending)")
+            }
+            if "code_hash" not in columns:
+                conn.execute(
+                    "ALTER TABLE gateway_pairing_pending ADD COLUMN code_hash TEXT"
+                )
+            if "salt" not in columns:
+                conn.execute(
+                    "ALTER TABLE gateway_pairing_pending ADD COLUMN salt TEXT"
+                )
 
     @property
     def profile(self) -> Optional[str]:
@@ -495,6 +564,8 @@ class PairingStore:
         return self._dir / "_rate_limits.json"
 
     def _load_json(self, path: Path) -> dict:
+        if self._semantier_db_path is not None:
+            return self._load_semantier_data(path)
         if path.exists():
             try:
                 return json.loads(path.read_text(encoding="utf-8"))
@@ -527,7 +598,119 @@ class PairingStore:
         return {}
 
     def _save_json(self, path: Path, data: dict) -> None:
+        if self._semantier_db_path is not None:
+            self._save_semantier_data(path, data)
+            return
         _secure_write(path, json.dumps(data, indent=2, ensure_ascii=False))
+
+    def _load_semantier_data(self, path: Path) -> dict:
+        name = Path(path).name
+        with self._semantier_connect() as conn:
+            if name == "_rate_limits.json":
+                rows = conn.execute(
+                    "SELECT key, value FROM gateway_pairing_limits WHERE scope=?",
+                    (self._semantier_scope,),
+                ).fetchall()
+                return {str(row["key"]): float(row["value"]) for row in rows}
+            if name.endswith("-pending.json"):
+                platform = name[: -len("-pending.json")]
+                rows = conn.execute(
+                    """SELECT code, user_id, user_name, created_at, code_hash, salt
+                       FROM gateway_pairing_pending
+                       WHERE scope=? AND platform=?""",
+                    (self._semantier_scope, platform),
+                ).fetchall()
+                return {
+                    str(row["code"]): {
+                        "user_id": str(row["user_id"]),
+                        "user_name": str(row["user_name"] or ""),
+                        "created_at": float(row["created_at"]),
+                        **({"hash": str(row["code_hash"])} if row["code_hash"] else {}),
+                        **({"salt": str(row["salt"])} if row["salt"] else {}),
+                    }
+                    for row in rows
+                }
+            if name.endswith("-approved.json"):
+                platform = name[: -len("-approved.json")]
+                rows = conn.execute(
+                    """SELECT user_id, user_name, approved_at
+                       FROM gateway_pairing_approved
+                       WHERE scope=? AND platform=?""",
+                    (self._semantier_scope, platform),
+                ).fetchall()
+                return {
+                    str(row["user_id"]): {
+                        "user_name": str(row["user_name"] or ""),
+                        "approved_at": float(row["approved_at"]),
+                    }
+                    for row in rows
+                }
+        return {}
+
+    def _save_semantier_data(self, path: Path, data: dict) -> None:
+        name = Path(path).name
+        with self._semantier_connect() as conn:
+            if name == "_rate_limits.json":
+                conn.execute(
+                    "DELETE FROM gateway_pairing_limits WHERE scope=?",
+                    (self._semantier_scope,),
+                )
+                conn.executemany(
+                    "INSERT INTO gateway_pairing_limits(scope, key, value) VALUES (?, ?, ?)",
+                    [
+                        (self._semantier_scope, str(key), float(value))
+                        for key, value in data.items()
+                    ],
+                )
+                return
+            if name.endswith("-pending.json"):
+                platform = name[: -len("-pending.json")]
+                conn.execute(
+                    "DELETE FROM gateway_pairing_pending WHERE scope=? AND platform=?",
+                    (self._semantier_scope, platform),
+                )
+                conn.executemany(
+                    """INSERT INTO gateway_pairing_pending
+                       (scope, platform, code, user_id, user_name, created_at, code_hash, salt)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    [
+                        (
+                            self._semantier_scope,
+                            platform,
+                            str(entry_id),
+                            str(info.get("user_id") or ""),
+                            str(info.get("user_name") or ""),
+                            float(info.get("created_at") or 0.0),
+                            str(info.get("hash") or "") or None,
+                            str(info.get("salt") or "") or None,
+                        )
+                        for entry_id, info in data.items()
+                        if isinstance(info, dict)
+                    ],
+                )
+                return
+            if name.endswith("-approved.json"):
+                platform = name[: -len("-approved.json")]
+                conn.execute(
+                    "DELETE FROM gateway_pairing_approved WHERE scope=? AND platform=?",
+                    (self._semantier_scope, platform),
+                )
+                conn.executemany(
+                    """INSERT INTO gateway_pairing_approved
+                       (scope, platform, user_id, user_name, approved_at)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    [
+                        (
+                            self._semantier_scope,
+                            platform,
+                            str(user_id),
+                            str(info.get("user_name") or ""),
+                            float(info.get("approved_at") or 0.0),
+                        )
+                        for user_id, info in data.items()
+                        if isinstance(info, dict)
+                    ],
+                )
 
     def _normalize_user_id(self, platform: str, user_id: str) -> str:
         """Normalize platform-specific user IDs before persisting them."""
@@ -926,6 +1109,19 @@ class PairingStore:
 
     def _all_platforms(self, suffix: str) -> list:
         """List all platforms that have data files of a given suffix."""
+        if self._semantier_db_path is not None:
+            table = {
+                "approved": "gateway_pairing_approved",
+                "pending": "gateway_pairing_pending",
+            }.get(suffix)
+            if table is None:
+                return []
+            with self._semantier_connect() as conn:
+                rows = conn.execute(
+                    f"SELECT DISTINCT platform FROM {table} WHERE scope=? ORDER BY platform",
+                    (self._semantier_scope,),
+                ).fetchall()
+            return [str(row["platform"]) for row in rows]
         platforms = []
         for f in self._dir.iterdir():
             if f.name.endswith(f"-{suffix}.json"):

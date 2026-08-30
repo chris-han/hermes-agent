@@ -2,6 +2,7 @@
 
 import json
 import os
+import sqlite3
 import sys
 import time
 from pathlib import Path
@@ -124,6 +125,36 @@ class TestCodeGeneration:
 
 
 class TestHashedStorage:
+    def test_semantier_sqlite_store_keeps_codes_hashed_and_shared(self, tmp_path):
+        pairing_dir = tmp_path / "platforms" / "pairing"
+        auth_db = tmp_path / "state.db"
+        store = PairingStore(pairing_dir=pairing_dir, auth_db_path=auth_db)
+
+        code = store.generate_code("feishu", "ou_user", "Alice")
+        assert code is not None
+
+        with sqlite3.connect(auth_db) as conn:
+            row = conn.execute(
+                """SELECT code, code_hash, salt, user_id
+                   FROM gateway_pairing_pending
+                   WHERE platform = 'feishu'"""
+            ).fetchone()
+        assert row is not None
+        request_id, code_hash, salt, user_id = row
+        assert request_id != code
+        assert code_hash and len(code_hash) == 64
+        assert salt and len(salt) == 32
+        assert user_id == "ou_user"
+        assert code not in auth_db.read_bytes().decode("latin-1")
+        assert list(pairing_dir.glob("*.json")) == []
+
+        reopened = PairingStore(pairing_dir=pairing_dir, auth_db_path=auth_db)
+        assert reopened.approve_code("feishu", code) == {
+            "user_id": "ou_user",
+            "user_name": "Alice",
+        }
+        assert reopened.is_approved("feishu", "ou_user") is True
+
     def test_pending_file_contains_hash_and_salt(self, tmp_path):
         """Stored entries must have 'hash' and 'salt', never the plaintext code."""
         with patch("gateway.pairing.PAIRING_DIR", tmp_path):
@@ -701,5 +732,3 @@ class TestProfileScopedStorage:
             / "pairing"
             / "_rate_limits.json"
         )
-
-
