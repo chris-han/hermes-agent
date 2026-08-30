@@ -17,7 +17,14 @@ def _semantier_root() -> Path:
     if configured:
         root = Path(configured).expanduser().resolve()
     else:
-        root = Path(__file__).resolve().parents[4]
+        root = next(
+            (
+                candidate
+                for candidate in Path(__file__).resolve().parents
+                if (candidate / "src" / "semantier").is_dir()
+            ),
+            Path(__file__).resolve().parents[4],
+        )
     if not (root / "src" / "semantier").is_dir():
         raise RuntimeError(
             "Semantica memory requires the parent Semantier runtime; set "
