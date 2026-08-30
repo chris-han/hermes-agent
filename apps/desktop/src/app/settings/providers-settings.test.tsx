@@ -8,15 +8,22 @@ import type { EnvVarInfo, OAuthProvider } from '@/types/hermes'
 
 const listOAuthProviders = vi.fn()
 const disconnectOAuthProvider = vi.fn()
+const deleteEnvVar = vi.fn()
 const getEnvVars = vi.fn()
+const runInTerminal = vi.fn()
 const startManualProviderOAuth = vi.fn()
 const startManualLocalEndpoint = vi.fn()
 const onboarding = atom({ manual: false })
 
 vi.mock('@/hermes', () => ({
+  deleteEnvVar: (key: string, profile?: string) => deleteEnvVar(key, profile),
   disconnectOAuthProvider: (providerId: string) => disconnectOAuthProvider(providerId),
   getEnvVars: () => getEnvVars(),
   listOAuthProviders: () => listOAuthProviders()
+}))
+
+vi.mock('@/app/right-sidebar/store', () => ({
+  runInTerminal: (command: string) => runInTerminal(command)
 }))
 
 vi.mock('@/store/onboarding', () => ({
@@ -62,6 +69,7 @@ function keyVar(patch: Partial<EnvVarInfo> = {}): EnvVarInfo {
 beforeEach(() => {
   onboarding.set({ manual: false })
   getEnvVars.mockResolvedValue({})
+  deleteEnvVar.mockResolvedValue({ ok: true })
   disconnectOAuthProvider.mockResolvedValue({ ok: true, provider: 'nous' })
   listOAuthProviders.mockResolvedValue({
     providers: [provider('nous', true), provider('minimax-oauth', false)]
@@ -125,6 +133,106 @@ describe('ProvidersSettings', () => {
     })
 
     expect(disconnectOAuthProvider).not.toHaveBeenCalled()
+  })
+
+  it('leaves the account connected when the removal prompt is dismissed with Escape', async () => {
+    await renderProvidersSettings()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove Nous Portal' }))
+    expect(await screen.findByRole('dialog')).toBeTruthy()
+    fireEvent.keyDown(window.document, { key: 'Escape' })
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(disconnectOAuthProvider).not.toHaveBeenCalled()
+  })
+
+  it('disconnects exactly once even if confirmation is activated repeatedly', async () => {
+    await renderProvidersSettings()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove Nous Portal' }))
+    const disconnect = await screen.findByRole('button', { name: 'Disconnect' })
+    fireEvent.click(disconnect)
+    fireEvent.click(disconnect)
+
+    await waitFor(() => expect(disconnectOAuthProvider).toHaveBeenCalledTimes(1))
+  })
+
+  it('guards API-key deletion behind the same cancel-safe confirmation host', async () => {
+    getEnvVars.mockResolvedValue({
+      WIDGETAI_API_KEY: keyVar({
+        is_set: true,
+        provider: 'widgetai',
+        provider_label: 'WidgetAI',
+        redacted_value: 'wid…key'
+      })
+    })
+    listOAuthProviders.mockResolvedValue({ providers: [] })
+
+    const { ProvidersSettings } = await import('./providers-settings')
+    render(
+      <>
+        <ProvidersSettings onClose={vi.fn()} onViewChange={vi.fn()} view="keys" />
+        <ConfirmHost />
+      </>
+    )
+
+    const masked = await screen.findByDisplayValue('wid…key')
+    fireEvent.focus(masked)
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove' }))
+    expect(await screen.findByRole('dialog')).toBeTruthy()
+    expect(deleteEnvVar).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(deleteEnvVar).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }))
+    await waitFor(() => expect(deleteEnvVar).toHaveBeenCalledTimes(1))
+    expect(deleteEnvVar).toHaveBeenCalledWith('WIDGETAI_API_KEY', undefined)
+  })
+
+  it('guards terminal-managed disconnect and runs the command exactly once after confirmation', async () => {
+    const originalDesktop = window.hermesDesktop
+    Object.defineProperty(window, 'hermesDesktop', {
+      configurable: true,
+      value: { terminal: {} }
+    })
+    listOAuthProviders.mockResolvedValue({
+      providers: [
+        provider('qwen-oauth', true, {
+          disconnect_command: 'qwen auth logout',
+          disconnectable: false,
+          flow: 'external',
+          name: 'Qwen (via Qwen CLI)'
+        })
+      ]
+    })
+    const onClose = vi.fn()
+    const { ProvidersSettings } = await import('./providers-settings')
+
+    render(
+      <>
+        <ProvidersSettings onClose={onClose} onViewChange={vi.fn()} view="accounts" />
+        <ConfirmHost />
+      </>
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Disconnect Qwen Code' }))
+    expect(await screen.findByRole('dialog')).toBeTruthy()
+    expect(runInTerminal).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(runInTerminal).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Disconnect Qwen Code' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Disconnect' }))
+    await waitFor(() => expect(runInTerminal).toHaveBeenCalledTimes(1))
+    expect(runInTerminal).toHaveBeenCalledWith('qwen auth logout')
+    expect(onClose).toHaveBeenCalledTimes(1)
+
+    Object.defineProperty(window, 'hermesDesktop', {
+      configurable: true,
+      value: originalDesktop
+    })
   })
 
   it('keeps provider selection separate from account removal', async () => {
