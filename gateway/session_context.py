@@ -92,6 +92,7 @@ _SESSION_WORKSPACE_OWNER_ID: ContextVar = ContextVar(
 )
 _SESSION_KEY: ContextVar = ContextVar("HERMES_SESSION_KEY", default=_UNSET)
 _SESSION_ID: ContextVar = ContextVar("HERMES_SESSION_ID", default=_UNSET)
+_SESSION_HERMES_HOME: ContextVar = ContextVar("HERMES_HOME", default=_UNSET)
 # In-process UI session/window id for multi-session desktop/TUI hosts. This is
 # intentionally separate from HERMES_SESSION_ID: the latter is the durable
 # conversation/session-db id, while the UI id is the live frontend tab/window
@@ -158,6 +159,8 @@ _VAR_MAP = {
     "HERMES_SESSION_WORKSPACE_OWNER_ID": _SESSION_WORKSPACE_OWNER_ID,
     "HERMES_SESSION_KEY": _SESSION_KEY,
     "HERMES_SESSION_ID": _SESSION_ID,
+    "HERMES_SESSION_HERMES_HOME": _SESSION_HERMES_HOME,
+    "HERMES_HOME": _SESSION_HERMES_HOME,
     "HERMES_UI_SESSION_ID": _SESSION_UI_SESSION_ID,
     "HERMES_SESSION_MESSAGE_ID": _SESSION_MESSAGE_ID,
     "HERMES_SESSION_PROFILE": _SESSION_PROFILE,
@@ -239,6 +242,7 @@ def set_session_vars(
     workspace_owner_id: str = "",
     session_key: str = "",
     session_id: str = "",
+    hermes_home: str = "",
     message_id: str = "",
     profile: str = "",
     browser_control_principal: str = "",
@@ -286,6 +290,7 @@ def set_session_vars(
         _SESSION_WORKSPACE_OWNER_ID.set(workspace_owner_id),
         _SESSION_KEY.set(session_key),
         _SESSION_ID.set(session_id),
+        _SESSION_HERMES_HOME.set(hermes_home or ""),
         _SESSION_UI_SESSION_ID.set(ui_session_id),
         _SESSION_MESSAGE_ID.set(message_id),
         _SESSION_PROFILE.set(profile),
@@ -327,6 +332,7 @@ def clear_session_vars(tokens: list) -> None:
         _SESSION_SCOPE_ID,
         _SESSION_KEY,
         _SESSION_ID,
+        _SESSION_HERMES_HOME,
         _SESSION_UI_SESSION_ID,
         _SESSION_MESSAGE_ID,
         _SESSION_PROFILE,

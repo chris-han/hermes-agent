@@ -5418,6 +5418,16 @@ class _BoundedCronSessionDB:
         return _bounded
 
 
+def _run_cron_conversation_in_scope(agent, prompt: str, sandbox_scope):
+    """Run one cron turn under its governed workspace/job sandbox identity."""
+    if sandbox_scope is None:
+        return agent.run_conversation(prompt)
+    from agents.sandbox_scope import bind_sandbox_scope
+
+    with bind_sandbox_scope(sandbox_scope):
+        return agent.run_conversation(prompt)
+
+
 def run_job(
     job: dict,
     *,
@@ -5447,6 +5457,7 @@ def run_job(
     """
     job_id = job["id"]
     job_name = str(job.get("name") or job.get("prompt") or job_id or "cron job")
+    _cron_run_started_at = datetime.now(timezone.utc)
 
     # ---------------------------------------------------------------
     # no_agent short-circuit — the script IS the job, no LLM involvement.
@@ -6496,10 +6507,32 @@ def run_job(
         # env passthrough registrations) when the cron run hops into the worker
         # thread used for inactivity timeout monitoring.
         _cron_context = contextvars.copy_context()
+        _sandbox_scope = None
+        try:
+            from agents.sandbox_scope import cron_job_scope_if_resolvable
+
+            _sandbox_scope = cron_job_scope_if_resolvable(
+                workdir=_job_workdir,
+                job_id=job_id,
+                run_timestamp_utc=_cron_run_started_at,
+            )
+        except Exception:
+            logger.debug(
+                "Job '%s': governed sandbox scope derivation failed",
+                job_id,
+                exc_info=True,
+            )
+
         # Tag this fire and time the run_conversation call for the usage_audit.jsonl entry.
         _audit_fire_id = uuid.uuid4().hex
         _audit_t_start = time.monotonic()
-        _cron_future = _cron_pool.submit(_cron_context.run, agent.run_conversation, prompt)
+        _cron_future = _cron_pool.submit(
+            _cron_context.run,
+            _run_cron_conversation_in_scope,
+            agent,
+            prompt,
+            _sandbox_scope,
+        )
         _inactivity_timeout = False
         try:
             if _cron_inactivity_limit is None:

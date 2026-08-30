@@ -137,8 +137,25 @@ def bind_execution_boundary(boundary: ExecutionBoundary | None) -> Iterator[None
     updates = _boundary_env(boundary)
     previous = {key: os.environ.get(key) for key in updates}
     os.environ.update(updates)
+    sandbox_context = contextlib.nullcontext()
+    if boundary.workspace_id and boundary.session_id:
+        from agents.sandbox_scope import SandboxScope, bind_sandbox_scope
+
+        sandbox_context = bind_sandbox_scope(
+            SandboxScope(
+                workspace_id=boundary.workspace_id,
+                lane="interactive_session",
+                scope_id=boundary.session_id,
+                adapter_key=str(boundary.audit_metadata.get("adapter_key") or "")
+                or None,
+                network_enabled=bool(
+                    boundary.audit_metadata.get("network_enabled", False)
+                ),
+            )
+        )
     try:
-        yield
+        with sandbox_context:
+            yield
     finally:
         _current_boundary.reset(token)
         for key, value in previous.items():

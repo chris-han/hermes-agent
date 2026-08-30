@@ -77,6 +77,8 @@ def test_provider_resolution_returns_typed_boundary():
 def test_bind_execution_boundary_uses_contextvar_first_and_env_for_subprocess(
     monkeypatch,
 ):
+    from agents.sandbox_scope import current_sandbox_key, current_sandbox_scope
+
     monkeypatch.setenv("HERMES_HOME", "/tmp/original")
     boundary = _Provider().resolve(
         ExecutionBoundaryRequest(source="api_server", session_id="session-a")
@@ -99,10 +101,14 @@ def test_bind_execution_boundary_uses_contextvar_first_and_env_for_subprocess(
             == "/tmp/ws-a/sessions/session-a/artifacts"
         )
         assert os.environ["HERMES_PROVIDER_FALLBACK_ENABLED"] == "0"
+        assert current_sandbox_scope() is not None
+        assert current_sandbox_key() == "ws:ws-a:session:session-a"
         assert "SEMANTIER_WORKSPACE_ID" not in os.environ
         assert "SEMANTIER_DISABLE_PROVIDER_FALLBACK" not in os.environ
 
     assert current_execution_boundary() is None
+    assert current_sandbox_scope() is None
+    assert current_sandbox_key() is None
     assert os.environ["HERMES_HOME"] == "/tmp/original"
     assert "HERMES_PROVIDER_FALLBACK_ENABLED" not in os.environ
     assert "SEMANTIER_WORKSPACE_ARTIFACTS_DIR" not in os.environ

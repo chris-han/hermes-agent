@@ -59,7 +59,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 # Sentinel returned by _resolve_request_profile when a /p/<profile>/ prefix
 # names a profile this gateway does not serve (→ 404). Distinct from None
@@ -148,6 +148,44 @@ from gateway.platforms.base import (
 from agent.redact import redact_sensitive_text
 from agent.interrupt_compat import request_hard_interrupt
 from gateway.readiness import collect_runtime_readiness
+from gateway import workspace_runtime as _workspace_runtime
+
+
+@contextmanager
+def _non_cron_api_request_env():
+    """Prevent stale cron-only process state from authorizing an API turn."""
+    keys = ("HERMES_CRON_SESSION", "HERMES_CRON_JOB_ID")
+    previous = {key: os.environ.get(key) for key in keys}
+    try:
+        for key in keys:
+            os.environ.pop(key, None)
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+@contextmanager
+def _bound_semantier_identity(user_id: str | None, workspace_id: str | None):
+    previous = {
+        "SEMANTIER_USER_ID": os.environ.get("SEMANTIER_USER_ID"),
+        "SEMANTIER_WORKSPACE_ID": os.environ.get("SEMANTIER_WORKSPACE_ID"),
+    }
+    try:
+        if str(user_id or "").strip():
+            os.environ["SEMANTIER_USER_ID"] = str(user_id).strip()
+        if str(workspace_id or "").strip():
+            os.environ["SEMANTIER_WORKSPACE_ID"] = str(workspace_id).strip()
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 from gateway.browser_control_artifacts import (
     ArtifactError,
     ArtifactRateLimiter,
@@ -2826,6 +2864,7 @@ class APIServerAdapter(BasePlatformAdapter):
         route: Optional[Dict[str, Any]] = None,
         session_model: Optional[str] = None,
         confirmed_runtime_lock: bool = False,
+        request_hermes_home: Optional[str] = None,
     ) -> Any:
         """
         Create an AIAgent instance using the gateway's runtime config.
@@ -3141,6 +3180,16 @@ class APIServerAdapter(BasePlatformAdapter):
             agent_kwargs["service_tier"] = request_service_tier
 
         agent = AIAgent(**agent_kwargs)
+        if request_hermes_home:
+            from agents.workspace_session_logs import (
+                configure_agent_workspace_session_paths,
+            )
+
+            configure_agent_workspace_session_paths(
+                agent,
+                Path(request_hermes_home).resolve(),
+                session_id,
+            )
         agent._hermes_api_runtime = {
             "provider": runtime_kwargs.get("provider") or getattr(agent, "provider", "") or "",
             "model": getattr(agent, "model", None) or model,
@@ -4668,6 +4717,20 @@ class APIServerAdapter(BasePlatformAdapter):
             )
             if selection_error:
                 return web.json_response(_openai_error(selection_error), status=400)
+        try:
+            execution_kwargs = self._execution_boundary_kwargs_for_api(
+                request=request,
+                source="api_server.session_chat",
+                session_id=session_id,
+            )
+        except Exception as exc:
+            from gateway.execution_boundary import GovernedExecutionBoundaryRequired
+
+            if isinstance(exc, GovernedExecutionBoundaryRequired):
+                return web.json_response(
+                    _openai_error(str(exc), err_type="server_error"), status=500
+                )
+            raise
         history = await self._conversation_history_for_session(session_id)
         result, usage = await self._run_agent(
             user_message=user_message,
@@ -4680,6 +4743,7 @@ class APIServerAdapter(BasePlatformAdapter):
             requested_runtime=runtime_request.get("requested") or {},
             route_source=runtime_request.get("route_source") or "global",
             confirmed_runtime_lock=lock_active,
+            **execution_kwargs,
             **agent_overrides,
         )
         effective_session_id = result.get("session_id") if isinstance(result, dict) else session_id
@@ -4783,6 +4847,20 @@ class APIServerAdapter(BasePlatformAdapter):
             route_source=runtime_request.get("route_source") or "global",
             model_lock=("accepted" if lock_active else ""),
         )
+        try:
+            execution_kwargs = self._execution_boundary_kwargs_for_api(
+                request=request,
+                source="api_server.session_chat_stream",
+                session_id=session_id,
+            )
+        except Exception as exc:
+            from gateway.execution_boundary import GovernedExecutionBoundaryRequired
+
+            if isinstance(exc, GovernedExecutionBoundaryRequired):
+                return web.json_response(
+                    _openai_error(str(exc), err_type="server_error"), status=500
+                )
+            raise
 
         loop = asyncio.get_running_loop()
         queue: "asyncio.Queue[Optional[tuple[str, Dict[str, Any]]]]" = asyncio.Queue()
@@ -4853,6 +4931,7 @@ class APIServerAdapter(BasePlatformAdapter):
                     requested_runtime=runtime_request.get("requested") or {},
                     route_source=runtime_request.get("route_source") or "global",
                     confirmed_runtime_lock=lock_active,
+                    **execution_kwargs,
                     **agent_overrides,
                 )
                 final_response = _resolve_media_to_data_urls(result.get("final_response", "") if isinstance(result, dict) else "")
@@ -5164,6 +5243,22 @@ class APIServerAdapter(BasePlatformAdapter):
             session_id = _derive_chat_session_id(system_prompt, first_user)
             # history already set from request body above
 
+        try:
+            execution_kwargs = self._execution_boundary_kwargs_for_api(
+                request=request,
+                source="api_server.chat_completions",
+                session_id=session_id,
+            )
+        except Exception as exc:
+            from gateway.execution_boundary import GovernedExecutionBoundaryRequired
+
+            if isinstance(exc, GovernedExecutionBoundaryRequired):
+                return web.json_response(
+                    _openai_error(str(exc), err_type="server_error"),
+                    status=500,
+                )
+            raise
+
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:29]}"
         model_name = body.get("model", self._model_name)
         created = int(time.time())
@@ -5270,6 +5365,7 @@ class APIServerAdapter(BasePlatformAdapter):
                 tool_complete_callback=_on_tool_complete,
                 agent_ref=agent_ref,
                 gateway_session_key=gateway_session_key,
+                **execution_kwargs,
                 **agent_overrides,
                 route=route,
             ))
@@ -5291,6 +5387,7 @@ class APIServerAdapter(BasePlatformAdapter):
                 ephemeral_system_prompt=system_prompt,
                 session_id=session_id,
                 gateway_session_key=gateway_session_key,
+                **execution_kwargs,
                 **agent_overrides,
                 route=route,
             )
@@ -6312,6 +6409,21 @@ class APIServerAdapter(BasePlatformAdapter):
         # groups the entire conversation under one session entry.
         session_id = stored_session_id or str(uuid.uuid4())
 
+        try:
+            execution_kwargs = self._execution_boundary_kwargs_for_api(
+                request=request,
+                source="api_server.responses",
+                session_id=session_id,
+            )
+        except Exception as exc:
+            from gateway.execution_boundary import GovernedExecutionBoundaryRequired
+
+            if isinstance(exc, GovernedExecutionBoundaryRequired):
+                return web.json_response(
+                    _openai_error(str(exc), err_type="server_error"), status=500
+                )
+            raise
+
         stream = _coerce_request_bool(body.get("stream"), default=False)
         route = self._resolve_route(body.get("model"))
         agent_overrides = _request_agent_overrides(
@@ -6381,6 +6493,7 @@ class APIServerAdapter(BasePlatformAdapter):
                 tool_complete_callback=_on_tool_complete,
                 agent_ref=agent_ref,
                 gateway_session_key=gateway_session_key,
+                **execution_kwargs,
                 **agent_overrides,
                 route=route,
             ))
@@ -6416,6 +6529,7 @@ class APIServerAdapter(BasePlatformAdapter):
                 ephemeral_system_prompt=instructions,
                 session_id=session_id,
                 gateway_session_key=gateway_session_key,
+                **execution_kwargs,
                 **agent_overrides,
                 route=route,
             )
@@ -7182,12 +7296,77 @@ class APIServerAdapter(BasePlatformAdapter):
             )
         return None
 
+    def _resolve_execution_boundary_for_api(
+        self,
+        *,
+        source: str,
+        session_id: str | None,
+        require_boundary: bool,
+        headers: Mapping[str, str] | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ):
+        from gateway.execution_boundary import (
+            ExecutionBoundaryRequest,
+            GovernedExecutionBoundaryRequired,
+            resolve_execution_boundary,
+        )
+
+        boundary = resolve_execution_boundary(
+            ExecutionBoundaryRequest(
+                source=source,
+                session_id=session_id,
+                headers=dict(headers or {}),
+                metadata=dict(metadata or {}),
+            )
+        )
+        if boundary is None and require_boundary:
+            raise GovernedExecutionBoundaryRequired(
+                f"Execution boundary required for {source} session={session_id or ''}"
+            )
+        return boundary
+
+    def _execution_boundary_kwargs_for_api(
+        self,
+        *,
+        request: "web.Request",
+        source: str,
+        session_id: str,
+    ) -> Dict[str, Any]:
+        """Resolve one request boundary and project it into ``_run_agent`` args."""
+        require_boundary = bool(
+            getattr(self, "_semantier_embedded_boundary_required", False)
+        )
+        boundary = self._resolve_execution_boundary_for_api(
+            source=source,
+            session_id=session_id,
+            require_boundary=require_boundary,
+            headers=request.headers,
+            metadata={
+                "transport": "embedded" if require_boundary else "standalone",
+                "trusted_internal_boundary": require_boundary,
+            },
+        )
+        kwargs: Dict[str, Any] = {
+            "execution_boundary": boundary,
+            "request_upload_session_id": session_id,
+        }
+        if boundary is None:
+            return kwargs
+        kwargs["request_upload_session_id"] = boundary.session_id or session_id
+        kwargs["request_user_id"] = boundary.user_id
+        kwargs["request_workspace_id"] = boundary.workspace_id
+        if boundary.paths.hermes_home is not None:
+            kwargs["request_hermes_home"] = str(boundary.paths.hermes_home)
+        return kwargs
+
     @staticmethod
     def _bind_api_server_session(
         *,
         chat_id: str = "",
         session_key: str = "",
         session_id: str = "",
+        user_id: str = "",
+        workspace_owner_id: str = "",
         browser_control_principal: str = "",
         browser_control_transport_family: str = "",
     ) -> list:
@@ -7211,8 +7390,12 @@ class APIServerAdapter(BasePlatformAdapter):
         return set_session_vars(
             platform="api_server",
             chat_id=chat_id,
+            user_id=user_id,
+            workspace_owner_id=workspace_owner_id,
             session_key=session_key,
             session_id=session_id,
+            hermes_home=os.environ.get("HERMES_HOME") or None,
+            cwd=os.environ.get("TERMINAL_CWD") or "",
             browser_control_principal=browser_control_principal,
             browser_control_transport_family=browser_control_transport_family,
             async_delivery=False,
@@ -7232,6 +7415,11 @@ class APIServerAdapter(BasePlatformAdapter):
         agent_ref: Optional[list] = None,
         active_run_id: Optional[str] = None,
         gateway_session_key: Optional[str] = None,
+        request_hermes_home: Optional[str] = None,
+        request_upload_session_id: Optional[str] = None,
+        request_user_id: Optional[str] = None,
+        request_workspace_id: Optional[str] = None,
+        execution_boundary=None,
         requested_model: Optional[str] = None,
         requested_provider: Optional[str] = None,
         model_options: Optional[Dict[str, Any]] = None,
@@ -7271,6 +7459,14 @@ class APIServerAdapter(BasePlatformAdapter):
         call run-scoped control endpoints such as ``/v1/runs/{run_id}/steer``.
         """
         loop = asyncio.get_running_loop()
+        if request_hermes_home is None and execution_boundary is not None:
+            boundary_home = getattr(
+                getattr(execution_boundary, "paths", None),
+                "hermes_home",
+                None,
+            )
+            if boundary_home is not None:
+                request_hermes_home = str(boundary_home)
         # Capture before hopping to the executor — ContextVars do not follow
         # run_in_executor threads, so the profile scope must be re-entered
         # inside _run() from this explicit value.
@@ -7283,13 +7479,30 @@ class APIServerAdapter(BasePlatformAdapter):
         )
 
         def _run():
+            from gateway.execution_boundary import bind_execution_boundary
             from gateway.session_context import clear_session_vars
 
-            with self._profile_scope(request_profile):
+            workspace_context = (
+                _workspace_runtime.bound_workspace_hermes_home(
+                    request_hermes_home,
+                    session_id=request_upload_session_id or session_id,
+                )
+                if request_hermes_home
+                else nullcontext()
+            )
+            with (
+                bind_execution_boundary(execution_boundary),
+                _non_cron_api_request_env(),
+                _bound_semantier_identity(request_user_id, request_workspace_id),
+                workspace_context,
+                self._profile_scope(request_profile),
+            ):
                 tokens = self._bind_api_server_session(
                     chat_id=session_id or "",
                     session_key=gateway_session_key or session_id or "",
                     session_id=session_id or "",
+                    user_id=request_user_id or "",
+                    workspace_owner_id=request_workspace_id or "",
                     browser_control_principal=request_browser_control_principal,
                     browser_control_transport_family=(
                         request_browser_control_transport_family
@@ -7311,6 +7524,7 @@ class APIServerAdapter(BasePlatformAdapter):
                         route=route,
                         session_model=session_model,
                         confirmed_runtime_lock=confirmed_runtime_lock,
+                        request_hermes_home=request_hermes_home,
                     )
                     if agent_ref is not None:
                         agent_ref[0] = agent
@@ -7679,6 +7893,27 @@ class APIServerAdapter(BasePlatformAdapter):
 
         run_id = f"run_{uuid.uuid4().hex}"
         session_id = session_id or run_id
+        try:
+            execution_kwargs = self._execution_boundary_kwargs_for_api(
+                request=request,
+                source="api_server.runs",
+                session_id=session_id,
+            )
+        except Exception as exc:
+            from gateway.execution_boundary import GovernedExecutionBoundaryRequired
+
+            if isinstance(exc, GovernedExecutionBoundaryRequired):
+                return web.json_response(
+                    _openai_error(str(exc), err_type="server_error"), status=500
+                )
+            raise
+        execution_boundary = execution_kwargs.get("execution_boundary")
+        request_hermes_home = execution_kwargs.get("request_hermes_home")
+        request_upload_session_id = execution_kwargs.get(
+            "request_upload_session_id", session_id
+        )
+        request_user_id = execution_kwargs.get("request_user_id")
+        request_workspace_id = execution_kwargs.get("request_workspace_id")
         # Approval queues gate host-side tool execution and must be isolated
         # per API run.  Client-provided session IDs and memory session keys are
         # conversation/memory scopes, not authorization namespaces: multiple
@@ -7734,6 +7969,27 @@ class APIServerAdapter(BasePlatformAdapter):
             _api_request_browser_control_transport_family.get()
         )
 
+        @contextmanager
+        def _request_execution_scope():
+            from gateway.execution_boundary import bind_execution_boundary
+
+            workspace_context = (
+                _workspace_runtime.bound_workspace_hermes_home(
+                    request_hermes_home,
+                    session_id=request_upload_session_id,
+                )
+                if request_hermes_home
+                else nullcontext()
+            )
+            with (
+                bind_execution_boundary(execution_boundary),
+                _non_cron_api_request_env(),
+                _bound_semantier_identity(request_user_id, request_workspace_id),
+                workspace_context,
+                self._profile_scope(request_profile),
+            ):
+                yield
+
         async def _run_and_close():
             try:
                 self._set_run_status(run_id, "running")
@@ -7749,7 +8005,7 @@ class APIServerAdapter(BasePlatformAdapter):
                         last_event="run.cancelled",
                     )
                     return
-                with self._profile_scope(request_profile):
+                with _request_execution_scope():
                     agent = self._create_agent(
                         ephemeral_system_prompt=ephemeral_system_prompt,
                         session_id=session_id,
@@ -7760,6 +8016,7 @@ class APIServerAdapter(BasePlatformAdapter):
                         requested_provider=agent_overrides.get("requested_provider"),
                         model_options=agent_overrides.get("model_options"),
                         route=route,
+                        request_hermes_home=request_hermes_home,
                     )
                 self._active_run_agents[run_id] = agent
 
@@ -7805,7 +8062,7 @@ class APIServerAdapter(BasePlatformAdapter):
                     effective_task_id = session_id or run_id
                     approval_token = None
                     session_tokens = []
-                    with self._profile_scope(request_profile):
+                    with _request_execution_scope():
                         try:
                             # Bind approval/session identity for this API run via
                             # contextvars so concurrent runs do not share process
@@ -7823,6 +8080,8 @@ class APIServerAdapter(BasePlatformAdapter):
                                 chat_id=session_id or "",
                                 session_key=approval_session_key,
                                 session_id=session_id or "",
+                                user_id=request_user_id or "",
+                                workspace_owner_id=request_workspace_id or "",
                                 browser_control_principal=(
                                     request_browser_control_principal
                                 ),

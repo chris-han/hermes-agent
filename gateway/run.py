@@ -5929,6 +5929,26 @@ class TurnRunner:
                     self._runner._enforce_agent_cache_cap()
             logger.debug("Created new agent for session %s (sig=%s)", ctx.session_key, _sig)
 
+        # A Semantier execution boundary owns the canonical workspace session
+        # layout. Bind both fresh and cached agents on every turn so a resumed
+        # session cannot retain paths from a previously active workspace.
+        from gateway.execution_boundary import current_execution_boundary
+
+        _execution_boundary = current_execution_boundary()
+        if (
+            _execution_boundary is not None
+            and _execution_boundary.paths.hermes_home is not None
+        ):
+            from agents.workspace_session_logs import (
+                configure_agent_workspace_session_paths,
+            )
+
+            configure_agent_workspace_session_paths(
+                agent,
+                _execution_boundary.paths.hermes_home,
+                ctx.session_id,
+            )
+
         # Per-message state — callbacks and reasoning config change every
         # turn and must not be baked into the cached agent constructor.
         # Gate on needs_progress_queue (tool_progress OR thinking_progress)

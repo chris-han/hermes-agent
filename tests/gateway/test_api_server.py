@@ -962,6 +962,75 @@ class TestToolsetsEndpoint:
 
 class TestChatCompletionsEndpoint:
     @pytest.mark.asyncio
+    async def test_embedded_request_forwards_governed_execution_boundary(self, adapter, tmp_path):
+        from gateway.execution_boundary import BoundaryPaths, BoundaryPolicy, ExecutionBoundary
+
+        workspace = tmp_path / "workspace"
+        boundary = ExecutionBoundary(
+            source="api_server.chat_completions",
+            session_id="governed-session",
+            user_id="user-1",
+            workspace_id="workspace-1",
+            paths=BoundaryPaths(
+                hermes_home=workspace,
+                terminal_cwd=workspace,
+                runs_root=workspace / "runs",
+                uploads_root=workspace / "uploads",
+                artifacts_root=workspace / "artifacts",
+            ),
+            policy=BoundaryPolicy(provider_fallback_enabled=False, require_boundary=True),
+        )
+        adapter._semantier_embedded_boundary_required = True
+        expected_result = (
+            {"final_response": "ok", "messages": [], "api_calls": 1},
+            {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+        )
+
+        with (
+            patch.object(adapter, "_resolve_execution_boundary_for_api", return_value=boundary) as resolve,
+            patch.object(adapter, "_run_agent", new_callable=AsyncMock, return_value=expected_result) as run,
+        ):
+            async with TestClient(TestServer(_create_app(adapter))) as cli:
+                response = await cli.post(
+                    "/v1/chat/completions",
+                    json={"messages": [{"role": "user", "content": "hello"}]},
+                )
+
+        assert response.status == 200
+        resolve.assert_called_once()
+        assert resolve.call_args.kwargs["source"] == "api_server.chat_completions"
+        run_kwargs = run.call_args.kwargs
+        assert run_kwargs["execution_boundary"] is boundary
+        assert run_kwargs["request_hermes_home"] == str(workspace)
+        assert run_kwargs["request_upload_session_id"] == "governed-session"
+        assert run_kwargs["request_user_id"] == "user-1"
+        assert run_kwargs["request_workspace_id"] == "workspace-1"
+
+    @pytest.mark.asyncio
+    async def test_embedded_request_fails_closed_when_boundary_is_missing(self, adapter):
+        from gateway.execution_boundary import GovernedExecutionBoundaryRequired
+
+        adapter._semantier_embedded_boundary_required = True
+        with (
+            patch.object(
+                adapter,
+                "_resolve_execution_boundary_for_api",
+                side_effect=GovernedExecutionBoundaryRequired("boundary unavailable"),
+            ),
+            patch.object(adapter, "_run_agent", new_callable=AsyncMock) as run,
+        ):
+            async with TestClient(TestServer(_create_app(adapter))) as cli:
+                response = await cli.post(
+                    "/v1/chat/completions",
+                    json={"messages": [{"role": "user", "content": "hello"}]},
+                )
+                payload = await response.json()
+
+        assert response.status == 500
+        assert "boundary unavailable" in payload["error"]["message"]
+        run.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_invalid_json_returns_400(self, adapter):
         app = _create_app(adapter)
         async with TestClient(TestServer(app)) as cli:
