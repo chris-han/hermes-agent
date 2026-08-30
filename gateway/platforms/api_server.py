@@ -2865,6 +2865,7 @@ class APIServerAdapter(BasePlatformAdapter):
         session_model: Optional[str] = None,
         confirmed_runtime_lock: bool = False,
         request_hermes_home: Optional[str] = None,
+        request_session_db_home: Optional[Path] = None,
     ) -> Any:
         """
         Create an AIAgent instance using the gateway's runtime config.
@@ -3171,7 +3172,11 @@ class APIServerAdapter(BasePlatformAdapter):
             "tool_progress_callback": tool_progress_callback,
             "tool_start_callback": tool_start_callback,
             "tool_complete_callback": tool_complete_callback,
-            "session_db": self._ensure_session_db(),
+            "session_db": (
+                self._open_and_cache_session_db(request_session_db_home)
+                if request_session_db_home is not None
+                else self._ensure_session_db()
+            ),
             "fallback_model": fallback_model,
             "reasoning_config": reasoning_config,
             "gateway_session_key": gateway_session_key,
@@ -7477,6 +7482,9 @@ class APIServerAdapter(BasePlatformAdapter):
         request_browser_control_transport_family = (
             _api_request_browser_control_transport_family.get()
         )
+        from hermes_constants import get_hermes_home
+
+        request_session_db_home = get_hermes_home()
 
         def _run():
             from gateway.execution_boundary import bind_execution_boundary
@@ -7525,6 +7533,7 @@ class APIServerAdapter(BasePlatformAdapter):
                         session_model=session_model,
                         confirmed_runtime_lock=confirmed_runtime_lock,
                         request_hermes_home=request_hermes_home,
+                        request_session_db_home=request_session_db_home,
                     )
                     if agent_ref is not None:
                         agent_ref[0] = agent
@@ -7968,6 +7977,9 @@ class APIServerAdapter(BasePlatformAdapter):
         request_browser_control_transport_family = (
             _api_request_browser_control_transport_family.get()
         )
+        from hermes_constants import get_hermes_home
+
+        request_session_db_home = get_hermes_home()
 
         @contextmanager
         def _request_execution_scope():
@@ -8017,6 +8029,7 @@ class APIServerAdapter(BasePlatformAdapter):
                         model_options=agent_overrides.get("model_options"),
                         route=route,
                         request_hermes_home=request_hermes_home,
+                        request_session_db_home=request_session_db_home,
                     )
                 self._active_run_agents[run_id] = agent
 
