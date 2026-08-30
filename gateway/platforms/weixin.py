@@ -1522,6 +1522,30 @@ class WeixinAdapter(BasePlatformAdapter):
             user_id=sender_id,
             user_name=sender_id,
         )
+        try:
+            from agents.weixin_ingress_identity import resolve_weixin_ingress_owner
+
+            owner = resolve_weixin_ingress_owner(
+                account_id=self._account_id,
+                external_user_id=sender_id,
+                chat_id=effective_chat_id,
+                platform_session_key=message_id or "",
+            )
+            workspace_id = str(
+                getattr(owner, "owner_workspace_id", "") or ""
+            ).strip()
+            if workspace_id:
+                source.workspace_owner_id = workspace_id
+                adapter_key = f"weixin:{workspace_id}:{self._account_id}"
+                source.adapter_key = adapter_key
+                source.delivery_adapter_key = adapter_key
+        except Exception:
+            logger.debug(
+                "[%s] failed to resolve governed Weixin ingress owner for %s",
+                self.name,
+                _safe_id(sender_id),
+                exc_info=True,
+            )
         event = MessageEvent(
             text=text,
             message_type=_message_type_from_media(media_types, text),

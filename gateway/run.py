@@ -6985,6 +6985,48 @@ class TurnRunner:
 _SESSION_DB_UNPINNED = object()
 
 
+def _weixin_source_has_user_scoped_home_channel(source: SessionSource) -> bool:
+    """Resolve and self-heal a governed user-scoped Weixin home target."""
+    workspace_id = str(getattr(source, "workspace_owner_id", "") or "").strip()
+    user_id = str(getattr(source, "user_id", "") or "").strip()
+    chat_id = str(getattr(source, "chat_id", "") or "").strip()
+    chat_type = str(getattr(source, "chat_type", "") or "").strip().lower()
+    if not user_id:
+        return False
+    try:
+        from agents.auth_db import (
+            load_weixin_runtime_accounts,
+            save_weixin_runtime_account,
+        )
+    except Exception:
+        return False
+    matching_accounts = []
+    for account in load_weixin_runtime_accounts():
+        account_workspace_id = str(
+            account.get("owner_workspace_id") or account.get("workspace_id") or ""
+        ).strip()
+        if workspace_id and account_workspace_id != workspace_id:
+            continue
+        candidate_user_ids = {
+            str(account.get("external_user_id") or "").strip(),
+            str(account.get("user_id") or "").strip(),
+        }
+        if user_id in candidate_user_ids:
+            matching_accounts.append(account)
+    if not matching_accounts or (not workspace_id and len(matching_accounts) != 1):
+        return False
+    for account in matching_accounts:
+        if str(account.get("home_channel") or "").strip():
+            return True
+        if chat_type == "dm" and chat_id:
+            updated = dict(account)
+            updated["home_channel"] = chat_id
+            updated["home_channel_thread_id"] = str(source.thread_id or "").strip()
+            save_weixin_runtime_account(updated)
+            return True
+    return False
+
+
 class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, GatewaySlashCommandsMixin):
     """
     Main gateway controller.

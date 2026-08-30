@@ -3058,6 +3058,12 @@ class FeishuAdapter(BasePlatformAdapter):
             thread_id=None,
             user_id_alt=sender_profile["user_id_alt"],
         )
+        source = self._stamp_governed_workspace_owner(
+            source,
+            sender_id=user_id_obj,
+            chat_id=chat_id,
+            platform_session_key=message_id,
+        )
         synthetic_event = MessageEvent(
             text=synthetic_text,
             message_type=MessageType.TEXT,
@@ -3120,6 +3126,12 @@ class FeishuAdapter(BasePlatformAdapter):
             user_name=sender_profile["user_name"],
             thread_id=None,
             user_id_alt=sender_profile["user_id_alt"],
+        )
+        source = self._stamp_governed_workspace_owner(
+            source,
+            sender_id=sender_id,
+            chat_id=chat_id,
+            platform_session_key=token or None,
         )
         synthetic_event = MessageEvent(
             text=synthetic_text,
@@ -3408,6 +3420,12 @@ class FeishuAdapter(BasePlatformAdapter):
             thread_id=thread_id,
             user_id_alt=sender_profile["user_id_alt"],
             is_bot=is_bot,
+        )
+        source = self._stamp_governed_workspace_owner(
+            source,
+            sender_id=sender_id,
+            chat_id=chat_id,
+            platform_session_key=message_id,
         )
         normalized = MessageEvent(
             text=text,
@@ -4168,6 +4186,40 @@ class FeishuAdapter(BasePlatformAdapter):
         if event_chat_type == "p2p":
             return "dm"
         return "group"
+
+    def _stamp_governed_workspace_owner(
+        self,
+        source: Any,
+        *,
+        sender_id: Any | None = None,
+        chat_id: str | None = None,
+        platform_session_key: str | None = None,
+    ) -> Any:
+        """Stamp only workspace authority resolved by Semantier core."""
+        if str(getattr(source, "workspace_owner_id", "") or "").strip():
+            return source
+        open_id = str(getattr(sender_id, "open_id", "") or "").strip() or None
+        union_id = str(getattr(sender_id, "union_id", "") or "").strip() or None
+        resolved_chat_id = str(chat_id or getattr(source, "chat_id", "") or "").strip() or None
+        resolved_session_key = str(platform_session_key or "").strip() or None
+        if not any((open_id, union_id, resolved_chat_id, resolved_session_key)):
+            return source
+        try:
+            from agents.feishu_ingress_identity import resolve_feishu_ingress_owner
+
+            owner = resolve_feishu_ingress_owner(
+                open_id=open_id,
+                union_id=union_id,
+                chat_id=resolved_chat_id,
+                platform_session_key=resolved_session_key,
+            )
+        except Exception:
+            logger.debug("[Feishu] Failed to resolve governed ingress owner", exc_info=True)
+            return source
+        workspace_id = str(getattr(owner, "owner_workspace_id", "") or "").strip()
+        if workspace_id:
+            source.workspace_owner_id = workspace_id
+        return source
 
     async def _resolve_sender_profile(
         self,

@@ -542,6 +542,7 @@ def test_admit_accepts_realistic_bot_at_bot_group_event():
 # --- Event-dispatch plumbing -----------------------------------------------
 
 
+@pytest.mark.integration
 def test_handle_message_event_data_forwards_sender_when_admitted():
     import asyncio
 

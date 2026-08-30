@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import os
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -516,7 +517,14 @@ class TestWeixinContentDedup:
     with different message_ids, bypassing message_id deduplication.
     """
 
-    def test_duplicate_content_with_different_message_ids_is_dropped(self):
+    def test_duplicate_content_with_different_message_ids_is_dropped(self, monkeypatch):
+        from agents import weixin_ingress_identity
+
+        monkeypatch.setattr(
+            weixin_ingress_identity,
+            "resolve_weixin_ingress_owner",
+            lambda **_kwargs: SimpleNamespace(owner_workspace_id="test-workspace"),
+        )
         adapter = _make_adapter()
         adapter._poll_session = object()
         adapter.handle_message = AsyncMock()
@@ -544,6 +552,9 @@ class TestWeixinContentDedup:
         assert adapter.handle_message.await_count == 1
         event = adapter.handle_message.await_args[0][0]
         assert event.text == "hello world"
+        assert event.source.workspace_owner_id == "test-workspace"
+        assert event.source.adapter_key == "weixin:test-workspace:test-account"
+        assert event.source.delivery_adapter_key == "weixin:test-workspace:test-account"
 
 
 class TestWeixinTextDebounce:
@@ -827,4 +838,3 @@ class TestWeixinVoiceGatewayHandoff:
             "VOICE event body leaked Tencent's STT text — runner would trust "
             "the wrong transcript instead of re-transcribing (#27300)."
         )
-

@@ -166,6 +166,8 @@ class SessionSource:
     user_id_alt: Optional[str] = None  # Platform-specific stable alt ID (Signal UUID, Feishu union_id)
     chat_id_alt: Optional[str] = None  # Signal group internal ID
     workspace_owner_id: Optional[str] = None  # Governed Semantier workspace scope
+    adapter_key: Optional[str] = None  # Workspace-scoped inbound adapter identity
+    delivery_adapter_key: Optional[str] = None  # Workspace-scoped egress adapter identity
     is_bot: bool = False  # True when the message author is a bot/webhook (Discord)
     # Platform-neutral SCOPE discriminator (Discord guild / Slack workspace /
     # Matrix server). Drives server/workspace isolation + the relay δ/ε/ζ gate.
@@ -268,6 +270,10 @@ class SessionSource:
             d["chat_id_alt"] = self.chat_id_alt
         if self.workspace_owner_id:
             d["workspace_owner_id"] = self.workspace_owner_id
+        if self.adapter_key:
+            d["adapter_key"] = self.adapter_key
+        if self.delivery_adapter_key:
+            d["delivery_adapter_key"] = self.delivery_adapter_key
         # D-Q2.5 dual-write: emit BOTH the canonical `scope_id` and the
         # deprecated `guild_id` alias (mirrored in __post_init__) so a connector
         # on either side of the migration resolves the scope. Drop `guild_id`
@@ -304,6 +310,8 @@ class SessionSource:
             user_id_alt=data.get("user_id_alt"),
             chat_id_alt=data.get("chat_id_alt"),
             workspace_owner_id=data.get("workspace_owner_id"),
+            adapter_key=data.get("adapter_key"),
+            delivery_adapter_key=data.get("delivery_adapter_key"),
             # D-Q2.5 dual-read: prefer the canonical `scope_id`, fall back to the
             # deprecated `guild_id` alias (a peer not yet migrated still sends it).
             scope_id=data.get("scope_id", data.get("guild_id")),
