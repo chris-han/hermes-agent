@@ -12,6 +12,7 @@ import {
   sortProviders
 } from '@/components/desktop-onboarding-overlay'
 import { Button } from '@/components/ui/button'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { SearchField } from '@/components/ui/search-field'
 import { disconnectOAuthProvider, listOAuthProviders } from '@/hermes'
 import { useI18n } from '@/i18n'
@@ -296,7 +297,13 @@ function NoProviderKeys() {
 
 export function ProvidersSettings({ onClose, onViewChange, view }: ProvidersSettingsProps) {
   const { t } = useI18n()
-  const { rowProps, vars } = useEnvCredentials()
+  const { rowProps, vars, pendingClearKey, commitClear, cancelClear } =
+    useEnvCredentials()
+  const [terminalDisconnectTarget, setTerminalDisconnectTarget] =
+    useState<null | OAuthProvider>(null)
+  const [disconnectTarget, setDisconnectTarget] = useState<null | OAuthProvider>(
+    null,
+  )
   const [oauthProviders, setOauthProviders] = useState<OAuthProvider[]>([])
   const [openProvider, setOpenProvider] = useState<null | string>(null)
   const [disconnecting, setDisconnecting] = useState<null | string>(null)
@@ -346,12 +353,16 @@ export function ProvidersSettings({ onClose, onViewChange, view }: ProvidersSett
       return
     }
 
+    setTerminalDisconnectTarget(provider)
+  }
+
+  function commitTerminalDisconnect() {
+    const provider = terminalDisconnectTarget
+    setTerminalDisconnectTarget(null)
+    if (!provider) return
+    const command = provider.disconnect_command
+    if (!command) return
     const name = providerTitle(provider)
-
-    if (!window.confirm(t.settings.providers.removeTerminalConfirm(name, command))) {
-      return
-    }
-
     // Leave the settings overlay so the terminal pane (chat-only) is visible.
     onClose()
     runInTerminal(command)
@@ -362,12 +373,15 @@ export function ProvidersSettings({ onClose, onViewChange, view }: ProvidersSett
     })
   }
 
-  async function handleDisconnect(provider: OAuthProvider) {
-    const name = providerTitle(provider)
+  function handleDisconnect(provider: OAuthProvider) {
+    setDisconnectTarget(provider)
+  }
 
-    if (!window.confirm(t.settings.providers.removeConfirm(name))) {
-      return
-    }
+  async function commitDisconnect() {
+    const provider = disconnectTarget
+    setDisconnectTarget(null)
+    if (!provider) return
+    const name = providerTitle(provider)
 
     setDisconnecting(provider.id)
 
@@ -450,10 +464,45 @@ export function ProvidersSettings({ onClose, onViewChange, view }: ProvidersSett
     <SettingsContent>
       <OAuthPicker
         disconnecting={disconnecting}
-        onDisconnect={provider => void handleDisconnect(provider)}
+        onDisconnect={handleDisconnect}
         onTerminalDisconnect={handleTerminalDisconnect}
         onWantApiKey={() => onViewChange('keys')}
         providers={oauthProviders}
+      />
+      {terminalDisconnectTarget ? (
+        <ConfirmDialog
+          destructive
+          description={t.settings.providers.removeTerminalConfirm(
+            providerTitle(terminalDisconnectTarget),
+            terminalDisconnectTarget.disconnect_command ?? '',
+          )}
+          onClose={() => setTerminalDisconnectTarget(null)}
+          onConfirm={commitTerminalDisconnect}
+          open
+          title="Remove provider?"
+        />
+      ) : null}
+      {disconnectTarget ? (
+        <ConfirmDialog
+          destructive
+          description={t.settings.providers.removeConfirm(
+            providerTitle(disconnectTarget),
+          )}
+          onClose={() => setDisconnectTarget(null)}
+          onConfirm={commitDisconnect}
+          open
+          title="Remove provider?"
+        />
+      ) : null}
+      <ConfirmDialog
+        destructive
+        description={pendingClearKey ? `Remove ${pendingClearKey} from .env?` : ''}
+        onClose={cancelClear}
+        onConfirm={() => {
+          void commitClear()
+        }}
+        open={pendingClearKey !== null}
+        title="Remove from .env?"
       />
     </SettingsContent>
   )

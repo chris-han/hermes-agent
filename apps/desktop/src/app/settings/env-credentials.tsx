@@ -49,6 +49,7 @@ export function useEnvCredentials(): UseEnvCredentials {
   const [edits, setEdits] = useState<Record<string, string>>({})
   const [revealed, setRevealed] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState<string | null>(null)
+  const [pendingClearKey, setPendingClearKey] = useState<string | null>(null)
 
   // Best-effort cleanup of a retired localStorage flag (global "Show
   // advanced" toggle) — everything in these views is configuration-level.
@@ -137,13 +138,20 @@ export function useEnvCredentials(): UseEnvCredentials {
     }
   }
 
-  async function handleClear(key: string) {
-    if (!window.confirm(toolsets.removeConfirm(key))) {
-      return
-    }
+  function handleClear(key: string) {
+    setPendingClearKey(key)
+  }
+
+  function cancelClear() {
+    setPendingClearKey(null)
+  }
+
+  async function commitClear() {
+    const key = pendingClearKey
+    setPendingClearKey(null)
+    if (!key || saving) return
 
     setSaving(key)
-
     try {
       await deleteEnvVar(key)
       patchVar(key, { is_set: false, redacted_value: null })
@@ -174,6 +182,9 @@ export function useEnvCredentials(): UseEnvCredentials {
   return {
     saveValue,
     vars,
+    pendingClearKey,
+    commitClear,
+    cancelClear,
     rowProps: {
       edits,
       revealed,
@@ -196,4 +207,7 @@ interface UseEnvCredentials {
   rowProps: Omit<EnvRowProps, 'varKey' | 'info'>
   saveValue: (key: string, value: string) => Promise<{ message?: string; ok: boolean }>
   vars: Record<string, EnvVarInfo> | null
+  pendingClearKey: string | null
+  commitClear: () => Promise<void>
+  cancelClear: () => void
 }
