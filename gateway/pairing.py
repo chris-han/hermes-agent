@@ -980,6 +980,37 @@ class PairingStore:
 
             return None
 
+    def find_pending_by_code(self, platform: str, code: str) -> Optional[dict]:
+        """Resolve a pending code to non-secret request metadata without mutation."""
+        normalized_code = str(code or "").strip().upper()
+        if not normalized_code:
+            return None
+        with self._lock:
+            self._cleanup_expired(platform)
+            pending = self._load_json(self._pending_path(platform))
+            for request_id, info in pending.items():
+                if not isinstance(info, dict):
+                    continue
+                stored_hash = info.get("hash")
+                stored_salt = info.get("salt")
+                if not isinstance(stored_hash, str) or not isinstance(stored_salt, str):
+                    continue
+                try:
+                    candidate_hash = self._hash_code(
+                        normalized_code, bytes.fromhex(stored_salt)
+                    )
+                except (TypeError, ValueError):
+                    continue
+                if not secrets.compare_digest(candidate_hash, stored_hash):
+                    continue
+                return {
+                    "platform": platform,
+                    "request_id": str(request_id),
+                    "user_id": str(info.get("user_id") or ""),
+                    "user_name": str(info.get("user_name") or ""),
+                }
+        return None
+
     def list_pending(self, platform: str = None) -> list:
         """List pending pairing requests, optionally filtered by platform.
 

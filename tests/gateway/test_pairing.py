@@ -149,6 +149,12 @@ class TestHashedStorage:
         assert list(pairing_dir.glob("*.json")) == []
 
         reopened = PairingStore(pairing_dir=pairing_dir, auth_db_path=auth_db)
+        assert reopened.find_pending_by_code("feishu", code) == {
+            "platform": "feishu",
+            "request_id": request_id,
+            "user_id": "ou_user",
+            "user_name": "Alice",
+        }
         assert reopened.approve_code("feishu", code) == {
             "user_id": "ou_user",
             "user_name": "Alice",
