@@ -1,9 +1,23 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
+
+
+def _has_parent_semantier_runtime() -> bool:
+    configured = os.environ.get("SEMANTIER_RUNTIME_ROOT", "").strip()
+    candidates = [Path(configured).expanduser()] if configured else []
+    candidates.extend(Path(__file__).resolve().parents)
+    return any((candidate / "src" / "semantier").is_dir() for candidate in candidates)
+
+
+pytestmark = pytest.mark.skipif(
+    not _has_parent_semantier_runtime(),
+    reason="requires the parent semantier-runtime implementation",
+)
 
 
 def _load_provider():

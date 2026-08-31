@@ -1,7 +1,23 @@
+import os
+from pathlib import Path
+
 import pytest
 
 from gateway.config import Platform
 from gateway.session import SessionSource
+
+
+def _has_parent_auth_db() -> bool:
+    configured = os.environ.get("SEMANTIER_RUNTIME_ROOT", "").strip()
+    candidates = [Path(configured).expanduser()] if configured else []
+    candidates.extend(Path(__file__).resolve().parents)
+    return any((candidate / "src" / "agents" / "auth_db.py").is_file() for candidate in candidates)
+
+
+pytestmark = pytest.mark.skipif(
+    not _has_parent_auth_db(),
+    reason="requires the canonical semantier-runtime auth_db implementation",
+)
 
 
 def test_ensure_auth_db_creates_auth_db_file(monkeypatch, tmp_path):
