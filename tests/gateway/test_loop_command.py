@@ -1,5 +1,6 @@
 """Gateway /loop command tests — dispatch, routing capture, mid-run guard."""
 
+import asyncio
 import logging
 import time
 from unittest.mock import AsyncMock, Mock
@@ -61,6 +62,19 @@ def _make_event(text: str) -> MessageEvent:
             user_id="user-loop",
         ),
         message_id="msg-loop",
+    )
+
+
+def test_embedded_loop_wakeup_watcher_exits_without_workspace_boundary():
+    runner = _make_runner()
+    runner._running = True
+    runner._semantier_embedded_boundary_required = True
+
+    asyncio.run(
+        asyncio.wait_for(
+            GatewayRunner._loop_wakeup_watcher(runner, interval=0),
+            timeout=0.1,
+        )
     )
 
 

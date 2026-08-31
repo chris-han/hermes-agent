@@ -22955,7 +22955,19 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
           idle boundary)
         - no routing metadata on the loop → skip with a one-time warning
           (CLI/TUI loops carry no route and are driven by their own surfaces)
+
+        Governed embedded runners are process-global and intentionally start
+        without a workspace execution boundary. They must not scan a shared
+        SessionDB; session-scoped work is resolved only after ingress binds
+        its governed workspace context.
         """
+        if bool(getattr(self, "_semantier_embedded_boundary_required", False)):
+            logger.debug(
+                "loop wakeup watcher disabled for governed embedded runner "
+                "without a process-global workspace boundary"
+            )
+            return
+
         await asyncio.sleep(5)  # let platforms finish connecting
         warned_no_route: set = set()
         while self._running:
