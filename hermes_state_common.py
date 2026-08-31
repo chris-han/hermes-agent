@@ -560,8 +560,6 @@ CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_assistant_calls_by_session
     ON messages(session_id)
     WHERE role = 'assistant' AND tool_calls IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_compression_locks_expires ON compression_locks(expires_at);
-CREATE INDEX IF NOT EXISTS idx_session_turn_leases_expires ON session_turn_leases(expires_at);
 CREATE INDEX IF NOT EXISTS idx_session_model_usage_session ON session_model_usage(session_id);
 CREATE INDEX IF NOT EXISTS idx_session_model_usage_model ON session_model_usage(model);
 CREATE INDEX IF NOT EXISTS idx_async_delegations_delivery
@@ -586,6 +584,10 @@ CREATE INDEX IF NOT EXISTS idx_sessions_handoff_state
     ON sessions(handoff_state, started_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_system_prompt_hash
     ON sessions(system_prompt_hash);
+CREATE INDEX IF NOT EXISTS idx_compression_locks_expires
+    ON compression_locks(expires_at);
+CREATE INDEX IF NOT EXISTS idx_session_turn_leases_expires
+    ON session_turn_leases(expires_at);
 """
 
 

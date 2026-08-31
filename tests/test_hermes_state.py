@@ -1729,6 +1729,56 @@ class TestSchemaInit:
                     f"but missing from live DB. Live columns: {live_cols}"
                 )
 
+    def test_legacy_lock_tables_reconcile_expiry_columns_before_indexes(self, tmp_path):
+        db_path = tmp_path / "legacy-locks.db"
+        db = SessionDB(db_path=db_path)
+        db.close()
+
+        conn = sqlite3.connect(str(db_path))
+        try:
+            conn.executescript(
+                """
+                DROP INDEX IF EXISTS idx_compression_locks_expires;
+                DROP INDEX IF EXISTS idx_session_turn_leases_expires;
+                DROP TABLE compression_locks;
+                DROP TABLE session_turn_leases;
+                CREATE TABLE compression_locks (
+                    session_id TEXT PRIMARY KEY,
+                    holder TEXT NOT NULL,
+                    acquired_at REAL NOT NULL
+                );
+                CREATE TABLE session_turn_leases (
+                    conversation_id TEXT PRIMARY KEY,
+                    holder TEXT NOT NULL,
+                    acquired_at REAL NOT NULL
+                );
+                """
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        reopened = SessionDB(db_path=db_path)
+        try:
+            for table_name in ("compression_locks", "session_turn_leases"):
+                columns = {
+                    row[1]
+                    for row in reopened._conn.execute(
+                        f'PRAGMA table_info("{table_name}")'
+                    ).fetchall()
+                }
+                assert "expires_at" in columns
+            indexes = {
+                row[0]
+                for row in reopened._conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'index'"
+                ).fetchall()
+            }
+            assert "idx_compression_locks_expires" in indexes
+            assert "idx_session_turn_leases_expires" in indexes
+        finally:
+            reopened.close()
+
 
 class TestReconcileColumnsErrorHandling:
     """_reconcile_columns must not bury migration failures (#79531/#80037).
