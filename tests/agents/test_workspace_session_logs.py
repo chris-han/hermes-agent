@@ -3,14 +3,22 @@ from pathlib import Path
 
 import pytest
 
-from agents.workspace_session_logs import (
-    _index_path,
-    _load_index,
-    _session_jsonl_path,
-    _session_snapshot_path,
-    find_workspace_session_index_matches,
-    resolve_or_create_workspace_session_id,
-)
+try:
+    from agents.workspace_session_logs import (
+        _index_path,
+        _load_index,
+        _session_jsonl_path,
+        _session_snapshot_path,
+        find_workspace_session_index_matches,
+        resolve_or_create_workspace_session_id,
+    )
+except ModuleNotFoundError as exc:
+    if "Canonical Semantier workspace_session_logs implementation is unavailable" not in str(exc):
+        raise
+    pytest.skip(
+        "requires the canonical semantier-runtime workspace_session_logs implementation",
+        allow_module_level=True,
+    )
 
 
 def test_index_path_uses_sessions_json(tmp_path):
