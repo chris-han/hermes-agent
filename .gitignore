@@ -100,6 +100,8 @@ apps/desktop/src/**/*.d.ts
 !apps/desktop/src/vite-env.d.ts
 
 # Repo-root build/debug artifacts that must never be committed
+/.semantier-home/
+/build/
 /log.txt
 /sqlite_leak_fix.png
 /*.png.bak
