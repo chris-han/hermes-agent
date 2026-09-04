@@ -10266,27 +10266,21 @@ class SessionDB(SessionSearchMixin, SessionSchemaMixin, SessionPortabilityMixin)
         else:
             base = base_title
 
-        # Find all existing numbered variants
-        # Escape SQL LIKE wildcards (%, _) in the base to prevent false matches
-        escaped = _escape_like(base)
-        with self._read_ctx() as conn:
-            cursor = conn.execute(
-                "SELECT title FROM sessions WHERE title = ? OR title LIKE ? ESCAPE '\\'",
-                (base, f"{escaped} #%"),
-            )
-            existing = [row["title"] for row in cursor.fetchall()]
-
-        if not existing:
+        if self.get_session_by_title(base) is None:
             return base  # No conflict, use the base name as-is
 
-        # Find the highest number
-        max_num = 1  # The unnumbered original counts as #1
-        for t in existing:
-            m = re.match(r'^.* #(\d+)$', t)
-            if m:
-                max_num = max(max_num, int(m.group(1)))
-
-        return f"{base} #{max_num + 1}"
+        # The suffix is part of the MAX_TITLE_LENGTH budget. Probe exact,
+        # indexed titles so long bases remain valid and repeated collisions
+        # advance to #3, #4, and beyond even though each numbered variant has
+        # a slightly shorter base prefix.
+        number = 2
+        while True:
+            suffix = f" #{number}"
+            prefix = base[: self.MAX_TITLE_LENGTH - len(suffix)].rstrip()
+            candidate = f"{prefix}{suffix}"
+            if self.get_session_by_title(candidate) is None:
+                return candidate
+            number += 1
 
     def get_compression_tip(self, session_id: str) -> Optional[str]:
         """Walk the compression-continuation chain forward and return the tip.

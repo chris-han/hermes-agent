@@ -42,6 +42,23 @@ def test_idle_worker_reuse():
         pool.shutdown(wait=True)
 
 
+def test_worker_initializer_runs_before_submitted_task():
+    worker_state = threading.local()
+
+    def initialize(value):
+        worker_state.value = value
+
+    pool = DaemonThreadPoolExecutor(
+        max_workers=1,
+        initializer=initialize,
+        initargs=("ready",),
+    )
+    try:
+        assert pool.submit(lambda: worker_state.value).result(timeout=10) == "ready"
+    finally:
+        pool.shutdown(wait=True)
+
+
 def test_wedged_worker_does_not_block_interpreter_exit():
     """A worker stuck in a long sleep must not hold the process open.
 

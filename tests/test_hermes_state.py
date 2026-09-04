@@ -1618,6 +1618,17 @@ class TestSessionTitleLineage:
         # The unrelated holder keeps its title.
         assert db.get_session("a")["title"] == "shared"
 
+    def test_next_title_in_lineage_fits_the_title_limit(self, db):
+        base = "x" * SessionDB.MAX_TITLE_LENGTH
+        db.create_session("taken", "cli")
+        db.set_session_title("taken", base)
+
+        next_title = db.get_next_title_in_lineage(base)
+
+        assert next_title.endswith(" #2")
+        assert len(next_title) == SessionDB.MAX_TITLE_LENGTH
+        assert SessionDB.sanitize_title(next_title) == next_title
+
 
 
 class TestSanitizeTitle:
