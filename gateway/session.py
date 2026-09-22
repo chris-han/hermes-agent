@@ -75,6 +75,9 @@ class SessionSource:
     chat_topic: Optional[str] = None  # channel topic/description (Discord, Slack)
     user_id_alt: Optional[str] = None  # platform-specific stable alt ID (Signal UUID, Feishu union_id)
     chat_id_alt: Optional[str] = None  # Signal group internal ID
+    workspace_owner_id: Optional[str] = None  # parent-projected governed workspace scope
+    adapter_key: Optional[str] = None  # parent-projected inbound adapter identity
+    delivery_adapter_key: Optional[str] = None  # parent-projected egress adapter identity
     is_bot: bool = False  # message author is a bot/webhook (Discord)
     # Platform-neutral SCOPE discriminator (Discord guild / Slack workspace / Matrix server) driving
     # isolation. ``guild_id`` is a deprecated alias: both written, ``scope_id`` wins on read.
@@ -123,7 +126,9 @@ class SessionSource:
     # Wire layout (order matters for byte-stable JSON): always-present, then truthy-only
     # optionals around the dual-written scope pair.
     _ALWAYS_FIELDS = ("chat_id", "chat_name", "chat_type", "user_id", "user_name", "thread_id", "chat_topic")
-    _OPTIONAL_PRE_SCOPE = ("user_id_alt", "chat_id_alt")
+    _OPTIONAL_PRE_SCOPE = (
+        "user_id_alt", "chat_id_alt", "workspace_owner_id", "adapter_key", "delivery_adapter_key",
+    )
     _OPTIONAL_POST_SCOPE = ("parent_chat_id", "message_id", "profile")
     _OPTIONAL_TAIL = ("auto_thread_initial_name", "prospective_thread_id")
 
@@ -693,7 +698,11 @@ def build_session_key(
     # Duck-typed sources may lack user_id_alt: read the participant only when it matters.
     participant_id = _canonical_participant(source) if (isolate_user or not is_dm) else None
 
-    parts = [_session_key_namespace(profile), source.platform.value, chat_type_slot]
+    parts = [_session_key_namespace(profile)]
+    workspace_owner_id = str(getattr(source, "workspace_owner_id", "") or "").strip()
+    if workspace_owner_id:
+        parts += ["workspace", workspace_owner_id]
+    parts += [source.platform.value, chat_type_slot]
     if source.platform == Platform.SLACK and source.scope_id:
         parts.append(str(source.scope_id))
     if chat_id:
