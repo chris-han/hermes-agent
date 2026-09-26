@@ -536,6 +536,14 @@ class TestToolHandlers:
         assert "Memory 2" in result["result"]
 
 
+    def test_recall_tool_renders_source_provenance(self, provider):
+        provider._client.arecall.return_value = SimpleNamespace(results=[SimpleNamespace(
+            text="Memory 1", document_id="doc-1", metadata={"source": "hermes_session"},
+        )])
+        result = json.loads(provider.handle_tool_call("hindsight_recall", {"query": "dark mode"}))
+        assert "document_id=doc-1" in result["result"]
+        assert "source=hermes_session" in result["result"]
+
     def test_reflect_success(self, provider):
         result = json.loads(provider.handle_tool_call(
             "hindsight_reflect", {"query": "summarize"}
@@ -605,6 +613,22 @@ class TestPrefetch:
         assert captured["query"] == "fix tests"       # current query, not ignored
         assert "fresh memory" in result
         p._client.arecall.assert_called_once()
+
+    def test_recall_sync_renders_source_provenance(self, provider_with_config):
+        p = provider_with_config(recall_sync=True)
+        p._client.arecall = AsyncMock(return_value=SimpleNamespace(results=[SimpleNamespace(
+            text="Option B remains unapproved", document_id="atlas-session-3",
+            metadata={"session_id": "atlas-session-3", "source": "hermes_session", "version": "v7", "ignored": "do-not-render"},
+        )]))
+
+        result = p.prefetch("is B approved?")
+
+        assert "Option B remains unapproved" in result
+        assert "document_id=atlas-session-3" in result
+        assert "session_id=atlas-session-3" in result
+        assert "source=hermes_session" in result
+        assert "version=v7" in result
+        assert "do-not-render" not in result
 
     def test_recall_sync_skips_background_queue(self, provider_with_config):
         # With sync recall there's nothing to prime in the background.

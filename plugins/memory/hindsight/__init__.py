@@ -900,6 +900,29 @@ class HindsightMemoryProvider(MemoryProvider):
         )
         return resp.text
 
+    @staticmethod
+    def _format_recall_result(result) -> str:
+        """Render recalled text with compact source identity when Hindsight supplies it.
+
+        Provenance remains candidate-context metadata; rendering it does not promote the
+        memory to authority. Keep the allowlist intentionally small so arbitrary retain
+        metadata cannot inflate or inject into the model-visible recall block.
+        """
+        text = str(getattr(result, "text", "") or "").strip()
+        if not text:
+            return ""
+        metadata = getattr(result, "metadata", None) or {}
+        provenance = []
+        for label, value in (
+            ("document_id", getattr(result, "document_id", None)),
+            ("session_id", metadata.get("session_id")),
+            ("source", metadata.get("source")),
+            ("version", metadata.get("version")),
+        ):
+            if value is not None and str(value).strip():
+                provenance.append(f"{label}={str(value).strip()}")
+        return f"{text} [provenance: {'; '.join(provenance)}]" if provenance else text
+
     def _do_recall(self, query: str) -> tuple[str, int]:
         """One recall/reflect for *query* (background prefetch and ``recall_sync`` paths)
         -> (text, memory count); the count is 0 for reflect (synthesis) and on error."""
@@ -913,7 +936,7 @@ class HindsightMemoryProvider(MemoryProvider):
                          self._bank_id, len(query), self._budget)
             results = self._recall(query)
             logger.debug("Recall: returned %d results", len(results))
-            return "\n".join(f"- {r.text}" for r in results if r.text), len(results)
+            return "\n".join(f"- {text}" for r in results if (text := self._format_recall_result(r))), len(results)
         except Exception as e:
             logger.debug("Hindsight recall failed: %s", e, exc_info=True)
             return "", 0
@@ -1119,7 +1142,7 @@ class HindsightMemoryProvider(MemoryProvider):
                      self._bank_id, len(query), self._budget)
         results = self._recall(query)
         logger.debug("Tool hindsight_recall: %d results", len(results))
-        return "\n".join(f"{i}. {r.text}" for i, r in enumerate(results, 1)) or "No relevant memories found."
+        return "\n".join(f"{i}. {text}" for i, r in enumerate(results, 1) if (text := self._format_recall_result(r))) or "No relevant memories found."
 
     def _tool_reflect(self, args: dict) -> str:
         query = args["query"]
