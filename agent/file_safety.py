@@ -225,6 +225,15 @@ def get_safe_write_roots() -> set[str]:
     return roots
 
 
+def get_allowed_write_roots() -> set[str]:
+    """Resolved HERMES_WRITE_ALLOWED_ROOTS paths (comma-separated list)."""
+    roots: set[str] = set()
+    for path in filter(None, os.getenv("HERMES_WRITE_ALLOWED_ROOTS", "").split(",")):
+        with suppress(OSError, ValueError):
+            roots.add(os.path.realpath(os.path.expanduser(path)))
+    return roots
+
+
 def build_write_approval_paths(home: str) -> set[str]:
     """Paths that need human APPROVAL to write but are not hard-denied credentials.
 
@@ -267,6 +276,10 @@ def _classify_write_denial(path: str) -> Optional[str]:
     ):
         return "credential"
 
+    allowed_roots = get_allowed_write_roots()
+    if allowed_roots and any(_is_under(resolved, root) for root in allowed_roots):
+        return None
+
     for base in _hermes_dirs():
         for sub in _HERMES_PROTECTED_SUBPATHS:
             with suppress(Exception):
@@ -274,7 +287,10 @@ def _classify_write_denial(path: str) -> Optional[str]:
                     return "credential"
 
     safe_roots = get_safe_write_roots()
-    if safe_roots and not any(_is_under(resolved, root) for root in safe_roots):
+    if safe_roots and any(_is_under(resolved, root) for root in safe_roots):
+        return "safe_root"
+
+    if safe_roots:
         return "safe_root"
 
     return None

@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -52,6 +53,130 @@ SKILL_SCAFFOLD_SQL_LIKE = _SKILL_INVOCATION_PREFIX + "%"
 # Marks where a preview query joined the head and tail of a long scaffolded
 # message; ``describe_skill_invocation`` cuts there rather than show the body.
 SKILL_EXCERPT_JOINT = "\x1e"
+
+
+@dataclass(frozen=True)
+class DynamicSkillInvocation:
+    """Resolved dynamic skill payload for a slash command."""
+
+    command_key: str
+    skill_name: str
+    user_instruction: str
+    expanded_message: str
+
+
+class DynamicSkillPayloadBuildError(ValueError):
+    """Raised when a recognized dynamic skill cannot render its prompt payload."""
+
+
+@dataclass(frozen=True)
+class SlashCommandClassification:
+    kind: str
+    command: str
+    message: str
+
+
+def classify_slash_command(
+    message: str,
+    *,
+    built_in_commands: set[str] | None = None,
+    plugin_command_resolver: Any | None = None,
+    platform: str | None = None,
+) -> SlashCommandClassification | None:
+    """Classify a leading slash command without executing it.
+
+    This compatibility shim preserves the older gateway/webapi contract while
+    reusing the current scan-based skill registry.
+    """
+    if not isinstance(message, str):
+        return None
+    stripped = message.strip()
+    if not stripped or not stripped.startswith("/"):
+        return None
+    command = stripped.split(None, 1)[0].lstrip("/")
+    if not command:
+        return None
+
+    built = set(built_in_commands or ())
+    normalized_built = {item.lstrip("/") for item in built}
+    if command in normalized_built:
+        return SlashCommandClassification("built_in", command, f"Built-in command /{command} is not supported here.")
+
+    if plugin_command_resolver is not None and plugin_command_resolver(command) is not None:
+        return SlashCommandClassification("plugin", command, f"Plugin command /{command} is not supported here.")
+
+    key = resolve_skill_command_key(command)
+    if key is not None:
+        skill_info = get_skill_commands().get(key) or {}
+        skill_name = str(skill_info.get("name") or command)
+        try:
+            from agent.skill_utils import parse_frontmatter, skill_matches_platform
+
+            skill_dir = skill_info.get("skill_dir")
+            if skill_dir:
+                skill_md = Path(skill_dir) / "SKILL.md"
+                if skill_md.exists():
+                    frontmatter, _ = parse_frontmatter(skill_md.read_text(encoding="utf-8"))
+                    if not skill_matches_platform(frontmatter):
+                        return SlashCommandClassification(
+                            "platform_incompatible_skill",
+                            command,
+                            f"The **{skill_name}** skill is not compatible with this platform.",
+                        )
+        except Exception:
+            pass
+        try:
+            from agent.skill_utils import get_disabled_skill_names
+
+            disabled = get_disabled_skill_names(platform=platform)
+            if skill_name in disabled or command in disabled:
+                return SlashCommandClassification(
+                    "disabled_skill",
+                    command,
+                    f"The **{skill_name}** skill is installed but disabled.",
+                )
+        except Exception:
+            pass
+        return SlashCommandClassification("dynamic_skill", command, f"Dynamic skill /{command} should expand.")
+
+    return SlashCommandClassification("unknown", command, f"Unknown command /{command}.")
+
+
+def expand_dynamic_skill_command(
+    message: str,
+    *,
+    task_id: str | None = None,
+) -> DynamicSkillInvocation | None:
+    """Expand a leading dynamic skill slash command into its prompt payload."""
+    if not isinstance(message, str):
+        return None
+    stripped = message.strip()
+    if not stripped or not stripped.startswith("/"):
+        return None
+    tokens = stripped.split(None, 1)
+    command = tokens[0].lstrip("/")
+    cmd_key = resolve_skill_command_key(command)
+    if cmd_key is None:
+        return None
+    skill_info = get_skill_commands().get(cmd_key) or {}
+    skill_name = str(skill_info.get("name") or cmd_key.lstrip("/"))
+    user_instruction = tokens[1].strip() if len(tokens) > 1 else ""
+    try:
+        expanded_message = build_skill_invocation_message(
+            cmd_key,
+            user_instruction=user_instruction,
+            task_id=task_id,
+        )
+    except Exception as exc:  # pragma: no cover - surfaced to callers as a real build error
+        raise DynamicSkillPayloadBuildError(str(exc)) from exc
+    if expanded_message is None:
+        raise DynamicSkillPayloadBuildError(f"Failed to expand skill command {cmd_key!r}.")
+    return DynamicSkillInvocation(
+        command_key=cmd_key,
+        skill_name=skill_name,
+        user_instruction=user_instruction,
+        expanded_message=expanded_message,
+    )
 
 
 def slugify_skill_name(name: str) -> str:
