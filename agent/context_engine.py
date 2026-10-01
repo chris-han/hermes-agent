@@ -117,11 +117,11 @@ class ContextEngine(ABC):
         """
         return messages, 0
 
-    def select_context(
+    def select_invocation_payload(
         self, request_messages: List[Dict[str, Any]], *, conversation_messages: List[Dict[str, Any]] = None,
         incoming_message: Dict[str, Any] = None, budget_tokens: int = 0,
     ) -> List[Dict[str, Any]]:
-        """Optionally *select* (replace) the context for THIS request, pre-generation.
+        """Optionally reshape the provider invocation payload for THIS request, pre-generation.
 
         Runs on every provider request (also retries), independent of
         ``should_compress()``: ``compress()`` shrinks over-long context, this swaps in a
@@ -140,7 +140,7 @@ class ContextEngine(ABC):
         return None
 
     def on_turn_complete(self, messages: List[Dict[str, Any]], usage: Dict[str, Any] = None, **kwargs: Any) -> None:
-        """Observe a finished turn (complement of ``select_context()``) to index/update
+        """Observe a finished turn (complement of ``select_invocation_payload()``) to index/update
         routing state for the next request.
 
         Best-effort, not guaranteed: fires from the normal finalization seam only; some

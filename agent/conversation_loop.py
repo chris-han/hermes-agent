@@ -1186,21 +1186,21 @@ def _engine_overrides_hook(engine: Any, name: str) -> bool:
         return True
 
 
-def _apply_context_engine_selection(
+def _apply_invocation_payload_selection(
     agent: Any, api_messages: List[Dict[str, Any]], conversation_messages: List[Dict[str, Any]],
     incoming_message: Optional[Dict[str, Any]], *, logger: Any,
 ) -> List[Dict[str, Any]]:
-    """Run the optional per-turn ``ContextEngine.select_context()`` hook, fail-open: any
+    """Run the optional per-turn ``ContextEngine.select_invocation_payload()`` hook, fail-open: any
     exception or invalid return yields ``api_messages`` unchanged; history is never mutated."""
     engine = getattr(agent, "context_compressor", None)
-    if not _engine_overrides_hook(engine, "select_context"):
+    if not _engine_overrides_hook(engine, "select_invocation_payload"):
         return api_messages
 
     session_label = getattr(agent, "session_id", None) or "-"
     # Structural clones: the engine must not be able to write through nested
     # containers into persisted history; only the request list is acted on (#80498).
     try:
-        selected = engine.select_context(
+        selected = engine.select_invocation_payload(
             api_messages,
             conversation_messages=(
                 [_clone_message_for_send(m) for m in conversation_messages]
@@ -1214,7 +1214,7 @@ def _apply_context_engine_selection(
         )
     except Exception:
         logger.warning(
-            "Context engine select_context hook failed; using unmodified request messages (session=%s)",
+            "Context engine select_invocation_payload hook failed; using unmodified request messages (session=%s)",
             session_label, exc_info=True,
         )
         return api_messages
@@ -1226,7 +1226,7 @@ def _apply_context_engine_selection(
     if isinstance(selected, list) and selected and all(isinstance(m, dict) for m in selected):
         return selected
     logger.warning(
-        "Context engine select_context returned an invalid value "
+        "Context engine select_invocation_payload returned an invalid value "
         "(not a non-empty list of dicts); ignoring (session=%s)", session_label,
     )
     return api_messages

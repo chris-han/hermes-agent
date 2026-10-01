@@ -112,7 +112,7 @@ def _make_loop_agent():
     compressor.should_compress_preflight.return_value = False
     compressor.should_defer_preflight_to_real_usage.return_value = False
     compressor.get_active_compression_failure_cooldown.return_value = None
-    compressor.select_context.return_value = None
+    compressor.select_invocation_payload.return_value = None
     compressor.get_automatic_compaction_status_message.return_value = ""
     agent.compression_enabled = False  # isolate the budget behavior under test
     agent.context_compressor = compressor

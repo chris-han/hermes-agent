@@ -6,7 +6,7 @@ completed turn's canonical token usage (prompt/completion/total + the canonical
 ``input_tokens`` / ``output_tokens`` / ``cache_read_tokens`` /
 ``cache_write_tokens`` / ``reasoning_tokens`` buckets) when the host has it —
 not a hardcoded ``None`` — so the engine can weigh how large/expensive the
-selected context was before the next ``select_context()``.
+selected context was before the next ``select_invocation_payload()``.
 
 The conversation loop stashes the most recent provider response's usage on the
 agent as ``_last_turn_usage`` (the same dict shape fed to

@@ -1,10 +1,10 @@
-"""Tests for the per-turn ``ContextEngine.select_context()`` hook.
+"""Tests for the per-turn ``ContextEngine.select_invocation_payload()`` hook.
 
-``select_context()`` is the *selection / routing* verb — distinct from
-compression — that lets an external context engine replace which context
+``select_invocation_payload()`` is the *selection / routing* verb — distinct from
+compression — that lets an external context engine replace which provider-message payload
 enters the prompt for a single request, every turn, independent of
 ``should_compress()``. It is additive and no-op by default, and the host
-call site (``_apply_context_engine_selection``) is fail-open: a missing hook,
+call site (``_apply_invocation_payload_selection``) is fail-open: a missing hook,
 an exception, or an invalid return value must leave the assembled request
 untouched and must never mutate persisted history.
 
@@ -20,7 +20,7 @@ from unittest.mock import MagicMock
 
 from agent.context_engine import ContextEngine
 from agent.conversation_loop import (
-    _apply_context_engine_selection,
+    _apply_invocation_payload_selection,
     _notify_context_engine_turn_complete,
 )
 
@@ -65,32 +65,32 @@ HISTORY = [{"role": "user", "content": "hello"}]
 
 
 
-# -- Host call site: _apply_context_engine_selection -----------------------
+# -- Host call site: _apply_invocation_payload_selection -----------------------
 
 
 
-def test_base_noop_select_context_is_short_circuited_not_called():
+def test_base_noop_select_invocation_payload_is_short_circuited_not_called():
     """Non-implementing engines skip the hook entirely (no call, no copies).
 
     The built-in ContextCompressor — and any engine that merely inherits the
     ABC default — must keep the default request path byte-identical AND pay
     nothing per request. ``hasattr`` alone cannot distinguish "inherits the
     no-op default" from "implements the hook" because the ABC defines
-    ``select_context`` on every engine; the host therefore identity-checks the
-    bound method against ``ContextEngine.select_context`` and short-circuits
+    ``select_invocation_payload`` on every engine; the host therefore identity-checks the
+    bound method against ``ContextEngine.select_invocation_payload`` and short-circuits
     WITHOUT calling it or building the shallow reference copies. This pins
     that: even a base implementation patched to raise is never invoked.
     """
     from unittest.mock import patch as _patch
 
     def _explode(self, request_messages, **kwargs):
-        raise AssertionError("base select_context must not be invoked")
+        raise AssertionError("base select_invocation_payload must not be invoked")
 
     engine = _MinimalEngine()  # inherits the ABC default
     agent = _agent_with(engine)
     logger = MagicMock()
-    with _patch.object(ContextEngine, "select_context", _explode):
-        out = _apply_context_engine_selection(
+    with _patch.object(ContextEngine, "select_invocation_payload", _explode):
+        out = _apply_invocation_payload_selection(
             agent, REQUEST, HISTORY, HISTORY[-1], logger=logger
         )
     assert out is REQUEST
@@ -122,12 +122,12 @@ def test_empty_list_keeps_original_request():
     """
 
     class _Engine(_MinimalEngine):
-        def select_context(self, request_messages, **kwargs):
+        def select_invocation_payload(self, request_messages, **kwargs):
             return []
 
     logger = MagicMock()
     agent = _agent_with(_Engine())
-    out = _apply_context_engine_selection(
+    out = _apply_invocation_payload_selection(
         agent, REQUEST, HISTORY, HISTORY[-1], logger=logger
     )
     assert out is REQUEST
@@ -140,7 +140,7 @@ def test_engine_mutating_inputs_cannot_corrupt_persisted_state():
 
     ``conversation_messages`` and ``incoming_message`` are reference-only
     context. The host passes shallow copies, so even a misbehaving engine that
-    appends to / edits them in ``select_context()`` cannot alter the live
+    appends to / edits them in ``select_invocation_payload()`` cannot alter the live
     persisted objects. Enforces the request-only contract (not just documents).
     """
     history = [{"role": "user", "content": "hello"}]
@@ -149,7 +149,7 @@ def test_engine_mutating_inputs_cannot_corrupt_persisted_state():
     incoming_snapshot = dict(incoming)
 
     class _Engine(_MinimalEngine):
-        def select_context(self, request_messages, *, conversation_messages=None,
+        def select_invocation_payload(self, request_messages, *, conversation_messages=None,
                             incoming_message=None, **kwargs):
             # Misbehaving engine: mutate the read-only inputs in place.
             if conversation_messages is not None:
@@ -161,7 +161,7 @@ def test_engine_mutating_inputs_cannot_corrupt_persisted_state():
             return None
 
     agent = _agent_with(_Engine())
-    _apply_context_engine_selection(
+    _apply_invocation_payload_selection(
         agent, REQUEST, history, incoming, logger=MagicMock()
     )
     # Persisted history + incoming message are untouched despite the engine's
@@ -174,7 +174,7 @@ def test_persisted_history_not_mutated():
     """The hook must not mutate the persisted conversation history."""
 
     class _Engine(_MinimalEngine):
-        def select_context(self, request_messages, *, conversation_messages=None, **kwargs):
+        def select_invocation_payload(self, request_messages, *, conversation_messages=None, **kwargs):
             # Even a misbehaving engine touching its inputs must not affect
             # what the host persists — the host passes the live list, so we
             # assert the host contract by checking the engine received it and
@@ -183,7 +183,7 @@ def test_persisted_history_not_mutated():
 
     history_snapshot = [dict(m) for m in HISTORY]
     agent = _agent_with(_Engine())
-    _apply_context_engine_selection(
+    _apply_invocation_payload_selection(
         agent, REQUEST, HISTORY, HISTORY[-1], logger=MagicMock()
     )
     assert HISTORY == history_snapshot
@@ -201,7 +201,7 @@ def test_role_unusual_replacement_passed_through_for_downstream_sanitizers():
     role-alternation risk on sibling PRs) is well-formed structurally, so the
     host returns it verbatim. Role-pairing/orphaned-tool cleanup runs *after*
     this hook in the request pipeline (`_sanitize_api_messages`,
-    `_drop_thinking_only_and_merge_users`), so select_context cannot emit a
+    `_drop_thinking_only_and_merge_users`), so select_invocation_payload cannot emit a
     malformed request that bypasses validation.
     """
     role_unusual = [
@@ -211,11 +211,11 @@ def test_role_unusual_replacement_passed_through_for_downstream_sanitizers():
     ]
 
     class _Engine(_MinimalEngine):
-        def select_context(self, request_messages, **kwargs):
+        def select_invocation_payload(self, request_messages, **kwargs):
             return role_unusual
 
     agent = _agent_with(_Engine())
-    out = _apply_context_engine_selection(
+    out = _apply_invocation_payload_selection(
         agent, REQUEST, HISTORY, HISTORY[-1], logger=MagicMock()
     )
     assert out is role_unusual  # accepted structurally; downstream sanitizers normalize
@@ -245,6 +245,13 @@ def test_on_turn_complete_called_with_snapshot_and_meta():
     assert captured["usage"] == {"total_tokens": 12}
     assert captured["kwargs"]["turn_id"] == "t1"
     assert captured["kwargs"]["api_call_count"] == 1
+
+
+def test_legacy_select_context_hook_is_absent_from_context_engine_api():
+    """Provider request shaping must not masquerade as semantic context formation."""
+
+    assert hasattr(ContextEngine, "select_invocation_payload")
+    assert not hasattr(ContextEngine, "select_context")
 
 
 

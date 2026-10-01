@@ -1559,7 +1559,7 @@ def test_review_fork_compacts_oversized_snapshot_in_memory(tmp_path: Path) -> No
         self.context_compressor.get_active_compression_failure_cooldown = MagicMock(
             return_value=None
         )
-        self.context_compressor.select_context = MagicMock(return_value=None)
+        self.context_compressor.select_invocation_payload = MagicMock(return_value=None)
         self._compression_feasibility_checked = True
         self.client = MagicMock()
         self.client.chat.completions.create.side_effect = [
