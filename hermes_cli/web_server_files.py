@@ -21,7 +21,23 @@ class ManagedFilesPolicy:
     can_change_path: bool
 
 
-def _fs_path(raw_path: str, *, cwd: str | None = None) -> Path:
+def _fs_enforce_read_allowed(path: Path) -> None:
+    from agent.file_safety import get_execution_boundary_block_error
+
+    error = get_execution_boundary_block_error(str(path))
+    if error:
+        raise HTTPException(status_code=403, detail=error)
+
+
+def _fs_enforce_write_allowed(path: Path) -> None:
+    from agent.file_safety import get_execution_boundary_block_error
+
+    error = get_execution_boundary_block_error(str(path), for_write=True)
+    if error:
+        raise HTTPException(status_code=403, detail=error)
+
+
+def _fs_path(raw_path: str, *, cwd: str | None = None, for_write: bool = False) -> Path:
     raw = str(raw_path or "").strip()
     if not raw:
         raise HTTPException(status_code=400, detail="Path is required")
@@ -42,7 +58,12 @@ def _fs_path(raw_path: str, *, cwd: str | None = None) -> Path:
             if not base.is_absolute():
                 raise HTTPException(status_code=400, detail="Session working directory is unavailable")
             candidate = base / candidate
-        return candidate.resolve(strict=False)
+        target = candidate.resolve(strict=False)
+        if for_write:
+            _fs_enforce_write_allowed(target)
+        else:
+            _fs_enforce_read_allowed(target)
+        return target
     except (OSError, RuntimeError, ValueError):
         raise HTTPException(status_code=400, detail="Invalid path")
 
@@ -60,8 +81,11 @@ def _canonical_path(path: Path, *, require_exists: bool = False) -> Path:
 
 def _ensure_managed_root(raw_path: str | Path) -> Path:
     root = Path(raw_path).expanduser()
+    _fs_enforce_read_allowed(root)
     try:
-        root.mkdir(parents=True, exist_ok=True)
+        if not root.exists():
+            _fs_enforce_write_allowed(root)
+            root.mkdir(parents=True, exist_ok=True)
         resolved = root.resolve()
     except (OSError, RuntimeError) as exc:
         raise HTTPException(status_code=500, detail=f"Managed files root is unavailable: {exc}")
@@ -170,6 +194,10 @@ def _resolve_managed_path(
     if root is not None and not _path_is_under(root, resolved):
         raise HTTPException(status_code=403, detail="Path outside managed files root")
 
+    if for_write:
+        _fs_enforce_write_allowed(resolved)
+    else:
+        _fs_enforce_read_allowed(resolved)
     return policy, resolved, str(resolved)
 
 
@@ -185,6 +213,7 @@ def _managed_file_entry(policy: ManagedFilesPolicy, target: Path) -> Dict[str, A
         raise HTTPException(status_code=400, detail="Invalid path")
     if policy.locked_root is not None and not _path_is_under(policy.locked_root, resolved):
         raise HTTPException(status_code=403, detail="Path outside managed files root")
+    _fs_enforce_read_allowed(resolved)
 
     try:
         st = resolved.stat()

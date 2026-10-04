@@ -23,6 +23,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any, Dict, FrozenSet, Optional
 
+from gateway.execution_boundary import execution_scratch_dir
 from utils import is_truthy_value
 
 
@@ -319,7 +320,7 @@ def _generate_command_tts(
     if output.exists():
         output.unlink()
     timeout = _get_command_tts_timeout(config)
-    with tempfile.TemporaryDirectory() as tmpdir:
+    with tempfile.TemporaryDirectory(dir=execution_scratch_dir()) as tmpdir:
         text_path = Path(tmpdir) / "input.txt"
         text_path.write_text(text, encoding="utf-8")
         placeholders = {

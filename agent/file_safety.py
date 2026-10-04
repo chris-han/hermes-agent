@@ -255,13 +255,38 @@ def build_write_approval_paths(home: str) -> set[str]:
 _HERMES_PROTECTED_SUBPATHS = ("state.db", "sessions", "mcp-tokens", "pairing", "vault", "browser-profile")
 
 
+def get_execution_boundary_block_error(path: str, *, for_write: bool = False) -> Optional[str]:
+    """Keep generic file IO inside the bound roots; never authorize a scratch redirect."""
+    from gateway.execution_boundary import (
+        BoundaryPathRejected, DiskIOBoundaryGuard, GovernedExecutionBoundaryRequired,
+        current_execution_boundary, get_execution_boundary_provider,
+    )
+
+    boundary = current_execution_boundary()
+    if boundary is None and get_execution_boundary_provider() is None:
+        return None
+    try:
+        guard = DiskIOBoundaryGuard(boundary)
+        if for_write:
+            resolved = guard.resolve_write_path(path)
+            if resolved != Path(path).expanduser().resolve():
+                return "Write denied: host scratch must be staged inside the active Semantier execution boundary."
+        else:
+            guard.resolve_read_path(path)
+    except (BoundaryPathRejected, GovernedExecutionBoundaryRequired, OSError, RuntimeError, ValueError):
+        return "Access denied: path is outside the active Semantier execution boundary or the boundary is unavailable."
+    return None
+
+
 def _classify_write_denial(path: str) -> Optional[str]:
-    """Return ``'credential'``, ``'safe_root'``, ``'nt_namespace'``, or ``None`` if writes are allowed."""
+    """Classify credential, safe-root, namespace, or execution-boundary write denials."""
     # NT/device-namespace check runs on the RAW string, before realpath():
     # resolving such a path is itself the NTLM-leak trigger, and namespace
     # prefixes defeat string-prefix denylist comparison after normalization.
     if is_nt_namespace_path(path):
         return "nt_namespace"
+    if get_execution_boundary_block_error(path, for_write=True):
+        return "boundary"
     homes, resolved = _homes_and_resolved(path)
 
     # Approval-gated paths are allowed at this layer so interactive tools can
@@ -304,6 +329,8 @@ def is_write_denied(path: str) -> bool:
 def get_write_denied_error(path: str, *, verb: str = "Write") -> Optional[str]:
     """Return a user/model-facing error when writes to ``path`` are blocked."""
     denial = _classify_write_denial(path)
+    if denial == "boundary":
+        return get_execution_boundary_block_error(path, for_write=True)
     if denial == "safe_root":
         roots_display = os.pathsep.join(sorted(get_safe_write_roots()))
         return (
@@ -376,6 +403,9 @@ def get_read_block_error(path: str) -> Optional[str]:
     nt_error = get_nt_namespace_error(path, verb="Read")
     if nt_error:
         return nt_error
+    boundary_error = get_execution_boundary_block_error(path)
+    if boundary_error:
+        return boundary_error
     resolved = Path(path).expanduser().resolve()
     hermes_dirs = _hermes_dirs()
     reason = None

@@ -148,6 +148,23 @@ def bind_execution_boundary(boundary: ExecutionBoundary | None) -> Iterator[None
                 os.environ[key] = value
 
 
+def execution_scratch_dir() -> str | None:
+    """Resolve per-call temporary staging without changing process-global temp state."""
+    boundary = current_execution_boundary()
+    if boundary is None and get_execution_boundary_provider() is None:
+        return None
+    guard = DiskIOBoundaryGuard(boundary)
+    artifacts = guard.boundary.paths.artifacts_root
+    if artifacts is None:
+        raise BoundaryPathRejected("BOUNDARY_WRITE_REJECTED: session artifact root required for scratch")
+    candidate = _resolve_path(artifacts / "tmp")
+    resolved = guard.resolve_write_path(candidate, purpose="scratch")
+    if resolved != candidate:
+        raise BoundaryPathRejected("BOUNDARY_WRITE_REJECTED: scratch root escapes the allowed write roots")
+    resolved.mkdir(parents=True, exist_ok=True)
+    return str(resolved)
+
+
 def _resolve_path(path: str | Path) -> Path:
     return Path(path).expanduser().resolve()
 

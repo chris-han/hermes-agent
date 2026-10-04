@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 from urllib.parse import urljoin
 
+from gateway.execution_boundary import execution_scratch_dir
 from utils import is_truthy_value
 from tools.transcription_audio import _transcode_audio_for_stt
 from tools.transcription_common import (
@@ -156,7 +157,7 @@ def _transcribe_openai(
                 create_kwargs["prompt"] = prompt
             with open(path, "rb") as audio_file:
                 return client.audio.transcriptions.create(file=audio_file, **create_kwargs)
-        with tempfile.TemporaryDirectory(prefix="hermes-stt-") as work_dir:
+        with tempfile.TemporaryDirectory(prefix="hermes-stt-", dir=execution_scratch_dir()) as work_dir:
             try:
                 transcription = _create_transcription(file_path)
             except APIStatusError as exc:

@@ -9,6 +9,8 @@ import shutil
 import tempfile
 from pathlib import Path
 
+from gateway.execution_boundary import execution_scratch_dir
+
 logger = logging.getLogger("tools.skill_manager_tool")
 
 _BATCH_OP_ACTIONS = {"create", "patch", "write_file", "remove_file"}
@@ -219,7 +221,7 @@ def _skill_manage_batch(operations, default_name: str = None, task_id: str = Non
     # skill_manage() calls re-enter them. Without the outer fence a concurrent writer landing
     # between the snapshot and a rollback would be silently reverted.
     with _smt._skill_mutation_locks(names):
-        snap_root = Path(tempfile.mkdtemp(prefix="skill_batch_"))
+        snap_root = Path(tempfile.mkdtemp(prefix="skill_batch_", dir=execution_scratch_dir()))
         snapshots, snap_err = _snapshot_skills(names, snap_root, _smt._find_skill)
         if snap_err is not None:
             shutil.rmtree(snap_root, ignore_errors=True)

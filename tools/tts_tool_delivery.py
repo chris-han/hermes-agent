@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from gateway.execution_boundary import execution_scratch_dir
 from hermes_cli._subprocess_compat import windows_hide_flags
 from tools.tts_command_provider import (
     BUILTIN_TTS_PROVIDERS, DEFAULT_COMMAND_TTS_MAX_TEXT_LENGTH, _get_named_provider_config,
@@ -266,7 +267,7 @@ def _write_wav_bytes_as(wav_bytes: bytes, output_path: str) -> str:
         with open(output_path, "wb") as f:
             f.write(wav_bytes)
         return output_path
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False, dir=execution_scratch_dir()) as tmp:
         tmp.write(wav_bytes)
         wav_path = tmp.name
     try:

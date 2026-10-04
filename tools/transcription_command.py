@@ -15,6 +15,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from gateway.execution_boundary import execution_scratch_dir
 from agent.model_metadata import CHARS_PER_TOKEN
 from tools.tts_command_provider import (
     _command_output_format, _command_timeout, _is_command_provider_config as _is_command_stt_provider_config,
@@ -90,7 +91,7 @@ def _transcribe_command_stt(
     language = (language_override or config.get("language")
                 or _resolve_stt_language(provider_name, stt_config) or DEFAULT_COMMAND_STT_LANGUAGE)
     try:
-        with tempfile.TemporaryDirectory(prefix=f"hermes-cmd-stt-{provider_name}-") as tmpdir:
+        with tempfile.TemporaryDirectory(prefix="hermes-cmd-stt-", dir=execution_scratch_dir()) as tmpdir:
             output_path = Path(tmpdir) / f"transcript.{output_format}"
             command = _render_command_stt_template(command_template, {
                 "input_path": str(audio.resolve()), "output_path": str(output_path),

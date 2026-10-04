@@ -14,6 +14,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, List, Optional
 
+from gateway.execution_boundary import execution_scratch_dir
 from agent.lazy_forward import forward_static as _forward_static
 from agent.tool_dispatch_helpers import _is_multimodal_tool_result, _multimodal_text_summary
 from utils import base_url_host_matches, base_url_hostname
@@ -75,7 +76,8 @@ class VisionMessagePrepMixin:
             return "", None
         mime = header[len("data:"):].split(";", 1)[0].strip() if header.startswith("data:") else ""
         suffix = _DATA_URL_SUFFIXES.get(mime if mime.startswith("image/") else "image/jpeg", ".jpg")
-        tmp = tempfile.NamedTemporaryFile(prefix="anthropic_image_", suffix=suffix, delete=False)
+        tmp = tempfile.NamedTemporaryFile(
+            prefix="anthropic_image_", suffix=suffix, delete=False, dir=execution_scratch_dir())
         try:
             with tmp:
                 tmp.write(base64.b64decode(data))
