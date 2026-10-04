@@ -4,7 +4,7 @@ import asyncio
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
-from gateway.config import Platform
+from gateway.config import GatewayConfig, Platform
 from gateway.platforms.event import MessageEvent
 from gateway.run import GatewayRunner
 from gateway.session import SessionEntry, SessionSource, build_session_key
@@ -13,6 +13,7 @@ from hermes_state import AsyncSessionDB
 
 def _runner(entry, adapters):
     runner = object.__new__(GatewayRunner)
+    runner.config = GatewayConfig()
     runner.adapters = adapters
     runner._profile_adapters = {}
     runner.session_store = MagicMock()

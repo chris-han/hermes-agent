@@ -707,6 +707,9 @@ class GatewaySessionCommandsMixin:
     async def _handle_save_command(self, event: MessageEvent) -> str:
         """Handle /save — export the current session and send it as a document."""
         import tempfile
+        import threading
+        from gateway.execution_boundary import execution_scratch_dir
+        from gateway.session import build_session_context
         from hermes_cli.session_export import (
             SAVE_USAGE, default_save_filename, normalize_save_format, render_session_for_save)
 
@@ -735,16 +738,40 @@ class GatewaySessionCommandsMixin:
         if redact:
             from hermes_cli.session_export_md import redact_session_data
             export_data = redact_session_data(export_data)
-        temp_dir = tempfile.mkdtemp(prefix="hermes_save_")
-        temp_path = os.path.join(temp_dir, filename)
-        try:
-            # Off-loop: render + write scale with transcript size (multi-MB) and would stall the loop.
-            def _render_and_write() -> None:
-                rendered = render_session_for_save(export_data, fmt)
-                with open(temp_path, "w", encoding="utf-8") as f:
-                    f.write(rendered)
+        temp_dir = temp_path = None
+        cleanup_requested = threading.Event()
+        worker_finished = threading.Event()
 
-            await asyncio.to_thread(_render_and_write)
+        def _cleanup_export() -> None:
+            with contextlib.suppress(OSError):
+                if temp_path is not None:
+                    os.remove(temp_path)
+            with contextlib.suppress(OSError):
+                if temp_dir is not None:
+                    os.rmdir(temp_dir)
+
+        try:
+            # /save bypasses the normal turn, so bind its resolved session before the
+            # existing executor resolves the parent-owned execution boundary.
+            def _render_and_write() -> None:
+                nonlocal temp_dir, temp_path
+                try:
+                    temp_dir = tempfile.mkdtemp(prefix="hermes_save_", dir=execution_scratch_dir())
+                    temp_path = os.path.join(temp_dir, filename)
+                    rendered = render_session_for_save(export_data, fmt)
+                    with open(temp_path, "w", encoding="utf-8") as f:
+                        f.write(rendered)
+                finally:
+                    worker_finished.set()
+                    if cleanup_requested.is_set():
+                        _cleanup_export()
+
+            session_context = build_session_context(source, self.config, session_entry)
+            session_markers = self._set_session_env(session_context)
+            try:
+                await self._run_in_executor_with_context(_render_and_write)
+            finally:
+                self._clear_session_env(session_markers)
             # Profile-aware: under multiplex the requester's bot lives in _profile_adapters, not self.adapters.
             adapter = self._delivery_adapter_for(source)
             if not adapter:
@@ -756,9 +783,10 @@ class GatewaySessionCommandsMixin:
             logger.warning("Session /save failed: %s", e)
             return f"Error exporting session: {e}"
         finally:
-            with contextlib.suppress(Exception):
-                os.remove(temp_path)
-                os.rmdir(temp_dir)
+            # Cancelling the await cannot stop a running executor worker.
+            cleanup_requested.set()
+            if worker_finished.is_set():
+                _cleanup_export()
 
     async def _handle_title_command(self, event: MessageEvent) -> str:
         """Handle /title command — set or show the current session's title."""
