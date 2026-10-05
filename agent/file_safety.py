@@ -312,10 +312,7 @@ def _classify_write_denial(path: str) -> Optional[str]:
                     return "credential"
 
     safe_roots = get_safe_write_roots()
-    if safe_roots and any(_is_under(resolved, root) for root in safe_roots):
-        return "safe_root"
-
-    if safe_roots:
+    if safe_roots and not any(_is_under(resolved, root) for root in safe_roots):
         return "safe_root"
 
     return None

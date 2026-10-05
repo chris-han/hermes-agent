@@ -1,13 +1,19 @@
+import pytest
+
 from agent.file_safety import get_read_block_error, get_write_denied_error
 from gateway import execution_boundary as boundary
 
 
-def test_bound_roots_reject_escapes_and_keep_credential_guards(tmp_path, monkeypatch):
+@pytest.mark.parametrize("broad_safe_root", [False, True])
+def test_bound_roots_reject_escapes_and_keep_credential_guards(tmp_path, monkeypatch, broad_safe_root):
     workspace = tmp_path / "workspace"
     artifacts = workspace / "artifacts"
     artifacts.mkdir(parents=True)
     monkeypatch.setenv("HERMES_HOME", str(workspace))
-    monkeypatch.delenv("HERMES_WRITE_SAFE_ROOT", raising=False)
+    if broad_safe_root:
+        monkeypatch.setenv("HERMES_WRITE_SAFE_ROOT", str(tmp_path))
+    else:
+        monkeypatch.delenv("HERMES_WRITE_SAFE_ROOT", raising=False)
     inside = artifacts / "plain.txt"
     outside = tmp_path / "outside.txt"
     escape = artifacts / "escape"
