@@ -640,6 +640,8 @@ class OpenAICompatRoutesMixin:
         if boundary_error is not None:
             return boundary_error
         provided_session_id = request.headers.get("X-Hermes-Session-Id", "").strip()
+        if execution_boundary is not None and provided_session_id and not provided_session_id.startswith(f"{execution_boundary.workspace_id}:"):
+            return _error_response("Session does not belong to the authenticated workspace", 400)
         if provided_session_id:
             if not self._api_key:
                 logger.warning(
@@ -656,8 +658,7 @@ class OpenAICompatRoutesMixin:
                 return _invalid_request("Session ID too long")
             session_id = provided_session_id
             try:
-                db = (await asyncio.to_thread(self._open_and_cache_session_db, execution_boundary.paths.hermes_home)
-                      if execution_boundary is not None else await self._ensure_session_db_async())
+                db = await self._ensure_session_db_async()
                 if db is not None:
                     # #98619/#13437: a client-addressed id from before a compression rotation
                     # must adopt the live continuation tip — history loads from it, the turn and
@@ -666,6 +667,8 @@ class OpenAICompatRoutesMixin:
                     # the delivery writer (gateway/wake.py) and /v1/runs use; fails open.
                     from gateway.platforms.api_server_runs import _resolve_live_session_id
                     session_id = await _resolve_live_session_id(self, provided_session_id)
+                    if execution_boundary is not None and not session_id.startswith(f"{execution_boundary.workspace_id}:"):
+                        return _error_response("Session does not belong to the authenticated workspace", 400)
                     history = await asyncio.to_thread(db.get_messages_as_conversation, session_id)
             except Exception as e:
                 logger.warning("Failed to load session history for %s: %s", session_id, e)
@@ -676,6 +679,8 @@ class OpenAICompatRoutesMixin:
             first_user = next(
                 (cm.get("content", "") for cm in conversation_messages if cm.get("role") == "user"), "")
             session_id = _derive_chat_session_id(system_prompt, first_user)
+            if execution_boundary is not None:
+                session_id = f"{execution_boundary.workspace_id}:{session_id}"
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:29]}"
         model_name = body.get("model", self._model_name)
         created = int(time.time())
@@ -992,8 +997,7 @@ class OpenAICompatRoutesMixin:
         execution_boundary, boundary_error = self._resolve_internal_execution_boundary(request, body)
         if boundary_error is not None:
             return boundary_error
-        scoped_db = (await asyncio.to_thread(self._open_and_cache_session_db, execution_boundary.paths.hermes_home)
-                     if execution_boundary is not None else None)
+        scoped_db = await self._ensure_session_db_async() if execution_boundary is not None else None
         raw_input = body.get("input")
         if raw_input is None:
             return _error_response("Missing 'input' field", 400)
@@ -1052,7 +1056,10 @@ class OpenAICompatRoutesMixin:
                 scope = stored.get("execution_scope")
                 expected_scope = {"user_id": execution_boundary.user_id,
                                   "workspace_id": execution_boundary.workspace_id}
-                if scope != expected_scope or scoped_db is None or not scoped_db.get_session(stored.get("session_id")):
+                stored_id = stored.get("session_id")
+                if (scope != expected_scope or not isinstance(stored_id, str)
+                        or not stored_id.startswith(f"{execution_boundary.workspace_id}:")
+                        or scoped_db is None or not scoped_db.get_session(stored_id)):
                     return _error_response(f"Previous response not found: {previous_response_id}", 404)
             conversation_history = list(stored.get("conversation_history", []))
             stored_session_id = stored.get("session_id")
@@ -1075,9 +1082,14 @@ class OpenAICompatRoutesMixin:
                 source=self._SESSION_SOURCE, session_key=gateway_session_key)
                 if scoped_db is not None and gateway_session_key else None)
             declared_session_id = str(declared_row["id"]) if declared_row else None
+            if declared_session_id and not declared_session_id.startswith(f"{execution_boundary.workspace_id}:"):
+                return _error_response("Session does not belong to the authenticated workspace", 400)
         else:
             declared_session_id = await asyncio.to_thread(self._declared_conversation_session, gateway_session_key)
-        session_id = stored_session_id or declared_session_id or str(uuid.uuid4())
+        fresh_session_id = str(uuid.uuid4())
+        if execution_boundary is not None:
+            fresh_session_id = f"{execution_boundary.workspace_id}:{fresh_session_id}"
+        session_id = stored_session_id or declared_session_id or fresh_session_id
         stream = _coerce_request_bool(body.get("stream"), default=False)
         route, agent_overrides, selection_error = self._select_request_route(
             body, session_id=session_id, gateway_session_key=gateway_session_key,

@@ -1199,6 +1199,9 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         self._response_store = ResponseStore()
         _api_runs._initialize_run_state(self, store_factory=RunIdempotencyStore)
         self._session_db: Optional[Any] = None  # explicit override (tests/manual wiring)
+        configured_state_root = os.environ.get("SEMANTIER_LOCAL_STATE_DIR")
+        self._semantier_session_db_home = (Path(configured_state_root).expanduser().resolve()
+                                         if configured_state_root else None)
         self._session_dbs: Dict[str, Any] = {}  # per-profile-home SessionDB cache
         self._session_db_cache_lock = threading.Lock()
         self._session_db_cache_closed = False
@@ -1738,15 +1741,26 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
             except Exception:
                 logger.debug("Failed to close API-server SessionDB", exc_info=True)
 
+    def _session_db_home(self):
+        if getattr(self, "_semantier_embedded_boundary_required", False):
+            if self._semantier_session_db_home is None:
+                raise RuntimeError("Semantier shared SessionDB configuration is required")
+            return self._semantier_session_db_home
+        from hermes_constants import get_hermes_home
+        return get_hermes_home()
+
     def _ensure_session_db(self):
-        """SessionDB for the active profile home (the runtime scope redirects ``get_hermes_home()``
-        per profile). Sync, for ``_create_agent``; handlers use ``_ensure_session_db_async``."""
+        """SessionDB for the composed Core shared owner, or the standalone active profile.
+
+        Core pins its host-configured state root at adapter startup; workspace tool homes
+        never select that database. Handlers use the matching async accessor."""
         if self._session_db is not None:
             return self._session_db
         try:
-            from hermes_constants import get_hermes_home
-            return self._open_and_cache_session_db(get_hermes_home())
+            return self._open_and_cache_session_db(self._session_db_home())
         except Exception as e:
+            if getattr(self, "_semantier_embedded_boundary_required", False):
+                raise
             logger.debug("SessionDB unavailable for API server: %s", e)
             return None
 
@@ -1756,8 +1770,7 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         if self._session_db is not None:
             return self._session_db
         try:
-            from hermes_constants import get_hermes_home
-            home = get_hermes_home()
+            home = self._session_db_home()
             key = str(home)
             with self._session_db_cache_lock:
                 cached = self._session_dbs.get(key)
@@ -1772,6 +1785,8 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
                     return cached
                 return await asyncio.to_thread(self._open_and_cache_session_db, home)
         except Exception as e:
+            if getattr(self, "_semantier_embedded_boundary_required", False):
+                raise
             logger.debug("SessionDB unavailable for API server: %s", e)
             return None
 
