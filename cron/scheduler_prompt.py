@@ -98,6 +98,8 @@ def _inject_context_from(job: dict, prompt: str) -> tuple[str, bool]:
     if not context_from:
         return prompt, False
     from cron.jobs import get_cron_output_dir
+    from cron.storage_provider import get_storage_provider
+    provider = get_storage_provider()
     output_dir = get_cron_output_dir()
     if isinstance(context_from, str):
         context_from = [context_from]
@@ -108,7 +110,9 @@ def _inject_context_from(job: dict, prompt: str) -> tuple[str, bool]:
             source_job_id = str(job.get("id") or "")
         is_self = source_job_id == job.get("id")
         # Traversal guard — valid job IDs are hex strings.
-        if not source_job_id or not all(c in "0123456789abcdef" for c in source_job_id):
+        if not isinstance(source_job_id, str) or not source_job_id or not all(c in "0123456789abcdef" for c in source_job_id):
+            if provider is not None:
+                raise RuntimeError(f"Referenced cron SQLite output has invalid job id: {source_job_id!r}")
             logger.warning(
                 "context_from: skipping invalid job_id %r for job_id=%r name=%r%s",
                 source_job_id, job.get("id"), job.get("name"),
@@ -116,13 +120,19 @@ def _inject_context_from(job: dict, prompt: str) -> tuple[str, bool]:
             )
             continue
         try:
-            output_files = sorted(
-                (output_dir / source_job_id).glob("*.md"), key=lambda f: f.stat().st_mtime,
-                reverse=True,
-            )
+            if provider is not None:
+                records = provider.list_outputs(output_dir.parent.parent, source_job_id)
+                if not records:
+                    raise RuntimeError(f"Referenced cron SQLite output is unavailable: {source_job_id}")
+                candidates = [str(record["content"]).strip() for record in records]
+            else:
+                output_files = sorted(
+                    (output_dir / source_job_id).glob("*.md"), key=lambda f: f.stat().st_mtime,
+                    reverse=True,
+                )
+                candidates = (output_file.read_text(encoding="utf-8").strip() for output_file in output_files)
             latest_output = ""
-            for output_file in output_files:
-                candidate = output_file.read_text(encoding="utf-8").strip()
+            for candidate in candidates:
                 # Only the run header describes suppression; script/agent payloads can
                 # quote these markers. Keep error documents useful for recovery context.
                 header = candidate.split("\n---\n", 1)[0].split("\n## Prompt", 1)[0]

@@ -43,6 +43,10 @@ def _prefix_names_served_profile(profile: str) -> bool:
 
 
 # Per-request /p/<profile>/ selection: set by the profile-prefix middleware, read by handlers.
+# Composed embedded turns use subprocess-compatible environment bindings.
+# Keep those process globals owned by one worker until its boundary is restored.
+_embedded_execution_boundary_lock = threading.RLock()
+
 _api_request_profile: ContextVar[Optional[str]] = ContextVar(
     "api_server_request_profile", default=None)
 _api_request_browser_control_principal: ContextVar[str] = ContextVar(
@@ -3824,7 +3828,8 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
     def _bind_api_server_session(
         *, chat_id: str = "", session_key: str = "", session_id: str = "", profile: str = "",
         browser_control_principal: str = "", browser_control_transport_family: str = "",
-        session_history_delivery: str = "") -> list:
+        session_history_delivery: str = "", user_id: str = "",
+        workspace_owner_id: str = "", hermes_home: str = "") -> list:
         """Bind an API turn with push disabled and history delivery default-denied.
 
         Only routes whose continuation reads SessionDB may pass "1". An omitted
@@ -3838,7 +3843,8 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
             platform="api_server", chat_id=chat_id, session_key=session_key, session_id=session_id,
             profile=profile, browser_control_principal=browser_control_principal,
             browser_control_transport_family=browser_control_transport_family,
-            async_delivery=False, cron_session="", session_history_delivery=session_history_delivery)
+            async_delivery=False, cron_session="", session_history_delivery=session_history_delivery,
+            user_id=user_id, workspace_owner_id=workspace_owner_id, hermes_home=hermes_home)
 
     def _turn_runtime_metadata(
         self, agent: Any, *, route: Optional[Dict[str, Any]], requested_runtime: Optional[Dict[str, Any]],
@@ -3922,7 +3928,7 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         confirmed_runtime_lock: bool = False, bind_declared_conversation: bool = False,
         session_history_delivery: str = "", turn_author: Optional[Dict[str, Any]] = None,
         relay_metadata: Optional[Dict[str, Any]] = None, notification_category: str = "result",
-        resume_unanswered_turn: bool = False) -> tuple:
+        resume_unanswered_turn: bool = False, execution_boundary=None) -> tuple:
         """Create an agent and run one turn in a thread executor -> ``(result, usage)``.
         ``agent_ref[0]`` receives the agent so SSE writers can interrupt it; ``active_run_id``
         registers it in ``_active_run_agents``. Under a confirmed model lock the actual
@@ -3941,7 +3947,7 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         request_browser_control_principal = _api_request_browser_control_principal.get()
         request_browser_control_transport_family = _api_request_browser_control_transport_family.get()
 
-        def _run():
+        def _run_unbound():
             from gateway.session_context import clear_session_vars
             with self._profile_scope(request_profile):
                 tokens = self._bind_api_server_session(
@@ -3949,7 +3955,10 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
                     session_id=session_id or "", profile=request_profile or "",
                     browser_control_principal=request_browser_control_principal,
                     browser_control_transport_family=request_browser_control_transport_family,
-                    session_history_delivery=session_history_delivery)
+                    session_history_delivery=session_history_delivery,
+                    user_id=execution_boundary.user_id if execution_boundary is not None else "",
+                    workspace_owner_id=execution_boundary.workspace_id if execution_boundary is not None else "",
+                    hermes_home=str(execution_boundary.paths.hermes_home) if execution_boundary is not None else "")
                 agent = None
                 from agent.notification_presentation import notification_turn
                 from gateway.warning_notifications import diagnostic_turn_muted
@@ -4045,6 +4054,23 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
                             self._bind_declared_conversation(
                                 getattr(agent, "session_id", None) or session_id, gateway_session_key)
                     clear_session_vars(tokens)
+        def _run():
+            from gateway.execution_boundary import bind_execution_boundary
+            if getattr(self, "_semantier_embedded_boundary_required", False) and execution_boundary is None:
+                raise RuntimeError("Authenticated execution boundary required")
+            from hermes_constants import set_hermes_home_override, reset_hermes_home_override
+            home_token = (set_hermes_home_override(execution_boundary.paths.hermes_home)
+                          if execution_boundary is not None else None)
+            try:
+                lock = (_embedded_execution_boundary_lock
+                        if getattr(self, "_semantier_embedded_boundary_required", False) else nullcontext())
+                with lock:
+                    with bind_execution_boundary(execution_boundary):
+                        return _run_unbound()
+            finally:
+                if home_token is not None:
+                    reset_hermes_home_override(home_token)
+
         self._activate_admitted_request()
         self._inflight_agent_runs += 1
         try:

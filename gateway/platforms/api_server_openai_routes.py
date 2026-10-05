@@ -254,7 +254,8 @@ class _ResponsesStream:
             "response": response_env,
             "conversation_history": self._history_with_user() if history is None else history,
             "instructions": self.instructions,
-            "session_id": session_id or self.session_id})
+            "session_id": session_id or self.session_id,
+            **({"execution_scope": self.execution_scope} if getattr(self, "execution_scope", None) is not None else {})})
         if self.conversation:
             self.adapter._response_store.set_conversation(self.conversation, self.response_id)
 
@@ -522,6 +523,26 @@ class _ResponsesStream:
 class OpenAICompatRoutesMixin:
     """/v1/chat/completions and /v1/responses handlers + SSE writers."""
 
+    def _resolve_internal_execution_boundary(self, request, body):
+        from gateway.platforms.api_server import _error_response
+        execution_boundary = None
+        if getattr(self, "_semantier_embedded_boundary_required", False):
+            from gateway.execution_boundary import ExecutionBoundaryRequest, resolve_execution_boundary
+            internal_metadata = body.get("_semantier_request_metadata") or {}
+            if not isinstance(internal_metadata, dict):
+                return None, _error_response("Invalid internal request metadata", 400)
+            try:
+                execution_boundary = resolve_execution_boundary(ExecutionBoundaryRequest(
+                    source="api_server", headers=request.headers,
+                    metadata={"trusted_internal_boundary": True, "transport": "embedded_http",
+                              "durable_request_text": internal_metadata.get("durable_request_text")},
+                ))
+                if execution_boundary is None or not execution_boundary.workspace_id or not execution_boundary.user_id:
+                    raise ValueError("Authenticated execution boundary required")
+            except (ValueError, RuntimeError) as exc:
+                return None, _error_response(str(exc), 400)
+        return execution_boundary, None
+
     def _select_request_route(
         self, body: Dict[str, Any], *, session_id, gateway_session_key, model_alias) -> tuple:
         """Resolve the model_routes alias + per-request overrides ->
@@ -615,6 +636,9 @@ class OpenAICompatRoutesMixin:
             return key_err
         # X-Hermes-Session-Id continues an existing session (history from state.db, not the body);
         # requires a configured API key or any client could read history by guessing ids.
+        execution_boundary, boundary_error = self._resolve_internal_execution_boundary(request, body)
+        if boundary_error is not None:
+            return boundary_error
         provided_session_id = request.headers.get("X-Hermes-Session-Id", "").strip()
         if provided_session_id:
             if not self._api_key:
@@ -632,7 +656,8 @@ class OpenAICompatRoutesMixin:
                 return _invalid_request("Session ID too long")
             session_id = provided_session_id
             try:
-                db = await self._ensure_session_db_async()
+                db = (await asyncio.to_thread(self._open_and_cache_session_db, execution_boundary.paths.hermes_home)
+                      if execution_boundary is not None else await self._ensure_session_db_async())
                 if db is not None:
                     # #98619/#13437: a client-addressed id from before a compression rotation
                     # must adopt the live continuation tip — history loads from it, the turn and
@@ -664,6 +689,7 @@ class OpenAICompatRoutesMixin:
             ephemeral_system_prompt=system_prompt, session_id=session_id,
             gateway_session_key=gateway_session_key, **agent_overrides, route=route,
             relay_metadata=relay_metadata,
+            **({"execution_boundary": execution_boundary} if execution_boundary is not None else {}),
             # #98619: only an explicitly provided X-Hermes-Session-Id is wake-capable (the
             # header is 403-gated on API_SERVER_KEY, so the wake self-post can authenticate
             # and the client can resume the session by sending it again). A fingerprint-derived
@@ -889,7 +915,7 @@ class OpenAICompatRoutesMixin:
         self, request: "web.Request", response_id: str, model: str, created_at: int, stream_q,
         agent_task, agent_ref, conversation_history: List[Dict[str, str]], user_message: str,
         instructions: Optional[str], conversation: Optional[str], store: bool, session_id: str,
-        gateway_session_key: Optional[str] = None) -> "web.StreamResponse":
+        gateway_session_key: Optional[str] = None, execution_scope=None) -> "web.StreamResponse":
         """Write the SSE stream for POST /v1/responses.
 
         Events: ``response.created`` -> ``output_text.delta/done`` + ``output_item.added/done``
@@ -904,6 +930,7 @@ class OpenAICompatRoutesMixin:
             self, response, response_id=response_id, model=model, created_at=created_at,
             conversation_history=conversation_history, user_message=user_message,
             instructions=instructions, conversation=conversation, store=store, session_id=session_id)
+        st.execution_scope = execution_scope
         try:
             await st.emit_created()
             async for item in _iter_stream_items(stream_q, agent_task, response):
@@ -962,6 +989,11 @@ class OpenAICompatRoutesMixin:
             return _invalid_request("Invalid JSON in request body")
         from gateway.platforms.api_server import _request_relay_metadata
         relay_metadata = _request_relay_metadata(body)
+        execution_boundary, boundary_error = self._resolve_internal_execution_boundary(request, body)
+        if boundary_error is not None:
+            return boundary_error
+        scoped_db = (await asyncio.to_thread(self._open_and_cache_session_db, execution_boundary.paths.hermes_home)
+                     if execution_boundary is not None else None)
         raw_input = body.get("input")
         if raw_input is None:
             return _error_response("Missing 'input' field", 400)
@@ -1016,6 +1048,12 @@ class OpenAICompatRoutesMixin:
             stored = self._response_store.get(previous_response_id)
             if stored is None:
                 return _error_response(f"Previous response not found: {previous_response_id}", 404)
+            if execution_boundary is not None:
+                scope = stored.get("execution_scope")
+                expected_scope = {"user_id": execution_boundary.user_id,
+                                  "workspace_id": execution_boundary.workspace_id}
+                if scope != expected_scope or scoped_db is None or not scoped_db.get_session(stored.get("session_id")):
+                    return _error_response(f"Previous response not found: {previous_response_id}", 404)
             conversation_history = list(stored.get("conversation_history", []))
             stored_session_id = stored.get("session_id")
             if instructions is None:
@@ -1032,10 +1070,14 @@ class OpenAICompatRoutesMixin:
         # id. Binding the declared key follows the same precedence: a chain-selected session must
         # not have its routing key rewritten to this header.
         _declared_selected = not stored_session_id and bool(gateway_session_key)
-        session_id = (
-            stored_session_id
-            or await asyncio.to_thread(self._declared_conversation_session, gateway_session_key)
-            or str(uuid.uuid4()))
+        if execution_boundary is not None:
+            declared_row = (scoped_db.find_latest_gateway_session_for_peer(
+                source=self._SESSION_SOURCE, session_key=gateway_session_key)
+                if scoped_db is not None and gateway_session_key else None)
+            declared_session_id = str(declared_row["id"]) if declared_row else None
+        else:
+            declared_session_id = await asyncio.to_thread(self._declared_conversation_session, gateway_session_key)
+        session_id = stored_session_id or declared_session_id or str(uuid.uuid4())
         stream = _coerce_request_bool(body.get("stream"), default=False)
         route, agent_overrides, selection_error = self._select_request_route(
             body, session_id=session_id, gateway_session_key=gateway_session_key,
@@ -1046,7 +1088,8 @@ class OpenAICompatRoutesMixin:
             user_message=user_message, conversation_history=conversation_history,
             ephemeral_system_prompt=instructions, session_id=session_id,
             gateway_session_key=gateway_session_key, bind_declared_conversation=_declared_selected,
-            **agent_overrides, route=route, relay_metadata=relay_metadata)
+            **agent_overrides, route=route, relay_metadata=relay_metadata,
+            **({"execution_boundary": execution_boundary} if execution_boundary is not None else {}))
         if stream:
             _stream_q = ThreadSafeAsyncQueue()
 
@@ -1078,7 +1121,9 @@ class OpenAICompatRoutesMixin:
                 stream_q=_stream_q, agent_task=agent_task, agent_ref=agent_ref,
                 conversation_history=conversation_history, user_message=user_message,
                 instructions=instructions, conversation=conversation, store=store,
-                session_id=session_id, gateway_session_key=gateway_session_key)
+                session_id=session_id, gateway_session_key=gateway_session_key,
+                execution_scope=({"user_id": execution_boundary.user_id, "workspace_id": execution_boundary.workspace_id}
+                                 if execution_boundary is not None else None))
 
         async def _compute_response():
             return await self._run_agent(**run_kwargs)
@@ -1115,7 +1160,10 @@ class OpenAICompatRoutesMixin:
         if store:
             self._response_store.put(response_id, {
                 "response": response_data, "conversation_history": full_history,
-                "instructions": instructions, "session_id": _effective_session_id})
+                "instructions": instructions, "session_id": _effective_session_id,
+                **({"execution_scope": {"user_id": execution_boundary.user_id,
+                                       "workspace_id": execution_boundary.workspace_id}}
+                   if execution_boundary is not None else {})})
             if conversation:
                 self._response_store.set_conversation(conversation, response_id)
         response_headers = {"X-Hermes-Session-Id": _effective_session_id}
@@ -1129,8 +1177,16 @@ class OpenAICompatRoutesMixin:
         auth_err = self._check_auth(request)
         if auth_err:
             return auth_err
+        execution_boundary, boundary_error = self._resolve_internal_execution_boundary(request, {})
+        if boundary_error is not None:
+            return boundary_error
         response_id = request.match_info["response_id"]
         stored = self._response_store.get(response_id)
+        if execution_boundary is not None and stored is not None:
+            expected_scope = {"user_id": execution_boundary.user_id,
+                              "workspace_id": execution_boundary.workspace_id}
+            if stored.get("execution_scope") != expected_scope:
+                return _error_response(f"Response not found: {response_id}", 404)
         if stored is None:
             return _error_response(f"Response not found: {response_id}", 404)
         return web.json_response(stored["response"])
@@ -1141,7 +1197,16 @@ class OpenAICompatRoutesMixin:
         auth_err = self._check_auth(request)
         if auth_err:
             return auth_err
+        execution_boundary, boundary_error = self._resolve_internal_execution_boundary(request, {})
+        if boundary_error is not None:
+            return boundary_error
         response_id = request.match_info["response_id"]
+        if execution_boundary is not None:
+            stored = self._response_store.get(response_id)
+            expected_scope = {"user_id": execution_boundary.user_id,
+                              "workspace_id": execution_boundary.workspace_id}
+            if stored is None or stored.get("execution_scope") != expected_scope:
+                return _error_response(f"Response not found: {response_id}", 404)
         if not self._response_store.delete(response_id):
             return _error_response(f"Response not found: {response_id}", 404)
         return web.json_response({"id": response_id, "object": "response", "deleted": True})

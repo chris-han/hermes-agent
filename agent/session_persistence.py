@@ -218,6 +218,15 @@ def _db_flush_row(agent, msg: Dict, is_current_turn_user: bool) -> Dict[str, Any
         "display_kind": _summary_display_kind(msg), "display_metadata": msg.get("display_metadata"),
         "platform_message_id": msg.get("platform_message_id"),  # load-bearing for restart drain-window recovery dedup
     }
+    if is_current_turn_user and role == "user":
+        from gateway.execution_boundary import current_execution_boundary
+        boundary = current_execution_boundary()
+        if boundary is not None and boundary.audit_metadata.get("authority_source") == "semantier_authenticated_context":
+            correlation = {key: boundary.audit_metadata[key] for key in
+                           ("durable_request_id", "durable_request_hash", "durable_request_text")
+                           if key in boundary.audit_metadata}
+            if correlation:
+                row["display_metadata"] = {**(row.get("display_metadata") or {}), **correlation}
     if isinstance(msg.get("_row_id"), int):
         row["_row_id"] = msg["_row_id"]
     return row

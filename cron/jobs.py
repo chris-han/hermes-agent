@@ -1305,6 +1305,10 @@ def _parse_jobs_file(jobs_file: Path) -> Tuple[Any, bool]:
 
 def load_jobs() -> List[Dict[str, Any]]:
     """Load all jobs from storage."""
+    from cron.storage_provider import get_storage_provider
+    provider = get_storage_provider()
+    if provider is not None:
+        return provider.load_jobs(_current_cron_store().cron_dir.parent)
     jobs_file = _current_cron_store().jobs_file
     ensure_dirs()
     # Stamp BEFORE reading (fail-safe, see _record_load_stamp): a racing write then forces the
@@ -1466,6 +1470,11 @@ def _save_jobs_unlocked(
     """Save all jobs; caller must hold _jobs_lock(). ``removed_ids`` = intentional deletes;
     ``replace=True`` skips the shrink-merge guard (wholesale rewrite for tests/disaster
     recovery)."""
+    from cron.storage_provider import get_storage_provider
+    provider = get_storage_provider()
+    if provider is not None:
+        provider.save_jobs(_current_cron_store().cron_dir.parent, jobs, removed_ids=removed_ids, replace=replace)
+        return
     jobs_file = _current_cron_store().jobs_file
     ensure_dirs()
     # Owner snapshot BEFORE replace so a root writer can hand the file back to the gateway user.
@@ -1725,6 +1734,8 @@ def create_job(
     paused: bool = False,
     paused_reason: Optional[str] = None,
     pinned: bool = False,
+    idempotency_key: Optional[str] = None,
+    idempotency_payload_hash: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Create a new cron job and return the stored record.
 
@@ -1734,6 +1745,27 @@ def create_job(
     injected. workdir: absolute cwd for tools/scripts. monitor_script/monitor_url: cheap monitor
     source run FIRST each tick; unchanged output suppresses the agent run (mutually exclusive,
     incompatible with ``no_agent``). reasoning_effort: per-job pin; capability NOT validated."""
+    def existing_identity(records):
+        if idempotency_key is None:
+            return None
+        for record in records:
+            identity = record.get("creation_identity") or {}
+            if identity.get("key") == idempotency_key:
+                if identity.get("payload_hash") != idempotency_payload_hash:
+                    raise ValueError("Durable request identity reused with different intent")
+                return record
+        return None
+
+    if idempotency_key is not None or idempotency_payload_hash is not None:
+        import re
+        if not isinstance(idempotency_key, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", idempotency_key):
+            raise ValueError("Invalid internal creation identity")
+        if not isinstance(idempotency_payload_hash, str) or not re.fullmatch(r"[a-f0-9]{64}", idempotency_payload_hash):
+            raise ValueError("Invalid internal creation intent hash")
+        with _jobs_lock():
+            existing = existing_identity(load_jobs())
+            if existing is not None:
+                return existing
     if not isinstance(paused, bool):
         raise ValueError("paused must be a boolean.")
     if paused_reason is not None and not isinstance(paused_reason, str):
@@ -1823,8 +1855,22 @@ def create_job(
         if value is not None:
             job[key] = value
 
+    if idempotency_key is not None:
+        job["creation_identity"] = {"key": idempotency_key, "payload_hash": idempotency_payload_hash}
     with _jobs_lock():
-        save_jobs(load_jobs() + [job])
+        records = load_jobs()
+        existing = existing_identity(records)
+        if existing is not None:
+            return existing
+        try:
+            save_jobs(records + [job])
+        except RuntimeError:
+            # A host store may reject a concurrent creation after the native
+            # cross-process lock degrades. Bind only an exact persisted identity.
+            existing = existing_identity(load_jobs())
+            if existing is None:
+                raise
+            return existing
     return job
 
 
@@ -2202,7 +2248,11 @@ def remove_job(job_id: str) -> bool:
         marker = _self_removal_delivery.get()
         if marker is not None and marker.job_id == canonical_id:
             marker.removed = True
-        if job_output_dir.exists():
+        from cron.storage_provider import get_storage_provider
+        provider = get_storage_provider()
+        if provider is not None:
+            provider.delete_outputs(_current_cron_store().cron_dir.parent, canonical_id)
+        elif job_output_dir.exists():
             shutil.rmtree(job_output_dir)
         try:
             from cron.notepad import clear_notepad
@@ -3247,7 +3297,11 @@ def _prune_job_output(job_output_dir: Path, keep: int) -> int:
 
 
 def save_job_output(job_id: str, output: str):
-    """Save job output to file."""
+    """Save job output through the host store, or standalone file storage."""
+    from cron.storage_provider import get_storage_provider
+    provider = get_storage_provider()
+    if provider is not None:
+        return provider.save_output(_current_cron_store().cron_dir.parent, job_id, output)
     ensure_dirs()
     job_output_dir = _job_output_dir(job_id)
     _ensure_cron_dir(job_output_dir)

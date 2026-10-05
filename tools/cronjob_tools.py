@@ -376,12 +376,20 @@ def _latest_job_output_excerpt(job_id: str, max_chars: int = 2000) -> Optional[s
     block (parent sees what the job produced). Never raises."""
     try:
         from cron.jobs import get_cron_output_dir
-        files = sorted((get_cron_output_dir() / job_id).glob("*.md"))
-        text = files[-1].read_text(encoding="utf-8", errors="replace").strip() if files else ""
+        from cron.storage_provider import get_storage_provider
+        storage = get_storage_provider()
+        if storage is not None:
+            records = storage.list_outputs(get_cron_output_dir().parent.parent, job_id)
+            text = str(records[0]["content"]).strip() if records else ""
+            source = f"SQLite cron output {job_id} at {records[0]['timestamp']}" if records else ""
+        else:
+            files = sorted((get_cron_output_dir() / job_id).glob("*.md"))
+            text = files[-1].read_text(encoding="utf-8", errors="replace").strip() if files else ""
+            source = str(files[-1]) if files else ""
         if not text:
             return None
         if len(text) > max_chars:
-            text = text[:max_chars] + f"\n… (truncated; full output: {files[-1]})"
+            text = text[:max_chars] + f"\n… (truncated; full output: {source})"
         return text
     except Exception:
         return None
@@ -596,9 +604,17 @@ def _action_create(a: Dict[str, Any]) -> str:
     if a["continuity"] is not None:
         context_from = _apply_continuity(context_from, a["continuity"])
 
+    from cron.storage_provider import get_storage_provider
+    storage = get_storage_provider()
+    from gateway.execution_boundary import current_execution_boundary
+    boundary = current_execution_boundary()
+    if storage is None and boundary is not None and boundary.audit_metadata.get("authority_source") == "semantier_authenticated_context":
+        raise RuntimeError("Semantier durable creation requires its authoritative cron storage binding")
+    creation_identity = storage.creation_identity() if storage is not None and hasattr(storage, "creation_identity") else {}
     from cron.scheduler import CronSchedulerRegistrationError, create_job_with_scheduler_registration
     try:
         job = create_job_with_scheduler_registration(
+            **creation_identity,
             prompt=prompt or "", schedule=a["schedule"], name=a["name"], repeat=a["repeat"],
             deliver=_resolve_cron_context_deliver(deliver),
             origin=_origin_from_env(a["schedule"]),
@@ -1062,8 +1078,17 @@ def check_cronjob_requirements() -> bool:
     the cron session marker keeps ``cron.allow_agent_scheduling`` meaningful there."""
     from gateway.session_context import get_session_env
     from utils import env_var_enabled, is_truthy_value
+    from gateway.execution_boundary import current_execution_boundary
+    boundary = current_execution_boundary()
+    authenticated_chat = (
+        boundary is not None
+        and boundary.source == "api_server"
+        and boundary.audit_metadata.get("authority_source") == "semantier_authenticated_context"
+        and bool(boundary.user_id and boundary.workspace_id)
+    )
     return (
-        env_var_enabled("HERMES_INTERACTIVE")
+        authenticated_chat
+        or env_var_enabled("HERMES_INTERACTIVE")
         or env_var_enabled("HERMES_GATEWAY_SESSION")
         or env_var_enabled("HERMES_EXEC_ASK")
         or is_truthy_value(get_session_env("HERMES_CRON_SESSION", ""))
