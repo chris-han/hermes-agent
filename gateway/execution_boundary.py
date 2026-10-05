@@ -34,7 +34,7 @@ class BoundaryPolicy:
     require_boundary: bool = False
     allowed_read_roots: tuple[Path, ...] = ()
     allowed_write_roots: tuple[Path, ...] = ()
-    scratch_roots: tuple[Path, ...] = (Path("/tmp"),)
+    scratch_roots: tuple[Path, ...] = (Path("/tmp"),)  # no-tmp: ok — compatibility redirect source, not host-write permission
 
 
 @dataclass(frozen=True)

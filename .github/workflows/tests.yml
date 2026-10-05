@@ -12,17 +12,64 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  prepare-durations:
+    name: Prepare shared test durations
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      artifact-id: ${{ steps.baseline.outputs.artifact-id }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Restore per-file duration cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: test_durations.json
+          key: test-durations-never-exact
+          restore-keys: |
+            test-durations-
+
+      - name: Freeze the shared baseline and verify the partition
+        # Independent cache restores could assign files to different slices.
+        # Freeze one baseline for both LPT assignment and per-file timeouts.
+        run: |
+          python3 - <<'PY'
+          import json
+          import runpy
+          from pathlib import Path
+
+          runner = runpy.run_path("scripts/run_tests_parallel.py", run_name="test_runner")
+          root = Path.cwd()
+          durations = runner["_load_durations"](root)
+          files = runner["_discover_files"]([root / "tests"])
+          slices = runner["_compute_lpt_slices"](files, 8, durations, root)
+          assigned = [file for part in slices for file in part]
+          if not all(slices) or len(assigned) != len(set(assigned)) or set(assigned) != set(files):
+              raise SystemExit("Test slices must be nonempty and cover every file exactly once")
+          Path("test_durations.json").write_text(
+              json.dumps(durations, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          print(f"Prepared {len(files)} files across {len(slices)} nonempty slices")
+          PY
+
+      - name: Upload immutable duration baseline
+        id: baseline
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: test-duration-baseline-${{ github.run_attempt }}
+          path: test_durations.json
+          if-no-files-found: error
+
   test:
-    name: Run tests
-    # One 96-core runner for the whole suite. There is no slicing. Slicing
-    # existed to spread the suite over 4-core runners. It cost a matrix job, a
-    # duration cache, a per-slice artifact and a merge job to do it.
-    #
-    # 96 cores clear the floor that the slowest single test file sets (about
-    # 82s). A second slice divides work that is already at that floor, and
-    # adds a second setup.
-    runs-on: ubuntu-latest-96-core
+    name: Run tests (slice ${{ matrix.slice }}/8)
+    needs: prepare-durations
+    runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        slice: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -87,21 +134,11 @@ jobs:
         # re-download, keeping the persisted cache small and fast to restore.
         run: uv cache prune --ci
 
-      - name: Restore per-file duration cache
-        # scripts/run_tests_parallel.py raises a file's timeout to
-        # 3x its last healthy duration (_effective_file_timeout) so a
-        # known-slow file dilated by load is not SIGKILL'd at the flat cap
-        # and laundered into a FLAKY retry. The scaler reads
-        # test_durations.json from the checkout; without this restore the
-        # file is absent on a fresh runner and the scaler is inert.
-        # Exact key never matches (run_id differs); restore-keys picks the
-        # most recent cache saved by a main push. PRs read, only main writes.
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      - name: Download shared duration baseline
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          path: test_durations.json
-          key: test-durations-never-exact
-          restore-keys: |
-            test-durations-
+          artifact-ids: ${{ needs.prepare-durations.outputs.artifact-id }}
+          merge-multiple: true
 
       - name: Run tests
         # Per-file isolation via scripts/run_tests.sh: each test file runs
@@ -109,46 +146,66 @@ jobs:
         # with bounded parallelism. No xdist, no shared workers, no
         # module-level state leakage between files.
         #
-        # No --files: the runner discovers the suite itself. The discovered
-        # set is identical to the list the removed matrix job used to pass in.
+        # Every slice discovers the same suite and uses the same immutable
+        # duration baseline, so each discovered file belongs to exactly one.
         run: |
           source .venv/bin/activate
-          scripts/run_tests.sh
+          scripts/run_tests.sh --slice "${{ matrix.slice }}/8"
         env:
-          # This is the maximum number of test FILES that run together.
-          # run_tests_parallel.py starts one pytest subprocess for each file
-          # from a single ThreadPoolExecutor, so this value IS the limit. The
-          # default is cpu_count*2, which is 192 here.
-          #
-          # Measured on this runner (96-core EPYC 7763, 377GB). Whole suite,
-          # two repetitions for each value. See run 32549672063:
-          #
-          #     workers   x cores   mean
-          #        48       0.5x    138s
-          #        96       1.0x    126s   <- fastest
-          #       144       1.5x    132s
-          #       192       2.0x    132s
-          #       240       2.5x    140s
-          #       288       3.0x    142s
-          #
-          # One worker for each core wins. The curve is shallow: 126s to 142s
-          # across a 6x range. The suite has sufficient concurrency at this
-          # size. The remaining time is the slowest files plus the setup.
-          # Workers above the core count only add contention.
-          HERMES_TEST_WORKERS: 96
+          # One subprocess per core keeps each standard runner bounded.
+          HERMES_TEST_WORKERS: 4
           # Ensure tests don't accidentally call real APIs
           OPENROUTER_API_KEY: ""
           OPENAI_API_KEY: ""
           NOUS_API_KEY: ""
 
-      - name: Save per-file duration cache (main only)
-        # Only green first-attempt durations are written by the runner, so
-        # a hang on main cannot ratchet its own bound upward.
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && hashFiles('test_durations.json') != ''
+      - name: Upload per-slice durations (main only)
+        # The runner records only healthy first-attempt timings. Replacing a
+        # successful slice's artifact supports rerunning selected jobs.
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: test-durations-shard-${{ matrix.slice }}
+          path: test_durations.json
+          if-no-files-found: error
+          overwrite: true
+
+  save-durations:
+    name: Merge and save test durations
+    needs: [prepare-durations, test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Download shared duration baseline
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.prepare-durations.outputs.artifact-id }}
+          path: duration-baseline
+          merge-multiple: true
+
+      - name: Download every slice's durations
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: test-durations-shard-*
+          path: duration-shards
+
+      - name: Merge changes against the shared baseline
+        # Each shard also contains stale baseline entries. Merge its changes,
+        # not its full dictionary, or a later shard erases earlier updates.
+        run: |
+          python3 scripts/ci/merge_test_durations.py \
+            --baseline duration-baseline/test_durations.json \
+            --shards duration-shards --slice-count 8 --output test_durations.json
+
+      - name: Save per-file duration cache
         uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: test_durations.json
-          key: test-durations-${{ github.run_id }}
+          key: test-durations-${{ github.run_id }}-${{ github.run_attempt }}
 
   e2e:
     runs-on: ubuntu-latest
