@@ -1748,11 +1748,20 @@ def create_job(
     def existing_identity(records):
         if idempotency_key is None:
             return None
+        from cron.storage_provider import get_storage_provider
+        provider = get_storage_provider()
+        lookup = getattr(provider, "lookup_creation_identity", None)
+        if lookup is not None:
+            persisted = lookup(_current_cron_store().cron_dir.parent, idempotency_key)
+            if persisted is not None:
+                records = [persisted]
         for record in records:
             identity = record.get("creation_identity") or {}
             if identity.get("key") == idempotency_key:
                 if identity.get("payload_hash") != idempotency_payload_hash:
                     raise ValueError("Durable request identity reused with different intent")
+                if record.get("_creation_retired_at"):
+                    raise ValueError("Durable request target was deleted; send a new request")
                 return record
         return None
 
