@@ -48,6 +48,7 @@ class _Batch:
     # Set on per-group units carved out by ``_dispatch_background``; None for the whole batch / ungrouped units.
     group: Optional[str] = None
     unit_id: Optional[str] = None  # the async registry id this unit runs under (``<call_id>-k`` for split calls)
+    live_home: Any = None  # explicit profile home for transcripts/manifest (#91996); None = ambient resolve
 
     def owner_kwargs(self) -> Dict[str, Any]:
         """Steer/stop authority of the originating session, passed to every child run."""
@@ -201,7 +202,7 @@ def _execute_and_aggregate(batch: _Batch, *, honor_parent_interrupt: bool = True
                 batch.live_writers[_idx].finalize(entry)
             if _idx < len(batch.live_paths):
                 entry["live_transcript"] = batch.live_paths[_idx]
-    update_manifest_statuses(batch.live_deleg_id, results)
+    update_manifest_statuses(batch.live_deleg_id, results, home=batch.live_home)
 
     combined: Dict[str, Any] = {"results": results, "total_duration_seconds": total_duration}
     # Runtime truth about children's background processes, as prose the parent can't miss inside the JSON.

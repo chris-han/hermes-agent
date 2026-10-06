@@ -691,6 +691,7 @@ def _notification_poller_scoped_loop(stop_event: threading.Event, sid: str, sess
     """
     from tools.process_registry import process_registry
     from tools.process_registry_notifications import format_process_notification
+    process_registry.restore_completions()  # first consumer in a TUI process (#123265)
     queue = process_registry.completion_queue
     emitted = session.setdefault("_notification_emitted", set())
     handle = lambda events, deferred: _notif_handle_ready(  # noqa: E731
