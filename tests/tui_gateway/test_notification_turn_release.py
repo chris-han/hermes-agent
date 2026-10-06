@@ -106,9 +106,11 @@ def test_a_loop_wakeup_whose_send_cannot_start_hands_the_turn_back(monkeypatch):
 def test_the_poller_thread_survives_a_dispatch_that_raises(monkeypatch):
     """The poller is the session's only path to notifications, /loop, /heartbeat and its bot
     mailbox; an exception out of one event's dispatch used to end the thread for good."""
-    events: queue.Queue = queue.Queue()
+    from tools.process_registry import ProcessRegistry
+    registry = ProcessRegistry()
+    events = registry.completion_queue
     events.put({"type": "completion", "session_id": "proc_a"})
-    monkeypatch.setattr("tools.process_registry.process_registry", SimpleNamespace(completion_queue=events))
+    monkeypatch.setattr("tools.process_registry.process_registry", registry)
     for name in ("_poll_bot_live_delivery_guarded", "_maybe_fire_tui_loop_tick",
                  "_maybe_fire_tui_heartbeat_tick", "_notif_poll_kanban"):
         monkeypatch.setattr(server, name, lambda *a, **k: None)
@@ -132,3 +134,4 @@ def test_the_poller_thread_survives_a_dispatch_that_raises(monkeypatch):
 
     assert not worker.is_alive()
     assert handled == [1, 1], "the second event must still be dispatched after the first one raised"
+    assert registry._completions_restored, "the real TUI consumer must initialize completion recovery"

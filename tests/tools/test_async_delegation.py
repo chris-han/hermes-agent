@@ -552,7 +552,11 @@ print(r["delegation_id"])
     consumer = r'''
 import json
 from tools.process_registry import process_registry
+assert process_registry.completion_queue.empty()  # import does not restore the ledger
+assert process_registry.restore_completions() == 1
+assert process_registry.restore_completions() == 0
 evt = process_registry.completion_queue.get_nowait()
+assert process_registry.completion_queue.empty()
 print(json.dumps(evt, sort_keys=True))
 '''
     second = subprocess.run(
@@ -574,7 +578,7 @@ assert ad.mark_completion_delivered({delegation_id!r})
         text=True, capture_output=True, timeout=15, check=True,
     )
     probe = subprocess.run(
-        [sys.executable, "-c", "from tools.process_registry import process_registry; print(process_registry.completion_queue.qsize())"],
+        [sys.executable, "-c", "from tools.process_registry import process_registry; process_registry.restore_completions(); print(process_registry.completion_queue.qsize())"],
         cwd=repo, env=env, text=True, capture_output=True, timeout=15, check=True,
     )
     assert probe.stdout.strip().splitlines()[-1] == "0"
