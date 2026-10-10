@@ -33,3 +33,9 @@ def test_context_isolation_and_default_compatibility(tmp_path):
             with bind_execution_boundary(boundary):dispatch=propagate_context_to_thread(lambda:r.dispatch('probe',{}))
             assert ('error' in json.loads(pool.submit(dispatch).result()))==denied
     assert json.loads(r.dispatch('probe',{}))['ran'] is True
+
+
+def test_existing_positional_scratch_roots_preserve_ordinary_policy(tmp_path):
+    policy = BoundaryPolicy(True, False, (), (), (tmp_path,))
+    assert policy.scratch_roots == (tmp_path,)
+    assert policy.allowed_tool_names is None
