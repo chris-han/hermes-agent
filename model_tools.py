@@ -880,6 +880,10 @@ def handle_function_call(
     it (single-fire contract). enabled/disabled_toolsets scope the Tool Search
     bridge catalog to this session's grant (None = unrestricted).
     """
+    from gateway.execution_boundary import execution_tool_denial
+    denial = execution_tool_denial(function_name)
+    if denial is not None:
+        return denial
     function_args = coerce_tool_args(function_name, function_args)
     if not isinstance(function_args, dict):
         function_args = {}

@@ -539,8 +539,8 @@ class OpenAICompatRoutesMixin:
                 ))
                 if execution_boundary is None or not execution_boundary.workspace_id or not execution_boundary.user_id:
                     raise ValueError("Authenticated execution boundary required")
-            except (ValueError, RuntimeError) as exc:
-                return None, _error_response(str(exc), 400)
+            except (ValueError, RuntimeError, PermissionError) as exc:
+                return None, _error_response(str(exc), 403 if isinstance(exc, PermissionError) else 400)
         return execution_boundary, None
 
     def _select_request_route(
