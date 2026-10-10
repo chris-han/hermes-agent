@@ -35,6 +35,7 @@ class BoundaryPolicy:
     allowed_read_roots: tuple[Path, ...] = ()
     allowed_write_roots: tuple[Path, ...] = ()
     scratch_roots: tuple[Path, ...] = (Path("/tmp"),)  # no-tmp: ok — compatibility redirect source, not host-write permission
+    allowed_tool_names: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -90,6 +91,20 @@ def get_execution_boundary_provider() -> ExecutionBoundaryProvider | None:
 
 def current_execution_boundary() -> ExecutionBoundary | None:
     return _current_boundary.get()
+
+
+def execution_tool_denial(name: str) -> str | None:
+    """Apply the server-resolved boundary before every execution door.
+
+    Catalog selection and middleware skip flags cannot relax this policy.
+    None preserves ordinary sessions; an empty tuple denies all tools.
+    """
+    import json
+    boundary = current_execution_boundary()
+    if boundary is not None and boundary.policy.allowed_tool_names is not None:
+        if name not in boundary.policy.allowed_tool_names:
+            return json.dumps({"error": f"Tool {name} is denied by the execution profile", "error_type": "execution_profile", "tool": name})
+    return None
 
 
 def resolve_execution_boundary(

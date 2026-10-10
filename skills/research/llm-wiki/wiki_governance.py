@@ -10,6 +10,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
+import tempfile
+import uuid
+import fcntl
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -141,7 +145,7 @@ def iter_wiki_pages(wiki_root: Path) -> list[WikiPage]:
         return pages
     for full_path in sorted(wiki_root.rglob("*.md")):
         relative = full_path.relative_to(wiki_root).as_posix()
-        if relative.startswith(".governance/") or relative in {"log.md", "SCHEMA.md"}:
+        if relative.startswith((".governance/", "raw/")) or relative in {"log.md", "SCHEMA.md"}:
             continue
         raw = full_path.read_text(encoding="utf-8")
         frontmatter, body = split_frontmatter(raw)
@@ -172,7 +176,7 @@ def normalize_page_ref(ref: str) -> str:
     return normalized
 
 
-def build_dependency_graph(wiki_root: Path) -> dict[str, Any]:
+def build_dependency_graph(wiki_root: Path, *, operation_id: str | None = None) -> dict[str, Any]:
     pages = iter_wiki_pages(wiki_root)
     page_ids = {page.path for page in pages}
     nodes = []
@@ -206,11 +210,8 @@ def build_dependency_graph(wiki_root: Path) -> dict[str, Any]:
     }
     root = governance_root(wiki_root)
     root.mkdir(parents=True, exist_ok=True)
-    (root / "dependency-graph.json").write_text(
-        json.dumps(graph, indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
-    append_audit(wiki_root, "graph_rebuild", "dependency-graph.json")
+    atomic_json(root / "dependency-graph.json", graph)
+    append_audit(wiki_root, "graph_rebuild", "dependency-graph.json", operation_id=operation_id)
     return graph
 
 
@@ -261,8 +262,8 @@ def load_contracts(wiki_root: Path) -> dict[str, dict[str, Any]]:
     return contracts
 
 
-def audit_wiki(wiki_root: Path) -> dict[str, Any]:
-    graph = build_dependency_graph(wiki_root)
+def audit_wiki(wiki_root: Path, *, change: dict[str, Any] | None = None) -> dict[str, Any]:
+    graph = build_dependency_graph(wiki_root, operation_id=(change or {}).get("operation_id"))
     pages = {page.path: page for page in iter_wiki_pages(wiki_root)}
     node_authority = {
         node["id"]: str(node.get("authority", "reference")) for node in graph["nodes"]
@@ -377,12 +378,7 @@ def audit_wiki(wiki_root: Path) -> dict[str, Any]:
         "findings": findings,
         "finding_classes": sorted(FINDING_CLASSES),
     }
-    reports_dir = governance_root(wiki_root) / "reports"
-    reports_dir.mkdir(parents=True, exist_ok=True)
-    report_path = reports_dir / f"assurance-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
-    report_path.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
-    append_audit(wiki_root, "assurance_audit", report_path.relative_to(wiki_root).as_posix())
-    return report
+    return publish_report(wiki_root, "assurance", report, change=change)
 
 
 def downstream_dependents(graph: dict[str, Any], canonical_page: str) -> list[str]:
@@ -404,24 +400,24 @@ def downstream_dependents(graph: dict[str, Any], canonical_page: str) -> list[st
     return result
 
 
-def mark_review_required(wiki_root: Path, relative_page: str) -> None:
+def mark_review_required(wiki_root: Path, relative_page: str, *, operation_id: str | None = None) -> None:
     full_path = wiki_root / relative_page
     raw = full_path.read_text(encoding="utf-8")
     frontmatter, body = split_frontmatter(raw)
-    frontmatter["alignment_state"] = "REVIEW_REQUIRED"
-    full_path.write_text(
-        f"---\n{render_simple_yaml(frontmatter)}\n---\n{body}",
-        encoding="utf-8",
-    )
-    append_audit(wiki_root, "alignment_state_transition", relative_page)
+    changed = frontmatter.get("alignment_state") != "REVIEW_REQUIRED"
+    if changed:
+        frontmatter["alignment_state"] = "REVIEW_REQUIRED"
+        atomic_bytes(full_path, f"---\n{render_simple_yaml(frontmatter)}\n---\n{body}".encode("utf-8"))
+    if changed or operation_id is not None:
+        append_audit(wiki_root, "alignment_state_transition", relative_page, operation_id=operation_id)
 
 
-def impact_canonical_change(wiki_root: Path, canonical_page: str) -> dict[str, Any]:
+def impact_canonical_change(wiki_root: Path, canonical_page: str, *, change: dict[str, Any] | None = None) -> dict[str, Any]:
     page = normalize_page_ref(canonical_page)
-    graph = build_dependency_graph(wiki_root)
+    graph = build_dependency_graph(wiki_root, operation_id=(change or {}).get("operation_id"))
     dependents = downstream_dependents(graph, page)
     for dependent in dependents:
-        mark_review_required(wiki_root, dependent)
+        mark_review_required(wiki_root, dependent, operation_id=(change or {}).get("operation_id"))
     report = {
         "schema_version": "llm-wiki-impact-report.v1",
         "generated_at": utc_now_iso(),
@@ -429,20 +425,70 @@ def impact_canonical_change(wiki_root: Path, canonical_page: str) -> dict[str, A
         "downstream_dependents": dependents,
         "event_driven": True,
     }
-    reports_dir = governance_root(wiki_root) / "reports"
-    reports_dir.mkdir(parents=True, exist_ok=True)
-    report_path = reports_dir / f"impact-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
-    report_path.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
-    append_audit(wiki_root, "impact_report", report_path.relative_to(wiki_root).as_posix())
+    return publish_report(wiki_root, "impact", report, change=change)
+
+
+def atomic_bytes(path: Path, data: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".wiki-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data); handle.flush(); os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        _sync_directory(path.parent)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
+def _sync_directory(path: Path) -> None:
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try: os.fsync(fd)
+    finally: os.close(fd)
+
+
+def atomic_json(path: Path, value: dict[str, Any]) -> None:
+    atomic_bytes(path, json.dumps(value, indent=2, sort_keys=True).encode("utf-8"))
+
+
+def publish_report(wiki_root: Path, kind: str, report: dict[str, Any], *, change: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Immutable report identity; CLI calls without change identity are new attempts."""
+    root = governance_root(wiki_root) / "reports"
+    root.mkdir(parents=True, exist_ok=True)
+    identity = hashlib.sha256(json.dumps(change, sort_keys=True).encode()).hexdigest() if change else uuid.uuid4().hex
+    path = root / f"{kind}-{identity}.json"
+    report = {**report, "change": change, "report_ref": path.relative_to(wiki_root).as_posix()}
+    fd, temporary = tempfile.mkstemp(prefix=".report-", dir=root)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(report, handle, indent=2, sort_keys=True); handle.flush(); os.fsync(handle.fileno())
+        try:
+            os.link(temporary, path)  # atomic, exclusive; never overwrite an earlier report
+            _sync_directory(root)
+        except FileExistsError:
+            existing = json.loads(path.read_text())
+            if change is None or existing.get("change") != change:
+                raise ValueError("report identity conflict")
+            report = existing
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+    append_audit(wiki_root, "assurance_audit" if kind == "assurance" else "impact_report", report["report_ref"], operation_id=(change or {}).get("operation_id"))
     return report
 
 
-def append_audit(wiki_root: Path, action: str, subject: str) -> None:
+def append_audit(wiki_root: Path, action: str, subject: str, *, operation_id: str | None = None) -> None:
     governance_root(wiki_root).mkdir(parents=True, exist_ok=True)
     log_path = governance_root(wiki_root) / "audit-log.jsonl"
-    entry = {"ts": utc_now_iso(), "action": action, "subject": subject}
-    with log_path.open("a", encoding="utf-8") as handle:
+    entry = {"ts": utc_now_iso(), "action": action, "subject": subject, "operation_id": operation_id}
+    with log_path.open("a+", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        if operation_id is not None:
+            handle.seek(0)
+            for line in handle:
+                previous = json.loads(line)
+                if all(previous.get(key) == entry[key] for key in ("action", "subject", "operation_id")):
+                    return
         handle.write(json.dumps(entry, sort_keys=True) + "\n")
+        handle.flush(); os.fsync(handle.fileno())
 
 
 def main(argv: list[str] | None = None) -> int:

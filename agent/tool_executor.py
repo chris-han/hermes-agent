@@ -1597,6 +1597,10 @@ def _resolve_sequential_dispatch(agent, ref: _ToolCallRef, messages: list) -> _S
     function_name, function_args, effective_task_id, tool_call_id, middleware_trace = (
         ref.name, ref.args, ref.task_id, ref.call_id, ref.trace,
     )
+    from gateway.execution_boundary import execution_tool_denial
+    denial = execution_tool_denial(function_name)
+    if denial is not None:
+        return _SequentialDispatch(lambda next_args: denial, finish_spinner=False)
     if function_name != "delegate_task" and function_name in INLINE_TOOL_EXECUTORS:
         # Agent-level tools that need live AIAgent state; table shared with invoke_tool.
         inline_executor = INLINE_TOOL_EXECUTORS[function_name]
