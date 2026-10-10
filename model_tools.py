@@ -222,6 +222,12 @@ def get_tool_definitions(enabled_toolsets: Optional[List[str]] = None, disabled_
     def compute():
         return _compute_tool_definitions(enabled_toolsets, disabled_toolsets, quiet_mode,
                                          skip_tool_search_assembly=skip_tool_search_assembly)
+    from gateway.execution_boundary import current_execution_boundary
+    boundary = current_execution_boundary()
+    if boundary is not None and boundary.policy.allowed_tool_names is not None:
+        # A server-resolved finite execution profile must expose its permitted
+        # schemas directly, without process-cache or deferred-bridge leakage.
+        return compute()
     if not quiet_mode:
         return compute()
     cache_key = _tool_defs_cache_key(enabled_toolsets, disabled_toolsets, skip_tool_search_assembly)
@@ -501,6 +507,11 @@ def _compute_tool_definitions(enabled_toolsets: Optional[List[str]] = None, disa
                               quiet_mode: bool = False, skip_tool_search_assembly: bool = False) -> List[Dict[str, Any]]:
     """Uncached implementation of :func:`get_tool_definitions`."""
     tools_to_include = _select_tool_names(enabled_toolsets, disabled_toolsets, quiet_mode)
+    from gateway.execution_boundary import current_execution_boundary
+    boundary = current_execution_boundary()
+    scoped_profile = boundary is not None and boundary.policy.allowed_tool_names is not None
+    if scoped_profile:
+        tools_to_include &= set(boundary.policy.allowed_tool_names)
     # Selection is per schema, not per process/profile. Kanban's local checks
     # are uncached; the outer definitions cache already keys on this selection.
     from tools.kanban_toolset_context import scoped_kanban_toolset_selection
@@ -527,7 +538,7 @@ def _compute_tool_definitions(enabled_toolsets: Optional[List[str]] = None, disa
     try:
         from tools.tool_search import assemble_tool_defs, load_config as _load_ts_config
         ts_cfg = _load_ts_config()
-        if not skip_tool_search_assembly and ts_cfg.enabled != "off":
+        if not scoped_profile and not skip_tool_search_assembly and ts_cfg.enabled != "off":
             assembly = assemble_tool_defs(filtered_tools, context_length=_resolve_active_context_length(), config=ts_cfg)
             if assembly.activated and not quiet_mode:
                 print(f"🔎 Tool Search (tier {assembly.tier}): {assembly.deferred_count} "
