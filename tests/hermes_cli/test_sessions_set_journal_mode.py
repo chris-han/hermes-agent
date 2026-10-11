@@ -31,7 +31,8 @@ def _args(mode, db=None, force=True):
     return argparse.Namespace(sessions_action="set-journal-mode", mode=mode, db=db, force=force)
 
 
-def test_set_journal_mode_converts_wal_store_offline(tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize("explicit_db", [False, True])
+def test_set_journal_mode_converts_wal_store_offline(explicit_db, tmp_path, monkeypatch, capsys):
     db = tmp_path / "state.db"
     _wal_store(db)
     monkeypatch.setattr("hermes_state.DEFAULT_DB_PATH", db)
