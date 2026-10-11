@@ -259,6 +259,10 @@ def _db_flush_collect(agent, messages: List[Dict], conversation_history: Optiona
             # context intact while transcript pollers omit unsolicited presentation.
             msg["display_kind"] = "hidden"
             msg["display_metadata"] = {**(msg.get("display_metadata") or {}), "notification_category": "diagnostic"}
+        # A host-owned internal turn publishes its final reply only after its
+        # domain result commits. Tool-call evidence remains in the real transcript.
+        if getattr(agent, '_host_defer_final_response', False) and msg.get('role') == 'assistant' and not msg.get('tool_calls'):
+            continue
         batch_rows.append(_db_flush_row(agent, msg, ov_idx == msg_idx or msg is pending_cli_message))
         batch_msgs.append(msg)
     return batch_rows, batch_msgs
