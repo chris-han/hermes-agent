@@ -3943,7 +3943,7 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         confirmed_runtime_lock: bool = False, bind_declared_conversation: bool = False,
         session_history_delivery: str = "", turn_author: Optional[Dict[str, Any]] = None,
         relay_metadata: Optional[Dict[str, Any]] = None, notification_category: str = "result",
-        resume_unanswered_turn: bool = False, execution_boundary=None) -> tuple:
+        resume_unanswered_turn: bool = False, execution_boundary=None, internal_continuation_id: Optional[str] = None, internal_turn_lease_holder: Optional[str] = None) -> tuple:
         """Create an agent and run one turn in a thread executor -> ``(result, usage)``.
         ``agent_ref[0]`` receives the agent so SSE writers can interrupt it; ``active_run_id``
         registers it in ``_active_run_agents``. Under a confirmed model lock the actual
@@ -3988,6 +3988,12 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
                         gateway_session_key=gateway_session_key, requested_model=requested_model,
                         requested_provider=requested_provider, model_options=model_options, route=route,
                         session_model=session_model, confirmed_runtime_lock=confirmed_runtime_lock)
+                    if internal_continuation_id is not None:
+                        if not getattr(self, '_semantier_embedded_boundary_required', False) or execution_boundary is None:
+                            raise RuntimeError('Host-owned internal continuation boundary required')
+                        agent._host_defer_final_response = True
+                        agent._host_session_turn_lease_holder = internal_turn_lease_holder
+                        agent._persist_user_message_platform_id = internal_continuation_id
                     if agent_ref is not None:
                         agent_ref[0] = agent
                     if resume_unanswered_turn:
@@ -4081,6 +4087,10 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
                         if getattr(self, "_semantier_embedded_boundary_required", False) else nullcontext())
                 with lock:
                     with bind_execution_boundary(execution_boundary):
+                        host_scope = getattr(self, '_semantier_api_actor_scope', None)
+                        if host_scope is not None and (session_history_delivery == '1' or internal_continuation_id is not None):
+                            with host_scope(self, execution_boundary, session_id, gateway_session_key or session_id, request_profile):
+                                return _run_unbound()
                         return _run_unbound()
             finally:
                 if home_token is not None:

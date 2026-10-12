@@ -319,6 +319,24 @@ class SessionMessagesMixin:
         # holding the lock for seconds (VACUUM, checkpoint) can't kill it.
         return self._execute_write(_do, patience_s=self._TRANSCRIPT_WRITE_PATIENCE_S)
 
+    def append_internal_result(self, session_id: str, content: str, *, result_id: str, result_hash: str) -> int:
+        """Project host-committed bytes once; collision checks and insert share a transaction."""
+        if not result_id or not result_hash:
+            raise ValueError('Internal result identity required')
+        msg={'content':content,'platform_message_id':result_id,'display_metadata':{'internal_result_hash':result_hash}}
+        params=self._message_row_params(session_id,'assistant',msg,None,time.time(),keep_reasoning=True)
+        def project(conn):
+            old=conn.execute('SELECT id,content,display_metadata FROM messages WHERE session_id=? AND platform_message_id=?',(session_id,result_id)).fetchone()
+            if old:
+                if old['content']!=content or json.loads(old['display_metadata'] or '{}').get('internal_result_hash')!=result_hash:
+                    raise ValueError('INTERNAL_RESULT_IDENTITY_CONFLICT')
+                return old['id']
+            self._check_transcript_write_guards(conn,session_id,None,reject_active_turn_lease=True)
+            row=conn.execute(_INSERT_MESSAGE_SQL,params).lastrowid
+            self._bump_session_counters(conn,session_id,1,0,unit=True)
+            return row
+        return self._execute_write(project,patience_s=self._TRANSCRIPT_WRITE_PATIENCE_S)
+
     def append_delegation_delivery(self, session_id: str, content: str, metadata: Dict[str, Any]) -> int:
         """Record a detached API result once, between client turns, including replay after rotation.
 

@@ -274,6 +274,29 @@ class SessionGatewayMixin:
                 )
         self._execute_write(_do)
 
+    def admit_native_api_route(self, session_key: str, entry_json: str, *, scope: str) -> str:
+        """Bind a real native transcript without replacing another origin or route.
+
+        The authenticated host supplies provenance; this method grants no authority.
+        Check and insertion share the existing SQLite writer transaction.
+        """
+        entry = json.loads(entry_json)
+        def admit(conn):
+            session = conn.execute("SELECT * FROM sessions WHERE id=?", (entry['session_id'],)).fetchone()
+            if session is None or session['ended_at'] is not None:
+                raise ValueError('API_ORIGIN_SESSION_UNAVAILABLE')
+            if session['session_key'] != session_key or session['source'] != 'api_server':
+                raise ValueError('API_ORIGIN_SESSION_MISMATCH')
+            old = conn.execute('SELECT entry_json FROM gateway_routing WHERE scope=? AND session_key=?', (scope,session_key)).fetchone()
+            if old:
+                previous = json.loads(old[0])
+                if previous['session_id'] != entry['session_id'] or previous.get('origin') != entry.get('origin'):
+                    raise ValueError('API_ORIGIN_REBINDING_FORBIDDEN')
+                return old[0]
+            conn.execute('INSERT INTO gateway_routing(scope,session_key,entry_json,updated_at) VALUES(?,?,?,?)', (scope,session_key,entry_json,time.time()))
+            return entry_json
+        return self._execute_write(admit)
+
     def save_gateway_routing_entry(self, session_key: str, entry_json: str, *, scope: str = "") -> None:
         """Upsert one gateway routing entry (session_key -> SessionEntry JSON); ``scope``
         namespaces the index per sessions_dir so two stores never share routing state."""

@@ -774,7 +774,7 @@ class SessionStore(
 ):
     """Session routing index + transcripts: SQLite (SessionDB), legacy JSONL fallback."""
 
-    def __init__(self, sessions_dir: Path, config: GatewayConfig, has_active_processes_fn=None):
+    def __init__(self, sessions_dir: Path, config: GatewayConfig, has_active_processes_fn=None, *, session_db=None):
         self.sessions_dir = sessions_dir
         self.config = config
         self._entries: Dict[str, SessionEntry] = {}
@@ -840,7 +840,10 @@ class SessionStore(
             self._routing_home: Optional[Path] = Path(get_hermes_home())
         except Exception:
             self._routing_home = None
-        self._open_session_db_for_active_scope()
+        if session_db is not None:
+            self._db = session_db
+        else:
+            self._open_session_db_for_active_scope()
 
     def _lazy(self, name: str, factory):
         """``self.<name>``, created via *factory* when missing/None (suites build bare stores via
@@ -875,6 +878,23 @@ class SessionStore(
         with self._lock:
             self._ensure_loaded_locked()
             return len(self._entries) > 1
+
+    def admit_native_api_session(self, *, session_key: str, session_id: str, source: SessionSource) -> SessionEntry:
+        """Host-attested API route admission; never synthesize a transcript or use JSON fallback."""
+        if source.platform != Platform.API_SERVER or not source.user_id or not source.workspace_owner_id:
+            raise ValueError('API_ORIGIN_SOURCE_REQUIRED')
+        db = self._routing_db
+        if db is None:
+            raise RuntimeError('API_ORIGIN_DURABLE_STORE_REQUIRED')
+        now = _now()
+        entry = SessionEntry(session_key=session_key,session_id=session_id,created_at=now,updated_at=now,
+            origin=source,platform=source.platform,transport_profile=source.profile)
+        retained = db.admit_native_api_route(session_key,json.dumps(entry.to_dict()),scope=self._routing_scope())
+        entry = SessionEntry.from_dict(json.loads(retained))
+        with self._lock:
+            self._ensure_loaded_locked()
+            self._entries[session_key] = entry
+        return entry
 
     def get_or_create_session(
         self, source: SessionSource, force_new: bool = False, touch_activity: bool = True,

@@ -101,7 +101,8 @@ class DurableTurnLease:
         """Release the row and drop the agent's holder attrs (only if they still name this lease)."""
         agent = self.agent
         try:
-            self.db.release_session_turn_lease(self.session_id, self.holder)
+            if getattr(agent, '_host_session_turn_lease_holder', None) != self.holder:
+                self.db.release_session_turn_lease(self.session_id, self.holder)
         except Exception:
             logger.error("Failed to release session turn lease: %s", self.session_id, exc_info=True)
         if getattr(agent, "_active_session_turn_lease_holder", None) == self.holder:
@@ -259,7 +260,7 @@ def admit_durable_turn_lease(
         return admission
     # Row proven to exist — suppress the redundant create attempt.
     agent._session_db_created = True
-    holder = (
+    holder = getattr(agent, "_host_session_turn_lease_holder", None) or (
         f"pid={os.getpid()}:turn={relay_turn_id}:platform={task_context['platform'] or 'unknown'}"
     )
     waited = False
