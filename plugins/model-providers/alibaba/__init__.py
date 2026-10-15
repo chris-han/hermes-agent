@@ -8,12 +8,23 @@ and ``model.provider: alibaba-cn`` resolves at runtime.
 from providers import register_provider
 from providers.base import ProviderProfile
 
-alibaba = ProviderProfile(
+class AlibabaProfile(ProviderProfile):
+    def build_api_kwargs_extras(self, *, reasoning_config=None, model="", **context):
+        # DashScope Qwen 3.5 uses enable_thinking, not reasoning_effort.
+        # Preserve provider defaults unless the caller explicitly disables it.
+        if (str(model).lower().rsplit("/", 1)[-1].startswith("qwen3.5")
+                and reasoning_config is not None
+                and reasoning_config.get("enabled") is False):
+            return {"enable_thinking": False}, {}
+        return {}, {}
+
+
+alibaba = AlibabaProfile(
     name="alibaba", aliases=("dashscope", "alibaba-cloud", "qwen-dashscope", "aliyun"), env_vars=("DASHSCOPE_API_KEY",),
     base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
 )
 
-alibaba_cn = ProviderProfile(
+alibaba_cn = AlibabaProfile(
     name="alibaba-cn", aliases=("dashscope-cn", "alibaba-cloud-cn"),
     display_name="Alibaba Cloud DashScope (China)",
     description="Alibaba Cloud DashScope, mainland-China endpoint",
@@ -21,7 +32,7 @@ alibaba_cn = ProviderProfile(
     base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
 )
 
-alibaba_token_plan = ProviderProfile(
+alibaba_token_plan = AlibabaProfile(
     name="alibaba-token-plan", aliases=("dashscope-token-plan",), display_name="Alibaba Cloud (Token Plan)",
     description="Alibaba Cloud Model Studio Token Plan (flat-token tier)",
     signup_url="https://help.aliyun.com/zh/model-studio/",
@@ -29,7 +40,7 @@ alibaba_token_plan = ProviderProfile(
     base_url="https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1", auth_type="api_key",
 )
 
-alibaba_token_plan_cn = ProviderProfile(
+alibaba_token_plan_cn = AlibabaProfile(
     name="alibaba-token-plan-cn", aliases=("dashscope-token-plan-cn",),
     display_name="Alibaba Cloud (Token Plan, China)",
     description="Alibaba Cloud Model Studio Token Plan, mainland-China endpoint",
