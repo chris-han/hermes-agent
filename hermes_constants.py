@@ -860,8 +860,9 @@ def secure_parent_dir(path: Path) -> None:
             "normally stored under the hermes home directory instead.", parent, _INSTALL_ROOT,
         )
         return
-    with contextlib.suppress(OSError):
-        os.chmod(parent, 0o700)
+    # Honor the same managed/container sharing policy as the home skeleton.
+    # A blanket chmod masks named ACL grants on sibling-container volumes.
+    apply_secure_dir_policy(parent)
 
 
 def _norm_home_path(path: str | None) -> str:
