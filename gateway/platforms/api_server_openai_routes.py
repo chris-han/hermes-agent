@@ -884,7 +884,7 @@ class OpenAICompatRoutesMixin:
                 usage = agent_usage or usage
             except Exception as exc:
                 agent_error = exc
-                logger.error("Agent task %s failed during SSE streaming: %s", completion_id, exc)
+                logger.error("Agent task %s failed during SSE streaming: %s", completion_id, exc, exc_info=True)
             completed, is_partial, is_failed, err_msg = _result_flags(result)
             if agent_error is not None:
                 is_failed = True

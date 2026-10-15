@@ -1092,13 +1092,24 @@ class SessionDB(
         the statement is replayed on the SAME connection within the read-only IOERR budget -- never
         closed and reopened (close() cancels this process's POSIX locks for every sibling connection),
         never quarantined (busy is not broken). A persistent IOERR exhausts the budget and propagates."""
-        for attempt in range(_READ_ONLY_IOERR_RETRY_ATTEMPTS + 1):
+        # Rollback-journal mode (including the safe fallback on older SQLite)
+        # blocks readers during another process's short exclusive commit. Reads
+        # are idempotent and need the same bounded patience as writer admission.
+        lock_deadline = time.monotonic() + self._WRITE_PATIENCE_S
+        ioerr_attempt = 0
+        while True:
             try:
                 with self._read_ctx() as conn:
                     return fn(conn)
             except sqlite3.OperationalError as exc:
-                if attempt >= _READ_ONLY_IOERR_RETRY_ATTEMPTS or _DISK_IO_ERROR_MARKER not in str(exc).lower():
+                message = str(exc).lower()
+                if "locked" in message or "busy" in message:
+                    if self._sleep_before_write_retry(lock_deadline, self._WRITE_PATIENCE_S):
+                        continue
                     raise
+                if ioerr_attempt >= _READ_ONLY_IOERR_RETRY_ATTEMPTS or _DISK_IO_ERROR_MARKER not in message:
+                    raise
+                ioerr_attempt += 1
                 time.sleep(_READ_ONLY_IOERR_RETRY_BACKOFF_S)
 
     def _ensure_db_file_generation(self) -> None:
