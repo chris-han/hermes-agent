@@ -1657,7 +1657,7 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         return str(row["id"]) if row and row.get("id") else None
 
     def _bind_declared_conversation(
-        self, session_id: Optional[str], gateway_session_key: Optional[str]) -> None:
+        self, session_id: Optional[str], gateway_session_key: Optional[str], *, strict: bool = False) -> None:
         """Record the declared conversation key on the session row (AIAgent writes it unkeyed);
         ``include_compression_ancestors`` covers a mid-turn rotation. UPDATE: no-op w/o a row.
 
@@ -1677,6 +1677,8 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
             existing = db.get_session(sid) or {}
             current = str(existing.get("session_key") or "").strip()
             if current and current != key:
+                if strict:
+                    raise ValueError("API_ORIGIN_SESSION_MISMATCH")
                 logger.debug(
                     "[%s] refusing to rebind session %s from a different declared conversation",
                     self.name, sid)
@@ -1685,6 +1687,8 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
                 sid, source=self._SESSION_SOURCE, session_key=key,
                 include_compression_ancestors=True)
         except Exception:
+            if strict:
+                raise
             logger.debug(
                 "[%s] declared-conversation bind failed for %s", self.name, sid, exc_info=True)
 
