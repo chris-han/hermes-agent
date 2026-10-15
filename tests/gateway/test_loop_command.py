@@ -75,6 +75,20 @@ def _make_event(text: str) -> MessageEvent:
 
 
 @pytest.mark.asyncio
+async def test_embedded_loop_wakeup_watcher_exits_without_shared_db_access(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    home.mkdir()
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    runner = _make_runner()
+    runner._running = True
+    runner._semantier_embedded_boundary_required = True
+
+    await asyncio.wait_for(runner._loop_wakeup_watcher(interval=0), timeout=2)
+
+    assert not (home / "state.db").exists()
+
+
+@pytest.mark.asyncio
 async def test_gateway_loop_create_captures_route(loop_env):
     runner = _make_runner()
     response = await GatewayRunner._handle_loop_command(runner, _make_event("/loop 5m check the deploy"))

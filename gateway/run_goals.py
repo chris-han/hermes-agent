@@ -459,7 +459,18 @@ class GatewayGoalsMixin:
         Multiplex: one gateway-wide task, so ``list_active_loops`` alone reads only the launch home's
         store — a ``/loop`` set from a secondary profile's chat would never fire. Every served
         profile's store is scanned under its own runtime scope (same shape as ``_handoff_watcher``),
-        and each hit is fired against that profile's adapters."""
+        and each hit is fired against that profile's adapters.
+
+        Governed embedded runners have no process-global workspace boundary and must not
+        scan the shared SessionDB. Session work requires its ingress-bound workspace context.
+        """
+        if bool(getattr(self, "_semantier_embedded_boundary_required", False)):
+            logger.debug(
+                "loop wakeup watcher disabled for governed embedded runner "
+                "without a process-global workspace boundary"
+            )
+            return
+
         from gateway.run import _async_profile_runtime_scope, _handoff_watch_scopes
         from gateway.run_idle_gates import profile_has_active_loop
         await asyncio.sleep(5)  # let platforms finish connecting
