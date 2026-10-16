@@ -112,7 +112,7 @@ def assemble_api_request(
     are injected only after whitespace normalization, the orphan sweep, thinking-only drop /
     user merge and surrogate stripping, so the same row's bytes never vary across turns."""
     from agent.conversation_loop import (
-        _CODEX_INCOMPLETE_NUDGE, _apply_invocation_payload_selection, _canonicalize_api_tool_calls,
+        _CODEX_INCOMPLETE_NUDGE, _apply_context_engine_selection, _canonicalize_api_tool_calls,
         _clone_message_for_send, _midturn_request_pressure_tokens, _pressure_with_real_floor,
     )
     from agent.model_metadata import estimate_messages_tokens_rough
@@ -139,7 +139,7 @@ def assemble_api_request(
     _sel_incoming = (
         messages[current_turn_user_idx] if 0 <= current_turn_user_idx < len(messages) else None
     )
-    api_messages = _apply_invocation_payload_selection(
+    api_messages = _apply_context_engine_selection(
         agent, api_messages, messages, _sel_incoming, logger=request_logger
     )
 

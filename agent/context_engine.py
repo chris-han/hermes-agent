@@ -117,7 +117,7 @@ class ContextEngine(ABC):
         """
         return messages, 0
 
-    def select_invocation_payload(
+    def select_context(
         self, request_messages: List[Dict[str, Any]], *, conversation_messages: List[Dict[str, Any]] = None,
         incoming_message: Dict[str, Any] = None, budget_tokens: int = 0,
     ) -> List[Dict[str, Any]]:
@@ -136,11 +136,14 @@ class ContextEngine(ABC):
         (system prompt + history + ephemeral prefill); ``conversation_messages`` is the
         persisted history for reference only (do not mutate); ``budget_tokens`` is the
         model's context length or 0 if unknown.
+
+        This request-message projection does not form, admit or activate Semantier
+        semantic WorkingContext and does not grant memory authority.
         """
         return None
 
     def on_turn_complete(self, messages: List[Dict[str, Any]], usage: Dict[str, Any] = None, **kwargs: Any) -> None:
-        """Observe a finished turn (complement of ``select_invocation_payload()``) to index/update
+        """Observe a finished turn (complement of ``select_context()``) to index/update
         routing state for the next request.
 
         Best-effort, not guaranteed: fires from the normal finalization seam only; some
