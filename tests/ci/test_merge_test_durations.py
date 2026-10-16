@@ -31,6 +31,7 @@ def _run(root: Path, count: int) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
         timeout=30,
+        check=False,
     )
 
 

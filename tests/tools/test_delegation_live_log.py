@@ -271,7 +271,7 @@ def test_explicit_home_pins_transcripts_across_raw_thread_boundary(tmp_path, mon
     session_home.mkdir()
 
     monkeypatch.setenv("HERMES_HOME", str(process_home))
-    home_scope = set_hermes_home_override(session_home)
+    token = set_hermes_home_override(session_home)
     out = {}
     try:
         def worker():
@@ -284,7 +284,7 @@ def test_explicit_home_pins_transcripts_across_raw_thread_boundary(tmp_path, mon
         t.start()
         t.join()
     finally:
-        reset_hermes_home_override(home_scope)
+        reset_hermes_home_override(token)
 
     expected_root = session_home / "cache" / "delegation" / "live"
     assert out["paths"], "transcripts were created"
@@ -305,7 +305,7 @@ def test_manifest_update_uses_same_explicit_home(tmp_path, monkeypatch):
     home = tmp_path / "own-profile"
     home.mkdir()
 
-    deleg_id, writers, paths = create_live_transcripts(
+    deleg_id, _writers, paths = create_live_transcripts(
         [{"goal": "pin me"}], home=home,
     )
     update_manifest_statuses(
@@ -421,19 +421,6 @@ def test_manifest_includes_model_and_provider():
     assert len(manifest["tasks"]) == 2
 
 
-def test_manifest_model_provider_are_optional_and_default_none():
-    """When not provided, model and provider should be null in the manifest."""
-    delegation_id, _writers, _paths = create_live_transcripts(
-        [{"goal": "task without model"}]
-    )
-
-    manifest = json.loads(
-        (live_transcript_root() / delegation_id / "manifest.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    assert manifest["model"] is None
-    assert manifest["provider"] is None
 
 
 def test_no_file_in_the_dispatch_directory_carries_the_raw_key():

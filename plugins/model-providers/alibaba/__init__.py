@@ -5,26 +5,30 @@ Profile names match models.dev catalog keys exactly so model metadata lines up
 and ``model.provider: alibaba-cn`` resolves at runtime.
 """
 
+from typing import Any
+
+from agent.reasoning_effort import dashscope_preserve_thinking_extras
 from providers import register_provider
 from providers.base import ProviderProfile
 
-class AlibabaProfile(ProviderProfile):
-    def build_api_kwargs_extras(self, *, reasoning_config=None, model="", **context):
-        # DashScope Qwen 3.5 uses enable_thinking, not reasoning_effort.
-        # Preserve provider defaults unless the caller explicitly disables it.
+
+class DashScopeProfile(ProviderProfile):
+    """DashScope compatible-mode: ask the server to keep replayed prior-turn reasoning."""
+
+    def build_api_kwargs_extras(self, *, model: str | None = None, reasoning_config=None, **context: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+        extras = dashscope_preserve_thinking_extras(model)
         if (str(model).lower().rsplit("/", 1)[-1].startswith("qwen3.5")
-                and reasoning_config is not None
-                and reasoning_config.get("enabled") is False):
-            return {"enable_thinking": False}, {}
-        return {}, {}
+                and reasoning_config is not None and reasoning_config.get("enabled") is False):
+            extras["enable_thinking"] = False
+        return extras, {}
 
 
-alibaba = AlibabaProfile(
+alibaba = DashScopeProfile(
     name="alibaba", aliases=("dashscope", "alibaba-cloud", "qwen-dashscope", "aliyun"), env_vars=("DASHSCOPE_API_KEY",),
     base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
 )
 
-alibaba_cn = AlibabaProfile(
+alibaba_cn = DashScopeProfile(
     name="alibaba-cn", aliases=("dashscope-cn", "alibaba-cloud-cn"),
     display_name="Alibaba Cloud DashScope (China)",
     description="Alibaba Cloud DashScope, mainland-China endpoint",
@@ -32,7 +36,7 @@ alibaba_cn = AlibabaProfile(
     base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
 )
 
-alibaba_token_plan = AlibabaProfile(
+alibaba_token_plan = DashScopeProfile(
     name="alibaba-token-plan", aliases=("dashscope-token-plan",), display_name="Alibaba Cloud (Token Plan)",
     description="Alibaba Cloud Model Studio Token Plan (flat-token tier)",
     signup_url="https://help.aliyun.com/zh/model-studio/",
@@ -40,7 +44,7 @@ alibaba_token_plan = AlibabaProfile(
     base_url="https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1", auth_type="api_key",
 )
 
-alibaba_token_plan_cn = AlibabaProfile(
+alibaba_token_plan_cn = DashScopeProfile(
     name="alibaba-token-plan-cn", aliases=("dashscope-token-plan-cn",),
     display_name="Alibaba Cloud (Token Plan, China)",
     description="Alibaba Cloud Model Studio Token Plan, mainland-China endpoint",

@@ -109,14 +109,17 @@ def run_setup(provider, hermes_home: str, config: dict) -> None:
     from tools.lazy_deps import install_specs
 
     deps = ["hindsight-all"] if mode == "local_embedded" else [f"hindsight-client>={_MIN_CLIENT_VERSION}"]
-    outcome = install_specs(deps, timeout=120)
-    if outcome.ok:
-        print("  ✓ Dependencies up to date")
-    elif outcome.blocked:
-        print(f"  ⚠ Cannot install dependencies: {outcome.reason}")
-    else:
-        print(f"  ⚠ Install failed:\n{(outcome.stderr or '').strip()}")
-        print(f"  Run manually: uv pip install --python {sys.executable} {' '.join(deps)}")
+    try:
+        outcome = install_specs(deps, timeout=120)
+        if outcome.ok:
+            print("  ✓ Dependencies up to date")
+        elif outcome.blocked:
+            print(f"  ⚠ Cannot install dependencies: {outcome.reason}")
+        else:
+            print(f"  ⚠ Install failed:\n{(outcome.stderr or '').strip()}")
+            print(f"  Run manually: uv pip install --python {sys.executable} {' '.join(deps)}")
+    except ImportError as exc:
+        print(f"  ⚠ Dependencies must be provisioned explicitly: {exc}")
 
     if mode == "cloud":
         print("\n  Get your API key at https://ui.hindsight.vectorize.io\n")

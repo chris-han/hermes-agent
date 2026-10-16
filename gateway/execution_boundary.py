@@ -203,7 +203,7 @@ class DiskIOBoundaryGuard:
         self.boundary = boundary
 
     @classmethod
-    def current(cls) -> "DiskIOBoundaryGuard":
+    def current(cls) -> DiskIOBoundaryGuard:
         return cls(current_execution_boundary())
 
     def _read_roots(self) -> tuple[Path, ...]:

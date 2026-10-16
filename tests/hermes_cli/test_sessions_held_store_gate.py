@@ -13,9 +13,9 @@ from argparse import Namespace
 
 import pytest
 
-import hermes_cli.sessions_cmd as sessions_cmd
+from hermes_cli import sessions_cmd
 
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="holder scan is unavailable on Windows")
+pytestmark = pytest.mark.platforms("posix")  # holder scan is unavailable on Windows
 
 
 _HOLDER = (
@@ -72,9 +72,9 @@ def _sessions_subparsers():
     from hermes_cli.subcommands.sessions import build_sessions_parser
 
     build_sessions_parser(parser.add_subparsers(dest="command"), cmd_sessions=sessions_cmd.cmd_sessions)
-    subparsers = [a for a in parser._actions if isinstance(a, argparse._SubParsersAction)][0]
+    subparsers = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
     sessions = subparsers.choices["sessions"]
-    nested = [a for a in sessions._actions if isinstance(a, argparse._SubParsersAction)][0]
+    nested = next(a for a in sessions._actions if isinstance(a, argparse._SubParsersAction))
     return nested.choices
 
 
@@ -85,10 +85,12 @@ def test_store_rewrites_refuse_and_name_the_holder_until_forced(action, state_db
     assert f"PID {foreign_holder.pid} (" in out
     assert f"Refusing `hermes sessions {action}`" in out and "--force" in out
     # The gate scans the store the command actually opened, not some other resolver's file: no
-    # `hermes sessions` subcommand can point the command at another database, so the default
-    # resolver IS the operated-on path, and the refusal names it.
+    # gated action can point the command at another database, so the default resolver IS the
+    # operated-on path, and the refusal names it. (Offline commands such as set-journal-mode
+    # take --db legitimately; they never go through this gate.)
     assert str(state_db) in out
-    assert not [opt for sub in _sessions_subparsers().values() for a in sub._actions
+    assert not [opt for name, sub in _sessions_subparsers().items()
+                if name in sessions_cmd._HELD_STORE_ACTIONS for a in sub._actions
                 for opt in a.option_strings if opt in ("--db", "--db-path", "--database")]
 
     assert sessions_cmd.cmd_sessions(_args(action, force=True)) != 1

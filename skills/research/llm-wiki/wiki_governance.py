@@ -16,7 +16,7 @@ import uuid
 import fcntl
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from pathlib import Path
 import re
 from typing import Any
@@ -43,7 +43,7 @@ class WikiPage:
 
 
 def utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def wiki_root_from_env_or_arg(raw: str | None) -> Path:
@@ -407,7 +407,7 @@ def mark_review_required(wiki_root: Path, relative_page: str, *, operation_id: s
     changed = frontmatter.get("alignment_state") != "REVIEW_REQUIRED"
     if changed:
         frontmatter["alignment_state"] = "REVIEW_REQUIRED"
-        atomic_bytes(full_path, f"---\n{render_simple_yaml(frontmatter)}\n---\n{body}".encode("utf-8"))
+        atomic_bytes(full_path, f"---\n{render_simple_yaml(frontmatter)}\n---\n{body}".encode())
     if changed or operation_id is not None:
         append_audit(wiki_root, "alignment_state_transition", relative_page, operation_id=operation_id)
 
