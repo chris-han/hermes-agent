@@ -163,6 +163,8 @@ interface ResolvedTicketBackend {
   shell?: boolean
   env?: NodeJS.ProcessEnv
   root?: string
+  ticketCommand?: string
+  ticketEnv?: NodeJS.ProcessEnv
 }
 
 const RUNTIME_COMMAND_TIMEOUT_MS = 30_000
@@ -221,6 +223,10 @@ function isFile(candidate: string): boolean {
  * PYTHONPATH is its whole import closure (-P still keeps the cwd out).
  */
 export async function ticketRuntimeFor(backend: ResolvedTicketBackend): Promise<{ command: string; env?: NodeJS.ProcessEnv }> {
+  if (backend.ticketCommand) {
+    return { command: backend.ticketCommand, env: { ...backend.env, ...backend.ticketEnv } }
+  }
+
   if (backend.kind === 'python' && !backend.shell) {
     return backend
   }

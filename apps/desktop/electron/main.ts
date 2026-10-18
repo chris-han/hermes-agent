@@ -5013,6 +5013,11 @@ async function resolveHermesBackend(backendArgs: string[]): Promise<ResolvedHerm
       command: payload.shim,
       args: [...backendArgs],
       env: { ...buildDesktopBackendEnv(), HERMES_RUNTIME_DIR: payload.toolsDir },
+      // The payload shim is the CLI entrypoint. TicketBridge instead runs a
+      // Python import helper, so it must use the payload interpreter and the
+      // same core/dependency path as the shim.
+      ticketCommand: payload.storePython,
+      ticketEnv: { PYTHONPATH: payloadPythonPath(payload) },
       root: payload.repoDir,
       bootstrap: false,
       shell: false,
@@ -5197,6 +5202,8 @@ interface ResolvedHermesBackend {
   shell: boolean
   local?: string
   root?: string
+  ticketCommand?: string
+  ticketEnv?: NodeJS.ProcessEnv
   installStamp?: Readonly<InstallStamp> | null
   activeRoot?: string
   isPackaged?: boolean
