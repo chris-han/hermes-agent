@@ -322,7 +322,7 @@ class TestTranscribeLocalCommand:
         out_dir.mkdir()
         (out_dir / "transcript.txt").write_text("hello", encoding="utf-8")
 
-        def fake_tempdir(prefix=None):
+        def fake_tempdir(prefix=None, dir=None):
             class _TempDir:
                 def __enter__(self_inner):
                     return str(out_dir)
@@ -365,7 +365,7 @@ class TestTranscribeLocalCommand:
         )
         monkeypatch.setenv("HERMES_LOCAL_STT_LANGUAGE", "en")
 
-        def fake_tempdir(prefix=None):
+        def fake_tempdir(prefix=None, dir=None):
             class _TempDir:
                 def __enter__(self_inner):
                     return str(out_dir)
@@ -1306,7 +1306,7 @@ class TestShellSafety:
             ),
         )
 
-        def fake_tempdir(prefix=None):
+        def fake_tempdir(prefix=None, dir=None):
             class _TempDir:
                 def __enter__(self):
                     return str(output_dir)
@@ -1382,7 +1382,7 @@ class TestShellSafety:
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
         monkeypatch.setattr(
-            "tools.transcription_local.tempfile.TemporaryDirectory", lambda prefix=None: _TempDir()
+            "tools.transcription_local.tempfile.TemporaryDirectory", lambda prefix=None, dir=None: _TempDir()
         )
         monkeypatch.setattr("tools.transcription_audio.subprocess.run", fake_run)
         monkeypatch.setattr(

@@ -46,9 +46,12 @@ def _run_stub_job(monkeypatch, job, answer):
     """Run ``job`` through the real writer with a stub agent returning ``answer``."""
     class Agent:
         def __init__(self, *args, **kwargs):
-            pass
+            self._session_db = kwargs["session_db"]
+            self.session_id = kwargs["session_id"]
+            self._session_db.create_session(self.session_id, "cron")
 
         def run_conversation(self, *args, **kwargs):
+            self._session_db.append_message(self.session_id, "assistant", answer)
             return {"final_response": answer, "completed": True, "failed": False}
 
     monkeypatch.setattr(run_agent, "AIAgent", Agent)

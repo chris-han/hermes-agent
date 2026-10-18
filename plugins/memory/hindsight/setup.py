@@ -14,13 +14,13 @@ from hermes_cli.secret_prompt import masked_secret_prompt
 from . import templates as _hs_templates
 from .embedded import _embedded_profile_env_path, _load_simple_env, _materialize_embedded_profile_env
 from .settings import (
-    _DEFAULT_API_URL, _DEFAULT_IDLE_TIMEOUT, _DEFAULT_LOCAL_URL, _DEFAULT_TIMEOUT, _MIN_CLIENT_VERSION,
+    _DEFAULT_API_URL, _DEFAULT_IDLE_TIMEOUT, _DEFAULT_LOCAL_URL, _DEFAULT_TIMEOUT,
     _PROVIDER_DEFAULT_MODELS,
 )
 
 _MODE_VALUES = ["cloud", "local_embedded", "local_external"]
 _MODE_ITEMS = [
-    ("Cloud", "Hindsight Cloud API (lightweight, just needs an API key)"),
+    ("Cloud", "Hindsight Cloud API (needs an API key)"),
     ("Local Embedded", "Run Hindsight locally (downloads ~200MB, needs LLM key)"),
     ("Local External", "Connect to an existing Hindsight instance"),
 ]
@@ -105,21 +105,14 @@ def run_setup(provider, hermes_home: str, config: dict) -> None:
         provider_config["llm_provider"] = llm_provider
 
     print("\n  Checking dependencies...")
-    # Environment-aware install: sealed hosted venvs redirect to the durable data volume.
-    from tools.lazy_deps import install_specs
-
-    deps = ["hindsight-all"] if mode == "local_embedded" else [f"hindsight-client>={_MIN_CLIENT_VERSION}"]
+    from .dependencies import sync_dependencies
+    from pm.package import InstallError
     try:
-        outcome = install_specs(deps, timeout=120)
-        if outcome.ok:
-            print("  ✓ Dependencies up to date")
-        elif outcome.blocked:
-            print(f"  ⚠ Cannot install dependencies: {outcome.reason}")
-        else:
-            print(f"  ⚠ Install failed:\n{(outcome.stderr or '').strip()}")
-            print(f"  Run manually: uv pip install --python {sys.executable} {' '.join(deps)}")
-    except ImportError as exc:
-        print(f"  ⚠ Dependencies must be provisioned explicitly: {exc}")
+        sync_dependencies(explicit=True)
+        print("  ✓ Dependencies prepared; restart Hermes if it is already running")
+    except (InstallError, OSError) as exc:
+        print(f"  ⚠ Cannot prepare dependencies: {exc}")
+        return
 
     if mode == "cloud":
         print("\n  Get your API key at https://ui.hindsight.vectorize.io\n")

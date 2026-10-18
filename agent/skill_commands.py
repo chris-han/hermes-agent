@@ -139,7 +139,7 @@ def classify_slash_command(
             if skill_dir:
                 skill_md = Path(skill_dir) / "SKILL.md"
                 if skill_md.exists():
-                    frontmatter, _ = parse_frontmatter(skill_md.read_text(encoding="utf-8"))
+                    frontmatter, _ = parse_frontmatter(skill_md.read_text(encoding="utf-8-sig"))
                     if not skill_matches_platform(frontmatter):
                         return SlashCommandClassification(
                             "platform_incompatible_skill",
