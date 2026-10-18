@@ -148,7 +148,9 @@ Simple shadows your display preferences instead of overwriting them. Every keybi
 
 Enable **Settings → Appearance → Window layout → Minimize to tray** to hide minimized windows from the taskbar or Dock while their sessions keep running. The setting is off by default and applies only to this device.
 
-With the setting enabled and a tray available, closing the main window with **X** or **Alt+F4** hides it without stopping Hermes or destroying its session. Closing secondary windows still closes those windows. Use **Show Hermes** in the system tray (the menu bar on macOS) to restore hidden windows. **Quit Hermes** from the tray menu and **Cmd+Q** still quit, including the normal active-work confirmation. If the tray is unavailable, closing the main window behaves normally.
+On Windows, closing any chat window with **X** or **Alt+F4** asks whether to **Keep Running in Background**, **Quit Hermes Desktop**, or **Cancel**. Background mode hides the window in the system tray and keeps its sessions and connections alive. This choice works even when Minimize to tray is off, enables tray mode for the current run, and leaves the saved preference unchanged. If a tray icon cannot be created, the window stays open with a warning. Quit exits Desktop through its normal active-work confirmation and teardown; a separately managed gateway keeps running.
+
+On macOS and Linux, the saved preference still controls whether closing the main window hides it; secondary windows close normally. Use **Show Hermes** in the system tray (the menu bar on macOS) to restore hidden windows. **Quit Hermes** from the tray menu and **Cmd+Q** still quit, including the normal active-work confirmation. If the tray is unavailable on these platforms, closing the main window behaves normally.
 
 On macOS, the Dock icon hides only when no ordinary Hermes window remains visible. On Linux, a registered StatusNotifier tray host is required; desktops without one keep normal minimize behavior. If the host disappears, hidden windows are restored.
 

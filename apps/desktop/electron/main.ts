@@ -13728,7 +13728,6 @@ function spawnSecondaryWindow({
   // Chat-surface registration: applyWindowTranslucency swaps this window's
   // backing between opaque-themed and alpha-0 when glass toggles.
   registerChatWindow(win)
-  minimizeToTray.registerWindow(win)
   translucencyBackedWindows.add(win)
 
   if (IS_MAC) {
@@ -13938,7 +13937,6 @@ function createInstanceWindow(
 
   registerChatWindow(win)
   instanceWindows.add(win)
-  minimizeToTray.registerWindow(win)
   recordWindowConnectionRoute(win.webContents, { ...route, registryScoped: route.connectionId !== null })
 
   // Chat-surface registration: see applyWindowTranslucency.
@@ -15036,7 +15034,6 @@ function createWindow() {
   })
 
   const createdMainWindow = mainWindow
-  minimizeToTray.registerWindow(createdMainWindow, { closeToTray: true })
   registerChatWindow(createdMainWindow)
   const defaultRoute = desktopProfilePreferences.getDefault()
 
@@ -19555,11 +19552,11 @@ function heldQuitForActiveWork(event: Electron.Event): boolean {
 // here, on the close event itself, catches it in time; "Quit Anyway" re-enters
 // before-quit with the latch set and falls through.
 function registerChatWindow(window: BrowserWindow) {
+  minimizeToTray.registerWindow(window, { closeToTray: process.platform === 'win32' || window === mainWindow })
   chatWindows.add(window)
   window.on('close', (event: Electron.Event) => {
-    // The tray's close-to-tray handler runs first (registered first) and
-    // absorbs the close into a hide — the work keeps running, so there is
-    // nothing to confirm.
+    // The close-choice handler runs first and holds the window open until
+    // the user decides. Its Quit action uses app.quit() and the work guard.
     if (event.defaultPrevented) {
       return
     }

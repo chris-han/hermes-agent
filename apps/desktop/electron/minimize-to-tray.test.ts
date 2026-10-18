@@ -11,11 +11,13 @@ const native = vi.hoisted(() => ({
   ipc: new Map<string, (...args: any[]) => any>(),
   windows: [] as any[],
   trays: [] as any[],
-  fail: false
+  fail: false,
+  confirmClose: vi.fn(() => 0)
 }))
 
 vi.mock('electron', () => ({
   app: native.app,
+  dialog: { showMessageBoxSync: native.confirmClose },
   ipcMain: { handle: (name: string, fn: (...args: any[]) => any) => native.ipc.set(name, fn) },
   BrowserWindow: { getAllWindows: () => native.windows },
   Menu: { buildFromTemplate: (items: unknown[]) => items },
@@ -116,6 +118,7 @@ beforeEach(() => {
   native.trays = []
   native.fail = false
   vi.clearAllMocks()
+  native.confirmClose.mockReturnValue(0)
 })
 afterEach(() => fs.rmSync(home, { recursive: true, force: true }))
 
@@ -149,6 +152,48 @@ function setup() {
 function flushDeferredHide() {
   return new Promise<void>(resolve => setImmediate(resolve))
 }
+
+test.runIf(process.platform === 'win32').each([false, true])(
+  'closing asks before quitting with minimize-to-tray enabled=%s',
+  async enabled => {
+    const { controller, main } = setup()
+    await controller.setEnabled(enabled)
+    native.confirmClose.mockReturnValue(1)
+
+    expect(main.close().preventDefault).toHaveBeenCalledOnce()
+    expect(native.app.quit).toHaveBeenCalledOnce()
+    expect(main.visible).toBe(true)
+    expect(main.destroyed).toBe(false)
+
+    controller.beginQuit()
+    main.close()
+    expect(main.destroyed).toBe(true)
+    expect(native.confirmClose).toHaveBeenCalledOnce()
+  }
+)
+
+test.runIf(process.platform === 'win32').each([false, true])(
+  'cancelling close and choosing background work with minimize-to-tray enabled=%s',
+  async enabled => {
+    const { controller, main } = setup()
+    await controller.setEnabled(enabled)
+    native.confirmClose.mockReturnValue(2)
+
+    expect(main.close().preventDefault).toHaveBeenCalledOnce()
+    expect(main.visible).toBe(true)
+    expect(native.app.quit).not.toHaveBeenCalled()
+
+    native.confirmClose.mockReturnValue(0)
+    main.close()
+    main.close()
+    await flushDeferredHide()
+    expect(native.confirmClose).toHaveBeenCalledTimes(enabled ? 3 : 2)
+    expect(main.visible).toBe(false)
+    expect(main.destroyed).toBe(false)
+    expect(controller.status().available).toBe(true)
+    expect(JSON.parse(fs.readFileSync(path.join(home, 'minimize-to-tray.json'), 'utf8')).enabled).toBe(enabled)
+  }
+)
 
 const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
 
@@ -389,10 +434,19 @@ test('persistence, disabling, failed tray creation, and handoff never strand hid
   failed.main.minimize()
   expect(failed.main.visible).toBe(true)
   failed.main.close()
-  expect(failed.main.destroyed).toBe(true)
+  await flushDeferredHide()
+  expect(failed.main.destroyed).toBe(process.platform !== 'win32')
+
+  if (process.platform === 'win32') {
+    expect(failed.main.visible).toBe(true)
+    expect(native.confirmClose).toHaveBeenLastCalledWith(failed.main, expect.objectContaining({ type: 'warning' }))
+  }
+
   fs.writeFileSync(path.join(home, 'minimize-to-tray.json'), 'bad json')
   const disabled = setup()
   expect(await disabled.controller.start()).toEqual({ enabled: false, available: false })
+  native.confirmClose.mockReturnValue(2)
   disabled.main.close()
-  expect(disabled.main.destroyed).toBe(true)
+  expect(disabled.main.destroyed).toBe(process.platform !== 'win32')
+  expect(native.app.quit).not.toHaveBeenCalled()
 })

@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, Tray } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Tray } from 'electron'
 
 export interface MinimizeToTrayStatus {
   enabled: boolean
@@ -213,6 +213,7 @@ export function createMinimizeToTray(options: Options) {
 
   function registerWindow(win: BrowserWindow, { closeToTray = false } = {}) {
     windows.add(win)
+    let backgroundPending = false
 
     const hide = () => {
       if (win.isDestroyed()) {
@@ -260,10 +261,68 @@ export function createMinimizeToTray(options: Options) {
 
     if (closeToTray) {
       win.on('close', event => {
-        if (hide()) {
-          event.preventDefault()
+        if (quitting || options.isQuittingForHandoff()) {
+          return
+        }
+
+        if (process.platform !== 'win32') {
+          if (hide()) {
+            event.preventDefault()
+          }
+
+          return
+        }
+
+        // Keep the window and its active-work report alive until the user decides.
+        event.preventDefault()
+
+        if (backgroundPending) {
+          return
+        }
+
+        const response = dialog.showMessageBoxSync(win, {
+          type: 'question',
+          title: 'Close Hermes Desktop',
+          message: 'Keep Hermes Desktop running in the background?',
+          detail:
+            'Keep running hides this window in the system tray. Quit exits Hermes Desktop and stops connections it manages. A separately managed gateway keeps running.',
+          buttons: ['Keep Running in Background', 'Quit Hermes Desktop', 'Cancel'],
+          defaultId: 0,
+          cancelId: 2,
+          noLink: true
+        })
+
+        if (response === 0) {
+          if (!hide()) {
+            void startBackground()
+          }
+        } else if (response === 1) {
+          // Preserve the existing active-work confirmation and shutdown coordinator.
+          app.quit()
         }
       })
+    }
+
+    async function startBackground() {
+      backgroundPending = true
+
+      try {
+        // Choosing background mode must work even when minimize-to-tray is off.
+        // Enable it for this run without rewriting the user's saved preference.
+        await apply(true)
+
+        if (!hide() && !win.isDestroyed() && !quitting && !options.isQuittingForHandoff()) {
+          dialog.showMessageBoxSync(win, {
+            type: 'warning',
+            message: 'Background mode is unavailable.',
+            detail:
+              'Hermes could not create a system tray icon. The window will stay open so you can try again or quit.',
+            buttons: ['OK']
+          })
+        }
+      } finally {
+        backgroundPending = false
+      }
     }
 
     // Windows session ending need not emit app.before-quit. Never hold it open.
