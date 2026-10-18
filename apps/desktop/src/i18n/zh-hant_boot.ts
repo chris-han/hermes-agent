@@ -1,4 +1,5 @@
 import type { TranslationOverrides } from './define-locale'
+import { zhHantSessionCommands } from './zh-hant_session_commands'
 
 export const zhHantBoot = {
   boot: {
@@ -75,6 +76,10 @@ export const zhHantBoot = {
       privacy: '隱私權政策',
       after: '約束。'
     }
+  },
+  promptNotices: {
+    legacySendUnconfirmed: '此伺服器無法確認這則訊息先前的傳送，它可能已經執行過。再次傳送前請先查看對話。',
+    sessionCommands: zhHantSessionCommands
   },
 
   updates: {
@@ -343,5 +348,5 @@ export const zhHantBoot = {
   }
 } satisfies Pick<
   TranslationOverrides,
-  'boot' | 'remoteDisplayBanner' | 'butterbar' | 'keepAwakeOffer' | 'updates' | 'install' | 'onboarding'
+  'boot' | 'remoteDisplayBanner' | 'butterbar' | 'keepAwakeOffer' | 'promptNotices' | 'updates' | 'install' | 'onboarding'
 >

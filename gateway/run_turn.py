@@ -26,7 +26,8 @@ from gateway.media_repair import repair_explicit_computer_use_media_paths
 from gateway.platforms.base import BasePlatformAdapter, ProcessingOutcome
 from gateway.platforms.event import MessageEvent
 from gateway.response_filters import (
-    display_kind_for_event, is_machinery_display_kind, reply_expected_metadata, silence_allowed,
+    display_kind_for_event, display_metadata_for_event, is_machinery_display_kind, reply_expected_metadata,
+    silence_allowed,
 )
 from gateway.warning_notifications import diagnostic_metadata, diagnostic_turn_muted, diagnostic_wake_muted
 from gateway.session import (
@@ -165,221 +166,14 @@ def hygiene_no_commit_reason(agent) -> str:
     return "in-place commit did not complete"
 
 
-class GatewayTurnMixin:
+from gateway.run_turn_prepare import GatewayTurnPrepareMixin
+from gateway.run_turn_hygiene import GatewayTurnHygieneMixin
+from gateway.run_turn_persistence import GatewayTurnPersistenceMixin
+
+
+class GatewayTurnMixin(GatewayTurnPrepareMixin, GatewayTurnHygieneMixin, GatewayTurnPersistenceMixin):
     """Agent-turn execution for GatewayRunner (see module docstring)."""
 
-    def _resolve_session_agent_runtime(
-        self, *, source: Optional[SessionSource] = None, session_key: Optional[str] = None,
-        user_config: Optional[dict] = None,
-    ) -> tuple[str, dict]:
-        """Resolve model/runtime for a session.
-
-        Priority (highest first): session ``/model`` → ``channel_overrides`` → global config/env
-        (``_resolve_gateway_model(user_config)`` and default provider resolution)."""
-        from gateway.run import (
-            _credential_pool_for_provider, _get_channel_override, _resolve_gateway_model,
-            _resolve_runtime_agent_kwargs, _resolve_runtime_agent_kwargs_for_provider,
-        )
-        skey = self._resolve_session_key_or_none(source, session_key)
-        # Every exit path starts clean: the /model-override fast path returns before the pop below,
-        # and hygiene/inbound callers resolve without a turn runner consuming the stash — a stale
-        # notice must never attach to another session's next turn (#74349).
-        self._pre_agent_fallback_notice = None
-
-        model = _resolve_gateway_model(user_config)
-        if skey:
-            self._rehydrate_session_model_override(skey)
-        _override_state = self._peek_session_state(skey) if skey else None
-        override = _override_state.conversation.model_override if _override_state else None
-        if override:
-            override_model = override.get("model", model)
-            override_runtime = {
-                k: override.get(k) for k in (
-                    "provider", "requested_provider", "api_key", "base_url", "api_mode",
-                    "max_tokens", "credential_pool", "request_overrides", "capabilities",
-                )
-            }
-            override_runtime["capabilities"] = dict(override_runtime["capabilities"] or {})
-            if override_runtime.get("api_key"):
-                if override_runtime.get("credential_pool") is None:
-                    override_runtime["credential_pool"] = _credential_pool_for_provider(override.get("provider"))
-                logger.debug(
-                    "Session model override (fast): session=%s config_model=%s -> override_model=%s provider=%s",
-                    skey or "", model, override_model, override_runtime.get("provider"),
-                )
-                return override_model, override_runtime
-            # No api_key on the override (credentials failed to re-resolve at rehydrate): resolve them
-            # for the override's own provider below, never layer it over the default provider's runtime.
-            logger.debug(
-                "Session model override (no api_key, fallback): session=%s config_model=%s override_model=%s",
-                skey or "", model, override_model,
-            )
-        elif logger.isEnabledFor(logging.DEBUG):
-            # The override_keys scan walks every session; only pay for it when DEBUG is on.
-            logger.debug(
-                "No session model override: session=%s config_model=%s override_keys=%s",
-                skey or "", model,
-                [
-                    _key for _key, _st in list(self._sessions_map().items())
-                    if _st.conversation.model_override is not None
-                ][:5] or "[]",
-            )
-
-        runtime_kwargs, unavailable_override = None, None
-        if override and override.get("provider"):
-            try:
-                runtime_kwargs = _resolve_runtime_agent_kwargs_for_provider(
-                    override["provider"], target_model=override.get("model") or None)
-            except Exception as exc:
-                # Layering the override on the default runtime sent its model to the default provider's
-                # endpoint (openai-codex on the Nous URL). Run this turn on the whole default route and say
-                # so; the persisted override is kept, so the next turn retries it.
-                logger.warning("Session /model override provider %s unavailable: %s", override["provider"], exc)
-                unavailable_override, override = override, None
-        if runtime_kwargs is None:
-            runtime_kwargs = _resolve_runtime_agent_kwargs()
-        # Private notice metadata must never reach an ``AIAgent(**runtime_kwargs)`` spread; the turn
-        # runner surfaces it through the agent's one-shot fallback notice (#74349).
-        self._pre_agent_fallback_notice = runtime_kwargs.pop("_fallback_notice", None)
-        runtime_model = runtime_kwargs.pop("model", None)
-        if runtime_model:
-            logger.info("Runtime provider supplied explicit model override: %s -> %s", model, runtime_model)
-            model = runtime_model
-        if unavailable_override and not self._pre_agent_fallback_notice:
-            from hermes_cli.fallback_config import pre_agent_fallback_notice
-            self._pre_agent_fallback_notice = pre_agent_fallback_notice(
-                unavailable_override["provider"], unavailable_override.get("model"), runtime_kwargs.get("provider"), model)
-
-        cfg = getattr(self, "config", None)  # getattr: bare object.__new__ test runners
-        if cfg and source is not None:
-            ch = _get_channel_override(
-                cfg, source.platform, str(source.chat_id) if source.chat_id else "",
-                thread_id=str(source.thread_id) if getattr(source, "thread_id", None) else None,
-                parent_id=str(source.parent_chat_id) if getattr(source, "parent_chat_id", None) else None,
-            )
-            if ch:
-                if ch.model:
-                    model = ch.model
-                if ch.provider:
-                    runtime_kwargs = _resolve_runtime_agent_kwargs_for_provider(ch.provider, target_model=model or None)
-                    ch_runtime_model = runtime_kwargs.pop("model", None)
-                    # Adopt the provider's bundled model only when the override named none.
-                    if ch_runtime_model and not ch.model:
-                        model = ch_runtime_model
-
-        if override and skey:
-            model, runtime_kwargs = self._apply_session_model_override(skey, model, runtime_kwargs)
-
-        # Provider resolved but no model.default (`hermes auth add` without `hermes model`): use the
-        # provider's first catalog model.
-        if not model and runtime_kwargs.get("provider"):
-            with suppress(Exception):
-                from hermes_cli.models import get_default_model_for_provider
-                model = get_default_model_for_provider(runtime_kwargs["provider"])
-                if model:
-                    logger.info(
-                        "No model configured — defaulting to %s for provider %s", model, runtime_kwargs["provider"],
-                    )
-
-        # Final safety net: an empty model (transient config-cache miss) makes every API call 400 and
-        # the session goes silent — reuse the last model resolved for this session, else process-wide.
-        if not model:
-            _lr_state = self._peek_session_state(skey) if skey else None
-            _lr_star = self._peek_session_state("*")
-            _recovered = (
-                (_lr_state.conversation.last_resolved_model if _lr_state else "")
-                or (_lr_star.conversation.last_resolved_model if _lr_star else "")
-            )
-            if _recovered:
-                logger.warning(
-                    "Empty model resolved for session=%s — recovering "
-                    "last-known-good model %s (config read likely returned "
-                    "empty; see #35314)", skey or "", _recovered,
-                )
-                model = _recovered
-        else:
-            # Cache the good resolution for future recovery turns.
-            if skey:
-                self._session_state(skey).conversation.last_resolved_model = model
-            self._session_state("*").conversation.last_resolved_model = model
-
-        return model, runtime_kwargs
-
-    def _resolve_turn_agent_config(self, user_message: str, model: str, runtime_kwargs: dict) -> dict:
-        """Effective model/runtime config for one turn. With `/fast` priority on, fast-mode
-        ``request_overrides`` are deep-merged OVER the per-provider ones so both reach the model."""
-        from gateway.run import _deep_merge_request_overrides
-        from agent.fast_mode import STATIC_TIERS
-        from hermes_cli.models import resolve_fast_mode_overrides
-        # Tests bind this method onto bare namespaces, so no class-level tables here.
-        runtime = {
-            k: runtime_kwargs.get(k) for k in (
-                "api_key", "base_url", "provider", "requested_provider", "api_mode", "command", "args",
-                "credential_pool", "max_tokens", "capabilities",
-            )
-        }
-        runtime["args"] = list(runtime["args"] or [])
-        runtime["capabilities"] = dict(runtime["capabilities"] or {})
-        base_request_overrides = dict(runtime_kwargs.get("request_overrides") or {})
-        route = {
-            "model": model,
-            "runtime": runtime,
-            "signature": (
-                model, runtime["provider"], runtime["requested_provider"], runtime["base_url"],
-                runtime["api_mode"], runtime["command"], tuple(runtime["args"]),
-            ),
-        }
-        tier = getattr(self, "_service_tier", None)
-        if tier not in STATIC_TIERS:
-            # None / auto / cold: the bounded window is applied per request by agent.fast_mode.
-            route["request_overrides"] = base_request_overrides
-            return route
-        try:
-            overrides = resolve_fast_mode_overrides(
-                route["model"], provider=runtime["provider"], base_url=runtime["base_url"], tier=tier,
-            )
-        except Exception:
-            overrides = None
-        # Fast-mode keys (service_tier / speed) are top-level and don't collide with extra_body.
-        route["request_overrides"] = _deep_merge_request_overrides(base_request_overrides, overrides or {})
-        return route
-
-    def _sync_session_model_from_agent(self, session_id: str, agent: Any) -> None:
-        """Persist the runtime model/provider a gateway turn actually used (provider fallback can
-        switch them after the row was created). Runs in the ``run_sync`` executor thread, so it
-        uses the sync ``SessionDB`` (``_db``), not the AsyncSessionDB forwarder."""
-        if not session_id or agent is None or self._session_db is None:
-            return
-        model = getattr(agent, "model", None)
-        if not model:
-            return
-        runtime = {k: getattr(agent, k, None) for k in ("provider", "base_url", "api_mode")}
-        runtime["fallback_active"] = bool(getattr(agent, "_fallback_activated", False))
-        runtime = {k: v for k, v in runtime.items() if v not in (None, "")}
-        try:
-            db = self._session_db._db
-            row = db.get_session(session_id)
-            if not row:
-                return
-            # Legacy backfill: canonical Bot Chats created BEFORE the follow_profile_config contract existed
-            # carry no marker, yet they are still the plugin-owned forever-DM. The plugin's own identity
-            # rule is "the profile's session titled exactly 'Bot Chat'" (UNIQUE(title) makes that an exact
-            # registry, and pre-policy rows may be visible OR hidden), so mirror that rule here. Without
-            # this, every Bot Chat that already exists in the field stays pinned to its stale stored
-            # provider until the user deletes it — the exact live-report shape (#89497 / #94818).
-            raw_config = row.get("model_config")
-            config = {}
-            with suppress(Exception):
-                config = json.loads(raw_config) if raw_config else {}
-            if not isinstance(config, dict):
-                config = {}
-            gateway_runtime = dict(config.get("gateway_runtime") or {})
-            if row.get("model") == model and all(gateway_runtime.get(k) == v for k, v in runtime.items()):
-                return
-            config["gateway_runtime"] = runtime
-            db.update_session_meta(session_id, json.dumps(config), model=model)
-        except Exception:
-            logger.debug("Failed to sync gateway session model metadata", exc_info=True)
 
     def _event_thread_metadata(self, event, source):
         """Thread metadata for a send that replies to ``event`` on ``source``."""
@@ -402,229 +196,7 @@ class GatewayTurnMixin:
         except Exception:
             return False
 
-    async def _hmwa_resolve_session(self, event, source):
-        """Resolve ``source`` to its session entry (topic recovery, internal-route guards, Telegram
-        topic-binding heal). Returns ``(source, session_entry, session_key)`` or ``None`` to drop
-        the event."""
-        # Topic-mode DMs: rewrite a stale/foreign thread_id to the user's last-active topic so a
-        # cross-topic Reply doesn't fragment the conversation.
-        event_metadata = getattr(event, "metadata", None) or {}
-        expected_session_key = str(event_metadata.get("gateway_session_key") or "").strip()
-        recovered = (await asyncio.to_thread(self._recover_telegram_topic_thread_id, source)
-                     if not expected_session_key else None)
-        if recovered is not None:
-            logger.info(
-                "telegram topic recovery: chat=%s user=%s %r -> %s",
-                source.chat_id, source.user_id, source.thread_id, recovered,
-            )
-            source = dataclasses.replace(source, thread_id=recovered)
-            with suppress(Exception):
-                event.source = source
 
-        if expected_session_key:
-            derived_session_key = self._session_key_for_source(source)
-            if derived_session_key != expected_session_key:
-                logger.warning(
-                    "Dropping internally routed event after route recovery: expected session=%s derived=%s",
-                    expected_session_key, derived_session_key,
-                )
-                return
-
-        strict_session = bool(event_metadata.get("gateway_session_strict"))
-        pinned_session_id = str(event_metadata.get("gateway_session_id") or "").strip()
-        if strict_session:
-            session_entry = await self.async_session_store.lookup_by_session_key(expected_session_key)
-            if session_entry is None or not pinned_session_id or session_entry.session_id != pinned_session_id:
-                logger.warning(
-                    "Dropping internally routed event: expected session id=%s is no longer current for key=%s",
-                    pinned_session_id or "missing", expected_session_key or "missing",
-                )
-                return
-        else:
-            # Internal wakes observe reset policy without counting as user activity, or periodic
-            # notifications keep the routing key alive across every daily/idle boundary.
-            session_entry = await self.async_session_store.get_or_create_session(
-                source, touch_activity=not bool(getattr(event, "internal", False)),
-            )
-        session_key = session_entry.session_key
-        if not strict_session and pinned_session_id:
-            resolved_entry = await self._resolve_async_delegation_session(session_entry, pinned_session_id, event_metadata.get("gateway_proven_session_id") or "", event_metadata.get("gateway_completion_ids") or ())
-            if resolved_entry is None:
-                return
-            session_entry = resolved_entry
-        self._cache_session_source(session_key, source)
-        if await asyncio.to_thread(self._is_telegram_topic_lane, source):
-            session_entry = await self._hmwa_heal_telegram_topic_binding(source, session_entry, session_key)
-        from gateway.run_heartbeat_acceptance import resolve_heartbeat_owner
-        if not await resolve_heartbeat_owner(self, event, session_entry):
-            return
-        return source, session_entry, session_key
-
-    async def _hmwa_heal_telegram_topic_binding(self, source, session_entry, session_key):
-        """Follow the (chat_id, thread_id) topic binding — healed to its compression tip — or record
-        a fresh one. Returns the (possibly switched) session entry."""
-        binding = None
-        try:
-            if self._session_db:
-                binding = await self._session_db.get_telegram_topic_binding(
-                    chat_id=str(source.chat_id), thread_id=str(source.thread_id),
-                    profile_name=self._telegram_topic_profile_name(source),
-                )
-        except Exception:
-            logger.debug("Failed to read Telegram topic binding", exc_info=True)
-        if not binding:
-            try:
-                await asyncio.to_thread(self._record_telegram_topic_binding, source, session_entry)
-            except Exception:
-                logger.debug("Failed to record Telegram topic binding", exc_info=True)
-            return session_entry
-        stored_session_id = str(binding.get("session_id") or "")
-        bound_session_id = stored_session_id
-        # A binding pointing at a pre-compression parent is walked forward to the tip so the next
-        # message resumes the compressed child instead of reloading the oversized parent.
-        # Returns the input unchanged when the session isn't a compression parent, so this is cheap and
-        # safe. See #20470, #29712, #33414.
-        if bound_session_id and self._session_db is not None:
-            try:
-                canonical_session_id = await self._session_db.get_compression_tip(bound_session_id)
-            except Exception:
-                logger.debug("compression-tip lookup failed for %s", bound_session_id, exc_info=True)
-                canonical_session_id = bound_session_id
-            if canonical_session_id and canonical_session_id != bound_session_id:
-                bound_session_id = canonical_session_id
-        if bound_session_id and bound_session_id != session_entry.session_id:
-            # Route through SessionStore so the key → id mapping persists and the previous lane
-            # session ends cleanly (in-place mutation split-brained the JSON index). The two DB
-            # awaits above are a window for /new or /resume to move the route; the CAS on the
-            # snapshot id lets that win instead of being clobbered by a stale binding.
-            switched = await self.async_session_store.switch_session(
-                session_key, bound_session_id, expected_session_id=session_entry.session_id,
-            )
-            if switched is not None:
-                session_entry = switched
-        if bound_session_id and bound_session_id != stored_session_id:
-            # The stored binding pointed at a parent: rewrite it to the canonical descendant.
-            await asyncio.to_thread(
-                self._sync_telegram_topic_binding, source, session_entry, reason="compression-tip-walk",
-            )
-        return session_entry
-
-    async def _hmwa_open_session(self, session_entry, session_key, source):
-        """Consume auto-reset / fresh-reset flags and emit ``session:start`` for new sessions.
-        Returns ``(_was_auto_reset, _is_new_session)``."""
-        # Capture and immediately consume was_auto_reset so it does not re-fire on subsequent messages —
-        # preventing the cleanup from wiping model/reasoning overrides set between turns (Closes #48031).
-        _was_auto_reset = getattr(session_entry, "was_auto_reset", False)
-        if _was_auto_reset:
-            # Conversation boundary: the funnel clears every conversation-scoped dict; evict the cached
-            # agent so context_compressor._previous_summary cannot leak into new summaries.
-            # Treat auto-reset as a full conversation boundary — clear every conversation-scoped per-session
-            # dict in one funnel call so the fresh session does not inherit the previous conversation's
-            # model/reasoning overrides, a queued "/model switched" note, or a stale resolved-model cache
-            # (#48031, #58403). See _CONVERSATION_SCOPED_STATE.
-            self._clear_conversation_scope(session_key, reason="auto_reset")
-            self._evict_cached_agent(session_key)
-            session_entry.was_auto_reset = False
-
-        _is_fresh_reset = getattr(session_entry, "is_fresh_reset", False)
-        _is_new_session = session_entry.created_at == session_entry.updated_at or _was_auto_reset or _is_fresh_reset
-        # Consume is_fresh_reset so it doesn't leak onto later messages in the same session.
-        if _is_fresh_reset:
-            # See #6508.
-            session_entry.is_fresh_reset = False
-        if _is_new_session:
-            await self.hooks.emit("session:start", {
-                "platform": source.platform.value if source.platform else "",
-                "user_id": source.user_id,
-                "session_id": session_entry.session_id,
-                "session_key": session_key,
-            })
-        return _was_auto_reset, _is_new_session
-
-    async def _hmwa_deliver_auto_reset_notice(self, session_entry, source, turn_sidecar_notes):
-        """Stage the auto-reset sidecar note for the agent and notify the user (policy-gated)."""
-        from gateway.run import _AUTO_RESET_CONTEXT_NOTES
-        reset_reason = getattr(session_entry, 'auto_reset_reason', None) or 'suspended'
-        context_note = _AUTO_RESET_CONTEXT_NOTES.get(reset_reason, _AUTO_RESET_CONTEXT_NOTES["suspended"])
-        # Long-lived channels: point the agent at the prior same-channel session for session_search.
-        try:
-            # Returns None (appends nothing) for other platforms or when there's no prior activity to
-            # recall. Deterministic — no extra API/DB calls (#36220).
-            continuity_note = build_channel_continuity_note(session_entry, source)
-        except Exception:
-            continuity_note = None
-        if continuity_note:
-            context_note = context_note + "\n\n" + continuity_note
-        turn_sidecar_notes.append(context_note)
-
-        try:
-            should_notify = reset_reason == "suspended"
-            adapter = self._delivery_adapter_for(source) if should_notify else None
-            if adapter:
-                notice = t("gateway.session.auto_reset_notice")
-                with suppress(Exception):
-                    session_info = await asyncio.to_thread(self._reset_notice_session_info, source)
-                    if session_info:
-                        notice = f"{notice}\n\n{session_info}"
-                await adapter.send(source.chat_id, notice, metadata=self._thread_metadata_for_source(source))
-        except Exception as e:
-            logger.debug("Auto-reset notification failed (non-fatal): %s", e)
-
-        # was_auto_reset was consumed in _hmwa_open_session; only the reason needs clearing.
-        session_entry.auto_reset_reason = None
-
-    def _hmwa_auto_load_skills(self, event, _auto, _quick_key, session_key):
-        """Prepend topic/channel-bound skill payload(s) to ``event.text`` on a new session."""
-        _skill_names = [_auto] if isinstance(_auto, str) else list(_auto)
-        try:
-            from agent.skill_commands import _load_skill_payload, _build_skill_message
-            _combined_parts: list[str] = []
-            _loaded_names: list[str] = []
-            for _sname in _skill_names:
-                _loaded = _load_skill_payload(_sname, task_id=_quick_key)
-                if not _loaded:
-                    logger.warning("[Gateway] Auto-skill '%s' not found", _sname)
-                    continue
-                _loaded_skill, _skill_dir, _display_name = _loaded
-                _part = _build_skill_message(
-                    _loaded_skill, _skill_dir,
-                    f'[IMPORTANT: The "{_display_name}" skill is auto-loaded. '
-                    f"Follow its instructions for this session.]",
-                )
-                if _part:
-                    _combined_parts.append(_part)
-                    _loaded_names.append(_sname)
-            if _combined_parts:
-                _combined_parts.append(event.text)  # user's original text after the payloads
-                event.text = "\n\n".join(_combined_parts)
-                logger.info("[Gateway] Auto-loaded skill(s) %s for session %s", _loaded_names, session_key)
-        except Exception as e:
-            logger.warning("[Gateway] Failed to auto-load skill(s) %s: %s", _skill_names, e)
-
-    async def _hmwa_acquire_turn_lease(self, _quick_key, run_generation, session_entry, _session_env_tokens):
-        """Serialize [load history → run → flush] per resolved SESSION_ID so another routing key on
-        the same session waits for the prior flush. Fail-closed on timeout (outer dispatch returns
-        a resend notice). Released in _handle_message's finally, granted per (routing key, run
-        generation) so a stale unwind can't release a newer turn's."""
-        from gateway.run import _float_env
-        _lease_registry = getattr(self, "_turn_leases", None)
-        if _lease_registry is None:
-            return
-        try:
-            _lease_token = await _lease_registry.acquire(
-                session_entry.session_id, owner_key=_quick_key, generation=run_generation,
-                timeout=_float_env("HERMES_TURN_LEASE_TIMEOUT", DEFAULT_LEASE_WAIT),
-            )
-        except TurnLeaseTimeoutError:
-            # The cleanup finally starts later; restore the tokens here or this exit leaks identity.
-            self._clear_session_env(_session_env_tokens)
-            raise
-        if _lease_token is not None:
-            self._session_state(_quick_key).turn.lease_tokens[run_generation] = _lease_token
-
-    @dataclasses.dataclass
-    class _HygienePlan:
-        """Hygiene pre-check outcome for one turn."""
 
         needs_compress: bool
         approx_tokens: int
@@ -1498,647 +1070,7 @@ class GatewayTurnMixin:
             elif _typing_adapter and callable(getattr(_kind, "stop_typing", None)):
                 await _typing_adapter.stop_typing(source.chat_id)
 
-    async def _hmwa_shape_agent_response(
-        self, agent_result, source, history, session_entry, session_key,
-        _quick_key, run_generation, _run_start_session_id, _platform_name, _msg_start_time,
-        persist_user_display_kind: Optional[str] = None,
-        reply_expected: Optional[bool] = None,
-    ):
-        """Turn the raw agent result into the outbound text: sentinel/silence handling, response
-        logging, resume-pending clear, empty-response normalization, and identity-guarded
-        post-compression session_id propagation. Returns
-        ``(response, _intentional_silence, agent_messages)``."""
-        from gateway.run import (
-            _is_gateway_hidden_reasoning_incomplete_turn, _normalize_empty_agent_response,
-            _sanitize_gateway_final_response, _should_clear_resume_pending_after_turn,
-        )
-        response = agent_result.get("final_response") or ""
-        # Hidden-reasoning-only retry exhaustion: the loop's sentinel text doubles as final_response
-        # and would be delivered verbatim (peer agents would ingest it as a completed turn).
-        if _is_gateway_hidden_reasoning_incomplete_turn(agent_result):
-            response = ""
-        _intentional_silence = self._is_intentional_silence(agent_result, response)
-        # A queued (/queue) chain's TERMINAL turn owns the silence verdict, not the event that
-        # opened the chain: an internal follow-up, or a message not addressed to the bot, may go
-        # silent; any other human one must not.
-        _silence_kind = agent_result.get("queued_terminal_display_kind", persist_user_display_kind)
-        _silence_reply_expected = agent_result.get("queued_terminal_reply_expected", reply_expected)
-        if _intentional_silence and not silence_allowed(_silence_kind, _silence_reply_expected):
-            logger.warning(
-                "silence marker rejected on a user turn: platform=%s chat=%s",
-                _platform_name, source.chat_id or "unknown",
-            )
-            _intentional_silence = False
-            response = _unexpected_silence_reply()
-        elif _intentional_silence and not is_machinery_display_kind(_silence_kind):
-            logger.debug(
-                "silence marker suppressed on an unaddressed turn: platform=%s chat=%s",
-                _platform_name, source.chat_id or "unknown",
-            )
 
-        # "(empty)" = the model produced no visible content after exhausting all retries. One
-        # text with the CLI explainer and the desktop (agent/turn_explainers.py) so the user
-        # reads the same words on every surface.
-        if response == "(empty)" and not _intentional_silence:
-            from agent.turn_explainers import EMPTY_RESPONSE_EXPLANATION
-
-            _model = str(agent_result.get("model") or "").strip() or t("gateway.errors.empty_response_model_label")
-            response = t("gateway.shared.warn_passthrough", error=EMPTY_RESPONSE_EXPLANATION.format(model=_model))
-        agent_messages = agent_result.get("messages", [])
-        logger.info(
-            "response ready: platform=%s chat=%s session=%s time=%.1fs api_calls=%d response=%d chars",
-            _platform_name, source.chat_id or "unknown", session_key or "unknown",
-            time.time() - _msg_start_time, agent_result.get("api_calls", 0), len(response),
-        )
-
-        # Successful turn: clear the consecutive-restart stuck-loop counter and resume_pending (set
-        # by drain-timeout shutdown) so later messages don't get the restart-interruption note.
-        if session_key and _should_clear_resume_pending_after_turn(agent_result):
-            await self._clear_restart_failure_count(session_key)
-            try:
-                await self.async_session_store.clear_resume_pending(session_key)
-            except Exception as _e:
-                logger.debug("clear_resume_pending failed for %s: %s", session_key, _e)
-
-        # Normalize empty responses: surface errors, partial failures, and work-without-text.
-        # Fix for #18765.
-        if not _intentional_silence:
-            response = _normalize_empty_agent_response(agent_result, response, history_len=len(history))
-            response = _sanitize_gateway_final_response(source.platform, response)
-
-        # The agent thread already updated the contextvar; propagate to SessionEntry + _save() only
-        # if the binding still points at the session this run was launched against.
-        if agent_result.get("session_id") and agent_result["session_id"] != session_entry.session_id:
-            if session_entry.session_id == _run_start_session_id:
-                session_entry.session_id = agent_result["session_id"]
-                # The held turn lease follows the rotation (persistence writes to the NEW id).
-                self._rebind_turn_lease(_quick_key, run_generation, session_entry.session_id)
-                await self.async_session_store._save()
-                await self.async_session_store._record_gateway_session_peer(
-                    session_entry.session_id, session_key, source,
-                )
-                await asyncio.to_thread(
-                    self._sync_telegram_topic_binding, source, session_entry, reason="agent-result-compression",
-                )
-            else:
-                logger.info(
-                    "Skipping agent-result session split sync for %s because the session binding "
-                    "moved from %s to %s before compression finished",
-                    session_key or "?", _run_start_session_id, session_entry.session_id,
-                )
-        return response, _intentional_silence, agent_messages
-
-    # reasoning_style → (header catalog key, per-line quote prefix for blank / non-blank lines)
-    _REASONING_QUOTE_STYLES = {
-        "subtext": ("gateway.reasoning.quote_label_discord", "-# ", "-#"),
-        "blockquote": ("gateway.reasoning.quote_label_md", "> ", ">"),
-    }
-
-    def _hmwa_prepend_reasoning(self, agent_result, response, source, _intentional_silence):
-        """Prepend the last reasoning block when show_reasoning is on for this platform. Mattermost
-        requires an explicit per-platform opt-in (scratch text, not final-answer content)."""
-        from gateway.run import _load_gateway_config, _platform_config_key, _resolve_gateway_display_bool
-        try:
-            _show_reasoning_effective = _resolve_gateway_display_bool(
-                _load_gateway_config(), _platform_config_key(source.platform), "show_reasoning",
-                default=bool(getattr(self, "_show_reasoning", False)), platform=source.platform,
-                require_platform_override_for={Platform.MATTERMOST},
-            )
-        except Exception:
-            _show_reasoning_effective = (
-                False if source.platform == Platform.MATTERMOST else getattr(self, "_show_reasoning", False)
-            )
-        last_reasoning = agent_result.get("last_reasoning")
-        if not (_show_reasoning_effective and response and not _intentional_silence and last_reasoning):
-            return response
-        from gateway.stream_consumer_fences import escape_code_fences_for_display
-        # Collapse long reasoning to keep messages readable
-        lines = last_reasoning.strip().splitlines()
-        if len(lines) > 15:
-            display_reasoning = "\n".join(lines[:15]) + t("gateway.reasoning.more_lines", count=len(lines) - 15)
-        else:
-            display_reasoning = last_reasoning.strip()
-        # Per-platform render style: Discord defaults to "-# " subtext, others keep the code block.
-        try:
-            from gateway.display_config import resolve_display_setting
-            _reasoning_style = resolve_display_setting(
-                _load_gateway_config(), _platform_config_key(source.platform), "reasoning_style", "code",
-            )
-        except Exception:
-            _reasoning_style = "code"
-        _quote = self._REASONING_QUOTE_STYLES.get(_reasoning_style)
-        if _quote:
-            header_key, prefix, empty = _quote
-            _quoted = "\n".join(f"{prefix}{ln}" if ln else empty for ln in display_reasoning.splitlines())
-            return f"{t(header_key)}\n{_quoted}\n\n{response}"
-        # Escape ``` inside reasoning so inner fences don't break the outer code block.
-        display_reasoning = escape_code_fences_for_display(display_reasoning)
-        return t("gateway.reasoning.block", reasoning=display_reasoning, response=response)
-
-    def _hmwa_runtime_footer_line(self, agent_result, source, _turn_seconds):
-        """Runtime-metadata footer for the FINAL message of the turn; off by default
-        (display.runtime_footer.enabled=false)."""
-        from gateway.run import _load_gateway_config, _platform_config_key, _terminal_scope_cwd
-        try:
-            from gateway.runtime_footer import build_footer_line as _bfl
-            return _bfl(
-                user_config=_load_gateway_config(),
-                platform_key=_platform_config_key(source.platform), model=agent_result.get("model"),
-                context_tokens=agent_result.get("last_prompt_tokens", 0) or 0,
-                context_length=agent_result.get("context_length") or None,
-                cwd=_terminal_scope_cwd(""), turn_seconds=_turn_seconds,
-                requested_model=agent_result.get("requested_model"),
-                served_model=agent_result.get("served_model"),
-            )
-        except Exception as _footer_err:
-            logger.debug("runtime_footer build failed: %s", _footer_err)
-            return ""
-
-    async def _hmwa_post_turn_hooks(self, hook_ctx, agent_result, response):
-        """agent:end hook, process-watcher scheduling, and watch-notification drain."""
-        await self.hooks.emit("agent:end", {
-            **hook_ctx, "response": (response or "")[:500], "model": agent_result.get("model", ""),
-            "provider": agent_result.get("provider", ""),
-        })
-
-        # Pending process watchers (check_interval on background processes)
-        try:
-            from tools.process_registry import process_registry
-            # Detach the batch atomically (reassign, not clear()) so concurrent appends aren't dropped.
-            watchers = process_registry.pending_watchers
-            process_registry.pending_watchers = []
-            for i, watcher in enumerate(watchers):
-                asyncio.create_task(self._run_process_watcher(watcher))
-                if i % 100 == 99:
-                    await asyncio.sleep(0)
-        except Exception as e:
-            logger.error("Process watcher setup error: %s", e)
-
-        # Drain watch notifications that arrived during the run; the queue also carries process /
-        # async-delegation completions owned elsewhere — inject only watch-type events.
-        try:
-            from tools.process_registry import process_registry as _pr
-            await self._drain_watch_notifications(_pr.completion_queue)
-        except Exception as e:
-            logger.debug("Watch queue drain error: %s", e)
-
-    # One owner for the boundary copy (agent/turn_failure_copy.py): the core closer in
-    # agent/conversation_loop.py writes the same row on the paths that never reach this layer.
-
-    def _hmwa_add_failed_turn_notice(self, response, notice):
-        """Make failed-turn delivery explicit without replacing the provider-specific guidance."""
-        response = str(response or "").strip()
-        return f"{response}\n\n{notice}" if response else notice
-
-    def _hmwa_failed_turn_notice(self, agent_result):
-        """Choose retry guidance without assuming completed tool effects can be repeated safely."""
-        from gateway.media_repair import _current_turn_messages
-        # Compression during the failed turn can move the slice boundary; the shared helper falls
-        # back to the last user row so tool evidence is not silently dropped.
-        turn_messages = _current_turn_messages(
-            agent_result.get("messages", []) or [], agent_result.get("history_offset", 0),
-        )
-        if any(
-            message.get("role") == "tool"
-            or (message.get("role") == "assistant" and message.get("tool_calls"))
-            for message in turn_messages
-        ):
-            return PARTIAL_FAILED_TURN_NOTICE
-        return FAILED_TURN_NOTICE
-
-    async def _hmwa_close_failed_turn(self, session_id, notice):
-        """Append the gateway-owned assistant boundary iff the durable tail is an open user row.
-
-        The tail, not "did the gateway write the user row", is the key: on the primary path the
-        agent's turn-start flush already persisted the row (so the platform-id dedupe skips the
-        gateway write), and a platform redelivery of an already-closed turn must not stack a
-        second assistant row."""
-        if await self.async_session_store.transcript_tail_role(session_id) != "user":
-            return
-        await self.async_session_store.append_to_transcript(session_id, {
-            "role": "assistant", "content": notice, "timestamp": time.time(), "display_kind": FAILED_TURN_DISPLAY_KIND,
-        })
-
-    def _hmwa_classify_turn_failure(self, agent_result, history, session_entry):
-        """Classify a finished turn for transcript persistence. Returns
-        ``(agent_failed_early, hidden_reasoning_incomplete, is_context_overflow_failure)``.
-
-        Context-overflow failures must NOT persist the user message (session would grow and
-        reproduce the failure forever); transient failures (429/timeout/5xx) DO."""
-        from gateway.run import _is_gateway_hidden_reasoning_incomplete_turn
-        # Save the full conversation to the transcript, including tool calls. This preserves the complete
-        # agent loop (tool_calls, tool results, intermediate reasoning) so sessions can be resumed with full
-        # context and transcripts are useful for debugging and training data. IMPORTANT: For
-        # context-overflow failures (compression exhausted, generic 400 on large sessions) we must NOT
-        # persist the user's message — doing so would grow the session further and cause the same failure on
-        # the next attempt, an infinite loop. (#1630, #9893) Transient failures (429, timeout, connection
-        # error, provider 5xx) are different: the session is not oversized, and silently dropping the user
-        # message causes severe context loss on retry — the agent forgets what was just asked. Persist the
-        # user turn so the conversation is preserved. (#7100)
-        agent_failed_early = bool(agent_result.get("failed"))
-        hidden_reasoning_incomplete = _is_gateway_hidden_reasoning_incomplete_turn(agent_result)
-        is_context_overflow_failure = is_context_overflow_failure_result(agent_result, len(history))
-        if is_context_overflow_failure:
-            logger.info(
-                "Skipping transcript persistence for context-overflow "
-                "failure in session %s to prevent session growth loop.", session_entry.session_id,
-            )
-        elif agent_failed_early:
-            logger.info(
-                "Transient agent failure in session %s — persisting user "
-                "message so conversation context is preserved on retry.", session_entry.session_id,
-            )
-        elif hidden_reasoning_incomplete:
-            logger.warning(
-                "Suppressing hidden-reasoning-only incomplete gateway turn for session %s: %s",
-                session_entry.session_id, agent_result.get("error", "processing incomplete"),
-            )
-        return agent_failed_early, hidden_reasoning_incomplete, is_context_overflow_failure
-
-    async def _hmwa_compression_exhaustion_reset(
-        self, agent_result, response, session_entry, session_key, source,
-    ):
-        """Auto-reset a permanently oversized session so the next message starts fresh instead of
-        replaying the oversized context forever. Never on a lock-contended defer — that is the
-        OPPOSITE case (a concurrent path holds the lock and is shrinking it). Returns
-        ``(response, session_entry)``."""
-        # When compression is exhausted, the session is permanently too large to process. (#9893) Never wipe
-        # the session for that — retry-next-message semantics apply (#69870 lock-skip consumer; salvaged
-        # from #49874).
-        if agent_result.get("compression_deferred"):
-            logger.info(
-                "Compression deferred for session %s — the compression "
-                "lock is held by a concurrent compressor. Keeping the "
-                "session intact; the next message retries normally.",
-                session_entry.session_id if session_entry else "?",
-            )
-        elif agent_result.get("compression_exhausted") and session_entry and session_key:
-            logger.info("Auto-resetting session %s after compression exhaustion.", session_entry.session_id)
-            new_entry = await self.async_session_store.reset_session(session_key)
-            self._evict_cached_agent(session_key)
-            # Conversation boundary: the funnel clears every conversation-scoped per-session dict.
-            self._clear_conversation_scope(session_key, reason="compression_exhausted_reset")
-            if new_entry is not None:
-                # Re-point the Telegram topic binding at the fresh session, or the binding-heal walk
-                # switches the next message back onto the bloated child and re-triggers exhaustion
-                # forever. No-op on non-topic lanes.
-                # Compression rotated session_entry.session_id to the oversized compressed child earlier
-                # this turn (the agent-result sync above), and that _sync also rewrote the (chat_id,
-                # thread_id) -> bloated-child binding. reset_session swaps in a clean, parentless session,
-                # but without re-syncing the binding the next inbound message in this topic gets
-                # switch_session'd back onto the bloated child by the binding-heal walk, reloads the
-                # oversized transcript, and re-triggers compression exhaustion forever (#35809 — regression
-                # of the #9893/#10063 auto-reset).
-                session_entry = new_entry
-                await asyncio.to_thread(
-                    self._sync_telegram_topic_binding, source, session_entry, reason="compression-exhausted-reset",
-                )
-            response = (response or "") + t("gateway.session.auto_reset_context_exhausted")
-        return response, session_entry
-
-    @staticmethod
-    def _hmwa_user_transcript_entry(event, prepared, ts):
-        """Transcript row for the inbound user turn (clean text + event time when captured)."""
-        # Transient failure (429/timeout/5xx): persist the user message so the next message can load a
-        # transcript that reflects what was said. The caller pairs it with a stable assistant safety
-        # boundary rather than the provider error text. Hidden-reasoning-only incomplete turns follow the
-        # same persistence rule so peer-agent channels don't ingest provider details. (#7100, #51628)
-        _user_entry = {
-            "role": "user",
-            "content": (
-                prepared.persist_user_message if prepared.persist_user_message is not None
-                else prepared.message_text
-            ),
-            "timestamp": prepared.persist_user_timestamp if prepared.persist_user_timestamp is not None else ts,
-        }
-        if prepared.persist_user_display_kind:
-            _user_entry["display_kind"] = prepared.persist_user_display_kind
-        if prepared.persistence_owner:
-            _user_entry["display_metadata"] = {"gateway_input_owner": prepared.persistence_owner}
-        if getattr(event, "message_id", None):
-            _user_entry["message_id"] = str(event.message_id)
-        return _user_entry
-
-    async def _hmwa_persist_turn_transcript(
-        self, *, event, source, session_entry, session_key, agent_result, agent_messages,
-        prepared, response, agent_failed_early, hidden_reasoning_incomplete, is_context_overflow_failure,
-    ):
-        """Persist this turn to the transcript (session_meta on first turn, closed failed turn on
-        transient failure, nothing on context overflow), update last_prompt_tokens, and re-baseline the
-        cached agent's message count."""
-        from gateway.run import _resolve_gateway_model
-        ts = time.time()  # Unix epoch float — consistent with DB storage
-        store = self.async_session_store
-        sid = session_entry.session_id
-        history = prepared.history
-        # The agent already persisted this turn's rows (codex app-server reports agent_persisted=True
-        # too); skip the DB write. Default = a session DB exists; non-persisting runtimes pass False.
-        # The agent already persisted these messages to SQLite via _flush_messages_to_session_db(), so skip
-        # the DB write here to prevent the duplicate-write bug (#860 / #42039). This holds for the codex
-        # app-server runtime too: although it early-returns and bypasses conversation_loop's per-step
-        # flushes, it flushes its own projected assistant/tool messages before returning and reports
-        # agent_persisted=True (see agent/codex_runtime.py). Reading the flag (default = self._session_db is
-        # not None) keeps the persistence contract explicit and lets any future non-persisting runtime opt
-        # into a gateway-side write by returning False.
-        agent_persisted = agent_result.get("agent_persisted", self._session_db is not None)
-        _user_row = self._hmwa_user_transcript_entry(event, prepared, ts)
-
-        if is_context_overflow_failure:
-            pass  # Skip all transcript writes — don't grow a broken session
-        else:
-            if not history:
-                # Fresh session: the tool definitions (as sent in the API request) make the transcript
-                # self-describing.
-                await store.append_to_transcript(sid, {
-                    "role": "session_meta",
-                    "tools": agent_result.get("tools", []) or [],
-                    "model": _resolve_gateway_model(),
-                    "platform": source.platform.value if source.platform else "",
-                    "timestamp": ts,
-                })
-            if agent_failed_early or hidden_reasoning_incomplete:
-                # Transient failure / hidden-reasoning incomplete: persist the user message without
-                # the provider error text (a gateway hint, not model output). Dedupe on platform
-                # message_id (Telegram retries after transient failures).
-                if event.message_id and await store.has_platform_message_id(sid, str(event.message_id)):
-                    logger.info(
-                        "Skipping duplicate user turn (message_id=%s) in session %s",
-                        event.message_id, sid,
-                    )
-                else:
-                    await store.append_to_transcript(sid, _user_row, skip_db=agent_persisted)
-                # Close the failed turn: a user-only tail lets alternation repair merge this request
-                # into an unrelated future message and replay stale side effects (#107070).
-                await self._hmwa_close_failed_turn(sid, self._hmwa_failed_turn_notice(agent_result))
-            else:
-                # Only the NEW messages: history_offset (what the agent saw), not len(history), which
-                # counts session_meta entries stripped before the agent saw them.
-                history_len = agent_result.get("history_offset", len(history))
-                new_messages = agent_messages[history_len:] if len(agent_messages) > history_len else []
-                if not new_messages:
-                    # Edge case: fall back to simple user/assistant rows.
-                    await store.append_to_transcript(sid, _user_row, skip_db=agent_persisted)
-                    if response:
-                        await store.append_to_transcript(
-                            sid, {"role": "assistant", "content": response, "timestamp": ts},
-                            skip_db=agent_persisted,
-                        )
-                else:
-                    # Attach the inbound platform message_id to the first user entry so platform-level
-                    # quote-resolution (e.g. Yuanbao) can find earlier @bot messages by original id.
-                    _user_msg_id_attached = False
-                    for msg in new_messages:
-                        if msg.get("role") == "system":
-                            continue  # rebuilt each run
-                        entry = {**msg, "timestamp": ts}
-                        if (
-                            not _user_msg_id_attached
-                            and msg.get("role") == "user"
-                            and event.message_id
-                            and "message_id" not in entry
-                        ):
-                            entry["message_id"] = str(event.message_id)
-                            _user_msg_id_attached = True
-                        await store.append_to_transcript(sid, entry, skip_db=agent_persisted)
-
-        # The agent persists token counts/model itself; keep only last_prompt_tokens for hygiene.
-        await store.update_session(
-            session_entry.session_key, last_prompt_tokens=agent_result.get("last_prompt_tokens", 0),
-            touch_activity=not bool(getattr(event, "internal", False)),
-        )
-
-        # Re-baseline the cached agent's message_count now that ALL of this turn's writes are done:
-        # the coherence guard snapshots at agent-BUILD time, so our own writes would otherwise
-        # trigger a rebuild next turn (destroying prompt caching).
-        await self._refresh_agent_cache_message_count(session_key, sid)
-
-    async def _hmwa_deliver_turn_response(
-        self, event, source, session_entry, session_key, run_generation,
-        agent_result, agent_messages, response, _footer_line, _intentional_silence,
-    ):
-        """Final delivery decisions: intentional silence, voice reply, streamed-turn media/footer.
-        Returns the text for the adapter to send, or ``None`` when already delivered."""
-        if diagnostic_wake_muted(event):
-            return None
-        # Intentional silence is a delivery decision: the [SILENT] turn stays persisted (alternation).
-        if _intentional_silence:
-            logger.info("Suppressing intentional silence marker for session %s", session_entry.session_id)
-            response = ""
-
-        adapter = self._delivery_adapter_for(source)
-        # Auto voice reply (TTS audio before the text) unless streaming TTS already delivered audio.
-        _streaming_tts_done = adapter is not None and bool(
-            getattr(adapter, "_streaming_tts_turn_completed", lambda *_a, **_k: False)(session_key, run_generation)
-        )
-        if not _streaming_tts_done and self._should_send_voice_reply(
-            event, response, agent_messages, already_sent=bool(agent_result.get("already_sent")),
-        ):
-            await self._send_voice_reply(event, response)
-
-        # Streamed responses still need MEDIA: files delivered (chunks carry the tags verbatim). Never
-        # skip when the agent failed: the error text is new content streaming didn't show.
-        if agent_result.get("already_sent") and not agent_result.get("failed"):
-            # The queued-follow-up lane uploads this response's attachments itself; re-scanning here
-            # would upload every file a second time.
-            if response and adapter and not agent_result.get("media_already_delivered"):
-                await self._deliver_media_from_response(response, event, adapter)
-            # Streaming delivered the body, but the footer was held back (`not already_sent` gate).
-            if _footer_line and adapter:
-                try:
-                    await adapter.send(source.chat_id, _footer_line, metadata=self._event_thread_metadata(event, source))
-                except Exception as _e:
-                    logger.debug("trailing footer send failed: %s", _e)
-            # Return None so the body isn't sent twice; stash the delivered text on the event for the
-            # /loop and /goal hooks that read the return value.
-            with suppress(Exception):
-                event._streamed_final_response = str(response or "")
-            return None
-
-        return response
-
-    # Chat-side next steps keyed by HTTP status; Hermes commands only (/login is the gateway's own
-    # sign-in, `{relogin}` the profile-aware host equivalent, filled from the turn's agent provider).
-    # Values are catalog keys (``gateway.errors.hint_*``); 401 carries a ``{relogin}`` placeholder.
-    _STATUS_HINTS = {
-        401: "gateway.errors.hint_auth",
-        402: "gateway.errors.hint_quota",
-        529: "gateway.errors.hint_overloaded",
-    }
-
-    async def _hmwa_agent_error_reply(self, e, event, source, session_entry, session_key, prepared):
-        """``except Exception`` body of the agent turn: stop typing, log, persist the inbound user
-        turn once and close it, and build the sanitized user-facing error reply."""
-        # Retain Slack thread/workspace routing so a failed turn cannot leave its status visible.
-        await self._hmwa_stop_typing_for_turn(event, source)
-        logger.exception("Agent error in session %s", session_key)
-        status_code = getattr(e, "status_code", None)
-        if status_code in {400, 500} and len(prepared.history) > 50:
-            # Context overflow / payload too large: a deterministic rejection (#107567), and the same
-            # no-grow rule as the persist path (#1630) — nothing is written into an oversized session.
-            from gateway.run import _context_overflow_reply
-            return _context_overflow_reply()
-        # Replay can coalesce inputs; only this input's durable marker establishes ownership.
-        try:
-            if prepared.message_text is not None and session_entry is not None:
-                _owned = await self.async_session_store.has_input_owner(
-                    prepared.persistence_session_id, prepared.persistence_owner,
-                )
-                if not _owned:
-                    await self.async_session_store.append_to_transcript(
-                        session_entry.session_id, self._hmwa_user_transcript_entry(event, prepared, time.time()),
-                    )
-                # Tool effects are unknown after an exception.
-                await self._hmwa_close_failed_turn(session_entry.session_id, PARTIAL_FAILED_TURN_NOTICE)
-        except Exception:
-            logger.debug("Failed to persist inbound user message after agent exception", exc_info=True)
-        # Never expose raw exception types/messages to end users (info-leakage risk).
-        _hint_key = self._STATUS_HINTS.get(status_code)
-        status_hint = t(_hint_key) if _hint_key and status_code != 401 else ""
-        if status_code == 401:
-            from agent.turn_failure_copy import relogin_command_hint
-
-            _turn_agent = getattr(self._session_state(session_key).turn, "agent", None)
-            status_hint = t(_hint_key, relogin=relogin_command_hint(getattr(_turn_agent, "provider", None)))
-        elif status_code == 429:
-            # Plan usage limit (resets on a schedule) vs a transient rate limit
-            _err_json = {}
-            with suppress(Exception):
-                _err_json = e.response.json().get("error", {})
-            if not isinstance(_err_json, dict):
-                _err_json = {}
-            _resets_in = _err_json.get("resets_in_seconds")
-            if _err_json.get("type") != "usage_limit_reached":
-                status_hint = t("gateway.errors.hint_rate_limited")
-            elif _resets_in and _resets_in > 0:
-                import math
-                status_hint = t("gateway.errors.hint_usage_limit_resets", hours=math.ceil(_resets_in / 3600))
-            else:
-                status_hint = t("gateway.errors.hint_usage_limit")
-        elif status_code == 400:
-            status_hint = t("gateway.errors.hint_rejected")
-        return self._hmwa_add_failed_turn_notice(
-            t("gateway.errors.generic_failed_with_hint", hint=status_hint), PARTIAL_FAILED_TURN_NOTICE,
-        )
-
-    def _hmwa_discard_stale_result(self, source, _quick_key, run_generation):
-        """A newer run generation superseded this turn: drop its deferred post-delivery callback."""
-        logger.info(
-            "Discarding stale agent result for %s — generation %d is no longer current",
-            _quick_key or "?", run_generation,
-        )
-        self._pop_post_delivery_callback(self._delivery_adapter_for(source), _quick_key, run_generation)
-
-    @dataclasses.dataclass
-    class _PreparedTurn:
-        """Inputs to the agent run assembled by ``_hmwa_prepare_turn``."""
-
-        history: Any
-        context_prompt: str
-        message_text: Any
-        persist_user_message: Any
-        persist_user_timestamp: Any
-        persist_user_display_kind: Optional[str]
-        persistence_session_id: Optional[str] = None
-        persistence_owner: Optional[str] = None
-        title_user_message: Optional[str] = None
-
-    async def _hmwa_prepare_turn(self, event, source, session_entry, session_key, _quick_key, run_generation):
-        """Everything between session resolution and the agent run: session open, task-local env,
-        context prompt, sidecar notes, turn lease, transcript load + hygiene, inbound text. Returns
-        ``(_PreparedTurn, env_tokens)``; a ``str`` first element is a reply to send instead of
-        running (history unreadable); ``None`` drops the turn (inbound text rejected)."""
-        from gateway.run import _load_gateway_config
-        from tools.approval_yolo import restore_session_yolo
-        _was_auto_reset, _is_new_session = await self._hmwa_open_session(session_entry, session_key, source)
-        restore_session_yolo(session_key, session_entry.yolo is True)  # a restarted gateway's set starts empty
-        context = build_session_context(source, self.config, session_entry)
-        # Session context variables for tools (task-local, concurrency-safe)
-        _session_env_tokens = self._set_session_env(context)
-        # Self-injected turns (internal=True) persist with a DB-only display_kind: timeline notices, not user bubbles.
-        persist_user_display_kind = display_kind_for_event(event)
-        _redact_pii = False  # privacy.redact_pii, re-read per message
-        with suppress(Exception):
-            _redact_pii = bool((_load_gateway_config().get("privacy") or {}).get("redact_pii", False))
-
-        # The context prompt render is pinned per session, keyed by a hash of the renderer inputs, so
-        # the system prompt cannot drift turn-over-turn; a miss (thread rename, /sethome) re-renders.
-        if event.internal and session_key:
-            await self._rehydrate_prompt_pins(session_key, session_entry.session_id)
-        context_prompt = self._pinned_session_context_prompt(
-            context, _redact_pii, session_key, internal=event.internal,
-        )
-
-        # Per-turn notes ride the user message via the api_content sidecar, NOT context_prompt
-        # (appending to the ephemeral system prompt forced a full agent rebuild).
-        turn_sidecar_notes: list[str] = []
-        if _was_auto_reset:
-            await self._hmwa_deliver_auto_reset_notice(session_entry, source, turn_sidecar_notes)
-
-        # Keep human text separate from skills, sender metadata, and other model context.
-        # With no text (e.g. voice-only), retain the existing enriched-message title fallback.
-        title_user_message = event.text or None
-
-        # Auto-load bound skill(s) only on NEW sessions; ongoing ones carry the content in history.
-        _auto = getattr(event, "auto_skill", None)
-        if _is_new_session and _auto:
-            self._hmwa_auto_load_skills(event, _auto, _quick_key, session_key)
-
-        await self._hmwa_acquire_turn_lease(_quick_key, run_generation, session_entry, _session_env_tokens)
-
-        # A turn becomes durable recovery work only after it owns the per-session lease; marking
-        # earlier would falsely recover a message that never began processing.
-        await self._mark_durable_active_turn(event, session_entry.session_key)
-
-        # An unreadable store is not an empty conversation: stop before the agent invents continuity
-        # from []. Restore task-local context here (before the broad cleanup finally).
-        try:
-            history = await self.async_session_store.load_transcript(session_entry.session_id)
-            history = await self._hmwa_run_session_hygiene(
-                event, source, session_entry, session_key, history, _quick_key, run_generation,
-            )
-        except TranscriptReadError:
-            self._clear_session_env(_session_env_tokens)
-            return t("gateway.errors.history_unavailable"), _session_env_tokens
-
-        await self._hmwa_first_contact_notes(source, history, turn_sidecar_notes, internal=event.internal)
-
-        # Voice channel state rides the user message ONLY when changed (in the system prompt it
-        # forced a rebuild + prompt-cache re-key per message).
-        _vc_note = self._voice_channel_sidecar_note(event, source, session_key)
-        if _vc_note:
-            turn_sidecar_notes.append(_vc_note)
-
-        # Auto-analyze user images so the model gets a description plus the local path.
-        message_text = await self._prepare_profile_scoped_inbound_message_text(
-            event=event, source=source, history=history, session_key=session_key,
-        )
-        if message_text is None:
-            return None, _session_env_tokens
-
-        message_text, persist_user_message, persist_user_timestamp = (
-            self._hmwa_apply_message_timestamp(event, message_text)
-        )
-
-        # Stage the notes (one-shot; consumed in run_sync) AFTER the early-out so an aborted turn
-        # cannot leak them into the next turn.
-        if turn_sidecar_notes and session_key:
-            self._set_pending_turn_sidecar_notes(session_key, turn_sidecar_notes)
-
-        # Bind this run generation to the adapter so deferred post-delivery callbacks are released
-        # by the run that registered them.
-        self._bind_adapter_run_generation(self._delivery_adapter_for(source), session_key, run_generation)
-        # Delivery IDs are only unique in their transport namespace. Keyless turns
-        # need their own identity, even when another process writes to this session.
-        import uuid
-        namespace = [source.platform.value, source.profile, source.scope_id,
-                     source.chat_id, source.thread_id, str(event.message_id)]
-        owner = (str(uuid.uuid5(uuid.NAMESPACE_URL, json.dumps(namespace)))
-                 if event.message_id else str(uuid.uuid4()))
-        return self._PreparedTurn(
-            history, context_prompt, message_text, persist_user_message, persist_user_timestamp,
-            persist_user_display_kind, session_entry.session_id, owner,
-            title_user_message=title_user_message,
-        ), _session_env_tokens
 
     async def _handle_message_with_agent(self, event, source, _quick_key: str, run_generation: int):
         """Inner handler that runs under the _running_agents sentinel guard."""
@@ -2205,7 +1137,7 @@ class GatewayTurnMixin:
                 persist_user_display_kind=prepared.persist_user_display_kind,
                 reply_expected=event.reply_expected,
                 persist_user_display_metadata={
-                    "gateway_input_owner": prepared.persistence_owner,
+                    "gateway_input_owner": prepared.persistence_owner, **display_metadata_for_event(event),
                     **reply_expected_metadata(event.reply_expected), **diagnostic_metadata(event)},
                 message_type=event.message_type,
                 scheduled_heartbeat=bool(getattr(event, "_heartbeat_session_id", None)),
@@ -2769,16 +1701,14 @@ class GatewayTurnMixin:
         if not proxy_url:
             return self._proxy_error_result(t("gateway.proxy.url_missing"))
 
-        # The proxy key is a per-profile credential: honor the installed secret scope under multiplex.
-        # Only UnscopedSecretError (the unscoped default-profile path) falls back to the env; any
-        # other get_secret() error propagates (same as BASE) rather than silently degrading to the
-        # ambient key, which may hold another profile's credential.
-        from agent.secret_scope import UnscopedSecretError, get_secret
+        # The proxy key is a per-profile credential read through the installed secret scope:
+        # ``_run_agent`` binds the source profile's scope (or the launch profile's once the process
+        # multiplexes), and an unscoped single-profile process reads os.environ inside get_secret.
+        # Any get_secret() error propagates rather than degrading to the ambient key, which may hold
+        # another profile's credential.
+        from agent.secret_scope import get_secret_str
 
-        try:
-            proxy_key = (get_secret("GATEWAY_PROXY_KEY") or "").strip()
-        except UnscopedSecretError:
-            proxy_key = os.getenv("GATEWAY_PROXY_KEY", "").strip()
+        proxy_key = get_secret_str("GATEWAY_PROXY_KEY").strip()
 
         _run_still_current = self._run_still_current_fn(session_key, run_generation)
 
@@ -2860,10 +1790,6 @@ class GatewayTurnMixin:
 
                     buffer = ""
                     async for chunk in resp.content.iter_any():
-                        if saw_done:
-                            # A buggy upstream that holds the connection open after [DONE]
-                            # would otherwise block us for up to sock_read seconds.
-                            break
                         if not _run_still_current():
                             return _stale_result("stream")
                         buffer += chunk.decode("utf-8", errors="replace")
@@ -2872,6 +1798,9 @@ class GatewayTurnMixin:
                             if _consume_sse_line(line):
                                 saw_done = True
                                 break
+                        # Exit before the iterator requests another network chunk.
+                        if saw_done:
+                            break
                         if len(buffer) > _GATEWAY_PROXY_SSE_BUFFER_MAX_CHARS:
                             raise ValueError("Proxy SSE stream exceeded max buffer size without a line boundary")
                     # The final SSE frame may not be newline-terminated: flush the residual
@@ -2942,9 +1871,14 @@ class GatewayTurnMixin:
         from agent.secret_scope import get_secret
         from gateway.display_config import resolve_display_setting, resolve_tool_progress
         from gateway.status_phrases import choose_status_phrase, resolve_status_phrase_catalog
-        user_config = _load_gateway_config()
-        platform_key = _platform_config_key(source.platform)
+        from gateway.session_policy import policy_for_source
+        policy = policy_for_source(self, source)
+        from gateway.session_authorities import active_authority
+        user_config = policy.config(active_authority(self)) if policy else _load_gateway_config()
+        platform_key = policy.platform if policy else _platform_config_key(source.platform)
         enabled_toolsets, disabled_toolsets = self._resolve_turn_toolsets(user_config, source, platform_key)
+        if policy:
+            enabled_toolsets = list(policy.current_toolsets(user_config))
         adapter = self._delivery_adapter_for(source)
         # Tool preview length (0 = no limit) and friendly tool labels (default on), per-platform.
         for _setter, _setting, _default, _cast in (
@@ -3474,9 +2408,8 @@ class GatewayTurnMixin:
                 name=f"gateway-turn-watchdog-{_turn_task_id[:12]}",
                 daemon=True,
             ).start()
-        worker.executor_task = asyncio.ensure_future(
-            self._run_in_executor_with_context(_run_sync_with_timeout_lifecycle)
-        )
+        from gateway.session_runtime_workers import start_turn_worker
+        start_turn_worker(self, worker, agent_holder, _run_sync_with_timeout_lifecycle)
         return worker
 
     @staticmethod
@@ -3516,6 +2449,7 @@ class GatewayTurnMixin:
         """Synthetic failed run dict for an inactivity timeout, with the activity-tracker diagnostic;
         interrupts the agent if it is still running so the thread pool worker is freed."""
         from gateway.run import _INTERRUPT_REASON_TIMEOUT, _INTERRUPT_TOOL_REASON_TIMEOUT, request_hard_interrupt
+        from gateway.session_results import record_terminal_failure
         session_key, result_holder, tools_holder = turn_ctx.session_key, turn_ctx.result_holder, turn_ctx.tools_holder
         _timed_out_agent = turn_ctx.agent_holder[0]
         _activity = self._agent_activity_summary(_timed_out_agent)
@@ -3545,14 +2479,14 @@ class GatewayTurnMixin:
                 "gateway.progress.timeout_last_activity",
                 activity=_last_desc, seconds=f"{_secs_ago:.0f}", progress=_iter_progress))
         _diag_lines.append(t("gateway.progress.timeout_hint"))
-        return {
+        return record_terminal_failure({
             "final_response": "\n".join(_diag_lines),
             "messages": result_holder[0].get("messages", []) if result_holder[0] else [],
             "api_calls": _iter_n,
             "tools": tools_holder[0] or [],
             "history_offset": 0,
             "failed": True,
-        }
+        })
 
     async def _run_agent_await_turn_worker(
         self, worker: GatewayRunner._RunAgentWorker, turn_ctx: TurnContext,
@@ -3600,7 +2534,12 @@ class GatewayTurnMixin:
         if getattr(_agent, "_provider_fallback_active", False) is True:
             self._evict_cached_agent(session_key)
             return
-        _cfg_model = self._fallback_baseline_model(session_key, turn_ctx.source, _agent)
+        # A LOCAL session runs its frozen launch policy's model, not the gateway's configured one.
+        from gateway.session_authorities import active_authority
+        from gateway.session_policy import policy_for_source
+        policy = policy_for_source(self, turn_ctx.source)
+        _cfg_model = self._fallback_baseline_model(
+            session_key, turn_ctx.source, _agent, policy_model=policy.current_model(active_authority(self)) if policy and policy.model else None)
         if _agent.model != _cfg_model and not self._is_intentional_model_switch(session_key, _agent, _cfg_model):
             self._evict_cached_agent(session_key)
 
@@ -3944,6 +2883,7 @@ class GatewayTurnMixin:
                 persist_user_display_kind=next_display_kind,
                 reply_expected=next_reply_expected,
                 persist_user_display_metadata={
+                    **display_metadata_for_event(pending_event),
                     **reply_expected_metadata(next_reply_expected), **diagnostic_metadata(pending_event)} or None,
             )
         except asyncio.CancelledError:
@@ -4278,11 +3218,18 @@ class GatewayTurnMixin:
 
         Keys: "final_response", "messages", "api_calls", "completed"."""
         if self._get_proxy_url():
-            return await self._run_agent_via_proxy(
+            result = await self._run_agent_via_proxy(
                 message=message, context_prompt=context_prompt, history=history, source=source,
                 session_id=session_id, session_key=session_key, run_generation=run_generation,
                 event_message_id=event_message_id, scheduled_heartbeat=scheduled_heartbeat,
             )
+            # The remote turn is this admission's executed turn (``TurnRunner.run_sync`` records
+            # the local one): without it a finite run would settle as a no-execution refusal.
+            from gateway.session_results import execution_result
+            captured = execution_result.get()
+            if captured is not None and 'result' not in captured:
+                captured['result'] = result
+            return result
 
         from run_agent import AIAgent
 
