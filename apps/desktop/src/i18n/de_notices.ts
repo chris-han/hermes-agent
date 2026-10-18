@@ -1,3 +1,4 @@
+import { deSessionCommands } from './de_session_commands'
 import type { TranslationOverrides } from './define-locale'
 
 // Shell notices (remote-display toast, butterbar, keep-awake offer), spread into de.ts.
@@ -21,5 +22,10 @@ export const deNotices = {
     message:
       'Hermes kann den Computer wach halten, solange eine Aufgabe läuft. Der Bildschirm schaltet sich weiterhin aus, und im Akkubetrieb kann der Computer trotzdem einschlafen.',
     action: 'Während der Arbeit wach halten'
+  },
+  promptNotices: {
+    legacySendUnconfirmed:
+      'Dieser Server konnte das frühere Senden dieser Nachricht nicht bestätigen; sie wurde möglicherweise bereits ausgeführt. Prüfe die Unterhaltung, bevor du sie erneut sendest.',
+    sessionCommands: deSessionCommands
   }
-} satisfies Pick<TranslationOverrides, 'remoteDisplayBanner' | 'butterbar' | 'keepAwakeOffer'>
+} satisfies Pick<TranslationOverrides, 'remoteDisplayBanner' | 'butterbar' | 'keepAwakeOffer' | 'promptNotices'>

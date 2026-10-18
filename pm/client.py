@@ -193,6 +193,10 @@ def ensure(name, *, base_env=None, explicit=False, verify=True, progress=None, p
     if pause_event is not None and pause_event.is_set():
         from pm.downloader import DownloadPaused
         raise DownloadPaused("install paused")
+    from pm.store import current_target
+    target = current_target()
+    if reason := get_package(name).missing_reason(target):
+        raise InstallError(name, f"unavailable on {target}: {reason}", "none")
     callbacks = {}
     if progress is not None:
         callbacks["progress"] = progress

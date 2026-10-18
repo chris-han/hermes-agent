@@ -1,4 +1,5 @@
 import type { TranslationOverrides } from './define-locale'
+import { frSessionCommands } from './fr_session_commands'
 
 // Shell notices (remote-display toast, butterbar, keep-awake offer), spread into fr.ts.
 export const frNotices = {
@@ -21,5 +22,10 @@ export const frNotices = {
     message:
       'Hermes peut empêcher la mise en veille pendant qu’une tâche s’exécute. L’écran s’éteint toujours, et sur batterie l’ordinateur peut quand même se mettre en veille.',
     action: 'Empêcher la veille pendant le travail'
+  },
+  promptNotices: {
+    legacySendUnconfirmed:
+      "Ce serveur n'a pas pu confirmer l'envoi précédent de ce message ; il a peut-être déjà été exécuté. Vérifiez la conversation avant de le renvoyer.",
+    sessionCommands: frSessionCommands
   }
-} satisfies Pick<TranslationOverrides, 'remoteDisplayBanner' | 'butterbar' | 'keepAwakeOffer'>
+} satisfies Pick<TranslationOverrides, 'remoteDisplayBanner' | 'butterbar' | 'keepAwakeOffer' | 'promptNotices'>
