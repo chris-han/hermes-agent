@@ -96,3 +96,20 @@ def flatpak_export_dirs() -> tuple[str, ...]:
 
 def snap_bin_dirs() -> tuple[str, ...]:
     return ("/snap/bin",) if sys.platform.startswith("linux") else ()
+
+
+def windows_git_core_dirs() -> tuple[str, ...]:
+    """Git-for-Windows binaries beside the PATH launcher and standard installs."""
+    if not _WIN:
+        return ()
+    from pathlib import Path
+    from hermes_platform.resolver.core import locate_command
+    command = locate_command("git").command
+    roots = []
+    if command:
+        root = Path(command[0]).parent.parent
+        roots.append(root.parent if root.name in {"mingw64", "mingw32", "clangarm64"} else root)
+    roots.extend((Path("C:/Program Files/Git"), Path("C:/Program Files (x86)/Git")))
+    return tuple(str(root / arch / suffix) for root in dict.fromkeys(roots)
+                 for arch in ("clangarm64", "mingw64", "mingw32")
+                 for suffix in ("libexec/git-core", "bin"))

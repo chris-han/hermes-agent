@@ -14,7 +14,8 @@ jobs:
     name: JS & TS checks
     # Standard hosted capacity needs no organization-specific runner setup.
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Serial workspace checks took 30 minutes on a cold standard runner.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
         with:
@@ -75,3 +76,6 @@ jobs:
       # so run one check at a time on the standard runner.
       - name: Run all workspace checks
         run: node .github/scripts/run-workspace-checks.mjs --concurrency 1
+
+      - name: Check the checkout is clean
+        uses: ./.github/actions/check-clean-worktree

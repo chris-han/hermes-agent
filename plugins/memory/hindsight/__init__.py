@@ -52,15 +52,13 @@ _LOCAL_MODES = {"local", "local_embedded"}
 _RETAIN_CONTEXT_DEFAULT = "conversation between Hermes Agent and the User"
 
 
-def _ensure_client_dependency() -> None:
-    """Lazily install the Hindsight client (``tools.lazy_deps``) before importing it."""
-    try:
-        from tools.lazy_deps import ensure as _lazy_ensure
-        _lazy_ensure("memory.hindsight", prompt=False)
-    except ImportError:
-        pass
-    except Exception as exc:
-        raise ImportError(str(exc)) from exc
+def _ensure_client_dependency(anchor: str = "hindsight_client") -> None:
+    """Prepare the plugin declaration before importing a missing client."""
+    import importlib.util
+    if anchor in sys.modules or importlib.util.find_spec(anchor) is not None:
+        return
+    from .dependencies import sync_dependencies
+    sync_dependencies()
 
 
 def _scoped_setting(name: str, default: str = "") -> str:
@@ -92,29 +90,19 @@ def _cloud_api_key(config: dict) -> str:
 
 
 def _maybe_upgrade_client() -> None:
-    """Auto-upgrade an outdated hindsight-client via the environment-aware lazy_deps
-    installer (sealed hosted venvs redirect to the durable target)."""
+    """Let PM enforce the declaration when an old client is installed."""
+    from importlib.metadata import PackageNotFoundError, version
+    from packaging.version import Version
     try:
-        from importlib.metadata import version as pkg_version
-        from packaging.version import Version
-        installed = pkg_version("hindsight-client")
-        if Version(installed) < Version(_MIN_CLIENT_VERSION):
-            logger.warning("hindsight-client %s is outdated (need >=%s), attempting upgrade...",
-                           installed, _MIN_CLIENT_VERSION)
-            from tools.lazy_deps import install_specs
-            outcome = install_specs([f"hindsight-client>={_MIN_CLIENT_VERSION}"], timeout=120)
-            if outcome.ok:
-                logger.info("hindsight-client upgraded to >=%s", _MIN_CLIENT_VERSION)
-            elif outcome.blocked:
-                logger.warning("Auto-upgrade unavailable: %s. Run: uv pip install 'hindsight-client>=%s'",
-                               outcome.reason, _MIN_CLIENT_VERSION)
-            else:
-                logger.warning("Auto-upgrade failed: %s. Run: uv pip install 'hindsight-client>=%s'",
-                               (outcome.stderr or "").strip() or "install error", _MIN_CLIENT_VERSION)
-    except ImportError as exc:
-        logger.warning("Hindsight dependency upgrade unavailable: %s", exc)
-    except Exception:
-        pass  # packaging not available or other issue — proceed anyway
+        installed = version("hindsight-client")
+    except PackageNotFoundError:
+        return
+    if Version(installed) < Version(_MIN_CLIENT_VERSION):
+        from .dependencies import sync_dependencies
+        try:
+            sync_dependencies()
+        except Exception as exc:
+            logger.warning("Hindsight dependency preparation failed: %s. Run hermes memory setup.", exc, exc_info=True)
 
 
 # update_mode='append' capability (Hindsight >= 0.5.0), cached per (API URL, key fingerprint)
@@ -472,7 +460,7 @@ class HindsightMemoryProvider(MemoryProvider):
         available, reason = _check_local_runtime()
         if not available:
             raise RuntimeError("Hindsight local runtime is unavailable" + (f": {reason}" if reason else ""))
-        _ensure_client_dependency()
+        _ensure_client_dependency("hindsight")
         from hindsight import HindsightEmbedded
         HindsightEmbedded.__del__ = lambda self: None
         cfg = self._config

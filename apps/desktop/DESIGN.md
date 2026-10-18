@@ -129,8 +129,13 @@ Reduced motion settles immediately without retaining empty clearance.
 
 Settings → Appearance → Window layout offers **Minimize to tray**, off by default and
 local to this desktop installation. When enabled, minimizing ordinary windows
-hides them without stopping their work. Close, Alt+F4, and Cmd+Q keep their
-normal behavior. The tray's **Show Hermes** restores hidden windows;
+hides them without stopping their work. On Windows, Close and Alt+F4 on chat
+windows offer **Keep Running in Background**, **Quit Hermes Desktop**, and
+**Cancel**. Background mode enables the tray for this run without changing the
+saved preference; a failed tray creation leaves the window visible with a warning.
+On macOS and Linux, the saved preference controls close-to-tray on the main window;
+secondary windows close normally. Cmd+Q keeps its normal quit behavior.
+The tray's **Show Hermes** restores hidden windows;
 **Quit Hermes** keeps the ordinary active-work confirmation and teardown.
 On macOS the tray lives in the menu bar; the Dock icon hides only when no normal
 window remains visible and returns on restore. If the tray is unavailable,

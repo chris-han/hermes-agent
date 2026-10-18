@@ -187,6 +187,7 @@ def test_pipe_gone_after_kill_falls_back(live_server, monkeypatch):
                 {
                     "pid": pid, "gateway_state": "running",
                     "code_sha": "OLD", "kind": "hermes-gateway",
+                    "argv": [str(PROJECT_ROOT / "hermes_cli" / "main.py")],
                 }
             ),
             encoding="utf-8",
