@@ -617,7 +617,7 @@ class GatewayTurnPrepareMixin:
                     # Toggle off: the model sees the clean message; timestamp stored for later opt-in.
                     message_text = _clean_message_text
         except Exception as _ts_err:
-            logger.debug("Message timestamp injection failed (non-fatal): %s", _ts_err)
+            logger.debug("Message timestamp injection failed (non-fatal): %s", _ts_err, exc_info=True)
         return message_text, persist_user_message, persist_user_timestamp
 
     @dataclasses.dataclass

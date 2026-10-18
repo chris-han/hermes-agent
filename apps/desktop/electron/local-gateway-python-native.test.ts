@@ -20,7 +20,7 @@ vi.mock('node:child_process', async importOriginal => {
   } }
 })
 
-test.skipIf(process.platform !== 'win32')('native pipe tickets reuse one helper and revalidate every owner', async () => {
+test.skipIf(process.platform !== 'win32').each([false, true])('native pipe tickets reuse one helper and revalidate every owner (bundled=%s)', async bundled => {
   const home = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ticket-bridge-')))
   const root = path.resolve(import.meta.dirname, '../../..')
   const python = process.env.HERMES_TEST_PYTHON || 'python'
@@ -55,7 +55,13 @@ finally:
   try {
     await once(server.stdout, 'data')
     const endpoint = { profile_id: home, instance_id: 'owner', runtime_protocol: 1, control_home: null }
-    const resolveBackend = vi.fn(async () => ({ command: python, env, kind: 'python', shell: false }))
+    const resolveBackend = vi.fn(async () => ({
+      command: bundled ? path.join(home, 'hermes.exe') : python,
+      env,
+      kind: 'python',
+      shell: false,
+      ...(bundled ? { ticketCommand: python, ticketEnv: { PYTHONPATH: root } } : {})
+    }))
     const mint = createGatewayTicketResolver(resolveBackend, () => root)
     const before = observed.helpers
 

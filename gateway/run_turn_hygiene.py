@@ -129,6 +129,7 @@ class GatewayTurnHygieneMixin:
                     ):
                         hs.config_context_length = None
                 except Exception:
+                    logger.debug("Hygiene context-pin lookup failed", exc_info=True)
                     hs.config_context_length = None
 
             # custom_providers per-model context_length fallback (as in run_agent.py); needs base_url.
@@ -141,6 +142,7 @@ class GatewayTurnHygieneMixin:
                         )
                         _hyg_custom_providers = _gw_gcp(hs.data)
                     except Exception:
+                        logger.debug("Hygiene custom-provider lookup failed", exc_info=True)
                         _hyg_custom_providers = hs.data.get("custom_providers")
                         if not isinstance(_hyg_custom_providers, list):
                             _hyg_custom_providers = []
@@ -150,7 +152,7 @@ class GatewayTurnHygieneMixin:
                     if _hyg_custom_ctx:
                         hs.config_context_length = int(_hyg_custom_ctx)
         except Exception:
-            pass
+            logger.debug("Hygiene settings lookup failed; keeping defaults", exc_info=True)
         return hs
 
     async def _hmwa_hygiene_plan(self, hs, history, session_entry, session_key):
@@ -230,9 +232,9 @@ class GatewayTurnHygieneMixin:
     async def _hmwa_hygiene_wait_for_summary(self, attempt, hs, session_entry):
         """Progress-aware inline wait for the detached hygiene compressor. Returns the compressed
         transcript; raises ``HygieneTurnHoldExceeded`` (turn-hold budget) or
-        ``asyncio.TimeoutError`` (idle/ceiling/fence cancel) for the caller's handlers.
-
-        Idle timeout (fence ticks per streamed token) + hard ceiling + turn-hold cap."""
+        ``asyncio.TimeoutError`` (idle/ceiling/fence cancel) for the caller's handlers. Idle timeout
+        (fence ticks per streamed token) + hard ceiling (moved back by prompt reading) + turn-hold cap."""
+        from agent.conversation_compression_deadline import effective_ceiling
         from gateway.run import HygieneTurnHoldExceeded, hygiene_wait_should_extend
         fence = attempt.commit_fence
         while True:
@@ -240,10 +242,9 @@ class GatewayTurnHygieneMixin:
                 raise TimeoutError
             # Charge the idle budget from the LAST PROGRESS event, else silence can approach 2x timeout.
             _hyg_waited = time.monotonic() - attempt.wait_started
-            _slice = min(
-                max(hs.timeout_seconds - fence.seconds_since_progress(), 0.005),
-                max(hs.total_ceiling_seconds - _hyg_waited, 0.005),
-            )
+            _ceiling = effective_ceiling(fence, hs.total_ceiling_seconds, attempt.wait_started)
+            _slice = min(max(hs.timeout_seconds - fence.seconds_since_progress(), 0.005),
+                         max(_ceiling - _hyg_waited, 0.005))
             # Cap the slice at the remaining turn-hold budget so a continuously-streaming worker can't
             # hold the turn until the ceiling. Budget exhausted → immediate timeout → abandonment.
             _turn_hold_remaining = hs.max_turn_hold_seconds - (time.monotonic() - attempt.wait_started)
@@ -258,6 +259,7 @@ class GatewayTurnHygieneMixin:
                 if fence.is_cancelled:
                     raise
                 _hyg_waited = time.monotonic() - attempt.wait_started
+                _ceiling = effective_ceiling(fence, hs.total_ceiling_seconds, attempt.wait_started)
                 _idle = fence.seconds_since_progress()
                 # Never hold the TURN past the budget even while the summary streams: proceed on the
                 # uncompressed transcript so the wire never trips a transport idle-timeout.
@@ -274,13 +276,13 @@ class GatewayTurnHygieneMixin:
                     )
                 if hygiene_wait_should_extend(
                     idle=_idle, timeout=hs.timeout_seconds, waited=_hyg_waited,
-                    ceiling=hs.total_ceiling_seconds, fence_cancelled=fence.is_cancelled,
+                    ceiling=_ceiling, fence_cancelled=fence.is_cancelled,
                 ):
                     if _slice >= _idle_left - 1e-9:
                         logger.info(
                             "Session hygiene compression for session %s still streaming after "
                             "%.0fs (last progress %.1fs ago) — extending wait (ceiling %.0fs)",
-                            session_entry.session_id, _hyg_waited, _idle, hs.total_ceiling_seconds,
+                            session_entry.session_id, _hyg_waited, _idle, _ceiling,
                         )
                     continue
                 raise
@@ -324,7 +326,7 @@ class GatewayTurnHygieneMixin:
                 await _adapter.emit_warning(source.chat_id, message, metadata=meta,
                                             logical_platform=source.platform)
         except Exception as _werr:
-            logger.warning("Failed to deliver %s to user: %s", what, _werr)
+            logger.warning("Failed to deliver %s to user: %s", what, _werr, exc_info=True)
 
     async def _hmwa_hygiene_record_failure_cooldown(self, hs, session_key, session_id, reason):
         """Escalate the failure streak (off-loop) and persist the cooldown, when enabled."""
@@ -363,6 +365,7 @@ class GatewayTurnHygieneMixin:
                 try:
                     _exc = _fut.exception()
                 except (asyncio.CancelledError, Exception):
+                    logger.debug("Deferred hygiene compression did not settle", exc_info=True)
                     _committed = False
                 else:
                     _committed = _exc is None and (
@@ -378,7 +381,7 @@ class GatewayTurnHygieneMixin:
                     try:
                         _reset_hygiene_failure_streak(_gw, _skey)
                     except Exception as _rs_err:
-                        logger.debug("hygiene streak reset after deferred adoption failed: %s", _rs_err)
+                        logger.debug("hygiene streak reset after deferred adoption failed: %s", _rs_err, exc_info=True)
                 else:
                     # Nothing to adopt (summary failed / fence refused / superseded): flat spacing so
                     # sustained traffic doesn't spawn and abandon a compressor every turn.
@@ -424,8 +427,7 @@ class GatewayTurnHygieneMixin:
         worker crossed the commit boundary first."""
         from gateway.run import _hygiene_compression_timeout_message
         fence = attempt.commit_fence
-        _hyg_waited = time.monotonic() - attempt.wait_started
-        _hyg_total_exhausted = _hyg_waited >= hs.total_ceiling_seconds or fence.deadline_exceeded
+        _hyg_total_exhausted = fence.deadline_exceeded  # armed with the ceiling before the wait began
         if _hyg_total_exhausted:
             # The worker checks this deadline between digest calls; keep its lease until it exits so
             # an unchanged session cannot overlap a retry (the release below is then a no-op).
@@ -494,7 +496,7 @@ class GatewayTurnHygieneMixin:
                     "session hygiene compression cancelled at commit fence",
                 )
             except Exception as _cd_err:
-                logger.debug("hygiene unwind cooldown record failed: %s", _cd_err)
+                logger.debug("hygiene unwind cooldown record failed: %s", _cd_err, exc_info=True)
 
     async def _hmwa_hygiene_adopt_transcript(
         self, attempt, _compressed, history, plan, *, session_entry, source, _quick_key, run_generation,
@@ -806,7 +808,7 @@ class GatewayTurnHygieneMixin:
             # deployments read as permanently broken (#97963; surfaced by @686f6c61 in PR #99657).
             pass
         except Exception as e:
-            logger.warning("Session hygiene auto-compress failed: %s", e)
+            logger.warning("Session hygiene auto-compress failed: %s", e, exc_info=True)
         # A landed compression published a NEW transcript on attempt.history: leave it byte-identical.
         # Anything else (turn-hold, timeout, unwind, codex path) left the FULL uncompressed transcript
         # there — that is the fail-closed case (#111988).

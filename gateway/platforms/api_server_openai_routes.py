@@ -1510,25 +1510,31 @@ class OpenAICompatRoutesMixin:
             response_headers["X-Hermes-Session-Key"] = gateway_session_key
         return web.json_response(response_data, headers=response_headers)
 
+    async def _parse_responses_request(self, request: web.Request) -> tuple:
+        """Apply admission limits and parse the Responses request before resolving its owner."""
+        from gateway.platforms.api_server import _invalid_request
+        limited = self._concurrency_limited_response()
+        if limited is not None:
+            return None, None, limited
+        gateway_session_key, key_err = self._parse_session_key_header(request)
+        if key_err is not None:
+            return None, None, key_err
+        try:
+            return await request.json(), gateway_session_key, None
+        except ValueError:
+            return None, None, _invalid_request("Invalid JSON in request body")
+
     async def _handle_responses(self, request: web.Request) -> web.Response:
+        """POST /v1/responses — OpenAI Responses API format."""
         if getattr(self, "_semantier_embedded_boundary_required", False):
             return await self._handle_embedded_responses(request)
-        """POST /v1/responses — OpenAI Responses API format."""
         from gateway.platforms.api_server import (
             ThreadSafeAsyncQueue, _coerce_request_bool,
             _error_response, _invalid_request, _redact_api_error_text,
             _resolve_media_to_data_urls, _responses_usage_payload)
-        # Bound total in-flight agent runs (configurable; #7483).
-        limited = self._concurrency_limited_response()
-        if limited is not None:
-            return limited
-        gateway_session_key, key_err = self._parse_session_key_header(request)
-        if key_err is not None:
-            return key_err
-        try:
-            body = await request.json()
-        except Exception:
-            return _invalid_request("Invalid JSON in request body")
+        body, gateway_session_key, request_error = await self._parse_responses_request(request)
+        if request_error is not None:
+            return request_error
         raw_input = body.get("input")
         if raw_input is None:
             return _error_response("Missing 'input' field", 400)

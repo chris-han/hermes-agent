@@ -740,10 +740,10 @@ def test_interrupted_snapshot_rolls_back_destination(tmp_path, monkeypatch):
         conn.commit()
 
     ticks = iter((0.0, hermes_state._REPAIR_LOCK_TIMEOUT_SECONDS + 1.0))
-    monkeypatch.setattr(hermes_state.time, "monotonic", lambda: next(ticks))
-
-    with pytest.raises(TimeoutError):
-        hermes_state_repair._copy_database_snapshot(source, destination)
+    with monkeypatch.context() as clock:
+        clock.setattr(hermes_state.time, "monotonic", lambda: next(ticks))
+        with pytest.raises(TimeoutError):
+            hermes_state_repair._copy_database_snapshot(source, destination)
 
     with sqlite3.connect(str(destination)) as conn:
         assert conn.execute("SELECT value FROM marker").fetchall() == [("original",)]

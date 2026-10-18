@@ -1804,7 +1804,7 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
     def _open_and_cache_session_db(self, home) -> Optional[Any]:
         """Cached SessionDB for ``home`` (shared by both ``_ensure_session_db*``). Never writes
         ``self._session_db`` (explicit override only), so no profile pins later requests."""
-        if self.gateway_runner is not None:
+        if self.gateway_runner is not None and not getattr(self, "_semantier_embedded_boundary_required", False):
             from gateway.platforms.api_server_store import selected_session_db
             return selected_session_db(self, home)
         from hermes_state_registry import acquire

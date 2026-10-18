@@ -79,8 +79,12 @@ def test_retained_tui_worktree_survives_stale_prune_while_its_session_resumes(tm
     assert ink.checkout.is_dir() is resumable
 
 
-@pytest.mark.parametrize('case', ['quoted_home', 'after_new', 'terminal_closed'])
-def test_retained_tui_worktree_kept_while_any_session_in_it_resumes(tmp_path, monkeypatch, case):
+@pytest.mark.parametrize('case, home_name', [
+    pytest.param('quoted_home', 'Zoë "q" \\ home', marks=pytest.mark.platforms('posix')),
+    pytest.param('quoted_home', 'Zoë q home', marks=pytest.mark.platforms('windows')),
+    ('after_new', 'home'), ('terminal_closed', 'home'),
+])
+def test_retained_tui_worktree_kept_while_any_session_in_it_resumes(tmp_path, monkeypatch, case, home_name):
     """N5: liveness comes from the store, for every way the lock used to read as dead — a home
     git C-quotes (non-ASCII / quote / backslash, every Windows path), ``/new`` leaving the older
     session's history behind the named empty one, and a launcher killed with its terminal
@@ -94,7 +98,7 @@ def test_retained_tui_worktree_kept_while_any_session_in_it_resumes(tmp_path, mo
     from hermes_constants import get_hermes_home
     from hermes_state import SessionDB
 
-    home = tmp_path / ('Zoë "q" \\ home' if case == 'quoted_home' else 'home')
+    home = tmp_path / home_name
     home.mkdir()
     monkeypatch.setenv('HERMES_HOME', str(home))
     repo = tmp_path / 'repo'

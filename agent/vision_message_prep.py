@@ -14,7 +14,6 @@ import tempfile
 from pathlib import Path
 from typing import Any, List, Optional
 
-from gateway.execution_boundary import execution_scratch_dir
 from agent.lazy_forward import forward_static as _forward_static
 from agent.tool_dispatch_helpers import _is_multimodal_tool_result, _multimodal_text_summary
 from utils import base_url_host_matches, base_url_hostname
@@ -70,6 +69,8 @@ class VisionMessagePrepMixin:
 
     @staticmethod
     def _materialize_data_url_for_vision(image_url: str) -> tuple[str, Optional[Path]]:
+        from gateway.execution_boundary import execution_scratch_dir
+
         header, _, data = str(image_url or "").partition(",")
         if len(data) > VisionMessagePrepMixin._MAX_DATA_URL_BASE64_BYTES:
             logger.warning("data-URL payload too large (%d bytes), skipping", len(data))
