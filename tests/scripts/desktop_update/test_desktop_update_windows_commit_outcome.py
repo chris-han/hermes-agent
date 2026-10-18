@@ -152,33 +152,38 @@ def test_nonzero_exit_after_the_commit_point_is_installed_with_a_followup(tmp_pa
         assert (result['ok'], result['exit_code']) == (False, 130), result
 
 
-_TIMED_CHECKOUT_HOLDER = """
-import msvcrt, os, sys, time
-fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT | os.O_BINARY, 0o644)
-os.lseek(fd, 1 << 20, os.SEEK_SET)
-msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)   # hermes_cli/update_lock.py::_try_lock's byte
-time.sleep(float(sys.argv[2]))
-"""
-
-
 @pytest.mark.platforms('windows')
 def test_result_finished_at_is_stamped_after_the_r6_release_wait(tmp_path: Path) -> None:
-    # The relaunched Desktop drops a non-manual result whose finished_at is 30 minutes old; the
-    # R6 wait lasts up to 2 h. The result must carry the time the hand-off actually finished.
-    holders = []
+    """The finish timestamp follows release, regardless of cold launcher startup time."""
+    import msvcrt
+    from concurrent.futures import ThreadPoolExecutor
+    from tests.waiting import wait_until
 
-    def hold_checkout(_home: Path, install: Path) -> None:
-        holders.append((subprocess.Popen([sys.executable, '-c', _TIMED_CHECKOUT_HOLDER,
-                                          str(install / '.hermes-update.lock'), '25']), time.time() + 25))
-    try:
-        code, out, _, result, home = _handoff(tmp_path, '-NoGateway', prepare=hold_checkout)
-    finally:
-        for proc, _ in holders:
-            proc.kill(); proc.wait()
+    released_at, releases = [], []
+
+    def hold_checkout(home: Path, install: Path) -> None:
+        lock = open(install / '.hermes-update.lock', 'a+b')  # windows-footgun: ok -- binary lock
+        lock.seek(1 << 20)
+        msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+        log = home / 'logs/desktop-update-handoff.log'
+
+        def release_after_wait_starts():
+            try:
+                wait_until(lambda: log.exists() and 'keeping the update marker' in
+                           log.read_text(encoding='utf-8-sig'), timeout=180,
+                           what='handoff reached checkout release wait')
+                released_at.append(time.time())
+            finally:
+                lock.seek(1 << 20)
+                msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+                lock.close()
+        releases.append(executor.submit(release_after_wait_starts))
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        code, out, _, result, _home = _handoff(tmp_path, '-NoGateway', prepare=hold_checkout, timeout=240)
+        releases[0].result()
     assert code == 0, out
-    log = (home / 'logs/desktop-update-handoff.log').read_text(encoding='utf-8-sig')
-    assert 'keeping the update marker' in log, log
-    assert result['ok'] is True and result['finished_at'] >= int(holders[0][1]) - 1, result
+    assert result['ok'] is True and result['finished_at'] >= int(released_at[0]), result
 
 
 @pytest.mark.platforms('windows')
