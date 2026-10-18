@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 def _read_durations(path: Path) -> dict[str, float]:
-    durations = json.loads(path.read_text(encoding="utf-8"))
+    durations = json.loads(path.read_text(encoding="utf-8-sig"))
     if not isinstance(durations, dict) or any(
         isinstance(value, bool)
         or not isinstance(value, (int, float))

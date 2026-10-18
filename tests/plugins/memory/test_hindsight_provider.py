@@ -151,8 +151,8 @@ def _assert_cloud_client_lazy_installed_before_import(tmp_path, monkeypatch, mod
     provider = _provider_for_mode(tmp_path, monkeypatch, mode)
     ensure_calls = []
 
-    def fake_ensure(feature, prompt=True):
-        ensure_calls.append((feature, prompt))
+    def fake_sync(*, explicit=False, plugins=None):
+        ensure_calls.append((plugins.dirs[0].name, explicit))
 
     class FakeHindsight:
         def __init__(self, **kwargs):
@@ -162,17 +162,18 @@ def _assert_cloud_client_lazy_installed_before_import(tmp_path, monkeypatch, mod
 
     def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
         if name == "hindsight_client":
-            if ensure_calls != [("memory.hindsight", False)]:
+            if ensure_calls != [("hindsight", False)]:
                 raise ModuleNotFoundError("No module named 'hindsight_client'")
             return SimpleNamespace(Hindsight=FakeHindsight)
         return real_import(name, globals, locals, fromlist, level)
 
-    monkeypatch.setattr("tools.lazy_deps.ensure", fake_ensure)
+    monkeypatch.setattr("pm.sync_venv", fake_sync)
+    monkeypatch.setattr("importlib.util.find_spec", lambda name: None)
     monkeypatch.setattr(builtins, "__import__", guarded_import)
 
     client = provider._get_client()
 
-    assert ensure_calls == [("memory.hindsight", False)]
+    assert ensure_calls == [("hindsight", False)]
     assert isinstance(client, FakeHindsight)
     assert client.kwargs == {
         "base_url": "http://localhost:9999",
@@ -440,6 +441,7 @@ class TestPostSetup:
         monkeypatch.setattr("builtins.input", lambda prompt="": "")
         monkeypatch.setattr("sys.stdin.isatty", lambda: True)
         monkeypatch.setattr("getpass.getpass", lambda prompt="": "sk-local-test")
+        monkeypatch.setattr("pm.sync_venv", lambda **kwargs: None)
         saved_configs = []
         monkeypatch.setattr("hermes_cli.config.save_config", lambda cfg: saved_configs.append(cfg.copy()))
 
@@ -1629,10 +1631,10 @@ class TestPostSetupEnvEncoding:
                             lambda *a, **kw: 0)  # cloud mode
         monkeypatch.setattr("hermes_cli.config.save_config", lambda c: None)
         # Skip the dependency install (now routed through lazy_deps, NS-605).
-        import tools.lazy_deps as lazy_deps_mod
+        import pm
         monkeypatch.setattr(
-            lazy_deps_mod, "install_specs",
-            lambda *a, **kw: SimpleNamespace(ok=True),
+            pm, "sync_venv",
+            lambda **kw: None,
         )
         # First line: API key prompt (readline). Second line: API URL (input).
         monkeypatch.setattr(sys, "stdin", io.StringIO("sk-new\n\n"))
@@ -1655,16 +1657,15 @@ class TestPostSetupEnvEncoding:
         assert "﻿" not in content
 
 
-class TestClientAutoUpgradeRoutesThroughLazyDeps:
+class TestClientAutoUpgradeRoutesThroughPM:
     """The initialize()-time hindsight-client auto-upgrade must go through
-    lazy_deps.install_specs() (environment-aware, durable-target on sealed
-    hosted venvs) — never a direct `uv pip install --python sys.executable`
+    PM plugin-union sync — never a direct `uv pip install --python sys.executable`
     subprocess, which fails with EROFS/EACCES on immutable images (NS-605)."""
 
     def _init_with_outdated_client(self, tmp_path, monkeypatch, outcome):
         import importlib.metadata as md
         import subprocess as subprocess_mod
-        import tools.lazy_deps as lazy_deps_mod
+        import pm
 
         config_path = tmp_path / "hindsight" / "config.json"
         config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1677,10 +1678,12 @@ class TestClientAutoUpgradeRoutesThroughLazyDeps:
         monkeypatch.setattr(md, "version", lambda name: "0.0.1")
 
         calls = []
-        monkeypatch.setattr(
-            lazy_deps_mod, "install_specs",
-            lambda specs, **kw: calls.append(tuple(specs)) or outcome,
-        )
+        def sync(**kwargs):
+            calls.append(tuple(path.name for path in kwargs["plugins"].dirs))
+            if not outcome.ok:
+                from pm.package import InstallError
+                raise InstallError("hindsight", outcome.reason)
+        monkeypatch.setattr(pm, "sync_venv", sync)
 
         # Regression guard: no direct pip subprocess may run.
         def _no_subprocess(*a, **kw):  # pragma: no cover - fails loudly
@@ -1691,13 +1694,11 @@ class TestClientAutoUpgradeRoutesThroughLazyDeps:
         provider.initialize(session_id="s", hermes_home=str(tmp_path), platform="cli")
         return calls
 
-    def test_upgrade_uses_install_specs_not_subprocess(self, tmp_path, monkeypatch):
-        from plugins.memory.hindsight import _MIN_CLIENT_VERSION
-
+    def test_upgrade_uses_pm_union_not_subprocess(self, tmp_path, monkeypatch):
         calls = self._init_with_outdated_client(
             tmp_path, monkeypatch, SimpleNamespace(ok=True)
         )
-        assert calls == [(f"hindsight-client>={_MIN_CLIENT_VERSION}",)]
+        assert calls == [("hindsight",)]
 
     def test_blocked_upgrade_is_nonfatal_and_surfaces_reason(
         self, tmp_path, monkeypatch, caplog

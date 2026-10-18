@@ -473,6 +473,9 @@
   },
   "model": "qwen3.5-plus",
   "off": {
+   "extra_body": {
+    "enable_thinking": false
+   },
    "messages": [
     {
      "content": [
@@ -713,6 +716,9 @@
   },
   "model": "qwen3.5-plus",
   "off": {
+   "extra_body": {
+    "enable_thinking": false
+   },
    "messages": [
     {
      "content": "You are a test agent.",
@@ -1241,6 +1247,9 @@
   },
   "model": "qwen3.5-plus",
   "off": {
+   "extra_body": {
+    "enable_thinking": false
+   },
    "messages": [
     {
      "content": "You are a test agent.",
@@ -1417,6 +1426,9 @@
   },
   "model": "qwen3.5-plus",
   "off": {
+   "extra_body": {
+    "enable_thinking": false
+   },
    "messages": [
     {
      "content": "You are a test agent.",

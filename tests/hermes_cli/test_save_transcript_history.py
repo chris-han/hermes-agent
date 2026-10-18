@@ -45,6 +45,8 @@ def _gateway_save(db, fmt, out):
 
     source = SessionSource(platform=Platform.TELEGRAM, user_id="u1", chat_id="c1", user_name="t", chat_type="dm")
     runner = object.__new__(GatewayRunner)
+    from gateway.config import GatewayConfig
+    runner.config = GatewayConfig()
     delivered = {}
     adapter = MagicMock()
     adapter.send_document = AsyncMock(side_effect=lambda **kw: delivered.update(

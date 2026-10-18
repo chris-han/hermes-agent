@@ -158,13 +158,13 @@ def _inject_context_from(job: dict, prompt: str) -> tuple[str, bool]:
                 records = provider.list_outputs(output_dir.parent.parent, source_job_id)
                 if not records:
                     raise RuntimeError(f"Referenced cron SQLite output is unavailable: {source_job_id}")
-                candidates = [str(record["content"]).strip() for record in records]
+                candidates = [str(record["content"]) for record in records]
             else:
                 output_files = sorted(
                     (output_dir / source_job_id).glob("*.md"), key=lambda f: f.stat().st_mtime,
                     reverse=True,
                 )
-                candidates = (output_file.read_text(encoding="utf-8-sig").strip() for output_file in output_files)
+                candidates = (output_file.read_text(encoding="utf-8-sig") for output_file in output_files)
             latest_output = ""
             for candidate in candidates:
                 # Only the run header describes suppression; script/agent payloads can

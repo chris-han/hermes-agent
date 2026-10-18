@@ -75,3 +75,6 @@ jobs:
       # so run one check at a time on the standard runner.
       - name: Run all workspace checks
         run: node .github/scripts/run-workspace-checks.mjs --concurrency 1
+
+      - name: Check the checkout is clean
+        uses: ./.github/actions/check-clean-worktree

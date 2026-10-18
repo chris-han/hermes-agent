@@ -351,6 +351,7 @@ _UPDATE_DEPENDENCIES = (
     "hermes_platform/resolver/__init__.py",  # update_cmd_commit's interpreter lookup
     "hermes_platform/resolver/base.py",
     "hermes_platform/resolver/core.py",
+    "hermes_platform/resolver/known_dirs.py",
     "agent/curator.py",
     "plugins/memory/__init__.py",
     "tools/checkpoint_maintenance.py",
