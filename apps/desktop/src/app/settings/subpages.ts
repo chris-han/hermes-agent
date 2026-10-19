@@ -47,6 +47,7 @@ const SUBPAGE_ICONS: Record<string, IconComponent> = {
   appearanceChatDisplay: MessageCircle,
   appearancePet: PawPrint,
   appearanceGeneral: Settings2,
+  appearanceCustomize: FileImage,
   modelMain: Box,
   modelAuxiliary: Cpu,
   modelMoa: Users,

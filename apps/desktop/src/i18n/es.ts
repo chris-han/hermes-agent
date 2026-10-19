@@ -690,6 +690,7 @@ export const esOverrides = {
       appearanceChatDisplay: 'Visualización del chat',
       appearancePet: 'Mascota',
       appearanceGeneral: 'General',
+      appearanceCustomize: 'Personalizar',
       modelMain: 'Modelo principal',
       modelAuxiliary: 'Modelos auxiliares',
       modelMoa: 'Mixture of Agents',

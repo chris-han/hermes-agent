@@ -687,6 +687,7 @@ export const frOverrides = {
       appearanceChatDisplay: 'Affichage des conversations',
       appearancePet: 'Compagnon',
       appearanceGeneral: 'Général',
+      appearanceCustomize: 'Personnaliser',
       modelMain: 'Modèle principal',
       modelAuxiliary: 'Modèles auxiliaires',
       modelMoa: 'Mixture of Agents',

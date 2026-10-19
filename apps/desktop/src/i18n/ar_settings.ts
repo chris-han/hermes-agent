@@ -19,6 +19,7 @@ export const arSettings = {
       appearanceChatDisplay: 'عرض المحادثة',
       appearancePet: 'الحيوان الأليف',
       appearanceGeneral: 'عام',
+      appearanceCustomize: 'التخصيص',
       modelMain: 'النموذج الرئيسي',
       modelAuxiliary: 'النماذج المساعدة',
       modelMoa: 'مزيج الوكلاء',

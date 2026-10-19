@@ -1,6 +1,7 @@
 import { useStore } from '@nanostores/react'
 import { type ReactElement, useEffect } from 'react'
 
+import { SemantierAttribution } from '@/components/organization-brand'
 import { UpdateStatusCard, VersionHero } from '@/components/update-status'
 import { VersionDetails } from '@/components/version-details'
 import { useI18n } from '@/i18n'
@@ -54,6 +55,12 @@ function AppUpdatesSettings({ includeUninstall }: AppUpdatesSettingsProps): Reac
   return (
     <SettingsContent>
       <VersionHero version={version} />
+      <div className="text-center">
+        <p className="text-xs text-muted-foreground">
+          {t.branding.organizationId}: {t.branding.unbound}
+        </p>
+        <SemantierAttribution />
+      </div>
       <div className="mx-auto mt-4 w-full max-w-2xl">
         <SectionHeading icon={RefreshCw} title={t.settings.about.updates} />
         <div className="grid gap-3" id={settingElementId(SETTING_IDS.about.updates)}>

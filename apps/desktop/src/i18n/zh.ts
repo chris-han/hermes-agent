@@ -1,5 +1,6 @@
 import { defineFieldCopy } from '@/app/settings/field-copy'
 
+import { zhBranding } from './branding'
 import { defineLocale, type TranslationOverrides } from './define-locale'
 import { introZh } from './intro-zh'
 import { zhAuxTasks } from './zh_aux_tasks'
@@ -16,6 +17,7 @@ import { zhThemePicker } from './zh_theme_picker'
 import { zhUpdateChannel } from './zh_update_channel'
 
 export const zhOverrides = {
+  branding: zhBranding,
   externalOpenFailed: {
     title: '无法打开此链接',
     message: '没有注册用于打开此地址的浏览器。请复制链接并手动打开。',
@@ -458,6 +460,7 @@ export const zhOverrides = {
       appearanceChatDisplay: '聊天显示',
       appearancePet: '宠物',
       appearanceGeneral: '常规',
+      appearanceCustomize: '品牌定制',
       modelMain: '主模型',
       modelAuxiliary: '辅助模型',
       modelMoa: '多智能体协作',

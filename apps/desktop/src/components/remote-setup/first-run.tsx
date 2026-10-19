@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { ReactElement } from 'react'
 
 import { BrandMark } from '@/components/brand-mark'
+import { OrganizationBrand } from '@/components/organization-brand'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/i18n'
 import { Loader2 } from '@/lib/icons'
@@ -43,6 +44,7 @@ export function FirstRunRemoteSetup({ onBack }: FirstRunRemoteSetupProps): React
       <div className="flex w-full max-w-xl flex-col rounded-xl border border-(--stroke-nous) bg-card p-8 shadow-nous">
         <div className="flex items-start gap-4">
           <BrandMark className="size-11 shrink-0" />
+          <OrganizationBrand attribution compact />
           <div className="min-w-0">
             <h2 className="text-xl font-semibold tracking-tight">{copy.remoteSetupTitle}</h2>
             <p className="mt-1.5 text-sm text-muted-foreground">{copy.remoteSetupDesc}</p>

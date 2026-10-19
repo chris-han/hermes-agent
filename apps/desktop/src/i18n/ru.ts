@@ -358,6 +358,7 @@ export const ruOverrides = {
       appearanceChatDisplay: 'Отображение чата',
       appearancePet: 'Питомец',
       appearanceGeneral: 'Общие',
+      appearanceCustomize: 'Настройка бренда',
       modelMain: 'Основная модель',
       modelAuxiliary: 'Вспомогательные модели',
       modelMoa: 'Совместная работа агентов',

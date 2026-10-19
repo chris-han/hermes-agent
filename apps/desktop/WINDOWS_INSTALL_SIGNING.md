@@ -16,7 +16,7 @@ $cert = New-SelfSignedCertificate `
   -KeyUsage DigitalSignature `
   -FriendlyName 'Hermes Local Signing' `
   -CertStoreLocation 'Cert:\CurrentUser\My' `
-  -TextExtension @('2.5.29.37={text}1.3.6.1.5.5.7.3.3') `
+  -TextExtension @('2.5.29.19={text}', '2.5.29.37={text}1.3.6.1.5.5.7.3.3') `
   -NotAfter (Get-Date).AddYears(2)
 
 $cert.Thumbprint
@@ -31,59 +31,29 @@ $cert.Thumbprint
 
 ## 2. 每次构建后签名并打包
 
-将下面内容保存为自己的 `.ps1` 脚本，修改顶部变量后运行。
-`$msix` 指向新构建的包；每次使用新的 `$dist` 文件夹和 `$zip` 文件名，避免混入旧文件。
-`$signtool` 和 `$sevenZip` 指向构建准备阶段提供的工具，示例路径可按实际构建工作目录调整。
+先检查当前用户已有证书及私钥、有效期、代码签名 EKU 和包清单的 Publisher。优先复用有效且用途合适的证书；有多个候选时必须通过已记录的指纹或既有信任依据明确选择，不能猜测。仅在没有可用证书时创建一次。创建示例的 Subject 只是参考，实际必须与本次 MSIX 清单的 `Identity Publisher` 逐字相同。界面品牌不改变包标识或发布者。
+
+使用仓库提供的脚本（所有路径均填写本次实际值）：
 
 ```powershell
-$ErrorActionPreference = 'Stop'
-
-$thumbprint = 'YOUR_CERTIFICATE_THUMBPRINT'
-$msix = 'D:\path\Hermes.msix'
-$dist = 'D:\path\distribution-new-build'
-$zip = 'D:\path\Hermes-new-build-windows-x64-signed.zip'
-
-$signtool = 'D:\repo\hermes-agent\.build\desktop-main-c277422\packager\winCodeSign\x64\signtool.exe'
-$sevenZip = 'D:\repo\hermes-agent\.build\desktop-main-c277422\packager\sevenZip\bin\7za.exe'
-
-if (Test-Path -LiteralPath $dist) { throw '请使用新的分发文件夹。' }
-if (Test-Path -LiteralPath $zip) { throw '请使用新的 ZIP 文件名。' }
-if (-not (Test-Path -LiteralPath $msix -PathType Leaf)) { throw '找不到 MSIX。' }
-
-$cert = Get-Item -LiteralPath "Cert:\CurrentUser\My\$thumbprint"
-if (-not $cert.HasPrivateKey) { throw '签名证书缺少私钥。' }
-if ($cert.NotAfter -le (Get-Date)) { throw '签名证书已过期。' }
-
-& $signtool sign /fd SHA256 /sha1 $thumbprint $msix
-if ($LASTEXITCODE -ne 0) { throw 'MSIX 签名失败。' }
-
-New-Item -ItemType Directory -Path $dist | Out-Null
-Export-Certificate -Cert $cert -FilePath "$dist\Hermes-signing.cer" | Out-Null
-Copy-Item -LiteralPath $msix -Destination $dist
-
-Get-ChildItem -LiteralPath $dist -File | Sort-Object Name | ForEach-Object {
-    $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-    "$hash  $($_.Name)"
-} | Set-Content -LiteralPath "$dist\SHA256SUMS.txt" -Encoding ascii
-
-& $sevenZip a -tzip $zip "$dist\*"
-if ($LASTEXITCODE -ne 0) { throw 'ZIP 创建失败。' }
-
-& $sevenZip t $zip
-if ($LASTEXITCODE -ne 0) { throw 'ZIP 校验失败。' }
-
-$zipHash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
-Set-Content -LiteralPath ($zip + '.sha256') `
-    -Value ($zipHash + '  ' + [IO.Path]::GetFileName($zip)) -Encoding ascii
-Get-Item -LiteralPath $zip | Select-Object FullName, Length
-Write-Output "SHA256: $zipHash"
+& .\apps\desktop\scripts\sign-windows-distribution.ps1 `
+  -Msix 'D:\path\Hermes.msix' `
+  -Thumbprint 'EXPLICIT_CERTIFICATE_THUMBPRINT' `
+  -SourceCommit 'COMPLETE_40_CHARACTER_HERMES_COMMIT' `
+  -SignTool 'D:\path\signtool.exe' `
+  -MakeAppx 'D:\path\makeappx.exe' `
+  -SevenZip 'D:\path\7za.exe' `
+  -Output 'D:\path\new-distribution'
+if ($LASTEXITCODE -ne 0) { throw '分发失败' }
 ```
 
-此流程签署的是 MSIX 包，包签名覆盖包内容；它不会逐个为内部 EXE/DLL 添加 Authenticode 签名。
-这里没有配置可信时间戳，因此不要假定证书到期后新安装仍能通过验证。
-ZIP 只分发 MSIX、公钥 `.cer` 和校验文件，不要把私钥 `.pfx` 放入分发目录。
+脚本保留原始未签名 MSIX 及构建收据，只签署新的分发副本。它先解包清单验证 Publisher/版本/架构，签名后必须在**已有信任**的环境中通过 SignTool `verify /pa /v` 才允许组装 ZIP。不会导入证书或改变机器信任。信任或私钥权限不足时停止并报告具体原因，由用户决定最小必要干预；不能通过自动导入证书使检查变绿。
 
-## 3. 安装电脑首次信任证书
+分发目录包含签名 MSIX、公钥 `.cer`、SHA256SUMS.txt 和 build-metadata.json。元数据绑定完整源提交、包名称/版本/架构、证书指纹/有效期、签名/验证结果、是否使用可信时间戳。所有散列在签名后生成。脚本校验 ZIP 完整性、提取后的文件集合和每项散列，再生成 ZIP 的 SHA-256 边车文件。禁止私钥、PFX、密码或凭据进入分发目录。
+
+可选 `-TimestampUrl` 使用 RFC 3161 时间戳；不提供时明确记录 `trustedTimestamp: false`。包签名覆盖包内容，不等于为每个内部 EXE/DLL 添加 Authenticode 签名。未使用可信时间戳时，不保证证书到期后的安装验证。
+
+## 3. 接收方安装电脑首次信任证书（本地构建流程不执行）
 
 先通过可信渠道核对 `.cer` 的证书指纹：
 

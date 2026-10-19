@@ -80,6 +80,7 @@ import { AppearanceExtraSlot } from './appearance-contrib'
 import type { AppearanceSubpageId } from './appearance-subpages'
 import { ChatFontSetting } from './chat-font-setting'
 import { MODE_OPTIONS } from './constants'
+import { CustomizeSettings } from './customize-settings'
 import { setNested } from './helpers'
 import { MinimizeToTraySetting } from './minimize-to-tray-setting'
 import { PetSettings } from './pet-settings'
@@ -547,6 +548,10 @@ export function AppearanceSettings({ subpage }: AppearanceSettingsProps = {}) {
   const uiScaleOptions = UI_SCALE_PRESETS.map(preset => ({ id: preset, label: `${preset}%` }))
 
   const matchedScalePreset = matchUiScalePreset(zoomPercent)
+
+  if (subpage === 'customize') {
+    return <CustomizeSettings />
+  }
 
   return (
     <SettingsContent>

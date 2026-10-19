@@ -2,6 +2,7 @@ import type { ModelOptionProvider } from '@hermes/shared'
 import { useStore } from '@nanostores/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
+import { OrganizationBrand } from '@/components/organization-brand'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
@@ -427,6 +428,9 @@ export function DesktopOnboardingOverlay({
       // `[data-glass-opaque]` in styles.css.
       data-glass-opaque=""
     >
+      <div className="absolute inset-x-6 top-6">
+        <OrganizationBrand attribution compact />
+      </div>
       <div
         className={cn(
           'relative w-full max-w-[45rem] transition-all duration-500 ease-out',

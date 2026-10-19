@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron'
 
+import { createBrandingBridge } from './desktop-branding-bridge'
 import type { DesktopProfileRoute } from './desktop-profile'
 import type { HudModifierApi, HudModifierStatus } from './hud-modifier-types'
 import { customWindowControlsEnabled } from './window-controls'
@@ -390,6 +391,7 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
 
     return () => ipcRenderer.removeListener('hermes:keep-awake-offer', listener)
   },
+  branding: createBrandingBridge(),
   minimizeToTray: {
     get: () => ipcRenderer.invoke('hermes:minimize-to-tray:get'),
     set: on => ipcRenderer.invoke('hermes:minimize-to-tray:set', on),

@@ -220,6 +220,7 @@ import { describeCrashReason, installCrashForensics } from './crash-forensics'
 import { adoptServedDashboardToken } from './dashboard-token'
 import { resolveDesktopHermesHome, resolveDesktopUserData } from './data-paths'
 import { registerDeepLinkProtocol as registerDeepLinkProtocolWith } from './deep-link-protocol'
+import { installDesktopBranding } from './desktop-branding-ipc'
 import { loadOrCreateInstallationId, sshOwnershipId } from './desktop-installation'
 import { formatDesktopLogLine, formatLogStamp } from './desktop-log-line'
 import {
@@ -12545,6 +12546,8 @@ function installPreviewGuestPreload() {
 // builder live in session-windows.ts so they stay unit-testable.
 const sessionWindows = createSessionWindowRegistry()
 
+const desktopBranding = installDesktopBranding(path.join(app.getPath('userData'), 'desktop-branding.v1.json'))
+
 const minimizeToTray = createMinimizeToTray({
   preferencesPath: path.join(app.getPath('userData'), 'minimize-to-tray.json'),
   getIconPath: getAppIconPath,
@@ -12734,6 +12737,7 @@ function spawnBrowserWindow(tabId) {
     recentReloadTimesRef: rendererReloadTimesRef
   })
 
+  desktopBranding.registerWindow(win)
   minimizeToTray.registerWindow(win)
   win.on('closed', () => {
     notifyBrowserPopoutClosed(tabId)
@@ -18440,6 +18444,7 @@ function heldQuitForActiveWork(event: Electron.Event): boolean {
 // here, on the close event itself, catches it in time; "Quit Anyway" re-enters
 // before-quit with the latch set and falls through.
 function registerChatWindow(window: BrowserWindow) {
+  desktopBranding.registerWindow(window)
   minimizeToTray.registerWindow(window, { closeToTray: process.platform === 'win32' || window === mainWindow })
   chatWindows.add(window)
   window.on('close', (event: Electron.Event) => {

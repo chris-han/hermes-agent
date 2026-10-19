@@ -22,6 +22,7 @@ export const zhHantSettings = {
       appearanceChatDisplay: '聊天顯示',
       appearancePet: '寵物',
       appearanceGeneral: '一般',
+      appearanceCustomize: '品牌自訂',
       modelMain: '主要模型',
       modelAuxiliary: '輔助模型',
       modelMoa: '多代理協作',

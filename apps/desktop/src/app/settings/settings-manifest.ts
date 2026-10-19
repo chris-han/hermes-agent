@@ -53,6 +53,11 @@ const appearanceSetting = (subpage: AppearanceSubpageId, keywords: readonly stri
  */
 export const SETTINGS_MANIFEST = {
   appearance: {
+    customize: {
+      subpage: 'customize',
+      keywords: ['brand', 'logo', 'organization', 'customize'],
+      copy: t => ({ label: t.branding.title, description: t.branding.scope })
+    },
     language: {
       subpage: 'general',
       keywords: ['locale'],

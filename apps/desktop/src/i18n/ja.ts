@@ -281,6 +281,7 @@ export const jaOverrides = {
       appearanceChatDisplay: 'チャット表示',
       appearancePet: 'ペット',
       appearanceGeneral: '一般',
+      appearanceCustomize: 'カスタマイズ',
       modelMain: 'メインモデル',
       modelAuxiliary: '補助モデル',
       modelMoa: 'エージェントの協調',

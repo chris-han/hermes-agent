@@ -1,7 +1,10 @@
+import { useStore } from '@nanostores/react'
 import { useState } from 'react'
 
+import { OrganizationBrand } from '@/components/organization-brand'
 import { useI18n } from '@/i18n'
 import { capitalize, normalize } from '@/lib/text'
+import { $desktopBranding } from '@/store/desktop-branding'
 
 import introCopyJsonl from './intro-copy.jsonl?raw'
 import { Wordmark } from './wordmark'
@@ -159,6 +162,7 @@ function resolveCopy(personality?: string, seed?: number): IntroCopy {
 }
 
 export function Intro({ personality, seed }: IntroProps) {
+  const branding = useStore($desktopBranding)
   const [mountSeed] = useState(() => Math.floor(Math.random() * 100000))
   const { t } = useI18n()
   const rotationSeed = mountSeed + (seed ?? 0)
@@ -176,7 +180,7 @@ export function Intro({ personality, seed }: IntroProps) {
       data-slot="aui_intro"
     >
       <div className="w-full min-w-0">
-        <Wordmark className="mb-1" text={WORDMARK} />
+        {branding.displayName || branding.logo ? <OrganizationBrand /> : <Wordmark className="mb-1" text={WORDMARK} />}
 
         <p className="m-0 text-center leading-normal tracking-tight">{body}</p>
       </div>

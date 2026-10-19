@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router'
 
 import { PlatformAvatar } from '@/app/messaging/platform-icon'
+import { OrganizationBrand, SemantierAttribution } from '@/components/organization-brand'
 import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
 import { ContextMenu, ContextMenuContent, ContextMenuTrigger } from '@/components/ui/context-menu'
@@ -1576,6 +1577,9 @@ export function ChatSidebar({
       <SidebarContent className="gap-0 overflow-hidden bg-transparent px-2.5">
         <SidebarGroup className="shrink-0 p-0 pb-2 pt-[calc(var(--titlebar-height)+0.375rem)]">
           <SidebarGroupContent>
+            <div className="px-2 pb-2">
+              <OrganizationBrand compact />
+            </div>
             <SidebarMenu className="gap-px">
               {navItems.map(item => {
                 const isInteractive = Boolean(item.action) || Boolean(item.route)
@@ -2067,6 +2071,9 @@ export function ChatSidebar({
           </div>
         )}
       </SidebarContent>
+      <div className="shrink-0 px-4 py-2">
+        <SemantierAttribution />
+      </div>
       <ProjectDialog />
       {/* One mount for the whole app. The header of WorktreeDialog tells why. */}
       <WorktreeDialog />

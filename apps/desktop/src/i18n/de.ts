@@ -687,6 +687,7 @@ export const deOverrides = {
       appearanceChatDisplay: 'Chat-Anzeige',
       appearancePet: 'Begleiter',
       appearanceGeneral: 'Allgemein',
+      appearanceCustomize: 'Anpassen',
       modelMain: 'Hauptmodell',
       modelAuxiliary: 'Hilfsmodelle',
       modelMoa: 'Mixture of Agents',

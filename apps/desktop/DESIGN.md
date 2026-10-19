@@ -579,3 +579,11 @@ The detailed state contract lives in the scoped
 - [ ] `cursor-pointer`, focus ring, and `Esc`-to-close behave?
 - [ ] Touched a primitive, token, or variant? Its named-contract entry in this
       file is updated in the same change.
+
+## Local organization display branding
+
+Settings → Appearance → Customize follows the existing settings NavLink, Input, Button and SectionHeading contracts. Menu rows retain icons and neutral selection; no colored edge. One locale follows global app language, including localized Semantier attribution. `customize-settings.tsx` owns the editable draft and eight explicit placement previews; previews pass draft identity into the same `OrganizationBrand` fragment used by real consumers and never mount live workflows. Apply commits only after native success; invalid/stale image work and failed saves retain the prior identity and recoverable draft. Reset is a draft action until Apply; remove keeps the name.
+
+`electron/desktop-branding.ts` owns the installation-wide versioned appearance record in userData, atomic serialized writes, safe raster revalidation and cold reads. `desktop-branding-ipc.ts` admits only registered top-level desktop windows; the sandbox-safe bridge supplies initial state before first paint and peer publications. `src/store/desktop-branding.ts` caches that committed native truth with stale-response guards. `OrganizationBrand` projects it into welcome, shared sidebar, Customize, About/version, updates, install, first remote connection and model onboarding. Upstream BrandMark, native identity, provider icons, version facts and notices retain their existing owners.
+
+Name/logo are display preferences, never organization authority. Organization ID stays read-only from authenticated Semantier context only; no such binding is currently exposed, so an explicit unavailable status is valid and non-blocking. Never derive it from Nous billing, a logo/name or local persistence. `SemantierAttribution` localizes quiet product attribution separately from preserved upstream notices.

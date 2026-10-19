@@ -1,5 +1,6 @@
 import { FIELD_DESCRIPTIONS, FIELD_LABELS } from '@/app/settings/constants'
 
+import { enBranding } from './branding'
 import { enAppTour } from './en_app_tour'
 import { enAuxTasks } from './en_aux_tasks'
 import { enBilling } from './en_billing'
@@ -21,6 +22,7 @@ import { enUpdateChannel } from './en_update_channel'
 import type { Translations } from './types'
 
 export const en: Translations = {
+  branding: enBranding,
   externalOpenFailed: {
     title: 'Couldn’t open this link',
     message: 'No browser is registered to open this address. Copy the link and open it manually.',
@@ -686,6 +688,7 @@ export const en: Translations = {
       appearanceChatDisplay: 'Chat display',
       appearancePet: 'Pet',
       appearanceGeneral: 'General',
+      appearanceCustomize: 'Customize',
       modelMain: 'Main model',
       modelAuxiliary: 'Auxiliary models',
       modelMoa: 'Mixture of Agents',
@@ -3538,7 +3541,8 @@ export const en: Translations = {
     restoreImageDraft: 'Restore image draft',
     queueCancelFailed: "Couldn't remove the queued turn",
     queueLostDiscard: 'Discard',
-    queueLostDiscardTip: 'The gateway restarted mid-turn and cannot finish this one. Discard it so the queued turns behind it run.',
+    queueLostDiscardTip:
+      'The gateway restarted mid-turn and cannot finish this one. Discard it so the queued turns behind it run.',
     queueResume: 'Resume',
     queueResumeTip: 'Paused by Stop — resume sending the queued turns',
     queueStuckTitle: 'Queued message not sent',

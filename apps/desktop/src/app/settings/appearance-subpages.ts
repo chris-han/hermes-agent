@@ -1,5 +1,6 @@
 export const APPEARANCE_SUBPAGES = [
   { id: 'general', labelKey: 'appearanceGeneral' },
+  { id: 'customize', labelKey: 'appearanceCustomize' },
   { id: 'theme', labelKey: 'appearanceTheme' },
   { id: 'typography', labelKey: 'appearanceTypography' },
   { id: 'window-layout', labelKey: 'appearanceWindowLayout' },

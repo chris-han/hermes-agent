@@ -4,6 +4,7 @@ import type { TranslucencyState } from '@hermes/shared/translucency'
 
 import type { ChallengeOutcome } from '../electron/challenge-window'
 import type { ScreenshotApi } from '../electron/command-screenshot-types'
+import type { DesktopBranding } from '../electron/desktop-branding-types'
 import type { HudModifierApi } from '../electron/hud-modifier-types'
 import type { MachineProfile } from '../electron/machine-profile'
 import type { HermesNotification } from '../electron/notification-types'
@@ -373,6 +374,12 @@ declare global {
       setTranslucency?: (payload: TranslucencyState) => void
       setKeepAwake?: (mode: KeepAwakeMode) => void
       onKeepAwakeOffer?: (callback: () => void) => () => void
+      branding?: {
+        initial: DesktopBranding
+        get: () => Promise<DesktopBranding>
+        set: (value: DesktopBranding) => Promise<DesktopBranding>
+        onChanged: (callback: (value: DesktopBranding) => void) => () => void
+      }
       minimizeToTray?: {
         get: () => Promise<{ enabled: boolean; available: boolean }>
         set: (on: boolean) => Promise<{ enabled: boolean; available: boolean }>
