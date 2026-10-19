@@ -118,6 +118,15 @@ def perform_api_call(
             defer_logical_completion=True,
         )
 
+    from agent.semantier_gateway import attribute_request
+    api_kwargs = attribute_request(
+        api_kwargs, base_url=str(agent.base_url or ''),
+        purpose=('subagent' if getattr(agent, 'is_subagent', False) is True
+                 else {'subagent': 'subagent', 'cron': 'cron'}.get(str(agent.platform or ''), 'chat')),
+        session_id=str(agent.session_id or ''), run_id=str(effective_task_id or turn_id or ''),
+        request_id=str(api_request_id),
+    )
+
     from hermes_cli.middleware import run_llm_execution_middleware
 
     # The ``_model_request_active`` bracket is taken under the redirect lock when one exists,

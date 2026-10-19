@@ -96,3 +96,14 @@ for _name, _params, _result in (
     ('bot_relay.deliver', CanonicalBotDeliverParams, CanonicalBotDeliverResult),
 ):
     canonical_method(_name, params=_params, result=_result)
+
+
+# Native Billing reads share the currency-safe value contract with the sidecar,
+# but execute through the authority's profile scope rather than legacy dispatch.
+from .billing_delegation_pets import BillingStateResult, SubscriptionStateResult
+from .semantier_billing import BillingReadParams
+
+canonical_method('billing.state', params=BillingReadParams, result=BillingStateResult,
+                 doc='Read the active authority profile billing backend.')
+canonical_method('subscription.state', params=BillingReadParams, result=SubscriptionStateResult,
+                 doc='Read subscription availability for the active authority profile.')

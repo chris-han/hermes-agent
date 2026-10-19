@@ -16,6 +16,7 @@ import { esSharedMetrics } from './es_shared_metrics'
 import { esThemePicker } from './es_theme_picker'
 import { esUpdateChannel } from './es_update_channel'
 import { introEs } from './intro-es'
+import { semantierBillingCopy } from './semantier-billing'
 
 export const esOverrides = {
   sharedMetrics: esSharedMetrics,
@@ -248,10 +249,7 @@ export const esOverrides = {
       saving: 'Guardando...'
     },
     vocabulary: {
-      facetRead: {
-        label: 'Lectura',
-        long: 'Lee datos de esta app. No cambia nada.'
-      },
+      facetRead: { label: 'Lectura', long: 'Lee datos de esta app. No cambia nada.' },
       facetWrite: {
         label: 'Escritura',
         long: 'Crea o cambia algo en esta app.'
@@ -2003,6 +2001,7 @@ export const esOverrides = {
     },
     localModels: esLocalModels,
     billing: {
+      semantier: semantierBillingCopy['es'],
       perMonth: (amount: string) => `${amount}/mes`,
       creditsPerMonth: (amount: string) => `${amount} créditos/mes`,
       usageLabel: (label: string) => `Uso de ${label}`,

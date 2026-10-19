@@ -186,6 +186,8 @@ export interface BillingAutoReload {
 }
 
 export interface BillingStateResponse {
+  free_tier_account?: boolean
+  free_tier_model?: string | null
   auto_reload: BillingAutoReload | null
   balance_display: string
   balance_usd: string | null
@@ -353,4 +355,49 @@ export interface SubscriptionUpgradeResponse {
   actor?: string
   code?: string
   recovery?: string
+}
+
+/** Semantier v1 has no implicit dollar fields or inferred wallet. */
+export interface SemantierMoney {
+  amount: string
+  currency: string
+}
+
+export interface SemantierBillingStateResponse {
+  ok: true
+  backend: 'semantier'
+  schema_version: 'semantier.billing.v1'
+  organization: { id: string; display_name?: string }
+  billing_account_id: string
+  mode: string
+  funding_source: string
+  balances: SemantierMoney[]
+  capabilities: {
+    can_read_usage: boolean
+    can_charge: false
+    can_change_plan: false
+    can_auto_top_up: false
+  }
+  usage: { known_cost?: SemantierMoney | null; status: string; unresolved_attempts: number | null; period?: string }
+  account: Record<string, unknown>
+  as_of: string
+}
+
+export interface SemantierSubscriptionStateResponse {
+  ok: true
+  backend: 'semantier'
+  schema_version: 'semantier.billing.v1'
+  billing_account_id: string
+  status: 'unavailable'
+  reason: string
+  capabilities: { can_charge: false; can_change_plan: false }
+}
+
+export type BillingBackendState = BillingStateResponse | SemantierBillingStateResponse
+export type SubscriptionBackendState = SubscriptionStateResponse | SemantierSubscriptionStateResponse
+
+export function isSemantierBilling<T extends object>(
+  state: T | SemantierBillingStateResponse
+): state is SemantierBillingStateResponse {
+  return 'backend' in state && state.backend === 'semantier'
 }

@@ -10,7 +10,7 @@ import type { TipId } from '@/lib/tips/catalog'
 import type { enBranding } from './branding'
 import type { AppTourTranslations } from './types_app_tour'
 import type { AuxTaskCopyMap } from './types_aux_tasks'
-import type { BillingTranslations } from './types_billing'
+import type { BillingSemantierTranslations, BillingTranslations } from './types_billing'
 import type { BootTranslations } from './types_boot'
 import type { CatalogInstallTranslations } from './types_catalog_install'
 import type { ClarifyCopy } from './types_clarify'
@@ -1508,7 +1508,7 @@ export interface Translations extends NoticeTranslations {
       deleted: (model: string) => string
       deleteFailed: string
     }
-    billing: {
+    billing: BillingSemantierTranslations & {
       perMonth: (amount: string) => string
       creditsPerMonth: (amount: string) => string
       usageLabel: (label: string) => string

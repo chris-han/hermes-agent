@@ -14,6 +14,7 @@ import { ruProjects } from './ru_projects'
 import { ruSharedMetrics } from './ru_shared_metrics'
 import { ruThemePicker } from './ru_theme_picker'
 import { ruUpdateChannel } from './ru_update_channel'
+import { semantierBillingCopy } from './semantier-billing'
 
 // RU_PLURAL: (count, one, few, many) — русские формы сущ. падежа
 // RU_NOUN: (count, one, few, many) — формы род. множественного
@@ -336,10 +337,7 @@ export const ruOverrides = {
       'composer.cancel': 'Закрыть поповер · отменить запуск'
     }
   },
-  findInPage: {
-    next: 'Следующее вхождение',
-    previous: 'Предыдущее вхождение'
-  },
+  findInPage: { next: 'Следующее вхождение', previous: 'Предыдущее вхождение' },
 
   language: {
     label: 'Язык',
@@ -351,6 +349,7 @@ export const ruOverrides = {
     noResults: 'Языки не найдены'
   },
   settings: {
+    billing: { semantier: semantierBillingCopy['ru'] },
     subpages: {
       appearanceTheme: 'Тема',
       appearanceTypography: 'Шрифты и масштаб',

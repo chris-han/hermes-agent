@@ -2053,9 +2053,10 @@ def _buffer_fallback_notice(agent, notice: str) -> None:
 
 
 def try_activate_fallback(agent, reason: FailoverReason | None = None, reset_at=None) -> bool:
-    """Switch to the next fallback model/provider in the chain; False when exhausted. Swaps client,
-    model slug and provider in place so the retry loop continues on the new backend; client
-    construction goes through resolve_provider_client (no duplicated provider→key mappings)."""
+    """Switch client/model/provider through resolve_provider_client; False when exhausted."""
+    from agent.semantier_gateway import is_gateway_route
+    if is_gateway_route(str(getattr(agent, 'base_url', '') or '')):
+        return False
     from agent.fallback_cooldown import _arm_rate_limit_cooldown, switch_deferred_by_reset
     if switch_deferred_by_reset(agent, reason, reset_at):
         return False
@@ -2073,7 +2074,6 @@ def try_activate_fallback(agent, reason: FailoverReason | None = None, reset_at=
         fb_model = (fb.get("model") or "").strip()
         if _should_skip_fallback_candidate(agent, fb, fb_key, fb_provider, fb_model, unavailable):
             continue
-
         try:
             from agent.route_binding import bind_route_entry
             bound = bind_route_entry(agent, fb, fb_provider, fb_model)

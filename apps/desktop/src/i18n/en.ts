@@ -19,6 +19,7 @@ import { enSharedMetrics } from './en_shared_metrics'
 import { enThemePicker } from './en_theme_picker'
 import { enUninstallSection } from './en_uninstall_section'
 import { enUpdateChannel } from './en_update_channel'
+import { semantierBillingCopy } from './semantier-billing'
 import type { Translations } from './types'
 
 export const en: Translations = {
@@ -665,10 +666,7 @@ export const en: Translations = {
     }
   },
 
-  findInPage: {
-    next: 'Next match',
-    previous: 'Previous match'
-  },
+  findInPage: { next: 'Next match', previous: 'Previous match' },
 
   language: {
     label: 'Language',
@@ -1650,6 +1648,7 @@ export const en: Translations = {
     },
     localModels: enLocalModels,
     billing: {
+      semantier: semantierBillingCopy['en'],
       perMonth: amount => `${amount}/mo`,
       creditsPerMonth: amount => `${amount} credits/mo`,
       usageLabel: label => `${label} usage`,

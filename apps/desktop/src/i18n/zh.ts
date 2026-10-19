@@ -3,6 +3,7 @@ import { defineFieldCopy } from '@/app/settings/field-copy'
 import { zhBranding } from './branding'
 import { defineLocale, type TranslationOverrides } from './define-locale'
 import { introZh } from './intro-zh'
+import { semantierBillingCopy } from './semantier-billing'
 import { zhAuxTasks } from './zh_aux_tasks'
 import { zhClarify } from './zh_clarify'
 import { zhConnectorCard } from './zh_connector_card'
@@ -437,10 +438,7 @@ export const zhOverrides = {
     }
   },
 
-  findInPage: {
-    next: '下一个匹配',
-    previous: '上一个匹配'
-  },
+  findInPage: { next: '下一个匹配', previous: '上一个匹配' },
 
   language: {
     label: '语言',
@@ -1688,6 +1686,7 @@ export const zhOverrides = {
     },
     localModels: zhLocalModels,
     billing: {
+      semantier: semantierBillingCopy['zh'],
       perMonth: amount => `${amount}/月`,
       creditsPerMonth: amount => `${amount} 额度/月`,
       usageLabel: label => `${label}用量`,

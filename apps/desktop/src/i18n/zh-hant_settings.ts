@@ -1,6 +1,7 @@
 import { defineFieldCopy } from '@/app/settings/field-copy'
 
 import type { TranslationOverrides } from './define-locale'
+import { semantierBillingCopy } from './semantier-billing'
 import { zhHantUpdateChannel } from './zh-hant_update_channel'
 
 export const zhHantSettings = {
@@ -1190,6 +1191,7 @@ export const zhHantSettings = {
       deleteFailed: '刪除失敗'
     },
     billing: {
+      semantier: semantierBillingCopy['zh-hant'],
       perMonth: amount => `${amount}/月`,
       creditsPerMonth: amount => `${amount} 額度/月`,
       usageLabel: label => `${label}用量`,

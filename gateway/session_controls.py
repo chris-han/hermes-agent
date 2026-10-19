@@ -107,6 +107,8 @@ class AuthorityConnection:
         handlers.update(busy_handlers(self))
         from gateway.session_config import handlers as config_handlers
         handlers.update(config_handlers(self))
+        from gateway.session_billing import handlers as billing_handlers
+        handlers.update(billing_handlers(self))
         from gateway.session_tui_config import handlers as tui_config_handlers
         handlers.update(tui_config_handlers(self))
         from gateway.session_ancillary import handlers as ancillary_handlers

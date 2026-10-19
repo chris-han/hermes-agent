@@ -32,10 +32,25 @@ export interface UsageBar {
   fill_fraction: number
 }
 export type UsageBarKind = 'plan' | 'topup'
+export interface BillingReadParams {
+  profile?: string | null
+  schema_version?: string | null
+}
 /** ``_serialize_billing_state`` (money as strings); the ``except`` fallback emits only ``ok / logged_in / free_tier_account / error``, so everything else is optional. */
 export interface BillingStateResult {
   ok: boolean
-  logged_in: boolean
+  error?: string | null
+  message?: string | null
+  portal_url?: string | null
+  retry_after?: number | null
+  payload?: Record<string, unknown> | null
+  actor?: string | null
+  code?: string | null
+  recovery?: string | null
+  backend?: string | null
+  schema_version?: string | null
+  request_id?: string | null
+  logged_in?: boolean | null
   free_tier_account?: boolean
   free_tier_model?: string | null
   org_name?: string | null
@@ -55,9 +70,15 @@ export interface BillingStateResult {
   payment_method?: BillingPaymentMethod | null
   monthly_cap?: BillingMonthlyCap | null
   auto_reload?: BillingAutoReload | null
-  portal_url?: string | null
-  error?: string | null
-  usage?: UsageModel | null
+  organization?: BillingOrganization | null
+  billing_account_id?: string | null
+  mode?: string | null
+  funding_source?: string | null
+  balances?: Money[] | null
+  capabilities?: BillingCapabilities | null
+  as_of?: string | null
+  account?: Record<string, unknown> | null
+  usage?: UsageModel | BillingUsage | null
 }
 export interface BillingCardInfo {
   brand: string
@@ -100,10 +121,41 @@ export interface BillingAutoReloadCard {
   last4?: string | null
 }
 export type AutoReloadCardKind = 'canonical' | 'distinct' | 'none'
+export interface BillingOrganization {
+  id: string
+  display_name?: string | null
+}
+export interface Money {
+  amount: string
+  currency: string
+}
+export interface BillingCapabilities {
+  can_read_usage: boolean
+  can_charge: false
+  can_change_plan: false
+  can_auto_top_up?: false
+}
+export interface BillingUsage {
+  known_cost?: Money | null
+  status: string
+  period?: string | null
+  unresolved_attempts?: number | null
+}
 /** ``_serialize_subscription_state``; the view's fallback emits only ``ok / logged_in / error``. */
 export interface SubscriptionStateResult {
   ok: boolean
-  logged_in: boolean
+  error?: string | null
+  message?: string | null
+  portal_url?: string | null
+  retry_after?: number | null
+  payload?: Record<string, unknown> | null
+  actor?: string | null
+  code?: string | null
+  recovery?: string | null
+  backend?: string | null
+  schema_version?: string | null
+  request_id?: string | null
+  logged_in?: boolean | null
   is_admin?: boolean | null
   can_change_plan?: boolean | null
   org_name?: string | null
@@ -112,9 +164,12 @@ export interface SubscriptionStateResult {
   context?: SubscriptionContext | null
   current?: CurrentSubscription | null
   tiers?: SubscriptionTierOption[] | null
-  portal_url?: string | null
-  error?: string | null
   usage?: UsageModel | null
+  available?: boolean | null
+  status?: string | null
+  billing_account_id?: string | null
+  capabilities?: Record<string, boolean> | null
+  reason?: string | null
 }
 export type SubscriptionContext = 'personal' | 'team'
 export interface CurrentSubscription {
@@ -154,6 +209,9 @@ export interface SubscriptionPreviewResult {
   actor?: string | null
   code?: string | null
   recovery?: string | null
+  backend?: string | null
+  schema_version?: string | null
+  request_id?: string | null
   effect?: SubscriptionChangeEffect | null
   reason?: string | null
   current_tier_id?: string | null
@@ -182,6 +240,9 @@ export interface BillingPendingChangeResult {
   actor?: string | null
   code?: string | null
   recovery?: string | null
+  backend?: string | null
+  schema_version?: string | null
+  request_id?: string | null
 }
 export interface SubscriptionUpgradeParams {
   profile?: string | null
@@ -199,6 +260,9 @@ export interface SubscriptionUpgradeResult {
   actor?: string | null
   code?: string | null
   recovery?: string | null
+  backend?: string | null
+  schema_version?: string | null
+  request_id?: string | null
   status?: string | null
   target_tier_name?: string | null
   recovery_url?: string | null
@@ -221,6 +285,9 @@ export interface BillingChargeResult {
   actor?: string | null
   code?: string | null
   recovery?: string | null
+  backend?: string | null
+  schema_version?: string | null
+  request_id?: string | null
   charge_id?: string | null
   idempotency_key?: string | null
 }
@@ -239,6 +306,9 @@ export interface BillingChargeStatusResult {
   actor?: string | null
   code?: string | null
   recovery?: string | null
+  backend?: string | null
+  schema_version?: string | null
+  request_id?: string | null
   status?: string | null
   amount_usd?: string | number | null
   settled_at?: string | null
@@ -261,6 +331,9 @@ export interface BillingMutationResult {
   actor?: string | null
   code?: string | null
   recovery?: string | null
+  backend?: string | null
+  schema_version?: string | null
+  request_id?: string | null
 }
 export interface BillingStepUpParams {
   profile?: string | null
@@ -277,6 +350,9 @@ export interface BillingStepUpResult {
   actor?: string | null
   code?: string | null
   recovery?: string | null
+  backend?: string | null
+  schema_version?: string | null
+  request_id?: string | null
   granted?: boolean | null
 }
 export interface DelegationStatusResult {
@@ -5871,7 +5947,7 @@ export interface RpcMethods {
   /** Poll one charge by id. */
   'billing.charge_status': { params: BillingChargeStatusParams; result: BillingChargeStatusResult }
   /** Read-only billing view (no scope); the Nous free tier is answered locally without a portal call. */
-  'billing.state': { params: ProfileParams; result: BillingStateResult }
+  'billing.state': { params: BillingReadParams; result: BillingStateResult }
   /** Run the billing:manage device flow; the URL/code arrive via billing.step_up.verification. */
   'billing.step_up': { params: BillingStepUpParams; result: BillingStepUpResult }
   /** Deliver a relayed DM into a Bot Chat on this gateway and return the one-turn reply (blocking). */
@@ -6319,7 +6395,7 @@ export interface RpcMethods {
   /** Clear a scheduled downgrade / cancellation (re-enables recurring spend). */
   'subscription.resume': { params: ProfileParams; result: BillingPendingChangeResult }
   /** Current plan, tier catalog and usage for the picker; fail-open when logged out. */
-  'subscription.state': { params: ProfileParams; result: SubscriptionStateResult }
+  'subscription.state': { params: BillingReadParams; result: SubscriptionStateResult }
   /** Prorate, charge and flip the plan (billing:manage, idempotent). */
   'subscription.upgrade': { params: SubscriptionUpgradeParams; result: SubscriptionUpgradeResult }
   /** Host battery for the status bar; always resolves, ``available: false`` when unreadable. */
@@ -6637,6 +6713,8 @@ export interface CanonicalRpcMethods {
   /** Forward one A2A input into the conversation its identity tuple names. */
   'a2a.forward': { params: A2aForwardParams; result: A2aForwardResult }
   'approval.respond': { params: CanonicalApprovalParams; result: PromptResponseResult }
+  /** Read the active authority profile billing backend. */
+  'billing.state': { params: BillingReadParams; result: BillingStateResult }
   'bot_relay.deliver': { params: CanonicalBotDeliverParams; result: CanonicalBotDeliverResult }
   /** Generation-fenced answer to a pending clarify prompt (empty answer = skipped). */
   'clarify.respond': { params: ClarifyRespondParams; result: PromptResponseResult }
@@ -6693,6 +6771,8 @@ export interface CanonicalRpcMethods {
   'session.steer': { params: CanonicalCorrectionParams; result: CanonicalCorrectionResult }
   /** Ink ``!cmd`` / ``{!cmd}`` on the shared owner: one safe command for a local session, in its frozen launch cwd (``gateway/session_shell.py``). */
   'shell.exec': { params: CanonicalShellExecParams; result: ShellExecResult }
+  /** Read subscription availability for the active authority profile. */
+  'subscription.state': { params: BillingReadParams; result: SubscriptionStateResult }
   /** Adopt a registered execution after verifying the live producer claim. */
   'worker.adopt': { params: WorkerScopeParams; result: WorkerExecution }
   /** Sequence-fenced typed persistence write from an adopted worker. */
@@ -6704,6 +6784,7 @@ export type CanonicalRpcMethod = keyof CanonicalRpcMethods
 export const CANONICAL_RPC_METHODS = [
   'a2a.forward',
   'approval.respond',
+  'billing.state',
   'bot_relay.deliver',
   'clarify.respond',
   'config.get',
@@ -6740,6 +6821,7 @@ export const CANONICAL_RPC_METHODS = [
   'session.stats',
   'session.steer',
   'shell.exec',
+  'subscription.state',
   'worker.adopt',
   'worker.persist',
   'worker.register'

@@ -236,13 +236,13 @@ def _maybe_title_session_at_turn_start(
             return
         # Snapshot runtime identity so the background titler can skip if the user
         # switches models before it fires.
-        # ``session_id`` rides along so the background titler's OpenCode request carries the
-        # same ``x-opencode-session`` affinity as the turn it belongs to (#112717).
+        # Freeze session affinity and native task correlation before the next turn starts.
         main_runtime = {
             k: getattr(agent, k, None)
             for k in ("model", "provider", "base_url", "api_key", "api_mode", "session_id")
         }
         # See #19027.
+        main_runtime["run_id"] = getattr(agent, "_current_task_id", None)
         upgrade = maybe_auto_title(
             session_db,
             session_id,

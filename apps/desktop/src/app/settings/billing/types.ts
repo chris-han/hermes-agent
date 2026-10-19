@@ -1,5 +1,6 @@
 import type {
   BillingAutoReload,
+  BillingBackendState,
   BillingCardInfo,
   BillingChargeResponse,
   BillingChargeStatusResponse,
@@ -8,7 +9,10 @@ import type {
   BillingMutationResponse,
   BillingRefusalCode,
   ChargeFailureReason,
+  SemantierBillingStateResponse,
+  SemantierSubscriptionStateResponse,
   BillingStateResponse as SharedBillingStateResponse,
+  SubscriptionBackendState,
   SubscriptionPreviewResponse,
   SubscriptionStateResponse,
   SubscriptionTierOption,
@@ -30,6 +34,7 @@ export type BillingStateResponse = SharedBillingStateResponse & {
 
 export type {
   BillingAutoReload,
+  BillingBackendState,
   BillingCardInfo,
   BillingChargeResponse,
   BillingChargeStatusResponse,
@@ -38,7 +43,10 @@ export type {
   BillingMutationResponse,
   BillingRefusalCode,
   ChargeFailureReason,
+  SemantierBillingStateResponse,
+  SemantierSubscriptionStateResponse,
   SharedBillingStateResponse,
+  SubscriptionBackendState,
   SubscriptionPreviewResponse,
   SubscriptionStateResponse,
   SubscriptionTierOption,

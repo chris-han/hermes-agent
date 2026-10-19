@@ -1,3 +1,5 @@
+import type { SemantierBillingCopy } from './semantier-billing'
+
 // Out-of-credits overlay copy; `Translations` spreads this in.
 export interface BillingTranslations {
   billingBlock: {
@@ -8,4 +10,8 @@ export interface BillingTranslations {
     addCredits: string
     dismiss: string
   }
+}
+
+export interface BillingSemantierTranslations {
+  semantier: SemantierBillingCopy
 }

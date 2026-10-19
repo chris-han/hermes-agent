@@ -3,19 +3,20 @@ import { createContext, useContext, useMemo } from 'react'
 import { useGatewayRequest } from '@/app/gateway/hooks/use-gateway-request'
 
 import type {
+  BillingBackendState,
   BillingChargeResponse,
   BillingChargeStatusResponse,
   BillingErrorPayload,
   BillingMutationResponse,
   BillingRefusalCode,
-  BillingStateResponse,
-  SubscriptionPreviewResponse,
-  SubscriptionStateResponse
+  SubscriptionBackendState,
+  SubscriptionPreviewResponse
 } from './types'
 
 export type BillingErrorKind = BillingRefusalCode
 
 export interface BillingRefusal {
+  backend?: string
   actor?: string
   code?: string
   kind: BillingErrorKind | 'timeout' | 'transport'
@@ -47,8 +48,8 @@ export type BillingRequestGateway = <T>(
 export interface BillingApi {
   charge: (amountUsd: string, idempotencyKey?: string) => Promise<BillingChargeResult>
   chargeStatus: (chargeId: string) => Promise<BillingResult<BillingChargeStatusResponse>>
-  fetchBillingState: () => Promise<BillingResult<BillingStateResponse>>
-  fetchSubscriptionState: () => Promise<BillingResult<SubscriptionStateResponse>>
+  fetchBillingState: () => Promise<BillingResult<BillingBackendState>>
+  fetchSubscriptionState: () => Promise<BillingResult<SubscriptionBackendState>>
   /** Chargeless quote for a plan change (POST /subscription/preview). */
   previewSubscriptionChange: (tierId: string) => Promise<BillingResult<SubscriptionPreviewResponse>>
   /** Clear a scheduled downgrade / cancellation — the undo (DELETE pending-change). */
@@ -100,6 +101,7 @@ const normalizeRefusal = (raw: Record<string, unknown>): BillingRefusal => {
   const message = asOptionalString(error?.message) ?? asOptionalString(raw.message) ?? kind
 
   return {
+    backend: asOptionalString(raw.backend),
     actor: asOptionalString(error?.actor) ?? asOptionalString(raw.actor),
     code: asOptionalString(error?.code) ?? asOptionalString(raw.code),
     kind,
@@ -154,8 +156,12 @@ export const createBillingApi = (requestGateway: BillingRequestGateway): Billing
   },
   chargeStatus: chargeId =>
     callBilling<BillingChargeStatusResponse>(requestGateway, 'billing.charge_status', { charge_id: chargeId }),
-  fetchBillingState: () => callBilling<BillingStateResponse>(requestGateway, 'billing.state'),
-  fetchSubscriptionState: () => callBilling<SubscriptionStateResponse>(requestGateway, 'subscription.state'),
+  fetchBillingState: () =>
+    callBilling<BillingBackendState>(requestGateway, 'billing.state', { schema_version: 'semantier.billing.v1' }),
+  fetchSubscriptionState: () =>
+    callBilling<SubscriptionBackendState>(requestGateway, 'subscription.state', {
+      schema_version: 'semantier.billing.v1'
+    }),
   previewSubscriptionChange: tierId =>
     callBilling<SubscriptionPreviewResponse>(requestGateway, 'subscription.preview', {
       subscription_type_id: tierId
