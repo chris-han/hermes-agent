@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
 
-import { I18nProvider } from '@/i18n'
+import { I18nProvider, useI18n } from '@/i18n'
 import { en } from '@/i18n/en'
 import { zh } from '@/i18n/zh'
 
@@ -21,6 +21,11 @@ vi.mock('@/lib/branding-image', () => ({ decodeBrandingImage: native.decode }))
 import { $desktopBranding } from '@/store/desktop-branding'
 const original = window.hermesDesktop
 
+function LocaleSwitch() {
+  const { setLocale } = useI18n()
+  return <button onClick={() => void setLocale('en')}>Switch locale</button>
+}
+
 function mount(locale = 'en') {
   window.hermesDesktop = {
     ...original,
@@ -35,6 +40,7 @@ function mount(locale = 'en') {
   return render(
     <I18nProvider configClient={null} initialLocale={locale}>
       <CustomizeSettings />
+      <LocaleSwitch />
     </I18nProvider>
   )
 }
@@ -104,4 +110,21 @@ test('Chinese uses one locale, nonblocking unavailable organization and localize
   fireEvent.change(screen.getByLabelText(zh.branding.name), { target: { value: '用户名称' } })
   act(() => $desktopBranding.set({ version: 1, displayName: 'Peer', logo: null }))
   await waitFor(() => expect((screen.getByLabelText(zh.branding.name) as HTMLInputElement).value).toBe('用户名称'))
+})
+
+test('separate Chinese and English fields select one preview name per locale without losing either draft', async () => {
+  mount('zh')
+  fireEvent.change(screen.getByLabelText('组织显示名称（中文）'), { target: { value: '司序科技' } })
+  fireEvent.change(screen.getByLabelText('组织显示名称（英文）'), { target: { value: 'Semantier' } })
+  const preview = () => screen.getByRole('region', { name: zh.branding.preview })
+  expect(preview().textContent).toContain('司序科技')
+  expect(preview().textContent).not.toContain('Semantier')
+  fireEvent.click(screen.getByRole('button', { name: 'Switch locale' }))
+  await waitFor(() => expect(screen.getByRole('region', { name: en.branding.preview }).textContent).toContain('Semantier'))
+  expect((screen.getByLabelText('Organization display name (Chinese)') as HTMLInputElement).value).toBe('司序科技')
+  expect((screen.getByLabelText('Organization display name (English)') as HTMLInputElement).value).toBe('Semantier')
+  native.save.mockImplementation(async value => { $desktopBranding.set(value); return value })
+  fireEvent.click(screen.getByRole('button', { name: en.branding.apply }))
+  await screen.findByText(en.branding.saved)
+  expect($desktopBranding.get()).toMatchObject({ displayName: 'Semantier', displayNameZh: '司序科技' })
 })

@@ -65,3 +65,16 @@ test('corrupt saved data reports load failure', () => {
   fs.writeFileSync(file, '{')
   expect(() => createDesktopBrandingStore(file).get()).toThrow()
 })
+
+test('both names survive native cold reads and each name is independently validated', async () => {
+  const file = fixture()
+  fs.writeFileSync(file, JSON.stringify({ version: 1, displayName: 'Legacy', logo: null }))
+  const store = createDesktopBrandingStore(file)
+  expect(store.get()).toMatchObject({ displayName: 'Legacy', displayNameZh: '' })
+  await store.set({ version: 1, displayName: 'Semantier', displayNameZh: '司序科技', logo: null })
+  expect(createDesktopBrandingStore(file).get()).toMatchObject({ displayName: 'Semantier', displayNameZh: '司序科技' })
+  for (const bad of [123, null, '中'.repeat(121), '坏\n名称', '坏\u007f名称']) {
+    await expect(store.set({ version: 1, displayName: 'Semantier', displayNameZh: bad, logo: null })).rejects.toThrow()
+    expect(store.get().displayNameZh).toBe('司序科技')
+  }
+})
