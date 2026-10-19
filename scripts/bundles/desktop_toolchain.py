@@ -12,6 +12,7 @@ from pathlib import Path
 import platform
 import subprocess
 import sys
+import tomllib
 import uuid
 
 
@@ -43,7 +44,7 @@ def bootstrap_environment(source: Path, work: Path, cache: Path,
     home = work / "home"
     result.update({
         "HOME": str(home), "USERPROFILE": str(home),
-        "LOCALAPPDATA": str(home / "AppData/Local"),
+        "LOCALAPPDATA": str(cache / "home/AppData/Local"),
         "APPDATA": str(home / "AppData/Roaming"),
         "HERMES_HOME": str(work / "hermes-home"),
         "HERMES_RUNTIME_DIR": str(cache / "tools"),
@@ -182,8 +183,49 @@ def native_cache_path(cache: Path, env: Mapping[str, str]) -> Path:
     encoded = encoded.replace(json.dumps(owned)[1:-1], "<build-cache>")
     # uv builds sdists below this root. Keep the partition compact so compiler
     # outputs fit Windows MAX_PATH; the target is already part of the identity.
+    if not complete:
+        shared = reusable_wheel_cache(cache, env)
+        if shared is not None:
+            return shared
     digest = hashlib.sha256(encoded.encode()).hexdigest()[:32] if complete else uuid.uuid4().hex
     return cache.resolve() / "python/runtime" / digest
+
+
+def _wheel_cache_target() -> str:
+    from pm.store import current_target
+
+    return current_target()
+
+
+def reusable_wheel_cache(cache: Path, env: Mapping[str, str]) -> Path | None:
+    """Reuse downloads only inside the distribution controller's serial workspace.
+
+    Without complete compiler identity, evict source builds through uv's public
+    CLI before reuse. Never delete uv internals. The pinned uv's known PyPI/local
+    source-cache layout is inspected read-only; other layouts stay private.
+    """
+    cache = cache.resolve()
+    if (env.get("HERMES_DESKTOP_SERIAL_CACHE") != str(cache)
+            or not Path(str(cache.parents[1]) + ".distribution.lock").is_file()):
+        return None
+    shared = cache / "python/runtime" / ("prebuilt-" + _wheel_cache_target())
+    names = set()
+    for bucket in shared.glob("sdists-v*"):
+        if bucket.name != "sdists-v9" or any(
+            child.name not in {"pypi", "editable", ".git", ".gitignore"} for child in bucket.iterdir()
+        ):
+            return None
+        if (bucket / "pypi").is_dir():
+            names.update(child.name for child in (bucket / "pypi").iterdir() if child.is_dir())
+    lock = Path(env["HERMES_PYTHON_SRC_ROOT"]) / "uv.lock"
+    packages = tomllib.loads(lock.read_text(encoding="utf-8"))["package"]
+    names.update(package["name"] for package in packages if "registry" not in package["source"])
+    if names:
+        import pm
+
+        pm.prune_cache(shared, packages=sorted(names))
+    print(f"Reusing prebuilt wheel cache: {shared}; source builds invalidated", flush=True)
+    return shared
 
 
 if __name__ == "__main__":

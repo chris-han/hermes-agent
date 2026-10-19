@@ -50,9 +50,10 @@ def test_bootstrap_environment_isolates_owned_paths_without_mutating_caller(tmp_
     assert dict(os.environ) == process_before
     assert environment["CARGO_HOME"] == inherited["CARGO_HOME"]
     assert environment["RUSTUP_HOME"] == inherited["RUSTUP_HOME"]
-    for key in ("HOME", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "HERMES_HOME",
+    for key in ("HOME", "USERPROFILE", "APPDATA", "HERMES_HOME",
                 "XDG_CONFIG_HOME", "XDG_CACHE_HOME"):
         assert Path(environment[key]).is_relative_to(work)
+    assert Path(environment["LOCALAPPDATA"]) == cache / "home/AppData/Local"
     assert Path(environment["HERMES_RUNTIME_DIR"]) == cache / "tools"
     assert Path(environment["UV_CACHE_DIR"]) == cache / "python/runtime"
     assert Path(environment["npm_config_cache"]) == cache / "npm"
@@ -295,3 +296,82 @@ def test_native_cache_leaves_room_for_sdist_compiler_outputs(tmp_path, monkeypat
                   / f"build/temp.{architecture}-cpython-314/Release/src/SKP_SILK_SRC"
                   / "SKP_Silk_NLSF_VQ_rate_distortion_FIX.obj")
         assert len(str(output)) < 260, str(output)
+
+
+def test_guarded_wheel_cache_reuses_downloads_but_evicts_source_builds(tmp_path, monkeypatch):
+    from scripts.bundles import desktop_toolchain
+
+    cache = tmp_path / '.cache/desktop-inputs'
+    source = tmp_path / 'source'
+    source.mkdir()
+    (source / 'uv.lock').write_text('''version = 1
+[[package]]
+name = "workspace-local"
+source = { editable = "." }
+[[package]]
+name = "prebuilt"
+source = { registry = "https://pypi.org/simple" }
+''')
+    shared = cache / 'python/runtime/prebuilt-test-target'
+    (shared / 'sdists-v9/pypi/compiled-package').mkdir(parents=True)
+    (shared / 'sdists-v9/.git').write_text('gitdir: does-not-exist')
+    (shared / 'sdists-v9/.gitignore').write_text('*')
+    wheel = shared / 'wheels-v6/unchanged-wheel'
+    wheel.parent.mkdir()
+    wheel.write_bytes(b'cached download')
+    env = {'HERMES_DESKTOP_SERIAL_CACHE': str(cache.resolve()),
+           'HERMES_PYTHON_SRC_ROOT': str(source), 'PATH': os.defpath}
+    monkeypatch.setattr(desktop_toolchain, '_wheel_cache_target', lambda: 'test-target')
+    import pm
+    calls = []
+    monkeypatch.setattr(pm, 'prune_cache', lambda cache, **kw: calls.append((cache, kw)))
+    assert desktop_toolchain.reusable_wheel_cache(cache, env) is None
+    Path(str(tmp_path) + '.distribution.lock').touch()
+    for _ in range(2):
+        assert desktop_toolchain.reusable_wheel_cache(cache, env) == shared
+    assert len(calls) == 2
+    assert calls[0] == (shared, {'packages': ['compiled-package', 'workspace-local']})
+    assert wheel.read_bytes() == b'cached download'
+    assert desktop_toolchain.reusable_wheel_cache(cache, {**env, 'HERMES_DESKTOP_SERIAL_CACHE': 'other'}) is None
+    (shared / 'sdists-v9/git').mkdir()
+    assert desktop_toolchain.reusable_wheel_cache(cache, env) is None
+    assert len(calls) == 2
+
+
+def test_guarded_wheel_cache_never_ignores_failed_invalidation(tmp_path, monkeypatch):
+    from scripts.bundles import desktop_toolchain
+
+    cache = tmp_path / '.cache/desktop-inputs'
+    source = tmp_path / 'source'
+    source.mkdir()
+    (source / 'uv.lock').write_text('[[package]]\nname="local"\nsource={editable="."}\n')
+    Path(str(tmp_path) + '.distribution.lock').touch()
+    import pm
+    def failed(*args, **kwargs):
+        raise RuntimeError('source-cache eviction failed')
+    monkeypatch.setattr(pm, 'prune_cache', failed)
+    with pytest.raises(RuntimeError, match='source-cache eviction failed'):
+        desktop_toolchain.reusable_wheel_cache(cache, {
+            'HERMES_DESKTOP_SERIAL_CACHE': str(cache.resolve()),
+            'HERMES_PYTHON_SRC_ROOT': str(source), 'PATH': os.defpath,
+        })
+
+
+def test_missing_compiler_identity_reuses_only_guarded_controller_cache(tmp_path, monkeypatch):
+    from scripts.bundles import desktop_toolchain
+
+    cache = tmp_path / '.cache/desktop-inputs'
+    source = tmp_path / 'source'
+    source.mkdir()
+    (source / 'uv.lock').write_text('package=[]\n')
+    Path(str(tmp_path) + '.distribution.lock').touch()
+    desktop_toolchain.platform.platform()
+    monkeypatch.setattr(desktop_toolchain.subprocess, 'run',
+                        lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError()))
+    env = {'PATH': os.defpath, 'HERMES_DESKTOP_SERIAL_CACHE': str(cache.resolve()),
+           'HERMES_PYTHON_SRC_ROOT': str(source)}
+    first = desktop_toolchain.native_cache_path(cache, env)
+    assert desktop_toolchain.native_cache_path(cache, env) == first
+    assert first.name.startswith('prebuilt-')
+    del env['HERMES_DESKTOP_SERIAL_CACHE']
+    assert desktop_toolchain.native_cache_path(cache, env) != desktop_toolchain.native_cache_path(cache, env)

@@ -426,5 +426,7 @@ def stage_tools(names: Sequence[str], *, source_store: Path, out: Path, target: 
     }))
 
 
-def prune_cache(cache: Path, *, ci: bool = False) -> None:
-    _python_operation("prune_cache", {"cache": Path(cache), "ci": ci})
+def prune_cache(cache: Path, *, ci: bool = False, packages: Sequence[str] = ()) -> None:
+    if isinstance(packages, str):
+        raise TypeError("packages must be a sequence, not a string")
+    _python_operation("prune_cache", {"cache": Path(cache), "ci": ci, "packages": list(packages)})

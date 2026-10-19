@@ -96,7 +96,15 @@ try {
     }
     $arguments = @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',(Join-Path $work 'scripts\build-bundle.ps1'))
     if ($request.python) { $arguments += @('-Python',$request.python) }
-    Native "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" $arguments
+    # This controller holds the workspace lock until every native build child exits.
+    # Only this serial context may share downloads with incomplete compiler identity.
+    $priorSerialCache = [Environment]::GetEnvironmentVariable('HERMES_DESKTOP_SERIAL_CACHE','Process')
+    try {
+      $env:HERMES_DESKTOP_SERIAL_CACHE = Join-Path $work '.cache\desktop-inputs'
+      Native "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" $arguments
+    } finally {
+      [Environment]::SetEnvironmentVariable('HERMES_DESKTOP_SERIAL_CACHE',$priorSerialCache,'Process')
+    }
     if ([string](Git-Value $work @('rev-parse','HEAD')) -cne $source -or
         @(Git-Value $work @('status','--porcelain','--untracked-files=all')).Count) { throw 'Build source changed during build' }
     $packages = @(Get-ChildItem -LiteralPath (Join-Path $work 'apps\desktop\release') -Filter '*.msix' -File)

@@ -463,3 +463,44 @@ def test_prune_cache_preserves_downloaded_wheels_unless_ci(tmp_path, build_tools
         second = build_requirements_environment([requirement], out=out, cache=cache, env=build_tools, offline=True, explicit=True)
         assert _run([str(second), "-I", "-c", "import cached_dep; print(cached_dep.__version__)"],
                     cwd=tmp_path, env=build_tools) == "1.0"
+
+
+def test_selective_cache_cleanup_preserves_other_downloads_offline(tmp_path, build_tools):
+    from functools import partial
+    from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+    import threading
+    from pm import build_requirements_environment, prune_cache
+
+    wheels = tmp_path / 'wheels'
+    wheels.mkdir()
+    kept, discarded = (_wheel(wheels, name) for name in ('kept_dep', 'discarded_dep'))
+    server = ThreadingHTTPServer(('127.0.0.1', 0), partial(SimpleHTTPRequestHandler, directory=str(wheels)))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    cache = tmp_path / 'cache'
+    requirements = [f'{name} @ http://127.0.0.1:{server.server_port}/{wheel.name}'
+                    for name, wheel in [('kept-dep', kept), ('discarded-dep', discarded)]]
+    try:
+        build_requirements_environment(requirements, out=tmp_path / 'first', cache=cache,
+                                       env=build_tools, explicit=True)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+    prune_cache(cache, packages=['discarded-dep'])
+    second = build_requirements_environment(requirements[:1], out=tmp_path / 'second', cache=cache,
+                                           env=build_tools, offline=True, explicit=True)
+    assert _run([str(second), '-I', '-c', 'import kept_dep; print(kept_dep.__version__)'],
+                cwd=tmp_path, env=build_tools) == '1.0'
+    with pytest.raises(InstallError):
+        build_requirements_environment(requirements[1:], out=tmp_path / 'third', cache=cache,
+                                       env=build_tools, offline=True, explicit=True)
+
+
+@pytest.mark.parametrize('packages', ['one-package', ['--force'], ['bad/name']])
+def test_selective_cache_cleanup_rejects_invalid_package_names(tmp_path, packages):
+    from pm import build_operations
+
+    with pytest.raises(ValueError, match='package names'):
+        build_operations.prune_cache(tmp_path / 'cache', packages=packages)
+    assert not (tmp_path / 'cache').exists()

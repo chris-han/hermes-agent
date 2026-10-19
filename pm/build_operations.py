@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+import re
 import sys
 from types import MappingProxyType
 
@@ -241,10 +242,15 @@ def stage_tools(names: Sequence[str], *, source_store: Path, out: Path, target: 
     return out
 
 
-def prune_cache(cache: Path, *, ci: bool = False) -> None:
-    """Prune unused cache entries; CI mode also discards downloaded wheels."""
+def prune_cache(cache: Path, *, ci: bool = False, packages: Sequence[str] = ()) -> None:
+    """Prune unused entries, or selectively discard named package caches."""
     from pm.environment import managed_environment
 
+    if isinstance(packages, str) or any(
+        not isinstance(name, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name) is None
+        for name in packages
+    ):
+        raise ValueError("cache cleanup requires package names")
     cache = Path(cache).absolute()
     environment = managed_environment(cache, cache=cache, realize=False, output=sys.stderr)
-    environment.prune_cache(ci=ci)
+    environment.prune_cache(ci=ci, packages=packages)

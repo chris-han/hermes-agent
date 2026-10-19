@@ -478,8 +478,10 @@ class PythonEnvironment:
         self._install_requirements_file(requirements, wheelhouse=wheelhouse, timeout=timeout)
         self.check()
 
-    def prune_cache(self, *, ci: bool = False) -> None:
-        command = ["cache", "prune", "--no-config"]
+    def prune_cache(self, *, ci: bool = False, packages: Sequence[str] = ()) -> None:
+        if ci and packages:
+            raise ValueError("selective package cleanup cannot be combined with CI pruning")
+        command = ["cache", "clean", *packages, "--no-config"] if packages else ["cache", "prune", "--no-config"]
         if ci:
             command += ["--ci", "--force"]
         result = self._run(command, cwd=Path.cwd(), timeout=1800)
