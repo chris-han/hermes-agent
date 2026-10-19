@@ -16,6 +16,7 @@ import { deThemePicker } from './de_theme_picker'
 import { deUpdateChannel } from './de_update_channel'
 import { defineLocale, type TranslationOverrides } from './define-locale'
 import { introDe } from './intro-de'
+import { semantierBillingCopy } from './semantier-billing'
 
 export const deOverrides = {
   sharedMetrics: deSharedMetrics,
@@ -244,10 +245,7 @@ export const deOverrides = {
       saving: 'Wird gespeichert...'
     },
     vocabulary: {
-      facetRead: {
-        label: 'Lesen',
-        long: 'Liest Daten aus dieser App. Ändert nichts.'
-      },
+      facetRead: { label: 'Lesen', long: 'Liest Daten aus dieser App. Ändert nichts.' },
       facetWrite: {
         label: 'Schreiben',
         long: 'Erstellt oder ändert etwas in dieser App.'
@@ -2008,6 +2006,7 @@ export const deOverrides = {
     },
     localModels: deLocalModels,
     billing: {
+      semantier: semantierBillingCopy['de'],
       perMonth: (amount: string) => `${amount}/Monat`,
       creditsPerMonth: (amount: string) => `${amount} Credits/Monat`,
       usageLabel: (label: string) => `${label}-Nutzung`,

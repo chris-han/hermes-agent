@@ -612,3 +612,44 @@ describe('BillingSettings', () => {
     expect(screen.queryByText('Usage')).toBeNull()
   })
 })
+
+it('shows Semantier scope and CNY without a zero wallet or Nous spending actions', async () => {
+  apiMocks.fetchBillingState.mockResolvedValue({
+    ok: true,
+    data: {
+      ok: true,
+      backend: 'semantier',
+      schema_version: 'semantier.billing.v1',
+      organization: { id: 'org-a', display_name: 'Example organization' },
+      billing_account_id: 'ba-a',
+      funding_source: 'CUSTOMER_CLOUD',
+      mode: 'shadow',
+      balances: [],
+      capabilities: { can_read_usage: true, can_charge: false, can_change_plan: false, can_auto_top_up: false },
+      usage: { known_cost: { amount: '0.012000', currency: 'CNY' }, status: 'ESTIMATED', unresolved_attempts: 2 },
+      account: {},
+      as_of: '2026-10-19T00:00:00Z'
+    }
+  })
+  renderBilling()
+  expect(await screen.findByText('Example organization')).toBeTruthy()
+  expect(screen.getByText('CNY 0.012000')).toBeTruthy()
+  expect(screen.getByText('No wallet is available for this funding source.')).toBeTruthy()
+  expect(screen.queryByText('$0.00')).toBeNull()
+  expect(screen.queryByText('Buy credits')).toBeNull()
+  expect(screen.queryByText('View plans')).toBeNull()
+})
+
+it('does not offer Nous Remote Spending for a Semantier scope refusal', async () => {
+  apiMocks.fetchBillingState.mockResolvedValue({
+    ok: false,
+    refusal: {
+      backend: 'semantier',
+      kind: 'insufficient_scope',
+      message: 'Access is unavailable.'
+    }
+  })
+  renderBilling()
+  expect(await screen.findByText('Access is unavailable.')).toBeTruthy()
+  expect(screen.queryByRole('button', { name: /verify|portal|sign in/i })).toBeNull()
+})

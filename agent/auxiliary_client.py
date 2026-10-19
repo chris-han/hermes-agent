@@ -187,14 +187,8 @@ def _create_openai_client(*, api_key: str, base_url: str, **kwargs: Any) -> Any:
         return _AuxProbeClientStub(api_key=api_key, base_url=base_url)
     kwargs = {**_openai_http_client_kwargs(base_url), **kwargs}
     _apply_required_codex_headers(kwargs, access_token=api_key, base_url=base_url)
-    # Hermes owns aux retry/fallback policy; the SDK default (max_retries=2) would triple
-    # wall time on a hung endpoint before Hermes sees one failure.
-    # Hermes owns auxiliary retry + provider/model fallback policy (the same-provider transient retry in
-    # call_llm plus the except-chain fallback). The OpenAI SDK's own default (max_retries=2 → up to 3
-    # attempts) silently multiplies the effective wall time of every aux call by 3× on a slow/hung endpoint,
-    # so a 120s timeout can stall ~360s before Hermes sees a single failure (issue #54465). Disable
-    # SDK-internal retries by default and let Hermes control the budget; explicit callers can still override
-    # via kwargs.
+    # Hermes owns retries/rotation/fallback. SDK retries multiply the wall clock and physical
+    # sends before the outer budget sees a failure; explicit caller kwargs can still override.
     kwargs.setdefault("max_retries", 0)
     return OpenAI(api_key=api_key, base_url=base_url, **kwargs)
 
@@ -3102,7 +3096,7 @@ def _try_anthropic(explicit_api_key: Optional[str | Callable[[], str]] = None,
 
 _MAIN_RUNTIME_FIELDS = ("provider", "model", "base_url", "api_key", "api_mode", "auth_mode")
 _MAIN_RUNTIME_CONTEXT_FIELDS = _MAIN_RUNTIME_FIELDS + (
-    "requested_provider", "session_id", "cache_scope",
+    "requested_provider", "session_id", "cache_scope", "run_id",
 )
 
 
@@ -6584,8 +6578,10 @@ def _forwards_max_tokens(provider: str, provider_norm: str, model: str, effectiv
     ceiling otherwise); OpenRouter (budgets the FULL window when omitted → 402 on low credit);
     managed local llama-server (uncapped decode with no EOS burns the GPU to the context window).
     """
+    from agent.semantier_gateway import is_gateway_route
     return (
-        _is_anthropic_compat_endpoint(provider, effective_base)
+        is_gateway_route(effective_base)
+        or _is_anthropic_compat_endpoint(provider, effective_base)
         or _nous_on_messages_wire(provider_norm, model)
         or provider_norm in _NVIDIA_PROVIDER_NAMES
         or base_url_host_matches(effective_base, "integrate.api.nvidia.com")
@@ -6732,7 +6728,6 @@ def _build_call_kwargs(
     no_progress_timeout: Optional[float] = None,
 ) -> dict:
     """Build kwargs for .chat.completions.create() with model/provider adjustments.
-    ``no_progress_timeout`` is a Codex-Responses-only extra (consumed by
     ``_CodexCompletionsAdapter.create``'s ``**kwargs`` catch-all); callers must only pass it
     when the resolved client is a ``CodexAuxiliaryClient`` — real SDK clients don't accept it."""
     kwargs: dict[str, Any] = {"model": model, "messages": messages, "timeout": timeout}
@@ -7518,6 +7513,12 @@ def _prepare_aux_request(
         no_progress_timeout=no_progress_timeout)
     if extra_headers:
         kwargs["extra_headers"] = dict(extra_headers)
+    from agent.semantier_gateway import attribute_request
+    kwargs = attribute_request(
+        kwargs, base_url=base_info or resolved_base_url or '', purpose=task or 'auxiliary',
+        session_id=str((main_runtime or {}).get("session_id") or _runtime_main_value("session_id") or ''),
+        run_id=str((main_runtime or {}).get("run_id") or ''),
+    )
     # Convert image blocks for Anthropic-compatible endpoints (e.g. MiniMax)
     client_base = str(getattr(client, "base_url", "") or "")
     if _is_anthropic_compat_endpoint(request_provider, client_base):
@@ -7915,9 +7916,6 @@ def _ladder_provider_fallback(first_err: Exception, route: _LadderRoute):
             task_chain_only=explicit_auth_with_task_chain)
     # All fallback layers exhausted — one user-visible warning, then re-raise.
     logger.warning("Auxiliary %s%s: %s on %s and all fallbacks exhausted "
-                   # All fallback layers exhausted — emit a single user-visible warning so the operator
-                   # knows aux task is about to fail. (#26882) The error itself is re-raised below.
-                   # (#26882)
                    "(fallback_chain + main agent model). Raising the primary error.",
                    task or "call", tag, reason, resolved_provider)
     return None
@@ -7934,6 +7932,9 @@ def _aux_recovery_ladder(
     strips → Nous heal/refresh → credential refresh/pool rotation → provider fallback.
     Each rung returns a response, narrows ``first_err`` and falls through, or re-raises.
     Raises the narrowed ``first_err`` when exhausted (after evicting a connection-poisoned client)."""
+    from agent.semantier_gateway import is_gateway_route
+    if is_gateway_route(base_info or resolved_base_url or ''):
+        raise first_err
     tag = " (async)" if async_mode else ""
     route = _LadderRoute(
         client, task, tag, async_mode, base_info, resolved_provider, resolved_model,
@@ -7958,8 +7959,6 @@ def _aux_recovery_ladder(
     # Reached only when no fallback answered, so the next auxiliary call rebuilds a fresh
     # client instead of reusing the dead one. ``first_err`` is the narrowed error from the
     # rungs above, not necessarily the original one. See issue #23432.
-    # Mirror the sync path: drop poisoned clients on connection/timeout so the next aux call rebuilds. See
-    # issue #23432.
     if _is_connection_error(first_err):
         try:
             _evict_cached_client_instance(client)

@@ -1,5 +1,5 @@
 """Contracts: billing / subscription / usage envelopes, delegation controls, handoff, message
-reactions, pet generation and ``project.facts`` (handlers in ``tui_gateway/methods_session.py``).
+reactions, pet generation and ``project.facts`` (handlers in ``tui_gateway/methods_billing.py`` / ``methods_session.py``).
 
 Billing routes are FAIL-OPEN: a logged-out / unreachable portal answers an ``ok`` result whose
 ``error`` carries the typed code (``_serialize_billing_error``) — never a JSON-RPC error — so the
@@ -13,6 +13,8 @@ from pydantic import Field
 from .base import JsonValue, Params, Result, WireEnum
 from .common import MessageReaction, OpenModel, ProfileParams, SessionParams
 from .registry import method
+from .semantier_billing import (BillingReadParams, BillingOrganization, BillingCapabilities,
+                               BillingUsage, Money)
 
 # ── billing envelope ──────────────────────────────────────────────────────────────────────────
 
@@ -31,6 +33,9 @@ class BillingEnvelope(Result):
     actor: str | None = None
     code: str | None = None
     recovery: str | None = None
+    backend: str | None = None
+    schema_version: str | None = None
+    request_id: str | None = None
 
 
 # ── usage.bars (shared two-bar dollar model) ──────────────────────────────────────────────────
@@ -136,12 +141,12 @@ class BillingAutoReload(Result):
     card: BillingAutoReloadCard | None = None
 
 
-class BillingStateResult(Result):
+class BillingStateResult(BillingEnvelope):
     """``_serialize_billing_state`` (money as strings); the ``except`` fallback emits only
     ``ok / logged_in / free_tier_account / error``, so everything else is optional."""
 
     ok: bool
-    logged_in: bool
+    logged_in: bool | None = None
     free_tier_account: bool = False
     free_tier_model: str | None = None
     org_name: str | None = None
@@ -163,10 +168,18 @@ class BillingStateResult(Result):
     auto_reload: BillingAutoReload | None = None
     portal_url: str | None = None
     error: str | None = None
-    usage: UsageModel | None = None
+    organization: BillingOrganization | None = None
+    billing_account_id: str | None = None
+    mode: str | None = None
+    funding_source: str | None = None
+    balances: list[Money] | None = None
+    capabilities: BillingCapabilities | None = None
+    as_of: str | None = None
+    account: dict[str, JsonValue] | None = None
+    usage: UsageModel | BillingUsage | None = None
 
 
-method("billing.state", params=ProfileParams, result=BillingStateResult,
+method("billing.state", params=BillingReadParams, result=BillingStateResult,
        doc="Read-only billing view (no scope); the Nous free tier is answered locally without a portal call.")
 
 
@@ -202,11 +215,11 @@ class SubscriptionTierOption(Result):
     is_enabled: bool
 
 
-class SubscriptionStateResult(Result):
+class SubscriptionStateResult(BillingEnvelope):
     """``_serialize_subscription_state``; the view's fallback emits only ``ok / logged_in / error``."""
 
     ok: bool
-    logged_in: bool
+    logged_in: bool | None = None
     is_admin: bool | None = None
     can_change_plan: bool | None = None
     org_name: str | None = None
@@ -218,9 +231,14 @@ class SubscriptionStateResult(Result):
     portal_url: str | None = None
     error: str | None = None
     usage: UsageModel | None = None
+    available: bool | None = None
+    status: str | None = None
+    billing_account_id: str | None = None
+    capabilities: dict[str, bool] | None = None
+    reason: str | None = None
 
 
-method("subscription.state", params=ProfileParams, result=SubscriptionStateResult,
+method("subscription.state", params=BillingReadParams, result=SubscriptionStateResult,
        doc="Current plan, tier catalog and usage for the picker; fail-open when logged out.")
 
 

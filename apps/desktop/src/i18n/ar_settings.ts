@@ -1,5 +1,6 @@
 import { arUpdateChannel } from './ar_update_channel'
 import type { TranslationOverrides } from './define-locale'
+import { semantierBillingCopy } from './semantier-billing'
 
 export const arSettings = {
   language: {
@@ -12,6 +13,7 @@ export const arSettings = {
     noResults: 'لا توجد لغة مطابقة'
   },
   settings: {
+    billing: { semantier: semantierBillingCopy['ar'] },
     subpages: {
       appearanceTheme: 'السمة',
       appearanceTypography: 'الخطوط والتحجيم',

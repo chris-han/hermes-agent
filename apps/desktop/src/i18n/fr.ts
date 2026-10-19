@@ -16,6 +16,7 @@ import { frSharedMetrics } from './fr_shared_metrics'
 import { frThemePicker } from './fr_theme_picker'
 import { frUpdateChannel } from './fr_update_channel'
 import { introFr } from './intro-fr'
+import { semantierBillingCopy } from './semantier-billing'
 
 export const frOverrides = {
   sharedMetrics: frSharedMetrics,
@@ -247,10 +248,7 @@ export const frOverrides = {
       saving: 'Enregistrement...'
     },
     vocabulary: {
-      facetRead: {
-        label: 'Lecture',
-        long: 'Lit des données de cette application. Ne modifie rien.'
-      },
+      facetRead: { label: 'Lecture', long: 'Lit des données de cette application. Ne modifie rien.' },
       facetWrite: {
         label: 'Écriture',
         long: 'Crée ou modifie quelque chose dans cette application.'
@@ -2014,6 +2012,7 @@ export const frOverrides = {
     },
     localModels: frLocalModels,
     billing: {
+      semantier: semantierBillingCopy['fr'],
       perMonth: (amount: string) => `${amount}/mois`,
       creditsPerMonth: (amount: string) => `${amount} crédits/mois`,
       usageLabel: (label: string) => `Utilisation ${label}`,

@@ -19,7 +19,7 @@ export const writeCache =
   (next: T | undefined | ((prev: T | undefined) => T | undefined)): void =>
     void queryClient.setQueryData<T>(key, next)
 
-// Query-key roots that are NOT profile-scoped: account/billing, the theme
+// Query-key roots that are NOT profile-scoped: the theme
 // marketplace, onboarding, and contrib log tails all read global or
 // account-level state, so a profile/gateway swap must not refetch them. Any
 // other key is treated as profile-scoped and invalidated -- a denylist is
@@ -27,7 +27,6 @@ export const writeCache =
 // cost), whereas an allowlist that misses a profile-scoped key would paint the
 // previous profile's data (a bug).
 const PROFILE_INDEPENDENT_QUERY_ROOTS = new Set<string>([
-  'billing',
   'marketplace-themes',
   'marketplace-themes-settings',
   'onboarding-model-options',
@@ -38,6 +37,10 @@ const PROFILE_INDEPENDENT_QUERY_ROOTS = new Set<string>([
 // account/global caches intact. Replaces a keyless invalidateQueries() that
 // refetched everything (billing, marketplace, onboarding) on every switch.
 export function invalidateProfileScopedQueries(): void {
+  // Billing credentials and account scope belong to the selected connection/profile.
+  // Cancel before removing so an old in-flight response cannot repopulate its account.
+  void queryClient.cancelQueries({ queryKey: ['billing'] })
+  queryClient.removeQueries({ queryKey: ['billing'] })
   void queryClient.invalidateQueries({
     predicate: query => {
       const root = query.queryKey[0]

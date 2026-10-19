@@ -23,8 +23,6 @@ describe('invalidateProfileScopedQueries', () => {
     ]
 
     const global = [
-      ['billing', 'state'],
-      ['billing', 'subscription'],
       ['marketplace-themes', 'all'],
       ['marketplace-themes-settings', 'x'],
       ['onboarding-model-options', 'y'],
@@ -44,6 +42,22 @@ describe('invalidateProfileScopedQueries', () => {
     for (const key of global) {
       expect(invalidated(key), `${JSON.stringify(key)} should be left intact`).toBe(false)
     }
+  })
+
+  it('removes account data and cancels in-flight billing on source switches', async () => {
+    let resolve!: (value: unknown) => void
+
+    const pending = new Promise<unknown>(done => {
+      resolve = done
+    })
+
+    queryClient.setQueryData(['billing', 'state', 'old'], { organization: 'old-org' })
+    const request = queryClient.fetchQuery({ queryKey: ['billing', 'subscription', 'old'], queryFn: () => pending })
+    const settled = request.catch(() => undefined)
+    invalidateProfileScopedQueries()
+    resolve({ organization: 'old-org' })
+    await settled
+    expect(queryClient.getQueriesData({ queryKey: ['billing'] })).toEqual([])
   })
 
   it('invalidates unknown/non-string-rooted keys by default (correctness-safe)', () => {

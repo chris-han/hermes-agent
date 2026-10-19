@@ -16,6 +16,7 @@ import { jaProjects } from './ja_projects'
 import { jaSharedMetrics } from './ja_shared_metrics'
 import { jaThemePicker } from './ja_theme_picker'
 import { jaUpdateChannel } from './ja_update_channel'
+import { semantierBillingCopy } from './semantier-billing'
 
 export const jaOverrides = {
   connectors: jaConnectors.connectors,
@@ -242,6 +243,7 @@ export const jaOverrides = {
   },
 
   settings: {
+    billing: { semantier: semantierBillingCopy['ja'] },
     uninstallSection: {
       dangerZone: '危険ゾーン',
       checkingInstalled: 'インストール内容を確認中…',
@@ -438,10 +440,7 @@ export const jaOverrides = {
       enableAllDesc: 'オフで以下の通知をすべて無効にします。',
       focusedHint: '完了通知は Hermes がバックグラウンドにあるときのみ表示されます。',
       kinds: {
-        approval: {
-          label: '承認が必要',
-          description: 'コマンドが承認または拒否を待っています。'
-        },
+        approval: { label: '承認が必要', description: 'コマンドが承認または拒否を待っています。' },
         input: {
           label: '入力が必要',
           description: 'Hermes が質問したか、パスワードやシークレットを必要としています。'
