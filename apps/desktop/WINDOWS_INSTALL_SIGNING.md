@@ -3,6 +3,18 @@
 本文用于每次 Windows x64 构建完成后，重复执行本地签名与打包。
 使用自签名证书；安装电脑需要预先信任对应公钥证书。
 
+## 一条命令：构建、签名和 ZIP（Semantier / WSL）
+
+在 Semantier 父仓库根目录运行：
+
+```bash
+python3 scripts/build_hermes_windows.py --thumbprint EXPLICIT_CERTIFICATE_THUMBPRINT
+```
+
+该命令使用 Windows 原生 PowerShell、Git 和依赖，将精确的已提交 Hermes HEAD 通过本地 bundle 传输到独立 Windows 工作树，调用现有 `scripts\build-bundle.ps1`，再调用本文的签名脚本。保留原始 Windows 检出及其未提交工作、专用工作树缓存、未签名 MSIX 和收据。无需远程 push。每次输出使用新目录，失败会留下日志，证书指纹必须明确指定。
+
+`--preflight` 仅检查传输、证书和工具；`--unsigned-receipt 'D:\path\unsigned-build-receipt.json'` 校验已有构建收据及散列后，仅重新签名/打包，不重新构建。完整构建仍沿用原有干净打包流程。详细参数、缓存及清理说明见父仓库 `docs/operational/hermes-windows-build.md`。签名脚本直接读取 MSIX 内的清单，无需解包整个运行时。
+
 ## 1. 首次创建可复用的签名证书
 
 在构建电脑的普通 PowerShell 中执行一次。
@@ -41,7 +53,6 @@ $cert.Thumbprint
   -Thumbprint 'EXPLICIT_CERTIFICATE_THUMBPRINT' `
   -SourceCommit 'COMPLETE_40_CHARACTER_HERMES_COMMIT' `
   -SignTool 'D:\path\signtool.exe' `
-  -MakeAppx 'D:\path\makeappx.exe' `
   -SevenZip 'D:\path\7za.exe' `
   -Output 'D:\path\new-distribution'
 if ($LASTEXITCODE -ne 0) { throw '分发失败' }

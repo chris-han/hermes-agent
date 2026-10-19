@@ -5,7 +5,7 @@ param(
   [Parameter(Mandatory=$true)][string]$Thumbprint,
   [Parameter(Mandatory=$true)][string]$SourceCommit,
   [Parameter(Mandatory=$true)][string]$SignTool,
-  [Parameter(Mandatory=$true)][string]$MakeAppx,
+  [string]$MakeAppx = '', # Retained for existing callers; manifest inspection needs no unpacker.
   [Parameter(Mandatory=$true)][string]$SevenZip,
   [Parameter(Mandatory=$true)][string]$Output,
   [string]$TimestampUrl = ''
@@ -26,12 +26,19 @@ if ($cert.EnhancedKeyUsageList.ObjectId -notcontains '1.3.6.1.5.5.7.3.3') { thro
 $basic = $cert.Extensions | Where-Object { $_.Oid.Value -eq '2.5.29.19' }
 if (!$basic -or $basic.CertificateAuthority) { throw 'End-entity Basic Constraints required' }
 New-Item -ItemType Directory -Path $Output | Out-Null
-$inspect = Join-Path $Output 'inspection'
 $dist = Join-Path $Output 'distribution'
 New-Item -ItemType Directory -Path $dist | Out-Null
 try {
-  Run-Native $MakeAppx @('unpack','/p',$Msix,'/d',$inspect)
-  [xml]$manifest = Get-Content -LiteralPath (Join-Path $inspect 'AppxManifest.xml') -Raw
+  # Reading one ZIP entry avoids extracting the complete multi-GB runtime and MAX_PATH failures.
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $archive = [IO.Compression.ZipFile]::OpenRead($Msix)
+  try {
+    if (@($archive.Entries | Where-Object { $_.FullName -ieq 'AppxSignature.p7x' }).Count) { throw 'Expected unsigned MSIX input' }
+    $entries = @($archive.Entries | Where-Object { $_.FullName -ceq 'AppxManifest.xml' })
+    if ($entries.Count -ne 1) { throw 'Expected one MSIX manifest' }
+    $reader = New-Object IO.StreamReader($entries[0].Open())
+    try { [xml]$manifest = $reader.ReadToEnd() } finally { $reader.Dispose() }
+  } finally { $archive.Dispose() }
   $identity = $manifest.Package.Identity
   if ([string]$identity.Publisher -cne $cert.Subject) { throw "Publisher mismatch: $($identity.Publisher) != $($cert.Subject)" }
   $signed = Join-Path $dist ([IO.Path]::GetFileName($Msix))
@@ -79,5 +86,5 @@ try {
   Write-Output "ZIP SHA256 $zipHash; trusted timestamp: $([bool]$TimestampUrl)"
 } finally {
   if ((Get-FileHash -LiteralPath $Msix -Algorithm SHA256).Hash.ToLowerInvariant() -ne $unsignedHash) { throw 'Unsigned artifact changed' }
-  foreach ($dir in @($inspect, (Join-Path $Output 'zip-validation'))) { if (Test-Path -LiteralPath $dir) { Remove-Item -LiteralPath $dir -Recurse -Force } }
+  foreach ($dir in @((Join-Path $Output 'zip-validation'))) { if (Test-Path -LiteralPath $dir) { Remove-Item -LiteralPath $dir -Recurse -Force } }
 }
