@@ -44,6 +44,10 @@ def save_disabled_skills(config: dict, disabled: set[str], platform: Optional[st
     """Persist disabled skill names to config; essential skills (e.g. ``hermes-agent``) are
     silently dropped — they cannot be disabled from any surface."""
     from agent.skill_utils import ESSENTIAL_SKILLS
+    from tools.skill_review_capture import generation
+    changed = set(disabled) ^ get_disabled_skills(config, platform)
+    if changed & generation().keys():
+        raise ValueError("MANAGED_SKILL_NAME_CONFLICT: review in Learning")
     disabled = set(disabled) - ESSENTIAL_SKILLS
     config.setdefault("skills", {})
     if platform is None:

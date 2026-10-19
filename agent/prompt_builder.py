@@ -1503,6 +1503,9 @@ def _build_skills_system_prompt_inner(
     skills_dir: Path, extra_roots: list[tuple[int, Path]], available_tools: set[str] | None,
     available_toolsets: set[str] | None, compact_categories: frozenset[str] | None,
 ) -> str:
+    from tools.skill_review_capture import managed_skill_index, generation, digest
+    managed_index = managed_skill_index() if skills_dir.resolve() == (get_hermes_home() / "skills").resolve() else {}
+    managed_hash = digest(generation()) if managed_index else ""
     # The resolved platform is part of the key: per-platform disabled-skill lists need distinct cache entries.
     _platform_hint = _current_session_platform_hint()
     disabled = get_disabled_skill_names(_platform_hint or None)
@@ -1520,7 +1523,7 @@ def _build_skills_system_prompt_inner(
         tuple(sorted(str(t) for t in (available_tools or set()))),
         tuple(sorted(str(ts) for ts in (available_toolsets or set()))),
         _platform_hint, tuple(sorted(disabled)), tuple(sorted(compact_categories or ())),
-        _oneshot_prompt_variant(), tuple(plugin_rows),
+        _oneshot_prompt_variant(), tuple(plugin_rows), managed_hash,
     )
     snapshot = _load_skills_snapshot(skills_dir, manifest)
     app_gated = snapshot is not None and any(
@@ -1564,6 +1567,14 @@ def _build_skills_system_prompt_inner(
         rows += _scan_extra_root(root, iter_skill_index_files(root, "SKILL.md"), tier, "Error reading external skill %s: %s")
         for cat, cat_desc in _read_category_descriptions(root, "Could not read external skill description %s: %s").items():
             category_descriptions.setdefault(cat, cat_desc)
+    rows = [(entry, ok) for entry, ok in rows if _entry_name(entry) not in managed_index]
+    for managed_name, directory in managed_index.items():
+        if directory is None:
+            continue
+        compatible, frontmatter, description = _parse_skill_file(directory / "SKILL.md")
+        entry = _build_snapshot_entry(directory / "SKILL.md", directory, frontmatter, description)
+        entry.update({"skill_name":managed_name,"frontmatter_name":managed_name,"category":"general","tier":TIER_LOCAL,"root":directory})
+        rows.append((entry, compatible))
     resolved = resolve_skill_catalog([
         {**entry, "name": _entry_name(entry), "path": entry["root"] / entry["rel"],
          "visible": ok and not hides(entry.get("skill_name") or "", entry.get("conditions") or {})}

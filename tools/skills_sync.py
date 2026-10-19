@@ -412,7 +412,11 @@ def sync_skills(quiet: bool = False) -> dict:
     external_index = _build_external_skill_index()
     st = _SyncState(manifest=_read_manifest(), quiet=quiet)
 
+    from tools.skill_review_capture import generation
+    managed_names = generation().keys()
     for skill_name, skill_src in bundled_skills:
+        if skill_name in managed_names:
+            continue
         # Curator-pruned built-ins must not resurrect on every update; essentials are exempt.
         if skill_name in suppressed and skill_name not in ESSENTIAL_SKILLS:
             st.suppressed.append(skill_name)

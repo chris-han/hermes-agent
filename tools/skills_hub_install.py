@@ -108,6 +108,8 @@ def _check_install_target(install_dir: Path) -> None:
       be silently wiped; a dir that directly contains SKILL.md is an existing
       install and stays overwritable (hub installs are lock-guarded in do_install).
     """
+    from tools.skill_review_capture import guard_managed_name
+    guard_managed_name(install_dir.name)
     from tools.skills_hub import _skills_dir
     # Refuse to nest a skill inside an existing skill directory. Installing with ``--category
     # <name-of-an-existing-skill>`` would create a hybrid skill-plus-category directory; a later update or
@@ -204,6 +206,11 @@ def install_from_quarantine(
 
 def uninstall_skill(skill_name: str) -> tuple[bool, str]:
     """Remove a hub-installed skill. Refuses to remove builtins."""
+    from tools.skill_review_capture import guard_managed_name
+    try:
+        guard_managed_name(skill_name)
+    except ValueError as exc:
+        return False, str(exc)
     from tools.skills_hub import HubLockFile, append_audit_log
     lock = HubLockFile()
     entry = lock.get_installed(skill_name)

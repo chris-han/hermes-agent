@@ -212,13 +212,15 @@ def _skill_catalog(*, skip_disabled: bool = False, include_hidden: bool = False)
     collecting candidates, so it asks for hidden rows too."""
     from agent.skill_utils import (
         TIER_PROJECT, is_disabled_entry, iter_project_skill_files, iter_skill_index_files, resolve_skill_catalog)
+    from tools.skill_review_capture import managed_skill_index
+    managed_packages = managed_skill_index()
     cache_key = ("with_disabled" if skip_disabled else "filtered", include_hidden)
     disabled = set() if skip_disabled else _get_disabled_skill_names()
     roots, _ = _skill_search_dirs()
     signature = _skills_scan_signature([d for _t, d in roots], disabled)
     now = time.monotonic()
     cached = _SKILLS_CACHE.get(cache_key)
-    if cached is not None and cached[0] == signature and (now - cached[1]) < _SKILLS_CACHE_TTL_SECONDS:
+    if not managed_packages and cached is not None and cached[0] == signature and (now - cached[1]) < _SKILLS_CACHE_TTL_SECONDS:
         # Shallow copies: callers mutate the returned dicts (web_server annotates
         # s["enabled"]/s["usage"]); handing out cached objects would poison the cache.
         return [dict(s) for s in cached[2]]
@@ -245,6 +247,16 @@ def _skill_catalog(*, skip_disabled: bool = False, include_hidden: bool = False)
                 logger.debug("Failed to read skill file %s: %s", skill_md, e)
             except Exception as e:
                 logger.debug("Skipping skill at %s: failed to parse: %s", skill_md, e, exc_info=True)
+    scanned = [s for s in scanned if s["name"] not in managed_packages]
+    for managed_name in managed_packages:
+        try:
+            directory = managed_packages[managed_name]
+            if directory is None:
+                continue
+            frontmatter = _safe_frontmatter(directory / "SKILL.md")
+            scanned.append({"name":managed_name,"description":frontmatter.get("description", ""),"category":"", "tier":0,"root":directory.parent,"path":directory/"SKILL.md","visible":True})
+        except (ValueError,OSError):
+            continue
     skills = [s for s in resolve_skill_catalog(scanned)
               if (s.pop("visible") or include_hidden) and not is_disabled_entry(s, disabled)]
     # Keyed by the signature computed BEFORE the scan: a write racing the scan changes the
@@ -494,6 +506,13 @@ def _locate_skill(name: str, local_category_name: Optional[str], roots):
     (project > local > create_dir > external, shadowed copies logged), same-tier collision refusal,
     same-root identical-copy ranking, quarantine gate, not-found listing. ``(error_json, skill_dir,
     skill_md)``; skill_md set iff no error."""
+    from tools.skill_review_capture import resolve_managed
+    try:
+        managed = resolve_managed(name)
+    except (ValueError, OSError) as exc:
+        return _fail(str(exc)), None, None
+    if managed is not None:
+        return None, managed, managed / "SKILL.md"
     from agent.skill_utils import AMBIGUOUS_SKILL_PREFIX, TIER_PROJECT, pick_skill_candidate, skill_candidate_rank
     all_dirs = [d for _t, d in roots]
     if not all_dirs:
@@ -527,6 +546,15 @@ def _locate_skill(name: str, local_category_name: Optional[str], roots):
             hint="Pass the exact relative path instead of the bare name, or rename one of the "
             "colliding skills so each name is unique."), None, None
     skill_dir, skill_md = candidates[0] if candidates else (None, None)
+    if skill_md is not None:
+        declared = _safe_frontmatter(skill_md).get("name")
+        if isinstance(declared, str) and declared != name:
+            try:
+                managed = resolve_managed(declared)
+            except (ValueError, OSError) as exc:
+                return _fail(str(exc)), None, None
+            if managed is not None:
+                return None, managed, managed / "SKILL.md"
     # Quarantine gate: a project-tier skill with a dangerous scan verdict must not
     # load even by explicit name (same chokepoint the index and skills_list use).
     if skill_md is not None and tier_of.get(_owning_search_dir(skill_md, all_dirs)) == TIER_PROJECT:

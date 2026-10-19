@@ -22,6 +22,11 @@ def reset_bundled_skill(name: str, restore: bool = False) -> dict:
     the entry breaks that loop. ``restore`` also deletes the user's copy so the next sync re-copies
     bundled. Returns ``{ok, action, message, synced}``; action is manifest_cleared / restored /
     not_in_manifest / bundled_missing / not_reset."""
+    from tools.skill_review_capture import guard_managed_name
+    try:
+        guard_managed_name(name)
+    except ValueError as exc:
+        return {"ok":False,"action":"managed_name_conflict","message":str(exc),"synced":None}
     ss, manifest, bundled_dir, bundled_by_name = _bundled_state()
     in_manifest = name in manifest
     is_bundled = name in bundled_by_name
@@ -85,6 +90,11 @@ def ensure_bundled_skill(name: str) -> dict:
     the manifest records the bundled hash, so a dest that kept user files reads as user-modified and
     ``hermes update`` leaves it alone: intended, the user's data wins."""
     from tools import skill_usage
+    from tools.skill_review_capture import guard_managed_name
+    try:
+        guard_managed_name(name)
+    except ValueError as exc:
+        return {"ok":False,"action":"managed_name_conflict","message":str(exc),"synced":None}
     ss, manifest, bundled_dir, bundled_by_name = _bundled_state()
     src = bundled_by_name[name]
     dest = ss._compute_relative_dest(src, bundled_dir)

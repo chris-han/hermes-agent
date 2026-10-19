@@ -382,6 +382,8 @@ async def toggle_skill(body: SkillToggle, profile: Optional[str] = None):
 
     def _run():
         with config_write_scope(body.profile or profile):
+            from tools.skill_review_capture import guard_managed_name
+            guard_managed_name(body.name)
             config = load_config()
             disabled = get_disabled_skills(config)
             if body.enabled:
@@ -391,7 +393,12 @@ async def toggle_skill(body: SkillToggle, profile: Optional[str] = None):
             save_disabled_skills(config, disabled)
         return {"ok": True, "name": body.name, "enabled": body.enabled}
 
-    return await asyncio.to_thread(_run)
+    try:
+        return await asyncio.to_thread(_run)
+    except ValueError as exc:
+        if "MANAGED_SKILL_NAME_CONFLICT" in str(exc):
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise
 
 
 @router.get("/api/skills/content")

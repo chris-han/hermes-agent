@@ -44,6 +44,10 @@ def handle_pending_subcommand(
     if not args:
         return f"{_fmt_state(subsystem)}\n\n" + _fmt_pending_list(subsystem)
     sub, rest = args[0].lower(), args[1:]
+    if subsystem == wa.SKILLS and sub in {"pending", "diff", "approve", "reject", "apply", "deny", "drop"}:
+        from tools.skill_review_capture import managed_home
+        if managed_home():
+            return _managed_review(sub, rest)
     if sub == "pending":
         return _fmt_pending_list(subsystem)
     if sub in {"approve", "apply"}:
@@ -135,6 +139,8 @@ def _apply_one(subsystem: str, rec, memory_store):
             from tools.memory_tool import apply_memory_pending
             result = apply_memory_pending(payload, memory_store)
         else:
+            if rec.get("custody") or rec.get("exact_capture"):
+                return False, "MANAGED_SKILL_REQUIRES_CORE_REVIEW: sign in and review in Learning", {}
             from tools.skill_manager_tool import apply_skill_pending
             result = json.loads(apply_skill_pending(payload))
         return bool(result.get("success")), result.get("error", ""), result
@@ -186,3 +192,36 @@ def _set_approval(subsystem: str, rest: list[str], set_mode_fn) -> str:
     except Exception as e:
         return f"Failed to set {subsystem}.write_approval: {e}"
     return f"{subsystem}.write_approval set to '{'on' if enabled else 'off'}'."
+
+
+def _managed_review(sub, rest):
+    """Transport only. Core authenticates the explicit session cookie and owns decisions."""
+    import os
+    import urllib.request
+    import urllib.parse
+    import uuid
+    endpoint = os.environ.get('SEMANTIER_API_URL', '').rstrip('/')
+    token = os.environ.get('SEMANTIER_SESSION_COOKIE', '')
+    parsed = urllib.parse.urlsplit(endpoint)
+    if not token or parsed.username or parsed.password or parsed.query or parsed.fragment or not parsed.hostname or (parsed.scheme != 'https' and not (parsed.scheme == 'http' and parsed.hostname in ('127.0.0.1','localhost','::1'))):
+        return 'Managed skill review requires an authenticated session. Sign in and review in Learning.'
+    sub = {'apply':'approve','deny':'reject','drop':'reject'}.get(sub,sub)
+    message = ' '.join(['/skills',sub,*rest])
+    cookie = 'vt_session='+token
+    browser_cookie = os.environ.get('SEMANTIER_BROWSER_SESSION_COOKIE', '')
+    if browser_cookie:
+        cookie += '; vt_browser_session='+browser_cookie
+    headers = {'Content-Type':'application/json','Cookie':cookie}
+    if os.environ.get('SEMANTIER_USER_AGENT'):
+        headers['User-Agent'] = os.environ['SEMANTIER_USER_AGENT']
+    request = urllib.request.Request(endpoint+'/api/learning/slash', data=json.dumps({'message':message,'request_id':uuid.uuid4().hex}).encode(), headers=headers, method='POST')
+    try:
+        # No redirects: do not forward a session credential to a different origin.
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                return None
+        with urllib.request.build_opener(NoRedirect).open(request,timeout=15) as response:
+            result = json.loads(response.read())
+        return result.get('message') or result.get('leading_answer') or json.dumps(result,ensure_ascii=False)
+    except Exception:
+        return 'Managed review unavailable or session expired. Sign in and review in Learning; no raw approval was applied.'

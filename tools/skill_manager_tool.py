@@ -86,6 +86,9 @@ def _skill_lock_path(name: str) -> Path:
     ``.usage.json.lock``), never inside the skill dir so delete/recreate cannot unlink it under a
     waiting writer. Keyed by a digest of the basename so ``foo`` and ``category/foo`` share one
     lock and no name can hit a filesystem limit (callers validate the basename first)."""
+    from tools.skill_review_capture import managed_home
+    if managed_home() and (_skills_dir().is_symlink() or (_skills_dir() / ".locks").is_symlink()):
+        raise ValueError("UNMANAGED_SKILL_LOCK_ROOT")
     digest = hashlib.sha256(Path(name).name.encode("utf-8", "surrogatepass")).hexdigest()
     return _skills_dir() / ".locks" / f"{digest}.lock"
 
@@ -661,14 +664,20 @@ def _run_write_gate(build_staging):
     try:
         from tools import write_approval as wa
     except Exception:
-        return None  # fail open
+        import os
+        if os.environ.get("SEMANTIER_WORKSPACE_ID") or (get_hermes_home() / ".learned-procedures").exists():
+            return tool_error("MANAGED_SKILL_REVIEW_UNAVAILABLE", success=False)
+        return None  # standalone behavior
     decision = wa.evaluate_gate(wa.SKILLS)
     if decision.allow:
         return None
     if decision.blocked:
         return tool_error(decision.message, success=False)
     payload, gist = build_staging(wa)
-    record = wa.stage_write(wa.SKILLS, payload, summary=gist, origin=wa.current_origin())
+    try:
+        record = wa.stage_write(wa.SKILLS, payload, summary=gist, origin=wa.current_origin())
+    except (OSError, ValueError) as exc:
+        return tool_error(str(exc), success=False)
     return json.dumps({"success": True, "staged": True, "pending_id": record["id"],
                        "gist": gist, "message": decision.message}, ensure_ascii=False)
 
@@ -700,6 +709,9 @@ def _skill_manage_from(payload: dict[str, Any], **extra) -> str:
 
 def apply_skill_pending(payload: dict[str, Any]) -> str:
     """Replay a staged skill write, bypassing the gate (the /skills approve handler)."""
+    from tools.skill_review_capture import managed_home
+    if managed_home():
+        return tool_error("MANAGED_SKILL_REQUIRES_CORE_REVIEW: sign in and review in Learning; raw approval is unavailable", success=False)
     token = _skill_gate_bypass.set(True)
     try:
         return _skill_manage_from(payload)

@@ -11,6 +11,7 @@ interactive CLI only) or **stages** the write under
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import difflib
 import json
 import logging
@@ -63,29 +64,55 @@ def _normalize_enabled(value: Any) -> bool:
 # --- Pending store (file-backed) ---
 
 def _pending_path(subsystem: str, pending_id: str) -> Path:
-    return get_hermes_home() / "pending" / subsystem / f"{pending_id}.json"
+    if subsystem not in _SUBSYSTEMS or (pending_id and not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", pending_id)):
+        raise ValueError("INVALID_PENDING_ID")
+    root = get_hermes_home() / "pending" / subsystem
+    if root.is_symlink() or (get_hermes_home() / "pending").is_symlink():
+        raise ValueError("UNMANAGED_PENDING_ROOT")
+    path = root / f"{pending_id}.json"
+    if path.is_symlink():
+        raise ValueError("UNMANAGED_PENDING_SYMLINK")
+    return path
 
 
 def _pending_files(subsystem: str) -> list:
     d = _pending_path(subsystem, "").parent
-    return list(d.glob("*.json")) if d.exists() else []
+    return [p for p in d.glob("*.json") if not p.is_symlink()] if d.exists() else []
 
 
 def stage_write(subsystem: str, payload: dict[str, Any], *, summary: str, origin: str) -> dict[str, Any]:
     """Persist a pending write and return its record (``id`` + metadata). ``payload`` is the exact
     kwargs to replay the write on approval; ``origin`` is ``foreground`` or ``background_review``.
-    Best-effort: on disk failure it logs and still returns a record — the write is lost, which is
-    the safe failure for an approval gate (nothing silently committed)."""
+    A failed capture or persistence raises: callers must never report a lost
+    proposal as staged/ready."""
     pid = uuid.uuid4().hex[:8]
     record = {
         "id": pid, "subsystem": subsystem, "action": payload.get("action", ""),
         "summary": (summary or "").strip(), "origin": origin or "foreground",
-        "created_at": time.time(), "payload": payload,
+        "created_at": datetime.now(timezone.utc).isoformat(), "payload": payload,
     }
+    if subsystem == SKILLS:
+        from tools.skill_review_capture import managed_home, capture
+        if managed_home():
+            from tools.skill_review_capture import stage_actor
+            actor = stage_actor.get()
+            if actor is None:
+                from gateway.execution_boundary import current_execution_boundary
+                boundary = current_execution_boundary()
+                if boundary is not None and boundary.user_id and boundary.workspace_id:
+                    actor = {"user_id":boundary.user_id,"workspace_id":boundary.workspace_id}
+            if not actor or not actor.get("user_id") or not actor.get("workspace_id"):
+                raise ValueError("MANAGED_STAGE_REQUIRES_AUTHENTICATED_ACTOR")
+            record["custody"] = actor
+            record["exact_capture"] = capture(payload)
     try:
+        if subsystem == SKILLS and record.get("custody"):
+            marker = get_hermes_home() / ".semantier-managed-skills.json"
+            atomic_json_write(marker, {"schema_version":"semantier.managed_skills_mode.v1"})
         atomic_json_write(_pending_path(subsystem, pid), record)
     except Exception as e:  # pragma: no cover - disk failure path
         logger.error("Failed to stage pending %s write: %s", subsystem, e, exc_info=True)
+        raise OSError("PENDING_STAGE_NOT_RETAINED") from e
     return record
 
 
@@ -100,7 +127,7 @@ def list_pending(subsystem: str) -> list[dict[str, Any]]:
             records.append(record)
         except Exception:
             logger.warning("Skipping unreadable pending record: %s", p)
-    records.sort(key=lambda r: r.get("created_at", 0))
+    records.sort(key=lambda r: str(r.get("created_at", "")))
     return records
 
 
@@ -203,6 +230,9 @@ def evaluate_gate(subsystem: str, *, inline_summary: str = "", inline_detail: st
     background → stage; gate on + memory + foreground → inline prompt when an interactive channel
     exists, else stage. The gate only ever delays a write, never silently refuses it; ``blocked``
     is produced only when the user actively denies the inline prompt."""
+    from tools.skill_review_capture import managed_home
+    if subsystem == SKILLS and managed_home():
+        return _staged(subsystem)
     if not write_approval_enabled(subsystem):
         return GateDecision(allow=True)
     # Skills are too big to review inline; a background write runs in a daemon thread with no user.
