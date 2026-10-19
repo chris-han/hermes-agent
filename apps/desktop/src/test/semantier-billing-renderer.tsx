@@ -25,6 +25,8 @@ if (bridgeOrigin.hostname !== '127.0.0.1' || bridgeOrigin.protocol !== 'http:') 
 let active: HermesGateway | undefined
 
 async function connect(source: number) {
+  document.body.dataset.bootstrapState = 'connecting'
+  delete document.body.dataset.bootstrapError
   setPrimaryGateway(null, 'default')
   setConnection(null)
   active?.close()
@@ -38,6 +40,7 @@ async function connect(source: number) {
   await gateway.connect(connection.wsUrl)
   setConnection(connection)
   setPrimaryGateway(gateway, 'default')
+  document.body.dataset.bootstrapState = 'ready'
 }
 
 Object.assign(window, { __semantierBillingWitness: { connect, disconnect: () => active?.close() } })
@@ -51,5 +54,6 @@ createRoot(document.getElementById('root')!).render(
   </MemoryRouter>
 )
 void connect(Number(params.get('source') || 0)).catch(error => {
+  document.body.dataset.bootstrapState = 'failed'
   document.body.dataset.bootstrapError = String(error)
 })

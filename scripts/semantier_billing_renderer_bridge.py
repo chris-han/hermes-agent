@@ -6,10 +6,13 @@ profile makes actual Semantier Billing HTTP calls. No BillingApi or authority is
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 from pathlib import Path
 import signal
+import secrets
+import time
 import subprocess
 import sys
 import threading
@@ -18,6 +21,52 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+
+
+class NativeRelay:
+    """Exact-origin browser leg; native credentials remain in this OS-owned adapter."""
+    def __init__(self, origin, native_target):
+        self.origin, self.native_target = origin, native_target
+        self.pending = {}
+        self.lock = threading.Lock()
+
+    def issue(self, source):
+        nonce = secrets.token_urlsafe(32)
+        with self.lock:
+            now = time.monotonic()
+            self.pending = {key: value for key, value in self.pending.items() if value[1] > now}
+            self.pending[nonce] = (source, now + 30)
+        return nonce
+
+    def consume(self, nonce):
+        with self.lock:
+            value = self.pending.pop(nonce, None)
+        return value[0] if value and value[1] > time.monotonic() else None
+
+    async def handle(self, browser):
+        from websockets.asyncio.client import connect
+        from websockets.exceptions import WebSocketException
+        protocols = browser.request.headers.get('Sec-WebSocket-Protocol', '').split(',')
+        tickets = [value.strip()[22:] for value in protocols if value.strip().startswith('hermes-gateway-ticket.')]
+        source = self.consume(tickets[0]) if len(tickets) == 1 else None
+        if source is None or browser.request.path.split('?')[0] != '/api/ws':
+            await browser.close(4401, 'Invalid bootstrap grant')
+            return
+        try:
+            url, protocols = await asyncio.to_thread(self.native_target, source)
+            async with connect(url, subprotocols=protocols, proxy=None, max_size=8 * 1024 * 1024) as native:
+                async def forward(reader, writer):
+                    async for message in reader:
+                        await writer.send(message)
+                tasks = [asyncio.create_task(forward(browser, native)), asyncio.create_task(forward(native, browser))]
+                try:
+                    await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                finally:
+                    for task in tasks:
+                        task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+        except (OSError, ValueError, RuntimeError, WebSocketException):
+            await browser.close(1011, 'Native gateway transport unavailable')
 
 
 def main():
@@ -44,6 +93,24 @@ def main():
             raise RuntimeError(f'Native gateway unavailable: {result.state}: {result.detail}')
         endpoints.append(result.endpoint)
 
+    def native_target(index):
+        endpoint = endpoints[index]
+        return gateway_ws_target(endpoint, _session_ticket(homes[index], endpoint))
+    relay = NativeRelay(args.renderer_origin, native_target)
+    relay_ready = threading.Event()
+    relay_state = {}
+    async def serve_relay():
+        from websockets.asyncio.server import serve
+        async with serve(relay.handle, '127.0.0.1', 0, origins=[args.renderer_origin],
+                         subprotocols=['hermes-gateway-v1'], max_size=8 * 1024 * 1024) as socket:
+            relay_state.update(port=socket.sockets[0].getsockname()[1], loop=asyncio.get_running_loop(), stop=asyncio.Event())
+            relay_ready.set()
+            await relay_state['stop'].wait()
+    relay_thread = threading.Thread(target=lambda: asyncio.run(serve_relay()), daemon=True)
+    relay_thread.start()
+    if not relay_ready.wait(10):
+        raise RuntimeError('Native transport adapter failed to start')
+
     class Bridge(BaseHTTPRequestHandler):
         def do_GET(self):
             parsed = urlsplit(self.path)
@@ -59,12 +126,11 @@ def main():
             except ValueError:
                 self.send_error(400)
                 return
+            # Only an expiring adapter nonce crosses into the browser. The actual owner
+            # ticket is minted server-side when this browser opens its transport.
+            ws_url = f"ws://127.0.0.1:{relay_state['port']}/api/ws?" + urlencode({
+                'native_dial': '1', 'ticket': relay.issue(index)})
             endpoint = endpoints[index]
-            ticket = _session_ticket(homes[index], endpoint)
-            ws_url, _ = gateway_ws_target(endpoint, ticket)
-            # This is the same ephemeral native_dial URL shape the production desktop
-            # converts into the ticket subprotocol; no Semantier/provider key crosses.
-            ws_url += '?' + urlencode({'native_dial': '1', 'ticket': ticket})
             payload = {'mode': 'remote', 'profile': 'default', 'connectionId': f'witness-{index}',
                        'baseUrl': endpoint.api_origin, 'wsUrl': ws_url}
             self.send_response(200)
@@ -86,6 +152,8 @@ def main():
         server.serve_forever()
     finally:
         server.server_close()
+        relay_state['loop'].call_soon_threadsafe(relay_state['stop'].set)
+        relay_thread.join(timeout=10)
         if args.stop_on_exit:
             for home in homes:
                 env = {**os.environ, 'HERMES_HOME': str(home)}
