@@ -2,7 +2,8 @@ export const enBranding = {
   title: 'Customize',
   scope:
     'Applies to this desktop installation and its windows. Display branding does not establish organization membership.',
-  name: 'Organization display name',
+  nameEn: 'Organization display name (English)',
+  nameZh: 'Organization display name (Chinese)',
   logo: 'Organization logo',
   upload: 'Upload logo',
   remove: 'Remove logo',
@@ -38,7 +39,8 @@ export const enBranding = {
 export const zhBranding: typeof enBranding = {
   title: '品牌定制',
   scope: '仅用于此桌面安装及其窗口。显示品牌不代表组织成员资格。',
-  name: '组织显示名称',
+  nameEn: '组织显示名称（英文）',
+  nameZh: '组织显示名称（中文）',
   logo: '组织标志',
   upload: '上传标志',
   remove: '移除标志',

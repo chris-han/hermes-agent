@@ -49,13 +49,14 @@ async function run() {
     const image = nativeImage.createFromBitmap(Buffer.alloc(64 * 64 * 4, 128), { width: 64, height: 64 })
     const logo = 'data:image/png;base64,' + image.toPNG().toString('base64')
     await primary.webContents.executeJavaScript(
-      `window.hermesDesktop.branding.set(${JSON.stringify({ version: 1, displayName: 'Native 组织', logo })})`
+      `window.hermesDesktop.branding.set(${JSON.stringify({ version: 1, displayName: 'Native Brand', displayNameZh: '原生品牌', logo })})`
     )
     assert.equal(
       (await peer.webContents.executeJavaScript('window.hermesDesktop.branding.get()')).displayName,
-      'Native 组织'
+      'Native Brand'
     )
     assert.equal(await peer.webContents.executeJavaScript('window.changes.length'), 1)
+    assert.equal((await peer.webContents.executeJavaScript('window.hermesDesktop.branding.get()')).displayNameZh, '原生品牌')
 
     for (const bad of ['data:image/png;base64,PHN2Zz4=', 'data:image/svg+xml;base64,PHN2Zy8+']) {
       await assert.rejects(
@@ -71,21 +72,22 @@ async function run() {
         'window.hermesDesktop.branding.set({version:1,displayName:"lost",logo:null})'
       )
     )
-    assert.equal((await read()).displayName, 'Native 组织')
+    assert.equal((await read()).displayName, 'Native Brand')
     fs.rmdirSync(file + '.tmp')
   } else if (mode === 'remove') {
-    assert.equal((await read()).displayName, 'Native 组织')
+    assert.equal((await read()).displayName, 'Native Brand')
+    assert.equal((await read()).displayNameZh, '原生品牌')
     assert.ok((await read()).logo)
     await primary.webContents.executeJavaScript(
-      'window.hermesDesktop.branding.set({version:1,displayName:"Native 组织",logo:null})'
+      'window.hermesDesktop.branding.set({version:1,displayName:"Native Brand",displayNameZh:"原生品牌",logo:null})'
     )
   } else if (mode === 'reset') {
-    assert.deepEqual(await read(), { version: 1, displayName: 'Native 组织', logo: null })
+    assert.deepEqual(await read(), { version: 1, displayName: 'Native Brand', displayNameZh: '原生品牌', logo: null })
     await primary.webContents.executeJavaScript(
       'window.hermesDesktop.branding.set({version:1,displayName:"",logo:null})'
     )
   } else {
-    assert.deepEqual(await read(), { version: 1, displayName: '', logo: null })
+    assert.deepEqual(await read(), { version: 1, displayName: '', displayNameZh: '', logo: null })
   }
 
   console.log(

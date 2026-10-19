@@ -44,7 +44,7 @@ test('atomic commits publish successful writes, serialize peers and survive cold
   expect(changed).toHaveLength(2)
   fs.rmdirSync(file + '.tmp')
   await store.set({ version: 1, displayName: '', logo: null })
-  expect(createDesktopBrandingStore(file).get()).toEqual({ version: 1, displayName: '', logo: null })
+  expect(createDesktopBrandingStore(file).get()).toEqual({ version: 1, displayName: '', displayNameZh: '', logo: null })
 })
 test('rejects invalid schemas and spoofed image bytes without changing prior state', async () => {
   const store = createDesktopBrandingStore(fixture())

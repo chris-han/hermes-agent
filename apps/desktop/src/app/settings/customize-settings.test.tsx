@@ -5,6 +5,8 @@ import { I18nProvider, useI18n } from '@/i18n'
 import { en } from '@/i18n/en'
 import { zh } from '@/i18n/zh'
 
+import { desktopBrandingName } from '../../../electron/desktop-branding-types'
+
 import { CustomizeSettings } from './customize-settings'
 const native = vi.hoisted(() => ({ save: vi.fn(), decode: vi.fn() }))
 vi.mock('@/store/desktop-branding', async () => {
@@ -53,7 +55,7 @@ afterEach(() => {
 })
 test('eight previews leave committed state alone; failed Apply retains editable draft; successful Apply commits', async () => {
   mount()
-  fireEvent.change(screen.getByLabelText(en.branding.name), { target: { value: 'Acme' } })
+  fireEvent.change(screen.getByLabelText(en.branding.nameEn), { target: { value: 'Acme' } })
   expect($desktopBranding.get().displayName).toBe('')
   const nav = screen.getByRole('navigation', { name: en.branding.placements })
   expect(nav.querySelectorAll('button')).toHaveLength(8)
@@ -66,7 +68,7 @@ test('eight previews leave committed state alone; failed Apply retains editable 
   native.save.mockRejectedValueOnce(new Error('disk full'))
   fireEvent.click(screen.getByRole('button', { name: en.branding.apply }))
   await screen.findByText(en.branding.saveFailed)
-  expect((screen.getByLabelText(en.branding.name) as HTMLInputElement).value).toBe('Acme')
+  expect((screen.getByLabelText(en.branding.nameEn) as HTMLInputElement).value).toBe('Acme')
   native.save.mockImplementation(async value => {
     $desktopBranding.set(value)
 
@@ -107,24 +109,44 @@ test('Chinese uses one locale, nonblocking unavailable organization and localize
   expect(screen.getAllByText(zh.branding.attribution).length).toBeGreaterThan(0)
   expect(screen.getByText(zh.branding.unbound)).toBeTruthy()
   expect((screen.getByRole('button', { name: zh.branding.apply }) as HTMLButtonElement).disabled).toBe(false)
-  fireEvent.change(screen.getByLabelText(zh.branding.name), { target: { value: '用户名称' } })
+  fireEvent.change(screen.getByLabelText(zh.branding.nameEn), { target: { value: '用户名称' } })
   act(() => $desktopBranding.set({ version: 1, displayName: 'Peer', logo: null }))
-  await waitFor(() => expect((screen.getByLabelText(zh.branding.name) as HTMLInputElement).value).toBe('用户名称'))
+  await waitFor(() => expect((screen.getByLabelText(zh.branding.nameEn) as HTMLInputElement).value).toBe('用户名称'))
 })
 
 test('separate Chinese and English fields select one preview name per locale without losing either draft', async () => {
   mount('zh')
-  fireEvent.change(screen.getByLabelText('组织显示名称（中文）'), { target: { value: '司序科技' } })
-  fireEvent.change(screen.getByLabelText('组织显示名称（英文）'), { target: { value: 'Semantier' } })
+  fireEvent.change(screen.getByLabelText('组织显示名称（中文）'), { target: { value: '示例集团' } })
+  fireEvent.change(screen.getByLabelText('组织显示名称（英文）'), { target: { value: 'Acme Global' } })
   const preview = () => screen.getByRole('region', { name: zh.branding.preview })
-  expect(preview().textContent).toContain('司序科技')
-  expect(preview().textContent).not.toContain('Semantier')
+  expect(preview().textContent).toContain('示例集团')
+  expect(preview().textContent).not.toContain('Acme Global')
   fireEvent.click(screen.getByRole('button', { name: 'Switch locale' }))
-  await waitFor(() => expect(screen.getByRole('region', { name: en.branding.preview }).textContent).toContain('Semantier'))
-  expect((screen.getByLabelText('Organization display name (Chinese)') as HTMLInputElement).value).toBe('司序科技')
-  expect((screen.getByLabelText('Organization display name (English)') as HTMLInputElement).value).toBe('Semantier')
+  await waitFor(() => expect(screen.getByRole('region', { name: en.branding.preview }).textContent).toContain('Acme Global'))
+  expect((screen.getByLabelText('Organization display name (Chinese)') as HTMLInputElement).value).toBe('示例集团')
+  expect((screen.getByLabelText('Organization display name (English)') as HTMLInputElement).value).toBe('Acme Global')
   native.save.mockImplementation(async value => { $desktopBranding.set(value); return value })
   fireEvent.click(screen.getByRole('button', { name: en.branding.apply }))
   await screen.findByText(en.branding.saved)
-  expect($desktopBranding.get()).toMatchObject({ displayName: 'Semantier', displayNameZh: '司序科技' })
+  expect($desktopBranding.get()).toMatchObject({ displayName: 'Acme Global', displayNameZh: '示例集团' })
+})
+
+ test('initial and reset previews use localized Semantier fallback', async () => {
+  mount('zh')
+  const preview = screen.getByRole('region', { name: zh.branding.preview })
+  expect(preview.querySelector('[data-organization-brand]')?.textContent).toContain('司序科技')
+  expect(preview.querySelector('img')?.getAttribute('src')).toContain('semantier-logo.svg')
+  fireEvent.click(screen.getByRole('button', { name: 'Switch locale' }))
+  await waitFor(() => expect(screen.getByRole('region', { name: en.branding.preview }).querySelector('[data-organization-brand]')?.textContent).toContain('Semantier'))
+  fireEvent.change(screen.getByLabelText('Organization display name (English)'), { target: { value: 'Acme' } })
+  fireEvent.click(screen.getByRole('button', { name: en.branding.reset }))
+  expect(screen.getByRole('region', { name: en.branding.preview }).querySelector('[data-organization-brand]')?.textContent).toContain('Semantier')
+})
+
+test.each([
+  ['zh', '', '', '司序科技'], ['zh-CN', 'Acme', '示例', '示例'],
+  ['en', 'Acme', '示例', 'Acme'], ['fr', '', '示例', '示例'],
+  ['zh-TW', 'Legacy', '', 'Legacy'], ['en', ' ', ' ', 'Semantier']
+])('name fallback for %s / %s / %s', (locale, displayName, displayNameZh, expected) => {
+  expect(desktopBrandingName({version: 1, displayName, displayNameZh, logo: null}, locale)).toBe(expected)
 })

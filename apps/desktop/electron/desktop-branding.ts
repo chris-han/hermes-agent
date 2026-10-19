@@ -16,9 +16,10 @@ export function validateDesktopBranding(input: unknown): DesktopBranding {
 
   if (
     value.version !== 1 ||
-    typeof value.displayName !== 'string' ||
-    value.displayName.length > 120 ||
-    Array.from(value.displayName).some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)
+    [value.displayName, value.displayNameZh === undefined ? '' : value.displayNameZh].some(
+      name => typeof name !== 'string' || name.length > 120 ||
+        Array.from(name).some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)
+    )
   ) {
     throw new Error('Invalid display name')
   }
@@ -64,7 +65,7 @@ export function validateDesktopBranding(input: unknown): DesktopBranding {
     logo = `data:image/png;base64,${canonical.toString('base64')}`
   }
 
-  return { version: 1, displayName: value.displayName, logo }
+  return { version: 1, displayName: value.displayName, displayNameZh: value.displayNameZh ?? '', logo }
 }
 
 export function createDesktopBrandingStore(file: string, changed: (value: DesktopBranding) => void = () => {}) {

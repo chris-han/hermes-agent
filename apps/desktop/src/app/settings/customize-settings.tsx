@@ -186,11 +186,25 @@ export function CustomizeSettings() {
         )}
         <div className="grid min-w-0 gap-8 lg:grid-cols-2">
           <div className="flex min-w-0 flex-col gap-5">
+            <label className="grid gap-2 text-sm" htmlFor="branding-display-name-zh">
+              {c.nameZh}
+              <Input
+                disabled={saving}
+                id="branding-display-name-zh"
+                lang="zh"
+                maxLength={120}
+                onChange={event => edit({ ...draft, displayNameZh: event.target.value })}
+                placeholder="司序科技"
+                value={draft.displayNameZh ?? ''}
+              />
+            </label>
             <label className="grid gap-2 text-sm" htmlFor="branding-display-name">
-              {c.name}
+              {c.nameEn}
               <Input
                 disabled={saving}
                 id="branding-display-name"
+                lang="en"
+                placeholder="Semantier"
                 maxLength={120}
                 onChange={event => edit({ ...draft, displayName: event.target.value })}
                 value={draft.displayName}
