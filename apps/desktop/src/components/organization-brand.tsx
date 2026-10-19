@@ -1,6 +1,6 @@
 import { useStore } from '@nanostores/react'
 
-import semantierLogo from '@/assets/semantier-logo.svg'
+import semantierLogo from '@/assets/semantier-logo.png'
 import { useI18n } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { $desktopBranding } from '@/store/desktop-branding'

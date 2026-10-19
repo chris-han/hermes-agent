@@ -135,7 +135,7 @@ test('separate Chinese and English fields select one preview name per locale wit
   mount('zh')
   const preview = screen.getByRole('region', { name: zh.branding.preview })
   expect(preview.querySelector('[data-organization-brand]')?.textContent).toContain('司序科技')
-  expect(preview.querySelector('img')?.getAttribute('src')).toContain('semantier-logo.svg')
+  expect(preview.querySelector('img')?.getAttribute('src')).toContain('semantier-logo.png')
   fireEvent.click(screen.getByRole('button', { name: 'Switch locale' }))
   await waitFor(() => expect(screen.getByRole('region', { name: en.branding.preview }).querySelector('[data-organization-brand]')?.textContent).toContain('Semantier'))
   fireEvent.change(screen.getByLabelText('Organization display name (English)'), { target: { value: 'Acme' } })
