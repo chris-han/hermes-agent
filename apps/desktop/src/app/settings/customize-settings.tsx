@@ -204,9 +204,9 @@ export function CustomizeSettings() {
                 disabled={saving}
                 id="branding-display-name"
                 lang="en"
-                placeholder="Semantier"
                 maxLength={120}
                 onChange={event => edit({ ...draft, displayName: event.target.value })}
+                placeholder="Semantier"
                 value={draft.displayName}
               />
             </label>

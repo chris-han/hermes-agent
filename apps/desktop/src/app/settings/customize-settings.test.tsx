@@ -25,6 +25,7 @@ const original = window.hermesDesktop
 
 function LocaleSwitch() {
   const { setLocale } = useI18n()
+
   return <button onClick={() => void setLocale('en')}>Switch locale</button>
 }
 
@@ -122,31 +123,46 @@ test('separate Chinese and English fields select one preview name per locale wit
   expect(preview().textContent).toContain('示例集团')
   expect(preview().textContent).not.toContain('Acme Global')
   fireEvent.click(screen.getByRole('button', { name: 'Switch locale' }))
-  await waitFor(() => expect(screen.getByRole('region', { name: en.branding.preview }).textContent).toContain('Acme Global'))
+  await waitFor(() =>
+    expect(screen.getByRole('region', { name: en.branding.preview }).textContent).toContain('Acme Global')
+  )
   expect((screen.getByLabelText('Organization display name (Chinese)') as HTMLInputElement).value).toBe('示例集团')
   expect((screen.getByLabelText('Organization display name (English)') as HTMLInputElement).value).toBe('Acme Global')
-  native.save.mockImplementation(async value => { $desktopBranding.set(value); return value })
+  native.save.mockImplementation(async value => {
+    $desktopBranding.set(value)
+
+    return value
+  })
   fireEvent.click(screen.getByRole('button', { name: en.branding.apply }))
   await screen.findByText(en.branding.saved)
   expect($desktopBranding.get()).toMatchObject({ displayName: 'Acme Global', displayNameZh: '示例集团' })
 })
 
- test('initial and reset previews use localized Semantier fallback', async () => {
+test('initial and reset previews use localized Semantier fallback', async () => {
   mount('zh')
   const preview = screen.getByRole('region', { name: zh.branding.preview })
   expect(preview.querySelector('[data-organization-brand]')?.textContent).toContain('司序科技')
   expect(preview.querySelector('img')?.getAttribute('src')).toContain('semantier-logo.png')
   fireEvent.click(screen.getByRole('button', { name: 'Switch locale' }))
-  await waitFor(() => expect(screen.getByRole('region', { name: en.branding.preview }).querySelector('[data-organization-brand]')?.textContent).toContain('Semantier'))
+  await waitFor(() =>
+    expect(
+      screen.getByRole('region', { name: en.branding.preview }).querySelector('[data-organization-brand]')?.textContent
+    ).toContain('Semantier')
+  )
   fireEvent.change(screen.getByLabelText('Organization display name (English)'), { target: { value: 'Acme' } })
   fireEvent.click(screen.getByRole('button', { name: en.branding.reset }))
-  expect(screen.getByRole('region', { name: en.branding.preview }).querySelector('[data-organization-brand]')?.textContent).toContain('Semantier')
+  expect(
+    screen.getByRole('region', { name: en.branding.preview }).querySelector('[data-organization-brand]')?.textContent
+  ).toContain('Semantier')
 })
 
 test.each([
-  ['zh', '', '', '司序科技'], ['zh-CN', 'Acme', '示例', '示例'],
-  ['en', 'Acme', '示例', 'Acme'], ['fr', '', '示例', '示例'],
-  ['zh-TW', 'Legacy', '', 'Legacy'], ['en', ' ', ' ', 'Semantier']
+  ['zh', '', '', '司序科技'],
+  ['zh-CN', 'Acme', '示例', '示例'],
+  ['en', 'Acme', '示例', 'Acme'],
+  ['fr', '', '示例', '示例'],
+  ['zh-TW', 'Legacy', '', 'Legacy'],
+  ['en', ' ', ' ', 'Semantier']
 ])('name fallback for %s / %s / %s', (locale, displayName, displayNameZh, expected) => {
-  expect(desktopBrandingName({version: 1, displayName, displayNameZh, logo: null}, locale)).toBe(expected)
+  expect(desktopBrandingName({ version: 1, displayName, displayNameZh, logo: null }, locale)).toBe(expected)
 })

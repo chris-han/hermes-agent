@@ -5,8 +5,7 @@ import { useI18n } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { $desktopBranding } from '@/store/desktop-branding'
 
-import { desktopBrandingName, type DesktopBranding } from '../../electron/desktop-branding-types'
-
+import { type DesktopBranding, desktopBrandingName } from '../../electron/desktop-branding-types'
 
 export function SemantierAttribution() {
   const { t } = useI18n()

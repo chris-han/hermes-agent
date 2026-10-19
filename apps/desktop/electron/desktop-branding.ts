@@ -17,7 +17,9 @@ export function validateDesktopBranding(input: unknown): DesktopBranding {
   if (
     value.version !== 1 ||
     [value.displayName, value.displayNameZh === undefined ? '' : value.displayNameZh].some(
-      name => typeof name !== 'string' || name.length > 120 ||
+      name =>
+        typeof name !== 'string' ||
+        name.length > 120 ||
         Array.from(name).some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)
     )
   ) {

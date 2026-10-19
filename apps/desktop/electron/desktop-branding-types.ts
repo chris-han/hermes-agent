@@ -11,7 +11,6 @@ export const DEFAULT_DESKTOP_BRANDING: DesktopBranding = { version: 1, displayNa
 export function desktopBrandingName(value: DesktopBranding, locale: string): string {
   const english = value.displayName.trim()
   const chinese = value.displayNameZh?.trim() ?? ''
-  return /^zh(?:-|$)/i.test(locale)
-    ? chinese || english || '司序科技'
-    : english || chinese || 'Semantier'
+
+  return /^zh(?:-|$)/i.test(locale) ? chinese || english || '司序科技' : english || chinese || 'Semantier'
 }

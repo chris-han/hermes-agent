@@ -28,6 +28,9 @@ async function launch() {
 let instance
 try {
  instance=await launch();let {app,page}=instance
+ await expect(page.getByRole('region',{name:'Placement preview'})).toContainText('Semantier')
+ await expect(page.getByRole('region',{name:'Placement preview'}).locator('img')).toHaveAttribute('src',/semantier-logo/)
+ checks.push('initial localized Semantier name and supplied default logo')
  await page.getByLabel('Organization display name (English)').fill('Native Brand')
  await page.getByLabel('Organization display name (Chinese)').fill('原生品牌')
  const png=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=160;c.height=64;const x=c.getContext('2d');x.fillStyle='#406080';x.fillRect(8,8,144,48);return c.toDataURL('image/png').split(',')[1]})
@@ -76,6 +79,7 @@ try {
  instance=await launch();({app,page}=instance)
  const restored=await page.evaluate(()=>window.hermesDesktop.branding.get());assert.equal(restored.displayName,'Native Brand');assert.equal(restored.displayNameZh,'原生品牌');assert.ok(restored.logo)
  await expect(page.getByLabel('Organization display name (English)')).toHaveValue('Native Brand')
+ await expect(page.getByLabel('Organization display name (Chinese)')).toHaveValue('原生品牌')
  checks.push('complete production Electron restart restores name and logo before settings')
  await page.getByRole('button',{name:'Remove logo',exact:true}).click();await expect(page.getByRole('region',{name:'Placement preview'}).locator('img')).toHaveAttribute('src',/semantier-logo/);await page.getByRole('button',{name:'Apply changes',exact:true}).click();await expect(page.getByText('Changes saved',{exact:true})).toBeVisible()
  await app.close();instance=null

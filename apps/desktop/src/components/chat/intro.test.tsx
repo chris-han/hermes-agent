@@ -3,6 +3,9 @@ import { afterEach, expect, it, vi } from 'vitest'
 
 import { I18nProvider, useI18n } from '@/i18n'
 import type { I18nContextValue } from '@/i18n'
+import { $desktopBranding } from '@/store/desktop-branding'
+
+import { DEFAULT_DESKTOP_BRANDING } from '../../../electron/desktop-branding-types'
 
 import { Intro } from './intro'
 import stock from './intro-copy.jsonl?raw'
@@ -28,6 +31,7 @@ function Fixture({ personality, seed = 0 }: { personality?: string; seed?: numbe
 
 afterEach(() => {
   cleanup()
+  $desktopBranding.set({ ...DEFAULT_DESKTOP_BRANDING })
   vi.restoreAllMocks()
 })
 it('translates every shipped stock body at the same personality and rotation position', async () => {
@@ -88,4 +92,17 @@ it('localizes the custom-personality fallback without translating its user-suppl
     expect(body).not.toBe(english)
     expect(body).toContain('My Custom Voice')
   }
+})
+
+it('welcome shows Chinese-only branding and localized Semantier defaults', async () => {
+  const { container } = render(<Fixture />)
+  const brand = () => container.querySelector('[data-organization-brand]')!
+  expect(brand().textContent).toBe('Semantier')
+  expect(brand().querySelector('img')?.getAttribute('src')).toContain('semantier-logo.png')
+  await act(() => i18n.setLocale('zh'))
+  expect(brand().textContent).toBe('司序科技')
+  act(() => $desktopBranding.set({ version: 1, displayName: '', displayNameZh: '示例集团', logo: null }))
+  expect(brand().textContent).toBe('示例集团')
+  await act(() => i18n.setLocale('en'))
+  expect(brand().textContent).toBe('示例集团')
 })

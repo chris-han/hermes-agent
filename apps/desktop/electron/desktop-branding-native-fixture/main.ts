@@ -56,7 +56,10 @@ async function run() {
       'Native Brand'
     )
     assert.equal(await peer.webContents.executeJavaScript('window.changes.length'), 1)
-    assert.equal((await peer.webContents.executeJavaScript('window.hermesDesktop.branding.get()')).displayNameZh, '原生品牌')
+    assert.equal(
+      (await peer.webContents.executeJavaScript('window.hermesDesktop.branding.get()')).displayNameZh,
+      '原生品牌'
+    )
 
     for (const bad of ['data:image/png;base64,PHN2Zz4=', 'data:image/svg+xml;base64,PHN2Zy8+']) {
       await assert.rejects(

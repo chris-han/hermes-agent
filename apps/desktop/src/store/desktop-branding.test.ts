@@ -11,7 +11,7 @@ test('a delayed startup read and save response cannot overwrite a newer peer pub
   let read!: (value: DesktopBranding) => void
   let write!: (value: DesktopBranding) => void
   let publish!: (value: DesktopBranding) => void
-  const initial: DesktopBranding = { version: 1, displayName: 'Initial', logo: null }
+  const initial: DesktopBranding = { version: 1, displayName: 'Initial', displayNameZh: '初始', logo: null }
   window.hermesDesktop = {
     ...original,
     branding: {
@@ -32,15 +32,15 @@ test('a delayed startup read and save response cannot overwrite a newer peer pub
     }
   }
   const store = await import('./desktop-branding')
-  const peer = { ...initial, displayName: 'Peer' }
+  const peer = { ...initial, displayName: 'Peer', displayNameZh: '其他窗口' }
   publish(peer)
   read(initial)
   await Promise.resolve()
   expect(store.$desktopBranding.get()).toEqual(peer)
-  const saving = store.saveDesktopBranding({ ...initial, displayName: 'Mine' })
-  const newer = { ...initial, displayName: 'Newer peer' }
+  const saving = store.saveDesktopBranding({ ...initial, displayName: 'Mine', displayNameZh: '我的品牌' })
+  const newer = { ...initial, displayName: 'Newer peer', displayNameZh: '更新品牌' }
   publish(newer)
-  write({ ...initial, displayName: 'Mine' })
+  write({ ...initial, displayName: 'Mine', displayNameZh: '我的品牌' })
   expect(await saving).toEqual(newer)
   expect(store.$desktopBranding.get()).toEqual(newer)
 })
