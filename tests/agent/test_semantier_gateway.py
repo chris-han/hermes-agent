@@ -129,3 +129,26 @@ def test_idempotency_is_stable_per_logical_call_and_unique_across_calls(tmp_path
     other_helper = sg.attribute_request({}, base_url=route['base_url'], purpose='title_generation')
     assert helper['extra_headers']['Idempotency-Key'] == helper_retry['extra_headers']['Idempotency-Key']
     assert helper['extra_headers']['Idempotency-Key'] != other_helper['extra_headers']['Idempotency-Key']
+
+
+def test_auto_title_snapshots_native_run_correlation(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from agent.turn_context import _maybe_title_session_at_turn_start
+
+    configure(tmp_path, monkeypatch)
+    snapshots = []
+    monkeypatch.setattr('agent.title_generator.maybe_auto_title',
+                        lambda *args, **kwargs: snapshots.append(kwargs['main_runtime']))
+    owner = SimpleNamespace(platform='desktop', session_id='session-owned',
+                            _current_task_id='task-owned', run_id='unrelated-value',
+                            model='gpt-5.1', provider='custom', api_key='profile-secret',
+                            base_url='http://127.0.0.1:8765/v1', api_mode='chat_completions',
+                            _session_db=object(), _session_db_created=True)
+    _maybe_title_session_at_turn_start(owner, [{'role': 'user', 'content': 'Read evidence'}])
+    owner._current_task_id = 'next-task'
+    snapshot = snapshots[0]
+    headers = sg.attribute_request({}, base_url=snapshot['base_url'], purpose='title_generation',
+                                   session_id=snapshot['session_id'], run_id=snapshot['run_id'])['extra_headers']
+    assert headers['X-Semantier-Session-Id'] == 'session-owned'
+    assert headers['X-Semantier-Run-Id'] == 'task-owned'
+    assert headers['X-Semantier-Purpose'] == 'title_generation'
