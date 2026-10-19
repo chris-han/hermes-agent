@@ -171,7 +171,8 @@ def test_packaging_preserves_keychain_home_without_retargeting_build_state(tmp_p
 
 
 @pytest.mark.platforms("linux", "macos", "windows")
-def test_prepare_tools_uses_pm_native_pins_and_separate_cache(tmp_path, monkeypatch):
+@pytest.mark.parametrize("shared", [False, True])
+def test_prepare_tools_uses_pm_native_pins_and_separate_cache(tmp_path, monkeypatch, shared):
     import pm
     from scripts.bundles import desktop_toolchain
     from pm import native_build
@@ -199,6 +200,8 @@ def test_prepare_tools_uses_pm_native_pins_and_separate_cache(tmp_path, monkeypa
     monkeypatch.setattr(native_build, "prepare_windows_environment", native)
     monkeypatch.setattr(desktop_toolchain, "native_cache_path", lambda cache, env: cache / "python/runtime/native-identity",
                         raising=False)
+    monkeypatch.setattr(desktop_toolchain, "reusable_wheel_cache",
+                        lambda cache, env: cache / "python/runtime/prebuilt" if shared else None)
     before = dict(os.environ)
     python, node, prepared = desktop_toolchain.prepare_tools(source, work, cache, env)
     assert acquired == ["uv", "npm"]
@@ -206,7 +209,8 @@ def test_prepare_tools_uses_pm_native_pins_and_separate_cache(tmp_path, monkeypa
     assert prepared["HERMES_PYTHON"] == str(python)
     assert prepared["HERMES_NODE"] == str(node)
     assert prepared["PATH"] == "pm-tools"
-    assert Path(prepared["UV_CACHE_DIR"]) == cache / "python/runtime/native-identity"
+    assert Path(prepared["UV_CACHE_DIR"]) == cache / ("python/runtime/prebuilt" if shared else "python/runtime/native-identity")
+    assert prepared["HERMES_DESKTOP_NATIVE_TOOLCHAIN"] == "native-identity"
     assert dict(os.environ) == before
     if pm.current_target() == "win32-arm64":
         assert len(native_calls) == 1
@@ -357,7 +361,7 @@ def test_guarded_wheel_cache_never_ignores_failed_invalidation(tmp_path, monkeyp
         })
 
 
-def test_missing_compiler_identity_reuses_only_guarded_controller_cache(tmp_path, monkeypatch):
+def test_shared_wheels_never_replace_native_toolchain_identity(tmp_path, monkeypatch):
     from scripts.bundles import desktop_toolchain
 
     cache = tmp_path / '.cache/desktop-inputs'
@@ -370,8 +374,9 @@ def test_missing_compiler_identity_reuses_only_guarded_controller_cache(tmp_path
                         lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError()))
     env = {'PATH': os.defpath, 'HERMES_DESKTOP_SERIAL_CACHE': str(cache.resolve()),
            'HERMES_PYTHON_SRC_ROOT': str(source)}
-    first = desktop_toolchain.native_cache_path(cache, env)
-    assert desktop_toolchain.native_cache_path(cache, env) == first
+    first = desktop_toolchain.reusable_wheel_cache(cache, env)
+    assert desktop_toolchain.reusable_wheel_cache(cache, env) == first
     assert first.name.startswith('prebuilt-')
+    assert desktop_toolchain.native_cache_path(cache, env) != desktop_toolchain.native_cache_path(cache, env)
     del env['HERMES_DESKTOP_SERIAL_CACHE']
     assert desktop_toolchain.native_cache_path(cache, env) != desktop_toolchain.native_cache_path(cache, env)

@@ -95,7 +95,8 @@ persistent prebuilt-wheel cache when compiler identity is incomplete: PM invokes
 `uv cache clean` for cached PyPI source builds and local project packages before
 reuse, preserving other downloads. Unknown source-cache layouts retain the
 private partition fallback; direct/concurrent bundle callers retain their original
-native-identity isolation. Dependency locks and hash checks remain active. Output
+native-identity isolation. The Node/native toolchain fingerprint remains independent
+of the shared Python download directory. Dependency locks and hash checks remain active. Output
 cleaning does not require downloading every unchanged dependency again.
 
 The scripts do not sign or notarize. They remove `AZURE_SIGN_*` (Windows) and the

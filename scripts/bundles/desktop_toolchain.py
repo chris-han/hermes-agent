@@ -118,8 +118,10 @@ def prepare_tools(source: Path, work: Path, cache: Path,
             raise FileNotFoundError(f"PM did not prepare a native {name} executable")
         binaries[name] = installed.binary
     prepared = pm.env_for("python", "npm", base_env=prepared)
+    native = native_cache_path(cache, prepared)
     prepared.update({"HERMES_PYTHON": str(binaries["python"]), "HERMES_NODE": str(binaries["node"]),
-                     "UV_CACHE_DIR": str(native_cache_path(cache, prepared))})
+                     "HERMES_DESKTOP_NATIVE_TOOLCHAIN": native.name,
+                     "UV_CACHE_DIR": str(reusable_wheel_cache(cache, prepared) or native)})
     return binaries["python"], binaries["node"], prepared
 
 
@@ -183,10 +185,6 @@ def native_cache_path(cache: Path, env: Mapping[str, str]) -> Path:
     encoded = encoded.replace(json.dumps(owned)[1:-1], "<build-cache>")
     # uv builds sdists below this root. Keep the partition compact so compiler
     # outputs fit Windows MAX_PATH; the target is already part of the identity.
-    if not complete:
-        shared = reusable_wheel_cache(cache, env)
-        if shared is not None:
-            return shared
     digest = hashlib.sha256(encoded.encode()).hexdigest()[:32] if complete else uuid.uuid4().hex
     return cache.resolve() / "python/runtime" / digest
 
