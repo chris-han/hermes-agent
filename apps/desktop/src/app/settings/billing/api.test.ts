@@ -44,7 +44,7 @@ describe('createBillingApi', () => {
     const response = await result.current.fetchBillingState()
 
     expect(response).toEqual({ data: state, ok: true })
-    expect(requestGatewayMock).toHaveBeenCalledWith('billing.state', {})
+    expect(requestGatewayMock).toHaveBeenCalledWith('billing.state', { schema_version: 'semantier.billing.v1' })
   })
 
   it('normalizes object-shaped refusal envelopes', async () => {
@@ -199,4 +199,26 @@ describe('createBillingApi', () => {
       idempotency_key: '11111111-1111-4111-8111-111111111111'
     })
   })
+})
+
+it('negotiates Semantier v1 and retains currency-safe state without Nous coercion', async () => {
+  const state = {
+    ok: true,
+    backend: 'semantier',
+    schema_version: 'semantier.billing.v1',
+    organization: { id: 'org-a' },
+    billing_account_id: 'ba-a',
+    mode: 'shadow',
+    funding_source: 'CUSTOMER_CLOUD',
+    balances: [],
+    capabilities: { can_read_usage: true, can_charge: false, can_change_plan: false, can_auto_top_up: false },
+    usage: { known_cost: { amount: '0.012000', currency: 'CNY' }, status: 'ESTIMATED', unresolved_attempts: 1 },
+    account: {},
+    as_of: '2026-10-19T00:00:00Z'
+  }
+
+  requestGatewayMock.mockResolvedValueOnce(state)
+  const result = await createBillingApi(requestGatewayMock).fetchBillingState()
+  expect(result).toEqual({ ok: true, data: state })
+  expect(requestGatewayMock).toHaveBeenLastCalledWith('billing.state', { schema_version: 'semantier.billing.v1' })
 })

@@ -26,6 +26,9 @@ def _init_fallback_chain(agent, fallback_model):
     sync_credential_pool_entry_id(agent)
 
     # Ordered backups tried when the primary is exhausted (legacy single-dict or list).
+    from agent.semantier_gateway import is_gateway_route
+    if is_gateway_route(str(getattr(agent, 'base_url', '') or '')):
+        fallback_model = None
     agent._fallback_chain = _fallback_entries(fallback_model)
     agent._fallback_index = 0
     agent._fallback_activated = getattr(agent, "_fallback_activated", False)

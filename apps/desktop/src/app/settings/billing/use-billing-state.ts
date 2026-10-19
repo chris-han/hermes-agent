@@ -1,3 +1,4 @@
+import { isSemantierBilling } from '@hermes/shared/billing'
 import { useQuery } from '@tanstack/react-query'
 
 import type { Translations } from '@/i18n'
@@ -8,8 +9,16 @@ import { openFreeTierSignIn } from '@/store/free-tier-sign-in'
 
 import type { BillingRefusal, BillingResult } from './api'
 import { useBillingApi } from './api'
+import { useBillingScope } from './billing-scope'
 import { resolveRefusal } from './errors'
-import type { BillingStateResponse, SubscriptionStateResponse, SubscriptionTierOption, UsageModelData } from './types'
+import type {
+  BillingBackendState,
+  BillingStateResponse,
+  SubscriptionBackendState,
+  SubscriptionStateResponse,
+  SubscriptionTierOption,
+  UsageModelData
+} from './types'
 
 export const EMPTY_BILLING_VALUE = '—'
 export const FALLBACK_PORTAL_BILLING_URL = 'https://portal.nousresearch.com/billing'
@@ -157,7 +166,7 @@ export interface BillingView {
   planFootnote?: string
   /** Automatic-refill section row. */
   refillRow?: BillingAccountRowView
-  status: 'free_tier' | 'loading' | 'logged_out' | 'normal' | 'refusal'
+  status: 'free_tier' | 'loading' | 'logged_out' | 'normal' | 'refusal' | 'semantier'
   summary: BillingSummaryItemView[]
   /** Live tier catalog for the plans sub-view (empty when unavailable). */
   tiers: BillingPlanTierView[]
@@ -168,29 +177,33 @@ export interface BillingView {
 
 export function useBillingState(enabled = true) {
   const api = useBillingApi()
+  const scope = useBillingScope()
 
   return useQuery({
     ...BILLING_QUERY_OPTIONS,
     enabled,
     queryFn: () => api.fetchBillingState(),
-    queryKey: ['billing', 'state']
+    queryKey: ['billing', 'state', scope],
+    gcTime: 0
   })
 }
 
 export function useSubscriptionState(enabled = true) {
   const api = useBillingApi()
+  const scope = useBillingScope()
 
   return useQuery({
     ...BILLING_QUERY_OPTIONS,
     enabled,
     queryFn: () => api.fetchSubscriptionState(),
-    queryKey: ['billing', 'subscription']
+    queryKey: ['billing', 'subscription', scope],
+    gcTime: 0
   })
 }
 
 export function deriveBillingView(
-  stateResult?: BillingResult<BillingStateResponse>,
-  subscriptionResult?: BillingResult<SubscriptionStateResponse>,
+  stateResult?: BillingResult<BillingBackendState>,
+  subscriptionResult?: BillingResult<SubscriptionBackendState>,
   b: Translations['settings']['billing'] = en.settings.billing
 ): BillingView {
   if (!stateResult) {
@@ -213,7 +226,32 @@ export function deriveBillingView(
   }
 
   const billing = stateResult.data
-  const subscription = subscriptionResult?.ok ? subscriptionResult.data : null
+
+  if (isSemantierBilling(billing)) {
+    return {
+      status: 'semantier',
+      summary: [
+        { label: b.semantier.organization, value: billing.organization.display_name || billing.organization.id },
+        {
+          label: b.semantier.knownCost,
+          value: billing.usage.known_cost
+            ? `${billing.usage.known_cost.currency} ${billing.usage.known_cost.amount}`
+            : b.semantier.unavailable
+        }
+      ],
+      tiers: [],
+      usageRows: []
+    }
+  }
+
+  const subscription =
+    subscriptionResult?.ok && !('backend' in subscriptionResult.data) ? subscriptionResult.data : null
+
+  const legacySubscriptionResult: BillingResult<SubscriptionStateResponse> | undefined = subscriptionResult?.ok
+    ? subscription
+      ? { ok: true, data: subscription }
+      : undefined
+    : subscriptionResult
 
   // Read BEFORE the logged-out branch: a free-tier install has no account, so
   // `logged_in` is false and the generic "connect your account" notice would
@@ -241,7 +279,7 @@ export function deriveBillingView(
   // One "can change plans in-app" verdict, shared by the plan card (button vs portal
   // link) and the grid (whether upgrade tiles are actionable) so the invariant lives
   // in one place.
-  const capable = plansCapable(subscription, subscriptionResult)
+  const capable = plansCapable(subscription, legacySubscriptionResult)
   // Computed once and threaded to both the card (caption + undo) and the grid
   // (Scheduled marker), so the two never disagree about what's pending.
   const pending = pendingTransition(subscription?.current)
@@ -250,7 +288,7 @@ export function deriveBillingView(
   return {
     notice: noCardNotice(billing, b),
     paymentRow: paymentMethodRow(billing, b),
-    plan: derivePlanCard(billing, subscription, subscriptionResult, tiers, capable, pending, b),
+    plan: derivePlanCard(billing, subscription, legacySubscriptionResult, tiers, capable, pending, b),
     refillRow: autoReloadRow(billing, b),
     status: 'normal',
     summary: [

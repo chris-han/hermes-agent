@@ -1,3 +1,4 @@
+import { isSemantierBilling } from '@hermes/shared/billing'
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 
@@ -25,11 +26,13 @@ import { RowValue } from './account-row-value'
 import { BillingApiProvider } from './api'
 import { AutoReloadRow } from './auto-reload-row'
 import { clampAmount, formatMoney } from './billing-amounts'
+import { useBillingScope } from './billing-scope'
 import { CurrentPlanCard } from './current-plan-card'
 import { type BillingDevFixtureName, billingDevFixtures } from './dev-fixtures'
 import { StepUpInlineAction } from './inline-feedback'
 import { openExternal } from './open-external'
 import { BillingPlansView } from './plans-view'
+import { SemantierBilling, semantierBillingProps } from './semantier-billing'
 import { createSimulatedBillingApi } from './simulated-api'
 import type { BillingStateResponse } from './types'
 import {
@@ -499,8 +502,18 @@ function BillingSettingsContent({
 
   const billingResult = billingState.data
   const subscriptionResult = subscriptionState.data
+
+  const semantierProps = semantierBillingProps(billingResult)
+
+  if (semantierProps) {
+    return <SettingsContent>
+      <BillingHeader fixtureName={fixtureName} onFixtureChange={onFixtureChange} />
+      <SemantierBilling {...semantierProps} />
+    </SettingsContent>
+  }
+
   const view = deriveBillingView(billingResult, subscriptionResult, b)
-  const billing = billingResult?.ok ? billingResult.data : undefined
+  const billing = billingResult?.ok && !isSemantierBilling(billingResult.data) ? billingResult.data : undefined
 
   const { paymentRow, refillRow, topupRow } = view
 
@@ -606,9 +619,11 @@ function BillingSettingsWithDevFixtures() {
 }
 
 export function BillingSettings() {
+  const scope = useBillingScope()
+
   if (import.meta.env.DEV) {
-    return <BillingSettingsWithDevFixtures />
+    return <BillingSettingsWithDevFixtures key={scope} />
   }
 
-  return <BillingSettingsContent />
+  return <BillingSettingsContent key={scope} />
 }
