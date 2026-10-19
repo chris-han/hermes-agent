@@ -33,7 +33,9 @@ Sources of truth — two axes, composed per target:
 Desktop build identity comes from HERMES_PAYLOAD_TAG / HERMES_BUILD_COMMIT:
 Canary uses yellow/dark-yellow backgrounds. Commit builds use red/dark-red
 and a seven-character SHA badge. The girl and tile geometry do not change.
-Only apps/desktop outputs use this identity. Website, bootstrap, dashboard,
+Windows Desktop PNG/ICO assets instead use the supplied Semantier logo,
+without flavor recoloring or SHA badges; package metadata still identifies the build.
+Only other apps/desktop outputs use this identity. Website, bootstrap, dashboard,
 and the shared master SVGs retain the default brand.
 
 The girl's position and uniform scale are registered to the reference artwork.
@@ -103,6 +105,10 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from PIL import Image
+
+# Anchor repository-owned helpers even under the build interpreter's -I isolation.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from windows_brand_icons import desktop_icon_bytes
 
 try:
     import resvg_py
@@ -879,7 +885,7 @@ def cmd_write(source: Path, out: Path) -> int:
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             selected = desktop_art if rel.startswith("apps/desktop/") else art
-            path.write_bytes(target_bytes(selected, kind, arg))
+            path.write_bytes(desktop_icon_bytes(source, rel, kind, arg) or target_bytes(selected, kind, arg))
             written += 1
         except Exception as exc:
             failures += 1
@@ -925,7 +931,7 @@ def cmd_check(source: Path, out: Path) -> int:
     for rel, kind, arg in TARGETS:
         try:
             selected = desktop_art if rel.startswith("apps/desktop/") else art
-            target_bytes(selected, kind, arg)
+            desktop_icon_bytes(source, rel, kind, arg) or target_bytes(selected, kind, arg)
         except Exception as exc:
             problems.append(f"{rel}: REGENERATE FAILED ({exc})")
 
