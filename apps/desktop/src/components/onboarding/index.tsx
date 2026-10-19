@@ -428,9 +428,6 @@ export function DesktopOnboardingOverlay({
       // `[data-glass-opaque]` in styles.css.
       data-glass-opaque=""
     >
-      <div className="absolute inset-x-6 top-6">
-        <OrganizationBrand attribution compact />
-      </div>
       <div
         className={cn(
           'relative w-full max-w-[45rem] transition-all duration-500 ease-out',
@@ -457,6 +454,7 @@ export function DesktopOnboardingOverlay({
           </Button>
         ) : null}
         <div className="grid gap-3 p-5">
+          <OrganizationBrand attribution compact />
           {reason ? <ReasonNotice reason={reason} /> : null}
           {ready && showPicker && !freeTierIntro && !onboarding.manual ? <FreeTierSetupNotice ctx={ctx} /> : null}
           {ready ? (
