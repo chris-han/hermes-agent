@@ -75,10 +75,16 @@ export interface BillingStateResult {
   mode?: string | null
   funding_source?: string | null
   balances?: Money[] | null
-  capabilities?: BillingCapabilities | null
+  capabilities?: BillingCapabilities | BillingCommerceCapabilities | null
   as_of?: string | null
   account?: Record<string, unknown> | null
-  usage?: UsageModel | BillingUsage | null
+  usage?: UsageModel | BillingUsage | BillingCommerceUsage | null
+  currency?: string | null
+  merchant?: BillingMerchant | null
+  environment?: string | null
+  subscription?: BillingSubscription | null
+  credits?: BillingCredits | null
+  portal?: BillingPortal | null
 }
 export interface BillingCardInfo {
   brand: string
@@ -135,11 +141,44 @@ export interface BillingCapabilities {
   can_change_plan: false
   can_auto_top_up?: false
 }
+export interface BillingCommerceCapabilities {
+  can_read_usage: boolean
+  can_charge: false
+  can_change_plan: false
+  can_auto_top_up?: false
+  can_manage_billing: boolean
+  can_open_portal: boolean
+}
 export interface BillingUsage {
   known_cost?: Money | null
   status: string
   period?: string | null
   unresolved_attempts?: number | null
+}
+export interface BillingCommerceUsage {
+  known_cost: Money
+  period: 'lifetime'
+}
+export interface BillingMerchant {
+  id: string
+  display_name: string
+}
+export interface BillingSubscription {
+  plan: string
+  term: 'annual' | 'monthly'
+  status: 'active' | 'expired'
+  starts_at: string
+  ends_at: string
+  manual_renewal: true
+}
+export interface BillingCredits {
+  allowance: Money
+  purchased: Money
+  held: Money
+  available: Money
+}
+export interface BillingPortal {
+  url: string | null
 }
 /** ``_serialize_subscription_state``; the view's fallback emits only ``ok / logged_in / error``. */
 export interface SubscriptionStateResult {

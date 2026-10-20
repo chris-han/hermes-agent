@@ -14,7 +14,8 @@ from .base import JsonValue, Params, Result, WireEnum
 from .common import MessageReaction, OpenModel, ProfileParams, SessionParams
 from .registry import method
 from .semantier_billing import (BillingReadParams, BillingOrganization, BillingCapabilities,
-                               BillingUsage, Money)
+                               BillingUsage, Money, BillingCommerceCapabilities, BillingSubscription,
+                               BillingCredits, BillingCommerceUsage, BillingPortal, BillingMerchant)
 
 # ── billing envelope ──────────────────────────────────────────────────────────────────────────
 
@@ -173,10 +174,16 @@ class BillingStateResult(BillingEnvelope):
     mode: str | None = None
     funding_source: str | None = None
     balances: list[Money] | None = None
-    capabilities: BillingCapabilities | None = None
+    capabilities: BillingCapabilities | BillingCommerceCapabilities | None = None
     as_of: str | None = None
     account: dict[str, JsonValue] | None = None
-    usage: UsageModel | BillingUsage | None = None
+    usage: UsageModel | BillingUsage | BillingCommerceUsage | None = None
+    currency: str | None = None
+    merchant: BillingMerchant | None = None
+    environment: str | None = None
+    subscription: BillingSubscription | None = None
+    credits: BillingCredits | None = None
+    portal: BillingPortal | None = None
 
 
 method("billing.state", params=BillingReadParams, result=BillingStateResult,

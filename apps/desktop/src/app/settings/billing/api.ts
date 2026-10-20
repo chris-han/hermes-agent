@@ -48,7 +48,7 @@ export type BillingRequestGateway = <T>(
 export interface BillingApi {
   charge: (amountUsd: string, idempotencyKey?: string) => Promise<BillingChargeResult>
   chargeStatus: (chargeId: string) => Promise<BillingResult<BillingChargeStatusResponse>>
-  fetchBillingState: () => Promise<BillingResult<BillingBackendState>>
+  fetchBillingState: (signal?: AbortSignal) => Promise<BillingResult<BillingBackendState>>
   fetchSubscriptionState: () => Promise<BillingResult<SubscriptionBackendState>>
   /** Chargeless quote for a plan change (POST /subscription/preview). */
   previewSubscriptionChange: (tierId: string) => Promise<BillingResult<SubscriptionPreviewResponse>>
@@ -136,10 +136,14 @@ const normalizeRpcResult = <T>(response: T): BillingResult<T> => {
 const callBilling = async <T>(
   requestGateway: BillingRequestGateway,
   method: string,
-  params: Record<string, unknown> = {}
+  params: Record<string, unknown> = {},
+  signal?: AbortSignal,
+  timeoutMs?: number
 ): Promise<BillingResult<T>> => {
   try {
-    return normalizeRpcResult(await requestGateway<T>(method, params))
+    return normalizeRpcResult(await (signal || timeoutMs
+      ? requestGateway<T>(method, params, timeoutMs, signal)
+      : requestGateway<T>(method, params)))
   } catch (error) {
     return { ok: false, refusal: normalizeThrown(error) }
   }
@@ -156,8 +160,15 @@ export const createBillingApi = (requestGateway: BillingRequestGateway): Billing
   },
   chargeStatus: chargeId =>
     callBilling<BillingChargeStatusResponse>(requestGateway, 'billing.charge_status', { charge_id: chargeId }),
-  fetchBillingState: () =>
-    callBilling<BillingBackendState>(requestGateway, 'billing.state', { schema_version: 'semantier.billing.v1' }),
+  fetchBillingState: async signal => {
+    const result = await callBilling<BillingBackendState>(requestGateway, 'billing.state',
+      { schema_version: 'semantier.billing.v2' }, signal, 1200)
+
+    // Only an identified older Semantier runtime negotiates down; never route to Nous.
+    return !result.ok && result.refusal.backend === 'semantier' && result.refusal.kind === 'unsupported_version'
+      ? callBilling<BillingBackendState>(requestGateway, 'billing.state', { schema_version: 'semantier.billing.v1' }, signal)
+      : result
+  },
   fetchSubscriptionState: () =>
     callBilling<SubscriptionBackendState>(requestGateway, 'subscription.state', {
       schema_version: 'semantier.billing.v1'
