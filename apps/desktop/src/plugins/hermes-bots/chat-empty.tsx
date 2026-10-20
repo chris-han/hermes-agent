@@ -2,7 +2,7 @@
  * What a bot's chat shows before it has said anything.
  *
  * Core's splash is Hermes' own wordmark and belongs to a fresh draft; a bot
- * chat is neither. It gets the same lettering with the bot's name in it, over
+ * chat is neither. It gets Manrope lettering with the bot's name in it, over
  * the same face the roster row and tab carry, so an empty conversation still
  * says whose it is.
  */
@@ -102,7 +102,7 @@ export function BotChatEmpty({ sessionId }: { sessionId: string }) {
           />
         </div>
 
-        <Wordmark className="mb-1" text={name} width="calc(80% - 1rem)" />
+        <Wordmark className="mb-1" fitMin="1.5rem" text={name} width="calc(80% - 1rem)" />
 
         <p className="m-0 text-center leading-normal tracking-tight">{b.bot.chatEmpty}</p>
       </div>

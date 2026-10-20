@@ -109,8 +109,8 @@ describe('alias identity survives the hosted handoff (#89131)', () => {
 
     expect(aliasIdentityFor(otherDefault)).toBeNull()
     expect(displayName(otherDefault, null)).toBe('Personal')
-    // Local default while the ACTIVE gateway is local: untouched "Hermes".
-    expect(displayName({ name: 'default' }, null)).toBe('Hermes')
+    // The local default uses product branding; aliases keep their own identity.
+    expect(displayName({ name: 'default' }, null)).toBe('semantier')
   })
 
   it('fails closed when two aliases claim one backend row', () => {

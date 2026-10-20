@@ -173,3 +173,20 @@ describe('an SDK that predates blobatarSvg', () => {
     expect(container.querySelector('svg[data-hb-math]')?.getAttribute('data-hb-shape')).toBe(defaultShapeFor('agent'))
   })
 })
+
+describe('primary bot appearance', () => {
+  it('uses Semantier green for the default bot while preserving explicit customization', async () => {
+    const { botAppearance } = await import('./avatar')
+
+    expect(botAppearance('default', { color: '#8b5cf6' })).toMatchObject({ color: '#9fe870', shape: 'squircle' })
+    expect(botAppearance('default', { custom: true, color: '#38bdf8', shape: 'cloud', image: 'photo.png' })).toEqual({
+      color: '#38bdf8',
+      shape: 'cloud',
+      image: 'photo.png'
+    })
+    expect(botAppearance('researcher', { color: '#38bdf8', shape: 'cloud' })).toMatchObject({
+      color: '#38bdf8',
+      shape: 'cloud'
+    })
+  })
+})

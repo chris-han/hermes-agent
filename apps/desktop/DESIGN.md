@@ -463,6 +463,14 @@ from their root base tokens; do not multiply the global tokens or nest CSS zoom.
   It replaced scattered Sparkles glyphs in updates / onboarding / about. Use it
   for hero/brand moments; don't reintroduce decorative star/sparkle icons.
 
+The untitled local default bot displays lowercase `semantier` and a Semantier
+green (`#9fe870`) avatar. Its empty-chat wordmark uses bundled Manrope 700
+with natural casing, tight tracking and the existing fitted-text layout (a
+1.5rem floor lets customized names fit compact panes). Explicit
+bot names, colors, shapes and uploaded images retain precedence; aliases and
+remote connection identities keep their existing scope. This presentation never
+changes a profile's machine identifier or native package/product identity.
+
 ## Motion
 
 - Visible windows keep animating when another app takes focus. Hidden/minimized
