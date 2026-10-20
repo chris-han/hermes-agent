@@ -1,5 +1,5 @@
 /** The server owns the allowlisted origin; clients own only these fixed task paths. */
-const tasks = { manage: '/billing', plans: '/billing/plans', topUp: '/billing/top-up', orders: '/billing/orders' } as const
+const tasks = { manage: '/billing', plans: '/pricing', topUp: '/billing/top-up', orders: '/billing/orders' } as const
 
 export function semantierPortalTask(origin: string | null, organizationId: string, accountId: string, task: keyof typeof tasks): string | null {
   if (!origin || !organizationId || !accountId) {return null}

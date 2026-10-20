@@ -89,7 +89,7 @@ No commercial capability in v1 is widened.
 
 The server supplies a configured portal origin. The bridge and renderer reject credentials,
 query strings, fragments, non-root paths and non-HTTPS origins except HTTP loopback.
-Buttons open only `/billing`, `/billing/plans`, `/billing/top-up` or `/billing/orders` with a
+Buttons open only `/billing`, public `/pricing`, `/billing/top-up` or `/billing/orders` with a
 non-secret organization and account hints. The portal must match the organization hint
 to its independently authenticated organization before creating any commerce action. Browser sign-in independently authorizes commerce; no inference
 credential, browser cookie or arbitrary return URL crosses this handoff. Missing portal

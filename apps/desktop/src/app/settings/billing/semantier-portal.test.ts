@@ -6,7 +6,7 @@ it('opens only a configured origin and finite account-scoped tasks without secre
   expect(semantierPortalTask('https://billing.example', 'org / a', 'account / a', 'orders'))
     .toBe('https://billing.example/billing/orders?organization_id=org+%2F+a&account_id=account+%2F+a')
   expect(semantierPortalTask('http://127.0.0.1:5173', 'org-a', 'a', 'plans'))
-    .toBe('http://127.0.0.1:5173/billing/plans?organization_id=org-a&account_id=a')
+    .toBe('http://127.0.0.1:5173/pricing?organization_id=org-a&account_id=a')
 
   for (const unsafe of [null, 'https://user:token@billing.example', 'https://billing.example?key=secret',
     'https://billing.example/#token', 'https://billing.example/redirect', 'http://untrusted.example']) {

@@ -6,6 +6,7 @@ import { useI18n } from '@/i18n'
 import type { SemantierBillingCopy } from '@/i18n/semantier-billing'
 import { semantierCommerceCopy } from '@/i18n/semantier-commerce'
 import { BarChart3, Package } from '@/lib/icons'
+import { fmtDateTime } from '@/lib/time'
 import { $activeGatewayRoute } from '@/store/gateway'
 import { $connection } from '@/store/session'
 
@@ -34,6 +35,13 @@ const money = (value: unknown): string | null => {
 
   return typeof value.amount === 'string' && typeof value.currency === 'string'
     ? `${value.currency} ${value.amount}` : null
+}
+
+/** Trim redundant scale only; tiny usage and large balances keep exact decimal digits. */
+export function formatSemantierMoney(value: { amount: string; currency: string }): string {
+  const [whole, fraction = ''] = value.amount.split('.')
+
+  return `${value.currency} ${whole}.${fraction.replace(/0+$/, '').padEnd(2, '0')}`
 }
 
 function row(title: string, value: string) {
@@ -112,17 +120,17 @@ export function SemantierBilling({ state, refusal }: SemantierBillingProps) {
         {row(commerce.package, state.subscription?.plan ?? commerce.noPackage)}
         {state.subscription && row(c.status, state.subscription.status === 'active' ? commerce.active : commerce.expired)}
         {state.subscription && row(commerce.term, commerce[state.subscription.term])}
-        {state.subscription && row(commerce.expires, state.subscription.ends_at)}
+        {state.subscription && row(commerce.expires, fmtDateTime.format(new Date(state.subscription.ends_at)))}
         {state.subscription && row(commerce.renewal, commerce.manual)}
         {row(commerce.environment, state.environment)}
       </SettingsSection>
       <SettingsSection icon={BarChart3} title={b.sections.usage}>
-        {row(commerce.allowance, money(state.credits.allowance) || c.unavailable)}
-        {row(commerce.purchased, money(state.credits.purchased) || c.unavailable)}
-        {row(c.held, money(state.credits.held) || c.unavailable)}
-        {row(c.available, money(state.credits.available) || c.unavailable)}
-        {row(`${c.knownCost} · ${c.lifetime}`, money(state.usage.known_cost) || c.unavailable)}
-        {row(c.updated, state.as_of)}
+        {row(commerce.allowance, formatSemantierMoney(state.credits.allowance))}
+        {row(commerce.purchased, formatSemantierMoney(state.credits.purchased))}
+        {row(c.held, formatSemantierMoney(state.credits.held))}
+        {row(c.available, formatSemantierMoney(state.credits.available))}
+        {row(`${c.knownCost} · ${c.lifetime}`, formatSemantierMoney(state.usage.known_cost))}
+        {row(c.updated, fmtDateTime.format(new Date(state.as_of)))}
       </SettingsSection>
       {state.capabilities.can_open_portal && <div className="flex flex-wrap gap-2">
         {tasks.map(task => {
