@@ -38,6 +38,12 @@ function fixture() {
   delete env.PYTHONPATH
   // The digest hook only needs the manifest to mark the payload as present.
   fs.writeFileSync(path.join(payload, 'manifest.json'), '{}')
+  // Exercise payload digests after the independent packed-main readiness gate.
+  const asar = path.join(directory, 'resources', 'app.asar')
+  fs.writeFileSync(asar, 'fixture archive')
+  fs.mkdirSync(path.join(asar+'.unpacked', 'dist'), {recursive:true})
+  fs.writeFileSync(path.join(asar+'.unpacked', 'dist/electron-main.mjs'),
+    'const re = /HERMES_(?:BACKEND|DASHBOARD)_READY[^\\n]*port=(\\d+)/m\n')
   execFileSync(python, ['-c',
     'from pathlib import Path; import sys; from scripts.bundles.payload import record_tools; from pm.store import current_target; root=Path(sys.argv[1]); record_tools(root,Path("pm/lock.json"),current_target(),{"uv":"uv"})',
     payload], { cwd: repo, env, encoding: 'utf8' })
@@ -87,5 +93,28 @@ test.runIf(process.platform === 'win32')('afterPack refuses missing or corrupt f
     assert.equal(fs.existsSync(f.facts), false)
   } finally {
     fs.rmSync(f.directory, { recursive: true, force: true })
+  }
+})
+
+
+test.runIf(process.platform === 'win32')('afterPack reuses content admission while refreshing real payload facts', () => {
+  const f = fixture()
+  const cacheOwner = fs.mkdtempSync(path.join(os.tmpdir(), 'pe-hook-cache-'))
+  const serial = path.join(cacheOwner, 'checkout/.cache/desktop-inputs')
+  fs.writeFileSync(path.join(cacheOwner,'checkout.distribution.lock'), '')
+  f.env.HERMES_DESKTOP_SERIAL_CACHE = serial
+  try {
+    for (let i=0;i<2;i++) {
+      const result=f.run()
+      assert.equal(result.status,0,result.stdout+result.stderr)
+    }
+    const rows=fs.readFileSync(path.join(serial,'native/pe/diagnostics.jsonl'),'utf8').trim().split('\n').map(JSON.parse)
+    assert.equal(rows.length,2)
+    assert.ok(rows[0].misses>0 && rows[1].hits>0)
+    assert.equal(fs.readFileSync(f.binary).readUInt32LE(296),0)
+    assert.ok(JSON.parse(fs.readFileSync(f.facts)).packages.uv.digest)
+  } finally {
+    fs.rmSync(f.directory,{recursive:true,force:true})
+    fs.rmSync(cacheOwner,{recursive:true,force:true})
   }
 })

@@ -6,8 +6,9 @@ import {fileURLToPath} from 'node:url'
 import {walkFiles, readSecurityDirectory, classifySecurityDirectory, clearSecurityDirectory} from './sanitize-pe-signatures.mjs'
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex')
-const rules = hash(Buffer.concat(['sanitize-pe-signatures.mjs', 'sanitize-pe-cache.mjs'].map(name =>
-  fs.readFileSync(fileURLToPath(new URL(name, import.meta.url))))))
+const ruleSources = ['sanitize-pe-signatures.mjs', 'sanitize-pe-cache.mjs'].map(name =>
+  fs.readFileSync(fileURLToPath(new URL(name, import.meta.url))))
+const rules = hash(Buffer.concat([...ruleSources, Buffer.from(process.versions.node)]))
 
 async function digest(file) {
   const h = createHash('sha256')

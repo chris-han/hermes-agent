@@ -205,7 +205,7 @@ def test_prepare_tools_uses_pm_native_pins_and_separate_cache(tmp_path, monkeypa
         return cache / ("native/node/node-identity" if family == "node" else "python/runtime/native-identity")
     monkeypatch.setattr(desktop_toolchain, "native_cache_path", identity)
     monkeypatch.setattr(desktop_toolchain, "reusable_wheel_cache",
-                        lambda cache, env: cache / "python/runtime/prebuilt" if shared else None)
+                        lambda cache, env, *, toolchain=None: cache / "python/runtime/prebuilt" if shared else None)
     before = dict(os.environ)
     python, node, prepared = desktop_toolchain.prepare_tools(source, work, cache, env)
     assert acquired == ["uv", "npm"]
@@ -213,7 +213,7 @@ def test_prepare_tools_uses_pm_native_pins_and_separate_cache(tmp_path, monkeypa
     assert prepared["HERMES_PYTHON"] == str(python)
     assert prepared["HERMES_NODE"] == str(node)
     assert prepared["PATH"] == "pm-tools"
-    assert Path(prepared["UV_CACHE_DIR"]) == cache / ("python/runtime/prebuilt" if shared and not complete else "python/runtime/native-identity")
+    assert Path(prepared["UV_CACHE_DIR"]) == cache / ("python/runtime/prebuilt" if shared else "python/runtime/native-identity")
     assert prepared["HERMES_DESKTOP_NATIVE_TOOLCHAIN"] == "node-identity"
     assert dict(os.environ) == before
     if pm.current_target() == "win32-arm64":
@@ -416,3 +416,32 @@ def test_windows_node_identity_is_case_insensitive_and_independent_of_python_ssl
     env["SIGNING_TOKEN"] = "DO-NOT-RECORD"
     desktop_toolchain.native_cache_path(tmp_path, env, family="node")
     assert "DO-NOT-RECORD" not in (tmp_path / "diagnostics/toolchains.jsonl").read_text()
+
+
+def test_qualified_shared_wheels_reuse_builds_and_requalify_on_identity_changes(tmp_path, monkeypatch):
+    from scripts.bundles import desktop_toolchain
+    import pm
+    cache=tmp_path/'.cache/desktop-inputs'; source=tmp_path/'source'; source.mkdir()
+    (source/'uv.lock').write_text('[[package]]\nname="local"\nsource={editable="."}\n')
+    Path(str(tmp_path)+'.distribution.lock').touch()
+    env={'HERMES_DESKTOP_SERIAL_CACHE':str(cache.resolve()),'HERMES_PYTHON_SRC_ROOT':str(source)}
+    calls=[];monkeypatch.setattr(pm,'prune_cache',lambda *a,**kw:calls.append(kw))
+    first=desktop_toolchain.reusable_wheel_cache(cache,env,toolchain='a'*32)
+    assert len(calls)==1
+    assert desktop_toolchain.reusable_wheel_cache(cache,env,toolchain='a'*32)==first
+    assert len(calls)==1
+    desktop_toolchain.reusable_wheel_cache(cache,env,toolchain='b'*32);assert len(calls)==2
+    desktop_toolchain.reusable_wheel_cache(cache,env);assert len(calls)==3
+    desktop_toolchain.reusable_wheel_cache(cache,env,toolchain='b'*32);assert len(calls)==4
+
+
+def test_python_cargo_build_configuration_changes_do_not_invalidate_node(tmp_path, monkeypatch):
+    from scripts.bundles import desktop_toolchain
+    cargo=tmp_path/'cargo';cargo.mkdir();cfg=cargo/'config.toml';cfg.write_text('[build]\njobs=2\n')
+    monkeypatch.setattr(desktop_toolchain.subprocess,'run',lambda *a,**kw:SimpleNamespace(returncode=0,stdout='stable compiler version',stderr=''))
+    env={'PATH':os.defpath,'CARGO_HOME':str(cargo)}
+    python=desktop_toolchain.native_cache_path(tmp_path/'cache',env)
+    node=desktop_toolchain.native_cache_path(tmp_path/'cache',env,family='node')
+    cfg.write_text('[build]\nrustflags=["-C","target-cpu=native"]\n')
+    assert desktop_toolchain.native_cache_path(tmp_path/'cache',env)!=python
+    assert desktop_toolchain.native_cache_path(tmp_path/'cache',env,family='node')==node

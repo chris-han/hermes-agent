@@ -61,3 +61,30 @@ def test_wrong_key_and_nonempty_output_are_preserved(tmp_path):
     target=tmp_path/'dirty'; target.mkdir(); (target/'user.txt').write_text('preserve')
     assert restore_cache(cache,'key',target,tmp_path,'b'*40) is None
     assert (target/'user.txt').read_text()=='preserve'
+
+
+def test_archive_paths_are_checked_even_with_a_matching_checksum(tmp_path):
+    import hashlib
+    import io
+    import tarfile
+    import pytest
+    out,prepared=payload(tmp_path); cache=tmp_path/'native/runtime/key'
+    publish_cache(cache,'key',out,prepared)
+    archive=cache/'runtime.tar'
+    # A correctly hashed but invalid archive must not write outside the output.
+    with tarfile.open(archive,'a') as bundle:
+        member=tarfile.TarInfo('../escaped.txt'); member.size=1
+        bundle.addfile(member,io.BytesIO(b'x'))
+    receipt=json.loads((cache/'receipt.json').read_text())
+    receipt['archiveSha256']=hashlib.sha256(archive.read_bytes()).hexdigest()
+    (cache/'receipt.json').write_text(json.dumps(receipt))
+    target=tmp_path/'safe'; target.mkdir()
+    with pytest.raises(tarfile.FilterError):restore_cache(cache,'key',target,tmp_path,'b'*40)
+    assert not (tmp_path/'escaped.txt').exists()
+
+
+def test_cached_metadata_is_inside_the_hashed_archive(tmp_path):
+    out,prepared=payload(tmp_path); cache=tmp_path/'native/runtime/key'
+    publish_cache(cache,'key',out,prepared)
+    receipt=json.loads((cache/'receipt.json').read_text())
+    assert 'prepared' not in receipt

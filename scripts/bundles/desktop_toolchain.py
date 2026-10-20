@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -126,7 +127,7 @@ def prepare_tools(source: Path, work: Path, cache: Path,
     native = native_cache_path(cache, prepared, diagnostic=python_state)
     prepared.update({"HERMES_PYTHON": str(binaries["python"]), "HERMES_NODE": str(binaries["node"]),
                      "HERMES_DESKTOP_NATIVE_TOOLCHAIN": node_native.name,
-                     "UV_CACHE_DIR": str(native if python_state["complete"] else (reusable_wheel_cache(cache, prepared) or native))})
+                     "UV_CACHE_DIR": str(reusable_wheel_cache(cache, prepared, toolchain=native.name if python_state["complete"] else None) or native)})
     return binaries["python"], binaries["node"], prepared
 
 
@@ -147,14 +148,25 @@ def native_cache_path(cache: Path, env: Mapping[str, str], *, family: str = "pyt
     keys = {"CC", "CXX", "AR", "CFLAGS", "CXXFLAGS", "LDFLAGS", "RUSTFLAGS", "RUSTUP_TOOLCHAIN",
             "SDKROOT", "MACOSX_DEPLOYMENT_TARGET", "WindowsSDKVersion", "VCToolsVersion",
             "WindowsSdkDir", "INCLUDE", "LIB", "LIBPATH", "OPENSSL_DIR", "OPENSSL_LIB_DIR",
-            "OPENSSL_INCLUDE_DIR", "OPENSSL_STATIC", "CL", "_CL_", "LINK", "_LINK_", "ARCHFLAGS", "VSCMD_ARG_TGT_ARCH"}
+            "OPENSSL_INCLUDE_DIR", "OPENSSL_STATIC", "CL", "_CL_", "LINK", "_LINK_", "ARCHFLAGS", "VSCMD_ARG_TGT_ARCH", "VCPKG_ROOT", "VCPKG_DEFAULT_TRIPLET"}
     keys = {key.upper() for key in keys}
     if family == "node":
-        keys -= {"RUSTFLAGS", "RUSTUP_TOOLCHAIN", "OPENSSL_DIR", "OPENSSL_LIB_DIR", "OPENSSL_INCLUDE_DIR", "OPENSSL_STATIC"}
+        keys -= {"RUSTFLAGS", "RUSTUP_TOOLCHAIN", "OPENSSL_DIR", "OPENSSL_LIB_DIR", "OPENSSL_INCLUDE_DIR", "OPENSSL_STATIC", "VCPKG_ROOT", "VCPKG_DEFAULT_TRIPLET"}
     selected = {key: value for key, value in canonical.items()
-                if key in keys or key.startswith(("CC_", "CXX_"))}
+                if key in keys or key.startswith(("CC_", "CXX_"))
+                or (family == "python" and key.startswith(("CARGO_BUILD_", "CARGO_TARGET_")))}
     identity = {"recipe": 2, "family": family, "target": target, "host": platform.platform(),
                 "libc": platform.libc_ver(), "inputs": selected, "probes": [], "openssl": {}}
+    if family == "python" and canonical.get("CARGO_HOME"):
+        cargo = Path(canonical["CARGO_HOME"])
+        configuration = {}
+        for name in ("config", "config.toml"):
+            path = cargo / name
+            if path.is_file():
+                with path.open("rb") as stream:
+                    configuration[name] = hashlib.file_digest(stream, "sha256").hexdigest()
+        if configuration:
+            identity["cargoConfig"] = configuration
     commands = [["rustc", "-vV"]] if family == "python" else []
     if target.startswith("win32"):
         commands.append(["cl", "/Bv"])
@@ -195,7 +207,9 @@ def native_cache_path(cache: Path, env: Mapping[str, str], *, family: str = "pyt
                 raise ValueError("incomplete linked SSL identity")
             identity["openssl"] = observed
             identity["probes"].append([["python", "loaded-ssl"], observed["version"]])
-            if any(key.startswith(("VCPKG", "PKG_CONFIG", "OPENSSL")) for key in canonical):
+            vcpkg = Path(canonical.get("VCPKG_ROOT", "")) / "installed"
+            external_openssl = any(vcpkg.glob("*/include/openssl")) if canonical.get("VCPKG_ROOT") else False
+            if external_openssl or any(key.startswith(("PKG_CONFIG", "OPENSSL")) for key in canonical):
                 complete = False
                 missing.append("external SSL build provider requires explicit include/lib identity")
         except (OSError, ValueError, subprocess.SubprocessError):
@@ -237,6 +251,9 @@ def native_cache_path(cache: Path, env: Mapping[str, str], *, family: str = "pyt
               "tools": [{"command": probe[0][0], "version": next((line for line in probe[1].splitlines()
                          if any(word in line.lower() for word in ("version", "rustc", "openssl", "clang", "gcc"))), "")[:240]}
                         for probe in identity["probes"]]}
+    if family == "python" and identity["openssl"].get("modules"):
+        record["sslRuntime"] = {"version": identity["openssl"]["version"], "abi": identity["openssl"]["abi"],
+                                "moduleHashes": {Path(name).name: value for name, value in identity["openssl"]["modules"].items()}}
     if diagnostic is not None:
         diagnostic.update(record)
     log = cache / "diagnostics/toolchains.jsonl"
@@ -252,7 +269,7 @@ def _wheel_cache_target() -> str:
     return current_target()
 
 
-def reusable_wheel_cache(cache: Path, env: Mapping[str, str]) -> Path | None:
+def reusable_wheel_cache(cache: Path, env: Mapping[str, str], *, toolchain: str | None = None) -> Path | None:
     """Reuse downloads only inside the distribution controller's serial workspace.
 
     Without complete compiler identity, evict source builds through uv's public
@@ -263,15 +280,35 @@ def reusable_wheel_cache(cache: Path, env: Mapping[str, str]) -> Path | None:
     if (env.get("HERMES_DESKTOP_SERIAL_CACHE") != str(cache)
             or not Path(str(cache.parents[1]) + ".distribution.lock").is_file()):
         return None
-    shared = cache / "python/runtime" / ("prebuilt-" + _wheel_cache_target())
+    if toolchain is not None and not re.fullmatch(r"[a-f0-9]{32}", toolchain):
+        raise ValueError("observed Python toolchain key required")
+    target = _wheel_cache_target()
+    shared = cache / "python/runtime" / ("prebuilt-" + target)
+    qualification = cache / "native/python-wheel-cache.json"
+    if qualification.is_symlink():
+        raise ValueError("linked wheel cache qualification")
+    if toolchain is None:
+        qualification.unlink(missing_ok=True)
     names = set()
     for bucket in shared.glob("sdists-v*"):
         if bucket.name != "sdists-v9" or any(
             child.name not in {"pypi", "editable", ".git", ".gitignore"} for child in bucket.iterdir()
         ):
+            qualification.unlink(missing_ok=True)
             return None
         if (bucket / "pypi").is_dir():
             names.update(child.name for child in (bucket / "pypi").iterdir() if child.is_dir())
+    expected = {"schema": 1, "target": target, "toolchain": toolchain}
+    if toolchain is not None:
+        try:
+            if json.loads(qualification.read_text(encoding="utf-8")) == expected and shared.is_dir():
+                print(f"Reusing qualified wheel cache: {shared}", flush=True)
+                return shared
+        except (OSError, ValueError):
+            pass
+    # A changed/incomplete identity must never leave an old qualification live
+    # when UV cleans or rebuilds source wheels in this shared serial cache.
+    qualification.unlink(missing_ok=True)
     lock = Path(env["HERMES_PYTHON_SRC_ROOT"]) / "uv.lock"
     packages = tomllib.loads(lock.read_text(encoding="utf-8"))["package"]
     names.update(package["name"] for package in packages if "registry" not in package["source"])
@@ -279,6 +316,10 @@ def reusable_wheel_cache(cache: Path, env: Mapping[str, str]) -> Path | None:
         import pm
 
         pm.prune_cache(shared, packages=sorted(names))
+    if toolchain is not None:
+        from pm.lock import _write
+        shared.mkdir(parents=True, exist_ok=True)
+        _write(qualification, expected)
     print(f"Reusing prebuilt wheel cache: {shared}; source builds invalidated", flush=True)
     return shared
 

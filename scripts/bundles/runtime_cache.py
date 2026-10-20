@@ -25,6 +25,20 @@ def diagnostic(root: Path, **values) -> None:
         stream.write(json.dumps({'producedAt': datetime.now(timezone.utc).isoformat(), **values}) + '\n')
 
 
+@contextmanager
+def measure(root: Path | None, stage: str):
+    started = time.monotonic()
+    result = "PASS"
+    try:
+        yield
+    except BaseException:
+        result = "FAIL"
+        raise
+    finally:
+        if root is not None:
+            diagnostic(root, stage=stage, result=result, elapsedSeconds=round(time.monotonic()-started, 3))
+
+
 def runtime_key(source: Path, revision: str, toolchain: str, target: str) -> str:
     from scripts.bundles.payload import INERT_SNAPSHOT_DIRS
     tree = subprocess.check_output(['git', 'ls-tree', '-r', '-z', revision], cwd=source)

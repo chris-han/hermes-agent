@@ -156,9 +156,12 @@ def prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
     with preparation_lock(out):
         prepared_path(out).unlink(missing_ok=True)
         (out / "manifest.json").unlink(missing_ok=True)
+        from scripts.bundles.runtime_cache import measure
+        log_root = Path(env["HERMES_DESKTOP_SERIAL_CACHE"]) if env and env.get("HERMES_DESKTOP_SERIAL_CACHE") else None
         def cold():
-            return _prepare_native(out=out, ref=ref, source=Path(source).resolve(),
-                                   cache=Path(cache).resolve(), tools=tools, env=env)
+            with measure(log_root, "runtime.prepare"):
+                return _prepare_native(out=out, ref=ref, source=Path(source).resolve(),
+                                       cache=Path(cache).resolve(), tools=tools, env=env)
         if runtime_cache is None:
             return cold()
         from scripts.bundles.runtime_cache import cache_lock, restore_cache, publish_cache
@@ -178,6 +181,8 @@ def _prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
     from pm import paths
     from pm.package import InstallError
 
+    from scripts.bundles.runtime_cache import measure
+    log_root = Path(env["HERMES_DESKTOP_SERIAL_CACHE"]) if env and env.get("HERMES_DESKTOP_SERIAL_CACHE") else None
     store_dir = out / "tools"
     store_dir.mkdir(parents=True, exist_ok=True)
     repo_dir = out / "hermes-agent"
@@ -186,7 +191,8 @@ def _prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
     revision = subprocess.check_output(
         ["git", "rev-parse", "--verify", f"{ref}^{{commit}}"], cwd=source,
         text=True, encoding="utf-8").strip()
-    snapshot(source, revision, repo_dir, exclude=INERT_SNAPSHOT_DIRS)
+    with measure(log_root, "runtime.snapshot"):
+        snapshot(source, revision, repo_dir, exclude=INERT_SNAPSHOT_DIRS)
     # PM's provider code reads its adjacent lock. Never combine that tool graph
     # with a revision selecting different pins.
     if (repo_dir / "pm/lock.json").read_bytes() != paths.lockfile_path().read_bytes():
@@ -199,10 +205,12 @@ def _prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
     ]
     from pm import prepare_tools, stage_tools
 
-    prepare_tools(names, out=Path(tools) if tools is not None else store_dir,
-                  target=current_target(), cache=cache)
+    with measure(log_root, "runtime.tools.prepare"):
+        prepare_tools(names, out=Path(tools) if tools is not None else store_dir,
+                      target=current_target(), cache=cache)
     if tools is not None:
-        stage_tools(names, source_store=Path(tools), out=store_dir, target=current_target())
+        with measure(log_root, "runtime.tools.copy"):
+            stage_tools(names, source_store=Path(tools), out=store_dir, target=current_target())
 
     # Prune the staged store BEFORE the venv sync and packaging: drop the
     # fetch-<sha> download-cache archives (needed only at install time — dead
@@ -226,7 +234,8 @@ def _prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
 
     if python_bin is None:
         raise FileNotFoundError("staged Python executable is missing")
-    stage_pm_runtime(out, python_bin, repo_dir, cache=cache)
+    with measure(log_root, "runtime.pm-environment"):
+        stage_pm_runtime(out, python_bin, repo_dir, cache=cache)
     print("✓ pm-runtime (independent locked dependencies)", flush=True)
 
     # Build + sync INSIDE the staged repo: the editable project install
@@ -238,9 +247,10 @@ def _prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
     from pm import build_environment
 
     # Cold native wheels need a larger budget than interactive installs.
-    build_environment(source=repo_dir, python=python_bin, out=venv_dir,
-                      env=env, cache=cache, all_extras=True, sealed=True, explicit=True,
-                      timeout=2 * 60 * 60)
+    with measure(log_root, "runtime.environment"):
+        build_environment(source=repo_dir, python=python_bin, out=venv_dir,
+                          env=env, cache=cache, all_extras=True, sealed=True, explicit=True,
+                          timeout=2 * 60 * 60)
     print("✓ venv (all extras, on the staged interpreter)")
 
     # Inventory the staged interpreter before publishing the bundle contract.
@@ -267,8 +277,9 @@ def _prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
     src_cache = cache
     if src_cache.is_dir():
         print(f"  uv-cache: copying {src_cache} → payload...", flush=True)
-        stage_uv_cache(src_cache, payload_cache)
-        pruned = prune_uv_cache_to_lock(payload_cache, repo_dir)
+        with measure(log_root, "runtime.uv-cache"):
+            stage_uv_cache(src_cache, payload_cache)
+            pruned = prune_uv_cache_to_lock(payload_cache, repo_dir)
         print(f"✓ uv-cache (lock-scoped: pruned {pruned} stale entries; offline rebuilds resolve from shipped wheels)", flush=True)
     else:
         raise InstallError("uv-cache", "runtime dependency cache is missing")
@@ -280,7 +291,8 @@ def _prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
         raise InstallError("tools", "native architecture verification failed")
     from scripts.bundles.payload import record_tools
     recorded = {name: fact["entry"] for name in names if (fact := facts.get(name)) and "entry" in fact}
-    record_tools(out, paths.lockfile_path(), current_target(), recorded)
+    with measure(log_root, "runtime.tool-digests"):
+        record_tools(out, paths.lockfile_path(), current_target(), recorded)
     from scripts.build.inputs import AgentInputs, RESOURCE_ENV, dependency_site
     from scripts.bundles.native_prepared import publish_prepared
 
@@ -288,9 +300,11 @@ def _prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
     (site / "hermes-agent.pth").write_text(
         Path(os.path.relpath(repo_dir, site)).as_posix() + "\n", encoding="utf-8")
     from scripts.bundles.payload import relativize_links
-    relativize_links(out)
+    with measure(log_root, "runtime.links"):
+        relativize_links(out)
     from scripts.bundles.bytecode import bake_bytecode
-    baked = bake_bytecode(out, python_bin)
+    with measure(log_root, "runtime.bytecode"):
+        baked = bake_bytecode(out, python_bin)
     print(f"✓ baked bytecode ({baked['modules']} modules, unchecked-hash, read-only caches)")
     inputs = AgentInputs(
         project=repo_dir / "pyproject.toml", code=repo_dir, repo="hermes-agent",
@@ -300,7 +314,8 @@ def _prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
         resources={name: repo_dir / name for name in RESOURCE_ENV},
         features=out / "enabled-features.json",
     )
-    return publish_prepared(out, source, revision, inputs)
+    with measure(log_root, "runtime.seal"):
+        return publish_prepared(out, source, revision, inputs)
 
 
 def finish_native(prepared: Path, frontends: dict[str, Path]) -> int:

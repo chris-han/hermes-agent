@@ -366,7 +366,7 @@ def prepare_in_worker(request: BuildRequest) -> Path:
     payload = None
     if request.variant != "light":
         runtime_cache = None
-        if request.target.startswith("win32"):
+        if request.target == "win32-x64":
             from scripts.bundles.desktop_toolchain import native_cache_path
             from scripts.bundles.runtime_cache import runtime_key, diagnostic
             state = {}

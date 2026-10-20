@@ -12,8 +12,23 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 function Run-Native([string]$Tool, [string[]]$Arguments) {
-  & $Tool @Arguments | Out-Host
-  if ($LASTEXITCODE -ne 0) { throw "$Tool failed ($LASTEXITCODE): $($Arguments -join ' ')" }
+  $watch = [Diagnostics.Stopwatch]::StartNew()
+  $savedPreference = $ErrorActionPreference
+  $code = $null
+  try {
+    $ErrorActionPreference = 'Continue'
+    $global:LASTEXITCODE = $null
+    & $Tool @Arguments | Out-Host
+    $code = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $savedPreference
+    $watch.Stop()
+    [ordered]@{producedAt=[DateTime]::UtcNow.ToString('o');
+      stage=([IO.Path]::GetFileName($Tool)+':'+$Arguments[0]);exitCode=$code;
+      elapsedSeconds=$watch.Elapsed.TotalSeconds} | ConvertTo-Json -Compress |
+      Add-Content -LiteralPath (Join-Path $Output 'distribution-stages.jsonl') -Encoding utf8
+  }
+  if ($null -eq $code -or $code -ne 0) { throw "$Tool failed ($code)" }
 }
 if ($SourceCommit -notmatch '^[0-9a-f]{40}$') { throw 'Complete source commit required' }
 if (Test-Path -LiteralPath $Output) { throw 'Use a fresh output directory' }
@@ -67,7 +82,7 @@ try {
     "$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $($_.Name)"
   } | Set-Content -LiteralPath (Join-Path $dist 'SHA256SUMS.txt') -Encoding ascii
   $zip = Join-Path $Output $archiveName
-  Run-Native $SevenZip @('a','-tzip',$zip,"$dist\*")
+  Run-Native $SevenZip @('a','-tzip','-mx=0',$zip,"$dist\*")
   Run-Native $SevenZip @('t',$zip)
   $extract = Join-Path $Output 'zip-validation'
   Run-Native $SevenZip @('x',$zip,"-o$extract",'-y')

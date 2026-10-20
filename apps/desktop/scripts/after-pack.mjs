@@ -125,7 +125,7 @@ export default async function afterPack(context) {
   const { scanned, repaired } = guardedCache
     ? await sanitizeTreeCached(context.appOutDir, path.join(serialCache, 'native/pe/receipt.json'))
     : sanitizeTree(context.appOutDir)
-  console.log(`[after-pack] ${scanned} PEs scanned, ${repaired.length} dangling certificate tables cleared`)
+  console.log(`[after-pack] ${scanned} PEs verified, ${repaired.length} dangling certificate tables cleared`)
   for (const file of repaired) {
     console.log(`  ${file}`)
   }
