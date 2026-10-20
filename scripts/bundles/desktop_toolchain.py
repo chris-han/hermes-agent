@@ -164,7 +164,7 @@ def native_cache_path(cache: Path, env: Mapping[str, str], *, family: str = "pyt
             path = cargo / name
             if path.is_file():
                 with path.open("rb") as stream:
-                    configuration[name] = hashlib.file_digest(stream, "sha256").hexdigest()
+                    configuration[str(path.resolve())] = hashlib.file_digest(stream, "sha256").hexdigest()
         if configuration:
             identity["cargoConfig"] = configuration
     commands = [["rustc", "-vV"]] if family == "python" else []
