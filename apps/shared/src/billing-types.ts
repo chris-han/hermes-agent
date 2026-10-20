@@ -393,11 +393,45 @@ export interface SemantierSubscriptionStateResponse {
   capabilities: { can_charge: false; can_change_plan: false }
 }
 
-export type BillingBackendState = BillingStateResponse | SemantierBillingStateResponse
+/** Negotiated read projection; all commerce remains browser authorized. */
+export interface SemantierBillingV2Response {
+  ok: true
+  backend: 'semantier'
+  schema_version: 'semantier.billing.v2'
+  organization: { id: string; display_name?: string }
+  billing_account_id: string
+  currency: string
+  merchant: { id: string; display_name: string } | null
+  environment: 'DEVELOPMENT' | 'UNAVAILABLE'
+  subscription: null | {
+    plan: string
+    term: 'annual' | 'monthly'
+    status: 'active' | 'expired'
+    starts_at: string
+    ends_at: string
+    manual_renewal: true
+  }
+  credits: { allowance: SemantierMoney; purchased: SemantierMoney; held: SemantierMoney; available: SemantierMoney }
+  usage: { known_cost: SemantierMoney; period: 'lifetime' }
+  capabilities: {
+    can_read_usage: boolean
+    can_manage_billing: boolean
+    can_open_portal: boolean
+    can_charge: false
+    can_change_plan: false
+    can_auto_top_up: false
+  }
+  portal: { url: string | null }
+  as_of: string
+}
+
+export type SemantierBillingResponse = SemantierBillingStateResponse | SemantierBillingV2Response
+
+export type BillingBackendState = BillingStateResponse | SemantierBillingResponse
 export type SubscriptionBackendState = SubscriptionStateResponse | SemantierSubscriptionStateResponse
 
 export function isSemantierBilling<T extends object>(
-  state: T | SemantierBillingStateResponse
-): state is SemantierBillingStateResponse {
+  state: T | SemantierBillingResponse
+): state is SemantierBillingResponse {
   return 'backend' in state && state.backend === 'semantier'
 }

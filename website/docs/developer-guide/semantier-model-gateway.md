@@ -66,17 +66,38 @@ metering or enable unsupported callers without separate integration evidence.
 ## Billing wire and Desktop
 
 Both native canonical and legacy transports support `billing.state` and `subscription.state`.
-Clients send `schema_version: semantier.billing.v1`; older clients receive a structured
+Desktop requests `schema_version: semantier.billing.v2` for account-scoped commerce reads and
+negotiates v1 only after an explicit Semantier `unsupported_version` refusal. Subscription
+reads retain v1. Clients without schema negotiation receive a structured
 `unsupported_version` refusal for Semantier rather than a dollar-shaped response. Nous
 responses preserve their existing wire. Canonical reads authorize the transport's profile and
 bind home, secrets and terminal scope off-loop. No legacy execution fallback is used.
 
-Semantier account data is read from `/api/billing/state` and `/api/billing/subscription` on the
+Semantier v1 account data is read from `/api/billing/state` and `/api/billing/subscription` on the
 same configured origin. Amounts retain their decimal strings and explicit currency. Missing
 wallets remain unavailable; subscription status, unpriced usage and pending reconciliation
 are explicit. Commercial charge/plan/auto-top-up controls are absent and legacy mutation
 RPCs refuse Semantier without opening Nous Remote Spending. `usage.bars` is unavailable for
 Semantier because its existing contract is dollar-specific.
+
+The v2 read uses `/api/billing/commerce/state`, optionally with the profile's explicit
+`billing.account_id`. Core must authorize the token's account scope; the bridge rejects a
+response for a different configured account. The inference credential grants read access
+only. Package expiry/manual renewal, included allowance, purchased credit, holds, lifetime
+usage, currency, merchant (or unavailable), development environment and as-of are separate.
+No commercial capability in v1 is widened.
+
+The server supplies a configured portal origin. The bridge and renderer reject credentials,
+query strings, fragments, non-root paths and non-HTTPS origins except HTTP loopback.
+Buttons open only `/billing`, public `/pricing`, `/billing/top-up` or `/billing/orders` with a
+non-secret organization and account hints. The portal must match the organization hint
+to its independently authenticated organization before creating any commerce action. Browser sign-in independently authorizes commerce; no inference
+credential, browser cookie or arbitrary return URL crosses this handoff. Missing portal
+configuration offers no commercial link and never falls back to Nous.
+
+Window focus refreshes the account projection with up to two transient Semantier retries
+(250/750 ms backoff, 1.2 s per read). Scope cancellation stops stale retries and late results
+cannot replace the new profile. Existing connection/runtime selection remains untouched.
 
 Settings → Billing retains the native settings primitives and active app locale. Billing
 queries are keyed by socket generation/profile, removed and canceled on context changes,

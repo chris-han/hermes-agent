@@ -65,3 +65,72 @@ class SemantierSubscriptionState(Result):
     status: Literal['unavailable']
     capabilities: dict[str, bool]
     reason: str
+
+
+class BillingCommerceCapabilities(BillingCapabilities):
+    can_manage_billing: bool
+    can_open_portal: bool
+
+
+class BillingSubscription(Result):
+    plan: str
+    term: Literal['annual', 'monthly']
+    status: Literal['active', 'expired']
+    starts_at: str
+    ends_at: str
+    manual_renewal: Literal[True]
+
+    _utc_period = field_validator('starts_at', 'ends_at')(SemantierBillingState.utc_timestamp.__func__)
+
+
+class BillingCredits(Result):
+    allowance: Money
+    purchased: Money
+    held: Money
+    available: Money
+
+
+class BillingCommerceUsage(Result):
+    known_cost: Money
+    period: Literal['lifetime']
+
+
+class BillingPortal(Result):
+    url: str | None
+
+    @field_validator('url')
+    @classmethod
+    def trusted_origin(cls, value: str | None) -> str | None:
+        from urllib.parse import urlsplit
+        if value is None:
+            return None
+        parsed = urlsplit(value)
+        if (parsed.username or parsed.password or parsed.query or parsed.fragment
+                or parsed.path not in {'', '/'} or not parsed.hostname
+                or (parsed.scheme != 'https' and not (
+                    parsed.scheme == 'http' and parsed.hostname in {'localhost', '127.0.0.1', '::1'}))):
+            raise ValueError('Billing portal must be an HTTPS origin (HTTP loopback allowed).')
+        return value
+
+
+class BillingMerchant(Result):
+    id: str
+    display_name: str
+
+
+class SemantierBillingV2(Result):
+    schema_version: Literal['semantier.billing.v2']
+    backend: Literal['semantier']
+    organization: BillingOrganization
+    billing_account_id: str
+    currency: str = Field(pattern=r'^[A-Z]{3}$')
+    merchant: BillingMerchant | None
+    environment: Literal['DEVELOPMENT', 'UNAVAILABLE']
+    subscription: BillingSubscription | None
+    credits: BillingCredits
+    usage: BillingCommerceUsage
+    capabilities: BillingCommerceCapabilities
+    portal: BillingPortal
+    as_of: str = Field(pattern=r'^.+(?:Z|\+00:00)$')
+
+    _utc_timestamp = field_validator('as_of')(SemantierBillingState.utc_timestamp.__func__)

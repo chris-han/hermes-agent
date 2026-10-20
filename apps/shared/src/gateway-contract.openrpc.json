@@ -6488,6 +6488,111 @@
         "title": "BillingChargeStatusResult",
         "type": "object"
       },
+      "BillingCommerceCapabilities": {
+        "additionalProperties": false,
+        "properties": {
+          "can_read_usage": {
+            "title": "Can Read Usage",
+            "type": "boolean"
+          },
+          "can_charge": {
+            "const": false,
+            "title": "Can Charge",
+            "type": "boolean"
+          },
+          "can_change_plan": {
+            "const": false,
+            "title": "Can Change Plan",
+            "type": "boolean"
+          },
+          "can_auto_top_up": {
+            "const": false,
+            "default": false,
+            "title": "Can Auto Top Up",
+            "type": "boolean"
+          },
+          "can_manage_billing": {
+            "title": "Can Manage Billing",
+            "type": "boolean"
+          },
+          "can_open_portal": {
+            "title": "Can Open Portal",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "can_read_usage",
+          "can_charge",
+          "can_change_plan",
+          "can_manage_billing",
+          "can_open_portal"
+        ],
+        "title": "BillingCommerceCapabilities",
+        "type": "object"
+      },
+      "BillingCommerceUsage": {
+        "additionalProperties": false,
+        "properties": {
+          "known_cost": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "period": {
+            "const": "lifetime",
+            "title": "Period",
+            "type": "string"
+          }
+        },
+        "required": [
+          "known_cost",
+          "period"
+        ],
+        "title": "BillingCommerceUsage",
+        "type": "object"
+      },
+      "BillingCredits": {
+        "additionalProperties": false,
+        "properties": {
+          "allowance": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "purchased": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "held": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "available": {
+            "$ref": "#/components/schemas/Money"
+          }
+        },
+        "required": [
+          "allowance",
+          "purchased",
+          "held",
+          "available"
+        ],
+        "title": "BillingCredits",
+        "type": "object"
+      },
+      "BillingMerchant": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "display_name"
+        ],
+        "title": "BillingMerchant",
+        "type": "object"
+      },
       "BillingMonthlyCap": {
         "additionalProperties": false,
         "properties": {
@@ -6948,6 +7053,27 @@
           "ok"
         ],
         "title": "BillingPendingChangeResult",
+        "type": "object"
+      },
+      "BillingPortal": {
+        "additionalProperties": false,
+        "properties": {
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "BillingPortal",
         "type": "object"
       },
       "BillingReadParams": {
@@ -7428,10 +7554,14 @@
                 "$ref": "#/components/schemas/BillingCapabilities"
               },
               {
+                "$ref": "#/components/schemas/BillingCommerceCapabilities"
+              },
+              {
                 "type": "null"
               }
             ],
-            "default": null
+            "default": null,
+            "title": "Capabilities"
           },
           "as_of": {
             "anyOf": [
@@ -7467,11 +7597,82 @@
                 "$ref": "#/components/schemas/BillingUsage"
               },
               {
+                "$ref": "#/components/schemas/BillingCommerceUsage"
+              },
+              {
                 "type": "null"
               }
             ],
             "default": null,
             "title": "Usage"
+          },
+          "currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Currency"
+          },
+          "merchant": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BillingMerchant"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "environment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Environment"
+          },
+          "subscription": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BillingSubscription"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "credits": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BillingCredits"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "portal": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BillingPortal"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "required": [
@@ -7692,6 +7893,54 @@
           "user_code"
         ],
         "title": "BillingStepUpVerificationPayload",
+        "type": "object"
+      },
+      "BillingSubscription": {
+        "additionalProperties": false,
+        "properties": {
+          "plan": {
+            "title": "Plan",
+            "type": "string"
+          },
+          "term": {
+            "enum": [
+              "annual",
+              "monthly"
+            ],
+            "title": "Term",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "expired"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "starts_at": {
+            "title": "Starts At",
+            "type": "string"
+          },
+          "ends_at": {
+            "title": "Ends At",
+            "type": "string"
+          },
+          "manual_renewal": {
+            "const": true,
+            "title": "Manual Renewal",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "plan",
+          "term",
+          "status",
+          "starts_at",
+          "ends_at",
+          "manual_renewal"
+        ],
+        "title": "BillingSubscription",
         "type": "object"
       },
       "BillingUsage": {

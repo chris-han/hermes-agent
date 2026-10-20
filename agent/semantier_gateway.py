@@ -5,7 +5,7 @@ configuration owns model selection; this extension never substitutes routes or c
 """
 import logging
 from dataclasses import dataclass
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 from uuid import uuid4, uuid5, NAMESPACE_URL
 
 SCHEMA_VERSION = 'semantier.billing.v1'
@@ -77,7 +77,7 @@ def refusal(code: str, message: str, *, request_id: str | None = None) -> dict:
 
 def billing_request(resource: str, *, schema_version: str | None = None) -> dict:
     """Only two read operations are allowed; redirects cannot forward profile tokens."""
-    if schema_version != SCHEMA_VERSION:
+    if schema_version not in {SCHEMA_VERSION, 'semantier.billing.v2'}:
         return refusal('unsupported_version', 'This client does not support Semantier billing v1.')
     if resource not in {'state', 'subscription'}:
         return refusal('unsupported_capability', 'Commercial billing actions are unavailable.')
@@ -89,9 +89,21 @@ def billing_request(resource: str, *, schema_version: str | None = None) -> dict
         return refusal('provider_not_configured', 'Semantier endpoint or credential is unavailable for this profile.')
     import requests
     from pydantic import ValidationError
-    from tui_gateway.contracts.semantier_billing import SemantierBillingState, SemantierSubscriptionState
+    from tui_gateway.contracts.semantier_billing import (
+        SemantierBillingState, SemantierSubscriptionState, SemantierBillingV2)
+    account_id = None
+    path = '/api/billing/' + resource
+    model = SemantierBillingState if resource == 'state' else SemantierSubscriptionState
+    if resource == 'state' and schema_version == 'semantier.billing.v2':
+        from hermes_cli.config import load_config_readonly
+        billing = load_config_readonly().get('billing') or {}
+        account_id = billing.get('account_id') if isinstance(billing, dict) else None
+        path = '/api/billing/commerce/state'
+        if account_id:
+            path += '?' + urlencode({'account_id': str(account_id)})
+        model = SemantierBillingV2
     try:
-        response = requests.get(settings.base_url[:-3] + '/api/billing/' + resource,
+        response = requests.get(settings.base_url[:-3] + path,
                                 headers={'Authorization': 'Bearer ' + settings.api_key},
                                 timeout=15, allow_redirects=False)
         request_id = response.headers.get('x-request-id')
@@ -109,8 +121,9 @@ def billing_request(resource: str, *, schema_version: str | None = None) -> dict
                 pass
             return refusal(code, 'Semantier billing is unavailable. Check the active connection and access.',
                            request_id=request_id)
-        model = SemantierBillingState if resource == 'state' else SemantierSubscriptionState
-        payload = model.model_validate(response.json()).model_dump(mode='json', exclude_none=True)
+        payload = model.model_validate(response.json()).model_dump(mode='json', exclude_none=model is not SemantierBillingV2)
+        if account_id and payload['billing_account_id'] != str(account_id):
+            return refusal('billing_unavailable', 'The billing response does not match this profile account.')
         return {'ok': True, **payload}
     except (requests.RequestException, ValueError, ValidationError):
         return refusal('billing_unavailable', 'Semantier billing could not be loaded. Retry this connection.')
