@@ -104,15 +104,21 @@ try {
       Write-Host 'Preflight passed. No build, signing, installation or trust change.'
       exit 0
     }
+    $counter = Join-Path (Split-Path $work -Parent) 'semantier-agent-build-version.json'
+    $semantierVersion = & (Join-Path $PSScriptRoot 'next-windows-build-version.ps1') -State $counter -SourceCommit $source
+    Copy-Item -LiteralPath $counter -Destination (Join-Path $output 'build-version.json')
     $arguments = @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',(Join-Path $work 'scripts\build-bundle.ps1'))
     if ($request.python) { $arguments += @('-Python',$request.python) }
     # This controller holds the workspace lock until every native build child exits.
     # Only this serial context may share downloads with incomplete compiler identity.
+    $priorSemantierVersion = [Environment]::GetEnvironmentVariable('SEMANTIER_DESKTOP_VERSION','Process')
     $priorSerialCache = [Environment]::GetEnvironmentVariable('HERMES_DESKTOP_SERIAL_CACHE','Process')
     try {
+      $env:SEMANTIER_DESKTOP_VERSION = $semantierVersion
       $env:HERMES_DESKTOP_SERIAL_CACHE = Join-Path $work '.cache\desktop-inputs'
       Native "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" $arguments
     } finally {
+      [Environment]::SetEnvironmentVariable('SEMANTIER_DESKTOP_VERSION',$priorSemantierVersion,'Process')
       [Environment]::SetEnvironmentVariable('HERMES_DESKTOP_SERIAL_CACHE',$priorSerialCache,'Process')
     }
     if ([string](Git-Value $work @('rev-parse','HEAD')) -cne $source -or
@@ -140,7 +146,7 @@ try {
   $signArgs = @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$signer,'-Msix',$copy,'-Thumbprint',$request.thumbprint,'-SourceCommit',$source,'-SignTool',$signTool,'-SevenZip',$sevenZip,'-Output',(Join-Path $output 'signed'))
   if ($request.timestampUrl) { $signArgs += @('-TimestampUrl',$request.timestampUrl) }
   Native "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" $signArgs
-  Json-File ([ordered]@{result='PASS';sourceCommit=$source;controllerCommit=$request.commit;certificateThumbprint=$cert.Thumbprint;trustedTimestamp=[bool]$request.timestampUrl;worktree=$work;unsignedReceipt=(Join-Path $unsigned 'unsigned-build-receipt.json');signedReceipt=(Join-Path $output 'signed\receipt.json');zip=(Join-Path $output 'signed\Hermes-windows-signed.zip')}) (Join-Path $output 'result.json')
+  Json-File ([ordered]@{result='PASS';sourceCommit=$source;controllerCommit=$request.commit;certificateThumbprint=$cert.Thumbprint;trustedTimestamp=[bool]$request.timestampUrl;worktree=$work;unsignedReceipt=(Join-Path $unsigned 'unsigned-build-receipt.json');signedReceipt=(Join-Path $output 'signed\receipt.json');zip=(Join-Path (Join-Path $output 'signed') ((Get-Content -LiteralPath (Join-Path $output 'signed\receipt.json') -Raw | ConvertFrom-Json).archiveName))}) (Join-Path $output 'result.json')
   Write-Host "Distribution complete: $output"
 } catch {
   if ($transcript) { Json-File ([ordered]@{result='FAIL';producedAt=[DateTime]::UtcNow.ToString('o');error=$_.Exception.Message}) (Join-Path $output 'failure.json') }
