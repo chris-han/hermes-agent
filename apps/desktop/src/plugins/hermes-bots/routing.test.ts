@@ -334,3 +334,12 @@ describe('group transcript speaker meta (#96432)', () => {
     expect(meta?.title).toBe('Remote Default')
   })
 })
+
+describe('home wordmark fallback', () => {
+  it('brands only an untitled default while preserving explicit names and aliases', () => {
+    expect(displayName({ name: 'default' }, null, 'semantier')).toBe('semantier')
+    expect(displayName({ name: 'default' }, { title: 'Hermes' }, 'semantier')).toBe('Hermes')
+    expect(displayName({ name: 'default', display_name: 'Research Team' }, null, 'semantier')).toBe('Research Team')
+    expect(displayName({ name: 'researcher' }, null, 'semantier')).toBe('Researcher')
+  })
+})

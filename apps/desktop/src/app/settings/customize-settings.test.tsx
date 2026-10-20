@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
 
 import { I18nProvider, useI18n } from '@/i18n'
@@ -8,7 +8,7 @@ import { zh } from '@/i18n/zh'
 import { desktopBrandingName } from '../../../electron/desktop-branding-types'
 
 import { CustomizeSettings } from './customize-settings'
-const native = vi.hoisted(() => ({ save: vi.fn(), decode: vi.fn() }))
+const native = vi.hoisted(() => ({ save: vi.fn(), decode: vi.fn(), create: vi.fn(), reveal: vi.fn() }))
 vi.mock('@/store/desktop-branding', async () => {
   const { atom } = await import('nanostores')
 
@@ -29,14 +29,15 @@ function LocaleSwitch() {
   return <button onClick={() => void setLocale('en')}>Switch locale</button>
 }
 
-function mount(locale = 'en') {
+function mount(locale = 'en', shortcuts = false) {
   window.hermesDesktop = {
     ...original,
     branding: {
       initial: { version: 1, displayName: '', logo: null },
       get: vi.fn(),
       set: vi.fn(),
-      onChanged: () => () => {}
+      onChanged: () => () => {},
+      ...(shortcuts ? { shortcuts: { available: true, create: native.create, reveal: native.reveal } } : {})
     }
   }
 
@@ -165,4 +166,53 @@ test.each([
   ['en', ' ', ' ', 'Semantier']
 ])('name fallback for %s / %s / %s', (locale, displayName, displayNameZh, expected) => {
   expect(desktopBrandingName({ version: 1, displayName, displayNameZh, logo: null }, locale)).toBe(expected)
+})
+
+test('shortcut creation saves dirty branding first and does not create after a failed save', async () => {
+  mount('en', true)
+  fireEvent.change(screen.getByLabelText(en.branding.nameEn), { target: { value: 'Acme' } })
+  native.save.mockRejectedValueOnce(new Error('disk full'))
+  fireEvent.click(screen.getByRole('button', { name: en.branding.shortcutApplyCreate }))
+  const section = screen.getByRole('region', { name: en.branding.shortcutTitle })
+  await within(section).findByText(en.branding.saveFailed)
+  expect(native.create).not.toHaveBeenCalled()
+  expect((screen.getByLabelText(en.branding.nameEn) as HTMLInputElement).value).toBe('Acme')
+})
+
+test('Windows shortcuts retain successful results and retry only the failed location', async () => {
+  mount('en', true)
+  native.create
+    .mockResolvedValueOnce([
+      { destination: 'desktop', status: 'created' },
+      { destination: 'startMenu', status: 'failed' }
+    ])
+    .mockResolvedValueOnce([{ destination: 'startMenu', status: 'created' }])
+  native.reveal.mockResolvedValue(undefined)
+  fireEvent.click(screen.getByRole('checkbox', { name: en.branding.shortcutStartMenu }))
+  fireEvent.click(screen.getByRole('button', { name: en.branding.shortcutCreate }))
+  await screen.findByText(en.branding.shortcutDesktop + ' · ' + en.branding.shortcutCreated)
+  expect(native.create.mock.calls[0][0].destinations).toEqual(['desktop', 'startMenu'])
+  fireEvent.click(screen.getByRole('button', { name: en.branding.shortcutReveal }))
+  expect(native.reveal).toHaveBeenCalledWith({ name: 'Semantier', destination: 'desktop' })
+  fireEvent.click(screen.getByRole('button', { name: en.branding.shortcutRetry }))
+  await waitFor(() => expect(native.create).toHaveBeenCalledTimes(2))
+  expect(native.create.mock.calls[1][0].destinations).toEqual(['startMenu'])
+  await screen.findByText(en.branding.shortcutStartMenu + ' · ' + en.branding.shortcutCreated)
+  expect(screen.getAllByRole('button', { name: en.branding.shortcutReveal })).toHaveLength(2)
+})
+
+test('shortcut name follows locale until edited and rejects unsafe Windows names', async () => {
+  mount('zh', true)
+  const name = screen.getByLabelText(zh.branding.shortcutName) as HTMLInputElement
+  expect(name.value).toBe('司序科技')
+  fireEvent.click(screen.getByText('Switch locale'))
+  await waitFor(() => expect(name.value).toBe('Semantier'))
+  fireEvent.change(name, { target: { value: 'Research' } })
+  fireEvent.change(screen.getByLabelText(en.branding.nameEn), { target: { value: 'Another' } })
+  expect(name.value).toBe('Research')
+  fireEvent.change(name, { target: { value: 'CON' } })
+  expect(screen.getByText(en.branding.shortcutInvalidName)).toBeTruthy()
+  expect((screen.getByRole('button', { name: en.branding.shortcutApplyCreate }) as HTMLButtonElement).disabled).toBe(
+    true
+  )
 })

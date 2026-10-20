@@ -15,6 +15,8 @@ python3 scripts/build_hermes_windows.py --thumbprint EXPLICIT_CERTIFICATE_THUMBP
 
 `--preflight` 仅检查传输、证书和工具；`--unsigned-receipt 'D:\path\unsigned-build-receipt.json'` 校验已有构建收据及散列后，仅重新签名/打包，不重新构建。完整构建仍沿用原有干净打包流程。详细参数、缓存及清理说明见父仓库 `docs/operational/hermes-windows-build.md`。签名脚本直接读取 MSIX 内的清单，无需解包整个运行时。
 
+本地 Semantier 完整构建的界面名称为 `Semantier Agent <版本>`，可执行文件为 `Semantier Agent.exe`，分发 ZIP 为 `SemantierAgent-<版本>-win-<架构>.zip`。版本从 `0.0.1` 开始，每次正式构建尝试自动递增补丁号，保存在工作目录旁的 `D:\repo\semantier-agent-build-version.json`；失败的正式构建也消耗编号。预检查和仅重新签名不递增。保留此计数器，不因清理构建输出而重置。MSIX 使用对应四段版本（例如 `0.0.1.0`），上游 Python 运行时版本仍独立记录。名称定制不改变包 Identity、ApplicationID、Publisher 或内部状态隔离名称。
+
 ## 1. 首次创建可复用的签名证书
 
 在构建电脑的普通 PowerShell 中执行一次。
@@ -49,7 +51,7 @@ $cert.Thumbprint
 
 ```powershell
 & .\apps\desktop\scripts\sign-windows-distribution.ps1 `
-  -Msix 'D:\path\Hermes.msix' `
+  -Msix 'D:\path\SemantierAgent-0.0.1.msix' `
   -Thumbprint 'EXPLICIT_CERTIFICATE_THUMBPRINT' `
   -SourceCommit 'COMPLETE_40_CHARACTER_HERMES_COMMIT' `
   -SignTool 'D:\path\signtool.exe' `
@@ -69,14 +71,14 @@ if ($LASTEXITCODE -ne 0) { throw '分发失败' }
 先通过可信渠道核对 `.cer` 的证书指纹：
 
 ```powershell
-Get-PfxCertificate -FilePath '.\Hermes-signing.cer' |
+Get-PfxCertificate -FilePath '.\SemantierAgent-signing.cer' |
     Format-List Subject, Thumbprint, NotBefore, NotAfter
 ```
 
 确认指纹后，在安装电脑的**管理员 PowerShell**中执行：
 
 ```powershell
-Import-Certificate -FilePath '.\Hermes-signing.cer' `
+Import-Certificate -FilePath '.\SemantierAgent-signing.cer' `
   -CertStoreLocation 'Cert:\LocalMachine\TrustedPeople'
 ```
 

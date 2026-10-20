@@ -1,19 +1,24 @@
 import { isSemantierBilling } from '@hermes/shared/billing'
 import { useStore } from '@nanostores/react'
 
+import { Button } from '@/components/ui/button'
 import { useI18n } from '@/i18n'
 import type { SemantierBillingCopy } from '@/i18n/semantier-billing'
+import { semantierCommerceCopy } from '@/i18n/semantier-commerce'
 import { BarChart3, Package } from '@/lib/icons'
+import { fmtDateTime } from '@/lib/time'
 import { $activeGatewayRoute } from '@/store/gateway'
 import { $connection } from '@/store/session'
 
 import { ListRow, SettingsSection } from '../primitives'
 
 import type { BillingRefusal, BillingResult } from './api'
-import type { BillingBackendState, SemantierBillingStateResponse } from './types'
+import { openExternal } from './open-external'
+import { semantierPortalTask } from './semantier-portal'
+import type { BillingBackendState, SemantierBillingResponse, SemantierBillingStateResponse } from './types'
 
 interface SemantierBillingProps {
-  state?: SemantierBillingStateResponse
+  state?: SemantierBillingResponse
   refusal?: BillingRefusal
 }
 
@@ -30,6 +35,13 @@ const money = (value: unknown): string | null => {
 
   return typeof value.amount === 'string' && typeof value.currency === 'string'
     ? `${value.currency} ${value.amount}` : null
+}
+
+/** Trim redundant scale only; tiny usage and large balances keep exact decimal digits. */
+export function formatSemantierMoney(value: { amount: string; currency: string }): string {
+  const [whole, fraction = ''] = value.amount.split('.')
+
+  return `${value.currency} ${whole}.${fraction.replace(/0+$/, '').padEnd(2, '0')}`
 }
 
 function row(title: string, value: string) {
@@ -81,7 +93,7 @@ function usageRows(state: SemantierBillingStateResponse, c: SemantierBillingCopy
 }
 
 export function SemantierBilling({ state, refusal }: SemantierBillingProps) {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const b = t.settings.billing
   const c = b.semantier
   const connection = useStore($connection)
@@ -93,6 +105,43 @@ export function SemantierBilling({ state, refusal }: SemantierBillingProps) {
     <p className="py-3 text-sm text-(--ui-text-tertiary)" role="status">{refusal?.message || c.unavailable}</p>
     <p className="text-sm text-(--ui-text-tertiary)">{c.recovery}</p>
   </SettingsSection>}
+
+  if (state.schema_version === 'semantier.billing.v2') {
+    const commerce = semantierCommerceCopy[locale] ?? semantierCommerceCopy.en
+    const tasks = ['manage', 'plans', 'topUp', 'orders'] as const
+
+    return <>
+      <SettingsSection icon={Package} title="Semantier">
+        {row(c.organization, state.organization.display_name || state.organization.id)}
+        {row(c.account, state.billing_account_id)}
+        {row(commerce.merchant, state.merchant?.display_name ?? c.unavailable)}
+        {row(commerce.currency, state.currency)}
+        {row(c.connection, connectionLabel)}
+        {row(commerce.package, state.subscription?.plan ?? commerce.noPackage)}
+        {state.subscription && row(c.status, state.subscription.status === 'active' ? commerce.active : commerce.expired)}
+        {state.subscription && row(commerce.term, commerce[state.subscription.term])}
+        {state.subscription && row(commerce.expires, fmtDateTime.format(new Date(state.subscription.ends_at)))}
+        {state.subscription && row(commerce.renewal, commerce.manual)}
+        {row(commerce.environment, state.environment)}
+      </SettingsSection>
+      <SettingsSection icon={BarChart3} title={b.sections.usage}>
+        {row(commerce.allowance, formatSemantierMoney(state.credits.allowance))}
+        {row(commerce.purchased, formatSemantierMoney(state.credits.purchased))}
+        {row(c.held, formatSemantierMoney(state.credits.held))}
+        {row(c.available, formatSemantierMoney(state.credits.available))}
+        {row(`${c.knownCost} · ${c.lifetime}`, formatSemantierMoney(state.usage.known_cost))}
+        {row(c.updated, fmtDateTime.format(new Date(state.as_of)))}
+      </SettingsSection>
+      {state.capabilities.can_open_portal && <div className="flex flex-wrap gap-2">
+        {tasks.map(task => {
+          const url = semantierPortalTask(state.portal.url, state.organization.id, state.billing_account_id, task)
+
+          return url && <Button key={task} onClick={() => openExternal(url)} variant="outline">{commerce[task]}</Button>
+        })}
+      </div>}
+      <p className="py-3 text-sm text-(--ui-text-tertiary)">{state.capabilities.can_open_portal && state.portal.url ? commerce.browserAuth : c.commercialUnavailable}</p>
+    </>
+  }
 
   return <>
     <SettingsSection icon={Package} title="Semantier">{scopeRows(state, c, connectionLabel)}</SettingsSection>

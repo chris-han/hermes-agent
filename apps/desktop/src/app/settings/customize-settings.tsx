@@ -29,6 +29,8 @@ import {
 
 import { DEFAULT_DESKTOP_BRANDING, type DesktopBranding } from '../../../electron/desktop-branding-types'
 
+import { BrandingShortcuts } from './branding-shortcuts'
+
 import { NavLink, SectionHeading, SettingsContent } from './primitives'
 import { SETTING_IDS, settingElementId } from './settings-manifest'
 
@@ -93,6 +95,8 @@ export function CustomizeSettings() {
   const [placement, setPlacement] = useState<BrandPlacement>('welcome')
   const [decoding, setDecoding] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [shortcutBusy, setShortcutBusy] = useState(false)
+  const busy = saving || shortcutBusy
   const [error, setError] = useState<'invalidImage' | 'saveFailed' | null>(null)
   const [saved, setSaved] = useState(false)
   const dirty = useRef(false)
@@ -157,8 +161,10 @@ export function CustomizeSettings() {
       dirty.current = false
       setDraft(value)
       setSaved(true)
+      return value
     } catch {
       setError('saveFailed')
+      return null
     } finally {
       setSaving(false)
     }
@@ -189,7 +195,7 @@ export function CustomizeSettings() {
             <label className="grid gap-2 text-sm" htmlFor="branding-display-name-zh">
               {c.nameZh}
               <Input
-                disabled={saving}
+                disabled={busy}
                 id="branding-display-name-zh"
                 lang="zh"
                 maxLength={120}
@@ -201,7 +207,7 @@ export function CustomizeSettings() {
             <label className="grid gap-2 text-sm" htmlFor="branding-display-name">
               {c.nameEn}
               <Input
-                disabled={saving}
+                disabled={busy}
                 id="branding-display-name"
                 lang="en"
                 maxLength={120}
@@ -217,7 +223,7 @@ export function CustomizeSettings() {
                 accept="image/png,image/jpeg,image/webp"
                 aria-label={c.logo}
                 className="sr-only"
-                disabled={saving}
+                disabled={busy}
                 onChange={event => {
                   const file = event.target.files?.[0]
                   event.target.value = ''
@@ -230,12 +236,12 @@ export function CustomizeSettings() {
                 type="file"
               />
               <div className="flex flex-wrap gap-2">
-                <Button disabled={saving} onClick={() => fileInput.current?.click()} size="sm" variant="secondary">
+                <Button disabled={busy} onClick={() => fileInput.current?.click()} size="sm" variant="secondary">
                   <Upload className="size-4" />
                   {c.upload}
                 </Button>
                 <Button
-                  disabled={saving || (!draft.logo && !decoding)}
+                  disabled={busy || (!draft.logo && !decoding)}
                   onClick={() => {
                     invalidateImage()
                     edit({ ...draft, logo: null })
@@ -285,7 +291,7 @@ export function CustomizeSettings() {
           </p>
           <div className="flex flex-wrap gap-2">
             <Button
-              disabled={saving}
+              disabled={busy}
               onClick={() => {
                 invalidateImage()
                 edit({ ...DEFAULT_DESKTOP_BRANDING })
@@ -296,12 +302,19 @@ export function CustomizeSettings() {
               <RefreshCw className="size-4" />
               {c.reset}
             </Button>
-            <Button disabled={saving || decoding || !available} onClick={() => void apply()} size="sm">
+            <Button disabled={busy || decoding || !available} onClick={() => void apply()} size="sm">
               <Check className="size-4" />
               {saving ? c.saving : c.apply}
             </Button>
           </div>
         </div>
+        <BrandingShortcuts
+          draft={draft}
+          dirty={JSON.stringify(draft) !== JSON.stringify(committed)}
+          disabled={saving || decoding || loadFailed || !available}
+          onApply={apply}
+          onBusy={setShortcutBusy}
+        />
       </div>
     </SettingsContent>
   )

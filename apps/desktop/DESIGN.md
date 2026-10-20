@@ -463,6 +463,15 @@ from their root base tokens; do not multiply the global tokens or nest CSS zoom.
   It replaced scattered Sparkles glyphs in updates / onboarding / about. Use it
   for hero/brand moments; don't reintroduce decorative star/sparkle icons.
 
+The local default bot uses a Semantier green (`#9fe870`) avatar. Its untitled
+empty-chat home wordmark displays lowercase `semantier` in bundled Manrope 700
+with natural casing, tight tracking and the existing fitted-text layout (a
+1.5rem floor lets customized names fit compact panes). Explicit
+bot names, colors, shapes and uploaded images retain precedence; aliases and
+remote connection identities keep their existing scope. This presentation never
+changes a profile's name outside this home fallback, its machine identifier,
+or native package/product identity.
+
 ## Motion
 
 - Visible windows keep animating when another app takes focus. Hidden/minimized
@@ -587,6 +596,12 @@ Settings → Appearance → Customize follows the existing settings NavLink, Inp
 `electron/desktop-branding.ts` owns the installation-wide versioned appearance record in userData, atomic serialized writes, safe raster revalidation and cold reads. `desktop-branding-ipc.ts` admits only registered top-level desktop windows; the sandbox-safe bridge supplies initial state before first paint and peer publications. `src/store/desktop-branding.ts` caches that committed native truth with stale-response guards. `OrganizationBrand` projects it into welcome, shared sidebar, Customize, About/version, updates, install, first remote connection and model onboarding. Upstream BrandMark, native identity, provider icons, version facts and notices retain their existing owners.
 
 Name/logo are display preferences, never organization authority. Organization ID stays read-only from authenticated Semantier context only; no such binding is currently exposed, so an explicit unavailable status is valid and non-blocking. Never derive it from Nous billing, a logo/name or local persistence. `SemantierAttribution` localizes quiet product attribution separately from preserved upstream notices.
+
+## Organization-logo Windows shortcuts
+
+Windows Customize appends a current-user shortcuts section after the existing editor and Apply controls. Reuse SectionHeading, Input, Button, OrganizationBrand and normal destination icons. The name follows the app locale’s draft organization name until edited. Desktop starts selected; Start menu means All apps, with manual Pin to Start help. Preview remains a draft; Apply & create saves first and creates nothing after a failed save. Creation uses the committed snapshot, disables editing while pending, reports each destination independently and retries only failures. Show in folder reveals only a verified owned result. Changing/resetting branding never deletes OS shortcuts; Update shortcuts explicitly refreshes their icon snapshot.
+
+The sandbox-safe branding bridge admits registered main frames only. Electron owns known-folder resolution, native image-to-ICO conversion, immutable icon snapshots and its ownership registry. Never overwrite unrelated links or accept renderer paths/commands. Installed MSIX shortcuts activate the registered package family/ApplicationID through AppsFolder; unpacked builds target their running executable. Package identity, Publisher, taskbar and tray remain separately owned. Verification uses real Windows shell links and isolated user-data/destination roots; no user desktop or Start-menu fixtures.
 
 ## Windows native branding
 

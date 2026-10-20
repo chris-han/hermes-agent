@@ -11,7 +11,7 @@
 import { aliasIdentityFor } from './routing'
 import type { BotMeta, RosterRow } from './types'
 
-export function displayName(bot: Partial<RosterRow>, meta?: BotMeta | null): string {
+export function displayName(bot: Partial<RosterRow>, meta?: BotMeta | null, defaultName = 'Hermes'): string {
   // A configured alias route claiming this row overrides source-derived
   // identity: the friendly alias name must survive hosted-session
   // activation and Cloud-only rosters (#89131).
@@ -69,7 +69,7 @@ export function displayName(bot: Partial<RosterRow>, meta?: BotMeta | null): str
   // that reads like nobody bothered. Present it as Hermes (the agent it is)
   // unless the user gives it a real title.
   if ((bot.name || '').trim().toLowerCase() === 'default' && !bot.title) {
-    return 'Hermes'
+    return defaultName
   }
 
   const raw = (bot.title || bot.name || '').replace(/[-_]+/g, ' ').trim()

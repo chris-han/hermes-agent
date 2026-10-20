@@ -33,7 +33,7 @@ if (!['', 'light', 'bundled', 'store'].includes(variant)) {
 // MSIX package identity. The Store re-signs on submission.
 const store = variant === 'store'
 const light = variant === 'light'
-const name = variants[store ? 'bundled' : (variant || '')]
+const name = variants[store ? 'bundled' : variant || '']
 
 // The electron-updater feed channel this build PUBLISHES to. A canary
 // tag (vX.Y.Z+canary.YYYYMMDDTHHMMSSZ) writes canary.yml / light-canary.yml;
@@ -46,11 +46,24 @@ const canary = /\+canary\.20\d{6}T\d{6}Z$/.test(process.env.HERMES_PAYLOAD_TAG |
 // seven-character commit suffix also names the CLI and fits MSIX's name cap.
 const buildCommitEnv = process.env.HERMES_BUILD_COMMIT || ''
 const buildCommit = /^[a-f0-9]{40}$/.test(buildCommitEnv) ? buildCommitEnv.slice(0, 7) : null
-const displayName = buildCommit
+const legacyDisplayName = buildCommit
   ? `${name.display} ${buildCommit}`
   : canary
     ? `${name.display} Canary`
     : name.display
+
+// Local Windows packaging has a human version independent of the upstream runtime.
+const semantierVersion = process.env.SEMANTIER_DESKTOP_VERSION || ''
+const semantierBuild = Boolean(semantierVersion && buildCommit && variant === 'bundled' && !store)
+if (
+  semantierVersion &&
+  (!semantierBuild ||
+    !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(semantierVersion) ||
+    semantierVersion.split('.').some(part => Number(part) > 65535))
+) {
+  throw new Error('Semantier version requires a local bundled commit build and numeric X.Y.Z')
+}
+const displayName = semantierBuild ? `Semantier Agent ${semantierVersion}` : legacyDisplayName
 
 const kebabSuffix = buildCommit ? `-${buildCommit}` : canary ? '-canary' : ''
 const pascalSuffix = buildCommit ? `Commit${buildCommit}` : canary ? 'Canary' : ''
@@ -68,10 +81,10 @@ const identity = {
   displayName,
   appId: `com.nousresearch.${name.kebab}${kebabSuffix}`,
   // Store and commit builds do not publish a release feed.
-  channel: store || buildCommit ? null : light ? (canary ? 'light-canary' : 'light') : (canary ? 'canary' : 'latest'),
+  channel: store || buildCommit ? null : light ? (canary ? 'light-canary' : 'light') : canary ? 'canary' : 'latest',
   appNamePascal: `${name.pascal}${pascalSuffix}`,
   artifactNamePascal: name.pascal,
-  windowsExecutableName: kebabSuffix ? cliName : displayName,
+  windowsExecutableName: semantierBuild ? 'Semantier Agent' : kebabSuffix ? cliName : displayName,
   cliName,
   msixAppIdWithOrg: `NousResearch.${name.pascal}${pascalSuffix}`,
   ...(store
@@ -96,9 +109,15 @@ const request = channelBuildRequest()
 // The updater reads the token from the stamped request, not from this export.
 const officialChannel =
   request !== null &&
-  ['appId', 'displayName', 'appNamePascal', 'artifactNamePascal', 'windowsExecutableName', 'cliName', 'msixAppIdWithOrg'].every(
-    key => request.identity[key] === identity[key]
-  )
+  [
+    'appId',
+    'displayName',
+    'appNamePascal',
+    'artifactNamePascal',
+    'windowsExecutableName',
+    'cliName',
+    'msixAppIdWithOrg'
+  ].every(key => request.identity[key] === identity[key])
 
 module.exports = !request
   ? identity

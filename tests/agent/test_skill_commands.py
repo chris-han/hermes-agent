@@ -859,3 +859,16 @@ class TestStackedSkillCommands:
         assert loaded == ["skill-a"]
         assert missing == ["gone"]
         assert "gone" in msg
+
+
+@pytest.mark.parametrize("encoding", ["utf-8", "utf-8-sig"])
+def test_bom_skill_keeps_platform_restriction(tmp_path, monkeypatch, encoding):
+    from agent import skill_commands
+    skill = _make_skill(tmp_path, "foreign", frontmatter_extra="platforms: [unsupported-host]\n")
+    path = skill / "SKILL.md"
+    path.write_text(path.read_text(encoding="utf-8"), encoding=encoding)
+    monkeypatch.setattr(skill_commands, "resolve_skill_command_key", lambda command: "/foreign")
+    monkeypatch.setattr(skill_commands, "get_skill_commands", lambda: {
+        "/foreign": {"name": "foreign", "skill_dir": str(skill)}})
+    result = skill_commands.classify_slash_command("/foreign")
+    assert result.kind == "platform_incompatible_skill"

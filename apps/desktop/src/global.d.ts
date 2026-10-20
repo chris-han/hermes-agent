@@ -5,6 +5,7 @@ import type { TranslucencyState } from '@hermes/shared/translucency'
 import type { ChallengeOutcome } from '../electron/challenge-window'
 import type { ScreenshotApi } from '../electron/command-screenshot-types'
 import type { DesktopBranding } from '../electron/desktop-branding-types'
+import type { BrandShortcutBridge } from '../electron/windows-brand-shortcuts-types'
 import type { HudModifierApi } from '../electron/hud-modifier-types'
 import type { MachineProfile } from '../electron/machine-profile'
 import type { HermesNotification } from '../electron/notification-types'
@@ -375,6 +376,7 @@ declare global {
       setKeepAwake?: (mode: KeepAwakeMode) => void
       onKeepAwakeOffer?: (callback: () => void) => () => void
       branding?: {
+        shortcuts?: BrandShortcutBridge
         initial: DesktopBranding
         get: () => Promise<DesktopBranding>
         set: (value: DesktopBranding) => Promise<DesktopBranding>

@@ -34,6 +34,7 @@ test('native consumption copies admitted modules and helpers, rejecting changed 
     const selection = { source, nativeDeps: out, platform: 'linux', arch: 'x64', nativeToolchain: 'compiler-a' }
     const record = () => native.recordNativeInputs({ ...selection, out })
     record()
+    fs.writeFileSync(path.join(app,'package.json'),JSON.stringify({version:'0.0.2',productName:'Semantier Agent 0.0.2'}))
     assert.equal(native.readNativeInputs(selection), out)
     assert.throws(() => native.readNativeInputs({ ...selection, nativeToolchain: 'compiler-b' }), /run preparation again/)
     await beforePack({ appOutDir: '', electronPlatformName: 'linux', arch: 1, packager: { projectDir: app } })

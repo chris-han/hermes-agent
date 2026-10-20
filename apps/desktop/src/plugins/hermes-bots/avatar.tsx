@@ -1120,9 +1120,9 @@ export function BotFace({ shape, color, image, size = 36, name = 'agent', mood =
   )
 }
 
-/** The friendly violet the primary profile has always worn, and the last
+/** Semantier green for the primary profile, and the last
  *  resort for a draft that has no name to derive a hue from yet. */
-const PRIMARY_AVATAR_COLOR = '#8b5cf6'
+const PRIMARY_AVATAR_COLOR = '#9fe870'
 
 /** A picked color wins; with none, fall back to the name's deterministic hue —
  *  the same one `botAppearance` seeds — so "no choice" means the app's color
@@ -1135,7 +1135,7 @@ export function botAppearance(name: string, meta: BotMeta | null | undefined): A
   // The primary profile is literally named "default"; the SDK's profileColor
   // can hand it a near-black that renders as an ugly black square, and any
   // auto-seeded color in local bot-meta would otherwise stick. Give the
-  // primary a nice fixed generic look (a friendly violet squircle). A user's
+  // primary a fixed branded look (a Semantier green squircle). A user's
   // EXPLICIT customization still wins: an uploaded/generated/pet image, or a
   // shape/color they set via the editor (tracked by meta.custom === true).
   const isPrimary = (name || '').trim().toLowerCase() === 'default'

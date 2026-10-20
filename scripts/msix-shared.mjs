@@ -250,7 +250,7 @@ export function appIdentity(desktopDir, tag = process.env.HERMES_PAYLOAD_TAG || 
     if (tag) throw new Error('Commit-only builds must not set HERMES_PAYLOAD_TAG')
     const commit = process.env.HERMES_BUILD_COMMIT
     if (!/^[a-f0-9]{40}$/.test(commit)) throw new Error('Commit builds require an exact full SHA')
-    const version = String(process.env.HERMES_PAYLOAD_VERSION || '')
+    const version = String(process.env.SEMANTIER_DESKTOP_VERSION || process.env.HERMES_PAYLOAD_VERSION || '')
     if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)
         || version.split('.').some(part => Number(part) > 65535)) {
       throw new Error('Commit builds require HERMES_PAYLOAD_VERSION=X.Y.Z with 16-bit fields')

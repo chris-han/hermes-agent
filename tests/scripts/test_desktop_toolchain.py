@@ -50,9 +50,10 @@ def test_bootstrap_environment_isolates_owned_paths_without_mutating_caller(tmp_
     assert dict(os.environ) == process_before
     assert environment["CARGO_HOME"] == inherited["CARGO_HOME"]
     assert environment["RUSTUP_HOME"] == inherited["RUSTUP_HOME"]
-    for key in ("HOME", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "HERMES_HOME",
+    for key in ("HOME", "USERPROFILE", "APPDATA", "HERMES_HOME",
                 "XDG_CONFIG_HOME", "XDG_CACHE_HOME"):
         assert Path(environment[key]).is_relative_to(work)
+    assert Path(environment["LOCALAPPDATA"]) == cache / "home/AppData/Local"
     assert Path(environment["HERMES_RUNTIME_DIR"]) == cache / "tools"
     assert Path(environment["UV_CACHE_DIR"]) == cache / "python/runtime"
     assert Path(environment["npm_config_cache"]) == cache / "npm"
@@ -170,7 +171,9 @@ def test_packaging_preserves_keychain_home_without_retargeting_build_state(tmp_p
 
 
 @pytest.mark.platforms("linux", "macos", "windows")
-def test_prepare_tools_uses_pm_native_pins_and_separate_cache(tmp_path, monkeypatch):
+@pytest.mark.parametrize("shared", [False, True])
+@pytest.mark.parametrize("complete", [False, True])
+def test_prepare_tools_uses_pm_native_pins_and_separate_cache(tmp_path, monkeypatch, shared, complete):
     import pm
     from scripts.bundles import desktop_toolchain
     from pm import native_build
@@ -196,8 +199,13 @@ def test_prepare_tools_uses_pm_native_pins_and_separate_cache(tmp_path, monkeypa
     monkeypatch.setattr(pm, "installed_package", lambda name: SimpleNamespace(binary=bins[name]))
     monkeypatch.setattr(pm, "env_for", lambda *names, base_env: {**base_env, "PATH": "pm-tools"})
     monkeypatch.setattr(native_build, "prepare_windows_environment", native)
-    monkeypatch.setattr(desktop_toolchain, "native_cache_path", lambda cache, env: cache / "python/runtime/native-identity",
-                        raising=False)
+    def identity(cache, env, *, family="python", diagnostic=None):
+        if diagnostic is not None:
+            diagnostic.update(complete=complete)
+        return cache / ("native/node/node-identity" if family == "node" else "python/runtime/native-identity")
+    monkeypatch.setattr(desktop_toolchain, "native_cache_path", identity)
+    monkeypatch.setattr(desktop_toolchain, "reusable_wheel_cache",
+                        lambda cache, env: cache / "python/runtime/prebuilt" if shared else None)
     before = dict(os.environ)
     python, node, prepared = desktop_toolchain.prepare_tools(source, work, cache, env)
     assert acquired == ["uv", "npm"]
@@ -205,7 +213,8 @@ def test_prepare_tools_uses_pm_native_pins_and_separate_cache(tmp_path, monkeypa
     assert prepared["HERMES_PYTHON"] == str(python)
     assert prepared["HERMES_NODE"] == str(node)
     assert prepared["PATH"] == "pm-tools"
-    assert Path(prepared["UV_CACHE_DIR"]) == cache / "python/runtime/native-identity"
+    assert Path(prepared["UV_CACHE_DIR"]) == cache / ("python/runtime/prebuilt" if shared and not complete else "python/runtime/native-identity")
+    assert prepared["HERMES_DESKTOP_NATIVE_TOOLCHAIN"] == "node-identity"
     assert dict(os.environ) == before
     if pm.current_target() == "win32-arm64":
         assert len(native_calls) == 1
@@ -236,6 +245,7 @@ def test_native_cache_identity_tracks_compilers_sdk_and_openssl(tmp_path, monkey
 
     # Let stdlib cache its real-host probe before substituting compiler commands.
     desktop_toolchain.platform.platform()
+    monkeypatch.setattr(desktop_toolchain.shutil, "which", lambda command, **kwargs: command)
     monkeypatch.setattr(desktop_toolchain.subprocess, "run", probe)
     cache = tmp_path / "cache"
     first = desktop_toolchain.native_cache_path(cache, env)
@@ -283,6 +293,7 @@ def test_native_cache_leaves_room_for_sdist_compiler_outputs(tmp_path, monkeypat
         path = openssl / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"native input")
+    monkeypatch.setattr(desktop_toolchain.shutil, "which", lambda command, **kwargs: command)
     monkeypatch.setattr(desktop_toolchain.subprocess, "run", probe)
     selected = desktop_toolchain.native_cache_path(cache, {
         "WindowsSDKVersion": "10.0.1", "VCToolsVersion": "14.1", "OPENSSL_DIR": str(openssl),
@@ -295,3 +306,113 @@ def test_native_cache_leaves_room_for_sdist_compiler_outputs(tmp_path, monkeypat
                   / f"build/temp.{architecture}-cpython-314/Release/src/SKP_SILK_SRC"
                   / "SKP_Silk_NLSF_VQ_rate_distortion_FIX.obj")
         assert len(str(output)) < 260, str(output)
+
+
+def test_guarded_wheel_cache_reuses_downloads_but_evicts_source_builds(tmp_path, monkeypatch):
+    from scripts.bundles import desktop_toolchain
+
+    cache = tmp_path / '.cache/desktop-inputs'
+    source = tmp_path / 'source'
+    source.mkdir()
+    (source / 'uv.lock').write_text('''version = 1
+[[package]]
+name = "workspace-local"
+source = { editable = "." }
+[[package]]
+name = "prebuilt"
+source = { registry = "https://pypi.org/simple" }
+''')
+    shared = cache / 'python/runtime/prebuilt-test-target'
+    (shared / 'sdists-v9/pypi/compiled-package').mkdir(parents=True)
+    (shared / 'sdists-v9/.git').write_text('gitdir: does-not-exist')
+    (shared / 'sdists-v9/.gitignore').write_text('*')
+    wheel = shared / 'wheels-v6/unchanged-wheel'
+    wheel.parent.mkdir()
+    wheel.write_bytes(b'cached download')
+    env = {'HERMES_DESKTOP_SERIAL_CACHE': str(cache.resolve()),
+           'HERMES_PYTHON_SRC_ROOT': str(source), 'PATH': os.defpath}
+    monkeypatch.setattr(desktop_toolchain, '_wheel_cache_target', lambda: 'test-target')
+    import pm
+    calls = []
+    monkeypatch.setattr(pm, 'prune_cache', lambda cache, **kw: calls.append((cache, kw)))
+    assert desktop_toolchain.reusable_wheel_cache(cache, env) is None
+    Path(str(tmp_path) + '.distribution.lock').touch()
+    for _ in range(2):
+        assert desktop_toolchain.reusable_wheel_cache(cache, env) == shared
+    assert len(calls) == 2
+    assert calls[0] == (shared, {'packages': ['compiled-package', 'workspace-local']})
+    assert wheel.read_bytes() == b'cached download'
+    assert desktop_toolchain.reusable_wheel_cache(cache, {**env, 'HERMES_DESKTOP_SERIAL_CACHE': 'other'}) is None
+    (shared / 'sdists-v9/git').mkdir()
+    assert desktop_toolchain.reusable_wheel_cache(cache, env) is None
+    assert len(calls) == 2
+
+
+def test_guarded_wheel_cache_never_ignores_failed_invalidation(tmp_path, monkeypatch):
+    from scripts.bundles import desktop_toolchain
+
+    cache = tmp_path / '.cache/desktop-inputs'
+    source = tmp_path / 'source'
+    source.mkdir()
+    (source / 'uv.lock').write_text('[[package]]\nname="local"\nsource={editable="."}\n')
+    Path(str(tmp_path) + '.distribution.lock').touch()
+    import pm
+    def failed(*args, **kwargs):
+        raise RuntimeError('source-cache eviction failed')
+    monkeypatch.setattr(pm, 'prune_cache', failed)
+    with pytest.raises(RuntimeError, match='source-cache eviction failed'):
+        desktop_toolchain.reusable_wheel_cache(cache, {
+            'HERMES_DESKTOP_SERIAL_CACHE': str(cache.resolve()),
+            'HERMES_PYTHON_SRC_ROOT': str(source), 'PATH': os.defpath,
+        })
+
+
+def test_shared_wheels_never_replace_native_toolchain_identity(tmp_path, monkeypatch):
+    from scripts.bundles import desktop_toolchain
+
+    cache = tmp_path / '.cache/desktop-inputs'
+    source = tmp_path / 'source'
+    source.mkdir()
+    (source / 'uv.lock').write_text('package=[]\n')
+    Path(str(tmp_path) + '.distribution.lock').touch()
+    desktop_toolchain.platform.platform()
+    monkeypatch.setattr(desktop_toolchain.subprocess, 'run',
+                        lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError()))
+    env = {'PATH': os.defpath, 'HERMES_DESKTOP_SERIAL_CACHE': str(cache.resolve()),
+           'HERMES_PYTHON_SRC_ROOT': str(source)}
+    first = desktop_toolchain.reusable_wheel_cache(cache, env)
+    assert desktop_toolchain.reusable_wheel_cache(cache, env) == first
+    assert first.name.startswith('prebuilt-')
+    assert desktop_toolchain.native_cache_path(cache, env) != desktop_toolchain.native_cache_path(cache, env)
+    del env['HERMES_DESKTOP_SERIAL_CACHE']
+    assert desktop_toolchain.native_cache_path(cache, env) != desktop_toolchain.native_cache_path(cache, env)
+
+
+def test_windows_node_identity_is_case_insensitive_and_independent_of_python_ssl(tmp_path, monkeypatch):
+    from scripts.bundles import desktop_toolchain
+    import pm.store
+    monkeypatch.setattr(pm.store, "current_target", lambda: "win32-x64")
+    desktop_toolchain.platform.platform()
+    calls = []
+    def probe(command, **kwargs):
+        calls.append(command)
+        if command[0] == "openssl":
+            raise FileNotFoundError("no OpenSSL CLI")
+        return SimpleNamespace(returncode=2 if command == ["cl", "/Bv"] else 0,
+                               stdout="compiler 19.44 x64", stderr="")
+    monkeypatch.setattr(desktop_toolchain.shutil, "which", lambda command, **kwargs: command)
+    monkeypatch.setattr(desktop_toolchain.subprocess, "run", probe)
+    env = {"WINDOWSSDKVERSION": "10.0.26100.0", "VCTOOLSVERSION": "14.44", "PATH": os.defpath}
+    first = desktop_toolchain.native_cache_path(tmp_path, env, family="node")
+    assert desktop_toolchain.native_cache_path(tmp_path, env, family="node") == first
+    assert desktop_toolchain.native_cache_path(tmp_path, {**env, "OPENSSL_DIR": "missing", "RUSTFLAGS": "changed"}, family="node") == first
+    assert not any(command[0] in {"rustc", "openssl"} for command in calls)
+    mixed = {"WindowsSDKVersion": env["WINDOWSSDKVERSION"], "VCToolsVersion": env["VCTOOLSVERSION"], "PATH": os.defpath}
+    assert desktop_toolchain.native_cache_path(tmp_path, mixed, family="node") == first
+    assert desktop_toolchain.native_cache_path(tmp_path, {**env, "VCTOOLSVERSION": "14.45"}, family="node") != first
+    assert desktop_toolchain.native_cache_path(tmp_path, env) != desktop_toolchain.native_cache_path(tmp_path, env)
+    diagnostic = (tmp_path / "diagnostics/toolchains.jsonl").read_text()
+    assert 'openssl' in diagnostic and 'node' in diagnostic
+    env["SIGNING_TOKEN"] = "DO-NOT-RECORD"
+    desktop_toolchain.native_cache_path(tmp_path, env, family="node")
+    assert "DO-NOT-RECORD" not in (tmp_path / "diagnostics/toolchains.jsonl").read_text()

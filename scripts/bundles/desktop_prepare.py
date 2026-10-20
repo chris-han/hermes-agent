@@ -337,7 +337,7 @@ def prepare_in_worker(request: BuildRequest) -> Path:
     request.validate_channel()
     python, node, env = prepare_tools(request.source, request.work, request.cache, os.environ)
     env = identity_environment(request, request.variant, env)
-    native_toolchain = Path(env["UV_CACHE_DIR"]).name
+    native_toolchain = env["HERMES_DESKTOP_NATIVE_TOOLCHAIN"]
     run([str(node), "scripts/build/node-deps.mjs", "--source", str(request.source), "--reuse",
          "--native-toolchain", native_toolchain,
          *[arg for name in request.workspaces() for arg in ("--workspace", name)]], cwd=request.source, env=env)
@@ -347,7 +347,7 @@ def prepare_in_worker(request: BuildRequest) -> Path:
             raise ValueError("icon environment must be preparation-owned, not a symlink")
         shutil.rmtree(icon_environment)
     icon_python = prepare_icon_environment(request.source, icon_environment, request.cache / "python/build")
-    native = request.source / "apps/desktop/build/native-deps"
+    native = request.cache / "native/node" / native_toolchain
     run([str(node), "apps/desktop/scripts/stage-native-deps.mjs", "--source", str(request.source),
          "--out", str(native), "--native-toolchain", native_toolchain], cwd=request.source, env=env)
     packager = request.work / "packager"

@@ -5,13 +5,16 @@ This module is stdlib-only until preparation runs inside the isolated child.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
 from pathlib import Path
 import platform
+import shutil
 import subprocess
 import sys
+import tomllib
 import uuid
 
 
@@ -43,7 +46,7 @@ def bootstrap_environment(source: Path, work: Path, cache: Path,
     home = work / "home"
     result.update({
         "HOME": str(home), "USERPROFILE": str(home),
-        "LOCALAPPDATA": str(home / "AppData/Local"),
+        "LOCALAPPDATA": str(cache / "home/AppData/Local"),
         "APPDATA": str(home / "AppData/Roaming"),
         "HERMES_HOME": str(work / "hermes-home"),
         "HERMES_RUNTIME_DIR": str(cache / "tools"),
@@ -117,12 +120,17 @@ def prepare_tools(source: Path, work: Path, cache: Path,
             raise FileNotFoundError(f"PM did not prepare a native {name} executable")
         binaries[name] = installed.binary
     prepared = pm.env_for("python", "npm", base_env=prepared)
+    node_native = native_cache_path(cache, prepared, family="node")
+    python_state = {}
+    native = native_cache_path(cache, prepared, diagnostic=python_state)
     prepared.update({"HERMES_PYTHON": str(binaries["python"]), "HERMES_NODE": str(binaries["node"]),
-                     "UV_CACHE_DIR": str(native_cache_path(cache, prepared))})
+                     "HERMES_DESKTOP_NATIVE_TOOLCHAIN": node_native.name,
+                     "UV_CACHE_DIR": str(native if python_state["complete"] else (reusable_wheel_cache(cache, prepared) or native))})
     return binaries["python"], binaries["node"], prepared
 
 
-def native_cache_path(cache: Path, env: Mapping[str, str]) -> Path:
+def native_cache_path(cache: Path, env: Mapping[str, str], *, family: str = "python",
+                      diagnostic: dict | None = None) -> Path:
     """Partition built wheels by observed native inputs, not just the OS label.
 
     Missing tool/SDK identity deliberately gets a fresh partition. No inherited
@@ -131,50 +139,73 @@ def native_cache_path(cache: Path, env: Mapping[str, str]) -> Path:
     from pm.store import current_target
 
     target = current_target()
+    if family not in {"node", "python"}:
+        raise ValueError("unknown native cache family")
+    canonical = {key.upper(): value for key, value in env.items()}
+    missing = []
     keys = {"CC", "CXX", "AR", "CFLAGS", "CXXFLAGS", "LDFLAGS", "RUSTFLAGS", "RUSTUP_TOOLCHAIN",
             "SDKROOT", "MACOSX_DEPLOYMENT_TARGET", "WindowsSDKVersion", "VCToolsVersion",
             "WindowsSdkDir", "INCLUDE", "LIB", "LIBPATH", "OPENSSL_DIR", "OPENSSL_LIB_DIR",
-            "OPENSSL_INCLUDE_DIR", "OPENSSL_STATIC"}
-    selected = {key: value for key, value in env.items() if key in keys or key.startswith("CC_")}
-    identity = {"recipe": 1, "target": target, "host": platform.platform(),
+            "OPENSSL_INCLUDE_DIR", "OPENSSL_STATIC", "CL", "_CL_", "LINK", "_LINK_", "ARCHFLAGS", "VSCMD_ARG_TGT_ARCH"}
+    keys = {key.upper() for key in keys}
+    if family == "node":
+        keys -= {"RUSTFLAGS", "RUSTUP_TOOLCHAIN", "OPENSSL_DIR", "OPENSSL_LIB_DIR", "OPENSSL_INCLUDE_DIR", "OPENSSL_STATIC"}
+    selected = {key: value for key, value in canonical.items()
+                if key in keys or key.startswith(("CC_", "CXX_"))}
+    identity = {"recipe": 2, "family": family, "target": target, "host": platform.platform(),
                 "libc": platform.libc_ver(), "inputs": selected, "probes": [], "openssl": {}}
-    commands = [["rustc", "-vV"]]
+    commands = [["rustc", "-vV"]] if family == "python" else []
     if target.startswith("win32"):
         commands.append(["cl", "/Bv"])
-        complete = bool(env.get("WindowsSDKVersion") and env.get("VCToolsVersion"))
+        for key in ("WINDOWSSDKVERSION", "VCTOOLSVERSION"):
+            if not canonical.get(key):
+                missing.append("missing environment " + key)
+        compiler_target = canonical.get("VSCMD_ARG_TGT_ARCH")
+        if compiler_target and compiler_target != target.removeprefix("win32-"):
+            missing.append("compiler target mismatch")
+        complete = not missing
     else:
         commands.extend([[env.get("CC") or "cc", "--version"], [env.get("CXX") or "c++", "--version"]])
         complete = True
-    commands.extend([[value, "--version"] for key, value in selected.items() if key.startswith("CC_")])
+    commands.extend([[value, "--version"] for key, value in selected.items() if key.startswith(("CC_", "CXX_"))])
     if target.startswith("darwin"):
         commands.extend([["xcrun", "--show-sdk-path"], ["xcrun", "--show-sdk-build-version"]])
-    openssl = env.get("OPENSSL_DIR")
-    if openssl or env.get("OPENSSL_LIB_DIR") or env.get("OPENSSL_INCLUDE_DIR"):
-        roots = {"include": Path(env["OPENSSL_INCLUDE_DIR"]) if env.get("OPENSSL_INCLUDE_DIR")
+    openssl = canonical.get("OPENSSL_DIR")
+    if family == "python" and (openssl or canonical.get("OPENSSL_LIB_DIR") or canonical.get("OPENSSL_INCLUDE_DIR")):
+        roots = {"include": Path(canonical["OPENSSL_INCLUDE_DIR"]) if canonical.get("OPENSSL_INCLUDE_DIR")
                  else Path(openssl or "") / "include",
-                 "lib": Path(env["OPENSSL_LIB_DIR"]) if env.get("OPENSSL_LIB_DIR")
+                 "lib": Path(canonical["OPENSSL_LIB_DIR"]) if canonical.get("OPENSSL_LIB_DIR")
                  else Path(openssl or "") / "lib"}
         for kind, root in roots.items():
             files = sorted(path for path in root.rglob("*") if path.is_file()) if root.is_dir() else []
             complete = complete and bool(files)
+            if not files:
+                missing.append("missing OpenSSL " + kind)
             for path in files:
                 with path.open("rb") as stream:
                     identity["openssl"][f"{kind}/{path.relative_to(root).as_posix()}"] = hashlib.file_digest(stream, "sha256").hexdigest()
-    else:
+    elif family == "python":
         commands.append(["openssl", "version", "-a"])
         if target == "win32-arm64":
             complete = False  # The provider must identify the linked static libraries.
+            missing.append("OpenSSL linked-library identity unavailable")
     for command in commands:
         try:
-            result = subprocess.run(command, env=dict(env), capture_output=True, text=True, encoding="utf-8",
+            executable = shutil.which(command[0], path=canonical.get("PATH")) if os.name == "nt" else command[0]
+            if executable is None:
+                raise FileNotFoundError(command[0])
+            result = subprocess.run([executable, *command[1:]], env=dict(env), capture_output=True, text=True, encoding="utf-8",
                                     errors="replace", timeout=30, stdin=subprocess.DEVNULL, check=False)
             output = result.stdout + result.stderr
             # cl /Bv reports its identity and exits 2 when no source is supplied.
             valid = result.returncode in ((0, 2) if command == ["cl", "/Bv"] else (0,)) and bool(output.strip())
             identity["probes"].append([command, output])
             complete = complete and valid
+            if not valid:
+                missing.append("failed probe " + command[0])
         except (OSError, subprocess.TimeoutExpired):
             complete = False
+            missing.append("unavailable probe " + command[0])
     # Build-owned locations move across runners; their bytes and relative layout
     # identify them. Keep external compiler/SDK paths significant.
     encoded = json.dumps(identity, sort_keys=True)
@@ -183,7 +214,56 @@ def native_cache_path(cache: Path, env: Mapping[str, str]) -> Path:
     # uv builds sdists below this root. Keep the partition compact so compiler
     # outputs fit Windows MAX_PATH; the target is already part of the identity.
     digest = hashlib.sha256(encoded.encode()).hexdigest()[:32] if complete else uuid.uuid4().hex
-    return cache.resolve() / "python/runtime" / digest
+    record = {"producedAt": datetime.now(timezone.utc).isoformat(),
+              "family": family, "target": target, "complete": complete, "key": digest,
+              "missing": missing, "inputHashes": {key: hashlib.sha256(value.encode()).hexdigest() for key, value in selected.items()},
+              "tools": [{"command": probe[0][0], "version": next((line for line in probe[1].splitlines()
+                         if any(word in line.lower() for word in ("version", "rustc", "openssl", "clang", "gcc"))), "")[:240]}
+                        for probe in identity["probes"]]}
+    if diagnostic is not None:
+        diagnostic.update(record)
+    log = cache / "diagnostics/toolchains.jsonl"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    with log.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(record, sort_keys=True) + "\n")
+    return cache.resolve() / ("native/node-toolchains" if family == "node" else "python/runtime") / digest
+
+
+def _wheel_cache_target() -> str:
+    from pm.store import current_target
+
+    return current_target()
+
+
+def reusable_wheel_cache(cache: Path, env: Mapping[str, str]) -> Path | None:
+    """Reuse downloads only inside the distribution controller's serial workspace.
+
+    Without complete compiler identity, evict source builds through uv's public
+    CLI before reuse. Never delete uv internals. The pinned uv's known PyPI/local
+    source-cache layout is inspected read-only; other layouts stay private.
+    """
+    cache = cache.resolve()
+    if (env.get("HERMES_DESKTOP_SERIAL_CACHE") != str(cache)
+            or not Path(str(cache.parents[1]) + ".distribution.lock").is_file()):
+        return None
+    shared = cache / "python/runtime" / ("prebuilt-" + _wheel_cache_target())
+    names = set()
+    for bucket in shared.glob("sdists-v*"):
+        if bucket.name != "sdists-v9" or any(
+            child.name not in {"pypi", "editable", ".git", ".gitignore"} for child in bucket.iterdir()
+        ):
+            return None
+        if (bucket / "pypi").is_dir():
+            names.update(child.name for child in (bucket / "pypi").iterdir() if child.is_dir())
+    lock = Path(env["HERMES_PYTHON_SRC_ROOT"]) / "uv.lock"
+    packages = tomllib.loads(lock.read_text(encoding="utf-8"))["package"]
+    names.update(package["name"] for package in packages if "registry" not in package["source"])
+    if names:
+        import pm
+
+        pm.prune_cache(shared, packages=sorted(names))
+    print(f"Reusing prebuilt wheel cache: {shared}; source builds invalidated", flush=True)
+    return shared
 
 
 if __name__ == "__main__":

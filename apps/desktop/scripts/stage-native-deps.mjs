@@ -27,11 +27,13 @@ import {
 } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { isMain } from './utils.mjs'
-import { recordNativeInputs } from './prepared-native-deps.mjs'
+import { nativeInputsReason, recordNativeInputs } from './prepared-native-deps.mjs'
 import { buildCommandScreenshotMonitor } from './build-command-screenshot-monitor.mjs'
 import { buildHudModifierMonitor, hudModifierBinaryRelativePath } from './build-hud-modifier-monitor.mjs'
 import { parseArgs } from 'node:util'
 import { productOutput, withProduct, workspaceTool } from '../../../scripts/build/frontend-common.mjs'
+
+import { cacheDiagnostic } from '../../../scripts/build/node-deps.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const projectRoot = resolve(here, '..')
@@ -764,6 +766,13 @@ function readdirSafe(dir) {
  */
 export async function prepareDesktopNativeDependencies({ source, out, platform = process.platform, arch = process.arch, nativeToolchain }) {
   ;({ source, out } = productOutput(source, out, ['node_modules', 'apps/desktop/node_modules', 'apps/desktop/src', 'apps/desktop/electron']))
+  const reason=nativeToolchain === undefined ? 'missing-toolchain-identity' : nativeInputsReason({source,nativeDeps:out,platform,arch,nativeToolchain})
+  if (!reason) {
+    cacheDiagnostic(source,'node-native',{result:'hit',reason:'verified-inputs-and-artifact-digests',platform,arch})
+    console.log('[stage-native-deps] reusing verified native artifacts')
+    return {out}
+  }
+  cacheDiagnostic(source,'node-native',{result:'miss',reason,platform,arch})
   rmSync(`${out}.prepared.json`, { force: true })
   await withProduct(out, async product => {
     stageNodePty({ source, out: product, platform, arch })

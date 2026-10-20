@@ -48,8 +48,11 @@ try {
   Run-Native $SignTool ($signArgs + $signed)
   # This is deliberately before ZIP assembly; do not import certificates on failure.
   Run-Native $SignTool @('verify','/pa','/v',$signed)
-  Export-Certificate -Cert $cert -FilePath (Join-Path $dist 'Hermes-signing.cer') | Out-Null
+  Export-Certificate -Cert $cert -FilePath (Join-Path $dist 'SemantierAgent-signing.cer') | Out-Null
+  $readableVersion = ([string]$identity.Version) -replace '\.0$',''
+  $archiveName = "SemantierAgent-$readableVersion-win-$($identity.ProcessorArchitecture).zip"
   $metadata = [ordered]@{
+    archiveName = $archiveName; displayName = [string]$manifest.Package.Properties.DisplayName
     producedAt = [DateTime]::UtcNow.ToString('o'); sourceCommit = $SourceCommit
     packageName = [string]$identity.Name; packageVersion = [string]$identity.Version
     architecture = [string]$identity.ProcessorArchitecture; publisher = [string]$identity.Publisher
@@ -63,7 +66,7 @@ try {
   Get-ChildItem -LiteralPath $dist -File | Sort-Object Name | ForEach-Object {
     "$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $($_.Name)"
   } | Set-Content -LiteralPath (Join-Path $dist 'SHA256SUMS.txt') -Encoding ascii
-  $zip = Join-Path $Output 'Hermes-windows-signed.zip'
+  $zip = Join-Path $Output $archiveName
   Run-Native $SevenZip @('a','-tzip',$zip,"$dist\*")
   Run-Native $SevenZip @('t',$zip)
   $extract = Join-Path $Output 'zip-validation'

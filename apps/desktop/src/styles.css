@@ -92,6 +92,15 @@
    (this variant) flatten everything into one shared scroll. See ChatSidebar. */
 @custom-variant compact (@media (max-height: 768px));
 
+/* Bundled for offline wordmarks; the font's OFL notice ships beside it. */
+@font-face {
+  font-family: 'Manrope';
+  src: url('./fonts/Manrope-Bold.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+}
+
 @font-face {
   font-family: 'Collapse';
   font-style: normal;
@@ -1950,11 +1959,11 @@ body.guest-pointer-lock :is(webview, iframe) {
    something a class-merge or a missed scan can quietly drop, leaving the
    wordmark rendered in body text. */
 .wordmark {
-  font-family: 'Collapse', var(--font-sans);
+  font-family: 'Manrope', var(--font-sans);
   font-weight: 700;
-  line-height: 0.9;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+  line-height: 1.1;
+  text-transform: none;
+  letter-spacing: -0.025em;
 }
 
 .fit-text > [aria-hidden] {

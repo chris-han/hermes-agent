@@ -1,5 +1,6 @@
 import { isSemantierBilling } from '@hermes/shared/billing'
 import { useQuery } from '@tanstack/react-query'
+import { useEffect } from 'react'
 
 import type { Translations } from '@/i18n'
 import { en } from '@/i18n/en'
@@ -175,17 +176,56 @@ export interface BillingView {
   usageRows: BillingUsageRowView[]
 }
 
+/** At most 3 × 1.2s reads + 1s backoff on a focus return. Scope cancellation stops retries. */
+export async function fetchBillingWithRetry(
+  fetchState: (signal?: AbortSignal) => Promise<BillingResult<BillingBackendState>>,
+  signal: AbortSignal
+): Promise<BillingResult<BillingBackendState>> {
+  let result = await fetchState(signal)
+
+  for (const delay of [250, 750]) {
+    if (signal.aborted || result.ok || result.refusal.backend !== 'semantier'
+      || result.refusal.kind !== 'billing_unavailable') {break}
+
+    await new Promise<void>(resolve => {
+      const finish = () => {clearTimeout(timer); signal.removeEventListener('abort', finish); resolve()}
+      const timer = setTimeout(finish, delay)
+
+      signal.addEventListener('abort', finish, { once: true })
+    })
+
+    if (signal.aborted) {break}
+    result = await fetchState(signal)
+  }
+
+  return result
+}
+
 export function useBillingState(enabled = true) {
   const api = useBillingApi()
   const scope = useBillingScope()
 
-  return useQuery({
+  const query = useQuery({
     ...BILLING_QUERY_OPTIONS,
     enabled,
-    queryFn: () => api.fetchBillingState(),
+    queryFn: ({ signal }) => fetchBillingWithRetry(api.fetchBillingState, signal),
     queryKey: ['billing', 'state', scope],
     gcTime: 0
   })
+
+  const { refetch } = query
+
+  useEffect(() => {
+    if (!enabled) {return}
+
+    const refresh = () => {void refetch({ cancelRefetch: false })}
+
+    window.addEventListener('focus', refresh)
+
+    return () => window.removeEventListener('focus', refresh)
+  }, [enabled, refetch, scope])
+
+  return query
 }
 
 export function useSubscriptionState(enabled = true) {

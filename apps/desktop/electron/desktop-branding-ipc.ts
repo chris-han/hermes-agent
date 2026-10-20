@@ -2,8 +2,10 @@ import { BrowserWindow, ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } fr
 
 import { createDesktopBrandingStore } from './desktop-branding'
 import { DEFAULT_DESKTOP_BRANDING } from './desktop-branding-types'
+import { defaultBrandShortcutService } from './windows-brand-shortcuts'
+import type { BrandShortcutRequest, ShortcutDestination } from './windows-brand-shortcuts-types'
 
-export function installDesktopBranding(file: string) {
+export function installDesktopBranding(file: string, createShortcuts = defaultBrandShortcutService) {
   const windows = new Set<BrowserWindow>()
 
   const store = createDesktopBrandingStore(file, value => {
@@ -13,6 +15,8 @@ export function installDesktopBranding(file: string) {
       }
     }
   })
+
+  const shortcuts = process.platform === 'win32' ? createShortcuts(() => store.get()) : null
 
   const allowed = (event: IpcMainEvent | IpcMainInvokeEvent) => {
     const win = BrowserWindow.fromWebContents(event.sender)
@@ -39,6 +43,24 @@ export function installDesktopBranding(file: string) {
 
     return store.set(value)
   })
+
+  ipcMain.handle('hermes:branding:shortcuts:create', (event, request: BrandShortcutRequest) => {
+    assertSender(event)
+    if (!shortcuts) {
+      throw new Error('Windows shortcuts unavailable')
+    }
+    return shortcuts.create(request)
+  })
+  ipcMain.handle(
+    'hermes:branding:shortcuts:reveal',
+    (event, request: { name: string; destination: ShortcutDestination }) => {
+      assertSender(event)
+      if (!shortcuts) {
+        throw new Error('Windows shortcuts unavailable')
+      }
+      shortcuts.reveal(request?.name, request?.destination)
+    }
+  )
 
   return {
     registerWindow(win: BrowserWindow) {
