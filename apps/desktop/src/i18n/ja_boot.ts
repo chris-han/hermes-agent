@@ -3,19 +3,19 @@ import type { TranslationOverrides } from './define-locale'
 // The boot screen's copy, composed by ja.ts.
 export const jaBoot = {
   boot: {
-    ready: 'Hermes Desktop の準備ができました',
+    ready: 'Semantier Agent の準備ができました',
     desktopBootFailedWithMessage: message => `デスクトップの起動に失敗しました: ${message}`,
     steps: {
       connectingGateway: 'ライブデスクトップゲートウェイに接続中',
-      loadingSettings: 'Hermes の設定を読み込み中',
+      loadingSettings: 'Semantier の設定を読み込み中',
       loadingSessions: '最近のセッションを読み込み中',
       retryingRemoteBackend: 'リモート Hermes バックエンドに再接続中…',
       startingDesktopConnection: 'デスクトップ接続を開始中',
-      startingHermesDesktop: 'Hermes Desktop を起動中…'
+      startingHermesDesktop: 'Semantier Agent を起動中…'
     },
     errors: {
-      backgroundExited: 'Hermes バックグラウンドプロセスが終了しました。',
-      backgroundExitedDuringStartup: '起動中に Hermes バックグラウンドプロセスが終了しました。',
+      backgroundExited: 'Semantier バックグラウンドプロセスが終了しました。',
+      backgroundExitedDuringStartup: '起動中に Semantier バックグラウンドプロセスが終了しました。',
       backendStopped: 'バックエンドが停止しました',
       desktopBootFailed: 'デスクトップの起動に失敗しました',
       gatewayConnectionLost: 'ゲートウェイへの接続が切断されました',
@@ -25,7 +25,7 @@ export const jaBoot = {
       ipcBridgeUnavailable: 'デスクトップ IPC ブリッジが利用できません。'
     },
     failure: {
-      title: 'Hermes を起動できませんでした',
+      title: 'Semantier を起動できませんでした',
       description:
         'バックグラウンドゲートウェイが起動しませんでした。以下の回復手順をお試しください。チャットや設定は削除されません。',
       remoteTitle: 'リモートゲートウェイへのサインインが必要です',

@@ -46,7 +46,7 @@ export const deProjects: NonNullable<TranslationOverrides['sidebar']>['projects'
   staleBackend:
     'Aktualisieren Sie das Hermes-Backend, um Projekte zu erstellen – Ihr Backend ist älter als diese Desktop-App (Einstellungen → Updates → Backend).',
   deleteConfirm:
-    'Das entfernt das gespeicherte Projekt aus Hermes. Dateien, Git-Repos und Worktrees bleiben unberührt.',
+    'Das entfernt das gespeicherte Projekt aus Semantier. Dateien, Git-Repos und Worktrees bleiben unberührt.',
   startWork: 'Neuer Worktree',
   newWorktreeTitle: 'Neuer Worktree',
   newWorktreeDesc: 'Benennen Sie den Branch für diesen Worktree.',
@@ -56,7 +56,7 @@ export const deProjects: NonNullable<TranslationOverrides['sidebar']>['projects'
   baseBranchNone: 'Keine Branches gefunden',
   startWorkFailed: 'Worktree konnte nicht erstellt werden',
   worktreeStaleBackend:
-    'Aktualisieren Sie das Hermes-Backend, um Worktrees über diese Remote-Verbindung zu erstellen – es ist älter als die Git-Worktree-API.',
+    'Aktualisieren Sie das Semantier-Backend, um Worktrees über diese Remote-Verbindung zu erstellen – es ist älter als die Git-Worktree-API.',
   worktreeProjectLabel: 'Projekt',
   worktreeProjectPlaceholder: 'Projekte durchsuchen…',
   worktreeProjectNone: 'Keine Projekte mit Ordner',

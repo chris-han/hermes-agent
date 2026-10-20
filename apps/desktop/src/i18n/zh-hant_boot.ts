@@ -3,19 +3,19 @@ import { zhHantSessionCommands } from './zh-hant_session_commands'
 
 export const zhHantBoot = {
   boot: {
-    ready: 'Hermes Desktop 已就緒',
+    ready: 'Semantier Agent 已就緒',
     desktopBootFailedWithMessage: message => `桌面啟動失敗：${message}`,
     steps: {
       connectingGateway: '正在連線桌面閘道',
-      loadingSettings: '正在載入 Hermes 設定',
+      loadingSettings: '正在載入 Semantier 設定',
       loadingSessions: '正在載入最近工作階段',
       retryingRemoteBackend: '正在重新連線遠端 Hermes 後端…',
       startingDesktopConnection: '正在啟動桌面連線',
-      startingHermesDesktop: '正在啟動 Hermes Desktop…'
+      startingHermesDesktop: '正在啟動 Semantier Agent…'
     },
     errors: {
-      backgroundExited: 'Hermes 背景程序已結束。',
-      backgroundExitedDuringStartup: 'Hermes 背景程序在啟動期間結束。',
+      backgroundExited: 'Semantier 背景程序已結束。',
+      backgroundExitedDuringStartup: 'Semantier 背景程序在啟動期間結束。',
       backendStopped: '後端已停止',
       desktopBootFailed: '桌面啟動失敗',
       gatewayConnectionLost: '與閘道的連線已中斷',
@@ -25,7 +25,7 @@ export const zhHantBoot = {
       ipcBridgeUnavailable: '桌面 IPC 橋接器不可用。'
     },
     failure: {
-      title: 'Hermes 無法啟動',
+      title: 'Semantier 無法啟動',
       description: '背景閘道未啟動。請嘗試下面的復原步驟。這裡的操作不會刪除您的聊天或設定。',
       remoteTitle: '需要重新登入遠端閘道',
       remoteDescription: '您的遠端閘道工作階段已過期。請重新登入以重新連線。這裡的操作不會刪除您的聊天或設定。',
@@ -60,8 +60,8 @@ export const zhHantBoot = {
   },
 
   keepAwakeOffer: {
-    title: '電腦在 Hermes 工作時進入了睡眠',
-    message: 'Hermes 可以在工作執行時保持電腦喚醒。螢幕仍會照常關閉，使用電池時電腦仍可能進入睡眠。',
+    title: '電腦在 Semantier 工作時進入了睡眠',
+    message: 'Semantier 可以在工作執行時保持電腦喚醒。螢幕仍會照常關閉，使用電池時電腦仍可能進入睡眠。',
     action: '執行期間保持喚醒'
   },
   remoteDisplayBanner: {
@@ -83,13 +83,13 @@ export const zhHantBoot = {
   },
 
   updates: {
-    discontinuedTitle: '此版本的 Hermes 已停止支援',
-    discontinuedBody: '此版本的 Hermes 已停止支援，可能無法正常運作——請解除安裝。您的資料仍保留在磁碟上。',
+    discontinuedTitle: '此版本的 Semantier 已停止支援',
+    discontinuedBody: '此版本的 Semantier 已停止支援，可能無法正常運作——請解除安裝。您的資料仍保留在磁碟上。',
     channels: { stable: '穩定版', canary: '預覽版' },
     bundleSwapPending: '重新啟動以完成更新',
     bundleSwapPendingDesc:
-      '更新後的應用程式已安裝完成，只需重新啟動 Hermes 即可載入新版本。聊天記錄和設定不會受到影響。',
-    bundleSwapPendingAction: '重新啟動 Hermes',
+      '更新後的應用程式已安裝完成，只需重新啟動 Semantier 即可載入新版本。聊天記錄和設定不會受到影響。',
+    bundleSwapPendingAction: '重新啟動 Semantier',
     stages: {
       idle: '準備中…',
       prepare: '準備中…',
@@ -98,7 +98,7 @@ export const zhHantBoot = {
       pydeps: '收尾中…',
       update: '正在更新 Hermes…',
       rebuild: '正在重新建置桌面應用程式…',
-      restart: '正在重新啟動 Hermes…',
+      restart: '正在重新啟動 Semantier…',
       done: '更新完成',
       manual: '從終端機更新',
       guiSkew: '請更新桌面應用程式',
@@ -108,15 +108,15 @@ export const zhHantBoot = {
     checkFailedTitle: '無法檢查更新',
     tryAgain: '重試',
     notAvailableTitle: '更新不可用',
-    unsupportedMessage: '此版本的 Hermes 無法在應用程式內自行更新。',
+    unsupportedMessage: '此版本的 Semantier 無法在應用程式內自行更新。',
     connectionRetry: '請檢查網路連線後重試。',
-    gitUnusable: 'Hermes 無法在這台電腦上執行 Git，因此無法檢查更新。',
+    gitUnusable: 'Semantier 無法在這台電腦上執行 Git，因此無法檢查更新。',
     latestBody: '您正在執行最新版本。',
     versionDetailsDistributionStore: 'Microsoft Store',
     latestBodyBackend: '後端正在執行最新版本。',
     allSetTitle: '已是最新版本',
     availableTitle: '有可用更新',
-    availableBody: '新版 Hermes 已可安裝。',
+    availableBody: '新版 Semantier 已可安裝。',
     availableTitleBackend: '後端有可用更新',
     availableBodyBackend: '已連接的 Hermes 後端有新版本可安裝。',
     availableBodyNoChangelog: '已有新版本可用。此安裝方式無法顯示更新日誌。',
@@ -128,26 +128,26 @@ export const zhHantBoot = {
     manualUnavailableTitle: '無法從這裡更新',
     manualBody: '您是從命令列安裝的 Hermes，因此更新也需要在那裡執行。請將此指令貼到終端機：',
     manualBodyBackend: 'Hermes 後端由本應用程式之外管理。請在託管它的伺服器上執行此指令：',
-    manualPickedUp: '下次啟動 Hermes 時會使用新版本。',
+    manualPickedUp: '下次啟動 Semantier 時會使用新版本。',
     manualPickedUpBackend: '後端會在更新完成後載入新版本。',
     guiSkewTitle: '請更新桌面應用程式',
     guiSkewBody:
-      '後端已更新，但此桌面應用程式套件未變更。請更新或重新安裝 Hermes 桌面應用程式（你的 AppImage / .deb / .rpm）以保持一致。',
+      '後端已更新，但此桌面應用程式套件未變更。請更新或重新安裝 Semantier 桌面應用程式（你的 AppImage / .deb / .rpm）以保持一致。',
     copy: '複製',
     copied: '已複製',
     done: '完成',
     applyingBody:
-      'Hermes 更新程式會在自己的視窗中接管，並在完成後自動重新開啟 Hermes。更新期間請勿自行重新開啟 Hermes。',
-    applyingBodyBackend: '遠端後端正在套用更新並將重新啟動。恢復後 Hermes 會自動重新連線。',
-    applyingClose: '此視窗會在更新期間關閉，隨後 Hermes 會自動重新開啟。',
+      'Semantier 更新程式會在自己的視窗中接管，並在完成後自動重新開啟 Semantier。更新期間請勿自行重新開啟 Semantier。',
+    applyingBodyBackend: '遠端後端正在套用更新並將重新啟動。恢復後 Semantier 會自動重新連線。',
+    applyingClose: '此視窗會在更新期間關閉，隨後 Semantier 會自動重新開啟。',
     errorTitle: '更新未完成',
     errorBody: '沒有資料遺失。您可以現在重試。',
-    blockerTitle: '關閉本機預覽以更新 Hermes？',
-    blockerBody: 'Hermes 需要在更新前停止這些本機預覽。這不會修改或刪除您的檔案。',
-    foreignBlockerTitle: '關閉其他處理程序以更新 Hermes',
+    blockerTitle: '關閉本機預覽以更新 Semantier？',
+    blockerBody: 'Semantier 需要在更新前停止這些本機預覽。這不會修改或刪除您的檔案。',
+    foreignBlockerTitle: '關閉其他處理程序以更新 Semantier',
     foreignBlockerBody:
-      'Hermes 無法安全地自動關閉這些處理程序。請關閉擁有這些處理程序的應用程式、終端機或服務，然後重試更新。',
-    mixedBlockerBody: 'Hermes 可以關閉下方列出的本機預覽。其他處理程序必須手動關閉，更新才能繼續。',
+      'Semantier 無法安全地自動關閉這些處理程序。請關閉擁有這些處理程序的應用程式、終端機或服務，然後重試更新。',
+    mixedBlockerBody: 'Semantier 可以關閉下方列出的本機預覽。其他處理程序必須手動關閉，更新才能繼續。',
     closePreviewsAndUpdate: '關閉預覽並更新',
     closePreviewsAndCheckAgain: '關閉預覽並重新檢查',
     localPreview: '本機預覽',
@@ -219,16 +219,16 @@ export const zhHantBoot = {
     viewDocs: '檢視安裝文件',
     installTo: '將安裝至',
     retryAfterRun: '我已執行 -- 重試',
-    setupChoiceTitle: '設定 Hermes Desktop',
+    setupChoiceTitle: '設定 Semantier Agent',
     setupChoiceDesc: '將此應用程式連線到您已執行的 Hermes 閘道，或在這台電腦上本機安裝 Hermes。',
     connectExistingTitle: '連線到現有 Hermes',
     connectExistingShort: '連線現有環境',
     connectExistingDesc: '使用工作階段權杖或瀏覽器登入連線遠端後端。不會啟動本機安裝。',
     installLocalTitle: '本機安裝 Hermes',
     installLocalDesc: '下載 Hermes、建立 Python 環境，並在這台電腦上執行後端。',
-    localStartUnavailable: '無法啟動本機安裝。請重新啟動 Hermes Desktop 後再試一次。',
+    localStartUnavailable: '無法啟動本機安裝。請重新啟動 Semantier Agent 後再試一次。',
     remoteSetupTitle: '連線到現有 Hermes',
-    remoteSetupDesc: '輸入閘道 URL。Hermes Desktop 會偵測需要權杖還是瀏覽器登入。',
+    remoteSetupDesc: '輸入閘道 URL。Semantier Agent 會偵測需要權杖還是瀏覽器登入。',
     remoteUrlTitle: '閘道 URL',
     remoteUrlDesc: '使用 Hermes 閘道的基礎 URL；遠端位址請包含 https://。',
     remoteUrlPlaceholder: 'https://gateway.example.com/hermes',
@@ -275,10 +275,10 @@ export const zhHantBoot = {
   },
 
   onboarding: {
-    headerTitle: '開始設定 Hermes Agent',
+    headerTitle: '開始設定 Semantier Agent',
     headerDesc: '連線模型提供方即可開始聊天。大多數選項只需一次點擊。',
-    preparingInstall: 'Hermes 正在完成安裝。首次執行通常不到一分鐘。',
-    starting: '正在啟動 Hermes…',
+    preparingInstall: 'Semantier 正在完成安裝。首次執行通常不到一分鐘。',
+    starting: '正在啟動 Semantier…',
     lookingUpProviders: '正在查詢提供方...',
     collapse: '收合',
     otherProviders: '其他提供方',
@@ -286,7 +286,7 @@ export const zhHantBoot = {
     chooseLater: '稍後再選擇提供方',
     recommended: '建議',
     connected: '已連線',
-    featuredPitch: '一個訂閱，300+ 前沿模型 — 執行 Hermes 的建議方式',
+    featuredPitch: '一個訂閱，300+ 前沿模型 — 執行 Semantier 的建議方式',
     fireworksPitch: '直接模型 API — Fireworks 託管的前沿模型',
     localModelsTitle: '本地執行模型',
     localModelsPitch: '無需帳號——下載模型，在本機執行',
@@ -299,7 +299,7 @@ export const zhHantBoot = {
       xai: { short: 'Grok 模型', description: '直接存取 xAI Grok 模型。' },
       local: {
         short: '自託管',
-        description: '將 Hermes 指向本機或自託管的 OpenAI 相容端點（vLLM、llama.cpp、Ollama 等）。'
+        description: '將 Semantier 指向本機或自託管的 OpenAI 相容端點（vLLM、llama.cpp、Ollama 等）。'
       }
     },
     backToSignIn: '返回登入',
@@ -311,7 +311,7 @@ export const zhHantBoot = {
     update: '更新',
     flowSubtitles: {
       pkce: '開啟瀏覽器登入，然後回到這裡繼續',
-      device_code: '在瀏覽器中開啟驗證頁面 — Hermes 會自動連線',
+      device_code: '在瀏覽器中開啟驗證頁面 — Semantier 會自動連線',
       external: '先在終端機登入一次，然後回來繼續聊天'
     },
     startingSignIn: provider => `正在為 ${provider} 啟動登入...`,
@@ -343,7 +343,7 @@ export const zhHantBoot = {
     startChatting: '開始',
     docs: provider => `${provider} 文件`,
     setupSlowTitle: '設定花費的時間比平常久。',
-    setupSlowBody: 'Hermes 仍在背景中啟動。',
+    setupSlowBody: 'Semantier 仍在背景中啟動。',
     continueWithoutSetup: '略過設定並繼續'
   }
 } satisfies Pick<

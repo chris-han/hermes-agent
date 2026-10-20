@@ -81,7 +81,7 @@ test('nativeRemovalInstructions names the steward per kind and OS', () => {
     nativeRemovalInstructions('bundled', 'darwin', '/Applications/Hermes Agent Canary.app'),
     'Quit the app and drag Hermes Agent Canary.app from /Applications to the Trash.'
   )
-  assert.match(nativeRemovalInstructions('bundled', 'darwin'), /drag the Hermes app from Applications to the Trash/)
+  assert.match(nativeRemovalInstructions('bundled', 'darwin'), /drag the Semantier app from Applications to the Trash/)
   assert.match(
     nativeRemovalInstructions('bundled', 'linux', '/home/x/Apps/Hermes.AppImage'),
     /\/home\/x\/Apps\/Hermes\.AppImage/

@@ -36,7 +36,7 @@ export const deFirstRun: FirstRunCopy = {
     notNow: 'Nicht jetzt'
   },
   intro: {
-    greeting: 'Hallo, ich bin Hermes.',
+    greeting: 'Hallo, ich bin Semantier.',
     plan: 'Richten wir alles für Sie ein. Danach machen wir etwas Cooles.'
   },
   rerun: {

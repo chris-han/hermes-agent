@@ -151,3 +151,11 @@ test('an idle cache does not resurrect finished work', () => {
 
   assert.equal(merged.count, 0)
 })
+
+
+test('quit confirmation names Semantier while retaining user chat titles', () => {
+  const prompt = quitPromptFor({ count: 1, titles: ['Hermes research notes'] }, false, false)
+  assert.equal(prompt?.message, 'Semantier is still working on 1 chat.')
+  assert.match(prompt!.detail, /Hermes research notes/)
+  assert.match(prompt!.detail, /closes Semantier/)
+})

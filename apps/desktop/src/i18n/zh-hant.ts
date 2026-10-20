@@ -96,7 +96,7 @@ export const zhHantOverrides = {
   messaging: zhHantCommandCenter.messaging,
   profiles: zhHantCommandCenter.profiles,
   modelAssignment: {
-    saveFailed: 'Hermes 未儲存該模型變更。',
+    saveFailed: 'Semantier 未儲存該模型變更。',
     confirmTitle: '模型選擇警告',
     confirmDetail: '僅在你接受此權衡時確認。',
     confirmAction: '確認',
@@ -127,11 +127,11 @@ export const zhHantOverrides = {
   preview: zhHantArtifacts.preview,
   interfaceMode: {
     title: '介面模式',
-    hint: '只改變顯示的內容，不改變 Hermes 的能力。',
+    hint: '只改變顯示的內容，不改變 Semantier 的能力。',
     sessionNote: '由簡潔模式設定。此處的變更僅在本次工作階段內生效；切換到進階模式即可保留為你的設定。',
     simple: {
       label: '簡潔',
-      description: '用於與 Hermes 對話。只有側邊欄和聊天；沒有終端機、檔案或差異面板。'
+      description: '用於與 Semantier 對話。只有側邊欄和聊天；沒有終端機、檔案或差異面板。'
     },
     advanced: {
       label: '進階',
@@ -148,8 +148,8 @@ export const zhHantOverrides = {
   ui: zhHantCommon.ui,
   freeTier: {
     offer: {
-      heading: '繼續使用 Hermes',
-      body: '你正在使用免費額度。繼續使用 Hermes 的話，你會開始遇到限制。登入免費的 Nous 帳戶，即可獲得更多額度。',
+      heading: '繼續使用 Semantier',
+      body: '你正在使用免費額度。繼續使用 Semantier 的話，你會開始遇到限制。登入免費的 Nous 帳戶，即可獲得更多額度。',
       signIn: '登入',
       notNow: '暫不'
     }

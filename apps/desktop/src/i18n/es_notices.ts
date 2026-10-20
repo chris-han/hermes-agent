@@ -18,9 +18,9 @@ export const esNotices = {
     }
   },
   keepAwakeOffer: {
-    title: 'Tu equipo entró en suspensión mientras Hermes trabajaba',
+    title: 'Tu equipo entró en suspensión mientras Semantier trabajaba',
     message:
-      'Hermes puede mantener tu equipo activo mientras se ejecuta una tarea. La pantalla se sigue apagando, y con batería el equipo aún puede entrar en suspensión.',
+      'Semantier puede mantener tu equipo activo mientras se ejecuta una tarea. La pantalla se sigue apagando, y con batería el equipo aún puede entrar en suspensión.',
     action: 'Mantener activo mientras trabaja'
   },
   promptNotices: {

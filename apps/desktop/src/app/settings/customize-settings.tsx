@@ -57,7 +57,7 @@ export function BrandingPreview({ draft, placement }: { draft: DesktopBranding; 
       aria-label={c.preview}
       className="flex min-h-72 min-w-0 flex-col gap-6 rounded-lg border border-(--ui-stroke-secondary) bg-background p-5"
     >
-      <p className="text-xs text-muted-foreground">Hermes · {c[placement]}</p>
+      <p className="text-xs text-muted-foreground">Semantier · {c[placement]}</p>
       <div className="flex flex-1 flex-col justify-center gap-5">
         <OrganizationBrand
           attribution

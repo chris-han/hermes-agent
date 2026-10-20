@@ -45,6 +45,12 @@ one-off at the call site.
 
 The untitled default Bot is displayed as **Semantier** in the roster and empty-chat title. Both use the shared Bot display-name resolver; explicit titles, aliases and profile display names remain authoritative. The empty-chat wordmark retains the existing Manrope treatment.
 
+## Product presentation
+
+Desktop-owned chrome and agent narration use **Semantier**, with **Semantier Agent** for application titles and the application name in About/updates. Locale-owned values, hardcoded native dialogs/menus and chat persona assets follow the same rule; machine keys are unchanged. User bot titles, aliases and organization names are never rewritten. The default Bot wordmark keeps Manrope.
+
+**Hermes** remains when it identifies the actual upstream backend/CLI/version, profile/source path, protocol, catalog/theme, Hermes Cloud/Nous service, OAuth authorization identity or upstream legal/provenance notice. App update labels must not relabel a backend update or backend version as a Semantier product release. Keep native package identity/Publisher and existing version sources independent of display branding. No runtime-wide text replacement.
+
 ## Information architecture
 
 - **Chat is the home surface.** The transcript and composer stay primary; tools,

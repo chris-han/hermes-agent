@@ -7,7 +7,7 @@ export const arThemePicker: ThemePickerCopy = {
   customColor: 'لون مخصص',
   themeAccent: 'افتراضي السمة',
   basic: 'أساسي',
-  basicDetail: 'للتحدث مع Hermes.',
+  basicDetail: 'للتحدث مع Semantier.',
   elite: 'متقدم',
   eliteDetail: 'للمطورين: الطرفية والملفات والفروقات.',
   noPick: 'لا اختيار'

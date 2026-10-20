@@ -46,7 +46,7 @@ export const frProjects: NonNullable<TranslationOverrides['sidebar']>['projects'
   staleBackend:
     'Mettez à jour le backend Hermes pour créer des projets — votre backend est plus ancien que cette application de bureau (Paramètres → Mises à jour → Backend).',
   deleteConfirm:
-    'Cela supprime le projet enregistré de Hermes. Les fichiers, dépôts git et worktrees restent inchangés.',
+    'Cela supprime le projet enregistré de Semantier. Les fichiers, dépôts git et worktrees restent inchangés.',
   startWork: 'Nouveau worktree',
   newWorktreeTitle: 'Nouveau worktree',
   newWorktreeDesc: 'Nommez la branche pour ce worktree.',
@@ -56,7 +56,7 @@ export const frProjects: NonNullable<TranslationOverrides['sidebar']>['projects'
   baseBranchNone: 'Aucune branche trouvée',
   startWorkFailed: 'Impossible de créer le worktree',
   worktreeStaleBackend:
-    'Mettez à jour le backend Hermes pour créer des worktrees depuis Desktop — votre backend est plus ancien que cette application (Paramètres → Mises à jour → Backend).',
+    'Mettez à jour le backend Semantier pour créer des worktrees depuis Desktop — votre backend est plus ancien que cette application (Paramètres → Mises à jour → Backend).',
   worktreeProjectLabel: 'Projet',
   worktreeProjectPlaceholder: 'Rechercher des projets…',
   worktreeProjectNone: 'Aucun projet avec un dossier',

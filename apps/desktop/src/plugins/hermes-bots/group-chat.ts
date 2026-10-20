@@ -1433,7 +1433,7 @@ export const GROUP_CHAT_MAX_MEMBERS = 6
  *  renamed bot never shows up as its raw profile id or a stale "Hermes"
  *  (community report, Aug 21 2026: renamed default still read "Hermes is
  *  thinking…" in group rooms). The untitled primary profile is literally
- *  named "default" — render it as Hermes (matching displayName and the
+ *  named "default" — render it as Semantier (matching displayName and the
  *  @hermes handle) so the main agent never loses its name in rooms.
  *
  *  Accepts either a member key (`connectionId::profile`, what the activity
@@ -1481,7 +1481,7 @@ export function groupSpeakerLabel(name?: null | string, group?: null | string) {
     // Exact key only: the bare `profile` key is a single-source record and
     // names whichever machine wrote it, never this connection's bot.
     const title = String(meta?.[trimmed]?.title || '').trim()
-    const label = title || (profile.toLowerCase() === 'default' ? 'Hermes' : profile)
+    const label = title || (profile.toLowerCase() === 'default' ? 'Semantier' : profile)
 
     // Another connection still exposes this name: keep them tellable apart.
     return rows.some(bot => bot.name === profile) ? `${label} · ${connection}` : label
@@ -1499,7 +1499,7 @@ export function groupSpeakerLabel(name?: null | string, group?: null | string) {
   // Legacy rungs for names the roster cannot place: a bare-keyed Bot Mode
   // title (single-source rosters only — once rows are connection-scoped the
   // bare key cannot say which machine it named), then the local row's
-  // display_name, then default → Hermes.
+  // display_name, then default → Semantier.
   const scoped = rows.some(bot => bot.sourceScoped || bot.remoteSource)
   const title = scoped ? '' : String(meta?.[trimmed]?.title || '').trim()
 
@@ -1514,7 +1514,7 @@ export function groupSpeakerLabel(name?: null | string, group?: null | string) {
     return renamed
   }
 
-  return isDefault ? 'Hermes' : trimmed
+  return isDefault ? 'Semantier' : trimmed
 }
 
 /** Trim a room log + its watermarks to the retained window, keeping

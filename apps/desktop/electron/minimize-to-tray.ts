@@ -183,13 +183,13 @@ export function createMinimizeToTray(options: Options) {
             height: process.platform === 'darwin' ? 18 : 24
           })
         )
-        tray.setToolTip('Hermes')
+        tray.setToolTip('Semantier')
         tray.setContextMenu(
           Menu.buildFromTemplate([
-            { label: 'Show Hermes', click: restore },
+            { label: 'Show Semantier', click: restore },
             { type: 'separator' },
             // Do not bypass the ordinary active-work confirmation or teardown.
-            { label: 'Quit Hermes', click: () => app.quit() }
+            { label: 'Quit Semantier', click: () => app.quit() }
           ])
         )
 
@@ -282,11 +282,11 @@ export function createMinimizeToTray(options: Options) {
 
         const response = dialog.showMessageBoxSync(win, {
           type: 'question',
-          title: 'Close Hermes Desktop',
-          message: 'Keep Hermes Desktop running in the background?',
+          title: 'Close Semantier Agent',
+          message: 'Keep Semantier Agent running in the background?',
           detail:
-            'Keep running hides this window in the system tray. Quit exits Hermes Desktop and stops connections it manages. A separately managed gateway keeps running.',
-          buttons: ['Keep Running in Background', 'Quit Hermes Desktop', 'Cancel'],
+            'Keep running hides this window in the system tray. Quit exits Semantier Agent and stops connections it manages. A separately managed gateway keeps running.',
+          buttons: ['Keep Running in Background', 'Quit Semantier Agent', 'Cancel'],
           defaultId: 0,
           cancelId: 2,
           noLink: true
@@ -316,7 +316,7 @@ export function createMinimizeToTray(options: Options) {
             type: 'warning',
             message: 'Background mode is unavailable.',
             detail:
-              'Hermes could not create a system tray icon. The window will stay open so you can try again or quit.',
+              'Semantier could not create a system tray icon. The window will stay open so you can try again or quit.',
             buttons: ['OK']
           })
         }

@@ -41,7 +41,7 @@ export const jaProjects: NonNullable<TranslationOverrides['sidebar']>['projects'
   staleBackend:
     'プロジェクトを作成するには Hermes バックエンドを更新してください。バックエンドがこのデスクトップアプリより古いです（設定 → 更新 → バックエンド）。',
   deleteConfirm:
-    'Hermes から保存済みプロジェクトを削除します。ファイル・git リポジトリ・ワークツリーはそのまま残ります。',
+    'Semantier から保存済みプロジェクトを削除します。ファイル・git リポジトリ・ワークツリーはそのまま残ります。',
   startWork: '新しいワークツリー',
   newWorktreeTitle: '新しいワークツリー',
   newWorktreeDesc: 'このワークツリーのブランチ名を入力してください。',
@@ -51,7 +51,7 @@ export const jaProjects: NonNullable<TranslationOverrides['sidebar']>['projects'
   baseBranchNone: 'ブランチが見つかりません',
   startWorkFailed: 'ワークツリーを作成できませんでした',
   worktreeStaleBackend:
-    'このリモート接続でワークツリーを作成するには Hermes バックエンドを更新してください — git ワークツリー API 以前のバージョンです。',
+    'このリモート接続でワークツリーを作成するには Semantier バックエンドを更新してください — git ワークツリー API 以前のバージョンです。',
   worktreeProjectLabel: 'プロジェクト',
   worktreeProjectPlaceholder: 'プロジェクトを検索…',
   worktreeProjectNone: 'フォルダのあるプロジェクトがありません',

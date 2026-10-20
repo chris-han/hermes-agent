@@ -18,9 +18,9 @@ export const deNotices = {
     }
   },
   keepAwakeOffer: {
-    title: 'Ihr Computer ist eingeschlafen, während Hermes gearbeitet hat',
+    title: 'Ihr Computer ist eingeschlafen, während Semantier gearbeitet hat',
     message:
-      'Hermes kann den Computer wach halten, solange eine Aufgabe läuft. Der Bildschirm schaltet sich weiterhin aus, und im Akkubetrieb kann der Computer trotzdem einschlafen.',
+      'Semantier kann den Computer wach halten, solange eine Aufgabe läuft. Der Bildschirm schaltet sich weiterhin aus, und im Akkubetrieb kann der Computer trotzdem einschlafen.',
     action: 'Während der Arbeit wach halten'
   },
   promptNotices: {

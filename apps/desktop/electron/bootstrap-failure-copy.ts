@@ -55,7 +55,7 @@ export function bootstrapStageLabel(stage: string | null | undefined): string | 
 
 const BOOTSTRAP_FAILURE_REMEDY =
   'Common causes: no internet connection, antivirus blocking the installer, or another copy of Hermes running. ' +
-  'Close other Hermes windows and choose Reload and retry; if it fails again, open the logs and send them to support.'
+  'Close other Semantier windows and choose Reload and retry; if it fails again, open the logs and send them to support.'
 
 /**
  * Build the Error.message for a failed bootstrap. First line is the plain

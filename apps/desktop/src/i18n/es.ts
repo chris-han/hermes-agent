@@ -98,7 +98,7 @@ export const esOverrides = {
       loading: 'Leyendo el catálogo y los servidores de este equipo',
       emptyTitle: 'Todavía no hay apps. Añade un servidor en este equipo para empezar.',
       noMatchTitle: 'No hay apps que coincidan',
-      noMatchBody: 'No hay coincidencias. Indica a Hermes tu propio servidor MCP para añadirlo.',
+      noMatchBody: 'No hay coincidencias. Indica a Semantier tu propio servidor MCP para añadirlo.',
       clearSearch: 'Borrar la búsqueda',
       hostedFailedTitle: 'No se pudo acceder a las apps alojadas.',
       hostedFailedBody: 'Los servidores de este equipo no se ven afectados y siguen funcionando. No se desactivó nada.',
@@ -113,7 +113,7 @@ export const esOverrides = {
       writeFailed: 'No se guardó ese cambio.',
       refreshFailed: 'No se actualizó la lista de herramientas.',
       disconnectNoAccount:
-        'Hermes no tiene ninguna cuenta que desconectar aquí. Actualiza la página e inténtalo de nuevo.',
+        'Semantier no tiene ninguna cuenta que desconectar aquí. Actualiza la página e inténtalo de nuevo.',
       disconnectRefused:
         'Nous no pudo quitar este inicio de sesión ahora. Desactiva la app con el interruptor o inténtalo más tarde.'
     },
@@ -153,23 +153,23 @@ export const esOverrides = {
     dialog: {
       disconnect: 'Desconectar',
       disconnectTitle: (name: string) => `¿Desconectar ${name}?`,
-      disconnectBody: 'Hermes deja de actuar con esta cuenta. Puedes volver a conectarla cuando quieras.',
+      disconnectBody: 'Semantier deja de actuar con esta cuenta. Puedes volver a conectarla cuando quieras.',
       menuRefreshTools: 'Actualizar herramientas',
       moreActions: 'Más acciones',
       removeServerTitle: (name: string) => `¿Quitar ${name}?`,
       removeServerBody: 'La entrada se quita de mcp.json en este equipo. No se elimina nada más.',
-      appSwitch: (name: string) => `Hermes puede usar ${name}`,
+      appSwitch: (name: string) => `Semantier puede usar ${name}`,
       waysTitle: (name: string) => `Dónde se ejecuta ${name}`,
       wayNotConnected: (name: string) => `Aún no está conectado. Inicia sesión en ${name} desde tu navegador.`,
       wayHosted: 'Administrado',
-      bothOn: (name: string) => `Ambos están activados, así que Hermes ve cada herramienta de ${name} dos veces.`,
+      bothOn: (name: string) => `Ambos están activados, así que Semantier ve cada herramienta de ${name} dos veces.`,
       turnOffLocal: 'Desactivar el servidor local',
       providedByPlugin: (plugin: string) => `Proporcionado por el plugin ${plugin}`,
       openPlugins: 'Abrir la pestaña Plugins',
       nousLine: 'Las apps de Nous siguen a tu cuenta, no al perfil.',
       rulesReadOnly: 'Las reglas no se pueden cambiar ahora.',
       rulesAppOff: (name: string) => `Activa ${name} para cambiar sus herramientas.`,
-      rulesSignIn: 'Inicia sesión para cambiar lo que Hermes puede hacer aquí.',
+      rulesSignIn: 'Inicia sesión para cambiar lo que Semantier puede hacer aquí.',
       orgNote: (count: number) => `Tu organización desactivó ${count} herramienta${count === 1 ? '' : 's'}.`,
       orgLink: 'Abrir la administración de conectores',
       connectEnded: 'El inicio de sesión no terminó.',
@@ -185,8 +185,8 @@ export const esOverrides = {
     tools: {
       title: 'Herramientas',
       notInstalledBody: 'Instálalo en este dispositivo para ver las herramientas que incluye.',
-      summaryTitle: (name: string) => `Lo que Hermes puede hacer con ${name}`,
-      summaryPreviewTitle: (name: string) => `Lo que Hermes podría hacer con ${name} cuando lo conectes`,
+      summaryTitle: (name: string) => `Lo que Semantier puede hacer con ${name}`,
+      summaryPreviewTitle: (name: string) => `Lo que Semantier podría hacer con ${name} cuando lo conectes`,
       summaryCount: (count: number) => `${count} herramienta${count === 1 ? '' : 's'}`,
       summaryAllTools: 'Todas las herramientas',
       summaryOther: 'Otras',
@@ -220,7 +220,7 @@ export const esOverrides = {
       needsAuthBody: 'El inicio de sesión se queda en este equipo. Nada sale de él.',
       retry: 'Reintentar',
       goneTitle: (name: string) => `${name} salió del catálogo.`,
-      goneBody: 'Hermes ya no puede llamarlo. La fila se queda hasta que la quites, así que nada desaparece.',
+      goneBody: 'Semantier ya no puede llamarlo. La fila se queda hasta que la quites, así que nada desaparece.',
       remove: 'Quitar',
       offTitle: (name: string) => `${name} está desactivado.`,
       offBody: 'Actívalo con el interruptor de arriba para leer las herramientas que incluye.',
@@ -294,7 +294,7 @@ export const esOverrides = {
   },
   sessionImport: {
     title: 'Continuar desde otra app',
-    subtitle: 'Trae una conversación a Hermes y retómala donde la dejaste.',
+    subtitle: 'Trae una conversación a Semantier y retómala donde la dejaste.',
     action: 'Importar sesión',
     readingFrom: 'Leyendo desde',
     connectedComputer: 'el equipo conectado',
@@ -313,18 +313,18 @@ export const esOverrides = {
     more: 'Cargar más sesiones',
     messages: 'mensajes',
     choose: 'Una conversación que vale la pena continuar',
-    chooseHelp: 'Elige una sesión para leer su historial antes de traerla a Hermes.',
+    chooseHelp: 'Elige una sesión para leer su historial antes de traerla a Semantier.',
     previewLoading: 'Abriendo la vista previa',
     previewError: 'Vista previa no disponible',
     previewHelp: 'Es posible que el origen se haya movido o cambiado. Actualiza la lista e inténtalo de nuevo.',
     previewLimit: 'Vista previa acortada para facilitar la lectura. Se importa la conversación completa.',
     you: 'Tú',
-    snapshot: 'Esta conversación ya está en Hermes. Abre tu copia existente para continuar.',
+    snapshot: 'Esta conversación ya está en Semantier. Abre tu copia existente para continuar.',
     copyNotice:
       'Copia el texto de la conversación. Los archivos de origen no cambian. La salida de herramientas y el razonamiento no se trasladan.',
     importing: 'Importando…',
-    open: 'Abrir en Hermes',
-    continue: 'Continuar en Hermes',
+    open: 'Abrir en Semantier',
+    continue: 'Continuar en Semantier',
     importError: 'No se pudo importar esta conversación.'
   },
   common: {
@@ -404,12 +404,12 @@ export const esOverrides = {
     backendOutOfDateTitle: 'Backend desactualizado',
     backendOutOfDateMessage:
       'Tu backend de Hermes es más antiguo que esta compilación de escritorio y puede no funcionar correctamente. Actualízalo para alinearlos.',
-    desktopOutOfDateTitle: 'Aplicación de Hermes desactualizada',
+    desktopOutOfDateTitle: 'Aplicación de Semantier desactualizada',
     desktopOutOfDateMessage:
-      'Esta aplicación de Hermes es más antigua que el backend al que está conectada y puede no funcionar correctamente. Actualiza la aplicación para alinearlos.',
+      'Esta aplicación de Semantier es más antigua que el backend al que está conectada y puede no funcionar correctamente. Actualiza la aplicación para alinearlos.',
     updateDesktopApp: 'Actualizar aplicación',
     installMethodUnsupportedTitle: 'Método de instalación no compatible',
-    updateHermes: 'Actualizar Hermes',
+    updateHermes: 'Actualizar Semantier',
     updateReadyTitle: 'Actualización lista',
     updateReadyMessage: count => `${count} ${count === 1 ? 'cambio nuevo disponible' : 'cambios nuevos disponibles'}.`,
     updateReadyMessageUnknown: 'Hay una nueva actualización disponible.',
@@ -430,22 +430,22 @@ export const esOverrides = {
       elevenLabsRejectedKey:
         'ElevenLabs no aceptó tu clave API. Actualízala en Configuración → Claves e inténtalo de nuevo.',
       diskFull: 'Disco lleno — libera espacio y vuelve a intentarlo.',
-      storageFailure: 'Hermes no pudo guardar en su carpeta de datos. Abre Mantenimiento para comprobarla y repararla.',
+      storageFailure: 'Semantier no pudo guardar en su carpeta de datos. Abre Mantenimiento para comprobarla y repararla.',
       gatewayAuthFailed:
-        'Este Hermes ya no acepta tu inicio de sesión guardado. Abre Gateways y vuelve a iniciar sesión (o pega un nuevo token de acceso) e inténtalo otra vez.',
+        'Este Semantier ya no acepta tu inicio de sesión guardado. Abre Gateways y vuelve a iniciar sesión (o pega un nuevo token de acceso) e inténtalo otra vez.',
       methodNotAllowed:
-        'El servicio en segundo plano de Hermes no está sincronizado con la app, probablemente tras una actualización. Reinícialo para solucionarlo.',
+        'El servicio en segundo plano de Semantier no está sincronizado con la app, probablemente tras una actualización. Reinícialo para solucionarlo.',
       microphonePermission: 'Se denegó el permiso del micrófono.',
       openaiRejectedApiKey:
         'OpenAI no aceptó tu clave API. Actualízala en Configuración → Claves e inténtalo de nuevo.',
       openaiTtsNeedsKey: 'La voz necesita una clave de OpenAI. Añade una en Configuración → Claves.',
       codeSkewRestartRequired:
-        'Hermes se actualizó, pero sigue ejecutando la versión anterior. Reinícialo para terminar la actualización.',
+        'Semantier se actualizó, pero sigue ejecutando la versión anterior. Reinícialo para terminar la actualización.',
       rpcOutOfSync: 'La app y el backend están en versiones distintas. Actualiza ambos.',
-      restartHermesFailed: 'No se pudo reiniciar Hermes'
+      restartHermesFailed: 'No se pudo reiniciar Semantier'
     },
     actions: {
-      restartHermes: 'Reiniciar Hermes',
+      restartHermes: 'Reiniciar Semantier',
       openKeys: 'Abrir Claves',
       openGateways: 'Abrir Gateways',
       openMaintenance: 'Abrir Mantenimiento'
@@ -473,7 +473,7 @@ export const esOverrides = {
       liveEndedConnectionLost: 'La sesión de voz en vivo perdió la conexión.',
       liveEndedClosed: 'El servicio cerró la sesión de voz en vivo.',
       liveError: 'Voz en vivo',
-      liveDelegationFailed: 'No se pudo pasar la solicitud a Hermes',
+      liveDelegationFailed: 'No se pudo pasar la solicitud a Semantier',
       liveUnavailable: reason =>
         `El chat de voz GPT-Live no está disponible: ${reason}. Se usará voz a texto en su lugar.`
     },
@@ -484,8 +484,8 @@ export const esOverrides = {
       rejectAction: 'Rechazar',
       inputTitle: 'Se necesita información',
       inputTitleNamed: session => `Se necesita una respuesta — ${session}`,
-      inputBody: 'Hermes espera tu respuesta.',
-      turnDoneTitle: 'Hermes terminó',
+      inputBody: 'Semantier espera tu respuesta.',
+      turnDoneTitle: 'Semantier terminó',
       turnDoneBody: '',
       turnErrorTitle: 'El turno falló',
       backgroundDoneTitle: 'Tarea en segundo plano finalizada',
@@ -739,7 +739,7 @@ export const esOverrides = {
     exportConfig: 'Exportar configuración',
     importConfig: 'Importar configuración',
     resetToDefaults: 'Restablecer valores predeterminados',
-    resetConfirm: '¿Restablecer toda la configuración a los valores predeterminados de Hermes?',
+    resetConfirm: '¿Restablecer toda la configuración a los valores predeterminados de Semantier?',
     exportFailed: 'Falló la exportación',
     resetFailed: 'Falló el restablecimiento',
     pluginPages: {
@@ -828,7 +828,7 @@ export const esOverrides = {
         desktopSuccess: name => `Plugin de escritorio ${name} instalado`,
         agentFailed: 'Error al instalar el plugin del agente',
         installUncertain:
-          'Hermes dejó de esperar el resultado de la instalación, pero es posible que el plugin siga instalándose. Cierra este cuadro y actualiza la lista de plugins antes de volver a instalarlo.',
+          'Semantier dejó de esperar el resultado de la instalación, pero es posible que el plugin siga instalándose. Cierra este cuadro y actualiza la lista de plugins antes de volver a instalarlo.',
         desktopFailed: 'Error al instalar el plugin de escritorio',
         missingEnv: (name, vars) =>
           `${name} está instalado, pero necesita una clave para funcionar: ${vars}. Añádela ahora o las herramientas del plugin fallarán.`,
@@ -899,7 +899,7 @@ export const esOverrides = {
       otpField: 'Clave del autenticador',
       otpPlaceholder: 'Secreto Base32 o enlace otpauth://',
       otpHint:
-        'La “clave de configuración” que muestra el sitio al activar la 2FA. Si la guardas, Hermes genera los códigos por sí mismo.',
+        'La “clave de configuración” que muestra el sitio al activar la 2FA. Si la guardas, Semantier genera los códigos por sí mismo.',
       twoFactorBadge: '2FA automática',
       deleteTitle: '¿Eliminar este elemento?',
       deleteDescription: label => `Se quitará “${label}”. Esto no se puede deshacer.`,
@@ -910,12 +910,12 @@ export const esOverrides = {
           'Los gestores de contraseñas instalados se detectan automáticamente. El agente te pide desbloquear uno la primera vez que necesita un inicio de sesión de él (una vez por sesión); solo se guarda en memoria un token de sesión, y el agente nunca ve tu contraseña maestra ni ningún inicio de sesión.',
         toggleFailed: 'No se pudo actualizar el gestor de contraseñas',
         notInstalled: name =>
-          `No detectado. Instala la herramienta de línea de comandos de ${name} e inicia sesión en ella; Hermes la detectará automáticamente.`,
-        disabledDesc: 'Detectado, pero desactivado para Hermes.',
+          `No detectado. Instala la herramienta de línea de comandos de ${name} e inicia sesión en ella; Semantier la detectará automáticamente.`,
+        disabledDesc: 'Detectado, pero desactivado para Semantier.',
         lockedDesc:
           'Detectado. El agente te pedirá desbloquearlo cuando necesite un inicio de sesión, o puedes desbloquearlo ahora.',
         unlockedDesc:
-          'Desbloqueado para esta sesión. Se bloquea automáticamente tras 30 minutos de inactividad o al cerrar Hermes.',
+          'Desbloqueado para esta sesión. Se bloquea automáticamente tras 30 minutos de inactividad o al cerrar Semantier.',
         statusLocked: 'Bloqueado',
         statusNotDetected: 'No detectado',
         statusOff: 'Desactivado',
@@ -935,7 +935,7 @@ export const esOverrides = {
       intro: 'Notificaciones del sistema operativo (no avisos dentro de la app). Por dispositivo.',
       enableAll: 'Activar notificaciones',
       enableAllDesc: 'Desactivado silencia todas las notificaciones siguientes.',
-      focusedHint: 'Los avisos de finalización solo se activan cuando Hermes está en segundo plano.',
+      focusedHint: 'Los avisos de finalización solo se activan cuando Semantier está en segundo plano.',
       kinds: {
         approval: {
           label: 'Se necesita aprobación',
@@ -943,11 +943,11 @@ export const esOverrides = {
         },
         input: {
           label: 'Se necesita información',
-          description: 'Hermes hizo una pregunta o necesita una contraseña o un secreto.'
+          description: 'Semantier hizo una pregunta o necesita una contraseña o un secreto.'
         },
         turnDone: {
           label: 'Respuesta lista',
-          description: 'Terminó un turno mientras Hermes estaba en segundo plano.'
+          description: 'Terminó un turno mientras Semantier estaba en segundo plano.'
         },
         turnError: {
           label: 'El turno falló',
@@ -963,11 +963,11 @@ export const esOverrides = {
         },
         plugin: {
           label: 'Notificaciones de complementos',
-          description: 'Un complemento de escritorio envió una notificación mientras Hermes estaba en segundo plano.'
+          description: 'Un complemento de escritorio envió una notificación mientras Semantier estaba en segundo plano.'
         }
       },
       test: 'Enviar notificación de prueba',
-      testTitle: 'Hermes',
+      testTitle: 'Semantier',
       testBody: 'Las notificaciones funcionan.',
       testSent:
         'Prueba enviada. Si no aparece nada, revisa los permisos de notificaciones del sistema operativo y el modo Concentración o No molestar.',
@@ -988,7 +988,7 @@ export const esOverrides = {
       advanced: 'Avanzado'
     },
     searchPlaceholder: {
-      about: 'Acerca de Hermes Desktop',
+      about: 'Acerca de Semantier Agent',
       config: 'Buscar configuración...',
       gateway: 'Conexión del gateway...',
       keys: 'Buscar claves API...',
@@ -1016,7 +1016,7 @@ export const esOverrides = {
       title: 'Apariencia',
       intro: 'Solo escritorio. El modo es el brillo; el tema es la paleta y el marco del chat.',
       colorMode: 'Modo de color',
-      colorModeDesc: 'Elige un modo fijo o deja que Hermes siga la configuración del sistema.',
+      colorModeDesc: 'Elige un modo fijo o deja que Semantier siga la configuración del sistema.',
       toolViewTitle: 'Visualización de llamadas a herramientas',
       toolViewDesc: 'Producto oculta las cargas útiles sin procesar; Técnico muestra entrada/salida completas.',
       hideCodeDiffsTitle: 'Ocultar diffs de código',
@@ -1093,14 +1093,14 @@ export const esOverrides = {
         'Muestra los precios de entrada, salida y lectura de caché por millón de tokens en el selector de modelos.',
       reactionsTitle: 'Reacciones a mensajes',
       reactionsDesc:
-        'Reacciones emoji estilo iMessage — reacciona a los mensajes, y Hermes puede reaccionar a los tuyos.',
+        'Reacciones emoji estilo iMessage — reacciona a los mensajes, y Semantier puede reaccionar a los tuyos.',
       tipsTitle: 'Consejos en la app',
       tipsDesc:
-        'Sugerencias ocasionales de la app y de Hermes. Cada consejo aparece una vez. Se desactiva automáticamente tras tus primeros 30 días; puedes volver a activarlo.',
+        'Sugerencias ocasionales de la app y de Semantier. Cada consejo aparece una vez. Se desactiva automáticamente tras tus primeros 30 días; puedes volver a activarlo.',
       tipsReset: (count: number) => `Volver a mostrar ${count} ${count === 1 ? 'consejo' : 'consejos'}`,
       toursTitle: 'Recorridos guiados',
       toursDesc:
-        'Deja que Hermes resalte cada paso mientras te guía por la app. Se desactiva automáticamente tras tus primeros 30 días; puedes volver a activarlo.',
+        'Deja que Semantier resalte cada paso mientras te guía por la app. Se desactiva automáticamente tras tus primeros 30 días; puedes volver a activarlo.',
       composerPopoutTitle: 'Compositor flotante',
       composerPopoutDesc:
         'Permite arrastrar el compositor fuera de su posición fija. Si está desactivado, permanece anclado abajo.',
@@ -1141,9 +1141,9 @@ export const esOverrides = {
       pet: {
         title: 'Mascota',
         intro:
-          'Adopta una mascota animada de petdex que flota sobre la app y reacciona a lo que hace Hermes: corre mientras se ejecutan herramientas, celebra los éxitos y se entristece con los errores.',
+          'Adopta una mascota animada de petdex que flota sobre la app y reacciona a lo que hace Semantier: corre mientras se ejecutan herramientas, celebra los éxitos y se entristece con los errores.',
         restartHint:
-          'Las mascotas necesitan un reinicio rápido: la aplicación en ejecución se inició antes de que se añadiera esta función. Cierra y vuelve a abrir Hermes y luego vuelve aquí.',
+          'Las mascotas necesitan un reinicio rápido: la aplicación en ejecución se inició antes de que se añadiera esta función. Cierra y vuelve a abrir Semantier y luego vuelve aquí.',
         scaleTitle: 'Tamaño',
         scaleDesc: 'Cambia el tamaño de la mascota flotante. Se aplica al instante en todas partes.',
         roamTitle: 'Moverse libremente',
@@ -1370,11 +1370,11 @@ export const esOverrides = {
       timezone: 'Identificador de zona horaria IANA. Vacío usa la zona horaria del sistema.',
       browser: {
         useRealProfile:
-          'La navegación local usa tus inicios de sesión reales. Hermes copia el perfil de tu navegador predeterminado (cookies, inicios de sesión, preferencias) en una instantánea gestionada y lo controla con su Chromium integrado: tu perfil activo nunca se abre directamente y la copia se actualiza a partir de él en cada ejecución. También permite que el agente abra bajo petición una sesión local con tu perfil real, incluso si hay un backend de navegador en la nube configurado. Solo se admiten navegadores Chromium (Chrome, Edge, Brave, Brave Origin, Chromium); un navegador predeterminado que no sea Chromium falla con un mensaje claro. Desactivado de forma predeterminada.'
+          'La navegación local usa tus inicios de sesión reales. Semantier copia el perfil de tu navegador predeterminado (cookies, inicios de sesión, preferencias) en una instantánea gestionada y lo controla con su Chromium integrado: tu perfil activo nunca se abre directamente y la copia se actualiza a partir de él en cada ejecución. También permite que el agente abra bajo petición una sesión local con tu perfil real, incluso si hay un backend de navegador en la nube configurado. Solo se admiten navegadores Chromium (Chrome, Edge, Brave, Brave Origin, Chromium); un navegador predeterminado que no sea Chromium falla con un mensaje claro. Desactivado de forma predeterminada.'
       },
       agent: {
         imageInputMode: 'Controla cómo se envían los adjuntos de imagen al modelo.',
-        maxTurns: 'Límite superior de turnos con llamadas a herramientas antes de que Hermes detenga una ejecución.'
+        maxTurns: 'Límite superior de turnos con llamadas a herramientas antes de que Semantier detenga una ejecución.'
       },
       terminal: {
         cwd: 'Carpeta de proyecto predeterminada para herramientas y terminal.',
@@ -1388,9 +1388,9 @@ export const esOverrides = {
       codeExecution: {
         mode: 'Qué tan estrictamente se limita la ejecución de código al proyecto actual.'
       },
-      fileReadMaxChars: 'Máximo de caracteres que Hermes puede leer en una solicitud de archivo.',
+      fileReadMaxChars: 'Máximo de caracteres que Semantier puede leer en una solicitud de archivo.',
       approvals: {
-        mode: 'Cómo maneja Hermes los comandos que necesitan aprobación explícita.',
+        mode: 'Cómo maneja Semantier los comandos que necesitan aprobación explícita.',
         timeout: 'Cuánto esperan los prompts de aprobación antes de vencer.'
       },
       security: {
@@ -1419,11 +1419,11 @@ export const esOverrides = {
       voice: {
         autoTts: 'Lee automáticamente en voz alta las respuestas del asistente.',
         voiceChatMode:
-          'chained: voz a texto → Hermes → texto a voz con los proveedores de abajo. gpt-live: un modelo de voz full-duplex de OpenAI (gpt-live-1) escucha y habla, y pasa cada solicitud real a Hermes; el modelo que hayas seleccionado responde con todas las herramientas. Requiere una clave API de OpenAI; la capa de voz cuesta 0,05 US$ por minuto.',
+          'chained: voz a texto → Semantier → texto a voz con los proveedores de abajo. gpt-live: un modelo de voz full-duplex de OpenAI (gpt-live-1) escucha y habla, y pasa cada solicitud real a Semantier; el modelo que hayas seleccionado responde con todas las herramientas. Requiere una clave API de OpenAI; la capa de voz cuesta 0,05 US$ por minuto.',
         gptLive: {
           voice: 'Voz del modo GPT-Live. Se aceptan ID de voz personalizados.',
           instructions:
-            'Frases adicionales para la personalidad de voz en vivo (tono, ritmo, idioma). Hermes mantiene su propio prompt de sistema.'
+            'Frases adicionales para la personalidad de voz en vivo (tono, ritmo, idioma). Semantier mantiene su propio prompt de sistema.'
         }
       },
       tts: {
@@ -1451,13 +1451,13 @@ export const esOverrides = {
       },
       updates: {
         nonInteractiveLocalChanges:
-          'Cuando Hermes se actualiza desde la app sin prompt de terminal, conserva los cambios locales de código fuente (stash) o descártalos. Las actualizaciones desde terminal siempre preguntan.'
+          'Cuando Semantier se actualiza desde la app sin prompt de terminal, conserva los cambios locales de código fuente (stash) o descártalos. Las actualizaciones desde terminal siempre preguntan.'
       }
     }),
     uninstallSection: {
       dangerZone: 'Zona de peligro',
       checkingInstalled: 'Comprobando lo que está instalado…',
-      uninstallHermes: 'Desinstalar Hermes',
+      uninstallHermes: 'Desinstalar Semantier',
       chooseHowMuch:
         'Elige cuánto quieres quitar. La app se cierra para terminar; vuelve a abrir el instalador cuando quieras para volver.',
       confirmUninstall: 'Confirmar desinstalación',
@@ -1538,7 +1538,7 @@ export const esOverrides = {
     config: {
       minimizeToTrayTitle: 'Minimizar a la bandeja',
       minimizeToTrayDesc:
-        'Al minimizar las ventanas o cerrar la ventana principal, se ocultan en la bandeja del sistema (barra de menús en macOS) y Hermes sigue ejecutándose. Usa Salir de Hermes en el menú de la bandeja o Cmd+Q para salir. Desactivado por defecto; se aplica solo a este dispositivo.',
+        'Al minimizar las ventanas o cerrar la ventana principal, se ocultan en la bandeja del sistema (barra de menús en macOS) y Semantier sigue ejecutándose. Usa Salir de Semantier en el menú de la bandeja o Cmd+Q para salir. Desactivado por defecto; se aplica solo a este dispositivo.',
       minimizeToTrayUnavailable:
         'La bandeja del sistema no está disponible. Las ventanas se minimizarán y cerrarán con normalidad. Desactiva y vuelve a activar esta opción para reintentarlo.',
       none: 'Ninguno',
@@ -1549,7 +1549,7 @@ export const esOverrides = {
       searchPlaceholder: 'Buscar…',
       noResults: 'No se encontraron resultados',
       systemDefault: 'Valor del sistema',
-      loading: 'Cargando configuración de Hermes...',
+      loading: 'Cargando configuración de Semantier...',
       emptyTitle: 'Nada que configurar',
       emptyDesc: 'Esta sección no tiene ajustes configurables.',
       failedLoad: 'No se pudo cargar la configuración',
@@ -1579,27 +1579,27 @@ export const esOverrides = {
       description:
         'Pulsa y suelta ⌘ + Opción en Mac, o Ctrl + Alt en Windows/Linux, para traer el HUD al frente desde cualquier app. Desactivado por defecto; se aplica solo a este dispositivo.',
       permission:
-        'Permite Hermes en Ajustes del Sistema → Privacidad y seguridad → Monitorización de entrada y vuelve a intentarlo. Este gesto no registra pulsaciones de teclas ni captura tu pantalla.',
+        'Permite Semantier en Ajustes del Sistema → Privacidad y seguridad → Monitorización de entrada y vuelve a intentarlo. Este gesto no registra pulsaciones de teclas ni captura tu pantalla.',
       unavailable:
-        'El asistente del gesto del HUD no pudo iniciarse o se detuvo de forma inesperada. Reinténtalo o reinicia Hermes. El atajo del HUD existente sigue funcionando dentro de Hermes.',
+        'El asistente del gesto del HUD no pudo iniciarse o se detuvo de forma inesperada. Reinténtalo o reinicia Semantier. El atajo del HUD existente sigue funcionando dentro de Semantier.',
       missingHelper:
-        'A esta instalación de Hermes le falta el asistente del gesto del HUD. Actualiza o reinstala Hermes y vuelve a intentarlo.',
+        'A esta instalación de Semantier le falta el asistente del gesto del HUD. Actualiza o reinstala Semantier y vuelve a intentarlo.',
       unsupportedSession:
         'Esta sesión de escritorio no admite pulsaciones globales de teclas modificadoras. Linux requiere X11; Wayland no es compatible.'
     },
     screenshot: {
       enabledTitle: 'Atajo de captura de pantalla',
       enabledDesc:
-        'Pulsa las dos teclas Comando a la vez desde cualquier app para capturar su ventana frontal y adjuntarla a tu borrador actual de Hermes. Nunca se envía automáticamente. Desactivado por defecto; se aplica solo a este Mac. El contenido de la ventana puede ser confidencial: revisa el adjunto antes de enviarlo.',
+        'Pulsa las dos teclas Comando a la vez desde cualquier app para capturar su ventana frontal y adjuntarla a tu borrador actual de Semantier. Nunca se envía automáticamente. Desactivado por defecto; se aplica solo a este Mac. El contenido de la ventana puede ser confidencial: revisa el adjunto antes de enviarlo.',
       statusTitle: 'Estado del atajo de captura',
       checking: 'Comprobando el atajo de captura…',
       disabled: 'El atajo de captura está desactivado.',
       starting: 'Iniciando la escucha del atajo. Todavía no está listo.',
       ready: 'El atajo está listo. Las capturas se adjuntan a tu borrador actual sin enviarse.',
       inputPermission:
-        'El permiso de Monitorización de entrada permite a Hermes detectar las dos teclas Comando mientras otra app está activa. Permite Hermes en Ajustes del Sistema → Privacidad y seguridad → Monitorización de entrada, vuelve aquí y reinténtalo.',
+        'El permiso de Monitorización de entrada permite a Semantier detectar las dos teclas Comando mientras otra app está activa. Permite Semantier en Ajustes del Sistema → Privacidad y seguridad → Monitorización de entrada, vuelve aquí y reinténtalo.',
       screenPermission:
-        'El permiso de Grabación de pantalla permite a Hermes capturar la ventana frontal cuando usas este atajo. Permite Hermes en Ajustes del Sistema → Privacidad y seguridad → Grabación de pantalla, vuelve aquí y reinténtalo. Reinicia Hermes si macOS te lo pide.',
+        'El permiso de Grabación de pantalla permite a Semantier capturar la ventana frontal cuando usas este atajo. Permite Semantier en Ajustes del Sistema → Privacidad y seguridad → Grabación de pantalla, vuelve aquí y reinténtalo. Reinicia Semantier si macOS te lo pide.',
       openSettings: 'Abrir Ajustes del Sistema',
       retry: 'Reintentar',
       unavailable: 'El atajo de captura no está disponible. Reinténtalo o desactívalo.',
@@ -1614,7 +1614,7 @@ export const esOverrides = {
     quickEntry: {
       enabledTitle: 'Entrada rápida',
       enabledDesc:
-        'Invoca un pequeño compositor desde cualquier lugar con un atajo global y envía un prompt sin abrir Hermes.',
+        'Invoca un pequeño compositor desde cualquier lugar con un atajo global y envía un prompt sin abrir Semantier.',
       shortcutTitle: 'Atajo de entrada rápida',
       shortcutDesc: 'Necesita al menos un modificador, p. ej. CommandOrControl+Shift+Espacio.',
       active: 'El atajo está activo.',
@@ -1688,7 +1688,7 @@ export const esOverrides = {
       sshHostTitle: 'Host SSH',
       headersTitle: 'Encabezados adicionales del gateway',
       headersDesc:
-        'Se envían con cada solicitud HTTP y WebSocket a este gateway, para proxies de acceso como Cloudflare Access (CF-Access-Client-Id / CF-Access-Client-Secret). Los valores se guardan cifrados. Se ignoran los encabezados que gestiona Hermes (Authorization, Cookie, Host…).',
+        'Se envían con cada solicitud HTTP y WebSocket a este gateway, para proxies de acceso como Cloudflare Access (CF-Access-Client-Id / CF-Access-Client-Secret). Los valores se guardan cifrados. Se ignoran los encabezados que gestiona Semantier (Authorization, Cookie, Host…).',
       headerValuePlaceholder: 'Valor',
       headerValueSaved: 'Guardado: déjalo en blanco para conservarlo',
       headerAdd: 'Añadir encabezado',
@@ -1727,14 +1727,14 @@ export const esOverrides = {
       loading: 'Cargando ajustes del gateway...',
       unavailableTitle: 'Ajustes del gateway no disponibles',
       unavailableDesc:
-        'Los ajustes de conexión solo se pueden cambiar desde la app Hermes Desktop en el equipo que la ejecuta.',
+        'Los ajustes de conexión solo se pueden cambiar desde la app Semantier Agent en el equipo que la ejecuta.',
       title: 'Conexión del gateway',
       envOverride: 'anulación de entorno',
       intro:
         'Local por predeterminado. Usa remoto cuando esta app deba controlar un backend de Hermes en otro lugar. Anulaciones por perfil a continuación.',
-      envOverrideTitle: 'Esta conexión quedó fijada por la forma en que se inició Hermes.',
+      envOverrideTitle: 'Esta conexión quedó fijada por la forma en que se inició Semantier.',
       envOverrideDesc:
-        'Un ajuste de inicio externo a la app eligió esta conexión, así que las opciones de abajo son de solo lectura. Reinicia Hermes sin ese ajuste (o pregunta a quien lo configuró) para cambiarla aquí.',
+        'Un ajuste de inicio externo a la app eligió esta conexión, así que las opciones de abajo son de solo lectura. Reinicia Semantier sin ese ajuste (o pregunta a quien lo configuró) para cambiarla aquí.',
       modeTitle: 'Modo de conexión',
       localTitle: 'Gateway local',
       localDesc:
@@ -1825,7 +1825,7 @@ export const esOverrides = {
       enterUrlFirst: 'Introduce primero una URL remota.',
       restartingTitle: 'Reiniciando conexión del gateway',
       savedTitle: 'Ajustes del gateway guardados',
-      restartingMessage: 'Hermes Desktop se reconectará con los ajustes guardados.',
+      restartingMessage: 'Semantier Agent se reconectará con los ajustes guardados.',
       savedMessage: 'Guardado para el próximo reinicio.',
       connectedTo: (baseUrl, version) => `Conectado a ${baseUrl}${version ? ` · Hermes ${version}` : ''}`,
       reachableTitle: 'Gateway remoto accesible',
@@ -1871,7 +1871,7 @@ export const esOverrides = {
       sshErrNotInstalled:
         'Hermes no está instalado en el host remoto. Instálalo allí (curl -fsSL https://hermes-agent.nousresearch.com/install.sh | sh) o indica la ruta de Hermes.',
       sshErrPlatform:
-        'Plataforma remota no compatible. El modo SSH de Hermes Desktop admite hosts remotos Linux, macOS y Windows.',
+        'Plataforma remota no compatible. El modo SSH de Semantier Agent admite hosts remotos Linux, macOS y Windows.',
       sshErrTimeout: 'La conexión SSH agotó el tiempo de espera. Es posible que el host no responda o esté en reposo.',
       sshErrUpdateRequired: 'Actualiza Hermes en el host remoto antes de conectarte con Desktop SSH.',
       sshErrInteractiveAuth:
@@ -1922,7 +1922,7 @@ export const esOverrides = {
       noOutput: 'Aún no hay salida.',
       deepLinkTitle: '¿Añadir servidor MCP?',
       deepLinkDescription:
-        'Un enlace pidió añadir este servidor MCP a Hermes. Revisa la configuración exacta de abajo: viene del enlace, no de Hermes.',
+        'Un enlace pidió añadir este servidor MCP a Semantier. Revisa la configuración exacta de abajo: viene del enlace, no de Semantier.',
       deepLinkStdioWarning:
         'Este servidor ejecuta un proceso local en tu equipo con el comando que se muestra abajo. Continúa solo si confías en su origen.',
       deepLinkConfirm: 'Añadir servidor',
@@ -2285,7 +2285,7 @@ export const esOverrides = {
       connectAccount: 'Conectar una cuenta',
       haveApiKey: '¿Tienes una clave API?',
       intro:
-        'Inicia sesión con una suscripción, sin copiar claves API. Hermes ejecuta el inicio de sesión del navegador por ti, aquí mismo en la app.',
+        'Inicia sesión con una suscripción, sin copiar claves API. Semantier ejecuta el inicio de sesión del navegador por ti, aquí mismo en la app.',
       connected: 'Conectado',
       collapse: 'Contraer',
       connectAnother: 'Conectar otro proveedor',
@@ -2307,7 +2307,7 @@ export const esOverrides = {
       localEndpoint: {
         title: 'Endpoint local o personalizado',
         description:
-          'Conecta Hermes con cualquier endpoint compatible con OpenAI (Zyphra, vLLM, llama.cpp, Ollama, etc.).'
+          'Conecta Semantier con cualquier endpoint compatible con OpenAI (Zyphra, vLLM, llama.cpp, Ollama, etc.).'
       },
       loading: 'Cargando proveedores...'
     },
@@ -2438,7 +2438,7 @@ export const esOverrides = {
         needsSetupConfirmAction: 'Seleccionar de todos modos',
         unavailableTitle: 'Los comandos de terminal no están disponibles',
         unavailableMessage: (backend: string) =>
-          `Hermes no puede ejecutar comandos de shell ahora mismo: ${backend} no está listo. Cambia a Local o termina de configurar ${backend} y vuelve a intentarlo.`,
+          `Semantier no puede ejecutar comandos de shell ahora mismo: ${backend} no está listo. Cambia a Local o termina de configurar ${backend} y vuelve a intentarlo.`,
         openBackendSettings: 'Abrir ajustes del terminal',
         useLocal: 'Usar Local',
         switchedToLocal: 'Los comandos de terminal ahora se ejecutan localmente. Se aplica a las sesiones nuevas.'
@@ -2454,7 +2454,7 @@ export const esOverrides = {
         failedSave: 'No se pudo guardar el ajuste del perfil real',
         prompt: {
           title: 'Mantén la sesión iniciada en tus sitios',
-          body: 'Deja que Hermes navegue con una instantánea de tu perfil predeterminado del navegador, para que los sitios se abran con la sesión ya iniciada.',
+          body: 'Deja que Semantier navegue con una instantánea de tu perfil predeterminado del navegador, para que los sitios se abran con la sesión ya iniciada.',
           bulletSnapshot: 'Las cookies y los inicios de sesión se copian en una instantánea administrada.',
           bulletLiveProfile: 'Tu perfil del navegador en uso nunca se abre directamente.',
           bulletLocal: 'Nada sale de este equipo.',
@@ -2532,7 +2532,7 @@ export const esOverrides = {
       halfDesktopHint: 'esta app, igual para todos los perfiles',
       halfAgent: 'Agente',
       halfAgentIn: (profile: string) => `Agente en ${profile}`,
-      defaultProfile: 'Hermes (predeterminado)',
+      defaultProfile: 'Semantier (predeterminado)',
       kindAgent: 'Agente',
       kindDesktop: 'Escritorio',
       kindBoth: 'Agente + Escritorio',
@@ -2694,7 +2694,7 @@ export const esOverrides = {
     loadFailed: 'No se pudo cargar el grafo de memoria',
     loading: 'Cargando…',
     emptyTitle: 'Aún no se ha aprendido nada',
-    emptyDesc: 'A medida que Hermes crea skills y memorias para tu trabajo, aparecerán aquí.',
+    emptyDesc: 'A medida que Semantier crea skills y memorias para tu trabajo, aparecerán aquí.',
     share: 'Compartir mapa',
     shareHint:
       'Copia el código para compartir este mapa o pega uno para cargarlo. Solo incluye el diseño, no el texto de tus memorias ni skills.',
@@ -2802,7 +2802,7 @@ export const esOverrides = {
       hatchSaving: 'Ya casi…',
       namePlaceholder: 'Ponle nombre a tu mascota',
       staleBackend: 'Actualiza Hermes para generar mascotas.',
-      backgroundHint: 'Puedes cerrar esto; Hermes te avisará cuando termine.',
+      backgroundHint: 'Puedes cerrar esto; Semantier te avisará cuando termine.',
       slowProviderHint: 'Esto puede tardar varios minutos',
       remix: 'Remixar',
       remixConfirmTitle: '¿Remixar este aspecto?',
@@ -2842,7 +2842,7 @@ export const esOverrides = {
       },
       settings: {
         title: 'Configuración',
-        detail: 'Configura Hermes Desktop'
+        detail: 'Configura Semantier Agent'
       },
       capabilities: {
         title: 'Capacidades',
@@ -2893,7 +2893,7 @@ export const esOverrides = {
     sharedGatewayRestartConfirm: 'Reiniciar todo',
     sharedGatewayRestarted: (count: number) =>
       `Gateway compartido reiniciado (${count} ${count === 1 ? 'bot' : 'bots'})`,
-    updateHermes: 'Actualizar Hermes',
+    updateHermes: 'Actualizar Semantier',
     reloadWindow: 'Recargar ventana',
     actionRunning: 'en ejecución',
     actionDone: 'listo',
@@ -3052,7 +3052,7 @@ export const esOverrides = {
     restartNeeded: 'Guardado. Reinicia el gateway de mensajería para que la nueva configuración surta efecto.',
     restartNow: 'Reiniciar ahora',
     restarting: 'Reiniciando…',
-    restartFailedManual: 'Hermes no pudo reiniciarse para aplicar tu configuración de mensajería',
+    restartFailedManual: 'Semantier no pudo reiniciarse para aplicar tu configuración de mensajería',
     restartFailedManualDetail:
       'Vuelve a pulsar Reiniciar; si sigue fallando, abre los registros y envía un diagnóstico.',
     restartAgain: 'Reiniciar de nuevo',
@@ -3060,11 +3060,11 @@ export const esOverrides = {
     telegramQr: {
       title: 'Elige cómo conectar tu bot de Telegram',
       subtitle:
-        'Ambas opciones conectan un bot que controlas y guardan sus credenciales solo en esta instalación de Hermes.',
+        'Ambas opciones conectan un bot que controlas y guardan sus credenciales solo en esta instalación de Semantier.',
       quickSetup: 'Configuración rápida',
       recommended: 'Recomendado',
       quickHelp:
-        'Escanea un código QR y confirma en Telegram. Hermes crea el bot y detecta tu ID de usuario de Telegram automáticamente.',
+        'Escanea un código QR y confirma en Telegram. Semantier crea el bot y detecta tu ID de usuario de Telegram automáticamente.',
       createWithQr: 'Crear con QR',
       starting: 'Iniciando…',
       replaceWarning:
@@ -3366,7 +3366,7 @@ export const esOverrides = {
     defaultProfile: 'Perfil predeterminado',
     defaultSet: (name: string) => `${name} es ahora el predeterminado`,
     defaultDescription:
-      'Se usa al abrir Hermes y para los chats nuevos. Las sesiones existentes se quedan en sus perfiles.',
+      'Se usa al abrir Semantier y para los chats nuevos. Las sesiones existentes se quedan en sus perfiles.',
     failedSetDefault: 'No se pudo establecer el perfil predeterminado',
     setColor: color => `Definir color ${color}`,
     autoColor: 'Auto',
@@ -3437,7 +3437,7 @@ export const esOverrides = {
     failedRename: 'No se pudo renombrar el perfil'
   },
   modelAssignment: {
-    saveFailed: 'Hermes no guardó ese cambio de modelo.',
+    saveFailed: 'Semantier no guardó ese cambio de modelo.',
     confirmTitle: 'Aviso sobre la selección de modelo',
     confirmDetail: 'Confirma solo si aceptas esta contrapartida.',
     confirmAction: 'Confirmar',
@@ -3505,7 +3505,7 @@ export const esOverrides = {
     everyHourAt: minute => `Cada hora en :${minute}`,
     newCron: 'Nueva tarea cron',
     emptyDescNew:
-      'Programa un prompt para ejecutarlo con una expresión cron. Hermes lo ejecutará y entregará los resultados al destino que elijas.',
+      'Programa un prompt para ejecutarlo con una expresión cron. Semantier lo ejecutará y entregará los resultados al destino que elijas.',
     emptyDescSearch: 'Prueba una búsqueda más amplia.',
     emptyTitleNew: 'Aún no hay tareas programadas',
     emptyTitleSearch: 'Sin coincidencias',
@@ -3720,9 +3720,9 @@ export const esOverrides = {
     storageCorrupt: {
       title: 'La base de datos de sesiones está dañada',
       body: (profiles: string) =>
-        `Hermes no puede leer todo el historial de sesiones de ${profiles}. Los chats que faltan en esta lista no se eliminaron; el archivo donde se guardan está dañado.`,
+        `Semantier no puede leer todo el historial de sesiones de ${profiles}. Los chats que faltan en esta lista no se eliminaron; el archivo donde se guardan está dañado.`,
       action:
-        'Sal de Hermes en este perfil y luego inspecciona el archivo sin modificarlo, o restaura una instantánea:',
+        'Sal de Semantier en este perfil y luego inspecciona el archivo sin modificarlo, o restaura una instantánea:',
       guide: 'Guía de recuperación'
     },
     noFilterMatches: 'Ninguna sesión coincide con estos filtros',
@@ -3795,12 +3795,12 @@ export const esOverrides = {
   composer: {
     message: 'Mensaje',
     wakingProfile: profile => `Despertando ${profile}…`,
-    placeholderStarting: 'Iniciando Hermes...',
-    placeholderReconnecting: 'Reconectando con Hermes…',
+    placeholderStarting: 'Iniciando Semantier...',
+    placeholderReconnecting: 'Reconectando con Semantier…',
     placeholderFollowUp: 'Enviar seguimiento',
     newSessionPlaceholders: [
       '¿Qué vamos a construir?',
-      'Dale una tarea a Hermes',
+      'Dale una tarea a Semantier',
       '¿Qué tienes en mente?',
       'Describe lo que necesitas',
       '¿Qué abordamos?',
@@ -3838,8 +3838,8 @@ export const esOverrides = {
     transcribingDictation: 'Transcribiendo dictado',
     voiceControls: 'Voz',
     voiceEngine: 'Motor del chat de voz',
-    voiceEngineChained: 'Voz a texto + voz de Hermes',
-    voiceEngineLive: 'GPT-Live (full-duplex, delega en Hermes)',
+    voiceEngineChained: 'Voz a texto + voz de Semantier',
+    voiceEngineLive: 'GPT-Live (full-duplex, delega en Semantier)',
     voiceEngineLiveNeedsKey: 'Requiere una clave API de OpenAI',
     voiceEngineChangeFailed: 'No se pudo cambiar el motor del chat de voz',
     voiceEngineChainedShort: 'voz a texto',
@@ -3890,7 +3890,7 @@ export const esOverrides = {
       '/queue':
         'Poner un prompt en cola para el siguiente turno, o listar/editar/quitar/mover/vaciar los prompts en cola',
       '/steer': 'Insertar un mensaje tras la siguiente llamada a herramienta sin interrumpir',
-      '/goal': 'Fijar un objetivo permanente en el que Hermes trabaja durante varios turnos hasta cumplirlo',
+      '/goal': 'Fijar un objetivo permanente en el que Semantier trabaja durante varios turnos hasta cumplirlo',
       '/heartbeat': 'Configurar un prompt recurrente que vuelve a esta sesión cuando está inactiva',
       '/refine': 'Revisar esta conversación ahora y guardar lo aprendido en memoria/skills',
       '/review':
@@ -3947,7 +3947,7 @@ export const esOverrides = {
       'composer.history': 'recorrer el menú emergente o el historial'
     },
     attachUrlTitle: 'Adjuntar una URL',
-    attachUrlDesc: 'Hermes obtendrá la página y la incluirá como contexto para este turno.',
+    attachUrlDesc: 'Semantier obtendrá la página y la incluirá como contexto para este turno.',
     urlPlaceholder: 'https://example.com/post',
     urlHintPre: 'Incluye la URL completa, p. ej. ',
     attach: 'Adjuntar',
@@ -4206,7 +4206,7 @@ export const esOverrides = {
       createPr: 'Crear PR',
       openPr: 'Abrir PR',
       ghMissing: 'Instala GitHub CLI (gh) e inicia sesión para abrir PR',
-      agentShip: 'Pedir a Hermes que abra un PR',
+      agentShip: 'Pedir a Semantier que abra un PR',
       agentShipUnavailable: 'El chat al que pertenecen estos cambios no está en pantalla.',
       agentShipPrompt:
         'Revisa los cambios actuales, haz un commit con un mensaje convencional claro, envía la rama y abre un pull request.',
@@ -4218,23 +4218,23 @@ export const esOverrides = {
     }
   },
   updates: {
-    discontinuedTitle: 'Esta versión de Hermes ya no tiene soporte',
+    discontinuedTitle: 'Esta versión de Semantier ya no tiene soporte',
     discontinuedBody:
-      'Esta versión de Hermes ya no tiene soporte y podría dejar de funcionar; desinstálala. Tus datos permanecen en el disco.',
+      'Esta versión de Semantier ya no tiene soporte y podría dejar de funcionar; desinstálala. Tus datos permanecen en el disco.',
     channels: { stable: 'Estable', canary: 'Canary' },
-    appName: 'Hermes',
+    appName: 'Semantier Agent',
     availableBodyRelease: tag => `La versión ${tag} está lista para instalarse.`,
     releaseAvailable: tag => `La versión ${tag} está disponible.`,
     checkingShort: 'Comprobando…',
     availableBodyAppInstaller:
-      'Hay una nueva versión de Hermes. Hermes se cerrará, Windows terminará la actualización y Hermes volverá a abrirse automáticamente.',
+      'Hay una nueva versión de Semantier. Semantier se cerrará, Windows terminará la actualización y Semantier volverá a abrirse automáticamente.',
     applyingBodyAppInstaller:
-      'Hermes se cerrará y Windows terminará la actualización. Hermes volverá a abrirse al finalizar; no tienes que hacer nada.',
+      'Semantier se cerrará y Windows terminará la actualización. Semantier volverá a abrirse al finalizar; no tienes que hacer nada.',
     applyingCloseAppInstaller:
-      'Esta ventana se cerrará; Windows terminará la actualización y Hermes volverá a abrirse automáticamente.',
+      'Esta ventana se cerrará; Windows terminará la actualización y Semantier volverá a abrirse automáticamente.',
     checkUnknownTitleAppInstaller: 'No se pudieron buscar actualizaciones',
     checkUnknownBodyAppInstaller:
-      'Windows no pudo buscar actualizaciones ahora. También se instalan automáticamente al reiniciar Hermes.',
+      'Windows no pudo buscar actualizaciones ahora. También se instalan automáticamente al reiniciar Semantier.',
     versionDetailsTitle: 'Detalles de la versión',
     versionDetailsBody:
       'Esta instalación se administra fuera de la app. Actualízala de la misma forma en que la instalaste.',
@@ -4263,8 +4263,8 @@ export const esOverrides = {
     bundleOutOfSyncAction: 'Obtener el instalador',
     bundleSwapPending: 'Reinicia para terminar la actualización',
     bundleSwapPendingDesc:
-      'La app actualizada ya está instalada; Hermes solo necesita reiniciarse para cargarla. Los chats y los ajustes no se tocan.',
-    bundleSwapPendingAction: 'Reiniciar Hermes',
+      'La app actualizada ya está instalada; Semantier solo necesita reiniciarse para cargarla. Los chats y los ajustes no se tocan.',
+    bundleSwapPendingAction: 'Reiniciar Semantier',
     checkNow: 'Comprobar ahora',
     seeWhatsNew: 'Ver novedades',
     releaseNotes: 'Notas de la versión',
@@ -4290,7 +4290,7 @@ export const esOverrides = {
       pydeps: 'Terminando…',
       update: 'Actualizando Hermes…',
       rebuild: 'Reconstruyendo la aplicación de escritorio…',
-      restart: 'Reiniciando Hermes…',
+      restart: 'Reiniciando Semantier…',
       done: 'Actualización completada',
       manual: 'Actualizar desde la terminal',
       guiSkew: 'Actualiza la aplicación de escritorio',
@@ -4300,17 +4300,17 @@ export const esOverrides = {
     checkFailedTitle: 'No se pudieron buscar actualizaciones',
     tryAgain: 'Intentar de nuevo',
     notAvailableTitle: 'Actualización no disponible',
-    unsupportedMessage: 'Esta versión de Hermes no puede actualizarse desde la app.',
+    unsupportedMessage: 'Esta versión de Semantier no puede actualizarse desde la app.',
     connectionRetry:
-      'Hermes no pudo llegar al servidor de actualizaciones. Comprueba tu conexión a internet y vuelve a intentarlo. Si usas un Hermes remoto, asegúrate de que esté en línea.',
-    gitUnusable: 'Hermes no pudo ejecutar Git en este equipo, así que no pudo buscar actualizaciones.',
+      'Semantier no pudo llegar al servidor de actualizaciones. Comprueba tu conexión a internet y vuelve a intentarlo. Si usas un Semantier remoto, asegúrate de que esté en línea.',
+    gitUnusable: 'Semantier no pudo ejecutar Git en este equipo, así que no pudo buscar actualizaciones.',
     connectionSettings: 'Configuración de conexión',
     openDownloadPage: 'Abrir la página de descarga',
     latestBody: 'Estás usando la versión más reciente.',
     latestBodyBackend: 'El backend está ejecutando la versión más reciente.',
     allSetTitle: 'Todo listo',
     availableTitle: 'Nueva actualización disponible',
-    availableBody: 'Hay una nueva versión de Hermes lista para instalar.',
+    availableBody: 'Hay una nueva versión de Semantier lista para instalar.',
     availableTitleBackend: 'Actualización del backend disponible',
     availableBodyBackend:
       'Hay una versión más reciente del backend de Hermes al que estás conectado lista para instalar.',
@@ -4324,30 +4324,30 @@ export const esOverrides = {
     manualUnavailableTitle: 'No se puede actualizar desde aquí',
     manualBody:
       'Instalaste Hermes desde la línea de comandos, así que las actualizaciones también se ejecutan ahí. Pega esto en tu terminal:',
-    manualPickedUp: 'Hermes usará la nueva versión la próxima vez que lo abras.',
+    manualPickedUp: 'Semantier usará la nueva versión la próxima vez que lo abras.',
     manualBodyBackend: 'El backend de Hermes se gestiona fuera de esta app. Ejecuta esto en el servidor que lo aloja:',
     manualPickedUpBackend: 'El backend cargará la nueva versión cuando termine la actualización.',
     guiSkewTitle: 'Actualiza la aplicación de escritorio',
     guiSkewBody:
-      'El backend se actualizó, pero el paquete de esta aplicación de escritorio no cambió. Actualiza o reinstala la aplicación de escritorio de Hermes (tu AppImage / .deb / .rpm) para que coincidan.',
+      'El backend se actualizó, pero el paquete de esta aplicación de escritorio no cambió. Actualiza o reinstala la aplicación de escritorio de Semantier (tu AppImage / .deb / .rpm) para que coincidan.',
     copy: 'Copiar',
     copied: 'Copiado',
     done: 'Listo',
     applyingBody:
-      'El actualizador de Hermes tomará el control en su propia ventana y volverá a abrir Hermes al terminar.',
+      'El actualizador de Semantier tomará el control en su propia ventana y volverá a abrir Semantier al terminar.',
     applyingBodyBackend:
-      'El backend remoto está aplicando la actualización y se reiniciará. Hermes se reconectará automáticamente cuando vuelva a estar disponible.',
-    applyingClose: 'Hermes se cerrará para aplicar la actualización.',
+      'El backend remoto está aplicando la actualización y se reiniciará. Semantier se reconectará automáticamente cuando vuelva a estar disponible.',
+    applyingClose: 'Semantier se cerrará para aplicar la actualización.',
     errorTitle: 'La actualización no terminó',
     errorBody: 'No pasa nada: no se perdió nada. Puedes intentarlo de nuevo ahora.',
-    blockerTitle: '¿Cerrar las vistas previas locales para actualizar Hermes?',
+    blockerTitle: '¿Cerrar las vistas previas locales para actualizar Semantier?',
     blockerBody:
-      'Hermes necesita detener estas vistas previas locales antes de actualizar. Esto no modifica ni elimina tus archivos.',
-    foreignBlockerTitle: 'Cierra otros procesos para actualizar Hermes',
+      'Semantier necesita detener estas vistas previas locales antes de actualizar. Esto no modifica ni elimina tus archivos.',
+    foreignBlockerTitle: 'Cierra otros procesos para actualizar Semantier',
     foreignBlockerBody:
-      'Hermes no puede cerrar estos procesos automáticamente de forma segura. Cierra la app, el terminal o el servicio al que pertenece cada uno y vuelve a intentar la actualización.',
+      'Semantier no puede cerrar estos procesos automáticamente de forma segura. Cierra la app, el terminal o el servicio al que pertenece cada uno y vuelve a intentar la actualización.',
     mixedBlockerBody:
-      'Hermes puede cerrar las vistas previas locales que se indican abajo. Los demás procesos deben cerrarse manualmente antes de continuar con la actualización.',
+      'Semantier puede cerrar las vistas previas locales que se indican abajo. Los demás procesos deben cerrarse manualmente antes de continuar con la actualización.',
     closePreviewsAndUpdate: 'Cerrar vistas previas y actualizar',
     closePreviewsAndCheckAgain: 'Cerrar vistas previas y volver a comprobar',
     localPreview: 'Vista previa local',
@@ -4396,7 +4396,7 @@ export const esOverrides = {
     viewDocs: 'Ver docs de instalación',
     installTo: 'Se instalará en',
     retryAfterRun: 'Ya lo ejecuté -- reintentar',
-    setupChoiceTitle: 'Configurar Hermes Desktop',
+    setupChoiceTitle: 'Configurar Semantier Agent',
     setupChoiceDesc:
       'Conecta esta app con un gateway de Hermes que ya esté en ejecución o instala Hermes localmente en este equipo.',
     connectExistingTitle: 'Conectar con un Hermes existente',
@@ -4405,10 +4405,10 @@ export const esOverrides = {
       'Usa un backend remoto con un token de sesión o inicio de sesión en el navegador. No se iniciará ninguna instalación local.',
     installLocalTitle: 'Instalar Hermes localmente',
     installLocalDesc: 'Descarga Hermes, crea su entorno de Python y ejecuta el backend en este equipo.',
-    localStartUnavailable: 'No se pudo iniciar la instalación local. Reinicia Hermes Desktop e inténtalo de nuevo.',
+    localStartUnavailable: 'No se pudo iniciar la instalación local. Reinicia Semantier Agent e inténtalo de nuevo.',
     remoteSetupTitle: 'Conectar con un Hermes existente',
     remoteSetupDesc:
-      'Introduce la URL de tu gateway. Hermes Desktop detectará si necesita un token o iniciar sesión en el navegador.',
+      'Introduce la URL de tu gateway. Semantier Agent detectará si necesita un token o iniciar sesión en el navegador.',
     remoteUrlTitle: 'URL del gateway',
     remoteUrlDesc: 'Usa la URL base del gateway de Hermes e incluye https:// si es remoto.',
     remoteUrlPlaceholder: 'https://gateway.example.com/hermes',
@@ -4461,7 +4461,7 @@ export const esOverrides = {
   freeTier: {
     providerRowTitle: 'Nous · plan gratuito',
     providerRowPitch: 'Inicia sesión con una cuenta de Nous para desbloquear más modelos y herramientas.',
-    readyTitle: 'Hermes está listo.',
+    readyTitle: 'Semantier está listo.',
     readyCaption: 'Gratis · conectores incluidos',
     begin: 'Empezar',
     signInInstead: 'Iniciar sesión con una cuenta de Nous',
@@ -4497,30 +4497,30 @@ export const esOverrides = {
     timedOutHeading: 'Ese enlace de inicio de sesión caducó',
     timedOutBody: 'Empieza de nuevo cuando quieras. Sigues en el servicio gratuito de Nous.',
     retiredBody:
-      'Tu sesión terminó antes de completar el inicio de sesión. Hermes iniciará una nueva; luego vuelve a iniciar sesión cuando quieras.',
+      'Tu sesión terminó antes de completar el inicio de sesión. Semantier iniciará una nueva; luego vuelve a iniciar sesión cuando quieras.',
     errorBody: 'No se completó el inicio de sesión. Vuelve a intentarlo cuando quieras.',
     busyHeading: 'Ya casi está',
     busyBody: (wait: string) =>
-      `Hermes no pudo terminar de iniciar tu sesión porque el servicio de Nous está ocupado. Vuelve a intentarlo en ${wait}. Mientras tanto, tu sesión sigue aquí.`,
+      `Semantier no pudo terminar de iniciar tu sesión porque el servicio de Nous está ocupado. Vuelve a intentarlo en ${wait}. Mientras tanto, tu sesión sigue aquí.`,
     unreachableBody:
-      'Hermes no pudo llegar al servicio de Nous para terminar de iniciar tu sesión. Comprueba tu conexión a internet y vuelve a intentarlo. Tu sesión sigue aquí.',
+      'Semantier no pudo llegar al servicio de Nous para terminar de iniciar tu sesión. Comprueba tu conexión a internet y vuelve a intentarlo. Tu sesión sigue aquí.',
     alreadySignedInHeading: 'Ya has iniciado sesión.',
-    alreadySignedInBody: 'Este Hermes ya tiene la sesión iniciada en una cuenta de Nous.',
+    alreadySignedInBody: 'Este Semantier ya tiene la sesión iniciada en una cuenta de Nous.',
     offer: {
-      heading: 'Sigue adelante con Hermes',
-      body: 'Estás usando el uso gratuito. Si sigues usando Hermes, empezarás a encontrarte con límites. Inicia sesión con una cuenta gratuita de Nous para tener un uso mayor.',
+      heading: 'Sigue adelante con Semantier',
+      body: 'Estás usando el uso gratuito. Si sigues usando Semantier, empezarás a encontrarte con límites. Inicia sesión con una cuenta gratuita de Nous para tener un uso mayor.',
       signIn: 'Iniciar sesión',
       notNow: 'Ahora no'
     },
     setupFailed: {
       gateClosed:
-        'Esta versión de Hermes no puede iniciarse sin una cuenta de Nous. Inicia sesión o crea una: es gratis y solo lleva un minuto.',
+        'Esta versión de Semantier no puede iniciarse sin una cuenta de Nous. Inicia sesión o crea una: es gratis y solo lleva un minuto.',
       paused:
-        'El uso de Hermes sin iniciar sesión está en pausa por un momento. Hermes seguirá comprobándolo. Iniciar sesión es gratis y te permite empezar ahora mismo.',
+        'El uso de Semantier sin iniciar sesión está en pausa por un momento. Semantier seguirá comprobándolo. Iniciar sesión es gratis y te permite empezar ahora mismo.',
       rateLimited: (wait: string) =>
-        `Mucha gente está empezando ahora mismo, así que Hermes volverá a intentarlo en ${wait}. Iniciar sesión es gratis y te ahorra la espera.`,
+        `Mucha gente está empezando ahora mismo, así que Semantier volverá a intentarlo en ${wait}. Iniciar sesión es gratis y te ahorra la espera.`,
       unreachable:
-        'Hermes no pudo llegar al servicio de Nous. Comprueba tu conexión a internet y pulsa Reintentar. O conecta otro proveedor por ahora.',
+        'Semantier no pudo llegar al servicio de Nous. Comprueba tu conexión a internet y pulsa Reintentar. O conecta otro proveedor por ahora.',
       serverError:
         'El servicio de Nous tuvo un fallo. Pulsa Reintentar en un momento o conecta otro proveedor por ahora.',
       powRequired:
@@ -4528,7 +4528,7 @@ export const esOverrides = {
       locked:
         'Esta sesión no puede continuar sin iniciar sesión. Inicia sesión o crea una cuenta gratuita de Nous para seguir.',
       generic:
-        'Hermes no pudo configurar el acceso gratuito sin iniciar sesión. Iniciar sesión es gratis; también puedes conectar otro proveedor.',
+        'Semantier no pudo configurar el acceso gratuito sin iniciar sesión. Iniciar sesión es gratis; también puedes conectar otro proveedor.',
       signInBelow: 'Iniciar sesión es gratis. Elige Nous abajo.',
       tryAgain: 'Reintentar',
       retrying: 'Reintentando…'
@@ -4625,7 +4625,7 @@ export const esOverrides = {
       update: 'actualizar',
       updateInProgress: 'Actualización en curso',
       commitsBehind: (count, branch) => `${count} ${count === 1 ? 'commit' : 'commits'} detrás de ${branch}`,
-      desktopVersion: version => `Hermes Desktop v${version}`,
+      desktopVersion: version => `Semantier Agent v${version}`,
       backendVersion: version => `backend v${version}`,
       clientLabel: version => `cliente v${version}`,
       connectionSsh: host => `SSH: ${host}`,
@@ -4787,7 +4787,7 @@ export const esOverrides = {
     binaryTitle: 'Esto parece un archivo binario',
     binaryBody: label => `Previsualizar ${label} puede mostrar texto ilegible.`,
     largeTitle: 'Este archivo es grande',
-    largeBody: (label, size) => `${label} pesa ${size}. Hermes solo mostrará los primeros 512 KB.`,
+    largeBody: (label, size) => `${label} pesa ${size}. Semantier solo mostrará los primeros 512 KB.`,
     previewAnyway: 'Previsualizar de todos modos',
     truncated: 'Mostrando los primeros 512 KB.',
     noInlineTitle: 'Sin vista previa inline',
@@ -4830,12 +4830,12 @@ export const esOverrides = {
         'Esta dirección apunta al equipo que ejecuta tu agente, no a este. El panel del navegador carga las páginas localmente, así que un servidor de desarrollo remoto necesita un reenvío de puertos o un nombre de host accesible.',
       failedToLoad: 'No se pudo cargar la vista previa',
       tryAgain: 'Intentar de nuevo',
-      restarting: 'Hermes se está reiniciando...',
-      askRestart: 'Pedir a Hermes que reinicie el servidor',
-      lookingRestart: taskId => `Hermes está buscando un servidor de vista previa para reiniciar (${taskId})`,
+      restarting: 'Semantier se está reiniciando...',
+      askRestart: 'Pedir a Semantier que reinicie el servidor',
+      lookingRestart: taskId => `Semantier está buscando un servidor de vista previa para reiniciar (${taskId})`,
       restartingTitle: 'Reiniciando servidor de vista previa',
       restartingMessage:
-        'Hermes está trabajando en segundo plano. Mira la consola de vista previa para ver el progreso.',
+        'Semantier está trabajando en segundo plano. Mira la consola de vista previa para ver el progreso.',
       startRestartFailed: message => `No se pudo iniciar el reinicio del servidor: ${message}`,
       restartFailed: 'Falló el reinicio del servidor',
       hideConsole: 'Ocultar consola de vista previa',
@@ -4847,17 +4847,17 @@ export const esOverrides = {
       reload: 'Recargar página',
       address: 'Dirección',
       addressPlaceholder: 'Introduce una dirección',
-      blankPageBody: 'Escribe una dirección arriba para navegar o pide a Hermes que abra una página.',
+      blankPageBody: 'Escribe una dirección arriba para navegar o pide a Semantier que abra una página.',
       finishedRestarting: message =>
-        `Hermes terminó de reiniciar el servidor de vista previa${message ? `: ${message}` : ''}`,
+        `Semantier terminó de reiniciar el servidor de vista previa${message ? `: ${message}` : ''}`,
       failedRestarting: message => `Falló el reinicio del servidor: ${message}`,
       unknownError: 'error desconocido',
       restartedTitle: 'Servidor de vista previa reiniciado',
       reloadingNow: 'Recargando la vista previa ahora.',
       restartFailedTitle: 'Falló el reinicio de la vista previa',
-      restartFailedMessage: 'Hermes no pudo reiniciar el servidor.',
+      restartFailedMessage: 'Semantier no pudo reiniciar el servidor.',
       stillWorking:
-        'Hermes sigue trabajando, pero aún no llegó ningún resultado de reinicio. Puede que el comando del servidor siga en primer plano.',
+        'Semantier sigue trabajando, pero aún no llegó ningún resultado de reinicio. Puede que el comando del servidor siga en primer plano.',
       workspaceReloading: 'El espacio de trabajo cambió, recargando vista previa',
       fileChanged: url => `Archivo cambiado, recargando vista previa: ${url}`,
       filesChanged: (count, url) => `${count} cambios de archivo, recargando vista previa: ${url}`,
@@ -4882,12 +4882,12 @@ export const esOverrides = {
   },
   interfaceMode: {
     title: 'Modo de interfaz',
-    hint: 'Cambia lo que se muestra, no lo que Hermes puede hacer.',
+    hint: 'Cambia lo que se muestra, no lo que Semantier puede hacer.',
     sessionNote:
       'Definido por el modo Simple. Un cambio aquí dura esta sesión; cambia a Avanzado para que sea permanente.',
     simple: {
       label: 'Simple',
-      description: 'Para hablar con Hermes. Barra lateral y chat; sin paneles de terminal, archivos ni diferencias.'
+      description: 'Para hablar con Semantier. Barra lateral y chat; sin paneles de terminal, archivos ni diferencias.'
     },
     advanced: {
       label: 'Avanzado',
@@ -4973,7 +4973,7 @@ export const esOverrides = {
     thread: {
       loadingSession: 'Cargando sesión',
       showEarlier: 'Mostrar mensajes anteriores',
-      loadingResponse: 'Hermes está cargando una respuesta',
+      loadingResponse: 'Semantier está cargando una respuesta',
       loadingLocalModel: (model: string) => `Cargando ${model} en memoria`,
       processingPrompt: 'Procesando el prompt',
       resumeWhenBackgroundDone: count =>
@@ -4999,25 +4999,25 @@ export const esOverrides = {
         billing: 'Créditos agotados',
         disk: 'Disco lleno',
         endpoint: 'No se puede conectar con tu servidor de modelos',
-        gateway: 'Hermes tuvo un problema',
-        generic: 'Hermes no pudo terminar esta respuesta',
+        gateway: 'Semantier tuvo un problema',
+        generic: 'Semantier no pudo terminar esta respuesta',
         provider: 'El servicio de IA devolvió un error',
-        runtime: 'Hermes tuvo un problema',
+        runtime: 'Semantier tuvo un problema',
         streaming: 'La respuesta se cortó'
       },
       errorLayerBodies: {
         auth: 'El servicio de IA rechazó tu inicio de sesión. Revisa las credenciales de este proveedor y vuelve a enviar el mensaje.',
         billing: 'Tu cuenta no tiene créditos para este proveedor. Recarga o cambia de proveedor y vuelve a enviarlo.',
-        disk: 'Tu disco está lleno, así que Hermes no pudo guardar esta conversación. Libera espacio y reinténtalo.',
+        disk: 'Tu disco está lleno, así que Semantier no pudo guardar esta conversación. Libera espacio y reinténtalo.',
         endpoint:
-          'Hermes no puede conectar con tu servidor de modelos personalizado. Comprueba que esté en ejecución y vuelve a enviar el mensaje.',
+          'Semantier no puede conectar con tu servidor de modelos personalizado. Comprueba que esté en ejecución y vuelve a enviar el mensaje.',
         gateway:
-          'Hermes tuvo un problema interno al iniciar esta respuesta. Vuelve a enviar el mensaje; si sigue ocurriendo, envía un diagnóstico.',
-        generic: 'Algo salió mal mientras Hermes respondía. Reinténtalo o copia los detalles si sigue ocurriendo.',
+          'Semantier tuvo un problema interno al iniciar esta respuesta. Vuelve a enviar el mensaje; si sigue ocurriendo, envía un diagnóstico.',
+        generic: 'Algo salió mal mientras Semantier respondía. Reinténtalo o copia los detalles si sigue ocurriendo.',
         provider:
           'El servicio de IA no pudo completar esta solicitud. Reinténtalo en un momento o cambia de proveedor.',
         runtime:
-          'Hermes tuvo un problema interno al iniciar esta respuesta. Vuelve a enviar el mensaje; si sigue ocurriendo, envía un diagnóstico.',
+          'Semantier tuvo un problema interno al iniciar esta respuesta. Vuelve a enviar el mensaje; si sigue ocurriendo, envía un diagnóstico.',
         streaming: 'La conexión se cortó antes de que terminara la respuesta. Reinténtalo para enviarla de nuevo.'
       },
       errorCodes: {
@@ -5063,7 +5063,7 @@ export const esOverrides = {
         },
         no_reply: {
           title: 'La respuesta no terminó',
-          body: 'Hermes terminó este turno sin respuesta. Reinténtalo para enviarla de nuevo.'
+          body: 'Semantier terminó este turno sin respuesta. Reinténtalo para enviarla de nuevo.'
         },
         stream_drop: {
           title: 'La respuesta se cortó',
@@ -5077,7 +5077,7 @@ export const esOverrides = {
         ssl_cert_verification: {
           title: 'Falló la conexión segura',
           body: (provider: string) =>
-            `Hermes no pudo verificar la conexión segura con ${provider}. Revisa la configuración de red o del proxy, o cambia de proveedor, y vuelve a enviar el mensaje.`
+            `Semantier no pudo verificar la conexión segura con ${provider}. Revisa la configuración de red o del proxy, o cambia de proveedor, y vuelve a enviar el mensaje.`
         },
         context_overflow: {
           title: 'Esta conversación es demasiado larga',
@@ -5112,26 +5112,26 @@ export const esOverrides = {
         },
         invalid_response: {
           title: 'El servicio de IA envió una respuesta ilegible',
-          body: (provider: string) => `${provider} devolvió algo que Hermes no pudo leer. Reinténtalo en un momento.`
+          body: (provider: string) => `${provider} devolvió algo que Semantier no pudo leer. Reinténtalo en un momento.`
         },
         empty_response: {
           title: 'El servicio de IA envió una respuesta vacía',
           body: (provider: string) => `${provider} no devolvió nada para este mensaje. Reinténtalo en un momento.`
         },
         loop_error: {
-          title: 'Hermes se quedó atascado en un bucle',
-          body: 'La respuesta repetía los mismos pasos, así que Hermes la detuvo. Reinténtalo o empieza un chat nuevo si vuelve a ocurrir.'
+          title: 'Semantier se quedó atascado en un bucle',
+          body: 'La respuesta repetía los mismos pasos, así que Semantier la detuvo. Reinténtalo o empieza un chat nuevo si vuelve a ocurrir.'
         },
         SESSION_NOT_OWNED: {
           title: 'Este chat está abierto en otro sitio',
-          body: 'Este chat está abierto en otra ventana de Hermes o en un terminal. Ciérralo allí y vuelve a enviar el mensaje, o empieza un chat nuevo aquí.'
+          body: 'Este chat está abierto en otra ventana de Semantier o en un terminal. Ciérralo allí y vuelve a enviar el mensaje, o empieza un chat nuevo aquí.'
         },
         disk_full: {
           title: 'Disco lleno',
-          body: 'Tu disco está lleno, así que Hermes no pudo guardar esta conversación. Libera espacio y reinténtalo.'
+          body: 'Tu disco está lleno, así que Semantier no pudo guardar esta conversación. Libera espacio y reinténtalo.'
         },
         free_tier_disabled: {
-          title: 'El uso de Hermes sin iniciar sesión está desactivado ahora mismo',
+          title: 'El uso de Semantier sin iniciar sesión está desactivado ahora mismo',
           body: 'Inicia sesión con una cuenta de Nous para seguir chateando; es gratis.'
         },
         free_tier_rate_limited: {
@@ -5144,10 +5144,10 @@ export const esOverrides = {
         },
         free_tier_model_not_free: {
           title: 'Ese modelo no está disponible sin iniciar sesión',
-          body: 'Por ahora Hermes usa el modelo gratuito. Inicia sesión con una cuenta de Nous para tener más modelos; es gratis.'
+          body: 'Por ahora Semantier usa el modelo gratuito. Inicia sesión con una cuenta de Nous para tener más modelos; es gratis.'
         },
         free_tier_route: {
-          title: 'Hermes no pudo llegar al modelo gratuito por esta ruta',
+          title: 'Semantier no pudo llegar al modelo gratuito por esta ruta',
           body: 'Inicia sesión con una cuenta de Nous (es gratis) o revisa el ajuste NOUS_INFERENCE_BASE_URL.'
         },
         free_tier_outage: {
@@ -5155,7 +5155,7 @@ export const esOverrides = {
           body: 'Vuelve a enviar el mensaje dentro de un minuto.'
         },
         free_tier_refused: {
-          title: 'Hermes no pudo enviarlo sin iniciar sesión',
+          title: 'Semantier no pudo enviarlo sin iniciar sesión',
           body: 'Iniciar sesión con una cuenta de Nous es gratis.'
         }
       },
@@ -5171,7 +5171,7 @@ export const esOverrides = {
       },
       errorDetails: 'Detalles',
       errorGenericProvider: 'El servicio de IA',
-      errorToastTitle: 'Hermes no pudo terminar la respuesta',
+      errorToastTitle: 'Semantier no pudo terminar la respuesta',
       errorRetry: 'Reintentar',
       errorLimitResets: (time: string) => `El límite se restablece a las ${time}`,
       errorRetryAtReset: (time: string) => `Reintentar cuando se restablezca el límite (${time})`,
@@ -5182,8 +5182,8 @@ export const esOverrides = {
       errorChooseModel: 'Elegir un modelo',
       errorCompressConversation: 'Comprimir conversación',
       errorCompressFailed: 'No se pudo comprimir la conversación',
-      errorOpenHermesFolder: 'Abrir la carpeta de Hermes',
-      errorOpenHermesFolderFailed: 'No se pudo abrir la carpeta de Hermes',
+      errorOpenHermesFolder: 'Abrir la carpeta de Semantier',
+      errorOpenHermesFolderFailed: 'No se pudo abrir la carpeta de Semantier',
       errorUpdateApiKey: 'Actualizar clave API',
       errorSignInAgain: (provider: string) => `Volver a iniciar sesión en ${provider}`,
       errorSignInFreeTier: 'Iniciar sesión con una cuenta de Nous',
@@ -5220,11 +5220,11 @@ export const esOverrides = {
     },
     approval: {
       gatewayDisconnected:
-        'Hermes está sin conexión ahora mismo. El comando sigue esperando tu respuesta (hasta que se agote el tiempo de aprobación). Reconéctate y vuelve a enviarla.',
+        'Semantier está sin conexión ahora mismo. El comando sigue esperando tu respuesta (hasta que se agote el tiempo de aprobación). Reconéctate y vuelve a enviarla.',
       sendFailed: 'No se pudo enviar tu respuesta',
       reconnect: 'Reconectar',
       timedOutSystemLine:
-        'Se agotó el tiempo de aprobación: el comando no se ejecutó. Pide a Hermes que lo intente de nuevo o sube el límite en Configuración → Seguridad → Tiempo de aprobación.',
+        'Se agotó el tiempo de aprobación: el comando no se ejecutó. Pide a Semantier que lo intente de nuevo o sube el límite en Configuración → Seguridad → Tiempo de aprobación.',
       openSafetySettings: 'Abrir configuración de seguridad',
       run: 'Ejecutar',
       command: 'Comando',
@@ -5235,7 +5235,7 @@ export const esOverrides = {
       reject: 'Rechazar',
       alwaysTitle: '¿Permitir siempre este comando?',
       alwaysDescription: pattern =>
-        `Esto añade el patrón “${pattern}” a tu allowlist permanente (~/.hermes/config.yaml). Hermes no volverá a preguntar por comandos como este, ni en esta sesión ni en futuras.`,
+        `Esto añade el patrón “${pattern}” a tu allowlist permanente (~/.hermes/config.yaml). Semantier no volverá a preguntar por comandos como este, ni en esta sesión ni en futuras.`,
       alwaysAllow: 'Permitir siempre'
     },
     clarify: esClarify,
@@ -5288,7 +5288,7 @@ export const esOverrides = {
       envRequired: 'Rellena primero las credenciales obligatorias',
       sendFailed: 'No se pudo enviar la respuesta de configuración MCP',
       reloadFailed: 'Servidor guardado, pero falló la recarga de herramientas MCP — se cargarán en la próxima sesión',
-      gatewayDisconnected: 'Hermes está sin conexión ahora mismo. Reconéctate y vuelve a enviarlo.'
+      gatewayDisconnected: 'Semantier está sin conexión ahora mismo. Reconéctate y vuelve a enviarlo.'
     },
     tool: {
       copyCode: 'Copiar código',
@@ -5474,7 +5474,7 @@ export const esOverrides = {
     }
   },
   prompts: {
-    gatewayDisconnected: 'Hermes está sin conexión ahora mismo. Reconéctate y vuelve a enviarlo.',
+    gatewayDisconnected: 'Semantier está sin conexión ahora mismo. Reconéctate y vuelve a enviarlo.',
     reconnect: 'Reconectar',
     sudoSendFailed: 'No se pudo enviar la contraseña sudo',
     secretSendFailed: 'No se pudo enviar el secreto',
@@ -5483,10 +5483,10 @@ export const esOverrides = {
       'Revisa el comando antes de introducir tu contraseña de sudo. La contraseña se envía al agente que lo ejecuta y se guarda en caché durante esta sesión.',
     sudoCommandUnavailable: 'Este agente no indicó el comando. Cancela si no puedes verificarlo en la conversación.',
     sudoInstallDesc:
-      'Hermes necesita tu contraseña de sudo para instalar los paquetes de Bot Screen (TigerVNC + Xfce) en el host del gateway. Solo se envía a ese host.',
+      'Semantier necesita tu contraseña de sudo para instalar los paquetes de Bot Screen (TigerVNC + Xfce) en el host del gateway. Solo se envía a ese host.',
     sudoPlaceholder: 'contraseña sudo',
     secretTitle: 'Se requiere un secreto',
-    secretDesc: 'Hermes necesita una credencial para continuar.',
+    secretDesc: 'Semantier necesita una credencial para continuar.',
     secretPlaceholder: 'valor secreto',
     vaultUnlockSendFailed: 'No se pudo enviar la contraseña maestra',
     vaultUnlockTitle: (name: string) => `Desbloquear ${name}`,
@@ -5498,7 +5498,7 @@ export const esOverrides = {
     vaultSaveSendFailed: 'No se pudo guardar el acceso',
     vaultSaveTitle: (site: string) => `¿Guardar tu acceso a ${site}?`,
     vaultSaveDesc: (origin: string) =>
-      `Hermes llegó a una página de inicio de sesión en ${origin} y no tiene un acceso para ella. Introdúcelo una vez aquí; se cifra en este equipo y se rellena en la página sin que el modelo vea nunca la contraseña.`,
+      `Semantier llegó a una página de inicio de sesión en ${origin} y no tiene un acceso para ella. Introdúcelo una vez aquí; se cifra en este equipo y se rellena en la página sin que el modelo vea nunca la contraseña.`,
     vaultSaveIdentifierLabel: 'Correo electrónico o nombre de usuario',
     vaultSaveIdentifierPlaceholder: 'tu@ejemplo.com',
     vaultSavePasswordPlaceholder: 'Contraseña',
@@ -5508,10 +5508,10 @@ export const esOverrides = {
     vaultCodeSendFailed: 'No se pudo enviar el código',
     vaultCodeTitle: (site: string) => `Código de verificación de ${site}`,
     vaultCodeDesc: (site: string) =>
-      `${site} pide un código de un solo uso (SMS, correo o app de autenticación). Introdúcelo aquí y Hermes lo escribe en la página; el modelo nunca lo ve.`,
+      `${site} pide un código de un solo uso (SMS, correo o app de autenticación). Introdúcelo aquí y Semantier lo escribe en la página; el modelo nunca lo ve.`,
     vaultCodeLabel: 'Código',
     vaultCodeFootnote:
-      'Consejo: guarda la clave del autenticador con este acceso en Configuración → Contraseñas e inicios de sesión y Hermes introducirá los códigos por ti.',
+      'Consejo: guarda la clave del autenticador con este acceso en Configuración → Contraseñas e inicios de sesión y Semantier introducirá los códigos por ti.',
     vaultCodeSkip: 'Omitir',
     vaultCodeConfirm: 'Introducir código'
   },
@@ -5581,8 +5581,8 @@ export const esOverrides = {
     sessionExportFailed: 'No se pudo exportar la sesión',
     imageSaved: 'Imagen guardada',
     downloadStarted: 'Descarga iniciada',
-    restartToUseSaveImage: 'Reinicia Hermes Desktop para usar Guardar imagen.',
-    restartToSaveImages: 'Reinicia Hermes Desktop para guardar imágenes',
+    restartToUseSaveImage: 'Reinicia Semantier Agent para usar Guardar imagen.',
+    restartToSaveImages: 'Reinicia Semantier Agent para guardar imágenes',
     imageDownloadFailed: 'Falló la descarga de imagen',
     openImage: 'Abrir imagen',
     downloadImage: 'Descargar imagen',
@@ -5604,7 +5604,7 @@ export const esOverrides = {
       systemNote: platform => `↻ Transferido a ${platform}; puedes reanudar aquí cuando quieras.`,
       failed: error => `La transferencia falló: ${error}`,
       timedOut:
-        'Hermes no pudo llegar a tu conexión de mensajería. Iníciala desde Configuración → Mensajería y vuelve a intentar el traspaso.',
+        'Semantier no pudo llegar a tu conexión de mensajería. Iníciala desde Configuración → Mensajería y vuelve a intentar el traspaso.',
       startMessaging: 'Iniciar mensajería'
     }
   },
@@ -5617,14 +5617,14 @@ export const esOverrides = {
       },
       skills: {
         title: 'Enséñale una vez',
-        text: 'Las skills son carpetas de instrucciones que Hermes carga cuando el trabajo las necesita.'
+        text: 'Las skills son carpetas de instrucciones que Semantier carga cuando el trabajo las necesita.'
       },
       messaging: {
-        title: 'Hermes lejos de tu escritorio',
+        title: 'Semantier lejos de tu escritorio',
         text: 'Conecta Telegram, Discord, Slack y más: el mismo agente, la misma memoria.'
       },
       artifacts: {
-        title: 'Todo lo que ha creado Hermes',
+        title: 'Todo lo que ha creado Semantier',
         text: 'Imágenes, archivos y enlaces de cada sesión, indexados en un solo lugar.'
       },
       cron: {
@@ -5637,7 +5637,7 @@ export const esOverrides = {
       },
       profiles: {
         title: 'Los perfiles son independientes',
-        text: 'Cada uno es su propio Hermes: sus propias claves, su propia memoria, sus propias sesiones.'
+        text: 'Cada uno es su propio Semantier: sus propias claves, su propia memoria, sus propias sesiones.'
       },
       'composer-mentions': {
         title: 'Adjunta y ordena',

@@ -35,7 +35,7 @@ export const zhFirstRun: FirstRunCopy = {
     notNow: '暂不'
   },
   intro: {
-    greeting: '你好，我是 Hermes。',
+    greeting: '你好，我是 Semantier。',
     plan: '我们先帮你把一切设置好，然后一起做点很酷的事。'
   },
   rerun: {

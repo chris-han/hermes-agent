@@ -3,19 +3,19 @@ import type { TranslationOverrides } from './define-locale'
 // The boot screen's copy, composed by ru.ts.
 export const ruBoot = {
   boot: {
-    ready: 'Hermes Desktop готов',
+    ready: 'Semantier Agent готов',
     desktopBootFailedWithMessage: message => `Не удалось запустить приложение: ${message}`,
     steps: {
       connectingGateway: 'Подключение к шлюзу',
-      loadingSettings: 'Загрузка настроек Hermes',
+      loadingSettings: 'Загрузка настроек Semantier',
       loadingSessions: 'Загрузка последних сеансов',
       retryingRemoteBackend: 'Переподключение к удалённому бэкенду Hermes…',
       startingDesktopConnection: 'Запуск подключения приложения',
-      startingHermesDesktop: 'Запуск Hermes Desktop…'
+      startingHermesDesktop: 'Запуск Semantier Agent…'
     },
     errors: {
-      backgroundExited: 'Фоновый процесс Hermes завершён.',
-      backgroundExitedDuringStartup: 'Фоновый процесс Hermes завершился при запуске.',
+      backgroundExited: 'Фоновый процесс Semantier завершён.',
+      backgroundExitedDuringStartup: 'Фоновый процесс Semantier завершился при запуске.',
       backendStopped: 'Бэкенд остановлен',
       desktopBootFailed: 'Не удалось запустить приложение',
       gatewayConnectionLost: 'Соединение с шлюзом потеряно',
@@ -23,7 +23,7 @@ export const ruBoot = {
       ipcBridgeUnavailable: 'IPC-мост приложения недоступен.'
     },
     failure: {
-      title: 'Hermes не удалось запустить',
+      title: 'Semantier не удалось запустить',
       description:
         'Фоновый шлюз не запустился. Попробуйте один из шагов восстановления ниже. Ничто из этого не удаляет ваши чаты и настройки.',
       remoteTitle: 'Требуется вход в удалённый шлюз',

@@ -3,19 +3,19 @@ import type { TranslationOverrides } from './define-locale'
 
 export const arBoot = {
   boot: {
-    ready: 'Hermes Desktop جاهز',
+    ready: 'Semantier Agent جاهز',
     desktopBootFailedWithMessage: message => `فشل تشغيل سطح المكتب: ${message}`,
     steps: {
       connectingGateway: 'جار الاتصال ببوابة سطح المكتب',
-      loadingSettings: 'جار تحميل إعدادات Hermes',
+      loadingSettings: 'جار تحميل إعدادات Semantier',
       loadingSessions: 'جار تحميل الجلسات الأخيرة',
       retryingRemoteBackend: 'جارٍ إعادة الاتصال بخادم Hermes البعيد…',
       startingDesktopConnection: 'جار بدء اتصال سطح المكتب',
-      startingHermesDesktop: 'جار تشغيل Hermes Desktop...'
+      startingHermesDesktop: 'جار تشغيل Semantier Agent...'
     },
     errors: {
-      backgroundExited: 'خرجت عملية Hermes الخلفية.',
-      backgroundExitedDuringStartup: 'خرجت عملية Hermes الخلفية أثناء بدء التشغيل.',
+      backgroundExited: 'خرجت عملية Semantier الخلفية.',
+      backgroundExitedDuringStartup: 'خرجت عملية Semantier الخلفية أثناء بدء التشغيل.',
       backendStopped: 'توقف الخلفية',
       desktopBootFailed: 'فشل تشغيل سطح المكتب',
       gatewayConnectionLost: 'انقطع الاتصال بالبوابة',
@@ -25,7 +25,7 @@ export const arBoot = {
       ipcBridgeUnavailable: 'جسر IPC لسطح المكتب غير متاح.'
     },
     failure: {
-      title: 'تعذر تشغيل Hermes',
+      title: 'تعذر تشغيل Semantier',
       description: 'لم تعمل البوابة الخلفية. جرب إحدى خطوات الاسترداد أدناه. لن يحذف ذلك محادثاتك أو إعداداتك.',
       remoteTitle: 'تسجيل الدخول للبوابة البعيدة مطلوب',
       remoteDescription: 'انتهت جلسة البوابة البعيدة. سجل الدخول مرة أخرى لإعادة الاتصال.',
@@ -56,9 +56,9 @@ export const arBoot = {
     }
   },
   keepAwakeOffer: {
-    title: 'دخل جهاز الكمبيوتر في وضع السكون أثناء عمل Hermes',
+    title: 'دخل جهاز الكمبيوتر في وضع السكون أثناء عمل Semantier',
     message:
-      'يمكن لـ Hermes إبقاء جهازك مستيقظًا أثناء تشغيل مهمة. ستنطفئ الشاشة كالمعتاد، وقد يدخل الجهاز في وضع السكون عند العمل بالبطارية.',
+      'يمكن لـ Semantier إبقاء جهازك مستيقظًا أثناء تشغيل مهمة. ستنطفئ الشاشة كالمعتاد، وقد يدخل الجهاز في وضع السكون عند العمل بالبطارية.',
     action: 'إبقاء الجهاز مستيقظًا أثناء العمل'
   },
   remoteDisplayBanner: {
@@ -80,13 +80,13 @@ export const arBoot = {
     sessionCommands: arSessionCommands
   },
   updates: {
-    discontinuedTitle: 'لم يعد إصدار Hermes هذا مدعومًا',
-    discontinuedBody: 'لم يعد إصدار Hermes هذا مدعومًا وقد يتوقف عن العمل — ألغِ تثبيته. ستبقى بياناتك على القرص.',
+    discontinuedTitle: 'لم يعد إصدار Semantier هذا مدعومًا',
+    discontinuedBody: 'لم يعد إصدار Semantier هذا مدعومًا وقد يتوقف عن العمل — ألغِ تثبيته. ستبقى بياناتك على القرص.',
     channels: { stable: 'مستقر', canary: 'تجريبي' },
     bundleSwapPending: 'أعد التشغيل لإكمال التحديث',
     bundleSwapPendingDesc:
-      'تم تثبيت التطبيق المحدَّث بالفعل — يكفي إعادة تشغيل Hermes لتحميله. لن تتأثر المحادثات أو الإعدادات.',
-    bundleSwapPendingAction: 'إعادة تشغيل Hermes',
+      'تم تثبيت التطبيق المحدَّث بالفعل — يكفي إعادة تشغيل Semantier لتحميله. لن تتأثر المحادثات أو الإعدادات.',
+    bundleSwapPendingAction: 'إعادة تشغيل Semantier',
     stages: {
       idle: 'جار التحضير...',
       prepare: 'جار التحضير...',
@@ -95,7 +95,7 @@ export const arBoot = {
       pydeps: 'جار الإنهاء...',
       update: 'جار تحديث Hermes...',
       rebuild: 'جار إعادة بناء تطبيق سطح المكتب...',
-      restart: 'جار إعادة تشغيل Hermes...',
+      restart: 'جار إعادة تشغيل Semantier...',
       done: 'اكتمل التحديث',
       manual: 'التحديث من الطرفية',
       guiSkew: 'تحديث تطبيق سطح المكتب',
@@ -105,8 +105,8 @@ export const arBoot = {
     checkFailedTitle: 'تعذّر التحقق من التحديثات',
     tryAgain: 'إعادة المحاولة',
     notAvailableTitle: 'التحديث غير متاح',
-    unsupportedMessage: 'لا يمكن لهذا الإصدار من Hermes تحديث نفسه من داخل التطبيق.',
-    appName: 'Hermes Desktop',
+    unsupportedMessage: 'لا يمكن لهذا الإصدار من Semantier تحديث نفسه من داخل التطبيق.',
+    appName: 'Semantier Agent',
     version: value => `الإصدار ${value}`,
     versionUnavailable: 'الإصدار غير متاح',
     bundleOutOfSync: 'إصدار التطبيق قديم',
@@ -150,16 +150,16 @@ export const arBoot = {
     versionDetailsInstallId: 'معرّف التثبيت',
     versionDetailsUncommittedChanges: '(+ تغييرات غير ملتزمة)',
     connectionRetry: 'تحقق من اتصالك وأعد المحاولة.',
-    gitUnusable: 'لم يتمكن Hermes من تشغيل Git على هذا الجهاز، لذا لم يتمكن من التحقق من التحديثات.',
+    gitUnusable: 'لم يتمكن Semantier من تشغيل Git على هذا الجهاز، لذا لم يتمكن من التحقق من التحديثات.',
     latestBody: 'أنت تستخدم أحدث إصدار.',
     latestBodyBackend: 'الواجهة الخلفية تعمل بأحدث إصدار.',
     allSetTitle: 'كل شيء جاهز',
     availableTitle: 'يتوفر تحديث جديد',
-    availableBody: 'إصدار جديد من Hermes جاهز للتثبيت.',
+    availableBody: 'إصدار جديد من Semantier جاهز للتثبيت.',
     availableTitleBackend: 'يتوفر تحديث للواجهة الخلفية',
     availableBodyBackend: 'إصدار أحدث من واجهة Hermes الخلفية المتصلة جاهز للتثبيت.',
     availableBodyNoChangelog: 'إصدار أحدث جاهز. ملاحظات الإصدار غير متاحة لنوع التثبيت هذا.',
-    availableBodyRelease: (tag: string) => `Hermes ${tag} جاهز للتثبيت.`,
+    availableBodyRelease: (tag: string) => `Semantier ${tag} جاهز للتثبيت.`,
     updateNow: 'التحديث الآن',
     maybeLater: 'ربما لاحقا',
     moreChanges: count => `+ ${count} تغيير${count === 1 ? '' : 'ات'} إضافي مُضمَّن.`,
@@ -168,28 +168,28 @@ export const arBoot = {
     manualUnavailableTitle: 'لا يمكن التحديث من هنا',
     manualBody: 'لقد ثبّتت Hermes من سطر الأوامر، لذا تُجرى التحديثات من هناك أيضا. الصق هذا في طرفيتك:',
     manualBodyBackend: 'تتم إدارة خادم Hermes خارج هذا التطبيق. نفّذ هذا الأمر على الخادم الذي يستضيفه:',
-    manualPickedUp: 'سيلتقط Hermes الإصدار الجديد في المرة التالية التي تشغّله فيها.',
+    manualPickedUp: 'سيلتقط Semantier الإصدار الجديد في المرة التالية التي تشغّله فيها.',
     manualPickedUpBackend: 'سيحمّل الخادم الإصدار الجديد بعد اكتمال التحديث.',
     guiSkewTitle: 'تحديث تطبيق سطح المكتب',
     guiSkewBody:
-      'تم تحديث الواجهة الخلفية، لكن حزمة تطبيق سطح المكتب هذه لم تتغير. حدّث أو أعد تثبيت تطبيق Hermes لسطح المكتب (ملف AppImage / ‎.deb / ‎.rpm) لمطابقته.',
+      'تم تحديث الواجهة الخلفية، لكن حزمة تطبيق سطح المكتب هذه لم تتغير. حدّث أو أعد تثبيت تطبيق Semantier لسطح المكتب (ملف AppImage / ‎.deb / ‎.rpm) لمطابقته.',
     copy: 'نسخ',
     copied: 'تم النسخ',
     done: 'تم',
     applyingBody:
-      'يتولّى مُحدِّث Hermes المهمة في نافذته الخاصة ويعيد فتح Hermes تلقائيا عند الانتهاء. الرجاء عدم إعادة فتح Hermes بنفسك أثناء التحديث.',
+      'يتولّى مُحدِّث Semantier المهمة في نافذته الخاصة ويعيد فتح Semantier تلقائيا عند الانتهاء. الرجاء عدم إعادة فتح Semantier بنفسك أثناء التحديث.',
     applyingBodyBackend:
-      'تطبّق الواجهة الخلفية البعيدة التحديث وستعيد التشغيل. يعيد Hermes الاتصال تلقائيا عند عودتها.',
-    applyingClose: 'ستُغلق هذه النافذة أثناء تشغيل التحديث، ثم يعيد Hermes فتح نفسه تلقائيا.',
+      'تطبّق الواجهة الخلفية البعيدة التحديث وستعيد التشغيل. يعيد Semantier الاتصال تلقائيا عند عودتها.',
+    applyingClose: 'ستُغلق هذه النافذة أثناء تشغيل التحديث، ثم يعيد Semantier فتح نفسه تلقائيا.',
     errorTitle: 'لم يكتمل التحديث',
     errorBody: 'لا داعي للقلق — لم يُفقد شيء. يمكنك إعادة المحاولة الآن.',
-    blockerTitle: 'إغلاق المعاينات المحلية لتحديث Hermes؟',
-    blockerBody: 'يحتاج Hermes إلى إيقاف هذه المعاينات المحلية قبل التحديث. لن يؤدي ذلك إلى تعديل ملفاتك أو حذفها.',
-    foreignBlockerTitle: 'أغلق العمليات الأخرى لتحديث Hermes',
+    blockerTitle: 'إغلاق المعاينات المحلية لتحديث Semantier؟',
+    blockerBody: 'يحتاج Semantier إلى إيقاف هذه المعاينات المحلية قبل التحديث. لن يؤدي ذلك إلى تعديل ملفاتك أو حذفها.',
+    foreignBlockerTitle: 'أغلق العمليات الأخرى لتحديث Semantier',
     foreignBlockerBody:
-      'لا يمكن لـ Hermes إغلاق هذه العمليات تلقائيًا بأمان. أغلق التطبيق أو الطرفية أو الخدمة التي تشغّل كل عملية، ثم حاول التحديث مرة أخرى.',
+      'لا يمكن لـ Semantier إغلاق هذه العمليات تلقائيًا بأمان. أغلق التطبيق أو الطرفية أو الخدمة التي تشغّل كل عملية، ثم حاول التحديث مرة أخرى.',
     mixedBlockerBody:
-      'يمكن لـ Hermes إغلاق المعاينات المحلية المدرجة أدناه. يجب إغلاق العمليات الأخرى يدويًا قبل متابعة التحديث.',
+      'يمكن لـ Semantier إغلاق المعاينات المحلية المدرجة أدناه. يجب إغلاق العمليات الأخرى يدويًا قبل متابعة التحديث.',
     closePreviewsAndUpdate: 'إغلاق المعاينات والتحديث',
     closePreviewsAndCheckAgain: 'إغلاق المعاينات والتحقق مجددًا',
     localPreview: 'معاينة محلية',
@@ -260,12 +260,12 @@ export const arBoot = {
     reloadRetry: 'إعادة التحميل وإعادة المحاولة'
   },
   onboarding: {
-    headerTitle: 'لنُعِدّ لك Hermes Agent',
+    headerTitle: 'لنُعِدّ لك Semantier Agent',
     headerDesc: 'اربط مزوّد نماذج لبدء المحادثة. معظم الخيارات تتطلب نقرة واحدة.',
-    preparingInstall: 'يُكمل Hermes التثبيت. عادة ما يستغرق ذلك أقل من دقيقة في أول تشغيل.',
-    starting: 'جار بدء Hermes...',
+    preparingInstall: 'يُكمل Semantier التثبيت. عادة ما يستغرق ذلك أقل من دقيقة في أول تشغيل.',
+    starting: 'جار بدء Semantier...',
     setupSlowTitle: 'يستغرق الإعداد وقتا أطول من المعتاد.',
-    setupSlowBody: 'لا يزال Hermes قيد البدء في الخلفية.',
+    setupSlowBody: 'لا يزال Semantier قيد البدء في الخلفية.',
     continueWithoutSetup: 'المتابعة دون إعداد',
     lookingUpProviders: 'جار البحث عن المزوّدين...',
     collapse: 'طي',
@@ -274,7 +274,7 @@ export const arBoot = {
     chooseLater: 'سأختار مزوّدا لاحقا',
     recommended: 'موصى به',
     connected: 'متصل',
-    featuredPitch: 'اشتراك واحد، أكثر من 300 نموذج متقدم — الطريقة الموصى بها لتشغيل Hermes',
+    featuredPitch: 'اشتراك واحد، أكثر من 300 نموذج متقدم — الطريقة الموصى بها لتشغيل Semantier',
     fireworksPitch: 'نماذج مفتوحة سريعة مع استضافة Fireworks.',
     openRouterPitch: 'مفتاح واحد لمئات النماذج — خيار افتراضي جيد',
     apiKeyOptions: {
@@ -297,7 +297,7 @@ export const arBoot = {
       local: {
         short: 'مستضاف ذاتيا',
         description:
-          'وجّه Hermes إلى نقطة نهاية محلية أو مستضافة ذاتيا متوافقة مع OpenAI (vLLM، llama.cpp، Ollama، إلخ).'
+          'وجّه Semantier إلى نقطة نهاية محلية أو مستضافة ذاتيا متوافقة مع OpenAI (vLLM، llama.cpp، Ollama، إلخ).'
       }
     },
     backToSignIn: 'العودة إلى تسجيل الدخول',
@@ -310,7 +310,7 @@ export const arBoot = {
     update: 'تحديث',
     flowSubtitles: {
       pkce: 'يفتح المتصفح لتسجيل الدخول ثم يتابع هنا',
-      device_code: 'يفتح صفحة تحقق في المتصفح — يتصل Hermes تلقائياً',
+      device_code: 'يفتح صفحة تحقق في المتصفح — يتصل Semantier تلقائياً',
       external: 'سجل الدخول مرة واحدة في الطرفية ثم عد إلى المحادثة'
     },
     startingSignIn: provider => `جار بدء تسجيل الدخول لـ ${provider}...`,
