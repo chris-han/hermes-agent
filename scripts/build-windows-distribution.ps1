@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
   Native half of scripts/build_hermes_windows.py (Semantier parent repository).
-  Retains a dedicated native build worktree/cache. Never resets the original checkout,
+  Retains a dedicated native checkout/cache. Never resets an occupied checkout,
   pushes, installs, creates certificates or changes trust. All output directories are fresh.
 #>
 [CmdletBinding()]
@@ -15,8 +15,9 @@ $output = [IO.Path]::GetFullPath($request.output).TrimEnd('\')
 foreach ($path in @($repo,$work,$output)) {
   if ($path -notmatch '^[A-Za-z]:\\' -or $path.Length -le 3) { throw 'Use Windows-native drive paths, not WSL/UNC roots' }
 }
-if ($repo -eq $work -or $repo.StartsWith($work + '\',[StringComparison]::OrdinalIgnoreCase) -or
-    $work.StartsWith($repo + '\',[StringComparison]::OrdinalIgnoreCase)) { throw 'Build worktree must be separate from the original checkout' }
+$standalone = $repo -ieq $work
+if (!$standalone -and ($repo.StartsWith($work + '\',[StringComparison]::OrdinalIgnoreCase) -or
+    $work.StartsWith($repo + '\',[StringComparison]::OrdinalIgnoreCase))) { throw 'Separate repository and worktree paths must not be nested' }
 if ($output -eq $work -or $output.StartsWith($work + '\',[StringComparison]::OrdinalIgnoreCase) -or
     $work.StartsWith($output + '\',[StringComparison]::OrdinalIgnoreCase) -or
     $output -eq $repo -or $output.StartsWith($repo + '\',[StringComparison]::OrdinalIgnoreCase)) { throw 'Output must be outside both checkouts' }
@@ -62,35 +63,44 @@ try {
   $source = $request.commit
   if (!$request.unsignedReceipt) {
     $marker = $work + '.distribution-owner.json'
+    $existing = Test-Path -LiteralPath $work
+    if (!$existing -and (Test-Path -LiteralPath $marker)) { throw 'Stale worktree owner marker requires inspection' }
+    if ($existing -and !(Test-Path -LiteralPath $marker)) { throw 'Occupied worktree has no ownership marker; choose a different path' }
+    if ($standalone -and !$existing) {
+      Native 'git' @('init',$work)
+    }
     $common = [IO.Path]::GetFullPath([string](Git-Value $repo @('rev-parse','--path-format=absolute','--git-common-dir')))
-    $originalHead = [string](Git-Value $repo @('rev-parse','HEAD'))
-    $originalStatus = @(Git-Value $repo @('status','--porcelain','--untracked-files=all'))
+    if (!$standalone) {
+      $originalHead = [string](Git-Value $repo @('rev-parse','HEAD'))
+      $originalStatus = @(Git-Value $repo @('status','--porcelain','--untracked-files=all'))
+    }
+    if ($existing) {
+      $owner = Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json
+      if ($owner.repository -cne $repo -or $owner.commonDirectory -cne $common -or $owner.kind -cne 'hermes-windows-distribution-v1') { throw 'Worktree ownership mismatch' }
+      if ([IO.Path]::GetFullPath([string](Git-Value $work @('rev-parse','--show-toplevel'))) -ine $work -or
+          [IO.Path]::GetFullPath([string](Git-Value $work @('rev-parse','--path-format=absolute','--git-common-dir'))) -ine $common) { throw 'Worktree registration mismatch' }
+      if (@(Git-Value $work @('status','--porcelain','--untracked-files=all')).Count) { throw 'Build worktree is dirty; preserve it and resolve changes or choose a fresh path' }
+      if (@(Git-Value $work @('branch','--show-current')).Count) { throw 'Owned build worktree must remain detached' }
+    }
     $bundle = Join-Path $output 'source.bundle'
     Copy-Item -LiteralPath $request.bundle -Destination $bundle
     Native 'git' @('-C',$repo,'bundle','verify',$bundle)
     Native 'git' @('-C',$repo,'fetch','--no-write-fetch-head',$bundle,$request.bundleRef)
     $transferred = [string](Git-Value $repo @('rev-parse',($request.commit + '^{commit}')))
     if ($transferred -cne $request.commit) { throw 'Transferred commit identity mismatch' }
-    if (Test-Path -LiteralPath $work) {
-      if (!(Test-Path -LiteralPath $marker)) { throw 'Occupied worktree has no ownership marker; choose a different path' }
-      $owner = Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json
-      if ($owner.repository -cne $repo -or $owner.commonDirectory -cne $common -or $owner.kind -cne 'hermes-windows-distribution-v1') { throw 'Worktree ownership mismatch' }
-      if ([IO.Path]::GetFullPath([string](Git-Value $work @('rev-parse','--show-toplevel'))) -ine $work -or
-          [IO.Path]::GetFullPath([string](Git-Value $work @('rev-parse','--path-format=absolute','--git-common-dir'))) -ine $common) { throw 'Worktree registration mismatch' }
-      if (@(Git-Value $work @('status','--porcelain','--untracked-files=all')).Count) { throw 'Build worktree is dirty; preserve it and resolve changes or choose a fresh path' }
-      # Never detach a user-created branch in an occupied workspace.
-      if (@(Git-Value $work @('branch','--show-current')).Count) { throw 'Owned build worktree must remain detached' }
+    if ($existing -or $standalone) {
       Native 'git' @('-C',$work,'checkout','--detach',$source)
     } else {
-      if (Test-Path -LiteralPath $marker) { throw 'Stale worktree owner marker requires inspection' }
       Native 'git' @('-C',$repo,'worktree','add','--detach',$work,$source)
+    }
+    if (!$existing) {
       Json-File ([ordered]@{kind='hermes-windows-distribution-v1';repository=$repo;commonDirectory=$common;createdAt=[DateTime]::UtcNow.ToString('o')}) $marker
     }
     if ([string](Git-Value $work @('rev-parse','HEAD')) -cne $source) { throw 'Build HEAD mismatch' }
-    if ([string](Git-Value $repo @('rev-parse','HEAD')) -cne $originalHead -or
-        (($originalStatus -join "`n") -cne (@(Git-Value $repo @('status','--porcelain','--untracked-files=all')) -join "`n"))) { throw 'Original checkout changed concurrently; build stopped without resetting it' }
+    if (!$standalone -and ([string](Git-Value $repo @('rev-parse','HEAD')) -cne $originalHead -or
+        (($originalStatus -join "`n") -cne (@(Git-Value $repo @('status','--porcelain','--untracked-files=all')) -join "`n")))) { throw 'Original checkout changed concurrently; build stopped without resetting it' }
     if ($request.preflight) {
-      Json-File ([ordered]@{result='PREFLIGHT_PASS';sourceCommit=$source;certificateThumbprint=$cert.Thumbprint;certificateSubject=$cert.Subject;certificateNotBefore=$cert.NotBefore.ToUniversalTime().ToString('o');certificateNotAfter=$cert.NotAfter.ToUniversalTime().ToString('o');signTool=$signTool;sevenZip=$sevenZip;worktree=$work}) (Join-Path $output 'preflight.json')
+      Json-File ([ordered]@{result='PREFLIGHT_PASS';sourceCommit=$source;certificateThumbprint=$cert.Thumbprint;certificateSubject=$cert.Subject;certificateNotBefore=$cert.NotBefore.ToUniversalTime().ToString('o');certificateNotAfter=$cert.NotAfter.ToUniversalTime().ToString('o');signTool=$signTool;sevenZip=$sevenZip;repository=$repo;standalone=$standalone;worktree=$work}) (Join-Path $output 'preflight.json')
       Write-Host 'Preflight passed. No build, signing, installation or trust change.'
       exit 0
     }

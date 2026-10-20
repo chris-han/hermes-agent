@@ -89,7 +89,11 @@ goes to `apps/desktop/release/`.
 Download caches remain under `.cache/desktop-inputs`, including private Windows
 LOCALAPPDATA caches for Electron and Rust bootstrap tools. They never use Linux
 native artifacts or the user's application state. The local distribution
-controller (`scripts/build-windows-distribution.ps1`) retains this workspace and
+controller (`scripts/build-windows-distribution.ps1`) accepts a standalone native
+checkout (`repository` equals `worktree`), or an explicitly separate repository
+and linked worktree. The Semantier WSL entry defaults to the standalone layout,
+transferring exact committed source by local Git bundle. It rejects occupied
+unowned, dirty or branch-attached build workspaces. It retains this workspace and
 holds its exclusive lock across the full build. Only that serial path enables a
 persistent prebuilt-wheel cache when compiler identity is incomplete: PM invokes
 `uv cache clean` for cached PyPI source builds and local project packages before
