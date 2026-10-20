@@ -154,6 +154,10 @@ def prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
         raise ValueError("symlinked native output")
     out.mkdir(parents=True, exist_ok=True)
     with preparation_lock(out):
+        from scripts.bundles.runtime_cache import retained_runtime
+        owned_candidate = retained_runtime(out, Path(source).resolve())
+        if runtime_cache is not None and any(out.iterdir()) and not owned_candidate:
+            raise ValueError('nonempty native output has no admitted retention ownership')
         prepared_path(out).unlink(missing_ok=True)
         (out / "manifest.json").unlink(missing_ok=True)
         from scripts.bundles.runtime_cache import measure
@@ -168,8 +172,15 @@ def prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
         entry, key = runtime_cache
         with cache_lock(entry):
             restored = restore_cache(entry, key, out, Path(source).resolve(), ref)
+            if restored is None and owned_candidate:
+                from pm.filesystem import remove_tree
+                same_key = retained_runtime(out, Path(source).resolve(), key)
+                remove_tree(out)
+                out.mkdir()
+                if not same_key:
+                    restored = restore_cache(entry, key, out, Path(source).resolve(), ref)
             if restored is not None:
-                print(f"runtime: reusing verified sealed preparation {key}", flush=True)
+                print(f"runtime: reusing sealed preparation candidate {key}; byte admission follows", flush=True)
                 return restored
             result = cold()
             publish_cache(entry, key, out, result)
@@ -330,11 +341,16 @@ def finish_native(prepared: Path, frontends: dict[str, Path]) -> int:
     out = prepared.with_name(prepared.name.removesuffix(".prepared.json"))
     with preparation_lock(out):
         (out / "manifest.json").unlink(missing_ok=True)
-        inputs = load_prepared(prepared)
+        from scripts.bundles.runtime_cache import measure
+        serial = os.environ.get("HERMES_DESKTOP_SERIAL_CACHE")
+        log_root = Path(serial) if serial else None
+        with measure(log_root, "runtime.admission"):
+            inputs = load_prepared(prepared)
         values = asdict(inputs)
         values["frontends"] = {name: Path(path).absolute() for name, path in frontends.items()}
         print("assembling verified payload", flush=True)
-        assemble(AgentInputs.from_dict(values), out)
+        with measure(log_root, "runtime.assembly"):
+            assemble(AgentInputs.from_dict(values), out)
     print(f"✓ manifest ({out / 'manifest.json'})")
     return 0
 

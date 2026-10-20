@@ -3,6 +3,7 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
+import pytest
 from scripts.bundles.runtime_cache import runtime_key, publish_cache, restore_cache
 
 
@@ -24,11 +25,11 @@ def test_key_reuses_ui_and_invalidates_backend_recipe_toolchain(tmp_path):
     (tmp_path/'scripts/bundles/native.py').write_text('new recipe'); assert key()!=second
 
 
-def payload(tmp_path):
+def payload(tmp_path, location=None):
     from scripts.build.inputs import AgentInputs, RESOURCE_ENV
     from scripts.bundles.native_prepared import publish_prepared
     from pm.store import current_target
-    out=tmp_path/'cold'; out.mkdir(); code=out/'hermes-agent'; code.mkdir()
+    out=location or tmp_path/'cold'; out.mkdir(parents=True); code=out/'hermes-agent'; code.mkdir()
     (code/'pyproject.toml').write_text('[project]\nname="fixture"\nversion="1.0"\n')
     (code/'entry.py').write_text('unchanged backend')
     for name in RESOURCE_ENV: (code/name).mkdir()
@@ -112,3 +113,101 @@ def test_native_environment_is_not_silently_relocated(tmp_path):
     out,prepared=payload(tmp_path);cache=tmp_path/'native/runtime/key';publish_cache(cache,'key',out,prepared)
     assert restore_cache(cache,'key',tmp_path/'different-location',tmp_path,'b'*40) is None
     assert not (tmp_path/'different-location').exists()
+
+
+def test_retained_output_is_bound_to_seal_and_validated_before_use(tmp_path, monkeypatch):
+    import tarfile
+    from scripts.bundles.native_prepared import load_prepared
+    out,prepared=payload(tmp_path);cache=tmp_path/'native/runtime/key';publish_cache(cache,'key',out,prepared)
+    inode=(out/'hermes-agent/entry.py').stat().st_ino
+    def extraction_forbidden(*a,**kw):raise AssertionError('retained bytes must not be recopied')
+    monkeypatch.setattr(tarfile.TarFile,'extractall',extraction_forbidden)
+    restored=restore_cache(cache,'key',out,tmp_path,'b'*40)
+    assert restored is not None
+    inputs=load_prepared(restored)
+    assert inputs.ref=='b'*40
+    assert (out/'hermes-agent/entry.py').stat().st_ino==inode
+    with tarfile.open(cache/'runtime.tar') as archive:
+        assert archive.next().name=='.runtime-prepared.json'
+
+
+def test_corrupt_retained_bytes_revoke_retention_without_admission(tmp_path):
+    import os
+    import pytest
+    from scripts.bundles.native_prepared import load_prepared
+    from scripts.bundles.runtime_cache import retained_runtime
+    out,prepared=payload(tmp_path);cache=tmp_path/'native/runtime/key';publish_cache(cache,'key',out,prepared)
+    code=out/'hermes-agent/entry.py';original=code.stat()
+    code.write_bytes(b'X'*original.st_size);os.utime(code,ns=(original.st_atime_ns,original.st_mtime_ns))
+    assert retained_runtime(out,tmp_path,'key')
+    restored=restore_cache(cache,'key',out,tmp_path,'b'*40)
+    with pytest.raises(ValueError,match='prepared bytes changed'):load_prepared(restored)
+    assert not retained_runtime(out,tmp_path)
+    assert code.read_bytes()==b'X'*original.st_size
+
+
+def test_key_miss_discards_only_recognized_owned_retained_output(tmp_path,monkeypatch):
+    import pytest
+    from scripts.bundles import native
+    out,prepared=payload(tmp_path);cache=tmp_path/'native/runtime/key';publish_cache(cache,'key',out,prepared)
+    class ColdReached(Exception):pass
+    def cold(**kwargs):
+        assert not list(out.iterdir())
+        raise ColdReached
+    monkeypatch.setattr(native,'_prepare_native',cold)
+    with pytest.raises(ColdReached):
+        native.prepare_native(out=out,ref='b'*40,source=tmp_path,cache=tmp_path/'wheels',runtime_cache=(cache,'changed-key'))
+    (out/'foreign.txt').write_text('preserve')
+    with pytest.raises(ValueError,match='nonempty'):
+        native.prepare_native(out=out,ref='b'*40,source=tmp_path,cache=tmp_path/'wheels',runtime_cache=(cache,'key'))
+    assert (out/'foreign.txt').read_text()=='preserve'
+
+
+@pytest.mark.parametrize('guarded,corrupt',[(True,False),(False,False),(True,True)])
+def test_clean_preserves_only_guarded_owned_runtime_and_restores_receipt(tmp_path,monkeypatch,guarded,corrupt):
+    from types import SimpleNamespace
+    from scripts.bundles.desktop_prepare import clean_outputs
+    from scripts.bundles.native_prepared import load_prepared
+    source=tmp_path/'source';source.mkdir()
+    out=source/'apps/desktop/build/agent-payload'
+    out,prepared=payload(source,out)
+    cache=source/'.cache/desktop-inputs';entry=cache/'native/runtime/key';publish_cache(entry,'key',out,prepared)
+    for relative in ['apps/desktop/build/products','apps/desktop/dist','apps/desktop/release']:
+        folder=source/relative;folder.mkdir();(folder/'stale').write_text('old build')
+    work=source/'.build/desktop-job';work.mkdir(parents=True);(work/'.desktop-preparation').write_text(str(source))
+    (source/'user.txt').write_text('preserve')
+    Path(str(source)+'.distribution.lock').touch()
+    if guarded:monkeypatch.setenv('HERMES_DESKTOP_SERIAL_CACHE',str(cache))
+    else:monkeypatch.delenv('HERMES_DESKTOP_SERIAL_CACHE',raising=False)
+    inode=(out/'hermes-agent/entry.py').stat().st_ino
+    if corrupt:
+        (out/'hermes-agent/entry.py').write_text('bad retained bytes')
+        with pytest.raises(ValueError,match='prepared bytes changed'):
+            load_prepared(restore_cache(entry,'key',out,source,'b'*40))
+    request=SimpleNamespace(source=source,work=work,cache=cache,target='win32-x64')
+    clean_outputs(request)
+    assert (source/'user.txt').read_text()=='preserve'
+    assert (entry/'runtime.tar').is_file() and not work.exists()
+    assert not (source/'apps/desktop/build/products').exists()
+    assert not (source/'apps/desktop/dist').exists() and not (source/'apps/desktop/release').exists()
+    assert out.exists()==(guarded and not corrupt)
+    restored=restore_cache(entry,'key',out,source,'b'*40)
+    assert load_prepared(restored).ref=='b'*40
+    assert (out/'hermes-agent/entry.py').read_text()=='unchanged backend'
+    if guarded and not corrupt:assert (out/'hermes-agent/entry.py').stat().st_ino==inode
+
+
+def test_input_change_restores_compatible_seal_without_dependency_acquisition(tmp_path,monkeypatch):
+    from scripts.bundles import native
+    from scripts.bundles.native_prepared import publish_prepared,load_prepared
+    from scripts.build.inputs import AgentInputs
+    out,prepared=payload(tmp_path);old=tmp_path/'native/runtime/old';new=tmp_path/'native/runtime/new'
+    data=json.loads(prepared.read_text());inputs=AgentInputs.from_dict({**data['inputs'],'ref':'b'*40})
+    publish_cache(old,'old',out,prepared)
+    (out/'hermes-agent/entry.py').write_text('different backend')
+    prepared=publish_prepared(out,tmp_path,'b'*40,inputs);publish_cache(new,'new',out,prepared)
+    def cold_forbidden(**kwargs):raise AssertionError('compatible sealed archive should be restored')
+    monkeypatch.setattr(native,'_prepare_native',cold_forbidden)
+    restored=native.prepare_native(out=out,ref='a'*40,source=tmp_path,cache=tmp_path/'wheels',runtime_cache=(old,'old'))
+    assert load_prepared(restored).ref=='a'*40
+    assert (out/'hermes-agent/entry.py').read_text()=='unchanged backend'

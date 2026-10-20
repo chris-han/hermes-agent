@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 import hashlib
 import json
@@ -100,11 +101,16 @@ def publish_prepared(out: Path, source: Path, revision: str, inputs: AgentInputs
 
     inputs.validate(out)
     paths = _input_paths(inputs, out)
-    digests = {}
-    for path in paths:
+    def seal_component(path):
         _owned(path, out)
         _check_links(path, out)
-        digests[path.relative_to(out).as_posix()] = _source_digest(path) if path == inputs.code else _digest(path)
+        digest = _source_digest(path) if path == inputs.code else _digest(path)
+        return path.relative_to(out).as_posix(), digest
+    # Independent read-only components retain the exact digest/link contract.
+    # Four bounded readers overlap Windows filesystem latency without holding
+    # whole file contents in memory. Publish only after every check succeeds.
+    with ThreadPoolExecutor(max_workers=4) as readers:
+        digests = dict(readers.map(seal_component, paths))
     data = {"schema": 1, "out": str(out), "source": str(source), "revision": revision,
             "lock": _digest(lockfile_path()), "inputs": asdict(inputs), "digests": digests}
     prepared = prepared_path(out)
@@ -129,7 +135,8 @@ def load_prepared(prepared: Path) -> AgentInputs:
         required = {path.relative_to(out).as_posix() for path in _input_paths(inputs, out)}
         if set(data["digests"]) != required:
             raise ValueError("native preparation inventory changed")
-        for index, (name, digest) in enumerate(data["digests"].items(), start=1):
+        def validate_component(item):
+            index, (name, digest) = item
             progress = f"payload verification [{index}/{len(data['digests'])}]: {name}"
             print(f"{progress} — checking paths and links", flush=True)
             path = out / name
@@ -139,7 +146,14 @@ def load_prepared(prepared: Path) -> AgentInputs:
             actual = _source_digest(path) if path == inputs.code else _digest(path)
             if actual != digest:
                 raise ValueError(f"prepared bytes changed: {name}")
+        with ThreadPoolExecutor(max_workers=4) as readers:
+            list(readers.map(validate_component, enumerate(data["digests"].items(), start=1)))
         print("payload verification complete", flush=True)
         return inputs
     except (OSError, ValueError, KeyError, TypeError) as exc:
+        # Only revoke our retention ownership marker. The failed bytes stay
+        # available for diagnosis; the next clean retry restores/rebuilds them.
+        if prepared.name.endswith('.prepared.json'):
+            from scripts.bundles.runtime_cache import revoke_retention
+            revoke_retention(prepared.with_name(prepared.name.removesuffix('.prepared.json')))
         raise ValueError(f"invalid native preparation; run preparation again: {exc}") from exc

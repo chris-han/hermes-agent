@@ -275,7 +275,32 @@ def clean_outputs(request: BuildRequest) -> None:
     """
     from pm.filesystem import remove_tree
 
-    stale = [request.source / "apps/desktop" / name for name in ("build", "dist", "release")]
+    from pm.filesystem import is_junction
+    from scripts.bundles.runtime_cache import retained_runtime
+    require_output_roots(request.source)
+    build = request.source / "apps/desktop/build"
+    payload = build / "agent-payload"
+    serial = os.environ.get("HERMES_DESKTOP_SERIAL_CACHE")
+    keep = (request.target == "win32-x64" and serial
+            and Path(serial).resolve() == request.cache.resolve()
+            and Path(str(request.source) + ".distribution.lock").is_file()
+            and retained_runtime(payload, request.source))
+    stale = [request.source / "apps/desktop" / name for name in ("dist", "release")]
+    if keep:
+        print(f"desktop build: retaining owned runtime candidate {payload}; admission follows", flush=True)
+        for child in build.iterdir():
+            if child == payload or child == payload.with_name(payload.name + ".prepare.lock"):
+                continue
+            if child.is_symlink():
+                child.unlink()
+            elif is_junction(child):
+                child.rmdir()
+            elif child.is_dir():
+                remove_tree(child)
+            else:
+                child.unlink()
+    else:
+        stale.insert(0, build)
     owner = request.work / ".desktop-preparation"
     if owner.is_file() and owner.read_text(encoding="utf-8-sig") == str(request.source):
         stale.append(request.work)
