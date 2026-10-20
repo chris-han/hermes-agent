@@ -109,8 +109,8 @@ describe('alias identity survives the hosted handoff (#89131)', () => {
 
     expect(aliasIdentityFor(otherDefault)).toBeNull()
     expect(displayName(otherDefault, null)).toBe('Personal')
-    // Local default while the ACTIVE gateway is local: untouched "Hermes".
-    expect(displayName({ name: 'default' }, null)).toBe('Hermes')
+    // Local default while the ACTIVE gateway is local: untouched default brand.
+    expect(displayName({ name: 'default' }, null)).toBe('Semantier')
   })
 
   it('fails closed when two aliases claim one backend row', () => {
@@ -337,9 +337,9 @@ describe('group transcript speaker meta (#96432)', () => {
 
 describe('home wordmark fallback', () => {
   it('brands only an untitled default while preserving explicit names and aliases', () => {
-    expect(displayName({ name: 'default' }, null, 'semantier')).toBe('semantier')
-    expect(displayName({ name: 'default' }, { title: 'Hermes' }, 'semantier')).toBe('Hermes')
-    expect(displayName({ name: 'default', display_name: 'Research Team' }, null, 'semantier')).toBe('Research Team')
-    expect(displayName({ name: 'researcher' }, null, 'semantier')).toBe('Researcher')
+    expect(displayName({ name: 'default' }, null)).toBe('Semantier')
+    expect(displayName({ name: 'default' }, { title: 'Hermes' })).toBe('Hermes')
+    expect(displayName({ name: 'default', display_name: 'Research Team' }, null)).toBe('Research Team')
+    expect(displayName({ name: 'researcher' }, null)).toBe('Researcher')
   })
 })

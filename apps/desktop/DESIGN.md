@@ -43,6 +43,8 @@ one-off at the call site.
 7. **Immediate feedback.** Direct manipulation updates the view first. Network
    or disk persistence reconciles afterward and rolls back visibly on failure.
 
+The untitled default Bot is displayed as **Semantier** in the roster and empty-chat title. Both use the shared Bot display-name resolver; explicit titles, aliases and profile display names remain authoritative. The empty-chat wordmark retains the existing Manrope treatment.
+
 ## Information architecture
 
 - **Chat is the home surface.** The transcript and composer stay primary; tools,
