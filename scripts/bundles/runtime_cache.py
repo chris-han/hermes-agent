@@ -51,7 +51,7 @@ def runtime_key(source: Path, revision: str, toolchain: str, target: str) -> str
         if (path.split('/')[0] not in INERT_SNAPSHOT_DIRS
                 or path.startswith(('scripts/bundles/', 'scripts/build/'))):
             selected.append([metadata.decode('ascii'), path])
-    value = {'schema': 1, 'tree': selected, 'toolchain': toolchain, 'target': target}
+    value = {'schema': 1, 'tree': selected, 'toolchain': toolchain, 'target': target, 'sourceLayout': str(source.resolve())}
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
 
@@ -102,6 +102,7 @@ def restore_cache(entry: Path, key: str, out: Path, source: Path, revision: str)
     from scripts.bundles.native_prepared import prepared_path
     started = time.monotonic()
     reason = 'missing-receipt'
+    extracting = False
     if any(p.is_symlink() for p in (entry, entry / 'receipt.json', entry / 'runtime.tar')):
         raise ValueError('linked runtime cache artifact')
     try:
@@ -124,29 +125,32 @@ def restore_cache(entry: Path, key: str, out: Path, source: Path, revision: str)
                 if sealed['key'] != key:
                     raise ValueError('sealed runtime key changed')
                 prepared = sealed['prepared']
-                previous = prepared['out']
-                if prepared['schema'] != 1 or not isinstance(previous, str):
-                    raise ValueError('invalid sealed preparation')
-                def relocate(value):
-                    if isinstance(value, dict):
-                        return {k: relocate(v) for k, v in value.items()}
-                    if isinstance(value, list):
-                        return [relocate(v) for v in value]
-                    if isinstance(value, str) and (value == previous or value.startswith((previous+'/', previous+'\\'))):
-                        return str(out) + value[len(previous):]
-                    return value
-                prepared = relocate(prepared)
-                prepared.update(out=str(out), source=str(source), revision=revision)
+                if (prepared['schema'] != 1 or Path(prepared['out']) != out
+                        or Path(prepared['source']) != source):
+                    reason = 'layout-changed'
+                    return None
+                # Native venvs may carry absolute editable/launcher metadata.
+                # Reuse only at the admitted layout; rebind the final commit,
+                # never guess how to rewrite arbitrary dependency files.
+                prepared['revision'] = revision
                 prepared['inputs']['ref'] = revision
                 out.mkdir(parents=True, exist_ok=True)
                 # The data filter rejects escaped links/paths and devices.
+                extracting = True
                 bundle.extractall(out, members=[m for m in bundle.getmembers() if m.name != member.name], filter='data')
         result = prepared_path(out)
         _atomic_bytes(result, json.dumps(prepared).encode())
         reason = 'verified-archive'
         return result
-    except (FileNotFoundError, KeyError, TypeError, json.JSONDecodeError):
+    except FileNotFoundError:
+        if extracting:
+            raise ValueError("runtime extraction failed; partial output is not admitted")
+        return None
+    except (KeyError, TypeError, json.JSONDecodeError) as exc:
+        if extracting:
+            raise ValueError("runtime extraction failed; partial output is not admitted") from exc
+        reason = "invalid-cache-metadata"
         return None
     finally:
-        diagnostic(entry.parents[2], result='hit' if reason == 'verified-archive' else 'miss',
+        diagnostic(entry.parents[2], result='hit' if reason == 'verified-archive' else ('failure' if extracting else 'miss'),
                    reason=reason, key=key, elapsedSeconds=round(time.monotonic()-started, 3))

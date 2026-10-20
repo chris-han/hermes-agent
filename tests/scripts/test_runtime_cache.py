@@ -1,5 +1,6 @@
 """Reuse sealed runtime bytes without relabelling changed backend inputs."""
 import json
+import shutil
 import subprocess
 from pathlib import Path
 from scripts.bundles.runtime_cache import runtime_key, publish_cache, restore_cache
@@ -46,11 +47,12 @@ def test_two_warm_preparations_and_corrupt_archive(tmp_path):
     from scripts.bundles.native_prepared import load_prepared
     out,prepared=payload(tmp_path); cache=tmp_path/'native/runtime/key'; publish_cache(cache,'key',out,prepared)
     for name in ['warm-one','warm-two']:
-        target=tmp_path/name; target.mkdir(); restored=restore_cache(cache,'key',target,tmp_path,'b'*40)
+        shutil.rmtree(out)
+        target=out; restored=restore_cache(cache,'key',target,tmp_path,'b'*40)
         inputs=load_prepared(restored)
         assert inputs.python==target/'tools/python/python.exe' and inputs.ref=='b'*40
         assert (inputs.code/'entry.py').read_text()=='unchanged backend'
-    (cache/'runtime.tar').write_bytes(b'corrupt'); target=tmp_path/'bad'; target.mkdir()
+    (cache/'runtime.tar').write_bytes(b'corrupt'); shutil.rmtree(out); target=out; target.mkdir()
     assert restore_cache(cache,'key',target,tmp_path,'b'*40) is None
     assert not list(target.iterdir())
 
@@ -78,7 +80,7 @@ def test_archive_paths_are_checked_even_with_a_matching_checksum(tmp_path):
     receipt=json.loads((cache/'receipt.json').read_text())
     receipt['archiveSha256']=hashlib.sha256(archive.read_bytes()).hexdigest()
     (cache/'receipt.json').write_text(json.dumps(receipt))
-    target=tmp_path/'safe'; target.mkdir()
+    shutil.rmtree(out); target=out; target.mkdir()
     with pytest.raises(tarfile.FilterError):restore_cache(cache,'key',target,tmp_path,'b'*40)
     assert not (tmp_path/'escaped.txt').exists()
 
@@ -88,3 +90,25 @@ def test_cached_metadata_is_inside_the_hashed_archive(tmp_path):
     publish_cache(cache,'key',out,prepared)
     receipt=json.loads((cache/'receipt.json').read_text())
     assert 'prepared' not in receipt
+
+
+def test_failed_extraction_cannot_become_a_partial_cache_miss(tmp_path):
+    import hashlib
+    import tarfile
+    import pytest
+    out,prepared=payload(tmp_path);cache=tmp_path/'native/runtime/key';publish_cache(cache,'key',out,prepared)
+    archive=cache/'runtime.tar'
+    with tarfile.open(archive,'a') as bundle:
+        member=tarfile.TarInfo('missing-link');member.type=tarfile.LNKTYPE;member.linkname='missing-target'
+        bundle.addfile(member)
+    receipt=json.loads((cache/'receipt.json').read_text());receipt['archiveSha256']=hashlib.sha256(archive.read_bytes()).hexdigest()
+    (cache/'receipt.json').write_text(json.dumps(receipt))
+    shutil.rmtree(out)
+    with pytest.raises((ValueError,tarfile.TarError,KeyError)):
+        restore_cache(cache,'key',out,tmp_path,'b'*40)
+
+
+def test_native_environment_is_not_silently_relocated(tmp_path):
+    out,prepared=payload(tmp_path);cache=tmp_path/'native/runtime/key';publish_cache(cache,'key',out,prepared)
+    assert restore_cache(cache,'key',tmp_path/'different-location',tmp_path,'b'*40) is None
+    assert not (tmp_path/'different-location').exists()
