@@ -1,18 +1,39 @@
 #!/usr/bin/env node
 import { execFileSync, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { parseArgs } from 'node:util'
 
+// Only package metadata that does not affect dependency/lifecycle resolution is omitted.
+export function dependencyContents(bytes, lock = false, cosmeticVersion = true) {
+  const value = JSON.parse(bytes)
+  const cosmetic = object => {
+    const copy = {...object}
+    for (const key of [...(cosmeticVersion ? ['version'] : []), 'productName', 'description']) delete copy[key]
+    return copy
+  }
+  if (!lock) return JSON.stringify(cosmetic(value))
+  const packages = Object.fromEntries(Object.entries(value.packages || {}).map(([key, entry]) =>
+    [key, key === '' || key === 'apps/desktop' ? cosmetic(entry) : entry]))
+  return JSON.stringify({...cosmetic(value), packages})
+}
+
+export function cacheDiagnostic(source, scope, record) {
+  const directory = join(source, '.cache/desktop-inputs/diagnostics')
+  mkdirSync(directory, {recursive:true})
+  appendFileSync(join(directory, scope + '.jsonl'), JSON.stringify({producedAt:new Date().toISOString(),...record}) + '\n')
+}
+
 // npm.cmd needs a shell. Use npm's JS entrypoint so paths remain argv on Windows.
 export function npmCommand({ env = process.env } = {}) {
   const names = process.platform === 'win32' ? ['npm.cmd', 'npm'] : ['npm']
-  const candidates = [env.npm_execpath]
-  for (const dir of (env.PATH || env.Path || '').split(delimiter)) {
+  const canonical = Object.fromEntries(Object.entries(env).map(([key, value]) => [key.toUpperCase(), value]))
+  const candidates = [canonical.NPM_EXECPATH]
+  for (const dir of (canonical.PATH || '').split(delimiter)) {
     for (const name of names) {
       const bin = join(dir, name)
       if (!existsSync(bin)) continue
@@ -48,21 +69,24 @@ function npmManifestVersion(cli) {
   }
 }
 
-function completedInstallMatches({ source, receipt, hiddenLock, key, nativeKey }) {
-  if (!existsSync(receipt) || !existsSync(hiddenLock)) return false
+function completedInstallReason({ source, receipt, hiddenLock, key, nativeKey }) {
+  if (!existsSync(receipt)) return 'missing-install-receipt'
+  if (!existsSync(hiddenLock)) return 'missing-installed-lock'
   const installed = readFileSync(hiddenLock)
   const expected = `${key}\n${createHash('sha256').update(installed).digest('hex')}\n`
   if (nativeKey !== undefined) {
     const nativeReceipt = `${receipt}.native-toolchain`
-    if (!existsSync(nativeReceipt) || readFileSync(nativeReceipt, 'utf8') !== `${expected}${nativeKey}\n`) return false
+    if (!existsSync(nativeReceipt)) return 'missing-native-toolchain-receipt'
+    if (readFileSync(nativeReceipt, 'utf8') !== `${expected}${nativeKey}\n`) return 'native-toolchain-or-install-inputs-changed'
   }
   // Probe each locked entry's manifest, not its directory: a partial cleanup or
   // snapshot restore can leave gutted directories behind, and product builders
   // resolve tools through these manifests (#128935). npm itself never repairs
   // such an entry — it trusts the hidden lockfile's claim that the package is
   // installed — so only rejecting the receipt here routes the update to npm ci.
-  return readFileSync(receipt, 'utf8') === expected && Object.keys(JSON.parse(installed).packages)
-    .every(path => existsSync(join(source, path, 'package.json')))
+  if (readFileSync(receipt, 'utf8') !== expected) return 'dependency-inputs-or-installed-lock-changed'
+  if (!Object.keys(JSON.parse(installed).packages).every(path => existsSync(join(source,path,'package.json')))) return 'missing-package-manifest'
+  return null
 }
 
 // An interrupted Windows update can leave a nested .bin that npm ci's own rmdir
@@ -128,19 +152,25 @@ export function prepareNodeDependencies({ source, workspaces, env = process.env,
   const nativeKey = nativeToolchain === undefined ? undefined : JSON.stringify(nativeToolchain)
   const hiddenLock = join(source, 'node_modules/.package-lock.json')
   const inputs = createHash('sha256').update(JSON.stringify({
-    node: process.versions.node, npm: npmVersion, platform: process.platform, arch: process.arch, args,
+    node: process.versions.node, abi:process.versions.modules, npm: npmVersion, platform: process.platform, arch: process.arch, args,
     // npm names are case-insensitive; Windows Python uppercases inherited keys.
-    config: Object.entries(env).filter(([key]) => /^npm_config_/i.test(key) && !/^npm_config_(cache|offline|prefer_offline)$/i.test(key))
-      .map(([key, value]) => [key.toLowerCase(), value]).sort(),
+    config: Object.entries(Object.fromEntries(Object.entries(env).filter(([key]) => /^npm_config_/i.test(key) && !/^npm_config_(cache|offline|prefer_offline)$/i.test(key))
+      .map(([key, value]) => [key.toLowerCase(), value]))).sort(),
   }))
   const files = ['package-lock.json', '.npmrc', ...Object.keys(lock.packages)
     .filter(path => !path.split('/').includes('node_modules'))
-    .map(path => join(path, 'package.json'))].sort()
+    .map(path => join(path, 'package.json'))].map(file => file.replaceAll('\\', '/')).sort()
   for (const file of files) {
-    inputs.update(file).update('\0').update(existsSync(join(source, file)) ? readFileSync(join(source, file)) : '<missing>').update('\0')
+    const bytes=existsSync(join(source,file)) ? readFileSync(join(source,file)) : null
+    inputs.update(file).update('\0').update(bytes ? (file.endsWith('.json') ? dependencyContents(bytes,file==='package-lock.json',file==='package-lock.json'||file==='package.json'||file==='apps/desktop/package.json') : bytes) : '<missing>').update('\0')
   }
   const key = inputs.digest('hex')
-  if (reuse && completedInstallMatches({ source, receipt, hiddenLock, key, nativeKey })) {
+  let reason
+  try {reason=completedInstallReason({source,receipt,hiddenLock,key,nativeKey})} catch {reason='unreadable-install-receipt'}
+  cacheDiagnostic(source,'node-deps',{result:reuse && !reason ? 'hit':'miss',reason:reason || (reuse ? 'verified':'reuse-disabled'),key,
+    node:process.versions.node,abi:process.versions.modules,npm:npmVersion,platform:process.platform,arch:process.arch,
+    workspaces:selected,nativeToolchain:nativeToolchain === undefined ? null:createHash('sha256').update(nativeKey).digest('hex')})
+  if (reuse && !reason) {
     console.log(`node-deps: reusing completed install (${selected.join(', ')})`)
     return { source, workspaces: selected }
   }

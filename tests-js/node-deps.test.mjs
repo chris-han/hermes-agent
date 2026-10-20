@@ -32,6 +32,11 @@ function fixture() {
   return root
 }
 
+test('prepared npm accepts uppercase Windows environment dictionary keys', () => {
+  const [node, cli] = npmCommand()
+  expect(npmCommand({ env: { NPM_EXECPATH: cli, Path: '' } })).toEqual([node, cli])
+})
+
 test.each(['npm', 'npm-fixture'])('prepared npm discovers lib/%s without npm_execpath', (directory) => {
   const [node, installedCli] = npmCommand()
   const root = mkdtempSync(join(tmpdir(), 'npm layout with spaces-'))
@@ -43,7 +48,7 @@ test.each(['npm', 'npm-fixture'])('prepared npm discovers lib/%s without npm_exe
   cpSync(installedCli, join(root, 'bin', process.platform === 'win32' ? 'npm.cmd' : 'npm'))
   symlinkSync(dirname(dirname(installedCli)), join(root, 'lib', directory), 'junction')
   const env = { ...process.env, PATH: join(root, 'bin') }
-  delete env.npm_execpath
+  for (const key of Object.keys(env)) if (key.toLowerCase() === 'npm_execpath') delete env[key]
   const [selectedNode, cli] = npmCommand({ env })
   expect(selectedNode).toBe(node)
   expect(cli).toBe(join(root, 'lib', directory, 'bin/npm-cli.js'))
@@ -325,3 +330,18 @@ test('a receipt keyed by the probed version reuses under the manifest version, e
   json(join(npmRoot, 'package.json'), { name: 'npm', version: '10.8.3' })
   expect(() => prepareNodeDependencies({ ...options, install: false })).toThrow(/disabled/)
 }, 30000)
+
+test('cosmetic workspace version and UI changes preserve a verified dependency install', async () => {
+  const { prepareNodeDependencies } = await import('../scripts/build/node-deps.mjs')
+  const source = fixture()
+  const options = {source, workspaces:['web'],reuse:true,nativeToolchain:'verified-compiler',env:{...process.env,npm_config_offline:'true',npm_config_cache:join(source,'.npm-cache')}}
+  prepareNodeDependencies(options)
+  const receipt=readFileSync(join(source,'node_modules/.hermes-node-deps'))
+  const file=join(source,'apps/desktop/package.json');const manifest=JSON.parse(readFileSync(file));manifest.version='0.0.2';manifest.productName='Semantier Agent 0.0.2';json(file,manifest)
+  writeFileSync(join(source,'web/logo.png'),'new logo')
+  prepareNodeDependencies({...options,install:false})
+  expect(readFileSync(join(source,'node_modules/.hermes-node-deps'))).toEqual(receipt)
+  expect(readFileSync(join(source,'.cache/desktop-inputs/diagnostics/node-deps.jsonl'),'utf8')).toContain('hit')
+  manifest.scripts.postinstall+='; node -e "process.exit(0)"';json(file,manifest)
+  expect(()=>prepareNodeDependencies({...options,install:false})).toThrow(/disabled/)
+},30000)

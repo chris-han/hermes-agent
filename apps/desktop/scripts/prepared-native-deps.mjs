@@ -1,3 +1,5 @@
+import { dependencyContents } from '../../../scripts/build/node-deps.mjs'
+import { resolveWindowsFrameworkCompiler } from './build-hud-modifier-monitor.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
@@ -7,8 +9,10 @@ import { fileDigest, treeDigest, preparationRequired } from './prepared-packagin
 /** @param {string} source @returns {string} */
 function nativeIdentity(source) {
   return createHash('sha256').update(JSON.stringify([
-    fileDigest(path.join(source, 'package-lock.json')),
-    fileDigest(path.join(source, 'apps/desktop/package.json')),
+    dependencyContents(fs.readFileSync(path.join(source,'package-lock.json')),true),
+    dependencyContents(fs.readFileSync(path.join(source,'apps/desktop/package.json'))),
+    process.versions.node,process.versions.modules,
+    process.platform === 'win32' ? fileDigest(resolveWindowsFrameworkCompiler()) : null,
     fileDigest(path.join(import.meta.dirname, 'stage-native-deps.mjs')),
     fileDigest(path.join(import.meta.dirname, 'prepared-native-deps.mjs')),
     ...['build-command-screenshot-monitor.mjs', 'build-hud-modifier-monitor.mjs']
@@ -35,29 +39,34 @@ export function recordNativeInputs({ source, out, platform, arch, nativeToolchai
 
 /** A local rebuild may skip restaging: the receipt is admitted and nothing in it soft-failed.
  * @param {NativeSelection} inputs @returns {boolean} */
-export function nativeInputsComplete(inputs) {
+export function nativeInputsReason(inputs) {
   try {
     readNativeInputs(inputs)
-    return JSON.parse(fs.readFileSync(`${inputs.nativeDeps}.prepared.json`, 'utf8')).degraded === false
-  } catch {
-    return false
-  }
+    return JSON.parse(fs.readFileSync(`${inputs.nativeDeps}.prepared.json`, 'utf8')).degraded === false ? null : 'degraded-native-tree'
+  } catch (error) { return error.cacheReason || 'missing-or-unreadable-native-receipt' }
 }
+
+export function nativeInputsComplete(inputs) { return nativeInputsReason(inputs) === null }
 
 /** @param {NativeSelection} inputs @returns {string} */
 export function readNativeInputs({ source, nativeDeps, platform = process.platform, arch = process.arch, nativeToolchain }) {
   try {
     const record = JSON.parse(fs.readFileSync(`${nativeDeps}.prepared.json`, 'utf8'))
-    if (record.schema !== 1 || record.source !== fs.realpathSync(source) || record.out !== fs.realpathSync(nativeDeps) ||
-        record.platform !== platform || record.arch !== arch ||
-        (nativeToolchain !== undefined && record.nativeToolchain !== nativeToolchain) ||
-        record.identity !== nativeIdentity(source) || record.digest !== treeDigest(nativeDeps)) {
-      throw preparationRequired('Stale or foreign native inputs')
-    }
+    const reason = [
+      [record.schema !== 1, 'native-receipt-schema'],
+      [record.source !== fs.realpathSync(source) || record.out !== fs.realpathSync(nativeDeps), 'native-source-or-output-path'],
+      [record.platform !== platform || record.arch !== arch, 'native-platform-or-architecture'],
+      [nativeToolchain !== undefined && record.nativeToolchain !== nativeToolchain, 'native-toolchain'],
+      [record.identity !== nativeIdentity(source), 'native-dependencies-abi-or-recipe'],
+      [record.digest !== treeDigest(nativeDeps), 'native-artifact-digest'],
+    ].find(([changed]) => changed)?.[1]
+    if (reason) {const error=preparationRequired('Stale native inputs: '+reason);error.cacheReason=reason;throw error}
     if (!fs.statSync(path.join(nativeDeps, 'node-pty/package.json')).isFile()) throw preparationRequired('Missing prepared node-pty')
     return record.out
   } catch (error) {
-    throw preparationRequired(`Cannot consume native inputs: ${error instanceof Error ? error.message : String(error)}`)
+    const rejected=preparationRequired(`Cannot consume native inputs: ${error instanceof Error ? error.message : String(error)}`)
+    rejected.cacheReason=error.cacheReason || 'missing-or-unreadable-native-inputs'
+    throw rejected
   }
 }
 

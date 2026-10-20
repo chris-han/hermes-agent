@@ -347,7 +347,7 @@ def prepare_in_worker(request: BuildRequest) -> Path:
             raise ValueError("icon environment must be preparation-owned, not a symlink")
         shutil.rmtree(icon_environment)
     icon_python = prepare_icon_environment(request.source, icon_environment, request.cache / "python/build")
-    native = request.source / "apps/desktop/build/native-deps"
+    native = request.cache / "native/node" / native_toolchain
     run([str(node), "apps/desktop/scripts/stage-native-deps.mjs", "--source", str(request.source),
          "--out", str(native), "--native-toolchain", native_toolchain], cwd=request.source, env=env)
     packager = request.work / "packager"

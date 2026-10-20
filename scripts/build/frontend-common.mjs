@@ -65,7 +65,7 @@ export function productOutput(source, out, inputs) {
   // In-tree products have explicit homes; everything else under source is an
   // input, even when this particular compiler does not read it.
   const generated = developerOutput(src, dest)
-    || ['.build', 'apps/desktop/build/products'].some(name => {
+    || ['.build', 'apps/desktop/build/products', '.cache/desktop-inputs/native/node'].some(name => {
       const root = path.join(src, name)
       return dest !== root && contains(root, dest)
     })
