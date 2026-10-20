@@ -1,8 +1,8 @@
 /** The server owns the allowlisted origin; clients own only these fixed task paths. */
 const tasks = { manage: '/billing', plans: '/billing/plans', topUp: '/billing/top-up', orders: '/billing/orders' } as const
 
-export function semantierPortalTask(origin: string | null, accountId: string, task: keyof typeof tasks): string | null {
-  if (!origin || !accountId) {return null}
+export function semantierPortalTask(origin: string | null, organizationId: string, accountId: string, task: keyof typeof tasks): string | null {
+  if (!origin || !organizationId || !accountId) {return null}
 
   try {
     const url = new URL(origin)
@@ -13,7 +13,7 @@ export function semantierPortalTask(origin: string | null, accountId: string, ta
     }
 
     url.pathname = tasks[task]
-    url.search = new URLSearchParams({ account_id: accountId }).toString()
+    url.search = new URLSearchParams({ organization_id: organizationId, account_id: accountId }).toString()
 
     return url.toString()
   } catch {

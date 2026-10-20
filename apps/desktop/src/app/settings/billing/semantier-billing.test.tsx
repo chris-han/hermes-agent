@@ -31,7 +31,7 @@ it('renders actual rights separately and opens an account task with independent 
   expect(screen.getByText('CNY 20.00')).toBeTruthy()
   expect(screen.getByText('CNY 1.00')).toBeTruthy()
   fireEvent.click(screen.getByRole('button', { name: 'Orders' }))
-  expect(openExternal).toHaveBeenCalledWith('https://billing.example/billing/orders?account_id=account-a')
+  expect(openExternal).toHaveBeenCalledWith('https://billing.example/billing/orders?organization_id=org-a&account_id=account-a')
 })
 
 it('missing portal offers no commercial links and never substitutes Nous', () => {

@@ -126,7 +126,7 @@ export function SemantierBilling({ state, refusal }: SemantierBillingProps) {
       </SettingsSection>
       {state.capabilities.can_open_portal && <div className="flex flex-wrap gap-2">
         {tasks.map(task => {
-          const url = semantierPortalTask(state.portal.url, state.billing_account_id, task)
+          const url = semantierPortalTask(state.portal.url, state.organization.id, state.billing_account_id, task)
 
           return url && <Button key={task} onClick={() => openExternal(url)} variant="outline">{commerce[task]}</Button>
         })}
