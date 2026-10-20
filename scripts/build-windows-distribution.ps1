@@ -26,18 +26,28 @@ if (Test-Path -LiteralPath $output) { throw 'Output already exists; choose a fre
 $lockPath = $work + '.distribution.lock'
 $lock = $null
 $transcript = $false
+$totalClock = [Diagnostics.Stopwatch]::StartNew()
 function Git-Value([string]$Directory, [string[]]$Arguments) {
   $value = & git -C $Directory @Arguments
   if ($LASTEXITCODE -ne 0) { throw "git failed ($LASTEXITCODE): $($Arguments -join ' ')" }
   return $value
 }
 function Native([string]$Tool, [string[]]$Arguments) {
-  # PS5 native stderr progress must not become terminating PowerShell errors.
   $saved = $ErrorActionPreference
+  $clock = [Diagnostics.Stopwatch]::StartNew()
+  $code = $null
+  $global:LASTEXITCODE = $null
   $ErrorActionPreference = 'Continue'
   try { & $Tool @Arguments 2>&1 | Out-Host; $code = $LASTEXITCODE }
-  finally { $ErrorActionPreference = $saved }
-  if ($code -ne 0) { throw "$Tool failed ($code): $($Arguments -join ' ')" }
+  finally {
+    $ErrorActionPreference = $saved
+    $clock.Stop()
+    if ($transcript) {
+      [ordered]@{producedAt=[DateTime]::UtcNow.ToString('o');tool=[IO.Path]::GetFileName($Tool);exitCode=$code;elapsedSeconds=$clock.Elapsed.TotalSeconds} |
+        ConvertTo-Json -Compress | Add-Content -LiteralPath (Join-Path $output 'controller-stages.jsonl') -Encoding utf8
+    }
+  }
+  if ($null -eq $code -or $code -ne 0) { throw "$Tool failed ($code)" }
 }
 function Json-File($Value, [string]$Path) { $Value | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $Path -Encoding utf8 }
 function Hash([string]$Path) { return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
@@ -105,8 +115,11 @@ try {
       exit 0
     }
     $counter = Join-Path (Split-Path $work -Parent) 'semantier-agent-build-version.json'
-    $semantierVersion = & (Join-Path $PSScriptRoot 'next-windows-build-version.ps1') -State $counter -SourceCommit $source
-    Copy-Item -LiteralPath $counter -Destination (Join-Path $output 'build-version.json')
+    $retryVersion = if ($request.PSObject.Properties.Name -contains 'retryVersion') { [string]$request.retryVersion } else { '' }
+    $semantierVersion = & (Join-Path $PSScriptRoot 'next-windows-build-version.ps1') -State $counter -SourceCommit $source -RetryVersion $retryVersion
+    if ($retryVersion) {
+      Json-File ([ordered]@{kind='semantier-windows-build-version-v1';version=$semantierVersion;sourceCommit=$source;reservedAt=[DateTime]::UtcNow.ToString('o');explicitRetry=$true;counterUnchanged=$true}) (Join-Path $output 'build-version.json')
+    } else { Copy-Item -LiteralPath $counter -Destination (Join-Path $output 'build-version.json') }
     $arguments = @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',(Join-Path $work 'scripts\build-bundle.ps1'))
     if ($request.python) { $arguments += @('-Python',$request.python) }
     # This controller holds the workspace lock until every native build child exits.
@@ -152,6 +165,10 @@ try {
   if ($transcript) { Json-File ([ordered]@{result='FAIL';producedAt=[DateTime]::UtcNow.ToString('o');error=$_.Exception.Message}) (Join-Path $output 'failure.json') }
   throw
 } finally {
-  if ($transcript) { Stop-Transcript | Out-Null }
+  $totalClock.Stop()
+  if ($transcript) {
+    Json-File ([ordered]@{producedAt=[DateTime]::UtcNow.ToString('o');elapsedSeconds=$totalClock.Elapsed.TotalSeconds;sourceCommit=$request.commit;passed=(Test-Path -LiteralPath (Join-Path $output 'result.json'))}) (Join-Path $output 'controller-total.json')
+    Stop-Transcript | Out-Null
+  }
   if ($lock) { $lock.Dispose(); Remove-Item -LiteralPath $lockPath }
 }
