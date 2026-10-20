@@ -319,7 +319,9 @@ def prepare(request: BuildRequest, *, clean: bool = False) -> Path:
     require_source(request.source, request.commit)
     with build_lock(request.source):
         if clean:
-            clean_outputs(request)
+            from scripts.bundles.runtime_cache import measure
+            with measure(request.cache, "outputs.clean"):
+                clean_outputs(request)
         return _prepare(request)
 
 
@@ -343,6 +345,8 @@ def _prepare(request: BuildRequest) -> Path:
         result.unlink(missing_ok=True)
         request_file = request.work / "request.json"
         _write(request_file, request.data())
+        from scripts.bundles.runtime_cache import diagnostic
+        diagnostic(request.cache, stage="manager.launch", result="START")
         status = run_preparation(request.source, request.work, request.cache, request_file)
         if status:
             result.unlink(missing_ok=True)
@@ -357,10 +361,13 @@ def prepare_in_worker(request: BuildRequest) -> Path:
     from scripts.build.icon_environment import prepare_icon_environment
     from scripts.bundles.native import prepare_native
 
+    from scripts.bundles.runtime_cache import diagnostic, measure
+    diagnostic(request.cache, stage="worker.entry", result="START")
     require_source(request.source, request.commit)
     from scripts.bundles.desktop_inputs import identity_environment
     request.validate_channel()
-    python, node, env = prepare_tools(request.source, request.work, request.cache, os.environ)
+    with measure(request.cache, "tools.bootstrap"):
+        python, node, env = prepare_tools(request.source, request.work, request.cache, os.environ)
     env = identity_environment(request, request.variant, env)
     native_toolchain = env["HERMES_DESKTOP_NATIVE_TOOLCHAIN"]
     run([str(node), "scripts/build/node-deps.mjs", "--source", str(request.source), "--reuse",
