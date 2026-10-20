@@ -159,7 +159,7 @@ export function clearSecurityDirectory(file, offsetInFile) {
  * @param {string} dir
  * @returns {Generator<string>}
  */
-function* walkFiles(dir) {
+export function* walkFiles(dir) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name)
     if (entry.isSymbolicLink()) continue

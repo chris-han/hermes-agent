@@ -22,6 +22,7 @@ import { rehashPayloadDigests } from './payload-digests.mjs'
 import { resolveSigningIdentity, signNestedChromium } from './sign-nested-chromium.mjs'
 import { signWheelZipMembers } from './sign-wheel-zips.mjs'
 import { sanitizeTree } from './sanitize-pe-signatures.mjs'
+import { sanitizeTreeCached } from './sanitize-pe-cache.mjs'
 
 /**
  * Put our full-resolution `assets/icon.icns` back as the bundle's legacy icon.
@@ -119,7 +120,11 @@ export default async function afterPack(context) {
   // is NOT best-effort: shipping past it means shipping an unsignable bundle.
   // this is a hack until https://github.com/astral-sh/python-build-standalone/pull/1217 is merged.
   console.log(`[after-pack] scanning PE certificate headers in ${context.appOutDir}`)
-  const { scanned, repaired } = sanitizeTree(context.appOutDir)
+  const serialCache = process.env.HERMES_DESKTOP_SERIAL_CACHE
+  const guardedCache = serialCache && fs.existsSync(path.resolve(serialCache, '../..') + '.distribution.lock')
+  const { scanned, repaired } = guardedCache
+    ? await sanitizeTreeCached(context.appOutDir, path.join(serialCache, 'native/pe/receipt.json'))
+    : sanitizeTree(context.appOutDir)
   console.log(`[after-pack] ${scanned} PEs scanned, ${repaired.length} dangling certificate tables cleared`)
   for (const file of repaired) {
     console.log(`  ${file}`)

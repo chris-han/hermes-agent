@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -17,7 +18,19 @@ if str(ROOT) not in sys.path:
 
 def run(argv: list[str], *, cwd: Path, env: dict[str, str]) -> None:
     print("bundle: " + subprocess.list2cmdline(argv), flush=True)
-    subprocess.run(argv, cwd=cwd, env=env, check=True)
+    started = time.monotonic()
+    result = "PASS"
+    try:
+        subprocess.run(argv, cwd=cwd, env=env, check=True)
+    except BaseException:
+        result = "FAIL"
+        raise
+    finally:
+        if env.get("HERMES_DESKTOP_SERIAL_CACHE"):
+            from scripts.bundles.runtime_cache import diagnostic
+            stage = next((Path(arg).name for arg in argv[1:] if arg.endswith((".py", ".mjs"))), Path(argv[0]).stem)
+            diagnostic(Path(env["HERMES_DESKTOP_SERIAL_CACHE"]), stage=stage, result=result,
+                       elapsedSeconds=round(time.monotonic()-started, 3))
 
 
 def capture(argv: list[str], repo: Path, env: dict[str, str]) -> str:

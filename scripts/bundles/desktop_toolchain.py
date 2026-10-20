@@ -120,6 +120,7 @@ def prepare_tools(source: Path, work: Path, cache: Path,
             raise FileNotFoundError(f"PM did not prepare a native {name} executable")
         binaries[name] = installed.binary
     prepared = pm.env_for("python", "npm", base_env=prepared)
+    prepared["HERMES_PYTHON"] = str(binaries["python"])
     node_native = native_cache_path(cache, prepared, family="node")
     python_state = {}
     native = native_cache_path(cache, prepared, diagnostic=python_state)
@@ -184,6 +185,22 @@ def native_cache_path(cache: Path, env: Mapping[str, str], *, family: str = "pyt
             for path in files:
                 with path.open("rb") as stream:
                     identity["openssl"][f"{kind}/{path.relative_to(root).as_posix()}"] = hashlib.file_digest(stream, "sha256").hexdigest()
+    elif family == "python" and target == "win32-x64" and canonical.get("HERMES_PYTHON"):
+        try:
+            probe = Path(__file__).with_name("windows_ssl_probe.py")
+            result = subprocess.run([canonical["HERMES_PYTHON"], "-I", str(probe)], env=dict(env),
+                                    capture_output=True, text=True, encoding="utf-8", timeout=30, check=True)
+            observed = json.loads(result.stdout)
+            if not observed.get("modules") or not observed.get("abi") or not observed.get("version"):
+                raise ValueError("incomplete linked SSL identity")
+            identity["openssl"] = observed
+            identity["probes"].append([["python", "loaded-ssl"], observed["version"]])
+            if any(key.startswith(("VCPKG", "PKG_CONFIG", "OPENSSL")) for key in canonical):
+                complete = False
+                missing.append("external SSL build provider requires explicit include/lib identity")
+        except (OSError, ValueError, subprocess.SubprocessError):
+            complete = False
+            missing.append("pinned Python loaded SSL identity unavailable")
     elif family == "python":
         commands.append(["openssl", "version", "-a"])
         if target == "win32-arm64":

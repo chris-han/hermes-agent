@@ -365,9 +365,20 @@ def prepare_in_worker(request: BuildRequest) -> Path:
         cwd=request.source, env=env)
     payload = None
     if request.variant != "light":
+        runtime_cache = None
+        if request.target.startswith("win32"):
+            from scripts.bundles.desktop_toolchain import native_cache_path
+            from scripts.bundles.runtime_cache import runtime_key, diagnostic
+            state = {}
+            observed = native_cache_path(request.cache, env, diagnostic=state)
+            if state["complete"]:
+                key = runtime_key(request.source, request.commit, observed.name, request.target)
+                runtime_cache = (request.cache / "native/runtime" / key, key)
+            else:
+                diagnostic(request.cache, result="disabled", reason="incomplete-python-toolchain", missing=state["missing"])
         payload = prepare_native(out=request.source / "apps/desktop/build/agent-payload", ref=request.commit,
                                  source=request.source, cache=Path(env["UV_CACHE_DIR"]),
-                                 tools=request.cache / "tools", env=env)
+                                 tools=request.cache / "tools", env=env, runtime_cache=runtime_cache)
     require_source(request.source, request.commit)
     prepared = PreparedDesktop.record(request, python=python, node=node, icon_python=icon_python,
                                       native=native, packager=packager / "prepared.json", payload=payload,

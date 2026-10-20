@@ -140,7 +140,8 @@ def prune_staged_store(store_dir: Path, names: list[str]) -> None:
 
 
 def prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
-                   tools: Path | None = None, env: dict | None = None) -> Path:
+                   tools: Path | None = None, env: dict | None = None,
+                   runtime_cache: tuple[Path, str] | None = None) -> Path:
     """Prepare final payload dependencies inside the caller's isolated PM process.
 
     The caller supplies its compiler environment; only the full standalone
@@ -155,8 +156,21 @@ def prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
     with preparation_lock(out):
         prepared_path(out).unlink(missing_ok=True)
         (out / "manifest.json").unlink(missing_ok=True)
-        return _prepare_native(out=out, ref=ref, source=Path(source).resolve(),
-                               cache=Path(cache).resolve(), tools=tools, env=env)
+        def cold():
+            return _prepare_native(out=out, ref=ref, source=Path(source).resolve(),
+                                   cache=Path(cache).resolve(), tools=tools, env=env)
+        if runtime_cache is None:
+            return cold()
+        from scripts.bundles.runtime_cache import cache_lock, restore_cache, publish_cache
+        entry, key = runtime_cache
+        with cache_lock(entry):
+            restored = restore_cache(entry, key, out, Path(source).resolve(), ref)
+            if restored is not None:
+                print(f"runtime: reusing verified sealed preparation {key}", flush=True)
+                return restored
+            result = cold()
+            publish_cache(entry, key, out, result)
+            return result
 
 
 def _prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
