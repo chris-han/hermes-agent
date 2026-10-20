@@ -116,7 +116,7 @@ try {
     }
     $counter = Join-Path (Split-Path $work -Parent) 'semantier-agent-build-version.json'
     $retryVersion = if ($request.PSObject.Properties.Name -contains 'retryVersion') { [string]$request.retryVersion } else { '' }
-    $semantierVersion = & (Join-Path $PSScriptRoot 'next-windows-build-version.ps1') -State $counter -SourceCommit $source -RetryVersion $retryVersion
+    $semantierVersion = & (Join-Path $work 'scripts\next-windows-build-version.ps1') -State $counter -SourceCommit $source -RetryVersion $retryVersion
     if ($retryVersion) {
       Json-File ([ordered]@{kind='semantier-windows-build-version-v1';version=$semantierVersion;sourceCommit=$source;reservedAt=[DateTime]::UtcNow.ToString('o');explicitRetry=$true;counterUnchanged=$true}) (Join-Path $output 'build-version.json')
     } else { Copy-Item -LiteralPath $counter -Destination (Join-Path $output 'build-version.json') }
@@ -154,7 +154,7 @@ try {
   if ((Hash $copy) -cne $receipt.unsignedSha256) { throw 'Unsigned copy checksum mismatch' }
   $receipt.preservedUnsignedArtifact = $copy
   Json-File $receipt (Join-Path $unsigned 'unsigned-build-receipt.json')
-  $signer = Join-Path $PSScriptRoot '..\apps\desktop\scripts\sign-windows-distribution.ps1'
+  $signer = if ($request.unsignedReceipt) { Join-Path $PSScriptRoot '..\apps\desktop\scripts\sign-windows-distribution.ps1' } else { Join-Path $work 'apps\desktop\scripts\sign-windows-distribution.ps1' }
   # Child shell gives a reliable native exit code even when the signing script throws.
   $signArgs = @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$signer,'-Msix',$copy,'-Thumbprint',$request.thumbprint,'-SourceCommit',$source,'-SignTool',$signTool,'-SevenZip',$sevenZip,'-Output',(Join-Path $output 'signed'))
   if ($request.timestampUrl) { $signArgs += @('-TimestampUrl',$request.timestampUrl) }
