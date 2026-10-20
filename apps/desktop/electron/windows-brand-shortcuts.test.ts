@@ -4,7 +4,7 @@ import path from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { createBrandShortcutService, pngsToIco, validateShortcutName } from './windows-brand-shortcuts'
+import { createBrandShortcutService, pngsToIco, validateShortcutName, type ShortcutServiceOptions } from './windows-brand-shortcuts'
 import type { DesktopBranding } from './desktop-branding-types'
 
 const mocks = vi.hoisted(() => ({ failWrite: false, reveal: vi.fn(), png: Buffer.alloc(0) }))
@@ -54,7 +54,7 @@ beforeEach(() => {
 })
 afterEach(() => fs.rmSync(root, { recursive: true, force: true }))
 const roots = () => ({ desktop: path.join(root, 'Desktop'), startMenu: path.join(root, 'Start') })
-const service = (target = async () => ({ target: 'C:\\app.exe', args: '', appUserModelId: 'test' })) =>
+const service = (target: ShortcutServiceOptions['target'] = async () => ({ target: 'C:\\app.exe', args: '', appUserModelId: 'test' })) =>
   createBrandShortcutService({ directory: path.join(root, 'state'), roots: roots(), branding: () => branding, target })
 
 describe('branding shortcuts', () => {

@@ -597,6 +597,12 @@ Settings → Appearance → Customize follows the existing settings NavLink, Inp
 
 Name/logo are display preferences, never organization authority. Organization ID stays read-only from authenticated Semantier context only; no such binding is currently exposed, so an explicit unavailable status is valid and non-blocking. Never derive it from Nous billing, a logo/name or local persistence. `SemantierAttribution` localizes quiet product attribution separately from preserved upstream notices.
 
+## Organization-logo Windows shortcuts
+
+Windows Customize appends a current-user shortcuts section after the existing editor and Apply controls. Reuse SectionHeading, Input, Button, OrganizationBrand and normal destination icons. The name follows the app locale’s draft organization name until edited. Desktop starts selected; Start menu means All apps, with manual Pin to Start help. Preview remains a draft; Apply & create saves first and creates nothing after a failed save. Creation uses the committed snapshot, disables editing while pending, reports each destination independently and retries only failures. Show in folder reveals only a verified owned result. Changing/resetting branding never deletes OS shortcuts; Update shortcuts explicitly refreshes their icon snapshot.
+
+The sandbox-safe branding bridge admits registered main frames only. Electron owns known-folder resolution, native image-to-ICO conversion, immutable icon snapshots and its ownership registry. Never overwrite unrelated links or accept renderer paths/commands. Installed MSIX shortcuts activate the registered package family/ApplicationID through AppsFolder; unpacked builds target their running executable. Package identity, Publisher, taskbar and tray remain separately owned. Verification uses real Windows shell links and isolated user-data/destination roots; no user desktop or Start-menu fixtures.
+
 ## Windows native branding
 
 The supplied `src/assets/semantier-logo.png` is the source for Windows EXE/window/tray ICO, MSIX installer/StoreLogo, Start/search/taskbar scale/targetsize/unplated PNGs and Desktop public PNG marks. The existing icon generator resizes it automatically, preserving color and transparency across light/dark themes and commit/canary builds. Build flavors do not recolor or badge this artwork. Actual product/version/Publisher/package identity and upstream notices remain truthful; macOS, bootstrap and website artwork retain their separate owners.
