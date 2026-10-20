@@ -119,6 +119,9 @@ def test_retained_output_is_bound_to_seal_and_validated_before_use(tmp_path, mon
     import tarfile
     from scripts.bundles.native_prepared import load_prepared
     out,prepared=payload(tmp_path);cache=tmp_path/'native/runtime/key';publish_cache(cache,'key',out,prepared)
+    from scripts.bundles.runtime_cache import retention_path
+    assert retention_path(out).parent==out.parent and retention_path(out).is_file()
+    assert not (out/'.runtime-retention.json').exists()
     inode=(out/'hermes-agent/entry.py').stat().st_ino
     def extraction_forbidden(*a,**kw):raise AssertionError('retained bytes must not be recopied')
     monkeypatch.setattr(tarfile.TarFile,'extractall',extraction_forbidden)
@@ -211,3 +214,21 @@ def test_input_change_restores_compatible_seal_without_dependency_acquisition(tm
     restored=native.prepare_native(out=out,ref='a'*40,source=tmp_path,cache=tmp_path/'wheels',runtime_cache=(old,'old'))
     assert load_prepared(restored).ref=='a'*40
     assert (out/'hermes-agent/entry.py').read_text()=='unchanged backend'
+
+
+def test_foreign_retention_sidecar_is_not_overwritten(tmp_path):
+    from scripts.bundles.runtime_cache import retention_path
+    out,prepared=payload(tmp_path);marker=retention_path(out);marker.write_text('foreign data')
+    with pytest.raises(ValueError,match='unowned runtime retention marker'):
+        publish_cache(tmp_path/'native/runtime/key','key',out,prepared)
+    assert marker.read_text()=='foreign data'
+
+
+def test_empty_linked_restore_output_cannot_write_outside_owner(tmp_path):
+    out,prepared=payload(tmp_path);cache=tmp_path/'native/runtime/key';publish_cache(cache,'key',out,prepared)
+    shutil.rmtree(out);outside=tmp_path/'outside';outside.mkdir()
+    try:out.symlink_to(outside,target_is_directory=True)
+    except (OSError,NotImplementedError):pytest.skip('directory symlink unavailable')
+    with pytest.raises(ValueError,match='symlinked native output'):
+        restore_cache(cache,'key',out,tmp_path,'b'*40)
+    assert not list(outside.iterdir())

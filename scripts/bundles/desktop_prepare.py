@@ -276,7 +276,7 @@ def clean_outputs(request: BuildRequest) -> None:
     from pm.filesystem import remove_tree
 
     from pm.filesystem import is_junction
-    from scripts.bundles.runtime_cache import retained_runtime
+    from scripts.bundles.runtime_cache import retained_runtime, retention_path
     require_output_roots(request.source)
     build = request.source / "apps/desktop/build"
     payload = build / "agent-payload"
@@ -284,12 +284,12 @@ def clean_outputs(request: BuildRequest) -> None:
     keep = (request.target == "win32-x64" and serial
             and Path(serial).resolve() == request.cache.resolve()
             and Path(str(request.source) + ".distribution.lock").is_file()
-            and retained_runtime(payload, request.source))
+            and payload.is_dir() and retained_runtime(payload, request.source))
     stale = [request.source / "apps/desktop" / name for name in ("dist", "release")]
     if keep:
         print(f"desktop build: retaining owned runtime candidate {payload}; admission follows", flush=True)
         for child in build.iterdir():
-            if child == payload or child == payload.with_name(payload.name + ".prepare.lock"):
+            if child in (payload, retention_path(payload), payload.with_name(payload.name + ".prepare.lock")):
                 continue
             if child.is_symlink():
                 child.unlink()

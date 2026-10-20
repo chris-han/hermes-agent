@@ -67,13 +67,15 @@ def cache_lock(entry: Path):
         yield
 
 
-RETENTION = '.runtime-retention.json'
+def retention_path(out: Path) -> Path:
+    # Build ownership is not a shipped runtime resource.
+    return out.with_name(out.name + '.retention.json')
 
 
 def retained_runtime(out: Path, source: Path | None = None, key: str | None = None) -> bool:
     """Ownership only: never a substitute for sealed metadata/byte admission."""
     try:
-        marker = out / RETENTION
+        marker = retention_path(out)
         if marker.is_symlink() or out.absolute() != out.resolve():
             return False
         data = json.loads(marker.read_text(encoding='utf-8'))
@@ -89,13 +91,16 @@ def retained_runtime(out: Path, source: Path | None = None, key: str | None = No
 
 def retain_runtime(out: Path, source: Path, key: str) -> None:
     from hermes_cli.runtime_state import _atomic_bytes
-    _atomic_bytes(out / RETENTION, json.dumps({'schema': 1, 'kind': 'hermes-native-runtime-retention-v1', 'out': str(out),
+    marker = retention_path(out)
+    if (marker.exists() or marker.is_symlink()) and not retained_runtime(out, source):
+        raise ValueError('unowned runtime retention marker; preserve and inspect it')
+    _atomic_bytes(marker, json.dumps({'schema': 1, 'kind': 'hermes-native-runtime-retention-v1', 'out': str(out),
                                                'source': str(source), 'key': key}).encode())
 
 
 def revoke_retention(out: Path) -> None:
     if retained_runtime(out):
-        (out / RETENTION).unlink()
+        retention_path(out).unlink()
 
 
 def publish_cache(entry: Path, key: str, out: Path, prepared: Path) -> None:
@@ -135,6 +140,8 @@ def restore_cache(entry: Path, key: str, out: Path, source: Path, revision: str)
     from hermes_cli.runtime_state import _atomic_bytes
     from scripts.bundles.native_prepared import prepared_path
     started = time.monotonic()
+    if out.absolute() != out.resolve():
+        raise ValueError('symlinked native output')
     reason = 'missing-receipt'
     extracting = False
     if any(p.is_symlink() for p in (entry, entry / 'receipt.json', entry / 'runtime.tar')):
@@ -171,6 +178,8 @@ def restore_cache(entry: Path, key: str, out: Path, source: Path, revision: str)
                 # never guess how to rewrite arbitrary dependency files.
                 prepared['revision'] = revision
                 prepared['inputs']['ref'] = revision
+                if not existing:
+                    revoke_retention(out)
                 out.mkdir(parents=True, exist_ok=True)
                 # Retained bytes remain candidates until load_prepared checks
                 # all current bytes/links before assembly. No deep check is skipped.

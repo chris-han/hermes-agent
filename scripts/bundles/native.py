@@ -174,7 +174,9 @@ def prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
             restored = restore_cache(entry, key, out, Path(source).resolve(), ref)
             if restored is None and owned_candidate:
                 from pm.filesystem import remove_tree
+                from scripts.bundles.runtime_cache import revoke_retention
                 same_key = retained_runtime(out, Path(source).resolve(), key)
+                revoke_retention(out)
                 remove_tree(out)
                 out.mkdir()
                 if not same_key:
