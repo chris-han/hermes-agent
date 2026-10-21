@@ -1,4 +1,4 @@
-"""Session Insights Engine: aggregates the SQLite state DB into usage insights (tokens, cost estimates, tool/skill
+"""Session Insights Engine: aggregates the native state DB into usage insights (tokens, cost estimates, tool/skill
 usage, activity, model/platform breakdowns). ``InsightsEngine(db).generate(days=30)`` → ``format_terminal(report)``."""
 
 import json
@@ -152,8 +152,50 @@ class InsightsEngine:
     )
     _PINNED = ("_GET_TOOL_CALLS", "_GET_SKILL_CALLS")
 
+    # Explicit PostgreSQL owner queries. The scoped SessionDB read context sets
+    # its governed schema and enforces a read-only transaction; no SQLite
+    # connection, index hint or runtime SQL conversion enters this branch.
+    _POSTGRES_QUERIES = {
+        "_GET_SESSIONS": _scoped(
+            f"SELECT {_SESSION_COLS} FROM sessions WHERE started_at >= %s",
+            " ORDER BY started_at DESC", src=" AND source = %s"),
+        "_GET_TOOL_CALLS": _scoped(
+            "SELECT m.session_id,m.tool_calls FROM messages m"
+            " JOIN sessions s ON s.id=m.session_id WHERE s.started_at >= %s",
+            " AND m.role='assistant' AND m.tool_calls IS NOT NULL",
+            src=" AND s.source = %s"),
+        "_GET_SKILL_CALLS": _scoped(
+            "SELECT m.tool_calls,m.timestamp FROM messages m"
+            " JOIN sessions s ON s.id=m.session_id WHERE s.started_at >= %s",
+            " AND m.role='assistant' AND m.tool_calls IS NOT NULL"
+            " AND (strpos(m.tool_calls,'skill_view')>0 OR strpos(m.tool_calls,'skill_manage')>0)",
+            src=" AND s.source = %s"),
+        "_GET_TOOL_NAMES": _scoped(
+            "SELECT m.session_id,m.tool_name,COUNT(*) AS count FROM messages m"
+            " JOIN sessions s ON s.id=m.session_id WHERE s.started_at >= %s",
+            " AND m.role='tool' AND m.tool_name IS NOT NULL GROUP BY m.session_id,m.tool_name",
+            src=" AND s.source = %s"),
+        "_GET_MESSAGE_STATS": _scoped(
+            "SELECT COUNT(*) AS total_messages,"
+            " SUM(CASE WHEN m.role='user' THEN 1 ELSE 0 END) AS user_messages,"
+            " SUM(CASE WHEN m.role='assistant' THEN 1 ELSE 0 END) AS assistant_messages,"
+            " SUM(CASE WHEN m.role='tool' THEN 1 ELSE 0 END) AS tool_messages"
+            " FROM messages m JOIN sessions s ON s.id=m.session_id WHERE s.started_at >= %s",
+            src=" AND s.source = %s"),
+        "_GET_MODEL_USAGE": _scoped(
+            "SELECT u.session_id,u.model,u.billing_provider,u.billing_base_url,"
+            " u.api_call_count,u.input_tokens,u.output_tokens,u.cache_read_tokens,"
+            " u.cache_write_tokens,u.reasoning_tokens,u.estimated_cost_usd,"
+            " u.actual_cost_usd,u.cost_status,u.cost_source,u.billing_mode"
+            " FROM session_model_usage u JOIN sessions s ON s.id=u.session_id"
+            " WHERE s.started_at >= %s", src=" AND s.source = %s"),
+    }
+
     def __init__(self, db):
         self.db = db
+        self._postgres = getattr(db, "backend", None) == "postgresql"
+        if self._postgres:
+            return
         self._conn = db._conn
         try:
             self._has_assistant_calls_index = bool(self._conn.execute(
@@ -168,6 +210,11 @@ class InsightsEngine:
 
     def _query(self, base: str, cutoff: float, source: Optional[str]) -> list:
         """Rows of ``<base>_WITH_SOURCE`` or ``<base>_ALL`` (instance attrs, so the unpinned fallback applies)."""
+        if self._postgres:
+            all_rows, source_rows = self._POSTGRES_QUERIES[base]
+            query, params = (source_rows, (cutoff, source)) if source else (all_rows, (cutoff,))
+            with self.db._read_ctx() as connection:
+                return connection.execute(query, params).fetchall()
         sql, params = (getattr(self, base + "_WITH_SOURCE"), (cutoff, source)) if source else (getattr(self, base + "_ALL"), (cutoff,))
         return self._conn.execute(sql, params).fetchall()
 

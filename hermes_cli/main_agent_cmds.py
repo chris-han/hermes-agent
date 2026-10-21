@@ -109,15 +109,16 @@ def cmd_tools(args):
 def cmd_insights(args):
     db = None
     try:
-        from hermes_state import SessionDB
+        from hermes_state_backend import open_session_db, postgres_enabled
         from agent.insights import InsightsEngine
         from hermes_cli.config import get_hermes_home
-        path = get_hermes_home() / "state.db"
-        if not path.exists():
+        home = get_hermes_home()
+        path = home / "state.db"
+        if not postgres_enabled() and not path.exists():
             from agent.i18n import t
             print(f"  {t('cli.insights.no_session_data')}")
             return
-        db = SessionDB(db_path=path, read_only=True)
+        db = open_session_db(home=home, read_only=True)
         engine = InsightsEngine(db)
         report = engine.generate(days=args.days, source=args.source)
         print(engine.format_terminal(report))
