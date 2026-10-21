@@ -76,11 +76,14 @@ def append_on_conn(store,conn,session_id,messages):
         row_id=store._insert(conn,'messages',values,returning='id').fetchone()['id']
         message['_row_id']=row_id; message['timestamp']=timestamp
         message[DB_ROW_SNAPSHOT]=transcript_row_snapshot(rows.fetch(session_id,row_id)); ids.append(row_id)
+    store._prune_pg_shadowed_checkpoints(conn,session_id,fresh)
+    store._reconcile_pg_display_orders(conn,session_id)
+    store._restamp_pg_messages(conn,session_id,fresh)
     store._recount_on_conn(conn,session_id)
     return ids
 
 
-def insert_fresh_on_conn(store,conn,session_id,messages):
+def insert_fresh_on_conn(store,conn,session_id,messages,*,prune_checkpoints=True):
     """Insert a new compaction generation without append-CAS adopting retired originals."""
     import time
     from hermes_state import SessionDB
@@ -97,4 +100,7 @@ def insert_fresh_on_conn(store,conn,session_id,messages):
         message['_row_id']=row_id;message['timestamp']=timestamp
         row=conn.execute(sql.SQL('SELECT * FROM {} WHERE id=%s').format(store.table('messages')),(row_id,)).fetchone()
         message[DB_ROW_SNAPSHOT]=transcript_row_snapshot(native_row(row));ids.append(row_id)
+    if prune_checkpoints:store._prune_pg_shadowed_checkpoints(conn,session_id,messages)
+    store._reconcile_pg_display_orders(conn,session_id)
+    store._restamp_pg_messages(conn,session_id,messages)
     return ids

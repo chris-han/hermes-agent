@@ -5,8 +5,9 @@ from pathlib import Path
 from hermes_state_backend import postgres_enabled,resolve_postgres_scope
 
 
-def statement(*,sqlite,postgresql):
-    return postgresql if postgres_enabled() else sqlite
+def statement(*,sqlite,postgresql,connection=None):
+    selected=is_postgres(connection) if connection is not None else postgres_enabled()
+    return postgresql if selected else sqlite
 
 
 def parameter_marker():return '%s' if postgres_enabled() else '?'
@@ -14,6 +15,32 @@ def parameter_marker():return '%s' if postgres_enabled() else '?'
 
 def is_postgres(conn):
     return getattr(conn,'hermes_scope',None) is not None
+
+
+def compression_step(conn,parent_id):
+    from hermes_state_postgresql_lineage import compression_step as select
+    return select(conn,parent_id)
+
+
+def connection_changes(conn):
+    """Actual rows changed by this transaction, without a connection facade."""
+    if not is_postgres(conn):return conn.total_changes
+    row=conn.execute('SELECT COALESCE(SUM(n_tup_ins+n_tup_upd+n_tup_del),0) FROM pg_catalog.pg_stat_xact_user_tables WHERE schemaname=%s',(conn.hermes_scope.schema,)).fetchone()
+    return int(row[0])
+
+
+def execute_many(conn,query,rows):
+    cursor=conn.cursor()
+    try:cursor.executemany(query,rows)
+    finally:cursor.close()
+
+
+def operational_errors():
+    import sqlite3
+    if postgres_enabled():
+        import psycopg
+        return (sqlite3.Error,psycopg.OperationalError)
+    return (sqlite3.Error,)
 
 
 class NativeRow:
@@ -68,10 +95,12 @@ def in_transaction(conn):
 
 
 @contextmanager
-def native_write_transaction(conn,*,allow_nested=False):
+def native_write_transaction(conn,*,allow_nested=False,patience_s=None):
     if conn.hermes_read_only:raise PermissionError('Read-only native store')
     if in_transaction(conn) and not allow_nested:raise RuntimeError('Nested native write transaction requires explicit composition')
     with conn.transaction():
+        if patience_s is not None:
+            conn.execute("SELECT set_config('lock_timeout',%s,true)",(str(max(1,int(float(patience_s)*1000)))+'ms',))
         conn.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',(conn.hermes_scope.schema+'\x1fcanonical-native-writer',))
         yield conn
 

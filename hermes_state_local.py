@@ -1,5 +1,6 @@
 """Private local creation receipts in the canonical runtime transaction owner."""
 import json
+from hermes_state_sql import statement as _storage_statement, is_postgres
 import time
 
 from hermes_state_runtime import RuntimeStoreError, _epoch, _json
@@ -17,7 +18,7 @@ def commit_local_session(db, *, epoch, receipt):
     key = POLICY_PREFIX + sid
     def write(conn):
         _epoch(conn, epoch)
-        old = conn.execute('SELECT value FROM state_meta WHERE key=?', (key,)).fetchone()
+        old = conn.execute(_storage_statement(sqlite='SELECT value FROM state_meta WHERE key=?', postgresql='SELECT value FROM state_meta WHERE key=%s', connection=conn), (key,)).fetchone()
         if old is not None:
             try:
                 saved = json.loads(old[0])
@@ -30,14 +31,14 @@ def commit_local_session(db, *, epoch, receipt):
                 raise RuntimeStoreError('invalid_params')
             return saved
         from hermes_state_mutation_retirement import RETIRED_PREFIX
-        if conn.execute('SELECT 1 FROM state_meta WHERE key=?', (RETIRED_PREFIX + sid,)).fetchone():
+        if conn.execute(_storage_statement(sqlite='SELECT 1 FROM state_meta WHERE key=?', postgresql='SELECT 1 FROM state_meta WHERE key=%s', connection=conn), (RETIRED_PREFIX + sid,)).fetchone():
             # Deleted: its receipt was retired with the transcript; a create/cron retry must not
             # resurrect the row (and re-fire its prompt) under the same deterministic id.
             raise RuntimeStoreError('not_found')
         if ('legacy_session_id' not in receipt and
-                conn.execute('SELECT 1 FROM sessions WHERE id=?', (sid,)).fetchone()):
+                conn.execute(_storage_statement(sqlite='SELECT 1 FROM sessions WHERE id=?', postgresql='SELECT 1 FROM sessions WHERE id=%s', connection=conn), (sid,)).fetchone()):
             raise RuntimeStoreError('storage_unavailable')
-        if conn.execute("SELECT 1 FROM gateway_routing WHERE scope='' AND session_key=?", (route,)).fetchone():
+        if conn.execute(_storage_statement(sqlite="SELECT 1 FROM gateway_routing WHERE scope='' AND session_key=?", postgresql="SELECT 1 FROM gateway_routing WHERE scope='' AND session_key=%s", connection=conn), (route,)).fetchone():
             raise RuntimeStoreError('admission_conflict')
         if 'legacy_session_id' in receipt:
             from hermes_state_local_migration import bind_legacy_target
@@ -45,14 +46,14 @@ def commit_local_session(db, *, epoch, receipt):
         policy, entry = receipt['policy'], receipt['entry']
         from datetime import datetime
         started = datetime.fromisoformat(entry['created_at']).timestamp()
-        conn.execute('''INSERT INTO sessions(id,source,user_id,session_key,chat_id,chat_type,
+        conn.execute(_storage_statement(sqlite='''INSERT INTO sessions(id,source,user_id,session_key,chat_id,chat_type,
             model,cwd,profile_name,origin_json,started_at) VALUES(?,?,?,?,?,'dm',?,?,?,?,?)
-            ON CONFLICT(id) DO NOTHING''',
+            ON CONFLICT(id) DO NOTHING''', postgresql="INSERT INTO sessions(id,source,user_id,session_key,chat_id,chat_type,\n            model,cwd,profile_name,origin_json,started_at) VALUES(%s,%s,%s,%s,%s,'dm',%s,%s,%s,%s,%s)\n            ON CONFLICT(id) DO NOTHING", connection=conn),
             (sid, policy['source'], receipt['principal_id'], route, entry['origin']['chat_id'],
              policy['model'], _row_cwd(policy), db._own_profile_name(), _json(entry['origin']), started))
-        conn.execute("INSERT INTO gateway_routing(scope,session_key,entry_json,updated_at) VALUES('',?,?,?)",
+        conn.execute(_storage_statement(sqlite="INSERT INTO gateway_routing(scope,session_key,entry_json,updated_at) VALUES('',?,?,?)", postgresql="INSERT INTO gateway_routing(scope,session_key,entry_json,updated_at) VALUES('',%s,%s,%s)", connection=conn),
                      (route, _json(entry), started))
-        conn.execute('INSERT INTO state_meta(key,value) VALUES(?,?)', (key, encoded))
+        conn.execute(_storage_statement(sqlite='INSERT INTO state_meta(key,value) VALUES(?,?)', postgresql='INSERT INTO state_meta(key,value) VALUES(%s,%s)', connection=conn), (key, encoded))
         return receipt
     return db._execute_write(write)
 
@@ -91,23 +92,24 @@ def retire_local_receipts(conn, session_ids):
     if not targets:
         return
     # Prefix scans (GLOB uses the key index), not one LIKE per id: a prune retires thousands.
-    gone = [key for key, value in conn.execute('SELECT key,value FROM state_meta WHERE key GLOB ?',
+    gone = [key for key, value in conn.execute(_storage_statement(sqlite='SELECT key,value FROM state_meta WHERE key GLOB ?',postgresql='SELECT key,value FROM state_meta WHERE starts_with(key,left(%s,-1))',connection=conn),
                                                (POLICY_PREFIX + '*',))
             if _policy_target(value) in targets]
-    gone += [key for key, value in conn.execute('SELECT key,value FROM state_meta WHERE key GLOB ?',
+    gone += [key for key, value in conn.execute(_storage_statement(sqlite='SELECT key,value FROM state_meta WHERE key GLOB ?',postgresql='SELECT key,value FROM state_meta WHERE starts_with(key,left(%s,-1))',connection=conn),
                                                 (API_DECLARED_PREFIX + '*',)) if value in targets]
     gone += [API_BINDING_PREFIX + sid for sid in targets]
-    conn.executemany('DELETE FROM state_meta WHERE key=?', [(key,) for key in gone])
+    from hermes_state_sql import execute_many
+    execute_many(conn,_storage_statement(sqlite='DELETE FROM state_meta WHERE key=?', postgresql='DELETE FROM state_meta WHERE key=%s', connection=conn), [(key,) for key in gone])
 
 
 def local_lineage_owner(conn, session_id):
     """The creation id whose receipt lineage holds physical segment *session_id* (a reset or
     compression child, which carries the owner as ``chat_id``); *session_id* itself otherwise."""
-    row = conn.execute('SELECT chat_id FROM sessions WHERE id=?', (session_id,)).fetchone()
+    row = conn.execute(_storage_statement(sqlite='SELECT chat_id FROM sessions WHERE id=?', postgresql='SELECT chat_id FROM sessions WHERE id=%s', connection=conn), (session_id,)).fetchone()
     owner = row[0] if row else None
     if not owner or owner == session_id:
         return session_id
-    saved = conn.execute('SELECT value FROM state_meta WHERE key=?', (POLICY_PREFIX + owner,)).fetchone()
+    saved = conn.execute(_storage_statement(sqlite='SELECT value FROM state_meta WHERE key=?', postgresql='SELECT value FROM state_meta WHERE key=%s', connection=conn), (POLICY_PREFIX + owner,)).fetchone()
     try:
         lineage = json.loads(saved[0]).get('lineage') if saved else None
     except (TypeError, ValueError, AttributeError):
@@ -128,7 +130,7 @@ def local_conversation_ids(conn, session_id):
     each segment of the receipt lineage. A canonical reset never forks the logical session (one
     policy, FIFO and generation), so listing, delete and retirement treat these ids as one."""
     owner = local_lineage_owner(conn, session_id)
-    saved = conn.execute('SELECT value FROM state_meta WHERE key=?', (POLICY_PREFIX + owner,)).fetchone()
+    saved = conn.execute(_storage_statement(sqlite='SELECT value FROM state_meta WHERE key=?', postgresql='SELECT value FROM state_meta WHERE key=%s', connection=conn), (POLICY_PREFIX + owner,)).fetchone()
     try:
         lineage = json.loads(saved[0]).get('lineage') if saved else None
     except (TypeError, ValueError, AttributeError):
@@ -146,14 +148,20 @@ def local_lineage_index(conn):
     reset segment to ``(owner, lineage)`` for the row that represents the conversation. A delete
     of that row removes the whole lineage (``hermes_state_mutation_guards.delete_targets``)."""
     superseded, heads = set(), {}
-    rows = conn.execute("SELECT value FROM state_meta WHERE key GLOB ? AND json_valid(value) "
+    if is_postgres(conn):
+        rows=conn.execute('SELECT value FROM state_meta WHERE starts_with(key,left(%s,-1))',(POLICY_PREFIX+'*',)).fetchall()
+    else:
+        rows = conn.execute("SELECT value FROM state_meta WHERE key GLOB ? AND json_valid(value) "
                         "AND json_array_length(value, '$.lineage') > 1", (POLICY_PREFIX + '*',)).fetchall()
     for (raw,) in rows:
-        receipt = json.loads(raw)
+        try:receipt=json.loads(raw)
+        except (ValueError,TypeError):continue
+        if not isinstance(receipt,dict):continue
         owner, lineage = receipt.get('session_id'), receipt.get('lineage')
+        if not isinstance(lineage,list) or len(lineage)<=1:continue
         if not isinstance(owner, str) or not all(isinstance(sid, str) for sid in lineage):
             continue
-        marks = ','.join('?' * len(lineage))
+        marks = ','.join(_storage_statement(sqlite='?',postgresql='%s',connection=conn) for _ in lineage)
         ended = dict(conn.execute(f'SELECT id,end_reason FROM sessions WHERE id IN ({marks})', lineage).fetchall())
         starts = [sid for i, sid in enumerate(lineage) if i == 0 or ended.get(lineage[i - 1]) == 'session_reset']
         superseded.update(starts[:-1])
@@ -185,7 +193,7 @@ def annotate_local_lineages(sessions, heads):
 
 def local_receipt(db, session_id):
     with db._read_ctx() as conn:
-        row = conn.execute('SELECT value FROM state_meta WHERE key=?', (POLICY_PREFIX + session_id,)).fetchone()
+        row = conn.execute(_storage_statement(sqlite='SELECT value FROM state_meta WHERE key=?', postgresql='SELECT value FROM state_meta WHERE key=%s', connection=conn), (POLICY_PREFIX + session_id,)).fetchone()
     if row is None:
         raise RuntimeStoreError('storage_unavailable')
     try:
@@ -204,10 +212,10 @@ def end_idle_local_session(db, *, epoch, session_id, target_id, reason):
     the row open; one committed after is reopened by the drain (``reopen_local_session``)."""
     def write(conn):
         _epoch(conn, epoch)
-        if conn.execute("SELECT 1 FROM session_admissions WHERE target_session_id=? AND status IN ('queued','started','unknown')",
+        if conn.execute(_storage_statement(sqlite="SELECT 1 FROM session_admissions WHERE target_session_id=? AND status IN ('queued','started','unknown')", postgresql="SELECT 1 FROM session_admissions WHERE target_session_id=%s AND status IN ('queued','started','unknown')", connection=conn),
                         (session_id,)).fetchone():
             return 0
-        if conn.execute("SELECT 1 FROM worker_executions WHERE session_id IN (?,?) AND status IN ('registered','running','unknown')",
+        if conn.execute(_storage_statement(sqlite="SELECT 1 FROM worker_executions WHERE session_id IN (?,?) AND status IN ('registered','running','unknown')", postgresql="SELECT 1 FROM worker_executions WHERE session_id IN (%s,%s) AND status IN ('registered','running','unknown')", connection=conn),
                         (session_id, target_id)).fetchone():
             return 0
         return db._end_and_bump(conn, 'UPDATE sessions SET ended_at=?, end_reason=? WHERE id=? AND ended_at IS NULL',

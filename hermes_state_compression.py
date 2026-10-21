@@ -63,6 +63,10 @@ def _claim_lease_row(conn, table: str, key_col: str, key: str, holder: str, now:
     """Single-transaction lease claim: DELETE a stale holder's row (``stale(holder,
     expires_at)``), INSERT OR IGNORE ours, then SELECT to confirm ownership (INSERT OR
     IGNORE gives no rowcount signal). Returns ``(acquired, reclaimed_holder)``."""
+    from hermes_state_sql import is_postgres
+    if is_postgres(conn):
+        from hermes_state_postgresql_leases import claim_lease_row
+        return claim_lease_row(conn,table,key_col,key,holder,now,expires_at)
     reclaimed_holder = None
     row = conn.execute(f"SELECT holder, expires_at FROM {table} WHERE {key_col} = ?", (key,)).fetchone()
     if row is not None and stale(row["holder"], row["expires_at"]):

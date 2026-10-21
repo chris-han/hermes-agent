@@ -18,7 +18,15 @@ _PEER_BY_KEY_PG="\n                SELECT s.*,\n                       COALESCE(
 _PEER_BY_TUPLE_PG="\n                SELECT s.*,\n                       COALESCE(sp.prompt, s.system_prompt)\n                           AS _system_prompt_resolved,\n                       (COALESCE(s.message_count, 0) > 0 OR EXISTS (\n                           SELECT 1 FROM messages WHERE messages.session_id = s.id LIMIT 1\n                       )) AS _has_messages\n                FROM sessions s\n                LEFT JOIN system_prompts sp ON sp.hash = s.system_prompt_hash\n                WHERE s.source = %s\n                  AND COALESCE(s.user_id, '') = COALESCE(%s, '')\n                  AND COALESCE(s.chat_id, '') = COALESCE(%s, '')\n                  AND COALESCE(s.chat_type, '') = COALESCE(%s, '')\n                  AND COALESCE(s.thread_id, '') = COALESCE(%s, '')\n                  AND (%s::text IS NULL OR COALESCE(s.profile_name, %s) = %s)\n                  AND (s.ended_at IS NULL OR s.end_reason IN ('agent_close', 'ws_orphan_reap', 'superseded_by_resume', 'startup_orphan_reap')\n                       OR (s.handoff_state = 'completed'))\n                  AND (COALESCE(s.message_count, 0) > 0 OR EXISTS (\n                      SELECT 1 FROM messages WHERE messages.session_id = s.id LIMIT 1\n                  ))\n                  AND NOT EXISTS (\n                      SELECT 1 FROM sessions b\n                      WHERE b.source = s.source\n                        AND COALESCE(b.user_id, '') = COALESCE(s.user_id, '')\n                        AND COALESCE(b.chat_id, '') = COALESCE(s.chat_id, '')\n                        AND COALESCE(b.chat_type, '') = COALESCE(s.chat_type, '')\n                        AND COALESCE(b.thread_id, '') = COALESCE(s.thread_id, '')\n                        AND (%s::text IS NULL OR COALESCE(b.profile_name, %s) = %s)\n                        AND b.ended_at IS NOT NULL\n                        AND b.end_reason IN ('session_reset', 'session_switch', 'idle', 'daily', 'suspended', 'resume_pending_expired')\n                        AND b.ended_at\n                            > COALESCE(s.last_activity_at, s.started_at)\n                  )\n                ORDER BY COALESCE(s.last_activity_at, s.started_at) DESC\n                LIMIT 1\n                "
 
 class PostgreSQLRuntimeMixin:
+    _TRANSCRIPT_WRITE_PATIENCE_S = _NativeSessionDB._TRANSCRIPT_WRITE_PATIENCE_S
+    _WRITE_PATIENCE_S = _NativeSessionDB._WRITE_PATIENCE_S
     _TITLE_SOURCE_RANK = _NativeSessionDB._TITLE_SOURCE_RANK
+    _WRITE_RETRY_MIN_S = _NativeSessionDB._WRITE_RETRY_MIN_S
+    _WRITE_RETRY_MAX_S = _NativeSessionDB._WRITE_RETRY_MAX_S
+    _WRITE_RETRY_SLOW_AFTER_S = _NativeSessionDB._WRITE_RETRY_SLOW_AFTER_S
+    _WRITE_RETRY_SLOW_MIN_S = _NativeSessionDB._WRITE_RETRY_SLOW_MIN_S
+    _WRITE_RETRY_SLOW_MAX_S = _NativeSessionDB._WRITE_RETRY_SLOW_MAX_S
+    _sleep_before_write_retry = _NativeSessionDB._sleep_before_write_retry
 
     @contextmanager
     def _read_ctx(self):
@@ -39,7 +47,7 @@ class PostgreSQLRuntimeMixin:
 
     def _execute_write(self, callback, **kwargs):
         with self._canonical_connection() as conn:
-            with native_write_transaction(conn):
+            with native_write_transaction(conn,patience_s=kwargs.get('patience_s',self._WRITE_PATIENCE_S)):
                 return callback(conn)
 
     def _read_one(self, query, params=()):
@@ -357,7 +365,64 @@ class PostgreSQLRuntimeMixin:
         return self._write_rowcount('UPDATE sessions SET title_source = %s WHERE id = %s AND title IS NOT NULL', (source, session_id)) > 0
 
     # The canonical wait loop calls only the owned lease verb and wall-clock callbacks.
-    acquire_session_turn_lease = _NativeSessionDB.acquire_session_turn_lease
+    def acquire_session_turn_lease(
+        self, session_id: str, holder: str, *, ttl_seconds: float = 300.0,
+        wait_seconds: float = 1800.0, poll_interval_seconds: float = 1.0, on_wait=None,
+        wait_notice_interval_seconds: float = 15.0, should_abort=None, acquire_patience_s: float = 0.5,
+        on_contended=None,
+    ) -> bool:
+        """Wait for a cross-process turn lease without holding a PostgreSQL lock. ``on_wait(elapsed)`` is
+        best-effort: called when another holder has the lease and about every
+        ``wait_notice_interval_seconds`` after. A busy database is not a holder: the attempt is
+        retried at once with a longer write patience, and ``on_contended()`` is called instead,
+        since the busy writer may be the holder's last flush. ``should_abort()`` True (e.g.
+        ``/stop``) returns False at once."""
+        deadline = time.monotonic() + max(0.0, float(wait_seconds))
+        patience = acquire_patience_s
+        wait_started = None
+        last_notice_at = None
+        notice_every = max(0.0, float(wait_notice_interval_seconds))
+        while True:
+            if should_abort is not None:
+                try:
+                    if should_abort():
+                        return False
+                except Exception:
+                    logger.debug("session turn lease should_abort callback failed", exc_info=True)
+            try:
+                if self.try_acquire_session_turn_lease(
+                    session_id, holder, ttl_seconds=ttl_seconds, patience_s=patience):
+                    return True
+            except (psycopg.errors.LockNotAvailable,psycopg.errors.DeadlockDetected) as exc:
+                # Another writer's transaction outlasted the write patience. That is not a lease
+                # holder, so no poll sleep or "another process" notice; the retry waits on the write
+                # lock itself (the poll interval moves into its patience) and wins it once free.
+                if on_contended is not None:
+                    try:
+                        on_contended()
+                    except Exception:
+                        logger.debug("session turn lease on_contended callback failed", exc_info=True)
+                patience = min(acquire_patience_s + max(0.0, float(poll_interval_seconds)),
+                               max(acquire_patience_s, deadline - time.monotonic()))
+                if not self._sleep_before_write_retry(deadline, 0.0):
+                    return False
+                continue
+            patience = acquire_patience_s
+            now = time.monotonic()
+            remaining = deadline - now
+            if remaining <= 0:
+                return False
+            if wait_started is None:
+                wait_started = now
+            if on_wait is not None and (
+                last_notice_at is None or notice_every == 0.0 or (now - last_notice_at) >= notice_every
+            ):
+                try:
+                    on_wait(max(0.0, now - wait_started))
+                except Exception:
+                    logger.debug("session turn lease on_wait callback failed", exc_info=True)
+                last_notice_at = now
+            time.sleep(min(max(0.01, float(poll_interval_seconds)), remaining))
     session_unread = staticmethod(_NativeSessionDB.session_unread)
 
     def session_count_ge(self,minimum):

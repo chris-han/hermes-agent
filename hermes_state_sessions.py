@@ -157,6 +157,10 @@ def _expand_compression_lineage_ids(conn, frontier: list[str]) -> list[str]:
     definition as ``_CHAIN_STEP_SQL`` / the list-projection CTE (parent ended with
     ``reason='compression'``, child is not a branch / reset / delegate / tool session).
     Branch/reset children are NOT continuations — they are their own conversations."""
+    from hermes_state_sql import is_postgres
+    if is_postgres(conn):
+        from hermes_state_postgresql_lineage import expand_compression_lineage_ids
+        return expand_compression_lineage_ids(conn,[sid for sid in frontier if sid])
     ids = [sid for sid in frontier if sid]
     if not ids:
         return []

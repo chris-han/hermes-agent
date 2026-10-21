@@ -59,10 +59,12 @@ CREATE TABLE IF NOT EXISTS migration_receipts (
     source_digest TEXT PRIMARY KEY, receipt_json TEXT NOT NULL,
     imported_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS semantier_session_branches (
-    child_session_id TEXT PRIMARY KEY REFERENCES sessions(id),
-    source_session_id TEXT NOT NULL REFERENCES sessions(id),
+    child_session_id TEXT PRIMARY KEY,
+    source_session_id TEXT NOT NULL,
     branch_point_message_id TEXT NOT NULL, branch_point_sequence INTEGER NOT NULL,
     title TEXT NOT NULL, idempotency_key TEXT NOT NULL, request_hash TEXT NOT NULL);
+ALTER TABLE semantier_session_branches DROP CONSTRAINT IF EXISTS semantier_session_branches_child_session_id_fkey;
+ALTER TABLE semantier_session_branches DROP CONSTRAINT IF EXISTS semantier_session_branches_source_session_id_fkey;
 CREATE INDEX IF NOT EXISTS messages_session_id_pg ON messages(session_id,id);
 CREATE INDEX IF NOT EXISTS sessions_parent_pg ON sessions(parent_session_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_title_unique ON sessions(title) WHERE title IS NOT NULL;
@@ -149,9 +151,10 @@ from hermes_state_rewind import SessionRewindMixin
 from hermes_state_postgresql_compaction import PostgreSQLCompactionMixin
 from hermes_state_postgresql_retirement import PostgreSQLRetirementMixin
 from hermes_state_postgresql_titles import PostgreSQLTitlesMixin
+from hermes_state_postgresql_mutations import PostgreSQLMutationsMixin
 
 
-class PostgreSQLSessionDB(PostgreSQLTitlesMixin,PostgreSQLRuntimeMixin,PostgreSQLPortabilityMixin,PostgreSQLSearchMixin,PostgreSQLUsageMixin,PostgreSQLCompactionMixin,PostgreSQLRetirementMixin,SessionRewindMixin):
+class PostgreSQLSessionDB(PostgreSQLMutationsMixin,PostgreSQLTitlesMixin,PostgreSQLRuntimeMixin,PostgreSQLPortabilityMixin,PostgreSQLSearchMixin,PostgreSQLUsageMixin,PostgreSQLCompactionMixin,PostgreSQLRetirementMixin,SessionRewindMixin):
     """Native SessionDB API used by the embedded API and Semantier session readers.
 
     Each operation owns a real PG transaction. External durable owners may call
@@ -175,15 +178,20 @@ class PostgreSQLSessionDB(PostgreSQLTitlesMixin,PostgreSQLRuntimeMixin,PostgreSQ
         return sql.Identifier(self.scope.schema, name)
 
     @contextmanager
-    def _transaction(self, *, read_only=False):
+    def _transaction(self, *, read_only=False, patience_s=None):
         if self._closed:
             raise RuntimeError('Session store closed')
         if self.read_only and not read_only:
             raise PermissionError('Read-only session store')
         with psycopg.connect(self._dsn, row_factory=dict_row) as conn:
+            conn.hermes_scope=self.scope
+            conn.hermes_home=self.home
+            conn.hermes_read_only=self.read_only or read_only
             if read_only:
                 conn.execute('SET TRANSACTION READ ONLY')
-            else:
+            if patience_s is not None:
+                conn.execute("SELECT set_config('lock_timeout',%s,true)",(str(max(1,int(float(patience_s)*1000)))+'ms',))
+            if not read_only:
                 conn.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',(self.scope.schema+'\x1fcanonical-native-writer',))
             conn.execute(sql.SQL('SET LOCAL search_path TO {},pg_catalog').format(sql.Identifier(self.scope.schema)))
             yield conn
@@ -224,8 +232,9 @@ class PostgreSQLSessionDB(PostgreSQLTitlesMixin,PostgreSQLRuntimeMixin,PostgreSQ
         return conn.execute(query,[*values.values(),value]).rowcount
 
     def _session_on_conn(self, conn, session_id, *, lock=False):
-        return conn.execute(sql.SQL('SELECT * FROM {} WHERE id=%s{}').format(self.table('sessions'),
+        row=conn.execute(sql.SQL('SELECT * FROM {} WHERE id=%s{}').format(self.table('sessions'),
             sql.SQL(' FOR UPDATE' if lock else '')), (session_id,)).fetchone()
+        return None if row is None else {key:row[key] for key in row.keys()}
 
     def _create_on_conn(self,conn,session_id,source,**kwargs):
         from hermes_state_postgresql_fields import SESSION_FIELDS
@@ -603,34 +612,28 @@ class PostgreSQLSessionDB(PostgreSQLTitlesMixin,PostgreSQLRuntimeMixin,PostgreSQ
         if limit and count>limit: raise SessionResumeTooLargeError(count,limit)
         return count
 
-    def _claim_lease(self,table,key_column,key,holder,ttl_seconds,*,session_id):
+    def _claim_lease(self,table,key_column,key,holder,ttl_seconds,*,session_id,patience_s=None):
         if not key or not holder:return False
-        import socket
-        from hermes_state import _compression_lock_holder_process_is_dead
-        now=time.time();host=socket.gethostname()
-        with self._transaction() as conn:
+        from hermes_state_postgresql_leases import claim_lease_row
+        now=time.time()
+        with self._transaction(patience_s=patience_s) as conn:
             self._lock_conversation(conn,session_id)
-            old=conn.execute(sql.SQL('SELECT holder,expires_at,owner_host FROM {} WHERE {}=%s FOR UPDATE').format(self.table(table),sql.Identifier(key_column)),(key,)).fetchone()
-            # Imported/foreign ownership has no local process proof and waits for expiry.
-            if old and old['owner_host']==host and _compression_lock_holder_process_is_dead(old['holder']):
-                conn.execute(sql.SQL('DELETE FROM {} WHERE {}=%s AND holder=%s').format(self.table(table),sql.Identifier(key_column)),(key,old['holder']))
-            query=sql.SQL('INSERT INTO {}({},holder,acquired_at,expires_at,owner_host) VALUES(%s,%s,%s,%s,%s) ON CONFLICT({}) DO UPDATE SET holder=excluded.holder,acquired_at=excluded.acquired_at,expires_at=excluded.expires_at,owner_host=excluded.owner_host WHERE {}.holder=excluded.holder OR {}.expires_at<=%s RETURNING holder').format(self.table(table),sql.Identifier(key_column),sql.Identifier(key_column),self.table(table),self.table(table))
-            return bool(conn.execute(query,(key,holder,now,now+max(.1,float(ttl_seconds)),host,now)).fetchone())
+            return claim_lease_row(conn,table,key_column,key,holder,now,now+max(.1,float(ttl_seconds)))[0]
 
     def try_acquire_session_turn_lease(self,session_id,holder,*,ttl_seconds=300,patience_s=None):
         with self._transaction(read_only=True) as conn: key=self._lease_key_on_conn(conn,session_id)
-        return self._claim_lease('session_turn_leases','conversation_id',key,holder,ttl_seconds,session_id=session_id)
+        return self._claim_lease('session_turn_leases','conversation_id',key,holder,ttl_seconds,session_id=session_id,patience_s=patience_s)
 
     def try_acquire_compression_lock(self,session_id,holder,ttl_seconds=300):
         return self._claim_lease('compression_locks','session_id',session_id,holder,ttl_seconds,session_id=session_id)
 
-    def _refresh_lease(self,table,key_column,key,holder,ttl_seconds):
-        with self._transaction() as conn:
+    def _refresh_lease(self,table,key_column,key,holder,ttl_seconds,*,patience_s=None):
+        with self._transaction(patience_s=patience_s) as conn:
             return bool(conn.execute(sql.SQL('UPDATE {} SET expires_at=%s WHERE {}=%s AND holder=%s').format(self.table(table),sql.Identifier(key_column)),(time.time()+max(.1,float(ttl_seconds)),key,holder)).rowcount)
 
     def refresh_session_turn_lease(self,session_id,holder,*,ttl_seconds=300,patience_s=None):
         with self._transaction(read_only=True) as conn: key=self._lease_key_on_conn(conn,session_id)
-        return self._refresh_lease('session_turn_leases','conversation_id',key,holder,ttl_seconds)
+        return self._refresh_lease('session_turn_leases','conversation_id',key,holder,ttl_seconds,patience_s=patience_s)
 
     def refresh_compression_lock(self,session_id,holder,ttl_seconds=300):
         return self._refresh_lease('compression_locks','session_id',session_id,holder,ttl_seconds)
@@ -653,37 +656,6 @@ class PostgreSQLSessionDB(PostgreSQLTitlesMixin,PostgreSQLRuntimeMixin,PostgreSQ
     def get_compression_lock_holder(self,session_id):
         row=self._one(sql.SQL('SELECT holder FROM {} WHERE session_id=%s AND expires_at>%s').format(self.table('compression_locks')),(session_id,time.time()))
         return row['holder'] if row else None
-
-    def publish_compression_child(self,*,parent_session_id,child_session_id,source,messages,model=None,
-            model_config=None,system_prompt=None,cwd=None,profile_name=None,compression_lock_holder=None,
-            require_compression_lease=True,require_lease_refresh=False,lease_ttl_seconds=300,
-            watermark=None,watermark_ceiling=None):
-        from hermes_state_errors import CompressionSessionBusyError,CompressionSessionClosedError
-        with self._transaction() as conn:
-            self._lock_conversation(conn,parent_session_id)
-            parent=self._session_on_conn(conn,parent_session_id,lock=True)
-            if not parent: raise KeyError('COMPRESSION_PARENT_NOT_FOUND')
-            lock=conn.execute(sql.SQL('SELECT * FROM {} WHERE session_id=%s FOR UPDATE').format(self.table('compression_locks')),(parent_session_id,)).fetchone()
-            if require_lease_refresh and lock and lock['holder']==compression_lock_holder:
-                lock['expires_at']=time.time()+lease_ttl_seconds
-                self._update(conn,'compression_locks',{'expires_at':lock['expires_at']},'session_id',parent_session_id)
-            if require_compression_lease and (not lock or lock['holder']!=compression_lock_holder or lock['expires_at']<=time.time()):
-                raise CompressionSessionBusyError('Compression lease lost before publication')
-            if parent['ended_at'] is not None: raise CompressionSessionClosedError(parent_session_id)
-            kwargs={k:parent[k] for k in ('user_id','session_key','chat_id','chat_type','thread_id','display_name','origin_json','profile_name','tool_names','git_branch','git_repo_root','archived','auto_archived','pinned')}
-            kwargs.update(model=model,model_config=model_config,system_prompt=system_prompt,cwd=cwd or parent['cwd'],parent_session_id=parent_session_id)
-            if profile_name is not None: kwargs['profile_name']=profile_name
-            if self._session_on_conn(conn,child_session_id): raise ValueError('COMPRESSION_CHILD_EXISTS')
-            self._create_on_conn(conn,child_session_id,source,**kwargs)
-            self._append_on_conn(conn,child_session_id,messages)
-            if watermark is not None:
-                tail=conn.execute(sql.SQL('SELECT * FROM {} WHERE session_id=%s AND active=1 AND id>%s AND (%s::bigint IS NULL OR id<=%s) ORDER BY id').format(self.table('messages')),(parent_session_id,watermark,watermark_ceiling,watermark_ceiling)).fetchall()
-                for row in tail:
-                    values=dict(row); values.pop('id'); values['session_id']=child_session_id
-                    self._insert(conn,'messages',values)
-            self._recount_on_conn(conn,child_session_id)
-            self._update(conn,'sessions',{'ended_at':time.time(),'end_reason':'compression'},'id',parent_session_id)
-            conn.execute(sql.SQL('DELETE FROM {} WHERE session_id=%s AND holder=%s').format(self.table('compression_locks')),(parent_session_id,compression_lock_holder))
 
     def branch_session(self,source_session_id,child_session_id,*,title,branch_point_message_id,
                        branch_point_sequence,idempotency_key,request_hash):
@@ -737,13 +709,14 @@ class PostgreSQLSessionDB(PostgreSQLTitlesMixin,PostgreSQLRuntimeMixin,PostgreSQ
             self._recount_on_conn(conn,session_id)
         return dict(**({'replacement_message_id':replacement_id,'replacement_message_uid':replacement.get('message_uid')} if preserve_compaction_handoff else {}),rewound_count=len(removed),target_message=self._decode_message(target),new_head_id=max([i for i in ids if i<target_message_id],default=None))
 
-    def replace_messages(self,session_id,messages,active_only=False,**kwargs):
-        with self._transaction() as conn:
-            self._guard_on_conn(conn,session_id,destructive=True)
-            conn.execute(sql.SQL('UPDATE {} SET active=0,compacted=0 WHERE session_id=%s AND active=1').format(self.table('messages')),(session_id,))
-            self._append_on_conn(conn,session_id,messages)
-
     def assert_api_continuation_origin_on_conn(self,conn,*,session_id,holder,routing_scope,session_key):
+        from psycopg.pq import TransactionStatus
+        if conn.info.transaction_status!=TransactionStatus.INTRANS:
+            raise ValueError('Active native/domain transaction required')
+        current=conn.execute('SELECT current_schema()').fetchone()
+        namespace=current['current_schema'] if hasattr(current,'keys') else current[0]
+        if namespace!=self.scope.schema:
+            raise ValueError('Native/domain transaction scope mismatch')
         self._lock_conversation(conn,session_id)
         key=self._lease_key_on_conn(conn,session_id)
         lease=conn.execute(sql.SQL('SELECT holder,expires_at FROM {} WHERE conversation_id=%s FOR UPDATE').format(self.table('session_turn_leases')),(key,)).fetchone()

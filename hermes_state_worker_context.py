@@ -3,6 +3,7 @@
 Identity and lineage remain owner-reserved. This is not arbitrary SessionDB RPC.
 """
 import json
+from hermes_state_sql import statement as _storage_statement, is_postgres
 
 from hermes_state_runtime import RuntimeStoreError
 
@@ -17,10 +18,10 @@ def worker_context(db, conn, session_id, payload):
     if payload:
         raise RuntimeStoreError('invalid_params')
     row = conn.execute(
-        'SELECT s.*, COALESCE(sp.prompt, s.system_prompt) AS _system_prompt_resolved, '
+        _storage_statement(sqlite='SELECT s.*, COALESCE(sp.prompt, s.system_prompt) AS _system_prompt_resolved, '
         'COALESCE(tp.prompt, s.tool_names) AS _tool_names_resolved '
         'FROM sessions s LEFT JOIN system_prompts sp ON sp.hash=s.system_prompt_hash '
-        'LEFT JOIN system_prompts tp ON tp.hash=s.tool_names WHERE s.id=?',
+        'LEFT JOIN system_prompts tp ON tp.hash=s.tool_names WHERE s.id=?', postgresql='SELECT s.*, COALESCE(sp.prompt, s.system_prompt) AS _system_prompt_resolved, COALESCE(tp.prompt, s.tool_names) AS _tool_names_resolved FROM sessions s LEFT JOIN system_prompts sp ON sp.hash=s.system_prompt_hash LEFT JOIN system_prompts tp ON tp.hash=s.tool_names WHERE s.id=%s', connection=conn),
         (session_id,),
     ).fetchone()
     return {'session': db._session_row_dict(row)}
@@ -30,7 +31,7 @@ def worker_prompt(db, conn, session_id, payload):
     if set(payload) != {'system_prompt'} or not (
             payload['system_prompt'] is None or isinstance(payload['system_prompt'], str)):
         raise RuntimeStoreError('invalid_params')
-    conn.execute('UPDATE sessions SET system_prompt_hash=?, system_prompt=NULL WHERE id=?',
+    conn.execute(_storage_statement(sqlite='UPDATE sessions SET system_prompt_hash=?, system_prompt=NULL WHERE id=?', postgresql='UPDATE sessions SET system_prompt_hash=%s, system_prompt=NULL WHERE id=%s', connection=conn),
                  (db._store_system_prompt(conn, payload['system_prompt']), session_id))
     db._delete_unreferenced_system_prompts(conn)
     return {'value': None}
@@ -40,7 +41,7 @@ def worker_sidecars(db, conn, session_id, payload):
     if set(payload) != {'patch'} or not isinstance(payload['patch'], dict) or set(payload['patch']) - SIDECAR_KEYS:
         raise RuntimeStoreError('invalid_params')
     merged = db._merge_model_config_json(conn, session_id, payload['patch'], on_missing='raise')
-    conn.execute('UPDATE sessions SET model_config=? WHERE id=?', (merged, session_id))
+    conn.execute(_storage_statement(sqlite='UPDATE sessions SET model_config=? WHERE id=?', postgresql='UPDATE sessions SET model_config=%s WHERE id=%s', connection=conn), (merged, session_id))
     return {'value': None}
 
 
@@ -62,7 +63,7 @@ def worker_tool_names(db, conn, session_id, payload):
     encoded = None if pin is None else json.dumps(pin)
     if encoded is not None and len(encoded) > 4 * 1024 * 1024:
         raise RuntimeStoreError('invalid_params')
-    conn.execute('UPDATE sessions SET tool_names=? WHERE id=?',
+    conn.execute(_storage_statement(sqlite='UPDATE sessions SET tool_names=? WHERE id=?', postgresql='UPDATE sessions SET tool_names=%s WHERE id=%s', connection=conn),
                  (db._store_system_prompt(conn, encoded), session_id))
     db._delete_unreferenced_system_prompts(conn)
     return {'value': None}
@@ -72,8 +73,8 @@ def worker_tail_role(db, conn, session_id, payload):
     """``SessionDB.latest_conversation_role`` on the receipt connection (failed-turn boundary)."""
     if payload:
         raise RuntimeStoreError('invalid_params')
-    row = conn.execute("SELECT role FROM messages WHERE session_id=? AND active=1 "
-                       "AND role NOT IN ('session_meta','system') ORDER BY id DESC LIMIT 1", (session_id,)).fetchone()
+    row = conn.execute(_storage_statement(sqlite="SELECT role FROM messages WHERE session_id=? AND active=1 "
+                       "AND role NOT IN ('session_meta','system') ORDER BY id DESC LIMIT 1", postgresql="SELECT role FROM messages WHERE session_id=%s AND active=1 AND role NOT IN ('session_meta','system') ORDER BY id DESC LIMIT 1", connection=conn), (session_id,)).fetchone()
     return {'value': row[0] if row else None}
 
 
@@ -81,6 +82,6 @@ def worker_row_role(db, conn, session_id, payload):
     """``SessionDB.get_message_role``: the role of an active row of THIS transcript, else None."""
     if set(payload) != {'row_id'} or type(payload['row_id']) is not int:
         raise RuntimeStoreError('invalid_params')
-    row = conn.execute('SELECT role FROM messages WHERE id=? AND session_id=? AND active=1',
+    row = conn.execute(_storage_statement(sqlite='SELECT role FROM messages WHERE id=? AND session_id=? AND active=1', postgresql='SELECT role FROM messages WHERE id=%s AND session_id=%s AND active=1', connection=conn),
                        (payload['row_id'], session_id)).fetchone()
     return {'value': row[0] if row else None}

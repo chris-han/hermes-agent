@@ -374,6 +374,8 @@ def test_pg_delete_retirement_cascades_and_protects_live_work(tmp_path,pg_settin
         db.create_session('branch','api_server',parent_session_id='parent',model_config={'_branched_from':'parent'})
         db.append_message('parent','user','private history')
         db.append_message('delegate','assistant','private delegate')
+        with db._transaction() as conn:
+            db._insert(conn,'semantier_session_branches',dict(child_session_id='branch',source_session_id='parent',branch_point_message_id='1',branch_point_sequence=1,title='Branch',idempotency_key='branch-key',request_hash='branch-hash'))
         db.save_gateway_routing_entry('route',json.dumps({'session_id':'parent'}))
         assert db.try_acquire_session_turn_lease('delegate','busy-owner')
         with pytest.raises(SessionActiveWriteGuardError):db.delete_session('parent',exclude_active_write_guards=True)
@@ -386,6 +388,7 @@ def test_pg_delete_retirement_cascades_and_protects_live_work(tmp_path,pg_settin
         assert db.delete_session('parent',expected_delete_ids=['parent','delegate'],exclude_active_write_guards=True)
         assert db.get_session('parent') is None and db.get_session('delegate') is None
         assert db.get_session('branch')['parent_session_id'] is None
+        assert db.get_branch_records()[0]['source_session_id']=='parent'
         assert db.load_gateway_routing_entries()=={}
         result=json.loads(db.get_meta(RESULT_PREFIX+'admission'))['result']
         assert result=={'final_response':'exact retry','messages':[]}
@@ -526,3 +529,225 @@ def test_pg_internal_result_projection_retries_without_duplicates(tmp_path,pg_se
         db.release_session_turn_lease('session','owner')
         assert db.get_messages('session')[0]['content']=='Committed 中文'
         assert db.get_messages('session')[0]['display_metadata']['internal_result_hash']=='hash'
+
+
+def test_pg_compression_handoff_matches_native_automatic_recovery_and_tail(tmp_path,pg_settings,monkeypatch):
+    import copy
+    from hermes_state import SessionDB
+    from hermes_state_postgresql import SessionScope,PostgreSQLSessionDB,provision_scope
+    source=tmp_path/'compression-source.db'
+    native=SessionDB(source)
+    native.create_session('parent','api_server',model_config={'onboarding_run':{'run':'stable'},'discard':'old'},
+        user_id='user',session_key='route',chat_id='chat',profile_name='profile',cwd='/workspace',
+        system_prompt='Parent prompt',origin_json=json.dumps({'platform':'api_server'}))
+    native.update_session_tool_names('parent',['one','two'])
+    native.append_messages_batch('parent',[
+        {'role':'user','content':'carried original','timestamp':1,'message_uid':'original'},
+        {'role':'assistant','content':'answer','timestamp':2},
+        {'role':'tool','content':[{'type':'text','text':'concurrent 中文'}],'timestamp':3,'api_content':'exact wire'},
+        {'role':'assistant','content':'own flush already covered','timestamp':4},
+    ])
+    native._write_sql('UPDATE sessions SET pinned=1,archived=1,auto_archived=1 WHERE id=?',('parent',))
+    assert native.try_acquire_compression_lock('parent','compressor')
+    native.end_session('parent','ws_disconnect')
+    scope=SessionScope('tenant','workspace',str(uuid.uuid4()))
+    provision_scope(pg_settings['semantier_migrate'],scope,app_role='semantier_app')
+    with PostgreSQLSessionDB(pg_settings['semantier_migrate'],scope,home=tmp_path) as imported:imported.import_sqlite_snapshot(source)
+    messages=[{'role':'user','content':'summary','timestamp':100,'message_uid':'summary'},
+              {'role':'user','content':'carried original','message_uid':'original'}]
+    arguments=dict(parent_session_id='parent',child_session_id='child',source='api_server',
+        model='new-model',model_config={'new':'value'},system_prompt='New prompt',
+        compression_lock_holder='compressor',watermark=2,watermark_ceiling=3)
+    native.publish_compression_child(messages=copy.deepcopy(messages),**arguments)
+    monkeypatch.setenv('HERMES_STATE_BACKEND','postgresql')
+    with PostgreSQLSessionDB(pg_settings['semantier_app'],scope,home=tmp_path) as db:
+        db.publish_compression_child(messages=copy.deepcopy(messages),**arguments)
+        for session_id in ('parent','child'):
+            actual=db.get_session(session_id);expected=native.get_session(session_id)
+            for field in ('source','created_source','model','model_config','system_prompt','system_prompt_hash','tool_names',
+                    'profile_name','user_id','session_key','chat_id','origin_json','cwd','parent_session_id','archived','auto_archived','pinned','end_reason','message_count','tool_call_count'):
+                assert actual[field]==expected[field],(session_id,field)
+        for actual,expected in zip(db.get_messages('child'),native.get_messages('child')):
+            for field in ('id','role','content','timestamp','message_uid','api_content','active','compacted'):
+                assert actual[field]==expected[field],field
+        assert db.get_compression_lock_holder('parent')==native.get_compression_lock_holder('parent')=='compressor'
+        assert db.get_compression_tip('parent')=='child'
+        assert db.find_live_compression_child('parent')['id']=='child'
+    native.close()
+
+
+def test_pg_replace_preserves_kept_prefix_and_destructive_modes(tmp_path,pg_settings,monkeypatch):
+    from hermes_state_postgresql import SessionScope,PostgreSQLSessionDB,provision_scope
+    scope=SessionScope('tenant','workspace',str(uuid.uuid4()))
+    provision_scope(pg_settings['semantier_migrate'],scope,app_role='semantier_app')
+    monkeypatch.setenv('HERMES_STATE_BACKEND','postgresql')
+    with PostgreSQLSessionDB(pg_settings['semantier_app'],scope,home=tmp_path) as db:
+        db.create_session('session','api_server')
+        db.append_messages_batch('session',[{'role':'user','content':'keep'},{'role':'assistant','content':'drop'}])
+        first=db.get_messages('session')[0]
+        replacement=[{'role':'user','content':'keep'},{'role':'assistant','content':'new'}]
+        db.replace_messages('session',replacement,archive_dropped=True)
+        assert [r['content'] for r in db.get_messages('session')]==['keep','new']
+        assert db.get_messages('session')[0]['id']==first['id']
+        assert len(db.get_messages('session',include_inactive=True))==3
+        assert replacement[0]['_row_id']==first['id']
+        db.replace_messages('session',[{'role':'user','content':'fresh'}],active_only=True)
+        assert [r['content'] for r in db.get_messages('session',include_inactive=True)]==['drop','fresh']
+        db.replace_messages('session',[{'role':'assistant','content':'only'}])
+        assert [r['content'] for r in db.get_messages('session',include_inactive=True)]==['only']
+        assert db.get_session('session')['message_count']==1
+
+
+def test_pg_shadowed_checkpoints_and_inherited_branch_markers(tmp_path,pg_settings,monkeypatch):
+    from hermes_state_postgresql import SessionScope,PostgreSQLSessionDB,provision_scope
+    scope=SessionScope('tenant','workspace',str(uuid.uuid4()))
+    provision_scope(pg_settings['semantier_migrate'],scope,app_role='semantier_app')
+    monkeypatch.setenv('HERMES_STATE_BACKEND','postgresql')
+    with PostgreSQLSessionDB(pg_settings['semantier_app'],scope,home=tmp_path) as db:
+        db.create_session('session','api_server')
+        db.append_messages_batch('session',[
+            {'role':'assistant','content':'older','codex_reasoning_items':[{'type':'compaction','encrypted_content':'old'},{'type':'reasoning','id':'keep'}]},
+            {'role':'assistant','content':'newer','codex_reasoning_items':[{'type':'compaction','encrypted_content':'new'}]},
+        ])
+        older,newer=db.get_messages('session')
+        assert json.loads(older['codex_reasoning_items'])==[{'type':'reasoning','id':'keep'}]
+        assert json.loads(newer['codex_reasoning_items'])==[{'type':'compaction','encrypted_content':'new'}]
+        db.create_session('old-root','api_server')
+        db.create_session('branch','api_server',parent_session_id='old-root',model_config={'_branched_from':'old-root'})
+        db.end_session('branch','compression')
+        db.create_session('continuation','api_server',parent_session_id='branch',model_config={'_branched_from':'old-root'})
+        assert db.get_compression_tip('branch')=='branch'
+        assert db.get_compression_lineage('continuation')==['branch','continuation']
+
+
+def test_pg_turn_lease_wait_honors_writer_contention_budget(tmp_path,pg_settings,monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    import psycopg,time
+    from hermes_state_postgresql import SessionScope,PostgreSQLSessionDB,provision_scope
+    scope=SessionScope('tenant','workspace',str(uuid.uuid4()))
+    provision_scope(pg_settings['semantier_migrate'],scope,app_role='semantier_app')
+    monkeypatch.setenv('HERMES_STATE_BACKEND','postgresql')
+    with PostgreSQLSessionDB(pg_settings['semantier_app'],scope,home=tmp_path) as db:
+        db.create_session('session','api_server')
+        blocker=psycopg.connect(pg_settings['semantier_app'])
+        blocker.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',(scope.schema+'\x1fcanonical-native-writer',))
+        notices=[]
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future=pool.submit(db.acquire_session_turn_lease,'session','holder',wait_seconds=.15,acquire_patience_s=.02,
+                poll_interval_seconds=.01,on_contended=lambda:notices.append('contended'))
+            try:
+                assert future.result(timeout=1) is False
+                assert notices
+            finally:
+                blocker.rollback();blocker.close()
+
+
+def test_pg_native_runtime_admission_worker_and_restart_receipts(tmp_path,pg_settings,monkeypatch):
+    import hermes_state_runtime as rt
+    from hermes_state_postgresql import SessionScope,PostgreSQLSessionDB,provision_scope
+    scope=SessionScope('tenant','workspace',str(uuid.uuid4()))
+    provision_scope(pg_settings['semantier_migrate'],scope,app_role='semantier_app')
+    monkeypatch.setenv('HERMES_STATE_BACKEND','postgresql')
+    with PostgreSQLSessionDB(pg_settings['semantier_app'],scope,home=tmp_path) as db:
+        db.create_session('session','api_server')
+        epoch=rt.begin_runtime_epoch(db,instance_id='first-boot')
+        arguments=dict(epoch=epoch,principal_id='principal',session_id='session',request_id='request',payload={'text':'bounded persisted work'})
+        admitted=rt.admit_session_input(db,**arguments)
+        assert rt.admit_session_input(db,**arguments)==admitted
+        with pytest.raises(rt.RuntimeStoreError,match='admission_conflict'):
+            rt.admit_session_input(db,**(arguments|{'payload':{'text':'changed'}}))
+        claimed=rt.claim_session_input(db,epoch=epoch,session_id='session')
+        assignment=dict(epoch=epoch,execution_id='worker',session_id='session',generation=claimed['generation'])
+        rt.register_worker_execution(db,**assignment,kind='compute',adoption_secret='private-fixture')
+        assert rt.mutate_worker_execution(db,**assignment,sequence=1,operation='turn.acquire',payload={'holder':'worker','ttl_seconds':300})=={'value':True}
+        write=dict(sequence=2,operation='transcript.append',payload={'turn_lease_holder':'worker','messages':[{'role':'assistant','content':'durable 中文'}]})
+        receipt=rt.mutate_worker_execution(db,**assignment,**write)
+        assert rt.mutate_worker_execution(db,**assignment,**write)==receipt
+        rt.mutate_worker_execution(db,**assignment,sequence=3,operation='usage.main',payload={'input_tokens':5,'model':'model'})
+        rt.mutate_worker_execution(db,**assignment,sequence=4,operation='turn.release',payload={'holder':'worker'})
+        rt.mutate_worker_execution(db,**assignment,sequence=5,operation='execution.finish',payload={})
+        assert rt.settle_session_input(db,epoch=epoch,admission_id=admitted['admission_id'],generation=claimed['generation'],outcome='completed',result={'final_response':'durable 中文'})['status']=='terminal'
+        pending=rt.admit_session_input(db,**(arguments|{'request_id':'pending'}))
+        lost=rt.claim_session_input(db,epoch=epoch,session_id='session')
+    with PostgreSQLSessionDB(pg_settings['semantier_app'],scope,home=tmp_path) as db:
+        replacement=rt.begin_runtime_epoch(db,instance_id='replacement-boot')
+        assert replacement==epoch+1
+        assert rt.recover_session_inputs(db,epoch=replacement)>=1
+        unknown=rt.get_session_admission(db,admission_id=pending['admission_id'])
+        assert unknown['status']=='unknown'
+        with pytest.raises(rt.RuntimeStoreError,match='unknown_execution'):rt.claim_session_input(db,epoch=replacement,session_id='session')
+        assert rt.resolve_unknown_session_input(db,epoch=replacement,admission_id=pending['admission_id'],generation=lost['generation'])['outcome']=='interrupted'
+        assert db.get_messages('session')[0]['content']=='durable 中文'
+        assert db.get_session('session')['input_tokens']==5
+        with pytest.raises(rt.RuntimeStoreError,match='stale_epoch'):rt.admit_session_input(db,**(arguments|{'request_id':'stale'}))
+
+
+def test_pg_lease_reacquisition_keeps_existing_expiry(tmp_path,pg_settings,monkeypatch):
+    from hermes_state_postgresql import SessionScope,PostgreSQLSessionDB,provision_scope
+    scope=SessionScope('tenant','workspace',str(uuid.uuid4()))
+    provision_scope(pg_settings['semantier_migrate'],scope,app_role='semantier_app')
+    monkeypatch.setenv('HERMES_STATE_BACKEND','postgresql')
+    with PostgreSQLSessionDB(pg_settings['semantier_app'],scope,home=tmp_path) as db:
+        db.create_session('session','api_server')
+        assert db.try_acquire_session_turn_lease('session','owner',ttl_seconds=60)
+        first=db.session_turn_lease_expires_at('session','owner')
+        assert db.try_acquire_session_turn_lease('session','owner',ttl_seconds=600)
+        assert db.session_turn_lease_expires_at('session','owner')==first
+        assert not db.try_acquire_session_turn_lease('session','other',ttl_seconds=600)
+
+
+def test_pg_snapshot_preserves_surviving_branch_reference_to_deleted_source(tmp_path,pg_settings):
+    from hermes_state import SessionDB
+    from hermes_state_postgresql import SessionScope,PostgreSQLSessionDB,provision_scope
+    source=tmp_path/'branch-source.db'
+    with SessionDB(source) as db:
+        db.create_session('parent','api_server')
+        db.append_message('parent','user','original')
+        db.create_session('branch','api_server',parent_session_id='parent',model_config={'_branched_from':'parent'})
+        db._write_sql('CREATE TABLE semantier_session_branches(child_session_id TEXT PRIMARY KEY,source_session_id TEXT NOT NULL,branch_point_message_id TEXT NOT NULL,branch_point_sequence INTEGER NOT NULL,title TEXT NOT NULL,idempotency_key TEXT NOT NULL,request_hash TEXT NOT NULL)')
+        db._write_sql('INSERT INTO semantier_session_branches VALUES(?,?,?,?,?,?,?)',('branch','parent','1',1,'Retained branch','key','hash'))
+        assert db.delete_session('parent')
+        assert db.get_session('branch')['parent_session_id'] is None
+    scope=SessionScope('tenant','workspace',str(uuid.uuid4()))
+    provision_scope(pg_settings['semantier_migrate'],scope,app_role='semantier_app')
+    with PostgreSQLSessionDB(pg_settings['semantier_migrate'],scope,home=tmp_path) as db:
+        receipt=db.import_sqlite_snapshot(source)
+        assert receipt['tables']['semantier_session_branches']==1
+        assert db.import_sqlite_snapshot(source)['idempotent']
+        assert db.get_branch_records()==[{'child_session_id':'branch','source_session_id':'parent','branch_point_message_id':'1','branch_point_sequence':1,'title':'Retained branch','idempotency_key':'key','request_hash':'hash'}]
+
+
+def test_pg_real_gateway_authority_bootstrap_uses_scope_identity(tmp_path,pg_settings,monkeypatch):
+    import asyncio,sqlite3
+    from types import SimpleNamespace
+    from hermes_state import AsyncSessionDB
+    from hermes_state_backend import session_store_key
+    from hermes_state_postgresql import SessionScope,PostgreSQLSessionDB,provision_scope
+    from gateway.session import SessionStore
+    from gateway.config import GatewayConfig
+    from gateway.session_authorities import SessionAuthorities
+    from gateway.run_runtime import _build_profile_authority
+    from gateway.session_cron import unbind_owner
+    scope=SessionScope('tenant','workspace',str(uuid.uuid4()))
+    provision_scope(pg_settings['semantier_migrate'],scope,app_role='semantier_app')
+    monkeypatch.setenv('HERMES_STATE_BACKEND','postgresql')
+    monkeypatch.setenv('HERMES_DATABASE_URL',pg_settings['semantier_app'])
+    monkeypatch.setenv('HERMES_HOME',str(tmp_path))
+    monkeypatch.setenv('HERMES_STATE_SCOPE_MAP',json.dumps({str(tmp_path):dict(zip(('tenant_id','workspace_id','source_store_id'),scope.identity))}))
+    monkeypatch.setattr(sqlite3,'connect',lambda *a,**k:pytest.fail('Hosted gateway authority bootstrap opened SQLite'))
+    with PostgreSQLSessionDB(pg_settings['semantier_app'],scope,home=tmp_path) as db:
+        config=GatewayConfig()
+        store=SessionStore(tmp_path/'sessions',config,session_db=db)
+        runner=SimpleNamespace(config=config,session_store=store,_session_db=AsyncSessionDB(db),
+            session_authorities=SessionAuthorities(tmp_path),session_runtime_descriptor={'instance_id':'boot'},adapters={})
+        async def run():
+            authority=await _build_profile_authority(runner,'default',tmp_path,register=True)
+            try:
+                assert authority.db is db
+                assert authority.epoch==1
+                assert runner.session_authorities.for_home(tmp_path) is authority
+                assert store._local_authority_epochs[session_store_key(db)]==1
+            finally:unbind_owner(authority)
+        asyncio.run(run())
+        assert not hasattr(db,'db_path')
+        assert not (tmp_path/'state.db').exists()

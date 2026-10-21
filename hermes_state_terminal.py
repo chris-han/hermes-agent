@@ -5,6 +5,7 @@ payload. A retired target permits only that exact digest, never fresh admission.
 Worker receipt reads additionally require the original private adoption proof.
 """
 import hmac
+from hermes_state_sql import statement as _storage_statement, is_postgres
 import json
 
 from hermes_state_runtime import RuntimeStoreError, _epoch, _json, _row, _secret_digest, _text, admission_fingerprint
@@ -56,7 +57,7 @@ def identity_key(principal_id, session_id, request_id):
 
 
 def terminal_admission(conn, admission_id):
-    saved = conn.execute('SELECT value FROM state_meta WHERE key=?',
+    saved = conn.execute(_storage_statement(sqlite='SELECT value FROM state_meta WHERE key=?', postgresql='SELECT value FROM state_meta WHERE key=%s', connection=conn),
                          (ADMISSION_PREFIX + admission_id,)).fetchone()
     return json.loads(saved[0]) if saved else None
 
@@ -74,9 +75,9 @@ def retry_terminal_admission(db, *, epoch, principal_id, session_id, request_id,
     with db._read_ctx() as conn:
         _epoch(conn, epoch)
         from hermes_state_mutation_retirement import RETIRED_PREFIX
-        if not conn.execute('SELECT 1 FROM state_meta WHERE key=?', (RETIRED_PREFIX + session_id,)).fetchone():
+        if not conn.execute(_storage_statement(sqlite='SELECT 1 FROM state_meta WHERE key=?', postgresql='SELECT 1 FROM state_meta WHERE key=%s', connection=conn), (RETIRED_PREFIX + session_id,)).fetchone():
             return None
-        saved = conn.execute('SELECT value FROM state_meta WHERE key=?',
+        saved = conn.execute(_storage_statement(sqlite='SELECT value FROM state_meta WHERE key=?', postgresql='SELECT value FROM state_meta WHERE key=%s', connection=conn),
                              (identity_key(principal_id, session_id, request_id),)).fetchone()
         if saved is None:
             raise RuntimeStoreError('not_found')
@@ -91,7 +92,7 @@ def terminal_worker_receipt(db, *, execution_id, session_id, generation, sequenc
     """Exact retired producer evidence; possession never reactivates the worker."""
     proof = _secret_digest(adoption_secret)
     with db._read_ctx() as conn:
-        saved = conn.execute('SELECT value FROM state_meta WHERE key=?',
+        saved = conn.execute(_storage_statement(sqlite='SELECT value FROM state_meta WHERE key=?', postgresql='SELECT value FROM state_meta WHERE key=%s', connection=conn),
                              (WORKER_PREFIX + execution_id,)).fetchone()
         if saved is None:
             raise RuntimeStoreError('not_found')

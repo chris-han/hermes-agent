@@ -144,7 +144,6 @@ class PostgreSQLRetirementMixin:
     def _delete_pg_ids(self,conn,ids):
         retire_sessions(self,conn,ids)
         conn.execute(sql.SQL('UPDATE {} SET parent_session_id=NULL WHERE parent_session_id=ANY(%s)').format(self.table('sessions')),(ids,))
-        conn.execute(sql.SQL('DELETE FROM {} WHERE child_session_id=ANY(%s) OR source_session_id=ANY(%s)').format(self.table('semantier_session_branches')),(ids,ids))
         conn.execute(sql.SQL('DELETE FROM {} WHERE session_id=ANY(%s)').format(self.table('messages')),(ids,))
         conn.execute(sql.SQL('DELETE FROM {} WHERE id=ANY(%s)').format(self.table('sessions')),(ids,))
         conn.execute(sql.SQL('DELETE FROM {} p WHERE NOT EXISTS(SELECT 1 FROM {} s WHERE s.system_prompt_hash=p.hash OR s.tool_names=p.hash)').format(self.table('system_prompts'),self.table('sessions')))

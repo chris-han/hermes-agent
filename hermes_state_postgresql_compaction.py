@@ -20,7 +20,7 @@ class PostgreSQLCompactionMixin(PostgreSQLCoverageMixin):
         if not ids:return
         rows=conn.execute(sql.SQL('SELECT * FROM {} WHERE id=ANY(%s) ORDER BY id').format(self.table('messages')),(ids,)).fetchall()
         for row in rows:
-            values={k:v for k,v in row.items() if k not in ('id','display_order')}
+            values={k:v for k,v in dict(row).items() if k not in ('id','display_order')}
             values.update(active=1,compacted=0)
             self._insert(conn,'messages',values)
 
@@ -87,9 +87,11 @@ class PostgreSQLCompactionMixin(PostgreSQLCoverageMixin):
                 conn.execute(sql.SQL('UPDATE {} SET active=0,compacted=0 WHERE session_id=%s AND id=ANY(%s)').format(self.table('messages')),(session_id,list(dict.fromkeys(rewound))))
             conn.execute(sql.SQL('UPDATE {} SET active=0,compacted=1 WHERE session_id=%s AND active=1').format(self.table('messages')),(session_id,))
             self._carry_pg_timestamps(conn,session_id,compacted_messages)
-            insert_fresh_on_conn(self,conn,session_id,compacted_messages)
+            insert_fresh_on_conn(self,conn,session_id,compacted_messages,prune_checkpoints=False)
             self._clone_pg_rows(conn,tail)
+            self._prune_pg_shadowed_checkpoints(conn,session_id,compacted_messages)
             self._reconcile_pg_display_orders(conn,session_id)
+            self._restamp_pg_messages(conn,session_id,compacted_messages)
             self._recount_on_conn(conn,session_id)
             if model_config_patch is not None:self._update(conn,'sessions',{'model_config':patched},'id',session_id)
             return conn.execute(sql.SQL('SELECT message_count FROM {} WHERE id=%s').format(self.table('sessions')),(session_id,)).fetchone()['message_count']

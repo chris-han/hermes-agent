@@ -3,6 +3,7 @@
 No handler opens a connection or invokes a self-committing SessionDB method.
 """
 from typing import Any, Dict, List, Optional
+from hermes_state_sql import statement as _storage_statement, is_postgres
 import json
 from functools import partial
 import math
@@ -26,7 +27,7 @@ def _number(value):
 def worker_compression_lock(db, conn, sid, payload, *, action):
     if action == 'holder':
         _fields(payload, ())
-        row = conn.execute('SELECT holder FROM compression_locks WHERE session_id=? AND expires_at>?',
+        row = conn.execute(_storage_statement(sqlite='SELECT holder FROM compression_locks WHERE session_id=? AND expires_at>?', postgresql='SELECT holder FROM compression_locks WHERE session_id=%s AND expires_at>%s', connection=conn),
                            (sid, time.time())).fetchone()
         return {'value': row[0] if row else None}
     _fields(payload, ('holder',), () if action == 'release' else ('ttl_seconds',))
@@ -40,10 +41,10 @@ def worker_compression_lock(db, conn, sid, payload, *, action):
         value = _claim_lease_row(conn, 'compression_locks', 'session_id', sid, holder, now, now + ttl,
                                 lambda h, e: e < now or _compression_lock_holder_process_is_dead(h))[0]
     elif action == 'renew':
-        value = conn.execute('UPDATE compression_locks SET expires_at=? WHERE session_id=? AND holder=?',
+        value = conn.execute(_storage_statement(sqlite='UPDATE compression_locks SET expires_at=? WHERE session_id=? AND holder=?', postgresql='UPDATE compression_locks SET expires_at=%s WHERE session_id=%s AND holder=%s', connection=conn),
                              (now + ttl, sid, holder)).rowcount > 0
     else:
-        conn.execute('DELETE FROM compression_locks WHERE session_id=? AND holder=?', (sid, holder))
+        conn.execute(_storage_statement(sqlite='DELETE FROM compression_locks WHERE session_id=? AND holder=?', postgresql='DELETE FROM compression_locks WHERE session_id=%s AND holder=%s', connection=conn), (sid, holder))
         value = None
     return {'value': value}
 
@@ -54,9 +55,9 @@ def worker_cooldown_record(db, conn, sid, payload):
     error = payload['error']
     if error is not None and not isinstance(error, str):
         raise RuntimeStoreError('invalid_params')
-    conn.execute('UPDATE sessions SET compression_failure_cooldown_until = CASE '
+    conn.execute(_storage_statement(sqlite='UPDATE sessions SET compression_failure_cooldown_until = CASE '
                  'WHEN compression_failure_cooldown_until IS NOT NULL AND compression_failure_cooldown_until > ? '
-                 'THEN compression_failure_cooldown_until ELSE ? END, compression_failure_error=? WHERE id=?',
+                 'THEN compression_failure_cooldown_until ELSE ? END, compression_failure_error=? WHERE id=?', postgresql='UPDATE sessions SET compression_failure_cooldown_until = CASE WHEN compression_failure_cooldown_until IS NOT NULL AND compression_failure_cooldown_until > %s THEN compression_failure_cooldown_until ELSE %s END, compression_failure_error=%s WHERE id=%s', connection=conn),
                  (deadline, deadline, error, sid))
     return {'value': None}
 
@@ -74,9 +75,9 @@ def worker_cooldown_restore(db, conn, sid, payload):
         _number(deadline)
     if error is not None and not isinstance(error, str):
         raise RuntimeStoreError('invalid_params')
-    conn.execute('UPDATE sessions SET compression_failure_cooldown_until=?, compression_failure_error=? WHERE id=?',
+    conn.execute(_storage_statement(sqlite='UPDATE sessions SET compression_failure_cooldown_until=?, compression_failure_error=? WHERE id=?', postgresql='UPDATE sessions SET compression_failure_cooldown_until=%s, compression_failure_error=%s WHERE id=%s', connection=conn),
                  (deadline, error, sid))
-    actual = conn.execute('SELECT compression_failure_cooldown_until,compression_failure_error FROM sessions WHERE id=?',
+    actual = conn.execute(_storage_statement(sqlite='SELECT compression_failure_cooldown_until,compression_failure_error FROM sessions WHERE id=?', postgresql='SELECT compression_failure_cooldown_until,compression_failure_error FROM sessions WHERE id=%s', connection=conn),
                           (sid,)).fetchone()
     if actual is None or tuple(actual) != (deadline, error):
         raise RuntimeError('compression cooldown rollback verification failed')
@@ -221,7 +222,7 @@ def publish_on_connection(db, conn, *, parent_session_id: str, child_session_id:
 
 def worker_watermark(db, conn, sid, payload):
     _fields(payload, ())
-    return {'value': conn.execute('SELECT COALESCE(MAX(id),0) FROM messages WHERE session_id=? AND active=1',
+    return {'value': conn.execute(_storage_statement(sqlite='SELECT COALESCE(MAX(id),0) FROM messages WHERE session_id=? AND active=1', postgresql='SELECT COALESCE(MAX(id),0) FROM messages WHERE session_id=%s AND active=1', connection=conn),
                                   (sid,)).fetchone()[0]}
 
 
@@ -232,7 +233,7 @@ def _handoff_messages(conn, sid, messages):
     for msg in messages:
         if not isinstance(msg, dict) or set(msg) - HANDOFF_MESSAGE_FIELDS or msg.get('role') not in ('user', 'assistant', 'system', 'tool'):
             raise RuntimeStoreError('invalid_params')
-        if '_row_id' in msg and not conn.execute('SELECT 1 FROM messages WHERE session_id=? AND id=?',
+        if '_row_id' in msg and not conn.execute(_storage_statement(sqlite='SELECT 1 FROM messages WHERE session_id=? AND id=?', postgresql='SELECT 1 FROM messages WHERE session_id=%s AND id=%s', connection=conn),
                                                  (sid, msg['_row_id'])).fetchone():
             raise RuntimeStoreError('permission_denied')
 
@@ -282,13 +283,13 @@ def _migrate_worker_automation(db, conn, parent, child):
     from hermes_cli.loops import LoopState
     for family, state_type in (('goal', GoalState), ('heartbeat', HeartbeatState), ('loop', LoopState)):
         old_key, new_key = f'{family}:{parent}', f'{family}:{child}'
-        row = conn.execute('SELECT value FROM state_meta WHERE key=?', (old_key,)).fetchone()
+        row = conn.execute(_storage_statement(sqlite='SELECT value FROM state_meta WHERE key=?', postgresql='SELECT value FROM state_meta WHERE key=%s', connection=conn), (old_key,)).fetchone()
         if row is None:
             continue
         state = state_type.from_json(row[0])
         if state.status == 'cleared':
             continue
-        prior = conn.execute('SELECT value FROM state_meta WHERE key=?', (new_key,)).fetchone()
+        prior = conn.execute(_storage_statement(sqlite='SELECT value FROM state_meta WHERE key=?', postgresql='SELECT value FROM state_meta WHERE key=%s', connection=conn), (new_key,)).fetchone()
         if prior is not None and (family != 'heartbeat' or state_type.from_json(prior[0]).status != 'cleared'):
             continue
         db.set_meta(new_key, state.to_json(), cursor=conn)
@@ -326,15 +327,15 @@ def worker_publish(db, conn, sid, payload):
             raise RuntimeStoreError('permission_denied')
         if key in prior:
             cfg[key] = prior[key]
-    if conn.execute('SELECT 1 FROM sessions WHERE id=?', (child,)).fetchone():
+    if conn.execute(_storage_statement(sqlite='SELECT 1 FROM sessions WHERE id=?', postgresql='SELECT 1 FROM sessions WHERE id=%s', connection=conn), (child,)).fetchone():
         raise RuntimeStoreError('permission_denied')
-    worker = conn.execute("SELECT * FROM worker_executions WHERE session_id=? AND status IN ('registered','running')", (sid,)).fetchone()
+    worker = conn.execute(_storage_statement(sqlite="SELECT * FROM worker_executions WHERE session_id=? AND status IN ('registered','running')", postgresql="SELECT * FROM worker_executions WHERE session_id=%s AND status IN ('registered','running')", connection=conn), (sid,)).fetchone()
     if worker is None:
         raise RuntimeStoreError('stale_generation')
     publish_on_connection(db, conn, parent_session_id=sid, **dict(payload, model_config=cfg))
     _migrate_worker_automation(db, conn, sid, child)
-    conn.execute('UPDATE sessions SET runtime_generation=? WHERE id=?', (worker['generation'], child))
-    conn.execute('UPDATE worker_executions SET session_id=? WHERE execution_id=?', (child, worker['execution_id']))
+    conn.execute(_storage_statement(sqlite='UPDATE sessions SET runtime_generation=? WHERE id=?', postgresql='UPDATE sessions SET runtime_generation=%s WHERE id=%s', connection=conn), (worker['generation'], child))
+    conn.execute(_storage_statement(sqlite='UPDATE worker_executions SET session_id=? WHERE execution_id=?', postgresql='UPDATE worker_executions SET session_id=%s WHERE execution_id=%s', connection=conn), (child, worker['execution_id']))
     # The FIFO/retry key is immutable; only physical lineage follows rotation.
     conn.execute("UPDATE session_admissions SET lineage_json=json_insert(lineage_json,'$[#]',?) "
                  "WHERE json_extract(lineage_json,'$[#-1]')=? AND generation=? AND owner_epoch=? "
@@ -348,12 +349,12 @@ def worker_publish(db, conn, sid, payload):
 def worker_receipt_assignment(conn, execution_id, session_id, generation, sequence, digest):
     """Only an identical already-committed publication can retry its old assignment."""
     from hermes_state_runtime import _worker_assignment
-    receipt = conn.execute('SELECT payload_digest,result_json FROM worker_receipts WHERE execution_id=? AND sequence=?',
+    receipt = conn.execute(_storage_statement(sqlite='SELECT payload_digest,result_json FROM worker_receipts WHERE execution_id=? AND sequence=?', postgresql='SELECT payload_digest,result_json FROM worker_receipts WHERE execution_id=%s AND sequence=%s', connection=conn),
                            (execution_id, sequence)).fetchone()
     if receipt and receipt['payload_digest'] == digest:
         assignment = json.loads(receipt['result_json']).get('worker_assignment')
         if assignment and assignment['parent'] == session_id:
-            current = conn.execute('SELECT session_id FROM worker_executions WHERE execution_id=?', (execution_id,)).fetchone()
+            current = conn.execute(_storage_statement(sqlite='SELECT session_id FROM worker_executions WHERE execution_id=?', postgresql='SELECT session_id FROM worker_executions WHERE execution_id=%s', connection=conn), (execution_id,)).fetchone()
             return _worker_assignment(conn, execution_id, current['session_id'], generation)
     return _worker_assignment(conn, execution_id, session_id, generation)
 
@@ -394,10 +395,10 @@ def reopen_on_connection(db, conn, session_id):
         expires_at = lock_row['expires_at']
         if expires_at is None or float(expires_at) >= now:
             return False
-        deleted = conn.execute('DELETE FROM compression_locks WHERE session_id = ? AND holder = ? AND expires_at = ?', (session_id, lock_row['holder'], expires_at))
+        deleted = conn.execute(_storage_statement(sqlite='DELETE FROM compression_locks WHERE session_id = ? AND holder = ? AND expires_at = ?', postgresql='DELETE FROM compression_locks WHERE session_id = %s AND holder = %s AND expires_at = %s', connection=conn), (session_id, lock_row['holder'], expires_at))
         if deleted.rowcount != 1:
             return False
-    updated = conn.execute("UPDATE sessions SET ended_at = NULL, end_reason = NULL WHERE id = ? AND ended_at IS NOT NULL AND end_reason = 'compression'", (session_id,))
+    updated = conn.execute(_storage_statement(sqlite="UPDATE sessions SET ended_at = NULL, end_reason = NULL WHERE id = ? AND ended_at IS NOT NULL AND end_reason = 'compression'", postgresql="UPDATE sessions SET ended_at = NULL, end_reason = NULL WHERE id = %s AND ended_at IS NOT NULL AND end_reason = 'compression'", connection=conn), (session_id,))
     return updated.rowcount == 1
 
 
@@ -414,7 +415,7 @@ def worker_compression_cleanup(db, conn, sid, payload):
     view.authorize(sid, target)
     if db._session_turn_lease_key_on_conn(conn, sid) != db._session_turn_lease_key_on_conn(conn, target):
         raise RuntimeStoreError('permission_denied')
-    conn.execute('DELETE FROM compression_locks WHERE session_id=? AND holder=?', (target, holder))
+    conn.execute(_storage_statement(sqlite='DELETE FROM compression_locks WHERE session_id=? AND holder=?', postgresql='DELETE FROM compression_locks WHERE session_id=%s AND holder=%s', connection=conn), (target, holder))
     return {'value': None}
 
 
@@ -439,7 +440,7 @@ def worker_turn_cleanup(db, conn, sid, payload):
     key = db._session_turn_lease_key_on_conn(conn, sid)
     if key != db._session_turn_lease_key_on_conn(conn, target):
         raise RuntimeStoreError('permission_denied')
-    conn.execute('DELETE FROM session_turn_leases WHERE conversation_id=? AND holder=?', (key, holder))
+    conn.execute(_storage_statement(sqlite='DELETE FROM session_turn_leases WHERE conversation_id=? AND holder=?', postgresql='DELETE FROM session_turn_leases WHERE conversation_id=%s AND holder=%s', connection=conn), (key, holder))
     return {'released': True}
 
 

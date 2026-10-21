@@ -1,5 +1,6 @@
 """Closed worker lifecycle handlers, called only inside the receipt transaction."""
 import json
+from hermes_state_sql import statement as _storage_statement, is_postgres
 import time
 
 from hermes_state_runtime import RuntimeStoreError
@@ -16,7 +17,7 @@ _CONSTRUCTOR_CONFIG = frozenset({'max_iterations', 'max_tokens', 'reasoning_conf
 def worker_create(db, conn, session_id, payload):
     if set(payload) - _CREATE_FIELDS or 'source' not in payload:
         raise RuntimeStoreError('invalid_params')
-    row = conn.execute('SELECT * FROM sessions WHERE id=?', (session_id,)).fetchone()
+    row = conn.execute(_storage_statement(sqlite='SELECT * FROM sessions WHERE id=?', postgresql='SELECT * FROM sessions WHERE id=%s', connection=conn), (session_id,)).fetchone()
     # A worker cannot mint a row or supply unreserved routing, lineage or cwd.
     if row is None or payload['source'] != row['source']:
         raise RuntimeStoreError('permission_denied')
@@ -47,8 +48,8 @@ def worker_lifecycle(db, conn, session_id, payload):
     from hermes_state_sessions import classify_session_status
     if payload:
         raise RuntimeStoreError('invalid_params')
-    row = conn.execute("SELECT role,tool_calls IS NOT NULL AS has_tool_calls,finish_reason "
-                       "FROM messages WHERE session_id=? ORDER BY id DESC LIMIT 1", (session_id,)).fetchone()
+    row = conn.execute(_storage_statement(sqlite="SELECT role,tool_calls IS NOT NULL AS has_tool_calls,finish_reason "
+                       "FROM messages WHERE session_id=? ORDER BY id DESC LIMIT 1", postgresql='SELECT role,tool_calls IS NOT NULL AS has_tool_calls,finish_reason FROM messages WHERE session_id=%s ORDER BY id DESC LIMIT 1', connection=conn), (session_id,)).fetchone()
     value = classify_session_status(role=row['role'], has_tool_calls=bool(row['has_tool_calls']),
                                     finish_reason=row['finish_reason']) if row else 'empty'
     return {'value': value}
@@ -72,7 +73,7 @@ def worker_title_source(db, conn, session_id, payload):
     if set(payload) != {'source'} or payload['source'] not in ('user', 'derived', 'llm'):
         raise RuntimeStoreError('invalid_params')
     return {'value': conn.execute(
-        'UPDATE sessions SET title_source=? WHERE id=? AND title IS NOT NULL',
+        _storage_statement(sqlite='UPDATE sessions SET title_source=? WHERE id=? AND title IS NOT NULL', postgresql='UPDATE sessions SET title_source=%s WHERE id=%s AND title IS NOT NULL', connection=conn),
         (payload['source'], session_id)).rowcount > 0}
 
 
@@ -81,7 +82,7 @@ def worker_next_title(db, conn, session_id, payload):
     from hermes_state_common import escape_like
     if set(payload) != {'base_title'} or not isinstance(payload['base_title'], str):
         raise RuntimeStoreError('invalid_params')
-    title = conn.execute('SELECT title FROM sessions WHERE id=?', (session_id,)).fetchone()[0]
+    title = conn.execute(_storage_statement(sqlite='SELECT title FROM sessions WHERE id=?', postgresql='SELECT title FROM sessions WHERE id=%s', connection=conn), (session_id,)).fetchone()[0]
     # Only an assigned title or a receipted title attempt authorizes dedupe.
     # Concurrent activity/usage receipts must not invalidate that title attempt.
     candidate = payload['base_title']
@@ -94,7 +95,7 @@ def worker_next_title(db, conn, session_id, payload):
         raise RuntimeStoreError('permission_denied')
     match = _NUMBERED_TITLE_RE.match(candidate)
     base = match.group(1) if match else candidate
-    rows = conn.execute("SELECT title FROM sessions WHERE title=? OR title LIKE ? ESCAPE '\\'",
+    rows = conn.execute(_storage_statement(sqlite="SELECT title FROM sessions WHERE title=? OR title LIKE ? ESCAPE '\\'", postgresql="SELECT title FROM sessions WHERE title=%s OR title LIKE %s ESCAPE '\\'", connection=conn),
                         (base, f'{escape_like(base)} #%')).fetchall()
     if not rows:
         return {'value': base}
@@ -113,8 +114,8 @@ def worker_activity(db, conn, session_id, payload):
     if when is not None and (type(when) not in (float, int) or not math.isfinite(when)):
         raise RuntimeStoreError('invalid_params')
     when = time.time() if when is None else float(when)
-    conn.execute('UPDATE sessions SET last_activity_at=?,last_activity_description=?,last_activity_provenance=? '
-                 'WHERE id=? AND (last_activity_at IS NULL OR last_activity_at<?)',
+    conn.execute(_storage_statement(sqlite='UPDATE sessions SET last_activity_at=?,last_activity_description=?,last_activity_provenance=? '
+                 'WHERE id=? AND (last_activity_at IS NULL OR last_activity_at<?)', postgresql='UPDATE sessions SET last_activity_at=%s,last_activity_description=%s,last_activity_provenance=%s WHERE id=%s AND (last_activity_at IS NULL OR last_activity_at<%s)', connection=conn),
                  (when, bound_activity_description(payload['description']),
                   normalize_activity_provenance(payload['provenance']).value, session_id, when))
     return {'value': None}
@@ -124,7 +125,7 @@ def worker_activity_clear(db, conn, session_id, payload):
     from agent.session_activity import ActivityProvenance
     if payload:
         raise RuntimeStoreError('invalid_params')
-    conn.execute('UPDATE sessions SET last_activity_description=?,last_activity_provenance=? WHERE id=?',
+    conn.execute(_storage_statement(sqlite='UPDATE sessions SET last_activity_description=?,last_activity_provenance=? WHERE id=?', postgresql='UPDATE sessions SET last_activity_description=%s,last_activity_provenance=%s WHERE id=%s', connection=conn),
                  ('', ActivityProvenance.UNKNOWN.value, session_id))
     return {'value': None}
 
@@ -135,8 +136,8 @@ def worker_billing_route(db, conn, session_id, payload):
         raise RuntimeStoreError('invalid_params')
     # Same contract as SessionDB.update_session_billing_route: route writers never touch the
     # stored prompt; only session.prompt replaces the frozen snapshot.
-    conn.execute('UPDATE sessions SET billing_provider=?,billing_base_url=?,billing_mode=COALESCE(?,billing_mode) '
-                 'WHERE id=?', (payload['provider'], payload['base_url'], payload['billing_mode'], session_id))
+    conn.execute(_storage_statement(sqlite='UPDATE sessions SET billing_provider=?,billing_base_url=?,billing_mode=COALESCE(?,billing_mode) '
+                 'WHERE id=?', postgresql='UPDATE sessions SET billing_provider=%s,billing_base_url=%s,billing_mode=COALESCE(%s,billing_mode) WHERE id=%s', connection=conn), (payload['provider'], payload['base_url'], payload['billing_mode'], session_id))
     return {'value': None}
 
 
@@ -145,8 +146,8 @@ def worker_api_content(db, conn, session_id, payload):
     if set(payload) != {'content', 'api_content'} or not isinstance(payload['api_content'], str):
         raise RuntimeStoreError('invalid_params')
     value = conn.execute(
-        "UPDATE messages SET api_content=? WHERE id=(SELECT id FROM messages WHERE session_id=? "
-        "AND role='user' AND active=1 ORDER BY id DESC LIMIT 1) AND content IS ?",
+        _storage_statement(sqlite="UPDATE messages SET api_content=? WHERE id=(SELECT id FROM messages WHERE session_id=? "
+        "AND role='user' AND active=1 ORDER BY id DESC LIMIT 1) AND content IS ?", postgresql="UPDATE messages SET api_content=%s WHERE id=(SELECT id FROM messages WHERE session_id=%s AND role='user' AND active=1 ORDER BY id DESC LIMIT 1) AND content IS NOT DISTINCT FROM %s", connection=conn),
         (_scrub_surrogates(payload['api_content']), session_id, db._encode_content(payload['content']))).rowcount
     return {'value': value}
 
@@ -164,7 +165,7 @@ def worker_message_api_content(db, conn, session_id, payload):
     if set(payload) != {'row_id', 'content', 'api_content'} or not isinstance(payload['api_content'], str):
         raise RuntimeStoreError('invalid_params')
     return {'value': conn.execute(
-        "UPDATE messages SET api_content=? WHERE id=? AND session_id=? AND role='user' AND active=1 AND content IS ?",
+        _storage_statement(sqlite="UPDATE messages SET api_content=? WHERE id=? AND session_id=? AND role='user' AND active=1 AND content IS ?", postgresql="UPDATE messages SET api_content=%s WHERE id=%s AND session_id=%s AND role='user' AND active=1 AND content IS NOT DISTINCT FROM %s", connection=conn),
         (_scrub_surrogates(payload['api_content']), _row_id(payload), session_id,
          db._encode_content(payload['content']))).rowcount}
 
@@ -174,7 +175,7 @@ def worker_user_content(db, conn, session_id, payload):
     if set(payload) != {'row_id', 'content'}:
         raise RuntimeStoreError('invalid_params')
     return {'value': conn.execute(
-        "UPDATE messages SET content=? WHERE id=? AND session_id=? AND role='user' AND active=1",
+        _storage_statement(sqlite="UPDATE messages SET content=? WHERE id=? AND session_id=? AND role='user' AND active=1", postgresql="UPDATE messages SET content=%s WHERE id=%s AND session_id=%s AND role='user' AND active=1", connection=conn),
         (db._encode_content(payload['content']), _row_id(payload), session_id)).rowcount}
 
 
@@ -210,8 +211,8 @@ def insert_session_row_in_transaction(
     # A delayed constructor/accounting backfill must not recreate a deleted session
     # beside its durable tombstone (the exact delete retry would then report a stale
     # success while a fresh delete collides with the existing marker).
-    if (conn.execute('SELECT 1 FROM sessions WHERE id=?', (session_id,)).fetchone() is None
-            and conn.execute('SELECT 1 FROM state_meta WHERE key=?', (RETIRED_PREFIX + session_id,)).fetchone()):
+    if (conn.execute(_storage_statement(sqlite='SELECT 1 FROM sessions WHERE id=?', postgresql='SELECT 1 FROM sessions WHERE id=%s', connection=conn), (session_id,)).fetchone() is None
+            and conn.execute(_storage_statement(sqlite='SELECT 1 FROM state_meta WHERE key=?', postgresql='SELECT 1 FROM state_meta WHERE key=%s', connection=conn), (RETIRED_PREFIX + session_id,)).fetchone()):
         raise RuntimeStoreError('not_found')
     if not (profile_name or "").strip():
         profile_name = self._own_profile_name()

@@ -4,6 +4,8 @@ The creation ID remains the admission/execution owner. Transcript rotation must
 not re-key idempotency digests, queued inputs, subscribers or uncertain claims.
 """
 import json
+from hermes_state_sql import statement as _storage_statement, is_postgres
+from hermes_state_sql import compression_step as _postgres_compression_step
 import time
 
 from hermes_state_local import POLICY_PREFIX
@@ -24,25 +26,25 @@ def validate_local_lineage(conn, receipt):
             or lineage[0] != root or lineage[-1] != receipt['entry']['session_id']):
         raise RuntimeStoreError('storage_unavailable')
     for parent_id, child_id in itertools.pairwise(lineage):
-        parent = conn.execute('SELECT end_reason FROM sessions WHERE id=?', (parent_id,)).fetchone()
-        child = conn.execute('SELECT parent_session_id,model_config FROM sessions WHERE id=?', (child_id,)).fetchone()
+        parent = conn.execute(_storage_statement(sqlite='SELECT end_reason FROM sessions WHERE id=?', postgresql='SELECT end_reason FROM sessions WHERE id=%s', connection=conn), (parent_id,)).fetchone()
+        child = conn.execute(_storage_statement(sqlite='SELECT parent_session_id,model_config FROM sessions WHERE id=?', postgresql='SELECT parent_session_id,model_config FROM sessions WHERE id=%s', connection=conn), (child_id,)).fetchone()
         if parent is None or child is None or child['parent_session_id'] != parent_id:
             raise RuntimeStoreError('storage_unavailable')
         if parent['end_reason'] == 'session_reset':
             valid = json.loads(child['model_config'] or '{}').get('_reset_from') == parent_id
         else:
-            tip = conn.execute(_CHAIN_STEP_SQL, (parent_id,)).fetchone()
+            tip = (_postgres_compression_step(conn, parent_id) if is_postgres(conn) else conn.execute(_CHAIN_STEP_SQL, (parent_id,)).fetchone())
             valid = parent['end_reason'] == 'compression' and tip is not None and tip['id'] == child_id
         if not valid:
             raise RuntimeStoreError('storage_unavailable')
-    if conn.execute(_CHAIN_STEP_SQL, (lineage[-1],)).fetchone() is not None:
+    if (_postgres_compression_step(conn, lineage[-1]) if is_postgres(conn) else conn.execute(_CHAIN_STEP_SQL, (lineage[-1],)).fetchone()) is not None:
         raise RuntimeStoreError('storage_unavailable')
     return lineage[-1]
 
 
 def local_physical_target(conn, session_id):
     """Resolve a local owner's current transcript on the caller's transaction."""
-    saved = conn.execute('SELECT value FROM state_meta WHERE key=?',
+    saved = conn.execute(_storage_statement(sqlite='SELECT value FROM state_meta WHERE key=?', postgresql='SELECT value FROM state_meta WHERE key=%s', connection=conn),
                          (POLICY_PREFIX + session_id,)).fetchone()
     if saved is None:
         return session_id
@@ -53,15 +55,15 @@ def local_physical_target(conn, session_id):
 
 
 def advance_local_target(conn, parent_session_id, child_session_id, *, entry=None):
-    parent = conn.execute('SELECT * FROM sessions WHERE id=?', (parent_session_id,)).fetchone()
+    parent = conn.execute(_storage_statement(sqlite='SELECT * FROM sessions WHERE id=?', postgresql='SELECT * FROM sessions WHERE id=%s', connection=conn), (parent_session_id,)).fetchone()
     logical_id = parent['chat_id'] if parent else None
     if not logical_id:
         return
     key = POLICY_PREFIX + logical_id
-    raw = conn.execute('SELECT value FROM state_meta WHERE key=?', (key,)).fetchone()
+    raw = conn.execute(_storage_statement(sqlite='SELECT value FROM state_meta WHERE key=?', postgresql='SELECT value FROM state_meta WHERE key=%s', connection=conn), (key,)).fetchone()
     if raw is None:
         from hermes_state_local_migration import LEGACY_PREFIX
-        legacy = conn.execute('SELECT 1 FROM state_meta WHERE key=?', (LEGACY_PREFIX + logical_id,)).fetchone()
+        legacy = conn.execute(_storage_statement(sqlite='SELECT 1 FROM state_meta WHERE key=?', postgresql='SELECT 1 FROM state_meta WHERE key=%s', connection=conn), (LEGACY_PREFIX + logical_id,)).fetchone()
         if logical_id.startswith('local-') or legacy:
             raise RuntimeStoreError('storage_unavailable')
         return
@@ -70,7 +72,7 @@ def advance_local_target(conn, parent_session_id, child_session_id, *, entry=Non
         if (receipt['session_id'] != logical_id or receipt['entry']['session_id'] != parent_session_id
                 or receipt['principal_id'] != parent['user_id'] or receipt['route'] != parent['session_key']):
             raise RuntimeStoreError('storage_unavailable')
-        route_row = conn.execute("SELECT entry_json FROM gateway_routing WHERE scope='' AND session_key=?",
+        route_row = conn.execute(_storage_statement(sqlite="SELECT entry_json FROM gateway_routing WHERE scope='' AND session_key=?", postgresql="SELECT entry_json FROM gateway_routing WHERE scope='' AND session_key=%s", connection=conn),
                                  (receipt['route'],)).fetchone()
         routed = json.loads(route_row[0]) if route_row else None
         if routed is None or routed['session_id'] != parent_session_id:
@@ -83,19 +85,19 @@ def advance_local_target(conn, parent_session_id, child_session_id, *, entry=Non
         if isinstance(exc, RuntimeStoreError):
             raise
         raise RuntimeStoreError('storage_unavailable') from exc
-    conn.execute("UPDATE gateway_routing SET entry_json=? WHERE scope='' AND session_key=?",
+    conn.execute(_storage_statement(sqlite="UPDATE gateway_routing SET entry_json=? WHERE scope='' AND session_key=?", postgresql="UPDATE gateway_routing SET entry_json=%s WHERE scope='' AND session_key=%s", connection=conn),
                  (_json(candidate), receipt['route']))
-    conn.execute('UPDATE state_meta SET value=? WHERE key=?', (_json(receipt), key))
-    conn.execute('UPDATE sessions SET runtime_revision=runtime_revision+1 WHERE id=?', (logical_id,))
+    conn.execute(_storage_statement(sqlite='UPDATE state_meta SET value=? WHERE key=?', postgresql='UPDATE state_meta SET value=%s WHERE key=%s', connection=conn), (_json(receipt), key))
+    conn.execute(_storage_statement(sqlite='UPDATE sessions SET runtime_revision=runtime_revision+1 WHERE id=?', postgresql='UPDATE sessions SET runtime_revision=runtime_revision+1 WHERE id=%s', connection=conn), (logical_id,))
 
 
 def reset_local_target(db, *, epoch, parent_session_id, entry):
     def write(conn):
         _epoch(conn, epoch)
-        parent = conn.execute('SELECT * FROM sessions WHERE id=?', (parent_session_id,)).fetchone()
+        parent = conn.execute(_storage_statement(sqlite='SELECT * FROM sessions WHERE id=?', postgresql='SELECT * FROM sessions WHERE id=%s', connection=conn), (parent_session_id,)).fetchone()
         if parent is None or parent['end_reason'] == 'compression':
             raise RuntimeStoreError('admission_conflict')
-        saved = conn.execute('SELECT value FROM state_meta WHERE key=?',
+        saved = conn.execute(_storage_statement(sqlite='SELECT value FROM state_meta WHERE key=?', postgresql='SELECT value FROM state_meta WHERE key=%s', connection=conn),
                              (POLICY_PREFIX + parent['chat_id'],)).fetchone()
         if saved is None:
             raise RuntimeStoreError('storage_unavailable')
@@ -110,9 +112,9 @@ def reset_local_target(db, *, epoch, parent_session_id, entry):
             child_session_id=entry['session_id'], source=policy['source'], model=policy['model'],
             model_config={'_reset_from': parent_session_id}, system_prompt=None,
             cwd=policy['cwd'], profile_name=parent['profile_name'])
-        conn.execute("UPDATE sessions SET ended_at=?,end_reason='session_reset' WHERE id=?",
+        conn.execute(_storage_statement(sqlite="UPDATE sessions SET ended_at=?,end_reason='session_reset' WHERE id=?", postgresql="UPDATE sessions SET ended_at=%s,end_reason='session_reset' WHERE id=%s", connection=conn),
                      (time.time(), parent_session_id))
         db._bump_conversation_generation(conn, parent_session_id, 'session_reset')
         advance_local_target(conn, parent_session_id, entry['session_id'], entry=entry)
-        conn.execute('UPDATE sessions SET runtime_generation=runtime_generation+1 WHERE id=?', (logical_id,))
+        conn.execute(_storage_statement(sqlite='UPDATE sessions SET runtime_generation=runtime_generation+1 WHERE id=?', postgresql='UPDATE sessions SET runtime_generation=runtime_generation+1 WHERE id=%s', connection=conn), (logical_id,))
     db._execute_write(write)

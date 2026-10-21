@@ -1,9 +1,11 @@
 """Fence an unsettled claim in a live owner without inventing a terminal result."""
 import asyncio
+from hermes_state_sql import statement as _storage_statement, is_postgres
 import logging
 import sqlite3
 
 from hermes_state_runtime import RuntimeStoreError, _admission, _epoch
+from hermes_state_sql import operational_errors
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +20,8 @@ def _mark_unknown(authority, row):
             return current['status']
         if current['status'] != 'started':
             raise RuntimeStoreError('stale_generation')
-        conn.execute("UPDATE session_admissions SET status='unknown' WHERE admission_id=?", (row['admission_id'],))
-        conn.execute('UPDATE sessions SET runtime_revision=runtime_revision+1 WHERE id=?', (row['target_session_id'],))
+        conn.execute(_storage_statement(sqlite="UPDATE session_admissions SET status='unknown' WHERE admission_id=?", postgresql="UPDATE session_admissions SET status='unknown' WHERE admission_id=%s", connection=conn), (row['admission_id'],))
+        conn.execute(_storage_statement(sqlite='UPDATE sessions SET runtime_revision=runtime_revision+1 WHERE id=?', postgresql='UPDATE sessions SET runtime_revision=runtime_revision+1 WHERE id=%s', connection=conn), (row['target_session_id'],))
         return 'unknown'
     return authority.db._execute_write(write)
 
@@ -32,7 +34,7 @@ async def recover_failed_settlement(authority, row):
             from gateway.session_runtime_workers import track_mutation
             writer = track_mutation(authority, asyncio.to_thread(_mark_unknown, authority, row))
             return await asyncio.shield(writer)
-        except (OSError, sqlite3.Error):
+        except (OSError, *operational_errors()):
             await asyncio.sleep(1)
 
 
@@ -132,7 +134,7 @@ async def settle_with_retry(authority, live, ref, row, response, outcome, captur
         try:
             return await asyncio.shield(track_mutation(authority, asyncio.to_thread(
                 commit_and_publish, authority, live, ref, row, response, outcome, captured, settlement)))
-        except (OSError, sqlite3.Error) as exc:
+        except (OSError, *operational_errors()) as exc:
             if delay is None or 'settled' in settlement:
                 raise
             logger.warning('Settlement of admission %s deferred by storage (%r); retrying in %.1fs',
