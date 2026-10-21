@@ -903,7 +903,7 @@ def prune_published_terminal_tasks(
         if not candidates:
             return 0
         deleted = conn.execute(
-            _storage_statement(sqlite=f"DELETE FROM hosted_room_driver_tasks WHERE room_id=? AND task_id IN ({','.join('?' * len(candidates))})",postgresql=f"DELETE FROM hosted_room_driver_tasks WHERE room_id=%s AND task_id IN ({','.join('?' * len(candidates))})"),
+            _storage_statement(sqlite=f"DELETE FROM hosted_room_driver_tasks WHERE room_id=? AND task_id IN ({','.join('?' * len(candidates))})",postgresql=f"DELETE FROM hosted_room_driver_tasks WHERE room_id=%s AND task_id IN ({','.join('%s' for _ in candidates)})"),
             (room_id, *candidates))
         return max(0, int(deleted.rowcount))
 

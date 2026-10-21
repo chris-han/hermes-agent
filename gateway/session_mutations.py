@@ -127,8 +127,9 @@ async def _mutate_session(authority, actor, ref, params, *, commit_lock=None):
         # would refuse a session whose receipt the client already saw as terminal.
         if operation == 'delete':
             store = getattr(authority.runner, 'session_store', None)
+            from hermes_state_backend import session_store_key
             if store is not None and (store._routing_db is None
-                    or store._routing_db.db_path != authority.db.db_path):
+                    or session_store_key(store._routing_db) != session_store_key(authority.db)):
                 raise RuntimeStoreError('runtime_coordination_required')
         if operation in {'rewind', 'reset'} and not callable(getattr(authority.runner, '_evict_cached_agent', None)):
             raise RuntimeStoreError('runtime_coordination_required')

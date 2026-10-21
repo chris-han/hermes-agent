@@ -422,25 +422,19 @@ class PostgreSQLSessionDB(PostgreSQLMutationsMixin,PostgreSQLTitlesMixin,Postgre
         return values
 
     def _decode_message(self,row):
-        from hermes_state_messages import SessionMessagesMixin
-        result=dict(row)
-        raw=result.pop('content_bytes',None)
-        if raw is not None: result['content']=bytes(raw).decode('utf-8')
         from hermes_state import SessionDB
-        result['content']=SessionDB._decode_content(result.get('content'))
-        for field in ('tool_calls','display_metadata'):
-            if result.get(field): result[field]=json.loads(result[field])
-        result.pop('display_identity',None); result.pop('display_order',None)
-        if not result.pop('_compressed_summary',0): pass
-        else: result['_compressed_summary']=True
-        return result
+        from hermes_state_postgresql_transcript import native_row
+        return object.__new__(SessionDB)._row_to_message_dict(native_row(row),warn_context='get_messages',summary_flag=True)
 
     def _append_on_conn(self,conn,session_id,messages):
         from hermes_state_postgresql_transcript import append_on_conn
         return append_on_conn(self,conn,session_id,messages)
 
     def _recount_on_conn(self,conn,session_id):
-        conn.execute(sql.SQL('UPDATE {} SET message_count=(SELECT COUNT(*) FROM {} WHERE session_id=%s AND active=1),tool_call_count=(SELECT COALESCE(SUM(CASE WHEN tool_calls IS NOT NULL THEN jsonb_array_length(tool_calls::jsonb) ELSE 0 END),0) FROM {} WHERE session_id=%s AND active=1) WHERE id=%s').format(self.table('sessions'),self.table('messages'),self.table('messages')),(session_id,session_id,session_id))
+        from hermes_state_messages import _parse_tool_calls,_tool_calls_count
+        rows=conn.execute(sql.SQL('SELECT tool_calls FROM {} WHERE session_id=%s AND active=1').format(self.table('messages')),(session_id,)).fetchall()
+        tools=sum(_tool_calls_count(_parse_tool_calls(row['tool_calls'])) for row in rows)
+        self._update(conn,'sessions',{'message_count':len(rows),'tool_call_count':tools},'id',session_id)
 
     def append_message(self,session_id,role,content=None,tool_name=None,tool_calls=None,tool_call_id=None,**kwargs):
         message=dict(role=role,content=content,tool_name=tool_name,tool_calls=tool_calls,tool_call_id=tool_call_id)

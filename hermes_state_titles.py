@@ -25,8 +25,10 @@ def next_title_in_lineage(conn, base_title: str) -> str:
     " #N" suffix, then increment the highest existing number."""
     match = _NUMBERED_TITLE_RE.match(base_title)
     base = match.group(1) if match else base_title
-    rows = conn.execute(
-        "SELECT title FROM sessions WHERE title = ? OR title LIKE ? ESCAPE '\\'",
+    from hermes_state_sql import statement
+    rows = conn.execute(statement(
+        sqlite="SELECT title FROM sessions WHERE title = ? OR title LIKE ? ESCAPE '\\'",
+        postgresql="SELECT title FROM sessions WHERE title=%s OR title LIKE %s ESCAPE '\\'",connection=conn),
         (base, f"{_escape_like(base)} #%")).fetchall()
     if not rows:
         return base

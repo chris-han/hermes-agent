@@ -231,6 +231,16 @@ def check_state_db_integrity(home: Optional[Path] = None) -> str:
     (renewed from a SQLite progress handler, #115542) so a long healthy check
     on a huge store is not mistaken for a parked deadlock.
     """
+    from hermes_state_backend import postgres_enabled,resolve_postgres_scope
+    if postgres_enabled():
+        from hermes_state_sql import connect_postgres
+        from hermes_state_postgresql import require_scope_ready
+        target=_home_path(home,'state.db').parent
+        try:
+            with closing(connect_postgres(target,read_only=True)) as conn:
+                require_scope_ready(conn,resolve_postgres_scope(target))
+            return 'ok'
+        except Exception as exc:return 'check-failed: '+type(exc).__name__
     path = _home_path(home, "state.db")
     if not path.exists():
         return "absent"

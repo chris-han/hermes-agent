@@ -1,5 +1,6 @@
 """Authority-bound hosted service; no legacy session server is constructed."""
 import asyncio
+from hermes_state_sql import statement as _storage_statement, is_postgres
 from contextlib import nullcontext
 from pathlib import Path
 
@@ -16,7 +17,8 @@ class CanonicalHostedRoomService(HostedControls, HostedRoomService):
     def __init__(self, authority, loop):
         self.authority, self.loop = authority, loop
         self.member_rpcs = {}
-        super().__init__(None, db_path=authority.db.db_path)
+        from hermes_state_backend import postgres_enabled
+        super().__init__(None, db_path=authority.db if postgres_enabled() else authority.db.db_path)
 
     def _make_rpc(self, server):
         # Member-specific canonical transports retain exact durable history. They
@@ -94,7 +96,7 @@ class CanonicalHostedRoomService(HostedControls, HostedRoomService):
     def bindings(self):
         with self.authority.db._read_ctx() as conn:
             owned = {r[0][len(_OWNER):] for r in conn.execute(
-                'SELECT key FROM state_meta WHERE key LIKE ?', (_OWNER + '%',))}
+                _storage_statement(sqlite='SELECT key FROM state_meta WHERE key LIKE ?', postgresql='SELECT key FROM state_meta WHERE key LIKE %s', connection=conn), (_OWNER + '%',))}
         return tuple(b for b in super().bindings() if b.room_id in owned)
 
     def _turn_lock(self, profile):
@@ -111,14 +113,14 @@ class CanonicalHostedRoomService(HostedControls, HostedRoomService):
         def write(conn):
             _epoch(conn, self.authority.epoch)
             key = _OWNER + room_id
-            row = conn.execute('SELECT value FROM state_meta WHERE key=?', (key,)).fetchone()
+            row = conn.execute(_storage_statement(sqlite='SELECT value FROM state_meta WHERE key=?', postgresql='SELECT value FROM state_meta WHERE key=%s', connection=conn), (key,)).fetchone()
             if row is None and create:
                 historical = conn.execute(
-                    'SELECT 1 FROM hosted_rooms WHERE room_id=? UNION ALL '
-                    'SELECT 1 FROM hosted_room_retired_ids WHERE room_id=?',
+                    _storage_statement(sqlite='SELECT 1 FROM hosted_rooms WHERE room_id=? UNION ALL '
+                    'SELECT 1 FROM hosted_room_retired_ids WHERE room_id=?', postgresql='SELECT 1 FROM hosted_rooms WHERE room_id=%s UNION ALL SELECT 1 FROM hosted_room_retired_ids WHERE room_id=%s', connection=conn),
                     (room_id, room_id)).fetchone()
                 if historical is None:
-                    conn.execute('INSERT INTO state_meta(key,value) VALUES(?,?)', (key, actor_subject))
+                    conn.execute(_storage_statement(sqlite='INSERT INTO state_meta(key,value) VALUES(?,?)', postgresql='INSERT INTO state_meta(key,value) VALUES(%s,%s)', connection=conn), (key, actor_subject))
                     return True
             if row is None or row[0] != actor_subject:
                 raise RuntimeStoreError('permission_denied')
@@ -127,7 +129,7 @@ class CanonicalHostedRoomService(HostedControls, HostedRoomService):
 
     def _owner(self, room_id):
         with self.authority.db._read_ctx() as conn:
-            row = conn.execute('SELECT value FROM state_meta WHERE key=?', (_OWNER + room_id,)).fetchone()
+            row = conn.execute(_storage_statement(sqlite='SELECT value FROM state_meta WHERE key=?', postgresql='SELECT value FROM state_meta WHERE key=%s', connection=conn), (_OWNER + room_id,)).fetchone()
         if row is None:
             raise RuntimeStoreError('permission_denied')
         return row[0]
@@ -157,11 +159,11 @@ class CanonicalHostedRoomService(HostedControls, HostedRoomService):
                 from gateway.hosted_rooms import _room_from_row
                 from gateway.hosted_room_driver import _task_from_row
                 _epoch(conn, self.authority.epoch)
-                owned = conn.execute('SELECT value FROM state_meta WHERE key=?',
+                owned = conn.execute(_storage_statement(sqlite='SELECT value FROM state_meta WHERE key=?', postgresql='SELECT value FROM state_meta WHERE key=%s', connection=conn),
                                      (_OWNER + binding.room_id,)).fetchone()
                 if owned is None or owned[0] != owner:
                     return False
-                stored = conn.execute('SELECT * FROM hosted_rooms WHERE room_id=?',
+                stored = conn.execute(_storage_statement(sqlite='SELECT * FROM hosted_rooms WHERE room_id=?', postgresql='SELECT * FROM hosted_rooms WHERE room_id=%s', connection=conn),
                                       (binding.room_id,)).fetchone()
                 if stored is None or stored['disbanded_at'] is not None:
                     return False
@@ -178,7 +180,7 @@ class CanonicalHostedRoomService(HostedControls, HostedRoomService):
                 if self.profile_homes().get(profile) != home:
                     return False
                 if identity is not None:
-                    stored = conn.execute('SELECT * FROM hosted_room_driver_tasks WHERE room_id=? AND task_id=?',
+                    stored = conn.execute(_storage_statement(sqlite='SELECT * FROM hosted_room_driver_tasks WHERE room_id=? AND task_id=?', postgresql='SELECT * FROM hosted_room_driver_tasks WHERE room_id=%s AND task_id=%s', connection=conn),
                                           (binding.room_id, identity.task_id)).fetchone()
                     if stored is None:
                         return False

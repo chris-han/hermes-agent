@@ -128,7 +128,8 @@ def load_room_links_tolerant(db_path: DbPath) -> tuple[tuple[StoredRoomLink, ...
 
 def save_room_link(db_path: DbPath, link: StoredRoomLink) -> None:
     hosted_rooms.upsert_room_link_record(db_path, record=link.as_record(), max_links=MAX_LINKS)
-    if os.name == "posix":
+    from hermes_state_backend import postgres_enabled
+    if os.name == "posix" and not postgres_enabled():
         with contextlib.suppress(OSError):
             Path(db_path).chmod(0o600)
 

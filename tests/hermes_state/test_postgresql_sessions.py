@@ -762,6 +762,8 @@ def native_pg_worker(tmp_path,pg_settings,monkeypatch):
     scope=SessionScope('tenant','workspace',str(uuid.uuid4()))
     provision_scope(pg_settings['semantier_migrate'],scope,app_role='semantier_app')
     monkeypatch.setenv('HERMES_STATE_BACKEND','postgresql')
+    monkeypatch.setenv('HERMES_DATABASE_URL',pg_settings['semantier_app'])
+    monkeypatch.setenv('HERMES_STATE_SCOPE_MAP',json.dumps({str(tmp_path):dict(zip(('tenant_id','workspace_id','source_store_id'),scope.identity))}))
     monkeypatch.setattr(sqlite3,'connect',lambda *a,**k:pytest.fail('Hosted worker opened SQLite'))
     with PostgreSQLSessionDB(pg_settings['semantier_app'],scope,home=tmp_path) as db:
         db.create_session('owned','cli',cwd='/reserved',profile_name='fixture')
@@ -818,3 +820,133 @@ def test_pg_worker_compaction_and_rotation_keep_foreign_tail(native_pg_worker):
     store.append_messages_batch('child',[{'role':'assistant','content':'after'}])
     assert [row['content'] for row in store.get_messages_as_conversation('child')]==['handoff','after']
     assert store.get_compression_lineage('child')==['owned','child']
+
+
+def test_pg_canonical_room_service_uses_real_native_home(native_pg_worker,tmp_path):
+    import asyncio
+    from types import SimpleNamespace
+    from gateway import hosted_rooms as rooms
+    from gateway.session_hosted_service import CanonicalHostedRoomService
+    from gateway.hosted_room_attachments import HostedRoomAttachmentStore
+    from gateway.hosted_room_policy_checkpoint import HostedRoomPolicyCheckpoint
+    db,_=native_pg_worker
+    authority=SimpleNamespace(db=db,profile_id=str(tmp_path))
+    loop=asyncio.new_event_loop()
+    try:
+        service=CanonicalHostedRoomService(authority,loop)
+        assert service.db_path is db
+        assert service.root==tmp_path
+        assert not service._link_load_error
+        room=rooms.create_room(db,room_id='room',name='真实存储',members=[{'profile':'ops','handle':'ops'}],authority_gateway_id='gateway')
+        assert room['authority_epoch']==1 and rooms.probe_hosted_room(db,room_id='room')
+        rooms.append_event(db,room_id='room',event_id='event',kind='message.user',actor={'kind':'user','id':'user'},
+            payload={'text':'retained 中文','thread_id':'thread'},authority_gateway_id='gateway',authority_epoch=1)
+        assert HostedRoomPolicyCheckpoint(db).sync(room_id='room',latest_seq=1)==1
+        attachments=HostedRoomAttachmentStore(db)
+        assert attachments.root==tmp_path/'hosted-room-attachments'
+        saved=attachments.put(room_id='room',upload_id='upload',kind='file',name='fixture.txt',mime='text/plain',data=b'retained attachment')
+        assert saved['size']==19
+        assert not (tmp_path/'state.db').exists() and not (tmp_path/'shared-state.db').exists()
+    finally:loop.close()
+
+
+def test_pg_legacy_message_decoding_and_later_append_match_native(tmp_path,pg_settings,monkeypatch):
+    from hermes_state import SessionDB
+    from hermes_state_postgresql import SessionScope,PostgreSQLSessionDB,provision_scope
+    source=tmp_path/'legacy.db'
+    with SessionDB(source) as original:
+        original.create_session('session','cli')
+        original.append_message('session','assistant','legacy content')
+        original._write_sql("UPDATE messages SET tool_calls='{broken',display_metadata='{broken' WHERE session_id='session'")
+        expected=original.get_messages('session')
+    scope=SessionScope('tenant','workspace',str(uuid.uuid4()))
+    provision_scope(pg_settings['semantier_migrate'],scope,app_role='semantier_app')
+    with PostgreSQLSessionDB(pg_settings['semantier_migrate'],scope,home=tmp_path) as migration:
+        migration.import_sqlite_snapshot(source)
+    monkeypatch.setenv('HERMES_STATE_BACKEND','postgresql')
+    import sqlite3
+    monkeypatch.setattr(sqlite3,'connect',lambda *a,**k:pytest.fail('Hosted legacy reader opened SQLite'))
+    with PostgreSQLSessionDB(pg_settings['semantier_app'],scope,home=tmp_path) as db:
+        assert db.get_messages('session')==expected
+        db.append_message('session','user','after migration')
+        assert [message['content'] for message in db.get_messages('session')]==['legacy content','after migration']
+        assert db.get_session('session')['message_count']==2
+
+
+def test_pg_native_readers_media_and_kanban_owner_fences(native_pg_worker,tmp_path,monkeypatch):
+    import os,psutil
+    import hermes_state_runtime as rt
+    from gateway.readiness import _probe_state_db
+    from gateway.lifecycle_ledger import check_state_db_integrity
+    from gateway.session_ingress_media import _held_media_paths,_history_mentions
+    from gateway.session_kanban import _read_kanban
+    from hermes_cli import kanban_db as kb
+    from hermes_cli.kanban_db_connect import connect
+    from hermes_cli.kanban_owner_recovery import owner_reclaim_paused
+    from agent.kanban_turn_recovery import worker_claim_is_live
+    from gateway.run_idle_exit import _kanban_busy
+    import psycopg
+    db,_=native_pg_worker
+    monkeypatch.setenv('HERMES_HOME',str(tmp_path))
+    assert _probe_state_db(tmp_path)=={'status':'ok'}
+    assert check_state_db_integrity(home=tmp_path)=='ok'
+    db.create_session('queue-owner','cli')
+    reference={'path':str(tmp_path/'media'/'retained.png')}
+    admitted=rt.admit_session_input(db,epoch=1,principal_id='principal',session_id='queue-owner',request_id='request',
+        payload={'attachments_v1':{'media':[reference]},'api_turn_v1':{'media':[reference]}})
+    with db._read_ctx() as conn:assert _held_media_paths(conn)=={reference['path']}
+    claimed=rt.claim_session_input(db,epoch=1,session_id='queue-owner')
+    rt.settle_session_input(db,epoch=1,admission_id=admitted['admission_id'],generation=claimed['generation'],outcome='completed')
+    with db._read_ctx() as conn:assert _held_media_paths(conn)=={reference['path']}
+    digest='a'*64
+    history_path=str(tmp_path/digest/'api.png')
+    db.append_message('queue-owner','user',[{'type':'text','text':history_path}])
+    with db._read_ctx() as conn:
+        assert _history_mentions(conn,[{'path':history_path,'sha256':digest}])=={history_path}
+    path=tmp_path/'kanban.db'
+    conn=connect(path)
+    try:
+        task_id=kb.create_task(conn,title='Retained owner',workspace_kind='scratch',completion_contract='local-only')
+        task=kb.claim_task(conn,task_id)
+        assert task is not None and task.current_run_id is not None
+        kb._append_event(conn,task_id,'owner_admitted',{'db':'/must-never-open/source-state.db'},run_id=task.current_run_id)
+        assert owner_reclaim_paused(conn,task_id)
+        marker=dict(owner_home=str(tmp_path),storage_identity=list(db.storage_identity),session_id='queue-owner',request_id='request',
+            pid=os.getpid(),birth=psutil.Process().create_time())
+        kb._append_event(conn,task_id,'owner_admitted',marker,run_id=task.current_run_id)
+        assert not owner_reclaim_paused(conn,task_id)
+        kb._append_event(conn,task_id,'owner_admitted',{**marker,'storage_identity':['postgresql','foreign','workspace','source']},run_id=task.current_run_id)
+        assert owner_reclaim_paused(conn,task_id)
+        assert worker_claim_is_live(task_id=task_id,db_path=str(path),run_id=str(task.current_run_id),claim_lock=task.claim_lock,verify_pid=False)
+        assert _kanban_busy()
+    finally:conn.close()
+    reader=_read_kanban(path)
+    try:
+        assert kb.get_task(reader,task_id).id==task_id
+        with pytest.raises(psycopg.errors.ReadOnlySqlTransaction):reader.execute('UPDATE tasks SET title=%s WHERE id=%s',('forbidden',task_id))
+    finally:reader.close()
+    assert not path.exists() and not (tmp_path/'state.db').exists()
+
+
+def test_pg_canonical_mutation_receipts_metadata_rewind_and_delete(native_pg_worker):
+    import hermes_state_runtime as rt
+    db,_=native_pg_worker
+    db.create_session('edit','cli')
+    db.append_messages_batch('edit',[{'role':'user','content':'first'},{'role':'assistant','content':'reply'},{'role':'user','content':'again'}])
+    args=dict(epoch=1,principal_id='principal',session_id='edit',request_id='sidebar',expected_revision=0,
+        expected_generation=0,operation='sidebar',payload={'title':'中文 sidebar','pinned':True,'hidden':True,'unread':True})
+    receipt=rt.mutate_runtime_session(db,**args)
+    assert receipt['revision']==1 and receipt['pinned'] and receipt['hidden'] and receipt['unread']
+    assert rt.mutate_runtime_session(db,**args)==receipt
+    with pytest.raises(rt.RuntimeStoreError,match='revision_conflict'):
+        rt.mutate_runtime_session(db,**(args|{'request_id':'stale'}))
+    target=db.get_messages('edit')[-1]['id']
+    rewind=dict(args,request_id='rewind',expected_revision=1,operation='rewind',payload={'target_message_id':target})
+    rewound=rt.mutate_runtime_session(db,**rewind)
+    assert rewound['rewound_count']==1 and rewound['target_message']['content']=='again'
+    assert [row['content'] for row in db.get_messages('edit')]==['first','reply']
+    assert rt.mutate_runtime_session(db,**rewind)==rewound
+    delete=dict(args,request_id='delete',expected_revision=rewound['revision'],expected_generation=rewound['execution_generation'],operation='delete',payload={})
+    deleted=rt.mutate_runtime_session(db,**delete)
+    assert deleted['deleted_ids']==['edit'] and db.get_session('edit') is None
+    assert rt.mutate_runtime_session(db,**delete)==deleted

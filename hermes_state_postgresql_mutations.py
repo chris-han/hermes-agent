@@ -15,6 +15,37 @@ class PostgreSQLMutationsMixin:
     _stamp_kept_live_prefix=SessionDB._stamp_kept_live_prefix
     _reasoning_json_text=staticmethod(SessionDB._reasoning_json_text)
     _session_row_dict=staticmethod(SessionDB._session_row_dict)
+    _tail_rows_after_watermark=SessionDB._tail_rows_after_watermark
+
+    def _row_to_message_dict(self,row,**kwargs):
+        return object.__new__(SessionDB)._row_to_message_dict(native_row(row),**kwargs)
+
+    def _split_rewind_target(self,*args):
+        return object.__new__(SessionDB)._split_rewind_target(*args)
+
+    def _active_transcript_counts(self,conn,session_id):
+        rows=conn.execute(sql.SQL('SELECT tool_calls FROM {} WHERE session_id=%s AND active=1').format(self.table('messages')),(session_id,)).fetchall()
+        return len(rows),sum(_tool_calls_count(_parse_tool_calls(row['tool_calls'])) for row in rows)
+
+    def _set_lineage_column_in_transaction(self,conn,column,session_id,value,*,extra_set_sql=''):
+        if column not in {'archived','pinned','hidden','last_read_at'}:raise ValueError('Unknown native lineage flag')
+        if extra_set_sql:raise ValueError('Explicit PostgreSQL lineage statement required')
+        ids=self._lineage_ids_on_conn(conn,session_id)
+        values={column:value}
+        if column=='archived':values['auto_archived']=0
+        query=sql.SQL('UPDATE {} SET {} WHERE id=ANY(%s) RETURNING id').format(self.table('sessions'),sql.SQL(',').join(sql.SQL('{}=%s').format(sql.Identifier(k)) for k in values))
+        return [row['id'] for row in conn.execute(query,(*values.values(),ids))]
+
+    def _clone_message_rows(self,conn,ids,*,session_id=None):
+        if not ids:return
+        targets=set()
+        for raw in conn.execute(sql.SQL('SELECT * FROM {} WHERE id=ANY(%s) ORDER BY id').format(self.table('messages')),(ids,)).fetchall():
+            values={key:raw[key] for key in raw.keys() if key not in ('id','active','compacted','display_order')}
+            if session_id is not None:values['session_id']=session_id
+            values.update(active=1,compacted=0)
+            self._insert(conn,'messages',values)
+            targets.add(values['session_id'])
+        for target in targets:self._reconcile_pg_display_orders(conn,target)
 
     def _store_system_prompt(self,conn,prompt):
         return self._store_pg_system_prompt(conn,prompt)
@@ -26,14 +57,18 @@ class PostgreSQLMutationsMixin:
         return self._lease_key_on_conn(conn,session_id)
 
     def _end_and_bump(self,conn,query,params,session_id,reason):
-        from hermes_state_common import _RESET_END_REASONS
         changed=conn.execute(query,params).rowcount
-        if changed and reason in _RESET_END_REASONS:
+        if changed:self._bump_conversation_generation(conn,session_id,reason)
+        return changed
+
+    def _bump_conversation_generation(self,conn,session_id,reason):
+        from hermes_state_common import _RESET_END_REASONS
+        if reason in _RESET_END_REASONS:
             row=self._session_on_conn(conn,session_id)
+            if row is None:return
             source,key=(str(row[k] or '').strip() for k in ('source','session_key'))
             if source and key:
                 conn.execute(sql.SQL('INSERT INTO {}(source,session_key,generation) VALUES(%s,%s,1) ON CONFLICT(source,session_key) DO UPDATE SET generation={}.generation+1').format(self.table('conversation_generations'),self.table('conversation_generations')),(source,key))
-        return changed
 
     def _check_transcript_write_guards(self,conn,session_id,compression_lock_holder,
             turn_lease_holder=None,turn_lease_ttl_seconds=300.0,reject_active_turn_lease=False,

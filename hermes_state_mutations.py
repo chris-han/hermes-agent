@@ -1,5 +1,6 @@
 """Closed action handlers inside the runtime mutation receipt transaction."""
 import time
+from hermes_state_sql import statement as _storage_statement, is_postgres
 from hermes_state_runtime import RuntimeStoreError
 
 METADATA_FIELDS = {'title': str, 'archived': bool, 'hidden': bool, 'pinned': bool, 'unread': bool}
@@ -85,7 +86,7 @@ def apply_action(db, conn, session_id, operation, payload, *, prepared=None):
         if key == 'title':
             affected.update(db._set_session_title_in_transaction(
                 conn, session_id, value, source=db.TITLE_SOURCE_USER))
-            result[key] = conn.execute('SELECT title FROM sessions WHERE id=?', (session_id,)).fetchone()[0]
+            result[key] = conn.execute(_storage_statement(sqlite='SELECT title FROM sessions WHERE id=?', postgresql='SELECT title FROM sessions WHERE id=%s', connection=conn), (session_id,)).fetchone()[0]
         else:
             column = 'last_read_at' if key == 'unread' else key
             stored = (0.0 if value else time.time()) if key == 'unread' else int(value)
@@ -117,14 +118,14 @@ def _rewind(db, conn, session_id, payload):
     target = db._row_to_message_dict(target, warn_context='rewind receipt', summary_flag=True)
     if live is not None:
         target['content'] = live.get('content')
-    conn.execute('UPDATE sessions SET runtime_generation=runtime_generation+1 WHERE id=?', (session_id,))
+    conn.execute(_storage_statement(sqlite='UPDATE sessions SET runtime_generation=runtime_generation+1 WHERE id=?', postgresql='UPDATE sessions SET runtime_generation=runtime_generation+1 WHERE id=%s', connection=conn), (session_id,))
     return {session_id, physical}, {'rewound_count': len(ids), 'target_message': target,
         'new_head_id': head, 'replacement_message_id': replacement}
 
 
 def _carrier_live_view(db, conn, session_id, message_id):
     from agent.context_compressor import split_user_originated_turn
-    row = conn.execute('SELECT * FROM messages WHERE id=? AND session_id=? AND active=1',
+    row = conn.execute(_storage_statement(sqlite='SELECT * FROM messages WHERE id=? AND session_id=? AND active=1', postgresql='SELECT * FROM messages WHERE id=%s AND session_id=%s AND active=1', connection=conn),
                        (message_id, session_id)).fetchone()
     message = row and db._row_to_message_dict(row, warn_context='rewind target', summary_flag=True)
     handoff, live = split_user_originated_turn(message) if message else (None, None)
@@ -143,9 +144,9 @@ def _import(db, conn, session_id, payload):
         raw = item['session']
         sid = raw['id']
         from hermes_state_mutation_retirement import RETIRED_PREFIX
-        if conn.execute('SELECT 1 FROM state_meta WHERE key=?', (RETIRED_PREFIX + sid,)).fetchone():
+        if conn.execute(_storage_statement(sqlite='SELECT 1 FROM state_meta WHERE key=?', postgresql='SELECT 1 FROM state_meta WHERE key=%s', connection=conn), (RETIRED_PREFIX + sid,)).fetchone():
             raise RuntimeStoreError('admission_conflict')
-        if conn.execute('SELECT 1 FROM sessions WHERE id=?', (sid,)).fetchone():
+        if conn.execute(_storage_statement(sqlite='SELECT 1 FROM sessions WHERE id=?', postgresql='SELECT 1 FROM sessions WHERE id=%s', connection=conn), (sid,)).fetchone():
             skipped.append(sid)
             continue
         db._import_session_row(conn, raw, item['messages'], sid)

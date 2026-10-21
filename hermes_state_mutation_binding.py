@@ -1,5 +1,6 @@
 """Control-only ownership for unbound legacy history; never an execution policy."""
 import json
+from hermes_state_sql import statement as _storage_statement, is_postgres
 from hermes_state_runtime import RuntimeStoreError
 
 BINDING_PREFIX = 'gateway.history_control.v1.'
@@ -22,12 +23,12 @@ def _owner_user(row):
 def import_history_control(conn, actor, session_ids):
     binding = json.dumps([actor.profile_id, actor.subject], separators=(',', ':'))
     for sid in session_ids:
-        if conn.execute('SELECT 1 FROM sessions WHERE id=?', (sid,)).fetchone() is None:
-            conn.execute('INSERT INTO state_meta(key,value) VALUES(?,?)', (BINDING_PREFIX + sid, binding))
+        if conn.execute(_storage_statement(sqlite='SELECT 1 FROM sessions WHERE id=?', postgresql='SELECT 1 FROM sessions WHERE id=%s', connection=conn), (sid,)).fetchone() is None:
+            conn.execute(_storage_statement(sqlite='INSERT INTO state_meta(key,value) VALUES(?,?)', postgresql='INSERT INTO state_meta(key,value) VALUES(%s,%s)', connection=conn), (BINDING_PREFIX + sid, binding))
 
 
 def authorize_history(conn, actor, session_id, *, claim=False):
-    row = conn.execute('SELECT * FROM sessions WHERE id=?', (session_id,)).fetchone()
+    row = conn.execute(_storage_statement(sqlite='SELECT * FROM sessions WHERE id=?', postgresql='SELECT * FROM sessions WHERE id=%s', connection=conn), (session_id,)).fetchone()
     if row is None:
         return False
     # Import intentionally strips routes. Never reinterpret a cold native/API
@@ -36,7 +37,7 @@ def authorize_history(conn, actor, session_id, *, claim=False):
         return False
     key = BINDING_PREFIX + session_id
     binding = json.dumps([actor.profile_id, actor.subject], separators=(',', ':'))
-    saved = conn.execute('SELECT value FROM state_meta WHERE key=?', (key,)).fetchone()
+    saved = conn.execute(_storage_statement(sqlite='SELECT value FROM state_meta WHERE key=?', postgresql='SELECT value FROM state_meta WHERE key=%s', connection=conn), (key,)).fetchone()
     if saved is not None:
         if saved[0] != binding:
             raise RuntimeStoreError('permission_denied')
@@ -48,12 +49,12 @@ def authorize_history(conn, actor, session_id, *, claim=False):
     if 'session:create' not in actor.capabilities:
         raise RuntimeStoreError('permission_denied')
     if claim:
-        conn.execute('INSERT INTO state_meta(key,value) VALUES(?,?)', (key, binding))
+        conn.execute(_storage_statement(sqlite='INSERT INTO state_meta(key,value) VALUES(?,?)', postgresql='INSERT INTO state_meta(key,value) VALUES(%s,%s)', connection=conn), (key, binding))
     return True
 
 
 def history_binding(conn, session_id):
-    saved = conn.execute('SELECT value FROM state_meta WHERE key=?', (BINDING_PREFIX + session_id,)).fetchone()
+    saved = conn.execute(_storage_statement(sqlite='SELECT value FROM state_meta WHERE key=?', postgresql='SELECT value FROM state_meta WHERE key=%s', connection=conn), (BINDING_PREFIX + session_id,)).fetchone()
     return saved[0] if saved else None
 
 
@@ -66,7 +67,7 @@ def same_history_owner(conn, anchor_id, session_id):
     rule (local source, no foreign user_id) — e.g. the pre-adoption ancestors of an adopted
     legacy CLI conversation. A bound (imported) anchor therefore never reaches unbound rows.
     """
-    columns = 'SELECT source,user_id,session_key,chat_id,origin_json FROM sessions WHERE id=?'
+    columns = _storage_statement(sqlite='SELECT source,user_id,session_key,chat_id,origin_json FROM sessions WHERE id=?',postgresql='SELECT source,user_id,session_key,chat_id,origin_json FROM sessions WHERE id=%s',connection=conn)
     anchor, row = (conn.execute(columns, (sid,)).fetchone() for sid in (anchor_id, session_id))
     if anchor is None or row is None:
         return False

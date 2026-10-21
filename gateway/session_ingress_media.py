@@ -6,6 +6,7 @@ native bytes are released by ``release_admission_media`` once their row is
 terminal and no live native input or retained API image context still holds them.
 """
 from collections import Counter
+from hermes_state_sql import statement as _storage_statement, is_postgres
 from contextlib import contextmanager
 from contextvars import ContextVar
 import hashlib
@@ -143,8 +144,8 @@ def reconcile_native_retry(db, *, principal_id, session_id, request_id, payload)
     if not fresh:
         return payload
     with db._read_ctx() as conn:
-        row = conn.execute('SELECT status, payload_json FROM session_admissions WHERE principal_id=? AND '
-                           'target_session_id=? AND request_id=?', (principal_id, session_id, request_id)).fetchone()
+        row = conn.execute(_storage_statement(sqlite='SELECT status, payload_json FROM session_admissions WHERE principal_id=? AND '
+                           'target_session_id=? AND request_id=?', postgresql='SELECT status, payload_json FROM session_admissions WHERE principal_id=%s AND target_session_id=%s AND request_id=%s', connection=conn), (principal_id, session_id, request_id)).fetchone()
     committed = json.loads(row[1]).get('native_text_v1', {}).get('media') if row is not None else None
     if not committed or [(r['sha256'], r['size']) for r in committed] != [(r['sha256'], r['size']) for r in fresh]:
         return payload
@@ -311,12 +312,12 @@ def admission_media_references(payload):
 def _held_media_paths(conn):
     # Project only references, not potentially large inline-image/history payloads; a live hosted
     # row's prompt is projected too, because its documents are held by text, not by a reference.
-    rows = conn.execute("""SELECT status, request_id, json_extract(payload_json,
+    rows = conn.execute(_storage_statement(sqlite="""SELECT status, request_id, json_extract(payload_json,
             '$.attachments_v1.media', '$.native_text_v1.media', '$.api_turn_v1.media'),
             CASE WHEN status!='terminal' AND request_id LIKE 'hosted:%'
                  THEN json_extract(payload_json, '$.text') END
             FROM session_admissions WHERE status!='terminal'
-            OR json_type(payload_json, '$.api_turn_v1.media') IS NOT NULL""").fetchall()
+            OR json_type(payload_json, '$.api_turn_v1.media') IS NOT NULL""",postgresql="SELECT status,request_id,jsonb_build_array(payload_json::jsonb#>'{attachments_v1,media}',payload_json::jsonb#>'{native_text_v1,media}',payload_json::jsonb#>'{api_turn_v1,media}')::text,CASE WHEN status!='terminal' AND request_id LIKE 'hosted:%' THEN payload_json::jsonb->>'text' END FROM session_admissions WHERE status!='terminal' OR payload_json::jsonb#>'{api_turn_v1,media}' IS NOT NULL",connection=conn)).fetchall()
     held = set()
     for status, request_id, encoded, text in rows:
         attachments, native, api = json.loads(encoded)
@@ -391,13 +392,15 @@ def sweep_settled_media(db, *, now=None):
     import time
     from agent.provider_media import MEDIA_CACHE_MAX_AGE_HOURS
     now = time.time() if now is None else now
-    if now - _last_sweep.get(db.db_path, 0) < _SWEEP_INTERVAL_S:
+    from hermes_state_backend import session_store_key
+    key=session_store_key(db)
+    if now - _last_sweep.get(key, 0) < _SWEEP_INTERVAL_S:
         return 0
-    _last_sweep[db.db_path] = now
+    _last_sweep[key] = now
     with db._read_ctx() as conn:
-        rows = conn.execute("""SELECT json_extract(payload_json, '$.attachments_v1.media', '$.native_text_v1.media')
+        rows = conn.execute(_storage_statement(sqlite="""SELECT json_extract(payload_json, '$.attachments_v1.media', '$.native_text_v1.media')
             FROM session_admissions WHERE status='terminal' AND (json_type(payload_json, '$.attachments_v1.media')
-            IS NOT NULL OR json_type(payload_json, '$.native_text_v1.media') IS NOT NULL)""").fetchall()
+            IS NOT NULL OR json_type(payload_json, '$.native_text_v1.media') IS NOT NULL)""",postgresql="SELECT jsonb_build_array(payload_json::jsonb#>'{attachments_v1,media}',payload_json::jsonb#>'{native_text_v1,media}')::text FROM session_admissions WHERE status='terminal' AND (payload_json::jsonb#>'{attachments_v1,media}' IS NOT NULL OR payload_json::jsonb#>'{native_text_v1,media}' IS NOT NULL)",connection=conn)).fetchall()
     cutoff = now - MEDIA_CACHE_MAX_AGE_HOURS * 3600
     stale = {}
     for (encoded,) in rows:
@@ -421,10 +424,11 @@ def collect_unheld_api_images(db):
     ``db``: a sweep whose database belongs to another profile would see every image here as
     unowned, so it collects nothing."""
     from hermes_constants import get_hermes_home
-    if Path(db.db_path).resolve().parent != get_hermes_home().resolve():
+    from hermes_state_backend import session_store_home,session_store_key
+    if session_store_home(db) != get_hermes_home().resolve():
         import logging
         logging.getLogger(__name__).warning(
-            'Skipped retained API image collection: %s is not the active profile store', db.db_path)
+            'Skipped retained API image collection: %s is not the active profile store', session_store_key(db))
         return 0
     root = _media_root()
     return release_unheld_media(db, [
@@ -445,11 +449,12 @@ def _history_mentions(conn, references, after_id=0):
         for tail in (reference['sha256'] + sep + Path(raw).name for sep in ('/', '\\')):
             needles[tail] = needles[json.dumps(tail)[1:-1]] = raw
     prefixes = sorted({reference['sha256'] for reference in references})
-    match = ' OR '.join(['instr(content,?)'] * len(prefixes))
-    query = f'SELECT content FROM messages WHERE ({match})' + (' AND id>?' if after_id else '')
+    match = ' OR '.join([_storage_statement(sqlite='instr(content,?)',postgresql="position(convert_to(%s,'UTF8') in COALESCE(content_bytes,convert_to(content,'UTF8')))>0",connection=conn)] * len(prefixes))
+    column=_storage_statement(sqlite='content',postgresql="COALESCE(content_bytes,convert_to(content,'UTF8'))",connection=conn)
+    query = f'SELECT {column} FROM messages WHERE ({match})' + (_storage_statement(sqlite=' AND id>?',postgresql=' AND id>%s',connection=conn) if after_id else '')
     mentioned = set()
     for (content,) in conn.execute(query, (*prefixes, *((after_id,) if after_id else ()))):
-        text = content.decode('utf-8', 'replace') if isinstance(content, bytes) else str(content)
+        text = bytes(content).decode('utf-8', 'replace') if isinstance(content, (bytes,memoryview)) else str(content)
         mentioned.update(raw for needle, raw in needles.items() if needle in text)
     return mentioned
 
@@ -478,7 +483,8 @@ def release_unheld_media(db, references, *, retain_history=True):
                 last_id = conn.execute('SELECT coalesce(max(id), 0) FROM messages').fetchone()[0]
                 seen = _history_mentions(conn, references)
             finally:
-                if conn.in_transaction:
+                from hermes_state_sql import in_transaction
+                if in_transaction(conn):
                     conn.execute('ROLLBACK')
         references = [reference for reference in references if reference['path'] not in seen]
         if not references:

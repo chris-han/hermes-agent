@@ -716,6 +716,21 @@ def _refuse_dead_board_resurrection(path: Path, board: Optional[str]) -> None:
         raise ValueError(f"kanban board {slug!r} does not exist; create it with `hermes kanban boards create {slug}`")
 
 
+def connect_read_only(db_path):
+    """Open the governed board for reads without touching a SQLite file in PG mode."""
+    from hermes_state_backend import postgres_enabled
+    if postgres_enabled():
+        conn=connect(db_path)
+        try:
+            conn.execute('SET default_transaction_read_only=on')
+            conn.hermes_read_only=True
+            return conn
+        except BaseException:conn.close();raise
+    conn=sqlite3.connect(Path(db_path).resolve().as_uri()+'?mode=ro',uri=True)
+    conn.row_factory=sqlite3.Row
+    return conn
+
+
 def connect(db_path: Optional[Path] = None, *, board: Optional[str] = None) -> sqlite3.Connection:
     """Open (and initialize if needed) the kanban DB. WAL is (re)enabled on
     every connection so a re-created file stays robust; the first connection

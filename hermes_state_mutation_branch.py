@@ -1,5 +1,6 @@
 """An independent local route, transcript and frozen policy in one receipt commit."""
 import json
+from hermes_state_sql import statement as _storage_statement, is_postgres
 import uuid
 
 from hermes_state_local import POLICY_PREFIX
@@ -15,15 +16,15 @@ def _branch_boundary(conn, target, through):
     appended later, even in this same commit window, have larger ids and stay out. The tool
     results that directly follow an assistant boundary answer its calls, so they belong to it."""
     if through is None:
-        return conn.execute('SELECT COALESCE(MAX(id), 0) FROM messages WHERE session_id=? AND active=1',
+        return conn.execute(_storage_statement(sqlite='SELECT COALESCE(MAX(id), 0) FROM messages WHERE session_id=? AND active=1', postgresql='SELECT COALESCE(MAX(id), 0) FROM messages WHERE session_id=%s AND active=1', connection=conn),
                             (target,)).fetchone()[0]
-    row = conn.execute('SELECT role FROM messages WHERE id=? AND session_id=? AND active=1',
+    row = conn.execute(_storage_statement(sqlite='SELECT role FROM messages WHERE id=? AND session_id=? AND active=1', postgresql='SELECT role FROM messages WHERE id=%s AND session_id=%s AND active=1', connection=conn),
                        (through, target)).fetchone()
     if row is None:
         raise RuntimeStoreError('invalid_params')
     if row['role'] == 'assistant':
-        following = conn.execute('SELECT id, role FROM messages WHERE session_id=? AND active=1 AND id>? '
-                                 'ORDER BY id', (target, through))
+        following = conn.execute(_storage_statement(sqlite='SELECT id, role FROM messages WHERE session_id=? AND active=1 AND id>? '
+                                 'ORDER BY id', postgresql='SELECT id, role FROM messages WHERE session_id=%s AND active=1 AND id>%s ORDER BY id', connection=conn), (target, through))
         for later in following:
             if later['role'] != 'tool':
                 break
@@ -32,7 +33,7 @@ def _branch_boundary(conn, target, through):
 
 
 def branch_in_transaction(db, conn, session_id, payload):
-    row = conn.execute('SELECT value FROM state_meta WHERE key=?',
+    row = conn.execute(_storage_statement(sqlite='SELECT value FROM state_meta WHERE key=?', postgresql='SELECT value FROM state_meta WHERE key=%s', connection=conn),
                        (POLICY_PREFIX + session_id,)).fetchone()
     if row is None:
         raise RuntimeStoreError('runtime_coordination_required')
@@ -54,19 +55,19 @@ def branch_in_transaction(db, conn, session_id, payload):
     from gateway.session_lifecycle import _now
     now = _now()
     entry = SessionEntry(route, child, now, now, origin=source, platform=Platform.LOCAL)
-    parent = conn.execute('SELECT * FROM sessions WHERE id=?', (target,)).fetchone()
+    parent = conn.execute(_storage_statement(sqlite='SELECT * FROM sessions WHERE id=?', postgresql='SELECT * FROM sessions WHERE id=%s', connection=conn), (target,)).fetchone()
     policy = saved['policy']
     db._publish_child_session_row(conn, parent, parent_session_id=target,
         child_session_id=child, source=policy['source'], model=policy['model'],
         model_config={'_branched_from': target}, system_prompt=None,
         cwd=policy['cwd'], profile_name=parent['profile_name'])
-    conn.execute('UPDATE sessions SET session_key=?,chat_id=?,origin_json=?,system_prompt_hash=? WHERE id=?',
+    conn.execute(_storage_statement(sqlite='UPDATE sessions SET session_key=?,chat_id=?,origin_json=?,system_prompt_hash=? WHERE id=?', postgresql='UPDATE sessions SET session_key=%s,chat_id=%s,origin_json=%s,system_prompt_hash=%s WHERE id=%s', connection=conn),
                  (route, child, _json(source.to_dict()), parent['system_prompt_hash'], child))
     ids, tools = db._tail_rows_after_watermark(conn,
         'SELECT id,tool_calls FROM messages WHERE session_id=? AND active=1 AND id<=? ORDER BY id',
         [target, _branch_boundary(conn, target, payload.get('through_message_id'))])
     db._clone_message_rows(conn, ids, session_id=child)
-    conn.execute('UPDATE sessions SET message_count=?,tool_call_count=? WHERE id=?', (len(ids), tools, child))
+    conn.execute(_storage_statement(sqlite='UPDATE sessions SET message_count=?,tool_call_count=? WHERE id=?', postgresql='UPDATE sessions SET message_count=%s,tool_call_count=%s WHERE id=%s', connection=conn), (len(ids), tools, child))
     if payload.get('title'):
         db._set_session_title_in_transaction(conn, child, payload['title'], source=db.TITLE_SOURCE_USER)
     else:
@@ -76,7 +77,7 @@ def branch_in_transaction(db, conn, session_id, payload):
                                              source=db.TITLE_SOURCE_DERIVED)
     receipt = dict(profile_id=saved['profile_id'], principal_id=saved['principal_id'],
                    request_id=request_id, session_id=child, route=route, entry=entry.to_dict(), policy=policy)
-    conn.execute("INSERT INTO gateway_routing(scope,session_key,entry_json,updated_at) VALUES('',?,?,?)",
+    conn.execute(_storage_statement(sqlite="INSERT INTO gateway_routing(scope,session_key,entry_json,updated_at) VALUES('',?,?,?)", postgresql="INSERT INTO gateway_routing(scope,session_key,entry_json,updated_at) VALUES('',%s,%s,%s)", connection=conn),
                  (route, _json(entry.to_dict()), now.timestamp()))
-    conn.execute('INSERT INTO state_meta(key,value) VALUES(?,?)', (POLICY_PREFIX + child, _json(receipt)))
+    conn.execute(_storage_statement(sqlite='INSERT INTO state_meta(key,value) VALUES(?,?)', postgresql='INSERT INTO state_meta(key,value) VALUES(%s,%s)', connection=conn), (POLICY_PREFIX + child, _json(receipt)))
     return {session_id}, {'branched_session_id': child, 'copied_messages': len(ids)}

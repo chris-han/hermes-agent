@@ -214,7 +214,8 @@ class PeerRunsHTTPClient:
             raise ValueError("peer API key is missing or too short")
         self.base_url, self.api_key, self.clock = base_url, api_key, clock
         self.timeout_seconds = float(timeout_seconds)
-        self.receipt_db_path = Path(receipt_db_path) if receipt_db_path else None
+        from hermes_state_backend import postgres_enabled
+        self.receipt_db_path = (receipt_db_path if postgres_enabled() else Path(receipt_db_path)) if receipt_db_path is not None else None
         if poll_min_seconds <= 0 or poll_max_seconds < poll_min_seconds:
             raise ValueError("peer polling bounds are invalid")
         self.poll_min_seconds = float(poll_min_seconds)
@@ -228,7 +229,8 @@ class PeerRunsHTTPClient:
 
     def bind_receipt_store(self, db_path: Path | str) -> None:
         """Attach the gateway-wide durable receipt store idempotently."""
-        path = Path(db_path)
+        from hermes_state_backend import postgres_enabled
+        path = db_path if postgres_enabled() else Path(db_path)
         if self.receipt_db_path not in {None, path}:
             raise PeerRunsHTTPError("peer receipt store changed")
         self.receipt_db_path = path

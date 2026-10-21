@@ -4,7 +4,7 @@ No execution, transport, or authority objects live here. Every mutation uses the
 SessionDB transaction owner, including its inode guard and SQLite retry policy.
 """
 import json
-from hermes_state_sql import statement as _storage_statement, is_postgres
+from hermes_state_sql import statement as _storage_statement, is_postgres, execute_many
 from hermes_state_sql import compression_step as _postgres_compression_step
 import uuid
 
@@ -305,7 +305,7 @@ def mutate_runtime_session(db, *, epoch: int, principal_id: str, session_id: str
             from hermes_state_mutation_prepared import local_snapshot
             return {'snapshot': local_snapshot(db, conn, session_id)}
         affected, projection = apply_action(db, conn, session_id, operation, payload, prepared=_prepared)
-        conn.executemany(_storage_statement(sqlite='UPDATE sessions SET runtime_revision=runtime_revision+1 WHERE id=?', postgresql='UPDATE sessions SET runtime_revision=runtime_revision+1 WHERE id=%s', connection=conn),
+        execute_many(conn,_storage_statement(sqlite='UPDATE sessions SET runtime_revision=runtime_revision+1 WHERE id=?', postgresql='UPDATE sessions SET runtime_revision=runtime_revision+1 WHERE id=%s', connection=conn),
                          [(target,) for target in affected])
         updated = conn.execute(_storage_statement(sqlite='SELECT * FROM sessions WHERE id=?', postgresql='SELECT * FROM sessions WHERE id=%s', connection=conn), (session_id,)).fetchone()
         result = {'session_id': session_id, 'revision': updated['runtime_revision'] if updated else expected_revision + 1,

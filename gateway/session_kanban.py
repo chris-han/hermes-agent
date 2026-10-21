@@ -1,5 +1,6 @@
 """Trusted dispatcher claims enter the ordinary owner's durable admission queue."""
 import asyncio
+from hermes_state_sql import statement as _storage_statement, is_postgres
 from contextlib import closing
 from dataclasses import asdict, replace
 import threading
@@ -8,6 +9,12 @@ from pathlib import Path
 import sqlite3
 
 from hermes_state_runtime import RuntimeStoreError
+from hermes_state_sql import database_errors
+
+
+def _read_kanban(path):
+    from hermes_cli.kanban_db_connect import connect_read_only
+    return connect_read_only(path)
 
 
 def build_kanban_policy(connection, params, config):
@@ -25,18 +32,18 @@ def build_kanban_policy(connection, params, config):
         raise RuntimeStoreError('invalid_params')
     try:
         board = kb._require_slug(params['board'])
-        path = Path(params['db']).resolve(strict=True) if 'db' in params else kb.kanban_db_path(board=board).resolve()
-        with closing(sqlite3.connect(path.as_uri() + '?mode=ro', uri=True)) as conn:
-            conn.row_factory = sqlite3.Row
+        from hermes_state_backend import postgres_enabled
+        path = Path(params['db']).resolve(strict=not postgres_enabled()) if 'db' in params else kb.kanban_db_path(board=board).resolve()
+        with closing(_read_kanban(path)) as conn:
             task = kb.get_task(conn, params['task_id'])
-            run = conn.execute('SELECT * FROM task_runs WHERE id=?', (params['run_id'],)).fetchone()
+            run = conn.execute(_storage_statement(sqlite='SELECT * FROM task_runs WHERE id=?', postgresql='SELECT * FROM task_runs WHERE id=%s', connection=conn), (params['run_id'],)).fetchone()
             if (task is None or run is None or task.status != 'running' or run['status'] != 'running'
                     or task.current_run_id != params['run_id'] or run['task_id'] != task.id
                     or task.claim_lock != params['claim_lock'] or run['claim_lock'] != task.claim_lock):
                 raise RuntimeStoreError('stale_kanban_claim')
             if Path(resolve_profile_env(task.assignee)).resolve() != Path(authority.profile_id).resolve():
                 raise RuntimeStoreError('profile_mismatch')
-            bound = conn.execute("SELECT payload FROM task_events WHERE task_id=? AND run_id=? AND kind='owner_admitted' ORDER BY id DESC LIMIT 1",
+            bound = conn.execute(_storage_statement(sqlite="SELECT payload FROM task_events WHERE task_id=? AND run_id=? AND kind='owner_admitted' ORDER BY id DESC LIMIT 1", postgresql="SELECT payload FROM task_events WHERE task_id=%s AND run_id=%s AND kind='owner_admitted' ORDER BY id DESC LIMIT 1", connection=conn),
                                  (task.id, task.current_run_id)).fetchone()
             if bound and json.loads(bound[0])['request_id'] != 'kanban:' + json.dumps([board, task.id, task.current_run_id], separators=(',', ':')):
                 raise RuntimeStoreError('stale_kanban_claim')
@@ -45,7 +52,7 @@ def build_kanban_policy(connection, params, config):
             if kb._retry_status_for_run(conn, task.id, task.current_run_id) == 'review':
                 # Same rule as the dispatcher's review lane: the reviewer always loads sdlc-review.
                 skills = list(dict.fromkeys([*skills, 'sdlc-review']))
-    except (ValueError, OSError, sqlite3.Error) as exc:
+    except (ValueError, OSError, *database_errors()) as exc:
         raise RuntimeStoreError('invalid_kanban_claim') from exc
     cwd = task.workspace_path
     params_policy = {'source': 'cli', 'cwd': cwd}
@@ -82,7 +89,12 @@ async def run_task(connection, params):
     # Resolved off-loop up front: no await separates the saved-claim check from session
     # creation. The Kanban claim check and its marker share one off-loop transaction; a
     # concurrent retry of the same attempt meets that marker (same session) or a stale claim.
-    owner_db = str(await asyncio.to_thread(Path(authority.db.db_path).resolve))
+    from hermes_state_backend import postgres_enabled,session_store_home
+    if postgres_enabled():
+        owner_binding={'owner_home':str(await asyncio.to_thread(session_store_home,authority.db)),
+            'storage_identity':list(authority.db.storage_identity)}
+    else:
+        owner_binding={'db':str(await asyncio.to_thread(Path(authority.db.db_path).resolve))}
     # The dispatcher attempt is the durable request identity, including after the
     # task closes. Retry checks the saved claim, never reinterprets updated cards.
     request_id = 'kanban:' + json.dumps([params.get('board'), params.get('task_id'), params.get('run_id')], separators=(',', ':'))
@@ -113,7 +125,7 @@ async def run_task(connection, params):
             # Either this exact attempt was already admitted to this session (retry after a
             # crash between session creation and admission), or the claim is still current
             # now; a reclaimed/closed task never reaches resume/submit.
-            marker = conn.execute("SELECT payload FROM task_events WHERE task_id=? AND run_id=? AND kind='owner_admitted' ORDER BY id DESC LIMIT 1",
+            marker = conn.execute(_storage_statement(sqlite="SELECT payload FROM task_events WHERE task_id=? AND run_id=? AND kind='owner_admitted' ORDER BY id DESC LIMIT 1", postgresql="SELECT payload FROM task_events WHERE task_id=%s AND run_id=%s AND kind='owner_admitted' ORDER BY id DESC LIMIT 1", connection=conn),
                                   (params['task_id'], params['run_id'])).fetchone()
             if marker:
                 if json.loads(marker[0])['session_id'] != ref.session_id:
@@ -123,7 +135,7 @@ async def run_task(connection, params):
                 if not (task and task.status == 'running' and task.current_run_id == params['run_id'] and task.claim_lock == params['claim_lock']):
                     raise RuntimeStoreError('stale_kanban_claim')
                 kb._append_event(conn, task.id, 'owner_admitted',
-                    {'db': owner_db, 'session_id': ref.session_id,
+                    {**owner_binding, 'session_id': ref.session_id,
                      'request_id': request_id, 'pid': os.getpid(), 'birth': psutil.Process().create_time()},
                     run_id=task.current_run_id)
     from gateway.session_runtime_workers import tracked_write
@@ -172,7 +184,7 @@ def bind_worker_context(frame):
             fingerprint = _process_fingerprint(os.getpid()) or UNVERIFIED_WORKER_FINGERPRINT
             kb._append_event(conn, task.id, 'worker_bound', {'pid': os.getpid(), 'claim_lock': context['claim_lock'],
                              'started_at': fingerprint}, run_id=context['run_id'])
-            claimed = conn.execute("SELECT payload, created_at FROM task_events WHERE task_id=? AND run_id=? AND kind='claimed' ORDER BY id DESC LIMIT 1",
+            claimed = conn.execute(_storage_statement(sqlite="SELECT payload, created_at FROM task_events WHERE task_id=? AND run_id=? AND kind='claimed' ORDER BY id DESC LIMIT 1", postgresql="SELECT payload, created_at FROM task_events WHERE task_id=%s AND run_id=%s AND kind='claimed' ORDER BY id DESC LIMIT 1", connection=conn),
                                    (task.id, context['run_id'])).fetchone()
     # Heartbeats extend the claim by the TTL the dispatcher claimed it with (a spawned worker
     # inherited it from the dispatcher's environment); this daemon's own default is not that.
@@ -199,7 +211,7 @@ def _watch_submitter(db, run_id):
         with closing(sqlite3.connect(db.resolve().as_uri() + '?mode=ro', uri=True)) as conn:
             while not _TURNS_DONE.wait(1.0):
                 try:
-                    row = conn.execute('SELECT worker_pid, worker_started_at FROM task_runs WHERE id=?', (run_id,)).fetchone()
+                    row = conn.execute(_storage_statement(sqlite='SELECT worker_pid, worker_started_at FROM task_runs WHERE id=?', postgresql='SELECT worker_pid, worker_started_at FROM task_runs WHERE id=%s', connection=conn), (run_id,)).fetchone()
                 except sqlite3.Error:
                     continue
                 if row and row[0] and row[0] != os.getpid() and not _worker_alive(row[0], row[1]):
@@ -264,7 +276,7 @@ def _record_worker_result(context, code, last_output):
 
 def _bound_worker_matches(conn, context):
     import os
-    row = conn.execute("SELECT payload FROM task_events WHERE task_id=? AND run_id=? AND kind='worker_bound' ORDER BY id DESC LIMIT 1",
+    row = conn.execute(_storage_statement(sqlite="SELECT payload FROM task_events WHERE task_id=? AND run_id=? AND kind='worker_bound' ORDER BY id DESC LIMIT 1", postgresql="SELECT payload FROM task_events WHERE task_id=%s AND run_id=%s AND kind='worker_bound' ORDER BY id DESC LIMIT 1", connection=conn),
         (context['task_id'], context['run_id'])).fetchone()
     bound = json.loads(row[0]) if row else {}
     return (bound.get('pid'), bound.get('claim_lock')) == (os.getpid(), context['claim_lock'])
@@ -288,7 +300,7 @@ def _bound_claim_is_live(context):
 def worker_result(path, params):
     """Read only the dispatcher's exact attempt; never infer success from admission settlement."""
     with closing(sqlite3.connect(Path(path).resolve().as_uri() + '?mode=ro', uri=True)) as conn:
-        row = conn.execute("SELECT payload FROM task_events WHERE run_id=? AND task_id=? AND kind='worker_result' ORDER BY id DESC LIMIT 1",
+        row = conn.execute(_storage_statement(sqlite="SELECT payload FROM task_events WHERE run_id=? AND task_id=? AND kind='worker_result' ORDER BY id DESC LIMIT 1", postgresql="SELECT payload FROM task_events WHERE run_id=%s AND task_id=%s AND kind='worker_result' ORDER BY id DESC LIMIT 1", connection=conn),
             (params['run_id'], params['task_id'])).fetchone()
         result = json.loads(row[0]) if row else {}
         return result if result.get('claim_lock') == params['claim_lock'] else {}

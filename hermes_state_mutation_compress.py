@@ -1,5 +1,6 @@
 """Commit a prepared summary, physical target, generation and receipt atomically."""
 import uuid
+from hermes_state_sql import statement as _storage_statement, is_postgres
 from hermes_state_mutation_prepared import validate_prepared
 
 
@@ -20,8 +21,8 @@ def compress_in_transaction(db, conn, session_id, payload, prepared):
             source=policy['source'], model=policy['model'], messages=prepared['messages'],
             model_config={'_compressed_from': target}, cwd=policy['cwd'], require_compression_lease=False)
         affected = set()  # Rotation publication already advances the logical revision.
-    conn.execute('UPDATE sessions SET runtime_generation=runtime_generation+1 WHERE id=?', (session_id,))
-    generation = conn.execute('SELECT runtime_generation FROM sessions WHERE id=?', (session_id,)).fetchone()[0]
+    conn.execute(_storage_statement(sqlite='UPDATE sessions SET runtime_generation=runtime_generation+1 WHERE id=?', postgresql='UPDATE sessions SET runtime_generation=runtime_generation+1 WHERE id=%s', connection=conn), (session_id,))
+    generation = conn.execute(_storage_statement(sqlite='SELECT runtime_generation FROM sessions WHERE id=?', postgresql='SELECT runtime_generation FROM sessions WHERE id=%s', connection=conn), (session_id,)).fetchone()[0]
     return affected, {'target_session_id': child, 'previous_target_session_id': target,
                    'execution_generation': generation, 'message_count': len(prepared['messages']),
                    'summary': prepared.get('summary')}

@@ -1,5 +1,6 @@
 """Prepare and publish a local reset inside the mutation receipt transaction."""
 import json
+from hermes_state_sql import statement as _storage_statement, is_postgres
 import uuid
 import time
 
@@ -10,7 +11,7 @@ from hermes_state_runtime import RuntimeStoreError
 
 
 def reset_in_transaction(db, conn, session_id, payload):
-    saved = conn.execute('SELECT value FROM state_meta WHERE key=?',
+    saved = conn.execute(_storage_statement(sqlite='SELECT value FROM state_meta WHERE key=?', postgresql='SELECT value FROM state_meta WHERE key=%s', connection=conn),
                          (POLICY_PREFIX + session_id,)).fetchone()
     if saved is None:
         raise RuntimeStoreError('runtime_coordination_required')
@@ -19,7 +20,7 @@ def reset_in_transaction(db, conn, session_id, payload):
     from hermes_state_runtime_workers import discard_orphan_workers_on_reset, runtime_lineage
     discard_orphan_workers_on_reset(conn, runtime_lineage(conn, session_id))
     require_target_advanceable(db, conn, list({session_id, target}))
-    parent = conn.execute('SELECT * FROM sessions WHERE id=?', (target,)).fetchone()
+    parent = conn.execute(_storage_statement(sqlite='SELECT * FROM sessions WHERE id=?', postgresql='SELECT * FROM sessions WHERE id=%s', connection=conn), (target,)).fetchone()
     policy = receipt['policy']
     from gateway.session import SessionEntry
     previous = SessionEntry.from_dict(receipt['entry'])
@@ -33,11 +34,11 @@ def reset_in_transaction(db, conn, session_id, payload):
         child_session_id=child_id, source=policy['source'], model=policy['model'],
         model_config={'_reset_from': target}, system_prompt=None,
         cwd=policy['cwd'], profile_name=parent['profile_name'])
-    conn.execute("UPDATE sessions SET ended_at=?,end_reason='session_reset' WHERE id=?", (time.time(), target))
+    conn.execute(_storage_statement(sqlite="UPDATE sessions SET ended_at=?,end_reason='session_reset' WHERE id=?", postgresql="UPDATE sessions SET ended_at=%s,end_reason='session_reset' WHERE id=%s", connection=conn), (time.time(), target))
     db._bump_conversation_generation(conn, target, 'session_reset')
     advance_local_target(conn, target, child_id, entry=entry.to_dict())
-    conn.execute('UPDATE sessions SET runtime_generation=runtime_generation+1 WHERE id=?', (session_id,))
-    generation = conn.execute('SELECT runtime_generation FROM sessions WHERE id=?', (session_id,)).fetchone()[0]
+    conn.execute(_storage_statement(sqlite='UPDATE sessions SET runtime_generation=runtime_generation+1 WHERE id=?', postgresql='UPDATE sessions SET runtime_generation=runtime_generation+1 WHERE id=%s', connection=conn), (session_id,))
+    generation = conn.execute(_storage_statement(sqlite='SELECT runtime_generation FROM sessions WHERE id=?', postgresql='SELECT runtime_generation FROM sessions WHERE id=%s', connection=conn), (session_id,)).fetchone()[0]
     # advance_local_target already advances the logical owner's revision.
     return set(), {'target_session_id': child_id, 'previous_target_session_id': target,
                    'execution_generation': generation}

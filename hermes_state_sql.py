@@ -17,6 +17,17 @@ def is_postgres(conn):
     return getattr(conn,'hermes_scope',None) is not None
 
 
+def native_store_home(store):
+    """Real home of a native PG store, or parent of an explicit SQLite locator."""
+    scope=getattr(store,'scope',None)
+    if scope is None:return Path(store).parent
+    if getattr(store,'_closed',False):raise RuntimeError('Session store closed')
+    home=Path(store.home).resolve()
+    if resolve_postgres_scope(home)!=scope:
+        raise ValueError('Native store home/scope mismatch')
+    return home
+
+
 def compression_step(conn,parent_id):
     from hermes_state_postgresql_lineage import compression_step as select
     return select(conn,parent_id)
@@ -40,6 +51,14 @@ def operational_errors():
     if postgres_enabled():
         import psycopg
         return (sqlite3.Error,psycopg.OperationalError)
+    return (sqlite3.Error,)
+
+
+def database_errors():
+    import sqlite3
+    if postgres_enabled():
+        import psycopg
+        return (sqlite3.Error,psycopg.Error)
     return (sqlite3.Error,)
 
 

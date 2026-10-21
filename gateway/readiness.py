@@ -27,6 +27,16 @@ def _probe_state_db(home: Path) -> dict[str, Any]:
     surfaces when a reader or writer touches it, and those publish into the latch. Reporting
     the latch here is what makes readiness and ``/api/status`` agree with the session list
     (#72046). ``detail="corrupt"`` is the one reason string consumers key off."""
+    from hermes_state_backend import postgres_enabled,resolve_postgres_scope
+    if postgres_enabled():
+        from hermes_state_sql import connect_postgres
+        from hermes_state_postgresql import require_scope_ready
+        try:
+            with closing(connect_postgres(home,read_only=True)) as conn:
+                require_scope_ready(conn,resolve_postgres_scope(home))
+            return _check('ok')
+        except Exception as exc:
+            return _check('degraded',type(exc).__name__)
     from hermes_state_health import STORAGE_CORRUPT, note_storage_error, storage_state
 
     path = home / "state.db"

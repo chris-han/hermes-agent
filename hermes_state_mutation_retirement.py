@@ -1,5 +1,6 @@
 """Durable deletion fences outside prunable transcript rows."""
 import json
+from hermes_state_sql import statement as _storage_statement, is_postgres, execute_many
 import time
 from hermes_state_runtime import RuntimeStoreError, admission_fingerprint, _json, _text
 
@@ -8,7 +9,7 @@ RETIRED_PREFIX = 'gateway.retired_session.v1.'
 
 def retired_session(db, session_id):
     with db._read_ctx() as conn:
-        return conn.execute('SELECT 1 FROM state_meta WHERE key=?',
+        return conn.execute(_storage_statement(sqlite='SELECT 1 FROM state_meta WHERE key=?', postgresql='SELECT 1 FROM state_meta WHERE key=%s', connection=conn),
                             (RETIRED_PREFIX + session_id,)).fetchone() is not None
 
 
@@ -18,7 +19,7 @@ def has_mutation_receipt(db, principal_id, session_id, request_id):
     key = 'gateway.mutation.v1.' + admission_fingerprint(
         canonical_target=session_id, payload={'principal': principal_id, 'request': request_id})
     with db._read_ctx() as conn:
-        return conn.execute('SELECT 1 FROM state_meta WHERE key=?', (key,)).fetchone() is not None
+        return conn.execute(_storage_statement(sqlite='SELECT 1 FROM state_meta WHERE key=?', postgresql='SELECT 1 FROM state_meta WHERE key=%s', connection=conn), (key,)).fetchone() is not None
 
 
 _TRANSCRIPT_FIELDS = frozenset({'messages', 'last_reasoning', 'tools', '_turn_user_row'})
@@ -29,21 +30,21 @@ def _compact_result(conn, admission_id):
     but not the transcript copies a turn result carries (cumulative ``messages``, reasoning, the
     settled ``_turn_user_row``)."""
     from hermes_state_terminal import RESULT_PREFIX
-    saved = conn.execute('SELECT value FROM state_meta WHERE key=?', (RESULT_PREFIX + admission_id,)).fetchone()
+    saved = conn.execute(_storage_statement(sqlite='SELECT value FROM state_meta WHERE key=?', postgresql='SELECT value FROM state_meta WHERE key=%s', connection=conn), (RESULT_PREFIX + admission_id,)).fetchone()
     if saved is None:
         return
     value = json.loads(saved[0])
     result = value.get('result')
     if isinstance(result, dict):
         value['result'] = {**{k: v for k, v in result.items() if k not in _TRANSCRIPT_FIELDS}, 'messages': []}
-    conn.execute('UPDATE state_meta SET value=? WHERE key=?', (_json(value), RESULT_PREFIX + admission_id))
+    conn.execute(_storage_statement(sqlite='UPDATE state_meta SET value=? WHERE key=?', postgresql='UPDATE state_meta SET value=%s WHERE key=%s', connection=conn), (_json(value), RESULT_PREFIX + admission_id))
 
 
 def retire_terminal_receipts(conn, session_ids):
     from hermes_state_terminal import ADMISSION_PREFIX, WORKER_PREFIX, identity_key
     for sid in session_ids:
-        admissions = conn.execute('SELECT * FROM session_admissions WHERE target_session_id=?', (sid,)).fetchall()
-        workers = conn.execute('SELECT * FROM worker_executions WHERE session_id=?', (sid,)).fetchall()
+        admissions = conn.execute(_storage_statement(sqlite='SELECT * FROM session_admissions WHERE target_session_id=?', postgresql='SELECT * FROM session_admissions WHERE target_session_id=%s', connection=conn), (sid,)).fetchall()
+        workers = conn.execute(_storage_statement(sqlite='SELECT * FROM worker_executions WHERE session_id=?', postgresql='SELECT * FROM worker_executions WHERE session_id=%s', connection=conn), (sid,)).fetchall()
         states = {r['status'] for r in [*admissions, *workers]} - {'terminal'}
         if states:
             raise RuntimeStoreError('unknown_execution' if 'unknown' in states else 'session_busy')
@@ -56,14 +57,14 @@ def retire_terminal_receipts(conn, session_ids):
             row['lineage_json'] = '[]'
             row['retired_at'] = time.time()
             _compact_result(conn, row['admission_id'])
-            conn.execute('INSERT INTO state_meta(key,value) VALUES(?,?)',
+            conn.execute(_storage_statement(sqlite='INSERT INTO state_meta(key,value) VALUES(?,?)', postgresql='INSERT INTO state_meta(key,value) VALUES(%s,%s)', connection=conn),
                          (ADMISSION_PREFIX + row['admission_id'], _json(row)))
-            conn.execute('INSERT INTO state_meta(key,value) VALUES(?,?)',
+            conn.execute(_storage_statement(sqlite='INSERT INTO state_meta(key,value) VALUES(?,?)', postgresql='INSERT INTO state_meta(key,value) VALUES(%s,%s)', connection=conn),
                          (identity_key(row['principal_id'], sid, row['request_id']), json.dumps(row['admission_id'])))
         for raw in workers:
             row = dict(raw)
             receipts = [dict(r) for r in conn.execute(
-                'SELECT sequence,payload_digest,result_json FROM worker_receipts WHERE execution_id=? ORDER BY sequence',
+                _storage_statement(sqlite='SELECT sequence,payload_digest,result_json FROM worker_receipts WHERE execution_id=? ORDER BY sequence', postgresql='SELECT sequence,payload_digest,result_json FROM worker_receipts WHERE execution_id=%s ORDER BY sequence', connection=conn),
                 (row['execution_id'],))]
             # A terminal worker can only replay an explicit ``execution.finish`` receipt. Every
             # other result (history/context reads) is user data that must not outlive the delete,
@@ -76,11 +77,11 @@ def retire_terminal_receipts(conn, session_ids):
                     receipt['result_json'] = None
             row['receipts'] = receipts
             row['retired_at'] = time.time()
-            conn.execute('INSERT INTO state_meta(key,value) VALUES(?,?)',
+            conn.execute(_storage_statement(sqlite='INSERT INTO state_meta(key,value) VALUES(?,?)', postgresql='INSERT INTO state_meta(key,value) VALUES(%s,%s)', connection=conn),
                          (WORKER_PREFIX + row['execution_id'], _json(row)))
-            conn.execute('DELETE FROM worker_receipts WHERE execution_id=?', (row['execution_id'],))
-        conn.execute('DELETE FROM worker_executions WHERE session_id=?', (sid,))
-        conn.execute('DELETE FROM session_admissions WHERE target_session_id=?', (sid,))
+            conn.execute(_storage_statement(sqlite='DELETE FROM worker_receipts WHERE execution_id=?', postgresql='DELETE FROM worker_receipts WHERE execution_id=%s', connection=conn), (row['execution_id'],))
+        conn.execute(_storage_statement(sqlite='DELETE FROM worker_executions WHERE session_id=?', postgresql='DELETE FROM worker_executions WHERE session_id=%s', connection=conn), (sid,))
+        conn.execute(_storage_statement(sqlite='DELETE FROM session_admissions WHERE target_session_id=?', postgresql='DELETE FROM session_admissions WHERE target_session_id=%s', connection=conn), (sid,))
 
 
 _LIVE_LEDGER_SQL = """SELECT 1 FROM session_admissions WHERE target_session_id=? AND status IN ('queued','started','unknown')
@@ -117,17 +118,29 @@ def retire_mutation_receipts(conn, session_ids):
     a rewind/compress/rename result carries, so a retry after the delete cannot read it back."""
     if not session_ids:
         return
-    named = ' OR '.join(f"json_extract(value,'{path}') IN (SELECT value FROM json_each(?1))"
+    if is_postgres(conn):
+        rows=[]
+        for key,raw in conn.execute('SELECT key,value FROM state_meta WHERE starts_with(key,%s)',('gateway.mutation.v1.',)):
+            try:value=json.loads(raw)
+            except (ValueError,TypeError):continue
+            result=value.get('result') if isinstance(value,dict) else None
+            if not isinstance(result,dict):continue
+            message=result.get('target_message')
+            refs=[result.get('session_id'),message.get('session_id') if isinstance(message,dict) else None,
+                  result.get('target_session_id'),result.get('previous_target_session_id')]
+            if any(ref in session_ids for ref in refs):rows.append((key,raw))
+    else:
+        named = ' OR '.join(f"json_extract(value,'{path}') IN (SELECT value FROM json_each(?1))"
                         for path in _RECEIPT_SESSION_PATHS)
-    rows = conn.execute(
-        "SELECT key,value FROM state_meta WHERE key GLOB 'gateway.mutation.v1.*' AND "
-        f"CASE WHEN json_valid(value) THEN ({named}) END", (json.dumps(list(session_ids)),)).fetchall()
+        rows = conn.execute(
+            "SELECT key,value FROM state_meta WHERE key GLOB 'gateway.mutation.v1.*' AND "
+            f"CASE WHEN json_valid(value) THEN ({named}) END", (json.dumps(list(session_ids)),)).fetchall()
     for key, raw in rows:
         receipt = json.loads(raw)
         result = receipt.get('result')
         if isinstance(result, dict) and any(f in result for f in _MUTATION_TRANSCRIPT_FIELDS):
             receipt['result'] = {k: (None if k in _MUTATION_TRANSCRIPT_FIELDS else v) for k, v in result.items()}
-            conn.execute('UPDATE state_meta SET value=? WHERE key=?', (_json(receipt), key))
+            conn.execute(_storage_statement(sqlite='UPDATE state_meta SET value=? WHERE key=?', postgresql='UPDATE state_meta SET value=%s WHERE key=%s', connection=conn), (_json(receipt), key))
 
 
 def _local_conversations(conn):
@@ -136,7 +149,7 @@ def _local_conversations(conn):
     id. Malformed receipts name nothing."""
     from hermes_state_local import POLICY_PREFIX
     members = {}
-    for (raw,) in conn.execute('SELECT value FROM state_meta WHERE key GLOB ?', (POLICY_PREFIX + '*',)):
+    for (raw,) in conn.execute(_storage_statement(sqlite='SELECT value FROM state_meta WHERE key GLOB ?',postgresql='SELECT value FROM state_meta WHERE starts_with(key,left(%s,-1))',connection=conn), (POLICY_PREFIX + '*',)):
         try:
             receipt = json.loads(raw)
         except (TypeError, ValueError):
@@ -160,7 +173,7 @@ def retire_prunable(conn, session_ids):
 
     def removable(sid):
         whole = conversations.get(sid, (sid,))
-        return swept.issuperset(whole) and not any(conn.execute(_LIVE_LEDGER_SQL, (x, x)).fetchone() for x in whole)
+        return swept.issuperset(whole) and not any(conn.execute(_storage_statement(sqlite=_LIVE_LEDGER_SQL,postgresql="SELECT 1 FROM session_admissions WHERE target_session_id=%s AND status IN ('queued','started','unknown') UNION ALL SELECT 1 FROM worker_executions WHERE session_id=%s AND status IN ('registered','running','unknown') LIMIT 1",connection=conn), (x, x)).fetchone() for x in whole)
     quiet = [sid for sid in session_ids if removable(sid)]
     retire_sessions(conn, quiet)
     return quiet
@@ -173,9 +186,9 @@ def delete_in_transaction(db, conn, session_id, payload):
     retire_sessions(conn, targets)
     for sid in targets:
         db._bump_conversation_generation(conn, sid, 'session_reset')
-        conn.execute('UPDATE sessions SET parent_session_id=NULL, runtime_revision=runtime_revision+1 WHERE parent_session_id=?', (sid,))
-        conn.execute('DELETE FROM messages WHERE session_id=?', (sid,))
-    conn.executemany('DELETE FROM sessions WHERE id=?', [(sid,) for sid in targets])
+        conn.execute(_storage_statement(sqlite='UPDATE sessions SET parent_session_id=NULL, runtime_revision=runtime_revision+1 WHERE parent_session_id=?', postgresql='UPDATE sessions SET parent_session_id=NULL, runtime_revision=runtime_revision+1 WHERE parent_session_id=%s', connection=conn), (sid,))
+        conn.execute(_storage_statement(sqlite='DELETE FROM messages WHERE session_id=?', postgresql='DELETE FROM messages WHERE session_id=%s', connection=conn), (sid,))
+    execute_many(conn,_storage_statement(sqlite='DELETE FROM sessions WHERE id=?', postgresql='DELETE FROM sessions WHERE id=%s', connection=conn), [(sid,) for sid in targets])
     db._delete_unreferenced_system_prompts(conn)
     return set(), {'deleted_ids': targets}
 
@@ -195,13 +208,13 @@ def retire_routes(conn, session_ids):
     # OR REPLACE: the marker is a fact, not a receipt; re-retiring an id that was recreated
     # beside its tombstone must not abort the delete that removes it again (and restarts its horizon).
     for sid in session_ids:
-        conn.execute('INSERT OR REPLACE INTO state_meta(key,value) VALUES(?,?)',
+        conn.execute(_storage_statement(sqlite='INSERT OR REPLACE INTO state_meta(key,value) VALUES(?,?)', postgresql='INSERT INTO state_meta(key,value) VALUES(%s,%s) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value', connection=conn),
                      (RETIRED_PREFIX + sid, json.dumps({'retired_at': time.time()})))
-        conn.execute('DELETE FROM state_meta WHERE key=?', ('gateway.api.settings.v1.' + sid,))
+        conn.execute(_storage_statement(sqlite='DELETE FROM state_meta WHERE key=?', postgresql='DELETE FROM state_meta WHERE key=%s', connection=conn), ('gateway.api.settings.v1.' + sid,))
     targets = set(session_ids)
     for row in conn.execute('SELECT scope,session_key,entry_json FROM gateway_routing').fetchall():
         if entry_session_id(row['entry_json']) in targets:
-            conn.execute('DELETE FROM gateway_routing WHERE scope=? AND session_key=?',
+            conn.execute(_storage_statement(sqlite='DELETE FROM gateway_routing WHERE scope=? AND session_key=?', postgresql='DELETE FROM gateway_routing WHERE scope=%s AND session_key=%s', connection=conn),
                          (row['scope'], row['session_key']))
 
 
@@ -223,7 +236,7 @@ def prune_retired_tombstones(conn, older_than=RETRY_HORIZON_S):
     for key, raw in conn.execute(f'SELECT key,value FROM state_meta WHERE key GLOB ? AND {_EXPIRED}',
                                  (ADMISSION_PREFIX + '*', cutoff)).fetchall():
         row = json.loads(raw)
-        conn.execute('DELETE FROM state_meta WHERE key IN (?,?,?)', (key, RESULT_PREFIX + row['admission_id'],
+        conn.execute(_storage_statement(sqlite='DELETE FROM state_meta WHERE key IN (?,?,?)', postgresql='DELETE FROM state_meta WHERE key IN (%s,%s,%s)', connection=conn), (key, RESULT_PREFIX + row['admission_id'],
                      identity_key(row['principal_id'], row['target_session_id'], row['request_id'])))
     for prefix in prefixes[1:]:
         conn.execute(f'DELETE FROM state_meta WHERE key GLOB ? AND {_EXPIRED}', (prefix + '*', cutoff))

@@ -68,7 +68,9 @@ class HostedRoomService:
         self, server: ModuleType, *, db_path: Path | str | None = None,
         peer_routes: Mapping[tuple[str, str], PeerMemberRoute] | None = None,
         peer_clients: Mapping[Any, HostedRoomPeerClient] | None = None) -> None:
-        self.server, self.db_path = server, Path(db_path or hosted_rooms.default_db_path())
+        from hermes_state_backend import postgres_enabled
+        location=db_path if db_path is not None else hosted_rooms.default_db_path()
+        self.server, self.db_path = server, location if postgres_enabled() else Path(location)
         hosted_rooms.prune_disbanded_rooms(self.db_path)
         self._policy_lock = threading.RLock()
         self._pending_actions: dict[tuple[str, str], dict[str, Any]] = {}
@@ -124,7 +126,8 @@ class HostedRoomService:
 
     @property
     def root(self) -> Path:
-        return self.db_path.parent
+        from hermes_state_sql import native_store_home
+        return native_store_home(self.db_path)
 
     def local_profiles(self) -> tuple[str, ...]:
         from hermes_constants import named_profile_has_identity, named_profile_is_deleted

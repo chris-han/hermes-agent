@@ -110,12 +110,15 @@ def _cron_busy(homes) -> str | None:
 
 def _kanban_busy() -> str | None:
     from hermes_cli import kanban_db
-    marks = ",".join("?" * len(_KANBAN_DUE_STATUSES))
+    from hermes_cli.kanban_db_connect import connect_read_only
+    from hermes_state_backend import postgres_enabled
+    from hermes_state_sql import statement
+    marks = ",".join(statement(sqlite='?',postgresql='%s') for _ in _KANBAN_DUE_STATUSES)
     for meta in kanban_db.list_boards(include_archived=False):
         path = kanban_db.kanban_db_path(board=meta.get("slug"))
-        if not path.exists():
+        if not postgres_enabled() and not path.exists():
             continue
-        with contextlib.closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=2)) as conn:
+        with contextlib.closing(connect_read_only(path)) as conn:
             if conn.execute(f"SELECT 1 FROM tasks WHERE status IN ({marks}) LIMIT 1",
                             _KANBAN_DUE_STATUSES).fetchone():
                 return f"kanban work on board {meta.get('slug')}"

@@ -100,8 +100,8 @@ def open_sqlite(path: DbPath, *, timeout: float = 10) -> sqlite3.Connection:
     """Row-factory connection with foreign keys on; no journal or schema work (steady-state readers)."""
     from hermes_state_backend import postgres_enabled
     if postgres_enabled():
-        from hermes_state_sql import connect_postgres
-        return connect_postgres(Path(path).parent)
+        from hermes_state_sql import connect_postgres,native_store_home
+        return connect_postgres(native_store_home(path),read_only=bool(getattr(path,'read_only',False)))
     from hermes_cli.sqlite_util import open_db
 
     return open_db(path, db_label="shared-state.db", busy_timeout_ms=int(timeout * 1000), wal=False,

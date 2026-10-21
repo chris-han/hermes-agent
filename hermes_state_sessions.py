@@ -195,6 +195,12 @@ def _expand_compression_lineage_ids(conn, frontier: list[str]) -> list[str]:
 def _collect_delegate_child_ids(conn, parent_ids: list[str]) -> list[str]:
     """Delegate-subagent ids (``_delegate_from`` marker, walked recursively) to cascade-delete with
     *parent_ids*; untagged children stay orphaned, not deleted."""
+    from hermes_state_sql import is_postgres
+    if is_postgres(conn):
+        from psycopg import sql
+        from hermes_state_postgresql_retirement import delegate_ids
+        rows=conn.execute(sql.SQL('SELECT * FROM {}').format(sql.Identifier(conn.hermes_scope.schema,'sessions'))).fetchall()
+        return delegate_ids(rows,parent_ids)
     df = _delegate_from_json()
     seeds = {sid for sid in parent_ids if sid}
     # Seed visited with the parents: a marker chain can loop back onto a parent,

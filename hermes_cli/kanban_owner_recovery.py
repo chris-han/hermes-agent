@@ -5,6 +5,18 @@ import json
 from pathlib import Path
 import sqlite3
 import psutil
+from hermes_state_sql import is_postgres,database_errors,connect_postgres
+
+
+def _owner_connection(board,binding):
+    if is_postgres(board):
+        from hermes_state_backend import resolve_postgres_scope
+        home=Path(binding['owner_home']).resolve()
+        scope=resolve_postgres_scope(home)
+        if binding['storage_identity']!=['postgresql',*scope.identity]:
+            raise ValueError('Kanban owner storage scope mismatch')
+        return connect_postgres(home,read_only=True)
+    return sqlite3.connect(Path(binding['db']).as_uri()+'?mode=ro',uri=True)
 
 
 def owner_reclaim_paused(conn, task_id):
@@ -17,7 +29,7 @@ def owner_reclaim_paused(conn, task_id):
         return False
     try:
         binding = json.loads(marker['payload'])
-        with closing(sqlite3.connect(Path(binding['db']).as_uri() + '?mode=ro', uri=True)) as owner:
+        with closing(_owner_connection(conn,binding)) as owner:
             row = owner.execute(_storage_statement(sqlite='SELECT status,outcome FROM session_admissions WHERE target_session_id=? AND request_id=?',postgresql='SELECT status,outcome FROM session_admissions WHERE target_session_id=%s AND request_id=%s'),
                                 (binding['session_id'], binding['request_id'])).fetchone()
         if row is not None and row[0] == 'terminal':
@@ -26,7 +38,7 @@ def owner_reclaim_paused(conn, task_id):
         if row is None or row[0] in {'queued', 'unknown'}:
             return True
         return psutil.Process(binding['pid']).create_time() != binding['birth']
-    except (OSError, ValueError, KeyError, sqlite3.Error):
+    except (OSError, ValueError, KeyError, *database_errors()):
         return True
     except psutil.Error:
         return True

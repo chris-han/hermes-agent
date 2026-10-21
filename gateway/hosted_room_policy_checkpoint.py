@@ -110,8 +110,8 @@ def _settled_message(
 class HostedRoomPolicyCheckpoint:
     """Incrementally index room policy without compacting visible history."""
     def __init__(self, db_path: DbPath) -> None:
-        self.db_path = Path(db_path)
         from hermes_state_backend import postgres_enabled
+        self.db_path = db_path if postgres_enabled() else Path(db_path)
         if postgres_enabled():
             from gateway.hosted_rooms_common import open_sqlite,table_exists
             with open_sqlite(self.db_path) as conn:

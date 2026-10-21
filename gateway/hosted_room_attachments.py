@@ -93,7 +93,8 @@ class AttachmentData:
 def default_attachment_root(db_path: Path | str) -> Path:
     """Return the private byte-store root beside the room state database."""
 
-    return Path(db_path).parent / "hosted-room-attachments"
+    from hermes_state_sql import native_store_home
+    return native_store_home(db_path) / "hosted-room-attachments"
 
 
 def _identifier(value: Any, *, label: str) -> str:
@@ -311,7 +312,8 @@ class HostedRoomAttachmentStore:
         room_quota_count: int = MAX_ROOM_ATTACHMENT_COUNT,
         gateway_quota_count: int = MAX_GATEWAY_ATTACHMENT_COUNT,
     ) -> None:
-        self.db_path = Path(db_path)
+        from hermes_state_backend import postgres_enabled
+        self.db_path = db_path if postgres_enabled() else Path(db_path)
         self.root = Path(root or default_attachment_root(self.db_path))
         self.blob_root = self.root / "blobs"
         self.clock = clock
@@ -340,7 +342,8 @@ class HostedRoomAttachmentStore:
         """Identity of the database FILE, so a recreated state.db is set up again."""
         from hermes_state_backend import postgres_enabled,resolve_postgres_scope
         if postgres_enabled():
-            return (resolve_postgres_scope(self.db_path.parent).schema,str(self.root.resolve()),0,0)
+            from hermes_state_sql import native_store_home
+            return (resolve_postgres_scope(native_store_home(self.db_path)).schema,str(self.root.resolve()),0,0)
         try:
             info = self.db_path.stat()
         except OSError:

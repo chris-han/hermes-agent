@@ -1,5 +1,6 @@
 """Profile-owned room controls over the canonical hosted service."""
 import asyncio
+from hermes_state_sql import statement as _storage_statement, is_postgres
 from pathlib import Path
 
 from hermes_state_runtime import RuntimeStoreError
@@ -51,8 +52,9 @@ async def dispatch_group_control(connection, method, params):
     if method not in _FIELDS or not isinstance(params, dict) or set(params) - (_FIELDS[method] | {'profile'}):
         raise RuntimeStoreError('invalid_params')
     home = Path(authority.profile_id)
-    db_path = await asyncio.to_thread(Path(authority.db.db_path).resolve)
-    if db_path.parent != await asyncio.to_thread(home.resolve):
+    from hermes_state_backend import session_store_home
+    db_home = await asyncio.to_thread(session_store_home,authority.db)
+    if db_home != await asyncio.to_thread(home.resolve):
         raise RuntimeStoreError('profile_mismatch')
     from hermes_cli.profiles import profile_matches_home
     profile = params.get('profile')
@@ -81,12 +83,14 @@ async def dispatch_group_control(connection, method, params):
 
 def _group(authority, actor, home, method, params):
     from gateway import hosted_rooms as rooms
-    db_path = authority.db.db_path
+    from hermes_state_backend import postgres_enabled
+    db_path = authority.db if postgres_enabled() else authority.db.db_path
     gateway_id = rooms.local_authority_gateway_id()
     service = getattr(authority, 'hosted_room_service', None)
     room_authorizer = getattr(service, 'authorize_room', None)
     if service is not None:
-        if Path(service.db_path).resolve() != Path(db_path).resolve():
+        from hermes_state_sql import native_store_home
+        if native_store_home(service.db_path).resolve() != native_store_home(db_path).resolve():
             raise RuntimeStoreError('profile_mismatch')
         status = service.runtime.status()
         if not status.get('running') or status.get('stopping'):
@@ -281,11 +285,11 @@ def _profiles(authority, actor, home, params):
         def summary(session):
             tip = authority.db.get_compression_tip(session['id']) or session['id']
             target = authority.db.get_session(tip) or session
-            with authority.db._lock:
-                message = authority.db._conn.execute(
-                    "SELECT content FROM messages WHERE session_id=? AND active=1 "
+            with authority.db._read_ctx() as conn:
+                message = conn.execute(
+                    _storage_statement(sqlite="SELECT content FROM messages WHERE session_id=? AND active=1 "
                     "AND role IN ('user','assistant') AND TRIM(COALESCE(content,''))!='' "
-                    "ORDER BY id DESC LIMIT 1", (tip,)).fetchone()
+                    "ORDER BY id DESC LIMIT 1", postgresql="SELECT content FROM messages WHERE session_id=%s AND active=1 AND role IN ('user','assistant') AND TRIM(COALESCE(content,''))!='' ORDER BY id DESC LIMIT 1", connection=authority.db._conn), (tip,)).fetchone()
             text = ' '.join(str(message[0] or '').split()) if message else ''
             return {'id': session['id'], 'resolved_id': tip, 'title': target.get('title') or '',
                     'root_title': session.get('title') or '',
@@ -303,14 +307,15 @@ def _profiles(authority, actor, home, params):
         if 'session:operator' in actor.capabilities:
             owner_filter, owner_params = '', ()
         else:
-            owner_filter, owner_params = 'user_id=? AND ', (actor.subject,)
-        with authority.db._lock:
+            owner_filter, owner_params = _storage_statement(sqlite='user_id=? AND ',postgresql='user_id=%s AND '), (actor.subject,)
+        with authority.db._read_ctx() as conn:
             from hermes_state_sessions import INTERNAL_LISTING_SOURCES
-            hidden_sources = ','.join('?' * len(INTERNAL_LISTING_SOURCES))
-            latest = authority.db._conn.execute(
+            hidden_sources = ','.join(_storage_statement(sqlite='?',postgresql='%s',connection=conn) for _ in INTERNAL_LISTING_SOURCES)
+            latest = conn.execute(_storage_statement(sqlite=
                 f"SELECT id FROM sessions WHERE {owner_filter}chat_id LIKE 'local-%' AND archived=0 "
                 f"AND COALESCE(source,'') NOT IN ({hidden_sources}) "
                 "ORDER BY COALESCE(last_activity_at,started_at) DESC LIMIT 1",
+                postgresql=f"SELECT id FROM sessions WHERE {owner_filter}chat_id LIKE 'local-%%' AND archived=0 AND COALESCE(source,'') NOT IN ({hidden_sources}) ORDER BY COALESCE(last_activity_at,started_at) DESC LIMIT 1",connection=conn),
                 (*owner_params, *INTERNAL_LISTING_SOURCES)).fetchone()
         if latest:
             row['last_session'] = summary(authority.db.get_session(latest[0]))

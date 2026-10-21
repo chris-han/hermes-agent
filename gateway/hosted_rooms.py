@@ -446,6 +446,8 @@ def _initialize_store(conn: sqlite3.Connection, db_path: Path) -> None:
 
 def _connect(db_path: DbPath) -> sqlite3.Connection:
     """Open the shared room store; ``initialize`` carries the path so the one-shot import can find it."""
+    from hermes_state_backend import postgres_enabled
+    if postgres_enabled():return open_sqlite(db_path)
     path = Path(db_path)
     return connect(
         path, db_label="shared-state.db (hosted_rooms)", ready=partial(_store_ready, db_path=path),
@@ -586,7 +588,7 @@ def _prune_disbanded_rooms_locked(
                      WHERE disbanded_at IS NOT NULL AND disbanded_at<=?""",postgresql='SELECT room_id FROM hosted_rooms\n                     WHERE disbanded_at IS NOT NULL AND disbanded_at<=%s'), (now - DISBANDED_ROOM_RETENTION_SECONDS,)))
     candidates.update(_room_ids(
         conn, _storage_statement(sqlite="""SELECT room_id FROM hosted_rooms WHERE disbanded_at IS NOT NULL
-                ORDER BY disbanded_at DESC, room_id ASC LIMIT -1 OFFSET ?""",postgresql='SELECT room_id FROM hosted_rooms WHERE disbanded_at IS NOT NULL\n                ORDER BY disbanded_at DESC, room_id ASC LIMIT -1 OFFSET %s'), (MAX_DISBANDED_ROOM_TOMBSTONES,)))
+                ORDER BY disbanded_at DESC, room_id ASC LIMIT -1 OFFSET ?""",postgresql='SELECT room_id FROM hosted_rooms WHERE disbanded_at IS NOT NULL\n                ORDER BY disbanded_at DESC, room_id ASC OFFSET %s'), (MAX_DISBANDED_ROOM_TOMBSTONES,)))
     if max_gateway_event_bytes is not None:
         retained_bytes = _gateway_event_bytes(conn)
         if retained_bytes > max_gateway_event_bytes:
@@ -1013,6 +1015,7 @@ def _probe(path: Path, table: str, query: str, params: tuple[Any, ...], unavaila
     if postgres_enabled():
         with closing(open_sqlite(path)) as conn:
             return table_exists(conn,table) and conn.execute(query,params).fetchone() is not None
+    path=Path(path)
     if not path.is_file():
         return False
     try:
@@ -1029,7 +1032,7 @@ def probe_hosted_room(db_path: DbPath, *, room_id: Any) -> bool:
     prompt-admission path for older Desktop clients, so it fails fast under contention instead of blocking
     the WebSocket reader for SQLite's ten-second timeout."""
     return _probe(
-        Path(db_path), "hosted_rooms", _storage_statement(sqlite="SELECT 1 FROM hosted_rooms WHERE room_id=? AND disbanded_at IS NULL LIMIT 1",postgresql='SELECT 1 FROM hosted_rooms WHERE room_id=%s AND disbanded_at IS NULL LIMIT 1'),
+        db_path, "hosted_rooms", _storage_statement(sqlite="SELECT 1 FROM hosted_rooms WHERE room_id=? AND disbanded_at IS NULL LIMIT 1",postgresql='SELECT 1 FROM hosted_rooms WHERE room_id=%s AND disbanded_at IS NULL LIMIT 1'),
         (_room_id(room_id),), "hosted room ownership is temporarily unavailable")
 
 
@@ -1038,7 +1041,7 @@ def probe_peer_room_reservation(
     """Check a peer reservation without creating or migrating shared state."""
     params = (_room_id(room_id), _actor_id(target_profile, "target_profile"), _now(now))
     return _probe(
-        Path(db_path), "hosted_room_peer_reservations", _SELECT_LIVE_RESERVATION, params,
+        db_path, "hosted_room_peer_reservations", _SELECT_LIVE_RESERVATION, params,
         "peer room ownership is temporarily unavailable")
 
 

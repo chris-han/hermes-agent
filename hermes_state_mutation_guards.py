@@ -1,5 +1,6 @@
 """Transcript mutation guards evaluated on the receipt's writer connection."""
 from hermes_state_common import _ENDED_ROW_SQL, _ended_by_compression
+from hermes_state_sql import statement as _storage_statement, is_postgres
 from hermes_state_errors import SessionCompressionInProgressError, SessionTurnLeaseLostError
 from hermes_state_runtime import RuntimeStoreError
 
@@ -15,8 +16,8 @@ def require_not_executing(conn, session_ids):
     against whatever physical target the mutation publishes. Workers have no queued state
     (registered/running/unknown are all live), so any non-terminal worker is executing."""
     for sid in session_ids:
-        admissions = conn.execute("SELECT status FROM session_admissions WHERE target_session_id=? AND status IN ('started','unknown')", (sid,)).fetchall()
-        workers = conn.execute("SELECT status FROM worker_executions WHERE session_id=? AND status IN ('registered','running','unknown')", (sid,)).fetchall()
+        admissions = conn.execute(_storage_statement(sqlite="SELECT status FROM session_admissions WHERE target_session_id=? AND status IN ('started','unknown')", postgresql="SELECT status FROM session_admissions WHERE target_session_id=%s AND status IN ('started','unknown')", connection=conn), (sid,)).fetchall()
+        workers = conn.execute(_storage_statement(sqlite="SELECT status FROM worker_executions WHERE session_id=? AND status IN ('registered','running','unknown')", postgresql="SELECT status FROM worker_executions WHERE session_id=%s AND status IN ('registered','running','unknown')", connection=conn), (sid,)).fetchall()
         states = {row[0] for row in [*admissions, *workers]}
         if 'unknown' in states:
             raise RuntimeStoreError('unknown_execution')
@@ -27,7 +28,7 @@ def require_not_executing(conn, session_ids):
 def _require_transcript_unleased(db, conn, sid):
     # A logical owner closed by compression is an ancestor, not a transcript
     # target; its live successor (also in session_ids) carries the lease/lock.
-    if _ended_by_compression(conn.execute(_ENDED_ROW_SQL, (sid,)).fetchone()):
+    if _ended_by_compression(conn.execute(_storage_statement(sqlite=_ENDED_ROW_SQL,postgresql='SELECT ended_at,end_reason FROM sessions WHERE id=%s',connection=conn), (sid,)).fetchone()):
         return
     db._check_transcript_write_guards(conn, sid, None,
         reject_active_turn_lease=True, reject_active_compression_lock=True)
@@ -44,8 +45,8 @@ def require_target_advanceable(db, conn, session_ids):
 
 def require_idle(db, conn, session_ids):
     for sid in session_ids:
-        admissions = conn.execute("SELECT status FROM session_admissions WHERE target_session_id=? AND status IN ('queued','started','unknown')", (sid,)).fetchall()
-        workers = conn.execute("SELECT status FROM worker_executions WHERE session_id=? AND status IN ('registered','running','unknown')", (sid,)).fetchall()
+        admissions = conn.execute(_storage_statement(sqlite="SELECT status FROM session_admissions WHERE target_session_id=? AND status IN ('queued','started','unknown')", postgresql="SELECT status FROM session_admissions WHERE target_session_id=%s AND status IN ('queued','started','unknown')", connection=conn), (sid,)).fetchall()
+        workers = conn.execute(_storage_statement(sqlite="SELECT status FROM worker_executions WHERE session_id=? AND status IN ('registered','running','unknown')", postgresql="SELECT status FROM worker_executions WHERE session_id=%s AND status IN ('registered','running','unknown')", connection=conn), (sid,)).fetchall()
         states = {row[0] for row in [*admissions, *workers]}
         if 'unknown' in states:
             raise RuntimeStoreError('unknown_execution')
@@ -61,6 +62,9 @@ def _continuation_edges(conn, sid):
     ``model_config``, so an inherited ``_branched_from``/``_delegate_from`` naming an older row
     does not make it a fork, and a delegate's continuation published by a canonical ``compress``
     carries no marker at all."""
+    if is_postgres(conn):
+        from hermes_state_postgresql_lineage import bound_continuation_edges
+        return bound_continuation_edges(conn,sid)
     from hermes_state_common import _non_continuation_child_sql
     edge = _non_continuation_child_sql('child.', 'parent.id')
     rows = conn.execute(
@@ -83,7 +87,7 @@ def delete_targets(conn, session_id):
     # shows one row for it, so its delete takes the creation id (policy, FIFO) and every segment.
     owner = local_lineage_owner(conn, session_id)
     targets.add(owner)
-    saved = conn.execute('SELECT value FROM state_meta WHERE key=?',
+    saved = conn.execute(_storage_statement(sqlite='SELECT value FROM state_meta WHERE key=?', postgresql='SELECT value FROM state_meta WHERE key=%s', connection=conn),
                          (POLICY_PREFIX + owner,)).fetchone()
     if saved is not None:
         receipt = json.loads(saved[0])

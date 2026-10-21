@@ -78,7 +78,9 @@ def submission_payload(rpc, prompt, attachments=None):
     # Each bound file is captured on its own, so the admission-wide cap is enforced here,
     # before any member is materialized.
     validate_media_batch_size(item['size'] for item in manifest)
-    store = HostedRoomAttachmentStore(rpc.authority.db.db_path)
+    from hermes_state_backend import postgres_enabled
+    db=rpc.authority.db
+    store = HostedRoomAttachmentStore(db if postgres_enabled() else db.db_path)
     references = []
     transferred = getattr(rpc, 'hosted_attachment_data', None)
     if transferred is not None and [item for item, data in transferred] != manifest:
