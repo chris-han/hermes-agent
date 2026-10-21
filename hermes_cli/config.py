@@ -1529,6 +1529,9 @@ def _env_ref_lookup(name: str) -> Optional[str]:
     "had" the default profile's ``${MATRIX_ACCESS_TOKEN}`` and fanned out). Same policy as
     ``gateway.config._getenv`` and ``get_env_value``.
     """
+    from tools.environments.local_env_policy import _is_platform_secret
+    if _is_platform_secret(name):
+        return None
     try:
         from agent.secret_scope import current_secret_scope, get_secret as _get_secret
     except Exception:

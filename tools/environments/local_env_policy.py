@@ -6,6 +6,56 @@ import functools
 import os
 from typing import Optional
 
+# Platform authority is not a profile credential. Keep only names, captured before
+# profile dotenv/config loads can replace a reference pointer in os.environ.
+_PLATFORM_SECRET_REFS = frozenset({
+    "SEMANTIER_NATIVE_CREDENTIAL_KEY_REF", "SEMANTIER_MODEL_GATEWAY_DATABASE_SECRET_REF",
+    "SEMANTIER_MODEL_GATEWAY_PROXY_SECRET_REF",
+})
+_PLATFORM_SECRET_NAMES = _PLATFORM_SECRET_REFS | frozenset({
+    "SEMANTIER_SESSION_SECRET", "SEMANTIER_NATIVE_CREDENTIAL_KEY",
+    "SEMANTIER_NATIVE_CREDENTIAL_ENCRYPTION_KEY", "SEMANTIER_DATABASE_URL",
+    "HERMES_DATABASE_URL", "SEMANTIER_MODEL_GATEWAY_DATABASE_URL",
+    "SEMANTIER_MODEL_GATEWAY_PROXY_KEY", "SEMANTIER_BILLING_DATABASE_URL",
+    "SEMANTIER_MIGRATION_DATABASE_URL", "LITELLM_DATABASE_URL", "LITELLM_MIGRATION_DATABASE_URL",
+})
+
+
+def protect_platform_secret_names(platform_env) -> None:
+    """Pin operator references at trusted host bootstrap, before serving profiles.
+
+    Additive for the process lifetime: profile writes cannot release an earlier
+    name. Never call with merged terminal/config env; no secret values are kept.
+    """
+    global _PLATFORM_SECRET_NAMES
+    names = {platform_env.get(key, "") for key in _PLATFORM_SECRET_REFS}
+    _PLATFORM_SECRET_NAMES |= frozenset(
+        name.upper() for name in names if isinstance(name, str) and name.isascii() and name.isidentifier())
+
+
+protect_platform_secret_names(os.environ)
+
+
+def _is_platform_secret(key: str) -> bool:
+    return key.upper() in _PLATFORM_SECRET_NAMES
+
+
+def postgres_worker_env(env: dict) -> dict:
+    """Fixed authority for trusted native workers, not customer tool children.
+
+    Drop custody even on an otherwise unsanitized launch-profile worker. Only
+    these two PG connection names are restored at the cron/Kanban grant boundary.
+    """
+    result = {k: v for k, v in env.items()
+              if not _is_platform_secret(k.removeprefix(_HERMES_PROVIDER_ENV_FORCE_PREFIX))}
+    if (os.environ.get("HERMES_STATE_BACKEND") == "postgresql"
+            or os.environ.get("SEMANTIER_STORAGE_BACKEND") == "postgresql"):
+        for key in ("HERMES_DATABASE_URL", "SEMANTIER_DATABASE_URL", "HERMES_STATE_BACKEND",
+                    "HERMES_STATE_SCOPE_MAP", "SEMANTIER_STORAGE_BACKEND", "SEMANTIER_AUTHORITY_STORE_MAP"):
+            if key in os.environ:
+                result[key] = os.environ[key]
+    return result
+
 # Prefix a caller uses in ``extra_env`` to force a blocklisted var through.
 _HERMES_PROVIDER_ENV_FORCE_PREFIX = "_HERMES_FORCE_"
 
@@ -277,9 +327,12 @@ def _is_hermes_internal_secret(key: str) -> bool:
     """True for Hermes-internal secrets injected under *dynamic* names the static
     blocklist cannot enumerate: ``AUXILIARY_<TASK>_API_KEY``/``_BASE_URL`` (per-task
     side-LLM credentials) and ``GATEWAY_RELAY_*_SECRET``/``_KEY``/``_TOKEN`` (relay
-    auth; non-secret routing hints stay visible). Stripped on every spawn path
+    auth; non-secret routing hints stay visible), and pinned host-platform custody.
+    Stripped on every customer spawn path
     regardless of env_passthrough registration or ``inherit_credentials``."""
     upper = key.upper()
+    if _is_platform_secret(key):
+        return True
     if upper.startswith("AUXILIARY_") and upper.endswith(("_API_KEY", "_BASE_URL")):
         return True
     return upper.startswith("GATEWAY_RELAY_") and upper.endswith(("_SECRET", "_KEY", "_TOKEN"))

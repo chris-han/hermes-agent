@@ -3707,7 +3707,8 @@ def _launch_external_cron_worker(job: dict) -> bool:
             inherit_profile_home=True,
             extra={"HERMES_HOME": str(profile_home)},
         ))
-    worker_env = systemd_user_bus_env(worker_env)
+    from tools.environments.local_env_policy import postgres_worker_env
+    worker_env = systemd_user_bus_env(postgres_worker_env(worker_env))
     # Unattended worker: the gateway sets HERMES_EXEC_ASK at startup (interactive launches set
     # the other two), and an inherited presence var makes every env-fallback consumer in the
     # child (`_is_interactive_cli`, sudo prompting, `check_cronjob_requirements`) believe a

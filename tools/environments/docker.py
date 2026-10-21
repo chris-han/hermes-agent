@@ -75,9 +75,12 @@ def _normalize_env_dict(env: dict | None) -> dict[str, str]:
         logger.warning("docker_env is not a dict: %s", type(env).__name__)
         return {}
     normalized: dict[str, str] = {}
+    from tools.environments.local_env_policy import _is_platform_secret
     for key, value in env.items():
         if not isinstance(key, str) or not _ENV_VAR_NAME_RE.match(key.strip()):
             logger.warning("Ignoring invalid docker_env key: %r", key)
+            continue
+        if _is_platform_secret(key.strip()):
             continue
         if not isinstance(value, (str, int, float, bool)):
             logger.warning("Ignoring non-string docker_env value for %r: %s", key.strip(), type(value).__name__)

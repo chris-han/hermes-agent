@@ -22,7 +22,7 @@ from tools.environments.base_output import _pipe_stdin
 from hermes_cli._subprocess_compat import windows_hide_flags
 from tools.environments.local_env_policy import (
     _ALWAYS_STRIP_FOLDED, _ALWAYS_STRIP_KEYS, _HERMES_PROVIDER_ENV_BLOCKLIST, _HERMES_PROVIDER_ENV_FORCE_PREFIX,
-    _is_hermes_internal_secret, _is_provider_env_blocklisted, _is_terminal_first_party_env,
+    _is_hermes_internal_secret, _is_platform_secret, _is_provider_env_blocklisted, _is_terminal_first_party_env,
     _home_adapter_secret_env, _matches_terminal_first_party_prefix, _plugin_terminal_env_strip_keys,
     _registered_adapter_secret_env, _registry_adapter_secret_env,
     strip_profile_gate_env)
@@ -431,7 +431,7 @@ def served_profile_child_env(
                     "", "served_profile_child_env(inherit_credentials=True) called with no target home and "
                     "no profile secret scope bound while multiplexing is on; the child would inherit the "
                     "launch profile's credentials. Bind the profile scope (or pass target_home) at the spawn site.")
-        env.update((k, v) for k, v in (secrets or {}).items() if v is not None)
+        env.update((k, v) for k, v in (secrets or {}).items() if v is not None and not _is_platform_secret(k))
     return env
 
 

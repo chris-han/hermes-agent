@@ -2920,6 +2920,8 @@ def _default_spawn(task: Task, workspace: str, *, board: Optional[str] = None) -
     # cgroup before startup; otherwise restarting the service kills the worker
     # that is performing the handoff.
     cmd = _restart_safe_worker_argv(task, cmd)
+    from tools.environments.local_env_policy import postgres_worker_env
+    env = postgres_worker_env(env)
     from tools.process_registry import systemd_user_bus_env
     env = systemd_user_bus_env(env)
     log_f = _open_worker_log(task, board)
