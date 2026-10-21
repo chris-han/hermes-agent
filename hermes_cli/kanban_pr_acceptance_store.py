@@ -1,12 +1,13 @@
 """Persist acceptance with the same ownership snapshot as the terminal write."""
 from __future__ import annotations
+from hermes_state_sql import statement as _storage_statement, parameter_marker as _parameter_marker, inserted_id as _inserted_id, in_transaction as _in_transaction
 
 from hermes_cli.kanban_db_connect import write_txn
 from hermes_cli.kanban_pr_acceptance import _PR, collect_acceptance
 
 
 def _snapshot(conn, task_id):
-    row = conn.execute("SELECT current_run_id, status, completion_contract FROM tasks WHERE id=?", (task_id,)).fetchone()
+    row = conn.execute(_storage_statement(sqlite="SELECT current_run_id, status, completion_contract FROM tasks WHERE id=?",postgresql='SELECT current_run_id, status, completion_contract FROM tasks WHERE id=%s'), (task_id,)).fetchone()
     return tuple(row) if row else None
 
 
@@ -26,12 +27,12 @@ def prepare_acceptance(conn, task_id, expected_run_id, metadata):
         with write_txn(conn):
             if _snapshot(conn, task_id) != snapshot:
                 return False
-            conn.execute("UPDATE tasks SET completion_contract=? WHERE id=?", (published_pr, task_id))
+            conn.execute(_storage_statement(sqlite="UPDATE tasks SET completion_contract=? WHERE id=?",postgresql='UPDATE tasks SET completion_contract=%s WHERE id=%s'), (published_pr, task_id))
         snapshot = (run_id, status, published_pr)
         contract = published_pr
     # The assignee profile's gh login owns the repo: acceptance must not run as
     # the ambient login of whichever process completes the card (#122689).
-    assignee = conn.execute("SELECT assignee FROM tasks WHERE id=?", (task_id,)).fetchone()["assignee"]
+    assignee = conn.execute(_storage_statement(sqlite="SELECT assignee FROM tasks WHERE id=?",postgresql='SELECT assignee FROM tasks WHERE id=%s'), (task_id,)).fetchone()["assignee"]
     return snapshot, collect_acceptance(contract, published_pr, assignee=assignee)
 
 
@@ -44,5 +45,5 @@ def record_acceptance(conn, task_id, acceptance):
     _append_event(conn, task_id, "pr_acceptance", receipt, run_id=snapshot[0])
     if not receipt["ok"]:
         detail = f"PR acceptance {receipt['classification']}: {receipt.get('detail', '')} {receipt['recovery']}"
-        conn.execute("UPDATE tasks SET last_failure_error=? WHERE id=?", (detail, task_id))
+        conn.execute(_storage_statement(sqlite="UPDATE tasks SET last_failure_error=? WHERE id=?",postgresql='UPDATE tasks SET last_failure_error=%s WHERE id=%s'), (detail, task_id))
     return receipt["ok"]

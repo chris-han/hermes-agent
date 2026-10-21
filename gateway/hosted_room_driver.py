@@ -6,6 +6,7 @@ without process-global state.
 """
 
 from __future__ import annotations
+from hermes_state_sql import statement as _storage_statement, parameter_marker as _parameter_marker, inserted_id as _inserted_id, in_transaction as _in_transaction
 
 import dataclasses
 import hashlib
@@ -47,23 +48,23 @@ _TASK_COLUMN_ORDER = (
     "terminal_at", "indeterminate_at")
 _TASK_COLUMNS = frozenset(_TASK_COLUMN_ORDER)
 _TASK_ORDER = "ORDER BY source_event_seq, created_at, task_id"
-_SELECT_LEASE = "SELECT * FROM hosted_room_driver_leases WHERE room_id=?"
-_SELECT_TASK = "SELECT * FROM hosted_room_driver_tasks WHERE room_id=? AND task_id=?"
+_SELECT_LEASE = _storage_statement(sqlite="SELECT * FROM hosted_room_driver_leases WHERE room_id=?",postgresql='SELECT * FROM hosted_room_driver_leases WHERE room_id=%s')
+_SELECT_TASK = _storage_statement(sqlite="SELECT * FROM hosted_room_driver_tasks WHERE room_id=? AND task_id=?",postgresql='SELECT * FROM hosted_room_driver_tasks WHERE room_id=%s AND task_id=%s')
 _TASK_INDEX_SQL = """CREATE INDEX {if_not_exists}idx_hosted_room_driver_tasks_status
            ON hosted_room_driver_tasks(room_id, status, source_event_seq, created_at, task_id)"""
 
 # --- Fenced task UPDATE statements (one per state-machine transition) ---------
 # Every transition is "UPDATE ... SET <set> WHERE room_id=? AND task_id=? AND <fence>"; the fence names the
 # expected status plus the generations that must not have moved.
-_GENERATION_FENCE = "execution_generation=? AND cancel_generation=?"
-_RUN_FENCE = "run_gateway_id=? AND run_process_generation=? AND run_lease_generation=?"
-_SETTLE_SET = "status=?, settlement_id=?, settlement_status=?, result_json=?, terminal_at=?, updated_at=?"
+_GENERATION_FENCE = _storage_statement(sqlite="execution_generation=? AND cancel_generation=?",postgresql='execution_generation=%s AND cancel_generation=%s')
+_RUN_FENCE = _storage_statement(sqlite="run_gateway_id=? AND run_process_generation=? AND run_lease_generation=?",postgresql='run_gateway_id=%s AND run_process_generation=%s AND run_lease_generation=%s')
+_SETTLE_SET = _storage_statement(sqlite="status=?, settlement_id=?, settlement_status=?, result_json=?, terminal_at=?, updated_at=?",postgresql='status=%s, settlement_id=%s, settlement_status=%s, result_json=%s, terminal_at=%s, updated_at=%s')
 _REQUEUE_SET = "status='queued', run_gateway_id=NULL, run_process_generation=NULL, run_lease_generation=NULL"
-_CANCEL_SET = "status='cancelled', cancel_generation=?, cancel_id=?, terminal_at=?, updated_at=?"
+_CANCEL_SET = _storage_statement(sqlite="status='cancelled', cancel_generation=?, cancel_id=?, terminal_at=?, updated_at=?",postgresql="status='cancelled', cancel_generation=%s, cancel_id=%s, terminal_at=%s, updated_at=%s")
 
 
 def _task_update(set_clause: str, fence: str) -> str:
-    return f"UPDATE hosted_room_driver_tasks SET {set_clause} WHERE room_id=? AND task_id=? AND {fence}"
+    return _storage_statement(sqlite=f"UPDATE hosted_room_driver_tasks SET {set_clause} WHERE room_id=? AND task_id=? AND {fence}",postgresql=f'UPDATE hosted_room_driver_tasks SET {set_clause} WHERE room_id=%s AND task_id=%s AND {fence}')
 
 
 def _generation_update(set_clause: str, status: str) -> str:
@@ -74,13 +75,13 @@ def _generation_update(set_clause: str, status: str) -> str:
 _SETTLE_RUNNING_SQL = _generation_update(_SETTLE_SET, "running") + f" AND {_RUN_FENCE}"
 _SETTLE_STOPPING_SQL = _generation_update(_SETTLE_SET, "stopping")
 _REQUEUE_RUNNING_SQL = _task_update(
-    f"{_REQUEUE_SET}, started_at=NULL, updated_at=?", f"status='running' AND {_GENERATION_FENCE} AND {_RUN_FENCE}")
-_CANCEL_QUEUED_SQL = _task_update(_CANCEL_SET, "status IN ('queued', 'deferred') AND cancel_generation=?")
+    _storage_statement(sqlite=f"{_REQUEUE_SET}, started_at=NULL, updated_at=?",postgresql=f'{_REQUEUE_SET}, started_at=NULL, updated_at=%s'), f"status='running' AND {_GENERATION_FENCE} AND {_RUN_FENCE}")
+_CANCEL_QUEUED_SQL = _task_update(_CANCEL_SET, _storage_statement(sqlite="status IN ('queued', 'deferred') AND cancel_generation=?",postgresql="status IN ('queued', 'deferred') AND cancel_generation=%s"))
 _BEGIN_STOP_SQL = _task_update(
-    "status='stopping', cancel_generation=?, cancel_id=?, updated_at=?",
-    "status IN ('running', 'indeterminate') AND cancel_generation=?")
+    _storage_statement(sqlite="status='stopping', cancel_generation=?, cancel_id=?, updated_at=?",postgresql="status='stopping', cancel_generation=%s, cancel_id=%s, updated_at=%s"),
+    _storage_statement(sqlite="status IN ('running', 'indeterminate') AND cancel_generation=?",postgresql="status IN ('running', 'indeterminate') AND cancel_generation=%s"))
 _COMPLETE_STOP_SQL = _task_update(
-    "status='cancelled', terminal_at=?, updated_at=?", "status='stopping' AND cancel_id=? AND cancel_generation=?")
+    _storage_statement(sqlite="status='cancelled', terminal_at=?, updated_at=?",postgresql="status='cancelled', terminal_at=%s, updated_at=%s"), _storage_statement(sqlite="status='stopping' AND cancel_id=? AND cancel_generation=?",postgresql="status='stopping' AND cancel_id=%s AND cancel_generation=%s"))
 
 # Lease-first recovery transitions: name -> (fenced status, SET clause, generation-guard stale message,
 # row stale message); the UPDATE is _generation_update(set_clause, status).
@@ -91,14 +92,14 @@ _GENERATION_TRANSITIONS = {
         "indeterminate", _CANCEL_SET, "indeterminate cancellation proof is stale",
         "indeterminate cancellation proof lost its fence"),
     "requeue": (
-        "indeterminate", f"{_REQUEUE_SET}, started_at=NULL, indeterminate_at=NULL, updated_at=?", _INDETERMINATE_STALE,
+        "indeterminate", _storage_statement(sqlite=f"{_REQUEUE_SET}, started_at=NULL, indeterminate_at=NULL, updated_at=?",postgresql=f'{_REQUEUE_SET}, started_at=NULL, indeterminate_at=NULL, updated_at=%s'), _INDETERMINATE_STALE,
         "indeterminate task changed during requeue"),
     "defer": (
-        "indeterminate", "status='deferred', result_json=?, terminal_at=?, updated_at=?", _INDETERMINATE_STALE,
+        "indeterminate", _storage_statement(sqlite="status='deferred', result_json=?, terminal_at=?, updated_at=?",postgresql="status='deferred', result_json=%s, terminal_at=%s, updated_at=%s"), _INDETERMINATE_STALE,
         "indeterminate task changed during deferral"),
     "requeue_deferred": (
         "deferred",
-        f"{_REQUEUE_SET}, result_json=NULL, started_at=NULL, terminal_at=NULL, indeterminate_at=NULL, updated_at=?",
+        _storage_statement(sqlite=f"{_REQUEUE_SET}, result_json=NULL, started_at=NULL, terminal_at=NULL, indeterminate_at=NULL, updated_at=?",postgresql=f'{_REQUEUE_SET}, result_json=NULL, started_at=NULL, terminal_at=NULL, indeterminate_at=NULL, updated_at=%s'),
         "deferred task generation changed", "deferred task changed during requeue")}
 
 
@@ -258,6 +259,9 @@ def _validate_schema(conn: sqlite3.Connection) -> None:
         raise DriverStateError(
             "unsupported unpublished hosted-room driver schema; "
             "recreate the driver tables before starting the driver")
+    from hermes_state_sql import is_postgres
+    if is_postgres(conn):
+        return
     for table in ("hosted_room_driver_leases", "hosted_room_driver_tasks"):
         if not any(
             row[2] == "hosted_rooms" and row[3] == "room_id" and row[4] == "room_id"
@@ -290,13 +294,23 @@ def _migrate_task_status_constraint(conn: sqlite3.Connection) -> None:
 def _connect(db_path: DbPath) -> sqlite3.Connection:
     """Open the store; existing tables are validated (after the status-constraint migration when needed).
     The driver schema never shipped, so an incompatible draft fails closed in ``_validate_schema``."""
+    from hermes_state_backend import postgres_enabled
+    if postgres_enabled():
+        from gateway.hosted_rooms_common import open_sqlite
+        conn=open_sqlite(db_path)
+        try:
+            _validate_schema(conn)
+        except BaseException:
+            conn.close()
+            raise
+        return conn
     existing: list[bool] = []
     def ready(conn: sqlite3.Connection) -> bool:
         existing.append(_schema_objects_exist(conn))
         if not existing[0]:
             return False
         row = conn.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name='hosted_room_driver_tasks'").fetchone()
+            _storage_statement(sqlite="SELECT sql FROM sqlite_master WHERE type='table' AND name='hosted_room_driver_tasks'",postgresql="SELECT sql FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='hosted_room_driver_tasks'")).fetchone()
         sql = str(row[0] or "").lower() if row else ""
         return "'stopping'" in sql and "'deferred'" in sql  # task-status CHECK already covers the current states
     conn = connect(
@@ -366,15 +380,15 @@ def _load_task(conn: sqlite3.Connection, identity: TaskIdentity, *, required: bo
 
 
 def _tasks_in_order(conn: sqlite3.Connection, room_id: str, status: str | None = None) -> list[sqlite3.Row]:
-    where, params = ("", (room_id,)) if status is None else (" AND status=?", (room_id, status))
-    sql = f"SELECT * FROM hosted_room_driver_tasks WHERE room_id=?{where} {_TASK_ORDER}"
+    where, params = ("", (room_id,)) if status is None else (_storage_statement(sqlite=" AND status=?",postgresql=' AND status=%s'), (room_id, status))
+    sql = _storage_statement(sqlite=f"SELECT * FROM hosted_room_driver_tasks WHERE room_id=?{where} {_TASK_ORDER}",postgresql=f'SELECT * FROM hosted_room_driver_tasks WHERE room_id=%s{where} {_TASK_ORDER}')
     return conn.execute(sql, params).fetchall()
 
 
 def _load_active_room(conn: sqlite3.Connection, room_id: str) -> sqlite3.Row:
     try:
         row = conn.execute(
-            "SELECT room_id, authority_gateway_id, authority_epoch, disbanded_at FROM hosted_rooms WHERE room_id=?",
+            _storage_statement(sqlite="SELECT room_id, authority_gateway_id, authority_epoch, disbanded_at FROM hosted_rooms WHERE room_id=?",postgresql='SELECT room_id, authority_gateway_id, authority_epoch, disbanded_at FROM hosted_rooms WHERE room_id=%s'),
             (room_id,)).fetchone()
     except sqlite3.OperationalError as exc:
         if "no such table" in str(exc).lower():
@@ -542,10 +556,10 @@ def acquire_lease(
         _require_room_authority(conn, room_id, gateway_id, authority_epoch)
         row = conn.execute(_SELECT_LEASE, (room_id,)).fetchone()
         if row is None:
-            conn.execute("""INSERT INTO hosted_room_driver_leases (
+            conn.execute(_storage_statement(sqlite="""INSERT INTO hosted_room_driver_leases (
                        room_id, gateway_id, authority_epoch, process_generation, lease_generation,
                        expires_at, acquired_at, updated_at, released_at
-                   ) VALUES (?, ?, ?, ?, 1, ?, ?, ?, NULL)""",
+                   ) VALUES (?, ?, ?, ?, 1, ?, ?, ?, NULL)""",postgresql='INSERT INTO hosted_room_driver_leases (\n                       room_id, gateway_id, authority_epoch, process_generation, lease_generation,\n                       expires_at, acquired_at, updated_at, released_at\n                   ) VALUES (%s, %s, %s, %s, 1, %s, %s, %s, NULL)'),
                 (room_id, gateway_id, authority_epoch, process_generation, expires_at, now, now))
             return _lease_from_row(conn.execute(_SELECT_LEASE, (room_id,)).fetchone())
         same_authority = row["gateway_id"] == gateway_id and int(row["authority_epoch"]) == authority_epoch
@@ -553,16 +567,16 @@ def acquire_lease(
         if same_authority and row["process_generation"] == process_generation and live:
             renewed_expiry = max(float(row["expires_at"]), expires_at)
             conn.execute(
-                "UPDATE hosted_room_driver_leases SET expires_at=?, updated_at=? WHERE room_id=? AND lease_generation=?",
+                _storage_statement(sqlite="UPDATE hosted_room_driver_leases SET expires_at=?, updated_at=? WHERE room_id=? AND lease_generation=?",postgresql='UPDATE hosted_room_driver_leases SET expires_at=%s, updated_at=%s WHERE room_id=%s AND lease_generation=%s'),
                 (renewed_expiry, now, room_id, int(row["lease_generation"])))
             return _lease_from_row({**dict(row), "expires_at": renewed_expiry})
         if same_authority and live:
             raise LeaseHeldError("room driver lease is held by another generation")
-        fenced_update(conn, """UPDATE hosted_room_driver_leases
+        fenced_update(conn, _storage_statement(sqlite="""UPDATE hosted_room_driver_leases
                SET gateway_id=?, authority_epoch=?, process_generation=?, lease_generation=lease_generation + 1,
                    expires_at=?, acquired_at=?, updated_at=?, released_at=NULL
                WHERE room_id=? AND lease_generation=? AND (
-                   gateway_id != ? OR authority_epoch != ? OR released_at IS NOT NULL OR expires_at <= ?)""",
+                   gateway_id != ? OR authority_epoch != ? OR released_at IS NOT NULL OR expires_at <= ?)""",postgresql='UPDATE hosted_room_driver_leases\n               SET gateway_id=%s, authority_epoch=%s, process_generation=%s, lease_generation=lease_generation + 1,\n                   expires_at=%s, acquired_at=%s, updated_at=%s, released_at=NULL\n               WHERE room_id=%s AND lease_generation=%s AND (\n                   gateway_id != %s OR authority_epoch != %s OR released_at IS NOT NULL OR expires_at <= %s)'),
             (
                 gateway_id, authority_epoch, process_generation, expires_at, now, now, room_id,
                 int(row["lease_generation"]), gateway_id, authority_epoch, now),
@@ -576,9 +590,9 @@ def renew_lease(db_path: DbPath, lease: DriverLease, *, ttl_seconds: Any, clock:
     with _transaction(db_path) as conn:
         current = _require_active_lease(conn, lease, now=now)
         expires_at = max(float(current["expires_at"]), requested_expiry)
-        fenced_update(conn, """UPDATE hosted_room_driver_leases SET expires_at=?, updated_at=?
+        fenced_update(conn, _storage_statement(sqlite="""UPDATE hosted_room_driver_leases SET expires_at=?, updated_at=?
                WHERE room_id=? AND gateway_id=? AND process_generation=?
-                 AND lease_generation=? AND released_at IS NULL AND expires_at > ?""",
+                 AND lease_generation=? AND released_at IS NULL AND expires_at > ?""",postgresql='UPDATE hosted_room_driver_leases SET expires_at=%s, updated_at=%s\n               WHERE room_id=%s AND gateway_id=%s AND process_generation=%s\n                 AND lease_generation=%s AND released_at IS NULL AND expires_at > %s'),
             (expires_at, now, lease.room_id, *_run_fence(lease), now),
             StaleLeaseError("driver lease changed during renewal"))
         return dataclasses.replace(lease, expires_at=expires_at, reclaimed=False)
@@ -597,11 +611,11 @@ def release_lease(db_path: DbPath, lease: DriverLease, *, clock: Clock) -> dict[
         if float(row["expires_at"]) <= now:
             raise StaleLeaseError("driver lease expired before release")
         if conn.execute(
-            "SELECT 1 FROM hosted_room_driver_tasks WHERE room_id=? AND status='running' LIMIT 1", (lease.room_id,)
+            _storage_statement(sqlite="SELECT 1 FROM hosted_room_driver_tasks WHERE room_id=? AND status='running' LIMIT 1",postgresql="SELECT 1 FROM hosted_room_driver_tasks WHERE room_id=%s AND status='running' LIMIT 1"), (lease.room_id,)
         ).fetchone() is not None:
             raise InvalidTaskTransitionError("cannot release a room lease while tasks are running")
-        conn.execute("""UPDATE hosted_room_driver_leases SET expires_at=?, updated_at=?, released_at=?
-               WHERE room_id=? AND lease_generation=?""",
+        conn.execute(_storage_statement(sqlite="""UPDATE hosted_room_driver_leases SET expires_at=?, updated_at=?, released_at=?
+               WHERE room_id=? AND lease_generation=?""",postgresql='UPDATE hosted_room_driver_leases SET expires_at=%s, updated_at=%s, released_at=%s\n               WHERE room_id=%s AND lease_generation=%s'),
             (now, now, now, lease.room_id, lease.lease_generation))
         return {
             "lease": _lease_from_row({**dict(row), "expires_at": now, "updated_at": now, "released_at": now}),
@@ -620,13 +634,13 @@ def admit_task(db_path: DbPath, identity: TaskIdentity, *, payload: Any, clock: 
                 raise TaskConflictError("task_id is already bound to a different payload")
             return _task_from_row(existing, idempotent=True)
         if conn.execute(
-            "SELECT * FROM hosted_room_driver_tasks WHERE room_id=? AND thread_id=? AND turn_id=?",
+            _storage_statement(sqlite="SELECT * FROM hosted_room_driver_tasks WHERE room_id=? AND thread_id=? AND turn_id=?",postgresql='SELECT * FROM hosted_room_driver_tasks WHERE room_id=%s AND thread_id=%s AND turn_id=%s'),
             (identity.room_id, identity.thread_id, identity.turn_id)).fetchone() is not None:
             raise TaskConflictError("thread_id and turn_id are already bound to a task")
-        conn.execute("""INSERT INTO hosted_room_driver_tasks (
+        conn.execute(_storage_statement(sqlite="""INSERT INTO hosted_room_driver_tasks (
                    room_id, task_id, thread_id, turn_id, source_event_seq, payload_json, payload_digest,
                    status, execution_generation, cancel_generation, created_at, updated_at
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', 0, 0, ?, ?)""",
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', 0, 0, ?, ?)""",postgresql="INSERT INTO hosted_room_driver_tasks (\n                   room_id, task_id, thread_id, turn_id, source_event_seq, payload_json, payload_digest,\n                   status, execution_generation, cancel_generation, created_at, updated_at\n               ) VALUES (%s, %s, %s, %s, %s, %s, %s, 'queued', 0, 0, %s, %s)"),
             (
                 *dataclasses.astuple(identity), normalized_payload["source_event_seq"], payload_json, payload_digest,
                 now, now))
@@ -649,20 +663,20 @@ def start_task(
         if row["status"] != "queued":
             raise InvalidTaskTransitionError(f"cannot start task in state '{row['status']}'")
         if conn.execute(
-            f"""SELECT task_id, status FROM hosted_room_driver_tasks
-               WHERE room_id=? AND status IN ('running', 'indeterminate', 'stopping') {_TASK_ORDER} LIMIT 1""",
+            _storage_statement(sqlite=f"""SELECT task_id, status FROM hosted_room_driver_tasks
+               WHERE room_id=? AND status IN ('running', 'indeterminate', 'stopping') {_TASK_ORDER} LIMIT 1""",postgresql=f"SELECT task_id, status FROM hosted_room_driver_tasks\n               WHERE room_id=%s AND status IN ('running', 'indeterminate', 'stopping') {_TASK_ORDER} LIMIT 1"),
             (identity.room_id,)).fetchone() is not None:
             raise InvalidTaskTransitionError("room recovery must resolve the prior task before starting new work")
         next_queued = conn.execute(
-            f"SELECT task_id FROM hosted_room_driver_tasks WHERE room_id=? AND status='queued' {_TASK_ORDER} LIMIT 1",
+            _storage_statement(sqlite=f"SELECT task_id FROM hosted_room_driver_tasks WHERE room_id=? AND status='queued' {_TASK_ORDER} LIMIT 1",postgresql=f"SELECT task_id FROM hosted_room_driver_tasks WHERE room_id=%s AND status='queued' {_TASK_ORDER} LIMIT 1"),
             (identity.room_id,)).fetchone()
         if next_queued is None or next_queued["task_id"] != identity.task_id:
             raise InvalidTaskTransitionError("task is not next in the hosted room event order")
         execution_generation = int(row["execution_generation"]) + 1
-        fenced_update(conn, """UPDATE hosted_room_driver_tasks
+        fenced_update(conn, _storage_statement(sqlite="""UPDATE hosted_room_driver_tasks
                SET status='running', execution_generation=?, run_gateway_id=?, run_process_generation=?,
                    run_lease_generation=?, started_at=?, updated_at=?
-               WHERE room_id=? AND task_id=? AND status='queued' AND cancel_generation=?""",
+               WHERE room_id=? AND task_id=? AND status='queued' AND cancel_generation=?""",postgresql="UPDATE hosted_room_driver_tasks\n               SET status='running', execution_generation=%s, run_gateway_id=%s, run_process_generation=%s,\n                   run_lease_generation=%s, started_at=%s, updated_at=%s\n               WHERE room_id=%s AND task_id=%s AND status='queued' AND cancel_generation=%s"),
             (
                 execution_generation, *_run_fence(lease), now, now, identity.room_id, identity.task_id,
                 expected_cancel_generation), StaleTaskError("task changed during start"))
@@ -829,7 +843,7 @@ def complete_task_cancel(
 def recover_room(db_path: DbPath, lease: DriverLease, *, clock: Clock) -> dict[str, list[TaskIdentity]]:
     """Fence abandoned running attempts without requeueing uncertain work."""
     now = _timestamp(clock)
-    foreign_running = f"room_id=? AND status='running' AND NOT ({_RUN_FENCE})"
+    foreign_running = _storage_statement(sqlite=f"room_id=? AND status='running' AND NOT ({_RUN_FENCE})",postgresql=f"room_id=%s AND status='running' AND NOT ({_RUN_FENCE})")
     fence = (lease.room_id, *_run_fence(lease))
     with _transaction(db_path) as conn:
         _require_active_lease(conn, lease, now=now)
@@ -837,8 +851,8 @@ def recover_room(db_path: DbPath, lease: DriverLease, *, clock: Clock) -> dict[s
             f"SELECT * FROM hosted_room_driver_tasks WHERE {foreign_running} {_TASK_ORDER}", fence).fetchall()
         if stale_rows:
             conn.execute(
-                f"""UPDATE hosted_room_driver_tasks SET status='indeterminate', indeterminate_at=?, updated_at=?
-                    WHERE {foreign_running}""", (now, now, *fence))
+                _storage_statement(sqlite=f"""UPDATE hosted_room_driver_tasks SET status='indeterminate', indeterminate_at=?, updated_at=?
+                    WHERE {foreign_running}""",postgresql=f"UPDATE hosted_room_driver_tasks SET status='indeterminate', indeterminate_at=%s, updated_at=%s\n                    WHERE {foreign_running}"), (now, now, *fence))
         from gateway.hosted_room_work_records import capture_transition_locked
         capture_transition_locked(conn, lease.room_id)
         return {
@@ -872,15 +886,15 @@ def prune_published_terminal_tasks(
     _bounded_int(retain, message="retain must be a non-negative integer")
     with _transaction(db_path) as conn:
         publications = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='hosted_room_policy_publications'").fetchone()
+            _storage_statement(sqlite="SELECT 1 FROM sqlite_master WHERE type='table' AND name='hosted_room_policy_publications'",postgresql="SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='hosted_room_policy_publications'")).fetchone()
         if publications is None:
             return 0
-        rows = conn.execute("""SELECT t.task_id, t.terminal_at FROM hosted_room_driver_tasks t
+        rows = conn.execute(_storage_statement(sqlite="""SELECT t.task_id, t.terminal_at FROM hosted_room_driver_tasks t
                 WHERE t.room_id=? AND t.status IN ('settled', 'failed', 'cancelled')
                   AND EXISTS (SELECT 1 FROM hosted_room_policy_publications p
                               WHERE p.room_id=t.room_id AND p.task_id=t.task_id
                                 AND p.kind IN ('turn.settled', 'turn.failed', 'turn.cancelled'))
-                ORDER BY t.terminal_at DESC, t.task_id ASC""", (room_id,)).fetchall()
+                ORDER BY t.terminal_at DESC, t.task_id ASC""",postgresql="SELECT t.task_id, t.terminal_at FROM hosted_room_driver_tasks t\n                WHERE t.room_id=%s AND t.status IN ('settled', 'failed', 'cancelled')\n                  AND EXISTS (SELECT 1 FROM hosted_room_policy_publications p\n                              WHERE p.room_id=t.room_id AND p.task_id=t.task_id\n                                AND p.kind IN ('turn.settled', 'turn.failed', 'turn.cancelled'))\n                ORDER BY t.terminal_at DESC, t.task_id ASC"), (room_id,)).fetchall()
         cutoff = now - float(retention_seconds)
         candidates = [
             str(row["task_id"]) for index, row in enumerate(rows)
@@ -889,7 +903,7 @@ def prune_published_terminal_tasks(
         if not candidates:
             return 0
         deleted = conn.execute(
-            f"DELETE FROM hosted_room_driver_tasks WHERE room_id=? AND task_id IN ({','.join('?' * len(candidates))})",
+            _storage_statement(sqlite=f"DELETE FROM hosted_room_driver_tasks WHERE room_id=? AND task_id IN ({','.join('?' * len(candidates))})",postgresql=f"DELETE FROM hosted_room_driver_tasks WHERE room_id=%s AND task_id IN ({','.join('?' * len(candidates))})"),
             (room_id, *candidates))
         return max(0, int(deleted.rowcount))
 
@@ -902,8 +916,8 @@ def get_task_for_turn(
     conn = _connect(db_path)
     try:
         row = conn.execute(
-            """SELECT * FROM hosted_room_driver_tasks
-               WHERE room_id=? AND thread_id=? AND turn_id=?""",
+            _storage_statement(sqlite="""SELECT * FROM hosted_room_driver_tasks
+               WHERE room_id=? AND thread_id=? AND turn_id=?""",postgresql='SELECT * FROM hosted_room_driver_tasks\n               WHERE room_id=%s AND thread_id=%s AND turn_id=%s'),
             (identity.room_id, identity.thread_id, identity.turn_id),
         ).fetchone()
         return _task_from_row(row) if row is not None else None

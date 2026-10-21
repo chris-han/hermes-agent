@@ -574,6 +574,9 @@ def repair_db(db_path: Optional[Path] = None, *, board: Optional[str] = None) ->
     ``hermes kanban repair`` can pick its exit code. ``OperationalError``
     (locked/busy) still propagates raw: a locked healthy DB must not be
     quarantined."""
+    from hermes_state_backend import postgres_enabled
+    if postgres_enabled():
+        raise RuntimeError('SQLite file repair does not apply to PostgreSQL Kanban')
     path = db_path if db_path is not None else _kb.kanban_db_path(board=board)
     try:
         resolved = path.resolve()
@@ -720,6 +723,17 @@ def connect(db_path: Optional[Path] = None, *, board: Optional[str] = None) -> s
     ``_INITIALIZED_PATHS``. Path: explicit ``db_path``, else ``board``, else
     :func:`kanban_db_path` (``HERMES_KANBAN_DB`` -> ``HERMES_KANBAN_BOARD`` ->
     ``<root>/kanban/current`` -> ``default``)."""
+    from hermes_state_backend import postgres_enabled
+    if postgres_enabled():
+        from hermes_constants import get_hermes_home
+        from hermes_state_sql import connect_postgres
+        from agent.delegation_context import kanban_path_is_fenced
+        candidate = db_path if db_path is not None else _kb.kanban_db_path(board=board)
+        # Extra boards require their own explicit namespace binding.
+        home = Path(db_path).parent if db_path is not None else get_hermes_home()
+        if board not in (None,'default'):
+            home = candidate
+        return connect_postgres(home,read_only=kanban_path_is_fenced(candidate))
     path = db_path if db_path is not None else _kb.kanban_db_path(board=board)
     from agent.delegation_context import kanban_path_is_fenced
     if kanban_path_is_fenced(path):
@@ -806,6 +820,10 @@ def init_db(db_path: Optional[Path] = None, *, board: Optional[str] = None) -> P
     :func:`connect`'s cached first-time auto-init, this always re-runs the
     migration pass — callers that know the on-disk schema may have drifted
     (tests writing legacy event kinds, external upgrades) use it to force it."""
+    from hermes_state_backend import postgres_enabled
+    if postgres_enabled():
+        with contextlib.closing(connect(db_path,board=board)) as conn:
+            return conn.hermes_scope
     path = db_path if db_path is not None else _kb.kanban_db_path(board=board)
     _refuse_dead_board_resurrection(path, board)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1248,6 +1266,14 @@ def write_txn(conn: sqlite3.Connection, *, allow_nested: bool = False):
     (``complete_task`` & co.) must never run under an open outer transaction,
     since those side effects would fire while the outer txn can still roll back.
     """
+    from hermes_state_sql import is_postgres,native_write_transaction
+    if is_postgres(conn):
+        from agent.delegation_context import kanban_path_is_fenced
+        if conn.hermes_read_only:
+            raise PermissionError('Kanban descendants cannot mutate their board')
+        with native_write_transaction(conn,allow_nested=allow_nested):
+            yield conn
+        return
     _kb._assert_not_delegated_child_mutation(_main_db_file(conn))
     if getattr(conn, "in_transaction", False):
         if not allow_nested:

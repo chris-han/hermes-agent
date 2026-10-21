@@ -6,6 +6,7 @@ late-bound via ``_kb`` (import-cycle breaking) so monkeypatching
 """
 
 from __future__ import annotations
+from hermes_state_sql import statement as _storage_statement, parameter_marker as _parameter_marker, inserted_id as _inserted_id, in_transaction as _in_transaction
 
 import json
 import sqlite3
@@ -29,7 +30,7 @@ _SCALAR_TYPES = (str, int, float, bool)
 
 # Subscription primary key predicate; every per-row statement below binds
 # ``(task_id, platform, chat_id, thread_id or "")`` against it.
-_SUB_KEY_WHERE = "WHERE task_id = ? AND platform = ? AND chat_id = ? AND thread_id = ?"
+_SUB_KEY_WHERE = _storage_statement(sqlite="WHERE task_id = ? AND platform = ? AND chat_id = ? AND thread_id = ?",postgresql='WHERE task_id = %s AND platform = %s AND chat_id = %s AND thread_id = %s')
 
 
 def _sub_key(task_id: str, platform: str, chat_id: str, thread_id: Optional[str]) -> tuple:
@@ -108,14 +109,14 @@ def add_notify_sub(
             merged_metadata.update(delivery_metadata)
         metadata_json = _encode_notify_delivery_metadata(merged_metadata) if merged_metadata else None
         conn.execute(
-            """
+            _storage_statement(sqlite="""
             INSERT OR IGNORE INTO kanban_notify_subs
                 (task_id, platform, chat_id, thread_id, user_id, user_id_alt,
                  chat_type, notifier_profile, delivery_mode, delivery_metadata,
                  created_at, last_event_id)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                     COALESCE((SELECT MAX(id) FROM task_events WHERE task_id = ?), 0))
-            """,
+            """,postgresql='\n            INSERT INTO kanban_notify_subs\n                (task_id, platform, chat_id, thread_id, user_id, user_id_alt,\n                 chat_type, notifier_profile, delivery_mode, delivery_metadata,\n                 created_at, last_event_id)\n            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,\n                    COALESCE((SELECT MAX(id) FROM task_events WHERE task_id = %s), 0)) ON CONFLICT DO NOTHING'),
             (
                 *key, user_id, user_id_alt, chat_type or "dm", notifier_profile,
                 insert_mode, metadata_json, int(time.time()), task_id,
@@ -136,7 +137,7 @@ def add_notify_sub(
                 continue
             guard = f" AND ({column} IS NULL OR {column} = '')" if fill_only else ""
             conn.execute(
-                f"UPDATE kanban_notify_subs SET {column} = ? " + _SUB_KEY_WHERE + guard,
+                _storage_statement(sqlite=f"UPDATE kanban_notify_subs SET {column} = ? ",postgresql=f'UPDATE kanban_notify_subs SET {column} = %s ') + _SUB_KEY_WHERE + guard,
                 (value, *key),
             )
 
@@ -154,7 +155,7 @@ def _notify_profile_filter(
     clauses: list[str] = []
     params: list[str] = []
     if profiles:
-        clauses.append("notifier_profile IN (" + ",".join("?" for _ in profiles) + ")")
+        clauses.append("notifier_profile IN (" + ",".join(_parameter_marker() for _ in profiles) + ")")
         params.extend(profiles)
     if include_unowned:
         clauses.append("notifier_profile IS NULL OR notifier_profile = ''")
@@ -182,7 +183,7 @@ def list_notify_subs(
     where: list[str] = []
     params: list[Any] = []
     if task_id is not None:
-        where.append("task_id = ?")
+        where.append(_storage_statement(sqlite="task_id = ?",postgresql='task_id = %s'))
         params.append(task_id)
     if owner_where:
         where.append(owner_where)
@@ -230,8 +231,8 @@ def count_notify_subs(
         params.extend(owner_params)
     for clause, value in (
         ("LOWER(platform) = LOWER(?)", platform),
-        ("chat_id = ?", chat_id),
-        ("thread_id = ?", thread_id),
+        (_storage_statement(sqlite="chat_id = ?",postgresql='chat_id = %s'), chat_id),
+        (_storage_statement(sqlite="thread_id = ?",postgresql='thread_id = %s'), thread_id),
     ):
         if value is not None:
             clauses.append(clause)
@@ -295,14 +296,14 @@ def purge_stale_done_notify_subs(conn: sqlite3.Connection, *, max_age_days: int 
     cutoff = int(time.time()) - days * 86400
     with _kb.write_txn(conn):
         cur = conn.execute(
-            "DELETE FROM kanban_notify_subs WHERE task_id IN ("
+            _storage_statement(sqlite="DELETE FROM kanban_notify_subs WHERE task_id IN ("
             " SELECT t.id FROM tasks t"
             " WHERE t.status IN ('done', 'blocked')"
             " AND COALESCE("
             "  (SELECT MAX(e.created_at) FROM task_events e"
             "   WHERE e.task_id = t.id),"
             "  t.completed_at, t.created_at, 0"
-            " ) < ?)",
+            " ) < ?)",postgresql="DELETE FROM kanban_notify_subs WHERE task_id IN ( SELECT t.id FROM tasks t WHERE t.status IN ('done', 'blocked') AND COALESCE(  (SELECT MAX(e.created_at) FROM task_events e   WHERE e.task_id = t.id),  t.completed_at, t.created_at, 0 ) < %s)"),
             (cutoff,),
         )
     return int(cur.rowcount or 0)
@@ -336,8 +337,8 @@ def unseen_events_for_sub(
         return 0, []
     kind_list = list(kinds) if kinds else None
     q = (
-        "SELECT * FROM task_events WHERE task_id = ? AND id > ? "
-        + ("AND kind IN (" + ",".join("?" * len(kind_list)) + ") " if kind_list else "")
+        _storage_statement(sqlite="SELECT * FROM task_events WHERE task_id = ? AND id > ? ",postgresql='SELECT * FROM task_events WHERE task_id = %s AND id > %s ')
+        + ("AND kind IN (" + ",".join([_parameter_marker()] * len(kind_list)) + ") " if kind_list else "")
         + "ORDER BY id ASC"
     )
     params: list[Any] = [task_id, cursor]
@@ -384,7 +385,7 @@ def claim_unseen_events_for_sub(
 def _cas_cursor(conn: sqlite3.Connection, key: tuple, new_cursor: int, expected: int) -> sqlite3.Cursor:
     """Move ``last_event_id`` only if it still equals ``expected``."""
     return conn.execute(
-        "UPDATE kanban_notify_subs SET last_event_id = ? " + _SUB_KEY_WHERE + " AND last_event_id = ?",
+        _storage_statement(sqlite="UPDATE kanban_notify_subs SET last_event_id = ? ",postgresql='UPDATE kanban_notify_subs SET last_event_id = %s ') + _SUB_KEY_WHERE + _storage_statement(sqlite=" AND last_event_id = ?",postgresql=' AND last_event_id = %s'),
         (int(new_cursor), *key, int(expected)),
     )
 
@@ -400,7 +401,7 @@ def advance_notify_cursor(
 ) -> None:
     with _kb.write_txn(conn):
         conn.execute(
-            "UPDATE kanban_notify_subs SET last_event_id = ? " + _SUB_KEY_WHERE,
+            _storage_statement(sqlite="UPDATE kanban_notify_subs SET last_event_id = ? ",postgresql='UPDATE kanban_notify_subs SET last_event_id = %s ') + _SUB_KEY_WHERE,
             (int(new_cursor), *_sub_key(task_id, platform, chat_id, thread_id)),
         )
 
@@ -412,7 +413,7 @@ def record_notify_ping(
     """Checkpoint a sent ping independently of the retryable wake cursor."""
     with _kb.write_txn(conn):
         conn.execute(
-            "UPDATE kanban_notify_subs SET last_ping_event_id = MAX(last_ping_event_id, ?) "
+            _storage_statement(sqlite="UPDATE kanban_notify_subs SET last_ping_event_id = MAX(last_ping_event_id, ?) ",postgresql='UPDATE kanban_notify_subs SET last_ping_event_id = MAX(last_ping_event_id, %s) ')
             + _SUB_KEY_WHERE,
             (int(event_id), *_sub_key(task_id, platform, chat_id, thread_id)),
         )

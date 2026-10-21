@@ -6,6 +6,7 @@ transport queue. Callers supply the database path (production handlers use the g
 """
 
 from __future__ import annotations
+from hermes_state_sql import statement as _storage_statement, parameter_marker as _parameter_marker, inserted_id as _inserted_id, in_transaction as _in_transaction
 
 import hashlib
 import json
@@ -154,27 +155,27 @@ _REMOTE_RUN_SCHEMA_COLUMNS = _REQUIRED_COLUMNS[4][1]
 
 # --- SQL fragments (statement text must stay byte-stable after whitespace normalisation) ---
 _EVENT_COLUMNS = ("room_id, seq, event_id, kind, actor_json, authority_epoch, payload_json, created_at")
-_SELECT_EVENT = f"SELECT {_EVENT_COLUMNS} FROM hosted_room_events WHERE room_id=? AND event_id=?"
-_INSERT_EVENT = (f"INSERT INTO hosted_room_events ({_EVENT_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+_SELECT_EVENT = _storage_statement(sqlite=f"SELECT {_EVENT_COLUMNS} FROM hosted_room_events WHERE room_id=? AND event_id=?",postgresql=f'SELECT {_EVENT_COLUMNS} FROM hosted_room_events WHERE room_id=%s AND event_id=%s')
+_INSERT_EVENT = (_storage_statement(sqlite=f"INSERT INTO hosted_room_events ({_EVENT_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",postgresql=f'INSERT INTO hosted_room_events ({_EVENT_COLUMNS}) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)'))
 _ROOM_COLUMNS = (
     "room_id, name, members_json, authority_gateway_id, authority_epoch, next_seq, revision,"
     " created_at, updated_at, disbanded_at")
 _ROOM_COLUMNS_WITH_BYTES = (
     "room_id, name, members_json, authority_gateway_id, authority_epoch, next_seq, event_bytes,"
     " revision, created_at, updated_at, disbanded_at")
-_SELECT_ROOM = f"SELECT {_ROOM_COLUMNS} FROM hosted_rooms WHERE room_id=?"
-_SELECT_ROOM_WITH_BYTES = f"SELECT {_ROOM_COLUMNS_WITH_BYTES} FROM hosted_rooms WHERE room_id=?"
+_SELECT_ROOM = _storage_statement(sqlite=f"SELECT {_ROOM_COLUMNS} FROM hosted_rooms WHERE room_id=?",postgresql=f'SELECT {_ROOM_COLUMNS} FROM hosted_rooms WHERE room_id=%s')
+_SELECT_ROOM_WITH_BYTES = _storage_statement(sqlite=f"SELECT {_ROOM_COLUMNS_WITH_BYTES} FROM hosted_rooms WHERE room_id=?",postgresql=f'SELECT {_ROOM_COLUMNS_WITH_BYTES} FROM hosted_rooms WHERE room_id=%s')
 _SUM_EVENT_BYTES = "SELECT COALESCE(SUM(event_bytes), 0) FROM hosted_rooms"
-_INSERT_RETIRED = ("INSERT OR IGNORE INTO hosted_room_retired_ids (room_id, retired_at) VALUES (?, ?)")
+_INSERT_RETIRED = (_storage_statement(sqlite="INSERT OR IGNORE INTO hosted_room_retired_ids (room_id, retired_at) VALUES (?, ?)",postgresql='INSERT INTO hosted_room_retired_ids (room_id, retired_at) VALUES (%s, %s) ON CONFLICT DO NOTHING'))
 _RETIRE_FROM_ROOMS = (
-    "INSERT OR IGNORE INTO hosted_room_retired_ids (room_id, retired_at)"
-    " SELECT room_id, disbanded_at FROM hosted_rooms WHERE {where}")
+    _storage_statement(sqlite="INSERT OR IGNORE INTO hosted_room_retired_ids (room_id, retired_at)"
+    " SELECT room_id, disbanded_at FROM hosted_rooms WHERE {where}",postgresql='INSERT INTO hosted_room_retired_ids (room_id, retired_at) SELECT room_id, disbanded_at FROM hosted_rooms WHERE {where} ON CONFLICT DO NOTHING'))
 _LINK_COLUMNS = (
     "room_id", "member_id", "target_url", "target_profile", "grant", "catalog_json", "cancellation_scope_id",
     "trace_id", "transport_security", "status", "updated_at")
 _REMOTE_RUN_WHERE = " AND ".join(f"{column}=?" for column in _REMOTE_RUN_IDENTITY_COLUMNS)
 _SELECT_REMOTE_RUN = f"SELECT * FROM hosted_room_remote_runs WHERE {_REMOTE_RUN_WHERE}"
-_LIVE_RESERVATION_WHERE = ("WHERE room_id=? AND target_profile=? AND expires_at>? AND revoked_at IS NULL")
+_LIVE_RESERVATION_WHERE = (_storage_statement(sqlite="WHERE room_id=? AND target_profile=? AND expires_at>? AND revoked_at IS NULL",postgresql='WHERE room_id=%s AND target_profile=%s AND expires_at>%s AND revoked_at IS NULL'))
 _SELECT_LIVE_RESERVATION = (f"SELECT 1 FROM hosted_room_peer_reservations {_LIVE_RESERVATION_WHERE} LIMIT 1")
 
 
@@ -325,7 +326,7 @@ def _migrate_remote_run_schema(conn: sqlite3.Connection) -> None:
         fallbacks = (("home_install_id", "'legacy'"), ("authority_gateway_id", "'legacy'"), ("authority_epoch", "1"))
         home, gateway, epoch = (column if column in columns else default for column, default in fallbacks)
         conn.execute(
-            f"""INSERT OR IGNORE INTO hosted_room_remote_runs_migrating(
+            _storage_statement(sqlite=f"""INSERT OR IGNORE INTO hosted_room_remote_runs_migrating(
                     room_id, home_install_id, authority_gateway_id,
                     authority_epoch, member_id, task_id,
                     execution_generation, target_install_id, target_profile,
@@ -334,7 +335,7 @@ def _migrate_remote_run_schema(conn: sqlite3.Connection) -> None:
                 SELECT room_id, {home}, {gateway}, {epoch}, member_id, task_id,
                        execution_generation, target_install_id, target_profile,
                        run_id, session_id, created_at, updated_at
-                  FROM hosted_room_remote_runs""")
+                  FROM hosted_room_remote_runs""",postgresql=f'INSERT INTO hosted_room_remote_runs_migrating(\n                    room_id, home_install_id, authority_gateway_id,\n                    authority_epoch, member_id, task_id,\n                    execution_generation, target_install_id, target_profile,\n                    run_id, session_id, created_at, updated_at\n                )\n                SELECT room_id, {home}, {gateway}, {epoch}, member_id, task_id,\n                       execution_generation, target_install_id, target_profile,\n                       run_id, session_id, created_at, updated_at\n                  FROM hosted_room_remote_runs ON CONFLICT DO NOTHING'))
     conn.execute("DROP TABLE hosted_room_remote_runs")
     conn.execute("ALTER TABLE hosted_room_remote_runs_migrating RENAME TO hosted_room_remote_runs")
 
@@ -350,7 +351,7 @@ _LEGACY_COLUMNS = (
     ("hosted_rooms", "event_bytes", "INTEGER NOT NULL", "0"),
     ("hosted_room_events", "actor_json", "TEXT NOT NULL", f"'{_LEGACY_ACTOR_JSON}'"),
     ("hosted_room_events", "authority_epoch", "INTEGER", None))
-_EVENT_BYTES_BACKFILL = """UPDATE hosted_rooms
+_EVENT_BYTES_BACKFILL = _storage_statement(sqlite="""UPDATE hosted_rooms
                   SET event_bytes=COALESCE((
                       SELECT SUM(
                           length(CAST(event_id AS BLOB)) +
@@ -360,7 +361,7 @@ _EVENT_BYTES_BACKFILL = """UPDATE hosted_rooms
                       )
                       FROM hosted_room_events
                       WHERE hosted_room_events.room_id=hosted_rooms.room_id
-                  ), 0) WHERE {where}"""
+                  ), 0) WHERE {where}""",postgresql="UPDATE hosted_rooms\n                  SET event_bytes=COALESCE((\n                      SELECT SUM(\n                          octet_length(convert_to(CAST(event_id AS text),'UTF8')) +\n                          octet_length(convert_to(CAST(kind AS text),'UTF8')) +\n                          octet_length(convert_to(CAST(actor_json AS text),'UTF8')) +\n                          octet_length(convert_to(CAST(payload_json AS text),'UTF8'))\n                      )\n                      FROM hosted_room_events\n                      WHERE hosted_room_events.room_id=hosted_rooms.room_id\n                  ), 0) WHERE {where}")
 
 
 def _migrate_legacy_columns(conn: sqlite3.Connection) -> None:
@@ -452,6 +453,9 @@ def _connect(db_path: DbPath) -> sqlite3.Connection:
 
 
 def _read_connection(db_path: DbPath) -> sqlite3.Connection:
+    from hermes_state_backend import postgres_enabled
+    if postgres_enabled():
+        return open_sqlite(db_path)
     """Open the room store without steady-state journal or migration writes."""
     path = Path(db_path)
     if not path.is_file():
@@ -469,7 +473,7 @@ _transaction = partial(transaction, _connect, immediate=False)
 
 # --- row helpers ------------------------------------------------------------------
 def _is_retired(conn: sqlite3.Connection, room_id: str) -> bool:
-    return conn.execute("SELECT 1 FROM hosted_room_retired_ids WHERE room_id=?", (room_id,)).fetchone() is not None
+    return conn.execute(_storage_statement(sqlite="SELECT 1 FROM hosted_room_retired_ids WHERE room_id=?",postgresql='SELECT 1 FROM hosted_room_retired_ids WHERE room_id=%s'), (room_id,)).fetchone() is not None
 
 
 def _room_row(conn: sqlite3.Connection, sql: str, params: tuple[Any, ...], room_id: str) -> sqlite3.Row:
@@ -478,7 +482,7 @@ def _room_row(conn: sqlite3.Connection, sql: str, params: tuple[Any, ...], room_
     if row is not None:
         return row
     # A retained disband tombstone still has replayable history; the caller did not opt into disbanded rooms.
-    retained = conn.execute("SELECT 1 FROM hosted_rooms WHERE room_id=?", (room_id,)).fetchone()
+    retained = conn.execute(_storage_statement(sqlite="SELECT 1 FROM hosted_rooms WHERE room_id=?",postgresql='SELECT 1 FROM hosted_rooms WHERE room_id=%s'), (room_id,)).fetchone()
     if retained is None and _is_retired(conn, room_id):
         raise RoomHistoryExpiredError("Group Chat history expired; room_id remains permanently retired")
     raise RoomNotFoundError("hosted room not found")
@@ -578,11 +582,11 @@ def _prune_disbanded_rooms_locked(
     candidates: set[str] = set()
     if now is not None:
         candidates.update(_room_ids(
-            conn, """SELECT room_id FROM hosted_rooms
-                     WHERE disbanded_at IS NOT NULL AND disbanded_at<=?""", (now - DISBANDED_ROOM_RETENTION_SECONDS,)))
+            conn, _storage_statement(sqlite="""SELECT room_id FROM hosted_rooms
+                     WHERE disbanded_at IS NOT NULL AND disbanded_at<=?""",postgresql='SELECT room_id FROM hosted_rooms\n                     WHERE disbanded_at IS NOT NULL AND disbanded_at<=%s'), (now - DISBANDED_ROOM_RETENTION_SECONDS,)))
     candidates.update(_room_ids(
-        conn, """SELECT room_id FROM hosted_rooms WHERE disbanded_at IS NOT NULL
-                ORDER BY disbanded_at DESC, room_id ASC LIMIT -1 OFFSET ?""", (MAX_DISBANDED_ROOM_TOMBSTONES,)))
+        conn, _storage_statement(sqlite="""SELECT room_id FROM hosted_rooms WHERE disbanded_at IS NOT NULL
+                ORDER BY disbanded_at DESC, room_id ASC LIMIT -1 OFFSET ?""",postgresql='SELECT room_id FROM hosted_rooms WHERE disbanded_at IS NOT NULL\n                ORDER BY disbanded_at DESC, room_id ASC LIMIT -1 OFFSET %s'), (MAX_DISBANDED_ROOM_TOMBSTONES,)))
     if max_gateway_event_bytes is not None:
         retained_bytes = _gateway_event_bytes(conn)
         if retained_bytes > max_gateway_event_bytes:
@@ -595,7 +599,7 @@ def _prune_disbanded_rooms_locked(
                     break
     if not candidates:
         return 0
-    placeholders = ",".join("?" for _ in candidates)
+    placeholders = ",".join(_parameter_marker() for _ in candidates)
     room_ids = tuple(sorted(candidates))
     conn.execute(_RETIRE_FROM_ROOMS.format(where=f"room_id IN ({placeholders}) AND disbanded_at IS NOT NULL"), room_ids)
     for table in _DEPENDENT_TABLES:
@@ -615,11 +619,11 @@ def prune_disbanded_rooms(db_path: DbPath, *, now: float | None = None) -> int:
 def list_room_link_records(db_path: DbPath) -> list[dict[str, Any]]:
     """Return private RoomLink records without logging or formatting grants."""
     with _transaction(db_path) as conn:
-        rows = conn.execute("""SELECT room_id, member_id, target_url, target_profile, grant,
+        rows = conn.execute(_storage_statement(sqlite="""SELECT room_id, member_id, target_url, target_profile, grant,
                       catalog_json, cancellation_scope_id, trace_id,
                       transport_security, status, updated_at
                  FROM hosted_room_links
-             ORDER BY room_id, member_id""").fetchall()
+             ORDER BY room_id, member_id""",postgresql='SELECT room_id, member_id, target_url, target_profile, "grant",\n                      catalog_json, cancellation_scope_id, trace_id,\n                      transport_security, status, updated_at\n                 FROM hosted_room_links\n             ORDER BY room_id, member_id')).fetchall()
     return [dict(row) for row in rows]
 
 
@@ -627,11 +631,11 @@ def upsert_room_link_record(db_path: DbPath, *, record: Mapping[str, Any], max_l
     """Atomically insert or replace one private RoomLink record."""
     with _transaction(db_path, immediate=True) as conn:
         existing = conn.execute(
-            "SELECT 1 FROM hosted_room_links WHERE room_id=? AND member_id=?", (record["room_id"], record["member_id"])
+            _storage_statement(sqlite="SELECT 1 FROM hosted_room_links WHERE room_id=? AND member_id=?",postgresql='SELECT 1 FROM hosted_room_links WHERE room_id=%s AND member_id=%s'), (record["room_id"], record["member_id"])
         ).fetchone()
         if existing is None and int(conn.execute("SELECT COUNT(*) FROM hosted_room_links").fetchone()[0]) >= max_links:
             raise HostedRoomError("too many stored room links")
-        conn.execute("""INSERT INTO hosted_room_links(
+        conn.execute(_storage_statement(sqlite="""INSERT INTO hosted_room_links(
                    room_id, member_id, target_url, target_profile, grant,
                    catalog_json, cancellation_scope_id, trace_id,
                    transport_security, status, updated_at
@@ -645,7 +649,7 @@ def upsert_room_link_record(db_path: DbPath, *, record: Mapping[str, Any], max_l
                    trace_id=excluded.trace_id,
                    transport_security=excluded.transport_security,
                    status=excluded.status,
-                   updated_at=excluded.updated_at""",
+                   updated_at=excluded.updated_at""",postgresql='INSERT INTO hosted_room_links(\n                   room_id, member_id, target_url, target_profile, "grant",\n                   catalog_json, cancellation_scope_id, trace_id,\n                   transport_security, status, updated_at\n               ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)\n               ON CONFLICT(room_id, member_id) DO UPDATE SET\n                   target_url=excluded.target_url,\n                   target_profile=excluded.target_profile,\n                   "grant"=excluded."grant",\n                   catalog_json=excluded.catalog_json,\n                   cancellation_scope_id=excluded.cancellation_scope_id,\n                   trace_id=excluded.trace_id,\n                   transport_security=excluded.transport_security,\n                   status=excluded.status,\n                   updated_at=excluded.updated_at'),
             tuple(record[column] for column in _LINK_COLUMNS))
 
 
@@ -654,14 +658,14 @@ def update_room_link_status(
     """Persist a non-secret route health classification."""
     with _transaction(db_path, immediate=True) as conn:
         return conn.execute(
-            "UPDATE hosted_room_links SET status=?, updated_at=? WHERE room_id=? AND member_id=?",
+            _storage_statement(sqlite="UPDATE hosted_room_links SET status=?, updated_at=? WHERE room_id=? AND member_id=?",postgresql='UPDATE hosted_room_links SET status=%s, updated_at=%s WHERE room_id=%s AND member_id=%s'),
             (status, _now(now), room_id, member_id)).rowcount == 1
 
 
 def delete_room_link_records(db_path: DbPath, *, room_id: str) -> int:
     """Delete persisted peer routes after their target grants are revoked."""
     with _transaction(db_path, immediate=True) as conn:
-        return conn.execute("DELETE FROM hosted_room_links WHERE room_id=?", (room_id,)).rowcount
+        return conn.execute(_storage_statement(sqlite="DELETE FROM hosted_room_links WHERE room_id=?",postgresql='DELETE FROM hosted_room_links WHERE room_id=%s'), (room_id,)).rowcount
 
 
 def _claim_values(claims: Mapping[str, Any], keys: tuple[str, ...]) -> dict[str, str]:
@@ -687,18 +691,18 @@ def revoke_room_grant_scope(
     if expiry <= timestamp:
         return
     with _transaction(db_path, immediate=True) as conn:
-        conn.execute("DELETE FROM hosted_room_revoked_grants WHERE expires_at<=?", (timestamp,))
-        conn.execute("""INSERT INTO hosted_room_revoked_grants(
+        conn.execute(_storage_statement(sqlite="DELETE FROM hosted_room_revoked_grants WHERE expires_at<=?",postgresql='DELETE FROM hosted_room_revoked_grants WHERE expires_at<=%s'), (timestamp,))
+        conn.execute(_storage_statement(sqlite="""INSERT INTO hosted_room_revoked_grants(
                    scope_key, expires_at, revoked_before
                ) VALUES (?, ?, ?)
                ON CONFLICT(scope_key) DO UPDATE SET
                    expires_at=MAX(hosted_room_revoked_grants.expires_at,
                                   excluded.expires_at),
                    revoked_before=MAX(hosted_room_revoked_grants.revoked_before,
-                                      excluded.revoked_before)""", (scope_key, expiry, timestamp))
-        conn.execute("""UPDATE hosted_room_peer_reservations SET revoked_at=?, updated_at=? WHERE room_id=?
+                                      excluded.revoked_before)""",postgresql='INSERT INTO hosted_room_revoked_grants(\n                   scope_key, expires_at, revoked_before\n               ) VALUES (%s, %s, %s)\n               ON CONFLICT(scope_key) DO UPDATE SET\n                   expires_at=MAX(hosted_room_revoked_grants.expires_at,\n                                  excluded.expires_at),\n                   revoked_before=MAX(hosted_room_revoked_grants.revoked_before,\n                                      excluded.revoked_before)'), (scope_key, expiry, timestamp))
+        conn.execute(_storage_statement(sqlite="""UPDATE hosted_room_peer_reservations SET revoked_at=?, updated_at=? WHERE room_id=?
                 AND member_id=? AND target_profile=? AND authority_gateway_id=?
-                AND authority_epoch=?""",
+                AND authority_epoch=?""",postgresql='UPDATE hosted_room_peer_reservations SET revoked_at=%s, updated_at=%s WHERE room_id=%s\n                AND member_id=%s AND target_profile=%s AND authority_gateway_id=%s\n                AND authority_epoch=%s'),
             (
                 timestamp, timestamp,
                 *_claim_values(claims, ("room_id", "member_id", "target_profile", "authority_gateway_id")).values(),
@@ -732,21 +736,21 @@ def reserve_peer_room(
     values = _reservation_claims(claims)
     room_id, _, target_profile, gateway_id, epoch = values
     with _transaction(db_path, immediate=True) as conn:
-        conn.execute("DELETE FROM hosted_room_peer_reservations WHERE expires_at<=?", (timestamp,))
+        conn.execute(_storage_statement(sqlite="DELETE FROM hosted_room_peer_reservations WHERE expires_at<=?",postgresql='DELETE FROM hosted_room_peer_reservations WHERE expires_at<=%s'), (timestamp,))
         authority_rows = conn.execute(
             f"""SELECT authority_gateway_id, authority_epoch
                 FROM hosted_room_peer_reservations {_LIVE_RESERVATION_WHERE}""", (room_id, target_profile, timestamp)
         ).fetchall()
         if any(_reservation_superseded(row, gateway_id, epoch) for row in authority_rows):
             raise AuthorityConflictError("peer room reservation authority changed")
-        conn.execute("""UPDATE hosted_room_peer_reservations SET revoked_at=?, updated_at=? WHERE room_id=?
-                AND target_profile=? AND authority_epoch<? AND revoked_at IS NULL""",
+        conn.execute(_storage_statement(sqlite="""UPDATE hosted_room_peer_reservations SET revoked_at=?, updated_at=? WHERE room_id=?
+                AND target_profile=? AND authority_epoch<? AND revoked_at IS NULL""",postgresql='UPDATE hosted_room_peer_reservations SET revoked_at=%s, updated_at=%s WHERE room_id=%s\n                AND target_profile=%s AND authority_epoch<%s AND revoked_at IS NULL'),
             (timestamp, timestamp, room_id, target_profile, epoch))
-        existing = conn.execute("""SELECT authority_gateway_id, authority_epoch FROM hosted_room_peer_reservations
-                WHERE room_id=? AND member_id=? AND target_profile=?""", values[:3]).fetchone()
+        existing = conn.execute(_storage_statement(sqlite="""SELECT authority_gateway_id, authority_epoch FROM hosted_room_peer_reservations
+                WHERE room_id=? AND member_id=? AND target_profile=?""",postgresql='SELECT authority_gateway_id, authority_epoch FROM hosted_room_peer_reservations\n                WHERE room_id=%s AND member_id=%s AND target_profile=%s'), values[:3]).fetchone()
         if existing is not None and _reservation_superseded(existing, gateway_id, epoch):
             raise AuthorityConflictError("peer room reservation authority changed")
-        conn.execute("""INSERT INTO hosted_room_peer_reservations(
+        conn.execute(_storage_statement(sqlite="""INSERT INTO hosted_room_peer_reservations(
                    room_id, member_id, target_profile, authority_gateway_id,
                    authority_epoch, expires_at, revoked_at, created_at, updated_at
                ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)
@@ -756,7 +760,7 @@ def reserve_peer_room(
                    expires_at=MAX(hosted_room_peer_reservations.expires_at,
                                   excluded.expires_at),
                    revoked_at=NULL,
-                   updated_at=excluded.updated_at""", (*values, expiry, timestamp, timestamp))
+                   updated_at=excluded.updated_at""",postgresql='INSERT INTO hosted_room_peer_reservations(\n                   room_id, member_id, target_profile, authority_gateway_id,\n                   authority_epoch, expires_at, revoked_at, created_at, updated_at\n               ) VALUES (%s, %s, %s, %s, %s, %s, NULL, %s, %s)\n               ON CONFLICT(room_id, member_id, target_profile) DO UPDATE SET\n                   authority_gateway_id=excluded.authority_gateway_id,\n                   authority_epoch=excluded.authority_epoch,\n                   expires_at=MAX(hosted_room_peer_reservations.expires_at,\n                                  excluded.expires_at),\n                   revoked_at=NULL,\n                   updated_at=excluded.updated_at'), (*values, expiry, timestamp, timestamp))
 
 
 def _read_one(db_path: DbPath, sql: str, params: tuple[Any, ...]) -> sqlite3.Row | None:
@@ -774,9 +778,9 @@ def peer_room_grant_is_current(db_path: DbPath, *, claims: Mapping[str, Any], no
     """Require a grant to match the target's current live reservation."""
     timestamp = _now(now)
     return _read_one(
-        db_path, """SELECT 1 FROM hosted_room_peer_reservations WHERE room_id=? AND member_id=?
+        db_path, _storage_statement(sqlite="""SELECT 1 FROM hosted_room_peer_reservations WHERE room_id=? AND member_id=?
             AND target_profile=? AND authority_gateway_id=? AND authority_epoch=?
-            AND expires_at>? AND revoked_at IS NULL LIMIT 1""", (*_reservation_claims(claims), timestamp)) is not None
+            AND expires_at>? AND revoked_at IS NULL LIMIT 1""",postgresql='SELECT 1 FROM hosted_room_peer_reservations WHERE room_id=%s AND member_id=%s\n            AND target_profile=%s AND authority_gateway_id=%s AND authority_epoch=%s\n            AND expires_at>%s AND revoked_at IS NULL LIMIT 1'), (*_reservation_claims(claims), timestamp)) is not None
 
 
 def room_grant_is_revoked(db_path: DbPath, *, claims: Mapping[str, Any], now: float | None = None) -> bool:
@@ -785,8 +789,8 @@ def room_grant_is_revoked(db_path: DbPath, *, claims: Mapping[str, Any], now: fl
     scope_key = _room_grant_scope_key(claims)
     issued_at = float(claims.get("issued_at") or 0)
     row = _read_one(
-        db_path, """SELECT revoked_before FROM hosted_room_revoked_grants
-            WHERE scope_key=? AND expires_at>?""", (scope_key, timestamp))
+        db_path, _storage_statement(sqlite="""SELECT revoked_before FROM hosted_room_revoked_grants
+            WHERE scope_key=? AND expires_at>?""",postgresql='SELECT revoked_before FROM hosted_room_revoked_grants\n            WHERE scope_key=%s AND expires_at>%s'), (scope_key, timestamp))
     return row is not None and issued_at <= float(row["revoked_before"])
 
 
@@ -805,14 +809,14 @@ def upsert_remote_run_receipt(db_path: DbPath, *, record: Mapping[str, Any], now
             if (*_remote_run_identity(existing), existing["run_id"], existing["session_id"]) != immutable:
                 raise HostedRoomError("remote run receipt conflicts with its logical task")
             conn.execute(
-                f"UPDATE hosted_room_remote_runs SET updated_at=? WHERE {_REMOTE_RUN_WHERE}", (timestamp, *identity))
+                _storage_statement(sqlite=f"UPDATE hosted_room_remote_runs SET updated_at=? WHERE {_REMOTE_RUN_WHERE}",postgresql=f'UPDATE hosted_room_remote_runs SET updated_at=%s WHERE {_REMOTE_RUN_WHERE}'), (timestamp, *identity))
             return
-        conn.execute("""INSERT INTO hosted_room_remote_runs(
+        conn.execute(_storage_statement(sqlite="""INSERT INTO hosted_room_remote_runs(
                    room_id, home_install_id, authority_gateway_id,
                    authority_epoch, member_id, target_install_id,
                    target_profile, task_id, execution_generation, run_id,
                    session_id, created_at, updated_at
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (*immutable, timestamp, timestamp))
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",postgresql='INSERT INTO hosted_room_remote_runs(\n                   room_id, home_install_id, authority_gateway_id,\n                   authority_epoch, member_id, target_install_id,\n                   target_profile, task_id, execution_generation, run_id,\n                   session_id, created_at, updated_at\n               ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)'), (*immutable, timestamp, timestamp))
         from gateway.hosted_room_work_records import capture_transition_locked
         capture_transition_locked(conn, record["room_id"])
 
@@ -848,11 +852,11 @@ def _adopt_legacy_room(
         conn, existing, room_id, seq, "system:authority-adopted", "authority.claimed",
         _system_actor_json("authority-control"), target_epoch,
         _claim_payload_json("legacy", authority_gateway_id, target_epoch), now, allow_control=True)
-    _fenced_update(conn, """UPDATE hosted_rooms
+    _fenced_update(conn, _storage_statement(sqlite="""UPDATE hosted_rooms
             SET members_json=?, authority_gateway_id=?, authority_epoch=?,
                 next_seq=next_seq+1, revision=revision+1, event_bytes=event_bytes+?, updated_at=?
             WHERE room_id=? AND authority_gateway_id='legacy' AND authority_epoch=? AND next_seq=?
-            AND disbanded_at IS NULL""",
+            AND disbanded_at IS NULL""",postgresql="UPDATE hosted_rooms\n            SET members_json=%s, authority_gateway_id=%s, authority_epoch=%s,\n                next_seq=next_seq+1, revision=revision+1, event_bytes=event_bytes+%s, updated_at=%s\n            WHERE room_id=%s AND authority_gateway_id='legacy' AND authority_epoch=%s AND next_seq=%s\n            AND disbanded_at IS NULL"),
         (
             members_json, authority_gateway_id, target_epoch, claim_bytes, now, room_id,
             int(existing["authority_epoch"]), seq), AuthorityConflictError("legacy room adoption lost its fence"))
@@ -900,12 +904,12 @@ def create_room(
         if int(active) >= MAX_ACTIVE_ROOMS:
             raise HostedRoomError("This host has too many active Group Chats. Delete one and try again.")
         conn.execute(
-            f"""INSERT INTO hosted_rooms ({_ROOM_COLUMNS_WITH_BYTES})
-                VALUES (?, ?, ?, ?, 1, 1, 0, 1, ?, ?, NULL)""",
+            _storage_statement(sqlite=f"""INSERT INTO hosted_rooms ({_ROOM_COLUMNS_WITH_BYTES})
+                VALUES (?, ?, ?, ?, 1, 1, 0, 1, ?, ?, NULL)""",postgresql=f'INSERT INTO hosted_rooms ({_ROOM_COLUMNS_WITH_BYTES})\n                VALUES (%s, %s, %s, %s, 1, 1, 0, 1, %s, %s, NULL)'),
             (room_id, name, members_json, authority_gateway_id, now, now))
         row = _reload(
-            conn, """SELECT room_id, name, members_json, authority_gateway_id, authority_epoch, revision,
-                created_at, updated_at FROM hosted_rooms WHERE room_id=?""", (room_id,),
+            conn, _storage_statement(sqlite="""SELECT room_id, name, members_json, authority_gateway_id, authority_epoch, revision,
+                created_at, updated_at FROM hosted_rooms WHERE room_id=?""",postgresql='SELECT room_id, name, members_json, authority_gateway_id, authority_epoch, revision,\n                created_at, updated_at FROM hosted_rooms WHERE room_id=%s'), (room_id,),
             "created room could not be reloaded")
     return {**_room_from_row(row), "members": normalized_members}
 
@@ -918,8 +922,8 @@ def list_rooms(
     offset = _non_negative(offset, "offset")
     with closing(_read_connection(db_path)) as conn:
         rows = conn.execute(
-            f"""SELECT {_ROOM_COLUMNS} FROM hosted_rooms WHERE disbanded_at IS NULL OR ?
-                ORDER BY updated_at DESC, room_id ASC LIMIT ? OFFSET ?""", (int(include_disbanded), limit, offset)
+            _storage_statement(sqlite=f"""SELECT {_ROOM_COLUMNS} FROM hosted_rooms WHERE disbanded_at IS NULL OR ?
+                ORDER BY updated_at DESC, room_id ASC LIMIT ? OFFSET ?""",postgresql=f'SELECT {_ROOM_COLUMNS} FROM hosted_rooms WHERE disbanded_at IS NULL OR %s\n                ORDER BY updated_at DESC, room_id ASC LIMIT %s OFFSET %s'), (int(include_disbanded), limit, offset)
         ).fetchall()
     return [_room_from_row(row) for row in rows]
 
@@ -944,9 +948,9 @@ def rename_room(db_path: DbPath, *, room_id: Any, event_id: Any, name: Any, now:
         seq = int(room["next_seq"])
         event_bytes = _prepare_event(conn, room, event_id, "room.renamed", actor_json, payload_json)
         # Rename updates the room row before inserting its event (order is load-bearing).
-        conn.execute("""UPDATE hosted_rooms
+        conn.execute(_storage_statement(sqlite="""UPDATE hosted_rooms
                 SET name=?, next_seq=?, event_bytes=event_bytes+?, revision=revision+1, updated_at=?
-                WHERE room_id=?""", (name, seq + 1, event_bytes, now, room_id))
+                WHERE room_id=?""",postgresql='UPDATE hosted_rooms\n                SET name=%s, next_seq=%s, event_bytes=event_bytes+%s, revision=revision+1, updated_at=%s\n                WHERE room_id=%s'), (name, seq + 1, event_bytes, now, room_id))
         conn.execute(_INSERT_EVENT, (
             room_id, seq, event_id, "room.renamed", actor_json, int(room["authority_epoch"]), payload_json, now))
         updated = conn.execute(_SELECT_ROOM, (room_id,)).fetchone()
@@ -981,8 +985,8 @@ def append_event(
                 raise EventConflictError("event_id already exists with different content")
             return _event_from_row(existing, idempotent=True)
         room = _room_row(
-            conn, """SELECT next_seq, event_bytes, authority_gateway_id, authority_epoch
-                FROM hosted_rooms WHERE room_id=? AND disbanded_at IS NULL""", (room_id,), room_id)
+            conn, _storage_statement(sqlite="""SELECT next_seq, event_bytes, authority_gateway_id, authority_epoch
+                FROM hosted_rooms WHERE room_id=? AND disbanded_at IS NULL""",postgresql='SELECT next_seq, event_bytes, authority_gateway_id, authority_epoch\n                FROM hosted_rooms WHERE room_id=%s AND disbanded_at IS NULL'), (room_id,), room_id)
         _require_authority(room, authority_gateway_id, authority_epoch, "stale hosted room authority")
         seq = int(room["next_seq"])
         if expected_latest_seq is not None and seq - 1 != expected_latest_seq:
@@ -994,23 +998,27 @@ def append_event(
         event_bytes = _insert_event(
             conn, room, room_id, seq, event_id, kind, actor_json, authority_epoch, payload_json, now,
             allow_control=kind in _CONTROL_EVENT_KINDS)
-        _fenced_update(conn, """UPDATE hosted_rooms SET next_seq=?, event_bytes=event_bytes+?, updated_at=?
-                WHERE room_id=? AND next_seq=?""", (seq + 1, event_bytes, now, room_id, seq),
+        _fenced_update(conn, _storage_statement(sqlite="""UPDATE hosted_rooms SET next_seq=?, event_bytes=event_bytes+?, updated_at=?
+                WHERE room_id=? AND next_seq=?""",postgresql='UPDATE hosted_rooms SET next_seq=%s, event_bytes=event_bytes+%s, updated_at=%s\n                WHERE room_id=%s AND next_seq=%s'), (seq + 1, event_bytes, now, room_id, seq),
             RuntimeError("hosted room sequence advance lost its write fence"))
         row = _reload(
-            conn, f"SELECT {_EVENT_COLUMNS} FROM hosted_room_events WHERE room_id=? AND seq=?", (room_id, seq),
+            conn, _storage_statement(sqlite=f"SELECT {_EVENT_COLUMNS} FROM hosted_room_events WHERE room_id=? AND seq=?",postgresql=f'SELECT {_EVENT_COLUMNS} FROM hosted_room_events WHERE room_id=%s AND seq=%s'), (room_id, seq),
             "appended event could not be reloaded")
     return {**_event_from_row(row), "actor": normalized_actor}
 
 
 def _probe(path: Path, table: str, query: str, params: tuple[Any, ...], unavailable: str) -> bool:
     """Non-blocking existence probe: short timeout, no schema creation or migration."""
+    from hermes_state_backend import postgres_enabled
+    if postgres_enabled():
+        with closing(open_sqlite(path)) as conn:
+            return table_exists(conn,table) and conn.execute(query,params).fetchone() is not None
     if not path.is_file():
         return False
     try:
         with closing(sqlite3.connect(path, timeout=0.05)) as conn:
             table_row = conn.execute(
-                f"SELECT 1 FROM sqlite_master WHERE type='table' AND name='{table}' LIMIT 1").fetchone()
+                _storage_statement(sqlite=f"SELECT 1 FROM sqlite_master WHERE type='table' AND name='{table}' LIMIT 1",postgresql=f"SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='{table}' LIMIT 1")).fetchone()
             return table_row is not None and conn.execute(query, params).fetchone() is not None
     except sqlite3.Error as exc:
         raise RoomProbeUnavailableError(unavailable) from exc
@@ -1021,7 +1029,7 @@ def probe_hosted_room(db_path: DbPath, *, room_id: Any) -> bool:
     prompt-admission path for older Desktop clients, so it fails fast under contention instead of blocking
     the WebSocket reader for SQLite's ten-second timeout."""
     return _probe(
-        Path(db_path), "hosted_rooms", "SELECT 1 FROM hosted_rooms WHERE room_id=? AND disbanded_at IS NULL LIMIT 1",
+        Path(db_path), "hosted_rooms", _storage_statement(sqlite="SELECT 1 FROM hosted_rooms WHERE room_id=? AND disbanded_at IS NULL LIMIT 1",postgresql='SELECT 1 FROM hosted_rooms WHERE room_id=%s AND disbanded_at IS NULL LIMIT 1'),
         (_room_id(room_id),), "hosted room ownership is temporarily unavailable")
 
 
@@ -1040,11 +1048,11 @@ def room_state(db_path: DbPath, *, room_id: Any, include_disbanded: bool = False
     with _transaction(db_path) as conn:
         row = _room_row(
             conn,
-            f"""SELECT {_ROOM_COLUMNS} FROM hosted_rooms WHERE room_id=? AND (disbanded_at IS NULL
-                OR ?)""", (room_id, int(include_disbanded)), room_id)
+            _storage_statement(sqlite=f"""SELECT {_ROOM_COLUMNS} FROM hosted_rooms WHERE room_id=? AND (disbanded_at IS NULL
+                OR ?)""",postgresql=f'SELECT {_ROOM_COLUMNS} FROM hosted_rooms WHERE room_id=%s AND (disbanded_at IS NULL\n                OR %s)'), (room_id, int(include_disbanded)), room_id)
         claim_row = conn.execute(
-            f"""SELECT {_EVENT_COLUMNS} FROM hosted_room_events WHERE room_id=?
-                AND kind='authority.claimed' AND authority_epoch=? ORDER BY seq DESC LIMIT 1""",
+            _storage_statement(sqlite=f"""SELECT {_EVENT_COLUMNS} FROM hosted_room_events WHERE room_id=?
+                AND kind='authority.claimed' AND authority_epoch=? ORDER BY seq DESC LIMIT 1""",postgresql=f"SELECT {_EVENT_COLUMNS} FROM hosted_room_events WHERE room_id=%s\n                AND kind='authority.claimed' AND authority_epoch=%s ORDER BY seq DESC LIMIT 1"),
             (room_id, int(row["authority_epoch"]))).fetchone()
     return {**_room_from_row(row), **({"authority_claim": _event_from_row(claim_row)} if claim_row is not None else {})}
 
@@ -1076,8 +1084,8 @@ def claim_authority(
     claim_payload_json = _claim_payload_json(expected_gateway_id, new_gateway_id, target_epoch)
     with _transaction(db_path, immediate=True) as conn:
         row = _room_row(
-            conn, """SELECT authority_gateway_id, authority_epoch, next_seq, event_bytes
-                FROM hosted_rooms WHERE room_id=? AND disbanded_at IS NULL""", (room_id,), room_id)
+            conn, _storage_statement(sqlite="""SELECT authority_gateway_id, authority_epoch, next_seq, event_bytes
+                FROM hosted_rooms WHERE room_id=? AND disbanded_at IS NULL""",postgresql='SELECT authority_gateway_id, authority_epoch, next_seq, event_bytes\n                FROM hosted_rooms WHERE room_id=%s AND disbanded_at IS NULL'), (room_id,), room_id)
         existing_event = _load_event(conn, room_id, event_id)
         idempotent = existing_event is not None
         if idempotent:
@@ -1092,16 +1100,16 @@ def claim_authority(
             claim_bytes = _insert_event(
                 conn, row, room_id, int(row["next_seq"]), event_id, "authority.claimed", claim_actor_json, target_epoch,
                 claim_payload_json, now, allow_control=True)
-            _fenced_update(conn, """UPDATE hosted_rooms SET authority_gateway_id=?,
+            _fenced_update(conn, _storage_statement(sqlite="""UPDATE hosted_rooms SET authority_gateway_id=?,
             authority_epoch=authority_epoch+1, next_seq=next_seq+1,
             event_bytes=event_bytes+?, revision=revision+1, updated_at=? WHERE room_id=?
-            AND disbanded_at IS NULL AND authority_gateway_id=? AND authority_epoch=?""",
+            AND disbanded_at IS NULL AND authority_gateway_id=? AND authority_epoch=?""",postgresql='UPDATE hosted_rooms SET authority_gateway_id=%s,\n            authority_epoch=authority_epoch+1, next_seq=next_seq+1,\n            event_bytes=event_bytes+%s, revision=revision+1, updated_at=%s WHERE room_id=%s\n            AND disbanded_at IS NULL AND authority_gateway_id=%s AND authority_epoch=%s'),
                 (new_gateway_id, claim_bytes, now, room_id, expected_gateway_id, expected_epoch),
                 AuthorityConflictError("hosted room authority changed"))
             existing_event = _load_event(conn, room_id, event_id)
         state_row = _reload(
-            conn, """SELECT room_id, name, members_json, authority_gateway_id, authority_epoch, next_seq,
-                revision, created_at, updated_at FROM hosted_rooms WHERE room_id=?""", (room_id,),
+            conn, _storage_statement(sqlite="""SELECT room_id, name, members_json, authority_gateway_id, authority_epoch, next_seq,
+                revision, created_at, updated_at FROM hosted_rooms WHERE room_id=?""",postgresql='SELECT room_id, name, members_json, authority_gateway_id, authority_epoch, next_seq,\n                revision, created_at, updated_at FROM hosted_rooms WHERE room_id=%s'), (room_id,),
             "claimed room could not be reloaded")
     if existing_event is None:  # pragma: no cover - both claim paths set it
         raise RuntimeError("authority claim event could not be reloaded")
@@ -1113,7 +1121,7 @@ def claim_authority(
 def _disband_replay(conn: sqlite3.Connection, room_id: str, room: sqlite3.Row | None) -> dict[str, Any] | None:
     """Idempotent replay for a retired or already-disbanded room; None when the room is live."""
     if room is None:
-        retired = conn.execute("SELECT retired_at FROM hosted_room_retired_ids WHERE room_id=?", (room_id,)).fetchone()
+        retired = conn.execute(_storage_statement(sqlite="SELECT retired_at FROM hosted_room_retired_ids WHERE room_id=?",postgresql='SELECT retired_at FROM hosted_room_retired_ids WHERE room_id=%s'), (room_id,)).fetchone()
         if retired is None:
             raise RoomNotFoundError("hosted room not found")
         return {
@@ -1137,8 +1145,8 @@ def disband_room(
     _require_positive_int(expected_epoch, "expected_epoch")
     now = _now(now)
     with _transaction(db_path, immediate=True) as conn:
-        room = conn.execute("""SELECT authority_gateway_id, authority_epoch, next_seq, event_bytes, disbanded_at
-                FROM hosted_rooms WHERE room_id=?""", (room_id,)).fetchone()
+        room = conn.execute(_storage_statement(sqlite="""SELECT authority_gateway_id, authority_epoch, next_seq, event_bytes, disbanded_at
+                FROM hosted_rooms WHERE room_id=?""",postgresql='SELECT authority_gateway_id, authority_epoch, next_seq, event_bytes, disbanded_at\n                FROM hosted_rooms WHERE room_id=%s'), (room_id,)).fetchone()
         if (replay := _disband_replay(conn, room_id, room)) is not None:
             return replay
         _require_authority(room, expected_gateway_id, expected_epoch, "stale hosted room authority")
@@ -1146,11 +1154,11 @@ def disband_room(
             conn, room, room_id, int(room["next_seq"]), "system:room-disbanded", "room.disbanded",
             _system_actor_json("room-control"), int(room["authority_epoch"]), _payload_json({"room_id": room_id}), now,
             allow_control=True)
-        _fenced_update(conn, """UPDATE hosted_rooms
+        _fenced_update(conn, _storage_statement(sqlite="""UPDATE hosted_rooms
                 SET disbanded_at=?, updated_at=?, revision=revision+1,
                     next_seq=next_seq+1, event_bytes=event_bytes+?
                 WHERE room_id=? AND disbanded_at IS NULL AND authority_gateway_id=?
-                AND authority_epoch=?""",
+                AND authority_epoch=?""",postgresql='UPDATE hosted_rooms\n                SET disbanded_at=%s, updated_at=%s, revision=revision+1,\n                    next_seq=next_seq+1, event_bytes=event_bytes+%s\n                WHERE room_id=%s AND disbanded_at IS NULL AND authority_gateway_id=%s\n                AND authority_epoch=%s'),
             (now, now, disband_bytes, room_id, expected_gateway_id, expected_epoch),
             RoomConflictError("hosted room disband lost its fence"))
         conn.execute(_INSERT_RETIRED, (room_id, now))
@@ -1169,14 +1177,14 @@ def read_events(
     limit = _bounded_limit(limit, MAX_LOG_LIMIT)
     with _transaction(db_path) as conn:
         room = _room_row(
-            conn, """SELECT next_seq, authority_gateway_id, authority_epoch FROM hosted_rooms
-                WHERE room_id=? AND (disbanded_at IS NULL OR ?)""", (room_id, int(include_disbanded)), room_id)
+            conn, _storage_statement(sqlite="""SELECT next_seq, authority_gateway_id, authority_epoch FROM hosted_rooms
+                WHERE room_id=? AND (disbanded_at IS NULL OR ?)""",postgresql='SELECT next_seq, authority_gateway_id, authority_epoch FROM hosted_rooms\n                WHERE room_id=%s AND (disbanded_at IS NULL OR %s<>0)'), (room_id, int(include_disbanded)), room_id)
         latest_seq = int(room["next_seq"]) - 1
         authority = {"gateway_id": str(room["authority_gateway_id"]), "epoch": int(room["authority_epoch"])}
         if since_seq > latest_seq:
             raise HostedRoomError("since_seq is ahead of the hosted room log")
         rows = conn.execute(
-            f"""WITH candidates AS (
+            _storage_statement(sqlite=f"""WITH candidates AS (
                    SELECT {_EVENT_COLUMNS},
                           SUM(
                               LENGTH(CAST(event_id AS BLOB)) +
@@ -1191,7 +1199,7 @@ def read_events(
                SELECT {_EVENT_COLUMNS}
                  FROM candidates
                 WHERE cumulative_bytes<=?
-                ORDER BY seq ASC""", (room_id, since_seq, limit, MAX_LOG_PAGE_BYTES)).fetchall()
+                ORDER BY seq ASC""",postgresql=f"WITH candidates AS (\n                   SELECT {_EVENT_COLUMNS},\n                          SUM(\n                              octet_length(convert_to(CAST(event_id AS text),'UTF8')) +\n                              octet_length(convert_to(CAST(kind AS text),'UTF8')) +\n                              octet_length(convert_to(CAST(actor_json AS text),'UTF8')) +\n                              octet_length(convert_to(CAST(payload_json AS text),'UTF8'))\n                          ) OVER (ORDER BY seq ASC) AS cumulative_bytes\n                     FROM hosted_room_events\n                    WHERE room_id=%s AND seq>%s\n                    ORDER BY seq ASC LIMIT %s\n               )\n               SELECT {_EVENT_COLUMNS}\n                 FROM candidates\n                WHERE cumulative_bytes<=%s\n                ORDER BY seq ASC"), (room_id, since_seq, limit, MAX_LOG_PAGE_BYTES)).fetchall()
     events = [_event_from_row(row) for row in rows]
     def build_page(page_events: list[dict[str, Any]]) -> dict[str, Any]:
         cursor = page_events[-1]["seq"] if page_events else since_seq

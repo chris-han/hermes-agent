@@ -6,6 +6,7 @@ late-bound via ``_kb`` (import-cycle breaking) so monkeypatching
 """
 
 from __future__ import annotations
+from hermes_state_sql import statement as _storage_statement, parameter_marker as _parameter_marker, inserted_id as _inserted_id, in_transaction as _in_transaction
 
 import os
 import shutil
@@ -43,13 +44,13 @@ def _path_key(path: Path | str | None) -> str:
 _TERMINAL_STATUSES_SQL = "('done', 'archived', 'failed', 'cancelled')"
 
 _ACTIVE_CHILDREN_SQL = (
-    "SELECT 1 FROM task_links l "
+    _storage_statement(sqlite="SELECT 1 FROM task_links l "
     "JOIN tasks t ON t.id = l.child_id "
     f"WHERE l.parent_id = ? AND t.status NOT IN {_TERMINAL_STATUSES_SQL} "
-    "LIMIT 1"
+    "LIMIT 1",postgresql=f'SELECT 1 FROM task_links l JOIN tasks t ON t.id = l.child_id WHERE l.parent_id = %s AND t.status NOT IN {_TERMINAL_STATUSES_SQL} LIMIT 1')
 )
 
-_WORKSPACE_ROW_SQL = "SELECT workspace_kind, workspace_path, branch_name FROM tasks WHERE id = ?"
+_WORKSPACE_ROW_SQL = _storage_statement(sqlite="SELECT workspace_kind, workspace_path, branch_name FROM tasks WHERE id = ?",postgresql='SELECT workspace_kind, workspace_path, branch_name FROM tasks WHERE id = %s')
 
 
 def _git(repo_root: Path, *args: str, timeout: int) -> subprocess.CompletedProcess:
@@ -78,7 +79,7 @@ def _has_active_children(conn: sqlite3.Connection, task_id: str) -> bool:
 
 
 _TERMINAL_TASK_SQL = (
-    f"SELECT 1 FROM tasks WHERE id = ? AND status IN {_TERMINAL_STATUSES_SQL}"
+    _storage_statement(sqlite=f"SELECT 1 FROM tasks WHERE id = ? AND status IN {_TERMINAL_STATUSES_SQL}",postgresql=f'SELECT 1 FROM tasks WHERE id = %s AND status IN {_TERMINAL_STATUSES_SQL}')
 )
 
 
@@ -87,9 +88,9 @@ def _is_terminal_task(conn: sqlite3.Connection, task_id: str) -> bool:
 
 
 _OTHER_LIVE_PATHS_SQL = (
-    "SELECT workspace_path FROM tasks "
+    _storage_statement(sqlite="SELECT workspace_path FROM tasks "
     "WHERE id != ? AND workspace_path IS NOT NULL "
-    f"AND status NOT IN {_TERMINAL_STATUSES_SQL}"
+    f"AND status NOT IN {_TERMINAL_STATUSES_SQL}",postgresql=f'SELECT workspace_path FROM tasks WHERE id != %s AND workspace_path IS NOT NULL AND status NOT IN {_TERMINAL_STATUSES_SQL}')
 )
 # Sibling boards mint their own ids, so the id being cleaned up here can
 # name a different live task there. Do not exclude it.
@@ -335,7 +336,7 @@ def _managed_scratch_path_info(p: Path) -> tuple[bool, Optional[str]]:
 def _scratch_workspace(conn: sqlite3.Connection, task_id: str) -> Optional[Path]:
     """Expanded ``workspace_path`` when the task uses a scratch workspace, else ``None``."""
     row = conn.execute(
-        "SELECT workspace_kind, workspace_path FROM tasks WHERE id = ?",
+        _storage_statement(sqlite="SELECT workspace_kind, workspace_path FROM tasks WHERE id = ?",postgresql='SELECT workspace_kind, workspace_path FROM tasks WHERE id = %s'),
         (task_id,),
     ).fetchone()
     if not row or row["workspace_kind"] != "scratch" or not row["workspace_path"]:
@@ -505,7 +506,7 @@ def _try_cleanup_parent_workspaces(conn: sqlite3.Connection, task_id: str) -> No
     """
     try:
         parents = conn.execute(
-            "SELECT parent_id FROM task_links WHERE child_id = ?",
+            _storage_statement(sqlite="SELECT parent_id FROM task_links WHERE child_id = ?",postgresql='SELECT parent_id FROM task_links WHERE child_id = %s'),
             (task_id,),
         ).fetchall()
         for (parent_id,) in parents:
@@ -541,7 +542,7 @@ def _cleanup_worker_tmux(conn: sqlite3.Connection, task_id: str) -> None:
     """Kill the tmux session associated with a task's assignee, if dead."""
     try:
         row = conn.execute(
-            "SELECT assignee FROM tasks WHERE id = ?", (task_id,)
+            _storage_statement(sqlite="SELECT assignee FROM tasks WHERE id = ?",postgresql='SELECT assignee FROM tasks WHERE id = %s'), (task_id,)
         ).fetchone()
         if not row or not row["assignee"]:
             return
@@ -827,7 +828,7 @@ def resolve_workspace(task: Task, *, board: Optional[str] = None) -> Path:
 
 def _set_task_column(conn: sqlite3.Connection, task_id: str, column: str, value: str) -> None:
     with _kb.write_txn(conn):
-        conn.execute(f"UPDATE tasks SET {column} = ? WHERE id = ?", (value, task_id))
+        conn.execute(_storage_statement(sqlite=f"UPDATE tasks SET {column} = ? WHERE id = ?",postgresql=f'UPDATE tasks SET {column} = %s WHERE id = %s'), (value, task_id))
 
 
 def set_workspace_path(conn: sqlite3.Connection, task_id: str, path: Path | str) -> None:

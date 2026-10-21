@@ -15,13 +15,41 @@ def postgres_enabled():
 
 
 def resolve_postgres_scope(home):
+    """Resolve a frozen migration mapping or the core-governed signup registry.
+
+    The registry is read only here. Resource allocation belongs to the explicit
+    authenticated signup transaction; opening a native store never provisions it.
+    """
     from hermes_state_postgresql import SessionScope
     mappings=json.loads(os.environ.get('HERMES_STATE_SCOPE_MAP','{}'))
-    key=str(Path(home).expanduser().resolve())
-    item=mappings.get(key)
-    if not isinstance(item,dict) or set(item)!= {'tenant_id','workspace_id','source_store_id'}:
+    if not isinstance(mappings,dict):
         raise ValueError('Explicit governed PostgreSQL session home mapping required')
-    return SessionScope(**item)
+    key=str(Path(home).expanduser().resolve())
+    if key in mappings:
+        item=mappings[key]
+        if not isinstance(item,dict) or set(item)!= {'tenant_id','workspace_id','source_store_id'}:
+            raise ValueError('Invalid governed PostgreSQL session home mapping')
+        return SessionScope(**item)
+    dsn=os.environ.get('HERMES_DATABASE_URL')
+    if dsn:
+        import psycopg
+        try:
+            with psycopg.connect(dsn) as conn:
+                conn.execute('SET TRANSACTION READ ONLY')
+                row=conn.execute("""SELECT b.tenant_id,b.workspace_id,b.source_store_id,b.schema_name
+                    FROM semantier_identity.workspace_runtime_bindings b
+                    JOIN semantier_identity.users u ON u.user_id=b.user_id
+                     AND u.payload_json::jsonb->>'user_id'=u.user_id
+                     AND u.payload_json::jsonb->>'workspace_id'=b.workspace_id
+                    WHERE b.hermes_home=%s""",(key,)).fetchone()
+        except psycopg.errors.UndefinedTable:
+            row=None
+        if row:
+            scope=SessionScope(*row[:3])
+            if scope.schema!=row[3]:
+                raise ValueError('Governed PostgreSQL namespace binding conflict')
+            return scope
+    raise ValueError('Explicit governed PostgreSQL session home mapping required')
 
 
 def open_session_db(db_path=None,*,home=None,read_only=False):

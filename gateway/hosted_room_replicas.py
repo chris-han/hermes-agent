@@ -8,6 +8,7 @@ epoch. Storage primitives only: the caller decides *when* takeover is safe.
 """
 
 from __future__ import annotations
+from hermes_state_sql import statement as _storage_statement, parameter_marker as _parameter_marker, inserted_id as _inserted_id, in_transaction as _in_transaction
 
 import json
 import sqlite3
@@ -24,9 +25,9 @@ MAX_REPLICA_ROOMS = 256
 MAX_REPLICA_EVENT_BYTES = 256 * 1024 * 1024
 _SYSTEM_ACTOR = {"kind": "system", "id": "authority-control"}
 _EVENT_COLUMNS = "(room_id, seq, event_id, kind, actor_json, authority_epoch, payload_json, created_at)"
-_INSERT_ROOM_EVENT = f"INSERT INTO hosted_room_events {_EVENT_COLUMNS} VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-_INSERT_REPLICA_EVENT = f"INSERT INTO hosted_room_replica_events {_EVENT_COLUMNS} VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-_SELECT_REPLICA = "SELECT * FROM hosted_room_replicas WHERE room_id=?"
+_INSERT_ROOM_EVENT = _storage_statement(sqlite=f"INSERT INTO hosted_room_events {_EVENT_COLUMNS} VALUES (?, ?, ?, ?, ?, ?, ?, ?)",postgresql=f'INSERT INTO hosted_room_events {_EVENT_COLUMNS} VALUES (%s, %s, %s, %s, %s, %s, %s, %s)')
+_INSERT_REPLICA_EVENT = _storage_statement(sqlite=f"INSERT INTO hosted_room_replica_events {_EVENT_COLUMNS} VALUES (?, ?, ?, ?, ?, ?, ?, ?)",postgresql=f'INSERT INTO hosted_room_replica_events {_EVENT_COLUMNS} VALUES (%s, %s, %s, %s, %s, %s, %s, %s)')
+_SELECT_REPLICA = _storage_statement(sqlite="SELECT * FROM hosted_room_replicas WHERE room_id=?",postgresql='SELECT * FROM hosted_room_replicas WHERE room_id=%s')
 
 
 class ReplicaError(HostedRoomError): """Base class for invalid or conflicting replica operations."""
@@ -35,6 +36,12 @@ class ReplicaEpochRegressionError(ReplicaError): """A page or demotion carries a
 
 
 def _initialize_replica_schema(conn: sqlite3.Connection) -> None:
+    from hermes_state_sql import is_postgres
+    if is_postgres(conn):
+        from gateway.hosted_rooms_common import table_exists
+        if not table_exists(conn,"hosted_room_replicas"):
+            raise RuntimeError("Provisioned hosted-room replica schema required")
+        return
     conn.execute("""CREATE TABLE IF NOT EXISTS hosted_room_replicas (
             room_id TEXT PRIMARY KEY, name TEXT NOT NULL, members_json TEXT NOT NULL,
             authority_gateway_id TEXT NOT NULL,
@@ -55,6 +62,12 @@ def _initialize_replica_schema(conn: sqlite3.Connection) -> None:
 def _replica_transaction(db_path: DbPath) -> Iterator[sqlite3.Connection]:
     """Ensure the replica schema (own autocommit connection), then open an IMMEDIATE transaction. The DDL is
     deliberately re-run inside the transaction: that double init is the established statement order."""
+    from hermes_state_backend import postgres_enabled
+    if postgres_enabled():
+        from gateway.hosted_rooms_common import transaction
+        with transaction(_connect,db_path,immediate=True) as conn:
+            yield conn
+        return
     with closing(_connect(db_path)) as conn, conn:
         _initialize_replica_schema(conn)
     with _transaction(db_path, immediate=True) as conn:
@@ -115,8 +128,8 @@ def _validate_page(page: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
 
 def _replica_row_state(conn: sqlite3.Connection, room_id: str) -> tuple[sqlite3.Row | None, int, int, int]:
     """Return (row, stored_epoch, last_seq, stored_bytes); a new room is admitted only under the room cap."""
-    row = conn.execute("""SELECT authority_gateway_id, authority_epoch, last_seq, latest_seq, event_bytes
-             FROM hosted_room_replicas WHERE room_id=?""", (room_id,)).fetchone()
+    row = conn.execute(_storage_statement(sqlite="""SELECT authority_gateway_id, authority_epoch, last_seq, latest_seq, event_bytes
+             FROM hosted_room_replicas WHERE room_id=?""",postgresql='SELECT authority_gateway_id, authority_epoch, last_seq, latest_seq, event_bytes\n             FROM hosted_room_replicas WHERE room_id=%s'), (room_id,)).fetchone()
     if row is None:
         count = conn.execute("SELECT COUNT(*) FROM hosted_room_replicas").fetchone()[0]
         if int(count) >= MAX_REPLICA_ROOMS:
@@ -131,14 +144,14 @@ def _store_replica(
     """INSERT the replica row for a new room, else UPDATE it (event_bytes accumulates)."""
     values = (room_name, members_json, authority["gateway_id"], authority["epoch"], new_last, max(latest_seq, new_last))
     if is_new:
-        conn.execute("""INSERT INTO hosted_room_replicas (room_id, name, members_json,
+        conn.execute(_storage_statement(sqlite="""INSERT INTO hosted_room_replicas (room_id, name, members_json,
                 authority_gateway_id, authority_epoch, last_seq, latest_seq, event_bytes,
-                created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",postgresql='INSERT INTO hosted_room_replicas (room_id, name, members_json,\n                authority_gateway_id, authority_epoch, last_seq, latest_seq, event_bytes,\n                created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)'),
             (room_id, *values, added_bytes, now, now))
     else:
-        conn.execute("""UPDATE hosted_room_replicas SET name=?, members_json=?, authority_gateway_id=?,
+        conn.execute(_storage_statement(sqlite="""UPDATE hosted_room_replicas SET name=?, members_json=?, authority_gateway_id=?,
                 authority_epoch=?, last_seq=?, latest_seq=?, event_bytes=event_bytes+?,
-                updated_at=? WHERE room_id=?""", (*values, added_bytes, now, room_id))
+                updated_at=? WHERE room_id=?""",postgresql='UPDATE hosted_room_replicas SET name=%s, members_json=%s, authority_gateway_id=%s,\n                authority_epoch=%s, last_seq=%s, latest_seq=%s, event_bytes=event_bytes+%s,\n                updated_at=%s WHERE room_id=%s'), (*values, added_bytes, now, room_id))
 
 
 def ingest_page(
@@ -215,29 +228,29 @@ def promote_replica(
             raise ReplicaError("replica not found")
         if replica["authority_gateway_id"] == local_gateway:
             raise ReplicaError("this gateway already holds the room authority")
-        if conn.execute("SELECT 1 FROM hosted_rooms WHERE room_id=?", (room_id,)).fetchone():
+        if conn.execute(_storage_statement(sqlite="SELECT 1 FROM hosted_rooms WHERE room_id=?",postgresql='SELECT 1 FROM hosted_rooms WHERE room_id=%s'), (room_id,)).fetchone():
             raise RoomConflictError("room_id already exists in the local authoritative store")
-        if conn.execute("SELECT 1 FROM hosted_room_retired_ids WHERE room_id=?", (room_id,)).fetchone():
+        if conn.execute(_storage_statement(sqlite="SELECT 1 FROM hosted_room_retired_ids WHERE room_id=?",postgresql='SELECT 1 FROM hosted_room_retired_ids WHERE room_id=%s'), (room_id,)).fetchone():
             raise RoomConflictError("room_id belongs to a disbanded room")
         previous_gateway, previous_epoch = str(replica["authority_gateway_id"]), int(replica["authority_epoch"])
         target_epoch, claim_seq = previous_epoch + 1, int(replica["last_seq"]) + 1
         claim = _control_event("claimed", target_epoch, {
             "previous_gateway_id": previous_gateway, "authority_gateway_id": local_gateway,
             "authority_epoch": target_epoch, "promoted_from_replica": True, "reason": reason})
-        conn.execute("""INSERT INTO hosted_rooms
+        conn.execute(_storage_statement(sqlite="""INSERT INTO hosted_rooms
                (room_id, name, members_json, authority_gateway_id, authority_epoch, next_seq, event_bytes,
                 revision, created_at, updated_at, disbanded_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, NULL)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, NULL)""",postgresql='INSERT INTO hosted_rooms\n               (room_id, name, members_json, authority_gateway_id, authority_epoch, next_seq, event_bytes,\n                revision, created_at, updated_at, disbanded_at)\n               VALUES (%s, %s, %s, %s, %s, %s, %s, 1, %s, %s, NULL)'),
             (
                 room_id, replica["name"], replica["members_json"], local_gateway, target_epoch, claim_seq + 1,
                 int(replica["event_bytes"]) + utf8_len(*claim), now, now))
         conn.execute(
-            f"""INSERT INTO hosted_room_events {_EVENT_COLUMNS}
+            _storage_statement(sqlite=f"""INSERT INTO hosted_room_events {_EVENT_COLUMNS}
                SELECT room_id, seq, event_id, kind, actor_json, authority_epoch, payload_json, created_at
-                 FROM hosted_room_replica_events WHERE room_id=?""", (room_id,))
+                 FROM hosted_room_replica_events WHERE room_id=?""",postgresql=f'INSERT INTO hosted_room_events {_EVENT_COLUMNS}\n               SELECT room_id, seq, event_id, kind, actor_json, authority_epoch, payload_json, created_at\n                 FROM hosted_room_replica_events WHERE room_id=%s'), (room_id,))
         _append_control_event(conn, room_id, claim_seq, target_epoch, claim, now)
-        conn.execute("DELETE FROM hosted_room_replica_events WHERE room_id=?", (room_id,))
-        conn.execute("DELETE FROM hosted_room_replicas WHERE room_id=?", (room_id,))
+        conn.execute(_storage_statement(sqlite="DELETE FROM hosted_room_replica_events WHERE room_id=?",postgresql='DELETE FROM hosted_room_replica_events WHERE room_id=%s'), (room_id,))
+        conn.execute(_storage_statement(sqlite="DELETE FROM hosted_room_replicas WHERE room_id=?",postgresql='DELETE FROM hosted_room_replicas WHERE room_id=%s'), (room_id,))
     return {
         "room_id": room_id, "authority_gateway_id": local_gateway, "authority_epoch": target_epoch,
         "previous_gateway_id": previous_gateway, "previous_epoch": previous_epoch, "claim_seq": claim_seq,
@@ -260,8 +273,8 @@ def demote_room(
     now = clock(now)
     local_gateway = local_authority_gateway_id()
     with _transaction(db_path, immediate=True) as conn:
-        row = conn.execute("""SELECT authority_gateway_id, authority_epoch, next_seq
-                 FROM hosted_rooms WHERE room_id=? AND disbanded_at IS NULL""", (room_id,)).fetchone()
+        row = conn.execute(_storage_statement(sqlite="""SELECT authority_gateway_id, authority_epoch, next_seq
+                 FROM hosted_rooms WHERE room_id=? AND disbanded_at IS NULL""",postgresql='SELECT authority_gateway_id, authority_epoch, next_seq\n                 FROM hosted_rooms WHERE room_id=%s AND disbanded_at IS NULL'), (room_id,)).fetchone()
         if row is None:
             raise ReplicaError("room not found in the local authoritative store")
         current_gateway, current_epoch = str(row["authority_gateway_id"]), int(row["authority_epoch"])
@@ -277,9 +290,9 @@ def demote_room(
             "previous_gateway_id": current_gateway, "authority_gateway_id": observed_gateway_id,
             "authority_epoch": observed_epoch})
         _append_control_event(conn, room_id, int(row["next_seq"]), observed_epoch, lost, now)
-        conn.execute("""UPDATE hosted_rooms
+        conn.execute(_storage_statement(sqlite="""UPDATE hosted_rooms
                   SET authority_gateway_id=?, authority_epoch=?, next_seq=next_seq+1, revision=revision+1, updated_at=?
-                WHERE room_id=?""",
+                WHERE room_id=?""",postgresql='UPDATE hosted_rooms\n                  SET authority_gateway_id=%s, authority_epoch=%s, next_seq=next_seq+1, revision=revision+1, updated_at=%s\n                WHERE room_id=%s'),
             (observed_gateway_id, observed_epoch, now, room_id))
     return {
         "room_id": room_id, "authority_gateway_id": observed_gateway_id, "authority_epoch": observed_epoch,

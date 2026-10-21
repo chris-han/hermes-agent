@@ -40,35 +40,96 @@ class SessionScope:
         return 'hermes_' + digest[:40]
 
 
+def postgres_scope_schema_sql():
+    """Pinned native DDL for the migration owner and guarded signup allocator.
+
+    Execute only with a transaction-local search_path pointing at the validated
+    SessionScope.schema. Runtime store constructors never execute this asset.
+    """
+    from hermes_state_postgresql_schema import SCHEMA_SQL
+    from hermes_state_postgresql_kanban_schema import SCHEMA_SQL as KANBAN_SCHEMA_SQL
+    from hermes_state_postgresql_rooms_schema import SCHEMA_SQL as ROOMS_SCHEMA_SQL
+    return SCHEMA_SQL + "\n" + KANBAN_SCHEMA_SQL + "\n" + ROOMS_SCHEMA_SQL + "\n" + r"""
+CREATE TABLE IF NOT EXISTS scope_binding (
+    singleton INTEGER PRIMARY KEY CHECK(singleton=1), tenant_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL, source_store_id TEXT NOT NULL,
+    native_schema_version INTEGER NOT NULL DEFAULT 1 CHECK(native_schema_version=1));
+ALTER TABLE scope_binding ADD COLUMN IF NOT EXISTS native_schema_version INTEGER NOT NULL DEFAULT 1 CHECK(native_schema_version=1);
+CREATE TABLE IF NOT EXISTS migration_receipts (
+    source_digest TEXT PRIMARY KEY, receipt_json TEXT NOT NULL,
+    imported_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS semantier_session_branches (
+    child_session_id TEXT PRIMARY KEY REFERENCES sessions(id),
+    source_session_id TEXT NOT NULL REFERENCES sessions(id),
+    branch_point_message_id TEXT NOT NULL, branch_point_sequence INTEGER NOT NULL,
+    title TEXT NOT NULL, idempotency_key TEXT NOT NULL, request_hash TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS messages_session_id_pg ON messages(session_id,id);
+CREATE INDEX IF NOT EXISTS sessions_parent_pg ON sessions(parent_session_id);
+"""
+
+
+def postgres_owned_tables():
+    """Fixed native migration asset ownership, independent from co-located core owners."""
+    import re
+    return tuple(dict.fromkeys(re.findall(r'CREATE TABLE IF NOT EXISTS ([a-z][a-z0-9_]*)',postgres_scope_schema_sql(),re.IGNORECASE)))
+
+
+def require_scope_ready(conn, scope=None):
+    """Validate native migration state using catalog reads only; never provision here.
+
+    The caller owns the actual psycopg transaction. With no explicit scope, the
+    current search_path must already name the governed native namespace.
+    """
+    import re
+    def values(row):
+        return tuple(row.values()) if hasattr(row,'values') else tuple(row)
+    namespace=scope.schema if scope is not None else values(conn.execute('SELECT current_schema()').fetchone())[0]
+    if not isinstance(namespace,str) or not re.fullmatch(r'hermes_[0-9a-f]{40}',namespace):
+        raise ValueError('Governed native schema required for readiness')
+    tables={values(row)[0] for row in conn.execute("SELECT c.relname FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=%s AND c.relkind IN ('r','p')",(namespace,))}
+    missing=set(postgres_owned_tables())-tables
+    if missing:raise ValueError('Native tables missing: '+','.join(sorted(missing)))
+    rows=conn.execute(sql.SQL('SELECT tenant_id,workspace_id,source_store_id,native_schema_version FROM {}').format(sql.Identifier(namespace,'scope_binding'))).fetchall()
+    if len(rows)!=1:raise ValueError('Native scope binding missing or ambiguous')
+    binding=values(rows[0]);actual=SessionScope(*binding[:3])
+    if actual.schema!=namespace or (scope is not None and actual!=scope) or binding[3]!=1:
+        raise ValueError('Native schema identity/version mismatch')
+    expected=set(re.findall(r'CREATE TRIGGER ([a-z][a-z0-9_]*)',postgres_scope_schema_sql(),re.IGNORECASE))
+    enabled={values(row)[0] for row in conn.execute("SELECT t.tgname FROM pg_catalog.pg_trigger t JOIN pg_catalog.pg_class c ON c.oid=t.tgrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=%s AND NOT t.tgisinternal AND t.tgenabled IN ('O','A')",(namespace,))}
+    missing=expected-enabled
+    if missing:raise ValueError('Native history guards missing or disabled: '+','.join(sorted(missing)))
+    return {'schema':namespace,'native_schema_version':1,'tables':len(postgres_owned_tables()),'enabled_triggers':len(expected)}
+
+
 def provision_scope(dsn, scope: SessionScope, *, app_role: str):
     """Migration-only DDL; the app role never owns schemas or tables."""
-    from hermes_state_postgresql_schema import SCHEMA_SQL
-    ddl = SCHEMA_SQL
     with psycopg.connect(dsn) as conn:
         conn.execute(sql.SQL('CREATE SCHEMA IF NOT EXISTS {}').format(sql.Identifier(scope.schema)))
         conn.execute(sql.SQL('SET LOCAL search_path TO {}, pg_catalog').format(sql.Identifier(scope.schema)))
-        conn.execute(ddl)
-        conn.execute('''CREATE TABLE IF NOT EXISTS scope_binding (
-            singleton INTEGER PRIMARY KEY CHECK(singleton=1), tenant_id TEXT NOT NULL,
-            workspace_id TEXT NOT NULL, source_store_id TEXT NOT NULL)''')
-        conn.execute('''INSERT INTO scope_binding VALUES (1,%s,%s,%s) ON CONFLICT DO NOTHING''', scope.identity)
+        conn.execute(postgres_scope_schema_sql())
+        conn.execute('INSERT INTO scope_binding VALUES (1,%s,%s,%s) ON CONFLICT DO NOTHING', scope.identity)
         binding = conn.execute('SELECT tenant_id,workspace_id,source_store_id FROM scope_binding').fetchone()
         if tuple(binding) != scope.identity:
             raise ValueError('Session namespace identity conflict')
-        conn.execute('''CREATE TABLE IF NOT EXISTS migration_receipts (
-            source_digest TEXT PRIMARY KEY, receipt_json TEXT NOT NULL,
-            imported_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP)''')
-        conn.execute('''CREATE TABLE IF NOT EXISTS semantier_session_branches (
-            child_session_id TEXT PRIMARY KEY REFERENCES sessions(id), source_session_id TEXT NOT NULL REFERENCES sessions(id),
-            branch_point_message_id TEXT NOT NULL, branch_point_sequence INTEGER NOT NULL,
-            title TEXT NOT NULL, idempotency_key TEXT NOT NULL, request_hash TEXT NOT NULL)''')
-        conn.execute('CREATE INDEX IF NOT EXISTS messages_session_id_pg ON messages(session_id,id)')
-        conn.execute('CREATE INDEX IF NOT EXISTS sessions_parent_pg ON sessions(parent_session_id)')
         conn.execute(sql.SQL('GRANT USAGE ON SCHEMA {} TO {}').format(sql.Identifier(scope.schema),sql.Identifier(app_role)))
-        conn.execute(sql.SQL('GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA {} TO {}').format(sql.Identifier(scope.schema),sql.Identifier(app_role)))
-        conn.execute(sql.SQL('GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA {} TO {}').format(sql.Identifier(scope.schema),sql.Identifier(app_role)))
-        # Runtime cannot change the source namespace identity or migration receipts.
-        conn.execute(sql.SQL('REVOKE INSERT,UPDATE,DELETE ON scope_binding,migration_receipts FROM {}').format(sql.Identifier(app_role)))
+        protected={'scope_binding','migration_receipts','schema_version','hosted_room_legacy_imports'}
+        owned=postgres_owned_tables()
+        for table in owned:
+            privileges=sql.SQL('SELECT' if table in protected else 'SELECT,INSERT,UPDATE,DELETE')
+            conn.execute(sql.SQL('GRANT {} ON TABLE {} TO {}').format(privileges,sql.Identifier(scope.schema,table),sql.Identifier(app_role)))
+            if table in protected:
+                conn.execute(sql.SQL('REVOKE INSERT,UPDATE,DELETE ON TABLE {} FROM {}').format(sql.Identifier(scope.schema,table),sql.Identifier(app_role)))
+        # Only sequences belonging to the native-owned tables; never re-grant a core owner's metadata.
+        sequences=conn.execute("""SELECT DISTINCT sequence_ns.nspname,sequence.relname
+            FROM pg_catalog.pg_class sequence
+            JOIN pg_catalog.pg_namespace sequence_ns ON sequence_ns.oid=sequence.relnamespace
+            JOIN pg_catalog.pg_depend d ON d.objid=sequence.oid AND d.deptype IN ('a','i')
+            JOIN pg_catalog.pg_class owner_table ON owner_table.oid=d.refobjid
+            JOIN pg_catalog.pg_namespace owner_ns ON owner_ns.oid=owner_table.relnamespace
+            WHERE sequence.relkind='S' AND owner_ns.nspname=%s AND owner_table.relname=ANY(%s)""",(scope.schema,list(owned))).fetchall()
+        for namespace,name in sequences:
+            conn.execute(sql.SQL('GRANT USAGE,SELECT ON SEQUENCE {} TO {}').format(sql.Identifier(namespace,name),sql.Identifier(app_role)))
+
 
 
 from hermes_state_postgresql_portability import PostgreSQLPortabilityMixin
@@ -76,9 +137,13 @@ from hermes_state_postgresql_portability import PostgreSQLPortabilityMixin
 
 from hermes_state_postgresql_search import PostgreSQLSearchMixin
 from hermes_state_postgresql_usage import PostgreSQLUsageMixin
+from hermes_state_postgresql_runtime import PostgreSQLRuntimeMixin
+from hermes_state_rewind import SessionRewindMixin
+from hermes_state_postgresql_compaction import PostgreSQLCompactionMixin
+from hermes_state_postgresql_retirement import PostgreSQLRetirementMixin
 
 
-class PostgreSQLSessionDB(PostgreSQLPortabilityMixin,PostgreSQLSearchMixin,PostgreSQLUsageMixin):
+class PostgreSQLSessionDB(PostgreSQLRuntimeMixin,PostgreSQLPortabilityMixin,PostgreSQLSearchMixin,PostgreSQLUsageMixin,PostgreSQLCompactionMixin,PostgreSQLRetirementMixin,SessionRewindMixin):
     """Native SessionDB API used by the embedded API and Semantier session readers.
 
     Each operation owns a real PG transaction. External durable owners may call
@@ -110,6 +175,9 @@ class PostgreSQLSessionDB(PostgreSQLPortabilityMixin,PostgreSQLSearchMixin,Postg
         with psycopg.connect(self._dsn, row_factory=dict_row) as conn:
             if read_only:
                 conn.execute('SET TRANSACTION READ ONLY')
+            else:
+                conn.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',(self.scope.schema+'\x1fcanonical-native-writer',))
+            conn.execute(sql.SQL('SET LOCAL search_path TO {},pg_catalog').format(sql.Identifier(self.scope.schema)))
             yield conn
 
     def _all(self, query, params=()):
@@ -151,15 +219,43 @@ class PostgreSQLSessionDB(PostgreSQLPortabilityMixin,PostgreSQLSearchMixin,Postg
         return conn.execute(sql.SQL('SELECT * FROM {} WHERE id=%s{}').format(self.table('sessions'),
             sql.SQL(' FOR UPDATE' if lock else '')), (session_id,)).fetchone()
 
-    def _create_on_conn(self, conn, session_id, source, **kwargs):
-        # Closed field set comes from the native schema owner, not caller SQL.
+    def _create_on_conn(self,conn,session_id,source,**kwargs):
         from hermes_state_postgresql_fields import SESSION_FIELDS
-        unknown = set(kwargs) - SESSION_FIELDS
-        if unknown:
-            raise TypeError('Unknown session fields: ' + ','.join(sorted(unknown)))
-        values = {'id':session_id,'source':source,'created_source':source,'started_at':time.time()}
+        from hermes_state_mutation_retirement import RETIRED_PREFIX
+        from hermes_state_runtime import RuntimeStoreError
+        from hermes_state_sessions import _parse_model_config
+        unknown=set(kwargs)-SESSION_FIELDS
+        if unknown:raise TypeError('Unknown session fields: '+','.join(sorted(unknown)))
+        old=self._session_on_conn(conn,session_id,lock=True)
+        if old is None and conn.execute(sql.SQL('SELECT 1 FROM {} WHERE key=%s').format(self.table('state_meta')),(RETIRED_PREFIX+session_id,)).fetchone():
+            raise RuntimeStoreError('not_found')
+        values={'id':session_id,'source':source,'created_source':source,'started_at':time.time()}
         values.update({k:self._serialize(v) for k,v in kwargs.items()})
-        self._insert(conn,'sessions',values,conflict=True)
+        if not (values.get('profile_name') or '').strip():values['profile_name']=self._own_profile_name()
+        if 'system_prompt' in values:
+            values['system_prompt_hash']=self._store_pg_system_prompt(conn,values.pop('system_prompt'))
+        if not old:self._insert(conn,'sessions',values)
+        else:
+            updates={k:v for k,v in values.items() if k not in ('id','source','started_at') and old.get(k) is None}
+            if old['source']=='unknown':updates['source']=source or 'unknown'
+            old_config=_parse_model_config(old['model_config'])
+            if values.get('model_config') is not None and set(old_config)=={'_reset_from'}:
+                config=_parse_model_config(values['model_config']);config['_reset_from']=old_config['_reset_from'];updates['model_config']=json.dumps(config)
+            if old['system_prompt_hash'] is None and values.get('system_prompt_hash') is not None:updates['system_prompt']=None
+            if updates:self._update(conn,'sessions',updates,'id',session_id)
+        child=self._session_on_conn(conn,session_id)
+        parent=self._session_on_conn(conn,child['parent_session_id']) if child and child['parent_session_id'] else None
+        if parent:
+            inherited={k:parent[k] for k in ('cwd','git_repo_root','git_branch') if child[k] is None}
+            def namespace(key):
+                pos=key.find(':',6)
+                return key[:pos+1] if pos>=0 else key[:6]
+            if child['profile_name'] is None and (parent['session_key'] is None or child['session_key'] is None or namespace(parent['session_key'])==namespace(child['session_key'])):
+                inherited['profile_name']=parent['profile_name']
+            config=_parse_model_config(child['model_config'])
+            if parent['end_reason']=='compression' and all(config.get(k)!=child['parent_session_id'] for k in ('_delegate_from','_branched_from')):
+                inherited.update({k:parent[k] for k in ('user_id','session_key','chat_id','chat_type','thread_id','display_name','origin_json','transport_profile') if child[k] is None})
+            if inherited:self._update(conn,'sessions',inherited,'id',session_id)
         return session_id
 
     def create_session(self, session_id, source, **kwargs):
@@ -169,11 +265,10 @@ class PostgreSQLSessionDB(PostgreSQLPortabilityMixin,PostgreSQLSearchMixin,Postg
     def ensure_session(self, session_id, source='unknown', model=None, **kwargs):
         return self.create_session(session_id,source,model=model,**kwargs)
 
-    def get_session(self, session_id):
-        row = self._one(sql.SQL('SELECT s.*,p.prompt AS _system_prompt_resolved FROM {} s LEFT JOIN {} p ON s.system_prompt_hash=p.hash WHERE s.id=%s').format(self.table('sessions'),self.table('system_prompts')),(session_id,))
-        if row:
-            row['_system_prompt_resolved'] = row['_system_prompt_resolved'] or row.get('system_prompt')
-        return row
+    def get_session(self,session_id):
+        from hermes_state import SessionDB
+        row=self._one(sql.SQL('SELECT s.*,COALESCE(p.prompt,s.system_prompt) AS _system_prompt_resolved,COALESCE(t.prompt,s.tool_names) AS _tool_names_resolved FROM {} s LEFT JOIN {} p ON s.system_prompt_hash=p.hash LEFT JOIN {} t ON s.tool_names=t.hash WHERE s.id=%s').format(self.table('sessions'),self.table('system_prompts'),self.table('system_prompts')),(session_id,))
+        return SessionDB._session_row_dict(row) if row else None
 
     def list_session_records(self):
         return self._all(sql.SQL('SELECT * FROM {} ORDER BY started_at,id').format(self.table('sessions')))
@@ -208,8 +303,9 @@ class PostgreSQLSessionDB(PostgreSQLPortabilityMixin,PostgreSQLSearchMixin,Postg
         with self._transaction() as conn:
             return self._update(conn,'sessions',{k:self._serialize(v) for k,v in values.items()},'id',session_id)
 
-    def end_session(self, session_id, end_reason):
-        self._set_session(session_id,ended_at=time.time(),end_reason=end_reason)
+    def end_session(self,session_id,end_reason):
+        with self._transaction() as conn:
+            conn.execute(sql.SQL('UPDATE {} SET ended_at=%s,end_reason=%s WHERE id=%s AND ended_at IS NULL').format(self.table('sessions')),(time.time(),end_reason,session_id))
 
     def reopen_session(self, session_id):
         self._set_session(session_id,ended_at=None,end_reason=None)
@@ -217,21 +313,20 @@ class PostgreSQLSessionDB(PostgreSQLPortabilityMixin,PostgreSQLSearchMixin,Postg
     def update_session_meta(self, session_id, **kwargs):
         return self._set_session(session_id,**kwargs)
 
-    def update_system_prompt(self, session_id, system_prompt):
-        self._set_session(session_id,system_prompt=system_prompt,system_prompt_hash=None)
-
-    def update_session_tool_names(self, session_id, pin):
-        self._set_session(session_id,tool_names=pin)
-
-    def patch_session_model_config(self, session_id, patch):
+    def update_system_prompt(self,session_id,system_prompt):
         with self._transaction() as conn:
-            row=self._session_on_conn(conn,session_id,lock=True)
-            if not row: return
-            cfg=json.loads(row['model_config'] or '{}')
-            for key,value in patch.items():
-                if value is None: cfg.pop(key,None)
-                else: cfg[key]=value
-            self._update(conn,'sessions',{'model_config':json.dumps(cfg)},'id',session_id)
+            digest=self._store_pg_system_prompt(conn,system_prompt)
+            self._update(conn,'sessions',{'system_prompt_hash':digest,'system_prompt':None},'id',session_id)
+            self._delete_pg_unused_prompts(conn)
+
+    def update_session_tool_names(self,session_id,pin):
+        with self._transaction() as conn:
+            digest=self._store_pg_system_prompt(conn,json.dumps(pin) if pin is not None else None)
+            self._update(conn,'sessions',{'tool_names':digest},'id',session_id)
+            self._delete_pg_unused_prompts(conn)
+
+    def _delete_pg_unused_prompts(self,conn):
+        conn.execute(sql.SQL('DELETE FROM {} p WHERE NOT EXISTS(SELECT 1 FROM {} s WHERE s.system_prompt_hash=p.hash OR s.tool_names=p.hash)').format(self.table('system_prompts'),self.table('sessions')))
 
     def get_meta(self,key):
         row=self._one(sql.SQL('SELECT value FROM {} WHERE key=%s').format(self.table('state_meta')),(key,))
@@ -251,7 +346,7 @@ class PostgreSQLSessionDB(PostgreSQLPortabilityMixin,PostgreSQLSearchMixin,Postg
         while current and current.get('parent_session_id'):
             cfg=json.loads(current.get('model_config') or '{}')
             parent_id=current['parent_session_id']
-            if parent_id in seen or current['source'] in ('tool','kanban','oneshot') or any(cfg.get(k) for k in ('_branched_from','_reset_from','_delegate_from')):
+            if parent_id in seen or self._is_explicit_fork_child_row(current,include_reset=True):
                 break
             parent=self._session_on_conn(conn,parent_id)
             if not parent or parent['end_reason']!='compression': break
@@ -259,6 +354,7 @@ class PostgreSQLSessionDB(PostgreSQLPortabilityMixin,PostgreSQLSearchMixin,Postg
         return current['id'] if current else session_id
 
     def _lock_conversation(self,conn,session_id):
+        conn.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',(self.scope.schema+'\x1fcanonical-native-writer',))
         key=self._lease_key_on_conn(conn,session_id)
         # Transaction advisory locks serialize absent-row lease creation as well as mutations.
         conn.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',
@@ -355,6 +451,13 @@ class PostgreSQLSessionDB(PostgreSQLPortabilityMixin,PostgreSQLSearchMixin,Postg
         if after_id is not None and (latest or offset or include_compacted or include_ancestors):
             raise ValueError('after_id incompatible with requested paging')
         ids=self._resume_lineage_ids(session_id) if include_ancestors else [session_id]
+        if include_compacted or len(ids)>1:
+            from hermes_state import SessionDB
+            raw=self._conversation_rows(ids,include_inactive=include_inactive,include_compacted=include_compacted)
+            codec=object.__new__(SessionDB)
+            raw=codec._dedupe_display_generations(raw)
+            raw=raw[::-1][offset:][:limit][::-1] if latest else raw[offset:][:limit]
+            return [self._decode_message(row) for row in raw]
         query=sql.SQL('SELECT * FROM {} WHERE session_id=ANY(%s)').format(self.table('messages'))
         params=[ids]
         if not include_inactive:
@@ -395,32 +498,44 @@ class PostgreSQLSessionDB(PostgreSQLPortabilityMixin,PostgreSQLSearchMixin,Postg
 
     def _resume_lineage_ids(self,session_id):
         rows={row['id']:row for row in self.list_session_records()}
-        current=rows.get(session_id); chain=[session_id]; seen={session_id}
-        while current and current.get('parent_session_id') and len(chain)<100:
-            cfg=json.loads(current.get('model_config') or '{}'); parent=rows.get(current['parent_session_id'])
-            if any(cfg.get(k) for k in ('_branched_from','_reset_from','_delegate_from')) or current['source'] in ('tool','kanban','oneshot') or not parent or parent['end_reason']!='compression' or parent['id'] in seen: break
-            seen.add(parent['id']); chain.append(parent['id']); current=parent
+        current=rows.get(session_id);chain=[session_id];seen={session_id}
+        while current and current.get('parent_session_id'):
+            parent=rows.get(current['parent_session_id'])
+            if self._is_explicit_fork_child_row(current,include_reset=True) or not parent or parent['end_reason']!='compression' or parent['id'] in seen:break
+            seen.add(parent['id']);chain.append(parent['id']);current=parent
         return list(reversed(chain))
 
     def get_compression_chain(self,session_id):
-        chain=[session_id]; seen={session_id}
-        rows=self.list_session_records()
-        while len(chain)<100:
-            parent=next((r for r in rows if r['id']==chain[-1]),None)
-            if not parent or parent['end_reason']!='compression': break
-            children=[r for r in rows if r['parent_session_id']==parent['id'] and self._resume_lineage_ids(r['id'])[0]!=r['id'] and r['id'] not in seen]
-            if not children: break
-            children.sort(key=lambda r:(r['started_at'],r['id']),reverse=True)
-            chain.append(children[0]['id']); seen.add(children[0]['id'])
+        from hermes_state_sessions import _parse_model_config
+        rows=self.list_session_records();by_id={r['id']:r for r in rows}
+        recency={r['session_id']:r['last_message'] for r in self._all(sql.SQL('SELECT session_id,MAX(timestamp) AS last_message FROM {} GROUP BY session_id').format(self.table('messages')))}
+        chain=[session_id] if session_id else [];seen=set(chain)
+        for _ in range(1000):
+            parent=by_id.get(chain[-1]) if chain else None
+            if not parent or parent['end_reason']!='compression':break
+            children=[r for r in rows if r['parent_session_id']==parent['id'] and r['source']!='tool' and all(_parse_model_config(r['model_config']).get(k) is None for k in ('_branched_from','_delegate_from','_reset_from')) and r['id'] not in seen]
+            if not children:break
+            children.sort(key=lambda r:r['id'],reverse=True)
+            children.sort(key=lambda r:(0 if r['end_reason']=='compression' else 1 if r['ended_at'] is None else 2,-max(r['started_at'] or 0,r['last_activity_at'] or 0,recency.get(r['id']) or 0),-(r['started_at'] or 0)))
+            best=children[0]
+            chain.append(best['id']);seen.add(best['id'])
         return chain
 
     def get_compression_tip(self,session_id):
-        if not self.get_session(session_id): return None
-        return self.get_compression_chain(session_id)[-1]
+        chain=self.get_compression_chain(session_id)
+        return chain[-1] if chain else session_id
 
     def get_compression_lineage(self,session_id):
-        if not self.get_session(session_id): return []
-        return self.get_compression_chain(self._resume_lineage_ids(session_id)[0])
+        rows={row['id']:row for row in self.list_session_records()};session=rows.get(session_id)
+        if not session:return []
+        if self._is_explicit_fork_child_row(session):return [session_id]
+        root=rows[self._resume_lineage_ids(session_id)[0]];lineage=[root['id']];seen=set(lineage);current=root
+        while current['end_reason']=='compression':
+            children=sorted((r for r in rows.values() if r['parent_session_id']==current['id']),key=lambda r:r['started_at'])
+            child=next((r for r in children if not self._is_explicit_fork_child_row(r,include_reset=True)),None)
+            if not child or child['id'] in seen:break
+            lineage.append(child['id']);seen.add(child['id']);current=child
+        return lineage if session_id in lineage else [session_id]
 
     def resolve_resume_session_id(self,session_id):
         return self.get_compression_tip(session_id) or session_id
@@ -452,7 +567,9 @@ class PostgreSQLSessionDB(PostgreSQLPortabilityMixin,PostgreSQLSearchMixin,Postg
         return model,display
 
     def get_resume_message_count(self,session_id,*,tip_only=False):
-        return len(self.get_messages(session_id,include_compacted=not tip_only,include_ancestors=not tip_only))
+        ids=[session_id] if tip_only else self._resume_lineage_ids(session_id)
+        clause=sql.SQL(' AND active=1' if tip_only else ' AND (active=1 OR compacted=1)')
+        return self._one(sql.SQL('SELECT COUNT(*) AS n FROM {} WHERE session_id=ANY(%s)').format(self.table('messages'))+clause,(ids,))['n']
 
     def assert_resume_safe(self,session_id,max_messages=None,*,tip_only=False):
         from hermes_state import SessionResumeTooLargeError,resolved_max_resume_messages
@@ -462,12 +579,18 @@ class PostgreSQLSessionDB(PostgreSQLPortabilityMixin,PostgreSQLSearchMixin,Postg
         return count
 
     def _claim_lease(self,table,key_column,key,holder,ttl_seconds,*,session_id):
-        if not key or not holder: return False
-        now=time.time()
+        if not key or not holder:return False
+        import socket
+        from hermes_state import _compression_lock_holder_process_is_dead
+        now=time.time();host=socket.gethostname()
         with self._transaction() as conn:
             self._lock_conversation(conn,session_id)
-            query=sql.SQL('INSERT INTO {}({},holder,acquired_at,expires_at) VALUES(%s,%s,%s,%s) ON CONFLICT({}) DO UPDATE SET holder=excluded.holder,acquired_at=excluded.acquired_at,expires_at=excluded.expires_at WHERE {}.holder=excluded.holder OR {}.expires_at<=%s RETURNING holder').format(self.table(table),sql.Identifier(key_column),sql.Identifier(key_column),self.table(table),self.table(table))
-            return bool(conn.execute(query,(key,holder,now,now+max(.1,float(ttl_seconds)),now)).fetchone())
+            old=conn.execute(sql.SQL('SELECT holder,expires_at,owner_host FROM {} WHERE {}=%s FOR UPDATE').format(self.table(table),sql.Identifier(key_column)),(key,)).fetchone()
+            # Imported/foreign ownership has no local process proof and waits for expiry.
+            if old and old['owner_host']==host and _compression_lock_holder_process_is_dead(old['holder']):
+                conn.execute(sql.SQL('DELETE FROM {} WHERE {}=%s AND holder=%s').format(self.table(table),sql.Identifier(key_column)),(key,old['holder']))
+            query=sql.SQL('INSERT INTO {}({},holder,acquired_at,expires_at,owner_host) VALUES(%s,%s,%s,%s,%s) ON CONFLICT({}) DO UPDATE SET holder=excluded.holder,acquired_at=excluded.acquired_at,expires_at=excluded.expires_at,owner_host=excluded.owner_host WHERE {}.holder=excluded.holder OR {}.expires_at<=%s RETURNING holder').format(self.table(table),sql.Identifier(key_column),sql.Identifier(key_column),self.table(table),self.table(table))
+            return bool(conn.execute(query,(key,holder,now,now+max(.1,float(ttl_seconds)),host,now)).fetchone())
 
     def try_acquire_session_turn_lease(self,session_id,holder,*,ttl_seconds=300,patience_s=None):
         with self._transaction(read_only=True) as conn: key=self._lease_key_on_conn(conn,session_id)
@@ -589,28 +712,11 @@ class PostgreSQLSessionDB(PostgreSQLPortabilityMixin,PostgreSQLSearchMixin,Postg
             self._recount_on_conn(conn,session_id)
         return dict(**({'replacement_message_id':replacement_id,'replacement_message_uid':replacement.get('message_uid')} if preserve_compaction_handoff else {}),rewound_count=len(removed),target_message=self._decode_message(target),new_head_id=max([i for i in ids if i<target_message_id],default=None))
 
-    def archive_and_compact(self,session_id,compacted_messages,*,watermark=None,compression_lock_holder=None,**kwargs):
-        with self._transaction() as conn:
-            self._guard_on_conn(conn,session_id,compression_lock_holder=compression_lock_holder,destructive=True)
-            query=sql.SQL('UPDATE {} SET active=0,compacted=1 WHERE session_id=%s AND active=1').format(self.table('messages'))
-            params=[session_id]
-            if watermark is not None: query+=sql.SQL(' AND id<=%s'); params.append(watermark)
-            conn.execute(query,params); self._append_on_conn(conn,session_id,compacted_messages)
-
     def replace_messages(self,session_id,messages,active_only=False,**kwargs):
         with self._transaction() as conn:
             self._guard_on_conn(conn,session_id,destructive=True)
             conn.execute(sql.SQL('UPDATE {} SET active=0,compacted=0 WHERE session_id=%s AND active=1').format(self.table('messages')),(session_id,))
             self._append_on_conn(conn,session_id,messages)
-
-    def delete_session(self,session_id,sessions_dir=None,**kwargs):
-        with self._transaction() as conn:
-            self._lock_conversation(conn,session_id)
-            # Retained children are detached explicitly; no FK disables or history renumbering.
-            conn.execute(sql.SQL('UPDATE {} SET parent_session_id=NULL WHERE parent_session_id=%s').format(self.table('sessions')),(session_id,))
-            for table,column in [('semantier_session_branches','child_session_id'),('semantier_session_branches','source_session_id'),('messages','session_id'),('session_model_usage','session_id'),('compression_locks','session_id'),('session_turn_leases','conversation_id')]:
-                conn.execute(sql.SQL('DELETE FROM {} WHERE {}=%s').format(self.table(table),sql.Identifier(column)),(session_id,))
-            return bool(conn.execute(sql.SQL('DELETE FROM {} WHERE id=%s').format(self.table('sessions')),(session_id,)).rowcount)
 
     def assert_api_continuation_origin_on_conn(self,conn,*,session_id,holder,routing_scope,session_key):
         self._lock_conversation(conn,session_id)
@@ -674,8 +780,10 @@ class PostgreSQLSessionDB(PostgreSQLPortabilityMixin,PostgreSQLSearchMixin,Postg
         return title
 
     def update_session_runtime_lock(self,session_id,*,model=None,provider=None,model_options=None,route_source=None,confirmed=False):
-        self.patch_session_model_config(session_id,{'browser_model_lock':dict(provider=provider or '',model=model or '',model_options=model_options or {},route_source=route_source or '',confirmed=bool(confirmed),updated_at=time.time())})
-        if model is not None: self._set_session(session_id,model=model)
+        lock=dict(provider=provider or '',model=model or '',model_options=model_options or {},route_source=route_source or '',confirmed=bool(confirmed),updated_at=time.time())
+        self._write_model_config_patch(session_id,{'browser_model_lock':lock},
+            'UPDATE sessions SET model_config=%s,model=COALESCE(%s,model) WHERE id=%s',
+            lambda merged:(merged,model,session_id))
 
     def unarchive_recoverable_session(self,session_id):
         return bool(self._set_session(session_id,archived=0,auto_archived=0))
@@ -691,3 +799,55 @@ class PostgreSQLSessionDB(PostgreSQLPortabilityMixin,PostgreSQLSearchMixin,Postg
 
     def touch_session_activity(self,session_id,**kwargs):
         self._set_session(session_id,last_activity_at=time.time(),**kwargs)
+
+    def create_client_session(self,session_id,*,source,model=None,model_config=None,system_prompt=None,title=None):
+        with self._transaction() as conn:
+            self._lock_conversation(conn,session_id)
+            if self._session_on_conn(conn,session_id):return None,'exists'
+            clean=self.sanitize_title(str(title)) if title is not None else None
+            if clean:
+                self._lock_conversation(conn,'title:'+clean)
+                if conn.execute(sql.SQL('SELECT 1 FROM {} WHERE title=%s').format(self.table('sessions')),(clean,)).fetchone():
+                    return None,'title:Title already exists'
+            self._create_on_conn(conn,session_id,source,model=model,model_config=model_config,system_prompt=system_prompt,title=clean)
+            return self._session_on_conn(conn,session_id),None
+
+    def list_sessions_rich(self,source=None,sources=None,exclude_sources=None,cwd_prefix=None,limit=20,offset=0,
+            include_children=False,min_message_count=0,project_compression_tips=True,order_by_last_active=False,
+            include_archived=False,archived_only=False,id_query=None,search_query=None,compact_rows=False,
+            include_pinned=False,session_key=None,include_hidden=False,include_subagents=False):
+        where,params=[],[]
+        if source or sources:where.append(sql.SQL('s.source=ANY(%s)'));params.append([source] if source else list(sources))
+        if exclude_sources:where.append(sql.SQL('s.source<>ALL(%s)'));params.append(list(exclude_sources))
+        if session_key:where.append(sql.SQL('s.session_key=%s'));params.append(session_key)
+        if cwd_prefix:where.append(sql.SQL('(s.cwd=%s OR starts_with(s.cwd,%s) OR starts_with(s.cwd,%s))'));params.extend([cwd_prefix,cwd_prefix.rstrip('/\\')+'/',cwd_prefix.rstrip('/\\')+'\\'])
+        if min_message_count:where.append(sql.SQL('s.message_count>=%s'));params.append(min_message_count)
+        if archived_only:where.append(sql.SQL('s.archived=1'))
+        elif not include_archived:where.append(sql.SQL('(s.archived=0 OR s.pinned=1)' if include_pinned else 's.archived=0'))
+        if not include_hidden and not archived_only:where.append(sql.SQL('s.hidden=0'))
+        if id_query:where.append(sql.SQL('strpos(lower(s.id),lower(%s))>0'));params.append(id_query)
+        if search_query:where.append(sql.SQL("(strpos(lower(COALESCE(s.title,'')),lower(%s))>0 OR strpos(lower(COALESCE(s.display_name,'')),lower(%s))>0 OR strpos(lower(s.id),lower(%s))>0)"));params.extend([search_query]*3)
+        if not include_children:
+            where.append(sql.SQL("(s.parent_session_id IS NULL OR COALESCE(s.model_config::jsonb->>'_branched_from','')<>'' OR COALESCE(s.model_config::jsonb->>'_reset_from','')<>'' OR EXISTS(SELECT 1 FROM {} p WHERE p.id=s.parent_session_id AND p.end_reason='branched'))").format(self.table('sessions')))
+            if not include_subagents:where.append(sql.SQL("COALESCE(s.model_config::jsonb->>'_delegate_from','')=''"))
+        clauses=sql.SQL(' WHERE ')+sql.SQL(' AND ').join(where) if where else sql.SQL('')
+        active=sql.SQL('GREATEST(s.started_at,COALESCE(s.last_activity_at,0),COALESCE((SELECT MAX(m.timestamp) FROM {} m WHERE m.session_id=s.id),0))').format(self.table('messages'))
+        query=sql.SQL("SELECT s.*,{} AS last_active,(SELECT COALESCE(m.content,'') FROM {} m WHERE m.session_id=s.id AND m.role='user' ORDER BY m.id DESC LIMIT 1) AS preview FROM {} s{}").format(active,self.table('messages'),self.table('sessions'),clauses)
+        query+=sql.SQL(' ORDER BY last_active DESC,s.started_at DESC,s.id DESC' if order_by_last_active else ' ORDER BY s.started_at DESC,s.id DESC')
+        rows=self._all(query,[*params])
+        # A compression continuation is represented by its tip, keeping one visible conversation.
+        if project_compression_tips:
+            output=[];seen=set()
+            for row in rows:
+                tip=self.get_compression_tip(row['id']) or row['id']
+                if tip in seen:continue
+                seen.add(tip);selected=next((r for r in rows if r['id']==tip),None) or self.get_session(tip)
+                if selected:output.append({**selected,'last_active':row['last_active'],'preview':row['preview']})
+            rows=output
+        window=rows[offset:offset+limit]
+        if include_pinned:
+            ids={row['id'] for row in window};window.extend(row for row in rows if row['pinned'] and row['id'] not in ids)
+        if compact_rows:
+            for row in window:
+                for key in ('model_config','system_prompt','tool_names'):row.pop(key,None)
+        return window

@@ -164,6 +164,11 @@ class SessionTranscriptMixin:
         (#114266)."""
         if skip_db:
             return
+        from hermes_state_backend import postgres_enabled
+        if postgres_enabled():
+            with self._get_transcript_drain_lock():
+                self._append_transcript_message(self._follow_reroutes(session_id),message)
+            return
         with self._get_transcript_drain_lock():
             self._append_to_transcript_serialized(self._follow_reroutes(session_id), message)
 

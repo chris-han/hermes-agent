@@ -11,11 +11,13 @@ best-effort: ledger failures must never block a send; callers wrap every call in
 """
 
 from __future__ import annotations
+from hermes_state_sql import statement as _storage_statement, parameter_marker as _parameter_marker, inserted_id as _inserted_id, in_transaction as _in_transaction
 
 import hashlib
 import logging
 import os
 import re
+from contextlib import contextmanager
 import sqlite3
 import threading
 import time
@@ -177,6 +179,10 @@ def _db_path():
 
 
 def _connect() -> sqlite3.Connection:
+    from hermes_state_backend import postgres_enabled
+    if postgres_enabled():
+        from hermes_state_sql import connect_postgres
+        return connect_postgres(_db_path().parent)
     from hermes_cli.sqlite_util import open_db
 
     # Shared state.db: SessionDB owns the durable PRAGMA set; this opener keeps the plain-tuple rows
@@ -208,10 +214,18 @@ def _initialize_schema(conn: sqlite3.Connection) -> None:
         add_column_if_missing(conn, "delivery_obligations", "adapter_profile", "adapter_profile TEXT")
 
 
+@contextmanager
 def _transaction():
+    from hermes_state_backend import postgres_enabled
+    if postgres_enabled():
+        from hermes_state_sql import native_write_transaction
+        conn=_connect()
+        try:
+            with native_write_transaction(conn):yield conn
+        finally:conn.close()
+        return
     from hermes_cli.sqlite_util import transaction
-
-    return transaction(_connect())
+    with transaction(_connect()) as conn:yield conn
 
 
 def _start_time(pid: int) -> Optional[int]:
@@ -273,15 +287,19 @@ def record_obligation(*, obligation_id: str, session_key: str, platform: str, ch
     now, (pid, started) = time.time(), _owner_stamp()
     with _DB_LOCK, _transaction() as conn:
         conn.execute(
-            """INSERT OR REPLACE INTO delivery_obligations
+            _storage_statement(sqlite="""INSERT OR REPLACE INTO delivery_obligations
                (obligation_id, session_key, platform, chat_id, thread_id,
                 content, state, attempts, created_at, updated_at,
                 owner_pid, owner_started_at, adapter_profile)
-               VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?, ?)""",postgresql="INSERT INTO delivery_obligations\n               (obligation_id, session_key, platform, chat_id, thread_id,\n                content, state, attempts, created_at, updated_at,\n                owner_pid, owner_started_at, adapter_profile)\n               VALUES (%s, %s, %s, %s, %s, %s, 'pending', 0, %s, %s, %s, %s, %s) ON CONFLICT(obligation_id) DO UPDATE SET session_key=excluded.session_key,platform=excluded.platform,chat_id=excluded.chat_id,thread_id=excluded.thread_id,content=excluded.content,state=excluded.state,attempts=excluded.attempts,created_at=excluded.created_at,updated_at=excluded.updated_at,owner_pid=excluded.owner_pid,owner_started_at=excluded.owner_started_at,adapter_profile=excluded.adapter_profile"),
             (obligation_id, session_key, platform, str(chat_id), str(thread_id) if thread_id else None,
              content, now, now, pid, started, str(adapter_profile).strip() if adapter_profile else "default"))
         # Same transaction, same connection: the cron ledgers prune this way too
         # (cron/delivery_queue._prune_terminal_unlocked, cron/executions._prune_unlocked).
+        from hermes_state_sql import is_postgres
+        if is_postgres(conn):
+            import socket
+            conn.execute('UPDATE delivery_obligations SET owner_host=%s WHERE obligation_id=%s',(socket.gethostname(),obligation_id))
         _prune_unlocked(conn, now)
 
 
@@ -295,13 +313,13 @@ def record_crash_left_reply(*, obligation_id: str, session_key: str, platform: s
     now = time.time()
     with _DB_LOCK, _transaction() as conn:
         conn.execute(
-            """INSERT OR IGNORE INTO delivery_obligations
+            _storage_statement(sqlite="""INSERT OR IGNORE INTO delivery_obligations
                (obligation_id, session_key, platform, chat_id, thread_id,
                 content, state, attempts, created_at, updated_at,
                 owner_pid, owner_started_at, adapter_profile)
                SELECT ?, ?, ?, ?, ?, ?, 'attempting', 0, ?, ?, NULL, NULL, ?
                WHERE NOT EXISTS (SELECT 1 FROM delivery_obligations
-                                 WHERE session_key = ? AND content = ? AND created_at >= ?)""",
+                                 WHERE session_key = ? AND content = ? AND created_at >= ?)""",postgresql="INSERT INTO delivery_obligations\n               (obligation_id, session_key, platform, chat_id, thread_id,\n                content, state, attempts, created_at, updated_at,\n                owner_pid, owner_started_at, adapter_profile)\n               SELECT %s, %s, %s, %s, %s, %s, 'attempting', 0, %s, %s, NULL, NULL, %s\n               WHERE NOT EXISTS (SELECT 1 FROM delivery_obligations\n                                 WHERE session_key = %s AND content = %s AND created_at >= %s) ON CONFLICT DO NOTHING"),
             (obligation_id, session_key, platform, str(chat_id), str(thread_id) if thread_id else None,
              content, now, now, str(adapter_profile).strip() if adapter_profile else "default",
              session_key, content, since))
@@ -330,12 +348,12 @@ def release_runtime_claim(obligation_id: str, error: str = "") -> bool:
         return False
     with _DB_LOCK, _transaction() as conn:
         cursor = conn.execute(
-            """UPDATE delivery_obligations
+            _storage_statement(sqlite="""UPDATE delivery_obligations
                SET state='failed', attempts=CASE
                        WHEN attempts > 0 THEN attempts - 1 ELSE 0 END,
                    updated_at=?, last_error=?
                WHERE obligation_id=? AND state='attempting'
-                 AND owner_pid IS ? AND owner_started_at IS ?""",
+                 AND owner_pid IS ? AND owner_started_at IS ?""",postgresql="UPDATE delivery_obligations\n               SET state='failed', attempts=CASE\n                       WHEN attempts > 0 THEN attempts - 1 ELSE 0 END,\n                   updated_at=%s, last_error=%s\n               WHERE obligation_id=%s AND state='attempting'\n                 AND owner_pid IS NOT DISTINCT FROM %s AND owner_started_at IS NOT DISTINCT FROM %s AND owner_host=current_setting('hermes.owner_host',true)"),
             (time.time(), error[:500] if error else None, obligation_id, pid, started))
     return bool(cursor.rowcount)
 
@@ -343,9 +361,9 @@ def release_runtime_claim(obligation_id: str, error: str = "") -> bool:
 def _update_state(obligation_id: str, state: str, error: str = "") -> None:
     with _DB_LOCK, _transaction() as conn:
         conn.execute(
-            """UPDATE delivery_obligations
+            _storage_statement(sqlite="""UPDATE delivery_obligations
                SET state=?, updated_at=?, last_error=?
-               WHERE obligation_id=?""",
+               WHERE obligation_id=?""",postgresql='UPDATE delivery_obligations\n               SET state=%s, updated_at=%s, last_error=%s\n               WHERE obligation_id=%s'),
             (state, time.time(), error[:500] if error else None, obligation_id))
 
 
@@ -389,11 +407,12 @@ def sweep_recoverable(now: Optional[float] = None, *, deliverable_platforms: Opt
     claimed: list[dict[str, Any]] = []
     with _DB_LOCK, _transaction() as conn:
         rows = conn.execute(
-            """SELECT obligation_id, session_key, platform, chat_id, thread_id,
+            _storage_statement(sqlite="""SELECT obligation_id, session_key, platform, chat_id, thread_id,
                       content, state, attempts, created_at,
                       owner_pid, owner_started_at, adapter_profile, last_error, updated_at
                FROM delivery_obligations
-               WHERE state IN ('pending', 'attempting', 'failed')"""
+               WHERE state IN ('pending', 'attempting', 'failed')""",
+               postgresql="SELECT obligation_id,session_key,platform,chat_id,thread_id,content,state,attempts,created_at,owner_pid,owner_started_at,adapter_profile,last_error,updated_at FROM delivery_obligations WHERE state IN ('pending','attempting','failed') AND (owner_pid IS NULL OR owner_host=current_setting('hermes.owner_host',true))")
         ).fetchall()
         for (oid, session_key, platform, chat_id, thread_id, content, state, attempts, created_at,
              owner_pid, owner_started_at, adapter_profile, last_error, updated_at) in rows:
@@ -401,8 +420,8 @@ def sweep_recoverable(now: Optional[float] = None, *, deliverable_platforms: Opt
                 continue  # a live gateway still owns this row
             if attempts >= MAX_ATTEMPTS or (now - created_at) > STALE_AFTER_SECONDS:  # exhausted -> abandoned
                 conn.execute(
-                    """UPDATE delivery_obligations
-                       SET state='abandoned', updated_at=? WHERE obligation_id=?""", (now, oid))
+                    _storage_statement(sqlite="""UPDATE delivery_obligations
+                       SET state='abandoned', updated_at=? WHERE obligation_id=?""",postgresql="UPDATE delivery_obligations\n                       SET state='abandoned', updated_at=%s WHERE obligation_id=%s"), (now, oid))
                 continue
             if ((deliverable_platforms is not None and platform not in deliverable_platforms)
                     or (deliverable_targets is not None and (platform, adapter_profile) not in deliverable_targets)):
@@ -412,10 +431,10 @@ def sweep_recoverable(now: Optional[float] = None, *, deliverable_platforms: Opt
                 # Still inside the platform's wait: adopt the dead owner's row without spending an attempt
                 # (state and error kept) so this process's flood timer can claim it once the wait passes.
                 cursor = conn.execute(
-                    """UPDATE delivery_obligations
+                    _storage_statement(sqlite="""UPDATE delivery_obligations
                        SET owner_pid=?, owner_started_at=?,
                            adapter_profile=COALESCE(adapter_profile, 'default')
-                       WHERE obligation_id=? AND (owner_pid IS ? OR owner_pid=?)""",
+                       WHERE obligation_id=? AND (owner_pid IS ? OR owner_pid=?)""",postgresql="UPDATE delivery_obligations\n                       SET owner_host=current_setting('hermes.owner_host',true), owner_pid=%s, owner_started_at=%s,\n                           adapter_profile=COALESCE(adapter_profile, 'default')\n                       WHERE obligation_id=%s AND (owner_pid IS NOT DISTINCT FROM %s OR owner_pid=%s)"),
                     (pid, started, oid, owner_pid, owner_pid))
                 if cursor.rowcount:
                     claimed.append({
@@ -429,11 +448,11 @@ def sweep_recoverable(now: Optional[float] = None, *, deliverable_platforms: Opt
             # marks it), and the runtime sweep, which only takes 'failed', cannot re-claim it mid-send. A
             # claimed flood row also drops its stale refusal, so an interrupted resend has no error.
             cursor = conn.execute(
-                """UPDATE delivery_obligations
+                _storage_statement(sqlite="""UPDATE delivery_obligations
                    SET owner_pid=?, owner_started_at=?, attempts=attempts+1, updated_at=?,
                        adapter_profile=COALESCE(adapter_profile, 'default'), state='attempting',
                        last_error=CASE WHEN ? THEN NULL ELSE last_error END
-                   WHERE obligation_id=? AND (owner_pid IS ? OR owner_pid=?)""",
+                   WHERE obligation_id=? AND (owner_pid IS ? OR owner_pid=?)""",postgresql="UPDATE delivery_obligations\n                   SET owner_host=current_setting('hermes.owner_host',true), owner_pid=%s, owner_started_at=%s, attempts=attempts+1, updated_at=%s,\n                       adapter_profile=COALESCE(adapter_profile, 'default'), state='attempting',\n                       last_error=CASE WHEN %s<>0 THEN NULL ELSE last_error END\n                   WHERE obligation_id=%s AND (owner_pid IS NOT DISTINCT FROM %s OR owner_pid=%s)"),
                 (pid, started, now, 1 if flood_row else 0, oid, owner_pid, owner_pid))
             if cursor.rowcount:
                 # A never-claimed pending row was never sent: redeliver plainly. Anything else (crashed
@@ -465,11 +484,11 @@ def sweep_failed_for_runtime(platform: str, now: Optional[float] = None, *,
     claimed: list[dict[str, Any]] = []
     with _DB_LOCK, _transaction() as conn:
         rows = conn.execute(
-            """SELECT obligation_id, session_key, platform, chat_id, thread_id,
+            _storage_statement(sqlite="""SELECT obligation_id, session_key, platform, chat_id, thread_id,
                       content, attempts, created_at, owner_pid,
                       owner_started_at, last_error, adapter_profile, updated_at
                FROM delivery_obligations
-               WHERE state='failed' AND platform=?""", (platform,)).fetchall()
+               WHERE state='failed' AND platform=?""",postgresql="SELECT obligation_id, session_key, platform, chat_id, thread_id,\n                      content, attempts, created_at, owner_pid,\n                      owner_started_at, last_error, adapter_profile, updated_at\n               FROM delivery_obligations\n               WHERE state='failed' AND platform=%s AND (owner_pid IS NULL OR owner_host=current_setting('hermes.owner_host',true))"), (platform,)).fetchall()
         for (oid, session_key, row_platform, chat_id, thread_id, content, attempts, created_at,
              owner_pid, owner_started_at, last_error, adapter_profile, updated_at) in rows:
             # Exact process-start matching prevents PID reuse from stealing work.
@@ -481,20 +500,20 @@ def sweep_failed_for_runtime(platform: str, now: Optional[float] = None, *,
             owner_guard = (now, oid, owner_pid, owner_started_at)
             if attempts >= MAX_ATTEMPTS or (now - created_at) > STALE_AFTER_SECONDS:  # exhausted -> abandoned
                 conn.execute(
-                    """UPDATE delivery_obligations
+                    _storage_statement(sqlite="""UPDATE delivery_obligations
                        SET state='abandoned', updated_at=?
                        WHERE obligation_id=? AND state='failed'
-                         AND owner_pid IS ? AND owner_started_at IS ?""", owner_guard)
+                         AND owner_pid IS ? AND owner_started_at IS ?""",postgresql="UPDATE delivery_obligations\n                       SET state='abandoned', updated_at=%s\n                       WHERE obligation_id=%s AND state='failed'\n                         AND owner_pid IS NOT DISTINCT FROM %s AND owner_started_at IS NOT DISTINCT FROM %s AND owner_host=current_setting('hermes.owner_host',true)"), owner_guard)
                 continue
             if now < due:
                 continue  # the platform's wait or the backoff has not passed; the timer comes back for it
             # The claim clears the stale error: this is a fresh attempt, and if it is interrupted the next
             # boot must see 'attempting' with no proof of non-delivery, hence the marker.
             cursor = conn.execute(
-                """UPDATE delivery_obligations
+                _storage_statement(sqlite="""UPDATE delivery_obligations
                    SET state='attempting', attempts=attempts+1, updated_at=?, last_error=NULL
                    WHERE obligation_id=? AND state='failed'
-                     AND owner_pid IS ? AND owner_started_at IS ?""", owner_guard)
+                     AND owner_pid IS ? AND owner_started_at IS ?""",postgresql="UPDATE delivery_obligations\n                   SET state='attempting', attempts=attempts+1, updated_at=%s, last_error=NULL\n                   WHERE obligation_id=%s AND state='failed'\n                     AND owner_pid IS NOT DISTINCT FROM %s AND owner_started_at IS NOT DISTINCT FROM %s AND owner_host=current_setting('hermes.owner_host',true)"), owner_guard)
             if cursor.rowcount:
                 # The failed send's ack may have been lost (reconnect) or its earlier chunks accepted
                 # (flood): every runtime redelivery carries a marker. The pre-claim error rides along so a
@@ -515,9 +534,9 @@ def pending_retries(now: Optional[float] = None) -> list[dict[str, Any]]:
         return []
     with _DB_LOCK, _transaction() as conn:
         rows = conn.execute(
-            """SELECT platform, adapter_profile, updated_at, last_error, attempts, created_at
+            _storage_statement(sqlite="""SELECT platform, adapter_profile, updated_at, last_error, attempts, created_at
                FROM delivery_obligations
-               WHERE state='failed' AND owner_pid IS ? AND owner_started_at IS ?""", (pid, started)).fetchall()
+               WHERE state='failed' AND owner_pid IS ? AND owner_started_at IS ?""",postgresql="SELECT platform, adapter_profile, updated_at, last_error, attempts, created_at\n               FROM delivery_obligations\n               WHERE state='failed' AND owner_pid IS NOT DISTINCT FROM %s AND owner_started_at IS NOT DISTINCT FROM %s AND owner_host=current_setting('hermes.owner_host',true)"), (pid, started)).fetchall()
     earliest: dict[tuple, float] = {}
     for platform, adapter_profile, updated_at, last_error, attempts, created_at in rows:
         # Reconnect-only rows (a claim released because the adapter was gone) are re-claimed by the
@@ -537,19 +556,19 @@ def pending_retries(now: Optional[float] = None) -> list[dict[str, Any]]:
 def _prune_unlocked(conn, now: float) -> None:
     """Retention DELETEs on the caller's open connection — must run inside the caller's transaction."""
     conn.execute(
-        """DELETE FROM delivery_obligations
-           WHERE state IN ('delivered', 'abandoned') AND updated_at < ?""", (now - _RETENTION_SECONDS,))
+        _storage_statement(sqlite="""DELETE FROM delivery_obligations
+           WHERE state IN ('delivered', 'abandoned') AND updated_at < ?""",postgresql="DELETE FROM delivery_obligations\n           WHERE state IN ('delivered', 'abandoned') AND updated_at < %s"), (now - _RETENTION_SECONDS,))
     total = conn.execute("SELECT COUNT(*) FROM delivery_obligations").fetchone()[0]
     if total > _MAX_ROWS:
         conn.execute(
-            """DELETE FROM delivery_obligations WHERE obligation_id IN (
+            _storage_statement(sqlite="""DELETE FROM delivery_obligations WHERE obligation_id IN (
                  SELECT obligation_id FROM delivery_obligations
                  ORDER BY CASE state
                             WHEN 'delivered' THEN 0
                             WHEN 'abandoned' THEN 1
                             ELSE 2
                           END, updated_at ASC
-                 LIMIT ?)""", (total - _MAX_ROWS,))
+                 LIMIT ?)""",postgresql="DELETE FROM delivery_obligations WHERE obligation_id IN (\n                 SELECT obligation_id FROM delivery_obligations\n                 ORDER BY CASE state\n                            WHEN 'delivered' THEN 0\n                            WHEN 'abandoned' THEN 1\n                            ELSE 2\n                          END, updated_at ASC\n                 LIMIT %s)"), (total - _MAX_ROWS,))
 
 
 def ledger_enabled(config: Optional[dict[str, Any]] = None) -> bool:

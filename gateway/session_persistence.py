@@ -11,6 +11,7 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Optional
 from utils import atomic_json_write
+from hermes_state_backend import postgres_enabled
 
 if TYPE_CHECKING:
     from gateway.session import SessionEntry
@@ -68,11 +69,14 @@ class SessionPersistenceMixin:
             try:
                 return acquire(path)  # process-wide registry: one writer per path
             except Exception as e:
-                if not _is_live_system_guard(e):
+                if not postgres_enabled() and not _is_live_system_guard(e):
                     print(f"[gateway] Warning: SQLite session store unavailable, falling back to JSONL: {e}")
                 raise
 
-        return self._db_handle_cache.get(path, _open, non_cacheable=_is_live_system_guard)
+        handle=self._db_handle_cache.get(path,_open,raise_on_error=postgres_enabled(),non_cacheable=_is_live_system_guard)
+        if handle is None and postgres_enabled():
+            raise RuntimeError("Hosted native session store unavailable")
+        return handle
 
     def _pinned_db(self):
         """Return the explicitly pinned DB (``store._db = x``), else ``_DB_UNPINNED``."""
@@ -113,6 +117,8 @@ class SessionPersistenceMixin:
                 return self._db
             return self._open_session_db_for_active_scope(db_path=home / "state.db")
         except Exception:
+            if postgres_enabled():
+                raise
             return None
 
     def _named_profile_for_key(self, session_key: Optional[str]) -> Optional[str]:
@@ -249,6 +255,8 @@ class SessionPersistenceMixin:
         load failed (warned). Lock held."""
         loader = self._routing_db_method("load_gateway_routing_entries")
         if loader is None:
+            if postgres_enabled():
+                raise RuntimeError("Hosted native routing store required")
             return False
         try:
             for key, entry_json in loader(scope=self._routing_scope()).items():
@@ -257,6 +265,8 @@ class SessionPersistenceMixin:
                     self._entries[key] = entry
             return True
         except Exception as e:
+            if postgres_enabled():
+                raise
             logger.warning("gateway.session: state.db routing load failed: %s", e)
             return False
 
@@ -286,7 +296,8 @@ class SessionPersistenceMixin:
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
         db_load_succeeded = self._load_routing_rows_locked()
         db_had_entries = db_load_succeeded and bool(self._entries)
-        self._import_legacy_sessions_json(db_had_entries)
+        if not postgres_enabled():
+            self._import_legacy_sessions_json(db_had_entries)
         self._loaded = True
         self._routing_db_loaded = db_load_succeeded
         self._routing_fallback_baseline = None if db_load_succeeded else self._entries_as_dicts()
@@ -295,6 +306,8 @@ class SessionPersistenceMixin:
 
     def _import_legacy_sessions_json(self, db_had_entries: bool) -> None:
         """Legacy import: sessions.json fills only keys the DB lacks. Lock held."""
+        if postgres_enabled():
+            raise RuntimeError("Hosted native routing cannot import unmanaged sessions.json")
         from gateway.session import SessionEntry
         sessions_file = self.sessions_dir / "sessions.json"
         if not sessions_file.exists():
@@ -472,8 +485,12 @@ class SessionPersistenceMixin:
                     replacer({k: json.dumps(v) for k, v in data.items()}, scope=self._routing_scope())
                     db_saved = True
                 except Exception as exc:
+                    if postgres_enabled():
+                        raise
                     logger.warning("gateway.session: state.db routing save failed: %s", exc)
-            if getattr(self, "_write_sessions_json", True) or not db_saved:
+            if postgres_enabled() and not db_saved:
+                raise RuntimeError("Hosted native routing commit required")
+            if not postgres_enabled() and (getattr(self, "_write_sessions_json", True) or not db_saved):
                 try:
                     self._save_sessions_json(data)
                 except Exception as exc:
@@ -493,6 +510,8 @@ class SessionPersistenceMixin:
 
     def _save_sessions_json(self, data: dict[str, Any]) -> None:
         """Write the legacy sessions.json mirror of the routing index (atomic + fsync)."""
+        if postgres_enabled():
+            raise RuntimeError("Hosted native routing cannot write sessions.json")
         atomic_json_write(self.sessions_dir / "sessions.json", {"_README": _SESSIONS_JSON_README, **data}, mode=0o600)
 
     def _save_entries(self) -> None:
@@ -534,6 +553,8 @@ class SessionPersistenceMixin:
                     fast_persisted[session_key] = (revision, entry_json)
                 return
             except Exception as exc:
+                if postgres_enabled():
+                    raise
                 logger.warning(
                     "gateway.session: single-entry routing save failed for %r (%s); falling back "
                     "to full index rewrite", session_key, exc)

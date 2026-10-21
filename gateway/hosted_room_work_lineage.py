@@ -1,4 +1,5 @@
 """Validate passive evidence against committed authority spans, never elect an owner."""
+from hermes_state_sql import statement as _storage_statement, parameter_marker as _parameter_marker, inserted_id as _inserted_id, in_transaction as _in_transaction
 from gateway.hosted_room_authority_history import at_sequence, read_history_locked, validate_history
 
 
@@ -10,7 +11,7 @@ def source_prefix_locked(conn, room_id, authority, seq):
     spans = validate_history(history, gateway_id=authority["gateway_id"], epoch=authority["epoch"])
     count = 0
     import json
-    for event in conn.execute("SELECT seq,authority_epoch,actor_json,kind FROM hosted_room_events WHERE room_id=? AND seq<=? ORDER BY seq", (room_id, seq)):
+    for event in conn.execute(_storage_statement(sqlite="SELECT seq,authority_epoch,actor_json,kind FROM hosted_room_events WHERE room_id=? AND seq<=? ORDER BY seq",postgresql='SELECT seq,authority_epoch,actor_json,kind FROM hosted_room_events WHERE room_id=%s AND seq<=%s ORDER BY seq'), (room_id, seq)):
         count += 1
         span = at_sequence(spans, count)
         actor = json.loads(event["actor_json"])

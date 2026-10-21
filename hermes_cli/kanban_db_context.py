@@ -7,6 +7,7 @@ Split out of ``hermes_cli.kanban_db``; origin-resident helpers are reached late-
 """
 
 from __future__ import annotations
+from hermes_state_sql import statement as _storage_statement, parameter_marker as _parameter_marker, inserted_id as _inserted_id, in_transaction as _in_transaction
 
 import json
 import os
@@ -139,7 +140,7 @@ def _ctx_parent_results(lines: list[str], conn: sqlite3.Connection, task_id: str
     falling back to ``task.result`` for pre-runs-table data. Stamped with a
     relative age so the worker re-verifies stale upstream results."""
     parent_rows = conn.execute(
-        "SELECT parent_id FROM task_links WHERE child_id = ? ORDER BY parent_id", (task_id,),
+        _storage_statement(sqlite="SELECT parent_id FROM task_links WHERE child_id = ? ORDER BY parent_id",postgresql='SELECT parent_id FROM task_links WHERE child_id = %s ORDER BY parent_id'), (task_id,),
     ).fetchall()
     wrote_header = False
     for pid in (r["parent_id"] for r in parent_rows):
@@ -180,11 +181,11 @@ def _ctx_role_history(lines: list[str], conn: sqlite3.Connection, task: Task, no
     if not task.assignee:
         return
     role_rows = conn.execute(
-        "SELECT t.id, t.title, r.summary, r.ended_at "
+        _storage_statement(sqlite="SELECT t.id, t.title, r.summary, r.ended_at "
         "FROM task_runs r JOIN tasks t ON r.task_id = t.id "
         "WHERE r.profile = ? AND r.task_id != ? "
         "  AND r.outcome = 'completed' "
-        "ORDER BY r.ended_at DESC LIMIT 5", (task.assignee, task.id),
+        "ORDER BY r.ended_at DESC LIMIT 5",postgresql="SELECT t.id, t.title, r.summary, r.ended_at FROM task_runs r JOIN tasks t ON r.task_id = t.id WHERE r.profile = %s AND r.task_id != %s   AND r.outcome = 'completed' ORDER BY r.ended_at DESC LIMIT 5"), (task.assignee, task.id),
     ).fetchall()
     if not role_rows:
         return

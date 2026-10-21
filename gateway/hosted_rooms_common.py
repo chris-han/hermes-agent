@@ -7,7 +7,9 @@ logic lives once. Must stay a leaf: never import a hosted_room* module (import c
 """
 
 from __future__ import annotations
+from hermes_state_sql import statement as _storage_statement
 
+from contextlib import contextmanager
 import json
 import re
 import sqlite3
@@ -96,6 +98,10 @@ def clock(now: float | None) -> float:
 
 def open_sqlite(path: DbPath, *, timeout: float = 10) -> sqlite3.Connection:
     """Row-factory connection with foreign keys on; no journal or schema work (steady-state readers)."""
+    from hermes_state_backend import postgres_enabled
+    if postgres_enabled():
+        from hermes_state_sql import connect_postgres
+        return connect_postgres(Path(path).parent)
     from hermes_cli.sqlite_util import open_db
 
     return open_db(path, db_label="shared-state.db", busy_timeout_ms=int(timeout * 1000), wal=False,
@@ -111,6 +117,9 @@ def connect(
     is serialized in SQLite itself: a crash rolls back the whole DDL/data migration and
     another process can safely retry it.
     """
+    from hermes_state_backend import postgres_enabled
+    if postgres_enabled():
+        return open_sqlite(db_path)
     def _initialize(conn: sqlite3.Connection) -> None:
         if not ready(conn):
             try:
@@ -134,18 +143,35 @@ def fenced_update(conn: sqlite3.Connection, sql: str, params: tuple, error: Exce
 
 
 def table_exists(conn: sqlite3.Connection, table: str) -> bool:
-    row = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
+    from hermes_state_sql import is_postgres
+    if is_postgres(conn):
+        return conn.execute("SELECT 1 FROM information_schema.tables WHERE table_schema=%s AND table_name=%s",(conn.hermes_scope.schema,table)).fetchone() is not None
+    row = conn.execute(_storage_statement(sqlite="SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",postgresql='SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name=?'), (table,)).fetchone()
     return row is not None
 
 
 def table_columns(conn: sqlite3.Connection, table: str) -> frozenset[str]:
+    from hermes_state_sql import is_postgres
+    if is_postgres(conn):
+        return frozenset(row[0] for row in conn.execute("SELECT column_name FROM information_schema.columns WHERE table_schema=%s AND table_name=%s",(conn.hermes_scope.schema,table)))
     return frozenset(row[1] for row in conn.execute(f"PRAGMA table_info({table})"))
 
 
+@contextmanager
 def transaction(
     connect: Callable[[DbPath], sqlite3.Connection], db_path: DbPath, *, immediate: bool
 ) -> Iterator[sqlite3.Connection]:
     """Open via ``connect``, optionally ``BEGIN IMMEDIATE``, commit on success, always close."""
     from hermes_cli.sqlite_util import transaction as _transaction
 
-    return _transaction(connect(db_path), immediate=immediate)
+    conn=connect(db_path)
+    from hermes_state_sql import is_postgres,native_write_transaction
+    if is_postgres(conn):
+        try:
+            with native_write_transaction(conn):
+                yield conn
+        finally:
+            conn.close()
+    else:
+        with _transaction(conn, immediate=immediate) as active:
+            yield active

@@ -78,3 +78,23 @@ def append_on_conn(store,conn,session_id,messages):
         message[DB_ROW_SNAPSHOT]=transcript_row_snapshot(rows.fetch(session_id,row_id)); ids.append(row_id)
     store._recount_on_conn(conn,session_id)
     return ids
+
+
+def insert_fresh_on_conn(store,conn,session_id,messages):
+    """Insert a new compaction generation without append-CAS adopting retired originals."""
+    import time
+    from hermes_state import SessionDB
+    from hermes_state_messages import _parse_tool_calls,_coerce_timestamp
+    from agent.message_metadata import stamp_message_uid,DB_ROW_SNAPSHOT
+    codec=object.__new__(SessionDB)
+    ids=[];index={}
+    for message in messages:
+        stamp_message_uid(message)
+        codec._stamp_tool_call_uids(message,_parse_tool_calls(message.get('tool_calls')),index)
+        timestamp=_coerce_timestamp(message.get('timestamp'),time.time())
+        values=pg_values(codec._serialized_message_row(session_id,message,timestamp))
+        row_id=store._insert(conn,'messages',values,returning='id').fetchone()['id']
+        message['_row_id']=row_id;message['timestamp']=timestamp
+        row=conn.execute(sql.SQL('SELECT * FROM {} WHERE id=%s').format(store.table('messages')),(row_id,)).fetchone()
+        message[DB_ROW_SNAPSHOT]=transcript_row_snapshot(native_row(row));ids.append(row_id)
+    return ids

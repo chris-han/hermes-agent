@@ -118,6 +118,9 @@ def import_legacy_rooms(conn: sqlite3.Connection, db_path: Path) -> None:
     The copy runs inside the caller's schema transaction under its own savepoint, so a crash or a
     refused row leaves either both the copied rows and the marker or neither.
     """
+    from hermes_state_sql import is_postgres
+    if is_postgres(conn):
+        raise RuntimeError("Hosted legacy room import requires the explicit snapshot migrator")
     source = source_path(db_path)
     if source is None or settled(conn, db_path):
         return

@@ -6,6 +6,7 @@ The passive wire contract applies stricter bounds in hosted_room_passive_lineage
 """
 
 from __future__ import annotations
+from hermes_state_sql import statement as _storage_statement, parameter_marker as _parameter_marker, inserted_id as _inserted_id, in_transaction as _in_transaction
 
 import json
 from dataclasses import dataclass
@@ -83,8 +84,8 @@ def read_history_locked(conn, room_id: str, *, gateway_id: str, epoch: int) -> l
     certified as a history of physical-host transfers.
     """
     rows = conn.execute(
-        """SELECT seq,authority_epoch,actor_json,payload_json FROM hosted_room_events
-           WHERE room_id=? AND kind='authority.claimed' ORDER BY seq LIMIT ?""",
+        _storage_statement(sqlite="""SELECT seq,authority_epoch,actor_json,payload_json FROM hosted_room_events
+           WHERE room_id=? AND kind='authority.claimed' ORDER BY seq LIMIT ?""",postgresql="SELECT seq,authority_epoch,actor_json,payload_json FROM hosted_room_events\n           WHERE room_id=%s AND kind='authority.claimed' ORDER BY seq LIMIT %s"),
         (room_id, MAX_AUTHORITY_SPANS),
     ).fetchall()
     if len(rows) >= MAX_AUTHORITY_SPANS:

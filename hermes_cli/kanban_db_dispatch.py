@@ -6,6 +6,7 @@ late-bound via ``_kb`` (import-cycle breaking) so monkeypatching
 """
 
 from __future__ import annotations
+from hermes_state_sql import statement as _storage_statement, parameter_marker as _parameter_marker, inserted_id as _inserted_id, in_transaction as _in_transaction
 
 import contextlib
 import os
@@ -514,9 +515,9 @@ def reap_terminal_workers(conn: sqlite3.Connection, *, signal_fn=None) -> list[s
     One row's failure (signal, /proc probe) is logged and skips only that row.
     Returns the task ids whose worker was terminated."""
     rows = conn.execute(
-        "SELECT id, task_id, worker_pid, worker_started_at, claim_lock FROM task_runs "
+        _storage_statement(sqlite="SELECT id, task_id, worker_pid, worker_started_at, claim_lock FROM task_runs "
         "WHERE ended_at IS NOT NULL AND ended_at <= ? "
-        "AND worker_pid IS NOT NULL AND worker_started_at IS NOT NULL",
+        "AND worker_pid IS NOT NULL AND worker_started_at IS NOT NULL",postgresql='SELECT id, task_id, worker_pid, worker_started_at, claim_lock FROM task_runs WHERE ended_at IS NOT NULL AND ended_at <= %s AND worker_pid IS NOT NULL AND worker_started_at IS NOT NULL'),
         (int(time.time()) - TERMINAL_WORKER_REAP_GRACE_SECONDS,),
     ).fetchall()
     host_prefix = _kb._host_prefix()
@@ -547,8 +548,8 @@ def _reap_terminal_worker_row(conn, row, host_prefix: str, signal_fn, reaped: li
             return  # still alive: try again next tick
     with _kb.write_txn(conn):
         conn.execute(
-            "UPDATE task_runs SET worker_pid = NULL, worker_started_at = NULL "
-            "WHERE id = ? AND worker_pid = ? AND worker_started_at = ?",
+            _storage_statement(sqlite="UPDATE task_runs SET worker_pid = NULL, worker_started_at = NULL "
+            "WHERE id = ? AND worker_pid = ? AND worker_started_at = ?",postgresql='UPDATE task_runs SET worker_pid = NULL, worker_started_at = NULL WHERE id = %s AND worker_pid = %s AND worker_started_at = %s::text'),
             (row["id"], pid, fingerprint),
         )
         if alive:
@@ -594,15 +595,15 @@ def _defer_reclaim_for_live_worker(
     grace = now + _kb.RECLAIM_DEFER_GRACE_SECONDS
     with _kb.write_txn(conn):
         cur = conn.execute(
-            "UPDATE tasks SET claim_expires = ? "
-            "WHERE id = ? AND status = 'running' AND claim_lock IS ?",
+            _storage_statement(sqlite="UPDATE tasks SET claim_expires = ? "
+            "WHERE id = ? AND status = 'running' AND claim_lock IS ?",postgresql="UPDATE tasks SET claim_expires = %s WHERE id = %s AND status = 'running' AND claim_lock IS NOT DISTINCT FROM %s"),
             (grace, task_id, claim_lock),
         )
         if cur.rowcount != 1:
             return
         run_id = _kb._current_run_id(conn, task_id)
         if run_id is not None:
-            conn.execute("UPDATE task_runs SET claim_expires = ? WHERE id = ?", (grace, run_id))
+            conn.execute(_storage_statement(sqlite="UPDATE task_runs SET claim_expires = ? WHERE id = ?",postgresql='UPDATE task_runs SET claim_expires = %s WHERE id = %s'), (grace, run_id))
         payload = {"reason": reason, "claim_lock": claim_lock, "claim_expires_now": grace}
         payload.update(termination)
         _kb._append_event(conn, task_id, "reclaim_deferred", payload, run_id=run_id)
@@ -623,10 +624,10 @@ def heartbeat_worker(
     """
     now = int(time.time())
     with _kb.write_txn(conn):
-        sql = "UPDATE tasks SET last_heartbeat_at = ? WHERE id = ? AND status = 'running'"
+        sql = _storage_statement(sqlite="UPDATE tasks SET last_heartbeat_at = ? WHERE id = ? AND status = 'running'",postgresql="UPDATE tasks SET last_heartbeat_at = %s WHERE id = %s AND status = 'running'")
         params: tuple = (now, task_id)
         if expected_run_id is not None:
-            sql += " AND current_run_id = ?"
+            sql += _storage_statement(sqlite=" AND current_run_id = ?",postgresql=' AND current_run_id = %s')
             params += (int(expected_run_id),)
         cur = conn.execute(sql, params)
         if cur.rowcount != 1:
@@ -637,7 +638,7 @@ def heartbeat_worker(
             else _kb._current_run_id(conn, task_id)
         )
         if run_id is not None:
-            conn.execute("UPDATE task_runs SET last_heartbeat_at = ? WHERE id = ?", (now, run_id))
+            conn.execute(_storage_statement(sqlite="UPDATE task_runs SET last_heartbeat_at = ? WHERE id = ?",postgresql='UPDATE task_runs SET last_heartbeat_at = %s WHERE id = %s'), (now, run_id))
         _kb._append_event(
             conn, task_id, "heartbeat",
             {"note": note} if note else None,
@@ -708,11 +709,11 @@ def enforce_max_runtime(conn: sqlite3.Connection, *, signal_fn=None) -> list[str
         with _kb.write_txn(conn):
             retry_status = _kb._retry_status_for_run(conn, tid)
             cur = conn.execute(
-                "UPDATE tasks SET status = ?, claim_lock = NULL, "
+                _storage_statement(sqlite="UPDATE tasks SET status = ?, claim_lock = NULL, "
                 "claim_expires = NULL, worker_pid = NULL, worker_started_at = NULL, "
                 "last_heartbeat_at = NULL "
                 "WHERE id = ? AND status = 'running' "
-                "  AND worker_pid = ? AND claim_lock IS ?",
+                "  AND worker_pid = ? AND claim_lock IS ?",postgresql="UPDATE tasks SET status = %s, claim_lock = NULL, claim_expires = NULL, worker_pid = NULL, worker_started_at = NULL, last_heartbeat_at = NULL WHERE id = %s AND status = 'running'   AND worker_pid = %s AND claim_lock IS NOT DISTINCT FROM %s"),
                 (retry_status, tid, pid, row["claim_lock"]),
             )
             if cur.rowcount == 1:
@@ -813,11 +814,11 @@ def detect_stale_running(
         with _kb.write_txn(conn):
             retry_status = _kb._retry_status_for_run(conn, tid)
             cur = conn.execute(
-                "UPDATE tasks SET status = ?, claim_lock = NULL, "
+                _storage_statement(sqlite="UPDATE tasks SET status = ?, claim_lock = NULL, "
                 "claim_expires = NULL, worker_pid = NULL, worker_started_at = NULL, "
                 "last_heartbeat_at = NULL "
                 "WHERE id = ? AND status = 'running' "
-                "  AND claim_lock IS ?",
+                "  AND claim_lock IS ?",postgresql="UPDATE tasks SET status = %s, claim_lock = NULL, claim_expires = NULL, worker_pid = NULL, worker_started_at = NULL, last_heartbeat_at = NULL WHERE id = %s AND status = 'running'   AND claim_lock IS NOT DISTINCT FROM %s"),
                 (retry_status, tid, row["claim_lock"]),
             )
             if cur.rowcount != 1:
@@ -881,11 +882,11 @@ def reconcile_orphaned_running(conn: sqlite3.Connection) -> list[str]:
             continue
         with _kb.write_txn(conn):
             cur = conn.execute(
-                "UPDATE tasks SET status = 'ready', claim_lock = NULL, "
+                _storage_statement(sqlite="UPDATE tasks SET status = 'ready', claim_lock = NULL, "
                 "claim_expires = NULL, worker_pid = NULL, worker_started_at = NULL, "
                 "last_heartbeat_at = NULL "
                 "WHERE id = ? AND status = 'running' "
-                "  AND claim_lock IS ? AND claim_expires IS ?",
+                "  AND claim_lock IS ? AND claim_expires IS ?",postgresql="UPDATE tasks SET status = 'ready', claim_lock = NULL, claim_expires = NULL, worker_pid = NULL, worker_started_at = NULL, last_heartbeat_at = NULL WHERE id = %s AND status = 'running'   AND claim_lock IS NOT DISTINCT FROM %s AND claim_expires IS NOT DISTINCT FROM %s"),
                 (tid, row["claim_lock"], row["claim_expires"]),
             )
             if cur.rowcount != 1:
@@ -948,9 +949,9 @@ def _protocol_violation_streak(conn: sqlite3.Connection, task_id: str) -> int:
     """
     streak = 0
     rows = conn.execute(
-        "SELECT outcome, error, metadata FROM task_runs "
+        _storage_statement(sqlite="SELECT outcome, error, metadata FROM task_runs "
         "WHERE task_id = ? AND ended_at IS NOT NULL "
-        "ORDER BY id DESC LIMIT ?",
+        "ORDER BY id DESC LIMIT ?",postgresql='SELECT outcome, error, metadata FROM task_runs WHERE task_id = %s AND ended_at IS NOT NULL ORDER BY id DESC LIMIT %s'),
         (task_id, _PROTOCOL_VIOLATION_SCAN_LIMIT),
     ).fetchall()
     for row in rows:
@@ -1192,10 +1193,10 @@ def _reclaim_dead_workers(conn: sqlite3.Connection, board: Optional[str] = None)
             retry_status = _kb._retry_status_for_run(conn, row["id"])
             dead.event_payload["retry_status"] = retry_status
             cur = conn.execute(
-                "UPDATE tasks SET status = ?, claim_lock = NULL, "
+                _storage_statement(sqlite="UPDATE tasks SET status = ?, claim_lock = NULL, "
                 "claim_expires = NULL, worker_pid = NULL, worker_started_at = NULL "
                 "WHERE id = ? AND status = 'running' "
-                "  AND worker_pid = ? AND claim_lock IS ?",
+                "  AND worker_pid = ? AND claim_lock IS ?",postgresql="UPDATE tasks SET status = %s, claim_lock = NULL, claim_expires = NULL, worker_pid = NULL, worker_started_at = NULL WHERE id = %s AND status = 'running'   AND worker_pid = %s AND claim_lock IS NOT DISTINCT FROM %s"),
                 (retry_status, row["id"], pid, row["claim_lock"]),
             )
             if cur.rowcount != 1:
@@ -1224,7 +1225,7 @@ def _reclaim_dead_workers(conn: sqlite3.Connection, board: Optional[str] = None)
                 # ``_record_task_failure`` (which stamps this column), yet the
                 # board UI and retry worker need the corrective message.
                 conn.execute(
-                    "UPDATE tasks SET last_failure_error = ? WHERE id = ?",
+                    _storage_statement(sqlite="UPDATE tasks SET last_failure_error = ? WHERE id = ?",postgresql='UPDATE tasks SET last_failure_error = %s WHERE id = %s'),
                     (dead.error_text[:500], row["id"]),
                 )
             if dead.rate_limited:
@@ -1253,7 +1254,7 @@ def _account_crashes(conn: sqlite3.Connection, crash_details: list) -> list[str]
         error_text = dead.error_text
         if dead.protocol_violation:
             streak = _protocol_violation_streak(conn, tid)
-            trow = conn.execute("SELECT max_retries FROM tasks WHERE id = ?", (tid,)).fetchone()
+            trow = conn.execute(_storage_statement(sqlite="SELECT max_retries FROM tasks WHERE id = ?",postgresql='SELECT max_retries FROM tasks WHERE id = %s'), (tid,)).fetchone()
             if trow is None:
                 continue  # task deleted mid-loop
             task_override = _kb._row_get(trow, "max_retries")
@@ -1400,8 +1401,8 @@ def _record_task_failure(
     error = error[:500]
     with _kb.write_txn(conn):
         row = conn.execute(
-            "SELECT consecutive_failures, status, max_retries, current_run_id "
-            "FROM tasks WHERE id = ?", (task_id,),
+            _storage_statement(sqlite="SELECT consecutive_failures, status, max_retries, current_run_id "
+            "FROM tasks WHERE id = ?",postgresql='SELECT consecutive_failures, status, max_retries, current_run_id FROM tasks WHERE id = %s'), (task_id,),
         ).fetchone()
         if row is None:
             return False
@@ -1423,16 +1424,16 @@ def _record_task_failure(
             if release_claim:
                 # Spawn path: restore the claimed source phase + clear claim.
                 conn.execute(
-                    "UPDATE tasks SET status = ?, claim_lock = NULL, "
+                    _storage_statement(sqlite="UPDATE tasks SET status = ?, claim_lock = NULL, "
                     "claim_expires = NULL, worker_pid = NULL, worker_started_at = NULL, "
                     "consecutive_failures = ?, last_failure_error = ? "
-                    "WHERE id = ? AND status = 'running'",
+                    "WHERE id = ? AND status = 'running'",postgresql="UPDATE tasks SET status = %s, claim_lock = NULL, claim_expires = NULL, worker_pid = NULL, worker_started_at = NULL, consecutive_failures = %s, last_failure_error = %s WHERE id = %s AND status = 'running'"),
                     (retry_status, failures, error, task_id),
                 )
             else:
                 conn.execute(
-                    "UPDATE tasks SET consecutive_failures = ?, "
-                    "last_failure_error = ? WHERE id = ?",
+                    _storage_statement(sqlite="UPDATE tasks SET consecutive_failures = ?, "
+                    "last_failure_error = ? WHERE id = ?",postgresql='UPDATE tasks SET consecutive_failures = %s, last_failure_error = %s WHERE id = %s'),
                     (failures, error, task_id),
                 )
             # Timeout/crash path's caller already emitted its own event.
@@ -1452,8 +1453,8 @@ def _record_task_failure(
             "UPDATE tasks SET status = 'blocked', "
             + ("claim_lock = NULL, claim_expires = NULL, worker_pid = NULL, worker_started_at = NULL, "
                if release_claim else "")
-            + "consecutive_failures = ?, last_failure_error = ? "
-            "WHERE id = ? AND status IN ('running', 'ready', 'review')",
+            + _storage_statement(sqlite="consecutive_failures = ?, last_failure_error = ? "
+            "WHERE id = ? AND status IN ('running', 'ready', 'review')",postgresql="consecutive_failures = %s, last_failure_error = %s WHERE id = %s AND status IN ('running', 'ready', 'review')"),
             (failures, error, task_id),
         )
         payload = {
@@ -1499,12 +1500,12 @@ def _set_worker_pid(conn: sqlite3.Connection, task_id: str, pid: int, *, run_id=
         if run_id is None:
             run_id = _kb._current_run_id(conn, task_id)
         cur = conn.execute(
-            "UPDATE tasks SET worker_pid = ?, worker_started_at = ? WHERE id = ? AND status = 'running' "
+            _storage_statement(sqlite="UPDATE tasks SET worker_pid = ?, worker_started_at = ? WHERE id = ? AND status = 'running' "
             "AND current_run_id IS ? AND worker_pid IS NULL "
-            "AND (? IS NULL OR claim_lock = ?)",
+            "AND (? IS NULL OR claim_lock = ?)",postgresql="UPDATE tasks SET worker_pid = %s, worker_started_at = %s::text WHERE id = %s AND status = 'running' AND current_run_id IS NOT DISTINCT FROM %s AND worker_pid IS NULL AND (%s IS NULL OR claim_lock = %s)"),
             (int(pid), started_at, task_id, run_id, claim_lock, claim_lock))
         if cur.rowcount:
-            conn.execute("UPDATE task_runs SET worker_pid = ?, worker_started_at = ? WHERE id = ?",
+            conn.execute(_storage_statement(sqlite="UPDATE task_runs SET worker_pid = ?, worker_started_at = ? WHERE id = ?",postgresql='UPDATE task_runs SET worker_pid = %s, worker_started_at = %s::text WHERE id = %s'),
                          (int(pid), started_at, run_id))
         _kb._append_event(conn, task_id, "spawned", {"pid": int(pid), "started_at": started_at}, run_id=run_id)
 
@@ -1519,15 +1520,15 @@ def adopt_worker_pid(conn: sqlite3.Connection, task_id: str, run_id: int, pid: i
     and it must exit without working it."""
     started_at = _process_fingerprint(int(pid)) or UNVERIFIED_WORKER_FINGERPRINT
     with _kb.write_txn(conn):
-        row = conn.execute("SELECT status, current_run_id, worker_pid, claim_lock FROM tasks WHERE id = ?",
+        row = conn.execute(_storage_statement(sqlite="SELECT status, current_run_id, worker_pid, claim_lock FROM tasks WHERE id = ?",postgresql='SELECT status, current_run_id, worker_pid, claim_lock FROM tasks WHERE id = %s'),
                            (task_id,)).fetchone()
         if row is None or row["status"] != "running" or row["current_run_id"] != int(run_id):
             return False
         # Liveness checks are host-local: a pid from another host (or pid namespace) proves nothing here.
         if row["worker_pid"] is None and (row["claim_lock"] or "").startswith(_kb._host_prefix()):
-            conn.execute("UPDATE tasks SET worker_pid = ?, worker_started_at = ? WHERE id = ?",
+            conn.execute(_storage_statement(sqlite="UPDATE tasks SET worker_pid = ?, worker_started_at = ? WHERE id = ?",postgresql='UPDATE tasks SET worker_pid = %s, worker_started_at = %s::text WHERE id = %s'),
                          (int(pid), started_at, task_id))
-            conn.execute("UPDATE task_runs SET worker_pid = ?, worker_started_at = ? WHERE id = ?",
+            conn.execute(_storage_statement(sqlite="UPDATE task_runs SET worker_pid = ?, worker_started_at = ? WHERE id = ?",postgresql='UPDATE task_runs SET worker_pid = %s, worker_started_at = %s::text WHERE id = %s'),
                          (int(pid), started_at, int(run_id)))
             _kb._append_event(conn, task_id, "worker_registered", {"pid": int(pid), "started_at": started_at},
                               run_id=int(run_id))
@@ -1543,8 +1544,8 @@ def _clear_failure_counter(conn: sqlite3.Connection, task_id: str) -> None:
     """
     with _kb.write_txn(conn):
         conn.execute(
-            "UPDATE tasks SET consecutive_failures = 0, "
-            "last_failure_error = NULL WHERE id = ?",
+            _storage_statement(sqlite="UPDATE tasks SET consecutive_failures = 0, "
+            "last_failure_error = NULL WHERE id = ?",postgresql='UPDATE tasks SET consecutive_failures = 0, last_failure_error = NULL WHERE id = %s'),
             (task_id,),
         )
 
@@ -1571,7 +1572,7 @@ def check_respawn_guard(
     passes own those.
     """
     row = conn.execute(
-        "SELECT last_failure_error FROM tasks WHERE id = ?",
+        _storage_statement(sqlite="SELECT last_failure_error FROM tasks WHERE id = ?",postgresql='SELECT last_failure_error FROM tasks WHERE id = %s'),
         (task_id,),
     ).fetchone()
     if row is None:
@@ -1586,9 +1587,9 @@ def check_respawn_guard(
     #    reaches the breaker.
     rl_cooldown = _kb._resolve_rate_limit_cooldown_seconds()
     latest_run = conn.execute(
-        "SELECT outcome, ended_at, metadata FROM task_runs "
+        _storage_statement(sqlite="SELECT outcome, ended_at, metadata FROM task_runs "
         "WHERE task_id = ? AND ended_at IS NOT NULL "
-        "ORDER BY ended_at DESC LIMIT 1",
+        "ORDER BY ended_at DESC LIMIT 1",postgresql='SELECT outcome, ended_at, metadata FROM task_runs WHERE task_id = %s AND ended_at IS NOT NULL ORDER BY ended_at DESC LIMIT 1'),
         (task_id,),
     ).fetchone()
     if latest_run is not None and latest_run["outcome"] == "spawn_failed":
@@ -1663,7 +1664,7 @@ def _rows_since(conn: sqlite3.Connection, table: str, task_id: str, since: int, 
     outside the mutators, #97455); those are decided on their parsed epoch. An unreadable time is
     dropped (never guards or lifts) unless the caller substitutes ``unreadable``."""
     col = _GUARD_TIME_COLS[table]
-    sql = f"SELECT {col}{cols} FROM {table} WHERE task_id = ? {where} AND {col} {'>' if strict else '>='} ?"
+    sql = _storage_statement(sqlite=f"SELECT {col}{cols} FROM {table} WHERE task_id = ? {where} AND {col} {'>' if strict else '>='} ?",postgresql=f"SELECT {col}{cols} FROM {table} WHERE task_id = %s {where} AND {col} {('>' if strict else '>=')} %s")
     for row in conn.execute(sql, (task_id, since)):
         t = _kb._to_epoch(row[0])
         t = unreadable if t is None else t
@@ -1786,8 +1787,8 @@ def dispatch_profile_allowlist_summary() -> str:
 
 def _has_spawnable(conn: sqlite3.Connection, status: str) -> bool:
     rows = conn.execute(
-        "SELECT DISTINCT assignee FROM tasks "
-        "WHERE status = ? AND assignee IS NOT NULL AND claim_lock IS NULL",
+        _storage_statement(sqlite="SELECT DISTINCT assignee FROM tasks "
+        "WHERE status = ? AND assignee IS NOT NULL AND claim_lock IS NULL",postgresql='SELECT DISTINCT assignee FROM tasks WHERE status = %s AND assignee IS NOT NULL AND claim_lock IS NULL'),
         (status,),
     ).fetchall()
     if not rows:
@@ -2080,8 +2081,8 @@ def _dispatch_lane_task(
         if not dry_run:
             with _kb.write_txn(conn):
                 last = conn.execute(
-                    "SELECT kind, payload FROM task_events WHERE task_id = ? "
-                    "ORDER BY created_at DESC, id DESC LIMIT 1", (task_id,)).fetchone()
+                    _storage_statement(sqlite="SELECT kind, payload FROM task_events WHERE task_id = ? "
+                    "ORDER BY created_at DESC, id DESC LIMIT 1",postgresql='SELECT kind, payload FROM task_events WHERE task_id = %s ORDER BY created_at DESC, id DESC LIMIT 1'), (task_id,)).fetchone()
                 if (last is None or last["kind"] != "skipped_nonspawnable"
                         or last["payload"] != _kb._json_or_null({"assignee": assignee})):
                     _kb._append_event(conn, task_id, "skipped_nonspawnable", {"assignee": assignee})
@@ -2186,8 +2187,8 @@ def _apply_default_assignee(
     try:
         with _kb.write_txn(conn):
             conn.execute(
-                "UPDATE tasks SET assignee = ? WHERE id = ? "
-                "AND (assignee IS NULL OR assignee = '')",
+                _storage_statement(sqlite="UPDATE tasks SET assignee = ? WHERE id = ? "
+                "AND (assignee IS NULL OR assignee = '')",postgresql="UPDATE tasks SET assignee = %s WHERE id = %s AND (assignee IS NULL OR assignee = '')"),
                 (assignee, task_id),
             )
             _kb._append_event(

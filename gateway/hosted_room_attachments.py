@@ -8,6 +8,7 @@ room's frozen recipient roster.
 """
 
 from __future__ import annotations
+from hermes_state_sql import statement as _storage_statement, parameter_marker as _parameter_marker, inserted_id as _inserted_id, in_transaction as _in_transaction
 
 from gateway.hosted_rooms import EventAttachmentConflictError
 
@@ -325,7 +326,8 @@ class HostedRoomAttachmentStore:
                 return
             conn = self._connect()
             try:
-                conn.execute("BEGIN IMMEDIATE")
+                from hermes_state_sql import is_postgres
+                conn.execute("BEGIN" if is_postgres(conn) else "BEGIN IMMEDIATE")
                 self._initialize(conn)
                 conn.commit()
             finally:
@@ -336,6 +338,9 @@ class HostedRoomAttachmentStore:
 
     def _startup_key(self) -> tuple[str, str, int, int] | None:
         """Identity of the database FILE, so a recreated state.db is set up again."""
+        from hermes_state_backend import postgres_enabled,resolve_postgres_scope
+        if postgres_enabled():
+            return (resolve_postgres_scope(self.db_path.parent).schema,str(self.root.resolve()),0,0)
         try:
             info = self.db_path.stat()
         except OSError:
@@ -352,6 +357,12 @@ class HostedRoomAttachmentStore:
                 pass
 
     def _initialize(self, conn: sqlite3.Connection) -> None:
+        from hermes_state_sql import is_postgres
+        if is_postgres(conn):
+            from gateway.hosted_rooms_common import table_exists
+            if not table_exists(conn,"hosted_room_attachments"):
+                raise RuntimeError("Provisioned hosted-room attachment schema required")
+            return
         conn.execute(
             """CREATE TABLE IF NOT EXISTS hosted_room_attachment_blobs (
                 blob_id TEXT PRIMARY KEY,
@@ -396,8 +407,8 @@ class HostedRoomAttachmentStore:
             conn.execute("ALTER TABLE hosted_room_attachments ADD COLUMN catalog_name TEXT")
             reader = conn.execute("SELECT attachment_id, name FROM hosted_room_attachments")
             while rows := reader.fetchmany(512):
-                conn.executemany(
-                    "UPDATE hosted_room_attachments SET catalog_name=? WHERE attachment_id=?",
+                conn.cursor().executemany(
+                    _storage_statement(sqlite="UPDATE hosted_room_attachments SET catalog_name=? WHERE attachment_id=?",postgresql='UPDATE hosted_room_attachments SET catalog_name=%s WHERE attachment_id=%s'),
                     ((fold_catalog_text(str(row["name"])), row["attachment_id"]) for row in rows),
                 )
         conn.execute(
@@ -414,6 +425,10 @@ class HostedRoomAttachmentStore:
         )
 
     def _connect(self) -> sqlite3.Connection:
+        from hermes_state_backend import postgres_enabled
+        if postgres_enabled():
+            from gateway.hosted_rooms_common import open_sqlite
+            return open_sqlite(self.db_path)
         from hermes_state_wal import apply_wal_with_fallback
 
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -430,6 +445,14 @@ class HostedRoomAttachmentStore:
     @contextmanager
     def _transaction(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:
         conn = self._connect()
+        from hermes_state_sql import is_postgres,native_write_transaction
+        if is_postgres(conn):
+            try:
+                with native_write_transaction(conn):
+                    yield conn
+            finally:
+                conn.close()
+            return
         try:
             if immediate:
                 conn.execute("BEGIN IMMEDIATE")
@@ -539,7 +562,7 @@ class HostedRoomAttachmentStore:
 
         with self._lock, self._transaction(immediate=True) as conn:
             existing = conn.execute(
-                "SELECT * FROM hosted_room_attachments WHERE room_id=? AND upload_id=?",
+                _storage_statement(sqlite="SELECT * FROM hosted_room_attachments WHERE room_id=? AND upload_id=?",postgresql='SELECT * FROM hosted_room_attachments WHERE room_id=%s AND upload_id=%s'),
                 (room_id, upload_id),
             ).fetchone()
             if existing is not None:
@@ -561,15 +584,15 @@ class HostedRoomAttachmentStore:
                 return self._metadata(existing, idempotent=True)
 
             room_totals = conn.execute(
-                """SELECT COALESCE(SUM(size), 0) AS bytes, COUNT(*) AS count
+                _storage_statement(sqlite="""SELECT COALESCE(SUM(size), 0) AS bytes, COUNT(*) AS count
                      FROM hosted_room_attachments
-                    WHERE room_id=? AND state!='disbanded'""",
+                    WHERE room_id=? AND state!='disbanded'""",postgresql="SELECT COALESCE(SUM(size), 0) AS bytes, COUNT(*) AS count\n                     FROM hosted_room_attachments\n                    WHERE room_id=%s AND state!='disbanded'"),
                 (room_id,),
             ).fetchone()
             uncommitted = conn.execute(
-                """SELECT COALESCE(SUM(size), 0) AS bytes, COUNT(*) AS count
+                _storage_statement(sqlite="""SELECT COALESCE(SUM(size), 0) AS bytes, COUNT(*) AS count
                      FROM hosted_room_attachments
-                    WHERE room_id=? AND state='uploaded'""",
+                    WHERE room_id=? AND state='uploaded'""",postgresql="SELECT COALESCE(SUM(size), 0) AS bytes, COUNT(*) AS count\n                     FROM hosted_room_attachments\n                    WHERE room_id=%s AND state='uploaded'"),
                 (room_id,),
             ).fetchone()
             if int(room_totals["bytes"]) + len(data) > self.room_quota_bytes:
@@ -586,7 +609,7 @@ class HostedRoomAttachmentStore:
                 raise AttachmentQuotaError("room uncommitted upload quota exceeded")
 
             blob = conn.execute(
-                "SELECT * FROM hosted_room_attachment_blobs WHERE sha256=?",
+                _storage_statement(sqlite="SELECT * FROM hosted_room_attachment_blobs WHERE sha256=?",postgresql='SELECT * FROM hosted_room_attachment_blobs WHERE sha256=%s'),
                 (digest,),
             ).fetchone()
             if blob is None:
@@ -601,26 +624,26 @@ class HostedRoomAttachmentStore:
                 target = self._blob_path(blob_id)
                 self._write_blob(target, data)
                 conn.execute(
-                    """INSERT INTO hosted_room_attachment_blobs
+                    _storage_statement(sqlite="""INSERT INTO hosted_room_attachment_blobs
                        (blob_id, sha256, size, ref_count, created_at)
-                       VALUES (?, ?, ?, 1, ?)""",
+                       VALUES (?, ?, ?, 1, ?)""",postgresql='INSERT INTO hosted_room_attachment_blobs\n                       (blob_id, sha256, size, ref_count, created_at)\n                       VALUES (%s, %s, %s, 1, %s)'),
                     (blob_id, digest, len(data), now),
                 )
             else:
                 blob_id = str(blob["blob_id"])
                 self._read_blob(blob_id=blob_id, size=int(blob["size"]), sha256=digest)
                 conn.execute(
-                    "UPDATE hosted_room_attachment_blobs SET ref_count=ref_count+1 WHERE blob_id=?",
+                    _storage_statement(sqlite="UPDATE hosted_room_attachment_blobs SET ref_count=ref_count+1 WHERE blob_id=?",postgresql='UPDATE hosted_room_attachment_blobs SET ref_count=ref_count+1 WHERE blob_id=%s'),
                     (blob_id,),
                 )
 
             attachment_id = f"att_{secrets.token_hex(16)}"
             conn.execute(
-                """INSERT INTO hosted_room_attachments
+                _storage_statement(sqlite="""INSERT INTO hosted_room_attachments
                    (attachment_id, upload_id, room_id, event_id, kind, name, catalog_name, size,
                     mime, sha256, blob_id, recipient_member_ids_json, state,
                     created_at, updated_at, expires_at)
-                   VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, '[]', 'uploaded', ?, ?, ?)""",
+                   VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, '[]', 'uploaded', ?, ?, ?)""",postgresql="INSERT INTO hosted_room_attachments\n                   (attachment_id, upload_id, room_id, event_id, kind, name, catalog_name, size,\n                    mime, sha256, blob_id, recipient_member_ids_json, state,\n                    created_at, updated_at, expires_at)\n                   VALUES (%s, %s, %s, NULL, %s, %s, %s, %s, %s, %s, %s, '[]', 'uploaded', %s, %s, %s)"),
                 (
                     attachment_id,
                     upload_id,
@@ -638,7 +661,7 @@ class HostedRoomAttachmentStore:
                 ),
             )
             row = conn.execute(
-                "SELECT * FROM hosted_room_attachments WHERE attachment_id=?",
+                _storage_statement(sqlite="SELECT * FROM hosted_room_attachments WHERE attachment_id=?",postgresql='SELECT * FROM hosted_room_attachments WHERE attachment_id=%s'),
                 (attachment_id,),
             ).fetchone()
             if row is None:  # pragma: no cover - guarded by insert
@@ -653,8 +676,8 @@ class HostedRoomAttachmentStore:
         now = float(self.clock())
         with self._transaction() as conn:
             row = conn.execute(
-                """SELECT * FROM hosted_room_attachments
-                    WHERE room_id=? AND upload_id=?""",
+                _storage_statement(sqlite="""SELECT * FROM hosted_room_attachments
+                    WHERE room_id=? AND upload_id=?""",postgresql='SELECT * FROM hosted_room_attachments\n                    WHERE room_id=%s AND upload_id=%s'),
                 (room_id, upload_id),
             ).fetchone()
             if row is None or str(row["state"]) == "disbanded":
@@ -728,7 +751,7 @@ class HostedRoomAttachmentStore:
         with self._lock, self._transaction(immediate=True) as conn:
             for entry in normalized:
                 row = conn.execute(
-                    "SELECT * FROM hosted_room_attachments WHERE attachment_id=?",
+                    _storage_statement(sqlite="SELECT * FROM hosted_room_attachments WHERE attachment_id=?",postgresql='SELECT * FROM hosted_room_attachments WHERE attachment_id=%s'),
                     (entry["attachment_id"],),
                 ).fetchone()
                 if row is None or str(row["room_id"]) != room_id:
@@ -768,10 +791,10 @@ class HostedRoomAttachmentStore:
                 if entry["attachment_id"] not in transitioned:
                     continue
                 updated = conn.execute(
-                    """UPDATE hosted_room_attachments
+                    _storage_statement(sqlite="""UPDATE hosted_room_attachments
                           SET event_id=?, recipient_member_ids_json=?, viewer_access=?, state='committed',
                               updated_at=?, expires_at=?
-                        WHERE attachment_id=? AND state='uploaded'""",
+                        WHERE attachment_id=? AND state='uploaded'""",postgresql="UPDATE hosted_room_attachments\n                          SET event_id=%s, recipient_member_ids_json=%s, viewer_access=%s, state='committed',\n                              updated_at=%s, expires_at=%s\n                        WHERE attachment_id=%s AND state='uploaded'"),
                     (
                         event_id,
                         recipients_json,
@@ -815,13 +838,13 @@ class HostedRoomAttachmentStore:
                 ]
             if not attachment_ids:
                 return 0
-            placeholders = ",".join("?" for _ in attachment_ids)
+            placeholders = ",".join(_parameter_marker() for _ in attachment_ids)
             changed = conn.execute(
-                f"""UPDATE hosted_room_attachments
+                _storage_statement(sqlite=f"""UPDATE hosted_room_attachments
                         SET event_id=NULL, recipient_member_ids_json='[]', viewer_access=0,
                             state='uploaded', updated_at=?, expires_at=?
                       WHERE room_id=? AND event_id=? AND state='committed'
-                        AND attachment_id IN ({placeholders})""",
+                        AND attachment_id IN ({placeholders})""",postgresql=f"UPDATE hosted_room_attachments\n                        SET event_id=NULL, recipient_member_ids_json='[]', viewer_access=0,\n                            state='uploaded', updated_at=%s, expires_at=%s\n                      WHERE room_id=%s AND event_id=%s AND state='committed'\n                        AND attachment_id IN ({placeholders})"),
                 (
                     now,
                     now + UNCOMMITTED_TTL_SECONDS,
@@ -840,8 +863,8 @@ class HostedRoomAttachmentStore:
         now = float(self.clock())
         with self._transaction(immediate=True) as conn:
             event = conn.execute(
-                """SELECT 1 FROM hosted_room_events
-                    WHERE room_id=? AND event_id=? LIMIT 1""",
+                _storage_statement(sqlite="""SELECT 1 FROM hosted_room_events
+                    WHERE room_id=? AND event_id=? LIMIT 1""",postgresql='SELECT 1 FROM hosted_room_events\n                    WHERE room_id=%s AND event_id=%s LIMIT 1'),
                 (room_id, event_id),
             ).fetchone()
             if event is None:
@@ -849,9 +872,9 @@ class HostedRoomAttachmentStore:
                     "attachment owner event is not durable in the room log"
                 )
             changed = conn.execute(
-                """UPDATE hosted_room_attachments
+                _storage_statement(sqlite="""UPDATE hosted_room_attachments
                       SET expires_at=NULL, updated_at=?
-                    WHERE room_id=? AND event_id=? AND state='committed'""",
+                    WHERE room_id=? AND event_id=? AND state='committed'""",postgresql="UPDATE hosted_room_attachments\n                      SET expires_at=NULL, updated_at=%s\n                    WHERE room_id=%s AND event_id=%s AND state='committed'"),
                 (now, room_id, event_id),
             )
             return int(changed.rowcount)
@@ -946,8 +969,8 @@ class HostedRoomAttachmentStore:
         now = float(self.clock())
         with self._transaction(immediate=True) as conn:
             has_events = conn.execute(
-                """SELECT 1 FROM sqlite_master
-                    WHERE type='table' AND name='hosted_room_events'"""
+                _storage_statement(sqlite="""SELECT 1 FROM sqlite_master
+                    WHERE type='table' AND name='hosted_room_events'""",postgresql="SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='hosted_room_events'")
             ).fetchone()
             if has_events is None:
                 return 0
@@ -975,9 +998,9 @@ class HostedRoomAttachmentStore:
                 if str(row["attachment_id"]) not in ids:
                     continue
                 changed += conn.execute(
-                    """UPDATE hosted_room_attachments
+                    _storage_statement(sqlite="""UPDATE hosted_room_attachments
                           SET expires_at=NULL, updated_at=?
-                        WHERE attachment_id=? AND state='committed'""",
+                        WHERE attachment_id=? AND state='committed'""",postgresql="UPDATE hosted_room_attachments\n                          SET expires_at=NULL, updated_at=%s\n                        WHERE attachment_id=%s AND state='committed'"),
                     (now, str(row["attachment_id"])),
                 ).rowcount
         return int(changed)
@@ -987,9 +1010,9 @@ class HostedRoomAttachmentStore:
         now = float(self.clock())
         with self._transaction(immediate=True) as conn:
             changed = conn.execute(
-                """UPDATE hosted_room_attachments
+                _storage_statement(sqlite="""UPDATE hosted_room_attachments
                       SET state='disbanded', updated_at=?, expires_at=?
-                    WHERE room_id=? AND state!='disbanded'""",
+                    WHERE room_id=? AND state!='disbanded'""",postgresql="UPDATE hosted_room_attachments\n                      SET state='disbanded', updated_at=%s, expires_at=%s\n                    WHERE room_id=%s AND state!='disbanded'"),
                 (now, now + DISBANDED_GRACE_SECONDS, room_id),
             )
             return int(changed.rowcount)
@@ -1000,12 +1023,12 @@ class HostedRoomAttachmentStore:
         removed = 0
         with self._lock, self._transaction(immediate=True) as conn:
             has_rooms = conn.execute(
-                """SELECT 1 FROM sqlite_master
-                    WHERE type='table' AND name='hosted_rooms'"""
+                _storage_statement(sqlite="""SELECT 1 FROM sqlite_master
+                    WHERE type='table' AND name='hosted_rooms'""",postgresql="SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='hosted_rooms'")
             ).fetchone()
             if has_rooms is not None:
                 conn.execute(
-                    """UPDATE hosted_room_attachments
+                    _storage_statement(sqlite="""UPDATE hosted_room_attachments
                           SET state='disbanded',
                               expires_at=(
                                 SELECT room.disbanded_at + ? FROM hosted_rooms AS room
@@ -1016,24 +1039,24 @@ class HostedRoomAttachmentStore:
                             SELECT 1 FROM hosted_rooms AS room
                              WHERE room.room_id=hosted_room_attachments.room_id
                                AND room.disbanded_at IS NOT NULL
-                        )""",
+                        )""",postgresql="UPDATE hosted_room_attachments\n                          SET state='disbanded',\n                              expires_at=(\n                                SELECT room.disbanded_at + %s FROM hosted_rooms AS room\n                                 WHERE room.room_id=hosted_room_attachments.room_id\n                              ),\n                              updated_at=%s\n                        WHERE state='committed' AND EXISTS (\n                            SELECT 1 FROM hosted_rooms AS room\n                             WHERE room.room_id=hosted_room_attachments.room_id\n                               AND room.disbanded_at IS NOT NULL\n                        )"),
                     (DISBANDED_GRACE_SECONDS, now),
                 )
             rows = conn.execute(
-                """SELECT attachment_id, blob_id FROM hosted_room_attachments
-                    WHERE expires_at IS NOT NULL AND expires_at <= ?""",
+                _storage_statement(sqlite="""SELECT attachment_id, blob_id FROM hosted_room_attachments
+                    WHERE expires_at IS NOT NULL AND expires_at <= ?""",postgresql='SELECT attachment_id, blob_id FROM hosted_room_attachments\n                    WHERE expires_at IS NOT NULL AND expires_at <= %s'),
                 (now,),
             ).fetchall()
             released = Counter(str(row["blob_id"]) for row in rows)
             for row in rows:
                 conn.execute(
-                    "DELETE FROM hosted_room_attachments WHERE attachment_id=?",
+                    _storage_statement(sqlite="DELETE FROM hosted_room_attachments WHERE attachment_id=?",postgresql='DELETE FROM hosted_room_attachments WHERE attachment_id=%s'),
                     (str(row["attachment_id"]),),
                 )
                 removed += 1
             for blob_id, count in released.items():
                 blob = conn.execute(
-                    "SELECT ref_count FROM hosted_room_attachment_blobs WHERE blob_id=?",
+                    _storage_statement(sqlite="SELECT ref_count FROM hosted_room_attachment_blobs WHERE blob_id=?",postgresql='SELECT ref_count FROM hosted_room_attachment_blobs WHERE blob_id=%s'),
                     (blob_id,),
                 ).fetchone()
                 if blob is None:
@@ -1042,14 +1065,14 @@ class HostedRoomAttachmentStore:
                     removed_blob_ids.append(blob_id)
                 else:
                     conn.execute(
-                        """UPDATE hosted_room_attachment_blobs
+                        _storage_statement(sqlite="""UPDATE hosted_room_attachment_blobs
                               SET ref_count=ref_count-?
-                            WHERE blob_id=?""",
+                            WHERE blob_id=?""",postgresql='UPDATE hosted_room_attachment_blobs\n                              SET ref_count=ref_count-%s\n                            WHERE blob_id=%s'),
                         (count, blob_id),
                     )
             if removed_blob_ids:
-                conn.executemany(
-                    "DELETE FROM hosted_room_attachment_blobs WHERE blob_id=?",
+                conn.cursor().executemany(
+                    _storage_statement(sqlite="DELETE FROM hosted_room_attachment_blobs WHERE blob_id=?",postgresql='DELETE FROM hosted_room_attachment_blobs WHERE blob_id=%s'),
                     ((blob_id,) for blob_id in removed_blob_ids),
                 )
         for blob_id in removed_blob_ids:
@@ -1097,7 +1120,7 @@ class HostedRoomAttachmentStore:
 
     def stats(self, *, room_id: str | None = None) -> dict[str, int]:
         with self._transaction() as conn:
-            where = " WHERE room_id=?" if room_id is not None else ""
+            where = _storage_statement(sqlite=" WHERE room_id=?",postgresql=' WHERE room_id=%s') if room_id is not None else ""
             params = (room_id,) if room_id is not None else ()
             row = conn.execute(
                 f"SELECT COUNT(*) AS count, COALESCE(SUM(size), 0) AS bytes "
@@ -1181,8 +1204,8 @@ class HostedRoomAttachmentStore:
         if not _table_exists(conn, "hosted_rooms"):
             raise AttachmentNotFoundError("Group Chat is unavailable to viewers")
         room = conn.execute(
-            """SELECT authority_gateway_id, authority_epoch, disbanded_at
-               FROM hosted_rooms WHERE room_id=?""",
+            _storage_statement(sqlite="""SELECT authority_gateway_id, authority_epoch, disbanded_at
+               FROM hosted_rooms WHERE room_id=?""",postgresql='SELECT authority_gateway_id, authority_epoch, disbanded_at\n               FROM hosted_rooms WHERE room_id=%s'),
             (room_id,),
         ).fetchone()
         if (
@@ -1195,7 +1218,7 @@ class HostedRoomAttachmentStore:
         # Files-only sources need not install the optional safety/retirement schema.
         for table in ("hosted_room_quarantine", "hosted_room_disband_fences"):
             if _table_exists(conn, table) and conn.execute(
-                f"SELECT 1 FROM {table} WHERE room_id=?", (room_id,),
+                _storage_statement(sqlite=f"SELECT 1 FROM {table} WHERE room_id=?",postgresql=f'SELECT 1 FROM {table} WHERE room_id=%s'), (room_id,),
             ).fetchone() is not None:
                 raise AttachmentNotFoundError("Group Chat is unavailable to viewers")
 
@@ -1212,7 +1235,7 @@ class HostedRoomAttachmentStore:
         now: float,
     ) -> sqlite3.Row:
         row = conn.execute(
-            "SELECT * FROM hosted_room_attachments WHERE attachment_id=? AND room_id=?",
+            _storage_statement(sqlite="SELECT * FROM hosted_room_attachments WHERE attachment_id=? AND room_id=?",postgresql='SELECT * FROM hosted_room_attachments WHERE attachment_id=%s AND room_id=%s'),
             (attachment_id, room_id),
         ).fetchone()
         if row is None or str(row["state"]) != "committed":
@@ -1226,7 +1249,7 @@ class HostedRoomAttachmentStore:
             # A pre-event commitment is staging, not authority to expose bytes.
             if (
                 conn.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='hosted_room_events'"
+                    _storage_statement(sqlite="SELECT 1 FROM sqlite_master WHERE type='table' AND name='hosted_room_events'",postgresql="SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='hosted_room_events'")
                 ).fetchone()
                 is None
             ):
@@ -1234,8 +1257,8 @@ class HostedRoomAttachmentStore:
                     "attachment is not published in this room"
                 )
             owner = conn.execute(
-                """SELECT payload_json FROM hosted_room_events
-                       WHERE room_id=? AND event_id=? AND kind IN ('message.user', 'message.member')""",
+                _storage_statement(sqlite="""SELECT payload_json FROM hosted_room_events
+                       WHERE room_id=? AND event_id=? AND kind IN ('message.user', 'message.member')""",postgresql="SELECT payload_json FROM hosted_room_events\n                       WHERE room_id=%s AND event_id=%s AND kind IN ('message.user', 'message.member')"),
                 (room_id, str(row["event_id"] or "")),
             ).fetchone()
             manifest = {
@@ -1295,13 +1318,13 @@ def _owner_event(
     # The standalone private-transport store need not have a canonical room log.
     if (
         conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='hosted_room_events'"
+            _storage_statement(sqlite="SELECT 1 FROM sqlite_master WHERE type='table' AND name='hosted_room_events'",postgresql="SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='hosted_room_events'")
         ).fetchone()
         is None
     ):
         return None
     return conn.execute(
-        "SELECT payload_json FROM hosted_room_events WHERE room_id=? AND event_id=?",
+        _storage_statement(sqlite="SELECT payload_json FROM hosted_room_events WHERE room_id=? AND event_id=?",postgresql='SELECT payload_json FROM hosted_room_events WHERE room_id=%s AND event_id=%s'),
         (room_id, event_id),
     ).fetchone()
 
@@ -1323,14 +1346,14 @@ def retain_message_attachments(
         raise AttachmentError("published attachment metadata must be canonical")
     if (
         conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='hosted_room_attachments'"
+            _storage_statement(sqlite="SELECT 1 FROM sqlite_master WHERE type='table' AND name='hosted_room_attachments'",postgresql="SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='hosted_room_attachments'")
         ).fetchone()
         is None
     ):
         raise EventAttachmentConflictError("message attachments are not committed")
     for entry in normalized:
         row = conn.execute(
-            "SELECT * FROM hosted_room_attachments WHERE attachment_id=?",
+            _storage_statement(sqlite="SELECT * FROM hosted_room_attachments WHERE attachment_id=?",postgresql='SELECT * FROM hosted_room_attachments WHERE attachment_id=%s'),
             (entry["attachment_id"],),
         ).fetchone()
         if (
@@ -1347,9 +1370,9 @@ def retain_message_attachments(
             )
     # Rollback and expiry use the same SQL write lock. No byte or peer I/O is
     # needed here; import verified the bytes before staging these commitments.
-    conn.executemany(
-        """UPDATE hosted_room_attachments SET expires_at=NULL, updated_at=?
-           WHERE attachment_id=?""",
+    conn.cursor().executemany(
+        _storage_statement(sqlite="""UPDATE hosted_room_attachments SET expires_at=NULL, updated_at=?
+           WHERE attachment_id=?""",postgresql='UPDATE hosted_room_attachments SET expires_at=NULL, updated_at=%s\n           WHERE attachment_id=%s'),
         ((now, entry["attachment_id"]) for entry in normalized),
     )
 

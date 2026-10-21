@@ -1,4 +1,5 @@
 """Producer-scoped passive evidence storage and durable older-writer guards."""
+from hermes_state_sql import statement as _storage_statement, parameter_marker as _parameter_marker, inserted_id as _inserted_id, in_transaction as _in_transaction
 
 import json
 
@@ -9,7 +10,13 @@ INVALID_TABLE = "hosted_room_work_records_invalid"
 
 
 def initialize(conn):
-    if not conn.in_transaction:
+    from hermes_state_sql import is_postgres
+    if is_postgres(conn):
+        for table in ("hosted_room_work_records_source","hosted_room_work_records_pending",INVALID_TABLE):
+            if not table_exists(conn,table):
+                raise RuntimeError("Provisioned hosted-room work schema required")
+        return
+    if not _in_transaction(conn):
         # Reserve the writer before schema reads. A deferred SAVEPOINT can lose
         # its write upgrade to another publisher without honoring busy_timeout.
         conn.execute("BEGIN IMMEDIATE")
@@ -45,7 +52,7 @@ def _initialize_locked(conn):
         # Preserve surrounding cleanup triggers by recreating the same table name
         # inside this transaction, rather than renaming its referents.
         rows = conn.execute(f"SELECT * FROM {table}").fetchall() if legacy else []
-        triggers = conn.execute("SELECT sql FROM sqlite_master WHERE type='trigger' AND tbl_name=?", (table,)).fetchall() if legacy else []
+        triggers = conn.execute(_storage_statement(sqlite="SELECT sql FROM sqlite_master WHERE type='trigger' AND tbl_name=?",postgresql="SELECT sql FROM sqlite_master WHERE type='trigger' AND tbl_name=%s"), (table,)).fetchall() if legacy else []
         if legacy:
             conn.execute(f"DROP TABLE {table}")
         extra = "target_install_id TEXT NOT NULL, route_generation TEXT NOT NULL, status TEXT NOT NULL," if pending else ""
@@ -57,13 +64,13 @@ def _initialize_locked(conn):
             {extra} PRIMARY KEY(room_id,producer_gateway_id,producer_epoch{key}),
             FOREIGN KEY(room_id) REFERENCES {parent}(room_id) ON DELETE CASCADE)""")
         for row in rows:
-            if not conn.execute(f"SELECT 1 FROM {parent} WHERE room_id=?", (row["room_id"],)).fetchone():
+            if not conn.execute(_storage_statement(sqlite=f"SELECT 1 FROM {parent} WHERE room_id=?",postgresql=f'SELECT 1 FROM {parent} WHERE room_id=%s'), (row["room_id"],)).fetchone():
                 fields = ["source_table", "room_id", "revision", "digest", "record_json", "disposition"]
                 values = [table, row["room_id"], row["revision"], row["digest"], row["record_json"], "invalid"]
                 if pending:
                     fields += ["target_install_id", "route_generation", "status"]
                     values += [row[k] for k in fields[-3:]]
-                conn.execute(f"INSERT INTO {INVALID_TABLE} ({','.join(fields)}) VALUES ({','.join('?' for _ in fields)})", values)
+                conn.execute(f"INSERT INTO {INVALID_TABLE} ({','.join(fields)}) VALUES ({','.join(_parameter_marker() for _ in fields)})", values)
                 continue
             producer, epoch, disposition = "", 0, "invalid"
             try:
@@ -80,7 +87,7 @@ def _initialize_locked(conn):
                 fields += ["target_install_id", "route_generation", "status"]
                 values += [row[k] for k in fields[-3:]]
             values[6] = scope_disposition(conn, table, dict(zip(fields, values)))
-            conn.execute(f"INSERT INTO {table} ({','.join(fields)}) VALUES ({','.join('?' for _ in fields)})", values)
+            conn.execute(f"INSERT INTO {table} ({','.join(fields)}) VALUES ({','.join(_parameter_marker() for _ in fields)})", values)
         for trigger in triggers:
             conn.execute(trigger[0])
     _guards(conn, work, tables)
@@ -96,7 +103,7 @@ def scope_disposition(conn, table, row):
     if row["disposition"] != "current":
         return row["disposition"]
     current = None
-    current = conn.execute("SELECT authority_gateway_id,authority_epoch FROM hosted_rooms WHERE room_id=?",
+    current = conn.execute(_storage_statement(sqlite="SELECT authority_gateway_id,authority_epoch FROM hosted_rooms WHERE room_id=?",postgresql='SELECT authority_gateway_id,authority_epoch FROM hosted_rooms WHERE room_id=%s'),
                            (row["room_id"],)).fetchone()
     if current is None or tuple(current) == (row["producer_gateway_id"], row["producer_epoch"]):
         return "current"
@@ -168,6 +175,9 @@ def retained_fields(table):
 def row_size_sql(table, prefix=""):
     # Reserve the longest bounded disposition up front so freezing/cleanup can
     # still run at capacity. Every original variable column is charged as bytes.
+    from hermes_state_backend import postgres_enabled
+    if postgres_enabled():
+        return "20+"+"+".join(f"COALESCE(octet_length(convert_to(CAST({prefix}{k} AS text),'UTF8')),0)" for k in retained_fields(table))
     return "20+" + "+".join(f"COALESCE(length(CAST({prefix}{k} AS BLOB)),0)" for k in retained_fields(table))
 
 
@@ -205,7 +215,7 @@ def validate_stored_locked(conn, table, row):
             # Match all examined values, not merely a key that may since have
             # been replaced. IS preserves NULL/BLOB distinctions in old stores.
             fields = list(row.keys())
-            where = " AND ".join(f'"{k}" IS ?' for k in fields)
+            where = " AND ".join(_storage_statement(sqlite=f'"{k}" IS ?',postgresql=f'"{k}" IS NOT DISTINCT FROM %s') for k in fields)
             conn.execute("SAVEPOINT work_record_invalidate")
             try:
                 conn.execute(f"UPDATE {table} SET disposition='invalid' WHERE {where}", [row[k] for k in fields])
@@ -233,7 +243,7 @@ def save_locked(conn, table, record, *, target_install_id=None, route_generation
         keys += ["target_install_id"]
     work._budget(conn, table, dict(zip(fields, values)))
     updates = ','.join(f'{k}=excluded.{k}' for k in fields if k not in keys)
-    conn.execute(f"INSERT INTO {table} ({','.join(fields)}) VALUES ({','.join('?' for _ in fields)}) "
+    conn.execute(f"INSERT INTO {table} ({','.join(fields)}) VALUES ({','.join(_parameter_marker() for _ in fields)}) "
                  f"ON CONFLICT({','.join(keys)}) DO UPDATE SET {updates}", values)
 
 

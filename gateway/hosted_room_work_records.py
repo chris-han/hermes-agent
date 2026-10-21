@@ -1,6 +1,7 @@
 """Bounded room-scoped evidence, never executable driver state or authority."""
 
 from __future__ import annotations
+from hermes_state_sql import statement as _storage_statement, parameter_marker as _parameter_marker, inserted_id as _inserted_id, in_transaction as _in_transaction
 
 import hashlib
 import json
@@ -184,11 +185,11 @@ def _budget(conn, table, proposed):
     keys = ["room_id", "producer_gateway_id", "producer_epoch"]
     if table == PENDING_TABLE:
         keys.append("target_install_id")
-    where = " AND ".join(f"{k}=?" for k in keys)
+    where = " AND ".join(f"{k}={_parameter_marker()}" for k in keys)
     old = conn.execute(f"SELECT {storage.row_size_sql(table)} FROM {table} WHERE {where}",
                        [proposed[k] for k in keys]).fetchone()
     size = conn.execute(f"SELECT {storage.row_size_sql(table)} FROM (SELECT "
-                        + ",".join(f"? AS {k}" for k in proposed) + ")", tuple(proposed.values())).fetchone()[0]
+                        + ",".join(f"{_parameter_marker()} AS {k}" for k in proposed) + ") AS proposed", tuple(proposed.values())).fetchone()[0]
     if total - (old[0] if old else 0) + size > MAX_STORE_BYTES or count - bool(old) + 1 > MAX_STORE_ROWS:
         raise WorkRecordCapacityError("work record storage is full")
 
@@ -196,8 +197,8 @@ def _budget(conn, table, proposed):
 def history_anchor(conn, table: str, room_id: str, seq: int) -> str:
     if seq == 0:
         return digest([])
-    row = conn.execute(f"""SELECT seq,event_id,kind,actor_json,authority_epoch,payload_json,created_at
-        FROM {table} WHERE room_id=? AND seq=?""", (room_id, seq)).fetchone()
+    row = conn.execute(_storage_statement(sqlite=f"""SELECT seq,event_id,kind,actor_json,authority_epoch,payload_json,created_at
+        FROM {table} WHERE room_id=? AND seq=?""",postgresql=f'SELECT seq,event_id,kind,actor_json,authority_epoch,payload_json,created_at\n        FROM {table} WHERE room_id=%s AND seq=%s'), (room_id, seq)).fetchone()
     if row is None:
         raise WorkRecordPrefixError("work record history prefix is unavailable")
     return digest([row["seq"], row["event_id"], row["kind"], json.loads(row["actor_json"]),
@@ -215,13 +216,13 @@ def _capture_tasks(conn, room_id):
         published = """NOT EXISTS (SELECT 1 FROM hosted_room_policy_publications AS p
             WHERE p.room_id=t.room_id AND p.task_id=t.task_id AND p.kind IN ('turn.settled','turn.failed','turn.cancelled'))"""
     task_filter = f" AND (status NOT IN ('settled','failed','cancelled') OR {published})" if published else ""
-    rows = conn.execute("""SELECT task_id,thread_id,turn_id,source_event_seq,payload_json,payload_digest,
+    rows = conn.execute(_storage_statement(sqlite="""SELECT task_id,thread_id,turn_id,source_event_seq,payload_json,payload_digest,
         status,execution_generation,cancel_generation,settlement_id,cancel_id
-        FROM hosted_room_driver_tasks AS t WHERE room_id=?""" + task_filter + " ORDER BY task_id LIMIT ?",
+        FROM hosted_room_driver_tasks AS t WHERE room_id=?""",postgresql='SELECT task_id,thread_id,turn_id,source_event_seq,payload_json,payload_digest,\n        status,execution_generation,cancel_generation,settlement_id,cancel_id\n        FROM hosted_room_driver_tasks AS t WHERE room_id=%s') + task_filter + _storage_statement(sqlite=" ORDER BY task_id LIMIT ?",postgresql=' ORDER BY task_id LIMIT %s'),
         (room_id, MAX_TASKS + 1)).fetchall()
     receipts = [dict(row) for row in conn.execute(
-        f"SELECT {','.join(sorted(_RECEIPT_FIELDS))} FROM hosted_room_remote_runs AS t WHERE room_id=?"
-        + (f" AND {published}" if published else "") + " ORDER BY task_id,execution_generation,member_id LIMIT ?",
+        _storage_statement(sqlite=f"SELECT {','.join(sorted(_RECEIPT_FIELDS))} FROM hosted_room_remote_runs AS t WHERE room_id=?",postgresql=f"SELECT {','.join(sorted(_RECEIPT_FIELDS))} FROM hosted_room_remote_runs AS t WHERE room_id=%s")
+        + (f" AND {published}" if published else "") + _storage_statement(sqlite=" ORDER BY task_id,execution_generation,member_id LIMIT ?",postgresql=' ORDER BY task_id,execution_generation,member_id LIMIT %s'),
         (room_id, MAX_RECEIPTS + 1))]
     if len(rows) > MAX_TASKS or len(receipts) > MAX_RECEIPTS:
         return [], [], "bounds_exceeded"
@@ -248,7 +249,7 @@ def capture_transition_locked(conn, room_id):
     """
     import logging
     owner = conn.execute(
-        "SELECT authority_gateway_id FROM hosted_rooms WHERE room_id=? AND disbanded_at IS NULL",
+        _storage_statement(sqlite="SELECT authority_gateway_id FROM hosted_rooms WHERE room_id=? AND disbanded_at IS NULL",postgresql='SELECT authority_gateway_id FROM hosted_rooms WHERE room_id=%s AND disbanded_at IS NULL'),
         (room_id,)).fetchone()
     if owner is None:
         return
@@ -276,7 +277,7 @@ def capture(db_path, *, room_id: str, local_gateway_id: str, through_seq: int | 
 
 def capture_locked(conn, *, room_id, local_gateway_id, through_seq=None):
     initialize(conn)
-    room = conn.execute("SELECT * FROM hosted_rooms WHERE room_id=?", (room_id,)).fetchone()
+    room = conn.execute(_storage_statement(sqlite="SELECT * FROM hosted_rooms WHERE room_id=?",postgresql='SELECT * FROM hosted_rooms WHERE room_id=%s'), (room_id,)).fetchone()
     if (room is None or room["authority_gateway_id"] != local_gateway_id or room["disbanded_at"] is not None):
         raise WorkRecordError("work record source is unavailable")
     seq = room["next_seq"] - 1
@@ -284,8 +285,8 @@ def capture_locked(conn, *, room_id, local_gateway_id, through_seq=None):
         raise WorkRecordPrefixError("history delivery must precede work records")
     tasks, receipts, reason = _capture_tasks(conn, room_id)
     fence = None  # This runtime has no durable peer revocation completion proof.
-    stop = conn.execute("""SELECT seq,payload_json FROM hosted_room_events
-        WHERE room_id=? AND kind='room.stop_requested' ORDER BY seq DESC LIMIT 1""", (room_id,)).fetchone()
+    stop = conn.execute(_storage_statement(sqlite="""SELECT seq,payload_json FROM hosted_room_events
+        WHERE room_id=? AND kind='room.stop_requested' ORDER BY seq DESC LIMIT 1""",postgresql="SELECT seq,payload_json FROM hosted_room_events\n        WHERE room_id=%s AND kind='room.stop_requested' ORDER BY seq DESC LIMIT 1"), (room_id,)).fetchone()
     content = {
         "version": 1 if room["authority_epoch"] == 1 else 2, "room_id": room_id, "home_install_id": local_gateway_id,
         "authority": {"gateway_id": local_gateway_id, "epoch": room["authority_epoch"]},
@@ -301,7 +302,7 @@ def capture_locked(conn, *, room_id, local_gateway_id, through_seq=None):
         from gateway import hosted_room_work_lineage as lineage
         spans, content["lineage_sha256"] = lineage.source_prefix_locked(conn, room_id, content["authority"], seq)
         content["incompleteness"] = ["prior_authority_work_unknown"]
-    previous = conn.execute(f"SELECT * FROM {SOURCE_TABLE} WHERE room_id=? AND producer_gateway_id=? AND producer_epoch=?",
+    previous = conn.execute(_storage_statement(sqlite=f"SELECT * FROM {SOURCE_TABLE} WHERE room_id=? AND producer_gateway_id=? AND producer_epoch=?",postgresql=f'SELECT * FROM {SOURCE_TABLE} WHERE room_id=%s AND producer_gateway_id=%s AND producer_epoch=%s'),
                             storage.scope(content)).fetchone()
     previous_record = storage.validate_stored_locked(conn, SOURCE_TABLE, previous) if previous is not None else None
     revision = previous_record["revision"] + 1 if previous_record else 1
@@ -342,11 +343,11 @@ def _validate_roster(record, members):
 def prepare_delivery_locked(conn, *, room_id, target_install_id, route_generation, local_gateway_id, through_seq):
     """Freeze a source view now; expose it only after its history is acknowledged."""
     initialize(conn)
-    current = conn.execute("SELECT authority_gateway_id,authority_epoch FROM hosted_rooms WHERE room_id=?", (room_id,)).fetchone()
+    current = conn.execute(_storage_statement(sqlite="SELECT authority_gateway_id,authority_epoch FROM hosted_rooms WHERE room_id=?",postgresql='SELECT authority_gateway_id,authority_epoch FROM hosted_rooms WHERE room_id=%s'), (room_id,)).fetchone()
     if current is None or current["authority_gateway_id"] != local_gateway_id:
         raise WorkRecordError("work record source is unavailable")
     key = (room_id, current["authority_gateway_id"], current["authority_epoch"], target_install_id)
-    old = conn.execute(f"SELECT * FROM {PENDING_TABLE} WHERE room_id=? AND producer_gateway_id=? AND producer_epoch=? AND target_install_id=?", key).fetchone()
+    old = conn.execute(_storage_statement(sqlite=f"SELECT * FROM {PENDING_TABLE} WHERE room_id=? AND producer_gateway_id=? AND producer_epoch=? AND target_install_id=?",postgresql=f'SELECT * FROM {PENDING_TABLE} WHERE room_id=%s AND producer_gateway_id=%s AND producer_epoch=%s AND target_install_id=%s'), key).fetchone()
     old_record = storage.validate_stored_locked(conn, PENDING_TABLE, old) if old is not None else None
     if old is not None and old["disposition"] != "current":
         raise WorkRecordError("pending work record is not current")
@@ -354,7 +355,7 @@ def prepare_delivery_locked(conn, *, room_id, target_install_id, route_generatio
         if old["route_generation"] == route_generation and old["status"] in BLOCKED_DELIVERY_STATUSES:
             return None
         record = old_record
-        current = conn.execute("SELECT authority_gateway_id,authority_epoch,members_json FROM hosted_rooms WHERE room_id=?", (room_id,)).fetchone()
+        current = conn.execute(_storage_statement(sqlite="SELECT authority_gateway_id,authority_epoch,members_json FROM hosted_rooms WHERE room_id=?",postgresql='SELECT authority_gateway_id,authority_epoch,members_json FROM hosted_rooms WHERE room_id=%s'), (room_id,)).fetchone()
         if (current is None or record["home_install_id"] != local_gateway_id
                 or record["authority"] != {"gateway_id": current["authority_gateway_id"], "epoch": current["authority_epoch"]}
                 or record["roster_sha256"] != roster_digest(json.loads(current["members_json"]))):
@@ -365,9 +366,9 @@ def prepare_delivery_locked(conn, *, room_id, target_install_id, route_generatio
             return None
     if old is not None and old["status"] != "acked":
         # A legitimate migrated JSON spelling is still immutable pending bytes.
-        conn.execute(f"""UPDATE {PENDING_TABLE} SET route_generation=?,status='pending'
+        conn.execute(_storage_statement(sqlite=f"""UPDATE {PENDING_TABLE} SET route_generation=?,status='pending'
             WHERE room_id=? AND producer_gateway_id=? AND producer_epoch=? AND target_install_id=?
-            AND disposition='current'""", (route_generation, *key))
+            AND disposition='current'""",postgresql=f"UPDATE {PENDING_TABLE} SET route_generation=%s,status='pending'\n            WHERE room_id=%s AND producer_gateway_id=%s AND producer_epoch=%s AND target_install_id=%s\n            AND disposition='current'"), (route_generation, *key))
     else:
         storage.save_locked(conn, PENDING_TABLE, record, target_install_id=target_install_id, route_generation=route_generation)
     # Persist the anchor even while history is behind. Recapturing the moving
@@ -377,8 +378,8 @@ def prepare_delivery_locked(conn, *, room_id, target_install_id, route_generatio
 
 def delivery_status_locked(conn, *, room_id, target_install_id, route_generation, record, status):
     initialize(conn)
-    row = conn.execute(f"SELECT * FROM {PENDING_TABLE} WHERE room_id=? AND target_install_id=? "
-                       "AND producer_gateway_id=? AND producer_epoch=? AND disposition='current'",
+    row = conn.execute(_storage_statement(sqlite=f"SELECT * FROM {PENDING_TABLE} WHERE room_id=? AND target_install_id=? "
+                       "AND producer_gateway_id=? AND producer_epoch=? AND disposition='current'",postgresql=f"SELECT * FROM {PENDING_TABLE} WHERE room_id=%s AND target_install_id=%s AND producer_gateway_id=%s AND producer_epoch=%s AND disposition='current'"),
                        (room_id, target_install_id, record["authority"]["gateway_id"], record["authority"]["epoch"])).fetchone()
     if row is None:
         return False
@@ -387,9 +388,9 @@ def delivery_status_locked(conn, *, room_id, target_install_id, route_generation
             return False
     except InvalidStoredWorkRecord:
         return False
-    return conn.execute(f"""UPDATE {PENDING_TABLE} SET status=? WHERE room_id=? AND target_install_id=?
+    return conn.execute(_storage_statement(sqlite=f"""UPDATE {PENDING_TABLE} SET status=? WHERE room_id=? AND target_install_id=?
         AND route_generation=? AND revision=? AND digest=? AND producer_gateway_id=? AND producer_epoch=?
-        AND disposition='current'""",
+        AND disposition='current'""",postgresql=f"UPDATE {PENDING_TABLE} SET status=%s WHERE room_id=%s AND target_install_id=%s\n        AND route_generation=%s AND revision=%s AND digest=%s AND producer_gateway_id=%s AND producer_epoch=%s\n        AND disposition='current'"),
         (status, room_id, target_install_id, route_generation, record["revision"], record["digest"],
          record["authority"]["gateway_id"], record["authority"]["epoch"])).rowcount == 1
 

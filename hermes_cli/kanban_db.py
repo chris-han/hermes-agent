@@ -13,6 +13,7 @@ locks). Schema: tasks, task_links, task_comments, task_events, task_runs, attach
 """
 
 from __future__ import annotations
+from hermes_state_sql import statement as _storage_statement, parameter_marker as _parameter_marker, inserted_id as _inserted_id, in_transaction as _in_transaction, integrity_errors as _integrity_errors
 
 import contextlib
 import json
@@ -219,7 +220,7 @@ def notify_task_updated(
         return
     try:
         row = conn.execute(
-            "SELECT assignee, current_run_id FROM tasks WHERE id = ?", (task_id,),
+            _storage_statement(sqlite="SELECT assignee, current_run_id FROM tasks WHERE id = ?",postgresql='SELECT assignee, current_run_id FROM tasks WHERE id = %s'), (task_id,),
         ).fetchone()
         _fire_kanban_lifecycle_hook(
             "on_kanban_task_updated", task_id, board=board or get_current_board(),
@@ -1245,9 +1246,9 @@ def create_task(
     # race may insert twice, the next lookup stabilises on the newest.
     if idempotency_key:
         row = conn.execute(
-            "SELECT id FROM tasks WHERE idempotency_key = ? "
+            _storage_statement(sqlite="SELECT id FROM tasks WHERE idempotency_key = ? "
             "AND status != 'archived' "
-            "ORDER BY created_at DESC LIMIT 1", (idempotency_key,),
+            "ORDER BY created_at DESC LIMIT 1",postgresql="SELECT id FROM tasks WHERE idempotency_key = %s AND status != 'archived' ORDER BY created_at DESC LIMIT 1"), (idempotency_key,),
         ).fetchone()
         if row:
             return row["id"]
@@ -1278,7 +1279,7 @@ def create_task(
                         branch_name = _project_branch_name(project_obj, task_id, title)
 
                 conn.execute(
-                    """
+                    _storage_statement(sqlite="""
                     INSERT INTO tasks (
                         id, title, body, assignee, status, priority,
                         created_by, created_at, workspace_kind, workspace_path,
@@ -1288,7 +1289,7 @@ def create_task(
                         reasoning_effort,
                         goal_mode, goal_max_turns, session_id, completion_contract
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
+                    """,postgresql='\n                    INSERT INTO tasks (\n                        id, title, body, assignee, status, priority,\n                        created_by, created_at, workspace_kind, workspace_path,\n                        branch_name, project_id, tenant, idempotency_key,\n                        max_runtime_seconds,\n                        skills, max_retries, model_override, provider_override,\n                        reasoning_effort,\n                        goal_mode, goal_max_turns, session_id, completion_contract\n                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)\n                    '),
                     (
                         task_id, title.strip(), body, assignee, task_status, priority,
                         created_by, now, workspace_kind, workspace_path,
@@ -1343,7 +1344,7 @@ def create_task(
                 inherit_creator_origin(conn, task_id, creator_task_id, created_at=now)
                 _inherit_notify_subs(conn, task_id, parents, created_at=now)
             return task_id
-        except sqlite3.IntegrityError:
+        except _integrity_errors():
             if attempt == 1:
                 raise
     raise RuntimeError("unreachable")
@@ -1364,7 +1365,7 @@ def _project_branch_name(project_obj: Any, task_id: str, title: Optional[str]) -
 
 def _link(conn: sqlite3.Connection, parent_id: str, child_id: str) -> None:
     conn.execute(
-        "INSERT OR IGNORE INTO task_links (parent_id, child_id) VALUES (?, ?)",
+        _storage_statement(sqlite="INSERT OR IGNORE INTO task_links (parent_id, child_id) VALUES (?, ?)",postgresql='INSERT INTO task_links (parent_id, child_id) VALUES (%s, %s) ON CONFLICT DO NOTHING'),
         (parent_id, child_id),
     )
 
@@ -1374,7 +1375,7 @@ def _missing_task_ids(conn: sqlite3.Connection, ids: Iterable[str]) -> list[str]
     ids = list(ids)
     if not ids:
         return []
-    placeholders = ",".join("?" * len(ids))
+    placeholders = ",".join([_parameter_marker()] * len(ids))
     rows = conn.execute(f"SELECT id FROM tasks WHERE id IN ({placeholders})", ids).fetchall()
     present = {r["id"] for r in rows}
     return [p for p in ids if p not in present]
@@ -1398,12 +1399,12 @@ def _inherit_notify_subs(
     if not parent_ids:
         return
     row = conn.execute(
-        "SELECT COALESCE(MAX(id), 0) AS cursor FROM task_events WHERE task_id = ?", (child_id,),
+        _storage_statement(sqlite="SELECT COALESCE(MAX(id), 0) AS cursor FROM task_events WHERE task_id = ?",postgresql='SELECT COALESCE(MAX(id), 0) AS cursor FROM task_events WHERE task_id = %s'), (child_id,),
     ).fetchone()
     cursor = int(row["cursor"] if row is not None else 0)
-    placeholders = ",".join("?" * len(parent_ids))
+    placeholders = ",".join([_parameter_marker()] * len(parent_ids))
     conn.execute(
-        f"""
+        _storage_statement(sqlite=f"""
         INSERT OR IGNORE INTO kanban_notify_subs
             (task_id, platform, chat_id, thread_id, user_id, user_id_alt,
              chat_type, notifier_profile, delivery_mode, delivery_metadata,
@@ -1413,13 +1414,13 @@ def _inherit_notify_subs(
                COALESCE(delivery_mode, 'notify'), delivery_metadata, ?, ?
           FROM kanban_notify_subs
          WHERE task_id IN ({placeholders})
-        """,
+        """,postgresql=f"\n        INSERT INTO kanban_notify_subs\n            (task_id, platform, chat_id, thread_id, user_id, user_id_alt,\n             chat_type, notifier_profile, delivery_mode, delivery_metadata,\n             created_at, last_event_id)\n        SELECT %s, platform, chat_id, thread_id, user_id, user_id_alt,\n               COALESCE(chat_type, 'dm'), notifier_profile,\n               COALESCE(delivery_mode, 'notify'), delivery_metadata, %s, %s\n          FROM kanban_notify_subs\n         WHERE task_id IN ({placeholders})\n         ON CONFLICT DO NOTHING"),
         (child_id, int(created_at if created_at is not None else time.time()), cursor, *parent_ids),
     )
 
 
 def get_task(conn: sqlite3.Connection, task_id: str) -> Optional[Task]:
-    row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    row = conn.execute(_storage_statement(sqlite="SELECT * FROM tasks WHERE id = ?",postgresql='SELECT * FROM tasks WHERE id = %s'), (task_id,)).fetchone()
     return Task.from_row(row) if row else None
 
 
@@ -1454,7 +1455,7 @@ def list_tasks(
         ("current_step_key", current_step_key),
     ):
         if val is not None:
-            query += f" AND {col} = ?"
+            query += _storage_statement(sqlite=f" AND {col} = ?",postgresql=f' AND {col} = %s')
             params.append(val)
     if not include_archived and status != "archived":
         query += " AND status != 'archived'"
@@ -1476,7 +1477,7 @@ def assign_task(conn: sqlite3.Connection, task_id: str, profile: Optional[str]) 
     profile = _canonical_assignee(profile)
     with write_txn(conn):
         row = conn.execute(
-            "SELECT status, claim_lock, assignee FROM tasks WHERE id = ?", (task_id,)
+            _storage_statement(sqlite="SELECT status, claim_lock, assignee FROM tasks WHERE id = ?",postgresql='SELECT status, claim_lock, assignee FROM tasks WHERE id = %s'), (task_id,)
         ).fetchone()
         if not row:
             return False
@@ -1488,11 +1489,11 @@ def assign_task(conn: sqlite3.Connection, task_id: str, profile: Optional[str]) 
         if row["assignee"] != profile:
             # The failure streak is per task/profile; a new profile starts fresh.
             conn.execute(
-                "UPDATE tasks SET assignee = ?, consecutive_failures = 0, "
-                "last_failure_error = NULL WHERE id = ?", (profile, task_id),
+                _storage_statement(sqlite="UPDATE tasks SET assignee = ?, consecutive_failures = 0, "
+                "last_failure_error = NULL WHERE id = ?",postgresql='UPDATE tasks SET assignee = %s, consecutive_failures = 0, last_failure_error = NULL WHERE id = %s'), (profile, task_id),
             )
         else:
-            conn.execute("UPDATE tasks SET assignee = ? WHERE id = ?", (profile, task_id))
+            conn.execute(_storage_statement(sqlite="UPDATE tasks SET assignee = ? WHERE id = ?",postgresql='UPDATE tasks SET assignee = %s WHERE id = %s'), (profile, task_id))
         # ``from`` lets the respawn guard tell a real handoff (dev→closer) from
         # a no-op re-assign or an unassign, which must not lift ``active_pr``.
         _append_event(
@@ -1512,7 +1513,7 @@ def set_model_override(
     model, provider = _validate_model_override(model, provider)
     return _set_task_override(
         conn, task_id,
-        "UPDATE tasks SET model_override = ?, provider_override = ? WHERE id = ?", (model, provider),
+        _storage_statement(sqlite="UPDATE tasks SET model_override = ?, provider_override = ? WHERE id = ?",postgresql='UPDATE tasks SET model_override = %s, provider_override = %s WHERE id = %s'), (model, provider),
         "model_override_set", {"model": model, "provider": provider},
         ("model_override", "provider_override"), archived_msg="cannot set model override",
     )
@@ -1542,7 +1543,7 @@ def set_reasoning_effort(conn: sqlite3.Connection, task_id: str, effort: Optiona
     other; applies on the NEXT dispatch, so settable while running."""
     effort = normalize_reasoning_effort(effort)
     return _set_task_override(
-        conn, task_id, "UPDATE tasks SET reasoning_effort = ? WHERE id = ?", (effort,),
+        conn, task_id, _storage_statement(sqlite="UPDATE tasks SET reasoning_effort = ? WHERE id = ?",postgresql='UPDATE tasks SET reasoning_effort = %s WHERE id = %s'), (effort,),
         "reasoning_effort_set", {"reasoning_effort": effort},
         ("reasoning_effort",), archived_msg="cannot set reasoning effort",
     )
@@ -1574,7 +1575,7 @@ def link_tasks(
         if missing:
             raise ValueError(f"unknown task(s): {', '.join(missing)}")
         child = conn.execute(
-            "SELECT status, current_run_id FROM tasks WHERE id = ?", (child_id,),
+            _storage_statement(sqlite="SELECT status, current_run_id FROM tasks WHERE id = ?",postgresql='SELECT status, current_run_id FROM tasks WHERE id = %s'), (child_id,),
         ).fetchone()
         if child["status"] == "running" and (
             expected_child_run_id is None
@@ -1588,7 +1589,7 @@ def link_tasks(
         # (archived counts as terminal, matching _parents_satisfied/recompute_ready).
         if _task_status(conn, parent_id) not in ("done", "archived"):
             cur = conn.execute(
-                "UPDATE tasks SET status = 'todo' WHERE id = ? AND status = 'ready'",
+                _storage_statement(sqlite="UPDATE tasks SET status = 'todo' WHERE id = ? AND status = 'ready'",postgresql="UPDATE tasks SET status = 'todo' WHERE id = %s AND status = 'ready'"),
                 (child_id,),
             )
             gated = cur.rowcount == 1
@@ -1621,7 +1622,7 @@ def _would_cycle(conn: sqlite3.Connection, parent_id: str, child_id: str) -> boo
             continue
         seen.add(node)
         rows = conn.execute(
-            "SELECT child_id FROM task_links WHERE parent_id = ?", (node,)
+            _storage_statement(sqlite="SELECT child_id FROM task_links WHERE parent_id = ?",postgresql='SELECT child_id FROM task_links WHERE parent_id = %s'), (node,)
         ).fetchall()
         stack.extend(r["child_id"] for r in rows)
     return False
@@ -1630,7 +1631,7 @@ def _would_cycle(conn: sqlite3.Connection, parent_id: str, child_id: str) -> boo
 def unlink_tasks(conn: sqlite3.Connection, parent_id: str, child_id: str) -> bool:
     with write_txn(conn):
         cur = conn.execute(
-            "DELETE FROM task_links WHERE parent_id = ? AND child_id = ?", (parent_id, child_id),
+            _storage_statement(sqlite="DELETE FROM task_links WHERE parent_id = ? AND child_id = ?",postgresql='DELETE FROM task_links WHERE parent_id = %s AND child_id = %s'), (parent_id, child_id),
         )
         removed = cur.rowcount > 0
         if removed:
@@ -1644,7 +1645,7 @@ def unlink_tasks(conn: sqlite3.Connection, parent_id: str, child_id: str) -> boo
 
 def _linked_ids(conn: sqlite3.Connection, want: str, where: str, task_id: str) -> list[str]:
     rows = conn.execute(
-        f"SELECT {want} FROM task_links WHERE {where} = ? ORDER BY {want}", (task_id,)
+        _storage_statement(sqlite=f"SELECT {want} FROM task_links WHERE {where} = ? ORDER BY {want}",postgresql=f'SELECT {want} FROM task_links WHERE {where} = %s ORDER BY {want}'), (task_id,)
     ).fetchall()
     return [r[want] for r in rows]
 
@@ -1667,7 +1668,7 @@ def task_graph_contexts(conn: sqlite3.Connection, task_ids: Iterable[str]) -> di
     if not ordered_ids:
         return contexts
 
-    placeholders = ",".join("?" for _ in ordered_ids)
+    placeholders = ",".join(_parameter_marker() for _ in ordered_ids)
     for bucket, own, other in (("parents", "child_id", "parent_id"), ("children", "parent_id", "child_id")):
         for row in conn.execute(
             f"SELECT l.{own} AS owner_id, t.id, t.title, t.status "
@@ -1698,21 +1699,21 @@ def add_comment(conn: sqlite3.Connection, task_id: str, author: str, body: str) 
     with write_txn(conn, allow_nested=True):
         _require_task(conn, task_id)
         cur = conn.execute(
-            "INSERT INTO task_comments (task_id, author, body, created_at) "
-            "VALUES (?, ?, ?, ?)", (task_id, author.strip(), body.strip(), now),
+            _storage_statement(sqlite="INSERT INTO task_comments (task_id, author, body, created_at) "
+            "VALUES (?, ?, ?, ?)",postgresql='INSERT INTO task_comments (task_id, author, body, created_at) VALUES (%s, %s, %s, %s) RETURNING id'), (task_id, author.strip(), body.strip(), now),
         )
         _append_event(conn, task_id, "commented", {"author": author, "len": len(body)})
-        return int(cur.lastrowid or 0)
+        return int(_inserted_id(cur) or 0)
 
 
 def _require_task(conn: sqlite3.Connection, task_id: str) -> None:
-    if not conn.execute("SELECT 1 FROM tasks WHERE id = ?", (task_id,)).fetchone():
+    if not conn.execute(_storage_statement(sqlite="SELECT 1 FROM tasks WHERE id = ?",postgresql='SELECT 1 FROM tasks WHERE id = %s'), (task_id,)).fetchone():
         raise ValueError(f"unknown task {task_id}")
 
 
 def _task_rows(conn: sqlite3.Connection, table: str, task_id: str, order: str) -> list[sqlite3.Row]:
     return conn.execute(
-        f"SELECT * FROM {table} WHERE task_id = ? ORDER BY {order}", (task_id,)
+        _storage_statement(sqlite=f"SELECT * FROM {table} WHERE task_id = ? ORDER BY {order}",postgresql=f'SELECT * FROM {table} WHERE task_id = %s ORDER BY {order}'), (task_id,)
     ).fetchall()
 
 
@@ -1726,8 +1727,8 @@ def list_comments_after(
     """Comments with ``id > after_id`` — keyed on rowid, not ``created_at``, so a
     same-second burst is never skipped (live worker comment bridge)."""
     rows = conn.execute(
-        "SELECT id, task_id, author, body, created_at FROM task_comments "
-        "WHERE task_id = ? AND id > ? ORDER BY id ASC", (task_id, int(after_id)),
+        _storage_statement(sqlite="SELECT id, task_id, author, body, created_at FROM task_comments "
+        "WHERE task_id = ? AND id > ? ORDER BY id ASC",postgresql='SELECT id, task_id, author, body, created_at FROM task_comments WHERE task_id = %s AND id > %s ORDER BY id ASC'), (task_id, int(after_id)),
     ).fetchall()
     return [Comment.from_row(r) for r in rows]
 
@@ -1806,16 +1807,16 @@ def add_attachment(
     with write_txn(conn):
         _require_task(conn, task_id)
         cur = conn.execute(
-            "INSERT INTO task_attachments "
+            _storage_statement(sqlite="INSERT INTO task_attachments "
             "(task_id, filename, stored_path, content_type, size, uploaded_by, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",postgresql='INSERT INTO task_attachments (task_id, filename, stored_path, content_type, size, uploaded_by, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id'),
             (task_id, filename.strip(), stored_path, content_type, int(size), uploaded_by, now),
         )
         _append_event(
             conn, task_id, "attached",
             {"filename": filename.strip(), "size": int(size), "by": uploaded_by},
         )
-        return int(cur.lastrowid or 0)
+        return int(_inserted_id(cur) or 0)
 
 
 def list_attachments(conn: sqlite3.Connection, task_id: str) -> list[Attachment]:
@@ -1823,7 +1824,7 @@ def list_attachments(conn: sqlite3.Connection, task_id: str) -> list[Attachment]
 
 
 def get_attachment(conn: sqlite3.Connection, attachment_id: int) -> Optional[Attachment]:
-    r = conn.execute("SELECT * FROM task_attachments WHERE id = ?", (attachment_id,)).fetchone()
+    r = conn.execute(_storage_statement(sqlite="SELECT * FROM task_attachments WHERE id = ?",postgresql='SELECT * FROM task_attachments WHERE id = %s'), (attachment_id,)).fetchone()
     return None if r is None else Attachment.from_row(r)
 
 
@@ -1833,9 +1834,9 @@ def delete_attachment(conn: sqlite3.Connection, attachment_id: int) -> Optional[
         att = get_attachment(conn, attachment_id)
         if att is None:
             return None
-        conn.execute("DELETE FROM task_attachments WHERE id = ?", (attachment_id,))
+        conn.execute(_storage_statement(sqlite="DELETE FROM task_attachments WHERE id = ?",postgresql='DELETE FROM task_attachments WHERE id = %s'), (attachment_id,))
         has_remaining_blob_reference = conn.execute(
-            "SELECT 1 FROM task_attachments WHERE stored_path = ? LIMIT 1",
+            _storage_statement(sqlite="SELECT 1 FROM task_attachments WHERE stored_path = ? LIMIT 1",postgresql='SELECT 1 FROM task_attachments WHERE stored_path = %s LIMIT 1'),
             (att.stored_path,),
         ).fetchone() is not None
         _append_event(conn, att.task_id, "attachment_removed", {"filename": att.filename})
@@ -1857,8 +1858,8 @@ def _insert_comment(
     """Raw comment INSERT for callers already inside a write txn (``add_comment``
     opens its own txn and emits ``commented``)."""
     conn.execute(
-        "INSERT INTO task_comments (task_id, author, body, created_at) "
-        "VALUES (?, ?, ?, ?)", (task_id, author, body, created_at),
+        _storage_statement(sqlite="INSERT INTO task_comments (task_id, author, body, created_at) "
+        "VALUES (?, ?, ?, ?)",postgresql='INSERT INTO task_comments (task_id, author, body, created_at) VALUES (%s, %s, %s, %s) RETURNING id'), (task_id, author, body, created_at),
     )
 
 
@@ -1868,8 +1869,8 @@ def _append_event(
 ) -> None:
     """Insert an event row inside the caller's txn; ``run_id`` groups it by attempt (NULL = task-scoped)."""
     conn.execute(
-        "INSERT INTO task_events (task_id, run_id, kind, payload, created_at) "
-        "VALUES (?, ?, ?, ?, ?)", (task_id, run_id, kind, _json_or_null(payload), int(time.time())),
+        _storage_statement(sqlite="INSERT INTO task_events (task_id, run_id, kind, payload, created_at) "
+        "VALUES (?, ?, ?, ?, ?)",postgresql='INSERT INTO task_events (task_id, run_id, kind, payload, created_at) VALUES (%s, %s, %s, %s, %s) RETURNING id'), (task_id, run_id, kind, _json_or_null(payload), int(time.time())),
     )
 
 
@@ -1889,7 +1890,7 @@ def _end_run(
     if run_id is None:
         return None
     conn.execute(
-        """
+        _storage_statement(sqlite="""
         UPDATE task_runs
            SET status        = ?,
                outcome       = ?,
@@ -1900,10 +1901,10 @@ def _end_run(
                claim_expires = NULL
          WHERE id = ?
            AND ended_at IS NULL
-        """,
+        """,postgresql='\n        UPDATE task_runs\n           SET status        = %s,\n               outcome       = %s,\n               summary       = %s,\n               error         = %s,\n               metadata      = %s,\n               ended_at      = %s,\n               claim_expires = NULL\n         WHERE id = %s\n           AND ended_at IS NULL\n        '),
         (status or outcome, outcome, summary, error, _json_or_null(metadata), now, run_id),
     )
-    conn.execute("UPDATE tasks SET current_run_id = NULL WHERE id = ?", (task_id,))
+    conn.execute(_storage_statement(sqlite="UPDATE tasks SET current_run_id = NULL WHERE id = ?",postgresql='UPDATE tasks SET current_run_id = NULL WHERE id = %s'), (task_id,))
     return run_id
 
 
@@ -1925,12 +1926,12 @@ def _json_or_null(obj: Any) -> Optional[str]:
 
 def _task_status(conn: sqlite3.Connection, task_id: str) -> Optional[str]:
     """Current ``tasks.status`` for ``task_id``, or ``None`` when no such row."""
-    row = conn.execute("SELECT status FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    row = conn.execute(_storage_statement(sqlite="SELECT status FROM tasks WHERE id = ?",postgresql='SELECT status FROM tasks WHERE id = %s'), (task_id,)).fetchone()
     return row["status"] if row else None
 
 
 def _current_run_id(conn: sqlite3.Connection, task_id: str) -> Optional[int]:
-    row = conn.execute("SELECT current_run_id FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    row = conn.execute(_storage_statement(sqlite="SELECT current_run_id FROM tasks WHERE id = ?",postgresql='SELECT current_run_id FROM tasks WHERE id = %s'), (task_id,)).fetchone()
     return int(row["current_run_id"]) if row and row["current_run_id"] else None
 
 
@@ -1970,26 +1971,26 @@ def _synthesize_ended_run(
     before the rewrite, so the run names the actor, not the new assignee."""
     now = int(time.time())
     trow = conn.execute(
-        "SELECT assignee, current_step_key FROM tasks WHERE id = ?", (task_id,),
+        _storage_statement(sqlite="SELECT assignee, current_step_key FROM tasks WHERE id = ?",postgresql='SELECT assignee, current_step_key FROM tasks WHERE id = %s'), (task_id,),
     ).fetchone()
     if profile is _UNSET:
         profile = trow["assignee"] if trow else None
     step_key = trow["current_step_key"] if trow else None
     cur = conn.execute(
-        """
+        _storage_statement(sqlite="""
         INSERT INTO task_runs (
             task_id, profile, step_key,
             status, outcome,
             summary, error, metadata,
             started_at, ended_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
+        """,postgresql='\n        INSERT INTO task_runs (\n            task_id, profile, step_key,\n            status, outcome,\n            summary, error, metadata,\n            started_at, ended_at\n        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id'),
         (
             task_id, profile, step_key, outcome, outcome, summary, error, _json_or_null(metadata),
             now, now,
         ),
     )
-    return int(cur.lastrowid or 0)
+    return int(_inserted_id(cur) or 0)
 
 
 # --- Dependency resolution (todo -> ready) ---
@@ -2007,17 +2008,17 @@ def _has_sticky_block(conn: sqlite3.Connection, task_id: str) -> bool:
     releases it; a task with no such event at all (direct DB edit) auto-recovers.
     """
     row = conn.execute(
-        "SELECT kind FROM task_events "
+        _storage_statement(sqlite="SELECT kind FROM task_events "
         "WHERE task_id = ? AND kind IN ('blocked', 'unblocked') "
-        "ORDER BY id DESC LIMIT 1", (task_id,),
+        "ORDER BY id DESC LIMIT 1",postgresql="SELECT kind FROM task_events WHERE task_id = %s AND kind IN ('blocked', 'unblocked') ORDER BY id DESC LIMIT 1"), (task_id,),
     ).fetchone()
     if row and row["kind"] == "blocked":
         return True
     trip = conn.execute(
-        "SELECT payload FROM task_events "
+        _storage_statement(sqlite="SELECT payload FROM task_events "
         "WHERE task_id = ? AND kind = 'gave_up' AND id > COALESCE("
         "  (SELECT MAX(id) FROM task_events WHERE task_id = ? AND kind = 'unblocked'), 0) "
-        "ORDER BY id DESC LIMIT 1", (task_id, task_id),
+        "ORDER BY id DESC LIMIT 1",postgresql="SELECT payload FROM task_events WHERE task_id = %s AND kind = 'gave_up' AND id > COALESCE(  (SELECT MAX(id) FROM task_events WHERE task_id = %s AND kind = 'unblocked'), 0) ORDER BY id DESC LIMIT 1"), (task_id, task_id),
     ).fetchone()
     return bool(trip) and bool(_json_dict(trip["payload"]).get("sticky"))
 
@@ -2026,10 +2027,10 @@ def _latest_event(
     conn: sqlite3.Connection, task_id: str, kind: str, run_id: Optional[int] = None,
 ) -> Optional[sqlite3.Row]:
     """Newest ``task_events`` row of ``kind`` (optionally scoped to one run)."""
-    sql = "SELECT payload FROM task_events WHERE task_id = ? AND kind = ?"
+    sql = _storage_statement(sqlite="SELECT payload FROM task_events WHERE task_id = ? AND kind = ?",postgresql='SELECT payload FROM task_events WHERE task_id = %s AND kind = %s')
     params: tuple[Any, ...] = (task_id, kind)
     if run_id is not None:
-        sql += " AND run_id = ?"
+        sql += _storage_statement(sqlite=" AND run_id = ?",postgresql=' AND run_id = %s')
         params = (*params, int(run_id))
     return conn.execute(sql + " ORDER BY id DESC LIMIT 1", params).fetchone()
 
@@ -2038,12 +2039,12 @@ def _resume_status_from_events(conn: sqlite3.Connection, task_id: str) -> str:
     """``review`` when the newest lifecycle event carries a review
     ``resume_status``/``retry_status``/``source_status``, else ``ready`` (legacy)."""
     row = conn.execute(
-        "SELECT payload FROM task_events "
+        _storage_statement(sqlite="SELECT payload FROM task_events "
         "WHERE task_id = ? AND kind IN ("
         "'blocked', 'block_loop_detected', 'dependency_wait', 'gave_up', "
         "'unblocked', 'changes_requested', 'review_reopened', 'status', 'reclaimed', "
         "'stale', 'timed_out', 'crashed', 'spawn_failed', 'rate_limited'"
-        ") ORDER BY id DESC LIMIT 1", (task_id,),
+        ") ORDER BY id DESC LIMIT 1",postgresql="SELECT payload FROM task_events WHERE task_id = %s AND kind IN ('blocked', 'block_loop_detected', 'dependency_wait', 'gave_up', 'unblocked', 'changes_requested', 'review_reopened', 'status', 'reclaimed', 'stale', 'timed_out', 'crashed', 'spawn_failed', 'rate_limited') ORDER BY id DESC LIMIT 1"), (task_id,),
     ).fetchone()
     payload = _json_dict(_row_get(row, "payload"))
     for key in ("resume_status", "retry_status", "source_status"):
@@ -2079,9 +2080,9 @@ def recompute_ready(conn: sqlite3.Connection, failure_limit: int | None = None) 
                 # Explicit human-intervention block; only ``unblock_task`` may exit it.
                 continue
             parents = conn.execute(
-                "SELECT t.status FROM tasks t "
+                _storage_statement(sqlite="SELECT t.status FROM tasks t "
                 "JOIN task_links l ON l.parent_id = t.id "
-                "WHERE l.child_id = ?", (task_id,),
+                "WHERE l.child_id = ?",postgresql='SELECT t.status FROM tasks t JOIN task_links l ON l.parent_id = t.id WHERE l.child_id = %s'), (task_id,),
             ).fetchall()
             if all(p["status"] in ("done", "archived") for p in parents):
                 resume_status = _resume_status_from_events(conn, task_id)
@@ -2098,12 +2099,12 @@ def recompute_ready(conn: sqlite3.Connection, failure_limit: int | None = None) 
                     if failures >= effective_limit:
                         continue
                     conn.execute(
-                        "UPDATE tasks SET status = ? "
-                        "WHERE id = ? AND status = 'blocked'", (resume_status, task_id),
+                        _storage_statement(sqlite="UPDATE tasks SET status = ? "
+                        "WHERE id = ? AND status = 'blocked'",postgresql="UPDATE tasks SET status = %s WHERE id = %s AND status = 'blocked'"), (resume_status, task_id),
                     )
                 else:
                     conn.execute(
-                        "UPDATE tasks SET status = ? WHERE id = ? AND status = 'todo'",
+                        _storage_statement(sqlite="UPDATE tasks SET status = ? WHERE id = ? AND status = 'todo'",postgresql="UPDATE tasks SET status = %s WHERE id = %s AND status = 'todo'"),
                         (resume_status, task_id),
                     )
                 _append_event(
@@ -2119,10 +2120,10 @@ def recompute_ready(conn: sqlite3.Connection, failure_limit: int | None = None) 
 def _parents_satisfied(conn: sqlite3.Connection, task_id: str) -> bool:
     """Return whether every direct parent is terminal for dependency gating."""
     return conn.execute(
-        "SELECT 1 FROM task_links l "
+        _storage_statement(sqlite="SELECT 1 FROM task_links l "
         "JOIN tasks p ON p.id = l.parent_id "
         "WHERE l.child_id = ? "
-        "AND p.status NOT IN ('done', 'archived') LIMIT 1", (task_id,),
+        "AND p.status NOT IN ('done', 'archived') LIMIT 1",postgresql="SELECT 1 FROM task_links l JOIN tasks p ON p.id = l.parent_id WHERE l.child_id = %s AND p.status NOT IN ('done', 'archived') LIMIT 1"), (task_id,),
     ).fetchone() is None
 
 
@@ -2132,10 +2133,10 @@ def unsatisfied_parents(conn: sqlite3.Connection, task_id: str) -> list[tuple[st
     order, so a refusal or a board view can name the blockers instead of the
     caller guessing. Read-only."""
     rows = conn.execute(
-        "SELECT p.id, p.status FROM task_links l "
+        _storage_statement(sqlite="SELECT p.id, p.status FROM task_links l "
         "JOIN tasks p ON p.id = l.parent_id "
         "WHERE l.child_id = ? AND p.status NOT IN ('done', 'archived') "
-        "ORDER BY p.id", (task_id,),
+        "ORDER BY p.id",postgresql="SELECT p.id, p.status FROM task_links l JOIN tasks p ON p.id = l.parent_id WHERE l.child_id = %s AND p.status NOT IN ('done', 'archived') ORDER BY p.id"), (task_id,),
     ).fetchall()
     return [(row["id"], row["status"]) for row in rows]
 
@@ -2147,7 +2148,7 @@ def _claim_and_open_run(
     """CAS ``source_status -> running``, open a run row, emit ``claimed``; None
     when the CAS lost. Caller holds the txn."""
     cur = conn.execute(
-        f"""
+        _storage_statement(sqlite=f"""
         UPDATE tasks
            SET status        = 'running',
                claim_lock    = ?,
@@ -2156,30 +2157,30 @@ def _claim_and_open_run(
          WHERE id = ?
            AND status = '{source_status}'
            AND claim_lock IS NULL
-        """,
+        """,postgresql=f"\n        UPDATE tasks\n           SET status        = 'running',\n               claim_lock    = %s,\n               claim_expires = %s,\n               started_at    = COALESCE(started_at, %s)\n         WHERE id = %s\n           AND status = '{source_status}'\n           AND claim_lock IS NULL\n        "),
         (lock, expires, now, task_id),
     )
     if cur.rowcount != 1:
         return None
     trow = conn.execute(
-        "SELECT assignee, max_runtime_seconds, current_step_key "
-        "FROM tasks WHERE id = ?", (task_id,),
+        _storage_statement(sqlite="SELECT assignee, max_runtime_seconds, current_step_key "
+        "FROM tasks WHERE id = ?",postgresql='SELECT assignee, max_runtime_seconds, current_step_key FROM tasks WHERE id = %s'), (task_id,),
     ).fetchone()
     run_cur = conn.execute(
-        """
+        _storage_statement(sqlite="""
         INSERT INTO task_runs (
             task_id, profile, step_key, status,
             claim_lock, claim_expires, max_runtime_seconds,
             started_at
         ) VALUES (?, ?, ?, 'running', ?, ?, ?, ?)
-        """,
+        """,postgresql="\n        INSERT INTO task_runs (\n            task_id, profile, step_key, status,\n            claim_lock, claim_expires, max_runtime_seconds,\n            started_at\n        ) VALUES (%s, %s, %s, 'running', %s, %s, %s, %s) RETURNING id"),
         (
             task_id, trow["assignee"] if trow else None, trow["current_step_key"] if trow else None,
             lock, expires, trow["max_runtime_seconds"] if trow else None, now,
         ),
     )
-    run_id = run_cur.lastrowid
-    conn.execute("UPDATE tasks SET current_run_id = ? WHERE id = ?", (run_id, task_id))
+    run_id = _inserted_id(run_cur)
+    conn.execute(_storage_statement(sqlite="UPDATE tasks SET current_run_id = ? WHERE id = ?",postgresql='UPDATE tasks SET current_run_id = %s WHERE id = %s'), (run_id, task_id))
     _append_event(
         conn, task_id, "claimed",
         {"lock": lock, "expires": expires, "run_id": run_id, **(event_extra or {})}, run_id=run_id,
@@ -2205,8 +2206,8 @@ def claim_task(
         # recompute_ready re-promotes when the parents finish.
         if not _parents_satisfied(conn, task_id):
             conn.execute(
-                "UPDATE tasks SET status = 'todo' "
-                "WHERE id = ? AND status = 'ready'", (task_id,),
+                _storage_statement(sqlite="UPDATE tasks SET status = 'todo' "
+                "WHERE id = ? AND status = 'ready'",postgresql="UPDATE tasks SET status = 'todo' WHERE id = %s AND status = 'ready'"), (task_id,),
             )
             _append_event(conn, task_id, "claim_rejected", {"reason": "parents_not_done"})
             return None
@@ -2235,8 +2236,8 @@ def claim_review_task(
     with write_txn(conn):
         if not _parents_satisfied(conn, task_id):
             demoted = conn.execute(
-                "UPDATE tasks SET status = 'todo' "
-                "WHERE id = ? AND status = 'review' AND claim_lock IS NULL", (task_id,),
+                _storage_statement(sqlite="UPDATE tasks SET status = 'todo' "
+                "WHERE id = ? AND status = 'review' AND claim_lock IS NULL",postgresql="UPDATE tasks SET status = 'todo' WHERE id = %s AND status = 'review' AND claim_lock IS NULL"), (task_id,),
             )
             if demoted.rowcount == 1:
                 _append_event(
@@ -2288,7 +2289,7 @@ def goal_run_status(
         return None
     if expected_run_id is not None:
         row = conn.execute(
-            "SELECT outcome FROM task_runs WHERE id = ? AND task_id = ?",
+            _storage_statement(sqlite="SELECT outcome FROM task_runs WHERE id = ? AND task_id = ?",postgresql='SELECT outcome FROM task_runs WHERE id = %s AND task_id = %s'),
             (int(expected_run_id), task_id),
         ).fetchone()
         outcome = str(row["outcome"]) if row and row["outcome"] is not None else None
@@ -2299,8 +2300,8 @@ def goal_run_status(
             return "superseded"
     if task.status in {"ready", "todo"}:
         event = conn.execute(
-            "SELECT kind FROM task_events WHERE task_id = ? "
-            "ORDER BY id DESC LIMIT 1", (task_id,),
+            _storage_statement(sqlite="SELECT kind FROM task_events WHERE task_id = ? "
+            "ORDER BY id DESC LIMIT 1",postgresql='SELECT kind FROM task_events WHERE task_id = %s ORDER BY id DESC LIMIT 1'), (task_id,),
         ).fetchone()
         if event and event["kind"] == "changes_requested":
             return "changes_requested"
@@ -2316,8 +2317,8 @@ def heartbeat_claim(
     lock = claimer or _claimer_id()
     with write_txn(conn):
         cur = conn.execute(
-            "UPDATE tasks SET claim_expires = ? "
-            "WHERE id = ? AND status = 'running' AND claim_lock = ?", (expires, task_id, lock),
+            _storage_statement(sqlite="UPDATE tasks SET claim_expires = ? "
+            "WHERE id = ? AND status = 'running' AND claim_lock = ?",postgresql="UPDATE tasks SET claim_expires = %s WHERE id = %s AND status = 'running' AND claim_lock = %s"), (expires, task_id, lock),
         )
         if cur.rowcount != 1:
             return False
@@ -2329,7 +2330,7 @@ def _extend_run_claim(conn: sqlite3.Connection, task_id: str, expires: int) -> O
     """Mirror a task claim extension onto its active run row; returns that run id."""
     run_id = _current_run_id(conn, task_id)
     if run_id is not None:
-        conn.execute("UPDATE task_runs SET claim_expires = ? WHERE id = ?", (expires, run_id))
+        conn.execute(_storage_statement(sqlite="UPDATE task_runs SET claim_expires = ? WHERE id = ?",postgresql='UPDATE task_runs SET claim_expires = %s WHERE id = %s'), (expires, run_id))
     return run_id
 
 
@@ -2366,11 +2367,11 @@ def release_stale_claims(
     reclaimed = 0
     host_prefix = _host_prefix()
     stale = conn.execute(
-        "SELECT id, claim_lock, worker_pid, worker_started_at, claim_expires, last_heartbeat_at, "
+        _storage_statement(sqlite="SELECT id, claim_lock, worker_pid, worker_started_at, claim_expires, last_heartbeat_at, "
         "       assignee "
         "FROM tasks "
         "WHERE status = 'running' AND claim_expires IS NOT NULL "
-        "  AND claim_expires < ?", (now,),
+        "  AND claim_expires < ?",postgresql="SELECT id, claim_lock, worker_pid, worker_started_at, claim_expires, last_heartbeat_at,        assignee FROM tasks WHERE status = 'running' AND claim_expires IS NOT NULL   AND claim_expires < %s"), (now,),
     ).fetchall()
     from hermes_cli.kanban_owner_recovery import owner_reclaim_paused
     for row in stale:
@@ -2400,12 +2401,12 @@ def release_stale_claims(
         with write_txn(conn):
             retry_status = _retry_status_for_run(conn, row["id"])
             cur = conn.execute(
-                "UPDATE tasks SET status = ?, claim_lock = NULL, "
+                _storage_statement(sqlite="UPDATE tasks SET status = ?, claim_lock = NULL, "
                 "claim_expires = NULL, worker_pid = NULL, worker_started_at = NULL "
                 "WHERE id = ? AND status = 'running' AND claim_lock IS ? "
                 "AND claim_expires IS NOT NULL AND claim_expires < ? "
                 # A worker that registered its own pid since the SELECT keeps its claim.
-                "AND worker_pid IS ?",
+                "AND worker_pid IS ?",postgresql="UPDATE tasks SET status = %s, claim_lock = NULL, claim_expires = NULL, worker_pid = NULL, worker_started_at = NULL WHERE id = %s AND status = 'running' AND claim_lock IS NOT DISTINCT FROM %s AND claim_expires IS NOT NULL AND claim_expires < %s AND worker_pid IS NOT DISTINCT FROM %s"),
                 (retry_status, row["id"], row["claim_lock"], now, row["worker_pid"]),
             )
             if cur.rowcount != 1:
@@ -2464,11 +2465,11 @@ def _extend_live_stale_claim(conn: sqlite3.Connection, row: sqlite3.Row, now: in
     new_expires = now + _resolve_claim_ttl_seconds()
     with write_txn(conn):
         cur = conn.execute(
-            "UPDATE tasks SET claim_expires = ? "
+            _storage_statement(sqlite="UPDATE tasks SET claim_expires = ? "
             "WHERE id = ? AND status = 'running' "
             "  AND claim_lock IS ? "
             "  AND claim_expires IS NOT NULL "
-            "  AND claim_expires < ?", (new_expires, row["id"], row["claim_lock"], now),
+            "  AND claim_expires < ?",postgresql="UPDATE tasks SET claim_expires = %s WHERE id = %s AND status = 'running'   AND claim_lock IS NOT DISTINCT FROM %s   AND claim_expires IS NOT NULL   AND claim_expires < %s"), (new_expires, row["id"], row["claim_lock"], now),
         )
         if cur.rowcount != 1:
             return
@@ -2493,7 +2494,7 @@ def reclaim_task(
     """Operator reclaim regardless of TTL: release the claim, restore the source
     phase, reset the failure counter. False when not running."""
     row = conn.execute(
-        "SELECT status, claim_lock, worker_pid, worker_started_at FROM tasks WHERE id = ?", (task_id,),
+        _storage_statement(sqlite="SELECT status, claim_lock, worker_pid, worker_started_at FROM tasks WHERE id = ?",postgresql='SELECT status, claim_lock, worker_pid, worker_started_at FROM tasks WHERE id = %s'), (task_id,),
     ).fetchone()
     if not row:
         return False
@@ -2506,10 +2507,10 @@ def reclaim_task(
     with write_txn(conn):
         retry_status = _retry_status_for_run(conn, task_id)
         cur = conn.execute(
-            "UPDATE tasks SET status = ?, claim_lock = NULL, "
+            _storage_statement(sqlite="UPDATE tasks SET status = ?, claim_lock = NULL, "
             "claim_expires = NULL, worker_pid = NULL, worker_started_at = NULL "
             "WHERE id = ? AND status IN ('running', 'ready', 'blocked') "
-            "AND claim_lock IS ?", (retry_status, task_id, prev_lock),
+            "AND claim_lock IS ?",postgresql="UPDATE tasks SET status = %s, claim_lock = NULL, claim_expires = NULL, worker_pid = NULL, worker_started_at = NULL WHERE id = %s AND status IN ('running', 'ready', 'blocked') AND claim_lock IS NOT DISTINCT FROM %s"), (retry_status, task_id, prev_lock),
         )
         if cur.rowcount != 1:
             return False
@@ -2552,14 +2553,14 @@ def _verify_created_cards(
     if not ordered:
         return [], []
 
-    row = conn.execute("SELECT assignee FROM tasks WHERE id = ?", (completing_task_id,)).fetchone()
+    row = conn.execute(_storage_statement(sqlite="SELECT assignee FROM tasks WHERE id = ?",postgresql='SELECT assignee FROM tasks WHERE id = %s'), (completing_task_id,)).fetchone()
     if row is None:
         # Completing task not found — nothing resolves.
         return [], ordered
     completing_assignee = row["assignee"]
 
     # Batch-fetch existence + created_by in one query.
-    placeholders = ",".join(["?"] * len(ordered))
+    placeholders = ",".join([_parameter_marker()] * len(ordered))
     rows = conn.execute(
         f"SELECT id, created_by FROM tasks WHERE id IN ({placeholders})", tuple(ordered),
     ).fetchall()
@@ -2697,7 +2698,7 @@ def complete_task(
         if acceptance is not None and not record_acceptance(conn, task_id, acceptance):
             return False
         trow = conn.execute(
-            "SELECT status, claim_lock, worker_pid, worker_started_at FROM tasks WHERE id = ?",
+            _storage_statement(sqlite="SELECT status, claim_lock, worker_pid, worker_started_at FROM tasks WHERE id = ?",postgresql='SELECT status, claim_lock, worker_pid, worker_started_at FROM tasks WHERE id = %s'),
             (task_id,),
         ).fetchone()
         prior_status = trow["status"] if trow else None
@@ -2706,7 +2707,7 @@ def complete_task(
         # _claim_is_live for what "live" means.
         if expected_run_id is None and not force and trow and _claim_is_live(trow):
             raise LiveClaimError(task_id)
-        sql = """
+        sql = _storage_statement(sqlite="""
                 UPDATE tasks
                    SET status       = 'done',
                        result       = ?,
@@ -2718,10 +2719,10 @@ def complete_task(
                        block_recurrences = 0
                  WHERE id = ?
                    AND status IN ('running', 'ready', 'blocked', 'review')
-                """
+                """,postgresql="\n                UPDATE tasks\n                   SET status       = 'done',\n                       result       = %s,\n                       completed_at = %s,\n                       claim_lock   = NULL,\n                       claim_expires= NULL,\n                       worker_pid   = NULL,\n                       block_kind   = NULL,\n                       block_recurrences = 0\n                 WHERE id = %s\n                   AND status IN ('running', 'ready', 'blocked', 'review')\n                ")
         params: tuple = (result, now, task_id)
         if expected_run_id is not None:
-            sql += " AND current_run_id = ?"
+            sql += _storage_statement(sqlite=" AND current_run_id = ?",postgresql=' AND current_run_id = %s')
             params = (*params, int(expected_run_id))
         if conn.execute(sql, params).rowcount != 1:
             return False
@@ -2802,7 +2803,7 @@ def _gate_empty_completion(
     ``_REVIEW_APPROVED_NOTE`` is the documented record.
     """
     row = conn.execute(
-        "SELECT status, result FROM tasks WHERE id = ?",
+        _storage_statement(sqlite="SELECT status, result FROM tasks WHERE id = ?",postgresql='SELECT status, result FROM tasks WHERE id = %s'),
         (task_id,),
     ).fetchone()
     if row is None:
@@ -3040,9 +3041,9 @@ def _insert_completion_attachment(
 ) -> None:
     """Record a worker-produced artifact in the existing attachment table."""
     conn.execute(
-        "INSERT INTO task_attachments "
+        _storage_statement(sqlite="INSERT INTO task_attachments "
         "(task_id, filename, stored_path, content_type, size, uploaded_by, created_at) "
-        "VALUES (?, ?, ?, NULL, ?, ?, ?)",
+        "VALUES (?, ?, ?, NULL, ?, ?, ?)",postgresql='INSERT INTO task_attachments (task_id, filename, stored_path, content_type, size, uploaded_by, created_at) VALUES (%s, %s, %s, NULL, %s, %s, %s) RETURNING id'),
         (task_id, filename, stored_path, size, uploaded_by, created_at),
     )
     _append_event(conn, task_id, "attached", {"filename": filename, "size": size, "by": uploaded_by})
@@ -3082,13 +3083,13 @@ def edit_task(
                 assignments.append(f"{field} = ?")
                 params.append(value)
         if result is not None:
-            assignments.append("result = ?")
+            assignments.append(_storage_statement(sqlite="result = ?",postgresql='result = %s'))
             params.append(result)
             changed_fields.append("result")
         if not assignments:
             return False
         conn.execute(
-            f"UPDATE tasks SET {', '.join(assignments)} WHERE id = ?",
+            _storage_statement(sqlite=f"UPDATE tasks SET {', '.join(assignments)} WHERE id = ?",postgresql=f"UPDATE tasks SET {', '.join(assignments)} WHERE id = %s"),
             (*params, task_id),
         )
         if priority is not None:
@@ -3103,13 +3104,13 @@ def edit_task(
             if metadata is not None:
                 changed_fields.append("metadata")
             run = conn.execute(
-            """
+            _storage_statement(sqlite="""
             SELECT id FROM task_runs
              WHERE task_id = ?
                AND outcome = 'completed'
              ORDER BY COALESCE(ended_at, started_at, 0) DESC, id DESC
              LIMIT 1
-            """,
+            """,postgresql="\n            SELECT id FROM task_runs\n             WHERE task_id = %s\n               AND outcome = 'completed'\n             ORDER BY COALESCE(ended_at, started_at, 0) DESC, id DESC\n             LIMIT 1\n            "),
             (task_id,),
         ).fetchone()
             if run is None:
@@ -3118,10 +3119,10 @@ def edit_task(
                 )
             else:
                 run_id = int(run["id"])
-                conn.execute("UPDATE task_runs SET summary = ? WHERE id = ?", (handoff_summary, run_id))
+                conn.execute(_storage_statement(sqlite="UPDATE task_runs SET summary = ? WHERE id = ?",postgresql='UPDATE task_runs SET summary = %s WHERE id = %s'), (handoff_summary, run_id))
                 if metadata is not None:
                     conn.execute(
-                        "UPDATE task_runs SET metadata = ? WHERE id = ?",
+                        _storage_statement(sqlite="UPDATE task_runs SET metadata = ? WHERE id = ?",postgresql='UPDATE task_runs SET metadata = %s WHERE id = %s'),
                         (json.dumps(metadata, ensure_ascii=False), run_id),
                     )
             _append_event(
@@ -3159,7 +3160,7 @@ def block_task(
         raise ValueError(f"block kind must be one of {sorted(VALID_BLOCK_KINDS)} or None")
     with write_txn(conn):
         cur_row = conn.execute(
-            "SELECT status, block_kind, block_recurrences FROM tasks WHERE id = ?", (task_id,),
+            _storage_statement(sqlite="SELECT status, block_kind, block_recurrences FROM tasks WHERE id = ?",postgresql='SELECT status, block_kind, block_recurrences FROM tasks WHERE id = %s'), (task_id,),
         ).fetchone()
         if cur_row is None:
             return False
@@ -3174,9 +3175,9 @@ def block_task(
             if kind is None or expected_run_id is not None or _row_get(cur_row, "block_kind") is not None:
                 return False
             classified = conn.execute(
-                "UPDATE tasks SET block_kind = ?, block_recurrences = 1 "
+                _storage_statement(sqlite="UPDATE tasks SET block_kind = ?, block_recurrences = 1 "
                 "WHERE id = ? AND status = 'blocked' AND block_kind IS NULL "
-                "AND current_run_id IS NULL",
+                "AND current_run_id IS NULL",postgresql="UPDATE tasks SET block_kind = %s, block_recurrences = 1 WHERE id = %s AND status = 'blocked' AND block_kind IS NULL AND current_run_id IS NULL"),
                 (kind, task_id),
             ).rowcount
             if classified != 1:
@@ -3202,7 +3203,7 @@ def block_task(
         if rekind_reason:
             payload["requested_kind"] = requested_kind
             payload["rekind_reason"] = rekind_reason
-        sql = f"""
+        sql = _storage_statement(sqlite=f"""
                 UPDATE tasks
                    SET status        = '{new_status}',
                        claim_lock    = NULL,
@@ -3211,10 +3212,10 @@ def block_task(
                        {set_sql}
                  WHERE id = ?
                    AND status IN ('running', 'ready')
-                """
+                """,postgresql=f"\n                UPDATE tasks\n                   SET status        = '{new_status}',\n                       claim_lock    = NULL,\n                       claim_expires = NULL,\n                       worker_pid    = NULL,\n                       {set_sql}\n                 WHERE id = %s\n                   AND status IN ('running', 'ready')\n                ")
         params = (*params, task_id)
         if expected_run_id is not None:
-            sql += " AND current_run_id = ?"
+            sql += _storage_statement(sqlite=" AND current_run_id = ?",postgresql=' AND current_run_id = %s')
             params = (*params, int(expected_run_id))
         if conn.execute(sql, params).rowcount != 1:
             return False
@@ -3250,9 +3251,9 @@ def _route_block(
     """
     payload = {"reason": reason, "kind": kind, "source_status": source_status}
     if kind == "dependency":
-        return "todo", "dependency_wait", "block_kind    = ?", (kind,), payload
+        return "todo", "dependency_wait", _storage_statement(sqlite="block_kind    = ?",postgresql='block_kind    = %s'), (kind,), payload
     recurrences = prev_recurrences + 1 if prev_kind == kind else 1
-    set_sql = "block_kind    = ?,\n                       block_recurrences = ?"
+    set_sql = _storage_statement(sqlite="block_kind    = ?,\n                       block_recurrences = ?",postgresql='block_kind    = %s,\n                       block_recurrences = %s')
     payload = {"reason": reason, "kind": kind, "recurrences": recurrences, "source_status": source_status}
     if recurrences >= BLOCK_RECURRENCE_LIMIT:
         payload["limit"] = BLOCK_RECURRENCE_LIMIT
@@ -3316,8 +3317,8 @@ def request_review(
             if not _parents_satisfied(conn, task_id):
                 return _ret(False, "parent dependencies are not satisfied")
             trow = conn.execute(
-                "SELECT assignee, status, claim_lock, current_run_id, worker_pid, "
-                "worker_started_at FROM tasks WHERE id = ?", (task_id,),
+                _storage_statement(sqlite="SELECT assignee, status, claim_lock, current_run_id, worker_pid, "
+                "worker_started_at FROM tasks WHERE id = ?",postgresql='SELECT assignee, status, claim_lock, current_run_id, worker_pid, worker_started_at FROM tasks WHERE id = %s'), (task_id,),
             ).fetchone()
             if trow is None:
                 return _ret(False, "task not found")
@@ -3350,14 +3351,14 @@ def request_review(
             implementer = None
             if trow["current_run_id"] is not None:
                 arow = conn.execute(
-                    "SELECT profile FROM task_runs WHERE id = ?",
+                    _storage_statement(sqlite="SELECT profile FROM task_runs WHERE id = ?",postgresql='SELECT profile FROM task_runs WHERE id = %s'),
                     (trow["current_run_id"],),
                 ).fetchone()
                 implementer = arow["profile"] if arow else None
             if implementer is None and trow["assignee"] != reviewer:
                 implementer = trow["assignee"]
-            assignee_sql = ", assignee = ?" if reviewer is not None else ""
-            run_guard = "" if expected_run_id is None else " AND current_run_id = ?"
+            assignee_sql = _storage_statement(sqlite=", assignee = ?",postgresql=', assignee = %s') if reviewer is not None else ""
+            run_guard = "" if expected_run_id is None else _storage_statement(sqlite=" AND current_run_id = ?",postgresql=' AND current_run_id = %s')
             params: tuple[Any, ...] = (
                 *(() if reviewer is None else (reviewer,)), task_id,
                 *(() if expected_run_id is None else (int(expected_run_id),)),
@@ -3369,10 +3370,10 @@ def request_review(
                        claim_lock    = NULL,
                        claim_expires = NULL,
                        worker_pid    = NULL
-                """ + assignee_sql + """
+                """ + assignee_sql + _storage_statement(sqlite="""
                  WHERE id = ?
                    AND status IN ('running', 'ready')
-                """ + run_guard,
+                """,postgresql="\n                 WHERE id = %s\n                   AND status IN ('running', 'ready')\n                ") + run_guard,
                 params,
             )
             if cur.rowcount != 1:
@@ -3409,9 +3410,9 @@ def _prior_reviewer(conn: sqlite3.Connection, task_id: str):
     ``None`` = first review (no such run); ``False`` = a run exists but its
     provenance is missing/malformed."""
     changes_run = conn.execute(
-        "SELECT id FROM task_runs "
+        _storage_statement(sqlite="SELECT id FROM task_runs "
         "WHERE task_id = ? AND outcome = 'changes_requested' "
-        "ORDER BY id DESC LIMIT 1", (task_id,),
+        "ORDER BY id DESC LIMIT 1",postgresql="SELECT id FROM task_runs WHERE task_id = %s AND outcome = 'changes_requested' ORDER BY id DESC LIMIT 1"), (task_id,),
     ).fetchone()
     if changes_run is None:
         return None
@@ -3436,7 +3437,7 @@ def request_changes(
 
     with write_txn(conn):
         task_row = conn.execute(
-            "SELECT status, assignee, current_run_id FROM tasks WHERE id = ?", (task_id,),
+            _storage_statement(sqlite="SELECT status, assignee, current_run_id FROM tasks WHERE id = ?",postgresql='SELECT status, assignee, current_run_id FROM tasks WHERE id = %s'), (task_id,),
         ).fetchone()
         if task_row is None:
             return False, "task not found"
@@ -3463,7 +3464,7 @@ def request_changes(
         # consecutive_failures deliberately PRESERVED: a review transition is
         # not evidence the pathology cleared; only complete_task resets it.
         cur = conn.execute(
-            """
+            _storage_statement(sqlite="""
             UPDATE tasks
                SET status = ?,
                    assignee = COALESCE(?, assignee),
@@ -3471,7 +3472,7 @@ def request_changes(
                    claim_expires = NULL,
                    worker_pid = NULL, worker_started_at = NULL
              WHERE id = ? AND status = 'running' AND current_run_id = ?
-            """,
+            """,postgresql="\n            UPDATE tasks\n               SET status = %s,\n                   assignee = COALESCE(%s, assignee),\n                   claim_lock = NULL,\n                   claim_expires = NULL,\n                   worker_pid = NULL, worker_started_at = NULL\n             WHERE id = %s AND status = 'running' AND current_run_id = %s\n            "),
             (new_status, implementer, task_id, int(current_run_id)),
         )
         if cur.rowcount != 1:
@@ -3515,9 +3516,9 @@ def promote_task(
     # writer set 'ready', so a forced promotion would only report a success the
     # first claim silently reverts (#106195). The dependency itself is the knob.
     parents = conn.execute(
-        "SELECT t.id, t.status FROM tasks t "
+        _storage_statement(sqlite="SELECT t.id, t.status FROM tasks t "
         "JOIN task_links l ON l.parent_id = t.id "
-        "WHERE l.child_id = ?", (task_id,),
+        "WHERE l.child_id = ?",postgresql='SELECT t.id, t.status FROM tasks t JOIN task_links l ON l.parent_id = t.id WHERE l.child_id = %s'), (task_id,),
     ).fetchall()
     unsatisfied = [p["id"] for p in parents if p["status"] not in ("done", "archived")]
     if unsatisfied:
@@ -3533,8 +3534,8 @@ def promote_task(
 
     with write_txn(conn):
         upd = conn.execute(
-            "UPDATE tasks SET status = 'ready' "
-            "WHERE id = ? AND status IN ('todo', 'blocked')", (task_id,),
+            _storage_statement(sqlite="UPDATE tasks SET status = 'ready' "
+            "WHERE id = ? AND status IN ('todo', 'blocked')",postgresql="UPDATE tasks SET status = 'ready' WHERE id = %s AND status IN ('todo', 'blocked')"), (task_id,),
         )
         if upd.rowcount != 1:
             return False, f"task {task_id} status changed during promotion"
@@ -3548,21 +3549,21 @@ def _reclaim_dangling_run(
 ) -> None:
     """Close a leaked open run before a status flip so the invariant
     ``current_run_id IS NULL <=> run row terminal`` holds; no-op normally."""
-    placeholders = ", ".join("?" for _ in statuses)
+    placeholders = ", ".join(_parameter_marker() for _ in statuses)
     stale = conn.execute(
-        f"SELECT current_run_id FROM tasks WHERE id = ? AND status IN ({placeholders})",
+        _storage_statement(sqlite=f"SELECT current_run_id FROM tasks WHERE id = ? AND status IN ({placeholders})",postgresql=f'SELECT current_run_id FROM tasks WHERE id = %s AND status IN ({placeholders})'),
         (task_id, *statuses),
     ).fetchone()
     if stale and stale["current_run_id"]:
         conn.execute(
-            """
+            _storage_statement(sqlite="""
             UPDATE task_runs
                SET status = 'reclaimed', outcome = 'reclaimed',
                    summary = COALESCE(summary, ?),
                    ended_at = ?,
                    claim_lock = NULL, claim_expires = NULL, worker_pid = NULL
              WHERE id = ? AND ended_at IS NULL
-            """,
+            """,postgresql="\n            UPDATE task_runs\n               SET status = 'reclaimed', outcome = 'reclaimed',\n                   summary = COALESCE(summary, %s),\n                   ended_at = %s,\n                   claim_lock = NULL, claim_expires = NULL, worker_pid = NULL\n             WHERE id = %s AND ended_at IS NULL\n            "),
             (note, now, int(stale["current_run_id"])),
         )
 
@@ -3600,9 +3601,9 @@ def unblock_task(conn: sqlite3.Connection, task_id: str) -> bool:
         # (the dispatcher's spawn/crash counter) IS reset — a deliberate unblock
         # is a fresh start for the retry budget.
         cur = conn.execute(
-            "UPDATE tasks SET status = ?, current_run_id = NULL, "
+            _storage_statement(sqlite="UPDATE tasks SET status = ?, current_run_id = NULL, "
             "consecutive_failures = 0, last_failure_error = NULL "
-            "WHERE id = ? AND status IN ('blocked', 'scheduled')", (new_status, task_id),
+            "WHERE id = ? AND status IN ('blocked', 'scheduled')",postgresql="UPDATE tasks SET status = %s, current_run_id = NULL, consecutive_failures = 0, last_failure_error = NULL WHERE id = %s AND status IN ('blocked', 'scheduled')"), (new_status, task_id),
         )
         if cur.rowcount != 1:
             return False
@@ -3636,10 +3637,10 @@ def reopen_review_task(conn: sqlite3.Connection, task_id: str) -> bool:
         cur = conn.execute(
             # consecutive_failures deliberately PRESERVED: review reopen is not
             # a success signal; only complete_task resets the breaker (#35072).
-            "UPDATE tasks SET status = ?, current_run_id = NULL, "
-            "claim_lock = NULL, claim_expires = NULL, worker_pid = NULL, worker_started_at = NULL "
-            + (", assignee = ?" if implementer else "")
-            + " WHERE id = ? AND status = 'review'",
+            _storage_statement(sqlite="UPDATE tasks SET status = ?, current_run_id = NULL, "
+            "claim_lock = NULL, claim_expires = NULL, worker_pid = NULL, worker_started_at = NULL ",postgresql='UPDATE tasks SET status = %s, current_run_id = NULL, claim_lock = NULL, claim_expires = NULL, worker_pid = NULL, worker_started_at = NULL ')
+            + (_storage_statement(sqlite=", assignee = ?",postgresql=', assignee = %s') if implementer else "")
+            + _storage_statement(sqlite=" WHERE id = ? AND status = 'review'",postgresql=" WHERE id = %s AND status = 'review'"),
             params,
         )
         if cur.rowcount != 1:
@@ -3672,13 +3673,13 @@ def invalidate_descendants_for_parent_reopen(
     Returns ``{"invalidated": [{id, prior_status, new_status, resume_status}],
     "terminations": [(worker_pid, claim_lock, worker_started_at)]}``.
     """
-    caller_owns_txn = bool(conn.in_transaction)
+    caller_owns_txn = bool(_in_transaction(conn))
     now = int(time.time())
     invalidated: list[dict[str, Any]] = []
     terminations: list[tuple[Optional[int], Optional[str], Optional[int]]] = []
     with write_txn(conn, allow_nested=True):
         rows = conn.execute(
-            """
+            _storage_statement(sqlite="""
             WITH RECURSIVE descendants(id) AS (
                 SELECT child_id FROM task_links WHERE parent_id = ?
                 UNION
@@ -3690,7 +3691,7 @@ def invalidate_descendants_for_parent_reopen(
             FROM descendants d
             JOIN tasks t ON t.id = d.id
             ORDER BY t.id
-            """,
+            """,postgresql='\n            WITH RECURSIVE descendants(id) AS (\n                SELECT child_id FROM task_links WHERE parent_id = %s\n                UNION\n                SELECT l.child_id\n                FROM task_links l\n                JOIN descendants d ON d.id = l.parent_id\n            )\n            SELECT t.id, t.status, t.current_run_id, t.worker_pid, t.claim_lock, t.worker_started_at\n            FROM descendants d\n            JOIN tasks t ON t.id = d.id\n            ORDER BY t.id\n            '),
             (task_id,),
         ).fetchall()
         for row in rows:
@@ -3711,9 +3712,9 @@ def invalidate_descendants_for_parent_reopen(
             # consecutive_failures = 0: deliberate operator reset — see
             # docstring for why this diverges from reopen_review_task.
             conn.execute(
-                "UPDATE tasks SET status = 'todo', completed_at = NULL, "
+                _storage_statement(sqlite="UPDATE tasks SET status = 'todo', completed_at = NULL, "
                 "claim_lock = NULL, claim_expires = NULL, worker_pid = NULL, worker_started_at = NULL, "
-                "current_run_id = NULL, consecutive_failures = 0 WHERE id = ?", (row["id"],),
+                "current_run_id = NULL, consecutive_failures = 0 WHERE id = ?",postgresql="UPDATE tasks SET status = 'todo', completed_at = NULL, claim_lock = NULL, claim_expires = NULL, worker_pid = NULL, worker_started_at = NULL, current_run_id = NULL, consecutive_failures = 0 WHERE id = %s"), (row["id"],),
             )
             entry = {
                 "id": row["id"], "prior_status": previous_status,
@@ -3761,7 +3762,7 @@ def specify_triage_task(
     assignee = _canonical_assignee(assignee)
     with write_txn(conn):
         existing = conn.execute(
-            "SELECT title, body, assignee FROM tasks WHERE id = ? AND status = 'triage'",
+            _storage_statement(sqlite="SELECT title, body, assignee FROM tasks WHERE id = ? AND status = 'triage'",postgresql="SELECT title, body, assignee FROM tasks WHERE id = %s AND status = 'triage'"),
             (task_id,),
         ).fetchone()
         if existing is None:
@@ -3770,21 +3771,21 @@ def specify_triage_task(
         params: list[Any] = []
         changed_fields: list[str] = []
         if title is not None and title.strip() != (existing["title"] or ""):
-            sets.append("title = ?")
+            sets.append(_storage_statement(sqlite="title = ?",postgresql='title = %s'))
             params.append(title.strip())
             changed_fields.append("title")
         if body is not None and (body or "") != (existing["body"] or ""):
-            sets.append("body = ?")
+            sets.append(_storage_statement(sqlite="body = ?",postgresql='body = %s'))
             params.append(body)
             changed_fields.append("body")
         if assignee is not None and assignee != (existing["assignee"] or None):
-            sets.append("assignee = ?")
+            sets.append(_storage_statement(sqlite="assignee = ?",postgresql='assignee = %s'))
             params.append(assignee)
             changed_fields.append("assignee")
         params.append(task_id)
         cur = conn.execute(
-            f"UPDATE tasks SET {', '.join(sets)} "
-            f"WHERE id = ? AND status = 'triage'", tuple(params),
+            _storage_statement(sqlite=f"UPDATE tasks SET {', '.join(sets)} "
+            f"WHERE id = ? AND status = 'triage'",postgresql=f"UPDATE tasks SET {', '.join(sets)} WHERE id = %s AND status = 'triage'"), tuple(params),
         )
         if cur.rowcount != 1:
             return False
@@ -3821,7 +3822,7 @@ def archive_task(conn: sqlite3.Connection, task_id: str, *, signal_fn=None) -> b
     """
     with write_txn(conn):
         row = conn.execute(
-            "SELECT status, claim_lock, worker_pid, worker_started_at FROM tasks WHERE id = ?",
+            _storage_statement(sqlite="SELECT status, claim_lock, worker_pid, worker_started_at FROM tasks WHERE id = ?",postgresql='SELECT status, claim_lock, worker_pid, worker_started_at FROM tasks WHERE id = %s'),
             (task_id,),
         ).fetchone()
         if not row:
@@ -3829,9 +3830,9 @@ def archive_task(conn: sqlite3.Connection, task_id: str, *, signal_fn=None) -> b
         was_running = row["status"] == "running"
         prev_pid, prev_lock, prev_started = row["worker_pid"], row["claim_lock"], row["worker_started_at"]
         cur = conn.execute(
-            "UPDATE tasks SET status = 'archived', "
+            _storage_statement(sqlite="UPDATE tasks SET status = 'archived', "
             "    claim_lock = NULL, claim_expires = NULL, worker_pid = NULL, worker_started_at = NULL "
-            "WHERE id = ? AND status != 'archived'", (task_id,),
+            "WHERE id = ? AND status != 'archived'",postgresql="UPDATE tasks SET status = 'archived',     claim_lock = NULL, claim_expires = NULL, worker_pid = NULL, worker_started_at = NULL WHERE id = %s AND status != 'archived'"), (task_id,),
         )
         if cur.rowcount != 1:
             return False
@@ -3854,9 +3855,9 @@ def archive_task(conn: sqlite3.Connection, task_id: str, *, signal_fn=None) -> b
 
 def _delete_task_relations(conn: sqlite3.Connection, task_id: str) -> None:
     """Delete every row referencing ``task_id`` (schema has no ON DELETE CASCADE)."""
-    conn.execute("DELETE FROM task_links WHERE parent_id = ? OR child_id = ?", (task_id, task_id))
+    conn.execute(_storage_statement(sqlite="DELETE FROM task_links WHERE parent_id = ? OR child_id = ?",postgresql='DELETE FROM task_links WHERE parent_id = %s OR child_id = %s'), (task_id, task_id))
     for table in ("task_comments", "task_events", "task_runs", "kanban_notify_subs"):
-        conn.execute(f"DELETE FROM {table} WHERE task_id = ?", (task_id,))
+        conn.execute(_storage_statement(sqlite=f"DELETE FROM {table} WHERE task_id = ?",postgresql=f'DELETE FROM {table} WHERE task_id = %s'), (task_id,))
 
 
 def delete_archived_task(conn: sqlite3.Connection, task_id: str) -> bool:
@@ -3866,14 +3867,14 @@ def delete_archived_task(conn: sqlite3.Connection, task_id: str) -> bool:
         if _task_status(conn, task_id) != "archived":
             return False
         _delete_task_relations(conn, task_id)
-        cur = conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+        cur = conn.execute(_storage_statement(sqlite="DELETE FROM tasks WHERE id = ?",postgresql='DELETE FROM tasks WHERE id = %s'), (task_id,))
         return cur.rowcount == 1
 
 
 def delete_task(conn: sqlite3.Connection, task_id: str) -> bool:
     """Hard-delete a task and its related rows in one txn; False when not found."""
     with write_txn(conn):
-        cur = conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+        cur = conn.execute(_storage_statement(sqlite="DELETE FROM tasks WHERE id = ?",postgresql='DELETE FROM tasks WHERE id = %s'), (task_id,))
         if cur.rowcount != 1:
             return False
         _delete_task_relations(conn, task_id)
@@ -3889,7 +3890,7 @@ def schedule_task(
     until ``unblock_task`` re-gates it."""
     with write_txn(conn):
         params: list[Any] = [task_id]
-        sql = """
+        sql = _storage_statement(sqlite="""
             UPDATE tasks
                SET status       = 'scheduled',
                    claim_lock   = NULL,
@@ -3897,9 +3898,9 @@ def schedule_task(
                    worker_pid   = NULL
              WHERE id = ?
                AND status IN ('todo', 'ready', 'running', 'blocked')
-        """
+        """,postgresql="\n            UPDATE tasks\n               SET status       = 'scheduled',\n                   claim_lock   = NULL,\n                   claim_expires= NULL,\n                   worker_pid   = NULL\n             WHERE id = %s\n               AND status IN ('todo', 'ready', 'running', 'blocked')\n        ")
         if expected_run_id is not None:
-            sql += " AND current_run_id = ?"
+            sql += _storage_statement(sqlite=" AND current_run_id = ?",postgresql=' AND current_run_id = %s')
             params.append(int(expected_run_id))
         if conn.execute(sql, params).rowcount != 1:
             return False
@@ -4038,8 +4039,8 @@ def gc_events(conn: sqlite3.Connection, *, older_than_seconds: int = 30 * 24 * 3
     cutoff = int(time.time()) - _retention_seconds(older_than_seconds)
     with write_txn(conn):
         cur = conn.execute(
-            "DELETE FROM task_events WHERE created_at < ? AND kind != 'decomposed' AND task_id IN "
-            "(SELECT id FROM tasks WHERE status IN ('done', 'archived'))", (cutoff,),
+            _storage_statement(sqlite="DELETE FROM task_events WHERE created_at < ? AND kind != 'decomposed' AND task_id IN "
+            "(SELECT id FROM tasks WHERE status IN ('done', 'archived'))",postgresql="DELETE FROM task_events WHERE created_at < %s AND kind != 'decomposed' AND task_id IN (SELECT id FROM tasks WHERE status IN ('done', 'archived'))"), (cutoff,),
         )
     return int(cur.rowcount or 0)
 
@@ -4142,12 +4143,12 @@ def list_runs(
         raise ValueError("state_type and state_name must both be set or both omitted")
     if state_type is not None and state_type not in ("status", "outcome"):
         raise ValueError("state_type must be 'status' or 'outcome'")
-    q = "SELECT * FROM task_runs WHERE task_id = ?"
+    q = _storage_statement(sqlite="SELECT * FROM task_runs WHERE task_id = ?",postgresql='SELECT * FROM task_runs WHERE task_id = %s')
     params: list[Any] = [task_id]
     if not include_active:
         q += " AND ended_at IS NOT NULL"
     if state_type is not None:
-        q += f" AND {state_type} = ?"
+        q += _storage_statement(sqlite=f" AND {state_type} = ?",postgresql=f' AND {state_type} = %s')
         params.append(state_name)
     q += " ORDER BY started_at ASC, id ASC"
     rows = conn.execute(q, params).fetchall()
@@ -4155,15 +4156,15 @@ def list_runs(
 
 
 def get_run(conn: sqlite3.Connection, run_id: int) -> Optional[Run]:
-    row = conn.execute("SELECT * FROM task_runs WHERE id = ?", (int(run_id),)).fetchone()
+    row = conn.execute(_storage_statement(sqlite="SELECT * FROM task_runs WHERE id = ?",postgresql='SELECT * FROM task_runs WHERE id = %s'), (int(run_id),)).fetchone()
     return Run.from_row(row) if row else None
 
 
 def latest_run(conn: sqlite3.Connection, task_id: str) -> Optional[Run]:
     """Return the most recent run regardless of outcome (active or closed)."""
     row = conn.execute(
-        "SELECT * FROM task_runs WHERE task_id = ? "
-        "ORDER BY started_at DESC, id DESC LIMIT 1", (task_id,),
+        _storage_statement(sqlite="SELECT * FROM task_runs WHERE task_id = ? "
+        "ORDER BY started_at DESC, id DESC LIMIT 1",postgresql='SELECT * FROM task_runs WHERE task_id = %s ORDER BY started_at DESC, id DESC LIMIT 1'), (task_id,),
     ).fetchone()
     return Run.from_row(row) if row else None
 
@@ -4172,9 +4173,9 @@ def latest_summary(conn: sqlite3.Connection, task_id: str) -> Optional[str]:
     """Newest non-empty run summary, or None. Workers hand off via ``summary`` and
     leave ``tasks.result`` NULL, so views need this or a done task looks empty."""
     row = conn.execute(
-        "SELECT summary FROM task_runs "
+        _storage_statement(sqlite="SELECT summary FROM task_runs "
         "WHERE task_id = ? AND summary IS NOT NULL AND summary != '' "
-        "ORDER BY COALESCE(ended_at, started_at) DESC, id DESC LIMIT 1", (task_id,),
+        "ORDER BY COALESCE(ended_at, started_at) DESC, id DESC LIMIT 1",postgresql="SELECT summary FROM task_runs WHERE task_id = %s AND summary IS NOT NULL AND summary != '' ORDER BY COALESCE(ended_at, started_at) DESC, id DESC LIMIT 1"), (task_id,),
     ).fetchone()
     return row["summary"] if row else None
 
@@ -4185,7 +4186,7 @@ def latest_summaries(conn: sqlite3.Connection, task_ids: Iterable[str]) -> dict[
     ids = list(task_ids)
     if not ids:
         return {}
-    placeholders = ",".join("?" for _ in ids)
+    placeholders = ",".join(_parameter_marker() for _ in ids)
     rows = conn.execute(
         f"""
         SELECT task_id, summary FROM (
@@ -4210,7 +4211,7 @@ def current_run_started_ats(conn: sqlite3.Connection, task_ids: Iterable[str]) -
     ids = list(task_ids)
     if not ids:
         return {}
-    placeholders = ",".join("?" for _ in ids)
+    placeholders = ",".join(_parameter_marker() for _ in ids)
     rows = conn.execute(
         "SELECT t.id AS task_id, r.started_at AS started_at FROM tasks t "
         "JOIN task_runs r ON r.id = t.current_run_id "

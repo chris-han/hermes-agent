@@ -3126,29 +3126,9 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
                 "updated_at": time.time()}}
         title = body.get("title")
 
-        def _atomic(conn):
-            # One BEGIN IMMEDIATE write: a concurrent same-id create blocks and sees the row.
-            if conn.execute("SELECT id FROM sessions WHERE id = ?", (session_id,)).fetchone():
-                return None, "exists"
-            conn.execute(
-                """INSERT INTO sessions (
-                   id, source, model, model_config, system_prompt, started_at
-                ) VALUES (?, ?, ?, ?, ?, ?)""",
-                (session_id, source, model_name, json.dumps(model_config) if model_config else None,
-                 system_prompt, time.time()))
-            if title is not None:
-                clean_title = db.sanitize_title(str(title))
-                if clean_title:
-                    try:
-                        db._resolve_title_conflict(conn, session_id, clean_title)
-                    except ValueError as exc:  # the DB's uniqueness rule; undo the INSERT
-                        conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
-                        return None, f"title:{exc}"
-                conn.execute("UPDATE sessions SET title = ? WHERE id = ?", (clean_title, session_id))
-            session_row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
-            return (dict(session_row) if session_row else {
-                "id": session_id, "source": source, "model": model_name, "title": title}), None
-        session, err = await asyncio.to_thread(db._execute_write, _atomic)
+        session, err = await asyncio.to_thread(
+            db.create_client_session,session_id,source=source,model=model_name,
+            model_config=model_config,system_prompt=system_prompt,title=title)
         if err == "exists":
             return _error_response(f"Session already exists: {session_id}", 409, code="session_exists")
         if err and err.startswith("title:"):

@@ -246,7 +246,11 @@ def _agent_home(agent: Any) -> Optional[Path]:
     except Exception:
         pass
     try:
-        db_path = getattr(getattr(agent, "_session_db", None), "db_path", None)
+        store = getattr(agent, "_session_db", None)
+        home = getattr(store, "home", None)
+        if home is not None:
+            return Path(home)
+        db_path = getattr(store, "db_path", None)
         return Path(db_path).parent if db_path else None
     except Exception:
         return None

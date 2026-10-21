@@ -1,4 +1,5 @@
 """Read-only canonical admission fences for dispatcher reclaim paths."""
+from hermes_state_sql import statement as _storage_statement, parameter_marker as _parameter_marker, inserted_id as _inserted_id, in_transaction as _in_transaction
 from contextlib import closing
 import json
 from pathlib import Path
@@ -9,15 +10,15 @@ import psutil
 def owner_reclaim_paused(conn, task_id):
     """Missing/ambiguous owner receipts never authorize another attempt."""
     marker = conn.execute(
-        "SELECT e.payload FROM task_events e JOIN tasks t ON t.current_run_id=e.run_id "
-        "WHERE t.id=? AND e.task_id=t.id AND e.kind='owner_admitted' ORDER BY e.id DESC LIMIT 1",
+        _storage_statement(sqlite="SELECT e.payload FROM task_events e JOIN tasks t ON t.current_run_id=e.run_id "
+        "WHERE t.id=? AND e.task_id=t.id AND e.kind='owner_admitted' ORDER BY e.id DESC LIMIT 1",postgresql="SELECT e.payload FROM task_events e JOIN tasks t ON t.current_run_id=e.run_id WHERE t.id=%s AND e.task_id=t.id AND e.kind='owner_admitted' ORDER BY e.id DESC LIMIT 1"),
         (task_id,)).fetchone()
     if marker is None:
         return False
     try:
         binding = json.loads(marker['payload'])
         with closing(sqlite3.connect(Path(binding['db']).as_uri() + '?mode=ro', uri=True)) as owner:
-            row = owner.execute('SELECT status,outcome FROM session_admissions WHERE target_session_id=? AND request_id=?',
+            row = owner.execute(_storage_statement(sqlite='SELECT status,outcome FROM session_admissions WHERE target_session_id=? AND request_id=?',postgresql='SELECT status,outcome FROM session_admissions WHERE target_session_id=%s AND request_id=%s'),
                                 (binding['session_id'], binding['request_id'])).fetchone()
         if row is not None and row[0] == 'terminal':
             # Discard acknowledges uncertainty, not permission to repeat effects.
@@ -36,8 +37,8 @@ def bound_interpreter_gone(conn, task_id):
     """True when the owner bound an interpreter to the task's current run and it is dead."""
     from hermes_cli.kanban_db_dispatch import _worker_alive
     row = conn.execute(
-        "SELECT e.payload FROM task_events e JOIN tasks t ON t.current_run_id=e.run_id "
-        "WHERE t.id=? AND e.task_id=t.id AND e.kind='worker_bound' ORDER BY e.id DESC LIMIT 1",
+        _storage_statement(sqlite="SELECT e.payload FROM task_events e JOIN tasks t ON t.current_run_id=e.run_id "
+        "WHERE t.id=? AND e.task_id=t.id AND e.kind='worker_bound' ORDER BY e.id DESC LIMIT 1",postgresql="SELECT e.payload FROM task_events e JOIN tasks t ON t.current_run_id=e.run_id WHERE t.id=%s AND e.task_id=t.id AND e.kind='worker_bound' ORDER BY e.id DESC LIMIT 1"),
         (task_id,)).fetchone()
     if row is None:
         return False
@@ -56,8 +57,8 @@ def managed_run_exit_code(conn, task_id, worker_pid, claim_lock):
     spawned submitter's ``tasks.worker_pid``."""
     def latest(kind):
         row = conn.execute(
-            "SELECT e.payload FROM task_events e JOIN tasks t ON t.current_run_id=e.run_id "
-            "WHERE t.id=? AND e.task_id=t.id AND e.kind=? ORDER BY e.id DESC LIMIT 1", (task_id, kind)).fetchone()
+            _storage_statement(sqlite="SELECT e.payload FROM task_events e JOIN tasks t ON t.current_run_id=e.run_id "
+            "WHERE t.id=? AND e.task_id=t.id AND e.kind=? ORDER BY e.id DESC LIMIT 1",postgresql='SELECT e.payload FROM task_events e JOIN tasks t ON t.current_run_id=e.run_id WHERE t.id=%s AND e.task_id=t.id AND e.kind=%s ORDER BY e.id DESC LIMIT 1'), (task_id, kind)).fetchone()
         try:
             payload = json.loads(row['payload']) if row else {}
         except ValueError:

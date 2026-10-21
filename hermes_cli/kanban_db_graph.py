@@ -1,5 +1,6 @@
 """Task graph initialization and atomic decomposition persistence."""
 from __future__ import annotations
+from hermes_state_sql import statement as _storage_statement, parameter_marker as _parameter_marker, inserted_id as _inserted_id, in_transaction as _in_transaction
 
 import sqlite3
 import time
@@ -15,8 +16,8 @@ def inherit_creator_origin(
     from hermes_cli.kanban_db import _inherit_notify_subs
 
     conn.execute(
-        "UPDATE tasks SET session_id = COALESCE(session_id, "
-        "(SELECT session_id FROM tasks WHERE id = ?)) WHERE id = ?",
+        _storage_statement(sqlite="UPDATE tasks SET session_id = COALESCE(session_id, "
+        "(SELECT session_id FROM tasks WHERE id = ?)) WHERE id = ?",postgresql='UPDATE tasks SET session_id = COALESCE(session_id, (SELECT session_id FROM tasks WHERE id = %s)) WHERE id = %s'),
         (creator_task_id, task_id),
     )
     _inherit_notify_subs(conn, task_id, (creator_task_id,), created_at=created_at)
@@ -35,7 +36,7 @@ def initial_task_state(
     if parents:
         rows = {row["id"]: row for row in conn.execute(
             "SELECT id, status, tenant FROM tasks WHERE id IN "
-            "(" + ",".join("?" * len(parents)) + ")", parents,
+            "(" + ",".join([_parameter_marker()] * len(parents)) + ")", parents,
         )}
         missing = [pid for pid in parents if pid not in rows]
         if missing:
@@ -115,15 +116,15 @@ def decompose_triage_task(
     now = int(time.time())
     with write_txn(conn):
         root_row = conn.execute(
-            "SELECT id, status, tenant, workspace_kind, workspace_path "
-            "FROM tasks WHERE id = ?", (task_id,),
+            _storage_statement(sqlite="SELECT id, status, tenant, workspace_kind, workspace_path "
+            "FROM tasks WHERE id = ?",postgresql='SELECT id, status, tenant, workspace_kind, workspace_path FROM tasks WHERE id = %s'), (task_id,),
         ).fetchone()
         if root_row is None or root_row["status"] != "triage":
             return None
         # Dependency links alone do not imply lineage. The completion event is
         # committed with the graph, and survives re-triage or unlinking.
         if conn.execute(
-            "SELECT 1 FROM task_events WHERE task_id = ? AND kind = 'decomposed' LIMIT 1",
+            _storage_statement(sqlite="SELECT 1 FROM task_events WHERE task_id = ? AND kind = 'decomposed' LIMIT 1",postgresql="SELECT 1 FROM task_events WHERE task_id = %s AND kind = 'decomposed' LIMIT 1"),
             (task_id,),
         ).fetchone():
             return None
@@ -145,10 +146,10 @@ def decompose_triage_task(
         sets = ["status = 'todo'"]
         params: list[Any] = []
         if root_assignee is not None:
-            sets.append("assignee = ?")
+            sets.append(_storage_statement(sqlite="assignee = ?",postgresql='assignee = %s'))
             params.append(root_assignee)
         params.append(task_id)
-        conn.execute(f"UPDATE tasks SET {', '.join(sets)} WHERE id = ?", tuple(params))
+        conn.execute(_storage_statement(sqlite=f"UPDATE tasks SET {', '.join(sets)} WHERE id = ?",postgresql=f"UPDATE tasks SET {', '.join(sets)} WHERE id = %s"), tuple(params))
         if author and author.strip():
             _insert_comment(
                 conn, task_id, author.strip(),
@@ -197,10 +198,10 @@ def _insert_decomposed_child(
     new_id = _new_task_id()
     body = child.get("body")
     conn.execute(
-        "INSERT INTO tasks "
+        _storage_statement(sqlite="INSERT INTO tasks "
         "(id, title, body, assignee, status, workspace_kind, "
         " workspace_path, tenant, created_at, created_by) "
-        "VALUES (?, ?, ?, ?, 'todo', ?, ?, ?, ?, ?)",
+        "VALUES (?, ?, ?, ?, 'todo', ?, ?, ?, ?, ?)",postgresql="INSERT INTO tasks (id, title, body, assignee, status, workspace_kind,  workspace_path, tenant, created_at, created_by) VALUES (%s, %s, %s, %s, 'todo', %s, %s, %s, %s, %s)"),
         (
             new_id, child["title"].strip(), body if isinstance(body, str) else None,
             _canonical_assignee(child.get("assignee")), child_ws_kind, child_ws_path,
