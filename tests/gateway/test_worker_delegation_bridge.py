@@ -31,8 +31,9 @@ def test_bridge_publishes_committed_completion_and_rejects_another_principal(tmp
     try:
         db.create_session('parent', source='cli')
         epoch = begin_runtime_epoch(db, instance_id='owner')
-        with closing(sqlite3.connect(tmp_path / 'state.db')) as conn:
-            _initialize_schema(conn)
+        if getattr(db, 'backend', 'sqlite') == 'sqlite':
+            with closing(sqlite3.connect(tmp_path / 'state.db')) as conn:
+                _initialize_schema(conn)
         authority = SimpleNamespace(db=db, epoch=epoch, profile_id='profile', _require_admission_open=lambda: None)
         actor = SimpleNamespace(profile_id='profile', subject='alice', capabilities={'worker:adopt'})
         connection = SimpleNamespace(authority=authority, actor=actor)
@@ -64,6 +65,29 @@ def test_bridge_publishes_committed_completion_and_rejects_another_principal(tmp
         with pytest.raises(RuntimeStoreError, match='permission_denied'):
             asyncio.run(worker_delegation_request(connection, ref, params))
         assert target.empty()
+        actor.subject = 'alice'
+        for sequence, operation in enumerate(('claim', 'defer', 'claim', 'release', 'claim', 'ack'), 3):
+            result = asyncio.run(worker_delegation_request(connection, ref, scope | dict(
+                epoch=epoch, sequence=sequence, operation='delegation.'+operation,
+                payload={'delegation_id':'deleg_owned', 'claim_id':'delivery-token'})))
+            assert result == {'value':True}
+        drop_payload = payload | {'delegation_id':'deleg_drop'}
+        drop_event = event | {'delegation_id':'deleg_drop'}
+        for sequence, operation, value in (
+            (9,'dispatch',drop_payload),
+            (10,'complete',{'event':drop_event, 'result':{'summary':'durable'}}),
+            (11,'claim',{'delegation_id':'deleg_drop','claim_id':'drop-token'}),
+            (12,'drop',{'delegation_id':'deleg_drop','claim_id':'drop-token'}),
+            (13,'dispatch',payload | {'delegation_id':'unscheduled'}),
+            (14,'unscheduled',{'delegation_id':'unscheduled'}),
+        ):
+            asyncio.run(worker_delegation_request(connection, ref, scope | dict(
+                epoch=epoch, sequence=sequence, operation='delegation.'+operation, payload=value)))
+        assert target.get_nowait() == drop_event | {'restored':True}
+        with db._read_ctx() as conn:
+            states = {row[0]:row[1] for row in conn.execute('SELECT delegation_id,delivery_state FROM async_delegations')}
+            assert states == {'deleg_owned':'delivered', 'deleg_drop':'dropped'}
+            assert conn.execute('SELECT COUNT(*) FROM worker_receipts').fetchone()[0] == 14
     finally:
         worker.terminate()
         worker.wait(timeout=5)

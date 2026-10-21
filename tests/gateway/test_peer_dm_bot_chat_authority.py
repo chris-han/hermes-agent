@@ -33,9 +33,9 @@ async def peer(tmp_path, monkeypatch):
     monkeypatch.setenv('HERMES_HOME', str(tmp_path))
     monkeypatch.setattr(run, '_load_gateway_config', lambda: {'platform_toolsets': {'cli': []}})
     monkeypatch.setattr('tools.bot_mode_dm._LIVE_WAIT_SECONDS', 2.0)
-    from hermes_state import SessionDB
+    from hermes_state_backend import open_session_db
     store = SessionStore(tmp_path / 'sessions', GatewayConfig())
-    store._db = SessionDB(db_path=tmp_path / 'state.db')
+    store._db = open_session_db(db_path=tmp_path / 'state.db')
     runner = SimpleNamespace(session_store=store, _session_db=store._db, adapters={}, _draining=False,
                              _evict_cached_agent=lambda route: None)
     authority = await initialize_session_authority(runner, profile_id='default', instance_id='fixture')

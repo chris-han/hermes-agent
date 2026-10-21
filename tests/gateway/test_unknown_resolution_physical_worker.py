@@ -33,7 +33,8 @@ def _local_reset(db, epoch, logical, child):
     source = SessionSource(platform=Platform.LOCAL, chat_id=sid, user_id='human', chat_type='dm')
     now = _now()
     entry = SessionEntry('local:' + sid, sid, now, now, origin=source, platform=Platform.LOCAL)
-    policy = build_policy({'source': 'cli', 'cwd': str(Path(db.db_path).parent), 'model': 'm', 'toolsets': []},
+    from hermes_state_backend import session_store_home
+    policy = build_policy({'source': 'cli', 'cwd': str(session_store_home(db)), 'model': 'm', 'toolsets': []},
                           {'platform_toolsets': {'cli': []}}, private_secrets={})
     commit_local_session(db, epoch=epoch, receipt={
         'profile_id': 'profile', 'principal_id': 'human', 'request_id': 'r', 'session_id': sid,

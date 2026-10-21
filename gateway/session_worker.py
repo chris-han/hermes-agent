@@ -8,6 +8,7 @@ import hmac
 import os
 
 from gateway.session_admission import admission_fingerprint
+import hermes_state_sql as native_sql
 from hermes_state_runtime import (
     RuntimeStoreError, _secret_digest, adopt_worker_execution,
     mutate_worker_execution, register_worker_execution,
@@ -49,7 +50,7 @@ def _verify(connection, ref, params, claim):
     authority = connection.authority
     target = worker_retry_target(authority.db, params)
     with authority.db._read_ctx() as conn:
-        row = conn.execute('SELECT * FROM worker_executions WHERE execution_id=?',
+        row = conn.execute(native_sql.statement(sqlite='SELECT * FROM worker_executions WHERE execution_id=?', postgresql='SELECT * FROM worker_executions WHERE execution_id=%s', connection=conn),
                            (params['execution_id'],)).fetchone()
         if row is None:
             raise RuntimeStoreError('not_found')

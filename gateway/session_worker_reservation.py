@@ -4,6 +4,7 @@ The producer retains the Popen handle and holds the child's bootstrap pipe until
 this returns. Public worker.register remains idle-only for unreserved callers.
 """
 import os
+import hermes_state_sql as native_sql
 import secrets
 import subprocess
 
@@ -73,21 +74,21 @@ def reserve_admission_worker(authority, *, admission_id, process, principal_id, 
         from hermes_state_local_lineage import local_physical_target
         sid = local_physical_target(conn, owner)
         execution_id = 'admission-worker:' + admission_id
-        if conn.execute('SELECT 1 FROM worker_executions WHERE execution_id=?', (execution_id,)).fetchone():
+        if conn.execute(native_sql.statement(sqlite='SELECT 1 FROM worker_executions WHERE execution_id=?', postgresql='SELECT 1 FROM worker_executions WHERE execution_id=%s', connection=conn), (execution_id,)).fetchone():
             raise RuntimeStoreError('admission_conflict')
-        if conn.execute("SELECT 1 FROM worker_executions WHERE session_id=? AND status!='terminal'", (sid,)).fetchone():
+        if conn.execute(native_sql.statement(sqlite="SELECT 1 FROM worker_executions WHERE session_id=? AND status!='terminal'", postgresql="SELECT 1 FROM worker_executions WHERE session_id=%s AND status!='terminal'", connection=conn), (sid,)).fetchone():
             raise RuntimeStoreError('stale_generation')
         # The private worker fence follows its physical assignment; admission/FIFO
         # generation and identity remain on the logical owner.
-        conn.execute('UPDATE sessions SET runtime_generation=? WHERE id=?', (generation, sid))
+        conn.execute(native_sql.statement(sqlite='UPDATE sessions SET runtime_generation=? WHERE id=?', postgresql='UPDATE sessions SET runtime_generation=%s WHERE id=%s', connection=conn), (generation, sid))
         if sid != owner:
-            conn.execute("UPDATE session_admissions SET lineage_json=json_insert(lineage_json,'$[#]',?) "
-                         "WHERE admission_id=?", (sid, admission_id))
+            conn.execute(native_sql.statement(sqlite="UPDATE session_admissions SET lineage_json=json_insert(lineage_json,'$[#]',?) "
+                         "WHERE admission_id=?", postgresql='UPDATE session_admissions SET lineage_json=(lineage_json::jsonb || jsonb_build_array(%s::text))::text WHERE admission_id=%s', connection=conn), (sid, admission_id))
         scope = dict(profile_id=authority.profile_id, session_id=sid, execution_id=execution_id,
                      generation=generation, pid=pid, birth=birth, secret=secret)
         claim = admission_fingerprint(canonical_target=sid, payload=scope | {'principal': principal_id})
-        conn.execute("INSERT INTO worker_executions(execution_id,session_id,kind,owner_epoch,generation,status,adoption_digest) "
-                     "VALUES(?,?,'compute',?,?,'registered',?)",
+        conn.execute(native_sql.statement(sqlite="INSERT INTO worker_executions(execution_id,session_id,kind,owner_epoch,generation,status,adoption_digest) "
+                     "VALUES(?,?,'compute',?,?,'registered',?)", postgresql="INSERT INTO worker_executions(execution_id,session_id,kind,owner_epoch,generation,status,adoption_digest) VALUES(%s,%s,'compute',%s,%s,'registered',%s)", connection=conn),
                      (execution_id, sid, authority.epoch, generation, _secret_digest(claim)))
         return scope | {'epoch': authority.epoch}
 
@@ -106,13 +107,13 @@ def lose_admission_worker(authority, row, scope):
         if (current['status'] != 'started' or current['owner_epoch'] != scope['epoch']
                 or current['generation'] != scope['generation']):
             raise RuntimeStoreError('stale_generation')
-        worker = conn.execute('SELECT * FROM worker_executions WHERE execution_id=?',
+        worker = conn.execute(native_sql.statement(sqlite='SELECT * FROM worker_executions WHERE execution_id=?', postgresql='SELECT * FROM worker_executions WHERE execution_id=%s', connection=conn),
                               (scope['execution_id'],)).fetchone()
         if worker is None or worker['generation'] != scope['generation'] or worker['owner_epoch'] != scope['epoch']:
             raise RuntimeStoreError('stale_generation')
-        conn.execute("UPDATE worker_executions SET status='terminal' WHERE execution_id=?", (scope['execution_id'],))
+        conn.execute(native_sql.statement(sqlite="UPDATE worker_executions SET status='terminal' WHERE execution_id=?", postgresql="UPDATE worker_executions SET status='terminal' WHERE execution_id=%s", connection=conn), (scope['execution_id'],))
         from hermes_state_runtime_workers import compact_terminal_receipts
         compact_terminal_receipts(conn, scope['execution_id'])
-        conn.execute("UPDATE session_admissions SET status='unknown' WHERE admission_id=?", (row['admission_id'],))
-        conn.execute('UPDATE sessions SET runtime_revision=runtime_revision+1 WHERE id=?', (current['target_session_id'],))
+        conn.execute(native_sql.statement(sqlite="UPDATE session_admissions SET status='unknown' WHERE admission_id=?", postgresql="UPDATE session_admissions SET status='unknown' WHERE admission_id=%s", connection=conn), (row['admission_id'],))
+        conn.execute(native_sql.statement(sqlite='UPDATE sessions SET runtime_revision=runtime_revision+1 WHERE id=?', postgresql='UPDATE sessions SET runtime_revision=runtime_revision+1 WHERE id=%s', connection=conn), (current['target_session_id'],))
     authority.db._execute_write(write)

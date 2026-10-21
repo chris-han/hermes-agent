@@ -9,7 +9,6 @@ session as an API conversation (``run_api_turn``) would be a second writer and i
 (``permission_denied``) by design. Without an authority the legacy live-owner mailbox applies.
 """
 import asyncio
-from pathlib import Path
 from types import SimpleNamespace
 import uuid
 
@@ -39,7 +38,8 @@ async def admit_peer_turn(authority, session_id, message, author):
     tip = bot_chat_tip(authority, session_id)
     if tip is None:
         return None
-    home = Path(authority.db.db_path).parent.resolve()
+    from hermes_state_backend import session_store_home
+    home = session_store_home(authority.db)
     # The API key already authenticated the peer; the turn enters the chat as its owner's own
     # input, the way owner recovery re-admits queued deliveries (``recover_bot_deliveries``).
     actor = Principal(tip['user_id'], authority.profile_id,

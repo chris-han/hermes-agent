@@ -10,6 +10,9 @@ crash-recovery wiring. Only the async lifecycle lives here; the child run is an 
 from __future__ import annotations
 
 import contextvars
+from contextlib import contextmanager
+from hermes_state_backend import postgres_enabled
+import hermes_state_sql as native_sql
 import json
 import logging
 import os
@@ -103,6 +106,8 @@ def _connect() -> sqlite3.Connection:
     from agent.runtime_session_store import WorkerPersistenceError, is_worker_process
     if is_worker_process():
         raise WorkerPersistenceError('worker_delegation_ledger_unavailable')
+    if postgres_enabled():
+        return native_sql.connect_postgres(get_hermes_home())
     from hermes_cli.sqlite_util import open_db
     # Same state.db as hermes_state.SessionDB -- reuse its owner-only (0600)
     # hardening so this writer doesn't create/leave the file (and its WAL
@@ -137,10 +142,19 @@ def _initialize_schema(conn: sqlite3.Connection) -> None:
     reconcile_state_schema(conn)
 
 
+@contextmanager
 def _transaction():
     from hermes_cli.sqlite_util import transaction
-
-    return transaction(_connect())
+    conn = _connect()
+    if native_sql.is_postgres(conn):
+        try:
+            with native_sql.native_write_transaction(conn):
+                yield conn
+        finally:
+            conn.close()
+    else:
+        with transaction(conn):
+            yield conn
 
 
 def _capture_routing_origin() -> dict[str, Any]:
@@ -172,12 +186,12 @@ def _persist_dispatch(record: dict[str, Any]) -> None:
     except OSError:
         pass
     with _DB_LOCK, _transaction() as conn:
-        conn.execute("""INSERT OR REPLACE INTO async_delegations
+        conn.execute(native_sql.statement(sqlite="""INSERT OR REPLACE INTO async_delegations
                (delegation_id, origin_session, origin_ui_session_id,
                 parent_session_id, state, dispatched_at, updated_at,
                 delivery_state, delivery_attempts, owner_pid,
                 owner_started_at, task_json, origin_session_id)
-               VALUES (?, ?, ?, ?, 'running', ?, ?, 'pending', 0, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, 'running', ?, ?, 'pending', 0, ?, ?, ?, ?)""", postgresql="INSERT INTO async_delegations\n               (delegation_id, origin_session, origin_ui_session_id,\n                parent_session_id, state, dispatched_at, updated_at,\n                delivery_state, delivery_attempts, owner_pid,\n                owner_started_at, task_json, origin_session_id, owner_host)\n               VALUES (%s, %s, %s, %s, 'running', %s, %s, 'pending', 0, %s, %s, %s, %s, current_setting('hermes.owner_host',true)) ON CONFLICT(delegation_id) DO UPDATE SET origin_session=EXCLUDED.origin_session,origin_ui_session_id=EXCLUDED.origin_ui_session_id,parent_session_id=EXCLUDED.parent_session_id,state=EXCLUDED.state,dispatched_at=EXCLUDED.dispatched_at,completed_at=EXCLUDED.completed_at,updated_at=EXCLUDED.updated_at,event_json=EXCLUDED.event_json,result_json=EXCLUDED.result_json,delivery_state=EXCLUDED.delivery_state,delivery_attempts=EXCLUDED.delivery_attempts,delivered_at=EXCLUDED.delivered_at,owner_pid=EXCLUDED.owner_pid,owner_started_at=EXCLUDED.owner_started_at,task_json=EXCLUDED.task_json,owner_execution_id=EXCLUDED.owner_execution_id,delivery_claim=EXCLUDED.delivery_claim,delivery_claimed_at=EXCLUDED.delivery_claimed_at,origin_session_id=EXCLUDED.origin_session_id,owner_host=EXCLUDED.owner_host"),
             (record["delegation_id"], record.get("session_key", ""), record.get("origin_ui_session_id", ""),
              record.get("parent_session_id"), record["dispatched_at"], now, os.getpid(), owner_started_at,
              json.dumps(task_payload), record.get("origin_session_id", "")))
@@ -190,24 +204,24 @@ def _prune_durable_records() -> None:
     cutoff = time.time() - _DURABLE_RETENTION_SECONDS
     with _DB_LOCK, _transaction() as conn:
         conn.execute(
-            "DELETE FROM async_delegations WHERE delivery_state='delivered' AND updated_at < ?", (cutoff,))
+            native_sql.statement(sqlite="DELETE FROM async_delegations WHERE delivery_state='delivered' AND updated_at < ?", postgresql="DELETE FROM async_delegations WHERE delivery_state='delivered' AND updated_at < %s"), (cutoff,))
         terminal_count = conn.execute(
-            "SELECT COUNT(*) FROM async_delegations WHERE state NOT IN ('running','finalizing')").fetchone()[0]
+            native_sql.statement(sqlite="SELECT COUNT(*) FROM async_delegations WHERE state NOT IN ('running','finalizing')", postgresql="SELECT COUNT(*) FROM async_delegations WHERE state NOT IN ('running','finalizing')")).fetchone()[0]
         if terminal_count > _MAX_RETAINED_COMPLETED:
-            conn.execute("""DELETE FROM async_delegations WHERE delegation_id IN (
+            conn.execute(native_sql.statement(sqlite="""DELETE FROM async_delegations WHERE delegation_id IN (
                      SELECT delegation_id FROM async_delegations
                      WHERE state NOT IN ('running','finalizing')
                      ORDER BY CASE delivery_state WHEN 'delivered' THEN 0 ELSE 1 END,
                               updated_at ASC LIMIT ?
-                   )""", (terminal_count - _MAX_RETAINED_COMPLETED,))
-        pending_count = conn.execute("""SELECT COUNT(*) FROM async_delegations
-               WHERE state NOT IN ('running','finalizing') AND delivery_state='pending'""").fetchone()[0]
+                   )""", postgresql="DELETE FROM async_delegations WHERE delegation_id IN (\n                     SELECT delegation_id FROM async_delegations\n                     WHERE state NOT IN ('running','finalizing')\n                     ORDER BY CASE delivery_state WHEN 'delivered' THEN 0 ELSE 1 END,\n                              updated_at ASC LIMIT %s\n                   )"), (terminal_count - _MAX_RETAINED_COMPLETED,))
+        pending_count = conn.execute(native_sql.statement(sqlite="""SELECT COUNT(*) FROM async_delegations
+               WHERE state NOT IN ('running','finalizing') AND delivery_state='pending'""", postgresql="SELECT COUNT(*) FROM async_delegations\n               WHERE state NOT IN ('running','finalizing') AND delivery_state='pending'")).fetchone()[0]
         if pending_count > _MAX_DURABLE_PENDING:
-            conn.execute("""DELETE FROM async_delegations WHERE delegation_id IN (
+            conn.execute(native_sql.statement(sqlite="""DELETE FROM async_delegations WHERE delegation_id IN (
                      SELECT delegation_id FROM async_delegations
                      WHERE state NOT IN ('running','finalizing') AND delivery_state='pending'
                      ORDER BY updated_at ASC LIMIT ?
-                   )""", (pending_count - _MAX_DURABLE_PENDING,))
+                   )""", postgresql="DELETE FROM async_delegations WHERE delegation_id IN (\n                     SELECT delegation_id FROM async_delegations\n                     WHERE state NOT IN ('running','finalizing') AND delivery_state='pending'\n                     ORDER BY updated_at ASC LIMIT %s\n                   )"), (pending_count - _MAX_DURABLE_PENDING,))
 
 
 def _persist_completion(event: dict[str, Any], result: dict[str, Any]) -> None:
@@ -215,9 +229,9 @@ def _persist_completion(event: dict[str, Any], result: dict[str, Any]) -> None:
         return remote.complete(event, result)
     now = time.time()
     with _DB_LOCK, _transaction() as conn:
-        conn.execute("""UPDATE async_delegations SET state=?, completed_at=?, updated_at=?,
+        conn.execute(native_sql.statement(sqlite="""UPDATE async_delegations SET state=?, completed_at=?, updated_at=?,
                event_json=?, result_json=?, delivery_state='pending'
-               WHERE delegation_id=?""",
+               WHERE delegation_id=?""", postgresql="UPDATE async_delegations SET state=%s, completed_at=%s, updated_at=%s,\n               event_json=%s, result_json=%s, delivery_state='pending'\n               WHERE delegation_id=%s"),
             (event.get("status", "completed"), event.get("completed_at", now), now,
              json.dumps(event), json.dumps(result), event["delegation_id"]))
 
@@ -231,14 +245,14 @@ def record_unit_child(delegation_id: str, entry: dict[str, Any]) -> None:
         return remote.child(delegation_id, entry)
     try:
         with _DB_LOCK, _transaction() as conn:
-            row = conn.execute("SELECT result_json FROM async_delegations WHERE delegation_id=? AND state='running'",
+            row = conn.execute(native_sql.statement(sqlite="SELECT result_json FROM async_delegations WHERE delegation_id=? AND state='running'", postgresql="SELECT result_json FROM async_delegations WHERE delegation_id=%s AND state='running'"),
                                (delegation_id,)).fetchone()
             if row is None:
                 return
             partial = json.loads(row[0] or "{}") or {}
             results = [r for r in partial.get("results") or [] if r.get("task_index") != entry.get("task_index")]
             results.append(entry)
-            conn.execute("UPDATE async_delegations SET result_json=?, updated_at=? WHERE delegation_id=? AND state='running'",
+            conn.execute(native_sql.statement(sqlite="UPDATE async_delegations SET result_json=?, updated_at=? WHERE delegation_id=? AND state='running'", postgresql="UPDATE async_delegations SET result_json=%s, updated_at=%s WHERE delegation_id=%s AND state='running'"),
                          (json.dumps({"results": results, "partial": True}), time.time(), delegation_id))
     except Exception:
         logger.warning("Async delegation %s: could not record finished child %s", delegation_id, entry.get("task_index"), exc_info=True)
@@ -277,10 +291,10 @@ def recover_abandoned_delegations() -> int:
         return 0
     now, recovered = time.time(), 0
     with _DB_LOCK, _transaction() as conn:
-        rows = conn.execute("""SELECT delegation_id, origin_session, origin_ui_session_id,
+        rows = conn.execute(native_sql.statement(sqlite="""SELECT delegation_id, origin_session, origin_ui_session_id,
                       parent_session_id, dispatched_at, owner_pid,
                       owner_started_at, task_json, origin_session_id, result_json, state
-               FROM async_delegations WHERE state IN ('running','finalizing')""").fetchall()
+               FROM async_delegations WHERE state IN ('running','finalizing')""", postgresql="SELECT delegation_id, origin_session, origin_ui_session_id,\n                      parent_session_id, dispatched_at, owner_pid,\n                      owner_started_at, task_json, origin_session_id, result_json, state\n               FROM async_delegations WHERE state IN ('running','finalizing') AND owner_host=current_setting('hermes.owner_host',true)")).fetchall()
         for row in rows:
             delegation_id, session_key, origin_ui, parent_id, dispatched_at, pid, started, task_json, origin_sid, result_json, last_state = row
             if alive(pid, started):
@@ -312,9 +326,9 @@ def recover_abandoned_delegations() -> int:
                 **{k: task[k] for k in _ROUTING_KEYS if task.get(k)}}
             result = {"status": "unknown", "summary": None, "error": event["error"], **diagnostics,
                       **({"results": recovered_results} if recovered_results else {})}
-            conn.execute("""UPDATE async_delegations SET state='unknown', completed_at=?,
+            conn.execute(native_sql.statement(sqlite="""UPDATE async_delegations SET state='unknown', completed_at=?,
                    updated_at=?, event_json=?, result_json=?, delivery_state='pending'
-                   WHERE delegation_id=?""", (now, now, json.dumps(event), json.dumps(result), delegation_id))
+                   WHERE delegation_id=?""", postgresql="UPDATE async_delegations SET state='unknown', completed_at=%s,\n                   updated_at=%s, event_json=%s, result_json=%s, delivery_state='pending'\n                   WHERE delegation_id=%s"), (now, now, json.dumps(event), json.dumps(result), delegation_id))
             recovered += 1
     return recovered
 
@@ -338,15 +352,15 @@ def restore_undelivered_completions(target_queue) -> int:
         # The ordinary owner restores delivery-only results; a compute import
         # must neither reap that owner's ledger nor steal its delivery queue.
         return 0
-    if not _db_path().exists():
+    if not postgres_enabled() and not _db_path().exists():
         return 0  # nothing to replay; a replay must not create (or migrate) the ledger (#123265)
     recover_abandoned_delegations()
     now = time.time()
     with _DB_LOCK, _transaction() as conn:
-        rows = conn.execute("""SELECT delegation_id, event_json, completed_at, dispatched_at
+        rows = conn.execute(native_sql.statement(sqlite="""SELECT delegation_id, event_json, completed_at, dispatched_at
                FROM async_delegations
                WHERE state != 'running' AND delivery_state='pending' AND event_json IS NOT NULL
-               ORDER BY completed_at, delegation_id""").fetchall()
+               ORDER BY completed_at, delegation_id""", postgresql="SELECT delegation_id, event_json, completed_at, dispatched_at\n               FROM async_delegations\n               WHERE state != 'running' AND delivery_state='pending' AND event_json IS NOT NULL\n               ORDER BY completed_at, delegation_id")).fetchall()
         return _replay_pending(conn, rows, target_queue, now)
 
 
@@ -358,10 +372,10 @@ def _replay_pending(conn, rows, target_queue, now: float) -> int:
     for delegation_id, payload, completed_at, dispatched_at in rows:
         age_basis = completed_at or dispatched_at
         if age_basis and (now - age_basis) > _MAX_COMPLETION_REPLAY_AGE_S:
-            conn.execute("""UPDATE async_delegations SET delivery_state='dropped',
+            conn.execute(native_sql.statement(sqlite="""UPDATE async_delegations SET delivery_state='dropped',
                           delivery_claim=NULL, delivery_claimed_at=NULL,
                           updated_at=?
-                   WHERE delegation_id=? AND delivery_state='pending'""", (now, delegation_id))
+                   WHERE delegation_id=? AND delivery_state='pending'""", postgresql="UPDATE async_delegations SET delivery_state='dropped',\n                          delivery_claim=NULL, delivery_claimed_at=NULL,\n                          updated_at=%s\n                   WHERE delegation_id=%s AND delivery_state='pending'"), (now, delegation_id))
             logger.warning("Async delegation %s: pending completion is %.1fh old "
                            "(cap %.1fh); terminally dropping the replay (result remains queryable).",
                            delegation_id, (now - age_basis) / 3600.0, _MAX_COMPLETION_REPLAY_AGE_S / 3600.0)
@@ -394,7 +408,7 @@ def sweep_orphaned_completions(target_queue, *, now: Optional[float] = None) -> 
     the delivery budget or the replay age converge to ``dropped``. Reads the current profile's ledger:
     callers bind the owning profile first."""
     alive = _owner_liveness()
-    if alive is None or not _db_path().exists():
+    if alive is None or (not postgres_enabled() and not _db_path().exists()):
         return 0  # never create a ledger just to sweep it
     recover_abandoned_delegations()
     now = time.time() if now is None else now
@@ -402,22 +416,22 @@ def sweep_orphaned_completions(target_queue, *, now: Optional[float] = None) -> 
     with _orphan_lock:
         offered = {delegation_id for key, delegation_id in _offered if key == home}
     with _DB_LOCK, _transaction() as conn:
-        rows = conn.execute("""SELECT delegation_id, event_json, completed_at, dispatched_at,
+        rows = conn.execute(native_sql.statement(sqlite="""SELECT delegation_id, event_json, completed_at, dispatched_at,
                       owner_pid, owner_started_at, delivery_attempts
                FROM async_delegations
                WHERE state NOT IN ('running','finalizing') AND delivery_state='pending'
                  AND event_json IS NOT NULL AND updated_at < ?
                  AND (delivery_claim IS NULL OR delivery_claimed_at < ?)
-               ORDER BY completed_at, delegation_id""", (now - _ORPHAN_STALE_S, now - _CLAIM_LEASE_S)).fetchall()
+               ORDER BY completed_at, delegation_id""", postgresql="SELECT delegation_id, event_json, completed_at, dispatched_at,\n                      owner_pid, owner_started_at, delivery_attempts\n               FROM async_delegations\n               WHERE state NOT IN ('running','finalizing') AND delivery_state='pending'\n                 AND event_json IS NOT NULL AND updated_at < %s\n                 AND (delivery_claim IS NULL OR delivery_claimed_at < %s)\n               AND owner_host=current_setting('hermes.owner_host',true) ORDER BY completed_at, delegation_id"), (now - _ORPHAN_STALE_S, now - _CLAIM_LEASE_S)).fetchall()
         orphans = []
         for delegation_id, payload, completed_at, dispatched_at, pid, started, attempts in rows:
             if delegation_id in offered or alive(pid, started):
                 continue
             if (attempts or 0) >= _MAX_DELIVERY_ATTEMPTS:
                 # Its last claimant died holding the final attempt; converge like release_completion_delivery.
-                conn.execute("""UPDATE async_delegations SET delivery_state='dropped',
+                conn.execute(native_sql.statement(sqlite="""UPDATE async_delegations SET delivery_state='dropped',
                               delivery_claim=NULL, delivery_claimed_at=NULL, updated_at=?
-                       WHERE delegation_id=? AND delivery_state='pending'""", (now, delegation_id))
+                       WHERE delegation_id=? AND delivery_state='pending'""", postgresql="UPDATE async_delegations SET delivery_state='dropped',\n                              delivery_claim=NULL, delivery_claimed_at=NULL, updated_at=%s\n                       WHERE delegation_id=%s AND delivery_state='pending'"), (now, delegation_id))
                 logger.warning("Async delegation %s exhausted its %d delivery attempts; "
                                "marking terminally dropped (result remains queryable).",
                                delegation_id, _MAX_DELIVERY_ATTEMPTS)
@@ -454,8 +468,8 @@ def mark_completion_delivered(delegation_id: str) -> bool:
     require_ledger_owner()
     now = time.time()
     return _update_delivery(
-        """UPDATE async_delegations SET delivery_state='delivered', delivered_at=?, updated_at=?
-           WHERE delegation_id=? AND delivery_state!='delivered'""", (now, now, delegation_id))
+        native_sql.statement(sqlite="""UPDATE async_delegations SET delivery_state='delivered', delivered_at=?, updated_at=?
+           WHERE delegation_id=? AND delivery_state!='delivered'""", postgresql="UPDATE async_delegations SET delivery_state='delivered', delivered_at=%s, updated_at=%s\n           WHERE delegation_id=%s AND delivery_state!='delivered'"), (now, now, delegation_id))
 
 
 def claim_completion_delivery(delegation_id: str, claim_id: str) -> bool:
@@ -465,13 +479,13 @@ def claim_completion_delivery(delegation_id: str, claim_id: str) -> bool:
     now = time.time()
     with _DB_LOCK, _transaction() as conn:
         row = conn.execute(
-            "SELECT delivery_state FROM async_delegations WHERE delegation_id=?", (delegation_id,)).fetchone()
+            native_sql.statement(sqlite="SELECT delivery_state FROM async_delegations WHERE delegation_id=?", postgresql='SELECT delivery_state FROM async_delegations WHERE delegation_id=%s'), (delegation_id,)).fetchone()
         if row is None:
             return True  # legacy event created before durable dispatch
-        cur = conn.execute("""UPDATE async_delegations SET delivery_claim=?, delivery_claimed_at=?,
+        cur = conn.execute(native_sql.statement(sqlite="""UPDATE async_delegations SET delivery_claim=?, delivery_claimed_at=?,
                       delivery_attempts=delivery_attempts+1, updated_at=?
                WHERE delegation_id=? AND delivery_state='pending'
-                 AND (delivery_claim IS NULL OR delivery_claimed_at < ?)""",
+                 AND (delivery_claim IS NULL OR delivery_claimed_at < ?)""", postgresql="UPDATE async_delegations SET delivery_claim=%s, delivery_claimed_at=%s,\n                      delivery_attempts=delivery_attempts+1, updated_at=%s\n               WHERE delegation_id=%s AND delivery_state='pending'\n                 AND (delivery_claim IS NULL OR delivery_claimed_at < %s)"),
             (claim_id, now, now, delegation_id, now - _CLAIM_LEASE_S))
         return cur.rowcount == 1
 
@@ -502,20 +516,20 @@ def release_completion_delivery(delegation_id: str, claim_id: str) -> bool:
         return remote.release(delegation_id, claim_id)
     now = time.time()
     with _DB_LOCK, _transaction() as conn:
-        capped = conn.execute("""UPDATE async_delegations SET delivery_state='dropped',
+        capped = conn.execute(native_sql.statement(sqlite="""UPDATE async_delegations SET delivery_state='dropped',
                       delivery_claim=NULL, delivery_claimed_at=NULL, updated_at=?
                WHERE delegation_id=? AND delivery_state='pending'
-                 AND delivery_claim=? AND delivery_attempts>=?""",
+                 AND delivery_claim=? AND delivery_attempts>=?""", postgresql="UPDATE async_delegations SET delivery_state='dropped',\n                      delivery_claim=NULL, delivery_claimed_at=NULL, updated_at=%s\n               WHERE delegation_id=%s AND delivery_state='pending'\n                 AND delivery_claim=%s AND delivery_attempts>=%s"),
             (now, delegation_id, claim_id, _MAX_DELIVERY_ATTEMPTS))
         if capped.rowcount == 1:
             logger.warning("Async delegation %s exhausted its %d delivery attempts; "
                            "marking terminally dropped (result remains queryable).",
                            delegation_id, _MAX_DELIVERY_ATTEMPTS)
             return True
-        cur = conn.execute("""UPDATE async_delegations SET delivery_claim=NULL,
+        cur = conn.execute(native_sql.statement(sqlite="""UPDATE async_delegations SET delivery_claim=NULL,
                       delivery_claimed_at=NULL, updated_at=?
                WHERE delegation_id=? AND delivery_state='pending'
-                 AND delivery_claim=?""", (now, delegation_id, claim_id))
+                 AND delivery_claim=?""", postgresql="UPDATE async_delegations SET delivery_claim=NULL,\n                      delivery_claimed_at=NULL, updated_at=%s\n               WHERE delegation_id=%s AND delivery_state='pending'\n                 AND delivery_claim=%s"), (now, delegation_id, claim_id))
         return cur.rowcount == 1
 
 
@@ -523,10 +537,10 @@ def defer_completion_delivery(delegation_id: str, claim_id: str) -> bool:
     """Return an unadmitted completion to pending without spending a delivery attempt."""
     if remote := worker_ledger():
         return remote.defer(delegation_id, claim_id)
-    return _update_delivery("""UPDATE async_delegations SET delivery_claim=NULL,
+    return _update_delivery(native_sql.statement(sqlite="""UPDATE async_delegations SET delivery_claim=NULL,
                   delivery_claimed_at=NULL, delivery_attempts=MAX(0, delivery_attempts-1),
                   updated_at=?
-           WHERE delegation_id=? AND delivery_state='pending' AND delivery_claim=?""",
+           WHERE delegation_id=? AND delivery_state='pending' AND delivery_claim=?""", postgresql="UPDATE async_delegations SET delivery_claim=NULL,\n                  delivery_claimed_at=NULL, delivery_attempts=GREATEST(0, delivery_attempts-1),\n                  updated_at=%s\n           WHERE delegation_id=%s AND delivery_state='pending' AND delivery_claim=%s"),
         (time.time(), delegation_id, claim_id))
 
 
@@ -537,11 +551,11 @@ def drop_completion_delivery(delegation_id: str, claim_id: str) -> bool:
     restart recovery from replaying it into a fail-closed drop forever."""
     if remote := worker_ledger():
         return remote.drop(delegation_id, claim_id)
-    return _update_delivery("""UPDATE async_delegations SET delivery_state='dropped',
+    return _update_delivery(native_sql.statement(sqlite="""UPDATE async_delegations SET delivery_state='dropped',
                   updated_at=?, delivery_claim=NULL,
                   delivery_claimed_at=NULL
            WHERE delegation_id=? AND delivery_state='pending'
-             AND delivery_claim=?""", (time.time(), delegation_id, claim_id))
+             AND delivery_claim=?""", postgresql="UPDATE async_delegations SET delivery_state='dropped',\n                  updated_at=%s, delivery_claim=NULL,\n                  delivery_claimed_at=NULL\n           WHERE delegation_id=%s AND delivery_state='pending'\n             AND delivery_claim=%s"), (time.time(), delegation_id, claim_id))
 
 
 def complete_completion_delivery(delegation_id: str, claim_id: str) -> bool:
@@ -549,11 +563,11 @@ def complete_completion_delivery(delegation_id: str, claim_id: str) -> bool:
     if remote := worker_ledger():
         return remote.ack(delegation_id, claim_id)
     now = time.time()
-    return _update_delivery("""UPDATE async_delegations SET delivery_state='delivered',
+    return _update_delivery(native_sql.statement(sqlite="""UPDATE async_delegations SET delivery_state='delivered',
                   delivered_at=?, updated_at=?, delivery_claim=NULL,
                   delivery_claimed_at=NULL
            WHERE delegation_id=? AND delivery_state='pending'
-             AND delivery_claim=?""", (now, now, delegation_id, claim_id))
+             AND delivery_claim=?""", postgresql="UPDATE async_delegations SET delivery_state='delivered',\n                  delivered_at=%s, updated_at=%s, delivery_claim=NULL,\n                  delivery_claimed_at=NULL\n           WHERE delegation_id=%s AND delivery_state='pending'\n             AND delivery_claim=%s"), (now, now, delegation_id, claim_id))
 
 
 def requeue_admitted_completion(delegation_id: str, target_queue) -> bool:
@@ -564,22 +578,22 @@ def requeue_admitted_completion(delegation_id: str, target_queue) -> bool:
     bounds the loop; a row without a stored event is left as it is."""
     now = time.time()
     with _DB_LOCK, _transaction() as conn:
-        exhausted = conn.execute("""UPDATE async_delegations SET delivery_state='dropped', updated_at=?
-               WHERE delegation_id=? AND delivery_state='delivered' AND delivery_attempts>=?""",
+        exhausted = conn.execute(native_sql.statement(sqlite="""UPDATE async_delegations SET delivery_state='dropped', updated_at=?
+               WHERE delegation_id=? AND delivery_state='delivered' AND delivery_attempts>=?""", postgresql="UPDATE async_delegations SET delivery_state='dropped', updated_at=%s\n               WHERE delegation_id=%s AND delivery_state='delivered' AND delivery_attempts>=%s"),
             (now, delegation_id, _MAX_DELIVERY_ATTEMPTS))
         if exhausted.rowcount == 1:
             logger.warning("Async delegation %s exhausted its %d delivery attempts; "
                            "marking terminally dropped (result remains queryable).",
                            delegation_id, _MAX_DELIVERY_ATTEMPTS)
             return False
-        reopened = conn.execute("""UPDATE async_delegations SET delivery_state='pending',
+        reopened = conn.execute(native_sql.statement(sqlite="""UPDATE async_delegations SET delivery_state='pending',
                       delivered_at=NULL, updated_at=?
-               WHERE delegation_id=? AND delivery_state='delivered' AND event_json IS NOT NULL""",
+               WHERE delegation_id=? AND delivery_state='delivered' AND event_json IS NOT NULL""", postgresql="UPDATE async_delegations SET delivery_state='pending',\n                      delivered_at=NULL, updated_at=%s\n               WHERE delegation_id=%s AND delivery_state='delivered' AND event_json IS NOT NULL"),
             (now, delegation_id))
         if reopened.rowcount != 1:
             return False
-        rows = conn.execute("""SELECT delegation_id, event_json, completed_at, dispatched_at
-               FROM async_delegations WHERE delegation_id=?""", (delegation_id,)).fetchall()
+        rows = conn.execute(native_sql.statement(sqlite="""SELECT delegation_id, event_json, completed_at, dispatched_at
+               FROM async_delegations WHERE delegation_id=?""", postgresql='SELECT delegation_id, event_json, completed_at, dispatched_at\n               FROM async_delegations WHERE delegation_id=%s'), (delegation_id,)).fetchall()
         return _replay_pending(conn, rows, target_queue, now) == 1
 
 
@@ -615,10 +629,10 @@ def get_durable_delegation(delegation_id: str) -> Optional[dict[str, Any]]:
     if remote := worker_ledger():
         return remote.read(delegation_id)
     with _DB_LOCK, _transaction() as conn:
-        row = conn.execute("""SELECT origin_session, state, dispatched_at, completed_at,
+        row = conn.execute(native_sql.statement(sqlite="""SELECT origin_session, state, dispatched_at, completed_at,
                       result_json, delivery_state, delivery_attempts,
                       origin_session_id
-               FROM async_delegations WHERE delegation_id=?""", (delegation_id,)).fetchone()
+               FROM async_delegations WHERE delegation_id=?""", postgresql='SELECT origin_session, state, dispatched_at, completed_at,\n                      result_json, delivery_state, delivery_attempts,\n                      origin_session_id\n               FROM async_delegations WHERE delegation_id=%s'), (delegation_id,)).fetchone()
     return None if row is None else {
         "delegation_id": delegation_id, "origin_session": row[0], "state": row[1], "dispatched_at": row[2],
         "completed_at": row[3], "result": json.loads(row[4]) if row[4] else None, "delivery_state": row[5],
@@ -652,12 +666,12 @@ def failed_delegations_for_session(
     if not selectors:
         return []
     cutoff = (now if now is not None else time.time()) - _FAILURE_SURFACE_WINDOW_S
-    owner_sql = " OR ".join(f"{col}=?" for col, _ in selectors)
+    owner_sql = " OR ".join(native_sql.statement(sqlite=f"{col}=?", postgresql=f"{col}=%s") for col, _ in selectors)
     with _DB_LOCK, _transaction() as conn:
         rows = conn.execute(
-            f"""SELECT delegation_id, state, dispatched_at, completed_at, task_json, result_json FROM async_delegations
+            native_sql.statement(sqlite=f"""SELECT delegation_id, state, dispatched_at, completed_at, task_json, result_json FROM async_delegations
                 WHERE ({owner_sql}) AND state NOT IN ('running','finalizing') AND completed_at >= ?
-                ORDER BY completed_at DESC LIMIT ?""",
+                ORDER BY completed_at DESC LIMIT ?""", postgresql=f"SELECT delegation_id, state, dispatched_at, completed_at, task_json, result_json FROM async_delegations\n                WHERE ({owner_sql}) AND state NOT IN ('running','finalizing') AND completed_at >= %s\n                ORDER BY completed_at DESC LIMIT %s"),
             (*(val for _, val in selectors), cutoff, limit)).fetchall()
     failed: list[dict[str, Any]] = []
     for delegation_id, state, dispatched_at, completed_at, task_json, result_json in rows:
@@ -866,7 +880,7 @@ def _dispatch_admitted(
             remote.unscheduled(delegation_id)
         else:
             with _DB_LOCK, _transaction() as conn:
-                conn.execute("DELETE FROM async_delegations WHERE delegation_id=?", (delegation_id,))
+                conn.execute(native_sql.statement(sqlite="DELETE FROM async_delegations WHERE delegation_id=?", postgresql='DELETE FROM async_delegations WHERE delegation_id=%s'), (delegation_id,))
         return {"status": "rejected", "error": f"Failed to schedule async delegation{label}: {exc}"}
     if progress_fn is not None:
         _ensure_stale_monitor()

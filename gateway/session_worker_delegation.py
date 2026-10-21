@@ -8,6 +8,7 @@ import json
 import math
 import time
 
+import hermes_state_sql as native_sql
 from hermes_state_runtime import RuntimeStoreError
 
 _TASK_KEYS = {'goal', 'goals', 'context', 'toolsets', 'role', 'model', 'is_batch', 'task_indexes'}
@@ -37,7 +38,7 @@ def _number(value):
 
 def _owned(conn, session_id, execution_id, delegation_id):
     _text(delegation_id)
-    row = conn.execute('SELECT * FROM async_delegations WHERE delegation_id=?', (delegation_id,)).fetchone()
+    row = conn.execute(native_sql.statement(sqlite='SELECT * FROM async_delegations WHERE delegation_id=?', postgresql='SELECT * FROM async_delegations WHERE delegation_id=%s', connection=conn), (delegation_id,)).fetchone()
     if row is None:
         raise RuntimeStoreError('not_found')
     if row['parent_session_id'] != session_id or row['owner_execution_id'] != execution_id:
@@ -51,7 +52,7 @@ def _dispatch(db, conn, session_id, payload, *, execution_id, worker_pid, worker
     _number(payload['dispatched_at'])
     if not isinstance(payload['task'], dict) or set(payload['task']) - _TASK_KEYS:
         raise RuntimeStoreError('invalid_params')
-    session = conn.execute('SELECT source,session_key FROM sessions WHERE id=?', (session_id,)).fetchone()
+    session = conn.execute(native_sql.statement(sqlite='SELECT source,session_key FROM sessions WHERE id=?', postgresql='SELECT source,session_key FROM sessions WHERE id=%s', connection=conn), (session_id,)).fetchone()
     # Only compute registrations are currently enabled. Native/child origins need
     # an owner-reserved source envelope, not worker-selected transport identities.
     if session is None or session['source'] not in ('cli', 'tui', 'gui', 'tool', 'oneshot'):
@@ -61,7 +62,7 @@ def _dispatch(db, conn, session_id, payload, *, execution_id, worker_pid, worker
             or payload['origin_ui_session_id'] not in ('', session_id)
             or payload['origin_session_id'] not in ('', session_id)):
         raise RuntimeStoreError('permission_denied')
-    old = conn.execute('SELECT 1 FROM async_delegations WHERE delegation_id=?', (payload['delegation_id'],)).fetchone()
+    old = conn.execute(native_sql.statement(sqlite='SELECT 1 FROM async_delegations WHERE delegation_id=?', postgresql='SELECT 1 FROM async_delegations WHERE delegation_id=%s', connection=conn), (payload['delegation_id'],)).fetchone()
     if old is not None:
         _owned(conn, session_id, execution_id, payload['delegation_id'])
         # Exact network retries are resolved by worker_receipts before this handler.
@@ -75,10 +76,13 @@ def _dispatch(db, conn, session_id, payload, *, execution_id, worker_pid, worker
     except psutil.Error as exc:
         raise RuntimeStoreError('worker_not_live') from exc
     now = time.time()
-    conn.execute('''INSERT INTO async_delegations
+    if native_sql.is_postgres(conn):
+        import socket
+        conn.execute("SELECT set_config('hermes.owner_host',%s,true)", (socket.gethostname(),))
+    conn.execute(native_sql.statement(sqlite='''INSERT INTO async_delegations
         (delegation_id,origin_session,origin_ui_session_id,parent_session_id,state,dispatched_at,
          updated_at,owner_pid,owner_started_at,task_json,origin_session_id,owner_execution_id)
-        VALUES(?,?,?,?,'running',?,?,?,?,?,?,?)''',
+        VALUES(?,?,?,?,'running',?,?,?,?,?,?,?)''', postgresql="INSERT INTO async_delegations\n        (delegation_id,origin_session,origin_ui_session_id,parent_session_id,state,dispatched_at,\n         updated_at,owner_pid,owner_started_at,task_json,origin_session_id,owner_execution_id,owner_host)\n        VALUES(%s,%s,%s,%s,'running',%s,%s,%s,%s,%s,%s,%s,current_setting('hermes.owner_host',true))", connection=conn),
         (payload['delegation_id'], payload['session_key'], payload['origin_ui_session_id'], session_id,
          payload['dispatched_at'], now, worker_pid, owner_started_at, json.dumps(payload['task']),
          payload['origin_session_id'], execution_id))
@@ -98,8 +102,8 @@ def _complete(db, conn, session_id, payload, *, execution_id):
     _number(event.get('completed_at'))
     if row['state'] != 'running':
         raise RuntimeStoreError('admission_conflict')
-    conn.execute('''UPDATE async_delegations SET state=?,completed_at=?,updated_at=?,event_json=?,result_json=?
-        WHERE delegation_id=?''', (event['status'], event['completed_at'], time.time(),
+    conn.execute(native_sql.statement(sqlite='''UPDATE async_delegations SET state=?,completed_at=?,updated_at=?,event_json=?,result_json=?
+        WHERE delegation_id=?''', postgresql='UPDATE async_delegations SET state=%s,completed_at=%s,updated_at=%s,event_json=%s,result_json=%s\n        WHERE delegation_id=%s', connection=conn), (event['status'], event['completed_at'], time.time(),
         json.dumps(event), json.dumps(payload['result']), event['delegation_id']))
     return {'value': None}
 
@@ -115,7 +119,7 @@ def _child(db, conn, session_id, payload, *, execution_id):
     previous = json.loads(row['result_json'] or '{}')
     results = [item for item in previous.get('results', []) if item.get('task_index') != entry['task_index']]
     results.append(entry)
-    conn.execute('UPDATE async_delegations SET result_json=?,updated_at=? WHERE delegation_id=?',
+    conn.execute(native_sql.statement(sqlite='UPDATE async_delegations SET result_json=?,updated_at=? WHERE delegation_id=?', postgresql='UPDATE async_delegations SET result_json=%s,updated_at=%s WHERE delegation_id=%s', connection=conn),
         (json.dumps({'results': results, 'partial': True}), time.time(), payload['delegation_id']))
     return {'value': None}
 
@@ -135,9 +139,9 @@ def _claim(db, conn, session_id, payload, *, execution_id):
     now = time.time()
     if row['state'] in ('running', 'finalizing'):
         return {'value': False}
-    changed = conn.execute('''UPDATE async_delegations SET delivery_claim=?,delivery_claimed_at=?,
+    changed = conn.execute(native_sql.statement(sqlite='''UPDATE async_delegations SET delivery_claim=?,delivery_claimed_at=?,
         delivery_attempts=delivery_attempts+1,updated_at=? WHERE delegation_id=? AND delivery_state='pending'
-        AND (delivery_claim IS NULL OR delivery_claimed_at < ?)''',
+        AND (delivery_claim IS NULL OR delivery_claimed_at < ?)''', postgresql="UPDATE async_delegations SET delivery_claim=%s,delivery_claimed_at=%s,\n        delivery_attempts=delivery_attempts+1,updated_at=%s WHERE delegation_id=%s AND delivery_state='pending'\n        AND (delivery_claim IS NULL OR delivery_claimed_at < %s)", connection=conn),
         (payload['claim_id'], now, now, payload['delegation_id'], now - 300)).rowcount
     return {'value': changed == 1}
 
@@ -149,6 +153,13 @@ _DELIVERY_UPDATES = {
     'release': "delivery_state=CASE WHEN delivery_attempts>=:cap THEN 'dropped' ELSE delivery_state END",
 }
 
+_PG_DELIVERY_UPDATES = {
+    'ack': "delivery_state='delivered',delivered_at=%(now)s",
+    'drop': "delivery_state='dropped'",
+    'defer': 'delivery_attempts=GREATEST(0,delivery_attempts-1)',
+    'release': "delivery_state=CASE WHEN delivery_attempts>=%(cap)s THEN 'dropped' ELSE delivery_state END",
+}
+
 
 def _delivery(db, conn, session_id, payload, *, execution_id, action):
     from tools.async_delegation import _MAX_DELIVERY_ATTEMPTS
@@ -156,9 +167,12 @@ def _delivery(db, conn, session_id, payload, *, execution_id, action):
     _owned(conn, session_id, execution_id, payload['delegation_id'])
     _text(payload['claim_id'])
     # Only constant, closed statement fragments enter this query.
-    changed = conn.execute('UPDATE async_delegations SET ' + _DELIVERY_UPDATES[action] +
+    changed = conn.execute(native_sql.statement(sqlite='UPDATE async_delegations SET ' + _DELIVERY_UPDATES[action] +
         ",updated_at=:now,delivery_claim=NULL,delivery_claimed_at=NULL WHERE delegation_id=:delegation_id "
         "AND delivery_state='pending' AND delivery_claim=:claim_id",
+        postgresql='UPDATE async_delegations SET ' + _PG_DELIVERY_UPDATES[action] +
+        ",updated_at=%(now)s,delivery_claim=NULL,delivery_claimed_at=NULL WHERE delegation_id=%(delegation_id)s "
+        "AND delivery_state='pending' AND delivery_claim=%(claim_id)s", connection=conn),
         payload | {'now': time.time(), 'cap': _MAX_DELIVERY_ATTEMPTS}).rowcount
     return {'value': changed == 1}
 
@@ -168,7 +182,7 @@ def _unscheduled(db, conn, session_id, payload, *, execution_id):
     row = _owned(conn, session_id, execution_id, payload['delegation_id'])
     if row['state'] != 'running' or row['result_json'] is not None:
         raise RuntimeStoreError('admission_conflict')
-    conn.execute('DELETE FROM async_delegations WHERE delegation_id=?', (payload['delegation_id'],))
+    conn.execute(native_sql.statement(sqlite='DELETE FROM async_delegations WHERE delegation_id=?', postgresql='DELETE FROM async_delegations WHERE delegation_id=%s', connection=conn), (payload['delegation_id'],))
     return {'value': None}
 
 

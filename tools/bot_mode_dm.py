@@ -829,8 +829,12 @@ def _delivery_main(args: list[str]) -> int:
 
 def _agent_home(agent: Any) -> str:
     """The calling agent's OWN home (session-db derived), not ambient env."""
+    session_db = getattr(agent, "_session_db", None)
+    if isinstance(getattr(session_db, "storage_identity", None), tuple):
+        from hermes_state_backend import session_store_home
+        return str(session_store_home(session_db))
     with contextlib.suppress(Exception):
-        db_path = getattr(getattr(agent, "_session_db", None), "db_path", None)
+        db_path = getattr(session_db, "db_path", None)
         if db_path:
             return str(Path(db_path).parent)
     return _default_home()

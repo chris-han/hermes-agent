@@ -69,7 +69,11 @@ def _parent_live_home(parent_agent: Any) -> Optional[Path]:
     to the ambient resolve, which is exactly the #91996 failure mode, so the
     skip is logged rather than silent.
     """
-    parent_db = getattr(getattr(parent_agent, "_session_db", None), "db_path", None)
+    session_db = getattr(parent_agent, "_session_db", None)
+    if isinstance(getattr(session_db, "storage_identity", None), tuple):
+        from hermes_state_backend import session_store_home
+        return session_store_home(session_db)
+    parent_db = getattr(session_db, "db_path", None)
     # Concrete str/Path only — NOT the os.PathLike protocol: MagicMock (and any
     # duck-typed test double) registers __fspath__ and so IS PathLike, which is
     # how a Mock "home" slipped through and transcripts landed at
@@ -143,6 +147,9 @@ def _open_child_session_db(parent_agent) -> Any:
     if parent_session_db is None:
         return None
     with _quiet("subagent: failed to open dedicated SessionDB; child persistence disabled", exc_info=True):
+        if isinstance(getattr(parent_session_db, "storage_identity", None), tuple):
+            from hermes_state_backend import open_session_db, session_store_home
+            return open_session_db(home=session_store_home(parent_session_db))
         from hermes_state_registry import acquire
         _parent_db_path = getattr(parent_session_db, "db_path", None)
         return acquire(_parent_db_path) if _parent_db_path is not None else acquire()

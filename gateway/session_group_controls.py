@@ -289,7 +289,7 @@ def _profiles(authority, actor, home, params):
                 message = conn.execute(
                     _storage_statement(sqlite="SELECT content FROM messages WHERE session_id=? AND active=1 "
                     "AND role IN ('user','assistant') AND TRIM(COALESCE(content,''))!='' "
-                    "ORDER BY id DESC LIMIT 1", postgresql="SELECT content FROM messages WHERE session_id=%s AND active=1 AND role IN ('user','assistant') AND TRIM(COALESCE(content,''))!='' ORDER BY id DESC LIMIT 1", connection=authority.db._conn), (tip,)).fetchone()
+                    "ORDER BY id DESC LIMIT 1", postgresql="SELECT content FROM messages WHERE session_id=%s AND active=1 AND role IN ('user','assistant') AND TRIM(COALESCE(content,''))!='' ORDER BY id DESC LIMIT 1", connection=conn), (tip,)).fetchone()
             text = ' '.join(str(message[0] or '').split()) if message else ''
             return {'id': session['id'], 'resolved_id': tip, 'title': target.get('title') or '',
                     'root_title': session.get('title') or '',
