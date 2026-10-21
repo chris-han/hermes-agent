@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS semantier_session_branches (
     title TEXT NOT NULL, idempotency_key TEXT NOT NULL, request_hash TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS messages_session_id_pg ON messages(session_id,id);
 CREATE INDEX IF NOT EXISTS sessions_parent_pg ON sessions(parent_session_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_title_unique ON sessions(title) WHERE title IS NOT NULL;
 """
 
 
@@ -98,7 +99,13 @@ def require_scope_ready(conn, scope=None):
     enabled={values(row)[0] for row in conn.execute("SELECT t.tgname FROM pg_catalog.pg_trigger t JOIN pg_catalog.pg_class c ON c.oid=t.tgrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=%s AND NOT t.tgisinternal AND t.tgenabled IN ('O','A')",(namespace,))}
     missing=expected-enabled
     if missing:raise ValueError('Native history guards missing or disabled: '+','.join(sorted(missing)))
-    return {'schema':namespace,'native_schema_version':1,'tables':len(postgres_owned_tables()),'enabled_triggers':len(expected)}
+    expected_indexes={name:bool(unique) for unique,name in re.findall(r'CREATE (UNIQUE )?INDEX IF NOT EXISTS ([a-z][a-z0-9_]*)',postgres_scope_schema_sql(),re.IGNORECASE)}
+    present_indexes={values(row)[0]:values(row)[1:] for row in conn.execute("""SELECT index_class.relname,i.indisvalid,i.indisready,i.indisunique
+        FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class index_class ON index_class.oid=i.indexrelid
+        JOIN pg_catalog.pg_namespace n ON n.oid=index_class.relnamespace WHERE n.nspname=%s""",(namespace,))}
+    missing=[name for name,unique in expected_indexes.items() if name not in present_indexes or not all(present_indexes[name][:2]) or (unique and not present_indexes[name][2])]
+    if missing:raise ValueError('Native indexes missing or invalid: '+','.join(sorted(missing)))
+    return {'schema':namespace,'native_schema_version':1,'tables':len(postgres_owned_tables()),'enabled_triggers':len(expected),'indexes':len(expected_indexes)}
 
 
 def provision_scope(dsn, scope: SessionScope, *, app_role: str):
@@ -141,9 +148,10 @@ from hermes_state_postgresql_runtime import PostgreSQLRuntimeMixin
 from hermes_state_rewind import SessionRewindMixin
 from hermes_state_postgresql_compaction import PostgreSQLCompactionMixin
 from hermes_state_postgresql_retirement import PostgreSQLRetirementMixin
+from hermes_state_postgresql_titles import PostgreSQLTitlesMixin
 
 
-class PostgreSQLSessionDB(PostgreSQLRuntimeMixin,PostgreSQLPortabilityMixin,PostgreSQLSearchMixin,PostgreSQLUsageMixin,PostgreSQLCompactionMixin,PostgreSQLRetirementMixin,SessionRewindMixin):
+class PostgreSQLSessionDB(PostgreSQLTitlesMixin,PostgreSQLRuntimeMixin,PostgreSQLPortabilityMixin,PostgreSQLSearchMixin,PostgreSQLUsageMixin,PostgreSQLCompactionMixin,PostgreSQLRetirementMixin,SessionRewindMixin):
     """Native SessionDB API used by the embedded API and Semantier session readers.
 
     Each operation owns a real PG transaction. External durable owners may call
@@ -431,6 +439,23 @@ class PostgreSQLSessionDB(PostgreSQLRuntimeMixin,PostgreSQLPortabilityMixin,Post
         kwargs.pop('turn_lease_ttl_seconds',None); message.update(kwargs)
         with self._transaction() as conn:
             self._guard_on_conn(conn,session_id,turn_lease_holder=turn,compression_lock_holder=compression)
+            return self._append_on_conn(conn,session_id,[message])[0]
+
+    def append_internal_result(self,session_id,content,*,result_id,result_hash):
+        """Project host-committed bytes once under the native writer transaction."""
+        if not result_id or not result_hash:
+            raise ValueError('Internal result identity required')
+        with self._transaction() as conn:
+            self._lock_conversation(conn,session_id)
+            old=conn.execute(sql.SQL('SELECT * FROM {} WHERE session_id=%s AND platform_message_id=%s').format(self.table('messages')),(session_id,result_id)).fetchone()
+            if old:
+                decoded=self._decode_message(old)
+                if decoded['content']!=content or (decoded.get('display_metadata') or {}).get('internal_result_hash')!=result_hash:
+                    raise ValueError('INTERNAL_RESULT_IDENTITY_CONFLICT')
+                return old['id']
+            self._guard_on_conn(conn,session_id)
+            message={'role':'assistant','content':content,'platform_message_id':result_id,
+                     'display_metadata':{'internal_result_hash':result_hash}}
             return self._append_on_conn(conn,session_id,[message])[0]
 
     def append_messages_batch(self,session_id,messages,compression_lock_holder=None,turn_lease_holder=None,
@@ -761,23 +786,9 @@ class PostgreSQLSessionDB(PostgreSQLRuntimeMixin,PostgreSQLPortabilityMixin,Post
         from hermes_state import SessionDB
         return SessionDB.sanitize_title(title)
 
-    def set_session_title(self,session_id,title):
-        return bool(self._set_session(session_id,title=self.sanitize_title(title),title_source='user'))
-
-    def set_auto_title(self,session_id,title,*,source):
-        with self._transaction() as conn:
-            row=self._session_on_conn(conn,session_id,lock=True)
-            ranks={None:-1,'derived':0,'llm':1,'user':2}
-            if not row or ranks.get(row['title_source'],-1)>=ranks.get(source,-1): return False
-            return bool(self._update(conn,'sessions',{'title':self.sanitize_title(title),'title_source':source},'id',session_id))
-
     def get_session_by_title(self,title):
-        return self._one(sql.SQL('SELECT * FROM {} WHERE title=%s ORDER BY started_at DESC LIMIT 1').format(self.table('sessions')),(title,))
-
-    def get_next_title_in_lineage(self,base_title):
-        base_title=self.sanitize_title(base_title) or ''; title=base_title; n=2
-        while self.get_session_by_title(title): title=f'{base_title} ({n})'; n+=1
-        return title
+        row=self._one(sql.SQL('SELECT id FROM {} WHERE title=%s').format(self.table('sessions')),(title,))
+        return self.get_session(row['id']) if row else None
 
     def update_session_runtime_lock(self,session_id,*,model=None,provider=None,model_options=None,route_source=None,confirmed=False):
         lock=dict(provider=provider or '',model=model or '',model_options=model_options or {},route_source=route_source or '',confirmed=bool(confirmed),updated_at=time.time())
@@ -807,8 +818,8 @@ class PostgreSQLSessionDB(PostgreSQLRuntimeMixin,PostgreSQLPortabilityMixin,Post
             clean=self.sanitize_title(str(title)) if title is not None else None
             if clean:
                 self._lock_conversation(conn,'title:'+clean)
-                if conn.execute(sql.SQL('SELECT 1 FROM {} WHERE title=%s').format(self.table('sessions')),(clean,)).fetchone():
-                    return None,'title:Title already exists'
+                try:self._resolve_title_conflict(conn,session_id,clean)
+                except ValueError as exc:return None,f'title:{exc}'
             self._create_on_conn(conn,session_id,source,model=model,model_config=model_config,system_prompt=system_prompt,title=clean)
             return self._session_on_conn(conn,session_id),None
 
