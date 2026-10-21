@@ -2,6 +2,7 @@
 replayed-user dedupe. Mixin bound via the MRO, built on SessionDB's _read_ctx/_execute_write/_read_* primitives."""
 
 from __future__ import annotations
+from hermes_state_sql import statement as _storage_statement, is_postgres
 
 import hashlib
 import json
@@ -1527,16 +1528,20 @@ class SessionMessagesMixin(SessionMessageCleanupMixin):
             best = None  # deepest node with messages
             for _ in range(32):
                 try:
-                    if conn.execute("SELECT 1 FROM messages WHERE session_id = ? LIMIT 1", (current,)).fetchone() is not None:
+                    if conn.execute(_storage_statement(sqlite="SELECT 1 FROM messages WHERE session_id = ? LIMIT 1",postgresql='SELECT 1 FROM messages WHERE session_id = %s LIMIT 1',connection=conn), (current,)).fetchone() is not None:
                         best = current
-                    child_row = conn.execute(
-                        "SELECT id FROM sessions AS child WHERE child.parent_session_id = ? "
-                        f"  AND {_sql_json_extract('child.model_config', '$._branched_from')} IS NULL "
-                        f"  AND {_sql_json_extract('child.model_config', '$._delegate_from')} IS NULL "
-                        f"  AND {_sql_json_extract('child.model_config', '$._reset_from')} IS NULL "
-                        f"  AND NOT {_legacy_reset_child_sql('child', _RESET_END_REASONS_SQL)} "
-                        "  AND COALESCE(child.source, '') != 'tool' "
-                        "ORDER BY child.started_at DESC, child.id DESC LIMIT 1", (current,)).fetchone()
+                    if is_postgres(conn):
+                        from hermes_state_postgresql_lineage import resume_child
+                        child_row=resume_child(conn,current)
+                    else:
+                        child_row = conn.execute(
+                            "SELECT id FROM sessions AS child WHERE child.parent_session_id = ? "
+                            f"  AND {_sql_json_extract('child.model_config', '$._branched_from')} IS NULL "
+                            f"  AND {_sql_json_extract('child.model_config', '$._delegate_from')} IS NULL "
+                            f"  AND {_sql_json_extract('child.model_config', '$._reset_from')} IS NULL "
+                            f"  AND NOT {_legacy_reset_child_sql('child', _RESET_END_REASONS_SQL)} "
+                            "  AND COALESCE(child.source, '') != 'tool' "
+                            "ORDER BY child.started_at DESC, child.id DESC LIMIT 1", (current,)).fetchone()
                 except Exception:
                     return session_id
                 if child_row is None or not child_row["id"] or child_row["id"] in seen:
@@ -1964,7 +1969,7 @@ class SessionMessagesMixin(SessionMessageCleanupMixin):
         if not session_key or not source:
             return None
         row = self._read_one(
-            "SELECT generation FROM conversation_generations WHERE source = ? AND session_key = ?",
+            _storage_statement(sqlite="SELECT generation FROM conversation_generations WHERE source = ? AND session_key = ?",postgresql='SELECT generation FROM conversation_generations WHERE source = %s AND session_key = %s',connection=getattr(self,'conn',None)),
             (source, session_key))
         generation = int(row["generation"]) if row is not None and row["generation"] is not None else 0
         return generation if generation > 0 else None

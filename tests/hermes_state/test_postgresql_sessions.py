@@ -751,3 +751,70 @@ def test_pg_real_gateway_authority_bootstrap_uses_scope_identity(tmp_path,pg_set
         asyncio.run(run())
         assert not hasattr(db,'db_path')
         assert not (tmp_path/'state.db').exists()
+
+
+@pytest.fixture
+def native_pg_worker(tmp_path,pg_settings,monkeypatch):
+    import sqlite3
+    from agent.runtime_session_store import RuntimeSessionStore
+    from hermes_state_runtime import begin_runtime_epoch,register_worker_execution,mutate_worker_execution
+    from hermes_state_postgresql import SessionScope,PostgreSQLSessionDB,provision_scope
+    scope=SessionScope('tenant','workspace',str(uuid.uuid4()))
+    provision_scope(pg_settings['semantier_migrate'],scope,app_role='semantier_app')
+    monkeypatch.setenv('HERMES_STATE_BACKEND','postgresql')
+    monkeypatch.setattr(sqlite3,'connect',lambda *a,**k:pytest.fail('Hosted worker opened SQLite'))
+    with PostgreSQLSessionDB(pg_settings['semantier_app'],scope,home=tmp_path) as db:
+        db.create_session('owned','cli',cwd='/reserved',profile_name='fixture')
+        epoch=begin_runtime_epoch(db,instance_id='worker-fixture')
+        assignment=dict(epoch=epoch,execution_id='worker',session_id='owned',generation=0)
+        register_worker_execution(db,**assignment,kind='compute',adoption_secret='private')
+        store=RuntimeSessionStore(lambda method,**params:mutate_worker_execution(db,**params),assignment,tmp_path/'outbox')
+        try:yield db,store
+        finally:store.close()
+
+
+def test_pg_worker_constructor_context_lifecycle_receipts(native_pg_worker):
+    db,store=native_pg_worker
+    assert store.create_session('owned','cli',model='requested',system_prompt='prefix',
+        model_config={'max_iterations':5},cwd='/reserved',profile_name='fixture')=='owned'
+    store.create_session('owned','cli',model='ignored',system_prompt='ignored',model_config={'max_iterations':10})
+    assert db.get_session('owned')['model']=='requested'
+    assert db.get_session_model_config_value('owned','max_iterations')==5
+    before=db.get_session('owned')['runtime_revision']
+    assert store.get_session('owned')['system_prompt']=='prefix'
+    assert db.get_session('owned')['runtime_revision']==before
+    store.update_system_prompt('owned','retained-prefix')
+    store.patch_session_model_config('owned',{'_usage_anchor':{'tokens':23}})
+    store.update_session_tool_names('owned',{'version':'v1','tools':['terminal']})
+    assert store.get_session_model_config_value('owned','_usage_anchor')=={'tokens':23}
+    assert store.get_session('owned')['tool_names']==json.dumps({'version':'v1','tools':['terminal']},sort_keys=True)
+    assert store.session_lifecycle_statuses(['owned'])=={'owned':'empty'}
+    store.append_messages_batch('owned',[{'role':'assistant','content':'done','finish_reason':'stop'}])
+    assert store.session_lifecycle_statuses(['owned'])==db.session_lifecycle_statuses(['owned'])
+    store.end_session('owned','agent_close')
+    ended=db.get_session('owned')['ended_at']
+    store.end_session('owned','late-close')
+    assert db.get_session('owned')['ended_at']==ended
+    assert store.finish()['status']=='terminal'
+
+
+def test_pg_worker_compaction_and_rotation_keep_foreign_tail(native_pg_worker):
+    db,store=native_pg_worker
+    store.append_messages_batch('owned',[{'role':'user','content':'old'},{'role':'assistant','content':'carry'}])
+    assert store.try_acquire_compression_lock('owned','holder')
+    watermark=store.get_active_message_watermark('owned')
+    db.append_messages_batch('owned',[{'role':'user','content':'foreign','api_content':' exact ','display_metadata':{'_accepted_input_id':'delivery'}}])
+    assert store.archive_and_compact('owned',[{'role':'assistant','content':'summary'},{'role':'assistant','content':'carry'}],
+        watermark=watermark,lock_holder='holder',tail_count=1,model_config_patch={'_proactive_prune_rearm_tokens':42})==3
+    rows=store.get_messages_as_conversation('owned',include_row_ids=True)
+    assert [row['content'] for row in rows]==['summary','carry','foreign']
+    assert rows[-1]['api_content']==' exact '
+    assert rows[-1]['display_metadata']=={'_accepted_input_id':'delivery'}
+    assert store.get_session_model_config_value('owned','_proactive_prune_rearm_tokens')==42
+    watermark=store.get_active_message_watermark('owned')
+    store.publish_compression_child(parent_session_id='owned',child_session_id='child',source='cli',
+        messages=[{'role':'assistant','content':'handoff'}],system_prompt='prefix',compression_lock_holder='holder',watermark=watermark)
+    assert store.scope['session_id']=='child'
+    store.append_messages_batch('child',[{'role':'assistant','content':'after'}])
+    assert [row['content'] for row in store.get_messages_as_conversation('child')]==['handoff','after']
+    assert store.get_compression_lineage('child')==['owned','child']

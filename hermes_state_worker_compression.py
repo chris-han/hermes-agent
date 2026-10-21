@@ -97,7 +97,7 @@ def worker_compression_counter(db, conn, sid, payload, *, column):
         _number(value)
     if column != 'compression_recovery_deadline' and (type(value) is not int or value < 0):
         raise RuntimeStoreError('invalid_params')
-    conn.execute(f'UPDATE sessions SET {column}=? WHERE id=?', (value, sid))
+    conn.execute(_storage_statement(sqlite=f'UPDATE sessions SET {column}=? WHERE id=?',postgresql=f'UPDATE sessions SET {column}=%s WHERE id=%s',connection=conn), (value, sid))
     return {'value': None}
 
 
@@ -189,6 +189,19 @@ def worker_history(db, conn, sid, payload):
     target = payload['target']
     view.authorize(sid, target)
     ids = view._resume_lineage_ids(target) if payload['include_ancestors'] else [target]
+    if is_postgres(conn):
+        from psycopg import sql
+        from hermes_state import SessionDB
+        from hermes_state_postgresql_transcript import native_row
+        query=sql.SQL('SELECT * FROM {} WHERE session_id=ANY(%s)').format(db.table('messages'))
+        if not payload['include_inactive']:
+            query+=sql.SQL(' AND (active=1 OR compacted=1)' if payload['include_compacted'] else ' AND active=1')
+        rows=[native_row(row) for row in conn.execute(query+sql.SQL(' ORDER BY id'),(ids,))]
+        codec=object.__new__(SessionDB)
+        if payload['include_compacted']:rows=codec._dedupe_display_generations(rows)
+        return {'messages':codec._rows_to_conversation(rows,session_id=target,
+            include_ancestors=payload['include_ancestors'],repair_alternation=payload['repair_alternation'],
+            include_row_ids=payload['include_row_ids'])}
     active = db._active_clause(payload['include_inactive'], payload['include_compacted'])
     rows = conn.execute(f'SELECT {db._CONVERSATION_ROW_COLUMNS} FROM messages '
                         f'WHERE session_id IN ({",".join("?" for _ in ids)}){active} ORDER BY id', ids).fetchall()
@@ -337,9 +350,9 @@ def worker_publish(db, conn, sid, payload):
     conn.execute(_storage_statement(sqlite='UPDATE sessions SET runtime_generation=? WHERE id=?', postgresql='UPDATE sessions SET runtime_generation=%s WHERE id=%s', connection=conn), (worker['generation'], child))
     conn.execute(_storage_statement(sqlite='UPDATE worker_executions SET session_id=? WHERE execution_id=?', postgresql='UPDATE worker_executions SET session_id=%s WHERE execution_id=%s', connection=conn), (child, worker['execution_id']))
     # The FIFO/retry key is immutable; only physical lineage follows rotation.
-    conn.execute("UPDATE session_admissions SET lineage_json=json_insert(lineage_json,'$[#]',?) "
+    conn.execute(_storage_statement(sqlite="UPDATE session_admissions SET lineage_json=json_insert(lineage_json,'$[#]',?) "
                  "WHERE json_extract(lineage_json,'$[#-1]')=? AND generation=? AND owner_epoch=? "
-                 "AND status IN ('started','unknown')",
+                 "AND status IN ('started','unknown')",postgresql="UPDATE session_admissions SET lineage_json=(lineage_json::jsonb || jsonb_build_array(%s::text))::text WHERE lineage_json::jsonb->>-1=%s AND generation=%s AND owner_epoch=%s AND status IN ('started','unknown')",connection=conn),
                  (child, sid, worker['generation'], worker['owner_epoch']))
     from hermes_state_runtime import row_annotations
     return {'value': None, 'worker_assignment': {'parent': sid, 'session_id': child},
@@ -362,8 +375,9 @@ def worker_receipt_assignment(conn, execution_id, session_id, generation, sequen
 def worker_claim_origin(db, params):
     """Keep the producer claim bound to its original identity after physical rotation."""
     with db._read_ctx() as conn:
-        row = conn.execute("SELECT result_json FROM worker_receipts WHERE execution_id=? "
+        row = conn.execute(_storage_statement(sqlite="SELECT result_json FROM worker_receipts WHERE execution_id=? "
                            "AND json_extract(result_json,'$.worker_assignment.parent') IS NOT NULL ORDER BY sequence LIMIT 1",
+                           postgresql="SELECT result_json FROM worker_receipts WHERE execution_id=%s AND result_json::jsonb#>>'{worker_assignment,parent}' IS NOT NULL ORDER BY sequence LIMIT 1",connection=conn),
                            (params['execution_id'],)).fetchone()
     return json.loads(row[0])['worker_assignment']['parent'] if row else params['session_id']
 
@@ -384,13 +398,16 @@ def worker_retry_target(db, params):
 from hermes_state_common import _COMPRESSION_LOCK_ROW_SQL as _LOCK_ROW_SQL, _ENDED_ROW_SQL, _ended_by_compression
 
 def reopen_on_connection(db, conn, session_id):
-    if not _ended_by_compression(conn.execute(_ENDED_ROW_SQL, (session_id,)).fetchone()):
+    if not _ended_by_compression(conn.execute(_storage_statement(sqlite=_ENDED_ROW_SQL,postgresql='SELECT ended_at,end_reason FROM sessions WHERE id=%s',connection=conn), (session_id,)).fetchone()):
         return False
-    child = conn.execute('\n                SELECT 1\n                FROM sessions\n                WHERE parent_session_id = ?\n                ' + db._NON_CONTINUATION_CHILD_FILTER_SQL.format(alias='') + '\n                LIMIT 1\n                ', (session_id,) * 4).fetchone()
+    if is_postgres(conn):
+        child=next(iter(db._continuation_children_on_conn(conn,session_id)),None)
+    else:
+        child = conn.execute('\n                SELECT 1\n                FROM sessions\n                WHERE parent_session_id = ?\n                ' + db._NON_CONTINUATION_CHILD_FILTER_SQL.format(alias='') + '\n                LIMIT 1\n                ', (session_id,) * 4).fetchone()
     if child is not None:
         return False
     now = time.time()
-    lock_row = conn.execute(_LOCK_ROW_SQL, (session_id,)).fetchone()
+    lock_row = conn.execute(_storage_statement(sqlite=_LOCK_ROW_SQL,postgresql='SELECT holder,expires_at FROM compression_locks WHERE session_id=%s',connection=conn), (session_id,)).fetchone()
     if lock_row is not None:
         expires_at = lock_row['expires_at']
         if expires_at is None or float(expires_at) >= now:

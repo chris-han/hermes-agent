@@ -4,6 +4,7 @@ Mixin bound onto ``SessionDB`` via the MRO, built on its ``_read_ctx`` /
 ``_execute_write`` / ``_write_sql`` / ``_read_one`` primitives."""
 
 from __future__ import annotations
+from hermes_state_sql import statement as _storage_statement, is_postgres, compression_step
 
 import json
 import logging
@@ -797,6 +798,7 @@ class SessionCompressionMixin:
         stale closed siblings such as ``ws_orphan_reap``."""
         def step(current: str):
             with self._read_ctx() as conn:
+                if is_postgres(conn):return compression_step(conn,current)
                 return conn.execute(_CHAIN_STEP_SQL, (current,)).fetchone()
         return _walk_compression_chain(session_id, step)
 
@@ -836,12 +838,12 @@ class SessionCompressionMixin:
         seen = {root["id"]}
         current = root
         while current.get("end_reason") == "compression":
-            rows = self._read_all(
-                """
+            with self._read_ctx() as conn:
+                rows = conn.execute(_storage_statement(sqlite="""
                 SELECT * FROM sessions
                 WHERE parent_session_id = ?
                 ORDER BY started_at ASC
-                """, (current["id"],))
+                """,postgresql='SELECT * FROM sessions WHERE parent_session_id=%s ORDER BY started_at ASC',connection=conn), (current["id"],)).fetchall()
             next_child = next((dict(row) for row in rows if self._is_compression_child_row(dict(row))), None)
             if not next_child or next_child["id"] in seen:
                 break

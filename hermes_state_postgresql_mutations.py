@@ -25,6 +25,16 @@ class PostgreSQLMutationsMixin:
     def _session_turn_lease_key_on_conn(self,conn,session_id):
         return self._lease_key_on_conn(conn,session_id)
 
+    def _end_and_bump(self,conn,query,params,session_id,reason):
+        from hermes_state_common import _RESET_END_REASONS
+        changed=conn.execute(query,params).rowcount
+        if changed and reason in _RESET_END_REASONS:
+            row=self._session_on_conn(conn,session_id)
+            source,key=(str(row[k] or '').strip() for k in ('source','session_key'))
+            if source and key:
+                conn.execute(sql.SQL('INSERT INTO {}(source,session_key,generation) VALUES(%s,%s,1) ON CONFLICT(source,session_key) DO UPDATE SET generation={}.generation+1').format(self.table('conversation_generations'),self.table('conversation_generations')),(source,key))
+        return changed
+
     def _check_transcript_write_guards(self,conn,session_id,compression_lock_holder,
             turn_lease_holder=None,turn_lease_ttl_seconds=300.0,reject_active_turn_lease=False,
             reject_active_compression_lock=False,allow_closed_compression_parent=False):

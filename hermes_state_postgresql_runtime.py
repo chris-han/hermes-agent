@@ -428,6 +428,15 @@ class PostgreSQLRuntimeMixin:
     def session_count_ge(self,minimum):
         return bool(self._one(sql.SQL('SELECT COUNT(*)>=%s AS enough FROM {}').format(self.table('sessions')),(minimum,))['enough'])
 
+    def session_lifecycle_statuses(self,session_ids):
+        from hermes_state_sessions import classify_session_status
+        ids=list(dict.fromkeys(sid for sid in (session_ids or []) if sid))
+        if not ids:return {}
+        rows=self._all(sql.SQL('SELECT DISTINCT ON (session_id) session_id,role,tool_calls IS NOT NULL AS has_tool_calls,finish_reason FROM {} WHERE session_id=ANY(%s) ORDER BY session_id,id DESC').format(self.table('messages')),(ids,))
+        result={sid:'empty' for sid in ids}
+        for row in rows:result[row['session_id']]=classify_session_status(role=row['role'],has_tool_calls=row['has_tool_calls'],finish_reason=row['finish_reason'])
+        return result
+
     def get_conversation_root(self,session_id):
         with self._transaction(read_only=True) as conn:
             return self._lease_key_on_conn(conn,session_id)

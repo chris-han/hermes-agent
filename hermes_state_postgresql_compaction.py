@@ -54,44 +54,51 @@ class PostgreSQLCompactionMixin(PostgreSQLCoverageMixin):
         if lock_holder is not None and compression_lock_holder is not None and lock_holder!=compression_lock_holder:
             raise ValueError('Conflicting compression owner')
         holder=lock_holder or compression_lock_holder
-        with self._transaction() as conn:
-            self._guard_on_conn(conn,session_id,compression_lock_holder=holder,destructive=True)
-            if holder is not None:
-                from hermes_state import SessionCompressionInProgressError
-                lock=conn.execute(sql.SQL('SELECT holder,expires_at FROM {} WHERE session_id=%s').format(self.table('compression_locks')),(session_id,)).fetchone()
-                if not lock or lock['holder']!=holder or lock['expires_at']<=time.time():
-                    raise SessionCompressionInProgressError('Compression lease lost before commit')
-            row=self._session_on_conn(conn,session_id,lock=True)
-            patched=None
-            if model_config_patch is not None:
-                cfg=_parse_model_config(row['model_config'])
-                for key,value in model_config_patch.items():
-                    if value is None:cfg.pop(key,None)
-                    else:cfg[key]=value
-                patched=json.dumps(cfg) if cfg else None
-            proved=self._proved_coverage(conn,session_id,covered_ids,unresolved_held,watermark)
-            active=conn.execute(sql.SQL('SELECT id FROM {} WHERE session_id=%s AND active=1 ORDER BY id').format(self.table('messages')),(session_id,)).fetchall()
-            active_ids=[r['id'] for r in active]
-            carried=self._resolve_carried_row_ids(conn,session_id,carried_messages or [])
-            if proved is not None:
-                covered=set(proved[0])|set(carried)
-                tail=[rid for rid in active_ids if rid not in covered]
-                summarized=[rid for rid in active_ids if rid in covered]
-                rewound=carried+(self._tail_originals(summarized,tail_count,proved[1]) if tail_count>0 else [])+tail
-            else:
-                tail=[] if watermark is None else [rid for rid in active_ids if rid>int(watermark)]
-                bound=[rid for rid in active_ids if watermark is None or rid<=int(watermark)]
-                width=int(tail_count)+self._uncounted_merged_rows(compacted_messages[-int(tail_count):]) if tail_count>0 else 0
-                rewound=carried+(bound[-width:] if width else [])+tail
-            if rewound:
-                conn.execute(sql.SQL('UPDATE {} SET active=0,compacted=0 WHERE session_id=%s AND id=ANY(%s)').format(self.table('messages')),(session_id,list(dict.fromkeys(rewound))))
-            conn.execute(sql.SQL('UPDATE {} SET active=0,compacted=1 WHERE session_id=%s AND active=1').format(self.table('messages')),(session_id,))
-            self._carry_pg_timestamps(conn,session_id,compacted_messages)
-            insert_fresh_on_conn(self,conn,session_id,compacted_messages,prune_checkpoints=False)
-            self._clone_pg_rows(conn,tail)
-            self._prune_pg_shadowed_checkpoints(conn,session_id,compacted_messages)
-            self._reconcile_pg_display_orders(conn,session_id)
-            self._restamp_pg_messages(conn,session_id,compacted_messages)
-            self._recount_on_conn(conn,session_id)
-            if model_config_patch is not None:self._update(conn,'sessions',{'model_config':patched},'id',session_id)
-            return conn.execute(sql.SQL('SELECT message_count FROM {} WHERE id=%s').format(self.table('sessions')),(session_id,)).fetchone()['message_count']
+        return self._execute_transcript_write(lambda conn:self._archive_and_compact_on_conn(
+            conn,session_id,compacted_messages,model_config_patch=model_config_patch,watermark=watermark,
+            lock_holder=holder,tail_count=tail_count,carried_messages=carried_messages,
+            covered_ids=covered_ids,unresolved_held=unresolved_held),compacted_messages)
+
+    def _archive_and_compact_on_conn(self,conn,session_id,compacted_messages,model_config_patch=None,
+            watermark=None,lock_holder=None,tail_count=0,carried_messages=None,covered_ids=None,unresolved_held=None):
+        holder=lock_holder
+        self._lock_conversation(conn,session_id)
+        if holder is not None:
+            from hermes_state import SessionCompressionInProgressError
+            lock=conn.execute(sql.SQL('SELECT holder,expires_at FROM {} WHERE session_id=%s').format(self.table('compression_locks')),(session_id,)).fetchone()
+            if not lock or lock['holder']!=holder or lock['expires_at']<=time.time():
+                raise SessionCompressionInProgressError('Compression lease lost before commit')
+        row=self._session_on_conn(conn,session_id,lock=True)
+        patched=None
+        if model_config_patch is not None:
+            cfg=_parse_model_config(row['model_config'])
+            for key,value in model_config_patch.items():
+                if value is None:cfg.pop(key,None)
+                else:cfg[key]=value
+            patched=json.dumps(cfg) if cfg else None
+        proved=self._proved_coverage(conn,session_id,covered_ids,unresolved_held,watermark)
+        active=conn.execute(sql.SQL('SELECT id FROM {} WHERE session_id=%s AND active=1 ORDER BY id').format(self.table('messages')),(session_id,)).fetchall()
+        active_ids=[r['id'] for r in active]
+        carried=self._resolve_carried_row_ids(conn,session_id,carried_messages or [])
+        if proved is not None:
+            covered=set(proved[0])|set(carried)
+            tail=[rid for rid in active_ids if rid not in covered]
+            summarized=[rid for rid in active_ids if rid in covered]
+            rewound=carried+(self._tail_originals(summarized,tail_count,proved[1]) if tail_count>0 else [])+tail
+        else:
+            tail=[] if watermark is None else [rid for rid in active_ids if rid>int(watermark)]
+            bound=[rid for rid in active_ids if watermark is None or rid<=int(watermark)]
+            width=int(tail_count)+self._uncounted_merged_rows(compacted_messages[-int(tail_count):]) if tail_count>0 else 0
+            rewound=carried+(bound[-width:] if width else [])+tail
+        if rewound:
+            conn.execute(sql.SQL('UPDATE {} SET active=0,compacted=0 WHERE session_id=%s AND id=ANY(%s)').format(self.table('messages')),(session_id,list(dict.fromkeys(rewound))))
+        conn.execute(sql.SQL('UPDATE {} SET active=0,compacted=1 WHERE session_id=%s AND active=1').format(self.table('messages')),(session_id,))
+        self._carry_pg_timestamps(conn,session_id,compacted_messages)
+        insert_fresh_on_conn(self,conn,session_id,compacted_messages,prune_checkpoints=False)
+        self._clone_pg_rows(conn,tail)
+        self._prune_pg_shadowed_checkpoints(conn,session_id,compacted_messages)
+        self._reconcile_pg_display_orders(conn,session_id)
+        self._restamp_pg_messages(conn,session_id,compacted_messages)
+        self._recount_on_conn(conn,session_id)
+        if model_config_patch is not None:self._update(conn,'sessions',{'model_config':patched},'id',session_id)
+        return conn.execute(sql.SQL('SELECT message_count FROM {} WHERE id=%s').format(self.table('sessions')),(session_id,)).fetchone()['message_count']

@@ -31,3 +31,11 @@ def expand_compression_lineage_ids(conn,ids):
     return [target for row in rows if _continuation(row) for target in
             ((row['id'],) if row['_parent'] in targets else ())+
             ((row['_parent'],) if row['id'] in targets else ())]
+
+
+def resume_child(conn,parent_id):
+    from hermes_state_common import _RESET_END_REASONS
+    sessions=sql.Identifier(conn.hermes_scope.schema,'sessions')
+    rows=conn.execute(sql.SQL('SELECT child.*,parent.end_reason AS _parent_end_reason,parent.session_key AS _parent_key FROM {} child JOIN {} parent ON parent.id=child.parent_session_id WHERE child.parent_session_id=%s ORDER BY child.started_at DESC,child.id DESC').format(sessions,sessions),(parent_id,)).fetchall()
+    return next((row for row in rows if _continuation(row) and not
+                 (row['_parent_end_reason'] in _RESET_END_REASONS and row['session_key'] and row['session_key']==row['_parent_key'])),None)

@@ -39,7 +39,8 @@ def worker_end(db, conn, session_id, payload):
     if set(payload) != {'end_reason'} or not isinstance(payload['end_reason'], str) or not payload['end_reason']:
         raise RuntimeStoreError('invalid_params')
     db._end_and_bump(conn,
-        'UPDATE sessions SET ended_at=?,end_reason=? WHERE id=? AND ended_at IS NULL',
+        _storage_statement(sqlite='UPDATE sessions SET ended_at=?,end_reason=? WHERE id=? AND ended_at IS NULL',
+            postgresql='UPDATE sessions SET ended_at=%s,end_reason=%s WHERE id=%s AND ended_at IS NULL',connection=conn),
         (time.time(), payload['end_reason'], session_id), session_id, payload['end_reason'])
     return {'value': None}
 
@@ -86,10 +87,11 @@ def worker_next_title(db, conn, session_id, payload):
     # Only an assigned title or a receipted title attempt authorizes dedupe.
     # Concurrent activity/usage receipts must not invalidate that title attempt.
     candidate = payload['base_title']
-    attempted = conn.execute(
+    attempted = conn.execute(_storage_statement(sqlite=
         "SELECT 1 FROM worker_receipts r JOIN worker_executions w ON w.execution_id=r.execution_id "
         "WHERE w.session_id=? AND w.status='running' "
         "AND json_extract(r.result_json,'$.title_candidate')=? LIMIT 1",
+        postgresql="SELECT 1 FROM worker_receipts r JOIN worker_executions w ON w.execution_id=r.execution_id WHERE w.session_id=%s AND w.status='running' AND r.result_json::jsonb->>'title_candidate'=%s LIMIT 1",connection=conn),
         (session_id, candidate)).fetchone()
     if candidate != title and attempted is None:
         raise RuntimeStoreError('permission_denied')
@@ -218,7 +220,7 @@ def insert_session_row_in_transaction(
         profile_name = self._own_profile_name()
     system_prompt_hash = self._store_system_prompt(conn, system_prompt)
     conn.execute(
-        """INSERT INTO sessions (
+        _storage_statement(sqlite="""INSERT INTO sessions (
            id, source, created_source, user_id, session_key, chat_id, chat_type, thread_id,
            model, model_config, system_prompt, system_prompt_hash,
            parent_session_id, cwd, profile_name, transport_profile, git_repo_root,
@@ -261,7 +263,7 @@ def insert_session_row_in_transaction(
                    THEN NULL
                    ELSE sessions.system_prompt
                END,
-""" + _UPSERT_KEEP_EXISTING_SQL,
+""" + _UPSERT_KEEP_EXISTING_SQL,postgresql="INSERT INTO sessions (\n           id, source, created_source, user_id, session_key, chat_id, chat_type, thread_id,\n           model, model_config, system_prompt, system_prompt_hash,\n           parent_session_id, cwd, profile_name, transport_profile, git_repo_root,\n           origin_json, display_name, started_at\n        )\n           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL, %s, %s, %s, %s, %s, %s, %s, %s, %s)\n           ON CONFLICT(id) DO UPDATE SET\n               source = CASE\n                   WHEN sessions.source = 'unknown'\n                   THEN COALESCE(excluded.source, 'unknown')\n                   ELSE sessions.source\n               END,\n               model = COALESCE(sessions.model, excluded.model),\n               model_config = CASE\n                   WHEN excluded.model_config IS NOT NULL\n                        AND jsonb_typeof(sessions.model_config::jsonb->'_reset_from') IS NOT NULL\n                        AND (sessions.model_config::jsonb - '_reset_from') = '{}'::jsonb\n                   THEN jsonb_set(excluded.model_config::jsonb,'{_reset_from}',sessions.model_config::jsonb->'_reset_from')::text\n                   ELSE COALESCE(sessions.model_config,excluded.model_config)\n               END,\n               system_prompt_hash = COALESCE(\n                   sessions.system_prompt_hash,\n                   excluded.system_prompt_hash\n               ),\n               system_prompt = CASE\n                   WHEN sessions.system_prompt_hash IS NULL\n                        AND excluded.system_prompt_hash IS NOT NULL\n                   THEN NULL\n                   ELSE sessions.system_prompt\n               END,\n" + _UPSERT_KEEP_EXISTING_SQL,connection=conn),
         (
             session_id, source, source, user_id, session_key, chat_id, chat_type, thread_id, model,
             json.dumps(model_config) if model_config else None, system_prompt_hash,

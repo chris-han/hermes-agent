@@ -2,6 +2,7 @@
 flags (end/reopen/archive/pin/hide/read), model_config patching, listing and
 counting, delete cascades, and the auto-archive sweep."""
 
+from hermes_state_sql import statement as _storage_statement, is_postgres
 import glob
 import json
 import logging
@@ -1515,7 +1516,7 @@ class SessionSessionsMixin:
         compression continuations need the parent's archived rows."""
         if not session_id:
             return False
-        row = self._read_one("SELECT model_config FROM sessions WHERE id = ?", (session_id,))
+        row = self._read_one(_storage_statement(sqlite="SELECT model_config FROM sessions WHERE id = ?",postgresql='SELECT model_config FROM sessions WHERE id = %s',connection=getattr(self,'conn',None)), (session_id,))
         return row is not None and bool(_parse_model_config(row[0]).get("_branched_from"))
 
     def _session_lineage_root_to_tip(self, session_id: str) -> list[str]:
@@ -1527,7 +1528,7 @@ class SessionSessionsMixin:
             while current and current not in chain and len(chain) < 100:
                 chain.append(current)
                 row = conn.execute(
-                    "SELECT parent_session_id FROM sessions WHERE id = ?", (current,),
+                    _storage_statement(sqlite="SELECT parent_session_id FROM sessions WHERE id = ?",postgresql='SELECT parent_session_id FROM sessions WHERE id = %s',connection=conn), (current,),
                 ).fetchone()
                 if row is None:
                     break
