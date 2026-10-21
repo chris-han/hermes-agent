@@ -330,10 +330,11 @@ def uv_cache_dir() -> Path:
     """The hermes-owned uv cache: machine-scoped and shared (keyed by
     content — two profiles reuse one cache), anchored to the DEFAULT
     hermes root like partials_root(). A bundle ships a seeded copy at
-    the payload root (uv-cache/); the first call under each uv.lock
+    the payload root (uv-cache/, a compact seed.zip on Windows);
+    the first request for each lock and archive
     merges it into the writable machine cache (the read-only payload
-    can't serve uv's working cache), and a warm `uv sync --offline`
-    from it is near-free (probed: 0.4s vs 1.2s cold) — the blow-away-
+    can't serve uv's working cache), and later `uv sync --offline`
+    operations reuse that writable cache — the blow-away-
     on-update contract depends on it. uv's default cache location is
     per-user/platform-opinionated and never used by pm."""
     from hermes_constants import get_default_hermes_root
@@ -353,6 +354,15 @@ def uv_cache_dir() -> Path:
     payload_cache = long_root(store_root().parent / "uv-cache")
     if payload_cache.is_dir():
         seed += "+payload"
+        archive = payload_cache / "seed.zip"
+        if archive.is_file():
+            # The same dependency lock can ship a corrected offline seed.
+            # Bind completion to actual archive bytes, including upgrades from
+            # historical loose seeds; otherwise a prior incomplete cache wins.
+            import hashlib
+
+            with archive.open("rb") as stream:
+                seed += "+archive:" + hashlib.file_digest(stream, "sha256").hexdigest()
     try:
         current = marker.read_text(encoding="utf-8-sig").strip() == seed
     except OSError:
@@ -368,8 +378,12 @@ def uv_cache_dir() -> Path:
             if payload_cache.is_dir():
                 seeded = long_root(machine_cache)
                 seeded.mkdir(parents=True, exist_ok=True)
+                archive = payload_cache / "seed.zip"
+                if archive.is_file():
+                    from pm.uv_cache_seed import seed_archive
+                    seed_archive(archive, seeded)
                 for entry in payload_cache.iterdir():
-                    if entry.name == ".seeded":
+                    if entry.name in {".seeded", "seed.zip"}:
                         continue
                     dest = seeded / entry.name
                     # Merge into whatever an earlier failed or killed seed left: skipping

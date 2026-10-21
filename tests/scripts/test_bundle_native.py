@@ -462,7 +462,8 @@ def prepare_metadata_for_build_wheel(metadata_directory, config_settings=None):
 '''
 
 
-def test_staged_cache_ships_full_wheel_set_and_rebuilds_offline(tmp_path):
+@pytest.mark.parametrize("compact", [False, True])
+def test_staged_cache_ships_full_wheel_set_and_rebuilds_offline(tmp_path, monkeypatch, compact):
     from tests.pm._fixtures import _wheel
 
     uv = shutil.which("uv")
@@ -538,6 +539,14 @@ def test_staged_cache_ships_full_wheel_set_and_rebuilds_offline(tmp_path):
         # reachability for any package the payload already shipped.
         assert any(shipped.rglob("wheel_proof*")), "downloadable wheels ship in the full cache"
 
+        if compact:
+            import hermes_constants
+            from pm import packages, paths
+            native.compact_uv_cache(shipped)
+            monkeypatch.setattr(hermes_constants, 'get_default_hermes_root', lambda: tmp_path / 'machine')
+            monkeypatch.setattr(paths, 'store_root', lambda: shipped.parent / 'tools')
+            monkeypatch.setattr(paths, 'repo_root', lambda: project)
+            shipped = packages.uv_cache_dir()
         # A fresh mutable venv rebuilds OFFLINE from the shipped cache alone.
         shutil.rmtree(cache, ignore_errors=True)
         shutil.rmtree(tmp_path / "first", ignore_errors=True)

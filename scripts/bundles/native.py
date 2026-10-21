@@ -81,6 +81,60 @@ def stage_uv_cache(source: Path, destination: Path) -> None:
     shutil.copytree(source, destination, ignore=ignore)
 
 
+
+def compact_uv_cache(cache: Path) -> None:
+    """Collapse a staged cache's Windows filesystem entries, keeping every wheel.
+
+    Only the owned staging copy is replaced. Verify the completed archive before
+    removing loose entries; build-host caches and non-Windows seeds stay intact.
+    """
+    import zipfile
+    from pm.filesystem import is_junction, remove_tree
+
+    archive = cache / "seed.zip"
+    temporary = cache / ".seed.zip.tmp"
+    if archive.exists() or temporary.exists():
+        raise ValueError("cache archive already exists")
+    try:
+        with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_DEFLATED,
+                             compresslevel=6, strict_timestamps=False) as output:
+            for directory, dirs, files in os.walk(cache):
+                for name in sorted(dirs + files):
+                    entry = Path(directory) / name
+                    if entry == temporary:
+                        continue
+                    if entry.is_symlink() or is_junction(entry):
+                        raise ValueError(f"linked staged cache entry: {entry}")
+                    output.write(entry, entry.relative_to(cache).as_posix())
+        with zipfile.ZipFile(temporary) as output:
+            bad = output.testzip()
+            if bad:
+                raise ValueError(f"cache archive integrity failed: {bad}")
+        temporary.replace(archive)
+        for entry in cache.iterdir():
+            if entry != archive:
+                if entry.is_dir():
+                    remove_tree(entry)
+                else:
+                    entry.unlink()
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def verify_offline_cache(root: Path, python: Path, env: dict) -> None:
+    """Exercise the real writable repair workspace before sealing Windows data."""
+    from pm import build_environment
+    from pm.workspace import _generate_pyproject
+
+    with tempfile.TemporaryDirectory(prefix=".offline-cache-check-", dir=root.parent) as scratch:
+        workspace = Path(scratch) / "project"
+        _generate_pyproject([], workspace, source=root / "hermes-agent")
+        shutil.copy2(root / "hermes-agent/uv.lock", workspace / "uv.lock")
+        build_environment(source=workspace, python=python, out=Path(scratch) / "venv",
+                          cache=root / "uv-cache", env=env, all_extras=True,
+                          sealed=True, offline=True, explicit=True, timeout=20 * 60)
+
+
 def stage_pm_runtime(root: Path, python: Path, repo: Path, *, offline: bool = False,
                      cache: Path | None = None) -> None:
     """Publish the same PM dependency graph as source installs, ready offline."""
@@ -280,8 +334,8 @@ def _prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
     facts.record_state("venv", Venv(repo_dir).expected_stamp(features, plugin_dirs=[]), features)
     print(f"✓ enabled-features.json ({len(features)} extras recorded)")
 
-    # Ship the full uv cache (build-only sdist sources and wheel ZIPs are
-    # already excluded by stage_uv_cache). Any per-install venv rebuild —
+    # Ship the complete lock-scoped offline cache (only sdist source
+    # trees are excluded; built wheel ZIPs remain). Any per-install venv rebuild —
     # plugin extras, feature changes — resolves entirely from the shipped
     # wheels with zero network access, on every profile of this install.
     payload_cache = out / "uv-cache"
@@ -296,6 +350,11 @@ def _prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
         print(f"✓ uv-cache (lock-scoped: pruned {pruned} stale entries; offline rebuilds resolve from shipped wheels)", flush=True)
     else:
         raise InstallError("uv-cache", "runtime dependency cache is missing")
+
+    if current_target().startswith("win32-"):
+        with measure(log_root, "runtime.offline-cache-validation"):
+            verify_offline_cache(out, python_bin, env)
+        print("✓ offline cache (full frozen all-extras writable rebuild)", flush=True)
 
     bad = _arch_guard(store_dir)
     for line in bad:
