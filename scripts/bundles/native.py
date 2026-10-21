@@ -121,6 +121,20 @@ def compact_uv_cache(cache: Path) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def verify_offline_cache(root: Path, python: Path, env: dict) -> None:
+    """Exercise the real writable repair workspace before sealing Windows data."""
+    from pm import build_environment
+    from pm.workspace import _generate_pyproject
+
+    with tempfile.TemporaryDirectory(prefix=".offline-cache-check-", dir=root.parent) as scratch:
+        workspace = Path(scratch) / "project"
+        _generate_pyproject([], workspace, source=root / "hermes-agent")
+        shutil.copy2(root / "hermes-agent/uv.lock", workspace / "uv.lock")
+        build_environment(source=workspace, python=python, out=Path(scratch) / "venv",
+                          cache=root / "uv-cache", env=env, all_extras=True,
+                          sealed=True, offline=True, explicit=True, timeout=20 * 60)
+
+
 def stage_pm_runtime(root: Path, python: Path, repo: Path, *, offline: bool = False,
                      cache: Path | None = None) -> None:
     """Publish the same PM dependency graph as source installs, ready offline."""
@@ -336,6 +350,11 @@ def _prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
         print(f"✓ uv-cache (lock-scoped: pruned {pruned} stale entries; offline rebuilds resolve from shipped wheels)", flush=True)
     else:
         raise InstallError("uv-cache", "runtime dependency cache is missing")
+
+    if current_target().startswith("win32-"):
+        with measure(log_root, "runtime.offline-cache-validation"):
+            verify_offline_cache(out, python_bin, env)
+        print("✓ offline cache (full frozen all-extras writable rebuild)", flush=True)
 
     bad = _arch_guard(store_dir)
     for line in bad:

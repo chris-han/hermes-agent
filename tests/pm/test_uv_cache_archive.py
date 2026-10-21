@@ -153,3 +153,26 @@ def test_compaction_preserves_loose_seed_on_archive_failure(seed, monkeypatch):
     assert (cache / 'archive-v0/bucket/module.py').read_bytes() == b'COMPLETE = True\n'
     assert not (cache / 'seed.zip').exists()
     assert not (cache / '.seed.zip.tmp').exists()
+
+
+def test_corrected_archive_for_same_lock_is_seeded(seed):
+    cache, machine = seed
+    native.compact_uv_cache(cache)
+    packages.uv_cache_dir()
+    previous = (machine / '.seeded').read_text()
+    with zipfile.ZipFile(cache / 'seed.zip', 'w') as z:
+        z.writestr('archive-v0/restored/package.py', b'required wheel restored')
+    packages.uv_cache_dir()
+    assert (machine / 'archive-v0/restored/package.py').read_bytes() == b'required wheel restored'
+    assert (machine / '.seeded').read_text() != previous
+
+
+def test_legacy_payload_marker_cannot_suppress_corrected_archive(seed):
+    cache, machine = seed
+    native.compact_uv_cache(cache)
+    machine.mkdir(parents=True)
+    lock = packages._uv_lock_digest(paths.repo_root() / 'uv.lock').hex()
+    (machine / '.seeded').write_text(lock + '+payload')
+    packages.uv_cache_dir()
+    assert (machine / 'archive-v0/bucket/module.py').read_bytes() == b'COMPLETE = True\n'
+    assert '+archive:' in (machine / '.seeded').read_text()

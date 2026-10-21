@@ -93,9 +93,11 @@ Windows packages carry the complete lock-scoped offline UV cache as
 `uv-cache/seed.zip`. Normal startup keeps using the shipped environment without
 extracting that seed. When PM creates or rebuilds an environment, it expands the
 seed into the shared writable machine cache, then records completion for the
-lock. Files publish atomically; interrupted seeds retry. Older loose-cache
-payloads remain readable. The archive changes storage layout, not offline
-repair, available extras, or tool support.
+lock and actual archive SHA-256 (so a corrected seed for the same lock is merged). Files publish atomically; interrupted seeds retry. Older loose-cache
+payloads remain readable. The archive preserves offline repair, available extras, and tool support.
+Pruning retains canonical distribution names plus declared core build backend
+requirements; rebuilding core metadata needs tools such as `wheel` even though
+those tools are outside the runtime lock.
 
 Additional pinned tools can use the writable tool store. Python additions use
 a complete writable environment outside the signed package. Its first generation
