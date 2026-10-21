@@ -1,4 +1,5 @@
 """Profile forwarding through the canonical owner, with exact conversation identity."""
+from hermes_state_sql import statement as _storage_statement
 import asyncio
 from contextvars import ContextVar
 from dataclasses import asdict, replace
@@ -56,7 +57,7 @@ def storage_source(db, source, session_id, fallback):
         # An adopted pre-authority row keeps its historical id as the route (session_local_migration).
         from hermes_state_local_migration import LEGACY_PREFIX
         with db._read_ctx() as conn:
-            if conn.execute('SELECT 1 FROM state_meta WHERE key=?', (LEGACY_PREFIX + str(source.chat_id),)).fetchone() is None:
+            if conn.execute(_storage_statement(sqlite='SELECT 1 FROM state_meta WHERE key=?', postgresql='SELECT 1 FROM state_meta WHERE key=%s', connection=conn), (LEGACY_PREFIX + str(source.chat_id),)).fetchone() is None:
                 return fallback
     from hermes_state_local import local_receipt
     receipt = local_receipt(db, source.chat_id)

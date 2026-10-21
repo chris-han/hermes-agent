@@ -4,6 +4,7 @@ One instance belongs to a durable room/member/profile binding. The service suppl
 its principal and current-membership check; neither is taken from RPC payloads.
 """
 from __future__ import annotations
+from hermes_state_sql import statement as _storage_statement
 
 import asyncio
 from dataclasses import asdict, replace
@@ -105,7 +106,7 @@ class HostedRoomAuthorityRPC:
         from hermes_state_runtime import _epoch
         def label(conn):
             _epoch(conn, self.authority.epoch)
-            conn.execute('UPDATE sessions SET title=?, hidden=1 WHERE id=?',
+            conn.execute(_storage_statement(sqlite='UPDATE sessions SET title=?, hidden=1 WHERE id=?', postgresql='UPDATE sessions SET title=%s, hidden=1 WHERE id=%s', connection=conn),
                          (f'Group: {self.room_id}', self.ref.session_id))
         await tracked_write(self.authority, partial(self.authority.db._execute_write, label))
         return await self._resume(params)

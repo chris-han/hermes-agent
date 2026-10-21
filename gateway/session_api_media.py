@@ -1,4 +1,5 @@
 """API image parts become committed media references that outlive the transient turn."""
+from hermes_state_sql import statement as _storage_statement
 import base64
 import hashlib
 import os
@@ -119,18 +120,24 @@ def compact_settled_api_payloads(db, admission_id=None):
                   "AND ((json_type(payload_json, '$.api_turn_v1.media') IS NOT NULL "
                   "AND payload_json LIKE '%data:image/%') OR (json_type(payload_json, '$.api_turn_v1.history')='array' "
                   "AND request_id NOT LIKE 'responses:%'))")
+    postgres_candidates = ("SELECT admission_id FROM session_admissions WHERE status='terminal' AND principal_id='api' "
+                           "AND (((payload_json::jsonb #> '{api_turn_v1,media}') IS NOT NULL "
+                           "AND payload_json ILIKE '%%data:image/%%') OR (jsonb_typeof(payload_json::jsonb #> '{api_turn_v1,history}')='array' "
+                           "AND request_id NOT LIKE 'responses:%%'))")
     if admission_id is None:
         # The scan runs on a read snapshot; a write transaction opens only when there is work.
         with db._read_ctx() as conn:
-            ids = [row[0] for row in conn.execute(candidates)]
+            ids = [row[0] for row in conn.execute(_storage_statement(sqlite=candidates, postgresql=postgres_candidates, connection=conn))]
     else:
         ids = [admission_id]
 
     def write(conn):
         compacted = 0
         for row_id in ids:
-            row = conn.execute(candidates.replace('SELECT admission_id', 'SELECT payload_json, request_id')
-                               + ' AND admission_id=?', (row_id,)).fetchone()
+            row = conn.execute(_storage_statement(
+                sqlite=candidates.replace('SELECT admission_id', 'SELECT payload_json, request_id') + ' AND admission_id=?',
+                postgresql=postgres_candidates.replace('SELECT admission_id', 'SELECT payload_json, request_id') + ' AND admission_id=%s',
+                connection=conn), (row_id,)).fetchone()
             if row is None:
                 continue
             payload = json.loads(row[0])
@@ -140,7 +147,7 @@ def compact_settled_api_payloads(db, admission_id=None):
             if text is not None or drop:
                 payload = {**payload, 'text': payload.get('text') if text is None else text,
                            'api_turn_v1': {**data, 'history': None} if drop else data}
-                conn.execute('UPDATE session_admissions SET payload_json=? WHERE admission_id=?',
+                conn.execute(_storage_statement(sqlite='UPDATE session_admissions SET payload_json=? WHERE admission_id=?', postgresql='UPDATE session_admissions SET payload_json=%s WHERE admission_id=%s', connection=conn),
                              (_json(payload), row_id))
                 compacted += 1
         return compacted

@@ -4,6 +4,7 @@ Only the private OS-authenticated owner socket exposes these verbs. The source
 owner attests durable membership/task state; the target never opens its database.
 """
 from __future__ import annotations
+from hermes_state_sql import statement as _storage_statement
 
 import asyncio
 import base64
@@ -242,10 +243,10 @@ def install_hosted_transport(server, authority, loop, *, attest):
         encoded = json.dumps(binding, sort_keys=True)
         def persist(conn):
             _epoch(conn, authority.epoch)
-            old = conn.execute('SELECT value FROM state_meta WHERE key=?', (key,)).fetchone()
+            old = conn.execute(_storage_statement(sqlite='SELECT value FROM state_meta WHERE key=?', postgresql='SELECT value FROM state_meta WHERE key=%s', connection=conn), (key,)).fetchone()
             if old is not None and old[0] != encoded:
                 raise RuntimeStoreError('permission_denied')
-            conn.execute('INSERT OR IGNORE INTO state_meta(key,value) VALUES(?,?)', (key, encoded))
+            conn.execute(_storage_statement(sqlite='INSERT OR IGNORE INTO state_meta(key,value) VALUES(?,?)', postgresql='INSERT INTO state_meta(key,value) VALUES(%s,%s) ON CONFLICT DO NOTHING', connection=conn), (key, encoded))
         authority.db._execute_write(persist)
         if operation == 'submit':
             rpc.hosted_attachment_data = _attachment_data(binding, attested, params)
@@ -271,7 +272,7 @@ def check_remote_hosted_admission(authority, ref, row):
 
 def _check_remote_hosted_admission(authority, ref, row):
     with authority.db._read_ctx() as conn:
-        stored = conn.execute('SELECT value FROM state_meta WHERE key=?',
+        stored = conn.execute(_storage_statement(sqlite='SELECT value FROM state_meta WHERE key=?', postgresql='SELECT value FROM state_meta WHERE key=%s', connection=conn),
                               (_BINDING + ref.session_id,)).fetchone()
     if stored is None:
         return False

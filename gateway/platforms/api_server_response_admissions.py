@@ -1,4 +1,5 @@
 """Responses retries observe their original admission before resolving mutable conversation names."""
+from hermes_state_sql import statement as _storage_statement
 from functools import partial
 import hashlib
 import json
@@ -19,10 +20,9 @@ def _request_admission_rows(db, request_id):
     from hermes_state_terminal import ADMISSION_PREFIX
     with db._read_ctx() as conn:
         rows = [dict(row) for row in conn.execute(
-            "SELECT * FROM session_admissions WHERE principal_id='api' AND request_id=?", (request_id,))]
+            _storage_statement(sqlite="SELECT * FROM session_admissions WHERE principal_id='api' AND request_id=?", postgresql="SELECT * FROM session_admissions WHERE principal_id='api' AND request_id=%s", connection=conn), (request_id,))]
         retired = conn.execute(
-            "SELECT value FROM state_meta WHERE key GLOB ? "
-            "AND json_extract(value, '$.principal_id')='api' AND json_extract(value, '$.request_id')=?",
+            _storage_statement(sqlite="SELECT value FROM state_meta WHERE key GLOB ? AND json_extract(value, '$.principal_id')='api' AND json_extract(value, '$.request_id')=?", postgresql="SELECT value FROM state_meta WHERE starts_with(key, left(%s,-1)) AND value::jsonb->>'principal_id'='api' AND value::jsonb->>'request_id'=%s", connection=conn),
             (ADMISSION_PREFIX + '*', request_id))
         rows.extend(json.loads(row[0]) for row in retired)
     return rows

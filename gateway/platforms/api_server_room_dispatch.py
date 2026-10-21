@@ -1,4 +1,5 @@
 """RoomLink dispatch validation and hidden member-session ownership."""
+from hermes_state_sql import statement as _storage_statement
 
 import asyncio
 import hashlib
@@ -37,20 +38,20 @@ async def _ensure_hosted_member_session(self, dispatch: Any) -> str:
             authority, session_id, hosted_dispatch=dispatch.as_mapping()))).session_id
 
     def atomic(conn):
-        row = conn.execute("SELECT id, title, source FROM sessions WHERE id=?", (session_id,)).fetchone()
+        row = conn.execute(_storage_statement(sqlite='SELECT id, title, source FROM sessions WHERE id=?', postgresql='SELECT id, title, source FROM sessions WHERE id=%s', connection=conn), (session_id,)).fetchone()
         if row is not None:
             if row["title"] != title or row["source"] != "bot_room":
                 raise RuntimeError("room session identity conflicts with existing data")
             return session_id
         clean_title = db.sanitize_title(title)
         conflict = conn.execute(
-            "SELECT id FROM sessions WHERE title=? AND id!=?", (clean_title, session_id)).fetchone()
+            _storage_statement(sqlite='SELECT id FROM sessions WHERE title=? AND id!=?', postgresql='SELECT id FROM sessions WHERE title=%s AND id!=%s', connection=conn), (clean_title, session_id)).fetchone()
         if conflict:
             raise RuntimeError(
                 "Another group already uses this room title on the target gateway. "
                 "Rename or migrate that group before retrying.")
         conn.execute(
-            "INSERT INTO sessions(id, source, title, hidden, started_at) VALUES(?, 'bot_room', ?, 1, ?)",
+            _storage_statement(sqlite="INSERT INTO sessions(id, source, title, hidden, started_at) VALUES(?, 'bot_room', ?, 1, ?)", postgresql="INSERT INTO sessions(id, source, title, hidden, started_at) VALUES(%s, 'bot_room', %s, 1, %s)", connection=conn),
             (session_id, clean_title, time.time()))
         return session_id
 

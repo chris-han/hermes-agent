@@ -1,5 +1,6 @@
 """API run controls resolve durable claims, never adapter agent/task ownership."""
 from dataclasses import asdict
+from hermes_state_sql import statement as _storage_statement
 
 from gateway.session_contract import Principal, SessionRef
 from gateway.session_results import admission_result
@@ -36,7 +37,7 @@ def run_admission(adapter, run_id):
     alias = getattr(adapter, '_run_admission_aliases', {}).get(run_id)
     column, value = ('admission_id', alias) if alias else ('request_id', run_id)
     with authority.db._read_ctx() as conn:
-        rows = conn.execute(f"SELECT * FROM session_admissions WHERE principal_id='api' AND {column}=?",
+        rows = conn.execute(_storage_statement(sqlite=f"SELECT * FROM session_admissions WHERE principal_id='api' AND {column}=?", postgresql=f"SELECT * FROM session_admissions WHERE principal_id='api' AND {column}=%s", connection=conn),
                             (value,)).fetchall()
     if len(rows) > 1:
         raise RuntimeStoreError('admission_conflict')

@@ -1,4 +1,5 @@
 """Exact execution results commit with settlement, before delivery/publication."""
+from hermes_state_sql import statement as _storage_statement
 import json
 from contextvars import ContextVar
 
@@ -77,7 +78,7 @@ def finish_result(db, *, epoch, row, response, outcome, result=None, prepared=No
         if current['owner_epoch'] != epoch or current['generation'] != row['generation']:
             raise RuntimeStoreError('stale_generation')
         if current['status'] == 'terminal':
-            saved = conn.execute('SELECT value FROM state_meta WHERE key=?',
+            saved = conn.execute(_storage_statement(sqlite='SELECT value FROM state_meta WHERE key=?', postgresql='SELECT value FROM state_meta WHERE key=%s', connection=conn),
                                  (_RESULT_PREFIX + row['admission_id'],)).fetchone()
             if saved is None:
                 raise RuntimeStoreError('storage_unavailable')
@@ -94,7 +95,7 @@ def admission_result(db, admission_id):
         row = _admission(conn, admission_id)
         if row['status'] != 'terminal':
             return None
-        saved = conn.execute('SELECT value FROM state_meta WHERE key=?',
+        saved = conn.execute(_storage_statement(sqlite='SELECT value FROM state_meta WHERE key=?', postgresql='SELECT value FROM state_meta WHERE key=%s', connection=conn),
                              (_RESULT_PREFIX + admission_id,)).fetchone()
         return json.loads(saved[0]) if saved else None
 
@@ -119,8 +120,7 @@ def close_discarded_turn(db, conn, row):
     from hermes_state_local_lineage import local_physical_target
     from hermes_state_runtime import _canonical_chain
     target = _canonical_chain(conn, local_physical_target(conn, row['target_session_id']))[-1]
-    tail = conn.execute("SELECT role, tool_calls FROM messages WHERE session_id=? AND active=1 "
-                        "AND role NOT IN ('session_meta','system') ORDER BY id DESC LIMIT 1", (target,)).fetchone()
+    tail = conn.execute(_storage_statement(sqlite="SELECT role, tool_calls FROM messages WHERE session_id=? AND active=1 AND role NOT IN ('session_meta','system') ORDER BY id DESC LIMIT 1", postgresql="SELECT role, tool_calls FROM messages WHERE session_id=%s AND active=1 AND role NOT IN ('session_meta','system') ORDER BY id DESC LIMIT 1", connection=conn), (target,)).fetchone()
     if tail is None or not (tail[0] == 'user' or (tail[0] == 'assistant' and tail[1] not in (None, '', '[]'))):
         return False
     db._append_messages_in_transaction(conn, target, [{

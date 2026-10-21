@@ -1,4 +1,5 @@
 """Server-only binding of API transcript identities to the existing TurnRunner."""
+from hermes_state_sql import statement as _storage_statement
 import asyncio
 from functools import partial
 import hashlib
@@ -14,7 +15,7 @@ from hermes_state_local import API_BINDING_PREFIX as _BINDING_PREFIX, API_DECLAR
 
 def declared_api_session(db, key):
     with db._read_ctx() as conn:
-        row = conn.execute('SELECT value FROM state_meta WHERE key=?',
+        row = conn.execute(_storage_statement(sqlite='SELECT value FROM state_meta WHERE key=?', postgresql='SELECT value FROM state_meta WHERE key=%s', connection=conn),
                            (_DECLARED_PREFIX + key,)).fetchone()
     return row[0] if row else None
 
@@ -134,9 +135,9 @@ def bind_api_steps(authority, session_id, *, hosted_dispatch=None, declared_key=
         _epoch(conn, authority.epoch)
         authority._require_admission_open()  # a drain that began while this waited on the writer wins
         from hermes_state_mutation_retirement import RETIRED_PREFIX
-        if conn.execute('SELECT 1 FROM state_meta WHERE key=?', (RETIRED_PREFIX + session_id,)).fetchone():
+        if conn.execute(_storage_statement(sqlite='SELECT 1 FROM state_meta WHERE key=?', postgresql='SELECT 1 FROM state_meta WHERE key=%s', connection=conn), (RETIRED_PREFIX + session_id,)).fetchone():
             raise RuntimeStoreError('not_found')
-        saved = conn.execute('SELECT value FROM state_meta WHERE key=?',
+        saved = conn.execute(_storage_statement(sqlite='SELECT value FROM state_meta WHERE key=?', postgresql='SELECT value FROM state_meta WHERE key=%s', connection=conn),
                              (_BINDING_PREFIX + session_id,)).fetchone()
         if saved is not None:
             binding = json.loads(saved[0])
@@ -146,35 +147,33 @@ def bind_api_steps(authority, session_id, *, hosted_dispatch=None, declared_key=
                 raise RuntimeStoreError('admission_conflict')
             return
         if declared_key:
-            existing_declared = conn.execute('SELECT value FROM state_meta WHERE key=?',
+            existing_declared = conn.execute(_storage_statement(sqlite='SELECT value FROM state_meta WHERE key=?', postgresql='SELECT value FROM state_meta WHERE key=%s', connection=conn),
                 (_DECLARED_PREFIX + declared_key,)).fetchone()
             if existing_declared and existing_declared[0] != session_id:
                 raise RuntimeStoreError('admission_conflict')
-            conn.execute('INSERT INTO state_meta(key,value) VALUES(?,?) ON CONFLICT(key) DO NOTHING',
+            conn.execute(_storage_statement(sqlite='INSERT INTO state_meta(key,value) VALUES(?,?) ON CONFLICT(key) DO NOTHING', postgresql='INSERT INTO state_meta(key,value) VALUES(%s,%s) ON CONFLICT(key) DO NOTHING', connection=conn),
                          (_DECLARED_PREFIX + declared_key, session_id))
-        row = conn.execute('SELECT source,session_key,title FROM sessions WHERE id=?', (session_id,)).fetchone()
+        row = conn.execute(_storage_statement(sqlite='SELECT source,session_key,title FROM sessions WHERE id=?', postgresql='SELECT source,session_key,title FROM sessions WHERE id=%s', connection=conn), (session_id,)).fetchone()
         if row is not None and row['source'] != storage_source:
             raise RuntimeStoreError('permission_denied')
         if storage_source == 'bot_room':
             if row is not None and row['title'] != title:
                 raise RuntimeStoreError('admission_conflict')
-            if conn.execute('SELECT 1 FROM sessions WHERE title=? AND id!=?', (title, session_id)).fetchone():
+            if conn.execute(_storage_statement(sqlite='SELECT 1 FROM sessions WHERE title=? AND id!=?', postgresql='SELECT 1 FROM sessions WHERE title=%s AND id!=%s', connection=conn), (title, session_id)).fetchone():
                 raise RuntimeStoreError('admission_conflict')
         if row is not None and row['session_key'] not in (None, '', route):
             raise RuntimeStoreError('admission_conflict')
-        existing = conn.execute("SELECT entry_json FROM gateway_routing WHERE scope='' AND session_key=?",
+        existing = conn.execute(_storage_statement(sqlite="SELECT entry_json FROM gateway_routing WHERE scope='' AND session_key=?", postgresql="SELECT entry_json FROM gateway_routing WHERE scope='' AND session_key=%s", connection=conn),
                                 (route,)).fetchone()
         if existing is not None and json.loads(existing[0])['session_id'] != session_id:
             raise RuntimeStoreError('admission_conflict')
-        conn.execute('''INSERT INTO sessions(id,source,title,hidden,started_at) VALUES(?,?,?,?,?)
-                        ON CONFLICT(id) DO NOTHING''', (session_id, storage_source, title,
+        conn.execute(_storage_statement(sqlite='INSERT INTO sessions(id,source,title,hidden,started_at) VALUES(?,?,?,?,?)\n                        ON CONFLICT(id) DO NOTHING', postgresql='INSERT INTO sessions(id,source,title,hidden,started_at) VALUES(%s,%s,%s,%s,%s)\n                        ON CONFLICT(id) DO NOTHING', connection=conn), (session_id, storage_source, title,
                                                        int(storage_source == 'bot_room'), now.timestamp()))
-        conn.execute('UPDATE sessions SET session_key=?,chat_id=?,user_id=?,chat_type=?,origin_json=? WHERE id=?',
+        conn.execute(_storage_statement(sqlite='UPDATE sessions SET session_key=?,chat_id=?,user_id=?,chat_type=?,origin_json=? WHERE id=?', postgresql='UPDATE sessions SET session_key=%s,chat_id=%s,user_id=%s,chat_type=%s,origin_json=%s WHERE id=%s', connection=conn),
                      (route, session_id, source.user_id, 'dm', _json(source.to_dict()), session_id))
-        conn.execute("INSERT INTO gateway_routing(scope,session_key,entry_json,updated_at) VALUES('',?,?,?) "
-                     'ON CONFLICT(scope,session_key) DO UPDATE SET entry_json=excluded.entry_json',
+        conn.execute(_storage_statement(sqlite="INSERT INTO gateway_routing(scope,session_key,entry_json,updated_at) VALUES('',?,?,?) ON CONFLICT(scope,session_key) DO UPDATE SET entry_json=excluded.entry_json", postgresql="INSERT INTO gateway_routing(scope,session_key,entry_json,updated_at) VALUES('',%s,%s,%s) ON CONFLICT(scope,session_key) DO UPDATE SET entry_json=excluded.entry_json", connection=conn),
                      (route, _json(entry.to_dict()), now.timestamp()))
-        conn.execute('INSERT INTO state_meta(key,value) VALUES(?,?)',
+        conn.execute(_storage_statement(sqlite='INSERT INTO state_meta(key,value) VALUES(?,?)', postgresql='INSERT INTO state_meta(key,value) VALUES(%s,%s)', connection=conn),
                      (_BINDING_PREFIX + session_id, _json(receipt)))
     yield partial(authority.db._execute_write, write)
     return restore_api_session(authority, session_id)
@@ -184,7 +183,7 @@ def api_storage_source(db, session_id, fallback):
     if fallback != 'api_server':
         return fallback
     with db._read_ctx() as conn:
-        saved = conn.execute('SELECT value FROM state_meta WHERE key=?',
+        saved = conn.execute(_storage_statement(sqlite='SELECT value FROM state_meta WHERE key=?', postgresql='SELECT value FROM state_meta WHERE key=%s', connection=conn),
                              (_BINDING_PREFIX + session_id,)).fetchone()
     return json.loads(saved[0]).get('storage_source', fallback) if saved else fallback
 
@@ -192,7 +191,7 @@ def api_storage_source(db, session_id, fallback):
 def restore_api_session(authority, session_id):
     from gateway.session_authority import LiveSession
     with authority.db._read_ctx() as conn:
-        saved = conn.execute('SELECT value FROM state_meta WHERE key=?',
+        saved = conn.execute(_storage_statement(sqlite='SELECT value FROM state_meta WHERE key=?', postgresql='SELECT value FROM state_meta WHERE key=%s', connection=conn),
                              (_BINDING_PREFIX + session_id,)).fetchone()
     if saved is None:
         raise RuntimeStoreError('not_found')

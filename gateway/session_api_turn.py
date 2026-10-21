@@ -1,4 +1,5 @@
 """Trusted API preparation and observation of the canonical durable FIFO."""
+from hermes_state_sql import statement as _storage_statement
 import asyncio
 from contextvars import ContextVar
 from contextlib import contextmanager
@@ -27,7 +28,7 @@ _OWNER_SCOPE_RE = re.compile(r'[0-9a-f]{64}')
 
 def api_settings(authority, ref):
     with authority.db._read_ctx() as conn:
-        saved = conn.execute('SELECT value FROM state_meta WHERE key=?',
+        saved = conn.execute(_storage_statement(sqlite='SELECT value FROM state_meta WHERE key=?', postgresql='SELECT value FROM state_meta WHERE key=%s', connection=conn),
                              (_SETTINGS_PREFIX + ref.session_id,)).fetchone()
     return json.loads(saved[0]) if saved else {}
 
@@ -258,15 +259,14 @@ def _admit_target(session_id, request_id, settings, conn):
     session's settings for its later payload-less (internal) turns, committed with the admitted
     turn rather than by the drain on the owner loop (N50)."""
     _one_target(session_id, request_id, conn)
-    conn.execute('INSERT INTO state_meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+    conn.execute(_storage_statement(sqlite='INSERT INTO state_meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', postgresql='INSERT INTO state_meta(key,value) VALUES(%s,%s) ON CONFLICT(key) DO UPDATE SET value=excluded.value', connection=conn),
                  (_SETTINGS_PREFIX + session_id, _json(settings)))
 
 
 def _one_target(session_id, request_id, conn):
     """One API request id (an Idempotency-Key) names one admission. The ledger keys identity by
     target too, so the same key aimed at another session would otherwise run the work again."""
-    if conn.execute("SELECT 1 FROM session_admissions WHERE principal_id='api' AND request_id=? "
-                    'AND target_session_id!=? LIMIT 1', (request_id, session_id)).fetchone():
+    if conn.execute(_storage_statement(sqlite="SELECT 1 FROM session_admissions WHERE principal_id='api' AND request_id=? AND target_session_id!=? LIMIT 1", postgresql="SELECT 1 FROM session_admissions WHERE principal_id='api' AND request_id=%s AND target_session_id!=%s LIMIT 1", connection=conn), (request_id, session_id)).fetchone():
         raise RuntimeStoreError('admission_conflict')
 
 
