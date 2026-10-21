@@ -1,6 +1,7 @@
 """Restore only private, profile-bound local policy into the existing authority."""
 import logging
-from pathlib import Path
+from hermes_state_backend import session_store_key
+from hermes_state_sql import statement
 
 from gateway.config import Platform
 from gateway.session import SessionEntry, SessionSource
@@ -157,7 +158,7 @@ def reset_local_session(store, old_entry, session_id, now, display_name):
         is_fresh_reset=True)
     db = store._db_for_key(old_entry.session_key)
     epochs = getattr(store, '_local_authority_epochs', None) or {}
-    epoch = epochs.get(Path(db.db_path).resolve(), store._local_authority_epoch) if db is not None else store._local_authority_epoch
+    epoch = epochs.get(session_store_key(db), store._local_authority_epoch) if db is not None else store._local_authority_epoch
     reset_local_target(db, epoch=epoch,
                        parent_session_id=old_entry.session_id, entry=entry.to_dict())
     store._entries[old_entry.session_key] = entry
@@ -167,7 +168,9 @@ def reset_local_session(store, old_entry, session_id, now, display_name):
 def recover_local_sessions(authority, *, schedule=False):
     with authority.db._read_ctx() as conn:
         ids = [row[0][len(POLICY_PREFIX):] for row in conn.execute(
-            'SELECT key FROM state_meta WHERE key LIKE ?', (POLICY_PREFIX + '%',))]
+            statement(sqlite='SELECT key FROM state_meta WHERE key LIKE ?',
+                      postgresql='SELECT key FROM state_meta WHERE key LIKE %s',
+                      connection=conn), (POLICY_PREFIX + '%',))]
     for sid in ids:
         try:
             ref = restore_local_session(authority, sid)

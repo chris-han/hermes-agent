@@ -10,6 +10,7 @@ import contextlib
 from dataclasses import asdict, dataclass, field
 from functools import partial
 import sqlite3
+from hermes_state_sql import statement
 import uuid
 
 from gateway.session_contract import (
@@ -23,6 +24,15 @@ from hermes_state_runtime import (
     cancel_session_input, claim_session_input, get_session_admission,
     list_session_admissions, recover_session_inputs, resolve_unknown_session_input,
 )
+
+# PostgreSQL is optional for explicitly local desktop stores.
+_STORAGE_OPERATIONAL_ERRORS = (OSError, sqlite3.OperationalError)
+try:
+    from psycopg import OperationalError as _PostgresOperationalError
+except ImportError:
+    pass
+else:
+    _STORAGE_OPERATIONAL_ERRORS += (_PostgresOperationalError,)
 
 # Capped backoff for a claim refused by transient storage (writer lock, full disk).
 _CLAIM_RETRY_MIN_S, _CLAIM_RETRY_MAX_S = 0.25, 5.0
@@ -121,7 +131,10 @@ class SessionAuthority:
             from hermes_state_local import POLICY_PREFIX
             with self.db._read_ctx() as conn:
                 from hermes_state_local_migration import LEGACY_PREFIX
-                local = conn.execute('SELECT 1 FROM state_meta WHERE key IN (?,?)',
+                local = conn.execute(statement(
+                    sqlite='SELECT 1 FROM state_meta WHERE key IN (?,?)',
+                    postgresql='SELECT 1 FROM state_meta WHERE key IN (%s,%s)',
+                    connection=conn),
                     (POLICY_PREFIX + ref.session_id, LEGACY_PREFIX + ref.session_id)).fetchone()
             if local or str(row.get('chat_id') or '').startswith('local-'):
                 from gateway.session_local_recovery import restore_local_session
@@ -442,8 +455,10 @@ class SessionAuthority:
             # The exact durable identity (authenticated principal + target + request id); the
             # attachment fields it yields still pass the full payload-digest comparison below.
             with self.db._read_ctx() as conn:
-                row = conn.execute('SELECT * FROM session_admissions WHERE principal_id=? AND '
-                                   'target_session_id=? AND request_id=?', (actor.subject,
+                row = conn.execute(statement(
+                    sqlite='SELECT * FROM session_admissions WHERE principal_id=? AND target_session_id=? AND request_id=?',
+                    postgresql='SELECT * FROM session_admissions WHERE principal_id=%s AND target_session_id=%s AND request_id=%s',
+                    connection=conn), (actor.subject,
                                    request.ref.session_id, request.request_id)).fetchone()
             from hermes_state_runtime import _row
             return _row(row) if row is not None else None
@@ -862,7 +877,7 @@ class SessionAuthority:
                 logging.getLogger(__name__).warning('Session %s paused: %s', ref.session_id, exc.reason)
                 self._pause(ref, exc.reason)
                 return None
-            except (OSError, sqlite3.OperationalError) as exc:
+            except _STORAGE_OPERATIONAL_ERRORS as exc:
                 # A writer held past its patience or a full disk is transient, and every _schedule
                 # caller is event-driven: a dead drain would strand the committed head and hang its
                 # waiters until the next submit. Retry in place (like recover_failed_settlement),
@@ -1046,7 +1061,8 @@ def backfill_legacy_session_owners(db):
     try:
         stamped = db.backfill_null_session_profiles(stamp)
     except Exception:
-        logging.getLogger(__name__).warning('Legacy session owner backfill failed for %s', db.db_path, exc_info=True)
+        from hermes_state_backend import session_store_key
+        logging.getLogger(__name__).warning('Legacy session owner backfill failed for %s', session_store_key(db), exc_info=True)
         return 0
     if stamped:
         logging.getLogger(__name__).info('Stamped %d legacy session row(s) with owner profile %r', stamped, stamp)
@@ -1063,8 +1079,8 @@ async def initialize_session_authority(runner, *, profile_id, instance_id, db=No
         db = getattr(runner._session_db, '_db', runner._session_db)
     # Resolved off-loop before any state is published: the rest of the bring-up runs without
     # yielding, so no other task observes a half-registered authority.
-    from pathlib import Path
-    db_key = await asyncio.to_thread(Path(db.db_path).resolve)
+    from hermes_state_backend import session_store_key
+    db_key = await asyncio.to_thread(session_store_key, db)
     epoch = await asyncio.to_thread(begin_runtime_epoch, db, instance_id=instance_id)
     # Hot-serve builds a profile while the loop serves the others: both writes stay off it.
     await asyncio.to_thread(recover_session_inputs, db, epoch=epoch)

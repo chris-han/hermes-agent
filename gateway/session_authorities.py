@@ -118,10 +118,11 @@ def served_profile_name(home) -> str:
 
 def authority_for_home(runner, home):
     """Explicit per-home lookup for callers that already know the routed home."""
+    from hermes_state_backend import session_store_home
     registry = getattr(runner, 'session_authorities', None)
     if registry is None:
         authority = getattr(runner, 'session_authority', None)
-        if authority is not None and Path(authority.db.db_path).resolve().parent == Path(home).resolve():
+        if authority is not None and session_store_home(authority.db) == Path(home).resolve():
             return authority
         return None
     return registry.for_home(home)

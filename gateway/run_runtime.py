@@ -37,13 +37,14 @@ async def _build_profile_authority(runner, name, home, *, register):
     """One profile's authority against its own ``state.db``; raises when that store is unusable."""
     from gateway.run import _profile_runtime_scope
     from gateway.session_authority import initialize_session_authority
+    from hermes_state_backend import session_store_home
     registry = runner.session_authorities
     instance_id = runner.session_runtime_descriptor['instance_id']
     # Each home's store resolves through the runner's scope-following handle cache, exactly
     # the handle every later scoped read of that profile uses (one writer per state.db).
     with _profile_runtime_scope(home, hydrate_secrets=False):
         db = getattr(runner._session_db, '_db', runner._session_db)
-        if db is None or (await asyncio.to_thread(Path(db.db_path).resolve)).parent != home:
+        if db is None or await asyncio.to_thread(session_store_home, db) != home:
             raise RuntimeError(f'session authority database does not belong to the reserved profile {home}')
         registry.add(home, None, name=name)
         try:

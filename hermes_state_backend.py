@@ -14,6 +14,32 @@ def postgres_enabled():
     return backend=='postgresql'
 
 
+def session_store_key(db):
+    """Stable owning-store key: a native scope tuple or the actual SQLite path."""
+    identity = getattr(db, 'storage_identity', None)
+    if identity is not None:
+        if (not isinstance(identity, tuple) or len(identity) != 4
+                or identity[0] != 'postgresql'
+                or any(not isinstance(part, str) or not part for part in identity)):
+            raise ValueError('Invalid native PostgreSQL storage identity')
+        return identity
+    path = getattr(db, 'db_path', None)
+    if not isinstance(path, (str, os.PathLike)):
+        raise ValueError('Session store has no supported storage identity')
+    return Path(path).expanduser().resolve()
+
+
+def session_store_home(db):
+    """Actual profile home; database locators never supply a hosted filesystem path."""
+    key = session_store_key(db)
+    if isinstance(key, tuple):
+        home = getattr(db, 'home', None)
+        if not isinstance(home, (str, os.PathLike)):
+            raise ValueError('Native PostgreSQL session store has no profile home')
+        return Path(home).expanduser().resolve()
+    return key.parent
+
+
 def resolve_postgres_scope(home):
     """Resolve a frozen migration mapping or the core-governed signup registry.
 
