@@ -7,11 +7,12 @@ Compression and reset may later advance the physical target, never FIFO identity
 """
 from dataclasses import asdict, replace
 from datetime import datetime
-from pathlib import Path
 
 from gateway.config import Platform
 from gateway.session import SessionEntry, SessionSource
 from gateway.session_contract import SessionRef
+from hermes_state_sql import statement
+from hermes_state_backend import session_store_home
 from hermes_state_runtime import RuntimeStoreError
 
 
@@ -33,10 +34,12 @@ def unbind_native_transport(authority, actor):
 def require_history_claim(authority, conn, actor, sid):
     """Import receipts confer ownership; merely knowing an old ID does not."""
     from hermes_state_mutation_binding import BINDING_PREFIX
-    row = conn.execute('SELECT session_key,chat_id,origin_json FROM sessions WHERE id=?', (sid,)).fetchone()
+    row = conn.execute(statement(sqlite='SELECT session_key,chat_id,origin_json FROM sessions WHERE id=?',
+                    postgresql='SELECT session_key,chat_id,origin_json FROM sessions WHERE id=%s', connection=conn), (sid,)).fetchone()
     if row is None or any(row):
         return
-    if conn.execute('SELECT 1 FROM state_meta WHERE key=?', (BINDING_PREFIX + sid,)).fetchone():
+    if conn.execute(statement(sqlite='SELECT 1 FROM state_meta WHERE key=?',
+                    postgresql='SELECT 1 FROM state_meta WHERE key=%s', connection=conn), (BINDING_PREFIX + sid,)).fetchone():
         return  # authorize_history checks the already committed importer identity.
     if getattr(authority, '_native_legacy_transports', {}).get(actor.transport_id) != actor:
         raise RuntimeStoreError('permission_denied')
@@ -51,7 +54,8 @@ def resolve_local_target(authority, actor, sid):
     from hermes_state_local import POLICY_PREFIX
     with db._read_ctx() as conn:
         from hermes_state_local_migration import LEGACY_PREFIX
-        bound = conn.execute('SELECT 1 FROM state_meta WHERE key IN (?,?)',
+        bound = conn.execute(statement(sqlite='SELECT 1 FROM state_meta WHERE key IN (?,?)',
+                    postgresql='SELECT 1 FROM state_meta WHERE key IN (%s,%s)', connection=conn),
             (POLICY_PREFIX + (row.get('chat_id') or sid), LEGACY_PREFIX + (row.get('chat_id') or sid))).fetchone()
     if bound or str(row.get('chat_id') or '').startswith('local-'):
         ref = SessionRef(authority.profile_id, row['chat_id'])
@@ -98,7 +102,7 @@ def adopt_legacy_session(authority, actor, row):
                'legacy_session_id': row['id'], 'lineage': [row['id']]}
     try:
         # Same lock order as old Bot Chat: mailbox (if any), liveness, SQLite.
-        with active_session_liveness_guard(row['id'], registry_home=Path(authority.db.db_path).parent) as active:
+        with active_session_liveness_guard(row['id'], registry_home=session_store_home(authority.db)) as active:
             if active:
                 raise RuntimeStoreError('runtime_coordination_required')
             commit_local_session(authority.db, epoch=authority.epoch, receipt=receipt)

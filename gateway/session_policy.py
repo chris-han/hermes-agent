@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 
+from hermes_state_backend import session_store_home
 from hermes_state_runtime import RuntimeStoreError
 
 CREATE_FIELDS = frozenset({'request_id', 'source', 'cwd', 'model', 'toolsets',
@@ -121,7 +122,7 @@ class LocalSessionPolicy:
         if held is not None and held[0] == self:
             return held[1]
         from gateway.run import _load_gateway_config
-        return present_sections(_load_gateway_config(Path(authority.db.db_path).resolve().parent / 'config.yaml'))
+        return present_sections(_load_gateway_config(session_store_home(authority.db) / 'config.yaml'))
 
     def current_toolsets(self, config):
         """The next turn's toolsets from its resolved *config*: a following session without an explicit

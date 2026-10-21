@@ -13,6 +13,8 @@ from agent.turn_author import parse_turn_author
 from gateway.session_contract import Principal, SessionRef
 from gateway.config import Platform
 from gateway.platforms.event import MessageEvent
+from hermes_state_sql import statement
+from hermes_state_backend import session_store_home
 from hermes_state_runtime import RuntimeStoreError, get_session_admission
 from tools.bot_live_delivery import _delivery_id, _read
 from gateway.session_bot_mailbox import (mailbox_lock, read_receipt, write_receipt,
@@ -76,7 +78,7 @@ def _scan_records(root):
 
 def _home(authority, actor, profile):
     from gateway.session_authorities import served_profile_name
-    home = Path(authority.db.db_path).parent.resolve()
+    home = session_store_home(authority.db)
     name = served_profile_name(home)
     if actor.profile_id != authority.profile_id or profile not in (name, 'hermes' if name == 'default' else name):
         raise RuntimeStoreError('profile_mismatch')
@@ -184,7 +186,8 @@ def _retry_admission(authority, record):
     """The delivery's one retry admission id, read from the FIFO by its derived identity, so every
     reader (an in-memory record, the receipt file, an owner restart) follows the same retry."""
     with authority.db._read_ctx() as conn:
-        row = conn.execute('SELECT admission_id FROM session_admissions WHERE target_session_id=? AND request_id=?',
+        row = conn.execute(statement(sqlite='SELECT admission_id FROM session_admissions WHERE target_session_id=? AND request_id=?',
+                    postgresql='SELECT admission_id FROM session_admissions WHERE target_session_id=%s AND request_id=%s', connection=conn),
                            (record['session_id'], _retry_identity(record['delivery_id']))).fetchone()
     return row[0] if row else None
 
@@ -367,7 +370,7 @@ def relay_operation(connection, operation, params):
     authority, actor = connection.authority, connection.actor
     from gateway.session_authorities import require_serving, served_profile_name
     require_serving(authority)  # the outbox/roster/replies belong to the home's next owner
-    home = Path(authority.db.db_path).parent.resolve()
+    home = session_store_home(authority.db)
     name = served_profile_name(home)
     _home(authority, actor, name)
     if 'session:control' not in actor.capabilities:
@@ -417,7 +420,7 @@ async def _migrate(authority, actor, home, root):
 
 async def recover_bot_deliveries(authority):
     """Rebuild derivative replies and queued legacy admissions at owner startup."""
-    home = Path(authority.db.db_path).parent.resolve()
+    home = session_store_home(authority.db)
     async with mailbox_lock(authority):
         root, records = await scan_receipts(home)
         for path, record in records:
@@ -439,7 +442,8 @@ async def recover_bot_deliveries(authority):
             return
         from hermes_state_local import POLICY_PREFIX
         with authority.db._read_ctx() as conn:
-            bound = conn.execute('SELECT 1 FROM state_meta WHERE key=?',
+            bound = conn.execute(statement(sqlite='SELECT 1 FROM state_meta WHERE key=?',
+                    postgresql='SELECT 1 FROM state_meta WHERE key=%s', connection=conn),
                 (POLICY_PREFIX + (target.get('chat_id') or target['id']),)).fetchone()
         if not bound:
             return  # Unowned history requires a native ticket, never the first remote sender.

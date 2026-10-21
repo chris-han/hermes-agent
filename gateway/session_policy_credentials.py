@@ -3,9 +3,9 @@ import hashlib
 import hmac
 import json
 from dataclasses import asdict
-from pathlib import Path
 
 from agent.credential_persistence import fingerprint_secret_value
+from hermes_state_backend import session_store_home
 from hermes_state_runtime import RuntimeStoreError
 
 PREFIX = 'profile-config-v1:'
@@ -25,7 +25,7 @@ def _fingerprint(value):
 
 
 def config_reference(authority, session_id, policy, secrets):
-    home = Path(authority.db.db_path).resolve().parent
+    home = session_store_home(authority.db)
     return PREFIX + json.dumps({'home': str(home), 'profile': authority.profile_id,
         'session': session_id, 'policy': policy_identity(policy),
         'entries': [[list(path), _fingerprint(value)] for path, value in secrets.items()]},
@@ -47,7 +47,7 @@ def recover_config_secrets(authority, policy, skip=None):
         return {path: value for path, value in values.items() if path[0] not in skip}
     try:
         source = json.loads(ref[len(PREFIX):])
-        home = Path(authority.db.db_path).resolve().parent
+        home = session_store_home(authority.db)
         if (source['home'] != str(home) or source['profile'] != authority.profile_id
                 or source['policy'] != policy_identity(policy)):
             raise ValueError('scope mismatch')
