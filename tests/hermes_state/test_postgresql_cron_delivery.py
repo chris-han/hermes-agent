@@ -182,3 +182,41 @@ def test_completed_cron_occurrence_and_tool_message_anchor_use_actual_pg_owner(t
         assert not list(home.rglob('*.db'))
     finally:
         reset_hermes_home_override(token)
+
+
+def test_selected_gateway_watcher_hashes_native_rows_without_sqlite_files(tmp_path,pg_settings,monkeypatch):
+    import sqlite3
+    from hermes_state_postgresql import SessionScope,provision_scope
+    from hermes_state_backend import open_session_db
+    from tui_gateway import server
+    homes=[tmp_path/'one',tmp_path/'two'];scopes=[SessionScope('tenant'+str(i),'workspace',str(uuid4())) for i in range(2)]
+    for scope in scopes:provision_scope(pg_settings['semantier_migrate'],scope,app_role='semantier_app')
+    monkeypatch.setenv('HERMES_STATE_BACKEND','postgresql');monkeypatch.setenv('HERMES_DATABASE_URL',pg_settings['semantier_app'])
+    monkeypatch.setenv('HERMES_STATE_SCOPE_MAP',json.dumps({str(home):dict(zip(('tenant_id','workspace_id','source_store_id'),scope.identity)) for home,scope in zip(homes,scopes)}))
+    monkeypatch.setattr(sqlite3,'connect',lambda *a,**k:pytest.fail('watcher opened SQLite'))
+    monkeypatch.setattr(server,'_watcher_home',lambda:homes[0]);monkeypatch.setattr(server,'_served_profile_homes',[homes[1]])
+    for i,home in enumerate(homes):
+        with open_session_db(home=home) as db:db.create_session('same','cli',title='one'+str(i))
+    before=server._sessions_sig()
+    assert before[0] is not None and before[1] is not None and before[0]!=before[1]
+    broadcasts=[]
+    monkeypatch.setattr(server,'_CHANGE_WATCHES',{'sessions.changed':(0.5,server._sessions_sig,dict)})
+    monkeypatch.setattr(server,'_change_sigs',{})
+    monkeypatch.setattr(server,'_change_checked_at',{})
+    monkeypatch.setattr(server,'_change_broadcast_at',{})
+    monkeypatch.setattr(server,'_broadcast_global_event',lambda name,payload:broadcasts.append((name,payload)))
+    server._broadcast_watched_changes(now=0)
+    assert broadcasts==[]
+    with open_session_db(home=homes[0]) as db:
+        db.set_session_title('same','changed')
+        changed=server._sessions_sig()
+        assert changed[0]!=before[0] and changed[1]==before[1]
+        server._broadcast_watched_changes(now=3)
+        assert broadcasts==[('sessions.changed',{})]
+        db.touch_session_activity('same',last_activity_description='heartbeat')
+        assert server._sessions_sig()==changed
+        server._broadcast_watched_changes(now=6)
+        assert broadcasts==[('sessions.changed',{})]
+    assert not any(home.exists() and list(home.rglob('*.db')) for home in homes)
+    with pytest.raises(ValueError,match='mapping required'):
+        server._session_db_content_sig(tmp_path/'unmapped'/'state.db')

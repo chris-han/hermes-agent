@@ -197,6 +197,25 @@ def _session_db_content_sig(db_path: Path):
     sessions columns that drive Desktop projections. Legacy stores safely use
     the subset of columns they have.
     """
+    from hermes_state_backend import postgres_enabled
+    if postgres_enabled():
+        # The gateway WS starts this watcher for canonical native authorities too.
+        # Filesystem mtimes cannot observe committed rows in a shared PG store.
+        from contextlib import closing
+        import hashlib
+        from psycopg import sql
+        from hermes_state_sql import connect_postgres
+        with closing(connect_postgres(Path(db_path).parent, read_only=True)) as conn:
+            fields = _SESSION_SIGNATURE_FIELDS
+            rows = conn.execute(sql.SQL('SELECT {} FROM {} ORDER BY id').format(
+                sql.SQL(',').join(map(sql.Identifier, fields)),
+                sql.Identifier(conn.hermes_scope.schema, 'sessions')))
+            digest = hashlib.blake2b(digest_size=16)
+            digest.update(repr(conn.hermes_scope.identity).encode('utf-8'))
+            for row in rows:
+                digest.update(repr(tuple(row)).encode('utf-8', 'backslashreplace'))
+                digest.update(b'\0')
+            return (fields, digest.digest())
     mtime = _newest_mtime_ns((db_path, db_path.with_name(f"{db_path.name}-wal")))
     cache_key = str(db_path)
     cached = _sessions_db_sig_cache.get(cache_key)
