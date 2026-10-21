@@ -1,6 +1,10 @@
 """Platform custody stays outside real customer tool children, with fake secrets only."""
 
+import json
 import os
+import shlex
+import shutil
+import sys
 
 import pytest
 
@@ -37,7 +41,8 @@ def platform_names(child_env, monkeypatch):
     return names
 
 
-@pytest.mark.parametrize('surface', ['foreground', 'background', 'nonterminal', 'served', 'python', 'managed'])
+@pytest.mark.parametrize('surface', [
+    'foreground', 'background', 'nonterminal', 'served', 'served_base', 'factory_no_scrub', 'python', 'managed'])
 def test_customer_children_cannot_inherit_platform_authority(child_env, platform_names, surface):
     names = [*platform_names, 'MY_APP_KEY', 'MY_CUSTOM_VAR']
     extras = {name: 'fake-override' for name in platform_names}
@@ -64,6 +69,12 @@ def test_customer_children_cannot_inherit_platform_authority(child_env, platform
             observed = observe_child(local.served_profile_child_env(inherit_credentials=True), names)
         finally:
             reset_secret_scope(token)
+    elif surface in {'served_base', 'factory_no_scrub'}:
+        supplied = {**os.environ, **extras}
+        env = (local.served_profile_child_env(base=supplied) if surface == 'served_base'
+               else local.build_subprocess_env(base=supplied, scrub_secrets=False))
+        observed = observe_child(env, names)
+        assert not any(name.removeprefix('_HERMES_FORCE_') in platform_names for name in env)
     else:
         env = (local._sanitize_subprocess_env(dict(os.environ), extras) if surface == 'background'
                else local.hermes_subprocess_env(base_env={**os.environ, **extras}, inherit_credentials=True))
@@ -127,3 +138,49 @@ def test_explicit_docker_env_cannot_restore_platform_names(child_env, platform_n
                                'MY_APP_KEY': 'workspace-byok', 'MY_CUSTOM_VAR': 'workspace-value'})
     assert env == {'MY_APP_KEY': 'workspace-byok', 'MY_CUSTOM_VAR': 'workspace-value'}
     assert observe_child(env, platform_names) == dict.fromkeys(platform_names)
+
+
+@pytest.mark.parametrize('overrides', [False, True])
+def test_transport_client_child_never_inherits_platform_custody(child_env, platform_names, overrides):
+    from tools.environments.remote_common import client_env_with
+    extras = dict.fromkeys(platform_names, 'fake-client-override') if overrides else {}
+    env = client_env_with(extras)
+    observed = observe_child(env, [*platform_names, 'MY_APP_KEY'])
+    assert {name: observed[name] for name in platform_names} == dict.fromkeys(platform_names)
+    assert observed['MY_APP_KEY'] == 'workspace-byok'
+
+
+def test_real_ssh_proxycommand_never_receives_platform_custody(child_env, platform_names, monkeypatch):
+    from tools.environments.remote_common import run_capture
+    ssh = shutil.which('ssh')
+    if ssh is None:
+        pytest.skip('OpenSSH client is not installed')
+    monkeypatch.setenv('SSH_AUTH_SOCK', str(child_env / 'fake-agent.sock'))
+    observed_path = child_env / 'proxy-observed.json'
+    names = [*platform_names, 'SSH_AUTH_SOCK', 'MY_APP_KEY']
+    code = ('import json,os;from pathlib import Path;Path(' + repr(str(observed_path))
+            + ').write_text(json.dumps({k:k in os.environ for k in ' + repr(names) + '}))')
+    config = child_env / 'ssh-test-config'
+    config.write_text('Host fixture\n HostName 127.0.0.1\n BatchMode yes\n'
+                      ' ProxyCommand ' + shlex.join([sys.executable, '-c', code]) + '\n')
+    # OpenSSH starts only the local ProxyCommand pipe, which exits without a
+    # protocol banner or a socket connection. No remote SSH/provider is contacted.
+    result = run_capture([ssh, '-F', str(config), 'fixture'], timeout=10)
+    assert result.returncode != 0
+    observed = json.loads(observed_path.read_text())
+    assert {name: observed[name] for name in platform_names} == dict.fromkeys(platform_names, False)
+    assert observed['SSH_AUTH_SOCK'] and observed['MY_APP_KEY']
+
+
+@pytest.mark.parametrize('explicit', [False, True])
+def test_common_popen_child_excludes_custody_even_with_explicit_env(child_env, platform_names, explicit):
+    from tools.environments.base_output import _popen_bash
+    names = [*platform_names, 'MY_APP_KEY']
+    code = 'import json,os; print(json.dumps({k:os.environ.get(k) for k in ' + repr(names) + '}))'
+    kwargs = {'env': dict(os.environ)} if explicit else {}
+    proc = _popen_bash([sys.executable, '-c', code], **kwargs)
+    output, _ = proc.communicate(timeout=30)
+    assert proc.returncode == 0
+    observed = json.loads(output)
+    assert {name: observed[name] for name in platform_names} == dict.fromkeys(platform_names)
+    assert observed['MY_APP_KEY'] == 'workspace-byok'

@@ -211,10 +211,10 @@ class SSHEnvironment(BaseEnvironment):
             # existing dirs (e.g. /home/<user>); a umask-002 0775 home breaks sshd StrictModes.
             ssh_cmd = self._build_ssh_command() + [f"tar xf - --no-overwrite-dir -C {shlex.quote(base)}"]
             tar_proc = subprocess.Popen(["tar", "-chf", "-", "-C", staging, "."], stdin=subprocess.DEVNULL,
-                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=client_env_with({}))
             try:
                 ssh_proc = subprocess.Popen(ssh_cmd, stdin=tar_proc.stdout,
-                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=client_env_with({}))
             except Exception:
                 tar_proc.kill()
                 tar_proc.wait()
@@ -255,7 +255,8 @@ class SSHEnvironment(BaseEnvironment):
         ssh_cmd = self._build_ssh_command() + [
             f"tar cf - --exclude='*.sock' -C / {shlex.quote(rel_base)}"]
         with open(dest, "wb") as f:
-            result = subprocess.run(ssh_cmd, stdin=subprocess.DEVNULL, stdout=f, stderr=subprocess.PIPE, timeout=120, check=False)
+            result = subprocess.run(ssh_cmd, stdin=subprocess.DEVNULL, stdout=f, stderr=subprocess.PIPE,
+                                    timeout=120, check=False, env=client_env_with({}))
         if result.returncode != 0:
             stderr = result.stderr.decode(errors="replace").strip()
             # A socket not named *.sock is the only rc=2 we knowingly accept, and only when
@@ -286,7 +287,7 @@ class SSHEnvironment(BaseEnvironment):
         values, unset_names = resolve_passthrough_env(hermes_env_loader=_load_hermes_env_vars)
         cmd = self._build_ssh_command(send_env=values) + bash_argv(shlex.quote(prepend_unset(cmd_string, unset_names)), login)
         client_env = client_env_with(values)
-        return _popen_bash(cmd, stdin_data, env=client_env) if client_env is not None else _popen_bash(cmd, stdin_data)
+        return _popen_bash(cmd, stdin_data, env=client_env)
 
     def cleanup(self):
         if self._sync_manager:
@@ -297,6 +298,7 @@ class SSHEnvironment(BaseEnvironment):
                 continue
             with contextlib.suppress(OSError, subprocess.SubprocessError):
                 cmd = ["ssh", "-o", f"ControlPath={socket}", "-O", "exit", f"{self.user}@{self.host}"]
-                subprocess.run(cmd, capture_output=True, timeout=5, stdin=subprocess.DEVNULL, check=False)
+                subprocess.run(cmd, capture_output=True, timeout=5, stdin=subprocess.DEVNULL,
+                               check=False, env=client_env_with({}))
             with contextlib.suppress(OSError):
                 socket.unlink()

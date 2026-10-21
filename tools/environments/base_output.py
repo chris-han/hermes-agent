@@ -252,6 +252,9 @@ def _popen_bash(cmd: list[str], stdin_data: str | None = None, **kwargs) -> subp
     """Spawn a subprocess with standard stdout/stderr/stdin setup; *stdin_data* is written
     asynchronously via :func:`_pipe_stdin`. Backends with special Popen needs (e.g. local's
     ``preexec_fn``) can bypass this and call :func:`_pipe_stdin` directly."""
+    from tools.environments.local_env_policy import strip_platform_secrets
+    source_env = kwargs.get("env")
+    kwargs["env"] = strip_platform_secrets(dict(os.environ) if source_env is None else source_env)
     kwargs.setdefault("creationflags", windows_hide_flags())
     proc = subprocess.Popen(
         cmd,

@@ -119,13 +119,20 @@ class TestBuildSSHCommand:
         assert "https://next.example" not in remote_text and "from-dotenv" not in remote_text
         assert "sk-must-not-forward" not in remote_text
 
-    def test_run_bash_without_passthrough_inherits_env_unchanged(self, monkeypatch):
+    def test_run_bash_without_passthrough_keeps_operator_env_but_not_platform_custody(self, monkeypatch):
         from tools import env_passthrough
 
         monkeypatch.setattr(env_passthrough, "get_all_passthrough", lambda: frozenset())
+        monkeypatch.setenv("SEMANTIER_SESSION_SECRET", "fake-platform-only")
+        monkeypatch.setenv("SSH_AUTH_SOCK", "/fake/operator-agent.sock")
+        monkeypatch.setenv("MY_BYOK", "fake-workspace-key")
         captured = self._capture_run_bash(monkeypatch, SSHEnvironment(host="h", user="u"))
         assert not any(a.startswith("SendEnv=") for a in captured["cmd"])
-        assert captured["env"] is None
+        projected_names = set(captured["env"])
+        assert "SEMANTIER_SESSION_SECRET" not in projected_names
+        assert "PATH" in projected_names
+        observed_operator = {key: captured["env"].get(key) for key in ("SSH_AUTH_SOCK", "MY_BYOK")}
+        assert observed_operator == {"SSH_AUTH_SOCK": "/fake/operator-agent.sock", "MY_BYOK": "fake-workspace-key"}
 
 
 class TestControlSocketPath:

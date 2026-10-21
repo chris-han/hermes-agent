@@ -9,7 +9,7 @@ from typing import Callable, Iterable
 
 from tools.environments.base_session_env import _SHELL_ENV_NAME_RE
 from tools.environments.local_env_policy import (
-    _is_hermes_internal_secret, _is_platform_secret, _is_provider_env_blocklisted)
+    _is_hermes_internal_secret, _is_platform_secret, _is_provider_env_blocklisted, strip_platform_secrets)
 
 
 def load_hermes_env_vars() -> dict[str, str]:
@@ -70,10 +70,11 @@ def prepend_unset(cmd_string: str, names: Iterable[str]) -> str:
     return f"unset {' '.join(shlex.quote(n) for n in names)} 2>/dev/null || true\n{cmd_string}"
 
 
-def client_env_with(values: dict[str, str]) -> dict[str, str] | None:
+def client_env_with(values: dict[str, str]) -> dict[str, str]:
     """Env for the docker/ssh CLIENT subprocess: forwarded values travel here (owner-readable
-    /proc/*/environ) while the argv carries names only; ``None`` = inherit when nothing to add."""
-    return {**os.environ, **values} if values else None
+    /proc/*/environ) while the argv carries names only. Transport clients and their
+    local helpers must never inherit platform custody, including with no additions."""
+    return strip_platform_secrets({**os.environ, **values})
 
 
 def run_capture(cmd: list[str], *, timeout: float, check: bool = False, env: dict | None = None,
@@ -82,7 +83,8 @@ def run_capture(cmd: list[str], *, timeout: float, check: bool = False, env: dic
     decoding and stdin closed (DEVNULL) so a CLI that unexpectedly prompts cannot hang the agent."""
     return subprocess.run(
         cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
-        timeout=timeout, check=check, stdin=subprocess.DEVNULL, env=env)
+        timeout=timeout, check=check, stdin=subprocess.DEVNULL,
+        env=strip_platform_secrets(dict(os.environ) if env is None else env))
 
 
 def bash_argv(cmd_string: str, login: bool = False) -> list[str]:

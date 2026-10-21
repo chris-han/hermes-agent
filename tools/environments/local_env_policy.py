@@ -37,7 +37,12 @@ protect_platform_secret_names(os.environ)
 
 
 def _is_platform_secret(key: str) -> bool:
-    return key.upper() in _PLATFORM_SECRET_NAMES
+    return key.upper().removeprefix("_HERMES_FORCE_") in _PLATFORM_SECRET_NAMES
+
+
+def strip_platform_secrets(env: dict) -> dict:
+    """Platform custody is denied even when a caller opts into profile credentials."""
+    return {k: v for k, v in env.items() if not _is_platform_secret(k)}
 
 
 def postgres_worker_env(env: dict) -> dict:
@@ -46,8 +51,7 @@ def postgres_worker_env(env: dict) -> dict:
     Drop custody even on an otherwise unsanitized launch-profile worker. Only
     these two PG connection names are restored at the cron/Kanban grant boundary.
     """
-    result = {k: v for k, v in env.items()
-              if not _is_platform_secret(k.removeprefix(_HERMES_PROVIDER_ENV_FORCE_PREFIX))}
+    result = strip_platform_secrets(env)
     if (os.environ.get("HERMES_STATE_BACKEND") == "postgresql"
             or os.environ.get("SEMANTIER_STORAGE_BACKEND") == "postgresql"):
         for key in ("HERMES_DATABASE_URL", "SEMANTIER_DATABASE_URL", "HERMES_STATE_BACKEND",

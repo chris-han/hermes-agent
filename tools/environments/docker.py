@@ -1025,21 +1025,20 @@ class DockerEnvironment(BaseEnvironment):
             logger.warning("docker run failed for %s, cleaning up orphaned container: %s", container_name, e)
             subprocess.run(
                 [self._docker_exe, "rm", "-f", container_name],
-                capture_output=True, timeout=10, stdin=subprocess.DEVNULL, check=False)
+                capture_output=True, timeout=10, stdin=subprocess.DEVNULL, check=False, env=client_env_with({}))
             raise
         container_id = result.stdout.strip()
         logger.info("Started container %s (%s)", container_name, container_id[:12])
         return container_id
 
     # --- Env forwarding ---
-    def _docker_client_env(self, values: dict[str, str]) -> dict[str, str] | None:
+    def _docker_client_env(self, values: dict[str, str]) -> dict[str, str]:
         """Env for the docker-client subprocess carrying forwarded values (pairs with name-only
-        ``-e KEY`` flags to keep secrets out of cmdline); ``None`` = inherit when empty.
+        ``-e KEY`` flags to keep secrets out of cmdline). Platform custody is always excluded.
 
         Name-only ``-e KEY`` flags make the docker CLI read each value from its own process environment,
         keeping secrets out of the client's world-readable ``/proc/<pid>/cmdline`` (issue #96268). Values
-        live in ``/proc/<pid>/environ`` instead, which is owner/root-only. Returns ``None`` (inherit as
-        before) when there is nothing to add.
+        live in ``/proc/<pid>/environ`` instead, which is owner/root-only.
         """
         return client_env_with(values)
 
@@ -1098,7 +1097,7 @@ class DockerEnvironment(BaseEnvironment):
         cmd += [self._container_id, *bash_argv(prepend_unset(cmd_string, unset_names), login)]
 
         client_env = self._docker_client_env(env_values)
-        return _popen_bash(cmd, stdin_data, env=client_env) if client_env is not None else _popen_bash(cmd, stdin_data)
+        return _popen_bash(cmd, stdin_data, env=client_env)
 
     # --- "No such container" recovery ---
     _NO_CONTAINER_PATTERNS = ("No such container", "is not running", "no such container")
@@ -1188,7 +1187,8 @@ class DockerEnvironment(BaseEnvironment):
                 _storage_opt_ok = True
                 if probe.stdout.strip():
                     subprocess.run([docker, "rm", probe.stdout.strip()],
-                                   capture_output=True, timeout=5, stdin=subprocess.DEVNULL, check=False)
+                                   capture_output=True, timeout=5, stdin=subprocess.DEVNULL,
+                                   check=False, env=client_env_with({}))
             elif "storage" in (probe.stderr or "").lower():
                 _storage_opt_ok = False  # daemon rejected --storage-opt: a host property
             # else: pull/daemon failure unrelated to storage-opt; not cached, retried next spawn
@@ -1291,7 +1291,8 @@ class DockerEnvironment(BaseEnvironment):
                 try:
                     subprocess.run(
                         [docker_exe, *argv, container_id],
-                        capture_output=True, timeout=30, stdin=subprocess.DEVNULL, check=False)
+                        capture_output=True, timeout=30, stdin=subprocess.DEVNULL,
+                        check=False, env=client_env_with({}))
                 except (subprocess.TimeoutExpired, OSError) as e:
                     logger.warning(fail_msg, log_id, e)
 
