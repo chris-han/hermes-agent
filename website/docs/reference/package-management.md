@@ -89,6 +89,14 @@ A packaged application's base payload is immutable. Hermes runs its backend
 from that payload, rather than copying a source checkout on first launch.
 The bundle builder checks its files and writes the launch paths into the desktop
 build stamp. Electron uses those paths without probing or repairing the payload.
+Windows packages carry the complete lock-scoped offline UV cache as
+`uv-cache/seed.zip`. Normal startup keeps using the shipped environment without
+extracting that seed. When PM creates or rebuilds an environment, it expands the
+seed into the shared writable machine cache, then records completion for the
+lock. Files publish atomically; interrupted seeds retry. Older loose-cache
+payloads remain readable. The archive changes storage layout, not offline
+repair, available extras, or tool support.
+
 Additional pinned tools can use the writable tool store. Python additions use
 a complete writable environment outside the signed package. Its first generation
 retains the shipped extras along with the new requirements. Later generations

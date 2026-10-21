@@ -118,3 +118,23 @@ test.runIf(process.platform === 'win32')('afterPack reuses content admission whi
     fs.rmSync(cacheOwner,{recursive:true,force:true})
   }
 })
+
+
+test.runIf(process.platform === 'win32')('afterPack archives only sanitized offline cache bytes', () => {
+  const f = fixture()
+  try {
+    const seed = path.join(f.payload, 'uv-cache')
+    fs.mkdirSync(seed)
+    fs.copyFileSync(f.binary, path.join(seed, 'offline.dll'))
+    const result = f.run()
+    assert.equal(result.status, 0, result.stdout + result.stderr)
+    assert.deepEqual(fs.readdirSync(seed), ['seed.zip'])
+    const bytes = execFileSync(python, ['-c',
+      'import zipfile,sys; sys.stdout.buffer.write(zipfile.ZipFile(sys.argv[1]).read("offline.dll"))',
+      path.join(seed, 'seed.zip')], { env: f.env })
+    assert.equal(bytes.readUInt32LE(296), 0)
+    assert.equal(bytes.readUInt32LE(300), 0)
+  } finally {
+    fs.rmSync(f.directory, { recursive: true, force: true })
+  }
+})

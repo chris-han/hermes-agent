@@ -81,6 +81,46 @@ def stage_uv_cache(source: Path, destination: Path) -> None:
     shutil.copytree(source, destination, ignore=ignore)
 
 
+
+def compact_uv_cache(cache: Path) -> None:
+    """Collapse a staged cache's Windows filesystem entries, keeping every wheel.
+
+    Only the owned staging copy is replaced. Verify the completed archive before
+    removing loose entries; build-host caches and non-Windows seeds stay intact.
+    """
+    import zipfile
+    from pm.filesystem import is_junction, remove_tree
+
+    archive = cache / "seed.zip"
+    temporary = cache / ".seed.zip.tmp"
+    if archive.exists() or temporary.exists():
+        raise ValueError("cache archive already exists")
+    try:
+        with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_DEFLATED,
+                             compresslevel=6, strict_timestamps=False) as output:
+            for directory, dirs, files in os.walk(cache):
+                for name in sorted(dirs + files):
+                    entry = Path(directory) / name
+                    if entry == temporary:
+                        continue
+                    if entry.is_symlink() or is_junction(entry):
+                        raise ValueError(f"linked staged cache entry: {entry}")
+                    output.write(entry, entry.relative_to(cache).as_posix())
+        with zipfile.ZipFile(temporary) as output:
+            bad = output.testzip()
+            if bad:
+                raise ValueError(f"cache archive integrity failed: {bad}")
+        temporary.replace(archive)
+        for entry in cache.iterdir():
+            if entry != archive:
+                if entry.is_dir():
+                    remove_tree(entry)
+                else:
+                    entry.unlink()
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def stage_pm_runtime(root: Path, python: Path, repo: Path, *, offline: bool = False,
                      cache: Path | None = None) -> None:
     """Publish the same PM dependency graph as source installs, ready offline."""
@@ -280,8 +320,8 @@ def _prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
     facts.record_state("venv", Venv(repo_dir).expected_stamp(features, plugin_dirs=[]), features)
     print(f"✓ enabled-features.json ({len(features)} extras recorded)")
 
-    # Ship the full uv cache (build-only sdist sources and wheel ZIPs are
-    # already excluded by stage_uv_cache). Any per-install venv rebuild —
+    # Ship the complete lock-scoped offline cache (only sdist source
+    # trees are excluded; built wheel ZIPs remain). Any per-install venv rebuild —
     # plugin extras, feature changes — resolves entirely from the shipped
     # wheels with zero network access, on every profile of this install.
     payload_cache = out / "uv-cache"

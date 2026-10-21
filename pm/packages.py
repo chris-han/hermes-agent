@@ -330,7 +330,8 @@ def uv_cache_dir() -> Path:
     """The hermes-owned uv cache: machine-scoped and shared (keyed by
     content — two profiles reuse one cache), anchored to the DEFAULT
     hermes root like partials_root(). A bundle ships a seeded copy at
-    the payload root (uv-cache/); the first call under each uv.lock
+    the payload root (uv-cache/, a compact seed.zip on Windows);
+    the first call under each uv.lock
     merges it into the writable machine cache (the read-only payload
     can't serve uv's working cache), and a warm `uv sync --offline`
     from it is near-free (probed: 0.4s vs 1.2s cold) — the blow-away-
@@ -368,8 +369,12 @@ def uv_cache_dir() -> Path:
             if payload_cache.is_dir():
                 seeded = long_root(machine_cache)
                 seeded.mkdir(parents=True, exist_ok=True)
+                archive = payload_cache / "seed.zip"
+                if archive.is_file():
+                    from pm.uv_cache_seed import seed_archive
+                    seed_archive(archive, seeded)
                 for entry in payload_cache.iterdir():
-                    if entry.name == ".seeded":
+                    if entry.name in {".seeded", "seed.zip"}:
                         continue
                     dest = seeded / entry.name
                     # Merge into whatever an earlier failed or killed seed left: skipping

@@ -175,10 +175,18 @@ def _relativize_bin_links(root: Path, directory: Path) -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["relocate", "rehash"])
+    parser.add_argument("action", choices=["relocate", "rehash", "compact-cache"])
     parser.add_argument("payload", type=Path)
     args = parser.parse_args()
-    if args.action == "rehash":
+    if args.action == "compact-cache":
+        from scripts.bundles.native import compact_uv_cache
+        cache = args.payload / "uv-cache"
+        if cache.is_dir():
+            if (cache / "seed.zip").exists():
+                raise ValueError("packed cache already exists; use fresh staging")
+            compact_uv_cache(cache)
+            print("compacted offline UV cache after PE sanitization")
+    elif args.action == "rehash":
         print(f"rehashed {rehash_tools(args.payload)} payload tools")
     else:
         relativize_links(args.payload)

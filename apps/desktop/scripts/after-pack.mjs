@@ -145,4 +145,14 @@ export default async function afterPack(context) {
     resourcesDir: context.packager.buildResourcesDir,
   })
   rehashPayloadDigests(payload)
+  // Keep every offline wheel, but collapse the loose cache only AFTER all PE
+  // members have passed the sanitizer and optional binary signer above.
+  // This changes only the packed copy, never prepared runtime/build caches.
+  const seed = path.join(payload, 'uv-cache')
+  if (fs.existsSync(path.join(payload, 'manifest.json')) && fs.existsSync(seed)
+      && !fs.existsSync(path.join(seed, 'seed.zip'))) {
+    runPython([
+      path.resolve(import.meta.dirname, '../../../scripts/bundles/payload.py'), 'compact-cache', payload],
+    { stdio: 'inherit' })
+  }
 }

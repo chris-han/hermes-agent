@@ -63,6 +63,12 @@ Acceptance requires a native run with the actual signed release artifacts.
 
 Packaged tool facts describe the final bytes, not only the staged archives.
 Windows refreshes the tool digests after sanitization and batch signing.
+Only then does `afterPack` compact the packed copy's offline UV cache into one
+`uv-cache/seed.zip`; every loose PE member is sanitized before archiving.
+Prepared runtime caches remain loose and unchanged. The archive keeps all
+lock-scoped wheels/metadata and passes ZIP integrity verification before loose
+packed entries are removed. PM expands it on demand for offline environment
+creation/repair; ordinary startup uses the shipped venv without expansion.
 The macOS custom signer retains the builder's entitlements and file selection.
 It refreshes digests after child signatures and before the outer app signature.
 Unsigned macOS builds refresh them at the end of `afterPack`.
