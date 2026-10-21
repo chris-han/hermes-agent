@@ -386,9 +386,13 @@ def _schema_with_dynamic_provider_options() -> dict[str, dict[str, Any]]:
             overlay[key] = {**CONFIG_SCHEMA[key], "options": options}
 
     for kind in ("tts", "stt"):
-        existing = _schema_select_options(f"{kind}.provider")
-        if existing is not None:
-            merge(f"{kind}.provider", _custom_provider_options(kind, list(existing), cfg))
+        key = f"{kind}.provider"
+        # Auto-selection may omit provider from DEFAULT_CONFIG. Preserve its
+        # existing selector override even when schema generation omitted it.
+        entry = CONFIG_SCHEMA.get(key, _SCHEMA_OVERRIDES[key])
+        options = _custom_provider_options(kind, list(entry["options"]), cfg)
+        if key not in CONFIG_SCHEMA or options != entry["options"]:
+            overlay[key] = {**entry, "options": options}
 
     merge("memory.provider", _memory_provider_schema_options(cfg))
 
