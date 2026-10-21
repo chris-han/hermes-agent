@@ -64,7 +64,8 @@ def branch_in_transaction(db, conn, session_id, payload):
     conn.execute(_storage_statement(sqlite='UPDATE sessions SET session_key=?,chat_id=?,origin_json=?,system_prompt_hash=? WHERE id=?', postgresql='UPDATE sessions SET session_key=%s,chat_id=%s,origin_json=%s,system_prompt_hash=%s WHERE id=%s', connection=conn),
                  (route, child, _json(source.to_dict()), parent['system_prompt_hash'], child))
     ids, tools = db._tail_rows_after_watermark(conn,
-        'SELECT id,tool_calls FROM messages WHERE session_id=? AND active=1 AND id<=? ORDER BY id',
+        _storage_statement(sqlite='SELECT id,tool_calls FROM messages WHERE session_id=? AND active=1 AND id<=? ORDER BY id',
+            postgresql='SELECT id,tool_calls FROM messages WHERE session_id=%s AND active=1 AND id<=%s ORDER BY id',connection=conn),
         [target, _branch_boundary(conn, target, payload.get('through_message_id'))])
     db._clone_message_rows(conn, ids, session_id=child)
     conn.execute(_storage_statement(sqlite='UPDATE sessions SET message_count=?,tool_call_count=? WHERE id=?', postgresql='UPDATE sessions SET message_count=%s,tool_call_count=%s WHERE id=%s', connection=conn), (len(ids), tools, child))

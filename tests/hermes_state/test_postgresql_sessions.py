@@ -950,3 +950,69 @@ def test_pg_canonical_mutation_receipts_metadata_rewind_and_delete(native_pg_wor
     deleted=rt.mutate_runtime_session(db,**delete)
     assert deleted['deleted_ids']==['edit'] and db.get_session('edit') is None
     assert rt.mutate_runtime_session(db,**delete)==deleted
+
+
+def test_pg_canonical_local_branch_reset_and_history_import(native_pg_worker,tmp_path):
+    from dataclasses import asdict
+    from gateway.config import Platform
+    from gateway.session import SessionEntry,SessionSource,build_session_key
+    from gateway.session_policy import build_policy
+    from gateway.session_lifecycle import _now
+    from gateway.session_contract import Principal
+    from hermes_state_keys import local_identity
+    from hermes_state_local import commit_local_session,local_receipt
+    from hermes_state_local_lineage import local_physical_target
+    from hermes_state_mutation_binding import import_history_control
+    import hermes_state_runtime as rt
+    db,_=native_pg_worker
+    profile=str(tmp_path);principal='principal';request='create-local'
+    sid=local_identity(profile,principal,request)
+    source=SessionSource(Platform.LOCAL,sid,user_id=principal,chat_type='dm')
+    route=build_session_key(source)
+    now=_now()
+    entry=SessionEntry(route,sid,now,now,origin=source,platform=Platform.LOCAL)
+    policy=build_policy({'source':'gui','cwd':str(tmp_path)}, {},profile_terminal=False)
+    created=dict(profile_id=profile,principal_id=principal,request_id=request,session_id=sid,route=route,
+        entry=entry.to_dict(),policy=asdict(policy))
+    assert commit_local_session(db,epoch=1,receipt=created)['session_id']==sid
+    db.append_messages_batch(sid,[{'role':'user','content':'branch root'},{'role':'assistant','content':'retained answer'}])
+    args=dict(epoch=1,principal_id=principal,session_id=sid,request_id='branch',expected_revision=0,
+        expected_generation=0,operation='branch',payload={'title':'独立分支'})
+    branched=rt.mutate_runtime_session(db,**args)
+    child=branched['branched_session_id']
+    assert [row['content'] for row in db.get_messages(child)]==['branch root','retained answer']
+    assert local_receipt(db,child)['principal_id']==principal
+    assert rt.mutate_runtime_session(db,**args)==branched
+    reset_args=dict(args,request_id='reset',expected_revision=branched['revision'],operation='reset',payload={})
+    reset=rt.mutate_runtime_session(db,**reset_args)
+    target=reset['target_session_id']
+    assert target!=sid and db.get_session(sid)['end_reason']=='session_reset'
+    with db._read_ctx() as conn:assert local_physical_target(conn,sid)==target
+    assert rt.mutate_runtime_session(db,**reset_args)==reset
+    actor=Principal(principal,profile,frozenset({'session:create','session:read','session:control'}),'fixture')
+    imported=dict(epoch=1,principal_id=principal,session_id='portable',request_id='import',expected_revision=0,
+        operation='import',payload={'sessions':[{'id':'portable','source':'import','title':'Imported',
+        'messages':[{'role':'user','content':'retained import'},{'role':'assistant','content':'archived','active':0,'compacted':1}]}]},
+        _authorize_write=lambda conn:import_history_control(conn,actor,['portable']))
+    receipt=rt.mutate_runtime_session(db,**imported)
+    assert receipt['imported_ids']==['portable']
+    assert [row['content'] for row in db.get_messages('portable')]==['retained import']
+    assert [row['content'] for row in db.get_messages('portable',include_compacted=True)]==['retained import','archived']
+    assert rt.mutate_runtime_session(db,**imported)==receipt
+
+
+def test_pg_foreign_history_import_preserves_origin_and_duplicate_clicks(native_pg_worker,tmp_path):
+    db,_=native_pg_worker
+    origin={'tool':'claude','foreign_session_id':'foreign-id','path':'/read-only/source-export.json'}
+    messages=[{'role':'user','content':'foreign 中文'},{'role':'assistant','content':'history'}]
+    first=db.import_foreign_history(origin,messages,title='迁移历史',cwd=str(tmp_path),profile='fixture')
+    assert not first['already_imported']
+    again=db.import_foreign_history(origin,messages,title='changed label',cwd=str(tmp_path),profile='fixture')
+    assert again=={'session_id':first['session_id'],'already_imported':True}
+    assert db.find_foreign_import(origin)==first['session_id']
+    row=db.get_session(first['session_id'])
+    assert json.loads(row['origin_json'])=={'imported_from':origin} and row['profile_name']=='fixture'
+    assert [message['content'] for message in db.get_messages(first['session_id'])]==['foreign 中文','history']
+    other=db.import_foreign_history({**origin,'foreign_session_id':'different'},messages,title='迁移历史',cwd=str(tmp_path),profile='fixture')
+    assert other['session_id']!=first['session_id']
+    assert db.get_session(other['session_id'])['title'].startswith('迁移历史 (')

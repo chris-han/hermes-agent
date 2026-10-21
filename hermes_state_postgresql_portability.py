@@ -126,37 +126,44 @@ class PostgreSQLPortabilityMixin(SessionPortabilityMixin):
         if len(sessions)>self._IMPORT_MAX_SESSIONS: raise ValueError('sessions exceeds import limit')
         normalized,errors=self._validate_import_payload(sessions)
         if errors: return dict(ok=False,imported=0,skipped=0,detached=0,errors=errors)
-        from hermes_state_portability import _IMPORT_FLAG_COLS,_IMPORT_PASSTHROUGH_COLS,_IMPORT_FLOAT_COLS,_IMPORT_INT_COLS,_IMPORT_MESSAGE_JSON_FIELDS
-        from hermes_cli.timefmt import coerce_epoch
-        from hermes_state_postgresql_transcript import insert_fresh_on_conn
-        from utils import safe_json_loads
-        import time
         imported,skipped,parents=[],[],[]
         with self._transaction() as conn:
             self._lock_conversation(conn,'__history_import__')
             for item in normalized:
                 raw=item['session'];sid=raw['id']
                 if self._session_on_conn(conn,sid):skipped.append(sid);continue
-                started=coerce_epoch(raw.get('started_at'),session_id=sid,field='started_at')
-                values=dict(id=sid,source=str(raw.get('source') or 'import'),
-                    system_prompt_hash=self._store_pg_system_prompt(conn,raw.get('system_prompt')),
-                    started_at=time.time() if started is None else started)
-                values.update({col:1 if self._coerce_or(raw.get(col),int,0) else 0 for col in _IMPORT_FLAG_COLS})
-                values.update({col:raw.get(col) for col in _IMPORT_PASSTHROUGH_COLS})
-                values.update({col:self._import_float_or_finite(raw.get(col),col) for col in _IMPORT_FLOAT_COLS})
-                values.update({col:self._import_int_or_bounded(raw.get(col),col,0) for col in _IMPORT_INT_COLS})
-                values['auto_archived'] &= values['archived']
-                self._insert(conn,'sessions',values)
-                messages=[{**msg,**{key:safe_json_loads(msg.get(key),default=msg.get(key)) if isinstance(msg.get(key),str) else msg.get(key) for key in _IMPORT_MESSAGE_JSON_FIELDS}} for msg in item['messages']]
-                ids=insert_fresh_on_conn(self,conn,sid,messages)
-                for row_id,message in zip(ids,messages):
-                    if not self._coerce_or(message.get('active'),int,1):
-                        self._update(conn,'messages',dict(active=0,compacted=1 if self._coerce_or(message.get('compacted'),int,0) else 0),'id',row_id)
-                self._recount_on_conn(conn,sid)
+                self._import_session_row(conn,raw,item['messages'],sid)
                 if raw.get('parent_session_id'):parents.append((sid,raw['parent_session_id']))
                 imported.append(sid)
             detached=self._attach_import_parents(conn,parents)
         return dict(ok=True,imported=len(imported),skipped=len(skipped),detached=detached,imported_ids=imported,skipped_ids=skipped,errors=[])
+
+    def _import_session_row(self,conn,raw,messages,sid):
+        """Import one normalized history row on the caller's native transaction."""
+        from hermes_state_portability import _IMPORT_FLAG_COLS,_IMPORT_PASSTHROUGH_COLS,_IMPORT_FLOAT_COLS,_IMPORT_INT_COLS,_IMPORT_MESSAGE_JSON_FIELDS
+        from hermes_cli.timefmt import coerce_epoch
+        from hermes_state_postgresql_transcript import insert_fresh_on_conn
+        from utils import safe_json_loads
+        import time
+        started=coerce_epoch(raw.get('started_at'),session_id=sid,field='started_at')
+        values=dict(id=sid,source=str(raw.get('source') or 'import'),
+            system_prompt_hash=self._store_pg_system_prompt(conn,raw.get('system_prompt')),
+            started_at=time.time() if started is None else started)
+        values.update({col:1 if self._coerce_or(raw.get(col),int,0) else 0 for col in _IMPORT_FLAG_COLS})
+        values.update({col:raw.get(col) for col in _IMPORT_PASSTHROUGH_COLS})
+        values.update({col:self._import_float_or_finite(raw.get(col),col) for col in _IMPORT_FLOAT_COLS})
+        values.update({col:self._import_int_or_bounded(raw.get(col),col,0) for col in _IMPORT_INT_COLS})
+        values['auto_archived'] &= values['archived']
+        self._insert(conn,'sessions',values)
+        messages=[{**msg,**{key:safe_json_loads(msg.get(key),default=msg.get(key)) if isinstance(msg.get(key),str) else msg.get(key) for key in _IMPORT_MESSAGE_JSON_FIELDS}} for msg in messages]
+        ids=insert_fresh_on_conn(self,conn,sid,messages,prune_checkpoints=False)
+        for row_id,message in zip(ids,messages):
+            if not self._coerce_or(message.get('active'),int,1):
+                self._update(conn,'messages',dict(active=0,compacted=1 if self._coerce_or(message.get('compacted'),int,0) else 0),'id',row_id)
+        live=[message for message in messages if self._coerce_or(message.get('active'),int,1)]
+        self._prune_pg_shadowed_checkpoints(conn,sid,live)
+        self._reconcile_pg_display_orders(conn,sid)
+        self._recount_on_conn(conn,sid)
 
     def _store_pg_system_prompt(self,conn,value):
         if value is None:return None

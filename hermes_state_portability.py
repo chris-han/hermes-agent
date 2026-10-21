@@ -19,6 +19,7 @@ from hermes_state_ids import new_session_id
 from hermes_state_common import SCHEMA_SQL, _shape_preview, _sql_preview_raw, _sql_session_last_active
 from hermes_state_messages import _parse_tool_calls, _tool_calls_count
 import itertools
+from hermes_state_sql import statement as _storage_statement
 
 # Pre-split logger identity so log filtering/capture is unchanged.
 logger = logging.getLogger("hermes_state")
@@ -133,7 +134,8 @@ class SessionPortabilityMixin:
 
     @staticmethod
     def _find_foreign_import_on_conn(conn, origin):
-        rows = conn.execute("SELECT id, origin_json FROM sessions WHERE source = ? AND origin_json IS NOT NULL",
+        rows = conn.execute(_storage_statement(sqlite="SELECT id, origin_json FROM sessions WHERE source = ? AND origin_json IS NOT NULL",
+                            postgresql='SELECT id,origin_json FROM sessions WHERE source=%s AND origin_json IS NOT NULL',connection=conn),
                             (origin["tool"],)).fetchall()
         for row in rows:
             imported = (safe_json_loads(row["origin_json"], default={}) or {}).get("imported_from", {})
@@ -170,10 +172,11 @@ class SessionPortabilityMixin:
             # Titles are globally unique within a profile. Preserve a readable
             # title while giving unrelated conversations with the same text room.
             item = normalized[0]
-            if conn.execute("SELECT 1 FROM sessions WHERE title = ?", (title,)).fetchone():
+            if conn.execute(_storage_statement(sqlite="SELECT 1 FROM sessions WHERE title = ?",postgresql='SELECT 1 FROM sessions WHERE title=%s',connection=conn), (title,)).fetchone():
                 item["session"]["title"] = f"{title} ({session_id[-12:]})"
             self._import_session_row(conn, item["session"], item["messages"], session_id)
-            conn.execute("UPDATE sessions SET origin_json = ?, profile_name = ? WHERE id = ?",
+            conn.execute(_storage_statement(sqlite="UPDATE sessions SET origin_json = ?, profile_name = ? WHERE id = ?",
+                         postgresql='UPDATE sessions SET origin_json=%s,profile_name=%s WHERE id=%s',connection=conn),
                          (json.dumps({"imported_from": origin}), profile, session_id))
             return {"session_id": session_id, "already_imported": False}
 

@@ -1,6 +1,6 @@
 """Optimistic preparation snapshots revalidated inside the receipt transaction."""
 import json
-from hermes_state_sql import statement as _storage_statement, is_postgres
+from hermes_state_sql import statement as _storage_statement, is_postgres, execute_many
 from hermes_state_local import POLICY_PREFIX
 from hermes_state_local_lineage import validate_local_lineage
 from hermes_state_mutation_guards import require_target_advanceable
@@ -67,7 +67,7 @@ def workspace_in_transaction(db, conn, session_id, payload, prepared):
     snapshot, generation = _commit_policy(db, conn, session_id, prepared)
     cwd, git = prepared['policy']['cwd'], prepared['git']
     rows = list(dict.fromkeys([*local_conversation_ids(conn, session_id), snapshot['target']]))
-    conn.executemany(_storage_statement(sqlite='UPDATE sessions SET cwd=?, git_branch=?, git_repo_root=?, '
+    execute_many(conn,_storage_statement(sqlite='UPDATE sessions SET cwd=?, git_branch=?, git_repo_root=?, '
                      'git_metadata_generation=COALESCE(git_metadata_generation, 0)+1 WHERE id=?', postgresql='UPDATE sessions SET cwd=%s, git_branch=%s, git_repo_root=%s, git_metadata_generation=COALESCE(git_metadata_generation, 0)+1 WHERE id=%s', connection=conn),
                      [(cwd, git['branch'] or None, git['root'] or None, sid) for sid in rows])
     return {session_id, snapshot['target']}, {'cwd': cwd, 'branch': git['branch'] or None,
