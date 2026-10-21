@@ -650,3 +650,11 @@ The hallucination filter catches most cases automatically. If you're still getti
 - Use a quieter environment
 - Adjust `silence_threshold` in config (higher = less sensitive)
 - Try a different STT model
+
+### Desktop language defaults and Windows GPU checks
+
+Changing the Desktop interface language also updates the default transcription language and Edge voice. Chinese selects Whisper `zh` and a Chinese Edge voice; English selects `en` and Aria. Custom speech languages and voices remain unchanged. Edge speech is an online service; local Whisper transcription is independent.
+
+The bundled Edge client is pinned to 7.3.1, which includes the newer request-token protocol and locale-independent server-date parsing. An older client may receive HTTP 403 even when local transcription works.
+
+Local Whisper uses `device: auto` and `compute_type: auto` unless explicitly configured. Successful model loads log `Local STT ready: model=... device=... compute_type=...`; these values report the actual CTranslate2 engine, rather than inferring GPU use from installed CUDA tools. Missing CUDA runtime libraries retain the existing CPU/int8 fallback. Model loading alone does not prove decoding; validate a real recording to confirm the GPU path.

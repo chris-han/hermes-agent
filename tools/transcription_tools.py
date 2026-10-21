@@ -351,6 +351,10 @@ def _get_or_load_local_model(model_name: str, local_cfg: dict[str, Any]):
                 # stt.local.device / compute_type pin a configuration where ``auto`` mis-detects.
                 _local_model = _load_local_whisper_model(model_name, device=local_cfg.get("device", "auto"),
                                                          compute_type=local_cfg.get("compute_type", "auto"))
+                engine = getattr(_local_model, "model", None)
+                logger.info("Local STT ready: model=%s device=%s compute_type=%s",
+                            model_name, getattr(engine, "device", "unknown"),
+                            getattr(engine, "compute_type", "unknown"))
                 _local_model_name = model_name
             model = _local_model
     return model

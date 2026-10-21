@@ -614,3 +614,7 @@ The sandbox-safe branding bridge admits registered main frames only. Electron ow
 ## Windows native branding
 
 The supplied `src/assets/semantier-logo.png` is the source for Windows EXE/window/tray ICO, MSIX installer/StoreLogo, Start/search/taskbar scale/targetsize/unplated PNGs and Desktop public PNG marks. The existing icon generator resizes it automatically, preserving color and transparency across light/dark themes and commit/canary builds. Build flavors do not recolor or badge this artwork. Actual product/version/Publisher/package identity and upstream notices remain truthful; macOS, bootstrap and website artwork retain their separate owners.
+
+## Voice defaults and interface language
+
+Changing the Desktop interface language saves matching default transcription hints (global and local Whisper) and the Edge TTS voice in the same profile-bound config write. Simplified and Traditional Chinese both use Whisper `zh`, with Mainland and Taiwan Edge voices respectively. Existing custom languages, voices, providers and models remain explicit choices. Clean Voice controls reconcile refreshed config; drafts being edited retain user input. Failed language saves retain the prior persisted speech configuration and roll the interface language back. The existing settings fields and primitives remain the only controls.

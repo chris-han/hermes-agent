@@ -149,8 +149,8 @@ function ConfigSettingsInner({
   const savedDiscoverySignatureRef = useRef<string | undefined>(undefined)
   const [saveVersion, setSaveVersion] = useState(0)
 
-  // Seed the local draft once, the first time the shared record lands.
-  // Background refetches thereafter must not clobber in-progress edits.
+  // Seed the draft from the shared record and refresh it while clean.
+  // Background refetches must not clobber in-progress edits.
   const configSeeded = useRef(false)
   // Snapshot of the record as it was when the draft was seeded. Autosave
   // diffs the draft against this (not against disk) so a field the user
@@ -164,12 +164,15 @@ function ConfigSettingsInner({
 
   // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
   useEffect(() => {
-    if (loadedConfig && !configSeeded.current) {
+    if (loadedConfig && (!configSeeded.current ||
+      (config && configBaselineRef.current && Object.keys(diffConfig(configBaselineRef.current, config)).length === 0))) {
       configSeeded.current = true
       configBaselineRef.current = loadedConfig
       savedDiscoverySignatureRef.current = repoDiscoveryPolicySignature(repoDiscoveryPolicyFromConfig(loadedConfig))
       setConfig(loadedConfig)
     }
+    // Reconcile changed voice defaults while clean; preserve in-progress autosave edits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadedConfig])
 
   // A profile switch invalidates (but doesn't clear) the shared config query, so
@@ -226,6 +229,11 @@ function ConfigSettingsInner({
       saveQueueRef.current = saveQueueRef.current.then(async () => {
         try {
           const patch = diffConfig(configBaselineRef.current ?? {}, snapshot)
+
+          if (Object.keys(patch).length === 0) {
+            return
+          }
+
           const result = await saveHermesConfig(patch, writeScope ?? scopeProfile)
 
           if (!result.ok) {

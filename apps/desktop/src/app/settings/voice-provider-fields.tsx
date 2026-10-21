@@ -68,8 +68,8 @@ export function VoiceProviderFields({
     staleTime: 5 * 60 * 1000
   })
 
-  // Local editable draft, seeded once from the shared cache (background
-  // refetches must not clobber in-progress edits) — the same shape as
+  // Local editable draft, refreshed from the shared cache while clean
+  // (background refetches must not clobber in-progress edits) — the same shape as
   // config-settings.tsx's autosave loop.
   const [config, setConfig] = useState<HermesConfigRecord | null>(null)
   // Autosave sends only what changed against this baseline (config-settings.tsx
@@ -81,18 +81,20 @@ export function VoiceProviderFields({
 
   // eslint-disable-next-line no-restricted-syntax -- one-shot config seed flag, not an atom mirror
   useEffect(() => {
-    if (loadedConfig && !seeded.current) {
+    if (loadedConfig && (!seeded.current || (baseline && config && Object.keys(diffConfig(baseline, config)).length === 0))) {
       seeded.current = true
       setBaseline(loadedConfig)
       setConfig(loadedConfig)
     }
+    // Only a new server/cache record reconciles a clean draft; never reset user edits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadedConfig])
 
   const saveVersionRef = useRef(0)
   const [saveVersion, setSaveVersion] = useState(0)
 
   useEffect(() => {
-    if (!config || saveVersion === 0) {
+    if (!config || saveVersion === 0 || Object.keys(diffConfig(baseline ?? {}, config)).length === 0) {
       return
     }
 

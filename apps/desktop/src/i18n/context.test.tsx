@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { HermesConfigRecord } from '@/hermes'
 
 import { TRANSLATIONS } from './catalog'
-import { type I18nConfigClient, I18nProvider, useI18n } from './context'
+import { type I18nConfigClient, I18nProvider, useI18n, withConfigDisplayLanguage } from './context'
 import { registerAppLocale } from './registry'
 import { $requestedLocale } from './runtime'
 import type { Locale } from './types'
@@ -229,7 +229,9 @@ describe('I18nProvider', () => {
     await waitFor(() => expect(saveConfig).toHaveBeenCalledTimes(1))
     expect(saveConfig).toHaveBeenCalledWith({
       display: { language: 'zh', skin: 'slate' },
-      terminal: { cwd: '/new' }
+      terminal: { cwd: '/new' },
+      stt: { language: 'zh', local: { language: 'zh' } },
+      tts: { edge: { voice: 'zh-CN-XiaoxiaoNeural' } }
     })
   })
 
@@ -404,5 +406,48 @@ describe('I18nProvider', () => {
     expect(screen.getByTestId('locale').textContent).toBe('ja')
 
     vi.useRealTimers()
+  })
+})
+
+
+describe('language-linked voice defaults', () => {
+  it.each([
+    ['en', 'en', 'en-US-AriaNeural'], ['zh', 'zh', 'zh-CN-XiaoxiaoNeural'],
+    ['zh-hant', 'zh', 'zh-TW-HsiaoChenNeural'], ['ja', 'ja', 'ja-JP-NanamiNeural'],
+    ['ar', 'ar', 'ar-SA-ZariyahNeural'], ['ru', 'ru', 'ru-RU-SvetlanaNeural'],
+    ['fr', 'fr', 'fr-FR-DeniseNeural'], ['de', 'de', 'de-DE-KatjaNeural'],
+    ['es', 'es', 'es-ES-ElviraNeural']
+  ] as const)('maps bundled locale %s to provider-native defaults', (locale, language, voice) => {
+    const next = withConfigDisplayLanguage({}, locale)
+    expect(next.stt).toEqual({ language, local: { language } })
+    expect(next.tts).toEqual({ edge: { voice } })
+  })
+
+  it('leaves speech choices unchanged for a plugin language without a known voice mapping', () => {
+    expect(withConfigDisplayLanguage({ stt: { language: 'pl' } }, 'pl').stt).toEqual({ language: 'pl' })
+  })
+
+  it('sets actual speech settings on sparse config and follows EN/ZH round trips', () => {
+    const chinese = withConfigDisplayLanguage({ display: { language: 'en' } }, 'zh')
+    expect(chinese.stt).toEqual({ language: 'zh', local: { language: 'zh' } })
+    expect(chinese.tts).toEqual({ edge: { voice: 'zh-CN-XiaoxiaoNeural' } })
+    const english = withConfigDisplayLanguage(chinese, 'en')
+    expect(english.stt).toEqual({ language: 'en', local: { language: 'en' } })
+    expect(english.tts).toEqual({ edge: { voice: 'en-US-AriaNeural' } })
+  })
+
+  it('preserves a custom language, voice, provider and model without mutating input', () => {
+    const original = { display: { language: 'en' }, stt: { language: 'fr', local: { language: 'ja', model: 'small' } }, tts: { provider: 'piper', edge: { voice: 'en-US-GuyNeural', speed: 1.2 } } }
+    const snapshot = structuredClone(original)
+    const next = withConfigDisplayLanguage(original, 'zh')
+    expect(next.stt).toEqual(original.stt)
+    expect(next.tts).toEqual(original.tts)
+    expect(original).toEqual(snapshot)
+  })
+
+  it('maps traditional Chinese UI to a supported Whisper language and Taiwan voice', () => {
+    const next = withConfigDisplayLanguage({ display: { language: 'zh' }, stt: { local: { language: 'zh' } }, tts: { edge: { voice: 'zh-CN-XiaoxiaoNeural' } } }, 'zh-hant')
+    expect(next.stt).toEqual({ language: 'zh', local: { language: 'zh' } })
+    expect(next.tts).toEqual({ edge: { voice: 'zh-TW-HsiaoChenNeural' } })
   })
 })

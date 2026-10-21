@@ -1,5 +1,6 @@
 import { REASONING_EFFORTS } from '@hermes/shared'
 
+import { LOCALE_VOICE_DEFAULTS } from '@/i18n/voice-defaults'
 import {
   Box,
   Brain,
@@ -297,7 +298,8 @@ export const ENUM_OPTIONS: Record<string, string[]> = {
     'en-US-AndrewNeural',
     'en-US-BrianNeural',
     'en-US-GuyNeural',
-    'en-GB-SoniaNeural'
+    'en-GB-SoniaNeural',
+    ...Object.values(LOCALE_VOICE_DEFAULTS).map(defaults => defaults.voice).filter(voice => voice !== 'en-US-AriaNeural')
   ],
   'tts.gemini.model': ['gemini-2.5-flash-preview-tts', 'gemini-2.5-pro-preview-tts'],
   // Gemini TTS prebuilt voice set.

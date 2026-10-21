@@ -3,6 +3,7 @@ import { useStore } from '@nanostores/react'
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 
 import { getHermesConfigRecord, type HermesConfigRecord, retainConfigReadOrigin, saveHermesConfig } from '@/hermes'
+import { queryClient } from '@/lib/query-client'
 
 import { TRANSLATIONS } from './catalog'
 import {
@@ -16,6 +17,7 @@ import {
 import { $appLocaleVersion, normalizeLocaleId, resolveTranslations } from './registry'
 import { $requestedLocale, setRuntimeI18nLocale } from './runtime'
 import type { Locale, Translations } from './types'
+import { withLocaleVoiceDefaults } from './voice-defaults'
 
 export interface I18nConfigClient {
   getConfig: () => Promise<HermesConfigRecord>
@@ -40,7 +42,13 @@ const defaultConfigClient: I18nConfigClient = {
     // No explicit scope: saveHermesConfig resolves the record's captured read
     // origin itself (resolveConfigWriteScope), and withConfigDisplayLanguage
     // retains that origin onto the derived record.
-    return saveHermesConfig(config, undefined, { preserveLanguage: true })
+    return saveHermesConfig(config, undefined, { preserveLanguage: true }).then(async result => {
+      if (result.ok) {
+        await queryClient.invalidateQueries({ queryKey: ['hermes-config-record'] })
+      }
+
+      return result
+    })
   }
 }
 
@@ -48,12 +56,16 @@ export function getConfigDisplayLanguage(config: HermesConfigRecord): unknown {
   return isRecord(config.display) ? config.display.language : undefined
 }
 
-export function withConfigDisplayLanguage(config: HermesConfigRecord, locale: Locale): HermesConfigRecord {
+export function withConfigDisplayLanguage(
+  config: HermesConfigRecord,
+  locale: Locale,
+  previousLocale = normalizeLocale(getConfigDisplayLanguage(config))
+): HermesConfigRecord {
   const display = isRecord(config.display) ? config.display : {}
 
   return retainConfigReadOrigin(
     {
-      ...config,
+      ...withLocaleVoiceDefaults(config, previousLocale, locale),
       display: {
         ...display,
         language: localeConfigValue(locale)
@@ -254,7 +266,7 @@ export function I18nProvider({
 
       try {
         const latestConfig = await configClient.getConfig()
-        const result = await configClient.saveConfig(withConfigDisplayLanguage(latestConfig, next))
+        const result = await configClient.saveConfig(withConfigDisplayLanguage(latestConfig, next, previousLocale))
 
         if (!result.ok) {
           throw new Error('Failed to save language')
