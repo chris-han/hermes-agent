@@ -118,7 +118,7 @@ def cmd_insights(args):
             from agent.i18n import t
             print(f"  {t('cli.insights.no_session_data')}")
             return
-        db = open_session_db(home=home, read_only=True)
+        db = open_session_db(db_path=path, home=home, read_only=True)
         engine = InsightsEngine(db)
         report = engine.generate(days=args.days, source=args.source)
         print(engine.format_terminal(report))
