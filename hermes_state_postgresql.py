@@ -152,9 +152,10 @@ from hermes_state_postgresql_compaction import PostgreSQLCompactionMixin
 from hermes_state_postgresql_retirement import PostgreSQLRetirementMixin
 from hermes_state_postgresql_titles import PostgreSQLTitlesMixin
 from hermes_state_postgresql_mutations import PostgreSQLMutationsMixin
+from hermes_state_postgresql_maintenance import PostgreSQLMaintenanceMixin
 
 
-class PostgreSQLSessionDB(PostgreSQLMutationsMixin,PostgreSQLTitlesMixin,PostgreSQLRuntimeMixin,PostgreSQLPortabilityMixin,PostgreSQLSearchMixin,PostgreSQLUsageMixin,PostgreSQLCompactionMixin,PostgreSQLRetirementMixin,SessionRewindMixin):
+class PostgreSQLSessionDB(PostgreSQLMaintenanceMixin,PostgreSQLMutationsMixin,PostgreSQLTitlesMixin,PostgreSQLRuntimeMixin,PostgreSQLPortabilityMixin,PostgreSQLSearchMixin,PostgreSQLUsageMixin,PostgreSQLCompactionMixin,PostgreSQLRetirementMixin,SessionRewindMixin):
     """Native SessionDB API used by the embedded API and Semantier session readers.
 
     Each operation owns a real PG transaction. External durable owners may call
@@ -260,6 +261,11 @@ class PostgreSQLSessionDB(PostgreSQLMutationsMixin,PostgreSQLTitlesMixin,Postgre
                 config=_parse_model_config(values['model_config']);config['_reset_from']=old_config['_reset_from'];updates['model_config']=json.dumps(config)
             if old['system_prompt_hash'] is None and values.get('system_prompt_hash') is not None:updates['system_prompt']=None
             if updates:self._update(conn,'sessions',updates,'id',session_id)
+        self._inherit_parent_session_metadata(conn,session_id)
+        return session_id
+
+    def _inherit_parent_session_metadata(self,conn,session_id):
+        from hermes_state_sessions import _parse_model_config
         child=self._session_on_conn(conn,session_id)
         parent=self._session_on_conn(conn,child['parent_session_id']) if child and child['parent_session_id'] else None
         if parent:
@@ -273,7 +279,6 @@ class PostgreSQLSessionDB(PostgreSQLMutationsMixin,PostgreSQLTitlesMixin,Postgre
             if parent['end_reason']=='compression' and all(config.get(k)!=child['parent_session_id'] for k in ('_delegate_from','_branched_from')):
                 inherited.update({k:parent[k] for k in ('user_id','session_key','chat_id','chat_type','thread_id','display_name','origin_json','transport_profile') if child[k] is None})
             if inherited:self._update(conn,'sessions',inherited,'id',session_id)
-        return session_id
 
     def create_session(self, session_id, source, **kwargs):
         with self._transaction() as conn:
@@ -361,7 +366,6 @@ class PostgreSQLSessionDB(PostgreSQLMutationsMixin,PostgreSQLTitlesMixin,Postgre
         current=self._session_on_conn(conn,session_id)
         seen={session_id}
         while current and current.get('parent_session_id'):
-            cfg=json.loads(current.get('model_config') or '{}')
             parent_id=current['parent_session_id']
             if parent_id in seen or self._is_explicit_fork_child_row(current,include_reset=True):
                 break
@@ -534,20 +538,8 @@ class PostgreSQLSessionDB(PostgreSQLMutationsMixin,PostgreSQLTitlesMixin,Postgre
         return list(reversed(chain))
 
     def get_compression_chain(self,session_id):
-        from hermes_state_sessions import _parse_model_config
-        rows=self.list_session_records();by_id={r['id']:r for r in rows}
-        recency={r['session_id']:r['last_message'] for r in self._all(sql.SQL('SELECT session_id,MAX(timestamp) AS last_message FROM {} GROUP BY session_id').format(self.table('messages')))}
-        chain=[session_id] if session_id else [];seen=set(chain)
-        for _ in range(1000):
-            parent=by_id.get(chain[-1]) if chain else None
-            if not parent or parent['end_reason']!='compression':break
-            children=[r for r in rows if r['parent_session_id']==parent['id'] and r['source']!='tool' and all(_parse_model_config(r['model_config']).get(k) is None for k in ('_branched_from','_delegate_from','_reset_from')) and r['id'] not in seen]
-            if not children:break
-            children.sort(key=lambda r:r['id'],reverse=True)
-            children.sort(key=lambda r:(0 if r['end_reason']=='compression' else 1 if r['ended_at'] is None else 2,-max(r['started_at'] or 0,r['last_activity_at'] or 0,recency.get(r['id']) or 0),-(r['started_at'] or 0)))
-            best=children[0]
-            chain.append(best['id']);seen.add(best['id'])
-        return chain
+        from hermes_state import SessionDB
+        return SessionDB.get_compression_chain(self,session_id)
 
     def get_compression_tip(self,session_id):
         chain=self.get_compression_chain(session_id)
@@ -566,7 +558,8 @@ class PostgreSQLSessionDB(PostgreSQLMutationsMixin,PostgreSQLTitlesMixin,Postgre
         return lineage if session_id in lineage else [session_id]
 
     def resolve_resume_session_id(self,session_id):
-        return self.get_compression_tip(session_id) or session_id
+        from hermes_state import SessionDB
+        return SessionDB.resolve_resume_session_id(self,session_id)
 
     def _conversation_rows(self,session_ids,*,include_inactive=False,include_compacted=False):
         from hermes_state_postgresql_transcript import native_row
@@ -767,13 +760,13 @@ class PostgreSQLSessionDB(PostgreSQLMutationsMixin,PostgreSQLTitlesMixin,Postgre
         return bool(self._set_session(session_id,archived=0,auto_archived=0))
 
     def set_session_archived(self,session_id,archived):
-        return bool(self._set_session(session_id,archived=int(archived),auto_archived=0))
+        return self._set_lineage_column('archived',session_id,int(archived))
 
     def set_session_hidden(self,session_id,hidden):
-        return bool(self._set_session(session_id,hidden=int(hidden)))
+        return self._set_lineage_column('hidden',session_id,int(hidden))
 
     def set_session_pinned(self,session_id,pinned):
-        return bool(self._set_session(session_id,pinned=int(pinned)))
+        return self._set_lineage_column('pinned',session_id,int(pinned))
 
     def touch_session_activity(self,session_id,**kwargs):
         self._set_session(session_id,last_activity_at=time.time(),**kwargs)

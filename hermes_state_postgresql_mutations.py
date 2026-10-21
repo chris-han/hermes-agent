@@ -1,5 +1,6 @@
 """Canonical transcript mutation and compression publication with PostgreSQL statements."""
 import json
+from itertools import pairwise
 import time
 from psycopg import sql
 from hermes_state import SessionDB
@@ -250,7 +251,7 @@ class PostgreSQLMutationsMixin:
             if not row or json.loads(row['value'])!=expected:raise RuntimeStoreError('storage_unavailable')
         lineage=receipt.get('lineage',[root])
         if not isinstance(lineage,list) or not lineage or len(set(lineage))!=len(lineage) or lineage[0]!=root or lineage[-1]!=receipt['entry']['session_id']:raise RuntimeStoreError('storage_unavailable')
-        for parent_id,child_id in zip(lineage,lineage[1:]):
+        for parent_id,child_id in pairwise(lineage):
             parent=self._session_on_conn(conn,parent_id);child=self._session_on_conn(conn,child_id)
             if not parent or not child or child['parent_session_id']!=parent_id:raise RuntimeStoreError('storage_unavailable')
             if parent['end_reason']=='session_reset':valid=json.loads(child['model_config'] or '{}').get('_reset_from')==parent_id

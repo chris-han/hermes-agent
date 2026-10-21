@@ -69,11 +69,10 @@ class PostgreSQLRuntimeMixin:
     def _write_sql_logged(self, operation, session_id, query, params=()):
         return self._write_sql(query, params)
 
-    def _set_lineage_column(self, column, session_id, value):
+    def _set_lineage_column(self,column,session_id,value):
         with self._transaction() as conn:
-            self._lock_conversation(conn, session_id)
-            ids = self.get_compression_lineage(session_id) or [session_id]
-            return bool(conn.execute(sql.SQL('UPDATE {} SET {}=%s WHERE id=ANY(%s)').format(self.table('sessions'), sql.Identifier(column)), (value, ids)).rowcount)
+            self._lock_conversation(conn,session_id)
+            return bool(self._set_lineage_column_in_transaction(conn,column,session_id,value))
 
     def update_session_cwd(self, session_id: str, cwd: str, git_branch: Optional[str]=None, git_repo_root: Optional[str]=None, replace_git_meta: bool=False) -> Optional[int]:
         """Persist the authoritative cwd and claim a Git metadata generation. git fields are written
@@ -112,7 +111,7 @@ class PostgreSQLRuntimeMixin:
         fields = [(col, val) for (col, val) in (('git_branch', (git_branch or '').strip()), ('git_repo_root', (git_repo_root or '').strip())) if val]
         if not fields:
             return False
-        return self._write_rowcount(f"UPDATE sessions SET {', '.join((f'{col} = %s' for (col, _) in fields))} WHERE id = %s AND cwd = %s AND git_metadata_generation = %s", [val for (_, val) in fields] + [session_id, cwd, generation]) == 1
+        return self._write_rowcount(f"UPDATE sessions SET {', '.join(f'{col} = %s' for (col, _) in fields)} WHERE id = %s AND cwd = %s AND git_metadata_generation = %s", [val for (_, val) in fields] + [session_id, cwd, generation]) == 1
 
     def backfill_repo_roots(self, cwd_to_root: dict[str, str]) -> None:
         """Backfill git repo roots for cwds without one; never clobbers a recorded root."""
@@ -393,7 +392,7 @@ class PostgreSQLRuntimeMixin:
                 if self.try_acquire_session_turn_lease(
                     session_id, holder, ttl_seconds=ttl_seconds, patience_s=patience):
                     return True
-            except (psycopg.errors.LockNotAvailable,psycopg.errors.DeadlockDetected) as exc:
+            except (psycopg.errors.LockNotAvailable,psycopg.errors.DeadlockDetected):
                 # Another writer's transaction outlasted the write patience. That is not a lease
                 # holder, so no poll sleep or "another process" notice; the retry waits on the write
                 # lock itself (the poll interval moves into its patience) and wins it once free.
@@ -538,3 +537,53 @@ class PostgreSQLRuntimeMixin:
         row=self._one(sql.SQL('SELECT generation FROM {} WHERE source=%s AND session_key=%s').format(self.table('conversation_generations')),(source,session_key))
         generation=int(row['generation'] or 0) if row else 0
         return generation if generation>0 else None
+
+    def request_handoff(self,session_id,platform):
+        return self._write_rowcount("UPDATE sessions SET handoff_state='pending',handoff_platform=%s,handoff_error=NULL WHERE id=%s AND (handoff_state IS NULL OR handoff_state IN ('completed','failed'))",(platform,session_id))>0
+
+    def get_handoff_state(self,session_id):
+        row=self._read_one('SELECT handoff_state,handoff_platform,handoff_error FROM sessions WHERE id=%s',(session_id,))
+        return {'state':row['handoff_state'],'platform':row['handoff_platform'],'error':row['handoff_error']} if row else None
+
+    def list_pending_handoffs(self):
+        rows=self._read_all("SELECT s.*,COALESCE(sp.prompt,s.system_prompt) AS _system_prompt_resolved FROM sessions s LEFT JOIN system_prompts sp ON sp.hash=s.system_prompt_hash WHERE s.handoff_state='pending' ORDER BY s.started_at ASC")
+        return [self._session_row_dict(row) for row in rows]
+
+    def claim_handoff(self,session_id):
+        return self._write_rowcount("UPDATE sessions SET handoff_state='running' WHERE id=%s AND handoff_state='pending'",(session_id,))>0
+
+    def has_pending_handoffs(self):
+        return self._read_one("SELECT 1 FROM sessions WHERE handoff_state='pending' LIMIT 1") is not None
+
+    def complete_handoff(self,session_id):
+        self._write_sql("UPDATE sessions SET handoff_state='completed',handoff_error=NULL WHERE id=%s",(session_id,))
+
+    def fail_handoff(self,session_id,error,*,only_states=None):
+        query="UPDATE sessions SET handoff_state='failed',handoff_error=%s WHERE id=%s"
+        params=[error[:500],session_id]
+        if only_states:query+=' AND handoff_state=ANY(%s)';params.append(list(only_states))
+        return self._write_rowcount(query,params)>0
+
+    def reclaim_stale_running_handoffs(self,error):
+        def reclaim(conn):
+            return [row[0] for row in conn.execute("UPDATE sessions SET handoff_state='failed',handoff_error=%s WHERE handoff_state='running' RETURNING id",(error[:500],))]
+        return self._execute_write(reclaim)
+
+    def retag_kanban_worker_sessions(self,workspaces_root):
+        from hermes_state_common import escape_like
+        prefix=str(workspaces_root).rstrip('/\\')
+        if not prefix:return 0
+        gate='kanban_worker_source_retagged:'+prefix
+        if self.get_meta(gate)=='1':return 0
+        def retag(conn):
+            escaped=escape_like(prefix)
+            count=conn.execute("UPDATE sessions SET source='kanban' WHERE source='cli' AND (cwd=%s OR cwd ILIKE %s ESCAPE '\\' OR cwd ILIKE %s ESCAPE '\\')",(prefix,escaped+'/%',escaped+'\\\\%')).rowcount or 0
+            self.set_meta(gate,'1',cursor=conn)
+            return count
+        return self._execute_write(retag)
+
+    def rekey_profile_state(self,old_name,new_name):
+        raise RuntimeError('Native profile rename is unavailable with PostgreSQL; governed workspace storage bindings are immutable')
+
+    def purge_profile_state(self,profile):
+        raise RuntimeError('Native profile deletion is unavailable with PostgreSQL; use the governed workspace lifecycle')

@@ -5,6 +5,7 @@ malformed JSON is never cast through a PostgreSQL JSON operator.
 """
 from psycopg import sql
 from hermes_state_sessions import _parse_model_config
+from hermes_cli.timefmt import EPOCH_MIN,EPOCH_MAX
 
 
 def _continuation(row):
@@ -15,12 +16,12 @@ def _continuation(row):
 def compression_step(conn,parent_id):
     sessions=sql.Identifier(conn.hermes_scope.schema,'sessions')
     messages=sql.Identifier(conn.hermes_scope.schema,'messages')
-    rows=conn.execute(sql.SQL("SELECT child.*, GREATEST(COALESCE(child.last_activity_at,0),child.started_at,COALESCE((SELECT MAX(m.timestamp) FROM {} m WHERE m.session_id=child.id),0)) AS _last_active FROM {} parent JOIN {} child ON child.parent_session_id=parent.id WHERE parent.id=%s AND parent.end_reason='compression'").format(messages,sessions,sessions),(parent_id,)).fetchall()
+    rows=conn.execute(sql.SQL("SELECT child.*, COALESCE((SELECT MAX(v) FROM (VALUES(child.last_activity_at),((SELECT MAX(m.timestamp) FROM {} m WHERE m.session_id=child.id AND m.timestamp BETWEEN %s AND %s))) AS activity(v) WHERE v BETWEEN %s AND %s),CASE WHEN child.started_at BETWEEN %s AND %s THEN child.started_at END) AS _last_active FROM {} parent JOIN {} child ON child.parent_session_id=parent.id WHERE parent.id=%s AND parent.end_reason='compression'").format(messages,sessions,sessions),(EPOCH_MIN,EPOCH_MAX,EPOCH_MIN,EPOCH_MAX,EPOCH_MIN,EPOCH_MAX,parent_id)).fetchall()
     candidates=[row for row in rows if _continuation(row)]
     if not candidates:return None
     def order(row):
         priority=0 if row['end_reason']=='compression' else (1 if row['ended_at'] is None else 2)
-        return -priority,row['_last_active'],row['started_at'],row['id']
+        return -priority,row['_last_active'] is not None,row['_last_active'] or 0,row['started_at'],row['id']
     return max(candidates,key=order)
 
 

@@ -69,7 +69,7 @@ _TRANSCRIPT_EVENTS_SQL = _storage_statement(sqlite=f"""WITH transcript_events(se
     SELECT {", ".join("events." + column for column in _ROOM_EVENT_COLUMNS.split(", "))}
     FROM transcript_events
     JOIN hosted_room_events AS events ON events.room_id=? AND events.seq=transcript_events.seq
-    ORDER BY events.seq LIMIT ?""",postgresql=f"WITH transcript_events(seq) AS (\n        SELECT seq FROM hosted_room_policy_transcript WHERE room_id=%s AND thread_id=%s\n        UNION ALL\n        SELECT settled_seq FROM hosted_room_policy_transcript\n         WHERE room_id=%s AND thread_id=%s AND settled_seq IS NOT NULL)\n    SELECT {', '.join(('events.' + column for column in _ROOM_EVENT_COLUMNS.split(', ')))}\n    FROM transcript_events\n    JOIN hosted_room_events AS events ON events.room_id=%s AND events.seq=transcript_events.seq\n    ORDER BY events.seq LIMIT %s")
+    ORDER BY events.seq LIMIT ?""",postgresql=f"WITH transcript_events(seq) AS (\n        SELECT seq FROM hosted_room_policy_transcript WHERE room_id=%s AND thread_id=%s\n        UNION ALL\n        SELECT settled_seq FROM hosted_room_policy_transcript\n         WHERE room_id=%s AND thread_id=%s AND settled_seq IS NOT NULL)\n    SELECT {', '.join('events.' + column for column in _ROOM_EVENT_COLUMNS.split(', '))}\n    FROM transcript_events\n    JOIN hosted_room_events AS events ON events.room_id=%s AND events.seq=transcript_events.seq\n    ORDER BY events.seq LIMIT %s")
 
 
 @dataclass(frozen=True)

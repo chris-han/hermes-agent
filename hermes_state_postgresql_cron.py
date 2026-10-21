@@ -4,7 +4,7 @@ Foreign-host and imported live ownership is indeterminate until a declared recov
 owner settles it. A local PID cannot prove that a remote PG writer has died.
 """
 from contextlib import contextmanager
-from datetime import datetime,timezone
+from datetime import datetime,UTC
 import os
 from pathlib import Path
 import socket
@@ -22,7 +22,7 @@ def _store(module):
     return open_session_db(home=home)
 
 
-def _now():return datetime.now(timezone.utc).isoformat()
+def _now():return datetime.now(UTC).isoformat()
 
 
 @contextmanager

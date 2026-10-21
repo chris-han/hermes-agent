@@ -1491,14 +1491,14 @@ class SessionMessagesMixin(SessionMessageCleanupMixin):
         strictly around the anchor (fewer than *window* = session boundary). Empty for a foreign anchor."""
         window = max(window, 0)
         with self._read_ctx() as conn:
-            if not conn.execute("SELECT 1 FROM messages WHERE id = ? AND session_id = ? LIMIT 1",
+            if not conn.execute(_storage_statement(sqlite="SELECT 1 FROM messages WHERE id = ? AND session_id = ? LIMIT 1",postgresql="SELECT 1 FROM messages WHERE id = %s AND session_id = %s LIMIT 1",connection=conn),
                                 (around_message_id, session_id)).fetchone():
                 return {"window": [], "messages_before": 0, "messages_after": 0}
             before_rows = conn.execute(
-                "SELECT * FROM messages WHERE session_id = ? AND id <= ? ORDER BY id DESC LIMIT ?",
+                _storage_statement(sqlite="SELECT * FROM messages WHERE session_id = ? AND id <= ? ORDER BY id DESC LIMIT ?",postgresql="SELECT * FROM messages WHERE session_id = %s AND id <= %s ORDER BY id DESC LIMIT %s",connection=conn),
                 (session_id, around_message_id, window + 1)).fetchall()
             after_rows = conn.execute(
-                "SELECT * FROM messages WHERE session_id = ? AND id > ? ORDER BY id ASC LIMIT ?",
+                _storage_statement(sqlite="SELECT * FROM messages WHERE session_id = ? AND id > ? ORDER BY id ASC LIMIT ?",postgresql="SELECT * FROM messages WHERE session_id = %s AND id > %s ORDER BY id ASC LIMIT %s",connection=conn),
                 (session_id, around_message_id, window)).fetchall()
         window_msgs = [self._row_to_message_dict(r, warn_context="get_messages_around", summary_flag=False)
                        for r in (*reversed(before_rows), *after_rows)]

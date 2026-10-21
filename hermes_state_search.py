@@ -4,6 +4,7 @@ Plain mixin for ``hermes_state.SessionDB`` (no ``__init__``/state of its own).
 Must never import hermes_state (cycle); shared constants live in hermes_state_common.
 """
 
+from hermes_state_sql import is_postgres, statement as _storage_statement
 import contextlib
 import logging
 import re
@@ -751,15 +752,12 @@ class SessionSearchMixin:
         bookend_start_rows: list[Any] = []
         bookend_end_rows: list[Any] = []
         if bookend > 0:
-            role_clause = "" if keep_roles is None else f" AND role IN ({','.join('?' for _ in keep_roles)})"
-            role_params = [] if keep_roles is None else list(keep_roles)
             with self._read_ctx() as conn:
+                role_clause = "" if keep_roles is None else f" AND role IN ({','.join('%s' if is_postgres(conn) else '?' for _ in keep_roles)})"
+                role_params = [] if keep_roles is None else list(keep_roles)
                 def _bookend(op: str, boundary_id: int, order: str):
                     return conn.execute(
-                        f"SELECT * FROM messages "
-                        f"WHERE session_id = ? AND id {op} ?{role_clause} "
-                        f"AND length(content) > 0 "
-                        f"ORDER BY id {order} LIMIT ?",
+                        _storage_statement(sqlite=f"SELECT * FROM messages WHERE session_id = ? AND id {op} ?{role_clause} AND length(content) > 0 ORDER BY id {order} LIMIT ?",postgresql=f"SELECT * FROM messages WHERE session_id = %s AND id {op} %s{role_clause} AND length(content) > 0 ORDER BY id {order} LIMIT %s",connection=conn),
                         (session_id, boundary_id, *role_params, bookend),
                     ).fetchall()
                 bookend_start_rows = _bookend("<", window_rows[0]["id"], "ASC")

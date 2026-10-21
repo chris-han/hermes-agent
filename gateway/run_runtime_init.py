@@ -36,6 +36,8 @@ class GatewayRuntimeInitMixin:
 
     def _init_session_store(self) -> None:
         """Build the SessionStore (with process-registry reset guard), its async facade and the router."""
+        from gateway.run_startup import validate_postgresql_platforms
+        validate_postgresql_platforms(self.config)
         from gateway.run import (AsyncSessionStore, DeliveryRouter, SessionStore)
         from tools.process_registry import process_registry
         self.session_store = SessionStore(

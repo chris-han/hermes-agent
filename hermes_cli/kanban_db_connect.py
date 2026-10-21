@@ -158,7 +158,7 @@ def _cross_process_init_lock(path: Path):
 
 
 @contextlib.contextmanager
-def _dispatch_tick_lock(db_path: Path):
+def _dispatch_tick_lock(db_path: Path, *, connection=None):
     """Non-blocking single-writer guard around one dispatcher tick; yields
     ``True`` if this process holds the board's ``.dispatch.lock``, else
     ``False`` (caller skips the tick).
@@ -177,6 +177,14 @@ def _dispatch_tick_lock(db_path: Path):
     lock is the defense-in-depth that prevents two dispatchers from ever writing concurrently *regardless of
     how the second one got there*.
     """
+    from hermes_state_sql import is_postgres
+    if is_postgres(connection):
+        key=connection.hermes_scope.schema+'\x1fkanban-dispatch'
+        acquired=connection.execute('SELECT pg_try_advisory_lock(hashtextextended(%s,0))',(key,)).fetchone()[0]
+        try:yield acquired
+        finally:
+            if acquired:connection.execute('SELECT pg_advisory_unlock(hashtextextended(%s,0))',(key,))
+        return
     lock_path = db_path.with_name(db_path.name + ".dispatch.lock")
     handle = None
     acquired = False
@@ -225,6 +233,9 @@ def _maybe_checkpoint_wal(conn: sqlite3.Connection, db_path: Path) -> None:
     """``PRAGMA wal_checkpoint(PASSIVE)`` at most once per interval per board,
     from the dispatcher tick under the dispatch lock. Never raises: pure
     hygiene, must not fail a tick."""
+    from hermes_state_sql import is_postgres
+    # PostgreSQL's server checkpointer owns its WAL; runtime roles never issue CHECKPOINT.
+    if is_postgres(conn):return
     try:
         key = str(db_path.resolve())
     except OSError:

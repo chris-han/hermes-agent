@@ -254,6 +254,9 @@ def _open_session_db_at_path(db_path: Path, *, read_only: bool):
     from hermes_state_errors import is_transient_sqlite_error
     from hermes_state_registry import acquire
 
+    from hermes_state_backend import postgres_enabled,open_session_db
+    if postgres_enabled():return open_session_db(db_path=db_path,read_only=read_only)
+
     if not read_only:
         return acquire(db_path)
 

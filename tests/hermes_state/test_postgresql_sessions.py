@@ -1016,3 +1016,192 @@ def test_pg_foreign_history_import_preserves_origin_and_duplicate_clicks(native_
     other=db.import_foreign_history({**origin,'foreign_session_id':'different'},messages,title='迁移历史',cwd=str(tmp_path),profile='fixture')
     assert other['session_id']!=first['session_id']
     assert db.get_session(other['session_id'])['title'].startswith('迁移历史 (')
+
+
+def test_pg_gateway_handoff_idle_gate_and_restart(native_pg_worker):
+    from gateway.run_idle_gates import profile_has_pending_handoff
+    db,_=native_pg_worker
+    db.create_session('handoff','cli',system_prompt='retained prefix')
+    assert db.request_handoff('handoff','telegram')
+    assert not db.request_handoff('handoff','discord')
+    assert profile_has_pending_handoff(db.home)
+    assert db.list_pending_handoffs()[0]['system_prompt']=='retained prefix'
+    assert db.claim_handoff('handoff') and not db.claim_handoff('handoff')
+    assert not db.fail_handoff('handoff','waiter timeout',only_states=('pending',))
+    assert db.reclaim_stale_running_handoffs('restarted')==['handoff']
+    assert db.get_handoff_state('handoff')=={'state':'failed','platform':'telegram','error':'restarted'}
+    assert db.request_handoff('handoff','discord') and db.claim_handoff('handoff')
+    db.complete_handoff('handoff')
+    assert not db.has_pending_handoffs() and db.get_handoff_state('handoff')['state']=='completed'
+
+
+def test_pg_session_search_anchored_views(native_pg_worker):
+    from tools.session_search_tool import _title_match_result
+    db,_=native_pg_worker
+    db.create_session('search','cli')
+    db.append_messages_batch('search',[{'role':('tool' if n==3 else 'user'),'content':f'row {n}'} for n in range(9)])
+    rows=db.get_messages('search');anchor=rows[4]['id']
+    view=db.get_anchored_view('search',anchor,window=1,bookend=2)
+    assert [r['content'] for r in view['window']]==['row 4','row 5']
+    assert [r['content'] for r in view['bookend_start']]==['row 0','row 1']
+    assert [r['content'] for r in view['bookend_end']]==['row 7','row 8']
+    assert view['messages_before']==view['messages_after']==1
+    assert db.get_messages_around('owned',anchor)['window']==[]
+    db.set_session_title('search','Search history')
+    result=_title_match_result(db,'Search history',None)
+    assert result['messages_after']==5 and len(result['messages'])==5
+
+
+def test_pg_worker_constructor_inherits_parent_without_routing_delegate(native_pg_worker):
+    from hermes_state_worker_lifecycle import insert_session_row_in_transaction
+    db,_=native_pg_worker
+    db.create_session('parent','telegram',cwd='/parent',git_repo_root='/repo',session_key='agent:main:telegram',chat_id='peer')
+    db.end_session('parent','compression')
+    with db._canonical_connection() as conn:
+        from hermes_state_sql import native_write_transaction
+        with native_write_transaction(conn):
+            insert_session_row_in_transaction(db,conn,'child','telegram',parent_session_id='parent')
+            insert_session_row_in_transaction(db,conn,'delegate','tool',parent_session_id='parent',model_config={'_delegate_from':'parent'})
+    assert db.get_session('child')['cwd']=='/parent' and db.get_session('child')['chat_id']=='peer'
+    assert db.get_session('delegate')['cwd']=='/parent' and db.get_session('delegate')['chat_id'] is None
+
+
+def test_pg_kanban_dispatch_retags_legacy_workers(native_pg_worker,tmp_path,monkeypatch):
+    from hermes_cli.kanban_db_dispatch import _retag_legacy_worker_sessions
+    db,_=native_pg_worker
+    monkeypatch.setenv('HERMES_HOME',str(tmp_path))
+    root=str(tmp_path/'kanban_workspaces')
+    db.create_session('legacy-worker','cli',cwd=root+'/task')
+    db.create_session('human','cli',cwd=root+'-other/task')
+    _retag_legacy_worker_sessions(root)
+    assert db.get_session('legacy-worker')['source']=='kanban'
+    assert db.get_session('human')['source']=='cli'
+    assert db.retag_kanban_worker_sessions(root)==0
+
+
+def test_pg_lineage_flags_match_canonical_sqlite(tmp_path,pg_settings):
+    from hermes_state import SessionDB
+    from hermes_state_postgresql import SessionScope,PostgreSQLSessionDB,provision_scope
+    def exercise(db):
+        db.create_session('root','cli')
+        db.end_session('root','compression')
+        db.create_session('fork','cli',parent_session_id='root',model_config={'_branched_from':'root'})
+        db.create_session('tip','cli',parent_session_id='root')
+        db.set_session_pinned('tip',True)
+        db.set_session_hidden('tip',True)
+        db.end_session('fork','compression')
+        db.create_session('fork-tip','cli',parent_session_id='fork',model_config={'_branched_from':'root'})
+        db.set_session_archived('fork-tip',True)
+        return {sid:{k:db.get_session(sid)[k] for k in ('pinned','hidden','archived','auto_archived')} for sid in ('root','fork','tip','fork-tip')}
+    with SessionDB(tmp_path/'oracle.db') as source:expected=exercise(source)
+    scope=SessionScope('tenant','workspace',str(uuid.uuid4()))
+    provision_scope(pg_settings['semantier_migrate'],scope,app_role='semantier_app')
+    with PostgreSQLSessionDB(pg_settings['semantier_app'],scope,home=tmp_path/'pg') as db:
+        assert exercise(db)==expected
+
+
+def test_pg_kanban_actual_dispatch_tick_has_database_lock_and_no_sqlite_checkpoint(native_pg_worker,tmp_path,monkeypatch):
+    from hermes_cli import kanban_db as kb
+    from hermes_cli.kanban_db_connect import connect,_dispatch_tick_lock
+    from hermes_cli.kanban_db_dispatch import dispatch_once
+    _db,_=native_pg_worker
+    monkeypatch.setenv('HERMES_HOME',str(tmp_path))
+    path=tmp_path/'kanban.db'
+    conn=connect(path);other=connect(path)
+    try:
+        result=dispatch_once(conn,dry_run=True,reconcile_orphans=False)
+        assert not result.skipped_locked
+        with _dispatch_tick_lock(path,connection=conn) as held:
+            assert held
+            with _dispatch_tick_lock(path,connection=other) as second:assert not second
+        with _dispatch_tick_lock(path,connection=other) as held:assert held
+        assert not path.exists() and not path.with_suffix('.db.dispatch.lock').exists()
+    finally:conn.close();other.close()
+
+
+def test_pg_native_dashboard_search_actual_router(native_pg_worker,monkeypatch,tmp_path):
+    import asyncio
+    from hermes_cli.web_routers.sessions import search_sessions
+    db,_=native_pg_worker
+    import hermes_state
+    monkeypatch.setattr(hermes_state,'DEFAULT_DB_PATH',tmp_path/'state.db')
+    monkeypatch.setenv('HERMES_HOME',str(tmp_path))
+    db.create_session('retained-search','cli')
+    db.append_message('retained-search','user','CJK 中文 retained finding')
+    from hermes_constants import set_hermes_home_override,reset_hermes_home_override
+    token=set_hermes_home_override(str(tmp_path))
+    try:
+        for needle in ('retained-search','finding','中文'):
+            result=asyncio.run(search_sessions(q=needle,limit=5))
+            assert [row['session_id'] for row in result['results']]==['retained-search']
+    finally:reset_hermes_home_override(token)
+
+
+def test_pg_public_resume_and_compression_recency_match_sqlite(tmp_path,pg_settings):
+    import time
+    from hermes_state import SessionDB
+    from hermes_state_sql import statement
+    from hermes_state_postgresql import SessionScope,PostgreSQLSessionDB,provision_scope
+    now=time.time()
+    def exercise(db):
+        db.create_session('root','cli');db.end_session('root','compression')
+        for sid,started,activity in [('older-activity',now+500,now-50),('newer-activity',now-100,now-10)]:
+            db.create_session(sid,'cli',parent_session_id='root')
+            db._execute_write(lambda conn,sid=sid,started=started,activity=activity:conn.execute(statement(sqlite='UPDATE sessions SET started_at=?,last_activity_at=? WHERE id=?',postgresql='UPDATE sessions SET started_at=%s,last_activity_at=%s WHERE id=%s',connection=conn),(started,activity,sid)))
+        db.create_session('ordinary','cli')
+        db.create_session('continued','cli',parent_session_id='ordinary')
+        db.append_message('continued','user','continued retained history')
+        return db.get_compression_chain('root'),db.resolve_resume_session_id('ordinary')
+    with SessionDB(tmp_path/'oracle.db') as source:expected=exercise(source)
+    assert expected==(['root','newer-activity'],'continued')
+    scope=SessionScope('tenant','workspace',str(uuid.uuid4()))
+    provision_scope(pg_settings['semantier_migrate'],scope,app_role='semantier_app')
+    with PostgreSQLSessionDB(pg_settings['semantier_app'],scope,home=tmp_path/'pg') as db:
+        assert exercise(db)==expected
+
+
+def test_pg_actual_search_snippets_keep_late_english_and_cjk_matches(tmp_path,pg_settings,monkeypatch):
+    import asyncio,sqlite3
+    from hermes_state import SessionDB
+    from hermes_constants import set_hermes_home_override,reset_hermes_home_override
+    from hermes_cli.web_routers.sessions import search_sessions
+    from hermes_state_postgresql import SessionScope,PostgreSQLSessionDB,provision_scope
+    source=tmp_path/'source';source.mkdir();pg_home=tmp_path/'hosted'
+    monkeypatch.setenv('HERMES_STATE_BACKEND','sqlite')
+    with SessionDB(source/'state.db') as db:
+        for sid,body in [('en','LongPrefix '*150+'late Needle matching context.'),('zh','前言 '*150+'关键字 中文匹配上下文。')]:
+            db.create_session(sid,'cli');db.append_message(sid,'user',body)
+    def search(home,query):
+        import hermes_state
+        monkeypatch.setattr(hermes_state,'DEFAULT_DB_PATH',home/'state.db')
+        token=set_hermes_home_override(str(home))
+        try:return asyncio.run(search_sessions(q=query,limit=5))['results']
+        finally:reset_hermes_home_override(token)
+    expected={query:search(source,query) for query in ('Needle','关键字','中文')}
+    assert '>>>Needle<<<' in expected['Needle'][0]['snippet']
+    assert all(query in rows[0]['snippet'] for query,rows in expected.items())
+    scope=SessionScope('tenant','workspace',str(uuid.uuid4()))
+    provision_scope(pg_settings['semantier_migrate'],scope,app_role='semantier_app')
+    with PostgreSQLSessionDB(pg_settings['semantier_migrate'],scope,home=pg_home) as db:db.import_sqlite_snapshot(source/'state.db')
+    monkeypatch.setenv('HERMES_STATE_BACKEND','postgresql')
+    monkeypatch.setenv('HERMES_DATABASE_URL',pg_settings['semantier_app'])
+    monkeypatch.setenv('HERMES_STATE_SCOPE_MAP',json.dumps({str(pg_home):dict(zip(('tenant_id','workspace_id','source_store_id'),scope.identity))}))
+    monkeypatch.setattr(sqlite3,'connect',lambda *a,**k:pytest.fail('Hosted snippet search opened SQLite'))
+    for query,source_rows in expected.items():
+        rows=search(pg_home,query)
+        assert [row['session_id'] for row in rows]==[row['session_id'] for row in source_rows]
+        assert f'>>>{query}<<<'.lower() in rows[0]['snippet'].lower()
+        assert len(rows[0]['snippet'])<=400 and rows[0]['snippet'].startswith('...')
+
+
+def test_pg_optional_native_profile_control_refuses_before_in_memory_mutation(native_pg_worker):
+    from types import SimpleNamespace
+    from gateway.run_profile_reconcile import migrate_profile_identity_verb,purge_profile_identity_verb
+    db,_=native_pg_worker;changes=[]
+    store=SimpleNamespace(_routing_db=db,_routing_home=None,
+        rekey_profile_routing=lambda *args:changes.append(args),purge_profile_routing=lambda *args:changes.append(args))
+    runner=SimpleNamespace(session_store=store)
+    for handler,payload in [(migrate_profile_identity_verb(runner),{'old':'original','new':'changed'}),(purge_profile_identity_verb(runner),{'name':'original'})]:
+        result=handler(payload)
+        assert result['ok'] is False and 'unavailable' in result['error']
+    assert changes==[] and db.get_session('owned') is not None

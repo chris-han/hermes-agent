@@ -133,7 +133,7 @@ def _inject_context_from(job: dict, prompt: str) -> tuple[str, bool]:
         return prompt, False
     from cron.jobs import get_cron_output_dir
     from cron.storage_provider import get_storage_provider
-    provider = get_storage_provider()
+    provider = get_storage_provider(required=True)
     output_dir = get_cron_output_dir()
     if isinstance(context_from, str):
         context_from = [context_from]

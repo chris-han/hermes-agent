@@ -1352,7 +1352,7 @@ def _parse_jobs_file(jobs_file: Path) -> tuple[Any, bool]:
 def load_jobs() -> list[dict[str, Any]]:
     """Load all jobs from storage."""
     from cron.storage_provider import get_storage_provider
-    provider = get_storage_provider()
+    provider = get_storage_provider(required=True)
     if provider is not None:
         return provider.load_jobs(_current_cron_store().cron_dir.parent)
     jobs_file = _current_cron_store().jobs_file
@@ -1559,7 +1559,7 @@ def _save_jobs_unlocked(
     ``replace=True`` skips the shrink-merge guard and the corrupt-store refusal (wholesale
     rewrite for tests, disaster recovery and load_jobs' auto-repair of unmergeable shapes)."""
     from cron.storage_provider import get_storage_provider
-    provider = get_storage_provider()
+    provider = get_storage_provider(required=True)
     if provider is not None:
         provider.save_jobs(_current_cron_store().cron_dir.parent, jobs, removed_ids=removed_ids, replace=replace)
         return
@@ -1837,7 +1837,7 @@ def create_job(
         if idempotency_key is None:
             return None
         from cron.storage_provider import get_storage_provider
-        provider = get_storage_provider()
+        provider = get_storage_provider(required=True)
         lookup = getattr(provider, "lookup_creation_identity", None)
         if lookup is not None:
             persisted = lookup(_current_cron_store().cron_dir.parent, idempotency_key)
@@ -2331,7 +2331,7 @@ def remove_job(job_id: str) -> bool:
         if marker is not None and marker.job_id == canonical_id:
             marker.removed = True
         from cron.storage_provider import get_storage_provider
-        provider = get_storage_provider()
+        provider = get_storage_provider(required=True)
         if provider is not None:
             provider.delete_outputs(_current_cron_store().cron_dir.parent, canonical_id)
         elif job_output_dir.exists():
@@ -3443,7 +3443,7 @@ def _prune_job_output(job_output_dir: Path, keep: int) -> int:
 def save_job_output(job_id: str, output: str):
     """Save job output through the host store, or standalone file storage."""
     from cron.storage_provider import get_storage_provider
-    provider = get_storage_provider()
+    provider = get_storage_provider(required=True)
     if provider is not None:
         return provider.save_output(_current_cron_store().cron_dir.parent, job_id, output)
     ensure_dirs()

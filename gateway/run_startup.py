@@ -1885,3 +1885,13 @@ class GatewayStartupMixin:
             raise RuntimeError(f"adapter.send failed: {exc}") from exc
         if not getattr(result, "success", True):
             raise RuntimeError(f"adapter.send failed: {_send_error(result)}")
+
+
+def validate_postgresql_platforms(config):
+    """Reject optional topic authority absent from the hosted migration contract."""
+    from hermes_state_backend import postgres_enabled
+    if not postgres_enabled():return
+    from gateway.config import Platform
+    telegram=config.platforms.get(Platform.TELEGRAM)
+    if telegram is not None and telegram.enabled:
+        raise RuntimeError('Telegram is unavailable with PostgreSQL hosted storage; its optional topic authority is supported only by desktop SQLite')

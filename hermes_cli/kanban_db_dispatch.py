@@ -2020,7 +2020,7 @@ def dispatch_once(
         result = _locked_tick()
         _kb._fire_dispatch_tick_hook(result, board=board, dry_run=dry_run)
         return result
-    with _kbc._dispatch_tick_lock(db_path) as held:
+    with _kbc._dispatch_tick_lock(db_path,connection=conn) as held:
         if not held:
             result = DispatchResult(skipped_locked=True)
         else:

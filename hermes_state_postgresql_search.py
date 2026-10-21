@@ -3,6 +3,7 @@ import json
 import re
 import unicodedata
 from psycopg import sql
+from hermes_state_messages import SessionMessagesMixin
 from hermes_state_search import SessionSearchMixin, _strip_cjk_wildcards, _non_operator_tokens, _flatten_text
 from hermes_state_common import FTS_TOOL_CONTENT_PREFIX_CHARS, FTS_TRIGRAM_EXCLUDED_SOURCES
 
@@ -33,7 +34,39 @@ def _units(query, *, like=False):
     return [g for g in groups if g]
 
 
+def _matched_snippet(content,groups):
+    """Bounded matching context using the native UI's text highlight delimiters."""
+    from itertools import islice
+    spans=[]
+    terms=[(term,prefix) for group in groups for term,negative,prefix in group if not negative]
+    for term,prefix in terms:
+        pattern=re.escape(term)
+        if not SessionSearchMixin._contains_cjk(term):
+            pattern=r'(?<!\w)'+pattern+(r'\w*' if prefix else r'(?!\w)')
+        spans.extend(match.span() for match in islice(re.finditer(pattern,content,re.IGNORECASE),20))
+    # Substring/trigram fallbacks can legitimately match inside an English token.
+    if not spans:
+        for term,_ in terms:
+            spans.extend(match.span() for match in islice(re.finditer(re.escape(term),content,re.IGNORECASE),20))
+    if not spans:return None
+    spans=sorted(set(spans));start=max(0,spans[0][0]-60);end=min(len(content),start+240)
+    merged=[]
+    for left,right in spans:
+        if left>=end:break
+        left=max(left,start);right=min(right,end)
+        if merged and left<=merged[-1][1]:merged[-1]=(merged[-1][0],max(right,merged[-1][1]))
+        elif len(merged)<20:merged.append((left,right))
+    pieces=['...' if start else ''];cursor=start
+    for left,right in merged:
+        pieces.extend((content[cursor:left],'>>>',content[left:right],'<<<'));cursor=right
+    pieces.extend((content[cursor:end],'...' if end<len(content) else ''))
+    return ''.join(pieces)
+
+
 class PostgreSQLSearchMixin:
+    search_sessions_by_id=SessionSearchMixin.search_sessions_by_id
+    get_anchored_view=SessionSearchMixin.get_anchored_view
+    get_messages_around=SessionMessagesMixin.get_messages_around
     _SEARCH_MESSAGE_RESULT_FIELDS=SessionSearchMixin._SEARCH_MESSAGE_RESULT_FIELDS
 
     def _search_match(self,groups,*,substring=False):
@@ -142,7 +175,7 @@ class PostgreSQLSearchMixin:
         if cjk and not tool:
             raw=_strip_cjk_wildcards(query).strip('"').strip()
             groups=[[(term,False,False)] for term in (_non_operator_tokens(raw) or [raw])]
-        select=sql.SQL('SELECT m.id,m.session_id,m.role,m.content,m.content_bytes,m.timestamp,m.tool_name,s.source,s.model,s.started_at AS session_started FROM {} m JOIN {} s ON s.id=m.session_id').format(self.table('messages'),self.table('sessions'))
+        select=sql.SQL('SELECT m.id,m.session_id,m.role,m.content,m.content_bytes,m.timestamp,m.tool_name,m.tool_calls,s.source,s.model,s.started_at AS session_started FROM {} m JOIN {} s ON s.id=m.session_id').format(self.table('messages'),self.table('sessions'))
         def find(current,*,substring=False,trigram=False,like_order=False):
             match,match_params=self._search_match(current,substring=substring)
             extra=sql.SQL('')
@@ -165,14 +198,13 @@ class PostgreSQLSearchMixin:
             if not rows:
                 relaxed=SessionSearchMixin._or_relaxed_query(query)
                 if relaxed:rows=find(_units(relaxed))
-        terms=[term for group in groups for term,negative,_ in group if not negative]
         output=[]
         for row in rows:
             raw=row.pop('content_bytes',None)
             content=bytes(raw).decode('utf-8') if raw is not None else row.pop('content') or ''
             row.pop('content',None)
-            anchor=content.lower().find(terms[0].lower()) if terms else 0
-            row['snippet']=content[max(0,anchor-40):max(0,anchor-40)+120]
+            candidates=(content,row.get('tool_name') or '',row.pop('tool_calls',None) or '')
+            row['snippet']=next((snippet for value in candidates if (snippet:=_matched_snippet(value,groups)) is not None),content[:240])
             if selected is None or 'context' in selected:
                 context=self._all(sql.SQL('''SELECT * FROM {} WHERE id IN (
                     %s,(SELECT id FROM {} WHERE session_id=%s AND (timestamp,id)<(%s,%s) ORDER BY timestamp DESC,id DESC LIMIT 1),
