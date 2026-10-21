@@ -291,3 +291,9 @@ def count_incidents(state: Optional[str] = None) -> int:
     with _transaction() as conn:
         row = conn.execute("SELECT COUNT(*) AS n FROM cron_incidents" + where, params).fetchone()
     return int(row["n"]) if row is not None else 0
+
+
+from hermes_state_backend import dispatch_cron_operation as _storage_dispatch
+import sys as _sys
+for _operation in ('upsert_incident','set_incident_state','close_incidents_for_recovered_job','list_incidents','get_incident','count_incidents'):
+    globals()[_operation] = _storage_dispatch(_sys.modules[__name__], _operation, globals()[_operation])

@@ -115,6 +115,7 @@ def resolve_and_repair_transcript_batch(
     decode_content_fn: Callable[[Any], Any],
     serialize_message_fn: Callable[[dict[str, Any], float], Mapping[str, Any]],
     decode_row_fn: Callable[[Mapping[str, Any]], dict[str, Any]],
+    row_store=None,
 ) -> list[dict[str, Any]]:
     """Resolve row-addressed rewrites without appending duplicates or replacing concurrent winners.
 
@@ -131,11 +132,11 @@ def resolve_and_repair_transcript_batch(
         expected = msg.get(DB_ROW_SNAPSHOT) if isinstance(msg, dict) else None
         target_row = None
         if isinstance(existing_row_id, int):
-            target_row = _active_message_row(conn, session_id, existing_row_id, role)
+            target_row = row_store.active(session_id, existing_row_id, role) if row_store is not None else _active_message_row(conn, session_id, existing_row_id, role)
         elif isinstance(expected, str):
             # Logical identity + the CAS version prove this dict came from durable replay. A new message
             # has neither proof, even when role/content/timestamp happen to equal an older message exactly.
-            target_row = _active_logical_message_row(conn, session_id, role, message_uid_or_none(msg))
+            target_row = row_store.logical(session_id, role, message_uid_or_none(msg)) if row_store is not None else _active_logical_message_row(conn, session_id, role, message_uid_or_none(msg))
         if target_row is None:
             inserted_rows.append(msg)
             continue
@@ -160,7 +161,10 @@ def resolve_and_repair_transcript_batch(
                     # "unknown", not NULL.
                     serialized = {**serialized, "token_count": target_row["token_count"]}
                 if any(target_row[column] != serialized[column] for column in _OWNED_COLUMNS):
-                    _rewrite_row(conn, session_id, target_row, serialized)
+                    if row_store is not None:
+                        row_store.rewrite(session_id, target_row, serialized)
+                    else:
+                        _rewrite_row(conn, session_id, target_row, serialized)
                     wrote = True
                 missing = {c: target_row[c] for c in _LIVE_MISSING_METADATA if msg.get(c) is None}
                 if any(value is not None for value in missing.values()):
@@ -170,10 +174,13 @@ def resolve_and_repair_transcript_batch(
         elif role == "assistant" and is_content_blank(decode_content_fn(target_row["content"])):
             # Legacy dict (no digest) over a blank assistant row: the interrupted-stream repair. Fill the row
             # from live content with a content-only CAS and never adopt the blank row onto the live dict.
-            wrote = conn.execute(
-                "UPDATE messages SET content = ? WHERE id = ? AND session_id = ? AND content IS ?",
-                (encode_content_fn(msg.get("content")), target_id, session_id, target_row["content"]),
-            ).rowcount > 0
+            if row_store is not None:
+                wrote = row_store.fill_blank(session_id, target_id, target_row, encode_content_fn(msg.get("content")))
+            else:
+                wrote = conn.execute(
+                    "UPDATE messages SET content = ? WHERE id = ? AND session_id = ? AND content IS ?",
+                    (encode_content_fn(msg.get("content")), target_id, session_id, target_row["content"]),
+                ).rowcount > 0
         else:
             # Legacy dict (no digest: a row-addressed resume, a clone, or a repair_alternation=False
             # projection) over a non-blank assistant row: another writer already filled it. Adopt its content
@@ -182,9 +189,12 @@ def resolve_and_repair_transcript_batch(
             if role == "assistant":
                 canonical = {"content": decode_content_fn(target_row["content"]), _CONTENT_ONLY: True}
 
-        final_row = conn.execute(
-            "SELECT * FROM messages WHERE id = ? AND session_id = ?", (target_id, session_id)
-        ).fetchone() if wrote else target_row
+        if wrote and row_store is not None:
+            final_row = row_store.fetch(session_id, target_id)
+        else:
+            final_row = conn.execute(
+                "SELECT * FROM messages WHERE id = ? AND session_id = ?", (target_id, session_id)
+            ).fetchone() if wrote else target_row
         msg["timestamp"] = final_row["timestamp"]
         # A row-addressed rewrite keeps the row's identity: the stored uid wins over whatever the live dict
         # carried (a restored dict without one, or a dict stamped before a rolled-back insert).

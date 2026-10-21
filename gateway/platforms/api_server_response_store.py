@@ -36,6 +36,13 @@ class ResponseStore:
     request id, so a reuse is refused with ``admission_conflict`` and never re-executes.
     """
 
+    def __new__(cls, max_size=MAX_STORED_RESPONSES, db_path=None, max_identities=None):
+        from hermes_state_backend import postgres_enabled
+        if postgres_enabled():
+            from hermes_state_postgresql_api import PostgreSQLResponseStore
+            return PostgreSQLResponseStore(max_size=max_size,db_path=db_path,max_identities=max_identities)
+        return super().__new__(cls)
+
     def __init__(self, max_size: int = MAX_STORED_RESPONSES, db_path: Optional[str] = None,
                  max_identities: Optional[int] = None):
         self._max_size = max_size

@@ -199,6 +199,9 @@ def acquire(db_path: Optional[Path] = None) -> SessionDB:
     whatever ``SessionDB.__init__`` raises; on a replacement-open failure the registry
     holds NO entry for the path."""
     from hermes_state import _default_db_path
+    from hermes_state_backend import postgres_enabled, open_session_db
+    if postgres_enabled():
+        return open_session_db(db_path)
 
     raw_path = Path(db_path) if db_path is not None else Path(_default_db_path())
     try:

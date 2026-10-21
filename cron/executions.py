@@ -647,3 +647,14 @@ def latest_executions(job_ids: list[str]) -> dict[str, dict[str, Any]]:
             clean,
         ).fetchall()
     return {row["job_id"]: dict(row) for row in rows}
+
+
+# Public operations select their real storage owner; SQLite remains the desktop default.
+from hermes_state_backend import dispatch_cron_operation as _storage_dispatch
+EXECUTION_METHODS=('create_execution','touch_execution_progress','set_execution_occurrence','mark_execution_running',
+ 'mark_execution_handoff_pending','adopt_claimed_execution','finish_execution','give_up_execution','terminalize_dead_owner',
+ 'recover_receipted_execution','execution_owner_live','settle_delivery_outcome','recover_interrupted_executions',
+ 'list_executions','get_execution','latest_executions')
+import sys as _sys
+for _operation in EXECUTION_METHODS:
+    globals()[_operation] = _storage_dispatch(_sys.modules[__name__], _operation, globals()[_operation])
