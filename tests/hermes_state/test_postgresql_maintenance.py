@@ -103,3 +103,26 @@ def test_maintenance_admission_and_corrupt_meta_are_scope_local(hosted):
     with pg._transaction() as conn:pg._insert(conn,'gateway_heartbeats',{'backend_id':'live-owner','pid':1,'started_at':old,'last_heartbeat':now})
     assert pg.sweep_orphaned_sessions(max_idle_seconds=90*86400,sources=('api_server',))==[]
     assert pg.sweep_orphaned_sessions(max_idle_seconds=90*86400,sources=('api_server',),respect_gateway_heartbeats=False)==['owned-open']
+
+
+def test_archive_flags_match_native_unfiltered_fork_component(hosted,tmp_path):
+    from hermes_state import SessionDB
+    pg,_=hosted;old=time.time()-10*86400
+    def seed(db,ended=False):
+        for marker in ('_branched_from','_delegate_from','_reset_from','tool'):
+            parent=marker+'-parent';child=marker+'-child'
+            db.create_session(parent,'cli');stamp(db,parent,old,reason='compression',archived=0,auto_archived=0)
+            db.create_session(child,'tool' if marker=='tool' else 'cli')
+            config={} if marker=='tool' else {marker:parent}
+            stamp(db,child,old,ended=ended,parent_session_id=parent,model_config=json.dumps(config),archived=0,auto_archived=0)
+        db.create_session('recent-sibling','cli');stamp(db,'recent-sibling',time.time(),ended=False,parent_session_id='_branched_from-parent',model_config=json.dumps({'_branched_from':'_branched_from-parent'}),archived=0,auto_archived=0)
+    def flags(db):
+        ids=[marker+suffix for marker in ('_branched_from','_delegate_from','_reset_from','tool') for suffix in ('-parent','-child')]+['recent-sibling']
+        return {sid:(db.get_session(sid)['archived'],db.get_session(sid)['auto_archived']) for sid in ids}
+    with SessionDB(tmp_path/'fork-oracle.sqlite3') as baseline:
+        seed(baseline);seed(pg)
+        assert baseline.archive_stale_sessions(3)==pg.archive_stale_sessions(3)==4
+        assert flags(pg)==flags(baseline)
+        seed(baseline,ended=True);seed(pg,ended=True)
+        assert baseline.archive_sessions(older_than_days=3)==pg.archive_sessions(older_than_days=3)==4
+        assert flags(pg)==flags(baseline)

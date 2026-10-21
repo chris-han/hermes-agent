@@ -20,14 +20,6 @@ def _ancestry(ids,parents):
     return seen
 
 
-def _lineage(ids,parents):
-    seen=_ancestry(ids,parents)
-    while True:
-        expanded=seen|{child for child,parent in parents.items() if parent in seen}
-        if expanded==seen:return seen
-        seen=expanded
-
-
 def _select(rows,parents,older_than_days,source,filters,*,ended=True,whole=False):
     from hermes_state_maintenance import _PRUNE_FILTER_NAMES
     unknown=set(filters)-_PRUNE_FILTER_NAMES
@@ -124,7 +116,7 @@ class PostgreSQLMaintenanceMixin:
             pinned={row['id'] for row in rows if row['pinned']}
             tips=[row for row in rows if not row['archived'] and row['end_reason']!='compression' and row['last_active'] is not None and row['last_active']<cutoff and not(row['hidden'] and row['title']==self.CANONICAL_BOT_CHAT_TITLE)]
             selected=[row for row in tips if not exclude_pinned or not(_ancestry([row['id']],parents)&pinned)]
-            ids=list(_lineage([row['id'] for row in selected],parents))
+            ids=list({sid for row in selected for sid in self._lineage_ids_on_conn(conn,row['id'])})
             conn.execute(sql.SQL('UPDATE {} SET auto_archived=CASE WHEN archived=0 THEN 1 ELSE auto_archived END,archived=1 WHERE id=ANY(%s)').format(self.table('sessions')),(ids,))
             return len(selected)
 
@@ -133,7 +125,7 @@ class PostgreSQLMaintenanceMixin:
         with self._transaction() as conn:
             rows,parents=self._maintenance_snapshot(conn)
             selected=_select(rows,parents,older_than_days,source,filters)
-            ids=list(_lineage([row['id'] for row in selected],parents))
+            ids=list({sid for row in selected for sid in self._lineage_ids_on_conn(conn,row['id'])})
             conn.execute(sql.SQL('UPDATE {} SET archived=1,auto_archived=0 WHERE id=ANY(%s)').format(self.table('sessions')),(ids,))
             return len(selected)
 
