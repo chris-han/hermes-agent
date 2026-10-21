@@ -290,6 +290,26 @@ CREATE TABLE IF NOT EXISTS delivery_obligations(
  thread_id TEXT,content TEXT NOT NULL,state TEXT NOT NULL,attempts BIGINT NOT NULL DEFAULT 0,
  created_at DOUBLE PRECISION NOT NULL,updated_at DOUBLE PRECISION NOT NULL,owner_pid BIGINT,
  owner_started_at BIGINT,last_error TEXT,adapter_profile TEXT,owner_host TEXT);
+
+-- Canonical cron payloads are UTF-8 bytea so SQLite's Unicode/NUL values survive exactly.
+CREATE TABLE IF NOT EXISTS cron_notepad (
+    job_id BYTEA NOT NULL, key BYTEA NOT NULL, value BYTEA NOT NULL,
+    updated_at TEXT NOT NULL, PRIMARY KEY(job_id,key)
+);
+CREATE TABLE IF NOT EXISTS deliveries (
+    execution_id TEXT PRIMARY KEY, job_json TEXT NOT NULL, content BYTEA NOT NULL,
+    for_failure INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL CHECK(status IN ('pending','delivering','delivered','failed','unknown','suppressed')),
+    owner_process_id TEXT,owner_pid BIGINT,owner_started_at BIGINT,owner_host TEXT,
+    created_at TEXT NOT NULL,finished_at TEXT,error TEXT
+);
+CREATE TABLE IF NOT EXISTS delivery_tombstones (
+    execution_id TEXT PRIMARY KEY,
+    terminal_status TEXT NOT NULL CHECK(terminal_status IN ('delivered','failed','unknown','suppressed')),
+    finished_at TEXT
+);
+ALTER TABLE async_delegations ADD COLUMN IF NOT EXISTS owner_host TEXT;
+CREATE INDEX IF NOT EXISTS deliveries_status_created_pg ON deliveries(status,created_at,execution_id);
 '''
 
 # SQLite rowid is the native deterministic tie-breaker for coherent route recency.

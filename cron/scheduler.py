@@ -1371,7 +1371,8 @@ def drain_delivery_queue(adapters, loop) -> int:
     # Only restart-safe workers create the queue file.  Every gateway (macOS,
     # Windows, launchd, Docker) runs this housekeeping tick, so skip the sqlite
     # open/create entirely until a worker has actually queued something.
-    if not _path().exists():
+    from hermes_state_backend import postgres_enabled
+    if not postgres_enabled() and not _path().exists():
         return 0
     def send(queued_job, queued_content, queued_for_failure):
         error = _deliver_result(
@@ -1891,8 +1892,17 @@ def _open_cron_session_db(job: dict):
         def acquire_store():
             if owner is None:
                 return acquire()
-            db = acquire(Path(owner[0].db.db_path))
-            if db is not owner[0].db:
+            from hermes_state_backend import postgres_enabled, open_session_db, session_store_home, session_store_key
+            if postgres_enabled():
+                # Native handles have no resident writer connection or accounting queue.
+                # Borrow the same governed scope with an independent lifetime; releasing
+                # this cron handle must never close the authority's own handle.
+                db = open_session_db(home=session_store_home(owner[0].db))
+                same_store = session_store_key(db) == session_store_key(owner[0].db)
+            else:
+                db = acquire(Path(owner[0].db.db_path))
+                same_store = db is owner[0].db
+            if not same_store:
                 from hermes_state_registry import release_or_close
                 release_or_close(db)
                 raise RuntimeError('cron requires the canonical owner store')

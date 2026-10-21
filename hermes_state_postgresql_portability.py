@@ -17,7 +17,7 @@ NATIVE_TABLES = ('schema_version','system_prompts','sessions','messages','sessio
 
 SNAPSHOT_FAMILIES = {'hosted_rooms': ROOM_TABLES, 'sessions': NATIVE_TABLES, 'api_runs': ('run_idempotency',),
     'api_responses': ('responses','conversations','response_keys','response_admissions','response_output_order'),
-    'cron': ('executions','cron_incidents'), 'kanban': ('tasks','task_links','task_comments','task_events','task_runs','task_attachments','kanban_notify_subs'), 'hosted_rooms_marker': ('hosted_room_legacy_imports',)}
+    'cron': ('executions','cron_incidents'), 'cron_notes': ('cron_notepad',), 'cron_delivery': ('deliveries','delivery_tombstones'), 'kanban': ('tasks','task_links','task_comments','task_events','task_runs','task_attachments','kanban_notify_subs'), 'hosted_rooms_marker': ('hosted_room_legacy_imports',)}
 
 
 def _json_value(value):
@@ -65,6 +65,10 @@ class PostgreSQLPortabilityMixin(SessionPortabilityMixin):
             for name,rows in tables.items():
                 for row in rows:
                     values=dict(row)
+                    if name=='cron_notepad':
+                        for column in ('job_id','key','value'):
+                            if isinstance(values.get(column),str):values[column]=values[column].encode('utf-8')
+                    if name=='deliveries' and isinstance(values.get('content'),str):values['content']=values['content'].encode('utf-8')
                     if name=='messages' and isinstance(values.get('content'),str) and '\x00' in values['content']:
                         values['content_bytes']=values['content'].encode('utf-8'); values['content']=None
                     self._insert(conn,name,values)
@@ -86,6 +90,10 @@ class PostgreSQLPortabilityMixin(SessionPortabilityMixin):
                 projected=[]
                 for row in actual:
                     values={column:row[column] for column in columns}
+                    if name in ('cron_notepad','deliveries'):
+                        for column in (('job_id','key','value') if name=='cron_notepad' else ('content',)):
+                            if column in columns and all(isinstance(item.get(column),str) for item in source_rows):
+                                values[column]=bytes(values[column]).decode('utf-8')
                     if name=='messages' and row.get('content_bytes') is not None:
                         values['content']=bytes(row['content_bytes']).decode('utf-8')
                     # Kanban deliberately accepts both legacy integer and boot-qualified text fingerprints.

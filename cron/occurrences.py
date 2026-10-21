@@ -22,7 +22,8 @@ def scheduled_instant(value):
 def completed_occurrence(job, instant):
     """Unknown/failed/pruned attempts cannot prove completion: keep them eligible."""
     from cron.constants import FIRE_CLAIM_SKEW_SECONDS
-    from cron.executions import _transaction
+    from cron import executions
+    from hermes_state_backend import postgres_enabled
 
     instant = scheduled_instant(instant)
     if instant is None:
@@ -30,12 +31,21 @@ def completed_occurrence(job, instant):
     # A skewed early fire (see claim_job_for_fire) legitimately completes just before its slot.
     earliest_real = datetime.fromisoformat(instant) - timedelta(seconds=FIRE_CLAIM_SKEW_SECONDS)
     try:
-        with _transaction() as conn:
-            rows = conn.execute(
-                "SELECT id, finished_at, claimed_at FROM executions "
-                "WHERE job_id=? AND scheduled_instant=? "
-                "AND status='completed'", (str(job['id']), instant)
-            ).fetchall()
+        if postgres_enabled():
+            from hermes_state_postgresql_cron import _transaction
+            from psycopg import sql
+            with _transaction(executions) as (store, conn):
+                rows = conn.execute(sql.SQL(
+                    "SELECT id, finished_at, claimed_at FROM {} "
+                    "WHERE job_id=%s AND scheduled_instant=%s AND status='completed'"
+                ).format(store.table('executions')), (str(job['id']), instant)).fetchall()
+        else:
+            with executions._transaction() as conn:
+                rows = conn.execute(
+                    "SELECT id, finished_at, claimed_at FROM executions "
+                    "WHERE job_id=? AND scheduled_instant=? "
+                    "AND status='completed'", (str(job['id']), instant)
+                ).fetchall()
         for row in rows:
             completed_at = scheduled_instant(row["finished_at"] or row["claimed_at"])
             # Legacy or malformed timestamps remain proof; only positively identified poison
@@ -51,6 +61,8 @@ def completed_occurrence(job, instant):
                 return True
         return False
     except Exception:
+        if postgres_enabled():
+            raise
         logger.warning("Cannot check completed occurrence for job %s", job['id'], exc_info=True)
         return False
 

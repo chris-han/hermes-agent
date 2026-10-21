@@ -11,9 +11,12 @@ from __future__ import annotations
 
 import sqlite3
 import threading
-from contextlib import contextmanager
+from contextlib import contextmanager, closing
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
+
+from hermes_state_backend import postgres_enabled
+from hermes_state_sql import connect_postgres, native_write_transaction, NativeRow
 
 from hermes_constants import get_hermes_home
 from hermes_time import now as _hermes_now
@@ -33,10 +36,44 @@ def _current_notepad_file() -> Path:
     return NOTEPAD_FILE or (get_hermes_home().resolve() / "cron" / "notepad.db")
 
 
-def _connect() -> sqlite3.Connection:
-    # Late imports: a scheduler daemon that outlives an on-disk upgrade already has the OLD
-    # ``hermes_cli.sqlite_util`` / ``cron.jobs`` cached, so new names must be resolved at call time,
-    # not at import time (the guarantee cron/ledger.py used to carry, see e24c8499).
+def _query(conn, sqlite, postgresql):
+    if not postgres_enabled():
+        return sqlite
+    from psycopg import sql
+
+    return sql.SQL(postgresql).format(
+        notes=sql.Identifier(conn.hermes_scope.schema, "cron_notepad")
+    )
+
+
+def _value(value):
+    return (
+        value.encode("utf-8")
+        if postgres_enabled() and isinstance(value, str)
+        else value
+    )
+
+
+def _note_row_factory(cursor):
+    names = tuple(column.name for column in cursor.description or ())
+    return lambda values: NativeRow(
+        names,
+        tuple(
+            bytes(value).decode("utf-8")
+            if name in {"job_id", "key", "value"} and value is not None
+            else value
+            for name, value in zip(names, values)
+        ),
+    )
+
+
+def _connect(*, read_only=False):
+    if postgres_enabled():
+        conn = connect_postgres(
+            _current_notepad_file().parent.parent, read_only=read_only
+        )
+        conn.row_factory = _note_row_factory
+        return conn
     from cron.jobs import _ensure_cron_dir
     from hermes_cli.sqlite_util import open_db
 
@@ -58,7 +95,12 @@ def _initialize_schema(conn: sqlite3.Connection) -> None:
 
 
 @contextmanager
-def _transaction() -> Iterator[sqlite3.Connection]:
+def _transaction(*, read_only=False):
+    if postgres_enabled():
+        with _lock, closing(_connect(read_only=read_only)) as conn:
+            with conn.transaction() if read_only else native_write_transaction(conn):
+                yield conn
+        return
     from hermes_cli.sqlite_util import transaction
 
     with _lock, transaction(_connect()) as conn:
@@ -80,13 +122,22 @@ def set_note(job_id: str, key: str, value: str) -> dict[str, Any]:
     """Upsert one key. Raises ValueError when a size cap would be exceeded."""
     job_id, key, value = str(job_id), str(key), str(value)
     _validate(job_id, key, value)
-    now = _hermes_now().isoformat()
+    now = _hermes_now()
+    if postgres_enabled():
+        from datetime import UTC
+
+        now = now.astimezone(UTC)
+    now = now.isoformat()
     with _transaction() as conn:
         row = conn.execute(
-            """SELECT COALESCE(SUM(LENGTH(CAST(key AS BLOB))
+            _query(
+                conn,
+                """SELECT COALESCE(SUM(LENGTH(CAST(key AS BLOB))
                  + LENGTH(CAST(value AS BLOB))), 0)
                FROM cron_notepad WHERE job_id=? AND key<>?""",
-            (job_id, key),
+                "SELECT COALESCE(SUM(octet_length(key)+octet_length(value)),0) FROM {notes} WHERE job_id=%s AND key<>%s",
+            ),
+            (_value(job_id), _value(key)),
         ).fetchone()
         other_bytes = int(row[0])
         entry_bytes = len(key.encode("utf-8")) + len(value.encode("utf-8"))
@@ -96,20 +147,28 @@ def set_note(job_id: str, key: str, value: str) -> dict[str, Any]:
                 f"{MAX_JOB_TOTAL_BYTES} bytes total; delete unused keys first"
             )
         conn.execute(
-            """INSERT INTO cron_notepad (job_id, key, value, updated_at)
+            _query(
+                conn,
+                """INSERT INTO cron_notepad (job_id, key, value, updated_at)
                VALUES (?, ?, ?, ?)
                ON CONFLICT(job_id, key)
                DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at""",
-            (job_id, key, value, now),
+                "INSERT INTO {notes}(job_id,key,value,updated_at) VALUES(%s,%s,%s,%s) ON CONFLICT(job_id,key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",
+            ),
+            (_value(job_id), _value(key), _value(value), now),
         )
     return {"job_id": job_id, "key": key, "value": value, "updated_at": now}
 
 
 def get_note(job_id: str, key: str) -> Optional[str]:
-    with _transaction() as conn:
+    with _transaction(read_only=True) as conn:
         row = conn.execute(
-            "SELECT value FROM cron_notepad WHERE job_id=? AND key=?",
-            (str(job_id), str(key)),
+            _query(
+                conn,
+                "SELECT value FROM cron_notepad WHERE job_id=? AND key=?",
+                "SELECT value FROM {notes} WHERE job_id=%s AND key=%s",
+            ),
+            (_value(str(job_id)), _value(str(key))),
         ).fetchone()
     return None if row is None else row["value"]
 
@@ -117,19 +176,27 @@ def get_note(job_id: str, key: str) -> Optional[str]:
 def delete_note(job_id: str, key: str) -> bool:
     with _transaction() as conn:
         cur = conn.execute(
-            "DELETE FROM cron_notepad WHERE job_id=? AND key=?",
-            (str(job_id), str(key)),
+            _query(
+                conn,
+                "DELETE FROM cron_notepad WHERE job_id=? AND key=?",
+                "DELETE FROM {notes} WHERE job_id=%s AND key=%s",
+            ),
+            (_value(str(job_id)), _value(str(key))),
         )
     return cur.rowcount > 0
 
 
 def list_notes(job_id: str) -> list[dict[str, Any]]:
     """All entries for one job, sorted by key."""
-    with _transaction() as conn:
+    with _transaction(read_only=True) as conn:
         rows = conn.execute(
-            "SELECT job_id, key, value, updated_at FROM cron_notepad "
-            "WHERE job_id=? ORDER BY key",
-            (str(job_id),),
+            _query(
+                conn,
+                "SELECT job_id, key, value, updated_at FROM cron_notepad "
+                "WHERE job_id=? ORDER BY key",
+                "SELECT job_id,key,value,updated_at FROM {notes} WHERE job_id=%s ORDER BY key",
+            ),
+            (_value(str(job_id)),),
         ).fetchall()
     return [dict(row) for row in rows]
 
@@ -137,11 +204,16 @@ def list_notes(job_id: str) -> list[dict[str, Any]]:
 def clear_notepad(job_id: str) -> int:
     """Delete every key for one job (called from ``cron.jobs.remove_job``). Returns row count;
     no-ops without creating the DB when no notepad file exists yet."""
-    if not _current_notepad_file().exists():
+    if not postgres_enabled() and not _current_notepad_file().exists():
         return 0
     with _transaction() as conn:
         cur = conn.execute(
-            "DELETE FROM cron_notepad WHERE job_id=?", (str(job_id),)
+            _query(
+                conn,
+                "DELETE FROM cron_notepad WHERE job_id=?",
+                "DELETE FROM {notes} WHERE job_id=%s",
+            ),
+            (_value(str(job_id)),),
         )
     return cur.rowcount
 
@@ -152,6 +224,8 @@ def render_notepad_section(job_id: str) -> str:
     try:
         notes = list_notes(job_id)
     except Exception:
+        if postgres_enabled():
+            raise
         return ""
     if not notes:
         return ""

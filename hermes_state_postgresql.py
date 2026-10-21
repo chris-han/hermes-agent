@@ -92,6 +92,9 @@ def require_scope_ready(conn, scope=None):
     tables={values(row)[0] for row in conn.execute("SELECT c.relname FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=%s AND c.relkind IN ('r','p')",(namespace,))}
     missing=set(postgres_owned_tables())-tables
     if missing:raise ValueError('Native tables missing: '+','.join(sorted(missing)))
+    owner_columns={(values(row)[0],values(row)[1]) for row in conn.execute("SELECT table_name,column_name FROM information_schema.columns WHERE table_schema=%s AND table_name IN ('deliveries','async_delegations')",(namespace,))}
+    if not {('deliveries','owner_host'),('async_delegations','owner_host')} <= owner_columns:
+        raise ValueError('Native owner-host provenance migration missing')
     rows=conn.execute(sql.SQL('SELECT tenant_id,workspace_id,source_store_id,native_schema_version FROM {}').format(sql.Identifier(namespace,'scope_binding'))).fetchall()
     if len(rows)!=1:raise ValueError('Native scope binding missing or ambiguous')
     binding=values(rows[0]);actual=SessionScope(*binding[:3])
