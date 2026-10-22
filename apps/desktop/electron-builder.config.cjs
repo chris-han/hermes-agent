@@ -130,7 +130,13 @@ module.exports = {
       to: 'install-stamp.json'
     },
     ...(['bundled', 'store'].includes(process.env.HERMES_DESKTOP_VARIANT || '')
-      ? [{ from: 'build/agent-payload', to: 'agent-payload' }]
+      ? [{ from: 'build/agent-payload', to: 'agent-payload',
+          // python-docx reads templates/default.docx at runtime. Its separate
+          // unpacked template source is inert, but MSIX treats _rels/*.rels as
+          // package relationships and rejects those nested payload names.
+          ...(process.platform === 'win32' ? {
+            filter: ['**/*', '!venv/Lib/site-packages/docx/templates/default-docx-template{,/**/*}']
+          } : {}) }]
       : []),
     {
       from: 'assets/icon.ico',
