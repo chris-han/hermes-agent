@@ -1,0 +1,1 @@
+{"failure_mode":"reject","max_capture_nodes":2048,"max_dependency_depth":32,"max_pairs":8,"max_total_bytes":33554432,"pair_order":"request","profile_id":"context_only_empirical_v1","purpose":"NEXT_PROPOSAL","schema_version":"advisory_context_profile.v1","source_order":"kind_ref_hash_utf8","usage":"CONTEXT_ONLY"}

@@ -1,0 +1,32 @@
+name: corpus_graph_schema_induction
+display_name: Corpus Graph Schema Induction
+version: "0.1.0"
+description: Authenticated candidate-only corpus graph schema induction and review tools.
+author: Semantier
+kind: standalone
+platforms:
+  - linux
+  - macos
+  - windows
+platform_compatibility:
+  - cli
+  - weixin
+  - feishu
+  - api_server
+  - acp
+capability_contract:
+  schema_version: semantier.plugin_capabilities.v1
+  capabilities:
+    read_profiles: allow
+    read_candidate: controlled
+    propose_candidate: controlled
+    review_candidate: controlled
+    read_graph_intent: controlled
+    review_graph_intent: controlled
+    execute_candidate_sample: controlled
+    record_feedback_retest: controlled
+    approve: deny
+    admit: deny
+    governance_submit: deny
+    change_authority_binding: deny
+    release_mutation: deny

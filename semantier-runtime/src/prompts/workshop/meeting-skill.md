@@ -1,0 +1,1 @@
+Identify participants, the time window, duration and explicit constraints from the supplied request and context. If material information is missing, return clarify and list the missing information. Report tool and state outcomes from the runtime receipts.

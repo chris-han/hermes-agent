@@ -1,0 +1,119 @@
+{
+  "profile_id": "tender_corpus_schema_induction.v0_1",
+  "semantic_role_by_header": {
+    "场景分类": "applicability_scope",
+    "违规敏感词": "canonical_expression",
+    "违规示例": "reference_example"
+  },
+  "node_type_by_role": {
+    "applicability_scope": "ApplicabilityScope",
+    "canonical_expression": "CanonicalExpression",
+    "reference_example": "ReferenceExample"
+  },
+  "role_relations": [
+    {
+      "type_id": "applies_to",
+      "source_role": "canonical_expression",
+      "target_role": "applicability_scope"
+    },
+    {
+      "type_id": "illustrated_by",
+      "source_role": "canonical_expression",
+      "target_role": "reference_example"
+    }
+  ],
+  "nary_signals": [
+    {
+      "signal_id": "numeric_threshold",
+      "dimension": "value_constraint",
+      "patterns": ["万元", "亿元", "以上", "以下", "不少于", "不低于", "超过"]
+    },
+    {
+      "signal_id": "deontic_modality",
+      "dimension": "modality",
+      "patterns": ["必须", "须", "应", "不得", "仅限", "不接受"]
+    },
+    {
+      "signal_id": "conditional_consequence",
+      "dimension": "consequence",
+      "patterns": ["否则", "无效投标", "不予受理", "作无效"]
+    }
+  ],
+  "nary_representation": {
+    "type_id": "ConstraintFrameV01",
+    "slots": [
+      "target_type_ref",
+      "attribute_ref",
+      "operator_ref",
+      "value_constraint",
+      "modality_ref",
+      "stage_ref",
+      "consequence_ref"
+    ]
+  },
+  "graph_intent_catalog": {
+    "admitted_type_ids": ["TenderConstraintScreeningReference", "ProcurementEligibilityConstraint", "ConstraintFrameV01", "ProcurementEligibility", "Applicability", "Modality", "Consequence", "CanonicalExpression", "ReferenceExample", "ApplicabilityScope"],
+    "admitted_relation_ids": ["ConstrainsEligibility"],
+    "relation_admission_bindings": {
+      "ConstrainsEligibility": "tender.constrains_eligibility"
+    },
+    "admitted_representation_kinds": ["frame"],
+    "authority_constraints": {
+      "allowed_source_roles": ["interpretive"],
+      "establishes_binding_conclusion_allowed": false
+    },
+    "hard_negative_questions": [
+      {"question_id": "hn.company_scale", "text": "Is company scale descriptive information or an eligibility restriction?", "distinction_to_preserve": "company scale as information versus company scale as an eligibility restriction"},
+      {"question_id": "hn.supplier_location", "text": "Is location contextual project information or supplier-location discrimination?", "distinction_to_preserve": "project/location information versus supplier-location discrimination"},
+      {"question_id": "hn.financial_threshold", "text": "Is a financial statement evidence or a financial-size threshold?", "distinction_to_preserve": "financial statement evidence versus financial-size threshold"},
+      {"question_id": "hn.qualification", "text": "Is a certificate domain-relevant or an unnecessary qualification restriction?", "distinction_to_preserve": "domain-relevant certificate requirement versus unnecessary qualification restriction"},
+      {"question_id": "hn.lowest_price", "text": "Is lowest price a benchmark or automatic award/rejection logic?", "distinction_to_preserve": "lowest price as a benchmark versus automatic lowest-price award/rejection logic"},
+      {"question_id": "hn.brand", "text": "Is a brand an example/reference or a mandatory designation?", "distinction_to_preserve": "brand as example/reference versus mandatory brand designation"}
+    ],
+    "forbidden_vocabulary": [
+      "WorkshopAgenda",
+      "WorkshopSession",
+      "TimeWindow",
+      "WorkshopTopic",
+      "WorkshopAudience",
+      "WorkshopActivity",
+      "SchedulesSession",
+      "hn.topic_vs_session",
+      "Is a topic label itself a session event?",
+      "topic label versus scheduled session event",
+      "hn.audience_vs_activity",
+      "Is an audience description a workshop activity?",
+      "intended audience versus session activity"
+    ],
+    "source_evidence_terms": ["场景分类", "违规敏感词", "违规示例", "必须", "不得"],
+    "minimum_source_evidence_matches": 2
+  },
+  "knowledge_relation_catalog": {
+    "schemaVersion": "knowledge_relation_profile_catalog.v1",
+    "namespace": "tender",
+    "taxonomyRef": "knowledge-relation-taxonomy:semantier.core@v1",
+    "taxonomyHash": "sha256:9cbd2a479961166de2a1c01ad3f2a543eaf86c51c01d53451e8c2c647fa984e3",
+    "relationTypes": [
+      {
+        "relationTypeId": "tender.constrains_eligibility",
+        "familyId": "dependency",
+        "namespace": "tender",
+        "definitionScope": "profile_defined",
+        "displayName": "Constrains eligibility",
+        "description": "A grounded condition constrains eligibility.",
+        "representationKind": "frame_role",
+        "projectionShape": "frame",
+        "sourceTypeRefs": ["tender.constraint_frame"],
+        "targetTypeRefs": ["tender.procurement_eligibility"],
+        "sourceRoleRefs": [],
+        "targetRoleRefs": [],
+        "directed": true,
+        "symmetric": false,
+        "transitive": false,
+        "inverseRelationTypeId": null,
+        "aliases": [],
+        "lifecycleState": "admitted"
+      }
+    ]
+  }
+}

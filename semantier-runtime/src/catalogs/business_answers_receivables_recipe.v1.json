@@ -1,0 +1,49 @@
+{
+  "recipe_id": "receivables.v1",
+  "recipe_version": "1",
+  "competency_question_version": "receivables_snapshot.v1",
+  "outstanding_rule": "positive_balance",
+  "overdue_rule": "positive_balance_and_due_before_snapshot",
+  "governance_state": "candidate",
+  "field_aliases": {
+    "customer_id": [
+      "customer_id",
+      "customer id",
+      "客户编号",
+      "客户id"
+    ],
+    "invoice_id": [
+      "invoice_id",
+      "invoice id",
+      "发票编号",
+      "发票id"
+    ],
+    "outstanding_balance": [
+      "outstanding_balance",
+      "outstanding balance",
+      "未结清余额",
+      "应收余额",
+      "余额"
+    ],
+    "currency": [
+      "currency",
+      "币种"
+    ],
+    "due_date": [
+      "due_date",
+      "due date",
+      "到期日",
+      "到期日期"
+    ],
+    "customer_name": [
+      "customer_name",
+      "customer name",
+      "客户名称"
+    ],
+    "snapshot_date": [
+      "snapshot_date",
+      "snapshot date",
+      "快照日期"
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+name: semantier_routing_guard
+version: 0.1.0
+description: Prevent Hermes procedural skills from becoming an independent semantic authority surface.
+provides_hooks:
+  - pre_llm_call
+  - pre_tool_call
+  - post_tool_call
+platform_compatibility:
+  - cli
+  - weixin
+  - feishu
+  - api_server
+  - acp

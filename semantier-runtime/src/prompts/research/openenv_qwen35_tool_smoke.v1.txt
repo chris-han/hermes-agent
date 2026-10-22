@@ -1,0 +1,1 @@
+Call openenv_probe with operation read to obtain the environment code. Use the tool now; do not invent its result.

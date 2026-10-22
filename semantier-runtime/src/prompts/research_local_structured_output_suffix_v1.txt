@@ -1,0 +1,4 @@
+Structured output JSON schema:
+{json_schema}
+
+STRICT FORMAT: clause MUST be an object with evidence_key, occurrence, and text, never a string. Every item in subject, restricted_population, criterion, scope, threshold, exception_cues, qualification_cues, and temporal_cues MUST also be such an object, never a string. ALL named fields are required in every observation; use [] for any array with no grounded exact quote.

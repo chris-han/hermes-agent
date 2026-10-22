@@ -1,0 +1,285 @@
+{
+  "artifact_id": "art_t3_cn_tendering_bidding_law_2017_v1",
+  "title": "People's Republic of China Tendering and Bidding Law, 2017 revision",
+  "title_zh": "中华人民共和国招标投标法（2017年修正）",
+  "semantic_tier": "T3",
+  "authority_domain": "compliance",
+  "tag_authority_level": "regulatory",
+  "source_type": "field_guide",
+  "authority_origin": "interpretive_source",
+  "source_ref": "knowledge-upload:v1:eyJ3b3Jrc3BhY2VJZCI6ImQ2ZjcxZDBmMTNlZjQ0ZTZiZGJjMjk3MjMzNGQ2ZTgzIiwic2Vzc2lvbklkIjoia25vd2xlZGdlLXVpIiwicmVsYXRpdmVQYXRoIjoid2lraS_mi5vmipXmoIcv5Lit5Y2O5Lq65rCR5YWx5ZKM5Zu95oub5qCH5oqV5qCH5rOVLnBkZiIsIm9yaWdpbmFsTmFtZSI6IuS4reWNjuS6uuawkeWFseWSjOWbveaLm-agh-aKleagh-azlS5wZGYiLCJzaXplIjoxMzAzNjE1LCJpbmdlc3RLaW5kIjoiZG9jdW1lbnRfZXh0cmFjdGlvbiIsImNhbm9uaWNhbEFydGlmYWN0S2luZCI6ImNhbm9uaWNhbF9kb2N1bWVudCJ9",
+  "jurisdiction": "CN",
+  "effective_from": "2017-12-28T00:00:00+00:00",
+  "effective_to": null,
+  "source_version": "2017_revision_pdf_upload_v1",
+  "extraction_method": "pdftotext_from_uploaded_pdf_after_document_extraction_pdf_unextractable",
+  "curator": "knowledge-ui-upload",
+  "source_provenance": {
+    "source_type": "governed_upload_pdf",
+    "source_ref": "knowledge-upload:v1:eyJ3b3Jrc3BhY2VJZCI6ImQ2ZjcxZDBmMTNlZjQ0ZTZiZGJjMjk3MjMzNGQ2ZTgzIiwic2Vzc2lvbklkIjoia25vd2xlZGdlLXVpIiwicmVsYXRpdmVQYXRoIjoid2lraS_mi5vmipXmoIcv5Lit5Y2O5Lq65rCR5YWx5ZKM5Zu95oub5qCH5oqV5qCH5rOVLnBkZiIsIm9yaWdpbmFsTmFtZSI6IuS4reWNjuS6uuawkeWFseWSjOWbveaLm-agh-aKleagh-azlS5wZGYiLCJzaXplIjoxMzAzNjE1LCJpbmdlc3RLaW5kIjoiZG9jdW1lbnRfZXh0cmFjdGlvbiIsImNhbm9uaWNhbEFydGlmYWN0S2luZCI6ImNhbm9uaWNhbF9kb2N1bWVudCJ9",
+    "prepared_by": "knowledge_ui_upload",
+    "approved_by": "bootstrap_reviewer",
+    "approved_at": "2026-07-23T00:00:00+00:00"
+  },
+  "summary": {
+    "purpose": "Promote curated article-level interpretations from the 2017 revised Tendering and Bidding Law for governed procurement-domain reference.",
+    "source_pdf_ref": "workspaces/d6f71d0f13ef44e6bdbc2972334d6e83/wiki/招投标/中华人民共和国招标投标法.pdf",
+    "source_pdf_hash": "sha256:ef698189d9f9da723ed5762ff5e87a416e373e6c14f020e39bb8613dce71b16d",
+    "normalized_artifact_ref": "artifacts/document_extraction/ef698189d9f9.json",
+    "normalized_artifact_hash": "sha256:9748a93583662e75870f5c411e5b629b2b1fbb370ef0b97e88c071d891f0f2e5"
+  },
+  "anchors": [
+    {
+      "anchor_id": "upload_pdf_first_section_articles_1_68",
+      "source_ref": "workspaces/d6f71d0f13ef44e6bdbc2972334d6e83/wiki/招投标/中华人民共和国招标投标法.pdf",
+      "pages": "1-7",
+      "local_hash": "0e3ac4e168d2016e2ca56e38243cb63fa9ad4a138ae642d1c232b8c56662e861",
+      "notes": "The uploaded PDF continues with additional procurement documents after Article 68; only the Tendering and Bidding Law section is promoted."
+    }
+  ],
+  "ambiguities": [
+    "The document_extraction plugin returned parser method pdf_unextractable with no text blocks; local pdftotext recovered text from the same uploaded PDF.",
+    "The uploaded PDF includes appended documents after the Tendering and Bidding Law; claims here stop at Article 68.",
+    "This artifact represents the uploaded 2017 revised text and does not by itself assert that no later amendment or draft has occurred."
+  ],
+  "claims": [
+    {
+      "key": "evidence.source_upload_ref",
+      "value": "knowledge-upload:v1:eyJ3b3Jrc3BhY2VJZCI6ImQ2ZjcxZDBmMTNlZjQ0ZTZiZGJjMjk3MjMzNGQ2ZTgzIiwic2Vzc2lvbklkIjoia25vd2xlZGdlLXVpIiwicmVsYXRpdmVQYXRoIjoid2lraS_mi5vmipXmoIcv5Lit5Y2O5Lq65rCR5YWx5ZKM5Zu95oub5qCH5oqV5qCH5rOVLnBkZiIsIm9yaWdpbmFsTmFtZSI6IuS4reWNjuS6uuawkeWFseWSjOWbveaLm-agh-aKleagh-azlS5wZGYiLCJzaXplIjoxMzAzNjE1LCJpbmdlc3RLaW5kIjoiZG9jdW1lbnRfZXh0cmFjdGlvbiIsImNhbm9uaWNhbEFydGlmYWN0S2luZCI6ImNhbm9uaWNhbF9kb2N1bWVudCJ9",
+      "interpretation": "Original governed upload reference supplied by the knowledge UI."
+    },
+    {
+      "key": "evidence.source_pdf_hash",
+      "value": "sha256:ef698189d9f9da723ed5762ff5e87a416e373e6c14f020e39bb8613dce71b16d",
+      "interpretation": "SHA-256 hash of the uploaded PDF curation source."
+    },
+    {
+      "key": "evidence.normalized_artifact_ref",
+      "value": "artifacts/document_extraction/ef698189d9f9.json",
+      "interpretation": "Document extraction normalized artifact reference produced for the upload."
+    },
+    {
+      "key": "evidence.normalized_artifact_hash",
+      "value": "sha256:9748a93583662e75870f5c411e5b629b2b1fbb370ef0b97e88c071d891f0f2e5",
+      "interpretation": "Content hash recorded in the normalized document extraction artifact."
+    },
+    {
+      "key": "tendering_bidding_law.applicability.cn",
+      "article": "2",
+      "value": "applies_to_tendering_and_bidding_activities_within_cn",
+      "text_zh": "在中华人民共和国境内进行招标投标活动，适用本法。"
+    },
+    {
+      "key": "mandatory_tender.project_categories",
+      "article": "3",
+      "value": [
+        "large_infrastructure_public_utility_public_interest_or_safety",
+        "state_owned_or_state_financed_investment",
+        "international_organization_or_foreign_government_loan_or_aid"
+      ],
+      "interpretation": "Engineering construction project survey, design, construction, supervision, and important related equipment or materials procurement in these categories must be tendered unless another law or State Council rule provides otherwise."
+    },
+    {
+      "key": "mandatory_tender.anti_avoidance",
+      "article": "4",
+      "value": "prohibit_splitting_or_other_avoidance",
+      "text_zh": "任何单位和个人不得将依法必须进行招标的项目化整为零或者以其他任何方式规避招标。"
+    },
+    {
+      "key": "tendering_bidding.principles",
+      "article": "5",
+      "value": [
+        "openness",
+        "fairness",
+        "impartiality",
+        "good_faith"
+      ],
+      "text_zh": "招标投标活动应当遵循公开、公平、公正和诚实信用的原则。"
+    },
+    {
+      "key": "mandatory_tender.no_local_or_department_barriers",
+      "article": "6",
+      "value": "region_department_restrictions_and_illegal_interference_prohibited",
+      "interpretation": "Tendering activities for legally mandatory tender projects are not subject to regional or departmental restrictions."
+    },
+    {
+      "key": "tender.methods",
+      "article": "10",
+      "value": [
+        "open_tender",
+        "invited_tender"
+      ],
+      "interpretation": "Open tender invites unspecified legal persons or organizations by announcement; invited tender invites specified legal persons or organizations by invitation."
+    },
+    {
+      "key": "tender_agent.selection_right",
+      "article": "12",
+      "value": "tenderer_may_choose_tender_agent",
+      "interpretation": "No unit or individual may designate a tender agent for the tenderer or force a qualified tenderer to entrust tender agency work."
+    },
+    {
+      "key": "tender_agent.no_administrative_affiliation",
+      "article": "14",
+      "value": "no_subordinate_or_interest_relationship_with_administrative_organs_or_state_organs",
+      "interpretation": "Tender agencies must not have affiliation or other interest relationships with administrative organs or other state organs."
+    },
+    {
+      "key": "open_tender.announcement_required",
+      "article": "16",
+      "value": "open_tender_requires_announcement",
+      "interpretation": "For legally mandatory tender projects, tender announcements must be published through state-designated newspapers, information networks, or other media."
+    },
+    {
+      "key": "invited_tender.minimum_invitees",
+      "article": "17",
+      "value": 3,
+      "unit": "organizations",
+      "interpretation": "Invited tender must invite at least three capable and creditworthy specific legal persons or other organizations."
+    },
+    {
+      "key": "bidder_qualification.no_unreasonable_discrimination",
+      "article": "18",
+      "value": "prohibit_unreasonable_restriction_exclusion_or_discrimination",
+      "interpretation": "The tenderer may request qualification and performance materials but must not restrict, exclude, or discriminate against potential bidders with unreasonable conditions."
+    },
+    {
+      "key": "tender_document.substantive_requirements",
+      "article": "19",
+      "value": [
+        "technical_requirements",
+        "qualification_review_standards",
+        "bid_price_requirements",
+        "evaluation_standards",
+        "main_contract_terms"
+      ],
+      "interpretation": "Tender documents must include all substantive requirements and conditions, including the listed requirement families."
+    },
+    {
+      "key": "tender_document.no_specific_supplier_bias",
+      "article": "20",
+      "value": "no_specific_producer_supplier_or_exclusionary_content",
+      "interpretation": "Tender documents must not require or indicate a specific producer or supplier or contain content that favors or excludes potential bidders."
+    },
+    {
+      "key": "tender_document.clarification_min_notice_days",
+      "article": "23",
+      "value": 15,
+      "unit": "days",
+      "interpretation": "Necessary clarification or modification of issued tender documents must be sent in writing to all recipients at least 15 days before the bid submission deadline."
+    },
+    {
+      "key": "mandatory_tender.minimum_bid_preparation_days",
+      "article": "24",
+      "value": 20,
+      "unit": "days",
+      "interpretation": "For legally mandatory tender projects, the minimum period from tender document issuance to bid submission deadline is 20 days."
+    },
+    {
+      "key": "bidder_count.re_tender_threshold",
+      "article": "28",
+      "value": 3,
+      "unit": "bidders",
+      "interpretation": "If fewer than three bidders submit bids, the tenderer must retender under the law."
+    },
+    {
+      "key": "consortium.joint_bid",
+      "article": "31",
+      "value": "consortium_bidders_joint_and_several_liability",
+      "interpretation": "Multiple legal persons or organizations may form a consortium; consortium parties must sign a joint bidding agreement and, if successful, bear joint and several liability to the tenderer."
+    },
+    {
+      "key": "bidder_misconduct.prohibited_conduct",
+      "article": "32",
+      "value": [
+        "bid_price_collusion",
+        "collusion_with_tenderer",
+        "bribery_to_tenderer_or_evaluation_committee"
+      ],
+      "interpretation": "Bidders must not collude with each other or the tenderer, exclude fair competition, harm lawful interests, or seek winning bids by bribery."
+    },
+    {
+      "key": "bidder_misconduct.below_cost_or_fraud",
+      "article": "33",
+      "value": [
+        "bid_below_cost_prohibited",
+        "bid_in_others_name_or_fraud_prohibited"
+      ],
+      "interpretation": "Bidders must not compete below cost or win by using another's name or other fraudulent means."
+    },
+    {
+      "key": "bid_opening.time_and_place",
+      "article": "34",
+      "value": "same_time_as_bid_deadline_and_predefined_place",
+      "interpretation": "Bid opening must occur publicly at the same time as the tender document's bid submission deadline and at the place specified in advance."
+    },
+    {
+      "key": "evaluation_committee.composition",
+      "article": "37",
+      "value": {
+        "minimum_members": 5,
+        "member_count_parity": "odd",
+        "technical_economic_expert_min_ratio": "2/3"
+      },
+      "interpretation": "For legally mandatory tender projects, the evaluation committee consists of tenderer representatives and technical or economic experts, with at least five members, an odd member count, and technical/economic experts no less than two thirds."
+    },
+    {
+      "key": "winning_bid.criteria",
+      "article": "41",
+      "value": [
+        "maximum_satisfaction_of_comprehensive_evaluation_standards",
+        "substantive_requirements_met_and_lowest_evaluated_price_except_below_cost"
+      ],
+      "interpretation": "A winning bid must satisfy one of the statutory winning-bid criteria."
+    },
+    {
+      "key": "contract.signing_deadline_days",
+      "article": "46",
+      "value": 30,
+      "unit": "days_after_winning_notice",
+      "interpretation": "The tenderer and successful bidder must conclude a written contract within 30 days after issuance of the winning notice and according to the tender and bid documents."
+    },
+    {
+      "key": "mandatory_tender.winning_report_deadline_days",
+      "article": "47",
+      "value": 15,
+      "unit": "days_after_winner_determined",
+      "interpretation": "For legally mandatory tender projects, the tenderer must submit a written tendering and bidding report to the relevant administrative supervision department within 15 days after determining the winner."
+    },
+    {
+      "key": "winning_bid.performance_transfer_limits",
+      "article": "48",
+      "value": "transfer_prohibited_and_subject_or_key_work_subcontract_prohibited",
+      "interpretation": "The successful bidder must perform under contract, must not transfer the winning project, must not divide and transfer it, and must not subcontract subject or key work."
+    },
+    {
+      "key": "complaint.right_to_object_or_complain",
+      "article": "65",
+      "value": "bidders_and_other_interested_parties_may_object_or_complain",
+      "interpretation": "Bidders and other interested parties may raise objections to the tenderer or complain to the relevant administrative supervision department if they believe tendering activities violate the law."
+    },
+    {
+      "key": "tender_exception.special_circumstances",
+      "article": "66",
+      "value": [
+        "national_security",
+        "state_secret",
+        "emergency_disaster_relief",
+        "poverty_relief_work_relief_using_migrant_workers",
+        "other_special_circumstances_under_state_rules"
+      ],
+      "interpretation": "Projects involving these special circumstances may avoid tendering under relevant state provisions when tendering is unsuitable."
+    },
+    {
+      "key": "international_funding.different_conditions",
+      "article": "67",
+      "value": "loan_or_funding_provider_conditions_may_apply_except_against_public_interest",
+      "interpretation": "For projects using international organization or foreign government loans or aid, provider-specific tendering conditions and procedures may apply unless they violate PRC public interest."
+    },
+    {
+      "key": "law.effective_date",
+      "article": "68",
+      "value": "2000-01-01",
+      "interpretation": "The Tendering and Bidding Law took effect on 2000-01-01; this artifact's promoted text reflects the 2017 revision effective from 2017-12-28."
+    }
+  ]
+}

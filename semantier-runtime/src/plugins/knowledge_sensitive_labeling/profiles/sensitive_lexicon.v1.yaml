@@ -1,0 +1,3 @@
+profile_version: sensitive_lexicon.v1
+rule_pack_kind: governed_policy_pack
+authority_role: governed_rule_source

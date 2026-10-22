@@ -1,0 +1,24 @@
+{
+  "produced_at": "2026-10-22T06:11:59.126753+00:00",
+  "sources": [
+    {
+      "file": "export-LICENSE.txt",
+      "url": "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/raw/2365baeacb507f821a0c8120fcee3d484dba7a07/LICENSE",
+      "sha256": "221c6df10b0931a5629adad671ea48fb7747e034c414b6d2bfa275bc3dd4ea17",
+      "bytes": 71
+    },
+    {
+      "file": "FunASR-MODEL-LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/modelscope/FunASR/main/MODEL_LICENSE",
+      "sha256": "7dba975a2069691db4992b0592d70828b330d2f8a30a71450f4e152a554e84f8",
+      "bytes": 5306
+    },
+    {
+      "file": "SenseVoice-model-card.md",
+      "url": "https://huggingface.co/FunAudioLLM/SenseVoiceSmall/raw/main/README.md",
+      "sha256": "6add90487ea3d685b6604ad0932b565fc5cf7e9daaf8aebc674de49da4560958",
+      "bytes": 11952
+    }
+  ],
+  "scope": "Pinned INT8 export refers to FunASR; model card points to MODEL_LICENSE1.1 permitting use/copy/modify/share with source/author attribution and retained model names. Full terms retained. Not Apache weight licensing; no FP32 bundled."
+}

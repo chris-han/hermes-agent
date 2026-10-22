@@ -1,0 +1,15 @@
+{
+  "repository": "https://github.com/ourines/hermes-jev",
+  "revision": "28a4ea390f80d97fcdc8c20d6b630dfe2de645de",
+  "version": "0.1.2",
+  "license": "MIT",
+  "vendored_files": {
+    "upstream/client.py": "413173b777c870ddb4b76b14383d70d419ecbbf366b1675d039bc8a4df3abdbe",
+    "upstream/LICENSE": "e6880bce0a620430bea46d12ac86d9bc636237ae57dd844268899d63846ebe7a"
+  },
+  "scope": "Disabled structurally offline candidate only",
+  "new_installed_dependencies": [],
+  "uses_existing": "httpx 0.28.1, Python 3.11.16, pinned Hermes host",
+  "source_data_leaves_boundary": false,
+  "production_admission": false
+}

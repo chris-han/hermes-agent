@@ -1,0 +1,15 @@
+name: governed_data_engineering
+version: "0.1.0"
+description: Deterministic data profiling, quality gates, feasibility checks, and dataset-card helpers.
+author: Semantier
+kind: standalone
+platforms:
+  - linux
+  - macos
+  - windows
+platform_compatibility:
+  - cli
+  - weixin
+  - feishu
+  - api_server
+  - acp

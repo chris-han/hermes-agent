@@ -1,0 +1,30 @@
+{
+  "artifact_id": "soe_sensitive_governance_t2_authority_v1",
+  "tier": "T2",
+  "schema_version": "sensitive_governance_bundle_artifact.v1",
+  "lifecycle_state": "certified",
+  "jurisdiction": "CN",
+  "effective_from": "2026-07-22T00:00:00+00:00",
+  "effective_to": null,
+  "source_provenance": {
+    "source_type": "repo_owned_synthetic_authority_registry",
+    "source_ref": "docs/derived/sensitive-information-governance-runtime-design.md",
+    "prepared_by": "semantier_demo_author",
+    "approved_by": "semantier_governance_reviewer",
+    "approved_at": "2026-07-22T00:00:00+00:00"
+  },
+  "references": [
+    {
+      "authority_ref": "t2_personal_information_protection",
+      "display_name_zh": "个人信息保护与最小必要处理依据"
+    },
+    {
+      "authority_ref": "t2_tender_confidentiality",
+      "display_name_zh": "招投标评审与投标报价保密依据"
+    },
+    {
+      "authority_ref": "t2_state_secret_marking_non_downgrade",
+      "display_name_zh": "既有秘密标识非降级依据"
+    }
+  ]
+}

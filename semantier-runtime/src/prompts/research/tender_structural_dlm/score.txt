@@ -1,0 +1,4 @@
+Use only the supplied evidence and candidate meanings. Does the target candidate describe the supported decision? The insufficient-evidence candidate applies only when the evidence supports none of the substantive alternatives. Answer Yes or No.
+{episode}
+Target: {target}
+Answer:

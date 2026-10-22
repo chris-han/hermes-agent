@@ -74,7 +74,18 @@ def _candidates(requested: str, gpu_vendor: str | None, target: str) -> tuple[st
     return tuple(dict.fromkeys((preferred, *fallback)))
 
 
+def distribution_unavailable_reason() -> str | None:
+    """Bundled Windows carries private/remote inference, without local LLM engines."""
+    from pm.features import runtime_distribution_extras
+
+    if runtime_distribution_extras() is not None:
+        return "llama.cpp engines are not bundled in this Windows distribution; select a remote provider."
+    return None
+
+
 def unavailable_reason(backend: str, target: str | None = None) -> str | None:
+    if reason := distribution_unavailable_reason():
+        return reason
     name = BACKEND_PACKAGES.get(backend)
     if name is None:
         return f"unknown backend {backend}"
@@ -115,6 +126,8 @@ def _installed(candidates: tuple[str, ...], allow_outdated: bool) -> Engine | No
 
 def installed_engine(backend: str = "auto", *, allow_outdated: bool = True) -> Engine | None:
     """Boot may retain a prior PM pin and moves a pre-PM engine into PM's store once; it never downloads."""
+    if distribution_unavailable_reason():
+        return None
     vendor = None
     if backend == "auto":
         from hermes_cli.local_runtime.bootstrap import _detect_gpu_vendor

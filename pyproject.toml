@@ -216,6 +216,57 @@ dependencies = [
   "nemo-relay>=0.10,<0.11; ((sys_platform == 'darwin' and platform_machine == 'arm64') or (sys_platform == 'linux' and platform_machine == 'x86_64' and 'android' not in platform_release) or (sys_platform == 'linux' and platform_machine == 'aarch64' and 'android' not in platform_release) or (sys_platform == 'win32' and platform_machine == 'AMD64') or (sys_platform == 'win32' and platform_machine == 'ARM64')) and python_version >= '3.14'",]
 
 [project.optional-dependencies]
+# Parent-owned runtime closure; frozen in this product lock, no Hermes cycle.
+semantier-windows = [
+  "Markdown==3.10.2; python_version < '3.14'",
+  "PyJWT[crypto]==2.13.0; python_version < '3.14'",
+  "aiohttp>=3.9",
+  "argon2-cffi>=23.1.0",
+  "charset-normalizer>=3.4.7",
+  "croniter==6.0.0; python_version < '3.14'",
+  "cryptography==50.0.1",
+  "cryptography==50.0.1; python_version < '3.14'",
+  "duckdb>=1.5.6",
+  "fastapi>=0.115",
+  "fire==0.7.1; python_version < '3.14'",
+  "httpx>=0.27",
+  "jinja2==3.1.6; python_version < '3.14'",
+  "jsonschema>=4.23",
+  "networkx>=2.8.0",
+  "numpy==2.4.3",
+  "openai==2.24.0; python_version < '3.14'",
+  "openpyxl>=3.1",
+  "pandas>=2.2",
+  "polars==1.41.2",
+  "prompt_toolkit==3.0.52; python_version < '3.14'",
+  "psutil==7.2.2; python_version < '3.14' and sys_platform != 'android'",
+  "psycopg[binary]==3.3.3",
+  "pydantic>=2",
+  "pymupdf4llm==1.28.2",
+  "pymupdf==1.28.2",
+  "pyoxigraph==0.5.11",
+  "pyshacl==0.40.1",
+  "python-docx==1.2.0",
+  "python-dotenv==1.2.2; python_version < '3.14'",
+  "python-multipart>=0.0.27",
+  "pyyaml>=6",
+  "rdflib>=7.0.0",
+  "requests==2.33.0; python_version < '3.14'",
+  "rich==14.3.3; python_version < '3.14'",
+  "ruamel.yaml==0.18.16; python_version < '3.14'",
+  "scipy>=1.13.1",
+  "sherpa-onnx-core==1.13.8",
+  "sherpa-onnx==1.13.8",
+  "snowballstemmer==3.1.1; python_version < '3.14'",
+  "soundfile==0.14.0",
+  "tenacity==9.1.4; python_version < '3.14'",
+  "tomli-w==1.2.0; python_version < '3.14'",
+  "truststore==0.10.4; python_version < '3.14'",
+  "uvicorn>=0.32",
+  "websockets==15.0.1; python_version < '3.14'",
+  "xlrd>=2.0.2"
+]
+
 # Hosted PostgreSQL session persistence; desktop SQLite needs no PG driver.
 postgresql = ["psycopg[binary]==3.3.3"]
 # High-performance event loop — uvloop replaces the stdlib asyncio loop with
@@ -601,7 +652,9 @@ default-groups = []
 # 3.11 is an install bridge for pre-PM updaters, never a runtime, so the lock
 # covers 3.14 only. Without this the lock must resolve every supported version,
 # where extras that only ever coexist on 3.14 (kittentts vs neutts) conflict.
-environments = ["python_version >= '3.14'"]
+# Resolve the operating systems PM actually ships; new scientific dependencies
+# expose Emscripten markers, where existing wheel-only inference is unsupported.
+environments = ["python_version >= '3.14' and (sys_platform == 'linux' or sys_platform == 'darwin' or sys_platform == 'win32')"]
 override-dependencies = [
   # discord.py's latest published version, 2.7.1, pins pynacl at <1.6. however, pynacl 1.5.0 has known vulnerabilities.
   # discord.py has updated pynacl to 1.6 on `main`, but has not yet published a patch release.
@@ -784,3 +837,59 @@ select = ["PLW1514", "ASYNC210", "ASYNC220", "ASYNC221", "ASYNC251", "TID251"]
 # Legacy blocking spawn sites in platform adapters, pending their own fixes.
 "plugins/platforms/whatsapp/adapter.py" = ["ASYNC220", "ASYNC221"]
 "plugins/platforms/photon/adapter.py" = ["ASYNC220"]
+
+[tool.hermes.windows-cpu-distribution]
+# CPU4 Semantier Windows x64 product; UNKNOWN optional connectors remain.
+extras = [
+  "acp",
+  "anthropic",
+  "audio-io",
+  "azure-identity",
+  "bedrock",
+  "computer-use",
+  "cron",
+  "daytona",
+  "ddgs",
+  "dingtalk",
+  "discord",
+  "doc-extract",
+  "edge-tts",
+  "exa",
+  "fal",
+  "feishu",
+  "firecrawl",
+  "google",
+  "google-chat",
+  "google-meet",
+  "matrix",
+  "mcp",
+  "messaging",
+  "mistral",
+  "modal",
+  "nemo-relay",
+  "otlp",
+  "parallel-web",
+  "piper",
+  "postgresql",
+  "pty",
+  "semantier-windows",
+  "silk",
+  "slack",
+  "sms",
+  "teams",
+  "telegram",
+  "termux",
+  "termux-all",
+  "trace-upload",
+  "tts-premium",
+  "uvloop",
+  "vercel",
+  "vertex",
+  "vision",
+  "wake-openwakeword",
+  "wake-porcupine",
+  "wake-sherpa",
+  "web",
+  "wecom",
+  "youtube"
+]

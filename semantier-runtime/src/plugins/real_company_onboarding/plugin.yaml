@@ -1,0 +1,15 @@
+name: real_company_onboarding
+version: "0.1.0"
+description: Deterministic real-company setup workflow tools backed by Semantier core.
+author: Semantier
+kind: standalone
+platforms:
+  - linux
+  - macos
+  - windows
+platform_compatibility:
+  - cli
+  - weixin
+  - feishu
+  - api_server
+  - acp

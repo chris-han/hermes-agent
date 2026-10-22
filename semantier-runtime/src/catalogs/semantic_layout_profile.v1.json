@@ -1,0 +1,24 @@
+{
+  "schema_version": "semantic_layout_profile.v1",
+  "profile_ref": "semantic-layout-profile:default@v1",
+  "engine_version": "semantic-layout-engine.v1",
+  "maximum_node_count": 500,
+  "maximum_edge_count": 2000,
+  "iterations": 48,
+  "normalization_min": -1.0,
+  "normalization_max": 1.0,
+  "cluster_anchor_strength": 0.08,
+  "repulsion_strength": 0.015,
+  "collision_distance": 0.04,
+  "default_attraction_weight": 0.025,
+  "relation_family_attraction_weights": {
+    "causal_behavioral": 0.035,
+    "dependency": 0.04,
+    "descriptive": 0.02,
+    "semantic": 0.03,
+    "spatial_contextual": 0.025,
+    "structural": 0.035,
+    "temporal": 0.03
+  },
+  "relation_type_attraction_weights": {}
+}

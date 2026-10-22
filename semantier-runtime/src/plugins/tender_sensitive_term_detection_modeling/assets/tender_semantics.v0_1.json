@@ -1,0 +1,9 @@
+{
+  "semantic_profile_id": "tender_semantics.v0_1",
+  "frame_schema": "constraint_frame.v0_1",
+  "graph_release_binding": "accepted_frame_pattern.graph_release_ref",
+  "operator_rules": "tender_operator_semantics.v0_1",
+  "matcher": "tender_frame_matcher.v0_1",
+  "composition_rules": "tender_frame_composition.v0_1",
+  "legal_disposition": "separate_optional_downstream_decision"
+}

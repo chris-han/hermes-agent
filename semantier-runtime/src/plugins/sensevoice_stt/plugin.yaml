@@ -1,0 +1,5 @@
+name: sensevoice_stt
+version: 0.1.0
+description: Optional pinned SenseVoice Small INT8 CPU transcription provider.
+author: Semantier
+platforms: [windows, linux, macos]

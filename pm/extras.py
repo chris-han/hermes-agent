@@ -15,6 +15,7 @@ from typing import Callable
 
 # extra name -> module that proves it is installed
 ANCHORS: dict[str, str | tuple[str, ...]] = {
+    "semantier-windows": ("sherpa_onnx", "soundfile", "duckdb", "pyshacl", "pyoxigraph", "fitz", "polars"),
     "anthropic": "anthropic",
     "bedrock": "boto3",
     "vertex": "google.auth",
@@ -128,6 +129,10 @@ def extra_supported(extra: str, *, environment: dict[str, str] | None = None,
     extra that IS present on this machine (anchors importable) is always
     supported — an installed override beats the table (dev machines,
     hand-synced venvs)."""
+    from pm.features import runtime_distribution_extras
+    selected = runtime_distribution_extras()
+    if selected is not None and extra not in selected:
+        return False
     if all((importable or _importable)(a) for a in _anchors(extra)):
         return True
     marker = _platform_gates().get(extra)

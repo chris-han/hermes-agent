@@ -1,0 +1,96 @@
+{
+  "schema_version": "knowledge_extraction_profile.v1",
+  "profile": "tender_sensitive_v1",
+  "model_ref": "semantica:pinned",
+  "semantica_candidate_defaults": {
+    "family_id": 1,
+    "family": "sensitive term"
+  },
+  "markdown_term_table": {
+    "enabled": true,
+    "term_headers": ["违规敏感词", "敏感词", "风险关键词"],
+    "category_headers": ["场景分类", "风险类型", "违规分类"],
+    "term_delimiters": ["、", "，", ",", "；", ";"]
+  },
+  "semantic_classes": [
+    "entity", "relationship", "modality", "exclusivity", "threshold",
+    "temporal_window", "scoring_effect", "condition", "exception",
+    "consequence", "document_role"
+  ],
+  "segmentation": {
+    "contractVersion": "1.0.0",
+    "profileId": "tender-sensitive",
+    "profileVersion": "1.0.0",
+    "decomposableSourceRoles": [
+      "canonical_sensitive_term",
+      "alias",
+      "applicability",
+      "remediation",
+      "grounding_example"
+    ],
+    "semanticRoleMarkers": {
+      "modifier": ["必须", "须", "应", "应当", "不得", "仅限", "不接受"]
+    },
+    "multiValueSourceRoles": [
+      "canonical_sensitive_term",
+      "alias",
+      "applicability"
+    ],
+    "delimiterRules": [
+      {
+        "token": "、",
+        "roles": ["canonical_sensitive_term", "alias", "applicability"],
+        "priority": 10
+      },
+      {
+        "token": "；",
+        "roles": ["*"],
+        "priority": 20
+      },
+      {
+        "token": ";",
+        "roles": ["*"],
+        "priority": 20
+      },
+      {
+        "token": "，",
+        "roles": ["canonical_sensitive_term", "alias"],
+        "priority": 30
+      }
+    ],
+    "clauseRules": {
+      "enabledRoles": ["remediation", "grounding_example"],
+      "terminalTokens": ["。", "！", "？"],
+      "conjunctionTokens": ["且", "并且", "以及", "或者", "或"],
+      "protectedConjunctions": []
+    },
+    "protectedSpanRules": {
+      "balancedPairs": [
+        ["\"", "\""],
+        ["'", "'"],
+        ["（", "）"],
+        ["(", ")"],
+        ["《", "》"]
+      ],
+      "regexes": [
+        "\\d+(?:\\.\\d+)?%",
+        "\\d+(?:\\.\\d+)?(?:元|万元|亿元|天|日|年)",
+        "\\d{4}[-/.年]\\d{1,2}(?:[-/.月]\\d{1,2}日?)?"
+      ],
+      "lexicalExceptions": []
+    },
+    "qualityGates": {
+      "advisoryLabelCodePoints": 40,
+      "hardLabelCodePoints": 160,
+      "maxIndependentClauses": 1,
+      "schemaAssistedMinConfidence": 0.85
+    },
+    "schemaAssisted": {
+      "enabled": true,
+      "promptAsset": "src/prompts/reference_concept_boundary_zh_v1.md",
+      "promptVersion": "1.0.0",
+      "allowedRoles": ["remediation", "grounding_example"],
+      "requiresHumanAcceptance": true
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "replacement_prefix": "Synthetic tender scenario, not authoritative source evidence. The parent clause is quoted only to identify what is being replaced: {target_text}\nFor this scenario that parent clause is superseded in full by the following exhaustive provision about the characteristic asked in the query. No other operative condition applies to that characteristic.\n",
+  "counterfactual_true": "The characteristic asked in the query is a mandatory requirement for the bidder or offered performance. Absence of that characteristic causes rejection; it is not merely a scoring preference or an example.",
+  "scoring_not_elimination": "The characteristic asked in the query receives additional evaluation points only. Its absence neither excludes a bidder nor makes an offer invalid. Bidders and offers without it remain eligible.",
+  "contextual_mention": "The characteristic asked in the query describes the purchaser's historical project context only. It imposes no requirement on the bidder or the offered performance; absence of the characteristic has no eligibility consequence.",
+  "related_attribute": "A separate characteristic, explicitly different from the one asked in the query, is required. The characteristic asked in the query is unrestricted; possessing or lacking it has no eligibility consequence.",
+  "mere_mention": "The characteristic asked in the query appears only in a nonbinding example. The example has no operative relation to bidder qualification or offer eligibility, and no other provision requires that characteristic."
+}

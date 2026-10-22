@@ -21,6 +21,10 @@ def _bundle_package_names() -> list[str]:
         for n in _lockfile().names()
         if not get_package(n).internal or n == "uv"
     ]
+    from pm.features import distribution_extras
+    from pm.paths import repo_root
+    if distribution_extras(repo_root(), target=current_target()) is not None:
+        names = [name for name in names if not name.startswith("llamacpp-")]
     if "python" not in names:
         names.append("python")
     return names
@@ -133,6 +137,37 @@ def verify_offline_cache(root: Path, python: Path, env: dict) -> None:
         build_environment(source=workspace, python=python, out=Path(scratch) / "venv",
                           cache=root / "uv-cache", env=env, all_extras=True,
                           sealed=True, offline=True, explicit=True, timeout=20 * 60)
+
+
+def stage_distribution_assets(repo: Path, cache: Path) -> None:
+    """Verify the committed parent composition and stage only its pinned CPU model."""
+    import hashlib
+    import json
+    from pm.features import distribution_extras
+    from pm.downloader import Download, Source
+    if distribution_extras(repo, target=current_target()) is None:
+        return
+    parent = repo / "semantier-runtime"
+    manifest = json.loads((parent / "composition.json").read_text(encoding="utf-8"))
+    for entry in manifest["files"]:
+        path = parent / entry["path"]
+        if not path.resolve().is_relative_to(parent.resolve()) or hashlib.sha256(path.read_bytes()).hexdigest() != entry["sha256"]:
+            raise ValueError("parent composition integrity mismatch: " + entry["path"])
+    model_cache = cache.parent / "semantier-sensevoice-assets"
+    model_cache.mkdir(parents=True, exist_ok=True)
+    sources = []
+    for entry in manifest["models"]:
+        if entry["name"] not in {"model.int8.onnx", "tokens.txt"}:
+            raise ValueError("unselected model asset in Windows CPU composition")
+        sources.append(Source(entry["url"], model_cache / entry["name"], entry["sha256"]))
+    Download(sources, partials_dir=model_cache / ".partials").run()
+    destination = parent / "assets/sensevoice"
+    destination.mkdir(parents=True)
+    for entry in manifest["models"]:
+        path = model_cache / entry["name"]
+        if path.stat().st_size != entry["bytes"]:
+            raise ValueError("pinned model size mismatch: " + entry["name"])
+        shutil.copyfile(path, destination / entry["name"])
 
 
 def stage_pm_runtime(root: Path, python: Path, repo: Path, *, offline: bool = False,
@@ -260,6 +295,7 @@ def _prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
         text=True, encoding="utf-8").strip()
     with measure(log_root, "runtime.snapshot"):
         snapshot(source, revision, repo_dir, exclude=INERT_SNAPSHOT_DIRS)
+        stage_distribution_assets(repo_dir, cache)
     # PM's provider code reads its adjacent lock. Never combine that tool graph
     # with a revision selecting different pins.
     if (repo_dir / "pm/lock.json").read_bytes() != paths.lockfile_path().read_bytes():
@@ -318,12 +354,15 @@ def _prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
         build_environment(source=repo_dir, python=python_bin, out=venv_dir,
                           env=env, cache=cache, all_extras=True, sealed=True, explicit=True,
                           timeout=2 * 60 * 60)
-    print("✓ venv (all extras, on the staged interpreter)")
+    print("✓ venv (declared distribution selection, on the staged interpreter)")
 
     # Inventory the staged interpreter before publishing the bundle contract.
-    from pm.features import installed_extras, write_features
+    from pm.features import installed_extras, write_features, distribution_extras, installed_package_names
 
     features = installed_extras(repo_dir, venv_dir, python_exe=python_bin)
+    selected = distribution_extras(repo_dir, target=current_target())
+    if selected is not None:
+        features = sorted(set(features) & set(selected))
     write_features(features, out)
 
     # The payload venv was built from this exact lock and feature set. Publish
@@ -346,7 +385,8 @@ def _prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
         print(f"  uv-cache: copying {src_cache} → payload...", flush=True)
         with measure(log_root, "runtime.uv-cache"):
             stage_uv_cache(src_cache, payload_cache)
-            pruned = prune_uv_cache_to_lock(payload_cache, repo_dir)
+            resolved = installed_package_names(venv_dir, python_exe=python_bin) if selected is not None else None
+            pruned = prune_uv_cache_to_lock(payload_cache, repo_dir, selected_packages=resolved)
         print(f"✓ uv-cache (lock-scoped: pruned {pruned} stale entries; offline rebuilds resolve from shipped wheels)", flush=True)
     else:
         raise InstallError("uv-cache", "runtime dependency cache is missing")
@@ -354,7 +394,7 @@ def _prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
     if current_target().startswith("win32-"):
         with measure(log_root, "runtime.offline-cache-validation"):
             verify_offline_cache(out, python_bin, env)
-        print("✓ offline cache (full frozen all-extras writable rebuild)", flush=True)
+        print("✓ offline cache (full frozen distribution-selection writable rebuild)", flush=True)
 
     bad = _arch_guard(store_dir)
     for line in bad:

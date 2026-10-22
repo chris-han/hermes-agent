@@ -1,0 +1,5 @@
+profile_version: email.v1
+source_kind: email
+normalization: canonical_document_elements
+authority_role: evidence_only
+semantic_projection: optional

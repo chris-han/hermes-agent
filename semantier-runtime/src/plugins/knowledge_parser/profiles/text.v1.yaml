@@ -1,0 +1,5 @@
+profile_version: text.v1
+source_kind: text
+normalization: ordered_text_segments
+authority_role: evidence_only
+semantic_projection: optional

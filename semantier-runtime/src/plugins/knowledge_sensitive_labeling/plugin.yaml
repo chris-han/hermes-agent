@@ -1,0 +1,18 @@
+name: knowledge_sensitive_labeling
+version: "0.1.0"
+description: Source-neutral sensitivity classification over CanonicalClassificationInput evidence.
+author: Semantier
+kind: standalone
+platforms:
+  - linux
+  - macos
+  - windows
+platform_compatibility:
+  - cli
+  - weixin
+  - feishu
+  - api_server
+  - acp
+webapi:
+  enabled: true
+  module: knowledge_sensitive_labeling.dashboard.webapi

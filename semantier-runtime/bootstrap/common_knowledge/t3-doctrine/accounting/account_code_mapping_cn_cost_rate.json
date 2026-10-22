@@ -1,0 +1,91 @@
+{
+  "artifact_id": "art_t3_cn_account_code_mapping_cost_rate_v1",
+  "title": "Chinese account-code mapping for cost-rate interpretation",
+  "semantic_tier": "T3",
+  "authority_domain": "accounting",
+  "tag_authority_level": "accounting",
+  "source_type": "field_guide",
+  "authority_origin": "interpretive_source",
+  "source_ref": "bootstrap/common_knowledge/t3-doctrine/accounting/account_code_mapping_cn_cost_rate.json",
+  "jurisdiction": "CN",
+  "effective_from": "2026-01-01T00:00:00+00:00",
+  "effective_to": null,
+  "source_version": "v1",
+  "extraction_method": "bootstrap_checked_in_json",
+  "curator": "bootstrap",
+  "source_provenance": {
+    "source_type": "repo_doctrine_json",
+    "source_ref": "bootstrap/common_knowledge/t3-doctrine/accounting/account_code_mapping_cn_cost_rate.json",
+    "prepared_by": "bootstrap_curator",
+    "approved_by": "bootstrap_reviewer",
+    "approved_at": "2026-01-01T00:00:00+00:00"
+  },
+  "anchors": [
+    {
+      "anchor_id": "claims",
+      "local_hash": "1dfd79313938b75c3a145d1b6b7247c8e655f75b329056500f7567017bcbc409"
+    }
+  ],
+  "summary": {
+    "purpose": "Define the doctrine-level account-code interpretation used when computing cost rate from Chinese accounting balances.",
+    "formula_name": "cost_rate",
+    "formula_text": "cost_rate = cost / revenue"
+  },
+  "claims": [
+    {
+      "key": "account.6001.role",
+      "value": "revenue",
+      "account_code_prefix": "6001",
+      "account_name_zh": "主营业务收入",
+      "interpretation": "Revenue account used as the denominator family for cost-rate analysis."
+    },
+    {
+      "key": "account.6001.balance_side",
+      "value": "credit",
+      "account_code_prefix": "6001",
+      "interpretation": "Revenue is interpreted from the credit side; analytics should use the absolute credit amount for revenue totals."
+    },
+    {
+      "key": "account.5001.role",
+      "value": "cost",
+      "account_code_prefix": "5001",
+      "account_name_zh": "生产成本",
+      "interpretation": "Cost account family included in cost-rate numerator."
+    },
+    {
+      "key": "account.5002.role",
+      "value": "cost",
+      "account_code_prefix": "5002",
+      "account_name_zh": "劳务成本",
+      "interpretation": "Cost account family included in cost-rate numerator."
+    },
+    {
+      "key": "account.5003.role",
+      "value": "cost",
+      "account_code_prefix": "5003",
+      "account_name_zh": "合同履约成本",
+      "interpretation": "Cost account family included in cost-rate numerator."
+    },
+    {
+      "key": "cost_rate.numerator.account_prefixes",
+      "value": [
+        "5001",
+        "5002",
+        "5003"
+      ],
+      "interpretation": "Use debit-side totals for these prefixes when computing cost."
+    },
+    {
+      "key": "cost_rate.denominator.account_prefixes",
+      "value": [
+        "6001"
+      ],
+      "interpretation": "Use absolute credit-side totals for these prefixes when computing revenue."
+    },
+    {
+      "key": "account_code.rollup_rule",
+      "value": "first_4_digits",
+      "interpretation": "Subaccounts such as 5002.01.01 inherit the semantic role of their first four digits."
+    }
+  ]
+}

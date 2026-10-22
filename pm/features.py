@@ -141,3 +141,49 @@ print(json.dumps(result))
             or any(type(value) is not bool for value in resolved.values())):
         raise FeatureProbeError("feature inventory returned incomplete anchor results")
     return sorted(extra for extra, group in required.items() if all(resolved[anchor] for anchor in group))
+
+
+def distribution_extras(repo_dir: Path, *, target: str) -> list[str] | None:
+    """The declared Windows product selection; other source/target builds are unchanged."""
+    if target != "win32-x64":
+        return None
+    import tomllib
+    with (repo_dir / "pyproject.toml").open("rb") as stream:
+        data = tomllib.load(stream)
+    profile = data.get("tool", {}).get("hermes", {}).get("windows-cpu-distribution")
+    if profile is None:
+        return None
+    extras = profile.get("extras")
+    declared = data.get("project", {}).get("optional-dependencies", {})
+    if (not isinstance(extras, list) or not extras or
+            any(not isinstance(name, str) or name not in declared for name in extras)):
+        raise ValueError("invalid Windows CPU distribution extras")
+    return sorted(set(extras))
+
+
+def runtime_distribution_extras() -> list[str] | None:
+    """Only a sealed product constrains source capability and lazy acquisition."""
+    from pm.paths import repo_root
+    from pm.store import current_target
+    from hermes_cli.steward import is_bundled_payload
+    root = repo_root()
+    if not is_bundled_payload(root):
+        return None
+    return distribution_extras(root, target=current_target())
+
+
+def installed_package_names(venv_dir: Path, *, python_exe: Path) -> set[str]:
+    """Inventory resolved distributions in the actual target environment for its seed."""
+    import subprocess
+    probe = """
+import importlib.metadata, json, sys, sysconfig
+paths = sysconfig.get_paths(vars={"base": sys.argv[1], "platbase": sys.argv[1]})
+print(json.dumps(sorted({d.metadata['Name'] for d in importlib.metadata.distributions(
+    path=list(dict.fromkeys(paths[k] for k in ('purelib', 'platlib'))))})))
+"""
+    result = subprocess.run([str(python_exe), "-I", "-S", "-c", probe, str(venv_dir)],
+                            capture_output=True, text=True, check=True, timeout=60)
+    names = json.loads(result.stdout)
+    if not isinstance(names, list) or not names or any(not isinstance(n, str) for n in names):
+        raise FeatureProbeError("invalid installed distribution inventory")
+    return set(names)

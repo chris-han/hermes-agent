@@ -1,0 +1,9 @@
+name: financial_documents
+version: 0.1.0
+description: Extract invoice_contract.v1 proposals from compatible canonical_document artifacts.
+author: Semantier
+kind: standalone
+platforms:
+  - linux
+  - macos
+  - windows

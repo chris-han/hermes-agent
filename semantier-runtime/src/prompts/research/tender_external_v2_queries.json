@@ -1,0 +1,25 @@
+{
+  "schema_version": "tender_external_query_templates.v1",
+  "templates": {
+    "actual_restriction": "Does the target source clause, with its complete source context, impose an actual {dimension} restriction on the bidder/supplier or the offered performance, rather than merely describe a project fact, request evidence, give an example, or state a conditional legitimate requirement?",
+    "eligibility_elimination": "Does the target source clause, with its complete source context, make the bidder/supplier's {dimension} a mandatory qualification or eligibility requirement, or grounds for rejection or automatic elimination, rather than only affect scoring or ranking?"
+  },
+  "application": "For every candidate clause and every matching frozen target dimension, enumerate both queries in lexical query-ID order. Do not choose a query from its label or to meet a family quota. Unsupported/ambiguous query-clause pairs are excluded with reasons, never assigned FALSE merely because support is missing.",
+  "dimensions": [
+    {"id":"enterprise_scale", "family_id":1, "dimension":"enterprise scale", "discovery_regex":"企业规模|从业人员|员工人数|职工人数|大型企业|中型企业|小型企业|微型企业|中小企业"},
+    {"id":"operating_history", "family_id":2, "dimension":"enterprise operating history or age", "discovery_regex":"成立时间|成立年限|经营年限|注册年限|经营时间|成立日期"},
+    {"id":"registered_capital", "family_id":3, "dimension":"registered capital", "discovery_regex":"注册资本|注册资金|实缴资本"},
+    {"id":"financial", "family_id":4, "dimension":"financial condition or performance", "discovery_regex":"营业收入|营业额|利润|资产总额|财务状况|财务报告|审计报告|财务报表|纳税额"},
+    {"id":"geographic", "family_id":5, "dimension":"supplier registration location or geographic presence", "discovery_regex":"注册地址|注册地|本地企业|本地供应商|当地分公司|本省|本市|所在地|服务网点|分支机构"},
+    {"id":"brand_product", "family_id":6, "dimension":"product brand or designated product", "discovery_regex":"品牌|商标|指定产品|指定软件|指定厂家|原厂|制造商"},
+    {"id":"intellectual_property", "family_id":7, "dimension":"intellectual property ownership", "discovery_regex":"知识产权|专利|著作权|自主知识产权"},
+    {"id":"past_performance", "family_id":8, "dimension":"supplier past project performance", "discovery_regex":"业绩|类似项目|同类项目|项目经验|实施经验"},
+    {"id":"personnel", "family_id":9, "dimension":"personnel experience, number, or qualifications", "discovery_regex":"项目经理|项目负责人|技术负责人|人员数量|人员配备|人员配置|人员资格|人员资质|从业经验|工作经验|职称"},
+    {"id":"certification", "family_id":10, "dimension":"supplier certification", "discovery_regex":"认证|资质证书|资格证书|许可证|许可证明"},
+    {"id":"exclusivity", "family_id":11, "dimension":"exclusive supply or performance", "discovery_regex":"不得转售|不得代理|不得分包|不得转包|不允许分包|独家|唯一供应商|自有资产|直接提供"},
+    {"id":"supplier_identity", "family_id":12, "dimension":"supplier identity or consortium participation", "discovery_regex":"联合体|法人资格|独立法人|自然人|所有制|企业性质"},
+    {"id":"evaluation", "family_id":13, "dimension":"evaluation or scoring", "discovery_regex":"评分|评审因素|加分|得分|评分标准|评分细则"},
+    {"id":"contractual", "family_id":14, "dimension":"contractual liability or performance", "discovery_regex":"单方|单方面|违约责任|违约金|不可抗力|解除合同|终止合同"},
+    {"id":"price", "family_id":15, "dimension":"bid price or award price", "discovery_regex":"最低价|最高限价|预算金额|固定价格|报价|价格分"}
+  ]
+}

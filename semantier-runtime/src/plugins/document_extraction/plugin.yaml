@@ -1,0 +1,9 @@
+name: document_extraction
+version: 0.1.0
+description: Governed neutral document extraction into canonical_document artifacts, including DOCX v2 anchors.
+author: Semantier
+kind: standalone
+platforms:
+  - linux
+  - macos
+  - windows

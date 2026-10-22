@@ -1,0 +1,9 @@
+{
+  "type": "choice",
+  "instructions": "Which semantic candidate is supported by this exact decision-local evidence?",
+  "criteria": {
+    "A": "The restriction predicate is true",
+    "B": "The restriction predicate is false",
+    "C": "The evidence is insufficient or unknown"
+  }
+}

@@ -1,0 +1,40 @@
+name: scoped::org_demo_apparel_trade_cn::accounting::cost_rate_cn
+category: policy_bundle
+semantic_tier: T5
+proposed_by: bootstrap
+scoped_owner: org:org_demo_apparel_trade_cn
+rollback_window_hours: 24
+rollback_strategy: Deactivate candidate and revert to prior analytics behavior.
+notes: Org-scoped Chinese account-code cost-rate interpretation loaded from repo bootstrap.
+jurisdiction_review:
+  route_family: SEMANTIER_GOVERNED_T5
+  target_tier: T5
+  fast_track_allowed: true
+  reason: governed_t5_candidate
+  authority_domain: accounting
+  source_kind: bootstrap_policy_file
+activation:
+  status: ACTIVE
+  actor: bootstrap
+  actor_roles:
+    - delegated_curator
+content:
+  bundle_id: cost-rate-cn-v1
+  version: 1
+  authority_domain: accounting
+  metric: cost_rate
+  org_id: org_demo_apparel_trade_cn
+  definition:
+    numerator_accounts_prefixes:
+      - "5001"
+      - "5002"
+      - "5003"
+    denominator_accounts_prefixes:
+      - "6001"
+    denominator_side: credit_abs
+    subaccount_rollup: first_4_digits
+    formula: cost / revenue
+  source_refs:
+    - source_id: art_t3_cn_account_code_mapping_cost_rate_v1
+      authority_role: supporting_reference
+      source_ref: bootstrap/common_knowledge/t3-doctrine/accounting/account_code_mapping_cn_cost_rate.json

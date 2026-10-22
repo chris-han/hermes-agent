@@ -409,6 +409,11 @@ def ensure_local_runtime(config: dict, force: bool = False) -> object | None:
     disabled/unavailable). Never raises into a session start — failures log and return None; chat
     falls back to configured providers."""
     global _SUPERVISOR, _SERVING_ENGINE
+    from hermes_cli.local_runtime.binaries import distribution_unavailable_reason
+
+    if reason := distribution_unavailable_reason():
+        logger.info(reason)
+        return None
     section = (config or {}).get("local_runtime") or {}
     if not force and not section.get("enabled"):
         return None

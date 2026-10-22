@@ -585,6 +585,28 @@ def ensure_hermes_home():
 # ---- Config loading/saving ----
 
 from hermes_cli.config_defaults import DEFAULT_CONFIG, OPTIONAL_ENV_VARS
+
+# Product policy belongs at configuration composition, not in the upstream data leaf.
+from pm.features import runtime_distribution_extras as _runtime_distribution_extras
+if _runtime_distribution_extras() is not None:
+    DEFAULT_CONFIG = copy.deepcopy(DEFAULT_CONFIG)
+    DEFAULT_CONFIG["stt"].update(provider="sensevoice", language="auto",
+        sensevoice={"model": "sensevoice-small-int8"})
+
+
+def _preserve_product_stt_selection(config: dict, raw: dict) -> None:
+    from pm.features import runtime_distribution_extras
+    if runtime_distribution_extras() is None:
+        return
+    stt = raw.get("stt")
+    if not isinstance(stt, dict) or "provider" in stt:
+        return
+    local = stt.get("local")
+    # A saved model without provider may be user-owned. Preserve the historical
+    # local interpretation, even when equal to an old default; no provenance guess.
+    if "model" in stt or isinstance(local, dict) and "model" in local:
+        config["stt"]["provider"] = "local"
+
 from hermes_cli.config_providers import (
     _API_MODE_ALIASES, _CAMEL_ALIASES, _KNOWN_PROVIDER_KEYS, _PROVIDER_NORMALIZE_WARNED,
     _canonical_api_mode, _coerce_ssl_verify, _custom_provider_entry_to_provider_config,
@@ -2374,6 +2396,7 @@ def _load_config_impl(*, want_deepcopy: bool) -> dict[str, Any]:
                     user_config.pop("max_turns", None)
 
                 config = _deep_merge(config, user_config)
+                _preserve_product_stt_selection(config, user_config)
                 from hermes_cli.moa_config import apply_user_moa_presets
                 apply_user_moa_presets(config, user_config)
                 # A copy of the file that just parsed is what a FRESH process falls back to when the

@@ -72,6 +72,9 @@ def _copy_core_inputs(source: Path, destination: Path) -> None:
     setuptools = metadata.get("tool", {}).get("setuptools", {})
     patterns = setuptools.get("packages", {}).get("find", {}).get("include", ["*"])
     package_roots = {pattern.split(".", 1)[0] for pattern in patterns}
+    if metadata.get("tool", {}).get("hermes", {}).get("windows-cpu-distribution") is not None:
+        # The frozen parent composition is a runtime resource, not a second wheel.
+        package_roots.add("semantier-runtime")
     files = {"pyproject.toml", "setup.py", "setup.cfg"}
     readme = project.get("readme")
     if isinstance(readme, str):

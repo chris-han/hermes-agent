@@ -1,0 +1,15 @@
+name: nihaixia
+version: "0.1.0"
+description: Ni Haixia classical Chinese medicine knowledge skill for Semantier workspaces.
+author: Semantier
+kind: standalone
+platforms:
+  - linux
+  - macos
+  - windows
+platform_compatibility:
+  - cli
+  - weixin
+  - feishu
+  - api_server
+  - acp

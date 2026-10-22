@@ -1,0 +1,484 @@
+{
+  "schema_version": "jev_research_transformations.v1",
+  "scope": "DEVELOPMENT_ONLY_COUNTERFACTUAL; no legal or production authority",
+  "instructions": "仅根据冻结的投影判断下列语义问题，不补充外部知识。{question} A=TRUE：所给材料支持该命题。B=FALSE：所给材料否定该命题或明确不适用于指定主体、时间、条件。C=UNKNOWN：决定该命题所需的关键材料缺失，无法判断真或假。",
+  "criteria": {
+    "A": "TRUE：冻结证据支持问题所定义的命题。",
+    "B": "FALSE：冻结证据否定问题所定义的命题，或明确排除其适用。",
+    "C": "UNKNOWN：材料缺失，不能从冻结证据判断命题真伪。"
+  },
+  "rows": [
+    {
+      "case_id": "base-0",
+      "category": "BASE",
+      "dimension_id": "brand_product",
+      "text": "本项目要求设备及其配件均为同一品牌。",
+      "expected_candidate": "A",
+      "variant_kind": "base",
+      "pair_id": null,
+      "semantic_group_id": "base-0",
+      "semantic_tags": [],
+      "question": "本项目是否对投标设备施加实际的品牌限制？仅列出品牌、证明材料、非约束示例不算；明确允许不同品牌为FALSE。"
+    },
+    {
+      "case_id": "base-1",
+      "category": "BASE",
+      "dimension_id": "brand_product",
+      "text": "本项目并不要求设备及其配件均为同一品牌，不同品牌同样可以投标。",
+      "expected_candidate": "B",
+      "variant_kind": "base",
+      "pair_id": null,
+      "semantic_group_id": "base-1",
+      "semantic_tags": [
+        "NEGATION_TRAP"
+      ],
+      "question": "本项目是否对投标设备施加实际的品牌限制？仅列出品牌、证明材料、非约束示例不算；明确允许不同品牌为FALSE。"
+    },
+    {
+      "case_id": "base-2",
+      "category": "BASE",
+      "dimension_id": "price",
+      "text": "设备报价超出分项限价的视为无效投标。",
+      "expected_candidate": "A",
+      "variant_kind": "base",
+      "pair_id": null,
+      "semantic_group_id": "base-2",
+      "semantic_tags": [],
+      "question": "本次投标是否存在实际报价限价或报价约束？仅用于日后采购参考且不计入投标总价的报价不算。"
+    },
+    {
+      "case_id": "base-3",
+      "category": "BASE",
+      "dimension_id": "price",
+      "text": "耗材清单中的单项报价仅为日后的耗材采购提供参考依据，不计入投标总价，也不作为本次投标限价。",
+      "expected_candidate": "B",
+      "variant_kind": "base",
+      "pair_id": null,
+      "semantic_group_id": "base-3",
+      "semantic_tags": [
+        "SCOPE_TRAP"
+      ],
+      "question": "本次投标是否存在实际报价限价或报价约束？仅用于日后采购参考且不计入投标总价的报价不算。"
+    },
+    {
+      "case_id": "base-4",
+      "category": "BASE",
+      "dimension_id": "certification",
+      "text": "投标供应商必须已取得国家认证认可的检验检测机构资质，否则不得投标。",
+      "expected_candidate": "A",
+      "variant_kind": "base",
+      "pair_id": null,
+      "semantic_group_id": "base-4",
+      "semantic_tags": [],
+      "question": "投标供应商自身是否必须具有认证或检验检测机构资质？可用多种方式提供产品技术证明，不等于供应商自身必须取得机构资质。"
+    },
+    {
+      "case_id": "base-5",
+      "category": "BASE",
+      "dimension_id": "certification",
+      "text": "技术指标证明材料可以使用检测报告、生产厂家官方网站截图或其他相关证明材料；不要求投标供应商自身取得检验检测机构资质。",
+      "expected_candidate": "B",
+      "variant_kind": "base",
+      "pair_id": null,
+      "semantic_group_id": "base-5",
+      "semantic_tags": [],
+      "question": "投标供应商自身是否必须具有认证或检验检测机构资质？可用多种方式提供产品技术证明，不等于供应商自身必须取得机构资质。"
+    },
+    {
+      "case_id": "base-6",
+      "category": "BASE",
+      "dimension_id": "contractual",
+      "text": "若发生类似情况两次以上，则采购人有权终止合同。",
+      "expected_candidate": "A",
+      "variant_kind": "base",
+      "pair_id": null,
+      "semantic_group_id": "base-6",
+      "semantic_tags": [],
+      "question": "本条是否施加实际合同履约义务或授予采购人因履约问题终止合同的权利？纯示例或明确否定不算。"
+    },
+    {
+      "case_id": "base-7",
+      "category": "BASE",
+      "dimension_id": "contractual",
+      "text": "即使发生类似情况两次以上，采购人也无权据此终止合同；本条不增设任何履约义务。",
+      "expected_candidate": "B",
+      "variant_kind": "base",
+      "pair_id": null,
+      "semantic_group_id": "base-7",
+      "semantic_tags": [],
+      "question": "本条是否施加实际合同履约义务或授予采购人因履约问题终止合同的权利？纯示例或明确否定不算。"
+    },
+    {
+      "case_id": "contrast-polarity-0",
+      "category": "MINIMAL_CONTRAST",
+      "dimension_id": "brand_product",
+      "text": "本项目要求设备及其配件均为同一品牌。",
+      "expected_candidate": "A",
+      "variant_kind": "polarity",
+      "pair_id": "contrast-polarity",
+      "semantic_group_id": "contrast-polarity",
+      "semantic_tags": [
+        "POLARITY"
+      ],
+      "question": "本项目是否对投标设备施加实际的品牌限制？仅列出品牌、证明材料、非约束示例不算；明确允许不同品牌为FALSE。"
+    },
+    {
+      "case_id": "contrast-polarity-1",
+      "category": "MINIMAL_CONTRAST",
+      "dimension_id": "brand_product",
+      "text": "本项目不要求设备及其配件均为同一品牌。",
+      "expected_candidate": "B",
+      "variant_kind": "polarity",
+      "pair_id": "contrast-polarity",
+      "semantic_group_id": "contrast-polarity",
+      "semantic_tags": [
+        "POLARITY"
+      ],
+      "question": "本项目是否对投标设备施加实际的品牌限制？仅列出品牌、证明材料、非约束示例不算；明确允许不同品牌为FALSE。"
+    },
+    {
+      "case_id": "contrast-scope-0",
+      "category": "MINIMAL_CONTRAST",
+      "dimension_id": "certification",
+      "text": "本项目要求投标供应商自身具有检验检测机构资质。",
+      "expected_candidate": "A",
+      "variant_kind": "scope",
+      "pair_id": "contrast-scope",
+      "semantic_group_id": "contrast-scope",
+      "semantic_tags": [
+        "SCOPE"
+      ],
+      "question": "投标供应商自身是否必须具有认证或检验检测机构资质？可用多种方式提供产品技术证明，不等于供应商自身必须取得机构资质。"
+    },
+    {
+      "case_id": "contrast-scope-1",
+      "category": "MINIMAL_CONTRAST",
+      "dimension_id": "certification",
+      "text": "本项目要求受托检测机构自身具有检验检测机构资质。",
+      "expected_candidate": "B",
+      "variant_kind": "scope",
+      "pair_id": "contrast-scope",
+      "semantic_group_id": "contrast-scope",
+      "semantic_tags": [
+        "SCOPE"
+      ],
+      "question": "投标供应商自身是否必须具有认证或检验检测机构资质？可用多种方式提供产品技术证明，不等于供应商自身必须取得机构资质。"
+    },
+    {
+      "case_id": "contrast-exception-0",
+      "category": "MINIMAL_CONTRAST",
+      "dimension_id": "brand_product",
+      "text": "本项目设备必须使用甲品牌；等效产品不予接受。",
+      "expected_candidate": "A",
+      "variant_kind": "exception",
+      "pair_id": "contrast-exception",
+      "semantic_group_id": "contrast-exception",
+      "semantic_tags": [
+        "EXCEPTION"
+      ],
+      "question": "本项目是否排除甲品牌以外的等效产品？等效产品可接受则为FALSE。"
+    },
+    {
+      "case_id": "contrast-exception-1",
+      "category": "MINIMAL_CONTRAST",
+      "dimension_id": "brand_product",
+      "text": "本项目设备必须使用甲品牌；等效产品同样接受。",
+      "expected_candidate": "B",
+      "variant_kind": "exception",
+      "pair_id": "contrast-exception",
+      "semantic_group_id": "contrast-exception",
+      "semantic_tags": [
+        "EXCEPTION"
+      ],
+      "question": "本项目是否排除甲品牌以外的等效产品？等效产品可接受则为FALSE。"
+    },
+    {
+      "case_id": "contrast-mandatory-0",
+      "category": "MINIMAL_CONTRAST",
+      "dimension_id": "price",
+      "text": "耗材价格必须计入投标总价。",
+      "expected_candidate": "A",
+      "variant_kind": "mandatory",
+      "pair_id": "contrast-mandatory",
+      "semantic_group_id": "contrast-mandatory",
+      "semantic_tags": [
+        "MANDATORY_OPTIONAL"
+      ],
+      "question": "本次投标是否强制把耗材价格计入投标总价？"
+    },
+    {
+      "case_id": "contrast-mandatory-1",
+      "category": "MINIMAL_CONTRAST",
+      "dimension_id": "price",
+      "text": "耗材价格可以不计入投标总价。",
+      "expected_candidate": "B",
+      "variant_kind": "mandatory",
+      "pair_id": "contrast-mandatory",
+      "semantic_group_id": "contrast-mandatory",
+      "semantic_tags": [
+        "MANDATORY_OPTIONAL"
+      ],
+      "question": "本次投标是否强制把耗材价格计入投标总价？"
+    },
+    {
+      "case_id": "contrast-temporal-0",
+      "category": "MINIMAL_CONTRAST",
+      "dimension_id": "contractual",
+      "text": "本次履约日期为2026年9月18日。终止条款生效日期为2026年9月17日，自生效日起持续有效。发生两次违约，采购人有权终止合同。",
+      "expected_candidate": "A",
+      "variant_kind": "temporal",
+      "pair_id": "contrast-temporal",
+      "semantic_group_id": "contrast-temporal",
+      "semantic_tags": [
+        "TEMPORAL"
+      ],
+      "question": "在所给履约日期，采购人是否已具有两次违约时终止合同的权利？尚未生效为FALSE。"
+    },
+    {
+      "case_id": "contrast-temporal-1",
+      "category": "MINIMAL_CONTRAST",
+      "dimension_id": "contractual",
+      "text": "本次履约日期为2026年9月18日。终止条款生效日期为2026年9月19日，自生效日起持续有效。发生两次违约，采购人有权终止合同。",
+      "expected_candidate": "B",
+      "variant_kind": "temporal",
+      "pair_id": "contrast-temporal",
+      "semantic_group_id": "contrast-temporal",
+      "semantic_tags": [
+        "TEMPORAL"
+      ],
+      "question": "在所给履约日期，采购人是否已具有两次违约时终止合同的权利？尚未生效为FALSE。"
+    },
+    {
+      "case_id": "contrast-evidence-0",
+      "category": "MINIMAL_CONTRAST",
+      "dimension_id": "certification",
+      "text": "投标资格见附件一。附件一资格条款：供应商自身必须具有检验检测机构资质。",
+      "expected_candidate": "A",
+      "variant_kind": "evidence",
+      "pair_id": "contrast-evidence",
+      "semantic_group_id": "contrast-evidence",
+      "semantic_tags": [
+        "EVIDENCE_MISSING"
+      ],
+      "question": "投标供应商自身是否必须具有认证或检验检测机构资质？可用多种方式提供产品技术证明，不等于供应商自身必须取得机构资质。"
+    },
+    {
+      "case_id": "contrast-evidence-1",
+      "category": "MINIMAL_CONTRAST",
+      "dimension_id": "certification",
+      "text": "投标资格见附件一。附件一资格条款：[材料缺失，无法确定资质要求]。",
+      "expected_candidate": "C",
+      "variant_kind": "evidence",
+      "pair_id": "contrast-evidence",
+      "semantic_group_id": "contrast-evidence",
+      "semantic_tags": [
+        "EVIDENCE_MISSING"
+      ],
+      "question": "投标供应商自身是否必须具有认证或检验检测机构资质？可用多种方式提供产品技术证明，不等于供应商自身必须取得机构资质。"
+    },
+    {
+      "case_id": "equivalence-paraphrase-0",
+      "category": "EQUIVALENCE",
+      "dimension_id": "brand_product",
+      "text": "本项目并不要求设备及其配件均为同一品牌。",
+      "expected_candidate": "B",
+      "variant_kind": "paraphrase",
+      "pair_id": "equivalence-paraphrase",
+      "semantic_group_id": "equivalence-paraphrase",
+      "semantic_tags": [],
+      "question": "本项目是否对投标设备施加实际的品牌限制？仅列出品牌、证明材料、非约束示例不算；明确允许不同品牌为FALSE。"
+    },
+    {
+      "case_id": "equivalence-paraphrase-1",
+      "category": "EQUIVALENCE",
+      "dimension_id": "brand_product",
+      "text": "投标设备与其配件可以来自不同品牌。",
+      "expected_candidate": "B",
+      "variant_kind": "paraphrase",
+      "pair_id": "equivalence-paraphrase",
+      "semantic_group_id": "equivalence-paraphrase",
+      "semantic_tags": [],
+      "question": "本项目是否对投标设备施加实际的品牌限制？仅列出品牌、证明材料、非约束示例不算；明确允许不同品牌为FALSE。"
+    },
+    {
+      "case_id": "equivalence-order-0",
+      "category": "EQUIVALENCE",
+      "dimension_id": "price",
+      "text": "设备报价不得超过分项限价。投标文件须加盖公章。",
+      "expected_candidate": "A",
+      "variant_kind": "order",
+      "pair_id": "equivalence-order",
+      "semantic_group_id": "equivalence-order",
+      "semantic_tags": [],
+      "question": "本次投标是否存在实际报价限价或报价约束？仅用于日后采购参考且不计入投标总价的报价不算。"
+    },
+    {
+      "case_id": "equivalence-order-1",
+      "category": "EQUIVALENCE",
+      "dimension_id": "price",
+      "text": "投标文件须加盖公章。设备报价不得超过分项限价。",
+      "expected_candidate": "A",
+      "variant_kind": "order",
+      "pair_id": "equivalence-order",
+      "semantic_group_id": "equivalence-order",
+      "semantic_tags": [],
+      "question": "本次投标是否存在实际报价限价或报价约束？仅用于日后采购参考且不计入投标总价的报价不算。"
+    },
+    {
+      "case_id": "equivalence-synonym-0",
+      "category": "EQUIVALENCE",
+      "dimension_id": "certification",
+      "text": "投标供应商自身必须具有检验检测机构资质。",
+      "expected_candidate": "A",
+      "variant_kind": "synonym",
+      "pair_id": "equivalence-synonym",
+      "semantic_group_id": "equivalence-synonym",
+      "semantic_tags": [],
+      "question": "投标供应商自身是否必须具有认证或检验检测机构资质？可用多种方式提供产品技术证明，不等于供应商自身必须取得机构资质。"
+    },
+    {
+      "case_id": "equivalence-synonym-1",
+      "category": "EQUIVALENCE",
+      "dimension_id": "certification",
+      "text": "投标供应商自身须具备检验检测机构资质。",
+      "expected_candidate": "A",
+      "variant_kind": "synonym",
+      "pair_id": "equivalence-synonym",
+      "semantic_group_id": "equivalence-synonym",
+      "semantic_tags": [],
+      "question": "投标供应商自身是否必须具有认证或检验检测机构资质？可用多种方式提供产品技术证明，不等于供应商自身必须取得机构资质。"
+    },
+    {
+      "case_id": "equivalence-formatting-0",
+      "category": "EQUIVALENCE",
+      "dimension_id": "contractual",
+      "text": "若发生类似情况两次以上，则采购人有权终止合同。",
+      "expected_candidate": "A",
+      "variant_kind": "formatting",
+      "pair_id": "equivalence-formatting",
+      "semantic_group_id": "equivalence-formatting",
+      "semantic_tags": [],
+      "question": "本条是否施加实际合同履约义务或授予采购人因履约问题终止合同的权利？纯示例或明确否定不算。"
+    },
+    {
+      "case_id": "equivalence-formatting-1",
+      "category": "EQUIVALENCE",
+      "dimension_id": "contractual",
+      "text": "若发生类似情况两次以上，\n\n则采购人有权终止合同。",
+      "expected_candidate": "A",
+      "variant_kind": "formatting",
+      "pair_id": "equivalence-formatting",
+      "semantic_group_id": "equivalence-formatting",
+      "semantic_tags": [],
+      "question": "本条是否施加实际合同履约义务或授予采购人因履约问题终止合同的权利？纯示例或明确否定不算。"
+    },
+    {
+      "case_id": "unknown-0",
+      "category": "UNKNOWN",
+      "dimension_id": "brand_product",
+      "text": "本项目采购设备及其配件。品牌要求以附件为准；附件缺失。",
+      "expected_candidate": "C",
+      "variant_kind": "material_dependency_missing",
+      "pair_id": null,
+      "semantic_group_id": "unknown-0",
+      "semantic_tags": [
+        "EVIDENCE_MISSING"
+      ],
+      "question": "本项目是否对投标设备施加实际的品牌限制？仅列出品牌、证明材料、非约束示例不算；明确允许不同品牌为FALSE。"
+    },
+    {
+      "case_id": "unknown-1",
+      "category": "UNKNOWN",
+      "dimension_id": "price",
+      "text": "本项目设报价表。限价及总价组成条款所在页缺失。",
+      "expected_candidate": "C",
+      "variant_kind": "material_dependency_missing",
+      "pair_id": null,
+      "semantic_group_id": "unknown-1",
+      "semantic_tags": [
+        "EVIDENCE_MISSING"
+      ],
+      "question": "本次投标是否存在实际报价限价或报价约束？仅用于日后采购参考且不计入投标总价的报价不算。"
+    },
+    {
+      "case_id": "unknown-2",
+      "category": "UNKNOWN",
+      "dimension_id": "certification",
+      "text": "投标须提交资格材料。关于供应商自身认证资质的条款被遮挡，无法读取。",
+      "expected_candidate": "C",
+      "variant_kind": "material_dependency_missing",
+      "pair_id": null,
+      "semantic_group_id": "unknown-2",
+      "semantic_tags": [
+        "EVIDENCE_MISSING"
+      ],
+      "question": "投标供应商自身是否必须具有认证或检验检测机构资质？可用多种方式提供产品技术证明，不等于供应商自身必须取得机构资质。"
+    },
+    {
+      "case_id": "unknown-3",
+      "category": "UNKNOWN",
+      "dimension_id": "contractual",
+      "text": "采购人与供应商订立合同。履约义务和终止权条款缺页，无法确定具体要求。",
+      "expected_candidate": "C",
+      "variant_kind": "material_dependency_missing",
+      "pair_id": null,
+      "semantic_group_id": "unknown-3",
+      "semantic_tags": [
+        "EVIDENCE_MISSING"
+      ],
+      "question": "本条是否施加实际合同履约义务或授予采购人因履约问题终止合同的权利？纯示例或明确否定不算。"
+    },
+    {
+      "case_id": "lexical-0",
+      "category": "LEXICAL_TRAP",
+      "dimension_id": "brand_product",
+      "text": "本项目并不要求设备及其配件均为同一品牌，不同品牌同样可以投标。",
+      "expected_candidate": "B",
+      "variant_kind": "shared_base_trap",
+      "pair_id": null,
+      "semantic_group_id": "base-1",
+      "semantic_tags": [
+        "NEGATION_TRAP"
+      ],
+      "question": "本项目是否对投标设备施加实际的品牌限制？仅列出品牌、证明材料、非约束示例不算；明确允许不同品牌为FALSE。"
+    },
+    {
+      "case_id": "lexical-1",
+      "category": "LEXICAL_TRAP",
+      "dimension_id": "price",
+      "text": "耗材清单中的单项报价仅为日后的耗材采购提供参考依据，不计入投标总价，也不作为本次投标限价。",
+      "expected_candidate": "B",
+      "variant_kind": "shared_base_trap",
+      "pair_id": null,
+      "semantic_group_id": "base-3",
+      "semantic_tags": [
+        "SCOPE_TRAP"
+      ],
+      "question": "本次投标是否存在实际报价限价或报价约束？仅用于日后采购参考且不计入投标总价的报价不算。"
+    },
+    {
+      "case_id": "lexical-2",
+      "category": "LEXICAL_TRAP",
+      "dimension_id": "certification",
+      "text": "示例材料清单中写有“供应商必须具有认证资质”，该清单仅作格式示例，不是本项目资格要求。本项目不要求供应商自身具有认证资质。",
+      "expected_candidate": "B",
+      "variant_kind": "quoted_example",
+      "pair_id": null,
+      "semantic_group_id": "lexical-2",
+      "semantic_tags": [],
+      "question": "投标供应商自身是否必须具有认证或检验检测机构资质？可用多种方式提供产品技术证明，不等于供应商自身必须取得机构资质。"
+    },
+    {
+      "case_id": "lexical-3",
+      "category": "LEXICAL_TRAP",
+      "dimension_id": "contractual",
+      "text": "旧合同曾约定“采购人有权终止合同”。本合同不采用该旧条款，不授予采购人该终止权，亦无其他履约约束。",
+      "expected_candidate": "B",
+      "variant_kind": "obsolete_clause",
+      "pair_id": null,
+      "semantic_group_id": "lexical-3",
+      "semantic_tags": [],
+      "question": "本条是否施加实际合同履约义务或授予采购人因履约问题终止合同的权利？纯示例或明确否定不算。"
+    }
+  ]
+}

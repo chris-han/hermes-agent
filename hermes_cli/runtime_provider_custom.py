@@ -443,6 +443,10 @@ def _resolve_llamacpp_runtime(requested_provider: str, explicit_api_key: Optiona
     No server => say so and stop; falling through to the generic custom path would surface "local
     server is off" as OpenRouter's baffling "401 Invalid API key". The switch's state picks the
     message (server off → point at the switch; else the setup pane)."""
+    from hermes_cli.local_runtime.binaries import distribution_unavailable_reason
+
+    if reason := distribution_unavailable_reason():
+        raise ValueError(reason)
     rp = _rp()
     try:
         from hermes_cli.local_runtime.endpoint import resolve_llamacpp_endpoint

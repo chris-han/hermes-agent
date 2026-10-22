@@ -1,0 +1,12 @@
+name: jev_native
+version: 0.1.0
+manifest_version: 1
+description: Disabled experimental Jev execution-contract candidate; no live dispatch tool.
+license: MIT
+provides_tools: []
+provides_hooks: []
+config_schema:
+  connection:
+    type: dict
+    default: {}
+    description: Explicit fixed TypeSafe route for local qualification.

@@ -1,0 +1,637 @@
+{
+  "binding": {
+    "additionalProperties": false,
+    "properties": {
+      "schemaVersion": {
+        "const": "etl_binding.v2",
+        "title": "Schemaversion",
+        "type": "string"
+      },
+      "sourcePort": {
+        "const": "rows",
+        "title": "Sourceport",
+        "type": "string"
+      },
+      "targetPort": {
+        "enum": [
+          "input",
+          "left",
+          "right"
+        ],
+        "title": "Targetport",
+        "type": "string"
+      }
+    },
+    "required": [
+      "schemaVersion",
+      "sourcePort",
+      "targetPort"
+    ],
+    "title": "EtlInputBinding",
+    "type": "object"
+  },
+  "operation": {
+    "$defs": {
+      "EtlAssertOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "column": {
+            "minLength": 1,
+            "pattern": "^(?!__).+",
+            "title": "Column",
+            "type": "string"
+          },
+          "operation": {
+            "const": "assert",
+            "title": "Operation",
+            "type": "string"
+          },
+          "operationSchemaVersion": {
+            "const": "etl_operation.v2",
+            "title": "Operationschemaversion",
+            "type": "string"
+          },
+          "rule": {
+            "enum": [
+              "required",
+              "unique",
+              "allowed",
+              "decimal",
+              "join_match"
+            ],
+            "title": "Rule",
+            "type": "string"
+          },
+          "values": {
+            "anyOf": [
+              {
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Values"
+          }
+        },
+        "required": [
+          "operationSchemaVersion",
+          "operation",
+          "column",
+          "rule"
+        ],
+        "title": "EtlAssertOperation",
+        "type": "object"
+      },
+      "EtlDecimalOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "column": {
+            "minLength": 1,
+            "pattern": "^(?!__).+",
+            "title": "Column",
+            "type": "string"
+          },
+          "operation": {
+            "const": "decimal",
+            "title": "Operation",
+            "type": "string"
+          },
+          "operationSchemaVersion": {
+            "const": "etl_operation.v2",
+            "title": "Operationschemaversion",
+            "type": "string"
+          },
+          "target": {
+            "minLength": 1,
+            "pattern": "^(?!__).+",
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operationSchemaVersion",
+          "operation",
+          "column",
+          "target"
+        ],
+        "title": "EtlDecimalOperation",
+        "type": "object"
+      },
+      "EtlExportOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "operation": {
+            "const": "export",
+            "title": "Operation",
+            "type": "string"
+          },
+          "operationSchemaVersion": {
+            "const": "etl_operation.v2",
+            "title": "Operationschemaversion",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operationSchemaVersion",
+          "operation"
+        ],
+        "title": "EtlExportOperation",
+        "type": "object"
+      },
+      "EtlFilterOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "column": {
+            "minLength": 1,
+            "pattern": "^(?!__).+",
+            "title": "Column",
+            "type": "string"
+          },
+          "comparison": {
+            "enum": [
+              "eq",
+              "ne",
+              "lt",
+              "le",
+              "gt",
+              "ge"
+            ],
+            "title": "Comparison",
+            "type": "string"
+          },
+          "operation": {
+            "const": "filter",
+            "title": "Operation",
+            "type": "string"
+          },
+          "operationSchemaVersion": {
+            "const": "etl_operation.v2",
+            "title": "Operationschemaversion",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "string",
+              "decimal"
+            ],
+            "title": "Type",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operationSchemaVersion",
+          "operation",
+          "column",
+          "comparison",
+          "value",
+          "type"
+        ],
+        "title": "EtlFilterOperation",
+        "type": "object"
+      },
+      "EtlGroupOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "minLength": 1,
+            "pattern": "^(?!__).+",
+            "title": "Count",
+            "type": "string"
+          },
+          "keys": {
+            "items": {
+              "minLength": 1,
+              "pattern": "^(?!__).+",
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Keys",
+            "type": "array",
+            "uniqueItems": true
+          },
+          "operation": {
+            "const": "group",
+            "title": "Operation",
+            "type": "string"
+          },
+          "operationSchemaVersion": {
+            "const": "etl_operation.v2",
+            "title": "Operationschemaversion",
+            "type": "string"
+          },
+          "sum": {
+            "minLength": 1,
+            "pattern": "^(?!__).+",
+            "title": "Sum",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operationSchemaVersion",
+          "operation",
+          "keys",
+          "sum",
+          "count"
+        ],
+        "title": "EtlGroupOperation",
+        "type": "object"
+      },
+      "EtlJoinOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "cardinality": {
+            "enum": [
+              "many_to_one",
+              "one_to_one"
+            ],
+            "title": "Cardinality",
+            "type": "string"
+          },
+          "columns": {
+            "minProperties": 1,
+            "patternProperties": {
+              "^(?!__).+": {
+                "minLength": 1,
+                "pattern": "^(?!__).+",
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "minLength": 1
+            },
+            "title": "Columns",
+            "type": "object"
+          },
+          "left_key": {
+            "minLength": 1,
+            "pattern": "^(?!__).+",
+            "title": "Left Key",
+            "type": "string"
+          },
+          "operation": {
+            "const": "join",
+            "title": "Operation",
+            "type": "string"
+          },
+          "operationSchemaVersion": {
+            "const": "etl_operation.v2",
+            "title": "Operationschemaversion",
+            "type": "string"
+          },
+          "right_key": {
+            "minLength": 1,
+            "pattern": "^(?!__).+",
+            "title": "Right Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operationSchemaVersion",
+          "operation",
+          "left_key",
+          "right_key",
+          "columns",
+          "cardinality"
+        ],
+        "title": "EtlJoinOperation",
+        "type": "object"
+      },
+      "EtlNormalizeOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "columns": {
+            "items": {
+              "minLength": 1,
+              "pattern": "^(?!__).+",
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Columns",
+            "type": "array",
+            "uniqueItems": true
+          },
+          "operation": {
+            "const": "normalize",
+            "title": "Operation",
+            "type": "string"
+          },
+          "operationSchemaVersion": {
+            "const": "etl_operation.v2",
+            "title": "Operationschemaversion",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operationSchemaVersion",
+          "operation",
+          "columns"
+        ],
+        "title": "EtlNormalizeOperation",
+        "type": "object"
+      },
+      "EtlQuarantineOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "operation": {
+            "const": "quarantine",
+            "title": "Operation",
+            "type": "string"
+          },
+          "operationSchemaVersion": {
+            "const": "etl_operation.v2",
+            "title": "Operationschemaversion",
+            "type": "string"
+          },
+          "reasons": {
+            "items": {
+              "enum": [
+                "invalid_decimal",
+                "join_unmatched",
+                "required",
+                "unique",
+                "allowed",
+                "decimal",
+                "join_match"
+              ],
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Reasons",
+            "type": "array"
+          }
+        },
+        "required": [
+          "operationSchemaVersion",
+          "operation",
+          "reasons"
+        ],
+        "title": "EtlQuarantineOperation",
+        "type": "object"
+      },
+      "EtlRenameOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "columns": {
+            "minProperties": 1,
+            "patternProperties": {
+              "^(?!__).+": {
+                "minLength": 1,
+                "pattern": "^(?!__).+",
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "minLength": 1
+            },
+            "title": "Columns",
+            "type": "object"
+          },
+          "operation": {
+            "const": "rename",
+            "title": "Operation",
+            "type": "string"
+          },
+          "operationSchemaVersion": {
+            "const": "etl_operation.v2",
+            "title": "Operationschemaversion",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operationSchemaVersion",
+          "operation",
+          "columns"
+        ],
+        "title": "EtlRenameOperation",
+        "type": "object"
+      },
+      "EtlSelectOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "columns": {
+            "items": {
+              "minLength": 1,
+              "pattern": "^(?!__).+",
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Columns",
+            "type": "array",
+            "uniqueItems": true
+          },
+          "operation": {
+            "const": "select",
+            "title": "Operation",
+            "type": "string"
+          },
+          "operationSchemaVersion": {
+            "const": "etl_operation.v2",
+            "title": "Operationschemaversion",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operationSchemaVersion",
+          "operation",
+          "columns"
+        ],
+        "title": "EtlSelectOperation",
+        "type": "object"
+      },
+      "EtlSourceOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_pin": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Artifact Pin"
+          },
+          "encoding": {
+            "default": "utf-8-sig",
+            "enum": [
+              "utf-8",
+              "utf-8-sig",
+              "gb18030"
+            ],
+            "title": "Encoding",
+            "type": "string"
+          },
+          "header_row": {
+            "default": 1,
+            "maximum": 100,
+            "minimum": 1,
+            "title": "Header Row",
+            "type": "integer"
+          },
+          "operation": {
+            "const": "source",
+            "title": "Operation",
+            "type": "string"
+          },
+          "operationSchemaVersion": {
+            "const": "etl_operation.v2",
+            "title": "Operationschemaversion",
+            "type": "string"
+          },
+          "sheet": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sheet"
+          },
+          "source": {
+            "minLength": 1,
+            "pattern": "^(?!__).+",
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operationSchemaVersion",
+          "operation",
+          "source"
+        ],
+        "title": "EtlSourceOperation",
+        "type": "object"
+      }
+    },
+    "discriminator": {
+      "mapping": {
+        "assert": "#/$defs/EtlAssertOperation",
+        "decimal": "#/$defs/EtlDecimalOperation",
+        "export": "#/$defs/EtlExportOperation",
+        "filter": "#/$defs/EtlFilterOperation",
+        "group": "#/$defs/EtlGroupOperation",
+        "join": "#/$defs/EtlJoinOperation",
+        "normalize": "#/$defs/EtlNormalizeOperation",
+        "quarantine": "#/$defs/EtlQuarantineOperation",
+        "rename": "#/$defs/EtlRenameOperation",
+        "select": "#/$defs/EtlSelectOperation",
+        "source": "#/$defs/EtlSourceOperation"
+      },
+      "propertyName": "operation"
+    },
+    "oneOf": [
+      {
+        "$ref": "#/$defs/EtlSourceOperation"
+      },
+      {
+        "$ref": "#/$defs/EtlSelectOperation"
+      },
+      {
+        "$ref": "#/$defs/EtlRenameOperation"
+      },
+      {
+        "$ref": "#/$defs/EtlNormalizeOperation"
+      },
+      {
+        "$ref": "#/$defs/EtlDecimalOperation"
+      },
+      {
+        "$ref": "#/$defs/EtlFilterOperation"
+      },
+      {
+        "$ref": "#/$defs/EtlJoinOperation"
+      },
+      {
+        "$ref": "#/$defs/EtlAssertOperation"
+      },
+      {
+        "$ref": "#/$defs/EtlQuarantineOperation"
+      },
+      {
+        "$ref": "#/$defs/EtlGroupOperation"
+      },
+      {
+        "$ref": "#/$defs/EtlExportOperation"
+      }
+    ]
+  },
+  "relation": {
+    "$defs": {
+      "EtlRelationColumn": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "minLength": 1,
+            "pattern": "^(?!__).+",
+            "title": "Name",
+            "type": "string"
+          },
+          "type": {
+            "default": "unknown",
+            "enum": [
+              "unknown",
+              "string",
+              "decimal",
+              "integer"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "EtlRelationColumn",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "columns": {
+        "items": {
+          "$ref": "#/$defs/EtlRelationColumn"
+        },
+        "title": "Columns",
+        "type": "array"
+      },
+      "known": {
+        "default": true,
+        "title": "Known",
+        "type": "boolean"
+      },
+      "schemaVersion": {
+        "const": "etl_relation.v2",
+        "default": "etl_relation.v2",
+        "title": "Schemaversion",
+        "type": "string"
+      }
+    },
+    "required": [
+      "columns"
+    ],
+    "title": "EtlRelationSchema",
+    "type": "object"
+  },
+  "schemaVersion": "etl_contract.v2"
+}

@@ -1,0 +1,40 @@
+You are producing non-authoritative proposal evidence for a graph-intent review.
+Use only the registered profile catalog and canonical source blocks below.
+Do not infer legal or institutional authority. Do not treat lexical examples as conclusions.
+Return ontology-shaped advisory evidence; Semantier retains authority over the reviewed intent.
+The ontology object must contain graph_intent_proposal with the complete GraphIntentBrief semantic fields: document_function, represented_or_governed_subject, primary_relationship, preferred_representation, material_dimensions, source_role_interpretation, authority_boundary, competency_questions, hard_negative_questions, alternatives_considered, assumptions, unresolved_questions, and claim_evidence.
+claim_evidence maps each claim path to one or more exact block_id aliases from CANONICAL_SOURCE_BLOCKS. Treat each block_id alias as an opaque token: copy it character-for-character from CANONICAL_SOURCE_BLOCKS and never calculate, reconstruct, shorten, modify, or invent one. The server resolves these aliases to exact canonical block hashes before validation and persistence. Cite only blocks whose text supports that claim. Use indexed paths for list items, for example material_dimensions.0 and hard_negative_questions.0. Do not emit an unsupported material claim; put it in unresolved_questions with affected_semantics instead.
+The claim paths are exact contract keys, not arbitrary JSON leaf paths. Use document_function, represented_or_governed_subject, primary_relationship, preferred_representation, and authority_boundary exactly for the five core claims; never append .type_id or another leaf suffix. For each nonempty source-role array use exactly source_role_interpretation.<field_name> with no item index. For every item in material_dimensions, competency_questions, hard_negative_questions, alternatives_considered, assumptions, and unresolved_questions use exactly <array_name>.<zero_based_index>. Do not add evidence keys outside those forms.
+Before returning, enumerate every populated array and verify that claim_evidence contains a nonempty citation for every index. This includes competency_questions.0, alternatives_considered.0 and assumptions.0 when those items exist; citations for only the core claims, material dimensions and hard negatives are insufficient. Never invent citations to satisfy this check. Do not invent completeness or category-exclusivity assumptions from the mere presence of a table or list. Optional assumptions and alternatives with no source support must remain empty, not become unsupported assertions.
+All type, relationship, and representation identifiers must be admitted by PROFILE_CATALOG. The catalog constrains vocabulary and proving expectations; except for the exact hard-negative contract below, it is not proposal content and must not be copied as an answer.
+primary_relationship.direction must be exactly source_to_target or target_to_source. Do not emit outbound, inbound, forward, reverse, or another direction synonym.
+Every item in every source_role_interpretation array is an ASCII-stable semantic type identifier admitted by PROFILE_CATALOG, not source text, a display label, an example phrase, or a translated concept name. Use exact admitted identifiers such as ConstraintFrameV01 or ApplicabilityScope when the cited source supports that role; otherwise use an empty array. Preserve source-language phrases only in descriptions or question text, never in source_role_interpretation arrays.
+Every unresolved_questions item must use affected_semantics values only from this governed set: topology, direction, cardinality, representation, authority_interpretation, grouping, applicability, evidence_ownership, extraction_behavior, display_label, explanatory_wording. Do not use GraphIntent field names such as authority_boundary as affected_semantics values.
+Do not create an authority_interpretation unresolved question merely because an interpretive, advisory, reference, or screening source does not establish external legal authority or enforcement. When the source does not itself establish a binding conclusion, set establishes_binding_conclusion to false, state that limitation in authority_boundary.rationale, and do not ask for statutes, enforcement mechanisms, or evidence outside CANONICAL_SOURCE_BLOCKS. Use an authority_interpretation question only when the cited source itself leaves its semantic authority role genuinely ambiguous.
+Consistency invariant: when establishes_binding_conclusion is false, do not emit an authority_interpretation question about whether the source has binding force, overrides regulations, supplies enforcement, or has some external legal status. The non-binding authority boundary already answers those questions for graph construction.
+
+Return exactly one JSON object with this shape. Every ellipsis below means a source-grounded value of the declared JSON type, not the literal ellipsis. Use empty arrays when a supported list has no items. Each claim_evidence value must contain exact block_id alias strings copied from CANONICAL_SOURCE_BLOCKS.
+
+{{
+  "graph_intent_proposal": {{
+    "document_function": {{"type_id": "...", "description": "..."}},
+    "represented_or_governed_subject": {{"type_id": "...", "description": "..."}},
+    "primary_relationship": {{"type_id": "...", "source_types": ["..."], "target_types": ["..."], "direction": "...", "semantic_description": "..."}},
+    "preferred_representation": {{"kind": "...", "type_id": "...", "rationale": "..."}},
+    "material_dimensions": [{{"type_id": "...", "description": "..."}}],
+    "source_role_interpretation": {{"canonical_objects": ["..."], "lexical_evidence": ["..."], "reference_examples": ["..."], "classifications": ["..."], "source_assessments": ["..."], "remediation_fields": ["..."], "contextual_fields": ["..."]}},
+    "authority_boundary": {{"source_role": "...", "may_support_screening_or_reasoning": true, "establishes_binding_conclusion": false, "rationale": "..."}},
+    "competency_questions": [{{"question_id": "...", "text": "...", "success_condition": "..."}}],
+    "hard_negative_questions": [{{"question_id": "...", "text": "...", "distinction_to_preserve": "..."}}],
+    "alternatives_considered": [{{"alternative_id": "...", "description": "...", "material_difference": "...", "disposition": "selected|rejected"}}],
+    "assumptions": ["..."],
+    "unresolved_questions": [{{"question_id": "...", "question": "...", "affected_semantics": ["..."]}}],
+    "claim_evidence": {{"<claim_path>": ["block_000001"]}}
+  }}
+}}
+
+Do not collapse typed objects into strings. Do not invent source block IDs. Omit an unresolved question only when the cited source evidence supports a complete typed claim. The hard_negative_questions array must reproduce every PROFILE_CATALOG hard-negative object exactly and only once, preserving its exact question_id, text, and distinction_to_preserve; do not omit, summarize, translate, reorder within an object, or invent hard negatives. These remain non-authoritative evaluation boundaries, and every copied array item still requires claim_evidence from a source block relevant to testing that distinction.
+
+PROFILE_ID: {profile_id}
+PROFILE_CATALOG: {profile_catalog}
+CANONICAL_SOURCE_BLOCKS: {canonical_source_blocks}

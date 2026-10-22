@@ -1,0 +1,25 @@
+name: tender_contextgraph_runtime
+display_name: Tender ContextGraph Runtime
+version: "0.1.0"
+description: Read-only Tender Runtime Expert ContextGraph review tools.
+author: Semantier
+kind: standalone
+platforms:
+  - linux
+  - macos
+  - windows
+platform_compatibility:
+  - api_server
+capability_contract:
+  schema_version: semantier.plugin_capabilities.v1
+  capabilities:
+    read_authority: allow
+    read_evaluation_baseline: controlled
+    read_candidate: deny
+    mutate_candidate: deny
+    checkpoint: deny
+    request_evaluation: deny
+    governance_submit: deny
+    approve: deny
+    admit: deny
+    change_authority_binding: deny

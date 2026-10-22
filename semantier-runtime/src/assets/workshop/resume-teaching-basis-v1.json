@@ -1,0 +1,273 @@
+{
+  "schema_version": "resume_teaching_basis.v1",
+  "basis_id": "workshop-fictional-reviewed-v1",
+  "as_of": "2026-10-11",
+  "experience_comparator": "GT",
+  "experience_bound_months": 36,
+  "interval_convention": "month_precision_half_open",
+  "intervals": [
+    [
+      "2016.08",
+      "至今"
+    ],
+    [
+      "2014.07",
+      "2016.07"
+    ]
+  ],
+  "source_text_hashes": {
+    "jd": "sha256:ad29ff9965b5ae054c3551554437c10bb79ad8d0ca3b0421ac4c38d41ef67ffd",
+    "resume": "sha256:02dab24e9077363f7690eca7c00641dd2f3b224bbd7cbe22875c3f44c4e6bfd7"
+  },
+  "requirements": [
+    {
+      "id": "education",
+      "label": "学历与专业",
+      "terms": [
+        {
+          "id": "education_level",
+          "label": "本科及以上",
+          "jd_quote": "本科及以上学历",
+          "quotes": [
+            "示例师范大学　教育学专业　本科",
+            "示例大学　教育管理专业　硕士"
+          ],
+          "basis_kind": "reviewed_teaching_proposal",
+          "condition": "required",
+          "value": true,
+          "jd_occurrence": 0
+        },
+        {
+          "id": "education_major",
+          "label": "教育相关专业（优先）",
+          "jd_quote": "教育学、教育管理或相关专业优先",
+          "quotes": [
+            "示例大学　教育管理专业　硕士"
+          ],
+          "basis_kind": "reviewed_teaching_proposal",
+          "condition": "preferred",
+          "value": true,
+          "jd_occurrence": 0
+        }
+      ]
+    },
+    {
+      "id": "experience",
+      "label": "工作经历",
+      "terms": [
+        {
+          "id": "experience_duration",
+          "label": "超过三年（冻结严格 >3 解释）",
+          "jd_quote": "**3 年以上**",
+          "quotes": [
+            "2016.08–至今",
+            "2014.07–2016.07"
+          ],
+          "basis_kind": "computation",
+          "condition": "required",
+          "value": true,
+          "jd_occurrence": 0
+        },
+        {
+          "id": "experience_relevance",
+          "label": "中学教务/行政关联（教学解释）",
+          "jd_quote": "中学教务或学校行政相关工作经验",
+          "quotes": [
+            "示例国际学校　教务处专员",
+            "示例市第二实验中学　行政干事"
+          ],
+          "basis_kind": "reviewed_teaching_proposal",
+          "condition": "required",
+          "value": true,
+          "jd_occurrence": 0
+        }
+      ]
+    },
+    {
+      "id": "administration",
+      "label": "教务工作",
+      "terms": [
+        {
+          "id": "course_selection",
+          "label": "选课系统",
+          "jd_quote": "选课系统",
+          "quotes": [
+            "维护学生选课系统数据，组织每学期选课开放与补退选窗口"
+          ],
+          "basis_kind": "reviewed_teaching_proposal",
+          "condition": "required",
+          "value": true,
+          "jd_occurrence": 1
+        },
+        {
+          "id": "timetable",
+          "label": "排课流程",
+          "jd_quote": "排课流程",
+          "quotes": [
+            "负责高中部 3 个年级共 24 个教学班的课表编排与调课协调"
+          ],
+          "basis_kind": "reviewed_teaching_proposal",
+          "condition": "required",
+          "value": true,
+          "jd_occurrence": 0
+        },
+        {
+          "id": "examinations",
+          "label": "考试组织",
+          "jd_quote": "考试组织",
+          "quotes": [
+            "统筹期中、期末考试安排与成绩录入审核"
+          ],
+          "basis_kind": "reviewed_teaching_proposal",
+          "condition": "required",
+          "value": true,
+          "jd_occurrence": 0
+        },
+        {
+          "id": "international_school",
+          "label": "国际/双语学校（优先）",
+          "jd_quote": "**有国际学校或双语学校工作经验者优先**",
+          "quotes": [
+            "示例国际学校　教务处专员"
+          ],
+          "basis_kind": "reviewed_teaching_proposal",
+          "condition": "preferred",
+          "value": true,
+          "jd_occurrence": 0
+        }
+      ]
+    },
+    {
+      "id": "systems",
+      "label": "信息系统与数据",
+      "terms": [
+        {
+          "id": "excel",
+          "label": "Excel",
+          "jd_quote": "Excel",
+          "quotes": [
+            "熟练使用 Excel（数据透视、函数建模）"
+          ],
+          "basis_kind": "reviewed_teaching_proposal",
+          "condition": "required",
+          "value": true,
+          "jd_occurrence": 0
+        },
+        {
+          "id": "sis",
+          "label": "学校信息系统 SIS",
+          "jd_quote": "学校信息管理系统（SIS）",
+          "quotes": [
+            "学校信息管理系统（SIS）与常见排课软件"
+          ],
+          "basis_kind": "reviewed_teaching_proposal",
+          "condition": "required",
+          "value": true,
+          "jd_occurrence": 0
+        },
+        {
+          "id": "statistics_reporting",
+          "label": "统计与报表能力",
+          "jd_quote": "数据统计与报表能力",
+          "quotes": [
+            "课时统计"
+          ],
+          "basis_kind": "reviewed_teaching_proposal",
+          "condition": "required",
+          "value": null,
+          "jd_occurrence": 0
+        }
+      ]
+    },
+    {
+      "id": "english",
+      "label": "英语工作沟通",
+      "terms": [
+        {
+          "id": "english_work",
+          "label": "工作语言",
+          "jd_quote": "英语可作为工作语言",
+          "quotes": [
+            "英语可作为工作语言（CET-6，日常邮件与会议沟通）"
+          ],
+          "basis_kind": "self_report",
+          "condition": "required",
+          "value": null,
+          "jd_occurrence": 0
+        },
+        {
+          "id": "english_written",
+          "label": "书面沟通",
+          "jd_quote": "日常书面与口头沟通",
+          "quotes": [
+            "英语可作为工作语言（CET-6，日常邮件与会议沟通）"
+          ],
+          "basis_kind": "self_report",
+          "condition": "required",
+          "value": null,
+          "jd_occurrence": 0
+        },
+        {
+          "id": "english_oral",
+          "label": "口头沟通",
+          "jd_quote": "日常书面与口头沟通",
+          "quotes": [
+            "英语可作为工作语言（CET-6，日常邮件与会议沟通）"
+          ],
+          "basis_kind": "self_report",
+          "condition": "required",
+          "value": null,
+          "jd_occurrence": 0
+        }
+      ]
+    },
+    {
+      "id": "coordination",
+      "label": "协调与多任务",
+      "terms": [
+        {
+          "id": "coordination_communication",
+          "label": "跨部门协调与沟通",
+          "jd_quote": "跨部门协调与沟通能力",
+          "quotes": [
+            "协调外籍教师签证材料收集与课时统计（涉及与人力资源部门的日常协作）"
+          ],
+          "basis_kind": "reviewed_teaching_proposal",
+          "condition": "required",
+          "value": true,
+          "jd_occurrence": 0
+        },
+        {
+          "id": "peak_multitask",
+          "label": "高峰期多任务能力",
+          "jd_quote": "开学季等高峰期承受多任务压力",
+          "quotes": [
+            "能在开学季等高峰期间保持多任务并行"
+          ],
+          "basis_kind": "self_report",
+          "condition": "required",
+          "value": null,
+          "jd_occurrence": 0
+        }
+      ]
+    },
+    {
+      "id": "certificate",
+      "label": "资格证（优先）",
+      "terms": [
+        {
+          "id": "teaching_certificate",
+          "label": "教师资格证（优先）",
+          "jd_quote": "持有教师资格证者优先",
+          "quotes": [
+            "高级中学教师资格证（2014 年取得）"
+          ],
+          "basis_kind": "reviewed_teaching_proposal",
+          "condition": "preferred",
+          "value": true,
+          "jd_occurrence": 0
+        }
+      ]
+    }
+  ]
+}

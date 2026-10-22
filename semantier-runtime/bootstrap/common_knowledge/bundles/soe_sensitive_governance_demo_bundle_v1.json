@@ -1,0 +1,51 @@
+{
+  "bundle_id": "soe_sensitive_governance_demo_bundle_v1",
+  "schema_version": "sensitive_governance_demo_bundle.v1",
+  "lifecycle_state": "active",
+  "jurisdiction": "CN",
+  "effective_from": "2026-07-22T00:00:00+00:00",
+  "effective_to": null,
+  "source_provenance": {
+    "source_type": "repo_owned_synthetic_demo_bundle",
+    "source_ref": "docs/plans/2026-07-22-soe-sensitive-information-governance-implementation-sprints.md",
+    "prepared_by": "semantier_demo_author",
+    "approved_by": "semantier_governance_reviewer",
+    "approved_at": "2026-07-22T00:00:00+00:00"
+  },
+  "dual_role_approval": {
+    "prepared_by": "semantier_demo_author",
+    "approved_by": "semantier_governance_reviewer",
+    "approved_at": "2026-07-22T00:00:00+00:00"
+  },
+  "artifacts": [
+    {
+      "artifact_id": "soe_sensitive_governance_t1_v1",
+      "tier": "T1",
+      "path": "bootstrap/common_knowledge/ontology/sensitive-governance/t1_classes_v1.json"
+    },
+    {
+      "artifact_id": "soe_sensitive_governance_t2_authority_v1",
+      "tier": "T2",
+      "path": "bootstrap/common_knowledge/authority/sensitive-governance/t2_authority_refs_v1.json"
+    },
+    {
+      "artifact_id": "soe_sensitive_governance_t3_enterprise_policy_v1",
+      "tier": "T3",
+      "path": "bootstrap/common_knowledge/authority/sensitive-governance/t3_enterprise_policy_refs_v1.json"
+    },
+    {
+      "artifact_id": "soe_sensitive_governance_t4_v1",
+      "tier": "T4",
+      "path": "bootstrap/common_knowledge/policies/sensitive-governance/t4_policy_bundle_v1.json"
+    }
+  ],
+  "policy_test_evidence": {
+    "positive": ["credential_removed", "expert_tokenized", "state_secret_blocked"],
+    "negative": ["public_text_allowed"]
+  },
+  "activation_evidence": {
+    "replay_dry_run_hash": "ad145a9fe7541f9aa2f98a377cd7b44a5b86dcd0890ccc995f5513eedb4807cb",
+    "activation_event_refs": ["sensitive_governance.bundle_activated"],
+    "required_artifact_tiers": ["T1", "T2", "T3", "T4"]
+  }
+}

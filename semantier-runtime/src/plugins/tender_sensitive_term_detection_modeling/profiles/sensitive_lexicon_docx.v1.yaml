@@ -1,0 +1,32 @@
+profile_version: sensitive_lexicon_docx.v1
+source_kind: controlled_document
+semantic_purpose: sensitive_lexicon
+canonical_document_schema_version: canonical_document.v2
+normalization_policy_version: sensitive_lexicon_normalization.v1
+columns:
+  term:
+    required: true
+    aliases:
+      - term
+      - 敏感词
+      - 敏感词汇
+      - 词汇
+      - 关键词
+  category:
+    required: false
+    aliases:
+      - category
+      - 分类
+      - 类别
+  severity:
+    required: false
+    aliases:
+      - severity
+      - 风险等级
+      - 严重程度
+  rationale:
+    required: false
+    aliases:
+      - rationale
+      - 说明
+      - 依据

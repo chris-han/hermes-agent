@@ -1,0 +1,1 @@
+Classify the scenario against the supplied contract clauses. Check which clauses govern the scenario, then consider their conditions, exceptions and time limits together. Not-Applicable means the clauses do not govern the scenario. Return exactly one label: Compliant, Non-Compliant, or Not-Applicable.

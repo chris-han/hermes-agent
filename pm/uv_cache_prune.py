@@ -42,14 +42,15 @@ def _build_package_names(source_repo: Path) -> set[str]:
     return names
 
 
-def prune_uv_cache_to_lock(cache: Path, source_repo: Path) -> int:
+def prune_uv_cache_to_lock(cache: Path, source_repo: Path, *, selected_packages: set[str] | None = None) -> int:
     """Delete cache entries for dists the lock cannot resolve.
 
     Unidentifiable buckets (no dist-info) survive — pruning fails open for
     unknown layouts, never for identifiable stale pins. Returns the pruned
     entry count for the build log.
     """
-    keep = lock_package_names(source_repo) | _build_package_names(source_repo)
+    runtime = lock_package_names(source_repo) if selected_packages is None else {_name_key(n) for n in selected_packages}
+    keep = runtime | _build_package_names(source_repo)
     dist_info = re.compile(r"([A-Za-z0-9_.]+?)-\d[^-]*\.dist-info")
 
     def dist_name(bucket: Path) -> str | None:

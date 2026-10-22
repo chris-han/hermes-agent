@@ -1,0 +1,1 @@
+This is a disposable OpenEnv tool-transport qualification task. Call openenv_read to obtain a code. Then call openenv_submit with value exactly equal to the observed code. Do not use other tools. After the environment confirms success, answer briefly. No real external messages or production changes are requested.

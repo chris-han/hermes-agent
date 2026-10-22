@@ -1,0 +1,4 @@
+Read the marker from the task source using the file tool, then report the exact marker as the final answer. If unavailable you may abstain with ABSTAIN.
+Task source locator: {source_path}
+Task source SHA256: {source_sha256}
+Only this task source may be accessed. Do not read reference, scorer, ledger, configuration or unrelated files. This is an offline DEVELOPMENT measurement fixture.

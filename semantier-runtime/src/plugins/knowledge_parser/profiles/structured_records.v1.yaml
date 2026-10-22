@@ -1,0 +1,4 @@
+profile_version: structured_records.v1
+source_kind: structured_records
+normalization: canonical_record_fields
+authority_role: evidence_only

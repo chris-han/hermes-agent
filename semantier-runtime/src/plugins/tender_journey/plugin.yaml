@@ -1,0 +1,17 @@
+name: tender_journey
+display_name: Tender Review Journey
+version: "0.1.0"
+description: Authenticated workflow continuity and production-owner Tender journey commands.
+author: Semantier
+kind: standalone
+platforms: [linux, macos, windows]
+platform_compatibility: [cli, weixin, feishu, api_server, acp]
+capability_contract:
+  schema_version: semantier.plugin_capabilities.v1
+  capabilities:
+    resolve_workflow: controlled
+    execute_workflow: controlled
+    approve: deny
+    admit: deny
+    change_authority_binding: deny
+    release_mutation: deny

@@ -1,0 +1,19 @@
+{
+  "artifact_id": "soe_sensitive_governance_t1_v1",
+  "tier": "T1",
+  "schema_version": "sensitive_governance_bundle_artifact.v1",
+  "lifecycle_state": "certified",
+  "classes": [
+    {"class_id": "PUBLIC_INFORMATION", "display_name_zh": "公开信息"},
+    {"class_id": "PERSONAL_INFORMATION", "display_name_zh": "个人信息"},
+    {"class_id": "SENSITIVE_PERSONAL_INFORMATION", "display_name_zh": "敏感个人信息"},
+    {"class_id": "TENDER_SENSITIVE_INFORMATION", "display_name_zh": "招投标敏感信息"},
+    {"class_id": "TENDER_EXPERT_INFORMATION", "display_name_zh": "评标专家信息"},
+    {"class_id": "BIDDER_CONFIDENTIAL_INFORMATION", "display_name_zh": "投标人保密信息"},
+    {"class_id": "ORDINARY_COMMERCIAL_SECRET", "display_name_zh": "普通商密"},
+    {"class_id": "CORE_COMMERCIAL_SECRET", "display_name_zh": "核心商密"},
+    {"class_id": "CREDENTIAL_OR_SECRET", "display_name_zh": "凭据或秘密"},
+    {"class_id": "EXISTING_STATE_SECRET_MARKING", "display_name_zh": "既有国家秘密标识"},
+    {"class_id": "SUSPECTED_STATE_SECRET", "display_name_zh": "疑似国家秘密"}
+  ]
+}

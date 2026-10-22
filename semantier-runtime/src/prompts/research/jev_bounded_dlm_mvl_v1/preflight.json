@@ -1,0 +1,30 @@
+{
+  "model": "jev-latest",
+  "state": {
+    "decision_subject_ref": "synthetic:preflight",
+    "source_excerpts": [
+      {
+        "ref": "e0",
+        "role": "fixture",
+        "text": "The statement explicitly says condition X applies."
+      }
+    ]
+  },
+  "questions": {
+    "decision": {
+      "type": "choice",
+      "instructions": "Does the supplied state explicitly say condition X applies?",
+      "criteria": {
+        "A": {
+          "what": "TRUE — condition X is explicitly supported"
+        },
+        "B": {
+          "what": "FALSE — condition X is explicitly contradicted"
+        },
+        "C": {
+          "what": "UNKNOWN — the supplied state is insufficient"
+        }
+      }
+    }
+  }
+}

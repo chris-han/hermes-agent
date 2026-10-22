@@ -494,6 +494,15 @@ def local_models_status():
     """Cheap, immediate: config state + installed runtime + staged models + supervisor state (GPU facts live
     in /hardware). Sync def on purpose: blocking urlopen/scans run in the threadpool."""
     section = _runtime_section()
+    if reason := binaries.distribution_unavailable_reason():
+        return {
+            "enabled": bool(section.get("enabled")), "tag": None, "configured_tag": None,
+            "update_available": False, "runtime_installed": False, "runtime_backend": None,
+            "server_running": False, "server_base_url": None,
+            "active_model_id": _active_llamacpp_model_id(), "loaded_models": {},
+            "loading": {}, "placement": {}, "models": [],
+            "models_dir": str(bootstrap.models_dir()), "unavailable_reason": reason,
+        }
     engine = binaries.installed_engine(section.get("backend", "auto"))
     runtime_backend = engine.backend if engine is not None else None
     configured_tag = binaries.pinned_tag(runtime_backend) if runtime_backend else _runtime_target()[0]

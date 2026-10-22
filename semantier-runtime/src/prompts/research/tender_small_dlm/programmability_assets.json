@@ -1,0 +1,12 @@
+{
+  "definitions": {
+    "TRUE": "The supplied context establishes the queried restriction as an operative mandatory requirement.",
+    "FALSE": "The supplied context establishes that the queried characteristic is not an operative mandatory restriction.",
+    "UNKNOWN": "The supplied context does not establish whether the queried restriction is operative."
+  },
+  "paraphrases": {
+    "TRUE": "The evidence shows that the requirement described in the query applies mandatorily.",
+    "FALSE": "The evidence shows that the characteristic in the query is not imposed as a mandatory requirement.",
+    "UNKNOWN": "There is insufficient evidence to determine whether the queried requirement is mandatory."
+  }
+}

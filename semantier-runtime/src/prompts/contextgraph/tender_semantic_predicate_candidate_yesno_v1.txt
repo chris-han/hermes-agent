@@ -1,0 +1,6 @@
+{decision_context_prompt}
+
+Candidate under evaluation: {candidate} = {semantic_value}.
+Is this candidate the correct semantic result for the supplied predicate and evidence?
+Answer YES if the candidate is correct, otherwise answer NO.
+Answer:

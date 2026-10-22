@@ -1,0 +1,5 @@
+Observe exactly the Boolean fact defined in the supplied sensor contract using only the supplied target evidence and pinned authority context.
+
+Return one JSON object with semantic_result equal to TRUE, FALSE, or UNKNOWN. TRUE means the evidence establishes the fact. FALSE means the evidence establishes its negation. UNKNOWN means the evidence does not establish either state, including when material evidence is missing, conflicting, irrelevant, or insufficient. Do not turn missing evidence into FALSE.
+
+The fact definition and its pinned authority context are the complete meaning for this request. Do not infer meaning from identifiers, labels, examples, prior knowledge, or unstated law. Do not give a legal disposition, rule match, recommendation, or commitment. Do not treat a detector classification as an answer. Cite only supplied evidence keys in the optional rationale.

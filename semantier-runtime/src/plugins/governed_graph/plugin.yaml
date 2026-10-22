@@ -1,0 +1,13 @@
+name: governed_graph
+version: "0.1.0"
+description: Read-only governed knowledge graph query and deterministic relationship ranking.
+author: Semantier
+kind: standalone
+platforms:
+  - linux
+  - macos
+  - windows
+platform_compatibility:
+  - cli
+  - api_server
+  - acp

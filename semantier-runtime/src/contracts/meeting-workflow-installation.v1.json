@@ -1,0 +1,9 @@
+{
+  "schemaVersion": "meeting_workflow_installation_manifest.v1",
+  "workflowId": "feishu-meeting-coordinator",
+  "workflowVersion": "2",
+  "ownerRef": "skill:feishu_meeting_coordinator",
+  "definitionArtifactHash": "sha256:5287116969cc6447329462a3dbd695f414babbca4629da7b4ef49e50233ea435",
+  "workflowHash": "sha256:a38c7f695771209ebd87432d2792a01507e56404dce12a053e2ed51b94595c21",
+  "compilerVersion": "workflow-execution-compiler/v2"
+}

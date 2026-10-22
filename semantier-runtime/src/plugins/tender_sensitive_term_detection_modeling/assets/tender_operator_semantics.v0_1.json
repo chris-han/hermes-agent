@@ -1,0 +1,34 @@
+{
+  "profile_id": "tender_operator_semantics.v0_1",
+  "units": {
+    "亿元": {"unit_ref": "CNY_100M", "multiplier": "100000000"},
+    "万元": {"unit_ref": "CNY_10K", "multiplier": "10000"},
+    "元": {"unit_ref": "CNY_YUAN", "multiplier": "1"}
+  },
+  "attributes": [
+    {"attribute_ref": "registered_capital", "markers": ["注册资本", "注册资金"]},
+    {"attribute_ref": "paid_in_capital", "markers": ["实缴资本"]},
+    {"attribute_ref": "net_assets", "markers": ["净资产"]}
+  ],
+  "operators": [
+    {"operator_ref": "GE", "markers": ["不低于", "不少于", "至少", "达到", "以上"]},
+    {"operator_ref": "GT", "markers": ["超过", "高于"]},
+    {"operator_ref": "LE", "markers": ["不超过", "不高于", "以下"]},
+    {"operator_ref": "LT", "markers": ["低于", "少于"]}
+  ],
+  "modality": {
+    "mandatory": ["必须", "须", "应", "要求", "仅限", "不接受", "不得参与"],
+    "description": ["载明", "显示", "为"]
+  },
+  "concept_aliases": {
+    "state_owned_enterprise": ["央企", "国企", "国有独资", "国有控股"],
+    "project_local_supplier": ["本地企业", "本市企业", "本省企业", "项目所在地一致"],
+    "consortium": ["联合体"],
+    "cmmi_level_5": ["CMMI5", "CMMI 5"]
+  },
+  "scope_guard_markers": ["不得以", "为由拒绝", "限制投标人"],
+  "consequence_markers": {
+    "score_bonus": ["加分", "增加2分", "增加 2 分"],
+    "invalid_bid": ["无效投标", "投标无效", "作无效", "不予受理"]
+  }
+}

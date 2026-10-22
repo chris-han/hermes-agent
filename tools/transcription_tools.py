@@ -251,6 +251,12 @@ def _get_provider(stt_config: dict) -> str:
     fallback); otherwise auto-detect local > groq > openai > mistral > xai > elevenlabs > deepinfra."""
     if not is_stt_enabled(stt_config):
         return "none"
+    from pm.features import runtime_distribution_extras
+    if runtime_distribution_extras() is not None:
+        selected = stt_config.get("provider", "sensevoice")
+        if selected == "local":
+            return "none"  # omitted Whisper never selects another local/cloud backend
+        return _resolve_explicit_provider(selected)
     explicit = "provider" in stt_config
     provider = stt_config.get("provider", DEFAULT_PROVIDER)
     # The managed "Nous Subscription" selection is the OpenAI backend routed via the managed gateway.

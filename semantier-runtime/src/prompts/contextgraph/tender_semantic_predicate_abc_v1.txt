@@ -1,0 +1,22 @@
+Evaluate exactly one bounded Tender semantic predicate using only the supplied DecisionLocalProjection.
+
+Do not invent missing evidence, authority, exceptions, or context. If the supplied projection does not contain enough evidence to decide the predicate, choose UNKNOWN.
+
+Target evidence:
+{target_evidence}
+
+Decision context:
+{decision_context}
+
+Restriction family ref: {family_ref}
+Semantic type ref: {semantic_type_ref}
+
+Predicate:
+Does the target evidence, considering only the supplied decision context, establish this restriction as an actual eligibility, scoring, supplier-identity, product, personnel, financial, geographic, performance, price, certification, or contractual restriction rather than merely descriptive context, an example, an evidence request, a conditional legitimate requirement, or a project fact?
+
+Choose exactly one token:
+A = TRUE
+B = FALSE
+C = UNKNOWN
+
+Answer:

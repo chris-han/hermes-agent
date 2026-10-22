@@ -1,0 +1,82 @@
+{
+  "profile_id": "ai_agents_workshop_schema_induction.v0_1",
+  "source_kind": "docx",
+  "paragraph_role_patterns": [
+    {"role_id": "time_window", "pattern": "^(?P<value>[0-2][0-9]:[0-5][0-9]\\s*-\\s*[0-2][0-9]:[0-5][0-9])"},
+    {"role_id": "topic", "pattern": "^[0-2][0-9]:[0-5][0-9]\\s*-\\s*[0-2][0-9]:[0-5][0-9]\\s*｜\\s*(?P<value>.+)$"},
+    {"role_id": "audience", "pattern": "^(?:上午|下午)：.*(?P<value>业务\\s*\\+\\s*IT 联合参与|IT 团队|IT 工程师)"},
+    {"role_id": "activity", "pattern": "^[•·]\\s*(?P<value>.+)$"}
+  ],
+  "node_type_by_role": {
+    "topic": "WorkshopTopic",
+    "audience": "WorkshopAudience",
+    "time_window": "TimeWindow",
+    "activity": "WorkshopActivity"
+  },
+  "event_types": [{"type_id": "WorkshopSession", "required_roles": ["time_window", "topic"]}],
+  "role_relations": [
+    {"type_id": "scheduled_during", "source_type": "WorkshopSession", "target_role": "time_window"},
+    {"type_id": "covers_topic", "source_type": "WorkshopSession", "target_role": "topic"},
+    {"type_id": "intended_for", "source_type": "WorkshopSession", "target_role": "audience"},
+    {"type_id": "includes_activity", "source_type": "WorkshopSession", "target_role": "activity"}
+  ],
+  "event_extraction": {
+    "boundary_role": "time_window",
+    "required_roles": ["time_window", "topic"],
+    "inherit_context_roles": ["audience"],
+    "attach_following_roles": ["activity"],
+    "output_key_by_role": {"audience": "audience", "activity": "activities"},
+    "sample_limit": 3
+  },
+  "representation": {
+    "type": "event",
+    "binary_triple_sufficient": true,
+    "reason": "Timed sessions retain topic and inherited audience context; binary event-to-role relations preserve the observed meaning."
+  },
+  "graph_intent_catalog": {
+    "admitted_type_ids": ["WorkshopAgenda", "WorkshopAgendaItem", "WorkshopAgendaReference", "WorkshopDay", "WorkshopSession", "WorkshopSessionPlan", "TimeWindow", "WorkshopTopic", "WorkshopAudience", "WorkshopActivity"],
+    "admitted_relation_ids": ["SchedulesSession"],
+    "admitted_representation_kinds": ["event"],
+    "authority_constraints": {
+      "allowed_source_roles": ["operational"],
+      "establishes_binding_conclusion_allowed": false
+    },
+    "hard_negative_questions": [
+      {"question_id": "hn.topic_vs_session", "text": "Is a topic label itself a session event?", "distinction_to_preserve": "topic label versus scheduled session event"},
+      {"question_id": "hn.audience_vs_activity", "text": "Is an audience description a workshop activity?", "distinction_to_preserve": "intended audience versus session activity"}
+    ],
+    "forbidden_vocabulary": [
+      "TenderConstraintScreeningReference",
+      "ProcurementEligibilityConstraint",
+      "ConstraintFrameV01",
+      "ProcurementEligibility",
+      "Applicability",
+      "Modality",
+      "Consequence",
+      "CanonicalExpression",
+      "ReferenceExample",
+      "ApplicabilityScope",
+      "ConstrainsEligibility",
+      "hn.company_scale",
+      "Is company scale descriptive information or an eligibility restriction?",
+      "company scale as information versus company scale as an eligibility restriction",
+      "hn.supplier_location",
+      "Is location contextual project information or supplier-location discrimination?",
+      "project/location information versus supplier-location discrimination",
+      "hn.financial_threshold",
+      "Is a financial statement evidence or a financial-size threshold?",
+      "financial statement evidence versus financial-size threshold",
+      "hn.qualification",
+      "Is a certificate domain-relevant or an unnecessary qualification restriction?",
+      "domain-relevant certificate requirement versus unnecessary qualification restriction",
+      "hn.lowest_price",
+      "Is lowest price a benchmark or automatic award/rejection logic?",
+      "lowest price as a benchmark versus automatic lowest-price award/rejection logic",
+      "hn.brand",
+      "Is a brand an example/reference or a mandatory designation?",
+      "brand as example/reference versus mandatory brand designation"
+    ],
+    "source_evidence_terms": ["工作坊", "上午：", "下午：", "｜"],
+    "minimum_source_evidence_matches": 2
+  }
+}

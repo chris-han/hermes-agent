@@ -1,0 +1,107 @@
+{
+  "schema_version": "graph_intent_partial_policy.v1",
+  "semantic_categories": {
+    "material": [
+      "topology",
+      "direction",
+      "cardinality",
+      "representation",
+      "authority_interpretation",
+      "grouping",
+      "applicability",
+      "evidence_ownership",
+      "extraction_behavior"
+    ],
+    "non_material": [
+      "display_label",
+      "explanatory_wording"
+    ]
+  },
+  "partial_fields": {
+    "document_function": {
+      "type_id": "UnresolvedDocumentFunction",
+      "description_template": "Unresolved document function; observed {structural_role} block: {exact_text}",
+      "unresolved_description_template": "Unresolved document function; assessment {assessment_ref} records {reason_code}."
+    },
+    "represented_or_governed_subject": {
+      "type_id": "UnresolvedSubject",
+      "description_template": "Unresolved governed or represented subject; assessment {assessment_ref} records {reason_code}."
+    },
+    "primary_relationship": {
+      "type_id": "UnresolvedRelationship",
+      "source_type_id": "UnresolvedSubject",
+      "target_type_id": "UnresolvedObject",
+      "direction": "unknown",
+      "description_template": "Unresolved primary relationship; assessment {assessment_ref} records {reason_code}."
+    },
+    "preferred_representation": {
+      "kind": "frame",
+      "type_id": null,
+      "rationale_template": "Unresolved preferred representation; assessment {assessment_ref} records {reason_code}."
+    },
+    "authority_boundary": {
+      "source_role": "unknown",
+      "may_support_screening_or_reasoning": false,
+      "establishes_binding_conclusion": false,
+      "rationale_template": "Unresolved authority interpretation; assessment {assessment_ref} records {reason_code}."
+    }
+  },
+  "clarification_questions": {
+    "document_function": {
+      "question_id": "uq.partial.document_function",
+      "question_template": "What document function, if any, should be resolved for assessment {assessment_ref} after {reason_code}?",
+      "affected_semantics": ["topology", "extraction_behavior"]
+    },
+    "represented_or_governed_subject": {
+      "question_id": "uq.partial.subject",
+      "question_template": "What governed or represented subject, if any, should be resolved for assessment {assessment_ref} after {reason_code}?",
+      "affected_semantics": ["topology"]
+    },
+    "primary_relationship": {
+      "question_id": "uq.partial.relationship",
+      "question_template": "What primary relationship and direction, if any, should be resolved for assessment {assessment_ref} after {reason_code}?",
+      "affected_semantics": ["topology", "direction"]
+    },
+    "preferred_representation": {
+      "question_id": "uq.partial.representation",
+      "question_template": "What representation and grouping, if any, should be resolved for assessment {assessment_ref} after {reason_code}?",
+      "affected_semantics": ["representation", "grouping"]
+    },
+    "authority_boundary": {
+      "question_id": "uq.partial.authority",
+      "question_template": "What authority interpretation, if any, should be resolved for assessment {assessment_ref} after {reason_code}?",
+      "affected_semantics": ["authority_interpretation"]
+    }
+  },
+  "diagnostic_questions": {
+    "profile_source_compatibility": {
+      "question_id": "uq.profile_source_compatibility",
+      "question_template": "Registered profile compatibility remains unresolved by assessment {assessment_ref} after {reason_code}.",
+      "affected_semantics": ["extraction_behavior", "topology"]
+    },
+    "proposal_evidence": {
+      "question_id": "uq.proposal_evidence",
+      "question_template": "Proposal evidence could not be admitted by assessment {assessment_ref} after {reason_code}: {failure_message}",
+      "affected_semantics": ["topology", "representation", "authority_interpretation", "extraction_behavior"]
+    },
+    "catalog_admission": {
+      "question_id": "uq.catalog_admission",
+      "question_template": "Proposal evidence failed governed catalog admission in assessment {assessment_ref} after {reason_code}: {failure_message}",
+      "affected_semantics": ["topology", "representation", "authority_interpretation", "extraction_behavior"]
+    }
+  },
+  "failure_messages": {
+    "LLM_PROPOSAL_EVIDENCE_UNAVAILABLE_OR_MALFORMED": "Policy could not admit a typed GraphIntent proposal from the pinned model evidence.",
+    "INVALID_TYPED_PROPOSAL": "Policy could not admit the typed GraphIntent proposal shape.",
+    "UNSUPPORTED_MATERIAL_CLAIM": "Policy found a material claim without governed claim evidence.",
+    "UNRELATED_CLAIM_EVIDENCE": "Policy found claim evidence outside the governed proposal claim set.",
+    "UNKNOWN_CANONICAL_SOURCE_BLOCK": "Policy found claim evidence for an unknown canonical source block.",
+    "CATALOG_ADMISSION_FAILED": "Policy found type, relation, or representation values outside the active catalog.",
+    "CATALOG_HARD_NEGATIVE_ADMISSION_FAILED": "Policy found hard-negative questions that do not match the active catalog.",
+    "CATALOG_AUTHORITY_ADMISSION_FAILED": "Policy found authority semantics outside the active catalog constraints.",
+    "FOREIGN_VOCABULARY_REJECTED": "Policy found vocabulary forbidden by the active catalog."
+  },
+  "fallback_reason_templates": {
+    "auto_pilot_material_ambiguity": "Material ambiguity requires assisted review under the pinned partial policy."
+  }
+}

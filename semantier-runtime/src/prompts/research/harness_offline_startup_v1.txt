@@ -1,0 +1,1 @@
+Return exactly OFFLINE_STARTUP_ACK_V1 as your final response. This is a startup transport check. Do not call tools or read any task source.

@@ -1,0 +1,126 @@
+{
+  "schema_version": "finance_sensitive_teaching.v1",
+  "source_hash": "sha256:6fb0a2ba26a2ee606fffce554763de9470b97d25e3a0a0cea83b17e0cd3c587a",
+  "source_filename": "finance-briefing-sample-zh.pdf",
+  "provenance": "教学示例规则 / 预置标注 / 模拟数据",
+  "findings": [
+    {
+      "id": "finance_arrears",
+      "rule_id": "teaching_arrears",
+      "section": 1,
+      "label": "组合识别风险",
+      "quote": "最大单笔 28.6 万元，高中部",
+      "rationale": "金额与学段组合可能使熟悉情况的人推断家庭。",
+      "evidence_ref": "finance_evidence_arrears",
+      "presentation_location": {
+        "kind": "pdf_page_rect",
+        "page": 1,
+        "x": 392.3380432128906,
+        "y": 304.139892578125,
+        "width": 133.20541381835938,
+        "height": 14.858154296875,
+        "unit": "pdf-point",
+        "origin": "top-left",
+        "precision": "span",
+        "exactText": "最大单笔 28.6 万元，高中部"
+      }
+    },
+    {
+      "id": "finance_supplier",
+      "rule_id": "teaching_supplier",
+      "section": 3,
+      "label": "评标阶段报价",
+      "quote": "校园网络改造 迅联信息技术（示例）有限公司 89.5 评标中（另有两家报价 102.3 / 95.8）",
+      "rationale": "供应商身份与在评报价结合可能暴露采购谈判信息。",
+      "evidence_ref": "finance_evidence_supplier",
+      "presentation_location": {
+        "kind": "pdf_page_rect",
+        "page": 1,
+        "x": 52.0,
+        "y": 572.9533081054688,
+        "width": 493.0,
+        "height": 13.53173828125,
+        "unit": "pdf-point",
+        "origin": "top-left",
+        "precision": "block",
+        "exactText": "校园网络改造 迅联信息技术（示例）有限公司 89.5 评标中（另有两家报价 102.3 / 95.8）"
+      }
+    },
+    {
+      "id": "finance_forecast",
+      "rule_id": "teaching_forecast",
+      "section": 4,
+      "label": "未审定预测",
+      "quote": "预计学年末经营性现金流结余约 620 万元",
+      "rationale": "预测依赖收缴率与支出假设，不能转述为已实现结余。",
+      "evidence_ref": "finance_evidence_forecast",
+      "presentation_location": {
+        "kind": "pdf_page_rect",
+        "page": 1,
+        "x": 192.25,
+        "y": 692.639892578125,
+        "width": 193.675048828125,
+        "height": 14.858154296875,
+        "unit": "pdf-point",
+        "origin": "top-left",
+        "precision": "span",
+        "exactText": "预计学年末经营性现金流结余约 620 万元"
+      }
+    },
+    {
+      "id": "finance_expansion",
+      "rule_id": "teaching_expansion",
+      "section": 5,
+      "label": "未披露扩校计划",
+      "quote": "尚未签署任何文件，未对外披露",
+      "rationale": "初步沟通并不等于已批准或承诺扩校。",
+      "evidence_ref": "finance_evidence_expansion",
+      "presentation_location": {
+        "kind": "pdf_page_rect",
+        "page": 2,
+        "x": 297.25,
+        "y": 51.389892578125,
+        "width": 148.0,
+        "height": 14.858154296875,
+        "unit": "pdf-point",
+        "origin": "top-left",
+        "precision": "span",
+        "exactText": "尚未签署任何文件，未对外披露"
+      }
+    }
+  ],
+  "rules": [
+    {
+      "id": "teaching_arrears",
+      "version": "1",
+      "label": "组合识别风险",
+      "conditions": "向不需要个案细节的受众分享；不代表已经识别到真实家庭。",
+      "recommendation": "合并统计并区间化金额，省略学段与催缴细节。",
+      "provenance": "manually_curated_teaching_rule"
+    },
+    {
+      "id": "teaching_supplier",
+      "version": "1",
+      "label": "评标阶段报价",
+      "conditions": "仅演示评标中报价的处理；不是采购违法结论。",
+      "recommendation": "共享时概括项目状态，隐去供应商与精确报价。",
+      "provenance": "manually_curated_teaching_rule"
+    },
+    {
+      "id": "teaching_forecast",
+      "version": "1",
+      "label": "未审定预测",
+      "conditions": "原文明确未经校务会审定；预测不等于事实。",
+      "recommendation": "保留预测与未审定标签，使用区间并说明假设。",
+      "provenance": "manually_curated_teaching_rule"
+    },
+    {
+      "id": "teaching_expansion",
+      "version": "1",
+      "label": "未披露扩校计划",
+      "conditions": "仅可行性沟通阶段；不构成真实保密定级。",
+      "recommendation": "概括为规划研究，省略选址与投资细节并保留未确认状态。",
+      "provenance": "manually_curated_teaching_rule"
+    }
+  ]
+}

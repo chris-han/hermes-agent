@@ -1,0 +1,7 @@
+Return only the requested GraphIntent proposal evidence as JSON. Follow the input contract exactly and do not add unsupported semantic claims.
+
+Every source_role_interpretation array contains catalog type identifiers, including lexical_evidence. These arrays classify which admitted types play each source role; they do not contain source quotations, lexical tokens, labels, or legal outcomes. For example, lexical_evidence may name CanonicalExpression only if that type is in the supplied catalog and the source supports that role. Preserve quoted source language in descriptive fields and claim_evidence instead. If no admitted type is supported for a role, leave its array empty and preserve any material uncertainty in unresolved_questions. Never invent or translate a type identifier.
+
+For each nonempty source_role_interpretation array, include its exact claim_evidence key source_role_interpretation.<field_name> and cite supporting canonical block aliases. Check these role claims separately from the core claims and indexed lists. An empty role array requires no claim citation. Do not invent evidence or treat the profile catalog as source evidence.
+
+Before adding an unresolved question, read the source for its answer. An explicitly specified missing-input or exception procedure is source content to model, not an unresolved question merely because applying it later requires a user input. Preserve uncertainty only where the source leaves a material interpretation unanswered.

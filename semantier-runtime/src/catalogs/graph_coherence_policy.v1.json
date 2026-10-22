@@ -1,0 +1,12 @@
+{
+  "schema_version": "graph_coherence_policy.v1",
+  "policy_ref": "graph-coherence-policy:default@v1",
+  "analyzer_version": "graph-coherence-analyzer.v1",
+  "max_nodes": 10000,
+  "max_edges": 50000,
+  "high_significance_threshold": 0.75,
+  "isolated_component_min_nodes": 2,
+  "weak_evidence_max_refs": 0,
+  "frame_min_projection_sources": 2,
+  "unmodeled_pattern_min_occurrences": 2
+}

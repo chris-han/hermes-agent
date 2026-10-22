@@ -1,0 +1,96 @@
+{
+  "tender_journey_resolve": {
+    "name": "tender_journey_resolve",
+    "description": "Resolve the authenticated session Tender journey and its exact server projection. Optional journey_id selects an existing journey. Multiple candidates return CHOICE_REQUIRED.",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "journey_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Journey Id"
+        }
+      },
+      "title": "JourneyResolveRequest",
+      "type": "object"
+    }
+  },
+  "tender_journey_action": {
+    "name": "tender_journey_action",
+    "description": "Execute a Tender workflow command through production owners. Use action_schemas from tender_journey_resolve for arguments. Reuse command and idempotency keys for retries; identity and session come from authenticated runtime context.",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "enum": [
+            "preflight",
+            "list_uploads",
+            "list_artifacts",
+            "import_upload",
+            "prepare_artifact",
+            "review_source_coverage",
+            "review_competency",
+            "propose_competency",
+            "prepare_authority_dependencies",
+            "create",
+            "pause",
+            "resume",
+            "cancel",
+            "select_policy",
+            "select_document",
+            "discover_intent",
+            "build_context",
+            "produce_normative_schema",
+            "produce_normative_semantics",
+            "propose_validation_cases",
+            "review_validation_cases",
+            "validate_source_semantics",
+            "certify_context",
+            "select_certification",
+            "bind_runtime",
+            "form_runtime_context",
+            "inspect",
+            "next_document",
+            "read_episode",
+            "read_intent",
+            "review_intent"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "journey_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Journey Id"
+        },
+        "arguments": {
+          "additionalProperties": true,
+          "title": "Arguments",
+          "type": "object"
+        }
+      },
+      "required": [
+        "action",
+        "arguments"
+      ],
+      "title": "JourneyActionRequest",
+      "type": "object"
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "schema": "vera.common-execution-prompts.v1",
+  "json_policy": "For this local execution driver, emit exactly one JSON object per response: {\"tool\":\"api_search\",\"arguments\":{\"query\":\"...\",\"top_k\":5}} or {\"tool\":\"api_fetch\",\"arguments\":{\"method\":\"GET\",\"url\":\"...\",\"params\":null,\"body\":null}} or {\"tool\":\"base64_encode\",\"arguments\":{\"text\":\"...\"}}. Never provide the world argument. Do not emit multiple actions, duplicate keys, prose, or comments. Use {\"done\":true} only when finished.",
+  "native_policy": "Use the available function tools to perform the task. The world argument is supplied by the environment.",
+  "controls": [
+    {
+      "role": "user",
+      "content": "Call api_search exactly once with query \"gmail list messages\" and top_k 1. Do not perform any other action."
+    },
+    {
+      "role": "user",
+      "content": "Call base64_encode exactly once with text \"hello\". Do not perform any other action."
+    }
+  ]
+}

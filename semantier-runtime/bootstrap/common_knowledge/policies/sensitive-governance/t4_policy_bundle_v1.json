@@ -1,0 +1,69 @@
+{
+  "artifact_id": "soe_sensitive_governance_t4_v1",
+  "tier": "T4",
+  "schema_version": "sensitive_governance_bundle_artifact.v1",
+  "lifecycle_state": "certified",
+  "unsupported_constructs": [],
+  "rules": [
+    {
+      "class_id": "EXISTING_STATE_SECRET_MARKING",
+      "route": "FAIL_HARD",
+      "action": "BLOCK",
+      "reason_codes": ["existing_state_secret_marking_non_downgrade"]
+    },
+    {
+      "class_id": "SUSPECTED_STATE_SECRET",
+      "route": "ESCALATE",
+      "action": "BLOCK",
+      "reason_codes": ["suspected_state_secret_requires_review"]
+    },
+    {
+      "class_id": "CREDENTIAL_OR_SECRET",
+      "route": "PASS_AUTO",
+      "action": "REDACT",
+      "reason_codes": ["credential_removed_before_agent_boundary"]
+    },
+    {
+      "class_id": "TENDER_EXPERT_INFORMATION",
+      "route": "PASS_AUTO",
+      "action": "TOKENIZE",
+      "reason_codes": ["expert_identity_tokenized_for_review"]
+    },
+    {
+      "class_id": "TENDER_SENSITIVE_INFORMATION",
+      "route": "PASS_AUTO",
+      "action": "TOKENIZE",
+      "reason_codes": ["tender_sensitive_value_tokenized"]
+    },
+    {
+      "class_id": "BIDDER_CONFIDENTIAL_INFORMATION",
+      "route": "PASS_AUTO",
+      "action": "TOKENIZE",
+      "reason_codes": ["bidder_confidential_value_tokenized"]
+    },
+    {
+      "class_id": "SENSITIVE_PERSONAL_INFORMATION",
+      "route": "PASS_AUTO",
+      "action": "MASK",
+      "reason_codes": ["sensitive_personal_information_masked"]
+    },
+    {
+      "class_id": "PERSONAL_INFORMATION",
+      "route": "PASS_AUTO",
+      "action": "MASK",
+      "reason_codes": ["personal_information_masked"]
+    },
+    {
+      "class_id": "ORDINARY_COMMERCIAL_SECRET",
+      "route": "PASS_AUTO",
+      "action": "TOKENIZE",
+      "reason_codes": ["commercial_secret_tokenized"]
+    },
+    {
+      "class_id": "CORE_COMMERCIAL_SECRET",
+      "route": "PASS_AUTO",
+      "action": "REDACT",
+      "reason_codes": ["core_commercial_secret_redacted"]
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+Extract source-grounded tender requirement primitives in source order. Use verbatim source text and preserve relationship grouping. Emit entities, relationships, modality, exclusivity, thresholds, temporal windows, scoring effects, conditions, exceptions, consequences, and document roles. Do not decide whether a clause is a violation and do not infer accepted ontology identities.

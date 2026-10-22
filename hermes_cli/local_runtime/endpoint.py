@@ -94,6 +94,10 @@ def resolve_llamacpp_endpoint(config: dict | None = None,
     is still spawning the server (≈1-3 s) while the desktop's readiness probe fires the moment the
     WebSocket connects.
     """
+    from hermes_cli.local_runtime.binaries import distribution_unavailable_reason
+
+    if distribution_unavailable_reason():
+        return None
     managed = _state_endpoint()
     if managed:
         return managed

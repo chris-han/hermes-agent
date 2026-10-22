@@ -1,0 +1,30 @@
+{
+  "schema_version": "source_semantic_witness_lineage_registry.v1",
+  "packages": [
+    {
+      "accepted_package_ref": "source-semantic-witness-package:tender@v1:accepted",
+      "accepted_package_hash": "sha256:bdd7eeb8f0a4ce92d3c4833e1fc00f0f657e90d04c5d7524f5163cd6ce8f516b",
+      "proposed_package_hash": "sha256:a17b123189247040f10cf0fbf74002d3b0121935b4e0bb5750cbe786ebca0a85",
+      "proposed_fixture_bytes_hash": "sha256:7e664fe67d25d59930ba6ceda72cec9c2d17188250e7fe225cfc3f50db390151",
+      "proposed_artifact_path": "src/catalogs/source_semantic_witness_lineages/tender_source_semantic_witness_proposed.v1.json",
+      "accepted_artifact_path": "src/catalogs/source_semantic_witness_lineages/tender_source_semantic_witness_accepted.v1.json"
+    },
+    {
+      "accepted_package_ref": "source-semantic-witness-package:tender@v2:accepted",
+      "accepted_package_hash": "sha256:77bff30d8bc76ef8500f88f77682fe2ec0b05397c2e59f0bb4e0a13224a30391",
+      "proposed_package_hash": "sha256:112c14c0603f539d70c9e2bddfb74f58248ebce31f8ca28ffd075ce9e4962af2",
+      "proposed_fixture_bytes_hash": "sha256:9dd82e5f5671c5a3c0a92a4d911dc77f4ed09b7e19e97440b9b82117abc72710",
+      "proposed_artifact_path": "src/catalogs/source_semantic_witness_lineages/tender_source_semantic_witness_proposed.v2.json",
+      "accepted_artifact_path": "src/catalogs/source_semantic_witness_lineages/tender_source_semantic_witness_accepted.v2.json"
+    },
+    {
+      "accepted_package_ref": "source-semantic-witness-package:workshop@v1:accepted",
+      "accepted_package_hash": "sha256:2a4d601d542937d09df4a9bdd43fd0e20042d7a75484444484821aafa06b77af",
+      "proposed_package_hash": "sha256:13fffa4277fcd5065eb37243fdc2a9904c96a5790eb4713d8e93997e66f7b950",
+      "proposed_fixture_bytes_hash": "sha256:251bc69d340f3a7d1b3a131c8c113ae3d037d1c32756f16579e01e2ee9237ce2",
+      "proposed_artifact_path": "src/catalogs/source_semantic_witness_lineages/workshop_source_semantic_witness_proposed.v1.json",
+      "accepted_artifact_path": "src/catalogs/source_semantic_witness_lineages/workshop_source_semantic_witness_accepted.v1.json"
+    }
+  ],
+  "content_hash": "sha256:e1db88681aac8c048a13aaa7bcf8070c1bbab2691538582adf18bac2546a3d3b"
+}

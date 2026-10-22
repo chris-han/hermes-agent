@@ -1,0 +1,4 @@
+profile_version: sensitivity_matching.v1
+classification_input: canonical_classification_input.v1
+rule_terms_source: authority_resolved_applicability_scope.match_terms
+authority_role: classification_evidence_only

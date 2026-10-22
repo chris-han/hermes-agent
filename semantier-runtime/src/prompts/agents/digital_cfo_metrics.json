@@ -1,0 +1,85 @@
+{
+  "metric_context_template": "Matched digital CFO metric contracts for this question. Use these contracts to translate the user's request into governed_query SQL instead of improvising metric meaning.\n\n{metric_contracts}\n\n{dimension_guidance}\n\nPrefer the matched contract's default grain unless the user explicitly asks for another period grain. If multiple metrics are matched, answer them separately or state the assumptions for combining them.",
+  "metrics": {
+    "gross_margin": {
+      "labels": ["毛利率", "毛利分析", "gross margin", "gross profit margin"],
+      "definition": "(revenue - direct_cost) / revenue",
+      "source_views": ["org_rea_claims", "org_general_ledger_balance_lines"],
+      "default_grain": "month",
+      "allowed_grains": ["month", "quarter", "year", "ltm", "ytd"],
+      "comparison_modes": ["actual", "yoy", "mom", "qoq", "budget_vs_actual"],
+      "dimension_candidates": ["project", "customer", "region", "product"],
+      "guidance": "Default to organization-level gross margin unless the user explicitly asks for project, customer, region, or product profitability."
+    },
+    "net_margin": {
+      "labels": ["净利率", "净利分析", "net margin", "net profit margin"],
+      "definition": "net_profit / revenue",
+      "source_views": ["org_financial_statement_packages", "org_general_ledger_balance_lines"],
+      "default_grain": "month",
+      "allowed_grains": ["month", "quarter", "year", "ltm", "ytd"],
+      "comparison_modes": ["actual", "yoy", "mom", "qoq", "budget_vs_actual"],
+      "dimension_candidates": ["project", "customer", "region"],
+      "guidance": "If the user asks for generic 利润率, default to net margin and state that assumption briefly."
+    },
+    "cost_analysis": {
+      "labels": ["成本核算", "成本分析", "cost analysis", "cost accounting"],
+      "definition": "Summarize debits and cost structure by governed account lines and explain the cost mix, major drivers, and changes over time.",
+      "source_views": ["org_general_ledger_balance_lines"],
+      "default_grain": "month",
+      "allowed_grains": ["month", "quarter", "year", "ltm", "ytd"],
+      "comparison_modes": ["actual", "yoy", "mom", "qoq", "trend"],
+      "dimension_candidates": ["project", "product", "department", "supplier"],
+      "guidance": "Use org_general_ledger_balance_lines for cost-account rollups instead of parsing balances_json outside governed_query."
+    },
+    "operating_expense_ratio": {
+      "labels": ["费用率", "期间费用率", "费用分析", "opex ratio", "operating expense ratio"],
+      "definition": "operating_expense / revenue",
+      "source_views": ["org_general_ledger_balance_lines", "org_financial_statement_packages"],
+      "default_grain": "month",
+      "allowed_grains": ["month", "quarter", "year", "ltm", "ytd"],
+      "comparison_modes": ["actual", "yoy", "mom", "qoq", "budget_vs_actual"],
+      "dimension_candidates": ["department", "project", "region"],
+      "guidance": "Separate selling, administrative, and finance expense when the account structure permits."
+    },
+    "budget_variance": {
+      "labels": ["预算偏差", "预算执行差异", "budget variance", "budget vs actual"],
+      "definition": "actual - budget, with absolute and percentage variance",
+      "source_views": ["org_general_ledger_balance_lines", "org_financial_statement_packages"],
+      "default_grain": "month",
+      "allowed_grains": ["month", "quarter", "year", "ytd"],
+      "comparison_modes": ["budget_vs_actual", "forecast_vs_actual"],
+      "dimension_candidates": ["project", "department", "region", "product"],
+      "guidance": "If a governed budget artifact is absent, state that budget variance requires a governed budget baseline rather than inferring one."
+    },
+    "cashflow_pressure": {
+      "labels": ["现金流压力", "cash flow pressure", "working capital pressure"],
+      "definition": "Assess liquidity strain using cash receipts, payables timing, receivables timing, and operating outflows.",
+      "source_views": ["org_rea_claims", "org_financial_statement_packages", "org_general_ledger_balance_lines"],
+      "default_grain": "month",
+      "allowed_grains": ["month", "quarter", "ltm", "ytd"],
+      "comparison_modes": ["actual", "trend", "yoy", "mom"],
+      "dimension_candidates": ["project", "customer", "supplier"],
+      "guidance": "Lead with operating cash pressure, collection timing, and payable burden rather than only reporting period-end cash balance."
+    },
+    "project_profitability": {
+      "labels": ["项目盈利", "项目毛利", "project profitability", "project margin"],
+      "definition": "project revenue - project direct cost, with margin and cost structure",
+      "source_views": ["org_rea_claims", "org_general_ledger_balance_lines"],
+      "default_grain": "month",
+      "allowed_grains": ["month", "quarter", "year", "ltm", "ytd"],
+      "comparison_modes": ["actual", "yoy", "mom", "trend"],
+      "dimension_candidates": ["project", "customer", "region"],
+      "guidance": "When the user asks generic 项目盈利, prefer project-level grouping before organization-level summary if project identifiers are available."
+    },
+    "receivables_collection": {
+      "labels": ["回款分析", "应收周转", "receivables collection", "collections analysis"],
+      "definition": "Measure invoicing, collections, outstanding receivables, and turnover timing",
+      "source_views": ["org_rea_claims", "org_general_ledger_balance_lines"],
+      "default_grain": "month",
+      "allowed_grains": ["month", "quarter", "year", "ltm", "ytd"],
+      "comparison_modes": ["actual", "trend", "yoy", "mom"],
+      "dimension_candidates": ["customer", "project", "region"],
+      "guidance": "When possible, separate invoice issuance from cash collection and explain gaps between revenue recognition and cash receipt."
+    }
+  }
+}

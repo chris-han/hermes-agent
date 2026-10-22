@@ -1,0 +1,17 @@
+{
+  "schema_version": "JevOperatorSourceFreezeV1",
+  "request_sha256": "e160b92c55bdf0c16eb17668a2233fdb21aa3fe794b02c08afa7348627eac19d",
+  "source_sha256": {
+    "worker.py": "a61f0a40a865c51a8b2ac600c7b43021dc32531b2c14179ef20dcedb17a05fcf",
+    "native.py": "390dfc3f8f35df18c5a51d4cabde09b2452c8341974ba42f2d9e203f7c3e047c",
+    "service.py": "90e5335903b329d533716c7cc66be46ea5e71e5a4be95089d64e324cce1ba8be",
+    "host.py": "3415f7bb0e5a17e3f687548737fc51afe17034718f88d4f80baf5215497eace6",
+    "durable.py": "0a855bce91c7b57ba8685b79a4d3446e636ca0f5a015fc37a290ab6623c22330",
+    "__init__.py": "2033cf719d1da6e871ccffb9fd9948d85202afa411f90dd6cb6190a1b9aff3e1",
+    "plugin.yaml": "55c291bb58057e1a4a1cd99fcb8395a9a728ce2b27ee597c6f76f319ed12ae2a",
+    "specimen.py": "3efe86224ae32002192c6a5e6caad61607a4a7b95af14700adec0ba26dc6263c",
+    "upstream/client.py": "413173b777c870ddb4b76b14383d70d419ecbbf366b1675d039bc8a4df3abdbe",
+    "operator-disclosure.txt": "28b6f772e547780d9e3ffcb075393c4ddf432b63e3a92fb3e370b35cb70667ba"
+  },
+  "authority": false
+}

@@ -1,0 +1,4 @@
+SenseVoice Small — FunAudioLLM / Alibaba Group.
+INT8 ONNX export: csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17 at 2365baeacb507f821a0c8120fcee3d484dba7a07.
+Model weights use the retained FunASR Model Open Source License Agreement1.1, not Apache2.0.
+Full model terms, attribution and upstream model card: docs/operational/evidence/windows-cpu-sensevoice-package-v1/

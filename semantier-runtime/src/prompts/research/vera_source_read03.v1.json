@@ -1,0 +1,34 @@
+{
+  "system": "Perform only the diagnostic step requested. Use the documented API and preserve source values exactly. Do not claim business actions.",
+  "read_template": "Read this source using exactly one api_fetch call. Use method GET and the exact URL below; omit optional params and body. The route is already supplied from the public catalog, so do not search. Source URL: {url}\nPublic API documentation: {doc}",
+  "retain_template": "Using only the tool result just received, return the {field} exactly as a JSON object with the single key value and a string value. No tools, explanations, fences, paraphrasing or rounding.",
+  "probes": [
+    {
+      "example_id": 4001,
+      "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages/msg_inv_001",
+      "doc": {
+        "id": "gmail.users.messages.get",
+        "path": "gmail/v1/users/{userId}/messages/{id}",
+        "method": "GET",
+        "description": "Fetch a specific email message by its ID.",
+        "response": "Message object with full payload"
+      },
+      "field": "subject field",
+      "selector": "subject",
+      "catalog": "automationbench/tools/api/schemas/gmail.jsonc"
+    },
+    {
+      "example_id": 4002,
+      "url": "https://sheets.googleapis.com/v4/spreadsheets/ss_expenses/values/%27January%202026%27!C2:C2",
+      "doc": {
+        "id": "sheets.spreadsheets.values.get",
+        "path": "sheets/v4/spreadsheets/{spreadsheetId}/values/{range}",
+        "method": "GET",
+        "description": "Read cell contents from a specific range. Retrieves data from a range specified in A1 notation (e.g., 'Sheet1!A1:Z100')."
+      },
+      "field": "first returned cell, values[0][0]",
+      "selector": "cell",
+      "catalog": "automationbench/tools/api/schemas/google_sheets.jsonc"
+    }
+  ]
+}

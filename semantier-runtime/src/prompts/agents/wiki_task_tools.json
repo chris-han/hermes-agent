@@ -1,0 +1,70 @@
+[
+  {
+    "name": "wiki_read",
+    "description": "Read an active documentary wiki page and its full-content SHA-256. Paths are relative to the active wiki.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "wiki_mutate",
+    "description": "Create, update or uniquely patch a documentary wiki page with optimistic version checking and a durable operation receipt. Paths are relative to the active wiki.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "operation_id": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "expected_sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "content": {
+          "type": "string"
+        },
+        "old_text": {
+          "type": "string"
+        },
+        "new_text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "operation_id",
+        "path",
+        "expected_sha256"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "wiki_reconcile",
+    "description": "Reconcile an owned durable wiki mutation obligation without resubmitting document content.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "operation_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "operation_id"
+      ],
+      "additionalProperties": false
+    }
+  }
+]

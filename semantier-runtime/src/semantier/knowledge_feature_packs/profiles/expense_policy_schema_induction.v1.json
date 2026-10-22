@@ -1,0 +1,116 @@
+{
+  "profile_id": "expense_policy_schema_induction.v1",
+  "semantic_role_by_header": {},
+  "node_type_by_role": {
+    "canonical_expression": "CanonicalExpression"
+  },
+  "role_relations": [],
+  "nary_signals": [
+    {
+      "signal_id": "deontic_modality",
+      "dimension": "modality",
+      "patterns": [
+        "须",
+        "应",
+        "不得"
+      ]
+    },
+    {
+      "signal_id": "temporal_condition",
+      "dimension": "value_constraint",
+      "patterns": [
+        "提交日",
+        "开具日",
+        "一周年",
+        "闰年"
+      ]
+    }
+  ],
+  "nary_representation": {
+    "type_id": "ConstraintFrameV01",
+    "slots": [
+      "target_type_ref",
+      "attribute_ref",
+      "operator_ref",
+      "value_constraint",
+      "modality_ref",
+      "stage_ref",
+      "consequence_ref"
+    ]
+  },
+  "graph_intent_catalog": {
+    "admitted_type_ids": [
+      "ExpensePolicy",
+      "ReimbursementRequest",
+      "Invoice",
+      "Applicant",
+      "Department",
+      "ExpensePurpose",
+      "PolicyClause",
+      "PolicyCondition",
+      "PolicyException",
+      "PolicyScope",
+      "ReviewRequirement",
+      "CalendarAnniversary",
+      "CanonicalExpression",
+      "ConstraintFrameV01",
+      "Applicability",
+      "Modality",
+      "Consequence"
+    ],
+    "admitted_relation_ids": [
+      "HasParticipantRole"
+    ],
+    "relation_admission_bindings": {
+      "HasParticipantRole": "core.has_participant_role"
+    },
+    "admitted_representation_kinds": [
+      "frame"
+    ],
+    "authority_constraints": {
+      "allowed_source_roles": [
+        "interpretive"
+      ],
+      "establishes_binding_conclusion_allowed": false
+    },
+    "hard_negative_questions": [
+      {
+        "question_id": "hn.review_vs_approval",
+        "text": "Does an exception-review requirement establish approval?",
+        "distinction_to_preserve": "review requirement versus approval"
+      },
+      {
+        "question_id": "hn.observation_vs_purpose",
+        "text": "Does an invoice establish the actual expense purpose?",
+        "distinction_to_preserve": "observed invoice facts versus applicant-provided purpose"
+      }
+    ],
+    "forbidden_vocabulary": [
+      "TenderConstraintScreeningReference",
+      "ProcurementEligibilityConstraint",
+      "ProcurementEligibility"
+    ],
+    "source_evidence_terms": [
+      "报销",
+      "教学",
+      "发票"
+    ],
+    "minimum_source_evidence_matches": 1
+  },
+  "knowledge_relation_catalog": {
+    "schemaVersion": "knowledge_relation_profile_catalog.v1",
+    "namespace": "expense",
+    "taxonomyRef": "knowledge-relation-taxonomy:semantier.core@v1",
+    "taxonomyHash": "sha256:9cbd2a479961166de2a1c01ad3f2a543eaf86c51c01d53451e8c2c647fa984e3",
+    "relationTypes": []
+  },
+  "source_kind": "pdf",
+  "display_name_en": "Teaching expense policy",
+  "display_name_zh": "教学报销政策",
+  "paragraph_role_patterns": [
+    {
+      "role_id": "canonical_expression",
+      "pattern": "^(?P<value>[\\s\\S]+)$"
+    }
+  ]
+}

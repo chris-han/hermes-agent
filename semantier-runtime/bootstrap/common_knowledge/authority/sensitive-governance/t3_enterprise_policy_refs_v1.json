@@ -1,0 +1,16 @@
+{
+  "artifact_id": "soe_sensitive_governance_t3_enterprise_policy_v1",
+  "tier": "T3",
+  "schema_version": "sensitive_governance_bundle_artifact.v1",
+  "lifecycle_state": "certified",
+  "references": [
+    {
+      "authority_ref": "t3_soe_procurement_review_purpose",
+      "display_name_zh": "国企采购评审目的限定"
+    },
+    {
+      "authority_ref": "t3_external_destination_minimization",
+      "display_name_zh": "外部目的地最小披露"
+    }
+  ]
+}

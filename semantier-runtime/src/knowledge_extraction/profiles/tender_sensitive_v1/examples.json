@@ -1,0 +1,9 @@
+[
+  {
+    "text": "需经强制性认证的设备，必须具备3C认证。",
+    "extractions": [
+      {"extraction_class": "condition", "extraction_text": "需经强制性认证的", "attributes": {"group_ref": "requirement_1"}},
+      {"extraction_class": "relationship", "extraction_text": "设备，必须具备3C认证", "attributes": {"group_ref": "requirement_1", "subject_text": "设备", "predicate_text": "必须具备", "object_text": "3C认证"}}
+    ]
+  }
+]

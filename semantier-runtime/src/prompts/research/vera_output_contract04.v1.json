@@ -1,0 +1,33 @@
+{
+  "system": "Perform only the diagnostic step requested. Use the documented API and preserve source values exactly. Do not claim business actions.",
+  "source_context": "The host is reading the following public task source through the native simulator. Retain only actual returned data for the extraction request that follows.\nSource URL: {url}\nPinned native response contract: {contract}",
+  "prose": "Using only the tool result just received, return the {field} exactly as a JSON object with the single key value and a string value. No tools, explanations, fences, paraphrasing or rounding.",
+  "schema": "Using only the tool result just received, extract the exact string from {field} and place that string in the output property named \"value\".\nReturn only JSON conforming to this schema: {\"type\":\"object\",\"properties\":{\"value\":{\"type\":\"string\"}},\"required\":[\"value\"],\"additionalProperties\":false}.\nThe source field selector identifies what to read; the schema defines the output property. Preserve the source string verbatim. No tools, explanations, fences, paraphrasing or rounding.",
+  "probes": [
+    {
+      "example_id": 4001,
+      "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages/msg_inv_001",
+      "field": "subject field",
+      "selector": "subject",
+      "contract": {
+        "shape": "flat Message object",
+        "source_field": "subject",
+        "source_type": "string"
+      },
+      "source_path": "automationbench/tools/api/impl/gmail.py"
+    },
+    {
+      "example_id": 4002,
+      "url": "https://sheets.googleapis.com/v4/spreadsheets/ss_expenses/values/ws_jan_2026!A2:Z9",
+      "field": "first returned cell, values[0][0]",
+      "selector": "cell",
+      "contract": {
+        "shape": "whole worksheet ValueRange",
+        "range": "ws_jan_2026!A2:Z9",
+        "source_field": "values[0][0]",
+        "source_type": "string"
+      },
+      "source_path": "automationbench/tools/api/impl/google_sheets.py"
+    }
+  ]
+}

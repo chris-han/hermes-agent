@@ -1,0 +1,76 @@
+{
+  "schema_version": "governed-analytics-labels.v1",
+  "description": "Display metadata for governed analytics machine schema identifiers. Machine identifiers stay ASCII; localized labels and units live here.",
+  "views": {
+    "analytics_rea_claims": {
+      "columns": {
+        "amount_10k": {
+          "display_name_zh": "金额（万元）",
+          "unit": "CNY_10K"
+        }
+      }
+    },
+    "analytics_cost_revenue_yearly": {
+      "columns": {
+        "revenue_10k": {
+          "display_name_zh": "收入（万元）",
+          "unit": "CNY_10K"
+        },
+        "cost_10k": {
+          "display_name_zh": "成本（万元）",
+          "unit": "CNY_10K"
+        }
+      }
+    },
+    "analytics_event_type_yearly": {
+      "columns": {
+        "amount_10k": {
+          "display_name_zh": "金额（万元）",
+          "unit": "CNY_10K"
+        }
+      }
+    },
+    "analytics_expense_audit_matrix": {
+      "columns": {},
+      "dynamic_columns": [
+        {
+          "name_pattern": "^amount_(\\d{4})_10k$",
+          "display_name_zh_template": "{year}年金额（万元）",
+          "unit": "CNY_10K"
+        }
+      ]
+    },
+    "governed_rea_claims": {
+      "columns": {
+        "amount_10k": {
+          "display_name_zh": "金额（万元）",
+          "unit": "CNY_10K"
+        }
+      }
+    },
+    "org_rea_claims": {
+      "columns": {
+        "amount_10k": {
+          "display_name_zh": "金额（万元）",
+          "unit": "CNY_10K"
+        }
+      }
+    },
+    "org_general_ledger_balance_lines": {
+      "columns": {
+        "debit_10k": {
+          "display_name_zh": "借方金额（万元）",
+          "unit": "CNY_10K"
+        },
+        "credit_10k": {
+          "display_name_zh": "贷方金额（万元）",
+          "unit": "CNY_10K"
+        },
+        "net_10k": {
+          "display_name_zh": "净额（万元）",
+          "unit": "CNY_10K"
+        }
+      }
+    }
+  }
+}

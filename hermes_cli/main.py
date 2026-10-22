@@ -680,6 +680,18 @@ if sys.argv[1:2] == ["pm"]:
 
     raise SystemExit(_pm_main(sys.argv[2:]))
 
+# The declared product carries an exact parent composition. Its existing launcher
+# remains the only owner of Semantier platform/workspace bootstrap and assets.
+from pm.features import runtime_distribution_extras as _runtime_distribution_extras
+if _runtime_distribution_extras() is not None:
+    from pm.paths import repo_root as _product_repo_root
+    _parent_source = _product_repo_root() / "semantier-runtime" / "src"
+    if not (_parent_source / "agents" / "launcher.py").is_file():
+        raise RuntimeError("packaged Semantier source composition is missing")
+    sys.path.insert(0, str(_parent_source))
+    from agents.launcher import bootstrap_packaged_runtime as _bootstrap_packaged_runtime
+    _bootstrap_packaged_runtime()
+
 # Windows launcher self-heal — the ``hermes`` command is a COPY of the venv
 # console script staged into the managed bin dir (outside the checkout, since
 # ``hermes update``'s autostash once swept ``<checkout>\bin`` copies off disk;

@@ -1,0 +1,11 @@
+One new POST to TypeSafe https://api.typesafe.ai/v1/systemone; model jev-1.13.0.
+Public TTPC-V3-0034 extraction and three unchanged Choice questions, 24,077 bytes.
+Request SHA-256: {request_sha256}
+One physical attempt, 60s local deadline, no retry, redirect or fallback. Interruption consumes the attempt; remote processing may continue.
+Existing credential profile: {credential_home}. Hermes reads its existing key in memory and sends it only to TypeSafe. No key is copied into a file or command line.
+Only a temporary plugin policy is enabled; no persistent profile, access grant or runtime tool changes.
+USD 0.01 API-metered allowance, excluding taxes and FX settlement fees. This is NOT a provider-enforced cap or guaranteed invoice maximum.
+Historical reported-use arithmetic was USD 0.000367164. The USD 0.005505024 engineering reserve is not a billing guarantee.
+Proceed only after checking this existing account uses USD 0.042/M input with free output, has sufficient existing credits, and auto-refill is OFF. Otherwise stop; this command does not change account settings.
+Records remain at {receipt_root}. Never remove them to repeat the call.
+This qualifies transport mechanics only, not model quality, fresh holdout, evaluator acceptance or production admission.

@@ -1,0 +1,19 @@
+name: tender_sensitive_term_detection_modeling
+display_name: Tender Sensitive Term Detection Modeling
+version: "0.1.0"
+description: Governed authoring, compilation, review, and runtime support for Tender Sensitive Term Detection over activated Semantier graph/rule context.
+author: Semantier
+kind: standalone
+platforms:
+  - linux
+  - macos
+  - windows
+platform_compatibility:
+  - cli
+  - weixin
+  - feishu
+  - api_server
+  - acp
+webapi:
+  enabled: true
+  module: tender_sensitive_term_detection_modeling.dashboard.webapi

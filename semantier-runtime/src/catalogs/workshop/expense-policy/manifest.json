@@ -1,0 +1,7 @@
+{
+  "schema_version": "workshop_expense_bundle.v1",
+  "teaching_only": true,
+  "origin": "docs/research/logs/expense-policy-lineage-demo-v1/terminal-report.md",
+  "snapshot_sha256": "42aea899d7d56934cf01c3b161693ed99644bcebef4be02aae5f5c3d1e9e68e0",
+  "source_sha256": "e01cd3b648361881e405e5cdba70643001a7e782b059d085c4e05ff32202f4c8"
+}

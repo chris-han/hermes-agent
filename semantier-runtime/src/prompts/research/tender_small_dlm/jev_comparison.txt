@@ -1,0 +1,1 @@
+Evaluate the decision described in the supplied state using its evidence and runtime candidate semantics. Follow the decision instructions in that state. Return the corresponding candidate from this question's criteria.

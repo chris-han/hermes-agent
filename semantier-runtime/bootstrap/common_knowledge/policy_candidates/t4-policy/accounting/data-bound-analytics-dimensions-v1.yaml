@@ -1,0 +1,41 @@
+name: global::accounting::data_bound_analytics_dimensions
+category: policy_bundle
+semantic_tier: T4
+proposed_by: bootstrap
+scoped_owner: global
+rollback_window_hours: 24
+rollback_strategy: Deactivate candidate and restore the prior architecture-law candidate.
+notes: Repo-owned Law 5 seed for dataset-derived analytics dimensions and pivots.
+jurisdiction_review:
+  route_family: SEMANTIER_GOVERNED_T4
+  target_tier: T4
+  fast_track_allowed: true
+  reason: governed_t4_candidate
+  authority_domain: accounting
+  source_kind: bootstrap_policy_file
+activation:
+  status: ACTIVE
+  actor: bootstrap
+  approval_actor_roles:
+    - control_owner
+    - policy_owner
+  activation_actor_roles:
+    - control_owner
+    - governance_chair
+    - policy_owner
+content:
+  policy_id: data-bound-analytics-dimensions-v1
+  version: 1
+  authority_domain: accounting
+  law_number: 5
+  rule: >
+    Data-bound analytics dimensions, buckets, periods, and pivots must be
+    derived from governed datasets or explicit governed policy artifacts, not
+    hard-coded in runtime SQL or plugin code.
+  requirements:
+    - Analytics period and year columns must be derived from source data.
+    - Runtime-owned machine identifiers must remain ASCII-stable.
+    - Localized labels for derived fields must live in governed metadata or schema-label catalogs.
+  source_refs:
+    - source_ref: docs/canonical/architecture.md
+      authority_role: canonical_runtime_contract

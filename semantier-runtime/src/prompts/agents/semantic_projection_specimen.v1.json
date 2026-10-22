@@ -1,0 +1,204 @@
+{
+  "decision_ir": {
+    "action_ref": "action:reschedule_meeting",
+    "actor_ref": "role:meeting_owner",
+    "condition": {
+      "predicate": "attendee_conflict_count_gte",
+      "value": 2
+    },
+    "decision_id": "meeting-reschedule-conflict-threshold",
+    "exception": {
+      "action_ref": "action:approve_keep_original_time",
+      "actor_ref": "role:executive_owner"
+    },
+    "object_ref": "object:meeting",
+    "requirement_strength": "REQUIRED",
+    "schema_version": "decision_ir.v1",
+    "source_exception_frame_hash": "sha256:d4303234cf12a41b9d01a614997716fac1749c795f8cabd48854f92f7b364f0c",
+    "source_exception_frame_ref": "exception:executive-owner-keep-original-time",
+    "source_rule_frame_hash": "sha256:ce7f80d65a5a8d2449c6f65ad1c659be5fb06d0fd2cd387864e05b91ccdd0ed8",
+    "source_rule_frame_ref": "rule:meeting-reschedule-conflict-threshold"
+  },
+  "decision_semantic_hash": "sha256:9526757af6ef12cd50b92bf5d9041d6103f7e9c3b6053fb21c983a755cd74be3",
+  "evidence_hash": "sha256:2ac5f7fa779d66b9a60157e94817d9c801533a698149db673d76167faf148b8d",
+  "fault_injections": [
+    {
+      "fault": "requirement_strength",
+      "mismatches": [
+        {
+          "expected": "REQUIRED",
+          "field": "requirement_strength",
+          "observed": "RECOMMENDED"
+        }
+      ],
+      "qualified": false,
+      "semantic_hash": "sha256:a9bf907afb1e226ca288f3961b822cf8f4ab7b81c5c145e8f540ebb672b6b0f7",
+      "surface_text": "如果参会冲突人数不少于 2 人，会议组织者宜调整会议时间。例外：如果执行负责人批准保留原时间，会议组织者可保持原时间。"
+    },
+    {
+      "fault": "actor",
+      "mismatches": [
+        {
+          "expected": "role:meeting_owner",
+          "field": "actor_ref",
+          "observed": "role:attendee"
+        }
+      ],
+      "qualified": false,
+      "semantic_hash": "sha256:6b211db44d9a06155fc5c32efcbe0d2fc3f09fa06171ec52c29f755fb8109c9f",
+      "surface_text": "如果参会冲突人数不少于 2 人，参会者应调整会议时间。例外：如果执行负责人批准保留原时间，参会者可保持原时间。"
+    },
+    {
+      "fault": "condition",
+      "mismatches": [
+        {
+          "expected": {
+            "predicate": "attendee_conflict_count_gte",
+            "value": 2
+          },
+          "field": "condition",
+          "observed": {
+            "predicate": "attendee_conflict_count_gte",
+            "value": 3
+          }
+        }
+      ],
+      "qualified": false,
+      "semantic_hash": "sha256:37e0111ce83f28a0c0c013d58fdd07cff7321bbfd217cb08f29f7600c29ecfc9",
+      "surface_text": "如果参会冲突人数不少于 3 人，会议组织者应调整会议时间。例外：如果执行负责人批准保留原时间，会议组织者可保持原时间。"
+    },
+    {
+      "fault": "exception",
+      "mismatches": [
+        {
+          "expected": {
+            "action_ref": "action:approve_keep_original_time",
+            "actor_ref": "role:executive_owner"
+          },
+          "field": "exception",
+          "observed": {
+            "action_ref": "action:approve_keep_original_time",
+            "actor_ref": "role:any_attendee"
+          }
+        }
+      ],
+      "qualified": false,
+      "semantic_hash": "sha256:830d0713b8010499b94353e60789cdbb7493424a4e36ee17b403ce42f795cd0e",
+      "surface_text": "如果参会冲突人数不少于 2 人，会议组织者应调整会议时间。例外：如果任何参会者批准保留原时间，会议组织者可保持原时间。"
+    }
+  ],
+  "replay": {
+    "byte_identical": true,
+    "first_hash": "sha256:2ac5f7fa779d66b9a60157e94817d9c801533a698149db673d76167faf148b8d",
+    "schema_version": "controlled_language_semantic_projection_replay.v1",
+    "second_hash": "sha256:2ac5f7fa779d66b9a60157e94817d9c801533a698149db673d76167faf148b8d"
+  },
+  "schema_version": "semantic_projection_asimov_showcase.v1",
+  "source": {
+    "kind": "RuleFrameV1 + ExceptionFrameV1",
+    "normative_frames": [
+      {
+        "actor_ref": "role:meeting_owner",
+        "conditions": [
+          {
+            "evidence_refs": [
+              "evidence:meeting-calendar-conflicts"
+            ],
+            "expected_value": 2,
+            "fact_ref": "fact:attendee_conflict_count",
+            "operator": "GE",
+            "predicate_id": "attendee_conflict_count_gte"
+          }
+        ],
+        "consequence": "Reschedule the meeting when the conflict threshold is met.",
+        "display_name": "Meeting reschedule conflict threshold",
+        "display_name_zh": "会议冲突改期阈值",
+        "epistemic_status": "FOUND",
+        "evidence_refs": [
+          "evidence:meeting-calendar-conflicts"
+        ],
+        "exception_refs": [
+          "exception:executive-owner-keep-original-time"
+        ],
+        "frame_hash": "sha256:ce7f80d65a5a8d2449c6f65ad1c659be5fb06d0fd2cd387864e05b91ccdd0ed8",
+        "frame_id": "rule:meeting-reschedule-conflict-threshold",
+        "frame_kind": "rule",
+        "modality": "obligation",
+        "object_ref": "object:meeting",
+        "precedence_refs": [],
+        "qualification_refs": [],
+        "rule_effects": [
+          {
+            "effect_id": "effect:meeting_reschedule",
+            "evidence_refs": [
+              "evidence:meeting-calendar-conflicts"
+            ],
+            "expected_value": "RESCHEDULE",
+            "fact_ref": "fact:meeting_schedule_action",
+            "operator": "EQ"
+          }
+        ],
+        "scope_refs": [],
+        "source_region_refs": [
+          "source:feishu-meeting-coordinator-policy:v1#reschedule"
+        ],
+        "temporal_condition_refs": []
+      },
+      {
+        "applies_to_rule_ref": "rule:meeting-reschedule-conflict-threshold",
+        "conditions": [
+          {
+            "evidence_refs": [
+              "evidence:meeting-owner-approval"
+            ],
+            "expected_value": true,
+            "fact_ref": "fact:executive_owner_keep_original_time_approved",
+            "operator": "EQ",
+            "predicate_id": "executive_owner_keep_original_time_approved"
+          }
+        ],
+        "display_name": "Executive owner keeps original time",
+        "display_name_zh": "执行负责人批准保留原时间",
+        "epistemic_status": "FOUND",
+        "evidence_refs": [
+          "evidence:meeting-owner-approval"
+        ],
+        "frame_hash": "sha256:d4303234cf12a41b9d01a614997716fac1749c795f8cabd48854f92f7b364f0c",
+        "frame_id": "exception:executive-owner-keep-original-time",
+        "frame_kind": "exception",
+        "source_region_refs": [
+          "source:feishu-meeting-coordinator-policy:v1#exception"
+        ]
+      }
+    ]
+  },
+  "summary": {
+    "fault_total": 4,
+    "faults_rejected": 4,
+    "valid_projection_count": 3,
+    "valid_projection_total": 3
+  },
+  "valid_projections": [
+    {
+      "profile": "ordinary_zh",
+      "qualified": true,
+      "semantic_hash": "sha256:9526757af6ef12cd50b92bf5d9041d6103f7e9c3b6053fb21c983a755cd74be3",
+      "surface_hash": "sha256:52dc786d9a3fa92c845fc3921ada5255df27e16927d79e42b25d19be5c90a346",
+      "surface_text": "参会冲突人数达到 2 人或以上时，会议组织者应调整会议时间；但执行负责人批准保留原时间的情况除外。"
+    },
+    {
+      "profile": "controlled_zh",
+      "qualified": true,
+      "semantic_hash": "sha256:9526757af6ef12cd50b92bf5d9041d6103f7e9c3b6053fb21c983a755cd74be3",
+      "surface_hash": "sha256:195dc214000bb351293ec99c7ed208049de925a85879bfc536c951181dcc771f",
+      "surface_text": "如果参会冲突人数不少于 2 人，会议组织者应调整会议时间。例外：如果执行负责人批准保留原时间，会议组织者可保持原时间。"
+    },
+    {
+      "profile": "normative_en",
+      "qualified": true,
+      "semantic_hash": "sha256:9526757af6ef12cd50b92bf5d9041d6103f7e9c3b6053fb21c983a755cd74be3",
+      "surface_hash": "sha256:c5b6f5347afaca56e5e16572cf00205befb8423ca3628de3baa3944b54199f70",
+      "surface_text": "If 2 or more attendees have a conflict, the meeting owner must reschedule the meeting, unless the executive owner approves keeping the original time."
+    }
+  ]
+}

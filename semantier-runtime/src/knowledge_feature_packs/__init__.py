@@ -1,0 +1,1 @@
+"""Knowledge feature-pack adapters."""

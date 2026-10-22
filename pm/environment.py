@@ -410,6 +410,15 @@ class PythonEnvironment:
                    "--python", str(self.python), "--compile-bytecode"]
         if no_default_groups:
             command.append("--no-default-groups")
+        from pm.features import distribution_extras
+        from pm.store import current_target
+        selected = distribution_extras(source, target=current_target())
+        if selected is not None:
+            outside = set(extras) - set(selected)
+            if outside:
+                raise ValueError(f"extras excluded by Windows CPU distribution: {sorted(outside)}")
+            if all_extras:
+                extras, all_extras = selected, False
         if all_extras:
             from pm.features import opt_in_extras
 

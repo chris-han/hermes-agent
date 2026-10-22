@@ -1,0 +1,9 @@
+name: governed_analytics
+version: "1.0.0"
+description: Business analytics tool over EOS SQLite via DuckDB
+platform_compatibility:
+  - cli
+  - weixin
+  - feishu
+  - api_server
+  - acp

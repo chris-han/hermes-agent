@@ -1,0 +1,8 @@
+{
+  "instructions": "Evaluate only the specified grounded leaf predicate under its frozen operator semantics. The source meaning defines the concept; the observations describe a synthetic case. EQ compares the underlying proposition with the specified Boolean or categorical value, including inversion when that value is false. EXISTS concerns presence of the observation only, not whether its substantive proposition is true. Do not infer a missing substantive observation as false. Open-textured legal concepts require interpretation of the supplied evidence; a number or keyword alone is not a substitute threshold. Select UNKNOWN when evidence cannot establish the specified predicate or its negation. Do not decide a final legal consequence. No additional facts, external retrieval, or current-law claims are permitted.",
+  "criteria": {
+    "A": {"what": "TRUE: the specified predicate, including its operator and comparison value, is established by the supplied observations."},
+    "B": {"what": "FALSE: the supplied observations establish that the specified predicate does not hold. Missing evidence alone is not FALSE, except the explicit EXISTS presence operator."},
+    "C": {"what": "UNKNOWN: available evidence is insufficient to establish the specified substantive predicate as TRUE or FALSE, including a missing material operand."}
+  }
+}
