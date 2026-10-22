@@ -261,6 +261,9 @@ class LearnedSkillPublicationService:
 
     def propose(self, context, baseline_ref, baseline_hash, new_content, request_id, origin=None, *, package_files=None):
         base = self._load(context, baseline_ref, SkillArtifactVersionV1, baseline_hash)
+        from services.learning_trace_evidence_service import validate_lesson_origin
+        validate_lesson_origin(context=context, store=self._store, origin=origin,
+                              target_ref=baseline_ref, target_hash=baseline_hash)
         if not isinstance(new_content, str) or (not new_content.strip() and package_files is None) or not request_id:
             raise ValueError('INVALID_PROCEDURE_CHANGE')
         if origin is not None:

@@ -21,10 +21,20 @@ from storage.graph_schema_discovery_store import GraphSchemaDiscoveryStore
 SKILL_MAJOR_VERSION = "knowledge-graph-building@1.0.0"
 PROVIDER_CONTRACT_VERSION = "semantica-llm-ontology@1"
 
+DEEPSEEK_MAAS_MODEL = "deepseek-v4.1-flash-1017"
+DEEPSEEK_MAAS_BASE_URL = "https://ws-n7w2em1zmym5ysta.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+
+
+def _provider_model(provider: str, model: str) -> tuple[str, str]:
+    if provider.lower() == "deepseek":
+        return "alibaba", DEEPSEEK_MAAS_MODEL
+    return provider.lower(), model
+
+
 PROVIDER_ENV_KEYS = {
     "alibaba": "DASHSCOPE_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
-    "deepseek": "DEEPSEEK_API_KEY",
+    "deepseek": "DASHSCOPE_API_KEY",
     "gemini": "GEMINI_API_KEY",
     "groq": "GROQ_API_KEY",
     "novita": "NOVITA_API_KEY",
@@ -62,7 +72,7 @@ def resolve_runtime_llm_provider_model(
         env.get("HERMES_INFERENCE_MODEL") or env.get("HERMES_MODEL") or ""
     ).strip()
     if provider and model:
-        return provider, model
+        return _provider_model(provider, model)
 
     config_paths: list[Path] = []
     if hermes_home is not None:
@@ -100,7 +110,7 @@ def resolve_runtime_llm_provider_model(
                 model_config.get("default") or model_config.get("model") or ""
             ).strip()
         if resolved_provider and resolved_provider != "auto" and resolved_model:
-            return resolved_provider, resolved_model
+            return _provider_model(resolved_provider, resolved_model)
     return None
 
 
@@ -155,7 +165,7 @@ class GraphSchemaLlmEvidenceRunner:
             self._require_safe_artifact_id(run_id, label="run_id")
         if evidence_id is not None:
             self._require_safe_artifact_id(evidence_id, label="evidence_id")
-        provider_key = provider.lower()
+        provider_key, model = _provider_model(provider, model)
         env_key = PROVIDER_ENV_KEYS.get(provider_key)
         has_managed_auth = bool(
             self.managed_auth_available is not None
@@ -289,6 +299,7 @@ class GraphSchemaLlmEvidenceRunner:
         return {"structured_output_attempts": deepcopy(attempts)} if attempts else {}
 
     def _generator(self, provider: str, model: str) -> Any:
+        provider, model = _provider_model(provider, model)
         if self.generator_factory is not None:
             return self.generator_factory(provider, model)
         _ensure_vendored_semantica_importable()
@@ -310,6 +321,8 @@ class GraphSchemaLlmEvidenceRunner:
                 if provider == "alibaba"
                 else self.environ.get("OPENAI_BASE_URL")
             )
+            if provider == "alibaba" and model == DEEPSEEK_MAAS_MODEL:
+                base_url = DEEPSEEK_MAAS_BASE_URL
             generator.provider = providers.OpenAIProvider(
                 api_key=self.environ.get(api_key_env),
                 base_url=base_url,

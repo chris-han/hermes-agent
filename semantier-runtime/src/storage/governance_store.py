@@ -636,6 +636,15 @@ class GovernanceStore:
             ).fetchone()
             return dict(row) if row else None
 
+    def learning_graph_events(self, *, candidate, owner_ref, as_of, limit):
+        """Exact owner-persisted candidate binding, bounded before receipt decoding."""
+        with self._lock:
+            rows = self._conn.execute(sql_query(
+                "SELECT e.* FROM policy_candidate_events e JOIN policy_candidates c ON c.candidate_id=e.candidate_id WHERE c.category='learned_procedure' AND c.scoped_owner=? AND json_extract(c.content_yaml,'$.candidate.artifact_ref')=? AND json_extract(c.content_yaml,'$.candidate.artifact_hash')=? AND (substr(e.created_at,1,19)||'.'||CASE WHEN instr(e.created_at,'.')=0 THEN '000000' ELSE substr(e.created_at,instr(e.created_at,'.')+1,6) END||'Z')<=? ORDER BY e.created_at,e.candidate_event_id LIMIT ?",
+                "SELECT e.* FROM policy_candidate_events e JOIN policy_candidates c ON c.candidate_id=e.candidate_id WHERE c.category='learned_procedure' AND c.scoped_owner=%s AND c.content_yaml::jsonb->'candidate'->>'artifact_ref'=%s AND c.content_yaml::jsonb->'candidate'->>'artifact_hash'=%s AND e.created_at::timestamptz<=%s::timestamptz ORDER BY e.created_at,e.candidate_event_id LIMIT %s"),
+                (owner_ref,candidate.artifact_ref,candidate.artifact_hash,as_of,min(201,max(1,limit)))).fetchall()
+            return [dict(row) for row in rows]
+
     def list_candidate_events(self, candidate_id: str) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(

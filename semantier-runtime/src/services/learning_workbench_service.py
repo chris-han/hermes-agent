@@ -288,8 +288,11 @@ class LearningWorkbenchService:
             return {'object': self._present(result, 'contribution')}
         origin = values.get("origin")
         if origin:
+            lesson_json = origin.get("lesson_json")
             origin = self.inspect_result(context=context, session_key=origin["session_key"],
                                          message_id=origin["message_id"])["origin"]
+            if lesson_json:
+                origin = {**origin, "lesson_json": lesson_json}
         if operation in ("correct_context", "suppress_context"):
             owner = self._context_owner()
             fields = {name: values[name] for name in ("item_ref", "expected_revision", "request_id")}
@@ -426,7 +429,16 @@ class LearningWorkbenchService:
         except (ValueError, KeyError, TypeError, OSError, PermissionError):
             # Optional learning metadata cannot revoke an already-recorded result.
             observation_error = "PRODUCER_RECEIPT_INTEGRITY_FAILED"
+        from services.learning_trace_evidence_service import LearningTraceEvidenceService, read_native_trace_basis
+        try:
+            source_binding, native_rows = read_native_trace_basis(runtime_id)
+            trace_views = LearningTraceEvidenceService(store=self._store).result_views(
+                context=context, session_id=runtime_id, source_binding=source_binding, native_rows=native_rows,
+                tool_call_ids={m.get('tool_call_id') for m in turn_messages if m.get('role') == 'tool'})
+        except (ValueError, PermissionError, OSError):
+            trace_views = {'coverage': 'unavailable', 'reason': 'TRACE_EVIDENCE_UNAVAILABLE'}
         return {
+            "trace_views": trace_views,
             "kind": "result", "ref": f"result:{session_key}:{message_id}", "title": "Recorded result",
             "content": selected.get("content") or "",
             "leading_answer": "This result is unchanged. Procedure use and causal attribution are not recorded.",

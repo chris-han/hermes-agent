@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "parent_commit": "dbddf1b02da874ff22d3a3afa30c7b321479edee",
+  "parent_commit": "ba213c1d19784761bbf2bcfa976c671963d6298a",
   "files": [
     {
       "path": "MODEL-NOTICE.txt",
@@ -228,7 +228,7 @@
     },
     {
       "path": "pyproject.toml",
-      "sha256": "f451ab3a7d8761eb337233109a794b0f0d9526b569bb42f7ace3b910b0c35c7e"
+      "sha256": "96c1cc2725929eb93594351fbd6ff8fb555273575ff38015574f80458b3453a0"
     },
     {
       "path": "src/agents/__init__.py",
@@ -420,7 +420,7 @@
     },
     {
       "path": "src/agents/launcher.py",
-      "sha256": "53a7de9beab1381050288efe3e28f2b45f580b431ed47325f92185b16a08e84c"
+      "sha256": "06a598d55689c479cc7927ffc0981bfd6a5fcd17498141e9b84306f237b3262a"
     },
     {
       "path": "src/agents/meeting_api_origin.py",
@@ -536,7 +536,7 @@
     },
     {
       "path": "src/agents/route_policy.py",
-      "sha256": "0405b589af93b911d7bccfbb913841450241e9d6a78178090eb263512c21e3bf"
+      "sha256": "be81a0d00f9b881ccd14025abba55c681ee20ef982d5e9b0089a620f1df461d8"
     },
     {
       "path": "src/agents/runtime_feedback_to_candidate.py",
@@ -572,7 +572,7 @@
     },
     {
       "path": "src/agents/semantier_agent.py",
-      "sha256": "6c10b6bb7135c47ae3814678f4f0d5bdebbf20dff0c528a663cf30b2b3ac72b1"
+      "sha256": "cd738bd8397e730b57f2eff4a9c190428fed9d9d4f61943bad8f87b6be389b29"
     },
     {
       "path": "src/agents/sensitive_labeling_report.py",
@@ -744,7 +744,7 @@
     },
     {
       "path": "src/agents/webapi/learning_workbench_routes.py",
-      "sha256": "bd6ac72803de64a92da012c8cfc95e3b8e440658d5e8522460b6c46abdb686c6"
+      "sha256": "62382f2236ad75a3c1abf1dfe99d48b84eac5e7e72e3d03d3752320a871be0cb"
     },
     {
       "path": "src/agents/webapi/legal_corpus_routes.py",
@@ -1301,6 +1301,10 @@
     {
       "path": "src/contracts/learned_skill_publication.py",
       "sha256": "0b5449cd96907edb4331771490c45f6280f52422afbc0f0fc5cbcf3f8e5cd55d"
+    },
+    {
+      "path": "src/contracts/learning_trace_evidence.py",
+      "sha256": "75df8b01122676657ce79bf586b412682ee76cf75b30110ae67fe4bc20b81f7f"
     },
     {
       "path": "src/contracts/learning_work_window.py",
@@ -2156,7 +2160,7 @@
     },
     {
       "path": "src/knowledge_extraction/contracts_chinese_concept_boundary_ic1_ic7.py",
-      "sha256": "c344fa1ec938829ad42fc0368303a5a8b924d4bd94408d0fb7228cac072f0005"
+      "sha256": "db4d59da216131cf00cb4faf342dbd198002985a46560bda7381245fbde2b60d"
     },
     {
       "path": "src/knowledge_extraction/migration_w6.py",
@@ -4456,7 +4460,7 @@
     },
     {
       "path": "src/services/graph_schema_llm_evidence_runner.py",
-      "sha256": "f009d13438e33a75a7356b2b65fdfd90570ff9b06d5a11afdd11a537b030934f"
+      "sha256": "b19c75bc2496bf46152204de4206b763e33a8957f31dd5e050f2eb9e883ff19b"
     },
     {
       "path": "src/services/harness_task_adapters/legal_review.py",
@@ -4532,7 +4536,11 @@
     },
     {
       "path": "src/services/learned_skill_publication_service.py",
-      "sha256": "f94e14ce0f575a2945903861b7a5aff7980bc5c132e9a5f1d9e60e7444f15aeb"
+      "sha256": "f15e9a9c492f5703e4a6e9961af0a1dc3a6da627bc887ebeda1e68c5c534e2e5"
+    },
+    {
+      "path": "src/services/learning_graph_projection.py",
+      "sha256": "43cba690379967dcbd0a8c1d2af9d220af18e46710b3b03299acbf76af9f51b3"
     },
     {
       "path": "src/services/learning_review_commands.py",
@@ -4543,8 +4551,12 @@
       "sha256": "133be2af699da34c1e2c08a27d771bec221493b321d22e201317106fd0f8d6a9"
     },
     {
+      "path": "src/services/learning_trace_evidence_service.py",
+      "sha256": "a645d5a99440f0296911e74d0e987cd5b3ab29d4e6c2f0c2028a8a1cd984f7a1"
+    },
+    {
       "path": "src/services/learning_workbench_service.py",
-      "sha256": "02313af528c6639a55f94497f24a9697adf36dfd0354ab392deec202c0e0fa5b"
+      "sha256": "d3f541e1bdf0469dbcf747f3585f744706081a9a900688997f5a798ff2851198"
     },
     {
       "path": "src/services/legal_evidence_recovery_service.py",
@@ -4560,7 +4572,7 @@
     },
     {
       "path": "src/services/memory_workbench_projection_service.py",
-      "sha256": "599ef14fe169ce9875f540b69516d89e683ad4c4eba0c6dd06a41feda8f489e0"
+      "sha256": "8fb6ec1257c4e89405c5c590f8030bd536f0c5394db26bcf019f1840f896577e"
     },
     {
       "path": "src/services/mvl_closure_evidence_service.py",
@@ -4820,7 +4832,7 @@
     },
     {
       "path": "src/services/retained_context_item_service.py",
-      "sha256": "4414f3c612dd30bfcb8976fb467a68cca28639fc534ec2d496fb9c56b6195ca0"
+      "sha256": "91710305572bc4a3c36d27858afe2ee5a7bc8761cc415eb41e89d4371c487e73"
     },
     {
       "path": "src/services/runtime_comparison_projection_service.py",
@@ -5268,7 +5280,7 @@
     },
     {
       "path": "src/storage/governance_store.py",
-      "sha256": "f8cb087eb660f5b59050826863c3b160c2ea146bc396ea5db8aa1a9cbb87624d"
+      "sha256": "3fc420de84b2578cf575ecd3504f7e5b0d8a4b0712cf4c3f352000612e2724a1"
     },
     {
       "path": "src/storage/governed_file_io.py",
@@ -5424,7 +5436,7 @@
     },
     {
       "path": "src/storage/ontology_build_store.py",
-      "sha256": "73efa075c1ba0b62fae169b5b8872c790ff260f27ba70e5e9352602b48ec6fc6"
+      "sha256": "2e7507c8670a98848af2f5093c6bbb75443b42855a3f37fb62084d29473c1e85"
     },
     {
       "path": "src/storage/ontology_postgres_connection.py",

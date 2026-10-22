@@ -12,8 +12,8 @@ dependencies = [
 	"fastapi>=0.115",
 	"httpx>=0.27",
 	"jsonschema>=4.23",
-	"uvicorn>=0.32",
-	"hermes-agent[anthropic]",
+	"uvicorn>=0.35",
+	"hermes-agent[feishu]",
 	# Hermes intentionally omits application dependencies below its managed
 	# Python 3.14 to keep old updaters lean. Semantier also hosts its source
 	# APIs on Python 3.12; declare that boundary's tested runtime requirements.

@@ -2,7 +2,7 @@
 from contextlib import contextmanager
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from agents.route_policy import RouteAuthorizationClass
@@ -20,6 +20,7 @@ class LearningOrigin(BaseModel):
     model_config = ConfigDict(extra="forbid")
     session_key: str = Field(min_length=1)
     message_id: str = Field(min_length=1)
+    lesson_json: str | None = Field(default=None, max_length=32768)
 
 
 class LearningAction(BaseModel):
@@ -105,6 +106,18 @@ def learning_inventory(request: Request, limit: int = Query(default=100, ge=1, l
                        cursor: str | None = Query(default=None, max_length=4096)):
     with _owners(request, "/api/learning", personal_read=True) as (context, service):
         return service.inventory(context=context, limit=limit, cursor=cursor)
+
+
+@router.get('/api/learning/graph')
+def learning_graph(request: Request, response: Response, as_of: str | None = Query(default=None,max_length=40),
+                   snapshot_hash: str | None = Query(default=None,pattern=r'^sha256:[0-9a-f]{64}$'),
+                   offset: int = Query(default=0,ge=0,le=600), limit: int = Query(default=200,ge=1,le=200),
+                   after_ref: str = Query(default='',max_length=500)):
+    from services.learning_graph_projection import LearningGraphProjection
+    response.headers['Cache-Control'] = 'no-store'
+    with _owners(request, '/api/learning/graph') as (context,service):
+        return LearningGraphProjection(store=service._store,learning=service).read(
+            context=context,as_of=as_of,snapshot_hash=snapshot_hash,offset=offset,limit=limit,after_ref=after_ref)
 
 
 @router.get("/api/learning/inspect")

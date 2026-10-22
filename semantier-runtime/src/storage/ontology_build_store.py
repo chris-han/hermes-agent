@@ -21,6 +21,7 @@ from contracts.runtime_semantic_inspection_result import RuntimeSemanticInspecti
 from contracts import semantic_kernel as kernel_contracts
 from contracts.change_candidate_v2 import ChangeCandidateV2
 from contracts.learning_workbench import LEARNING_ARTIFACT_MODELS as SKILL_ARTIFACT_MODELS
+from contracts.learning_trace_evidence import LEARNING_TRACE_ARTIFACT_MODELS
 from contracts.retained_context_items import RETAINED_CONTEXT_ARTIFACT_MODELS
 from contracts.learned_skill_publication import LEARNED_SKILL_ARTIFACT_MODELS
 from contracts.project_memory_state import ProjectStateProjectionV1, TypedStateDecisionV1
@@ -592,7 +593,7 @@ def ontology_build_store_path(workspace_root: str | Path) -> Path:
 
 
 LEARNING_ARTIFACT_MODELS = {
-    **SKILL_ARTIFACT_MODELS, **RETAINED_CONTEXT_ARTIFACT_MODELS, **LEARNED_SKILL_ARTIFACT_MODELS,
+    **SKILL_ARTIFACT_MODELS, **LEARNING_TRACE_ARTIFACT_MODELS, **RETAINED_CONTEXT_ARTIFACT_MODELS, **LEARNED_SKILL_ARTIFACT_MODELS,
 }
 
 
@@ -4550,6 +4551,22 @@ class OntologyBuildStore:
             )
             for artifact_ref, artifact_hash in rows
         )
+
+    def list_learning_graph_records(self, *, organization_id, workspace_id, owner_ref, as_of, after_ref='', limit=201):
+        """Read one bounded personal learning cohort; filter before decoding."""
+        rows = self._connection.execute(sql_query(
+            "SELECT artifact_ref, artifact_hash, schema_version FROM ontology_build_artifacts WHERE organization_id=? AND workspace_id=? AND COALESCE(json_extract(payload_json,'$.owner_ref'),json_extract(payload_json,'$.profile.owner_ref'))=? AND (schema_version IN ('skill_artifact_version.v1','learned_skill_proposal.v1','learned_skill_assessment.v1','learned_skill_publication_receipt.v1','retained_context_item_change.v1','learning_trace_observation.v1') OR schema_version='semantier.change_candidate.v2') AND (substr(recorded_at,1,19)||'.'||CASE WHEN instr(recorded_at,'.')=0 THEN '000000' ELSE substr(recorded_at,instr(recorded_at,'.')+1,6) END||'Z')<=? AND artifact_ref>? ORDER BY artifact_ref LIMIT ?",
+            "SELECT artifact_ref, artifact_hash, schema_version FROM ontology_build_artifacts WHERE organization_id=%s AND workspace_id=%s AND COALESCE(payload_json::jsonb->>'owner_ref',payload_json::jsonb->'profile'->>'owner_ref')=%s AND (schema_version IN ('skill_artifact_version.v1','learned_skill_proposal.v1','learned_skill_assessment.v1','learned_skill_publication_receipt.v1','retained_context_item_change.v1','learning_trace_observation.v1') OR schema_version='semantier.change_candidate.v2') AND recorded_at::timestamptz<=%s::timestamptz AND artifact_ref>%s ORDER BY artifact_ref LIMIT %s"),
+            (organization_id,workspace_id,owner_ref,as_of,after_ref,min(201,max(1,limit)))).fetchall()
+        return tuple(dict(artifact_ref=r[0],artifact_hash=r[1],schema_version=r[2]) for r in rows)
+
+    def list_learning_trace_pins(self, *, organization_id, workspace_id, owner_ref, session_id, limit):
+        """Bound the selected observation scope before decoding any payloads."""
+        rows = self._connection.execute(sql_query(
+            "SELECT artifact_ref, artifact_hash FROM ontology_build_artifacts WHERE organization_id=? AND workspace_id=? AND schema_version='learning_trace_observation.v1' AND json_extract(payload_json,'$.owner_ref')=? AND json_extract(payload_json,'$.session_id')=? ORDER BY artifact_ref LIMIT ?",
+            "SELECT artifact_ref, artifact_hash FROM ontology_build_artifacts WHERE organization_id=%s AND workspace_id=%s AND schema_version='learning_trace_observation.v1' AND payload_json::jsonb->>'owner_ref'=%s AND payload_json::jsonb->>'session_id'=%s ORDER BY artifact_ref LIMIT %s"),
+            (organization_id, workspace_id, owner_ref, session_id, limit)).fetchall()
+        return tuple(ArtifactPinV1(artifact_kind='learning_trace_observation',artifact_ref=ref,artifact_hash=digest) for ref,digest in rows)
 
     def get_raw(
         self,

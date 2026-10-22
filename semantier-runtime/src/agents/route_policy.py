@@ -120,6 +120,7 @@ ROUTE_POLICY_MAP: dict[tuple[str, str], RoutePolicy] = {
     ("GET", "/api/memory/lineage"): RoutePolicy.AUTHENTICATED,
     ("GET", "/api/learning"): RoutePolicy.AUTHENTICATED,
     ("GET", "/api/learning/inspect"): RoutePolicy.AUTHENTICATED,
+    ("GET", "/api/learning/graph"): RoutePolicy.AUTHENTICATED,
     ("GET", "/api/learning/context-snapshot"): RoutePolicy.AUTHENTICATED,
     ("POST", "/api/learning/action"): RoutePolicy.AUTHENTICATED,
     ("POST", "/api/learning/slash"): RoutePolicy.AUTHENTICATED,
@@ -779,6 +780,7 @@ ROUTE_AUTHZ_CLASS_MAP: dict[tuple[str, str], RouteAuthorizationClass] = {
     ("GET", "/api/learning"): RouteAuthorizationClass.SELF_ONLY,
     # Result reads are personal; other kinds enforce TENANT_MEMBER in the handler.
     ("GET", "/api/learning/inspect"): RouteAuthorizationClass.SELF_ONLY,
+    ("GET", "/api/learning/graph"): RouteAuthorizationClass.TENANT_MEMBER,
     ("GET", "/api/learning/context-snapshot"): RouteAuthorizationClass.TENANT_MEMBER,
     ("POST", "/api/learning/action"): RouteAuthorizationClass.SELF_ONLY,
     ("POST", "/api/learning/slash"): RouteAuthorizationClass.SELF_ONLY,

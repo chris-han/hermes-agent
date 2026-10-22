@@ -364,7 +364,11 @@ class SemantierAgent:
                         user_id=user_id,
                         evaluation_section=evaluation_prompt["text"] if evaluation_prompt else None,
                     )
-                    result = agent.run_conversation(prompt, system_message=system_message)
+                    from services.learning_trace_evidence_service import observe_native_conversation
+                    with observe_native_conversation(context=retained_context,
+                            session_id=boundary.session_id or session_id,
+                            native_db=getattr(agent, "_session_db", None)) as trace_capture:
+                        result = agent.run_conversation(prompt, system_message=system_message)
                     if evaluation_prompt is not None:
                         result = {**result, "evaluation_prompt_receipt": {
                             **evaluation_prompt["receipt"],

@@ -8,8 +8,7 @@ References: docs/plans/2026-08-21-contextgraph-studio-chinese-concept-boundary-r
 
 from __future__ import annotations
 from typing import Literal, Optional, List, Dict, Any
-from datetime import datetime
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 import hashlib
 import json
 
@@ -62,8 +61,7 @@ class ConceptCandidateSpanIdentity(BaseModel):
         digest = hashlib.sha256(payload_bytes).hexdigest().lower()
         return f"ccs_v1_{digest}"
     
-    class Config:
-        use_enum_values = True
+    model_config = ConfigDict(use_enum_values=True)
 
 
 class ConceptCandidateSpan(BaseModel):
@@ -147,7 +145,8 @@ class SegmentationProfile(BaseModel):
     qualityGates: QualityGate
     schemaAssisted: SchemaAssistedConfig
     
-    @validator("profileVersion")
+    @field_validator("profileVersion")
+    @classmethod
     def validate_version(cls, v):
         """Ensure semantic version format."""
         import re
@@ -155,18 +154,18 @@ class SegmentationProfile(BaseModel):
             raise ValueError(f"profileVersion must be semantic: {v}")
         return v
     
-    @validator("*", pre=True)
+    @field_validator("*", mode="before")
+    @classmethod
     def no_unknown_keys(cls, v):
         """Reject unknown keys (strict schema)."""
         if isinstance(v, dict):
-            known = set(cls.__fields__.keys())
+            known = set(cls.model_fields.keys())
             unknown = set(v.keys()) - known
             if unknown:
                 raise ValueError(f"Unknown profile keys: {unknown}")
         return v
     
-    class Config:
-        extra = "forbid"  # Reject unknown fields
+    model_config = ConfigDict(extra="forbid")  # Reject unknown fields
 
 
 # ============================================================================
@@ -212,9 +211,10 @@ class CurationAction(BaseModel):
     comment: Optional[str] = None
     clientTimestamp: str  # RFC3339
     
-    @validator("splitOffsetsAbsolute")
-    def validate_split_offsets(cls, v, values):
-        if values.get("actionType") == "split" and v is None:
+    @field_validator("splitOffsetsAbsolute")
+    @classmethod
+    def validate_split_offsets(cls, v, info: ValidationInfo):
+        if info.data.get("actionType") == "split" and v is None:
             raise ValueError("split action requires splitOffsetsAbsolute")
         if v:
             if len(v) < 1:

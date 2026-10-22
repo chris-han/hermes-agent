@@ -144,6 +144,9 @@ class RetainedContextItemService:
             content=None,request_id=request_id,origin=origin)
 
     def _change(self, *, context, item_ref, expected_revision, content, request_id, origin):
+        from services.learning_trace_evidence_service import validate_lesson_origin
+        validate_lesson_origin(context=context, store=self.store, origin=origin,
+                              target_ref=item_ref, target_hash=expected_revision)
         from tools.memory_tool import MemoryStore, load_on_disk_store, ENTRY_DELIMITER, _scan_memory_content
         from agents.runtime_memory_boundary import _USER_MEMORY_BLOCKED_LINE_RE
         if not request_id or not isinstance(request_id,str):

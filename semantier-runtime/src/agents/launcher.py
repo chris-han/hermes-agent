@@ -1677,6 +1677,7 @@ def run_runtime_cli(argv: Sequence[str] | None = None, *, program_name: str = "s
             host=args.host,
             port=args.port,
             reload=args.reload,
+            ws="websockets-sansio",
         )
         completed_cleanly = True
     finally:
@@ -1856,5 +1857,6 @@ def run_api(argv: Sequence[str] | None = None) -> int:
         host=args.host,
         port=args.port,
         reload=args.reload,
+        ws="websockets-sansio",
     )
     return 0

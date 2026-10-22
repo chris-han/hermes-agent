@@ -10,6 +10,7 @@ from contracts.ontology_building import ArtifactPinV1, OntologyBuildManifestV1, 
 from contracts.project_memory_state import ProjectStateProjectionV1
 from contracts.runtime_context_reconstruction import MemoryCandidateV1
 from contracts.learning_workbench import SkillArtifactVersionV1
+from contracts.learning_trace_evidence import LearningTraceObservationV1
 from contracts.semantic_kernel import Evidence, ContextGraph, DecisionRecord, ChangeCandidate, Ontology, WorkingContext
 from contracts.change_candidate_v2 import ChangeCandidateV2
 from contracts.ontology_admission import OntologyAdmissionDecisionV1, OntologyReleaseBundleV1
@@ -22,6 +23,7 @@ from runtime_paths import workspace_root_path, workspace_hermes_home_path
 
 # Explicit owner contracts and identity fields; never recursively discover arbitrary pins.
 _OWNERS = {
+    'learning_trace_observation.v1': (LearningTraceObservationV1, 'learning_trace_observation', 'artifact_ref', 'artifact_hash', 'experience'),
     'retained_context_item_change.v1': (RetainedContextItemChangeV1, 'retained_context_item_change', 'artifact_ref', 'artifact_hash', 'experience'),
     'ontology_build_manifest.v1': (OntologyBuildManifestV1, 'ontology_build_manifest', 'build_ref', 'build_hash', 'semantic'),
     'exploratory_graph_snapshot.v1': (ExploratoryGraphSnapshotV1, 'exploratory_graph_snapshot', 'snapshot_ref', 'snapshot_hash', 'semantic'),
@@ -234,7 +236,7 @@ class MemoryWorkbenchProjectionService:
         value = spec[0].model_validate(raw['payload'])
         if (value.organization_id, value.workspace_id) != (context.organization_id, context.workspace_id):
             raise PermissionError('outside native artifact owner scope')
-        if isinstance(value, (SkillArtifactVersionV1, LearnedSkillProposalV1, LearnedSkillAssessmentV1, LearnedSkillPublicationReceiptV1, RetainedContextItemChangeV1)) and value.owner_ref != context.user_id:
+        if isinstance(value, (SkillArtifactVersionV1, LearnedSkillProposalV1, LearnedSkillAssessmentV1, LearnedSkillPublicationReceiptV1, RetainedContextItemChangeV1, LearningTraceObservationV1)) and value.owner_ref != context.user_id:
             raise PermissionError('outside personal procedure owner scope')
         personal_owner = getattr(getattr(value, 'profile', None), 'owner_ref', None)
         if personal_owner and personal_owner != context.user_id:
