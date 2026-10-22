@@ -252,16 +252,16 @@ def _get_provider(stt_config: dict) -> str:
     if not is_stt_enabled(stt_config):
         return "none"
     from pm.features import runtime_distribution_extras
+    explicit = "provider" in stt_config
+    provider = stt_config.get("provider", DEFAULT_PROVIDER)
+    # Preserve the managed subscription alias in every distribution.
+    if isinstance(provider, str) and provider.strip().lower() == "nous":
+        provider = "openai"
     if runtime_distribution_extras() is not None:
-        selected = stt_config.get("provider", "sensevoice")
+        selected = provider if explicit else "sensevoice"
         if selected == "local":
             return "none"  # omitted Whisper never selects another local/cloud backend
         return _resolve_explicit_provider(selected)
-    explicit = "provider" in stt_config
-    provider = stt_config.get("provider", DEFAULT_PROVIDER)
-    # The managed "Nous Subscription" selection is the OpenAI backend routed via the managed gateway.
-    if isinstance(provider, str) and provider.strip().lower() == "nous":
-        provider = "openai"
     if explicit and provider == "local":
         # Legacy DEFAULT_CONFIG seeded ``stt.provider: local`` on every install, so only a
         # raw config.yaml selection counts as explicit; otherwise autodetect (local-first anyway).

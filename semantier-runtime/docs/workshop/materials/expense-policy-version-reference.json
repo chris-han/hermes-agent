@@ -1,0 +1,66 @@
+{
+  "schema_version": "expense_policy_engineering_reference.v1",
+  "reference_status": "DEVELOPMENT_DETERMINISTIC_NOT_HUMAN_GOLD",
+  "v1_hash": "sha256:cea66b2e5a27bc3fbeb22438524e370f238c729c01c3dbe3c6d8ccc76e94e32e",
+  "v2_hash": "sha256:7c1548d830f1bf93e02f4dadf4b579bf1b5f6803d76b14e7ca1cca97e6fecfb9",
+  "effective_on": "2026-10-16",
+  "business_timezone": "Asia/Shanghai",
+  "amendment": "one_to_two_calendar_years",
+  "cases": [
+    {
+      "case_id": "original",
+      "invoice_date": "2025-06-30",
+      "submitted_on": "2026-10-16",
+      "v1": "exception_review_required",
+      "v2": "allowed"
+    },
+    {
+      "case_id": "equal_two_years",
+      "invoice_date": "2025-06-30",
+      "submitted_on": "2027-06-30",
+      "v1": "exception_review_required",
+      "v2": "allowed"
+    },
+    {
+      "case_id": "after_two_years",
+      "invoice_date": "2025-06-30",
+      "submitted_on": "2027-07-01",
+      "v1": "exception_review_required",
+      "v2": "exception_review_required"
+    },
+    {
+      "case_id": "leap_equal",
+      "invoice_date": "2024-02-29",
+      "submitted_on": "2026-02-28",
+      "v1": "exception_review_required",
+      "v2": "allowed"
+    },
+    {
+      "case_id": "leap_after",
+      "invoice_date": "2024-02-29",
+      "submitted_on": "2026-03-01",
+      "v1": "exception_review_required",
+      "v2": "exception_review_required"
+    },
+    {
+      "case_id": "future",
+      "invoice_date": "2026-10-17",
+      "submitted_on": "2026-10-16",
+      "v1": "UNKNOWN",
+      "v2": "UNKNOWN"
+    },
+    {
+      "case_id": "missing",
+      "invoice_date": null,
+      "submitted_on": "2026-10-16",
+      "v1": "UNKNOWN",
+      "v2": "UNKNOWN"
+    }
+  ],
+  "limitations": [
+    "leap arithmetic cases before effectivity evaluate predicate only",
+    "no institutional admission",
+    "no human reference",
+    "no learning qualification"
+  ]
+}

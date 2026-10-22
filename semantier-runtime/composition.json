@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "parent_commit": "e709375b963c4d9f26c510d72e6775e5e8388bfc",
+  "parent_commit": "dbddf1b02da874ff22d3a3afa30c7b321479edee",
   "files": [
     {
       "path": "MODEL-NOTICE.txt",
@@ -73,6 +73,158 @@
     {
       "path": "docs/operational/evidence/windows-cpu-sensevoice-package-v1/license-provenance.json",
       "sha256": "5a0c70a0549524013fba14e5bfa226f81891a81c8772bd404b57316d783393cf"
+    },
+    {
+      "path": "docs/workshop/materials/README.md",
+      "sha256": "697af231043f785898c7a16ab20b34876b38eefe49782f6d7f118a569dc0915f"
+    },
+    {
+      "path": "docs/workshop/materials/README.pdf",
+      "sha256": "e881ce7a91f074df69888b742d14086a1d7ee93eb2ee9c7c8891982ad19800e7"
+    },
+    {
+      "path": "docs/workshop/materials/classroom-stream.v1.json",
+      "sha256": "75a677ff09d59706ad0430de1ffab979657ed0b21043a6584f739827327ffe4a"
+    },
+    {
+      "path": "docs/workshop/materials/expense-policy-demo.md",
+      "sha256": "b91884f2517a24ef8cdad666b5355ab88e556b82ca512a1933e34ea781c35da1"
+    },
+    {
+      "path": "docs/workshop/materials/expense-policy-version-reference.json",
+      "sha256": "67864c3aa7fdf8b64289ad38258b8b3d5e8c26f57f36b8d4748e6f1d60dc6369"
+    },
+    {
+      "path": "docs/workshop/materials/finance-briefing-sample-zh.md",
+      "sha256": "dd79d9847f3641aba31107edef42352cda313eb9567ed5d60e1f2bb005299315"
+    },
+    {
+      "path": "docs/workshop/materials/finance-briefing-sample-zh.pdf",
+      "sha256": "6fb0a2ba26a2ee606fffce554763de9470b97d25e3a0a0cea83b17e0cd3c587a"
+    },
+    {
+      "path": "docs/workshop/materials/instructor-materials-guide-zh.md",
+      "sha256": "7766b76315c2f783070f3e1557c0446be81e5af8801e2a9fa46722e929b12a6a"
+    },
+    {
+      "path": "docs/workshop/materials/instructor-materials-guide-zh.pdf",
+      "sha256": "c3d58bd9f0f6f1739c63fe5679a3c232cac92ad8d20ca240de63961f9ccb2efb"
+    },
+    {
+      "path": "docs/workshop/materials/jd-sample-zh.md",
+      "sha256": "79550e97f15cae1f95652890df5152e1b472c1070c41e77f40a3af67d958c2a7"
+    },
+    {
+      "path": "docs/workshop/materials/jd-sample-zh.pdf",
+      "sha256": "ac95e939b45bcb651b593acbcfabed29f4a904a611c1bd42484c64088f5efebb"
+    },
+    {
+      "path": "docs/workshop/materials/prompt-versions-handout-zh.md",
+      "sha256": "f209d2c7a22c508ce19048ac34bfa085c909a09b4fdeae450fc991030468a2a6"
+    },
+    {
+      "path": "docs/workshop/materials/prompt-versions-handout-zh.pdf",
+      "sha256": "4ace7cf83df8824f2765b7966c28f38d4fd6a3b558883df0a9923a1c475ed01c"
+    },
+    {
+      "path": "docs/workshop/materials/report-template-zh.md",
+      "sha256": "ec5f63a5543dc5fb3af85258b5eae072dc854d9fadd5146d5629a90ea291e197"
+    },
+    {
+      "path": "docs/workshop/materials/report-template-zh.pdf",
+      "sha256": "ba95149739633c654c9682bfafb0d705003ae6e5c5d9188ea78bde0c40c5967c"
+    },
+    {
+      "path": "docs/workshop/materials/resume-sample-zh.md",
+      "sha256": "226b6d6759568ff6e112d8f3bbeab85ac9ccc6c648604a8db574be42dc667d89"
+    },
+    {
+      "path": "docs/workshop/materials/resume-sample-zh.pdf",
+      "sha256": "34dbc6f90b365e188933ef3b8cdbd21b906e7cdb368306cd7087a99ab7b0eb6c"
+    },
+    {
+      "path": "docs/workshop/materials/school-candidate-catalog.v1.json",
+      "sha256": "c2b82e89dc888b3b592495d64c59d02b5af907852fd0b5c7c262af332a4b5e07"
+    },
+    {
+      "path": "docs/workshop/materials/student/finance-briefing-sample-zh.md",
+      "sha256": "d9e421d6d1ab4ee9c17d0a0ea91a81c3e17b188df81d055da459ca2599daea21"
+    },
+    {
+      "path": "docs/workshop/materials/student/finance-briefing-sample-zh.pdf",
+      "sha256": "2e1252a59fa14a19af43b79632fc07e9b5b3c4d42a3127fc5cc2069a5e571bf6"
+    },
+    {
+      "path": "docs/workshop/materials/student/jd-sample-zh.md",
+      "sha256": "82d862c18e2d674f76b193617c01974007f5cdeed72d3706ab25ed9bb2cc8916"
+    },
+    {
+      "path": "docs/workshop/materials/student/jd-sample-zh.pdf",
+      "sha256": "3783089287dec4e148a719fd4d6bdd03aab13330dbf3d1d52d111f335841b735"
+    },
+    {
+      "path": "docs/workshop/materials/student/resume-sample-zh.md",
+      "sha256": "aae62e1f45fc71a42bff7844f228a82bd655792db406d88cecbdb61108873166"
+    },
+    {
+      "path": "docs/workshop/materials/student/resume-sample-zh.pdf",
+      "sha256": "e298064e55e60e59b9f77265dd71bc6c1a4d8453b681c2404b5728c97fbc4f03"
+    },
+    {
+      "path": "docs/workshop/materials/student/student-records-sample-zh.md",
+      "sha256": "3ac689013a3c85269fd4b1908adfe83a7709fb6718a5d5066eed2c459d3cdf0b"
+    },
+    {
+      "path": "docs/workshop/materials/student/student-records-sample-zh.pdf",
+      "sha256": "aea96d8ade10af2c19a486115ebbf4a1ee04a929f42eecb004685901131a636e"
+    },
+    {
+      "path": "docs/workshop/materials/student-hands-on-morning-zh.md",
+      "sha256": "3ad224c2fe3d9c6d1eda4d1a816cff263bbfaebbbd1554a2a65afe7d936607f3"
+    },
+    {
+      "path": "docs/workshop/materials/student-hands-on-morning-zh.pdf",
+      "sha256": "e9eb3e798c50735dc2f3753ebe39ed642a19315925f7c297f36cb9903e4ed72a"
+    },
+    {
+      "path": "docs/workshop/materials/student-records-sample-zh.md",
+      "sha256": "3e1658d84872185ae1462d325cc4ee87ae97166b0b89d95416db87d684e54ea5"
+    },
+    {
+      "path": "docs/workshop/materials/student-records-sample-zh.pdf",
+      "sha256": "a20b76016b5d83eeb5f33750743bb49153f169a4c8c9d03353bc46848531792e"
+    },
+    {
+      "path": "docs/workshop/materials/suspected-classified-sample-zh.md",
+      "sha256": "a85b610b8a45ae1a395d7b55d9d8abca7e4c59b1f524bc1f55b8eb766eea8c05"
+    },
+    {
+      "path": "docs/workshop/materials/suspected-classified-sample-zh.pdf",
+      "sha256": "19194c7b24f0f40edca13936429aea1230f43dc85a9e47477486d57569295d63"
+    },
+    {
+      "path": "docs/workshop/materials/task-profiles.v1.json",
+      "sha256": "153cfc3fb93e2b40bd8051e117de43ebcbc109bc8e68dc975adcd837421ca1c2"
+    },
+    {
+      "path": "docs/workshop/materials/tutoring-manifest.v1.json",
+      "sha256": "bbf78c5d2ce7e64f0134deab1bdf1fb608710e473f99f302b1305524f3930e8a"
+    },
+    {
+      "path": "docs/workshop/materials/\u5317\u4eac\u8c61\u9c9c\u79d1\u6280\u6709\u9650\u516c\u53f8_\u53d1\u7968\u91d1\u989d45.92\u5143.pdf",
+      "sha256": "0cd38513c4e542626c5abd45f9a4d13b52566b3e847e82156078203aed17e80f"
+    },
+    {
+      "path": "docs/workshop/materials/\u8d22\u52a1\u62a5\u9500\u653f\u7b56-v2-development.md",
+      "sha256": "7c1548d830f1bf93e02f4dadf4b579bf1b5f6803d76b14e7ca1cca97e6fecfb9"
+    },
+    {
+      "path": "docs/workshop/materials/\u8d22\u52a1\u62a5\u9500\u653f\u7b56.md",
+      "sha256": "cea66b2e5a27bc3fbeb22438524e370f238c729c01c3dbe3c6d8ccc76e94e32e"
+    },
+    {
+      "path": "docs/workshop/materials/\u8d22\u52a1\u62a5\u9500\u653f\u7b56.pdf",
+      "sha256": "e01cd3b648361881e405e5cdba70643001a7e782b059d085c4e05ff32202f4c8"
     },
     {
       "path": "pyproject.toml",
@@ -220,7 +372,7 @@
     },
     {
       "path": "src/agents/hermes_bundled_skill_adapter.py",
-      "sha256": "a367dc9c58773707d32c92c0f2d9ced1957e9d7edbe8e40549392425dac513f3"
+      "sha256": "9fd7398879c3fd93389d2010f999bb96a57f1be24ead02e32c88e2c3d3d2cc89"
     },
     {
       "path": "src/agents/hermes_chat_worker.py",

@@ -50,3 +50,12 @@ def test_ambiguous_saved_local_model_remains_local_and_config_is_not_rewritten(m
     config._preserve_product_stt_selection(merged, raw)
     assert merged['stt']['provider'] == 'local'
     assert raw == {'stt': {'local': {'model': 'small'}}}
+
+
+def test_product_preserves_managed_nous_selection(monkeypatch):
+    from tools import transcription_tools as stt
+    monkeypatch.setattr(features, 'runtime_distribution_extras', lambda: ['semantier-windows'])
+    calls=[]
+    monkeypatch.setitem(stt._EXPLICIT_RESOLVERS, 'openai', lambda: calls.append('managed') or 'managed-openai')
+    assert stt._get_provider({'provider':'nous'}) == 'managed-openai'
+    assert calls == ['managed']

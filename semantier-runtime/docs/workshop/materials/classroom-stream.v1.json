@@ -1,0 +1,700 @@
+{
+  "schema_version": "workshop_material_stream_definition.v1",
+  "stream_id": "semantier-workshop-full-curriculum",
+  "version": "1.0.0",
+  "source_authority": "Canonical workshop Markdown remains instructional authority. This file only indexes delivery order and existing product surfaces.",
+  "segments": [
+    {
+      "id": "B0",
+      "track": "business",
+      "day": "1",
+      "slot": "09:00–09:15",
+      "minutes": 15,
+      "mode": "DEMONSTRATED",
+      "title": "AI 应用不是一个大模型：关键部件导览",
+      "source": "docs/workshop/01-agenda-zh.md",
+      "heading": "#### 9:00–9:15｜AI 应用关键部件导览（15 分钟）",
+      "materials": [],
+      "starter_refs": [],
+      "surface": null,
+      "student_manual_slides": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "id": "B1",
+      "track": "business",
+      "day": "1",
+      "slot": "09:15–09:40",
+      "minutes": 25,
+      "mode": "HANDS_ON",
+      "title": "Prompt Engineering：豆包／DeepSeek 两版对照",
+      "source": "docs/workshop/05-demo-script-zh.md",
+      "heading": "# 场景 1 — 通用 Prompt Engineering（以 Resume Screening 作为示例，9:15–9:40）",
+      "materials": [
+        "resume-sample-zh.md",
+        "jd-sample-zh.md",
+        "prompt-versions-handout-zh.md"
+      ],
+      "starter_refs": [],
+      "surface": null,
+      "supplemental_sections": [
+        {
+          "source": "docs/workshop/demos/resume-lineage-instructor-rehearsal-zh.md",
+          "heading": "# 虚构简历证据筛选：五分钟讲师演示"
+        }
+      ],
+      "student_manual_slides": [
+        9
+      ]
+    },
+    {
+      "id": "B2",
+      "track": "business",
+      "day": "1",
+      "slot": "09:40–10:00",
+      "minutes": 20,
+      "mode": "DEMONSTRATED",
+      "title": "PPT 介绍：AI 应用部件",
+      "source": "docs/workshop/01-agenda-zh.md",
+      "heading": "#### 9:40–10:00｜结合 A／B 输出认识 AI 应用部件（20 分钟）",
+      "materials": [],
+      "starter_refs": [],
+      "surface": null,
+      "supplemental_sections": [
+        {
+          "source": "docs/workshop/05-demo-script-zh.md",
+          "heading": "# PPT 讲解 — AI 应用部件、分类框架与知识库"
+        },
+        {
+          "source": "docs/workshop/demos/HR-demo-resume/合规演示样本说明.md",
+          "heading": "# HR 招聘合规演示样本说明"
+        }
+      ],
+      "student_manual_slides": [
+        10,
+        11,
+        12
+      ]
+    },
+    {
+      "id": "B3",
+      "track": "business",
+      "day": "1",
+      "slot": "10:00–10:10",
+      "minutes": 10,
+      "mode": "BREAK",
+      "title": "休息",
+      "source": "docs/workshop/01-agenda-zh.md",
+      "heading": "#### 10:00–10:10｜休息（10 分钟）",
+      "materials": [],
+      "starter_refs": [],
+      "surface": null,
+      "student_manual_slides": [
+        8
+      ]
+    },
+    {
+      "id": "B4",
+      "track": "business",
+      "day": "1",
+      "slot": "10:10–10:20",
+      "minutes": 10,
+      "mode": "DEMONSTRATED",
+      "title": "PPT 介绍：分类框架与知识库",
+      "source": "docs/workshop/01-agenda-zh.md",
+      "heading": "#### 10:10–10:20｜分类框架与知识库速览（10 分钟）",
+      "materials": [],
+      "starter_refs": [],
+      "surface": null,
+      "student_manual_slides": [
+        13
+      ]
+    },
+    {
+      "id": "B5",
+      "track": "business",
+      "day": "1",
+      "slot": "10:20–10:35",
+      "minutes": 15,
+      "mode": "HANDS_ON",
+      "title": "Student Services & Records 数据保护",
+      "source": "docs/workshop/05-demo-script-zh.md",
+      "heading": "# 场景 2 — Student Services & Records：Context 与敏感标注（10:20–10:35）",
+      "materials": [
+        "student-records-sample-zh.md"
+      ],
+      "starter_refs": [],
+      "surface": "/files",
+      "student_manual_slides": [
+        14
+      ]
+    },
+    {
+      "id": "B6",
+      "track": "business",
+      "day": "1",
+      "slot": "10:35–11:00",
+      "minutes": 25,
+      "mode": "HANDS_ON",
+      "title": "发票与报销政策检查",
+      "source": "docs/workshop/05-demo-script-zh.md",
+      "heading": "# 场景 3 — 发票与报销政策检查（Finance，10:35–11:00）",
+      "materials": [
+        "finance-briefing-sample-zh.pdf"
+      ],
+      "starter_refs": [],
+      "surface": null,
+      "student_manual_slides": [
+        15,
+        16
+      ]
+    },
+    {
+      "id": "B7",
+      "track": "business",
+      "day": "1",
+      "slot": "11:00–11:15",
+      "minutes": 15,
+      "mode": "HANDS_ON",
+      "title": "自选文件快速分析与规则缺口",
+      "source": "docs/workshop/05-demo-script-zh.md",
+      "heading": "# 小组快速分析 — 一份真实文件与一条规则缺口（11:00–11:15）",
+      "materials": [
+        "report-template-zh.md"
+      ],
+      "starter_refs": [],
+      "surface": "/files",
+      "student_manual_slides": [
+        17
+      ]
+    },
+    {
+      "id": "B8",
+      "track": "business",
+      "day": "1",
+      "slot": "11:15–12:00",
+      "minutes": 45,
+      "mode": "DEBRIEF",
+      "title": "成果反馈、质疑与后续发现",
+      "source": "docs/workshop/01-agenda-zh.md",
+      "heading": "#### 11:15–12:00｜成果反馈、质疑与后续发现（45 分钟）",
+      "materials": [
+        "report-template-zh.md"
+      ],
+      "starter_refs": [],
+      "surface": null,
+      "supplemental_sections": [
+        {
+          "source": "docs/workshop/01-agenda-zh.md",
+          "heading": "### 四、上午课后作业与反馈"
+        }
+      ],
+      "student_manual_slides": [
+        18,
+        19,
+        22
+      ]
+    },
+    {
+      "id": "IT1-0",
+      "track": "it",
+      "day": "1",
+      "slot": "13:00–13:15",
+      "minutes": 15,
+      "mode": "DEMONSTRATED",
+      "title": "部件到代码对照走查",
+      "source": "docs/workshop/01-agenda-zh.md",
+      "heading": "### 13:00–13:15 — 部件到代码对照走查（上午 → 下午桥接）",
+      "materials": [],
+      "starter_refs": [
+        "README.md"
+      ],
+      "surface": "/terminal",
+      "supplemental_sections": [
+        {
+          "source": "docs/workshop/05-demo-script-zh.md",
+          "heading": "# 下午桥接 Demo — 会议协调员（Context Engineering / 行政场景）"
+        }
+      ],
+      "optional_extension": "semantic-projection",
+      "student_manual_slides": [
+        20,
+        21
+      ]
+    },
+    {
+      "id": "IT1-1",
+      "track": "it",
+      "day": "1",
+      "slot": "13:15–14:00",
+      "minutes": 45,
+      "mode": "DEMONSTRATED",
+      "title": "企业级智能体技术栈全景拆解",
+      "source": "docs/workshop/01-agenda-zh.md",
+      "heading": "### 13:15–14:00 — 企业级智能体技术栈全景拆解（精简为 45 分钟）",
+      "materials": [],
+      "starter_refs": [
+        "README.md"
+      ],
+      "surface": "/terminal"
+    },
+    {
+      "id": "L1",
+      "track": "it",
+      "day": "1",
+      "slot": "14:00–15:00",
+      "minutes": 60,
+      "mode": "HANDS_ON",
+      "title": "Lab 1 — 环境就绪",
+      "source": "docs/workshop/03-lab-manual-zh.md",
+      "heading": "# Lab 1 — 环境就绪",
+      "materials": [],
+      "starter_refs": [
+        "scripts/run_runtime.sh"
+      ],
+      "surface": "/terminal"
+    },
+    {
+      "id": "L2",
+      "track": "it",
+      "day": "1",
+      "slot": "15:00–16:00",
+      "minutes": 60,
+      "mode": "HANDS_ON",
+      "title": "Lab 2 — 模型路由与 JSON 护栏",
+      "source": "docs/workshop/03-lab-manual-zh.md",
+      "heading": "# Lab 2 — 模型路由与 JSON 护栏",
+      "materials": [],
+      "starter_refs": [
+        "model.json",
+        "scripts/run_runtime.sh",
+        "scripts/run_eval.sh"
+      ],
+      "surface": "/terminal"
+    },
+    {
+      "id": "IT1-2",
+      "track": "it",
+      "day": "1",
+      "slot": "16:00–17:00",
+      "minutes": 60,
+      "mode": "HANDS_ON",
+      "title": "飞书开发者后台配置与网关通路",
+      "source": "docs/workshop/01-agenda-zh.md",
+      "heading": "### 16:00–17:00 — 飞书开发者后台配置与网关通路",
+      "materials": [],
+      "starter_refs": [
+        "scripts/run_mock_gateway.sh"
+      ],
+      "surface": "/terminal"
+    },
+    {
+      "id": "IT2-0",
+      "track": "it",
+      "day": "2",
+      "slot": "09:00–10:00",
+      "minutes": 60,
+      "mode": "DEMONSTRATED",
+      "title": "Hermes 原生架构核心概念",
+      "source": "docs/workshop/01-agenda-zh.md",
+      "heading": "### 09:00–10:00 — Hermes 原生架构核心概念",
+      "materials": [],
+      "starter_refs": [
+        "prompts/meeting-agent.md",
+        "prompts/meeting-skill.md"
+      ],
+      "surface": "/terminal",
+      "supplemental_sections": [
+        {
+          "source": "docs/workshop/05-demo-script-zh.md",
+          "heading": "# 技术 Demo — 插件注册"
+        }
+      ]
+    },
+    {
+      "id": "L3",
+      "track": "it",
+      "day": "2",
+      "slot": "10:00–11:00",
+      "minutes": 60,
+      "mode": "HANDS_ON",
+      "title": "Lab 3 — 会议意图解析器",
+      "source": "docs/workshop/03-lab-manual-zh.md",
+      "heading": "# Lab 3 — 会议意图解析器",
+      "materials": [],
+      "starter_refs": [
+        "plugins/meeting_intent.py",
+        "examples/eval_cases.jsonl",
+        "scripts/run_eval.sh"
+      ],
+      "surface": "/terminal"
+    },
+    {
+      "id": "IT2-1",
+      "track": "it",
+      "day": "2",
+      "slot": "11:00–12:00",
+      "minutes": 60,
+      "mode": "HANDS_ON",
+      "title": "高可用稳定性基础",
+      "source": "docs/workshop/01-agenda-zh.md",
+      "heading": "### 11:00–12:00 — 高可用稳定性基础",
+      "materials": [],
+      "starter_refs": [
+        "scripts/run_eval.sh"
+      ],
+      "surface": "/terminal",
+      "supplemental_sections": [
+        {
+          "source": "docs/workshop/05-demo-script-zh.md",
+          "heading": "# 技术 Demo — 安全失败"
+        }
+      ]
+    },
+    {
+      "id": "L4",
+      "track": "it",
+      "day": "2",
+      "slot": "13:00–14:00",
+      "minutes": 60,
+      "mode": "HANDS_ON",
+      "title": "Lab 4 — 飞书回声与意图解析",
+      "source": "docs/workshop/03-lab-manual-zh.md",
+      "heading": "# Lab 4 — 飞书回声与意图解析",
+      "materials": [],
+      "starter_refs": [
+        "scripts/run_mock_gateway.sh",
+        "plugins/meeting_intent.py"
+      ],
+      "surface": "/terminal"
+    },
+    {
+      "id": "L5",
+      "track": "it",
+      "day": "2",
+      "slot": "14:00–15:30",
+      "minutes": 90,
+      "mode": "HANDS_ON",
+      "title": "Lab 5 — calendar_find_slots 插件",
+      "source": "docs/workshop/03-lab-manual-zh.md",
+      "heading": "# Lab 5 — `calendar_find_slots` 插件",
+      "materials": [],
+      "starter_refs": [
+        "plugins/calendar_find_slots.py",
+        "examples/slot_eval_cases.jsonl",
+        "scripts/run_eval.sh"
+      ],
+      "surface": "/terminal"
+    },
+    {
+      "id": "L6",
+      "track": "it",
+      "day": "2",
+      "slot": "15:30–17:00",
+      "minutes": 90,
+      "mode": "HANDS_ON",
+      "title": "Lab 6 — 会议协调员提议循环",
+      "source": "docs/workshop/03-lab-manual-zh.md",
+      "heading": "# Lab 6 — 会议协调员提议循环",
+      "materials": [],
+      "starter_refs": [
+        "scripts/run_mock_gateway.sh",
+        "scripts/run_eval.sh"
+      ],
+      "surface": "/terminal"
+    },
+    {
+      "id": "IT3-0",
+      "track": "it",
+      "day": "3",
+      "slot": "09:00–10:00",
+      "minutes": 60,
+      "mode": "HANDS_ON",
+      "title": "跨会话多轮状态保持",
+      "source": "docs/workshop/01-agenda-zh.md",
+      "heading": "### 09:00–10:00 — 跨会话多轮状态保持（Multi-Turn State）",
+      "materials": [],
+      "starter_refs": [
+        "scripts/run_mock_gateway.sh"
+      ],
+      "surface": "/terminal"
+    },
+    {
+      "id": "L7",
+      "track": "it",
+      "day": "3",
+      "slot": "10:00–11:30",
+      "minutes": 90,
+      "mode": "HANDS_ON",
+      "title": "Lab 7 — calendar_create_event 插件",
+      "source": "docs/workshop/03-lab-manual-zh.md",
+      "heading": "# Lab 7 — `calendar_create_event` 插件",
+      "materials": [],
+      "starter_refs": [
+        "plugins/calendar_create_event.py",
+        "scripts/run_eval.sh"
+      ],
+      "surface": "/terminal",
+      "supplemental_sections": [
+        {
+          "source": "docs/workshop/05-demo-script-zh.md",
+          "heading": "# 技术 Demo — 确认闸门"
+        }
+      ]
+    },
+    {
+      "id": "IT3-1",
+      "track": "it",
+      "day": "3",
+      "slot": "11:30–12:00",
+      "minutes": 30,
+      "mode": "DEBRIEF",
+      "title": "Skill 与 Plugin 的分水岭",
+      "source": "docs/workshop/01-agenda-zh.md",
+      "heading": "### 11:30–12:00 — 深度复盘：Skill 与 Plugin 的分水岭",
+      "materials": [],
+      "starter_refs": [
+        "prompts/meeting-skill.md",
+        "plugins/calendar_create_event.py"
+      ],
+      "surface": "/terminal"
+    },
+    {
+      "id": "RT",
+      "track": "it",
+      "day": "3",
+      "slot": "13:00–14:00",
+      "minutes": 60,
+      "mode": "HANDS_ON",
+      "title": "工业级生产安全防御体系",
+      "source": "docs/workshop/01-agenda-zh.md",
+      "heading": "### 13:00–14:00 — 工业级生产安全防御体系（Red Teaming）",
+      "materials": [],
+      "starter_refs": [
+        "scripts/run_red_team.sh"
+      ],
+      "surface": "/terminal"
+    },
+    {
+      "id": "PERF",
+      "track": "it",
+      "day": "3",
+      "slot": "14:00–15:00",
+      "minutes": 60,
+      "mode": "HANDS_ON",
+      "title": "性能调优与故障白盒诊断",
+      "source": "docs/workshop/01-agenda-zh.md",
+      "heading": "### 14:00–15:00 — 性能调优与故障白盒诊断",
+      "materials": [],
+      "starter_refs": [
+        "scripts/run_eval.sh"
+      ],
+      "surface": "/terminal"
+    },
+    {
+      "id": "CAP",
+      "track": "it",
+      "day": "3",
+      "slot": "15:00–16:00",
+      "minutes": 60,
+      "mode": "HANDS_ON",
+      "title": "Mini 结业项目 — 受控预订流程",
+      "source": "docs/workshop/03-lab-manual-zh.md",
+      "heading": "# Mini 结业项目 — 受控预订流程",
+      "materials": [],
+      "starter_refs": [
+        "scripts/run_capstone.sh",
+        "examples/capstone-review.json"
+      ],
+      "surface": "/terminal"
+    },
+    {
+      "id": "BACKLOG",
+      "track": "it",
+      "day": "3",
+      "slot": "16:00–17:00",
+      "minutes": 60,
+      "mode": "DEBRIEF",
+      "title": "IT 团队第一个30天试点项目 Backlog",
+      "source": "docs/workshop/01-agenda-zh.md",
+      "heading": "### 16:00–17:00 — 战后复盘：IT 团队第一个30天试点项目 Backlog",
+      "materials": [],
+      "starter_refs": [
+        "examples/backlog.json"
+      ],
+      "surface": "/terminal",
+      "supplemental_sections": [
+        {
+          "source": "docs/workshop/05-demo-script-zh.md",
+          "heading": "# 收尾 Demo — 30 天试点计划"
+        }
+      ]
+    },
+    {
+      "id": "M0",
+      "track": "decision",
+      "day": "module06",
+      "slot": "Core",
+      "minutes": 10,
+      "mode": "DEMONSTRATED",
+      "title": "本课要解决的问题",
+      "source": "docs/workshop/06-feishu-meeting-coordinator-decision-planning-zh.md",
+      "heading": "## 0. 本课要解决的问题",
+      "materials": [],
+      "starter_refs": [],
+      "surface": "/workflows"
+    },
+    {
+      "id": "M1",
+      "track": "decision",
+      "day": "module06",
+      "slot": "Core",
+      "minutes": 10,
+      "mode": "DEMONSTRATED",
+      "title": "Demo 场景",
+      "source": "docs/workshop/06-feishu-meeting-coordinator-decision-planning-zh.md",
+      "heading": "# 2. Demo 场景",
+      "materials": [],
+      "starter_refs": [],
+      "surface": "/workflows"
+    },
+    {
+      "id": "M2",
+      "track": "decision",
+      "day": "module06",
+      "slot": "Core",
+      "minutes": 10,
+      "mode": "DEMONSTRATED",
+      "title": "Pareto Frontier",
+      "source": "docs/workshop/06-feishu-meeting-coordinator-decision-planning-zh.md",
+      "heading": "# 13. 第四层：Pareto Frontier",
+      "materials": [],
+      "starter_refs": [],
+      "surface": "/workflows"
+    },
+    {
+      "id": "M3",
+      "track": "decision",
+      "day": "module06",
+      "slot": "Core",
+      "minutes": 10,
+      "mode": "DEMONSTRATED",
+      "title": "Value of Information",
+      "source": "docs/workshop/06-feishu-meeting-coordinator-decision-planning-zh.md",
+      "heading": "# 22. 第七层：Value of Information",
+      "materials": [],
+      "starter_refs": [],
+      "surface": "/workflows"
+    },
+    {
+      "id": "M4",
+      "track": "decision",
+      "day": "module06",
+      "slot": "Core",
+      "minutes": 15,
+      "mode": "HANDS_ON",
+      "title": "Demo 1：完整计算",
+      "source": "docs/workshop/06-feishu-meeting-coordinator-decision-planning-zh.md",
+      "heading": "# 36. Demo 1：完整计算",
+      "materials": [],
+      "starter_refs": [],
+      "surface": "/workflows"
+    },
+    {
+      "id": "M5",
+      "track": "decision",
+      "day": "module06",
+      "slot": "Core",
+      "minutes": 15,
+      "mode": "HANDS_ON",
+      "title": "Demo 2：Value of Information",
+      "source": "docs/workshop/06-feishu-meeting-coordinator-decision-planning-zh.md",
+      "heading": "# 37. Demo 2：Value of Information",
+      "materials": [],
+      "starter_refs": [],
+      "surface": "/workflows"
+    },
+    {
+      "id": "M6",
+      "track": "decision",
+      "day": "module06",
+      "slot": "Core",
+      "minutes": 10,
+      "mode": "HANDS_ON",
+      "title": "Demo 3：Immaterial Query",
+      "source": "docs/workshop/06-feishu-meeting-coordinator-decision-planning-zh.md",
+      "heading": "# 38. Demo 3：Immaterial Query",
+      "materials": [],
+      "starter_refs": [],
+      "surface": "/workflows",
+      "supplemental_sections": [
+        {
+          "source": "docs/workshop/06-feishu-meeting-coordinator-decision-planning-zh.md",
+          "heading": "# 39. Demo 4：Cancel 为什么不是默认第三个按钮"
+        },
+        {
+          "source": "docs/workshop/06-feishu-meeting-coordinator-decision-planning-zh.md",
+          "heading": "# 40. Demo 5：Cancel 进入 Frontier"
+        }
+      ]
+    },
+    {
+      "id": "M7",
+      "track": "decision",
+      "day": "module06",
+      "slot": "Extension",
+      "minutes": 10,
+      "mode": "DEMONSTRATED",
+      "title": "Demo 讲师脚本",
+      "source": "docs/workshop/06-feishu-meeting-coordinator-decision-planning-zh.md",
+      "heading": "# 60. Demo 讲师脚本",
+      "materials": [],
+      "starter_refs": [],
+      "surface": "/workflows"
+    },
+    {
+      "id": "M8",
+      "track": "decision",
+      "day": "module06",
+      "slot": "Extension",
+      "minutes": 30,
+      "mode": "DEBRIEF",
+      "title": "Workshop Demo 的期望画面",
+      "source": "docs/workshop/06-feishu-meeting-coordinator-decision-planning-zh.md",
+      "heading": "# 61. Workshop Demo 的期望画面",
+      "materials": [],
+      "starter_refs": [],
+      "surface": "/workflows",
+      "supplemental_sections": [
+        {
+          "source": "docs/workshop/06-feishu-meeting-coordinator-decision-planning-zh.md",
+          "heading": "# 55. 课堂练习 A"
+        },
+        {
+          "source": "docs/workshop/06-feishu-meeting-coordinator-decision-planning-zh.md",
+          "heading": "# 56. 课堂练习 B"
+        },
+        {
+          "source": "docs/workshop/06-feishu-meeting-coordinator-decision-planning-zh.md",
+          "heading": "# 57. 课堂练习 C"
+        },
+        {
+          "source": "docs/workshop/06-feishu-meeting-coordinator-decision-planning-zh.md",
+          "heading": "# 58. 课堂练习 D"
+        },
+        {
+          "source": "docs/workshop/06-feishu-meeting-coordinator-decision-planning-zh.md",
+          "heading": "# 59. 课堂练习 E：设计一个错误系统"
+        }
+      ]
+    }
+  ]
+}

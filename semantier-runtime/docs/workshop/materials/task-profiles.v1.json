@@ -1,0 +1,31 @@
+{
+  "schema_version": "workshop_task_profiles.v1",
+  "profiles": {
+    "general": {
+      "profile_id": "workshop-general-task-v1",
+      "version": "1.0.0",
+      "authority_status": "FICTIONAL_TRAINING_FIXTURE",
+      "fictional": true,
+      "purpose": "展示基础任务处理，不引入岗位专门知识。",
+      "instructions": [
+        "只依据当前文件和任务目的",
+        "标出无法判断项",
+        "引用证据位置",
+        "不得把课程样本当作学校正式制度"
+      ]
+    },
+    "role_knowledge": {
+      "profile_id": "workshop-role-knowledge-task-v1",
+      "version": "1.0.0",
+      "authority_status": "FICTIONAL_TRAINING_FIXTURE",
+      "fictional": true,
+      "purpose": "展示加入岗位/职能知识后的可观察差异。",
+      "instructions": [
+        "复用 general 基线",
+        "加入课程中明确给出的 HR/Student Services/Finance 教学知识",
+        "保留证据位置与无法判断项",
+        "不得升级为学校正式制度"
+      ]
+    }
+  }
+}

@@ -170,7 +170,8 @@ def bundled_skill_exposure_enabled() -> bool:
 
 
 def repo_bundled_skills_root() -> Path:
-    return Path(__file__).resolve().parents[2] / "hermes-agent" / "skills"
+    from agents.launcher import _repo_hermes_agent_root
+    return _repo_hermes_agent_root() / "skills"
 
 
 def managed_bundled_skill_root(runtime_root: Path) -> Path:

@@ -1,0 +1,468 @@
+{
+  "schema_version": "workshop_tutoring_manifest.v1",
+  "manifest_id": "semantier-workshop-tutoring-dual-audience",
+  "version": "1.0.0",
+  "fictional_training_only": true,
+  "authority_boundary": "Curriculum definitions and tutorial progress are non-authoritative. Product owners determine execution, disclosure, learning state, and meeting decisions.",
+  "materials": {
+    "resume-sample-zh.md": {
+      "sha256": "226b6d6759568ff6e112d8f3bbeab85ac9ccc6c648604a8db574be42dc667d89",
+      "fictional": true,
+      "distribution": "learner",
+      "transform": "strip_instructor_note"
+    },
+    "jd-sample-zh.md": {
+      "sha256": "79550e97f15cae1f95652890df5152e1b472c1070c41e77f40a3af67d958c2a7",
+      "fictional": true,
+      "distribution": "learner",
+      "transform": "strip_instructor_note"
+    },
+    "prompt-versions-handout-zh.md": {
+      "sha256": "f209d2c7a22c508ce19048ac34bfa085c909a09b4fdeae450fc991030468a2a6",
+      "fictional": true,
+      "distribution": "learner",
+      "transform": "none"
+    },
+    "report-template-zh.md": {
+      "sha256": "ec5f63a5543dc5fb3af85258b5eae072dc854d9fadd5146d5629a90ea291e197",
+      "fictional": true,
+      "distribution": "learner",
+      "transform": "none"
+    },
+    "student-records-sample-zh.md": {
+      "sha256": "3e1658d84872185ae1462d325cc4ee87ae97166b0b89d95416db87d684e54ea5",
+      "fictional": true,
+      "distribution": "learner",
+      "transform": "strip_instructor_note"
+    },
+    "finance-briefing-sample-zh.md": {
+      "sha256": "dd79d9847f3641aba31107edef42352cda313eb9567ed5d60e1f2bb005299315",
+      "fictional": true,
+      "distribution": "learner",
+      "transform": "strip_instructor_note"
+    },
+    "suspected-classified-sample-zh.md": {
+      "sha256": "a85b610b8a45ae1a395d7b55d9d8abca7e4c59b1f524bc1f55b8eb766eea8c05",
+      "fictional": true,
+      "distribution": "controlled_only",
+      "transform": "strip_instructor_note"
+    },
+    "finance-briefing-sample-zh.pdf": {
+      "sha256": "6fb0a2ba26a2ee606fffce554763de9470b97d25e3a0a0cea83b17e0cd3c587a",
+      "fictional": true,
+      "distribution": "learner",
+      "transform": "none"
+    }
+  },
+  "knowledge_sources": {
+    "national_framework": {
+      "source_id": "national-framework-unbound",
+      "version": null,
+      "authority_status": "UNQUALIFIED_EXTERNAL_REFERENCE",
+      "teaching_use": "Conceptual placeholder only until an approved authoritative source/version is supplied. Do not present as a cited legal or institutional authority."
+    },
+    "school_candidate_catalog": {
+      "source_id": "workshop-school-candidate-catalog",
+      "version": "1.0.0",
+      "content_hash": "sha256:c2b82e89dc888b3b592495d64c59d02b5af907852fd0b5c7c262af332a4b5e07",
+      "authority_status": "FICTIONAL_TRAINING_FIXTURE",
+      "path": "school-candidate-catalog.v1.json"
+    }
+  },
+  "task_profiles": {
+    "general": {
+      "profile_id": "workshop-general-task-v1",
+      "version": "1.0.0",
+      "authority_status": "FICTIONAL_TRAINING_FIXTURE",
+      "source": "task-profiles.v1.json"
+    },
+    "role_knowledge": {
+      "profile_id": "workshop-role-knowledge-task-v1",
+      "version": "1.0.0",
+      "authority_status": "FICTIONAL_TRAINING_FIXTURE",
+      "source": "task-profiles.v1.json"
+    }
+  },
+  "checkpoint_outcomes": [
+    "VERIFIED",
+    "ASSISTED",
+    "DEMONSTRATED",
+    "REFLECTED",
+    "UNAVAILABLE"
+  ],
+  "profiles": {
+    "business_foundation": {
+      "audience": "business_and_beginner_it",
+      "scheduled_minutes": 180,
+      "steps": [
+        {
+          "id": "B0",
+          "minutes": 15,
+          "title": "AI 应用八个部件",
+          "activity": "ORIENT",
+          "sources": [
+            "01-agenda-zh.md"
+          ],
+          "operation": "inspect glossary and product surfaces",
+          "checkpoint": {
+            "kind": "PARTICIPATION"
+          },
+          "misconception": "AI application equals model only",
+          "transfer": "Name the owner of one capability."
+        },
+        {
+          "id": "B1",
+          "minutes": 35,
+          "title": "Resume/JD + Prompt 对比",
+          "activity": "DO",
+          "materials": [
+            "resume-sample-zh.md",
+            "jd-sample-zh.md",
+            "prompt-versions-handout-zh.md"
+          ],
+          "operation": "upload_parse_and_compare_prompt_runs",
+          "checkpoint": {
+            "kind": "OWNER_RESULT",
+            "evidence": [
+              "source_hash",
+              "parse_ref",
+              "run_ref",
+              "prompt_version"
+            ]
+          },
+          "misconception": "better wording can justify unsupported facts",
+          "transfer": "Explain one output difference using evidence."
+        },
+        {
+          "id": "B2",
+          "minutes": 30,
+          "title": "Prompt + Skill",
+          "activity": "EVALUATE",
+          "materials": [
+            "resume-sample-zh.md",
+            "jd-sample-zh.md"
+          ],
+          "operation": "compare_general_and_role_knowledge_profiles",
+          "checkpoint": {
+            "kind": "OWNER_RESULT",
+            "evidence": [
+              "profile_id",
+              "run_ref",
+              "citation_ref",
+              "gap_note"
+            ]
+          },
+          "misconception": "Skill is authority",
+          "transfer": "Record one miss, false positive, or rule gap."
+        },
+        {
+          "id": "B3",
+          "minutes": 10,
+          "title": "Break",
+          "activity": "BREAK",
+          "checkpoint": {
+            "kind": "BREAK"
+          },
+          "misconception": null,
+          "transfer": null
+        },
+        {
+          "id": "B4",
+          "minutes": 15,
+          "title": "Knowledge Base",
+          "activity": "DO",
+          "materials": [
+            "report-template-zh.md"
+          ],
+          "operation": "inspect_source_version_and_citation",
+          "checkpoint": {
+            "kind": "OWNER_RESULT",
+            "evidence": [
+              "source_ref",
+              "version",
+              "content_hash",
+              "locator"
+            ]
+          },
+          "misconception": "retrieved source is automatically active policy",
+          "transfer": "Distinguish source availability from authority."
+        },
+        {
+          "id": "B5",
+          "minutes": 20,
+          "title": "Student Services Context",
+          "activity": "DO",
+          "materials": [
+            "student-records-sample-zh.md",
+            "suspected-classified-sample-zh.md"
+          ],
+          "operation": "compare_internal_vs_third_party_and_block_cover_only",
+          "checkpoint": {
+            "kind": "OWNER_RESULT",
+            "evidence": [
+              "purpose",
+              "run_ref",
+              "blocked_source_ref"
+            ]
+          },
+          "misconception": "removing names eliminates re-identification risk",
+          "transfer": "Identify one combination risk."
+        },
+        {
+          "id": "B6",
+          "minutes": 30,
+          "title": "Finance Governance",
+          "activity": "DO",
+          "materials": [
+            "finance-briefing-sample-zh.md"
+          ],
+          "operation": "review_reveal_copy_and_trace",
+          "checkpoint": {
+            "kind": "OWNER_RESULT",
+            "evidence": [
+              "review_decision_ref",
+              "reveal_decision_ref",
+              "copy_decision_ref",
+              "replay_ref"
+            ]
+          },
+          "misconception": "reveal permission implies copy permission",
+          "transfer": "Explain why reveal and copy are separate."
+        },
+        {
+          "id": "B7",
+          "minutes": 20,
+          "title": "Correction + later session",
+          "activity": "EVALUATE",
+          "materials": [
+            "report-template-zh.md"
+          ],
+          "operation": "correct_future_context_and_verify_later_snapshot",
+          "checkpoint": {
+            "kind": "OWNER_RESULT",
+            "evidence": [
+              "correction_ref",
+              "later_session_ref",
+              "snapshot_ref",
+              "citation_ref",
+              "gap_count"
+            ]
+          },
+          "misconception": "accepted correction proves causal use or policy activation",
+          "transfer": "Separate correction, availability, snapshot presence, and demonstrated result."
+        },
+        {
+          "id": "B8",
+          "minutes": 5,
+          "title": "Synthesis + homework",
+          "activity": "REFLECT",
+          "sources": [
+            "01-agenda-zh.md"
+          ],
+          "operation": "submit_eight_field_assignment_template",
+          "checkpoint": {
+            "kind": "REFLECTION"
+          },
+          "misconception": "completion certificate equals product proof",
+          "transfer": "State one useful insight and one unresolved rule gap."
+        }
+      ],
+      "homework": {
+        "fields": [
+          "任务目的与使用对象",
+          "原始文件类型",
+          "Agent 敏感信息发现清单",
+          "分类与保护建议",
+          "人工纠正后的版本",
+          "脱敏或受控共享版本",
+          "无法判断、需要学校制度确认的事项",
+          "该任务所依赖的 AI 应用部件"
+        ],
+        "feedback": {
+          "due_working_days": 5,
+          "required": [
+            "一个优点",
+            "一个主要风险",
+            "一个修改建议",
+            "漏报标注",
+            "误报标注",
+            "缺口质量"
+          ]
+        }
+      }
+    },
+    "it_decision_planning": {
+      "audience": "architect_pm_workflow_engineer",
+      "scheduled_minutes": 120,
+      "core_steps": [
+        {
+          "id": "I0",
+          "minutes": 10,
+          "title": "Actors / roles / commitment / effects",
+          "activity": "ORIENT",
+          "operation": "inspect_four_isolated_workspaces",
+          "checkpoint": {
+            "kind": "OWNER_RESULT",
+            "evidence": [
+              "workspace_refs",
+              "role_refs"
+            ]
+          },
+          "misconception": "decision equals commitment",
+          "transfer": "Identify the requester-only commitment boundary."
+        },
+        {
+          "id": "I1",
+          "minutes": 20,
+          "title": "Scenario A",
+          "activity": "DO",
+          "operation": "run_scenario_A",
+          "checkpoint": {
+            "kind": "OWNER_RESULT",
+            "evidence": [
+              "run_id",
+              "decision_frontier",
+              "exclusions"
+            ]
+          },
+          "misconception": "all generated options are admissible",
+          "transfer": "Explain one exclusion."
+        },
+        {
+          "id": "I2",
+          "minutes": 20,
+          "title": "Scenario C material UNKNOWN",
+          "activity": "DO",
+          "operation": "run_scenario_C_and_reply",
+          "checkpoint": {
+            "kind": "OWNER_RESULT",
+            "evidence": [
+              "target_ref",
+              "subject_ref",
+              "ask_event",
+              "subsequent_frontier"
+            ]
+          },
+          "misconception": "UNKNOWN always blocks",
+          "transfer": "Explain why this information changes admissibility."
+        },
+        {
+          "id": "I3",
+          "minutes": 10,
+          "title": "Scenario D immaterial UNKNOWN",
+          "activity": "EVALUATE",
+          "operation": "run_scenario_D",
+          "checkpoint": {
+            "kind": "OWNER_RESULT",
+            "evidence": [
+              "target_ref",
+              "subject_ref",
+              "no_ask_for_target",
+              "exclusion"
+            ]
+          },
+          "misconception": "any UNKNOWN should trigger ASK",
+          "transfer": "Explain why the optional participant does not change the blocked slot."
+        },
+        {
+          "id": "I4",
+          "minutes": 15,
+          "title": "Replay / speed / seek",
+          "activity": "OBSERVE",
+          "operation": "replay_same_sealed_run",
+          "checkpoint": {
+            "kind": "OWNER_RESULT",
+            "evidence": [
+              "run_id",
+              "result_hash",
+              "playback_positions"
+            ]
+          },
+          "misconception": "playback is recomputation",
+          "transfer": "Distinguish semantic time from presentation time."
+        },
+        {
+          "id": "I5",
+          "minutes": 15,
+          "title": "Requester commitment",
+          "activity": "EVALUATE",
+          "operation": "inspect_requester_required_boundary",
+          "checkpoint": {
+            "kind": "OWNER_RESULT",
+            "evidence": [
+              "decision_ref",
+              "commitment_state",
+              "effect_count"
+            ]
+          },
+          "misconception": "simulated decision authorizes external mutation",
+          "transfer": "Name the owner required for commitment."
+        }
+      ],
+      "extension_steps": [
+        {
+          "id": "IX1",
+          "minutes": 10,
+          "title": "Scenario B dominance",
+          "activity": "EVALUATE",
+          "operation": "inspect_dominated_alternatives",
+          "checkpoint": {
+            "kind": "OWNER_RESULT",
+            "evidence": [
+              "dominated_options"
+            ]
+          }
+        },
+        {
+          "id": "IX2",
+          "minutes": 10,
+          "title": "Scenario E/F cancellation",
+          "activity": "EVALUATE",
+          "operation": "compare_cancel_paths",
+          "checkpoint": {
+            "kind": "OWNER_RESULT",
+            "evidence": [
+              "requester_choice",
+              "allowed_actions"
+            ]
+          }
+        },
+        {
+          "id": "IX3",
+          "minutes": 10,
+          "title": "Bounded optimization / information value",
+          "activity": "REFLECT",
+          "operation": "compare_current_heuristic_to_solver_classes",
+          "checkpoint": {
+            "kind": "REFLECTION"
+          }
+        }
+      ]
+    }
+  },
+  "instructor_reference_cases": {
+    "visibility": "instructor_only",
+    "cases": [
+      {
+        "id": "resume-boundary",
+        "material": "resume-sample-zh.md",
+        "expected": "flags irrelevant marriage/family/health/identity fields without inventing qualification evidence"
+      },
+      {
+        "id": "student-reidentification",
+        "material": "student-records-sample-zh.md",
+        "expected": "recognizes combination risk under third-party sharing"
+      },
+      {
+        "id": "finance-vendor-reveal",
+        "material": "finance-briefing-sample-zh.md",
+        "expected": "masks fictional vendor, permits bounded authorized reveal, denies copy by separate decision"
+      },
+      {
+        "id": "classified-cover-block",
+        "material": "suspected-classified-sample-zh.md",
+        "expected": "blocked without content analysis or quotation"
+      }
+    ]
+  }
+}

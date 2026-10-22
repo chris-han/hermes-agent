@@ -1,0 +1,93 @@
+{
+  "schema_version": "workshop_school_candidate_catalog.v1",
+  "catalog_id": "workshop-school-candidate-catalog",
+  "version": "1.0.0",
+  "authority_status": "FICTIONAL_TRAINING_FIXTURE",
+  "fictional": true,
+  "title": "国际学校候选数据目录（教学样本）",
+  "disclaimer": "仅用于课程练习，不构成学校制度、法律结论或正式数据分类目录。",
+  "entries": [
+    {
+      "id": "hr.resume.identity",
+      "domain": "HR",
+      "label": "候选人身份与联系方式",
+      "source": "course-fixture",
+      "version": "1.0.0",
+      "rule_status": "candidate",
+      "examples": [
+        "姓名",
+        "联系方式",
+        "身份证号",
+        "住址"
+      ],
+      "teaching_note": "任务必要性与最小化"
+    },
+    {
+      "id": "hr.resume.family-health",
+      "domain": "HR",
+      "label": "婚育、家庭与健康信息",
+      "source": "course-fixture",
+      "version": "1.0.0",
+      "rule_status": "candidate",
+      "examples": [
+        "婚育状况",
+        "配偶职业",
+        "手术史"
+      ],
+      "teaching_note": "招聘筛选通常不应无边界使用"
+    },
+    {
+      "id": "student.support.health",
+      "domain": "Student Services",
+      "label": "学生健康与支持信息",
+      "source": "course-fixture",
+      "version": "1.0.0",
+      "rule_status": "candidate",
+      "examples": [
+        "哮喘",
+        "医疗建议",
+        "学生支持记录"
+      ],
+      "teaching_note": "未成年人信息与共享目的"
+    },
+    {
+      "id": "student.reidentification",
+      "domain": "Student Services",
+      "label": "组合重识别风险",
+      "source": "course-fixture",
+      "version": "1.0.0",
+      "rule_status": "candidate",
+      "examples": [
+        "班级+健康+活动",
+        "家庭结构+职业+搬迁"
+      ],
+      "teaching_note": "删除姓名不等于不可识别"
+    },
+    {
+      "id": "finance.vendor.identity",
+      "domain": "Finance",
+      "label": "供应商身份",
+      "source": "course-fixture",
+      "version": "1.0.0",
+      "rule_status": "candidate",
+      "examples": [
+        "供应商名称"
+      ],
+      "teaching_note": "跨部门共享时采用遮罩与受限揭示"
+    },
+    {
+      "id": "finance.forward-looking",
+      "domain": "Finance",
+      "label": "经营预测与未确认计划",
+      "source": "course-fixture",
+      "version": "1.0.0",
+      "rule_status": "candidate",
+      "examples": [
+        "现金流预测",
+        "扩校计划",
+        "未确认谈判结果"
+      ],
+      "teaching_note": "不得将未确认内容写成事实"
+    }
+  ]
+}
