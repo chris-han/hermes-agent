@@ -1056,7 +1056,7 @@ def resolve_runtime_provider(*, requested: Optional[str] = None, explicit_api_ke
     requested_provider = resolve_requested_provider(requested)
     _raise_if_provider_disabled(requested_provider)
     from agent.semantier_gateway import gateway_settings,cloud_model_profile,is_gateway_route
-    cloud_base = explicit_base_url or str((_get_model_config() or {}).get('base_url') or '')
+    cloud_base = (explicit_base_url or str((_get_model_config() or {}).get('base_url') or '')) if requested_provider in {'custom','semantier-cloud'} else ''
     if requested_provider == 'semantier-cloud' or (requested_provider == 'custom' and is_gateway_route(cloud_base)):
         settings = gateway_settings()
         if settings is None:
