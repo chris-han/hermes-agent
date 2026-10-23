@@ -283,6 +283,24 @@ describe('useVoiceConversation full-duplex barge-in', () => {
     }
   })
 
+  it('does not re-arm the microphone when muted during an empty candidate transcription', async () => {
+    let resolveCapture!: (text: string) => void
+    const capture = new Promise<string>(resolve => { resolveCapture = resolve })
+    const { hook, onInterrupt } = renderConversation({ transcribeCapture: () => capture })
+    await enterThinking(hook)
+    await waitFor(() => expect(monitorCalls.length).toBeGreaterThan(0))
+    const monitor = monitorCalls.at(-1)
+    act(() => monitor?.onSpeech())
+    await act(async () => { monitor?.onUtterance?.(new Blob(['noise'], { type: 'audio/webm' })) })
+    act(() => hook.result.current.toggleMute())
+    const count = monitorCalls.length
+    await act(async () => { resolveCapture('') })
+    expect(onInterrupt).not.toHaveBeenCalled()
+    expect(monitorCalls).toHaveLength(count)
+    expect(hook.result.current.muted).toBe(true)
+    expect(hook.result.current.status).toBe('idle')
+  })
+
   it('leaves the model request running when candidate transcription fails', async () => {
     const { hook, onInterrupt } = renderConversation({
       transcribeCapture: async () => { throw new Error('STT unavailable') }

@@ -479,7 +479,7 @@ export function useVoiceConversation({
 
         // An acoustic candidate is not yet user intent. Silence/failed STT
         // during generation keeps the original answer alive and awaited.
-        if (awaitingSpokenResponseRef.current && !bargedRef.current) {
+        if (enabledRef.current && !mutedRef.current && awaitingSpokenResponseRef.current && !bargedRef.current) {
           rearmMonitor()
           setStatus('thinking')
 
