@@ -54,3 +54,32 @@ def test_profile_scoped_catalog_and_actual_request_fields(tmp_path, monkeypatch)
         assert configure_cloud_request({'model':'byok'},base_url='http://127.0.0.1:2/v1')=={'model':'byok'}
     finally:
         server.shutdown();server.server_close();thread.join()
+
+
+def test_cleared_scope_does_not_accept_a_late_catalog_response(tmp_path,monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from agent.semantier_gateway import cloud_catalog,clear_cloud_catalog
+    ready,release=Event(),Event();calls=[]
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self,*args):pass
+        def do_GET(self):
+            calls.append(1);version=len(calls)
+            if version==1:
+                ready.set();assert release.wait(3)
+            data=json.dumps({'object':'list','data':[{'id':'private','revision':str(version)}]}).encode()
+            self.send_response(200);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
+    server=ThreadingHTTPServer(('127.0.0.1',0),Handler);thread=Thread(target=server.serve_forever,daemon=True);thread.start()
+    monkeypatch.setenv('HERMES_HOME',str(tmp_path));monkeypatch.setenv('CLOUD_TEST_KEY','owned')
+    (tmp_path/'config.yaml').write_text(yaml.safe_dump({'semantier_gateway':{'enabled':True,'base_url':f'http://127.0.0.1:{server.server_port}/v1','api_key_env':'CLOUD_TEST_KEY'}}))
+    clear_cloud_catalog()
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            old=pool.submit(cloud_catalog);assert ready.wait(3)
+            clear_cloud_catalog()
+            fresh=pool.submit(cloud_catalog)
+            assert fresh.result(timeout=3)['data'][0]['revision']=='2'
+            release.set();assert old.result(timeout=3)['data'][0]['revision']=='1'
+        assert cloud_catalog()['data'][0]['revision']=='2' and len(calls)==2
+    finally:
+        release.set();server.shutdown();thread.join();server.server_close();clear_cloud_catalog()

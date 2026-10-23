@@ -176,15 +176,21 @@ from hashlib import sha256
 from copy import deepcopy
 _catalog_lock = RLock()
 _catalog_cache = {}
+_catalog_pending = {}
+_catalog_generation = 0
 
 
 def clear_cloud_catalog():
+    global _catalog_generation
     with _catalog_lock:
+        _catalog_generation += 1
         _catalog_cache.clear()
+        _catalog_pending.clear()
 
 
 def cloud_catalog(*, refresh=False):
     from hermes_constants import get_hermes_home
+    from concurrent.futures import Future, TimeoutError
     import requests
     try:
         settings = gateway_settings()
@@ -196,24 +202,48 @@ def cloud_catalog(*, refresh=False):
         raise ValueError('Semantier Cloud Provider is not configured for this profile.')
     key = (str(get_hermes_home()), settings.base_url, sha256(settings.api_key.encode()).hexdigest())
     with _catalog_lock:
+        generation = _catalog_generation
         cached = _catalog_cache.get(key)
         if not refresh and cached and monotonic()-cached[0] < 30:
             return deepcopy(cached[1])
+        pending = _catalog_pending.get(key)
+        leader = pending is None
+        if leader:
+            pending = Future()
+            _catalog_pending[key] = pending
+    if not leader:
         try:
-            response = requests.get(settings.base_url[:-3]+'/api/cloud-provider/catalog',
+            return deepcopy(pending.result(timeout=5))
+        except TimeoutError:
+            raise ValueError('Semantier Cloud Provider catalog timed out; refresh.') from None
+    try:
+        with requests.Session() as client:
+            client.trust_env = False
+            response = client.get(settings.base_url[:-3]+'/api/cloud-provider/catalog',
                 headers={'Authorization':'Bearer '+settings.api_key}, timeout=5, allow_redirects=False)
-            if response.status_code != 200:
-                raise ValueError('Semantier Cloud Provider catalog unavailable; refresh or reconnect.')
-            payload = response.json()
-            if payload.get('object') != 'list' or not isinstance(payload.get('data'),list):
-                raise ValueError('Invalid Semantier Cloud Provider catalog.')
+        if response.status_code != 200:
+            logging.getLogger(__name__).warning('Cloud catalog rejected status=%s',response.status_code)
+            raise ValueError('Semantier Cloud Provider catalog unavailable; refresh or reconnect.')
+        payload = response.json()
+        if payload.get('object') != 'list' or not isinstance(payload.get('data'),list):
+            raise ValueError('Invalid Semantier Cloud Provider catalog.')
+        with _catalog_lock:
             if len(_catalog_cache) >= 16:
                 _catalog_cache.clear()
-            _catalog_cache[key] = (monotonic(),payload)
-            return deepcopy(payload)
-        except (requests.RequestException,ValueError):
+            if generation == _catalog_generation:
+                _catalog_cache[key] = (monotonic(),payload)
+        pending.set_result(payload)
+        return deepcopy(payload)
+    except (requests.RequestException,ValueError):
+        with _catalog_lock:
             _catalog_cache.pop(key,None)
-            raise ValueError('Semantier Cloud Provider catalog unavailable; refresh or reconnect.') from None
+        error = ValueError('Semantier Cloud Provider catalog unavailable; refresh or reconnect.')
+        pending.set_exception(error)
+        raise error from None
+    finally:
+        with _catalog_lock:
+            if _catalog_pending.get(key) is pending:
+                _catalog_pending.pop(key,None)
 
 
 def cloud_model_profile(model, *, refresh=False):
