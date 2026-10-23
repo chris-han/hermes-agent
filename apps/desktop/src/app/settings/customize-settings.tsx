@@ -30,7 +30,6 @@ import {
 import { DEFAULT_DESKTOP_BRANDING, type DesktopBranding } from '../../../electron/desktop-branding-types'
 
 import { BrandingShortcuts } from './branding-shortcuts'
-
 import { NavLink, SectionHeading, SettingsContent } from './primitives'
 import { SETTING_IDS, settingElementId } from './settings-manifest'
 
@@ -161,9 +160,11 @@ export function CustomizeSettings() {
       dirty.current = false
       setDraft(value)
       setSaved(true)
+
       return value
     } catch {
       setError('saveFailed')
+
       return null
     } finally {
       setSaving(false)
@@ -309,9 +310,9 @@ export function CustomizeSettings() {
           </div>
         </div>
         <BrandingShortcuts
-          draft={draft}
           dirty={JSON.stringify(draft) !== JSON.stringify(committed)}
           disabled={saving || decoding || loadFailed || !available}
+          draft={draft}
           onApply={apply}
           onBusy={setShortcutBusy}
         />

@@ -125,6 +125,7 @@ export function ConfigField({
   }
 
   const schemaOptions = schema.type === 'select' ? (schema.options ?? []).map(String) : undefined
+
   const selectOptions =
     (schemaKey === 'stt.provider' || schemaKey === 'tts.provider') && schemaOptions
       ? [...new Set([...(enumOptions ?? []), ...schemaOptions])]
