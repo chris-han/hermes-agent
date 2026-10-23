@@ -104,8 +104,11 @@ def get_model_info(profile: Optional[str] = None):
         with _config_profile_scope(profile):
             cloud_active = is_gateway_route(base_url)
         if cloud_active:
-            with _config_profile_scope(profile):
-                profile_info = cloud_model_profile(model_name)
+            try:
+                with _config_profile_scope(profile):
+                    profile_info = cloud_model_profile(model_name)
+            except ValueError:
+                raise HTTPException(503,'Semantier Cloud Provider metadata unavailable; refresh or reconnect') from None
             context = profile_info.get('context_window')
             pin = config_ctx if type(config_ctx) is int and config_ctx > 0 else None
             return {'model':model_name,'provider':provider,'auto_context_length':context or 0,

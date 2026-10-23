@@ -24,8 +24,8 @@ def billing_backend() -> str:
 
 
 def cloud_connection_config():
-    from hermes_cli.config import load_config_readonly
-    cfg = load_config_readonly()
+    from hermes_cli.runtime_provider import load_config
+    cfg = load_config()
     legacy = cfg.get('semantier_gateway') or {}
     if isinstance(legacy,dict) and legacy.get('enabled') is True:
         return legacy
@@ -263,3 +263,20 @@ def configure_cloud_request(kwargs, *, base_url):
     headers['X-Semantier-Capability-Revision'] = profile['revision']
     result['extra_headers'] = headers
     return result
+
+
+def cloud_switch_result(model, current_provider, *, is_global=False):
+    from hermes_cli.model_switch import ModelSwitchResult
+    try:
+        settings = gateway_settings()
+        if settings is None:
+            raise ValueError('Semantier Cloud Provider connection required.')
+        profile = cloud_model_profile(model,refresh=True)
+        if profile['protocol'] not in {'chat','chat_completions'}:
+            raise ValueError('Unsupported Semantier Cloud Provider protocol.')
+        return ModelSwitchResult(success=True,new_model=model,target_provider='custom',
+            provider_changed=current_provider!='custom',api_key=settings.api_key,base_url=settings.base_url,
+            api_mode='chat_completions',provider_label='Semantier Cloud Provider',is_global=is_global,
+            runtime_capabilities={'supports_'+k:v is True for k,v in profile['capabilities'].items()})
+    except ValueError as error:
+        return ModelSwitchResult(success=False,error_message=str(error))

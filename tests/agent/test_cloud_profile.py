@@ -34,9 +34,23 @@ def test_profile_scoped_catalog_and_actual_request_fields(tmp_path, monkeypatch)
         assert body['max_tokens']==100 and 'tools' not in body and 'reasoning_effort' not in body
         assert body['temperature']==.7
         assert body['extra_headers']['X-Semantier-Capability-Revision']=='r1'
+        from hermes_cli.model_switch import switch_model,apply_model_selection
+        from hermes_cli.runtime_provider import resolve_runtime_provider
+        # Native draft/session picker passes its display slug through these real owners.
+        profile['protocol']='chat'
+        from agent.semantier_gateway import clear_cloud_catalog
+        clear_cloud_catalog()
+        result=switch_model('private-alias','custom','old',current_base_url=base,explicit_provider='semantier-cloud')
+        assert result.success and result.target_provider=='custom' and result.base_url==base
+        saved=apply_model_selection(cfg['model'],result)
+        assert saved['api_key']=='${CLOUD_TEST_KEY}' and saved['capability_revision']=='r1'
+        resolved=resolve_runtime_provider(requested='semantier-cloud',target_model='private-alias')
+        assert resolved['provider']=='custom' and resolved['base_url']==base and resolved['api_key']=='scoped-test-key'
+
         other=tmp_path/'other';other.mkdir();monkeypatch.setenv('HERMES_HOME',str(other))
         (other/'config.yaml').write_text(yaml.safe_dump(cfg))
-        cloud_catalog();assert len(seen)==2
+        before=len(seen)
+        cloud_catalog();assert len(seen)==before+1
         assert configure_cloud_request({'model':'byok'},base_url='http://127.0.0.1:2/v1')=={'model':'byok'}
     finally:
         server.shutdown();server.server_close();thread.join()

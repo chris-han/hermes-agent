@@ -1747,6 +1747,9 @@ def switch_model(
     step returns a failure :class:`ModelSwitchResult` to stop the chain, or ``None`` to continue.
     ``user_providers`` / ``custom_providers`` are the config.yaml ``providers:`` dict and
     ``custom_providers:`` list."""
+    from agent.semantier_gateway import is_gateway_route, cloud_switch_result
+    if explicit_provider == 'semantier-cloud' or (not explicit_provider and is_gateway_route(current_base_url)):
+        return cloud_switch_result(raw_input.strip(),current_provider,is_global=is_global)
     st = _Switch(
         raw_input=raw_input, current_provider=current_provider, current_model=current_model,
         current_base_url=current_base_url, current_api_key=current_api_key, is_global=is_global,
@@ -1797,6 +1800,12 @@ def model_selection_config_updates(result: ModelSwitchResult, current_model_cfg:
     for key in stale:
         if key in model_cfg:
             updates[key] = None
+    from agent.semantier_gateway import is_gateway_route, cloud_connection_config, cloud_model_profile
+    if is_gateway_route(result.base_url):
+        cloud_config = cloud_connection_config()
+        updates['capability_revision'] = cloud_model_profile(result.new_model)['revision']
+        if cloud_config.get('api_key_env'):
+            updates['api_key'] = '${'+cloud_config['api_key_env']+'}'
     return updates
 
 

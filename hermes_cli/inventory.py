@@ -246,7 +246,9 @@ def build_model_options_payload(
         catalog = cloud_catalog(refresh=refresh)
         profiles = catalog['data']
         return {'providers':[{'slug':'semantier-cloud','name':'Semantier Cloud Provider',
-            'authenticated':True, 'is_current':True, 'models':[p['id'] for p in profiles],
+            'authenticated':True, 'is_current':True, 'aliases':[ctx.current_provider],
+            'capabilities':{p['id']:{'fast':False,'reasoning':p['capabilities'].get('reasoning') is True and bool(p['request_parameters']['reasoning_controls'])} for p in profiles},
+            'models':[p['id'] for p in profiles],
             'model_profiles':{p['id']:p for p in profiles}, 'total_models':len(profiles)}],
             'model':ctx.current_model,'provider':'semantier-cloud', 'source':'semantier-cloud'}
     refresh = bool(refresh)
