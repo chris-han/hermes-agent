@@ -40,21 +40,43 @@ class SenseVoiceProvider(TranscriptionProvider):
 
     def _asset_dir(self):
         home = get_hermes_home().resolve()
-        path = (home / 'models' / 'sensevoice').resolve()
+        local = home / 'models' / 'sensevoice'
+        if (local.is_symlink() or getattr(local, 'is_junction', lambda: False)()) and not local.exists():
+            raise ValueError('SenseVoice local asset override is a dangling link')
+        path = local.resolve()
         if not path.is_relative_to(home):
             raise ValueError('SenseVoice assets must remain under the active Hermes home')
-        # A present user override is authoritative, even if incomplete/corrupt.
-        # Only this product's launcher-provisioned shared platform root is a fallback.
+        # A present local override remains authoritative, including corrupt/incomplete state.
         if path.exists() or not _is_cpu_distribution():
             return path
-        shared = os.environ.get('SEMANTIER_LOCAL_STATE_DIR')
-        if not shared:
-            raise ValueError('SenseVoice packaged platform assets are not bootstrapped')
-        platform = Path(shared).resolve()
-        path = (platform / 'models' / 'sensevoice').resolve()
-        if not path.is_relative_to(platform):
-            raise ValueError('SenseVoice shared assets escape the governed platform root')
-        return path
+        from gateway.execution_boundary import current_execution_boundary
+        boundary = current_execution_boundary()
+        if boundary is not None:
+            shared = os.environ.get('SEMANTIER_LOCAL_STATE_DIR')
+            if not shared:
+                raise ValueError('managed SenseVoice platform assets are not bootstrapped')
+            platform = Path(shared).resolve()
+            path = (platform / 'models' / 'sensevoice').resolve()
+            if not path.is_relative_to(platform):
+                raise ValueError('SenseVoice shared assets escape the governed platform root')
+            return path
+        # Standalone profiles share immutable shipped assets, without per-profile model copies.
+        from hermes_constants import get_default_hermes_root
+        owner = get_default_hermes_root().resolve()
+        cache_entry = owner / 'models' / 'sensevoice'
+        if (cache_entry.is_symlink() or getattr(cache_entry, 'is_junction', lambda: False)()) and not cache_entry.exists():
+            raise ValueError('SenseVoice shared asset override is a dangling link')
+        cached = cache_entry.resolve()
+        if not cached.is_relative_to(owner):
+            raise ValueError('SenseVoice shared assets escape the standalone owner')
+        if cached.exists():
+            return cached
+        from pm.paths import repo_root
+        package = repo_root().resolve()
+        assets = (package / 'semantier-runtime/assets/sensevoice').resolve()
+        if not assets.is_relative_to(package):
+            raise ValueError('SenseVoice shipped assets escape the package')
+        return assets
 
     def is_available(self):
         try:
@@ -103,7 +125,11 @@ class SenseVoiceProvider(TranscriptionProvider):
         ffmpeg = _find_ffmpeg_binary()
         if not ffmpeg:
             raise ValueError('SenseVoice needs ffmpeg for non-16kHz-mono audio')
-        with tempfile.TemporaryDirectory(prefix='sensevoice-', dir=execution_scratch_dir()) as scratch:
+        scratch_root = execution_scratch_dir()
+        if scratch_root is None:
+            from hermes_constants import get_scratch_dir
+            scratch_root = get_scratch_dir()
+        with tempfile.TemporaryDirectory(prefix='sensevoice-', dir=scratch_root) as scratch:
             target = str(Path(scratch)/'audio.wav')
             subprocess.run([ffmpeg,'-nostdin','-v','error','-y','-i',str(file_path),
                             '-ar','16000','-ac','1','-c:a','pcm_f32le',target],

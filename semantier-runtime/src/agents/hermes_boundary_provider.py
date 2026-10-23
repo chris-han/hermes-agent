@@ -136,6 +136,7 @@ class SemantierExecutionBoundaryProvider:
             workspace_id=workspace_id,
             paths=BoundaryPaths(
                 hermes_home=resolved_workspace,
+                profile_owner_root=resolved_workspace,
                 terminal_cwd=resolved_workspace,
                 runs_root=resolved_runs,
                 uploads_root=resolved_uploads,

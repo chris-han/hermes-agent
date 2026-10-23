@@ -270,10 +270,12 @@ class SemantierAgent:
                 "hermes-agent is not installed. Add it as a workspace dependency and sync the environment."
             ) from exc
 
-        with bind_execution_boundary(boundary), _hermes_home_bound(
+        # Host-owned platform/workspace bootstrap precedes request-bound IO.
+        # A workspace boundary must never be repurposed to create platform profiles.
+        with _hermes_home_bound(
             target_home,
             session_id=boundary.session_id or session_id,
-        ):
+        ), bind_execution_boundary(boundary):
             from agents.runtime_memory_boundary import reconcile_retained_context_for_boundary
 
             reconcile_retained_context_for_boundary(boundary, context=retained_context)

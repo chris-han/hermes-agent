@@ -1381,6 +1381,78 @@ def _bootstrap_profile_dir(profile_dir: Path, source_dir: Optional[Path],
         _clone_file(source_dir, profile_dir, SYNC_MANIFEST_NAME)
 
 
+_LIFECYCLE_THREAD_LOCK = threading.RLock()
+_LIFECYCLE_HELD = threading.local()
+
+
+@contextlib.contextmanager
+def _profile_lifecycle_lock(owner: Path):
+    """One namespace lock shared by ensure/create/import/rename/delete, including threads."""
+    from pm.filesystem import lock_fd
+    owner = owner.resolve()
+    key = (os.getpid(), str(owner))
+    with _LIFECYCLE_THREAD_LOCK:
+        held = getattr(_LIFECYCLE_HELD, "keys", set())
+        if key in held:
+            yield
+            return
+        namespace = owner / "profiles"
+        if not namespace.resolve().is_relative_to(owner):
+            raise ValueError("profile namespace escapes owner")
+        namespace.mkdir(parents=True, exist_ok=True)
+        lock = namespace / ".lifecycle.lock"
+        if lock.is_symlink() or getattr(lock, "is_junction", lambda: False)():
+            raise ValueError("profile lifecycle lock must not be a link")
+        with lock.open("a+b") as stream:
+            if not lock_fd(stream.fileno(), wait=True):
+                raise RuntimeError("profile lifecycle lock unavailable")
+            _LIFECYCLE_HELD.keys = held | {key}
+            try:
+                yield
+            finally:
+                _LIFECYCLE_HELD.keys = held
+
+
+def _locked_profile_lifecycle(operation):
+    from functools import wraps
+    @wraps(operation)
+    def locked(*args, **kwargs):
+        with _profile_lifecycle_lock(_get_default_hermes_home()):
+            return operation(*args, **kwargs)
+    return locked
+
+
+def ensure_profile(owner_root: Path, name: str, *, no_skills: bool = False) -> Path:
+    """Ensure one valid same-owner profile without changing generic create semantics."""
+    from hermes_constants import (
+        get_default_hermes_root, set_profile_owner_root_override, reset_profile_owner_root_override,
+    )
+    owner = Path(owner_root).expanduser().resolve()
+    canon = _canon_valid(name)
+    if canon == "default":
+        raise ValueError("ensure_profile requires a named profile")
+    token = set_profile_owner_root_override(owner)
+    try:
+        if get_default_hermes_root().resolve() != owner:
+            raise PermissionError("profile owner conflicts with governed host binding")
+        with _profile_lifecycle_lock(owner):
+            namespace = owner / "profiles"
+            target = get_profile_dir(canon)
+            if (target.is_symlink() or getattr(target, "is_junction", lambda: False)()
+                    or not target.resolve().is_relative_to(namespace.resolve())):
+                raise ValueError("profile path escapes owner")
+            if named_profile_is_deleted(target):
+                raise FileExistsError("profile is tombstoned; explicit create required")
+            if target.exists():
+                if not named_profile_is_live(target):
+                    raise FileExistsError("existing profile has no valid identity")
+                return target
+            return create_profile(canon, no_alias=True, no_skills=no_skills)
+    finally:
+        reset_profile_owner_root_override(token)
+
+
+@_locked_profile_lifecycle
 def create_profile(
     name: str, clone_from: Optional[str] = None, clone_all: bool = False, clone_config: bool = False,
     no_alias: bool = False, no_skills: bool = False, description: Optional[str] = None,
@@ -1757,6 +1829,7 @@ class ProfileIdentitySettlementPending(RuntimeError):
             f"still pending — run: {self.retry_command}")
 
 
+@_locked_profile_lifecycle
 def delete_profile(name: str, yes: bool = False) -> Path:
     """Delete a profile, its wrapper script, and its gateway service (service disabled first
     to prevent auto-restart, gateway stopped if running)."""
@@ -2253,6 +2326,7 @@ def export_profile(name: str, output_path: str, extra_files: Optional[dict[str, 
         return Path(make_targz(base, tmpdir, canon))
 
 
+@_locked_profile_lifecycle
 def import_profile(archive_path: str, name: Optional[str] = None) -> Path:
     """Import a profile from a tar.gz archive."""
     import tempfile
@@ -2321,6 +2395,7 @@ def _record_profile_rename(new_dir: Path, old_canon: str) -> None:
         logger.debug("profile rename: could not record previous name %r in %s: %s", old_canon, new_dir, exc)
 
 
+@_locked_profile_lifecycle
 def rename_profile(old_name: str, new_name: str) -> Path:
     """Rename a profile: directory, wrapper script, service, active_profile. The default
     profile's home IS the installation root, so "renaming" it sets a presentation-only
@@ -2437,6 +2512,8 @@ def profile_root_for_env_home(env_home: str, default_root: Path) -> Path:
     if not env_home:
         return default_root
     env_path = Path(env_home)
+    if env_path == default_root or env_path.parent == default_root / "profiles":
+        return default_root
     return env_path.parent.parent if env_path.parent.name == "profiles" else env_path
 
 

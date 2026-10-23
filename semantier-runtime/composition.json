@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "parent_commit": "ba213c1d19784761bbf2bcfa976c671963d6298a",
+  "parent_commit": "d6f0e64c8f1bf23a4640144ba541dad85b4017ac",
   "files": [
     {
       "path": "MODEL-NOTICE.txt",
@@ -368,7 +368,7 @@
     },
     {
       "path": "src/agents/hermes_boundary_provider.py",
-      "sha256": "56131e9fa5e983506e4ac61510db51f974c6b58c9a2ae5fba010bebd2b58ea50"
+      "sha256": "c4dfe24be7c815b07613f4d1d104a616f9e7486dfe0aeedb12b77876c2f9801b"
     },
     {
       "path": "src/agents/hermes_bundled_skill_adapter.py",
@@ -420,7 +420,7 @@
     },
     {
       "path": "src/agents/launcher.py",
-      "sha256": "06a598d55689c479cc7927ffc0981bfd6a5fcd17498141e9b84306f237b3262a"
+      "sha256": "e8a0e3755e3fdd3ac70fb377493eb840ac6431e9c572ce750019b6aa6cf309b7"
     },
     {
       "path": "src/agents/meeting_api_origin.py",
@@ -475,6 +475,10 @@
       "sha256": "5fcc50d6b322e850f22f49648d4234df5f40368afd0267f3f695b38de4072ea3"
     },
     {
+      "path": "src/agents/model_gateway/operator_diagnostics.py",
+      "sha256": "96042fa8ad93732a8b78d8815292f0788d4f1214759c4cb799cc28adcc183a87"
+    },
+    {
       "path": "src/agents/model_gateway/physical_binding.py",
       "sha256": "b01ca11330e0bb024d00a95b1105c2f9adf27d7e44ad9423949ee35476272fad"
     },
@@ -488,7 +492,7 @@
     },
     {
       "path": "src/agents/model_gateway/proxy_capture.py",
-      "sha256": "3b236735a30344b2b2455034ed26a9d63a5f1b833e40daae54bff7b4f9da0b78"
+      "sha256": "000962cd5219ff6af98f0eb8459a17c32d520afeeebba79d63fcadb62db07a13"
     },
     {
       "path": "src/agents/model_gateway/runtime.py",
@@ -496,7 +500,7 @@
     },
     {
       "path": "src/agents/model_gateway/service.py",
-      "sha256": "9bf49a8b3629f653af4a19feb3e5433a056ef1e0c116e3d7f0273adff5d988c7"
+      "sha256": "4ee3da8a16814c01addc42cb9b7ae7fc92a92f031f9f624b4fbdffdb3de61849"
     },
     {
       "path": "src/agents/model_gateway/store.py",
@@ -572,7 +576,7 @@
     },
     {
       "path": "src/agents/semantier_agent.py",
-      "sha256": "cd738bd8397e730b57f2eff4a9c190428fed9d9d4f61943bad8f87b6be389b29"
+      "sha256": "a6c0a00ca36676e6ec13bf62c7263a35efc2983d7cf07c4a36b954d8a969edda"
     },
     {
       "path": "src/agents/sensitive_labeling_report.py",
@@ -2908,11 +2912,11 @@
     },
     {
       "path": "src/plugins/sensevoice_stt/plugin.yaml",
-      "sha256": "517c6aa6c19c1866b136d2ec005056b51e800e1357d6d4028680e91e6849124e"
+      "sha256": "6f9b9b32023ed14eefaf81203b4849240a308656283025c50c594aba88c4e671"
     },
     {
       "path": "src/plugins/sensevoice_stt/provider.py",
-      "sha256": "aa35695018a23ac9402c8fe18f0b4be2c0dc7b8dd42b8147087ae9eb814ab07e"
+      "sha256": "27c6b29aac6f1e3c88ae3bca459701880bb2c355105a12cdca08f2af5bd40a7f"
     },
     {
       "path": "src/plugins/sensevoice_stt/requirements.txt",

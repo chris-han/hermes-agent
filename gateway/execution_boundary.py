@@ -26,6 +26,7 @@ class BoundaryPaths:
     uploads_root: Path | None = None
     artifacts_root: Path | None = None
     logs_root: Path | None = None
+    profile_owner_root: Path | None = None
 
 
 @dataclass(frozen=True)

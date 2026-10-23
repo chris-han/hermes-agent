@@ -211,29 +211,72 @@ LOCAL_RUNTIME_ROOT_DIRS: frozenset[str] = frozenset({"models", "runtimes", "node
 # Where connector tool results save the files they return, under each profile's home.
 CONNECTOR_DOWNLOADS_SUBDIR = Path("downloads", "connectors")
 
-# get_default_hermes_root() memo keyed on (native home, expanded HERMES_HOME) so it stays
-# fresh when a test or plugin mutates either input; saves ~80us/call at 31+ sites.
-_default_hermes_root_memo: tuple[str, str, Path] | None = None
+# The namespace owner is separate from the active home selected inside it.
+_PROFILE_OWNER_ROOT = ContextVar("hermes_profile_owner_root", default=None)
+_PROCESS_PROFILE_OWNER_ROOT: Path | None = None
+
+
+def set_profile_owner_root_override(root: str | Path) -> Token:
+    """Host/bootstrap scope; never mirrors request identity into process environment."""
+    return _PROFILE_OWNER_ROOT.set(_expand_hermes_home(str(root)))
+
+
+def reset_profile_owner_root_override(token: Token) -> None:
+    _PROFILE_OWNER_ROOT.reset(token)
+
+
+def pin_profile_owner_root(root: str | Path | None) -> None:
+    """Freeze the CLI process owner before changing its active HERMES_HOME."""
+    global _PROCESS_PROFILE_OWNER_ROOT
+    _PROCESS_PROFILE_OWNER_ROOT = None if root is None else _expand_hermes_home(str(root))
 
 
 def get_default_hermes_root(*, home: str | Path | None = None) -> Path:
-    """Root of an explicit home, or the process home when none is supplied."""
-    global _default_hermes_root_memo
-    native_home = _get_platform_default_hermes_home()
-    env_home = str(home).strip() if home is not None else os.environ.get("HERMES_HOME", "").strip()
-    env_path = _expand_hermes_home(env_home) if env_home else None
-    memo_key = (str(native_home), str(env_path) if env_path is not None else "")
-    memo = _default_hermes_root_memo
-    if memo is not None and memo[:2] == memo_key:
-        return memo[2]
-    result = native_home
-    if env_path is not None:
-        try:
-            env_path.resolve().relative_to(native_home.resolve())  # under ~/.hermes (normal or profile mode)
-        except ValueError:  # Docker/custom root: <root>/profiles/<name> -> <root>, else HERMES_HOME itself
-            result = env_path.parent.parent if env_path.parent.name == "profiles" else env_path
-    _default_hermes_root_memo = (*memo_key, result)
-    return result
+    """Host-bound owner, scoped owner, launch owner, then standalone startup home.
+
+    An explicit local root nested below the native home is still a distinct root.
+    Legacy children launched with a named home retain the immediate profiles/name
+    spelling at startup; subsequent profile switches use the frozen owner instead.
+    """
+    boundary_module = sys.modules.get("gateway.execution_boundary")
+    boundary = boundary_module.current_execution_boundary() if boundary_module else None
+    if boundary is not None:
+        owner = boundary.paths.profile_owner_root
+        if owner is not None:
+            return Path(owner)
+        if boundary.policy.require_boundary:
+            raise RuntimeError("host-bound profile owner root required")
+    scoped = _PROFILE_OWNER_ROOT.get()
+    if scoped is not None:
+        return scoped
+    value = str(home).strip() if home is not None else os.environ.get("HERMES_HOME", "").strip()
+    if home is None and _PROCESS_PROFILE_OWNER_ROOT is not None and value:
+        active = _expand_hermes_home(value)
+        owner = _PROCESS_PROFILE_OWNER_ROOT
+        if active == owner or active.parent == owner / "profiles":
+            return owner
+    if not value:
+        return _get_platform_default_hermes_home()
+    path = _expand_hermes_home(value)
+    # An explicitly supplied startup owner is never inferred from its spelling.
+    if home is not None:
+        return path
+    # Compatibility for old children carrying only an active home: require a
+    # real profile identity plus an established namespace, not arbitrary ancestors.
+    if path.parent.name == "profiles":
+        root = path.parent.parent
+        profile_identity = any((path / marker).is_file() for marker in _HERMES_HOME_MARKERS)
+        owner_identity = (root == _get_platform_default_hermes_home() or root.name == ".hermes"
+            or any((root / marker).is_file() for marker in _HERMES_HOME_MARKERS))
+        # A stale legacy active home may be gone while its sibling namespace
+        # is established. Keep recovery commands at that owner, never recreate H.
+        stale_legacy = (not path.exists() and path.parent.is_dir() and any(
+            child.is_dir() and not child.name.startswith(".") and any(
+                (child / marker).is_file() for marker in _HERMES_HOME_MARKERS)
+            for child in path.parent.iterdir()))
+        if (profile_identity and owner_identity) or stale_legacy:
+            return root
+    return path
 
 
 # Tombstone lives beside the profile dir (not inside) so a stale mkdir or rmtree cannot erase it.

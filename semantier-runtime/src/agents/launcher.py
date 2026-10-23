@@ -745,27 +745,9 @@ def _ensure_repo_local_runtime_env(runtime_root: Path) -> None:
 
 
 def _ensure_runtime_profile(runtime_root: Path, profile_name: str) -> Path:
-    profile_dir = runtime_root / "profiles" / profile_name
-    if not profile_dir.exists():
-        previous_home = os.environ.get("HERMES_HOME")
-        os.environ["HERMES_HOME"] = str(runtime_root)
-        try:
-            _ensure_repo_hermes_agent_on_path()
-            try:
-                from hermes_cli.profiles import create_profile
-                profile_dir = create_profile(profile_name, no_alias=True, no_skills=True)
-            except (ImportError, ModuleNotFoundError):
-                # Bootstrap tests and minimal installations may not ship the
-                # optional profile helper.  A profile is still a filesystem
-                # boundary; Hermes can materialize its aliases later.
-                profile_dir.mkdir(parents=True, exist_ok=True)
-        finally:
-            if previous_home is None:
-                os.environ.pop("HERMES_HOME", None)
-            else:
-                os.environ["HERMES_HOME"] = previous_home
-    profile_dir.mkdir(parents=True, exist_ok=True)
-    return profile_dir
+    _ensure_repo_hermes_agent_on_path()
+    from hermes_cli.profiles import ensure_profile
+    return ensure_profile(runtime_root, profile_name, no_skills=True)
 
 
 def _ensure_meeting_coordinator_profiles(runtime_root: Path) -> None:

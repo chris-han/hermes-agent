@@ -595,9 +595,15 @@ def explicit_cli_profile() -> str | None:
 def _apply_profile_override() -> None:
     """Pre-parse --profile/-p and set HERMES_HOME before imports."""
     global _explicit_cli_profile
+    from hermes_constants import get_default_hermes_root, pin_profile_owner_root
     _explicit_cli_profile = None
     argv = sys.argv[1:]
     profile_name, consume, profile_index = _scan_profile_flag(argv)
+    # Desktop/CLI transports owner in HERMES_HOME and selection in --profile.
+    # Legacy children with no selector may carry a validated active home instead.
+    owner = (get_default_hermes_root(home=os.environ.get("HERMES_HOME", ""))
+             if profile_name is not None else get_default_hermes_root())
+    pin_profile_owner_root(owner)
     from_sticky_profile = False
 
     # HERMES_HOME already set with no explicit flag: trust it only when it
@@ -606,7 +612,8 @@ def _apply_profile_override() -> None:
     # we must still read active_profile — the user may have run
     # `hermes profile use` and the gateway should honour it (#22502).
     hermes_home_env = os.environ.get("HERMES_HOME", "")
-    if profile_name is None and hermes_home_env and Path(hermes_home_env).parent.name == "profiles":
+    if (profile_name is None and hermes_home_env
+            and Path(hermes_home_env) != owner and Path(hermes_home_env).parent == owner / "profiles"):
         return
 
     if (profile_name is None and not _under_gateway_supervisor(argv)
@@ -680,17 +687,10 @@ if sys.argv[1:2] == ["pm"]:
 
     raise SystemExit(_pm_main(sys.argv[2:]))
 
-# The declared product carries an exact parent composition. Its existing launcher
-# remains the only owner of Semantier platform/workspace bootstrap and assets.
-from pm.features import runtime_distribution_extras as _runtime_distribution_extras
-if _runtime_distribution_extras() is not None:
-    from pm.paths import repo_root as _product_repo_root
-    _parent_source = _product_repo_root() / "semantier-runtime" / "src"
-    if not (_parent_source / "agents" / "launcher.py").is_file():
-        raise RuntimeError("packaged Semantier source composition is missing")
-    sys.path.insert(0, str(_parent_source))
-    from agents.launcher import bootstrap_packaged_runtime as _bootstrap_packaged_runtime
-    _bootstrap_packaged_runtime()
+# The normal Hermes CLI/Desktop entrypoint owns local standalone initialization.
+# SaaS hosts bootstrap explicitly through their own entrypoint, never from extras.
+from hermes_cli.standalone_bootstrap import bootstrap_standalone_runtime
+bootstrap_standalone_runtime()
 
 # Windows launcher self-heal — the ``hermes`` command is a COPY of the venv
 # console script staged into the managed bin dir (outside the checkout, since

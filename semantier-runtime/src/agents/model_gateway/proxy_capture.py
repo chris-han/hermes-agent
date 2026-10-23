@@ -17,6 +17,7 @@ class AttemptCapture:
     invocation_id: str | None = None
     provider: str | None = None
     physical_binding: dict | None = None
+    diagnostic_output_limit: int | None = None
 
 
 _attempt: ContextVar[AttemptCapture | None] = ContextVar('semantier_proxy_attempt', default=None)
@@ -137,6 +138,12 @@ class CaptureTransport(httpx.AsyncBaseTransport):
             raise RuntimeError('a physical send is already claimed for this attempt')
         from agents.model_gateway.physical_binding import verify_native_request
         verify_native_request(attempt.physical_binding,provider,request)
+        if attempt.diagnostic_output_limit is not None:
+            body = json.loads(request.content)
+            cap = body.get('max_completion_tokens', body.get('max_tokens'))
+            if (len(request.content) > 16384 or isinstance(cap, bool) or
+                    not isinstance(cap, int) or not 1 <= cap <= attempt.diagnostic_output_limit):
+                raise ValueError('diagnostic native request exceeds its admitted limits')
         await self.store.claim_native_send(attempt.attempt_id,attempt.invocation_id,provider)
         attempt.sends = 1
         response = await self.native.handle_async_request(request)
@@ -157,6 +164,10 @@ class AdmittedAttemptMiddleware:
 
     async def __call__(self, scope, receive, send):
         if scope['type'] != 'http' or scope.get('path') not in ('/v1/chat/completions', '/chat/completions'):
+            return await self.app(scope, receive, send)
+        # Only the authenticated outer operator command can establish this
+        # context without facade metadata; HTTP clients cannot set ContextVars.
+        if _attempt.get() is not None:
             return await self.app(scope, receive, send)
         messages, size = [], 0
         while True:

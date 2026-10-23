@@ -1,5 +1,5 @@
 name: sensevoice_stt
-version: 0.1.0
-description: Optional pinned SenseVoice Small INT8 CPU transcription provider.
+version: 0.2.0
+description: Pinned SenseVoice Small INT8 CPU transcription for local and managed Hermes.
 author: Semantier
 platforms: [windows, linux, macos]

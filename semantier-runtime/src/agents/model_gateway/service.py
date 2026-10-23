@@ -2,12 +2,16 @@
 from __future__ import annotations
 import json
 import asyncio
+import logging
 from dataclasses import replace
 import httpx
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from contracts.model_gateway import canonical_hash, validate_chat
 from billing.native_evidence import final_native_observation
+
+
+logger = logging.getLogger(__name__)
 
 
 class GatewayService:
@@ -104,6 +108,9 @@ class GatewayService:
             raise
         headers={'x-semantier-invocation-id':admitted['invocation_id'],'x-semantier-attempt-id':admitted['attempt_id']}
         if response.status_code >= 400:
+            # Server-owned correlation only: Proxy bodies/headers may contain secrets.
+            logger.warning('private Proxy invocation rejected: status=%d invocation_id=%s attempt_id=%s',
+                           response.status_code, admitted['invocation_id'], admitted['attempt_id'])
             await response.aclose()
             await self.billing.mark_uncertain(actor.organization_id,admitted['invocation_id'])
             raise HTTPException(502,'private Proxy invocation rejected')
