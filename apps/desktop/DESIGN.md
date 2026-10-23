@@ -618,3 +618,15 @@ The supplied `src/assets/semantier-logo.png` is the source for Windows EXE/windo
 ## Voice defaults and interface language
 
 Changing the Desktop interface language saves matching default transcription hints (global and local Whisper) and the Edge TTS voice in the same profile-bound config write. Simplified and Traditional Chinese both use Whisper `zh`, with Mainland and Taiwan Edge voices respectively. Existing custom languages, voices, providers and models remain explicit choices. Clean Voice controls reconcile refreshed config; drafts being edited retain user input. Failed language saves retain the prior persisted speech configuration and roll the interface language back. The existing settings fields and primitives remain the only controls.
+
+
+## Voice interruption confirmation
+
+During Voice Chat, microphone activity starts a candidate capture; it does not
+cancel an in-flight model request. Audible playback may be silenced immediately.
+Only a nonempty transcription that passes the existing echo guard confirms a
+user interruption and sends Stop to the backend. Silence, unavailable capture or
+failed transcription keeps the original answer awaited. If the answer arrives
+while a candidate is being transcribed, retain it for playback after the empty
+candidate resolves; a confirmed interruption consumes the superseded answer.
+This uses the existing listening/thinking/speaking states and controls.

@@ -37,7 +37,7 @@ interface VoiceConversationOptions {
   enabled: boolean
   onFatalError?: () => void
   /** Interrupt the in-flight agent turn (the same seam as the Stop button).
-   *  Fired when the user speaks while the model is still generating. */
+   *  Fired after transcription confirms speech while the model is generating. */
   onInterrupt?: () => Promise<void> | void
   onStopWord?: () => void
   onSubmit: (text: string) => Promise<void> | void
@@ -467,7 +467,7 @@ export function useVoiceConversation({
    * fall back to normal listening.
    */
   const submitCapturedUtterance = useCallback(
-    async (audio: Blob | null) => {
+    async (audio: Blob | null, rearmMonitor: () => void) => {
       const echoSource = bargeEchoTextRef.current
       const conversation = conversationRef.current
       const live = () => conversation !== null && conversationRef.current === conversation
@@ -475,6 +475,17 @@ export function useVoiceConversation({
       bargeEchoTextRef.current = ''
 
       const resumeListening = () => {
+        bargeCapturePendingRef.current = false
+
+        // An acoustic candidate is not yet user intent. Silence/failed STT
+        // during generation keeps the original answer alive and awaited.
+        if (awaitingSpokenResponseRef.current && !bargedRef.current) {
+          rearmMonitor()
+          setStatus('thinking')
+
+          return
+        }
+
         if (enabledRef.current && !mutedRef.current) {
           pendingStartRef.current = true
         }
@@ -517,17 +528,6 @@ export function useVoiceConversation({
           return
         }
 
-        // A spoken stop command while barging means "stop everything" — the
-        // turn/playback was already cut at trip time; now end the conversation
-        // instead of submitting "stop" as a new prompt.
-        if (isVoiceStopCommand(transcript)) {
-          dropSpeechSession()
-          setStatus('idle')
-          onStopWordRef.current?.()
-
-          return
-        }
-
         // Fail-closed echo guard (tools/voice_mode_transcript.is_tts_echo):
         // over speakers the reply bleeds into the mic and trips the playback-
         // phase trigger. A transcript matching what was being spoken is
@@ -540,8 +540,27 @@ export function useVoiceConversation({
           return
         }
 
-        // A generation-phase barge interrupted the in-flight turn; the submit
-        // path refuses while `busy`, so wait for the interrupt to settle.
+        // Only a nonempty, non-echo transcript confirms an interruption.
+        // VAD alone can trip on room noise or the app's own thinking sound.
+        if (!bargedRef.current) {
+          bargedRef.current = true
+          markVoicePlaybackInterrupted()
+          stopVoicePlayback()
+        }
+
+        if (busyRef.current) {
+          void onInterruptRef.current?.()
+        }
+
+        if (isVoiceStopCommand(transcript)) {
+          dropSpeechSession()
+          setStatus('idle')
+          onStopWordRef.current?.()
+
+          return
+        }
+
+        // The submit path refuses while busy; await the confirmed interrupt.
         const deadline = Date.now() + INTERRUPT_SETTLE_TIMEOUT_MS
 
         while (busyRef.current && Date.now() < deadline) {
@@ -587,9 +606,8 @@ export function useVoiceConversation({
    * Full-duplex barge-in monitor for the WHOLE agent turn: armed at submit,
    * live through generation (thinking) AND playback (speaking).
    *
-   * - generation phase (`busy`): speech interrupts the in-flight turn via
-   *   `onInterrupt` — the same seam as the Stop button — and cuts any TTS that
-   *   managed to start, so the stale reply never speaks.
+   * - generation phase (`busy`): capture the candidate utterance, then use
+   *   `onInterrupt` only after STT confirms nonempty, non-echo speech.
    * - playback phase: speech cuts playback and the captured interruption is
    *   transcribed and submitted as the next turn.
    *
@@ -616,20 +634,19 @@ export function useVoiceConversation({
         // time the capture is transcribed.
         bargeEchoTextRef.current = $voicePlayback.get().status === 'speaking' ? (pendingResponse()?.text ?? '') : ''
         bargeCapturePendingRef.current = true
-        bargedRef.current = true
-        markVoicePlaybackInterrupted()
-        stopVoicePlayback()
+        stopThinkingSound()
 
-        if (busyRef.current) {
-          // Mid-generation: stop the in-flight turn so the captured utterance
-          // becomes the next one instead of queueing behind a stale reply.
-          void onInterruptRef.current?.()
+        // Silence audible playback immediately, but never cancel model work
+        // on an unconfirmed acoustic candidate.
+        if ($voicePlayback.get().status === 'speaking') {
+          bargedRef.current = true
+          markVoicePlaybackInterrupted()
+          stopVoicePlayback()
         }
       },
       onUtterance: audio => {
-        bargeCapturePendingRef.current = false
         stopBargeMonitorRef.current = null
-        void submitCapturedUtterance(audio)
+        void submitCapturedUtterance(audio, ensureBargeMonitor)
       }
     })
   }, [pendingResponse, submitCapturedUtterance])
@@ -1060,6 +1077,12 @@ export function useVoiceConversation({
   // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
   useEffect(() => {
     if (!enabled || muted) {
+      return
+    }
+
+    // Capture/STT owns the mic. A reply arriving during confirmation waits
+    // here; an empty result will resume it, a real interruption consumes it.
+    if (bargeCapturePendingRef.current) {
       return
     }
 

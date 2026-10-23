@@ -87,6 +87,7 @@ function renderConversation(
     onInterrupt?: () => void
     pendingResponse?: () => { id: string; pending: boolean; text: string } | null
     transcript?: string
+    transcribeCapture?: () => Promise<string>
   } = {}
 ) {
   const onInterrupt = overrides.onInterrupt ?? vi.fn()
@@ -105,7 +106,9 @@ function renderConversation(
   let transcriptions = 0
 
   const onTranscribeAudio = vi.fn(async () =>
-    transcriptions++ === 0 ? 'kick off the task' : (overrides.transcript ?? 'and another thing')
+    transcriptions++ === 0
+      ? 'kick off the task'
+      : (overrides.transcribeCapture?.() ?? overrides.transcript ?? 'and another thing')
   )
 
   const pendingResponse = overrides.pendingResponse ?? (() => null)
@@ -195,7 +198,7 @@ describe('useVoiceConversation full-duplex barge-in', () => {
     }
   })
 
-  it('interrupts the in-flight turn when speech trips mid-generation', async () => {
+  it('waits for a nonempty transcript before interrupting mid-generation', async () => {
     const { hook, onInterrupt } = renderConversation()
 
     await act(async () => {
@@ -208,9 +211,90 @@ describe('useVoiceConversation full-duplex barge-in', () => {
       monitorCalls.at(-1)?.onSpeech()
     })
 
-    expect(onInterrupt).toHaveBeenCalledTimes(1)
+    expect(onInterrupt).not.toHaveBeenCalled()
+    expect(markVoicePlaybackInterrupted).not.toHaveBeenCalled()
+
+    const monitor = monitorCalls.at(-1)
+    await act(async () => {
+      void monitor?.onUtterance?.(new Blob(['speech'], { type: 'audio/webm' }))
+    })
+    await waitFor(() => expect(onInterrupt).toHaveBeenCalledTimes(1))
     expect(markVoicePlaybackInterrupted).toHaveBeenCalled()
     expect(stopVoicePlayback).toHaveBeenCalled()
+    hook.rerender({ busy: false })
+  })
+
+  it('keeps waiting for the original answer when a noise capture transcribes to silence', async () => {
+    const { hook, onInterrupt, onSubmit } = renderConversation({ transcript: '' })
+    await enterThinking(hook)
+    await waitFor(() => expect(monitorCalls.length).toBeGreaterThan(0))
+    const monitor = monitorCalls.at(-1)
+    act(() => monitor?.onSpeech())
+    await act(async () => {
+      monitor?.onUtterance?.(new Blob(['noise'], { type: 'audio/webm' }))
+    })
+    expect(onInterrupt).not.toHaveBeenCalled()
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+    expect(markVoicePlaybackInterrupted).not.toHaveBeenCalled()
+    await waitFor(() => expect(hook.result.current.status).toBe('thinking'))
+    await waitFor(() => expect(monitorCalls.length).toBeGreaterThan(1))
+  })
+
+  it('keeps the original request running when capture produces no audio', async () => {
+    const { hook, onInterrupt, onSubmit } = renderConversation()
+    await enterThinking(hook)
+    await waitFor(() => expect(monitorCalls.length).toBeGreaterThan(0))
+    const monitor = monitorCalls.at(-1)
+    act(() => monitor?.onSpeech())
+    await act(async () => { monitor?.onUtterance?.(null) })
+    expect(onInterrupt).not.toHaveBeenCalled()
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(hook.result.current.status).toBe('thinking'))
+  })
+
+  it('speaks the original answer after an in-flight noise transcription resolves empty', async () => {
+    let replyReady = false
+    let resolveCapture!: (text: string) => void
+    const capture = new Promise<string>(resolve => { resolveCapture = resolve })
+
+    const { hook, onInterrupt } = renderConversation({
+      transcribeCapture: () => capture,
+      pendingResponse: () => replyReady ? { id: 'original-answer', pending: false, text: '这是原来的中文回答。' } : null
+    })
+
+    $autoSpeakReplies.set(true)
+
+    try {
+      await enterThinking(hook)
+      await waitFor(() => expect(monitorCalls.length).toBeGreaterThan(0))
+      const monitor = monitorCalls.at(-1)
+      act(() => monitor?.onSpeech())
+      await act(async () => { monitor?.onUtterance?.(new Blob(['noise'], { type: 'audio/webm' })) })
+      replyReady = true
+      act(() => hook.rerender({ busy: false }))
+      expect(onInterrupt).not.toHaveBeenCalled()
+      expect(startSpeechStreamMock).not.toHaveBeenCalled()
+      await act(async () => { resolveCapture('') })
+      await waitFor(() => expect(startSpeechStreamMock).toHaveBeenCalled())
+      await waitFor(() => expect(playSpeechTextMock).toHaveBeenCalledWith('这是原来的中文回答。', expect.anything()))
+      expect(onInterrupt).not.toHaveBeenCalled()
+    } finally {
+      $autoSpeakReplies.set(false)
+    }
+  })
+
+  it('leaves the model request running when candidate transcription fails', async () => {
+    const { hook, onInterrupt } = renderConversation({
+      transcribeCapture: async () => { throw new Error('STT unavailable') }
+    })
+
+    await enterThinking(hook)
+    await waitFor(() => expect(monitorCalls.length).toBeGreaterThan(0))
+    const monitor = monitorCalls.at(-1)
+    act(() => monitor?.onSpeech())
+    await act(async () => { monitor?.onUtterance?.(new Blob(['noise'], { type: 'audio/webm' })) })
+    expect(onInterrupt).not.toHaveBeenCalled()
+    await waitFor(() => expect(hook.result.current.status).toBe('thinking'))
   })
 
   it('submits the captured interruption once the interrupt settles (busy clears)', async () => {
@@ -251,7 +335,9 @@ describe('useVoiceConversation full-duplex barge-in', () => {
     hook.rerender({ busy: false })
 
     act(() => {
+      $voicePlayback.set({ ...$voicePlayback.get(), status: 'speaking' })
       monitorCalls.at(-1)?.onSpeech()
+      $voicePlayback.set({ ...$voicePlayback.get(), status: 'idle' })
     })
 
     expect(onInterrupt).not.toHaveBeenCalled()
