@@ -794,7 +794,8 @@ def _apply_main_assignment_sync(cfg: dict, provider: str, model: str, base_url: 
         from agent.semantier_gateway import cloud_connection_config
         cloud_config = cloud_connection_config()
         if cloud_config.get('api_key_env'):
-            model_cfg['api_key'] = '${'+cloud_config['api_key_env']+'}'
+            model_cfg.pop('api_key',None)
+            model_cfg['key_env'] = cloud_config['api_key_env']
         model_cfg.pop('context_length',None)
     cfg["model"] = model_cfg
 

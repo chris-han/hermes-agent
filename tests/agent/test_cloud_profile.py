@@ -43,9 +43,11 @@ def test_profile_scoped_catalog_and_actual_request_fields(tmp_path, monkeypatch)
         result=switch_model('private-alias','custom','old',current_base_url=base,explicit_provider='semantier-cloud')
         assert result.success and result.target_provider=='custom' and result.base_url==base
         saved=apply_model_selection(cfg['model'],result)
-        assert saved['api_key']=='${CLOUD_TEST_KEY}' and saved['capability_revision']=='r1'
+        assert saved['key_env']=='CLOUD_TEST_KEY' and 'api_key' not in saved and saved['capability_revision']=='r1'
         resolved=resolve_runtime_provider(requested='semantier-cloud',target_model='private-alias')
         assert resolved['provider']=='custom' and resolved['base_url']==base and resolved['api_key']=='scoped-test-key'
+        embedded=resolve_runtime_provider(requested='custom',explicit_base_url=base,explicit_api_key='embedded-control-only',target_model='private-alias')
+        assert embedded['api_key']=='scoped-test-key' and embedded['source']=='semantier-cloud'
 
         other=tmp_path/'other';other.mkdir();monkeypatch.setenv('HERMES_HOME',str(other))
         (other/'config.yaml').write_text(yaml.safe_dump(cfg))

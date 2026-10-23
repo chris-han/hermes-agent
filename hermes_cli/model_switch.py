@@ -1805,7 +1805,8 @@ def model_selection_config_updates(result: ModelSwitchResult, current_model_cfg:
         cloud_config = cloud_connection_config()
         updates['capability_revision'] = cloud_model_profile(result.new_model)['revision']
         if cloud_config.get('api_key_env'):
-            updates['api_key'] = '${'+cloud_config['api_key_env']+'}'
+            updates['api_key'] = None
+            updates['key_env'] = cloud_config['api_key_env']
     return updates
 
 
