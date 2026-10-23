@@ -801,7 +801,7 @@ def _apply_main_assignment_sync(cfg: dict, provider: str, model: str, base_url: 
     new_provider = provider.strip().lower()
     gateway_tools = _apply_nous_gateway_defaults(cfg) if new_provider == "nous" else []
     save_config(cfg)
-    if new_provider in {"custom", "local"} and base_url and not endpoint_already_known:
+    if new_provider in {"custom", "local"} and base_url and not endpoint_already_known and not is_gateway_route(base_url):
         _register_custom_endpoint(base_url, api_key, model)
     # The serve process's boot record may still say "nothing configured"; the chat gates on it.
     reconcile_record()
