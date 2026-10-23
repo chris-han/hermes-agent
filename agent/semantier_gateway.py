@@ -23,12 +23,29 @@ def billing_backend() -> str:
     return str(config.get('backend') or 'nous') if isinstance(config, dict) else 'unsupported'
 
 
+def cloud_connection_config():
+    from hermes_cli.config import load_config_readonly
+    cfg = load_config_readonly()
+    legacy = cfg.get('semantier_gateway') or {}
+    if isinstance(legacy,dict) and legacy.get('enabled') is True:
+        return legacy
+    providers = cfg.get('providers') or {}
+    named = providers.get('semantier-cloud') if isinstance(providers,dict) else None
+    if not isinstance(named,dict):
+        return None
+    model = cfg.get('model') or {}
+    current = model if isinstance(model,dict) else {}
+    base = str(named.get('base_url') or '')
+    if current.get('provider') != 'semantier-cloud' and not (base and current.get('base_url') == base):
+        return None
+    return {'enabled':True,'base_url':base,'api_key_env':named.get('key_env') or current.get('key_env'),
+            'api_key':named.get('api_key') or current.get('api_key')}
+
+
 def gateway_settings() -> GatewaySettings | None:
-    from hermes_cli.config import get_env_value, load_config_readonly
-    config = load_config_readonly().get('semantier_gateway') or {}
-    if not isinstance(config, dict):
-        raise ValueError('Invalid Semantier gateway configuration.')
-    if config.get('enabled') is not True:
+    from hermes_cli.config import get_env_value
+    config = cloud_connection_config()
+    if config is None:
         return None
     base = str(config.get('base_url') or '').rstrip('/')
     parsed = urlsplit(base)
@@ -36,19 +53,19 @@ def gateway_settings() -> GatewaySettings | None:
             or parsed.path != '/v1' or not parsed.hostname
             or (parsed.scheme != 'https' and not (
                 parsed.scheme == 'http' and parsed.hostname in {'127.0.0.1', 'localhost', '::1'}))):
-        raise ValueError('Semantier gateway requires an HTTPS /v1 endpoint (HTTP loopback is allowed).')
+        raise ValueError('Semantier Cloud Provider requires a configured public HTTPS /v1 endpoint (HTTP loopback is allowed).')
     key_name = str(config.get('api_key_env') or '')
-    key = get_env_value(key_name) if key_name else None
+    key = get_env_value(key_name) if key_name else config.get('api_key')
+    if isinstance(key,str) and key.startswith('${') and key.endswith('}'):
+        key = get_env_value(key[2:-1])
     if not key:
-        raise ValueError('Semantier gateway credential is unavailable for this profile.')
+        raise ValueError('Semantier Cloud Provider scoped credential is unavailable for this profile.')
     return GatewaySettings(base, key)
 
 
 def is_gateway_route(base_url: str) -> bool:
-    from hermes_cli.config import load_config_readonly
-    config = load_config_readonly().get('semantier_gateway') or {}
-    return (isinstance(config, dict) and config.get('enabled') is True and bool(config.get('base_url'))
-            and str(base_url).rstrip('/') == str(config['base_url']).rstrip('/'))
+    config = cloud_connection_config()
+    return bool(config and config.get('base_url') and str(base_url).rstrip('/') == str(config['base_url']).rstrip('/'))
 
 
 def attribute_request(kwargs: dict, *, base_url: str, purpose: str,
@@ -67,7 +84,7 @@ def attribute_request(kwargs: dict, *, base_url: str, purpose: str,
             raise ValueError('Invalid Semantier correlation value.')
         if value:
             headers[f'X-Semantier-{name}'] = value
-    return {**kwargs, 'extra_headers': headers}
+    return configure_cloud_request({**kwargs, 'extra_headers': headers},base_url=base_url)
 
 
 def refusal(code: str, message: str, *, request_id: str | None = None) -> dict:
@@ -84,7 +101,7 @@ def billing_request(resource: str, *, schema_version: str | None = None) -> dict
     try:
         settings = gateway_settings()
         if not settings:
-            return refusal('provider_not_configured', 'Semantier gateway is disabled for this profile.')
+            return refusal('provider_not_configured', 'Semantier Cloud Provider is disabled for this profile.')
     except ValueError:
         return refusal('provider_not_configured', 'Semantier endpoint or credential is unavailable for this profile.')
     import requests
@@ -149,3 +166,100 @@ def read_billing(resource: str, *, schema_version: str | None = None) -> dict:
     except Exception:
         logging.getLogger(__name__).exception('Could not load legacy Nous billing view')
         return {'ok': True, 'logged_in': False, 'error': f'could not load {resource} state'}
+
+
+# Memory-only advisory cache. A rotated token or another profile/origin never reuses entries.
+# Dispatch authority remains remote; no credential material or catalog is persisted here.
+from threading import RLock
+from time import monotonic
+from hashlib import sha256
+from copy import deepcopy
+_catalog_lock = RLock()
+_catalog_cache = {}
+
+
+def clear_cloud_catalog():
+    with _catalog_lock:
+        _catalog_cache.clear()
+
+
+def cloud_catalog(*, refresh=False):
+    from hermes_constants import get_hermes_home
+    import requests
+    try:
+        settings = gateway_settings()
+    except ValueError:
+        clear_cloud_catalog()
+        raise
+    if settings is None:
+        clear_cloud_catalog()
+        raise ValueError('Semantier Cloud Provider is not configured for this profile.')
+    key = (str(get_hermes_home()), settings.base_url, sha256(settings.api_key.encode()).hexdigest())
+    with _catalog_lock:
+        cached = _catalog_cache.get(key)
+        if not refresh and cached and monotonic()-cached[0] < 30:
+            return deepcopy(cached[1])
+        try:
+            response = requests.get(settings.base_url[:-3]+'/api/cloud-provider/catalog',
+                headers={'Authorization':'Bearer '+settings.api_key}, timeout=5, allow_redirects=False)
+            if response.status_code != 200:
+                raise ValueError('Semantier Cloud Provider catalog unavailable; refresh or reconnect.')
+            payload = response.json()
+            if payload.get('object') != 'list' or not isinstance(payload.get('data'),list):
+                raise ValueError('Invalid Semantier Cloud Provider catalog.')
+            if len(_catalog_cache) >= 16:
+                _catalog_cache.clear()
+            _catalog_cache[key] = (monotonic(),payload)
+            return deepcopy(payload)
+        except (requests.RequestException,ValueError):
+            _catalog_cache.pop(key,None)
+            raise ValueError('Semantier Cloud Provider catalog unavailable; refresh or reconnect.') from None
+
+
+def cloud_model_profile(model, *, refresh=False):
+    rows = [row for row in cloud_catalog(refresh=refresh)['data'] if row.get('id') == model]
+    if len(rows) != 1:
+        raise ValueError('Selected Semantier Cloud Provider model is unavailable; refresh models.')
+    return rows[0]
+
+
+def configure_cloud_request(kwargs, *, base_url):
+    """Compile protocol fields for the chosen alias; never substitute supplier transport."""
+    if not is_gateway_route(base_url):
+        return kwargs
+    profile = cloud_model_profile(kwargs.get('model'))
+    context, output = profile.get('context_window'), profile.get('max_output_tokens')
+    if type(context) is not int or context <= 0 or type(output) is not int or output <= 0:
+        raise ValueError('Semantier Cloud Provider context/output limits unknown; deployment configuration required.')
+    result = dict(kwargs)
+    extra = result.pop('extra_body',{}) or {}
+    if not isinstance(extra,dict) or set(extra)-{'enable_thinking'}:
+        raise ValueError('Unsupported Semantier Cloud Provider request overrides.')
+    result.update(extra)
+    caps = profile['capabilities']
+    for capability, fields in {'tools':('tools','tool_choice','parallel_tool_calls'),
+        'reasoning':('reasoning_effort','enable_thinking'), 'structured_output':('response_format',)}.items():
+        if caps.get(capability) is not True or capability == 'reasoning' and not profile['request_parameters']['reasoning_controls']:
+            for field in fields:
+                result.pop(field,None)
+    messages = result.get('messages',[])
+    if caps.get('vision') is not True and any(isinstance(m.get('content'),list) and any(
+            isinstance(c,dict) and c.get('type') in {'image_url','input_image'} for c in m['content']) for m in messages):
+        raise ValueError('Selected Semantier Cloud Provider model has no approved vision capability.')
+    import json
+    prompt = {k:result[k] for k in ('messages','tools','response_format') if k in result}
+    reserve = len(json.dumps(prompt,ensure_ascii=False).encode()) + 64*len(messages)
+    room = min(output,32768,context-reserve)
+    if room < 1:
+        raise ValueError('Semantier Cloud Provider context budget exceeded; compact or start a new session.')
+    cap = result.pop('max_completion_tokens',result.pop('max_tokens',None))
+    if cap is not None and (type(cap) is not int or cap <= 0):
+        raise ValueError('Invalid Semantier Cloud Provider output cap.')
+    result[profile['request_parameters']['output']] = min(cap or room,room)
+    if caps.get('stream') is not True:
+        result['stream'] = False
+        result.pop('stream_options',None)
+    headers = dict(result.get('extra_headers') or {})
+    headers['X-Semantier-Capability-Revision'] = profile['revision']
+    result['extra_headers'] = headers
+    return result

@@ -97,6 +97,19 @@ def get_model_info(profile: Optional[str] = None):
         model_name, provider = _main_model_fields(model_cfg)
         base_url = model_cfg.get("base_url", "") if isinstance(model_cfg, dict) else ""
         config_ctx = model_cfg.get("context_length") if isinstance(model_cfg, dict) else None
+        from agent.semantier_gateway import is_gateway_route, cloud_model_profile
+        with _config_profile_scope(profile):
+            cloud_active = is_gateway_route(base_url)
+        if cloud_active:
+            with _config_profile_scope(profile):
+                profile_info = cloud_model_profile(model_name)
+            context = profile_info.get('context_window')
+            pin = config_ctx if type(config_ctx) is int and config_ctx > 0 else None
+            return {'model':model_name,'provider':provider,'auto_context_length':context or 0,
+                'config_context_length':pin or 0, 'effective_context_length':min(context,pin) if context and pin else context or 0,
+                'capabilities':{'supports_'+key:value for key,value in profile_info['capabilities'].items()},
+                'cloud_profile':profile_info}
+
 
         if not model_name:
             return dict(_EMPTY_MODEL_INFO, provider=provider)

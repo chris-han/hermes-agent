@@ -12,8 +12,8 @@ pm.features.runtime_distribution_extras = lambda: ['sensevoice']
 from hermes_cli.config import load_config, save_config
 config = load_config()
 assert config['model']['provider'] == 'semantier-cloud'
-assert config['model']['default'] == 'kwe-qwen3.8-u'
-assert config['providers']['semantier-cloud']['base_url'] == 'http://10.90.7.21:4000/v1'
+assert not config['model']['default']
+assert not config['providers']['semantier-cloud']['base_url']
 assert not config['providers']['semantier-cloud'].get('api_key')
 assert config['stt']['provider'] == 'sensevoice'
 config['model'] = {'provider':'custom','default':'saved-model','base_url':'http://127.0.0.1:7777/v1'}

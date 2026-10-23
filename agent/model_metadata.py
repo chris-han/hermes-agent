@@ -2236,6 +2236,13 @@ def get_model_context_length(
     probe, Ollama); 4 Anthropic /v1/models (API keys only); 5 provider-aware (Copilot,
     Nous, Codex OAuth, GMI, Ollama, OpenRouter live, models.dev); 6 OpenRouter for
     unknown providers; 7 local server; 8 hardcoded defaults; 9 256K fallback."""
+    from agent.semantier_gateway import is_gateway_route, cloud_model_profile
+    if is_gateway_route(base_url):
+        profile = cloud_model_profile(model)
+        context = profile.get('context_window')
+        if type(context) is not int or context <= 0:
+            raise ValueError('Semantier Cloud Provider context limit unknown; deployment configuration required.')
+        return min(context,config_context_length) if type(config_context_length) is int and config_context_length > 0 else context
     # 0. Explicit config override — user knows best
     if isinstance(config_context_length, int) and config_context_length > 0:
         return config_context_length

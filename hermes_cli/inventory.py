@@ -239,6 +239,14 @@ def build_model_options_payload(
     mid-session even though another model under the same provider may still work (same contract
     as ``/model`` and the aux pickers, #66584 / #66624). Visibility only: ``fast_custom_probe=False``
     keeps the live probe of the current custom endpoint on its full 5s discovery budget."""
+    from agent.semantier_gateway import is_gateway_route, cloud_catalog
+    if is_gateway_route(ctx.current_base_url):
+        catalog = cloud_catalog(refresh=refresh)
+        profiles = catalog['data']
+        return {'providers':[{'slug':'semantier-cloud','name':'Semantier Cloud Provider',
+            'authenticated':True, 'is_current':True, 'models':[p['id'] for p in profiles],
+            'model_profiles':{p['id']:p for p in profiles}, 'total_models':len(profiles)}],
+            'model':ctx.current_model,'provider':'semantier-cloud', 'source':'semantier-cloud'}
     refresh = bool(refresh)
     payload = build_models_payload(
         ctx, explicit_only=bool(explicit_only), include_unconfigured=bool(include_unconfigured),

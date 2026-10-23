@@ -749,10 +749,25 @@ def _prepare_main_assignment(cfg: dict, provider: str, model: str, base_url: str
     ``_CONFIG_MUTATION_LOCK``; it writes nothing."""
     if not provider or not model:
         raise HTTPException(status_code=400, detail="provider and model required for main")
+    from agent.semantier_gateway import is_gateway_route, cloud_model_profile, gateway_settings
+    current = cfg.get('model') if isinstance(cfg.get('model'),dict) else {}
+    current_cloud = is_gateway_route(str(current.get('base_url','')))
+    if provider == 'semantier-cloud' or current_cloud and provider == current.get('provider') and not base_url or is_gateway_route(base_url):
+        settings = gateway_settings()
+        if not settings:
+            raise HTTPException(422,'Semantier Cloud Provider connection required')
+        if (base_url and base_url.rstrip('/') != settings.base_url) or api_key:
+            raise HTTPException(422,'Cloud transport is profile-owned')
+        profile_info = cloud_model_profile(model,refresh=True)
+        if profile_info.get('protocol') not in {'chat','chat_completions'}:
+            raise HTTPException(422,'Cloud protocol unsupported by this Hermes version')
+        from hermes_cli.model_switch import ModelSwitchResult
+        return settings.base_url, ModelSwitchResult(success=True,new_model=model,target_provider='custom',
+            base_url=settings.base_url,api_mode='chat_completions',provider_label='Semantier Cloud Provider',is_global=True)
     provider, model = _normalize_main_model_assignment(provider, model)
     provider_entry = _provider_entry(cfg, provider)
-    if not base_url and isinstance(provider_entry, dict) and provider_entry.get("base_url"):
-        base_url = str(provider_entry.get("base_url") or "").strip()
+    if not base_url and isinstance(provider_entry, dict) and provider_entry.get('base_url'):
+        base_url = str(provider_entry.get('base_url') or '').strip()
     return base_url, _validated_main_model_selection(cfg, provider, model, base_url, api_key)
 
 
@@ -772,6 +787,15 @@ def _apply_main_assignment_sync(cfg: dict, provider: str, model: str, base_url: 
         provider_lc in {"custom", "local"} and bool(base_url) and _endpoint_known_to_config(cfg, base_url))
     model_cfg = _apply_main_model_assignment(cfg.get("model", {}), result, api_key)
     _resolve_assignment_credentials(model_cfg, provider, provider_entry)
+    from agent.semantier_gateway import is_gateway_route, cloud_model_profile
+    if is_gateway_route(model_cfg.get('base_url','')):
+        model_cfg['capability_revision'] = cloud_model_profile(model)['revision']
+        from agent.semantier_gateway import gateway_settings
+        from agent.semantier_gateway import cloud_connection_config
+        cloud_config = cloud_connection_config()
+        if cloud_config.get('api_key_env'):
+            model_cfg['api_key'] = '${'+cloud_config['api_key_env']+'}'
+        model_cfg.pop('context_length',None)
     cfg["model"] = model_cfg
 
     new_provider = provider.strip().lower()

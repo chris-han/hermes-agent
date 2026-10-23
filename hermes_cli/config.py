@@ -593,10 +593,10 @@ if _runtime_distribution_extras() is not None:
     DEFAULT_CONFIG["stt"].update(provider="sensevoice", language="auto",
         sensevoice={"model": "sensevoice-small-int8"})
     # Initial connection only. Credentials are supplied by the user/service, never shipped.
-    DEFAULT_CONFIG["model"] = {"provider": "semantier-cloud", "default": "kwe-qwen3.8-u"}
+    DEFAULT_CONFIG["model"] = {"provider": "semantier-cloud", "default": ""}
     DEFAULT_CONFIG["providers"]["semantier-cloud"] = {
-        "base_url": "http://10.90.7.21:4000/v1", "api_mode": "chat_completions",
-        "models": [{"id": "kwe-qwen3.8-u", "name": "kwe-qwen3.8-u"}],
+        "name": "Semantier Cloud Provider", "base_url": "", "api_mode": "chat_completions",
+        "models": [],
     }
 
 
