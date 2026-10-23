@@ -93,9 +93,12 @@ def get_model_info(profile: Optional[str] = None):
     context length (so the UI can show "Auto-detected: 200K" beside the
     override) plus models.dev capabilities when available."""
     try:
-        model_cfg = _load_config_scoped(profile).get("model", "")
+        scoped_config = _load_config_scoped(profile)
+        model_cfg = scoped_config.get("model", "")
         model_name, provider = _main_model_fields(model_cfg)
         base_url = model_cfg.get("base_url", "") if isinstance(model_cfg, dict) else ""
+        if provider == 'semantier-cloud' and not base_url:
+            base_url = str((scoped_config.get('providers',{}).get('semantier-cloud') or {}).get('base_url') or '')
         config_ctx = model_cfg.get("context_length") if isinstance(model_cfg, dict) else None
         from agent.semantier_gateway import is_gateway_route, cloud_model_profile
         with _config_profile_scope(profile):

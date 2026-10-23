@@ -84,7 +84,7 @@ def attribute_request(kwargs: dict, *, base_url: str, purpose: str,
             raise ValueError('Invalid Semantier correlation value.')
         if value:
             headers[f'X-Semantier-{name}'] = value
-    return configure_cloud_request({**kwargs, 'extra_headers': headers},base_url=base_url)
+    return {**kwargs, 'extra_headers': headers}
 
 
 def refusal(code: str, message: str, *, request_id: str | None = None) -> dict:

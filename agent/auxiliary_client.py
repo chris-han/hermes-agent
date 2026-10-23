@@ -7519,6 +7519,8 @@ def _prepare_aux_request(
         session_id=str((main_runtime or {}).get("session_id") or _runtime_main_value("session_id") or ''),
         run_id=str((main_runtime or {}).get("run_id") or ''),
     )
+    from agent.semantier_gateway import configure_cloud_request
+    kwargs = configure_cloud_request(kwargs,base_url=base_info or resolved_base_url or '')
     # Convert image blocks for Anthropic-compatible endpoints (e.g. MiniMax)
     client_base = str(getattr(client, "base_url", "") or "")
     if _is_anthropic_compat_endpoint(request_provider, client_base):

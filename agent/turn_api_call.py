@@ -130,6 +130,9 @@ def perform_api_call(
         request_id=str(api_request_id),
     )
 
+    from agent.semantier_gateway import configure_cloud_request
+    api_kwargs = configure_cloud_request(api_kwargs,base_url=str(agent.base_url or ''))
+
     from hermes_cli.middleware import run_llm_execution_middleware
 
     # The ``_model_request_active`` bracket is taken under the redirect lock when one exists,
