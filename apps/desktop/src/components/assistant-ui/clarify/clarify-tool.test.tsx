@@ -228,12 +228,14 @@ describe('ClarifyTool live card stays mounted across settle', () => {
       requestId: 'request-1',
       sessionId: 'session-1'
     })
+
     const args = {
       questions: [
         { question: 'Which deployment target?', choices: ['staging', 'production'] },
         { question: 'Which region?', choices: ['us', 'eu'] }
       ]
     }
+
     const props = { ...liveClarifyProps(), args, argsText: JSON.stringify(args) }
     renderClarify(<ClarifyTool {...props} />)
 
