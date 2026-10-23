@@ -114,7 +114,7 @@ def test_named_profile_start_all_starts_the_default_host_service(monkeypatch, tm
     (named / "config.yaml").write_text("{}\n", encoding="utf-8")
 
     monkeypatch.setenv("HERMES_HOME", str(named))
-    hermes_constants._default_hermes_root_memo = None
+    hermes_constants._PROCESS_PROFILE_OWNER_ROOT = None
     monkeypatch.setattr(
         gw, "_guard_named_profile_under_multiplexer",
         lambda **k: pytest.fail("the generic profile guard pre-empted start --all"),
@@ -187,7 +187,7 @@ def test_named_profile_restart_all_with_host_down_restarts_the_default_root(monk
     monkeypatch.setenv("OPENAI_API_KEY", "leinad-openai")
 
     monkeypatch.setenv("HERMES_HOME", str(named))
-    hermes_constants._default_hermes_root_memo = None
+    hermes_constants._PROCESS_PROFILE_OWNER_ROOT = None
     monkeypatch.setattr(gw, "_host_multiplexer_for_all_verb", lambda: None)
     monkeypatch.setattr(gw, "_stop_installed_service", lambda system: False)
     monkeypatch.setattr(gw, "kill_gateway_processes", lambda **k: 0)

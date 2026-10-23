@@ -23,7 +23,7 @@ def pool(tmp_path, monkeypatch):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("HERMES_HOME", str(root))
     import hermes_constants
-    hermes_constants._default_hermes_root_memo = None  # type: ignore[attr-defined]
+    hermes_constants._PROCESS_PROFILE_OWNER_ROOT = None  # type: ignore[attr-defined]
     (root / "auth.json").write_text(json.dumps({"credential_pool": {"anthropic": [{
         "id": "seat", "label": "seat", "auth_type": "api_key", "priority": 0,
         "source": "manual", "access_token": KEY,

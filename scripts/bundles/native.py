@@ -140,7 +140,7 @@ def verify_offline_cache(root: Path, python: Path, env: dict) -> None:
 
 
 def stage_distribution_assets(repo: Path, cache: Path) -> None:
-    """Verify the committed parent composition and stage only its pinned CPU model."""
+    """Verify the parent composition and stage its product backend and pinned CPU model."""
     import hashlib
     import json
     from pm.features import distribution_extras
@@ -153,6 +153,17 @@ def stage_distribution_assets(repo: Path, cache: Path) -> None:
         path = parent / entry["path"]
         if not path.resolve().is_relative_to(parent.resolve()) or hashlib.sha256(path.read_bytes()).hexdigest() != entry["sha256"]:
             raise ValueError("parent composition integrity mismatch: " + entry["path"])
+    # Product-owned implementation stays in the parent composition. Only the
+    # staged distribution exposes it through Hermes' bundled backend owner;
+    # copying into user plugins would require a separate user activation.
+    plugin = parent / "src/plugins/sensevoice_stt"
+    destination_plugin = repo / "plugins/sensevoice_stt"
+    destination_plugin.mkdir(parents=True)  # refuse an unexpected collision
+    for name in ("__init__.py", "provider.py", "plugin.yaml"):
+        relative = str((plugin / name).relative_to(parent)).replace("\\", "/")
+        if not any(entry["path"] == relative for entry in manifest["files"]):
+            raise ValueError("unbound product plugin input: " + relative)
+        shutil.copyfile(plugin / name, destination_plugin / name)
     model_cache = cache.parent / "semantier-sensevoice-assets"
     model_cache.mkdir(parents=True, exist_ok=True)
     sources = []

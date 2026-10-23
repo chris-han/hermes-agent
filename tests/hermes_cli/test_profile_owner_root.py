@@ -105,3 +105,71 @@ def test_ensure_never_resurrects_tombstoned_profile(monkeypatch, tmp_path):
     with pytest.raises(FileExistsError, match='tombstoned'):
         profiles.ensure_profile(owner, 'retained', no_skills=True)
     assert (home / 'memories/MEMORY.md').read_text() == 'retained'
+
+
+@pytest.mark.parametrize('alter_sys', [False, True])
+def test_module_entry_reimport_preserves_explicit_default_over_sticky_profile(monkeypatch, tmp_path, alter_sys):
+    """Gateway helpers importing the CLI must not apply sticky selection twice."""
+    import subprocess
+    import sys
+    owner = tmp_path / 'owner'
+    named = owner / 'profiles/retained'
+    named.mkdir(parents=True)
+    (named / 'config.yaml').write_text('model: retained\n')
+    (owner / 'active_profile').write_text('retained\n')
+    script = '''
+import os, sys, runpy
+sys.argv = ['hermes', '--profile', 'default', 'gateway', 'run', '--quiet']
+owner = os.environ['HERMES_HOME']
+def trace(frame, event, arg):
+    if event == 'call' and frame.f_code.co_name == 'main' and frame.f_globals.get('__name__') == 'hermes_cli.main':
+        sys.settrace(None)
+        assert os.environ['HERMES_HOME'] == owner
+        import hermes_cli.main as canonical
+        assert os.environ['HERMES_HOME'] == owner
+        assert canonical.explicit_cli_profile() == 'default'
+        assert canonical.__dict__ is frame.f_globals
+        raise SystemExit(0)
+    return trace
+sys.settrace(trace)
+runpy.run_module('hermes_cli.main', run_name='__main__', alter_sys=os.environ['ALTER_SYS'] == '1')
+'''
+    env = {**os.environ, 'HERMES_HOME': str(owner), 'ALTER_SYS': str(int(alter_sys)),
+           'PYTHONPATH': str(Path(profiles.__file__).resolve().parents[1])}
+    result = subprocess.run([sys.executable, '-c', script], env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_explicit_home_lookup_preserves_legacy_named_owner_contract(monkeypatch, tmp_path):
+    owner = tmp_path / 'owner'
+    named = owner / 'profiles/retained'
+    named.mkdir(parents=True)
+    (owner / 'auth.json').write_text('{}')
+    (named / 'profile.yaml').write_text('name: retained\n')
+    monkeypatch.setenv('HERMES_HOME', str(named))
+    assert homes.get_default_hermes_root() == owner
+    assert homes.get_default_hermes_root(home=named) == owner
+    assert homes.get_default_hermes_root(home=named, explicit_owner=True) == named
+
+
+def test_tenant_comparison_does_not_collapse_explicit_homes_to_ambient_owner(tmp_path):
+    from gateway.host_attach import launched_by_other_tenant
+    from gateway.execution_boundary import BoundaryPaths, BoundaryPolicy, ExecutionBoundary, bind_execution_boundary
+    a, b = tmp_path / 'a', tmp_path / 'b'
+    for root in (a, b):
+        named = root / 'profiles/shared'
+        named.mkdir(parents=True)
+        (root / 'auth.json').write_text('{}')
+        (named / 'profile.yaml').write_text('name: shared\n')
+    def check():
+        assert launched_by_other_tenant(a / 'profiles/shared', b / 'profiles/shared')
+        assert not launched_by_other_tenant(a, a / 'profiles/shared')
+        assert homes.get_default_hermes_root() == a
+    with bind_execution_boundary(ExecutionBoundary('host', paths=BoundaryPaths(profile_owner_root=a),
+                                                  policy=BoundaryPolicy(require_boundary=True))):
+        check()
+    token = homes.set_profile_owner_root_override(a)
+    try:
+        check()
+    finally:
+        homes.reset_profile_owner_root_override(token)

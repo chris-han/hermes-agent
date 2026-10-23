@@ -23,7 +23,7 @@ def isolated_home(tmp_path, monkeypatch):
     (tmp_path / ".hermes").mkdir()
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
-    monkeypatch.setattr(hermes_constants, "_default_hermes_root_memo", None)
+    monkeypatch.setattr(hermes_constants, "_PROCESS_PROFILE_OWNER_ROOT", None)
     monkeypatch.setattr(gateway_migrate, "duplicate_credential_findings", list)
     return tmp_path
 

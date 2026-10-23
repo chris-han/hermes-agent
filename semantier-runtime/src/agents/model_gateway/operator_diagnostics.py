@@ -116,9 +116,18 @@ def load_diagnostic_policies(value, origins):
     return policies
 
 
+def load_diagnostic_policy_file(path, origins):
+    from pathlib import Path
+    policy = Path(path)
+    if not policy.exists():
+        return ()
+    return load_diagnostic_policies(json.loads(policy.read_text()), origins)
+
+
 class OperatorDiagnosticsMiddleware:
-    def __init__(self, app, store, policy, authorize):
+    def __init__(self, app, store, policy, authorize, *, policy_loader=None):
         self.app, self.store, self.authorize = app, store, authorize
+        self.policy_loader = policy_loader
         self.policies = (policy,) if isinstance(policy, DiagnosticPolicy) else tuple(policy or ())
 
     async def __call__(self, scope, receive, send):
@@ -156,13 +165,19 @@ class OperatorDiagnosticsMiddleware:
             if role != "proxy_admin" or not auth.user_id:
                 raise HTTPException(403,"platform diagnostics require a proxy administrator")
             try:
+                policies = self.policy_loader() if self.policy_loader else self.policies
+            except (OSError, ValueError, TypeError):
+                raise HTTPException(503, "Operator diagnostic bootstrap policy is unavailable or invalid") from None
+            if not policies:
+                raise HTTPException(503, "Operator diagnostic bootstrap is not ready; retry after initialization")
+            try:
                 params = body.get("litellm_params", {}) if scope["path"] == "/health/test_connection" else body
                 model = params.get("model") if isinstance(params, dict) else None
-                p = next((policy for policy in self.policies if model in policy.aliases or
+                p = next((policy for policy in policies if model in policy.aliases or
                     (scope["path"] == "/health/test_connection" and model == policy.physical_binding["provider_model_id"])), None)
                 if p is None:
                     raise ValueError("Model is not enabled for platform diagnostics. Select: " +
-                                     ", ".join(alias for policy in self.policies for alias in policy.aliases))
+                                     ", ".join(alias for policy in policies for alias in policy.aliases))
                 body = p.prepare(body,scope["path"])
             except ValueError as exc:
                 return await JSONResponse({"error":{"code":"diagnostic_validation_failed",

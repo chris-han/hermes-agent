@@ -50,7 +50,7 @@ def s6_host(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(root))
     for name in ("GATEWAY_MULTIPLEX_PROFILES", "TELEGRAM_BOT_TOKEN", "DISCORD_BOT_TOKEN", "API_SERVER_KEY"):
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setattr(hermes_constants, "_default_hermes_root_memo", None)
+    monkeypatch.setattr(hermes_constants, "_PROCESS_PROFILE_OWNER_ROOT", None)
     scandir = tmp_path / "run-service"
     fake = _FakeS6(scandir, up=set())
     monkeypatch.setattr(gw, "_running_under_s6", lambda: True)

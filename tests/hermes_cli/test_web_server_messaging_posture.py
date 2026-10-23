@@ -47,7 +47,7 @@ def client(monkeypatch, _isolate_hermes_home):
 
     home = get_hermes_home()
     monkeypatch.setattr(hermes_state, "DEFAULT_DB_PATH", home / "state.db")
-    monkeypatch.setattr(hermes_constants, "_default_hermes_root_memo", None)
+    monkeypatch.setattr(hermes_constants, "_PROCESS_PROFILE_OWNER_ROOT", None)
     # Liveness is a verified identity: this pytest process passes as the gateway
     # only while its probed command line matches the home being asked about
     # (``_command_line_belongs_to_profile``). The worker test below re-points the

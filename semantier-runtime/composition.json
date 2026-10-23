@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "parent_commit": "d6f0e64c8f1bf23a4640144ba541dad85b4017ac",
+  "parent_commit": "1b07c68c2a66f6e2d400a28e03ea0d553770d1e6",
   "files": [
     {
       "path": "MODEL-NOTICE.txt",
@@ -476,7 +476,7 @@
     },
     {
       "path": "src/agents/model_gateway/operator_diagnostics.py",
-      "sha256": "96042fa8ad93732a8b78d8815292f0788d4f1214759c4cb799cc28adcc183a87"
+      "sha256": "55999fb9008a625accca4127133f507dcf80c61abee2e465fceb08a3925f66b5"
     },
     {
       "path": "src/agents/model_gateway/physical_binding.py",
@@ -2912,7 +2912,7 @@
     },
     {
       "path": "src/plugins/sensevoice_stt/plugin.yaml",
-      "sha256": "6f9b9b32023ed14eefaf81203b4849240a308656283025c50c594aba88c4e671"
+      "sha256": "30d4401ab77ea0a327de930e74845edd4e1959cd11a35644b584c6a8c6848cbb"
     },
     {
       "path": "src/plugins/sensevoice_stt/provider.py",

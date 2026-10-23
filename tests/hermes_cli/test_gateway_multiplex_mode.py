@@ -37,7 +37,7 @@ def fleet(tmp_path, monkeypatch):
     monkeypatch.delenv("GATEWAY_MULTIPLEX_PROFILES", raising=False)
     for name in ("TELEGRAM_BOT_TOKEN", "DISCORD_BOT_TOKEN", "API_SERVER_KEY", "WEBHOOK_ENABLED"):
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setattr(hermes_constants, "_default_hermes_root_memo", None)
+    monkeypatch.setattr(hermes_constants, "_PROCESS_PROFILE_OWNER_ROOT", None)
     services: dict[str, list] = {}
     pids: dict[str, int] = {}
     monkeypatch.setattr(gm, "_installed_services", lambda home: services.get(_name(home), []))

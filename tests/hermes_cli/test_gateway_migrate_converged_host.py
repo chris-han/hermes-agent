@@ -40,7 +40,7 @@ def converged_host(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("HERMES_GATEWAY_LOCK_DIR", str(tmp_path / "locks"))
     monkeypatch.delenv("GATEWAY_MULTIPLEX_PROFILES", raising=False)
-    monkeypatch.setattr(hermes_constants, "_default_hermes_root_memo", None)
+    monkeypatch.setattr(hermes_constants, "_PROCESS_PROFILE_OWNER_ROOT", None)
     assert str(hermes_constants.get_default_hermes_root()).startswith(str(tmp_path))
 
     served = ["default", "coder", "ops"]

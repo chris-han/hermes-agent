@@ -31,7 +31,7 @@ def _use_home(monkeypatch, fake_home: Path, hermes_home: Path) -> None:
     (hermes_home / "config.yaml").write_text("{}\n", encoding="utf-8")
     monkeypatch.setenv("HOME", str(fake_home))
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
-    monkeypatch.setattr(hermes_constants, "_default_hermes_root_memo", None)
+    monkeypatch.setattr(hermes_constants, "_PROCESS_PROFILE_OWNER_ROOT", None)
     monkeypatch.setattr("gateway.status._get_process_hermes_home", lambda: hermes_home)
 
 

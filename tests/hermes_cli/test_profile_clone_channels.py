@@ -50,7 +50,7 @@ def home(tmp_path, monkeypatch):
     root.mkdir()
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     monkeypatch.setenv("HERMES_HOME", str(root))
-    monkeypatch.setattr(hermes_constants, "_default_hermes_root_memo", None)
+    monkeypatch.setattr(hermes_constants, "_PROCESS_PROFILE_OWNER_ROOT", None)
     for name in ("TELEGRAM_BOT_TOKEN", "DISCORD_BOT_TOKEN", "API_SERVER_KEY", "WHATSAPP_ENABLED",
                  "GATEWAY_MULTIPLEX_PROFILES", "TELEGRAM_ALLOWED_USERS"):
         monkeypatch.delenv(name, raising=False)
@@ -180,7 +180,7 @@ def test_clone_is_published_atomically_after_stripping(home, monkeypatch):
 
     assert seen == {"final_exists": False, "served": ["default"], "work_dir_hidden": True}
     assert profile_dir.is_dir() and [n for n, _ in profiles.profiles_to_serve(multiplex=True)] == ["default", "bot2"]
-    assert not [p for p in (home / "profiles").iterdir() if p.name.startswith(".")]
+    assert {p.name for p in (home / "profiles").iterdir() if p.name.startswith(".")} == {".lifecycle.lock"}
 
 
 def test_clone_channels_refusal_lives_in_create_profile(home, monkeypatch):

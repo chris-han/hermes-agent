@@ -25,7 +25,7 @@ def homes(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(root))
     for name in ("TELEGRAM_BOT_TOKEN", "DISCORD_BOT_TOKEN", "OPENAI_API_KEY"):
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setattr(hermes_constants, "_default_hermes_root_memo", None)
+    monkeypatch.setattr(hermes_constants, "_PROCESS_PROFILE_OWNER_ROOT", None)
     monkeypatch.setattr(gm, "_live_gateway_pid", lambda home: None)
     monkeypatch.setattr(gm, "_installed_services", lambda home: [])
     return root, root / "profiles" / "worker"

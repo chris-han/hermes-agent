@@ -45,6 +45,15 @@ _bootstrap_root = os.path.realpath(os.path.join(os.path.dirname(__file__), os.pa
 if _bootstrap_root not in sys.path:
     sys.path.insert(0, _bootstrap_root)
 from hermes_cli import _startup_fast
+
+# Run entrypoints through one canonical module. ``python -m`` and runpy wrappers
+# otherwise execute startup as __main__, then gateway helpers import a second
+# copy which has lost the consumed --profile flag and follows sticky selection.
+if __name__ == "__main__":
+    from hermes_cli.main import main as _entry_main
+    _entry_main()
+    raise SystemExit(0)
+
 import itertools
 
 # A literal ``~``/``$VAR`` in HERMES_HOME (fish, or any quoted value) must become absolute
@@ -601,7 +610,7 @@ def _apply_profile_override() -> None:
     profile_name, consume, profile_index = _scan_profile_flag(argv)
     # Desktop/CLI transports owner in HERMES_HOME and selection in --profile.
     # Legacy children with no selector may carry a validated active home instead.
-    owner = (get_default_hermes_root(home=os.environ.get("HERMES_HOME", ""))
+    owner = (get_default_hermes_root(home=os.environ.get("HERMES_HOME", ""), explicit_owner=True)
              if profile_name is not None else get_default_hermes_root())
     pin_profile_owner_root(owner)
     from_sticky_profile = False
@@ -3609,7 +3618,3 @@ def main():
             sys.exit(rc)
     else:
         parser.print_help()
-
-
-if __name__ == "__main__":
-    main()

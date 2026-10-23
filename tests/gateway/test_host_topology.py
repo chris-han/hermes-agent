@@ -87,9 +87,11 @@ def test_topology_ignores_another_tenants_record_and_reads_the_launch_homes_stat
     root_a, root_b = tmp_path / "hermes-a", tmp_path / "hermes-b"
     argus = root_b / "profiles" / "argus"
     argus.mkdir(parents=True)
+    (root_b / "config.yaml").write_text("{}\n")
+    (argus / "config.yaml").write_text("{}\n")
     monkeypatch.setenv("HERMES_GATEWAY_LOCK_DIR", str(tmp_path / "locks"))
     monkeypatch.setenv("HERMES_HOME", str(root_b))
-    monkeypatch.setattr("hermes_constants._default_hermes_root_memo", None)
+    monkeypatch.setattr("hermes_constants._PROCESS_PROFILE_OWNER_ROOT", None)
 
     hr.publish_record(hr.ROLE_GATEWAY, profiles=("default", "coder"), home=str(root_a))
     assert host_topology.host_gateway_topology() is None

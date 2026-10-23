@@ -43,7 +43,7 @@ def stranded(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_GATEWAY_LOCK_DIR", str(tmp_path / "locks"))
     for name in ("TELEGRAM_BOT_TOKEN", "DISCORD_BOT_TOKEN", "GATEWAY_MULTIPLEX_PROFILES"):
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setattr(hermes_constants, "_default_hermes_root_memo", None)
+    monkeypatch.setattr(hermes_constants, "_PROCESS_PROFILE_OWNER_ROOT", None)
     assert str(hermes_constants.get_default_hermes_root()).startswith(str(tmp_path))
 
     (root / gm.MANIFEST_NAME).write_text(json.dumps({

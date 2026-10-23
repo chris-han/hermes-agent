@@ -22,7 +22,7 @@ def fake_root(tmp_path, monkeypatch):
     root.mkdir()
     monkeypatch.setattr(hermes_constants.Path, "home", lambda: tmp_path)
     monkeypatch.setenv("HERMES_HOME", str(root))
-    monkeypatch.setattr(hermes_constants, "_default_hermes_root_memo", None, raising=False)
+    monkeypatch.setattr(hermes_constants, "_PROCESS_PROFILE_OWNER_ROOT", None, raising=False)
     return root
 
 

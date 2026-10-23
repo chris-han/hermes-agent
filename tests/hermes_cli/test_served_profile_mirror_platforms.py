@@ -35,7 +35,7 @@ def served_root(tmp_path, monkeypatch):
     # Liveness is a verified identity; this pytest process passes as the default gateway only by
     # wearing a gateway command line.
     monkeypatch.setattr(status, "_read_process_cmdline", lambda pid: "hermes gateway run")
-    monkeypatch.setattr(hermes_constants, "_default_hermes_root_memo", None)
+    monkeypatch.setattr(hermes_constants, "_PROCESS_PROFILE_OWNER_ROOT", None)
     return root
 
 
@@ -112,7 +112,7 @@ def test_messaging_card_for_the_default_home_rekeys_by_the_profile_not_the_dirna
     }
     monkeypatch.setenv("HERMES_HOME", str(root))
     import hermes_constants
-    monkeypatch.setattr(hermes_constants, "_default_hermes_root_memo", None)
+    monkeypatch.setattr(hermes_constants, "_PROCESS_PROFILE_OWNER_ROOT", None)
     # A launch-service gateway's record fails the own-rung argv check (inline ``-c``), so the card
     # falls through to the multiplexer rung — mirrored here by an absent own record.
     monkeypatch.setattr(messaging, "read_runtime_status", lambda *a, **k: None)

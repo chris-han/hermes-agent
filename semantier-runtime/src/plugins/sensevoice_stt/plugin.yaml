@@ -3,3 +3,4 @@ version: 0.2.0
 description: Pinned SenseVoice Small INT8 CPU transcription for local and managed Hermes.
 author: Semantier
 platforms: [windows, linux, macos]
+kind: backend

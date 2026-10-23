@@ -38,7 +38,7 @@ def served_root(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_GATEWAY_LOCK_DIR", str(tmp_path / "locks"))
     import hermes_constants
     from gateway import status
-    monkeypatch.setattr(hermes_constants, "_default_hermes_root_memo", None)
+    monkeypatch.setattr(hermes_constants, "_PROCESS_PROFILE_OWNER_ROOT", None)
     # Liveness is a VERIFIED identity: this pytest process stands in for the default gateway only
     # because its command line reads as one; any other PID keeps its real command line.
     real_cmdline = status._read_process_cmdline

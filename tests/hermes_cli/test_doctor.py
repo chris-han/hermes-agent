@@ -1643,7 +1643,7 @@ def test_profile_alias_status_follows_the_wrapper_the_profile_really_has(monkeyp
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
-    monkeypatch.setattr(hermes_constants, "_default_hermes_root_memo", None)
+    monkeypatch.setattr(hermes_constants, "_PROCESS_PROFILE_OWNER_ROOT", None)
     monkeypatch.setattr(gm, "duplicate_credential_findings", list)
     for name in ("dev", "ops", "work", "old"):
         (tmp_path / ".hermes" / "profiles" / name).mkdir(parents=True)

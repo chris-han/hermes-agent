@@ -72,7 +72,7 @@ def mux_home(tmp_path, monkeypatch):
         (root / "profiles" / name / ".env").write_text(f"LINE_CHANNEL_SECRET=secret-{name}\n")
     monkeypatch.setenv("HERMES_HOME", str(root))
     import hermes_constants
-    monkeypatch.setattr(hermes_constants, "_default_hermes_root_memo", None)
+    monkeypatch.setattr(hermes_constants, "_PROCESS_PROFILE_OWNER_ROOT", None)
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     from agent import secret_scope
     monkeypatch.setattr(secret_scope, "_MULTIPLEX_ACTIVE", True)

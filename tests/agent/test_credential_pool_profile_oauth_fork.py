@@ -35,7 +35,7 @@ def fleet(tmp_path, monkeypatch):
     # The pytest seat-belt in the root write-through compares the global path
     # against $HOME/.hermes/auth.json; our root is elsewhere, so writes go.
     import hermes_constants
-    hermes_constants._default_hermes_root_memo = None  # type: ignore[attr-defined]
+    hermes_constants._PROCESS_PROFILE_OWNER_ROOT = None  # type: ignore[attr-defined]
 
     expired = int((time.time() - 3600) * 1000)
     store = {
@@ -95,7 +95,7 @@ def fleet(tmp_path, monkeypatch):
     def use(home):
         """Switch the process to *home* (root or a profile dir)."""
         monkeypatch.setenv("HERMES_HOME", str(home))
-        hermes_constants._default_hermes_root_memo = None  # type: ignore[attr-defined]
+        hermes_constants._PROCESS_PROFILE_OWNER_ROOT = None  # type: ignore[attr-defined]
         import hermes_cli.auth as auth_mod
         auth_mod._global_auth_store_cache = None
         auth_mod._oauth_heal_clean_marks.clear()

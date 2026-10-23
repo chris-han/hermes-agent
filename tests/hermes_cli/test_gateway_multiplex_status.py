@@ -37,7 +37,7 @@ def _fake_multiplexer(monkeypatch, tmp_path, *, multiplex: bool, pid_file: bool 
         "start_time": status._get_process_start_time(os.getpid()), "hermes_home": str(tmp_path),
     }))
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / "profiles" / "beta"))
-    monkeypatch.setattr(hermes_constants, "_default_hermes_root_memo", None)
+    monkeypatch.setattr(hermes_constants, "_PROCESS_PROFILE_OWNER_ROOT", None)
     monkeypatch.setattr(
         status, "_read_process_cmdline", lambda pid: "python -m hermes_cli.main gateway run --replace"
     )

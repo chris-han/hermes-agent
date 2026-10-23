@@ -19,7 +19,7 @@ def multiplex_root(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(root))
     monkeypatch.delenv("API_SERVER_KEY", raising=False)
     import hermes_constants
-    monkeypatch.setattr(hermes_constants, "_default_hermes_root_memo", None)
+    monkeypatch.setattr(hermes_constants, "_PROCESS_PROFILE_OWNER_ROOT", None)
     from agent import secret_scope
     monkeypatch.setattr(secret_scope, "_MULTIPLEX_ACTIVE", True)
     return root

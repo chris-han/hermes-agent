@@ -231,24 +231,30 @@ def pin_profile_owner_root(root: str | Path | None) -> None:
     _PROCESS_PROFILE_OWNER_ROOT = None if root is None else _expand_hermes_home(str(root))
 
 
-def get_default_hermes_root(*, home: str | Path | None = None) -> Path:
+def get_default_hermes_root(*, home: str | Path | None = None, explicit_owner: bool = False) -> Path:
     """Host-bound owner, scoped owner, launch owner, then standalone startup home.
 
+    ``home`` is an active home lookup, including named profiles. CLI transports
+    can explicitly identify an owner with ``explicit_owner=True``.
     An explicit local root nested below the native home is still a distinct root.
     Legacy children launched with a named home retain the immediate profiles/name
     spelling at startup; subsequent profile switches use the frozen owner instead.
     """
-    boundary_module = sys.modules.get("gateway.execution_boundary")
-    boundary = boundary_module.current_execution_boundary() if boundary_module else None
-    if boundary is not None:
-        owner = boundary.paths.profile_owner_root
-        if owner is not None:
-            return Path(owner)
-        if boundary.policy.require_boundary:
-            raise RuntimeError("host-bound profile owner root required")
-    scoped = _PROFILE_OWNER_ROOT.get()
-    if scoped is not None:
-        return scoped
+    # An explicit-home lookup compares identities (including another tenant's
+    # owner); ambient binding must not collapse both operands to this host.
+    # No-argument lifecycle/mutation lookup remains strictly host-bound.
+    if home is None:
+        boundary_module = sys.modules.get("gateway.execution_boundary")
+        boundary = boundary_module.current_execution_boundary() if boundary_module else None
+        if boundary is not None:
+            owner = boundary.paths.profile_owner_root
+            if owner is not None:
+                return Path(owner)
+            if boundary.policy.require_boundary:
+                raise RuntimeError("host-bound profile owner root required")
+        scoped = _PROFILE_OWNER_ROOT.get()
+        if scoped is not None:
+            return scoped
     value = str(home).strip() if home is not None else os.environ.get("HERMES_HOME", "").strip()
     if home is None and _PROCESS_PROFILE_OWNER_ROOT is not None and value:
         active = _expand_hermes_home(value)
@@ -259,20 +265,19 @@ def get_default_hermes_root(*, home: str | Path | None = None) -> Path:
         return _get_platform_default_hermes_home()
     path = _expand_hermes_home(value)
     # An explicitly supplied startup owner is never inferred from its spelling.
-    if home is not None:
+    if explicit_owner:
         return path
     # Compatibility for old children carrying only an active home: require a
     # real profile identity plus an established namespace, not arbitrary ancestors.
     if path.parent.name == "profiles":
         root = path.parent.parent
-        profile_identity = any((path / marker).is_file() for marker in _HERMES_HOME_MARKERS)
+        profile_identity = named_profile_has_identity(path)
         owner_identity = (root == _get_platform_default_hermes_home() or root.name == ".hermes"
-            or any((root / marker).is_file() for marker in _HERMES_HOME_MARKERS))
+            or named_profile_has_identity(root))
         # A stale legacy active home may be gone while its sibling namespace
         # is established. Keep recovery commands at that owner, never recreate H.
         stale_legacy = (not path.exists() and path.parent.is_dir() and any(
-            child.is_dir() and not child.name.startswith(".") and any(
-                (child / marker).is_file() for marker in _HERMES_HOME_MARKERS)
+            child.is_dir() and not child.name.startswith(".") and named_profile_has_identity(child)
             for child in path.parent.iterdir()))
         if (profile_identity and owner_identity) or stale_legacy:
             return root

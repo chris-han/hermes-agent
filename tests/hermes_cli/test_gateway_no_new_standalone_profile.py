@@ -32,7 +32,7 @@ def quiet_host(tmp_path, monkeypatch):
         (root / "profiles" / name).mkdir(parents=True)
         (root / "profiles" / name / "config.yaml").write_text("{}\n")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-    monkeypatch.setattr(hermes_constants, "_default_hermes_root_memo", None)
+    monkeypatch.setattr(hermes_constants, "_PROCESS_PROFILE_OWNER_ROOT", None)
     monkeypatch.setattr(gw, "supports_systemd_services", lambda: True)
     monkeypatch.setattr(gw, "_service_backend", lambda: "systemd")
     monkeypatch.setattr(gw, "refuses_container_user_scope_install", lambda system: False)
@@ -46,7 +46,7 @@ def quiet_host(tmp_path, monkeypatch):
     def use(profile: str | None) -> None:
         home = root if profile is None else root / "profiles" / profile
         monkeypatch.setenv("HERMES_HOME", str(home))
-        hermes_constants._default_hermes_root_memo = None
+        hermes_constants._PROCESS_PROFILE_OWNER_ROOT = None
 
     return root, calls, use
 
