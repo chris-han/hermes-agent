@@ -297,3 +297,32 @@ def test_clean_run_cannot_delete_the_outputs_of_a_build_that_holds_the_lock(tmp_
         prepare(request, clean=True)
 
     assert running.read_text(encoding="utf-8") == "output of the build that holds the lock"
+
+
+def test_guarded_bundle_reuses_payload_python_for_icons(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from scripts.bundles import desktop_prepare as module, desktop, desktop_toolchain, desktop_inputs, native
+    from scripts.build import icon_environment
+    from pm.environments import venv_python
+    source, commit = _project(tmp_path)
+    request = SimpleNamespace(source=source, commit=commit, work=tmp_path / 'work', cache=tmp_path / 'cache',
+                              variant='bundled', target='win32-x64', workspaces=lambda: [], validate_channel=lambda: None)
+    request.work.mkdir()
+    monkeypatch.setattr(desktop_toolchain, 'prepare_tools', lambda *args: (Path(sys.executable), Path(sys.executable), {'HERMES_DESKTOP_NATIVE_TOOLCHAIN': 'fixture', 'UV_CACHE_DIR': str(request.cache)}))
+    def observed(cache, env, diagnostic):
+        diagnostic.update(complete=True)
+        return Path('observed')
+    monkeypatch.setattr(desktop_toolchain, 'native_cache_path', observed)
+    monkeypatch.setattr(desktop, 'run', lambda *args, **kwargs: None)
+    monkeypatch.setattr(desktop_inputs, 'identity_environment', lambda request, variant, env: env)
+    monkeypatch.setattr(native, 'prepare_native', lambda **kwargs: source / 'apps/desktop/build/agent-payload.prepared.json')
+    def forbidden(*args):
+        raise AssertionError('bundled icons must not install a second Python environment')
+    monkeypatch.setattr(icon_environment, 'prepare_icon_environment', forbidden)
+    captured = {}
+    def record(cls, request, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(write=lambda path: path.write_text('{}'))
+    monkeypatch.setattr(module.PreparedDesktop, 'record', classmethod(record))
+    module.prepare_in_worker(request)
+    assert captured['icon_python'] == venv_python(source / 'apps/desktop/build/agent-payload/venv')

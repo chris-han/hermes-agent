@@ -110,3 +110,26 @@ def test_launcher_keeps_user_cache_redirect_without_marker(tmp_path):
             tmp_path / "userhome" / ".cache" / "hermes-pycache")
     finally:
         sys.pycache_prefix = original
+
+
+def test_source_only_bake_keeps_dependency_bytecode_and_still_checks_coverage(tmp_path, monkeypatch):
+    import shutil
+    from scripts.bundles import bytecode
+    root = _make_payload(tmp_path)
+    bake_bytecode(root, Path(sys.executable))
+    dependencies = list((root / 'venv').rglob('*.pyc')) + list((root / 'pm-runtime').rglob('*.pyc'))
+    before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in dependencies}
+    shutil.rmtree(root / 'hermes-agent/pkg/__pycache__')
+    (root / 'hermes-agent/pkg/mod.py').write_text('X = 2\n')
+    original = bytecode.subprocess.run
+    calls = []
+    def run(command, **kwargs):
+        calls.append(command[-1])
+        return original(command, **kwargs)
+    monkeypatch.setattr(bytecode.subprocess, 'run', run)
+    bake_bytecode(root, Path(sys.executable), source_only=True)
+    assert calls == [str(root / 'hermes-agent')]
+    assert {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in dependencies} == before
+    dependencies[0].chmod(0o644); dependencies[0].unlink()
+    with pytest.raises(ValueError, match='have no bytecode'):
+        bake_bytecode(root, Path(sys.executable), source_only=True)

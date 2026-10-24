@@ -276,7 +276,7 @@ def clean_outputs(request: BuildRequest) -> None:
     from pm.filesystem import remove_tree
 
     from pm.filesystem import is_junction
-    from scripts.bundles.runtime_cache import retained_runtime, retention_path
+    from scripts.bundles.runtime_cache import retained_runtime, retention_path, dependencies_path
     require_output_roots(request.source)
     build = request.source / "apps/desktop/build"
     payload = build / "agent-payload"
@@ -289,7 +289,7 @@ def clean_outputs(request: BuildRequest) -> None:
     if keep:
         print(f"desktop build: retaining owned runtime candidate {payload}; admission follows", flush=True)
         for child in build.iterdir():
-            if child in (payload, retention_path(payload), payload.with_name(payload.name + ".prepare.lock")):
+            if child in (payload, retention_path(payload), dependencies_path(payload), payload.with_name(payload.name + ".prepare.lock")):
                 continue
             if child.is_symlink():
                 child.unlink()
@@ -373,12 +373,6 @@ def prepare_in_worker(request: BuildRequest) -> Path:
     run([str(node), "scripts/build/node-deps.mjs", "--source", str(request.source), "--reuse",
          "--native-toolchain", native_toolchain,
          *[arg for name in request.workspaces() for arg in ("--workspace", name)]], cwd=request.source, env=env)
-    icon_environment = request.work / "icon-environment"
-    if icon_environment.exists():
-        if icon_environment.is_symlink():
-            raise ValueError("icon environment must be preparation-owned, not a symlink")
-        shutil.rmtree(icon_environment)
-    icon_python = prepare_icon_environment(request.source, icon_environment, request.cache / "python/build")
     native = request.cache / "native/node" / native_toolchain
     run([str(node), "apps/desktop/scripts/stage-native-deps.mjs", "--source", str(request.source),
          "--out", str(native), "--native-toolchain", native_toolchain], cwd=request.source, env=env)
@@ -396,21 +390,37 @@ def prepare_in_worker(request: BuildRequest) -> Path:
          "--out", str(request.work / "native-probe"), "--native-toolchain", native_toolchain],
         cwd=request.source, env=env)
     payload = None
+    dependency_identity = None
     if request.variant != "light":
         runtime_cache = None
+        dependency_identity = None
         if request.target == "win32-x64":
             from scripts.bundles.desktop_toolchain import native_cache_path
-            from scripts.bundles.runtime_cache import runtime_key, diagnostic
+            from scripts.bundles.runtime_cache import runtime_key, dependency_key, diagnostic
             state = {}
             observed = native_cache_path(request.cache, env, diagnostic=state)
             if state["complete"]:
                 key = runtime_key(request.source, request.commit, observed.name, request.target)
                 runtime_cache = (request.cache / "native/runtime" / key, key)
+                dependency_identity = dependency_key(request.source, request.commit, observed.name, request.target)
             else:
                 diagnostic(request.cache, result="disabled", reason="incomplete-python-toolchain", missing=state["missing"])
         payload = prepare_native(out=request.source / "apps/desktop/build/agent-payload", ref=request.commit,
                                  source=request.source, cache=Path(env["UV_CACHE_DIR"]),
-                                 tools=request.cache / "tools", env=env, runtime_cache=runtime_cache)
+                                 tools=request.cache / "tools", env=env, runtime_cache=runtime_cache,
+                                 dependency_identity=dependency_identity)
+    if payload is not None and dependency_identity is not None:
+        from pm.environments import venv_python
+        # The admitted bundled environment already owns Pillow/resvg. Reuse it
+        # rather than creating another Python environment for every icon render.
+        icon_python = venv_python(request.source / "apps/desktop/build/agent-payload/venv")
+    else:
+        icon_environment = request.work / "icon-environment"
+        if icon_environment.exists():
+            if icon_environment.is_symlink():
+                raise ValueError("icon environment must be preparation-owned, not a symlink")
+            shutil.rmtree(icon_environment)
+        icon_python = prepare_icon_environment(request.source, icon_environment, request.cache / "python/build")
     require_source(request.source, request.commit)
     prepared = PreparedDesktop.record(request, python=python, node=node, icon_python=icon_python,
                                       native=native, packager=packager / "prepared.json", payload=payload,

@@ -241,7 +241,8 @@ def prune_staged_store(store_dir: Path, names: list[str]) -> None:
 
 def prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
                    tools: Path | None = None, env: dict | None = None,
-                   runtime_cache: tuple[Path, str] | None = None) -> Path:
+                   runtime_cache: tuple[Path, str] | None = None,
+                   dependency_identity: str | None = None) -> Path:
     """Prepare final payload dependencies inside the caller's isolated PM process.
 
     The caller supplies its compiler environment; only the full standalone
@@ -262,17 +263,21 @@ def prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
         (out / "manifest.json").unlink(missing_ok=True)
         from scripts.bundles.runtime_cache import measure
         log_root = Path(env["HERMES_DESKTOP_SERIAL_CACHE"]) if env and env.get("HERMES_DESKTOP_SERIAL_CACHE") else None
-        def cold():
+        def cold(reuse_dependencies=False):
             with measure(log_root, "runtime.prepare"):
+                extra = {"reuse_dependencies": True} if reuse_dependencies else {}
                 return _prepare_native(out=out, ref=ref, source=Path(source).resolve(),
-                                       cache=Path(cache).resolve(), tools=tools, env=env)
+                                       cache=Path(cache).resolve(), tools=tools, env=env, **extra)
         if runtime_cache is None:
             return cold()
         from scripts.bundles.runtime_cache import cache_lock, restore_cache, publish_cache
         entry, key = runtime_cache
         with cache_lock(entry):
             restored = restore_cache(entry, key, out, Path(source).resolve(), ref)
-            if restored is None and owned_candidate:
+            from scripts.bundles.runtime_cache import admit_dependencies, publish_dependencies, retain_runtime
+            reuse = (restored is None and owned_candidate and dependency_identity is not None
+                     and admit_dependencies(out, Path(source).resolve(), dependency_identity))
+            if restored is None and owned_candidate and not reuse:
                 from pm.filesystem import remove_tree
                 from scripts.bundles.runtime_cache import revoke_retention
                 same_key = retained_runtime(out, Path(source).resolve(), key)
@@ -282,15 +287,30 @@ def prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
                 if not same_key:
                     restored = restore_cache(entry, key, out, Path(source).resolve(), ref)
             if restored is not None:
+                if dependency_identity is not None:
+                    from scripts.bundles.native_prepared import load_prepared
+                    # This interpreter may also render build icons before assembly.
+                    # Admit retained bytes before any Python execution.
+                    load_prepared(restored)
+                    publish_dependencies(restored, dependency_identity)
                 print(f"runtime: reusing sealed preparation candidate {key}; byte admission follows", flush=True)
                 return restored
-            result = cold()
-            publish_cache(entry, key, out, result)
+            result = cold(reuse_dependencies=reuse)
+            if dependency_identity is not None:
+                publish_dependencies(result, dependency_identity)
+                # The fixed-layout dependency environment is already sealed and retained.
+                # Keep it through interrupted packaging without writing another multi-GB
+                # backend-bound archive; legacy whole-archive callers remain supported.
+                retain_runtime(out, Path(source).resolve(), key)
+                from scripts.bundles.runtime_cache import diagnostic
+                diagnostic(entry.parents[2], result='dependency-hit' if reuse else 'dependency-published', key=dependency_identity)
+            else:
+                publish_cache(entry, key, out, result)
             return result
 
 
 def _prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
-                    tools: Path | None, env: dict | None) -> Path:
+                    tools: Path | None, env: dict | None, reuse_dependencies: bool = False) -> Path:
     from pm import paths
     from pm.package import InstallError
 
@@ -319,23 +339,24 @@ def _prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
     ]
     from pm import prepare_tools, stage_tools
 
-    with measure(log_root, "runtime.tools.prepare"):
-        prepare_tools(names, out=Path(tools) if tools is not None else store_dir,
-                      target=current_target(), cache=cache)
-    if tools is not None:
-        with measure(log_root, "runtime.tools.copy"):
-            stage_tools(names, source_store=Path(tools), out=store_dir, target=current_target())
+    if not reuse_dependencies:
+        with measure(log_root, "runtime.tools.prepare"):
+            prepare_tools(names, out=Path(tools) if tools is not None else store_dir,
+                          target=current_target(), cache=cache)
+        if tools is not None:
+            with measure(log_root, "runtime.tools.copy"):
+                stage_tools(names, source_store=Path(tools), out=store_dir, target=current_target())
 
-    # Prune the staged store BEFORE the venv sync and packaging: drop the
-    # fetch-<sha> download-cache archives (needed only at install time — dead
-    # weight in the shipped payload AND in the CI cache that restores this
-    # dir) and any orphaned package versions left over from an older lock
-    # the cache carried in. A lean staged store = a lean CI cache.
+        # Prune the staged store BEFORE the venv sync and packaging: drop the
+        # fetch-<sha> download-cache archives (needed only at install time — dead
+        # weight in the shipped payload AND in the CI cache that restores this
+        # dir) and any orphaned package versions left over from an older lock
+        # the cache carried in. A lean staged store = a lean CI cache.
 
-    # Only this build's store is ours to prune; machine-wide partials are not.
-    # Cached facts may still name packages removed from the current selection.
-    # Retain the dependency closure before using facts as the deletion roots.
-    prune_staged_store(store_dir, names)
+        # Only this build's store is ours to prune; machine-wide partials are not.
+        # Cached facts may still name packages removed from the current selection.
+        # Retain the dependency closure before using facts as the deletion roots.
+        prune_staged_store(store_dir, names)
 
 
     facts = Facts(store_dir / "facts.json")
@@ -348,23 +369,24 @@ def _prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
 
     if python_bin is None:
         raise FileNotFoundError("staged Python executable is missing")
-    with measure(log_root, "runtime.pm-environment"):
-        stage_pm_runtime(out, python_bin, repo_dir, cache=cache)
-    print("✓ pm-runtime (independent locked dependencies)", flush=True)
-
-    # Build + sync INSIDE the staged repo: the editable project install
-    # must point at the payload's own tree, not this checkout.
     venv_dir = out / "venv"
-    if venv_dir.exists():
-        shutil.rmtree(venv_dir)
-    env = dict(build_env)
-    from pm import build_environment
+    if not reuse_dependencies:
+        with measure(log_root, "runtime.pm-environment"):
+            stage_pm_runtime(out, python_bin, repo_dir, cache=cache)
+        print("✓ pm-runtime (independent locked dependencies)", flush=True)
 
-    # Cold native wheels need a larger budget than interactive installs.
-    with measure(log_root, "runtime.environment"):
-        build_environment(source=repo_dir, python=python_bin, out=venv_dir,
-                          env=env, cache=cache, all_extras=True, sealed=True, explicit=True,
-                          timeout=2 * 60 * 60)
+        # Build + sync INSIDE the staged repo: the editable project install
+        # must point at the payload's own tree, not this checkout.
+        if venv_dir.exists():
+            shutil.rmtree(venv_dir)
+        env = dict(build_env)
+        from pm import build_environment
+
+        # Cold native wheels need a larger budget than interactive installs.
+        with measure(log_root, "runtime.environment"):
+            build_environment(source=repo_dir, python=python_bin, out=venv_dir,
+                              env=env, cache=cache, all_extras=True, sealed=True, explicit=True,
+                              timeout=2 * 60 * 60)
     print("✓ venv (declared distribution selection, on the staged interpreter)")
 
     # Inventory the staged interpreter before publishing the bundle contract.
@@ -389,33 +411,34 @@ def _prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
     # plugin extras, feature changes — resolves entirely from the shipped
     # wheels with zero network access, on every profile of this install.
     payload_cache = out / "uv-cache"
-    if payload_cache.exists():
-        shutil.rmtree(payload_cache, ignore_errors=True)
-    src_cache = cache
-    if src_cache.is_dir():
-        print(f"  uv-cache: copying {src_cache} → payload...", flush=True)
-        with measure(log_root, "runtime.uv-cache"):
-            stage_uv_cache(src_cache, payload_cache)
-            resolved = installed_package_names(venv_dir, python_exe=python_bin) if selected is not None else None
-            pruned = prune_uv_cache_to_lock(payload_cache, repo_dir, selected_packages=resolved)
-        print(f"✓ uv-cache (lock-scoped: pruned {pruned} stale entries; offline rebuilds resolve from shipped wheels)", flush=True)
-    else:
-        raise InstallError("uv-cache", "runtime dependency cache is missing")
+    if not reuse_dependencies:
+        if payload_cache.exists():
+            shutil.rmtree(payload_cache, ignore_errors=True)
+        src_cache = cache
+        if src_cache.is_dir():
+            print(f"  uv-cache: copying {src_cache} → payload...", flush=True)
+            with measure(log_root, "runtime.uv-cache"):
+                stage_uv_cache(src_cache, payload_cache)
+                resolved = installed_package_names(venv_dir, python_exe=python_bin) if selected is not None else None
+                pruned = prune_uv_cache_to_lock(payload_cache, repo_dir, selected_packages=resolved)
+            print(f"✓ uv-cache (lock-scoped: pruned {pruned} stale entries; offline rebuilds resolve from shipped wheels)", flush=True)
+        else:
+            raise InstallError("uv-cache", "runtime dependency cache is missing")
 
-    if current_target().startswith("win32-"):
-        with measure(log_root, "runtime.offline-cache-validation"):
-            verify_offline_cache(out, python_bin, env)
-        print("✓ offline cache (full frozen distribution-selection writable rebuild)", flush=True)
+        if current_target().startswith("win32-"):
+            with measure(log_root, "runtime.offline-cache-validation"):
+                verify_offline_cache(out, python_bin, env)
+            print("✓ offline cache (full frozen distribution-selection writable rebuild)", flush=True)
 
-    bad = _arch_guard(store_dir)
-    for line in bad:
-        print(f"✗ arch: {line}")
-    if bad:
-        raise InstallError("tools", "native architecture verification failed")
-    from scripts.bundles.payload import record_tools
-    recorded = {name: fact["entry"] for name in names if (fact := facts.get(name)) and "entry" in fact}
-    with measure(log_root, "runtime.tool-digests"):
-        record_tools(out, paths.lockfile_path(), current_target(), recorded)
+        bad = _arch_guard(store_dir)
+        for line in bad:
+            print(f"✗ arch: {line}")
+        if bad:
+            raise InstallError("tools", "native architecture verification failed")
+        from scripts.bundles.payload import record_tools
+        recorded = {name: fact["entry"] for name in names if (fact := facts.get(name)) and "entry" in fact}
+        with measure(log_root, "runtime.tool-digests"):
+            record_tools(out, paths.lockfile_path(), current_target(), recorded)
     from scripts.build.inputs import AgentInputs, RESOURCE_ENV, dependency_site
     from scripts.bundles.native_prepared import publish_prepared
 
@@ -427,7 +450,7 @@ def _prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
         relativize_links(out)
     from scripts.bundles.bytecode import bake_bytecode
     with measure(log_root, "runtime.bytecode"):
-        baked = bake_bytecode(out, python_bin)
+        baked = bake_bytecode(out, python_bin, **({"source_only": True} if reuse_dependencies else {}))
     print(f"✓ baked bytecode ({baked['modules']} modules, unchecked-hash, read-only caches)")
     inputs = AgentInputs(
         project=repo_dir / "pyproject.toml", code=repo_dir, repo="hermes-agent",

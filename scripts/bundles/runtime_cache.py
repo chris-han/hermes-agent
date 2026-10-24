@@ -55,6 +55,67 @@ def runtime_key(source: Path, revision: str, toolchain: str, target: str) -> str
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
 
+# These components stay at the admitted absolute layout across source-only builds.
+DEPENDENCY_COMPONENTS = frozenset({'tools', 'venv', 'pm-runtime', 'uv-cache', 'enabled-features.json'})
+
+
+def dependency_key(source: Path, revision: str, toolchain: str, target: str) -> str:
+    """Install inputs, independently of the application's Python source commit."""
+    tree = subprocess.check_output(['git', 'ls-tree', '-r', '-z', revision], cwd=source)
+    recipes = {'pyproject.toml', 'uv.lock', 'setup.py', 'setup.cfg', 'MANIFEST.in', 'scripts/bundles/native.py',
+               'scripts/bundles/native_prepared.py', 'scripts/bundles/runtime_cache.py', 'scripts/bundles/bytecode.py',
+               'scripts/build/inputs.py', 'scripts/bundles/payload.py'}
+    selected = []
+    for row in tree.split(b'\0'):
+        if row:
+            metadata, name = row.split(b'\t', 1)
+            path = name.decode('utf-8')
+            if path in recipes or path.startswith('pm/'):
+                selected.append([metadata.decode('ascii'), path])
+    value = {'schema': 1, 'tree': selected, 'toolchain': toolchain, 'target': target,
+             'sourceLayout': str(source.resolve())}
+    return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+
+
+def dependencies_path(out: Path) -> Path:
+    return out.with_name(out.name + '.dependencies.json')
+
+
+def publish_dependencies(prepared: Path, key: str) -> None:
+    """Reuse the fresh preparation digests; no second copy or environment relocation."""
+    from hermes_cli.runtime_state import _atomic_bytes
+    data = json.loads(prepared.read_text(encoding='utf-8-sig'))
+    components = {name: data['digests'][name] for name in sorted(DEPENDENCY_COMPONENTS)}
+    record = {'schema': 1, 'key': key, 'out': data['out'], 'source': data['source'],
+              'producedAt': datetime.now(timezone.utc).isoformat(),
+              'preparedRevision': data['revision'], 'components': components}
+    _atomic_bytes(dependencies_path(Path(data['out'])), json.dumps(record).encode())
+
+
+def admit_dependencies(out: Path, source: Path, key: str) -> bool:
+    """Fresh current-byte/link admission, never a timestamp or receipt-only hit."""
+    from concurrent.futures import ThreadPoolExecutor
+    from scripts.bundles.native_prepared import _owned, _check_links, _digest
+    try:
+        receipt = dependencies_path(out)
+        if receipt.is_symlink() or out.absolute() != out.resolve():
+            return False
+        data = json.loads(receipt.read_text(encoding='utf-8-sig'))
+        if (data['schema'] != 1 or data['key'] != key or data['out'] != str(out)
+                or data['source'] != str(source) or set(data['components']) != DEPENDENCY_COMPONENTS):
+            return False
+        def matches(item):
+            name, expected = item
+            path = out / name
+            _owned(path, out)
+            _check_links(path, out)
+            return _digest(path) == expected
+        with ThreadPoolExecutor(max_workers=4) as readers:
+            return all(readers.map(matches, data['components'].items()))
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+        return False
+
+
 @contextmanager
 def cache_lock(entry: Path):
     from hermes_cli.runtime_state import _lock

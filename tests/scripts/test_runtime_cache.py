@@ -232,3 +232,128 @@ def test_empty_linked_restore_output_cannot_write_outside_owner(tmp_path):
     with pytest.raises(ValueError,match='symlinked native output'):
         restore_cache(cache,'key',out,tmp_path,'b'*40)
     assert not list(outside.iterdir())
+
+
+def test_dependency_key_ignores_application_source_but_tracks_install_inputs(tmp_path):
+    from scripts.bundles.runtime_cache import dependency_key
+    git(tmp_path, 'init'); git(tmp_path, 'config', 'user.name', 'Fixture'); git(tmp_path, 'config', 'user.email', 'fixture@example.invalid')
+    for name in ['entry.py', 'uv.lock', 'pyproject.toml', 'pm/lock.json', 'scripts/bundles/native.py']:
+        p = tmp_path / name; p.parent.mkdir(parents=True, exist_ok=True); p.write_text('one')
+    def key(toolchain='observed', target='win32-x64'):
+        git(tmp_path, 'add', '.'); git(tmp_path, 'commit', '--allow-empty', '-m', 'fixture')
+        return dependency_key(tmp_path, git(tmp_path, 'rev-parse', 'HEAD'), toolchain, target)
+    first = key()
+    (tmp_path / 'entry.py').write_text('new backend')
+    assert key() == first
+    assert key('other interpreter/compiler') != first
+    assert key(target='win32-arm64') != first
+    for name in ['uv.lock', 'pyproject.toml', 'pm/lock.json', 'scripts/bundles/native.py']:
+        before = key(); (tmp_path / name).write_text('changed dependency or recipe')
+        assert key() != before
+
+
+def test_dependency_receipt_admits_unchanged_environment_across_source_changes(tmp_path):
+    from scripts.bundles.runtime_cache import publish_dependencies, admit_dependencies, dependencies_path
+    out, prepared = payload(tmp_path)
+    publish_dependencies(prepared, 'deps')
+    assert admit_dependencies(out, tmp_path, 'deps')
+    (out / 'hermes-agent/entry.py').write_text('updated source')
+    assert admit_dependencies(out, tmp_path, 'deps')
+    assert not admit_dependencies(out, tmp_path, 'new-deps')
+    assert not admit_dependencies(out, tmp_path / 'other-source', 'deps')
+    (out / 'venv/Lib/site-packages/corrupt.py').write_text('changed dependency bytes')
+    assert not admit_dependencies(out, tmp_path, 'deps')
+    assert dependencies_path(out).is_file()  # retain failed receipt for diagnosis
+
+
+def test_backend_key_miss_reuses_dependencies_without_publishing_another_whole_archive(tmp_path, monkeypatch):
+    from scripts.bundles import native
+    from scripts.bundles.runtime_cache import publish_dependencies, retain_runtime
+    from scripts.bundles.native_prepared import publish_prepared, load_prepared
+    from scripts.build.inputs import AgentInputs
+    out, prepared = payload(tmp_path)
+    publish_dependencies(prepared, 'deps'); retain_runtime(out, tmp_path, 'old-backend')
+    sentinel = out / 'venv/Lib/site-packages/keep.py'; sentinel.write_text('dependency')
+    # Seal the fixture after its final dependency content is written.
+    data = json.loads(prepared.read_text()); inputs = AgentInputs.from_dict(data['inputs'])
+    prepared = publish_prepared(out, tmp_path, 'a' * 40, inputs); publish_dependencies(prepared, 'deps')
+    inode = sentinel.stat().st_ino
+    def refresh(**kwargs):
+        assert kwargs['reuse_dependencies'] is True
+        assert sentinel.stat().st_ino == inode
+        (out / 'hermes-agent/entry.py').write_text('new backend')
+        current = AgentInputs.from_dict({**data['inputs'], 'ref': 'b' * 40})
+        return publish_prepared(out, tmp_path, 'b' * 40, current)
+    monkeypatch.setattr(native, '_prepare_native', refresh)
+    entry = tmp_path / 'native/runtime/new-backend'
+    result = native.prepare_native(out=out, ref='b' * 40, source=tmp_path, cache=tmp_path / 'wheels',
+                                  runtime_cache=(entry, 'new-backend'), dependency_identity='deps')
+    assert load_prepared(result).ref == 'b' * 40
+    assert (out / 'hermes-agent/entry.py').read_text() == 'new backend'
+    assert sentinel.stat().st_ino == inode
+    assert not (entry / 'runtime.tar').exists()
+
+
+def test_source_refresh_calls_real_native_flow_without_installing_dependencies(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from scripts.bundles import native, payload as payload_module, bytecode
+    from scripts.bundles.native_prepared import load_prepared
+    from pm import paths
+    import pm
+    import pm.features
+    from pm.packages import Venv
+    out, prepared = payload(tmp_path)
+    (out / 'hermes-agent/pm').mkdir()
+    (out / 'hermes-agent/pm/lock.json').write_bytes(paths.lockfile_path().read_bytes())
+    # The staged PM authority points to the fixture's existing interpreter.
+    monkeypatch.setattr(native, 'Facts', lambda path: SimpleNamespace(
+        get=lambda name: {'entry': 'python', 'version': '3.14.7'}, record_state=lambda *args: None))
+    def forbid(*args, **kwargs):
+        raise AssertionError('source-only preparation must not acquire/copy/install dependencies')
+    monkeypatch.setattr(native, 'get_package', lambda name: SimpleNamespace(binary=lambda *args: out / 'tools/python/python.exe'))
+    monkeypatch.setattr(native, '_bundle_package_names', lambda: [])
+    monkeypatch.setattr(pm, 'prepare_tools', forbid)
+    monkeypatch.setattr(pm, 'stage_tools', forbid)
+    monkeypatch.setattr(pm, 'build_environment', forbid)
+    monkeypatch.setattr(native, 'stage_pm_runtime', forbid)
+    monkeypatch.setattr(native, 'verify_offline_cache', forbid)
+    monkeypatch.setattr(payload_module, 'snapshot', lambda *args, **kwargs: (out / 'hermes-agent/entry.py').write_text('new backend'))
+    monkeypatch.setattr(native.subprocess, 'check_output', lambda *args, **kwargs: 'b' * 40)
+    monkeypatch.setattr(pm.features, 'installed_extras', lambda *args, **kwargs: [])
+    monkeypatch.setattr(pm.features, 'distribution_extras', lambda *args, **kwargs: None)
+    monkeypatch.setattr(Venv, 'expected_stamp', lambda *args, **kwargs: 'fixture-stamp')
+    monkeypatch.setattr(bytecode, 'bake_bytecode', lambda *args, **kwargs: {'modules': 1})
+    import scripts.build.inputs
+    monkeypatch.setattr(scripts.build.inputs, 'dependency_site', lambda *args: out / 'venv/Lib/site-packages')
+    environment_inode = (out / 'venv').stat().st_ino
+    result = native._prepare_native(out=out, ref='b' * 40, source=tmp_path, cache=tmp_path / 'wheels',
+                                    tools=None, env={}, reuse_dependencies=True)
+    assert load_prepared(result).ref == 'b' * 40
+    assert (out / 'hermes-agent/entry.py').read_text() == 'new backend'
+    assert (out / 'venv').stat().st_ino == environment_inode
+
+
+def test_completed_dependencies_survive_interrupted_desktop_build_without_archives(tmp_path, monkeypatch):
+    from scripts.bundles import native, runtime_cache as cache_module
+    from scripts.bundles.native_prepared import publish_prepared
+    from scripts.build.inputs import AgentInputs
+    out = tmp_path / 'output'; entry = tmp_path / 'native/runtime/key'
+    def cold(**kwargs):
+        out.rmdir()
+        return payload(tmp_path, out)[1]
+    def archive_forbidden(*args):
+        raise AssertionError('in-place dependency reuse needs no whole archive')
+    monkeypatch.setattr(native, '_prepare_native', cold)
+    monkeypatch.setattr(cache_module, 'publish_cache', archive_forbidden)
+    result = native.prepare_native(out=out, ref='a' * 40, source=tmp_path, cache=tmp_path / 'wheels',
+                                   runtime_cache=(entry, 'key'), dependency_identity='deps')
+    # The desktop build may stop after preparation; dependency ownership is durable.
+    assert cache_module.retained_runtime(out, tmp_path)
+    assert cache_module.admit_dependencies(out, tmp_path, 'deps')
+    data = json.loads(result.read_text())
+    def warm(**kwargs):
+        assert kwargs['reuse_dependencies'] is True
+        return publish_prepared(out, tmp_path, 'b' * 40, AgentInputs.from_dict({**data['inputs'], 'ref': 'b' * 40}))
+    monkeypatch.setattr(native, '_prepare_native', warm)
+    native.prepare_native(out=out, ref='b' * 40, source=tmp_path, cache=tmp_path / 'wheels',
+                          runtime_cache=(entry, 'key'), dependency_identity='deps')

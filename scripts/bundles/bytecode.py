@@ -74,20 +74,26 @@ def _uncovered(root: Path) -> tuple[list[Path], int]:
     return missing, unparseable
 
 
-def bake_bytecode(root: Path, python: Path) -> dict:
+def bake_bytecode(root: Path, python: Path, *, source_only: bool = False) -> dict:
     """Compile every payload module with the staged interpreter and seal the
     caches read-only. ``root`` is the payload root; ``python`` MUST be the
-    payload's own staged interpreter binary."""
+    payload's own staged interpreter binary. With admitted dependency reuse,
+    source_only compiles application source while retaining dependency bytecode;
+    complete coverage is still required for every import root."""
     root = Path(root).resolve()
     python = Path(python).resolve()
     if not python.is_file():
         raise FileNotFoundError(f"staged interpreter is missing: {python}")
     total = 0
-    for source_root in _import_roots(root):
-        subprocess.run(
-            [str(python), "-I", "-m", "compileall", "-q",
-             "--invalidation-mode", "unchecked-hash", str(source_root)],
-            check=True, timeout=30 * 60, stdin=subprocess.DEVNULL)
+    roots = _import_roots(root)
+    for index, source_root in enumerate(roots):
+        # Retained dependencies already have sealed unchecked-hash bytecode.
+        # Recompiling it would overwrite read-only files on Windows.
+        if not source_only or index == 0:
+            subprocess.run(
+                [str(python), "-I", "-m", "compileall", "-q",
+                 "--invalidation-mode", "unchecked-hash", str(source_root)],
+                check=True, timeout=30 * 60, stdin=subprocess.DEVNULL)
         missing, _unparseable = _uncovered(source_root)
         if missing:
             sample = ", ".join(str(m.relative_to(root)) for m in missing[:5])
