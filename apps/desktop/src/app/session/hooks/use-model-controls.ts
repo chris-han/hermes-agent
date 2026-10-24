@@ -267,6 +267,9 @@ export function useModelControls({
         ? $currentReasoningEffortWire.get()
         : ($sessionStates.get()[liveSessionId!]?.reasoningEffortWire ?? '')
 
+      // Live surfaces read their own slice, including the primary pane. Keep
+      // its rollback snapshot separate from the sticky draft selection.
+      const prevSession = liveSessionId ? $sessionStates.get()[liveSessionId] : undefined
       const prevSource = getCurrentModelSource()
       const liveGatewayProfile = cacheProfile || $activeGatewayProfile.get()
 
@@ -275,8 +278,10 @@ export function useModelControls({
           setCurrentModel(selection.model)
           setCurrentProvider(selection.provider)
           markComposerSelectionManual()
-        } else if (liveSessionId) {
-          // Optimistic tile paint — session.info will confirm; rollback on error. The wire stamp
+        }
+
+        if (liveSessionId) {
+          // Optimistic live paint — session.info will confirm; rollback on error. The wire stamp
           // belongs to the old route, so it is withdrawn until session.info re-stamps it.
           sessionTileDelegate()?.updateSession(liveSessionId, state => ({
             ...state,
@@ -292,22 +297,24 @@ export function useModelControls({
       }
 
       const rollbackSelection = () => {
+        if (liveSessionId) {
+          sessionTileDelegate()?.updateSession(liveSessionId, state => ({
+            ...state,
+            model: prevSession?.model ?? prevModel,
+            provider: prevSession?.provider ?? prevProvider,
+            reasoningEffortWire: prevSession ? (prevSession.reasoningEffortWire ?? '') : prevWire
+          }))
+        }
+
         if (touchesPrimary) {
           setCurrentModel(prevModel)
           setCurrentProvider(prevProvider)
           // The setters withdraw the wire stamp on a change; the old route's stamp is still true.
           setCurrentReasoningEffortWire(prevWire)
           setCurrentModelSource(prevSource)
-        } else if (liveSessionId) {
-          sessionTileDelegate()?.updateSession(liveSessionId, state => ({
-            ...state,
-            model: prevModel,
-            provider: prevProvider,
-            reasoningEffortWire: prevWire
-          }))
         }
 
-        cacheSelection(prevProvider, prevModel)
+        cacheSelection(prevSession?.provider ?? prevProvider, prevSession?.model ?? prevModel)
       }
 
       paintSelection()
@@ -378,7 +385,10 @@ export function useModelControls({
               touchesPrimary
                 ? $activeSessionId.get() !== liveSessionId ||
                   $currentModel.get() !== prevModel ||
-                  $currentProvider.get() !== prevProvider
+                  $currentProvider.get() !== prevProvider ||
+                  (prevSession !== undefined &&
+                    ($sessionStates.get()[liveSessionId]?.model !== prevSession.model ||
+                      $sessionStates.get()[liveSessionId]?.provider !== prevSession.provider))
                 : !liveSessionId ||
                   $sessionStates.get()[liveSessionId]?.model !== prevModel ||
                   $sessionStates.get()[liveSessionId]?.provider !== prevProvider,

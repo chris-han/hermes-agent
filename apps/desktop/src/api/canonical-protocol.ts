@@ -560,6 +560,14 @@ export class CanonicalDesktopProtocol {
   private mutationReceipt(method: string, params: Record<string, unknown>, value: any): any {
     if (value.session_id !== params.session_id) { throw new Error('Metadata receipt destination mismatch') }
 
+    // A model edit advances execution identity before the next preset write.
+    // Adopt its acknowledgement immediately; replayed receipts cannot regress it.
+    const owner = canonicalSessionKey(value.session_id, params.profile)
+
+    if (typeof value.execution_generation === 'number' && value.execution_generation > (this.generations.get(owner) ?? -1)) {
+      this.generations.set(owner, value.execution_generation)
+    }
+
     for (const [key, mutation] of this.mutations) { if (mutation.request_id === params.request_id) { this.mutations.delete(key) } }
     this.settleModelConfirmation(params)
     this.retireSupersededMutations(params, value.revision)

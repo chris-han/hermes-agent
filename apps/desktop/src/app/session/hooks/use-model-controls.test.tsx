@@ -2,7 +2,9 @@ import { QueryClient } from '@tanstack/react-query'
 import { act, cleanup, render, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { PRIMARY_SESSION_VIEW } from '@/app/chat/session-view'
 import { getGlobalModelInfo } from '@/hermes'
+import { createClientSessionState } from '@/lib/chat-runtime'
 import { modelOptionsQueryKey } from '@/lib/model-options'
 import { $activeGatewayProfile } from '@/store/profile'
 import {
@@ -88,6 +90,7 @@ function Harness({
 
 describe('useModelControls', () => {
   beforeEach(() => {
+    tile.delegate = null
     confirmMock.mockReset()
     notifyError.mockReset()
     $activeGatewayProfile.set('default')
@@ -108,6 +111,90 @@ describe('useModelControls', () => {
     setCurrentProvider('')
     SessionStates.$sessionStates.set({})
   })
+
+  function seedLivePrimary() {
+    const runtimeId = 'runtime-primary'
+    $activeSessionId.set(runtimeId)
+    setCurrentModel('draft-model')
+    setCurrentProvider('draft-provider')
+    setCurrentReasoningEffortWire('draft-wire')
+    SessionStates.publishSessionState(runtimeId, {
+      ...createClientSessionState('stored-primary'),
+      model: 'live-model',
+      provider: 'live-provider',
+      reasoningEffortWire: 'live-wire'
+    })
+    tile.delegate = {
+      updateSession: (
+        id: string,
+        update: (state: ReturnType<typeof createClientSessionState>) => ReturnType<typeof createClientSessionState>
+      ) => {
+        SessionStates.publishSessionState(id, update(SessionStates.$sessionStates.get()[id]!))
+      }
+    }
+  }
+
+  it('updates the live primary selector before the gateway answers and keeps it after success', async () => {
+    seedLivePrimary()
+    const response = deferred<never>()
+
+    const { result } = renderHook(() =>
+      useModelControls({
+        queryClient: new QueryClient(),
+        requestGateway: vi.fn(() => response.promise)
+      })
+    )
+
+    const switched = result.current.selectModel({ model: 'new-model', provider: 'new-provider' })
+
+    expect(PRIMARY_SESSION_VIEW.$model.get()).toBe('new-model')
+    expect(PRIMARY_SESSION_VIEW.$provider.get()).toBe('new-provider')
+    expect(PRIMARY_SESSION_VIEW.$reasoningEffortWire.get()).toBe('')
+    response.resolve({} as never)
+    await expect(switched).resolves.toBe(true)
+    expect(PRIMARY_SESSION_VIEW.$model.get()).toBe('new-model')
+  })
+
+  it.each(['failure', 'decline', 'confirm', 'stale'] as const)(
+    'restores the live selector own route on %s with a different draft pick',
+    async outcome => {
+      seedLivePrimary()
+      const requestGateway = vi.fn()
+
+      if (outcome === 'failure') {
+        requestGateway.mockRejectedValueOnce(new Error('unavailable'))
+      } else {
+        requestGateway.mockResolvedValueOnce({ confirm_required: true }).mockResolvedValueOnce({})
+      }
+
+      const answer = deferred<boolean>()
+      confirmMock.mockReturnValueOnce(answer.promise)
+      const { result } = renderHook(() => useModelControls({ queryClient: new QueryClient(), requestGateway }))
+
+      await expect(result.current.selectModel({ model: 'new-model', provider: 'new-provider' })).resolves.toBe(false)
+      expect(PRIMARY_SESSION_VIEW.$model.get()).toBe('live-model')
+      expect(PRIMARY_SESSION_VIEW.$provider.get()).toBe('live-provider')
+      expect(PRIMARY_SESSION_VIEW.$reasoningEffortWire.get()).toBe('live-wire')
+      expect($currentModel.get()).toBe('draft-model')
+      expect($currentProvider.get()).toBe('draft-provider')
+      expect($currentReasoningEffortWire.get()).toBe('draft-wire')
+
+      if (outcome !== 'failure') {
+        if (outcome === 'stale') {
+          SessionStates.publishSessionState('runtime-primary', {
+            ...SessionStates.$sessionStates.get()['runtime-primary']!,
+            model: 'external-model'
+          })
+        }
+
+        await act(async () => answer.resolve(outcome === 'confirm' || outcome === 'stale'))
+        await waitFor(() => expect(requestGateway).toHaveBeenCalledTimes(outcome === 'confirm' ? 2 : 1))
+        expect(PRIMARY_SESSION_VIEW.$model.get()).toBe(
+          outcome === 'confirm' ? 'new-model' : outcome === 'stale' ? 'external-model' : 'live-model'
+        )
+      }
+    }
+  )
 
   it('writes optimistic selections only to the owning connection cache', async () => {
     const queryClient = new QueryClient()

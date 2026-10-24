@@ -241,3 +241,22 @@ test('a message-level branch carries its durable boundary row; a whole-chat bran
   expect(() => protocol.prepare('session.branch', { session_id: 's', count: 2 })).toThrow(/not saved yet/)
   expect(protocol.prepare('session.branch', { session_id: 's' })).toMatchObject({ payload: {} })
 })
+
+test('model acknowledgements advance the next preset generation without regressing on a replay or crossing profiles', () => {
+  const protocol = new CanonicalDesktopProtocol()
+
+  for (const profile of ['default', 'other']) {
+    protocol.result('session.resume', { session_id: 's', profile }, { session_id: 's', revision: 27, execution_generation: 27 })
+  }
+
+  const pick = protocol.prepare('config.set', { session_id: 's', key: 'model', value: 'qwen --provider cloud' })
+  const receipt = { session_id: 's', revision: 28, execution_generation: 28, operation: 'model', model: 'qwen', provider: 'cloud' }
+  protocol.result('config.set', pick, receipt)
+
+  const preset = protocol.prepare('config.set', { session_id: 's', key: 'reasoning', value: 'medium' })
+  expect(preset).toMatchObject({ operation: 'reasoning', expected_revision: 28, expected_generation: 28 })
+  protocol.event({ type: 'session.info', session_id: 's', payload: { revision: 30, execution_generation: 30 } })
+  protocol.result('config.set', pick, receipt)
+  expect(protocol.prepare('session.interrupt', { session_id: 's' })).toMatchObject({ execution_generation: 30 })
+  expect(protocol.prepare('session.interrupt', { session_id: 's', profile: 'other' })).toMatchObject({ execution_generation: 27 })
+})
