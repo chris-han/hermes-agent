@@ -465,14 +465,14 @@ describe('ProvidersSettings', () => {
     }
   })
 
-  it('opens Semantier Cloud from the featured card without starting Nous sign-in', async () => {
+  it('preserves explicit Nous sign-in without branding it as Semantier Cloud', async () => {
     const open = vi.spyOn(externalLinks, 'openExternalLink').mockImplementation(() => {})
     listOAuthProviders.mockResolvedValue({ providers: [provider('nous', false)] })
     render(<ProvidersSettings onClose={vi.fn()} onViewChange={vi.fn()} view="accounts" />)
-    fireEvent.click(await screen.findByText('Semantier Cloud'))
-    expect(open).toHaveBeenCalledWith('https://cloud.semantier.com')
-    expect(startManualProviderOAuth).not.toHaveBeenCalled()
-    expect(screen.queryByText('Nous Portal')).toBeNull()
+    fireEvent.click(await screen.findByText('Nous Portal'))
+    expect(startManualProviderOAuth).toHaveBeenCalledWith('nous', expect.anything())
+    expect(open).not.toHaveBeenCalled()
+    expect(screen.queryByText('Semantier Cloud')).toBeNull()
   })
 
   it('offers a Local / custom endpoint entry in the API-keys tab that opens the custom-endpoint flow', async () => {
@@ -491,4 +491,18 @@ describe('ProvidersSettings', () => {
 
     await waitFor(() => expect(startManualLocalEndpoint).toHaveBeenCalledWith(null))
   })
+})
+
+it('starts the real Cloud provider through the shared coordinator and refreshes connection facts on focus', async () => {
+  listOAuthProviders.mockResolvedValue({ providers: [provider('semantier-cloud', false, { name: 'Semantier Cloud' })] })
+  render(
+    <MemoryRouter>
+      <ProvidersSettings onClose={() => undefined} onViewChange={() => undefined} view="accounts" />
+    </MemoryRouter>
+  )
+  fireEvent.click(await screen.findByRole('button', { name: /Semantier Cloud/ }))
+  expect(startManualProviderOAuth).toHaveBeenCalledWith('semantier-cloud', expect.anything())
+  const count = listOAuthProviders.mock.calls.length
+  act(() => window.dispatchEvent(new Event('focus')))
+  await waitFor(() => expect(listOAuthProviders.mock.calls.length).toBeGreaterThan(count))
 })

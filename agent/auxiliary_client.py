@@ -4760,6 +4760,9 @@ def _named_custom_api_key(custom_entry: dict[str, Any], provider: str, custom_ba
     """Credential for a named custom provider: inline api_key → key_env → key_cmd → credential pool → placeholder.
     Aux resolves named custom providers here, not via _resolve_named_custom_runtime, so key_cmd must be
     honoured at the same precedence or every aux call 401s."""
+    if custom_entry.get("credential_ref"):
+        from hermes_cli.cloud_device_client import credential
+        return credential(custom_entry["credential_ref"], base_url=custom_base)
     custom_key: Any = (custom_entry.get("api_key") or "").strip()
     custom_key_env = (custom_entry.get("key_env") or custom_entry.get("api_key_env") or "").strip()
     if not custom_key and custom_key_env:

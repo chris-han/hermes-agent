@@ -660,7 +660,8 @@ export const zhOverrides = {
         agentSuccess: name => `智能体插件 ${name} 已安装`,
         desktopSuccess: name => `桌面插件 ${name} 已安装`,
         agentFailed: '智能体插件安装失败',
-        installUncertain: 'Semantier 已停止等待安装结果，但插件可能仍在安装。关闭此窗口并刷新插件列表，然后再尝试安装。',
+        installUncertain:
+          'Semantier 已停止等待安装结果，但插件可能仍在安装。关闭此窗口并刷新插件列表，然后再尝试安装。',
         desktopFailed: '桌面插件安装失败',
         missingEnv: (_name, vars) => `缺少环境变量：${vars}。请在设置 → 密钥中添加。`,
         verified: '已验证',
@@ -1293,7 +1294,8 @@ export const zhOverrides = {
       description:
         '在 Mac 上按下并松开 ⌘ + Option，在 Windows/Linux 上按下并松开 Ctrl + Alt，即可从任意应用将 HUD 置于前台。默认关闭，仅适用于此设备。',
       permission: '请在系统设置 → 隐私与安全性 → 输入监控中允许 Semantier，然后重试。此手势不会记录按键或截取屏幕。',
-      unavailable: 'HUD 手势辅助程序无法启动或意外停止。请重试或重启 Semantier。Semantier 内原有的 HUD 快捷键仍可使用。',
+      unavailable:
+        'HUD 手势辅助程序无法启动或意外停止。请重试或重启 Semantier。Semantier 内原有的 HUD 快捷键仍可使用。',
       missingHelper: '此 Semantier 安装缺少 HUD 手势辅助程序。请更新或重新安装 Semantier，然后重试。',
       unsupportedSession: '此桌面会话不支持全局修饰键轻按事件。Linux 需要 X11；不支持 Wayland。'
     },
@@ -1926,6 +1928,7 @@ export const zhOverrides = {
       removeTerminalConfirm: (provider, command) => `断开 ${provider}？这将在终端中运行 "${command}" 以清除凭据。`,
       removeTerminalRunning: provider => `正在终端中断开 ${provider}…`,
       removedTitle: '账号已移除',
+      cloudRemoteRevokePending: '已在本地断开连接，但尚未确认云端撤销。请在账单页面撤销此设备，或重新授权。',
       removedMessage: provider => `${provider} 已移除。`,
       failedRemove: provider => `无法移除 ${provider}`,
       noProviderKeys: '没有可用的提供方 API 密钥。',
@@ -4465,7 +4468,8 @@ export const zhOverrides = {
         },
         ssl_cert_verification: {
           title: '安全连接失败',
-          body: provider => `Semantier 无法验证与 ${provider} 的安全连接。请检查网络或代理设置，或切换服务商后重新发送。`
+          body: provider =>
+            `Semantier 无法验证与 ${provider} 的安全连接。请检查网络或代理设置，或切换服务商后重新发送。`
         }
       },
       errorLayers: {

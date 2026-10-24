@@ -747,6 +747,9 @@ async def disconnect_oauth_provider(provider_id: str, request: Request, profile:
     _require_token(request)
 
     def _run():
+        if provider_id == "semantier-cloud":
+            from hermes_cli.cloud_device_client import disconnect
+            return disconnect()
         catalog_by_id = {p["id"]: p for p in _build_oauth_catalog()}
         provider = catalog_by_id.get(provider_id)
         if provider is None:
@@ -808,12 +811,23 @@ def _validate_oauth_profile(profile: Optional[str]) -> str:
     return profile_name
 
 
+async def _cloud_device_request(profile, operation, *args):
+    from hermes_cli import cloud_device_client
+    action = getattr(cloud_device_client, operation)
+    try:
+        return await scoped_to_thread(profile, lambda: action(*args))
+    except ValueError:
+        raise HTTPException(409, "Cloud connection unavailable; retry from the original profile or reauthorize.") from None
+
+
 @router.post("/api/providers/oauth/{provider_id}/start")
 async def start_oauth_login(provider_id: str, request: Request, profile: Optional[str] = None):
     """Initiate an OAuth login flow. Token-protected."""
     _require_token(request)
     _gc_oauth_sessions()
     _validate_oauth_profile(profile)
+    if provider_id == "semantier-cloud":
+        return await _cloud_device_request(profile, "start")
     catalog_entry = next((p for p in _OAUTH_PROVIDER_CATALOG if p["id"] == provider_id), None)
     if catalog_entry is None:
         raise HTTPException(status_code=400, detail=f"Unknown provider {provider_id}")
@@ -871,10 +885,13 @@ async def submit_oauth_code(
 
 
 @router.get("/api/providers/oauth/{provider_id}/poll/{session_id}")
-async def poll_oauth_session(provider_id: str, session_id: str, profile: Optional[str] = None):
+async def poll_oauth_session(provider_id: str, session_id: str, request: Request, profile: Optional[str] = None):
     """Poll a session's status (no auth — read-only state). One endpoint serves
     every device-code flow: all report progress via the worker-updated ``status``."""
     requested_profile = _validate_oauth_profile(profile)
+    if provider_id == "semantier-cloud":
+        _require_token(request)
+        return await _cloud_device_request(profile, "poll", session_id)
     with _oauth_sessions_lock:
         sess = _oauth_sessions.get(session_id)
     if not sess:
@@ -905,6 +922,8 @@ async def cancel_oauth_session(session_id: str, request: Request, profile: Optio
     """
     _require_token(request)
     requested_profile = _validate_oauth_profile(profile)
+    if session_id.startswith("cloud-"):
+        return await _cloud_device_request(profile, "cancel", session_id)
     with _oauth_sessions_lock:
         sess = _oauth_sessions.get(session_id)
         if sess is not None:

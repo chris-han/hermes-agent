@@ -957,7 +957,16 @@ export async function startProviderOAuth(provider: OAuthProvider, ctx: Onboardin
 }
 
 // Poll a session-backed device-code flow until it resolves.
+const activePolls = new Set<number>()
+
 async function pollSession(provider: OAuthProvider, start: DeviceStart, ctx: OnboardingContext, generation: number) {
+  if (activePolls.has(generation)) {return}
+
+  if (provider.id === 'semantier-cloud' && JSON.stringify(captureOnboardingScope()) !== JSON.stringify(ctx.scope))
+    {return}
+
+  activePolls.add(generation)
+
   try {
     const { error_message, status } = await pollOAuthSession(provider.id, start.session_id, ctx.scope)
 
@@ -986,6 +995,8 @@ async function pollSession(provider: OAuthProvider, start: DeviceStart, ctx: Onb
 
     clearPoll()
     setFlow({ status: 'error', provider, start, ...signInDidNotFinish(provider, error) })
+  } finally {
+    activePolls.delete(generation)
   }
 }
 

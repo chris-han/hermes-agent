@@ -185,8 +185,13 @@ function OAuthPicker({
   // The free tier holds a token but no account: it is never "connected"; the featured Nous row
   // names it (Nous · free tier) and offers the sign-in that keeps its connectors.
   const isConnected = (p: OAuthProvider) => Boolean(p.status?.logged_in) && p.status?.free_tier !== true
-  const featured = ordered.find(p => p.id === FEATURED_ID && !isConnected(p)) ?? null
-  const rest = featured ? ordered.filter(p => p.id !== FEATURED_ID) : ordered
+
+  const featured =
+    ordered.find(p => p.id === FEATURED_ID && !isConnected(p)) ??
+    ordered.find(p => p.id === 'nous' && !isConnected(p)) ??
+    null
+
+  const rest = featured ? ordered.filter(p => p.id !== featured.id) : ordered
   // Keep connected accounts grouped and always visible; only the unconnected
   // providers hide behind the disclosure, so the page leads with what's set up.
   // Both lists preserve `sortProviders` order (curated priority, then name).
@@ -212,7 +217,7 @@ function OAuthPicker({
       <p className="-mt-2 mb-1 text-[length:var(--conversation-caption-font-size)] leading-(--conversation-caption-line-height) text-(--ui-text-tertiary)">
         {p.intro}
       </p>
-      {featured && <FeaturedProviderRow onSelect={select} provider={featured} semantierCloud />}
+      {featured && <FeaturedProviderRow onSelect={select} provider={featured} />}
       <LocalEndpointRow onOpen={onWantLocalEndpoint} />
       {/* Slot #3 — the no-account path, matching onboarding. Behind the
           --local launch flag like every local-models surface. */}
@@ -441,24 +446,32 @@ export function ProvidersSettings({
 
   useEffect(() => {
     let cancelled = false
+    let readGeneration = 0
 
-    void (async () => {
-      if (onboardingActive) {
-        return
-      }
+    const refresh = async () => {
+      if (onboardingActive) {return}
+      const generation = ++readGeneration
 
       try {
         const { providers } = await listOAuthProviders(scopeProfile)
 
-        if (!cancelled) {
-          setOauthProviders(providers)
-        }
+        if (!cancelled && generation === readGeneration) {setOauthProviders(providers)}
       } catch {
-        // Ignore — the OAuth panel just won't render.
+        // Keep the last known scoped facts when a refresh is unavailable.
       }
-    })()
+    }
 
-    return () => void (cancelled = true)
+    const onFocus = () => {
+      void refresh()
+    }
+
+    void refresh()
+    window.addEventListener('focus', onFocus)
+
+    return () => {
+      cancelled = true
+      window.removeEventListener('focus', onFocus)
+    }
   }, [onboardingActive, scopeProfile])
 
   // External (CLI-managed) providers can't be cleared via the API by design —
@@ -518,11 +531,14 @@ export function ProvidersSettings({
         return
       }
 
+      const remotePending = provider.id === 'semantier-cloud' && result.remote_revoked === false
       notify({
-        durationMs: 3_000,
-        kind: 'success',
+        durationMs: remotePending ? 10_000 : 3_000,
+        kind: remotePending ? 'info' : 'success',
         title: t.settings.providers.removedTitle,
-        message: t.settings.providers.removedMessage(name)
+        message: remotePending
+          ? (t.settings.providers.cloudRemoteRevokePending ?? t.settings.providers.failedRemove(name))
+          : t.settings.providers.removedMessage(name)
       })
       await refreshOAuthProviders().catch(() => undefined)
     } catch (err) {

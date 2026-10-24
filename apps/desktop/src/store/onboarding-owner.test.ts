@@ -221,3 +221,16 @@ it('keeps readiness on the same profile as REST writes when the owner has none',
     profile: 'leverage-ai'
   })
 })
+
+it('defers Cloud installation polls while a different runtime/profile is foreground', async () => {
+  const ctx = beginContext()
+  await startProviderOAuth({ ...makeOAuthProvider('semantier-cloud'), flow: 'device_code' }, ctx)
+  switchForeground()
+  await vi.advanceTimersByTimeAsync(6000)
+  expect(requests.some(request => request.path.includes('/poll/'))).toBe(false)
+  setApiRequestConnection(owner.connectionId)
+  setApiRequestProfile(owner.profile)
+  await vi.advanceTimersByTimeAsync(3000)
+  expect(requests.some(request => request.path.includes('/poll/'))).toBe(true)
+  expectOwnerRequests()
+})

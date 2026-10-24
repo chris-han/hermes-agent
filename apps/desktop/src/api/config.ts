@@ -322,8 +322,8 @@ export function listOAuthProviders(profile?: ProfileScope): Promise<OAuthProvide
 export function disconnectOAuthProvider(
   providerId: string,
   profile?: null | string
-): Promise<{ ok: boolean; provider: string }> {
-  return hermesApi<{ ok: boolean; provider: string }>({
+): Promise<{ ok: boolean; provider: string; remote_revoked?: boolean }> {
+  return hermesApi<{ ok: boolean; provider: string; remote_revoked?: boolean }>({
     ...profileScoped(profile),
     path: `/api/providers/oauth/${encodeURIComponent(providerId)}`,
     method: 'DELETE'

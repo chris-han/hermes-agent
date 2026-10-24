@@ -141,7 +141,14 @@ def _external_process_cli_command(provider_id: str, default: str) -> str:
 # providers appear automatically. Also carries two non-catalog rows the Accounts tab needs:
 # the Anthropic credential-status card and the synthetic ``claude-code`` row.
 # ``flow``: ``device_code`` = show code + URL + poll; ``external`` = delegated to a terminal/CLI.
+def _semantier_cloud_status():
+    from hermes_cli.cloud_device_client import status
+    return status()
+
+
 _OAUTH_PROVIDER_CATALOG: tuple[dict[str, Any], ...] = (
+    {"id": "semantier-cloud", "name": "Semantier Cloud", "flow": "device_code",
+     "cli_command": "", "docs_url": "https://cloud.semantier.com", "status_fn": _semantier_cloud_status},
     # status_fn None → dispatched via auth.get_<provider>_auth_status.
     {"id": "nous", "name": "Nous Portal", "flow": "device_code", "cli_command": "hermes auth add nous",
      "docs_url": "https://portal.nousresearch.com", "status_fn": None},

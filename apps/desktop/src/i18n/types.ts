@@ -1736,6 +1736,7 @@ export interface Translations extends NoticeTranslations {
       removeTerminalConfirm: (provider: string, command: string) => string
       removeTerminalRunning: (provider: string) => string
       removedTitle: string
+      cloudRemoteRevokePending?: string
       removedMessage: (provider: string) => string
       failedRemove: (provider: string) => string
       noProviderKeys: string

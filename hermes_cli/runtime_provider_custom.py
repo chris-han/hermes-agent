@@ -46,6 +46,9 @@ def _key_env_secret(entry: dict[str, Any], label: str) -> str:
     variable otherwise surfaces only as the provider's 401/403 (#67453). A block with no key_env at
     all stays silent — that IS the keyless-server configuration.
     """
+    if entry.get("credential_ref"):
+        from hermes_cli.cloud_device_client import credential
+        return credential(entry["credential_ref"], base_url=_entry_url(entry))
     key_env = _clean(entry.get("key_env") or entry.get("api_key_env"))
     if not key_env:
         return ""
@@ -102,6 +105,9 @@ def _lift_extra_headers(entry: dict[str, Any], result: dict[str, Any]) -> None:
 def _lift_common_custom_fields(entry: dict[str, Any], result: dict[str, Any], *, provider_key: str, key_env: str,
                                api_mode: Optional[str]) -> None:
     """Copy the optional fields shared by ``providers:`` and legacy ``custom_providers:`` entries."""
+    for key in ("credential_ref", "portal_origin"):
+        if entry.get(key):
+            result[key] = entry[key]
     if key_env:
         result["key_env"] = key_env
     if provider_key:

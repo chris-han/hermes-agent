@@ -164,6 +164,7 @@ PROFILE_CREDENTIAL_PATHS = frozenset({
     "mem0.json",                    # Mem0 api_key (self-hosted server key) next to its settings
     "webhook_subscriptions.json",   # per-route HMAC secrets
     "teams_pipeline_store.json",    # Graph subscription client_state (webhook shared secret)
+    ".cloud-device.bin", ".cloud-device.lock",  # native proof and scoped Cloud credentials
     "mcp-tokens",                   # MCP OAuth tokens
     "vault",                        # vault.key + vault.json.enc
     "browser-profile", "browser_auth", "bot-desktop",  # browser cookies / logins

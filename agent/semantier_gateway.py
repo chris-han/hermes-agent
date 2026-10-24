@@ -27,19 +27,20 @@ def cloud_connection_config():
     from hermes_cli.runtime_provider import load_config
     cfg = load_config()
     legacy = cfg.get('semantier_gateway') or {}
-    if isinstance(legacy,dict) and legacy.get('enabled') is True:
-        return legacy
     providers = cfg.get('providers') or {}
     named = providers.get('semantier-cloud') if isinstance(providers,dict) else None
-    if not isinstance(named,dict):
-        return None
     model = cfg.get('model') or {}
     current = model if isinstance(model,dict) else {}
+    protected = isinstance(named,dict) and named.get('credential_ref') and (current.get('provider') == 'semantier-cloud' or current.get('base_url') == named.get('base_url'))
+    if isinstance(legacy,dict) and legacy.get('enabled') is True and not protected:
+        return legacy
+    if not isinstance(named,dict):
+        return None
     base = str(named.get('base_url') or '')
     if current.get('provider') != 'semantier-cloud' and not (base and current.get('base_url') == base):
         return None
     return {'enabled':True,'base_url':base,'api_key_env':named.get('key_env') or current.get('key_env'),
-            'api_key':named.get('api_key') or current.get('api_key')}
+            'api_key':named.get('api_key') or current.get('api_key'), 'credential_ref':named.get('credential_ref')}
 
 
 def gateway_settings() -> GatewaySettings | None:
@@ -54,6 +55,9 @@ def gateway_settings() -> GatewaySettings | None:
             or (parsed.scheme != 'https' and not (
                 parsed.scheme == 'http' and parsed.hostname in {'127.0.0.1', 'localhost', '::1'}))):
         raise ValueError('Semantier Cloud Provider requires a configured public HTTPS /v1 endpoint (HTTP loopback is allowed).')
+    if config.get('credential_ref'):
+        from hermes_cli.cloud_device_client import credential
+        return GatewaySettings(base, credential(config['credential_ref'], base_url=base))
     key_name = str(config.get('api_key_env') or '')
     key = get_env_value(key_name) if key_name else config.get('api_key')
     if isinstance(key,str) and key.startswith('${') and key.endswith('}'):

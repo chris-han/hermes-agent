@@ -1,6 +1,5 @@
 import { RowButton } from '@/components/ui/row-button'
 import { useI18n } from '@/i18n'
-import { openExternalLink } from '@/lib/external-link'
 import { Check, ChevronRight, Terminal } from '@/lib/icons'
 import { PROVIDER_DISPLAY_NAMES } from '@/lib/model-status-label'
 import type { OAuthProvider } from '@/types/hermes'
@@ -9,6 +8,7 @@ import type { OAuthProvider } from '@/types/hermes'
 // only the featured order. Both Anthropic entries sit at the bottom: the API-key
 // path first, then the subscription OAuth path (only works with extra usage credits).
 const PROVIDER_ORDER: Record<string, number> = {
+  'semantier-cloud': -1,
   nous: 0,
   'openai-codex': 1,
   'minimax-oauth': 2,
@@ -28,21 +28,20 @@ export const sortProviders = (providers: OAuthProvider[]) =>
 
 export function FeaturedProviderRow({
   onSelect,
-  provider,
-  semantierCloud = false
+  provider
 }: {
   onSelect: (provider: OAuthProvider) => void
   provider: OAuthProvider
-  semantierCloud?: boolean
 }) {
   const { t } = useI18n()
+  const semantierCloud = provider.id === 'semantier-cloud'
   const freeTier = !semantierCloud && provider.status?.free_tier === true
-  const loggedIn = !semantierCloud && provider.status?.logged_in && !freeTier
+  const loggedIn = provider.status?.logged_in && !freeTier
 
   return (
     <button
       className="group relative flex w-full items-center justify-between gap-4 rounded-[8px] bg-primary/[0.06] px-3 py-2.5 text-left transition-colors hover:bg-primary/10"
-      onClick={() => (semantierCloud ? openExternalLink('https://cloud.semantier.com') : onSelect(provider))}
+      onClick={() => onSelect(provider)}
       type="button"
     >
       <span aria-hidden className="arc-border arc-reverse arc-nous" />
@@ -64,7 +63,7 @@ export function FeaturedProviderRow({
           )}
         </div>
         <p className="mt-1 text-xs leading-5 text-muted-foreground">
-          {semantierCloud ? 'cloud.semantier.com' : freeTier ? t.freeTier.providerRowPitch : t.onboarding.featuredPitch}
+          {semantierCloud ? t.common.connect : freeTier ? t.freeTier.providerRowPitch : t.onboarding.featuredPitch}
         </p>
       </div>
       <ChevronRight className="size-4 shrink-0 text-primary transition group-hover:translate-x-0.5" />

@@ -119,7 +119,7 @@ _KNOWN_PROVIDER_KEYS = {
     "api_mode", "transport", "model", "default_model", "models", "models_discovered",
     "context_length", "rate_limit_delay", "request_timeout_seconds", "stale_timeout_seconds",
     "discover_models", "extra_body", "extra_headers", "capabilities", "ssl_ca_cert", "ssl_verify",
-    "catalog_provider", "session_affinity_header"}
+    "catalog_provider", "session_affinity_header", "credential_ref", "portal_origin"}
 
 
 def _pick_provider_base_url(entry: dict[str, Any], provider_key: str) -> str:
@@ -234,6 +234,8 @@ def _normalize_custom_provider_entry(
         if value:
             normalized[field] = value
 
+    _put("credential_ref", _stripped("credential_ref"))
+    _put("portal_origin", _stripped("portal_origin"))
     _put("api_key", _stripped("api_key"))
     _put("key_cmd", _stripped("key_cmd"))
     key_env = _stripped("key_env", "api_key_env")
@@ -291,7 +293,7 @@ def _custom_provider_entry_to_provider_config(
 
     provider_entry: dict[str, Any] = {"api": normalized["base_url"]}
     for field in (
-        "name", "api_key", "key_env", "key_cmd", "models", "models_discovered", "context_length",
+        "name", "api_key", "key_env", "key_cmd", "credential_ref", "portal_origin", "models", "models_discovered", "context_length",
         "rate_limit_delay", "discover_models", "extra_body", "extra_headers",
         "session_affinity_header", "ssl_ca_cert", "ssl_verify", "catalog_provider"):
         if field in normalized:
