@@ -183,6 +183,15 @@ try {
       { timeout: 180000 }
     )
     .toBe(true)
+  await expect(page.getByText('Loading Semantier settings', { exact: true })).toBeHidden({ timeout: 180000 })
+  await expect
+    .poll(
+      async () =>
+        (await page.getByRole('button', { name: /Semantier Cloud/ }).count()) > 0 ||
+        (await page.locator('[data-glass-opaque][class*="--z-onboarding"]').count()) === 0,
+      { timeout: 180000 }
+    )
+    .toBe(true)
   receipt.stage = 'provider_visible'
   if (scopeMode) await selectProfile('default')
   if ((process.argv[5] || '').startsWith('settings') || process.argv[5] === 'scope-connect') {
@@ -338,6 +347,7 @@ try {
         await page.getByRole('button', { name: /^Begin$/i }).waitFor({ timeout: 90000 })
       }
     } else {
+      assert.equal(freshMode, false, 'fresh runtime must expose the real Connect entry before any send')
       receipt.recovery_state = 'installed_restart'
       receipt.purchase_created = false
     }

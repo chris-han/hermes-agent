@@ -241,12 +241,17 @@ def build_model_options_payload(
     mid-session even though another model under the same provider may still work (same contract
     as ``/model`` and the aux pickers, #66584 / #66624). Visibility only: ``fast_custom_probe=False``
     keeps the live probe of the current custom endpoint on its full 5s discovery budget."""
-    from agent.semantier_gateway import is_gateway_route, cloud_catalog
+    from agent.semantier_gateway import is_gateway_route, cloud_catalog, gateway_settings
     if is_gateway_route(ctx.current_base_url):
-        catalog = cloud_catalog(refresh=refresh)
-        profiles = catalog['data']
+        # First onboarding must be discoverable before protected custody exists.
+        # Missing local authentication is distinct from a live catalog failure.
+        try:
+            settings = gateway_settings()
+        except ValueError:
+            settings = None
+        profiles = cloud_catalog(refresh=refresh,settings=settings)['data'] if settings else []
         return {'providers':[{'slug':'semantier-cloud','name':'Semantier Cloud Provider',
-            'authenticated':True, 'is_current':True, 'aliases':[ctx.current_provider],
+            'authenticated':settings is not None, 'is_current':True, 'aliases':[ctx.current_provider],
             'capabilities':{p['id']:{'fast':False,'reasoning':p['capabilities'].get('reasoning') is True and bool(p['request_parameters']['reasoning_controls'])} for p in profiles},
             'models':[p['id'] for p in profiles],
             'model_profiles':{p['id']:p for p in profiles}, 'total_models':len(profiles)}],

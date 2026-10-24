@@ -231,3 +231,17 @@ def test_real_title_response_format_uses_cloud_capability_compiler(tmp_path,monk
     structured=sg.configure_cloud_request({'model':'title-model','messages':[{'role':'user','content':'Title fixture'}],
         'extra_body':{'response_format':_TITLE_RESPONSE_FORMAT}},base_url='http://127.0.0.1:8765/v1')
     assert structured['response_format']==_TITLE_RESPONSE_FORMAT
+
+
+def test_unconnected_cloud_model_options_remain_available_for_first_onboarding(tmp_path, monkeypatch):
+    configure(tmp_path, monkeypatch)
+    from hermes_cli.inventory import ConfigContext, build_model_options_payload
+    from tui_gateway.contracts.config_free_tier_control import ModelOptionsResult
+    def absent(**kwargs):
+        raise ValueError('Semantier Cloud Provider scoped credential is unavailable for this profile.')
+    monkeypatch.setattr(sg,'gateway_settings',absent)
+    payload=build_model_options_payload(ConfigContext('semantier-cloud','',
+        'http://127.0.0.1:8765/v1',{},[]))
+    result=ModelOptionsResult.model_validate(payload)
+    assert result.providers[0].authenticated is False
+    assert result.providers[0].models==[]

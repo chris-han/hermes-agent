@@ -14,7 +14,7 @@ parser=argparse.ArgumentParser()
 parser.add_argument('--source',type=Path,required=True)
 parser.add_argument('--root',type=Path,required=True)
 parser.add_argument('--fixture-root',type=Path,required=True)
-parser.add_argument('--operation',choices=['lifecycle','fault','expiry'],required=True)
+parser.add_argument('--operation',choices=['lifecycle','fault','expiry','runtime'],required=True)
 args=parser.parse_args()
 assert os.name=='nt'
 source=args.source.resolve();home=args.root.resolve()
@@ -62,7 +62,41 @@ with httpx.Client(base_url='http://127.0.0.1:55474',trust_env=False,timeout=20) 
     private=device._read()
     assert private['proof'].encode() not in (home/'.cloud-device.bin').read_bytes()
     assert private['proof'] not in json.dumps(started)
-    if args.operation=='expiry':
+    if args.operation=='runtime':
+        decide(started,'approve')
+        other=home.parent.parent/'runtime-other-user'/'hermes-home'
+        other.mkdir(parents=True,exist_ok=False)
+        (other.parent/'.owner.json').write_text(json.dumps({'owner':'windows-cloud-client-r1'}))
+        (other/'config.yaml').write_text(json.dumps(initial))
+        other_before=(other/'config.yaml').read_bytes()
+        probe = """import json,sys
+sys.path.insert(0,sys.argv[1])
+from hermes_cli import cloud_device_client as device
+try:device.poll(sys.argv[2])
+except ValueError:print(json.dumps({'foreign_runtime_refused':True}))
+else:raise AssertionError('foreign runtime consumed authorization')
+"""
+        child_env={**os.environ,'HERMES_HOME':str(other)}
+        foreign=subprocess.run([sys.executable,'-c',probe,str(source),started['session_id']],env=child_env,capture_output=True,text=True,timeout=45,check=False)
+        assert foreign.returncode==0,foreign.stderr[-500:]
+        assert json.loads(foreign.stdout)['foreign_runtime_refused']
+        assert (home/'config.yaml').read_bytes()==original_config
+        assert (other/'config.yaml').read_bytes()==other_before
+        assert not (other/'.cloud-device.bin').exists()
+        resume="""import json,sys
+sys.path.insert(0,sys.argv[1])
+from hermes_cli import cloud_device_client as device
+started=device.start()
+assert started['session_id']==sys.argv[2]
+print(json.dumps({'status':device.poll(started['session_id'])['status']}))
+"""
+        resumed=subprocess.run([sys.executable,'-c',resume,str(source),started['session_id']],capture_output=True,text=True,timeout=90,check=False)
+        assert resumed.returncode==0,resumed.stderr[-500:]
+        assert json.loads(resumed.stdout)['status']=='approved'
+        assert (other/'config.yaml').read_bytes()==other_before
+        assert device.disconnect()['remote_revoked']
+        checks=['separate_windows_runtime_cannot_consume_foreign_session','foreign_runtime_no_credential_or_config_publication','original_runtime_new_process_resumes_same_intent','original_runtime_only_installation','remote_revocation_confirmed']
+    elif args.operation=='expiry':
         print(json.dumps({'stage':'waiting_real_server_ttl','expires_at':private['expires_at']}),flush=True)
         while device._now() <= device._time(private['expires_at'])+.3:
             time.sleep(min(15,max(.1,device._time(private['expires_at'])+.4-device._now())))
