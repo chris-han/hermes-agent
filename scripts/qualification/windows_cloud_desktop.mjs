@@ -119,7 +119,7 @@ try {
     socket.on('framereceived', ({payload}) => {
       try {
         const frame=JSON.parse(String(payload)); const method=methods.get(frame.id)
-        if(method && /session|profile/.test(method)) receipt.transport.push({method,error_code:frame.error?.code,success:!frame.error})
+        if(method && receipt.transport.length < 200) receipt.transport.push({method,error_code:frame.error?.code,success:!frame.error})
       } catch {}
     })
   })
@@ -183,7 +183,15 @@ try {
       }
       await portal.getByRole('button', { name: 'Approve device', exact: true }).click()
     }
-    await page.getByRole('button', { name: /^Begin$/i }).waitFor({ timeout: 90000 })
+    if (process.argv[5] === 'settings-connect') {
+      await expect.poll(() => {
+        const checked=spawnSync(python,[path.join(source,'scripts/qualification/windows_cloud_device.py'),'--source',source,'--root',home,'--status'],{env,cwd:source,encoding:'utf8',timeout:20000})
+        return checked.status === 0 && JSON.parse(checked.stdout).logged_in
+      }, {timeout:90000}).toBe(true)
+      receipt.native_installation_confirmed=true
+    } else {
+      await page.getByRole('button', { name: /^Begin$/i }).waitFor({ timeout: 90000 })
+    }
     } else {
       receipt.recovery_state = 'installed_restart'
       receipt.purchase_created = false

@@ -16,12 +16,16 @@ def main():
     parser.add_argument('--read',action='store_true')
     parser.add_argument('--inspect',action='store_true')
     parser.add_argument('--chat',action='store_true')
+    parser.add_argument('--status',action='store_true')
     args = parser.parse_args()
     assert os.name == 'nt', 'real Windows is required'
     source=args.source.resolve();home=args.root.resolve()
     sys.path.insert(0,str(source))
     os.environ['HERMES_HOME']=str(home)
     from hermes_cli import cloud_device_client as device
+    if args.status:
+        print(json.dumps(device.status()))
+        return
     if args.chat:
         profile=home.parent/'profile'
         for key,folder in {'HOME':profile,'USERPROFILE':profile,'APPDATA':profile/'AppData/Roaming','LOCALAPPDATA':profile/'AppData/Local','TEMP':home.parent/'tmp','TMP':home.parent/'tmp'}.items():
