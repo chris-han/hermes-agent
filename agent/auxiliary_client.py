@@ -2754,7 +2754,8 @@ def _runtime_main_value(field: str) -> Any:
 def set_runtime_main(
     provider: str, model: str, *, requested_provider: str = "", base_url: str = "",
     api_key: Any = "", api_mode: str = "", auth_mode: str = "", session_id: str = "",
-    cache_scope: str = "",
+    cache_scope: str = "", task_id: str = "", root_run_id: str = "", parent_run_id: str = "",
+    run_id: str = "", business_object_ref: str = "", cloud_route: str = "",
 ) -> contextvars.Token:
     """Record the current context's live main runtime for auxiliary routing.
 
@@ -2776,6 +2777,8 @@ def set_runtime_main(
         "auth_mode": (auth_mode or "").strip().lower(),
         "session_id": (session_id or "").strip(),
         "cache_scope": (cache_scope or "").strip(),
+        "cloud_route": cloud_route,
+        **{k:v for k,v in {"task_id":task_id,"root_run_id":root_run_id,"parent_run_id":parent_run_id,"run_id":run_id,"business_object_ref":business_object_ref}.items() if v},
     }
     # Publish authoritative context before updating the locked mirrors.
     token = _RUNTIME_MAIN_CONTEXT.set(runtime)
@@ -3096,7 +3099,7 @@ def _try_anthropic(explicit_api_key: Optional[str | Callable[[], str]] = None,
 
 _MAIN_RUNTIME_FIELDS = ("provider", "model", "base_url", "api_key", "api_mode", "auth_mode")
 _MAIN_RUNTIME_CONTEXT_FIELDS = _MAIN_RUNTIME_FIELDS + (
-    "requested_provider", "session_id", "cache_scope", "run_id",
+    "requested_provider", "session_id", "cache_scope", "run_id", "task_id", "root_run_id", "parent_run_id", "business_object_ref", "cloud_route",
 )
 
 
@@ -7516,14 +7519,20 @@ def _prepare_aux_request(
         no_progress_timeout=no_progress_timeout)
     if extra_headers:
         kwargs["extra_headers"] = dict(extra_headers)
-    from agent.semantier_gateway import attribute_request
+    from agent.semantier_gateway import attribute_request, GatewaySettings
+    frozen = _normalize_main_runtime(main_runtime)
+    cloud_base = frozen.get('cloud_route')
+    bound = (GatewaySettings(cloud_base,frozen['api_key']) if cloud_base and
+        str(base_info or resolved_base_url or '').rstrip('/') == cloud_base and isinstance(frozen.get('api_key'),str) else None)
     kwargs = attribute_request(
         kwargs, base_url=base_info or resolved_base_url or '', purpose=task or 'auxiliary',
-        session_id=str((main_runtime or {}).get("session_id") or _runtime_main_value("session_id") or ''),
-        run_id=str((main_runtime or {}).get("run_id") or ''),
+        settings=bound,
+        session_id=str(frozen.get("session_id") or ''),
+        **{field:str(frozen.get(field) or "")
+           for field in ("task_id","root_run_id","parent_run_id","run_id","business_object_ref")},
     )
     from agent.semantier_gateway import configure_cloud_request
-    kwargs = configure_cloud_request(kwargs,base_url=base_info or resolved_base_url or '')
+    kwargs = configure_cloud_request(kwargs,base_url=base_info or resolved_base_url or '',settings=bound)
     # Convert image blocks for Anthropic-compatible endpoints (e.g. MiniMax)
     client_base = str(getattr(client, "base_url", "") or "")
     if _is_anthropic_compat_endpoint(request_provider, client_base):

@@ -48,9 +48,10 @@ def _should_stream(agent: Any) -> bool:
     checks); disabled on provider signal, ACP providers (``acp://`` scheme or an
     external-process provider profile), MoA without a display consumer, or Mock clients in
     tests (SimpleNamespace, not stream iterators)."""
-    from agent.semantier_gateway import is_gateway_route, cloud_model_profile
-    if is_gateway_route(str(agent.base_url or '')):
-        return cloud_model_profile(agent.model)['capabilities'].get('stream') is True
+    from agent.semantier_gateway import is_gateway_route, cloud_model_profile, agent_cloud_settings
+    bound = agent_cloud_settings(agent)
+    if bound or is_gateway_route(str(agent.base_url or '')):
+        return cloud_model_profile(agent.model,**({"settings":bound} if bound else {}))['capabilities'].get('stream') is True
     if getattr(agent, "_disable_streaming", False):
         return False
     _base = str(agent.base_url or "").lower()
@@ -121,17 +122,18 @@ def perform_api_call(
             defer_logical_completion=True,
         )
 
-    from agent.semantier_gateway import attribute_request
+    from agent.semantier_gateway import attribute_request, agent_cloud_settings
     api_kwargs = attribute_request(
         api_kwargs, base_url=str(agent.base_url or ''),
         purpose=('subagent' if getattr(agent, 'is_subagent', False) is True
                  else {'subagent': 'subagent', 'cron': 'cron'}.get(str(agent.platform or ''), 'chat')),
-        session_id=str(agent.session_id or ''), run_id=str(effective_task_id or turn_id or ''),
-        request_id=str(api_request_id),
+        session_id=str(agent.session_id or ''),
+        **(getattr(agent,'_semantier_task_context',None) or {'task_id':str(effective_task_id),'root_run_id':str(effective_task_id),'run_id':str(turn_id)}),
+        request_id=str(api_request_id), settings=agent_cloud_settings(agent),
     )
 
     from agent.semantier_gateway import configure_cloud_request
-    api_kwargs = configure_cloud_request(api_kwargs,base_url=str(agent.base_url or ''))
+    api_kwargs = configure_cloud_request(api_kwargs,base_url=str(agent.base_url or ''),settings=agent_cloud_settings(agent))
 
     from hermes_cli.middleware import run_llm_execution_middleware
 

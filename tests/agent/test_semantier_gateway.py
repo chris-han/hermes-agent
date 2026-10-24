@@ -144,14 +144,18 @@ def test_auto_title_snapshots_native_run_correlation(tmp_path, monkeypatch):
                             model='gpt-5.1', provider='custom', api_key='profile-secret',
                             base_url='http://127.0.0.1:8765/v1', api_mode='chat_completions',
                             _session_db=object(), _session_db_created=True)
+    sg.bind_task_context(owner,'task-owned','run-owned')
     _maybe_title_session_at_turn_start(owner, [{'role': 'user', 'content': 'Read evidence'}])
     owner._current_task_id = 'next-task'
     snapshot = snapshots[0]
     headers = sg.attribute_request({}, base_url=snapshot['base_url'], purpose='title_generation',
-                                   session_id=snapshot['session_id'], run_id=snapshot['run_id'])['extra_headers']
+                                   session_id=snapshot['session_id'],
+                                   **{k:snapshot[k] for k in ('task_id','root_run_id','parent_run_id','run_id')})['extra_headers']
     assert headers['X-Semantier-Session-Id'] == 'session-owned'
-    assert headers['X-Semantier-Run-Id'] == 'task-owned'
-    assert headers['X-Semantier-Purpose'] == 'title_generation'
+    assert headers['X-Semantier-Run-Id'].startswith('title-')
+    assert headers['X-Semantier-Parent-Run-Id'] == 'run-owned'
+    assert headers['X-Semantier-Task-Id'] == headers['X-Semantier-Root-Run-Id'] == 'task-owned'
+    assert headers['X-Semantier-Purpose'] == 'title'
 
 
 def test_cloud_model_options_matches_native_wire_contract(tmp_path, monkeypatch):
@@ -163,3 +167,52 @@ def test_cloud_model_options_matches_native_wire_contract(tmp_path, monkeypatch)
         'http://127.0.0.1:8765/v1', {}, []))
     result = ModelOptionsResult.model_validate(payload)
     assert result.provider == 'semantier-cloud'
+
+
+def test_task_root_and_child_lineage_are_runtime_owned():
+    from types import SimpleNamespace
+    parent = SimpleNamespace()
+    first = sg.bind_task_context(parent, 'task-1', 'run-1')
+    assert first == {'task_id':'task-1','root_run_id':'task-1','run_id':'run-1'}
+    assert sg.bind_task_context(parent,'task-1','run-2')['root_run_id'] == first['root_run_id']
+    child = SimpleNamespace(_semantier_parent_task_context=first)
+    assert sg.bind_task_context(child,'child-task','child-run') == {
+        'task_id':'task-1','root_run_id':'task-1','run_id':'child-run','parent_run_id':'run-1'}
+    assert sg.bind_task_context(parent,'other-task','run-3')['root_run_id'] != first['root_run_id']
+
+
+def test_auxiliary_runtime_receives_current_root_not_a_global_mirror(monkeypatch):
+    from types import SimpleNamespace
+    from agent.turn_context import _publish_runtime_main
+    from agent.auxiliary_client import _normalize_main_runtime, reset_runtime_main, set_runtime_main
+    monkeypatch.setattr('agent.prompt_cache_scope.resolve_prompt_cache_scope_safe',lambda agent:'scope')
+    token=set_runtime_main('custom','old',session_id='foreign-session',task_id='foreign-task')
+    try:
+        owner=SimpleNamespace(provider='custom',model='model',base_url='https://fixture.invalid/v1',api_key='key',session_id='session')
+        sg.bind_task_context(owner,'task-owned','run-owned')
+        _publish_runtime_main(owner)
+        snapshot=_normalize_main_runtime(None)
+        assert snapshot['task_id']==snapshot['root_run_id']=='task-owned'
+        assert snapshot['run_id']=='run-owned' and snapshot['session_id']=='session'
+    finally:
+        reset_runtime_main(token)
+
+
+def test_captured_cloud_route_survives_current_profile_reconfiguration(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    configure(tmp_path,monkeypatch)
+    agent=SimpleNamespace(base_url='http://127.0.0.1:8765/v1',api_key='profile-secret')
+    sg.capture_agent_route(agent)
+    bound=sg.agent_cloud_settings(agent)
+    (tmp_path/'config.yaml').write_text('model: {provider: custom, base_url: http://127.0.0.1:9999/v1}\n')
+    assert not sg.is_gateway_route(agent.base_url)
+    result=sg.attribute_request({},base_url=agent.base_url,purpose='chat',task_id='t',root_run_id='root',run_id='run',settings=bound)
+    assert result['extra_headers']['X-Semantier-Root-Run-Id']=='root'
+    seen=[]
+    profile={'context_window':128000,'max_output_tokens':128,'capabilities':{},'request_parameters':{'output':'max_tokens','reasoning_controls':[]},'revision':'account-a-revision','account_id':'account-a'}
+    monkeypatch.setattr(sg,'cloud_model_profile',lambda model,**kwargs: seen.append(kwargs['settings']) or profile)
+    compiled=sg.configure_cloud_request({'model':'alias','messages':[]},base_url=agent.base_url,settings=bound)
+    assert seen==[bound]
+    assert compiled['extra_headers']['X-Semantier-Account-Id']=='account-a'
+    agent.base_url='http://127.0.0.1:9999/v1'
+    assert sg.agent_cloud_settings(agent) is None

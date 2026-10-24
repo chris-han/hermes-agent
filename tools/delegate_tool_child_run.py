@@ -852,6 +852,8 @@ class _ChildRun:
         _images = list(getattr(child, "_delegate_images", None) or [])
         user_message: Any = _build_child_goal_message(self.goal, _images, child) if _images else self.goal
 
+        child._semantier_parent_task_context = dict(getattr(self.parent_agent,"_semantier_task_context",{}))
+
         def _run_with_thread_capture():
             worker_thread_holder["t"] = threading.current_thread()
             from agent.delegation_context import delegated_child_context

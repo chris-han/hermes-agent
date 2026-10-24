@@ -241,8 +241,16 @@ def _maybe_title_session_at_turn_start(
             k: getattr(agent, k, None)
             for k in ("model", "provider", "base_url", "api_key", "api_mode", "session_id")
         }
+        from agent.semantier_gateway import agent_cloud_settings
+        bound = agent_cloud_settings(agent)
+        if bound:
+            main_runtime["cloud_route"] = bound.base_url
         # See #19027.
-        main_runtime["run_id"] = getattr(agent, "_current_task_id", None)
+        context = dict(getattr(agent,"_semantier_task_context",{}))
+        if context:
+            main_runtime.update(context, parent_run_id=context['run_id'], run_id='title-'+uuid.uuid4().hex)
+        else:
+            main_runtime['run_id'] = getattr(agent,'_current_task_id',None)
         upgrade = maybe_auto_title(
             session_db,
             session_id,
@@ -545,6 +553,8 @@ def _publish_runtime_main(agent: Any) -> None:
                 "requested_provider", "base_url", "api_key", "api_mode", "auth_mode", "session_id"
             )},
             cache_scope=_cache_scope,
+            cloud_route=getattr(getattr(agent,"_semantier_cloud_settings",None),"base_url", ""),
+            **getattr(agent, "_semantier_task_context", {}),
         )
 
 
@@ -589,6 +599,8 @@ def _bind_turn_identity(
     )
     agent._relay_pending_turn_id = None
     agent._current_turn_id = turn_id
+    from agent.semantier_gateway import bind_task_context
+    bind_task_context(agent,effective_task_id,turn_id)
     agent._current_api_request_id = ""
     # Tripwire: warn when this turn starts before the previous turn-end persist
     # (concurrent turns interleave transcript writes). Cleared in _persist_session.
@@ -1075,7 +1087,6 @@ def build_turn_context(
     from tools.skill_provenance import set_review_attended
     set_review_attended(getattr(agent, "_review_attended", False))
     agent._restore_primary_runtime()
-    _publish_runtime_main(agent)
     _refresh_mcp_tools_between_turns(agent)
 
     if isinstance(user_message, str):
@@ -1087,6 +1098,7 @@ def build_turn_context(
         agent, task_id, stream_callback, persist_user_message,
         persist_user_timestamp, persist_user_platform_id,
     )
+    _publish_runtime_main(agent)
     _reset_per_turn_agent_state(agent)
 
     _preview_text = summarize_user_message_for_log(user_message)

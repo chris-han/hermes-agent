@@ -72,19 +72,58 @@ def is_gateway_route(base_url: str) -> bool:
     return bool(config and config.get('base_url') and str(base_url).rstrip('/') == str(config['base_url']).rstrip('/'))
 
 
+def capture_agent_route(agent):
+    """Retain the native task's credential/account route across later profile edits."""
+    agent._semantier_cloud_settings = None
+    if is_gateway_route(str(agent.base_url or '')):
+        settings = gateway_settings()
+        if not settings or agent.api_key != settings.api_key:
+            raise ValueError('Cloud connection changed while the task started; retry.')
+        agent._semantier_cloud_settings = settings
+
+
+def agent_cloud_settings(agent):
+    settings = getattr(agent,'_semantier_cloud_settings',None)
+    if (isinstance(settings,GatewaySettings) and str(agent.base_url or '').rstrip('/') == settings.base_url
+            and agent.api_key == settings.api_key):
+        return settings
+    return None
+
+
+def bind_task_context(agent, task_id, run_id):
+    """Freeze runtime correlation; server still owns namespace and financial authority."""
+    parent = getattr(agent, '_semantier_parent_task_context', None) or {}
+    context = {'task_id':parent.get('task_id') or task_id,
+               'root_run_id':parent.get('root_run_id') or task_id, 'run_id':run_id}
+    if parent.get('run_id'):
+        context['parent_run_id'] = parent['run_id']
+    if parent.get('business_object_ref'):
+        context['business_object_ref'] = parent['business_object_ref']
+    agent._semantier_task_context = context
+    return dict(context)
+
+
 def attribute_request(kwargs: dict, *, base_url: str, purpose: str,
-                      session_id: str = '', run_id: str = '', request_id: str | None = None) -> dict:
-    if not is_gateway_route(base_url):
+                      session_id: str = '', run_id: str = '', task_id: str = '', root_run_id: str = '',
+                      parent_run_id: str = '', business_object_ref: str = '', request_id: str | None = None,
+                      settings: GatewaySettings | None = None) -> dict:
+    if not (str(base_url).rstrip('/') == settings.base_url if settings else is_gateway_route(base_url)):
         return kwargs
-    gateway_settings()  # Invalid configured endpoint/credential fails closed only on this route.
-    if purpose not in {'chat', 'title_generation'}:
+    if settings is None:
+        gateway_settings()  # Invalid configured endpoint/credential fails closed only on this route.
+    purpose = {'title_generation':'title'}.get(purpose,purpose)
+    if purpose not in {'chat', 'title'}:
         raise ValueError('This Semantier hosted profile supports primary chat and title generation only.')
-    headers = dict(kwargs.get('extra_headers') or {})
+    headers = {key:value for key,value in (kwargs.get('extra_headers') or {}).items()
+               if not key.lower().startswith('x-semantier-')}
     headers['Idempotency-Key'] = (str(uuid5(NAMESPACE_URL, f'hermes:{session_id}:{request_id}'))
                                   if request_id else headers.get('Idempotency-Key') or str(uuid4()))
-    for name, value in {'Session-Id': session_id, 'Run-Id': run_id, 'Purpose': purpose}.items():
+    import re
+    for name, value in {'Session-Id': session_id, 'Run-Id': run_id, 'Purpose': purpose,
+            'Task-Id':task_id,'Root-Run-Id':root_run_id,'Parent-Run-Id':parent_run_id,
+            'Business-Object-Ref':business_object_ref}.items():
         value = str(value or '')
-        if len(value) > 200 or any(ord(char) < 32 or ord(char) > 126 for char in value):
+        if value and not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.:/-]{0,199}',value):
             raise ValueError('Invalid Semantier correlation value.')
         if value:
             headers[f'X-Semantier-{name}'] = value
@@ -192,12 +231,12 @@ def clear_cloud_catalog():
         _catalog_pending.clear()
 
 
-def cloud_catalog(*, refresh=False):
+def cloud_catalog(*, refresh=False, settings=None):
     from hermes_constants import get_hermes_home
     from concurrent.futures import Future, TimeoutError
     import requests
     try:
-        settings = gateway_settings()
+        settings = settings or gateway_settings()
     except ValueError:
         clear_cloud_catalog()
         raise
@@ -250,18 +289,20 @@ def cloud_catalog(*, refresh=False):
                 _catalog_pending.pop(key,None)
 
 
-def cloud_model_profile(model, *, refresh=False):
-    rows = [row for row in cloud_catalog(refresh=refresh)['data'] if row.get('id') == model]
+def cloud_model_profile(model, *, refresh=False, settings=None):
+    options = {"settings":settings} if settings is not None else {}
+    rows = [row for row in cloud_catalog(refresh=refresh,**options)['data'] if row.get('id') == model]
     if len(rows) != 1:
         raise ValueError('Selected Semantier Cloud Provider model is unavailable; refresh models.')
     return rows[0]
 
 
-def configure_cloud_request(kwargs, *, base_url):
+def configure_cloud_request(kwargs, *, base_url, settings=None):
     """Compile protocol fields for the chosen alias; never substitute supplier transport."""
-    if not is_gateway_route(base_url):
+    if not (str(base_url).rstrip('/') == settings.base_url if settings else is_gateway_route(base_url)):
         return kwargs
-    profile = cloud_model_profile(kwargs.get('model'))
+    options = {'settings':settings} if settings is not None else {}
+    profile = cloud_model_profile(kwargs.get('model'),**options)
     context, output = profile.get('context_window'), profile.get('max_output_tokens')
     if type(context) is not int or context <= 0 or type(output) is not int or output <= 0:
         raise ValueError('Semantier Cloud Provider context/output limits unknown; deployment configuration required.')
@@ -295,6 +336,8 @@ def configure_cloud_request(kwargs, *, base_url):
         result.pop('stream_options',None)
     headers = dict(result.get('extra_headers') or {})
     headers['X-Semantier-Capability-Revision'] = profile['revision']
+    if profile.get('account_id'):
+        headers['X-Semantier-Account-Id'] = profile['account_id']
     result['extra_headers'] = headers
     return result
 
