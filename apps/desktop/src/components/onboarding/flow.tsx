@@ -140,7 +140,9 @@ export function FlowPanel({
 
   return (
     <Step title={t.onboarding.signInWith(title)}>
-      <p className="text-sm text-muted-foreground">{t.onboarding.deviceCodeOpened(title)}</p>
+      <p className="text-sm text-muted-foreground">
+        {flow.provider.id === 'semantier-cloud' ? (t.onboarding.cloudBrowserOpened ?? t.onboarding.waitingAuthorize) : t.onboarding.deviceCodeOpened(title)}
+      </p>
       {flow.start.user_code ? (
         <DeviceCode code={flow.start.user_code} copied={flow.copied} onCopy={() => void copyDeviceCode()} />
       ) : null}

@@ -358,6 +358,13 @@ export function DesktopOnboardingOverlay({
     }
   }, [ctx, onboarding.flow.status, onboarding.manual, onboarding.providers])
 
+  const cloudFlow = ('provider' in onboarding.flow && onboarding.flow.provider?.id === 'semantier-cloud') ||
+    (onboarding.flow.status === 'confirming_model' && onboarding.flow.providerSlug === 'semantier-cloud')
+
+  if (onboarding.manual && cloudFlow && JSON.stringify(captureOnboardingScope()) !== JSON.stringify(ctx.scope)) {
+    return null
+  }
+
   if (!onboarding.manual && onboardingSurfaceActive()) {
     return null
   }

@@ -62,6 +62,7 @@ export const zhOnboarding: TranslationOverrides['onboarding'] = {
   waitingAuthorize: '等待你授权...',
   externalPending: provider => `${provider} 通过自己的 CLI 登录。请在终端运行此命令，然后回来选择“我已登录”：`,
   signedIn: '我已登录',
+  cloudBrowserOpened: '请在浏览器中授权此设备，再返回此配置继续连接。',
   deviceCodeOpened: provider => `已在浏览器中打开 ${provider}。请在那里输入此代码：`,
   reopenVerification: '重新打开验证页面',
   copy: '复制',

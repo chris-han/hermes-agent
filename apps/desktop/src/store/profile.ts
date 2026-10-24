@@ -541,6 +541,32 @@ export function prewarmProfileBackend(name: string, connectionId: null | string 
 
 let gatewaySwitch: Promise<void> | null = null
 
+/** Serialize native configuration publication with foreground profile/source
+ * activation. A delayed Cloud poll may install; its original scope must stay
+ * active until that request settles. Recheck the captured scope inside work. */
+export async function withGatewayProfileActivationLock<T>(work: () => Promise<T>): Promise<T> {
+  while (gatewaySwitch) {
+    await gatewaySwitch.catch(() => undefined)
+  }
+
+  const result = work()
+
+  const lock = result.then(
+    () => undefined,
+    () => undefined
+  )
+
+  gatewaySwitch = lock
+
+  try {
+    return await result
+  } finally {
+    if (gatewaySwitch === lock) {
+      gatewaySwitch = null
+    }
+  }
+}
+
 // Descriptor lookups are IPC round-trips into Electron main. A wedged main
 // (the #93454 class: a ticket mint that never answers) must not latch the
 // gatewaySwitch mutex — and, through it, every later profile/source switch

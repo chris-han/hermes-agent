@@ -44,7 +44,8 @@ vi.mock('@/hermes', () => ({
 vi.mock('@/lib/query-client', () => ({ invalidateProfileScopedQueries: vi.fn() }))
 vi.mock('@/store/starmap', () => ({ resetStarmapGraph }))
 
-const { $activeGatewayProfile, ensureGatewayAgent, ensureGatewayProfile } = await import('./profile')
+const { $activeGatewayProfile, ensureGatewayAgent, ensureGatewayProfile, withGatewayProfileActivationLock } =
+  await import('./profile')
 
 const {
   $connection,
@@ -446,4 +447,35 @@ describe('ensureGatewayAgent commit hook (beforeActivate) — the Sessions switc
     expect($activeGatewayProfile.get()).toBe('writer')
     expect($connection.get()?.profile).toBe('writer')
   })
+})
+
+it('serializes profile and source switches behind native Cloud installation', async () => {
+  const approvedReply = deferred()
+  const order: string[] = []
+  getConnection.mockResolvedValue(localConn({ profile: 'worker' }))
+  getConnectionFor.mockResolvedValue(agentConn())
+  ensureGatewayForProfile.mockImplementation(async () => {
+    order.push('profile')
+  })
+  ensureGatewayForAgent.mockImplementation(async () => {
+    order.push('source')
+
+    return true
+  })
+
+  const install = withGatewayProfileActivationLock(async () => {
+    order.push('poll')
+    await approvedReply.promise
+    expect($activeGatewayProfile.get()).toBe('default')
+    order.push('install')
+  })
+
+  await Promise.resolve()
+  const profileSwitch = ensureGatewayProfile('worker')
+  const sourceSwitch = ensureGatewayAgent('homelab', 'research')
+  await Promise.resolve()
+  expect(order).toEqual(['poll'])
+  approvedReply.resolve()
+  await Promise.all([install, profileSwitch, sourceSwitch])
+  expect(order).toEqual(['poll', 'install', 'profile', 'source'])
 })

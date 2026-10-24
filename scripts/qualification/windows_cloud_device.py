@@ -18,18 +18,67 @@ def main():
     parser.add_argument('--inspect',action='store_true')
     parser.add_argument('--chat',action='store_true')
     parser.add_argument('--status',action='store_true')
+    parser.add_argument('--cancel',action='store_true')
     parser.add_argument('--task-id',default='windows-source-explicit-chat')
     parser.add_argument('--title',action='store_true')
     parser.add_argument('--expect-denied',action='store_true')
     parser.add_argument('--account-map',type=Path)
+    parser.add_argument('--account-switch',action='store_true')
+    parser.add_argument('--fixture-root',type=Path)
     args = parser.parse_args()
     assert os.name == 'nt', 'real Windows is required'
     source=args.source.resolve();home=args.root.resolve()
     sys.path.insert(0,str(source))
     os.environ['HERMES_HOME']=str(home)
     from hermes_cli import cloud_device_client as device
+    if args.cancel:
+        print(json.dumps(device.cancel(device._read()['session_id'])))
+        return
     if args.status:
         print(json.dumps(device.status()))
+        return
+    if args.account_switch:
+        import httpx
+        import time
+        from urllib.parse import parse_qs,urlsplit
+        from hermes_cli.runtime_provider import resolve_runtime_provider
+        from run_agent import AIAgent
+        profile=home.parent/'profile'
+        for key,folder in {'HOME':profile,'USERPROFILE':profile,'APPDATA':profile/'AppData/Roaming','LOCALAPPDATA':profile/'AppData/Local','TEMP':home.parent/'tmp','TMP':home.parent/'tmp'}.items():
+            folder.mkdir(parents=True,exist_ok=True);os.environ[key]=str(folder)
+        os.chdir(home)
+        for key in list(os.environ):
+            if key.endswith(('_API_KEY','_TOKEN','_SECRET','_PASSWORD','_CREDENTIALS')):os.environ.pop(key,None)
+        identity=json.loads((args.fixture_root/'identity.json').read_text())
+        mapped=json.loads(args.account_map.read_text())
+        original=device._read()['account_id']
+        assert original==mapped['bound_account_id']
+        runtime=resolve_runtime_provider(requested='semantier-cloud',target_model='device-controlled');runtime.pop('source',None)
+        assert runtime['base_url']=='http://127.0.0.1:55474/v1'
+        agent=AIAgent(model='device-controlled',**runtime,max_iterations=1,enabled_toolsets=[],quiet_mode=True,
+            skip_context_files=True,skip_memory=True,skip_background_review=True)
+        with httpx.Client(base_url='http://127.0.0.1:55474',trust_env=False,timeout=20) as browser:
+            assert browser.post('/auth/password/login',json={k:identity[k] for k in ('login','password')}).status_code==200
+            def install(account):
+                started=device.start()
+                intent=parse_qs(urlsplit(started['verification_url']).query)['intent_ref'][0]
+                response=browser.post('/api/cloud-provider/device/'+intent+'/approve',json={'contract_version':device.CONTRACT,'account_id':account,'decision':'approve'},headers={'origin':'http://127.0.0.1:55474','x-semantier-csrf':'1'})
+                assert response.status_code==200,response.text
+                result=device.poll(started['session_id'])
+                assert result['status']=='approved' and result['account_id']==account
+                return result
+            other=install(mapped['authorized_other_account_id'])
+            assert device._config()['billing']['account_id']==mapped['authorized_other_account_id']
+            assert not other['model']
+            result=agent.run_conversation('Controlled captured account acceptance. Reply briefly.',task_id=args.task_id)
+            assert 'Device controlled response.' in str(result.get('final_response',''))
+            restored=install(original)
+            assert restored['model']=='device-controlled'
+            assert device._config()['model']['capability_revision']
+        print(json.dumps({'produced_at':datetime.now(UTC).isoformat(),'scope':'REAL_NATIVE_ACCOUNT_SWITCH_AND_CAPTURED_TASK',
+            'captured_account_id':original,'other_installed_account_id':mapped['authorized_other_account_id'],
+            'other_catalog_empty':not other['model'],'restored_account_id':restored['account_id'],
+            'native_old_runtime_chat_completed':True,'task_root':args.task_id,'purchase_calls':0,'package_acceptance':False}))
         return
     if args.account_map:
         import httpx

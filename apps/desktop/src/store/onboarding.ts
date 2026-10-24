@@ -28,6 +28,7 @@ import { setMainModelAssignment } from '@/store/model-assignment'
 import { dismissNotification, notify, notifyError } from '@/store/notifications'
 import { afterOnboardingSurfaceClear, onboardingSurfaceOpen } from '@/store/onboarding-presence'
 import { captureOnboardingScope, type OnboardingScope } from '@/store/onboarding-scope'
+import { withGatewayProfileActivationLock } from '@/store/profile'
 import type { OAuthProvider, OAuthStartResponse } from '@/types/hermes'
 
 type PkceStart = Extract<OAuthStartResponse, { flow: 'pkce' }>
@@ -956,19 +957,57 @@ export async function startProviderOAuth(provider: OAuthProvider, ctx: Onboardin
   }
 }
 
+// A transport timeout is not native completion: the worker may still publish.
+// Keep the existing activation lease until the SAME operation is observed.
+// If the runtime is unreachable, returning to another scope waits; restarting
+// Desktop recovers through the protected native journal rather than guessing.
+async function pollCloudSession(start: DeviceStart, ctx: OnboardingContext) {
+  const operation = { id: crypto.randomUUID() }
+
+  try {
+    return await pollOAuthSession('semantier-cloud', start.session_id, ctx.scope, operation)
+  } catch {
+    for (;;) {
+      try {
+        return await pollOAuthSession('semantier-cloud', start.session_id, ctx.scope, {
+          ...operation
+        })
+      } catch {
+        await new Promise(resolve => window.setTimeout(resolve, 1000))
+      }
+    }
+  }
+}
+
 // Poll a session-backed device-code flow until it resolves.
 const activePolls = new Set<number>()
 
 async function pollSession(provider: OAuthProvider, start: DeviceStart, ctx: OnboardingContext, generation: number) {
-  if (activePolls.has(generation)) {return}
+  if (activePolls.has(generation)) {
+    return
+  }
 
-  if (provider.id === 'semantier-cloud' && JSON.stringify(captureOnboardingScope()) !== JSON.stringify(ctx.scope))
-    {return}
+  if (provider.id === 'semantier-cloud' && JSON.stringify(captureOnboardingScope()) !== JSON.stringify(ctx.scope)) {
+    return
+  }
 
   activePolls.add(generation)
 
   try {
-    const { error_message, status } = await pollOAuthSession(provider.id, start.session_id, ctx.scope)
+    const sameScope = () => JSON.stringify(captureOnboardingScope()) === JSON.stringify(ctx.scope)
+
+    const reply =
+      provider.id === 'semantier-cloud'
+        ? await withGatewayProfileActivationLock(async () =>
+            sameScope() ? pollCloudSession(start, ctx) : { status: 'pending' }
+          )
+        : await pollOAuthSession(provider.id, start.session_id, ctx.scope)
+
+    const { error_message, status } = reply as Awaited<ReturnType<typeof pollOAuthSession>>
+
+    if (provider.id === 'semantier-cloud' && !sameScope()) {
+      return
+    }
 
     if (generation !== flowGeneration) {
       return
@@ -1394,6 +1433,13 @@ export async function confirmOnboardingModel(ctx: OnboardingContext) {
     return
   }
 
+  if (
+    flow.providerSlug === 'semantier-cloud' &&
+    JSON.stringify(captureOnboardingScope()) !== JSON.stringify(ctx.scope)
+  ) {
+    return
+  }
+
   if (manual) {
     // Best-effort: the overlay is already on its way out (cinematic exit
     // choreography in the caller isn't gated on this), so a failure here is
@@ -1401,9 +1447,13 @@ export async function confirmOnboardingModel(ctx: OnboardingContext) {
     // this file's non-blocking gateway calls. The alternative (silently
     // keeping the previous default) is still safer than the bug this fixes.
     try {
-      const res = await setMainModelAssignment({ provider: flow.providerSlug, model: flow.currentModel }, undefined, {
-        skipConfirmPrompt: true
-      })
+      const res = await setMainModelAssignment(
+        { provider: flow.providerSlug, model: flow.currentModel },
+        ctx.scope ?? ctx.profile,
+        {
+          skipConfirmPrompt: true
+        }
+      )
 
       notifyGatewayTools(res.gateway_tools)
     } catch (error) {

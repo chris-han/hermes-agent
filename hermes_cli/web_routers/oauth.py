@@ -820,6 +820,37 @@ async def _cloud_device_request(profile, operation, *args):
         raise HTTPException(409, "Cloud connection unavailable; retry from the original profile or reauthorize.") from None
 
 
+# Retain each protected local poll until observed completion. HTTP cancellation
+# does not cancel its native worker; a renderer scope lease must observe the
+# same operation, rather than start a second mutating poll after a lost reply.
+_cloud_polls = {}
+
+
+async def _cloud_poll(profile, session_id, operation_id):
+    if not operation_id:
+        return await _cloud_device_request(profile, "poll", session_id)
+    if not isinstance(operation_id, str) or not 1 <= len(operation_id) <= 64 or not all(
+            ch.isascii() and (ch.isalnum() or ch in "-_") for ch in operation_id):
+        raise HTTPException(422, "Invalid poll operation identity.")
+    key = (_oauth_profile_name(profile), session_id, operation_id)
+    task = _cloud_polls.get(key)
+    if task is None:
+        # Completed receipts are disposable; never evict a running operation.
+        for old_key, old_task in list(_cloud_polls.items()):
+            if old_task.done() and len(_cloud_polls) >= 128:
+                del _cloud_polls[old_key]
+        if len(_cloud_polls) >= 128:
+            raise HTTPException(409, "Native poll capacity unavailable.")
+        async def run():
+            try:
+                return await _cloud_device_request(profile, "poll", session_id)
+            except Exception:
+                return {"status": "error", "error_message": "Cloud connection unavailable; retry from the original profile or reauthorize."}
+        task = asyncio.create_task(run())
+        _cloud_polls[key] = task
+    return await asyncio.shield(task)
+
+
 @router.post("/api/providers/oauth/{provider_id}/start")
 async def start_oauth_login(provider_id: str, request: Request, profile: Optional[str] = None):
     """Initiate an OAuth login flow. Token-protected."""
@@ -885,13 +916,14 @@ async def submit_oauth_code(
 
 
 @router.get("/api/providers/oauth/{provider_id}/poll/{session_id}")
-async def poll_oauth_session(provider_id: str, session_id: str, request: Request, profile: Optional[str] = None):
+async def poll_oauth_session(provider_id: str, session_id: str, request: Request, profile: Optional[str] = None,
+                             operation_id: Optional[str] = None):
     """Poll a session's status (no auth — read-only state). One endpoint serves
     every device-code flow: all report progress via the worker-updated ``status``."""
     requested_profile = _validate_oauth_profile(profile)
     if provider_id == "semantier-cloud":
         _require_token(request)
-        return await _cloud_device_request(profile, "poll", session_id)
+        return await _cloud_poll(profile, session_id, operation_id)
     with _oauth_sessions_lock:
         sess = _oauth_sessions.get(session_id)
     if not sess:

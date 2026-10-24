@@ -308,7 +308,7 @@ def configure_cloud_request(kwargs, *, base_url, settings=None):
         raise ValueError('Semantier Cloud Provider context/output limits unknown; deployment configuration required.')
     result = dict(kwargs)
     extra = result.pop('extra_body',{}) or {}
-    if not isinstance(extra,dict) or set(extra)-{'enable_thinking'}:
+    if not isinstance(extra,dict) or set(extra)-{'enable_thinking','response_format'}:
         raise ValueError('Unsupported Semantier Cloud Provider request overrides.')
     result.update(extra)
     caps = profile['capabilities']

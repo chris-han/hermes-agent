@@ -356,11 +356,12 @@ export function submitOAuthCode(
 export function pollOAuthSession(
   providerId: string,
   sessionId: string,
-  profile?: ProfileScope
+  profile?: ProfileScope,
+  operation?: { id: string }
 ): Promise<OAuthPollResponse> {
   return window.hermesDesktop.api<OAuthPollResponse>({
     ...capabilityScoped(profile),
-    path: `/api/providers/oauth/${encodeURIComponent(providerId)}/poll/${encodeURIComponent(sessionId)}`
+    path: `/api/providers/oauth/${encodeURIComponent(providerId)}/poll/${encodeURIComponent(sessionId)}${operation ? `?operation_id=${encodeURIComponent(operation.id)}` : ''}`
   })
 }
 

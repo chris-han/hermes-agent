@@ -74,6 +74,7 @@ export const enOnboarding: Translations['onboarding'] = {
   externalPending: provider =>
     `${provider} signs in through its own CLI. Run this command in a terminal, then come back and pick "I've signed in":`,
   signedIn: "I've signed in",
+  cloudBrowserOpened: 'Approve this device in your browser. Return to this profile to finish connecting.',
   deviceCodeOpened: provider => `We opened ${provider} in your browser. Enter this code there:`,
   reopenVerification: 'Re-open verification page',
   copy: 'Copy',

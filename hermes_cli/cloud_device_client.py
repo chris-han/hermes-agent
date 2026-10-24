@@ -341,9 +341,9 @@ def _install(state, binding):
         if not isinstance(cfg.get('model'),dict):
             cfg['model'] = {'default':str(cfg.get('model') or '')}
         previous = cfg['model']
-        if previous.get('provider') != 'semantier-cloud' and (previous.get('api_key') or previous.get('key_env')):
+        if previous.get('provider') != 'semantier-cloud' and (previous.get('api_key') or previous.get('key_env') or previous.get('key_cmd')):
             from hermes_cli.config_providers import get_compatible_custom_providers
-            saved = {key:previous[key] for key in ('base_url','api_key','key_env','api_mode') if previous.get(key)}
+            saved = {key:previous[key] for key in ('base_url','api_key','key_env','key_cmd','api_mode') if previous.get(key)}
             if not saved.get('base_url'):
                 raise ValueError('Previous embedded provider credential needs its configured endpoint before switching.')
             saved['default_model'] = previous.get('default','')
@@ -357,9 +357,10 @@ def _install(state, binding):
                     name = key+'-'+str(suffix)
                 saved['name'] = urlsplit(saved['base_url']).hostname or str(previous.get('provider') or 'Saved provider')
                 cfg['providers'][name] = saved
-        cfg['model'].update(provider='semantier-cloud', base_url=entry['base_url'])
+        cfg['model'].update(provider='semantier-cloud', base_url=entry['base_url'],api_mode='chat_completions')
         cfg['model'].pop('api_key',None)
         cfg['model'].pop('key_env',None)
+        cfg['model'].pop('key_cmd',None)
         rows = _catalog(state['origin'], data['credential']['secret'])
         allowed = sorted({row['id'] for row in rows if isinstance(row.get('id'),str) and row['id']})
         selected = cfg['model'].get('default')

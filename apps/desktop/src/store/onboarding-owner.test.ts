@@ -8,6 +8,7 @@ import { makeOAuthProvider } from '@/test/oauth-provider'
 import {
   $desktopOnboarding,
   closeManualOnboarding,
+  confirmOnboardingModel,
   type OnboardingContext,
   saveOnboardingLocalEndpoint,
   setOnboardingCode,
@@ -233,4 +234,64 @@ it('defers Cloud installation polls while a different runtime/profile is foregro
   await vi.advanceTimersByTimeAsync(3000)
   expect(requests.some(request => request.path.includes('/poll/'))).toBe(true)
   expectOwnerRequests()
+})
+
+it('confirms a manual default only on the initiating owner', async () => {
+  const ctx = beginContext()
+  await startProviderOAuth(makeOAuthProvider('openai-codex'), ctx)
+  await vi.advanceTimersByTimeAsync(3000)
+  expect($desktopOnboarding.get().flow.status).toBe('confirming_model')
+  requests.length = 0
+  switchForeground()
+  await confirmOnboardingModel(ctx)
+  expectOwnerRequests()
+})
+
+it('defers Cloud confirmation until its original foreground scope returns', async () => {
+  const ctx = beginContext()
+  $desktopOnboarding.set({
+    ...$desktopOnboarding.get(),
+    flow: {
+      status: 'confirming_model',
+      providerSlug: 'semantier-cloud',
+      currentModel: 'fixture-model',
+      label: 'Semantier Cloud',
+      saving: false
+    }
+  })
+  requests.length = 0
+  switchForeground()
+  await confirmOnboardingModel(ctx)
+  expect(requests).toHaveLength(0)
+  expect($desktopOnboarding.get().flow.status).toBe('confirming_model')
+  setApiRequestConnection(owner.connectionId)
+  setApiRequestProfile(owner.profile)
+  await confirmOnboardingModel(ctx)
+  expectOwnerRequests()
+})
+
+it('observes the same native operation after a lost poll reply without starting another install', async () => {
+  const ctx = beginContext()
+  const api = window.hermesDesktop.api
+  let originalPath = ''
+  let observations = 0
+  window.hermesDesktop.api = vi.fn(async request => {
+    if (request.path.includes('/poll/')) {
+      if (!originalPath) {
+        originalPath = request.path
+        throw new Error('local response lost while native worker continues')
+      }
+
+      observations++
+      expect(request.path).toBe(originalPath)
+      expect(request).toMatchObject(owner)
+
+      return { status: 'pending' }
+    }
+
+    return api(request)
+  }) as typeof api
+  await startProviderOAuth({ ...makeOAuthProvider('semantier-cloud'), flow: 'device_code' }, ctx)
+  await vi.advanceTimersByTimeAsync(3000)
+  expect(observations).toBe(1)
 })

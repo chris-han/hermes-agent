@@ -293,7 +293,7 @@ def test_connect_never_reuses_an_unrelated_provider_origin(native,monkeypatch):
 def test_install_retains_embedded_previous_provider_and_capability_revision(native,monkeypatch):
     device,home=native
     cfg=device._config()
-    cfg['model'].update(api_key='old-provider-secret',default='old-model',api_mode='chat_completions')
+    cfg['model'].update(api_key='old-provider-secret',default='old-model',api_mode='anthropic_messages')
     from hermes_cli.config import atomic_config_replace
     atomic_config_replace(home/'config.yaml',cfg)
     install_wire(device,monkeypatch)
@@ -304,3 +304,5 @@ def test_install_retains_embedded_previous_provider_and_capability_revision(nati
     prior=[row for row in get_compatible_custom_providers(installed) if row.get('api_key')=='old-provider-secret']
     assert len(prior)==1 and prior[0]['base_url']=='http://127.0.0.1:8765/v1'
     assert installed['model']['capability_revision']=='allowed-revision'
+    assert installed['model']['api_mode']=='chat_completions'
+    assert prior[0]['api_mode']=='anthropic_messages'

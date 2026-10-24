@@ -50,6 +50,7 @@ export interface OnboardingTranslations {
   externalPending: (provider: string) => string
   signedIn: string
   deviceCodeOpened: (provider: string) => string
+  cloudBrowserOpened?: string
   reopenVerification: string
   copy: string
   defaultModel: string

@@ -216,3 +216,18 @@ def test_captured_cloud_route_survives_current_profile_reconfiguration(tmp_path,
     assert compiled['extra_headers']['X-Semantier-Account-Id']=='account-a'
     agent.base_url='http://127.0.0.1:9999/v1'
     assert sg.agent_cloud_settings(agent) is None
+
+
+def test_real_title_response_format_uses_cloud_capability_compiler(tmp_path,monkeypatch):
+    from agent.title_generator import _TITLE_RESPONSE_FORMAT
+    configure(tmp_path,monkeypatch)
+    profile={'context_window':128000,'max_output_tokens':128,'capabilities':{'structured_output':False},
+        'request_parameters':{'output':'max_tokens','reasoning_controls':[]},'revision':'title-revision'}
+    monkeypatch.setattr(sg,'cloud_model_profile',lambda *args,**kwargs:profile)
+    wire=sg.configure_cloud_request({'model':'title-model','messages':[{'role':'user','content':'Title fixture'}],
+        'extra_body':{'response_format':_TITLE_RESPONSE_FORMAT}},base_url='http://127.0.0.1:8765/v1')
+    assert 'response_format' not in wire and 'extra_body' not in wire
+    profile['capabilities']['structured_output']=True
+    structured=sg.configure_cloud_request({'model':'title-model','messages':[{'role':'user','content':'Title fixture'}],
+        'extra_body':{'response_format':_TITLE_RESPONSE_FORMAT}},base_url='http://127.0.0.1:8765/v1')
+    assert structured['response_format']==_TITLE_RESPONSE_FORMAT
