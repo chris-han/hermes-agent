@@ -15,20 +15,20 @@ python3 scripts/build_hermes_windows.py --thumbprint EXPLICIT_CERTIFICATE_THUMBP
 
 `--preflight` 仅检查传输、证书和工具；`--unsigned-receipt 'D:\path\unsigned-build-receipt.json'` 校验已有构建收据及散列后，仅重新签名/打包，不重新构建。完整构建仍沿用原有干净打包流程。详细参数、缓存及清理说明见父仓库 `docs/operational/hermes-windows-build.md`。签名脚本直接读取 MSIX 内的清单，无需解包整个运行时。
 
-本地 Semantier 完整构建的界面名称为 `Semantier Agent <版本>`，可执行文件为 `Semantier Agent.exe`，分发 ZIP 为 `SemantierAgent-<版本>-win-<架构>.zip`。版本从 `0.0.1` 开始，每次正式构建尝试自动递增补丁号，保存在工作目录旁的 `D:\repo\semantier-agent-build-version.json`；失败的正式构建也消耗编号。预检查和仅重新签名不递增。保留此计数器，不因清理构建输出而重置。MSIX 使用对应四段版本（例如 `0.0.1.0`），上游 Python 运行时版本仍独立记录。名称定制不改变包 Identity、ApplicationID、Publisher 或内部状态隔离名称。
+本地 Semantier 完整构建的界面名称为 `Semantier Agent <版本>`，可执行文件为 `Semantier Agent.exe`，分发 ZIP 为 `SemantierAgent-<版本>-win-<架构>.zip`。版本从 `0.0.1` 开始，每次正式构建尝试自动递增补丁号，保存在工作目录旁的 `D:\repo\semantier-agent-build-version.json`；失败的正式构建也消耗编号。预检查和仅重新签名不递增。保留此计数器，不因清理构建输出而重置。MSIX 使用对应四段版本（例如 `0.0.1.0`），上游 Python 运行时版本仍独立记录。名称定制不改变包 Identity、ApplicationID 或内部状态隔离名称。Semantier 本地版本使用 `CN=Semantier Technology, O=Semantier Technology` 签名发布者及 `Semantier Technology` 显示名；上游和 Store 发布者保持原值。更换 Publisher 会改变 Windows 包家族，旧版不能作为同一包家族原地升级。
 
 ## 1. 首次创建可复用的签名证书
 
 在构建电脑的普通 PowerShell 中执行一次。
 `Subject` 必须与 MSIX 清单的 `Identity Publisher` 完全匹配。
-以下值对应 Hermes 当前的非商店 MSIX 发布者：
+以下值对应 Semantier 本地版本的 MSIX 发布者（上游非 Semantier 构建继续使用 Nous 证书）：
 
 ```powershell
 $cert = New-SelfSignedCertificate `
   -Type Custom `
-  -Subject 'CN=Nous Research Inc., O=Nous Research Inc., L=Austin, S=Texas, C=US' `
+  -Subject 'CN=Semantier Technology, O=Semantier Technology' `
   -KeyUsage DigitalSignature `
-  -FriendlyName 'Hermes Local Signing' `
+  -FriendlyName 'Semantier Agent Local Signing' `
   -CertStoreLocation 'Cert:\CurrentUser\My' `
   -TextExtension @('2.5.29.19={text}', '2.5.29.37={text}1.3.6.1.5.5.7.3.3') `
   -NotAfter (Get-Date).AddYears(2)
@@ -45,7 +45,7 @@ $cert.Thumbprint
 
 ## 2. 每次构建后签名并打包
 
-先检查当前用户已有证书及私钥、有效期、代码签名 EKU 和包清单的 Publisher。优先复用有效且用途合适的证书；有多个候选时必须通过已记录的指纹或既有信任依据明确选择，不能猜测。仅在没有可用证书时创建一次。创建示例的 Subject 只是参考，实际必须与本次 MSIX 清单的 `Identity Publisher` 逐字相同。界面品牌不改变包标识或发布者。
+先检查当前用户已有证书及私钥、有效期、代码签名 EKU 和包清单的 Publisher。优先复用有效且用途合适的证书；有多个候选时必须通过已记录的指纹或既有信任依据明确选择，不能猜测。仅在没有可用证书时创建一次。创建示例的 Subject 只是参考，实际必须与本次 MSIX 清单的 `Identity Publisher` 逐字相同。安装界面可能显示签名证书的 CN，因此 Semantier 本地构建同时设置清单 Publisher、PublisherDisplayName，并使用 Subject 完全匹配的证书。
 
 使用仓库提供的脚本（所有路径均填写本次实际值）：
 
