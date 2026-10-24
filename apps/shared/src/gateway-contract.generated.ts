@@ -85,6 +85,7 @@ export interface BillingStateResult {
   subscription?: BillingSubscription | null
   credits?: BillingCredits | null
   portal?: BillingPortal | null
+  account_provisioning?: AccountProvisioning | null
 }
 export interface BillingCardInfo {
   brand: string
@@ -179,6 +180,16 @@ export interface BillingCredits {
 }
 export interface BillingPortal {
   url: string | null
+}
+/** Exact public projection from account_sync_store.account_provisioning. */
+export interface AccountProvisioning {
+  local_status: string
+  inference_ready: boolean
+  gateway_sync_status?: string | null
+  organization_id?: string | null
+  billing_account_id?: string | null
+  currency?: string | null
+  reason?: string | null
 }
 /** ``_serialize_subscription_state``; the view's fallback emits only ``ok / logged_in / error``. */
 export interface SubscriptionStateResult {

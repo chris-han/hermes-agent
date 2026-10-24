@@ -15,7 +15,7 @@ from .common import MessageReaction, OpenModel, ProfileParams, SessionParams
 from .registry import method
 from .semantier_billing import (BillingReadParams, BillingOrganization, BillingCapabilities,
                                BillingUsage, Money, BillingCommerceCapabilities, BillingSubscription,
-                               BillingCredits, BillingCommerceUsage, BillingPortal, BillingMerchant)
+                               BillingCredits, BillingCommerceUsage, BillingPortal, BillingMerchant, AccountProvisioning)
 
 # ── billing envelope ──────────────────────────────────────────────────────────────────────────
 
@@ -184,6 +184,7 @@ class BillingStateResult(BillingEnvelope):
     subscription: BillingSubscription | None = None
     credits: BillingCredits | None = None
     portal: BillingPortal | None = None
+    account_provisioning: AccountProvisioning | None = None
 
 
 method("billing.state", params=BillingReadParams, result=BillingStateResult,

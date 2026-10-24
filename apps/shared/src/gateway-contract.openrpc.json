@@ -4767,6 +4767,86 @@
         "title": "AccountOwner",
         "type": "object"
       },
+      "AccountProvisioning": {
+        "additionalProperties": false,
+        "description": "Exact public projection from account_sync_store.account_provisioning.",
+        "properties": {
+          "local_status": {
+            "title": "Local Status",
+            "type": "string"
+          },
+          "inference_ready": {
+            "title": "Inference Ready",
+            "type": "boolean"
+          },
+          "gateway_sync_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Gateway Sync Status"
+          },
+          "organization_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Organization Id"
+          },
+          "billing_account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Billing Account Id"
+          },
+          "currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Currency"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "local_status",
+          "inference_ready"
+        ],
+        "title": "AccountProvisioning",
+        "type": "object"
+      },
       "ActiveIdResult": {
         "additionalProperties": false,
         "properties": {
@@ -7667,6 +7747,17 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/BillingPortal"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "account_provisioning": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccountProvisioning"
               },
               {
                 "type": "null"

@@ -92,3 +92,17 @@ def test_v2_readiness_cannot_describe_a_foreign_scope(field,value):
     payload['account_provisioning']={'local_status':'READY','inference_ready':True,field:value}
     with pytest.raises(ValidationError,match='scope mismatch'):
         SemantierBillingV2.model_validate(payload)
+
+
+@pytest.mark.parametrize('ready', [False, True])
+def test_v2_readiness_survives_registered_rpc_envelope(ready):
+    from tui_gateway.contracts.registry import METHODS
+    payload = state()
+    payload['account_provisioning'] = {'local_status': 'READY', 'inference_ready': ready,
+        'organization_id': 'org-a', 'billing_account_id': 'account-a', 'currency': 'CNY',
+        'gateway_sync_status': 'SYNCED' if ready else 'PENDING',
+        'reason': None if ready else 'PREPARING'}
+    validated = SemantierBillingV2.model_validate(payload).model_dump(exclude_unset=True)
+    wire = METHODS['billing.state'].result.model_validate({'ok': True, **validated})
+    assert wire.account_provisioning.inference_ready is ready
+    assert wire.credits.allowance.amount == '100.00'
