@@ -1,4 +1,4 @@
-/** Real Windows Electron/renderer + selected source Python. Source acceptance only. */
+/** One native journey driver: explicit source lane or exact extracted-package lane. */
 import { _electron, chromium, expect } from '../../node_modules/@playwright/test/index.mjs'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -11,7 +11,16 @@ assert.equal(process.platform, 'win32')
 const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const root = path.resolve(process.argv[2])
 const executable = process.argv[3]
-const python = process.argv[4]
+const packagedMode = process.argv[7] === 'package'
+let python = process.argv[4]
+const payload = packagedMode ? path.join(path.dirname(executable), 'resources/agent-payload') : null
+const payloadManifest = packagedMode ? JSON.parse(fs.readFileSync(path.join(payload, 'manifest.json'), 'utf8')) : null
+const runtimeSource = packagedMode ? path.join(payload, payloadManifest.runtime.repoDir) : source
+if (packagedMode) {
+  python = path.join(payload, payloadManifest.runtime.storePython)
+  assert.ok(fs.existsSync(python), 'actual shipped base interpreter is required')
+  assert.ok(process.argv[8] && fs.existsSync(process.argv[8]), 'exact signed MSIX binding required')
+}
 assert.ok(root && executable && python, 'explicit disposable state, Electron and interpreter required')
 const marker = path.join(root, '.owner.json')
 if (fs.existsSync(root)) assert.equal(JSON.parse(fs.readFileSync(marker, 'utf8')).owner, 'windows-cloud-client-r1')
@@ -68,8 +77,23 @@ Object.assign(env, {
   HERMES_DESKTOP_SKIP_PROTOCOL_REGISTRATION: '1',
   HERMES_DESKTOP_DEV_SERVER: ''
 })
+if (packagedMode) {
+  for (const key of ['PYTHONPATH', 'HERMES_DESKTOP_HERMES_ROOT', 'HERMES_DESKTOP_PYTHON']) delete env[key]
+  env.USERPROFILE = process.env.USERPROFILE
+}
 if (process.argv[5] === 'stop') {
-  const result = spawnSync(python, ['-m', 'hermes_cli.main', 'gateway', 'stop'], {
+  const cli = packagedMode
+    ? [
+        '-I',
+        '-c',
+        "import sys,runpy;sys.path[:0]=[sys.argv.pop(1),sys.argv.pop(1)];sys.argv[0]='hermes';runpy.run_module('hermes_cli.main',run_name='__main__')",
+        runtimeSource,
+        path.join(payload, payloadManifest.runtime.sitePackages),
+        'gateway',
+        'stop'
+      ]
+    : ['-m', 'hermes_cli.main', 'gateway', 'stop']
+  const result = spawnSync(python, cli, {
     env,
     cwd: source,
     encoding: 'utf8',
@@ -86,15 +110,16 @@ if (process.argv[5] === 'stop') {
 }
 const freshMode = process.argv[5] === 'fresh-connect'
 const scopeMode = process.argv[5] === 'scope-connect'
-const profileAsset = scopeMode
-  ? fs
-      .readdirSync(path.join(source, 'apps/desktop/dist/assets'))
-      .find(
-        name =>
-          name.endsWith('.js') &&
-          fs.readFileSync(path.join(source, 'apps/desktop/dist/assets', name), 'utf8').includes('as selectProfile')
-      )
-  : null
+let profileAsset =
+  !packagedMode && scopeMode
+    ? fs
+        .readdirSync(path.join(source, 'apps/desktop/dist/assets'))
+        .find(
+          name =>
+            name.endsWith('.js') &&
+            fs.readFileSync(path.join(source, 'apps/desktop/dist/assets', name), 'utf8').includes('as selectProfile')
+        )
+    : null
 const selectProfile = async name => {
   await page.evaluate(
     async ({ asset, name }) => {
@@ -123,21 +148,86 @@ const run = Date.now()
 const hash = p => createHash('sha256').update(fs.readFileSync(p)).digest('hex')
 const receipt = {
   produced_at: new Date().toISOString(),
-  scope: 'ACTUAL_WINDOWS_SOURCE_ELECTRON',
+  scope: packagedMode ? 'EXACT_EXTRACTED_SIGNED_PACKAGE' : 'ACTUAL_WINDOWS_SOURCE_ELECTRON',
   package_acceptance: false,
-  source_python_sha256: hash(path.join(source, 'hermes_cli/cloud_device_client.py')),
-  renderer_sha256: hash(path.join(source, 'apps/desktop/dist/index.html')),
+  registered_install_acceptance: false,
+  runtime_coverage: packagedMode ? 'extracted-runtime-only' : 'source-only',
+  source_python_sha256: hash(path.join(runtimeSource, 'hermes_cli/cloud_device_client.py')),
+  renderer_sha256: packagedMode ? null : hash(path.join(source, 'apps/desktop/dist/index.html')),
+  ...(packagedMode
+    ? {
+        signed_msix_path: process.argv[8],
+        signed_msix_sha256: hash(process.argv[8]),
+        payload_source_commit: payloadManifest.ref
+      }
+    : {}),
   stage: 'boot'
 }
 let app, page, browser, browserContext
+const nativeInstalled = () =>
+  page.evaluate(async () => {
+    const result = await window.hermesDesktop.api({
+      path: '/api/providers/oauth',
+      profile: 'default',
+      connectionId: 'local'
+    })
+    return result.providers.find(provider => provider.id === 'semantier-cloud')?.status.logged_in === true
+  })
 try {
   app = await _electron.launch({
     executablePath: executable,
-    args: [path.join(source, 'apps/desktop'), '--no-sandbox'],
+    args: packagedMode ? ['--no-sandbox'] : [path.join(source, 'apps/desktop'), '--no-sandbox'],
     cwd: path.join(source, 'apps/desktop'),
     env,
     timeout: 90000
   })
+  if (packagedMode) {
+    receipt.application = await app.evaluate(async ({ app }) => {
+      const fs = await import('node:fs'),
+        path = await import('node:path'),
+        crypto = await import('node:crypto')
+      const assets = path.join(app.getAppPath(), 'dist/assets')
+      return {
+        isPackaged: app.isPackaged,
+        version: app.getVersion(),
+        resources: process.resourcesPath,
+        appPath: app.getAppPath(),
+        renderer_sha256: crypto
+          .createHash('sha256')
+          .update(fs.readFileSync(path.join(app.getAppPath(), 'dist/index.html')))
+          .digest('hex'),
+        profileAsset: fs
+          .readdirSync(assets)
+          .find(
+            name =>
+              name.startsWith('profile-') &&
+              name.endsWith('.js') &&
+              fs.readFileSync(path.join(assets, name), 'utf8').includes('as selectProfile')
+          )
+      }
+    })
+    assert.equal(receipt.application.isPackaged, true)
+    assert.match(process.argv[9] || '', /^[a-f0-9]{40}$/, 'exact artifact source commit required')
+    assert.equal(payloadManifest.ref, process.argv[9])
+    receipt.production_modules = {}
+    for (const relative of [
+      'hermes_cli/cloud_device_client.py',
+      'hermes_cli/web_routers/oauth.py',
+      'agent/semantier_gateway.py',
+      'hermes_cli/inventory.py',
+      'tui_gateway/contracts/semantier_billing.py'
+    ]) {
+      const actual = hash(path.join(runtimeSource, relative))
+      assert.equal(actual, hash(path.join(source, relative)), 'shipped source mismatch: ' + relative)
+      receipt.production_modules[relative] = actual
+    }
+    assert.equal(
+      path.resolve(receipt.application.resources),
+      path.resolve(path.join(path.dirname(executable), 'resources'))
+    )
+    receipt.renderer_sha256 = receipt.application.renderer_sha256
+    profileAsset = receipt.application.profileAsset
+  }
   await app.evaluate(({ shell }) => {
     globalThis.__cloudSourceUrls = []
     shell.openExternal = async url => {
@@ -205,10 +295,9 @@ try {
     await page.screenshot({ path: path.join(root, `settings-${run}.png`) })
   }
   if (['connect', 'settings-connect', 'scope-connect', 'fresh-connect'].includes(process.argv[5])) {
-    const fixture = path.resolve(
-      source,
-      freshMode ? '../.tmp/windows-cloud-r1/fresh' : '../.tmp/windows-cloud-r1/cloud'
-    )
+    const fixtureName = process.argv[10] || (freshMode ? 'fresh' : 'cloud')
+    assert.match(fixtureName, /^[a-z0-9-]+$/)
+    const fixture = path.resolve(source, '../.tmp/windows-cloud-r1', fixtureName)
     const identity = JSON.parse(fs.readFileSync(path.join(fixture, 'identity.json'), 'utf8'))
     const sends = path.resolve(source, '../.tmp/windows-cloud-r1/proxy/controlled-sends.jsonl')
     const sendCount = () =>
@@ -332,26 +421,7 @@ try {
         await selectProfile('default')
       }
       if (process.argv[5] === 'settings-connect' || scopeMode) {
-        await expect
-          .poll(
-            () => {
-              const checked = spawnSync(
-                python,
-                [
-                  path.join(source, 'scripts/qualification/windows_cloud_device.py'),
-                  '--source',
-                  source,
-                  '--root',
-                  home,
-                  '--status'
-                ],
-                { env, cwd: source, encoding: 'utf8', timeout: 20000 }
-              )
-              return checked.status === 0 && JSON.parse(checked.stdout).logged_in
-            },
-            { timeout: 90000 }
-          )
-          .toBe(true)
+        await expect.poll(nativeInstalled, { timeout: 90000 }).toBe(true)
         receipt.native_installation_confirmed = true
       } else {
         await page.getByRole('button', { name: /Begin/i }).waitFor({ timeout: 90000 })
@@ -360,20 +430,7 @@ try {
       if (freshMode) {
         assert.equal(identity.registered, true, 'fresh signup must already have an actual browser receipt')
         assert.ok(fs.existsSync(path.join(fixture, 'browser-paid.json')))
-        const installed = spawnSync(
-          python,
-          [
-            path.join(source, 'scripts/qualification/windows_cloud_device.py'),
-            '--source',
-            source,
-            '--root',
-            home,
-            '--status'
-          ],
-          { env, cwd: source, encoding: 'utf8', timeout: 20000 }
-        )
-        assert.equal(installed.status, 0)
-        assert.equal(JSON.parse(installed.stdout).logged_in, true, 'restart recovery requires real native installation')
+        assert.equal(await nativeInstalled(), true, 'restart recovery requires actual native installation')
         receipt.fresh_journey_recovery = true
         receipt.prior_browser_stage_sha256 = hash(path.join(fixture, 'browser-paid.json'))
       }
@@ -444,7 +501,9 @@ try {
     await page.getByRole('button', { name: 'Appearance', exact: true }).click()
     await page.getByRole('button', { name: 'General', exact: true }).click()
     await page.getByRole('button', { name: 'Switch language', exact: true }).click()
-    await page.getByRole('option', { name: /简体中文/ }).click()
+    await page.getByRole('combobox').fill('简体中文')
+    await page.keyboard.press('ArrowDown')
+    await page.keyboard.press('Enter')
     await page.getByRole('button', { name: '提供方', exact: true }).click()
     await expect(page.getByRole('button', { name: /Semantier Cloud/ }).first()).toBeVisible()
     await page.screenshot({ path: path.join(root, `visual-zh-dark-1024-${run}.png`) })
@@ -452,18 +511,21 @@ try {
     await page.getByRole('button', { name: '外观', exact: true }).click()
     await page.getByRole('button', { name: '常规', exact: true }).click()
     await page.getByRole('button', { name: '切换语言', exact: true }).click()
-    await page.getByRole('option', { name: /English/ }).click()
+    await page.getByRole('combobox').fill('English')
+    await page.keyboard.press('ArrowDown')
+    await page.keyboard.press('Enter')
     await page.getByRole('button', { name: 'Theme', exact: true }).click()
     await page.getByRole('button', { name: 'Light', exact: true }).click()
     assert.equal(count(), before, 'visual, account Billing and locale/theme refresh must not infer')
     receipt.zero_inference_visual_billing_refresh = true
     receipt.stage = 'native_visual_billing_accessibility'
   }
+  receipt.package_acceptance = packagedMode
   receipt.title = await page.title()
   receipt.text = (await page.locator('body').innerText()).slice(0, 8000)
   await page.screenshot({ path: path.join(root, `provider-visible-${run}.png`) })
   fs.writeFileSync(path.join(root, `source-receipt-${run}.json`), JSON.stringify(receipt, null, 2))
-  console.log(JSON.stringify({ stage: receipt.stage, package_acceptance: false }))
+  console.log(JSON.stringify({ stage: receipt.stage, package_acceptance: receipt.package_acceptance }))
 } catch (error) {
   receipt.error = String(error).slice(0, 1000)
   const portalFailure = browserContext?.pages().at(-1)

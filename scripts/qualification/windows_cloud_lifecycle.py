@@ -26,6 +26,18 @@ for key,folder in {'HOME':profile,'USERPROFILE':profile,'APPDATA':profile/'AppDa
 sys.path.insert(0,str(source))
 from hermes_cli import cloud_device_client as device
 
+
+def child_command(values):
+    payload=os.environ.get('HERMES_QUALIFICATION_PAYLOAD')
+    if not payload:
+        return [sys.executable,*values]
+    packages=str(Path(payload)/'venv/Lib/site-packages')
+    if values[0]=='-c':
+        prefix='import sys;sys.path[:0]='+repr([str(source),packages])+';'
+        return [sys.executable,'-I','-c',prefix+values[1],*values[2:]]
+    return [sys.executable,'-I',os.environ['HERMES_QUALIFICATION_RUNNER'],'--payload',payload,
+        '--script',values[0],'--',*values[1:]]
+
 if args.operation=='fault':
     from hermes_cli import config
     original=config.atomic_config_replace
@@ -72,12 +84,24 @@ with httpx.Client(base_url='http://127.0.0.1:55474',trust_env=False,timeout=20) 
         probe = """import json,sys
 sys.path.insert(0,sys.argv[1])
 from hermes_cli import cloud_device_client as device
+
+
+def child_command(values):
+    payload=os.environ.get('HERMES_QUALIFICATION_PAYLOAD')
+    if not payload:
+        return [sys.executable,*values]
+    packages=str(Path(payload)/'venv/Lib/site-packages')
+    if values[0]=='-c':
+        prefix='import sys;sys.path[:0]='+repr([str(source),packages])+';'
+        return [sys.executable,'-I','-c',prefix+values[1],*values[2:]]
+    return [sys.executable,'-I',os.environ['HERMES_QUALIFICATION_RUNNER'],'--payload',payload,
+        '--script',values[0],'--',*values[1:]]
 try:device.poll(sys.argv[2])
 except ValueError:print(json.dumps({'foreign_runtime_refused':True}))
 else:raise AssertionError('foreign runtime consumed authorization')
 """
         child_env={**os.environ,'HERMES_HOME':str(other)}
-        foreign=subprocess.run([sys.executable,'-c',probe,str(source),started['session_id']],env=child_env,capture_output=True,text=True,timeout=45,check=False)
+        foreign=subprocess.run(child_command(['-c',probe,str(source),started['session_id']]),env=child_env,capture_output=True,text=True,timeout=45,check=False)
         assert foreign.returncode==0,foreign.stderr[-500:]
         assert json.loads(foreign.stdout)['foreign_runtime_refused']
         assert (home/'config.yaml').read_bytes()==original_config
@@ -86,11 +110,23 @@ else:raise AssertionError('foreign runtime consumed authorization')
         resume="""import json,sys
 sys.path.insert(0,sys.argv[1])
 from hermes_cli import cloud_device_client as device
+
+
+def child_command(values):
+    payload=os.environ.get('HERMES_QUALIFICATION_PAYLOAD')
+    if not payload:
+        return [sys.executable,*values]
+    packages=str(Path(payload)/'venv/Lib/site-packages')
+    if values[0]=='-c':
+        prefix='import sys;sys.path[:0]='+repr([str(source),packages])+';'
+        return [sys.executable,'-I','-c',prefix+values[1],*values[2:]]
+    return [sys.executable,'-I',os.environ['HERMES_QUALIFICATION_RUNNER'],'--payload',payload,
+        '--script',values[0],'--',*values[1:]]
 started=device.start()
 assert started['session_id']==sys.argv[2]
 print(json.dumps({'status':device.poll(started['session_id'])['status']}))
 """
-        resumed=subprocess.run([sys.executable,'-c',resume,str(source),started['session_id']],capture_output=True,text=True,timeout=90,check=False)
+        resumed=subprocess.run(child_command(['-c',resume,str(source),started['session_id']]),capture_output=True,text=True,timeout=90,check=False)
         assert resumed.returncode==0,resumed.stderr[-500:]
         assert json.loads(resumed.stdout)['status']=='approved'
         assert (other/'config.yaml').read_bytes()==other_before
@@ -119,7 +155,7 @@ print(json.dumps({'status':device.poll(started['session_id'])['status']}))
         decide(install,'approve','windows-inaccessible-r1',403)
         assert (home/'config.yaml').read_bytes()==original_config
         decide(install,'approve')
-        child=subprocess.run([sys.executable,str(Path(__file__).resolve()),'--source',str(source),'--root',str(home),'--fixture-root',str(args.fixture_root),'--operation','fault'],capture_output=True,text=True,timeout=45,check=False)
+        child=subprocess.run(child_command([str(Path(__file__).resolve()),'--source',str(source),'--root',str(home),'--fixture-root',str(args.fixture_root),'--operation','fault']),capture_output=True,text=True,timeout=45,check=False)
         assert child.returncode==77,(child.returncode,child.stderr[-500:])
         assert device._read()['status']=='installing'
         staged_ref=device._read()['credential_ref']
