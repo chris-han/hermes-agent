@@ -58,7 +58,7 @@ Object.assign(env, {
   LOCALAPPDATA: path.join(profile, 'AppData/Local'),
   TEMP: path.join(root, 'tmp'),
   TMP: path.join(root, 'tmp'),
-  HERMES_DESKTOP_USER_DATA_DIR: path.join(root, 'electron-state'),
+  HERMES_DESKTOP_USER_DATA_DIR: path.join(root, process.argv[6] || 'electron-state'),
   HERMES_DESKTOP_IGNORE_EXISTING: '1',
   HERMES_DESKTOP_ISOLATED_BACKEND: '1',
   HERMES_DESKTOP_HERMES_ROOT: source,
@@ -110,11 +110,31 @@ try {
     }
   })
   page = await app.firstWindow()
+  receipt.transport = []
+  page.on('websocket', socket => {
+    const methods = new Map()
+    socket.on('framesent', ({payload}) => {
+      try { const frame=JSON.parse(String(payload)); if(frame.method) methods.set(frame.id,frame.method) } catch {}
+    })
+    socket.on('framereceived', ({payload}) => {
+      try {
+        const frame=JSON.parse(String(payload)); const method=methods.get(frame.id)
+        if(method && /session|profile/.test(method)) receipt.transport.push({method,error_code:frame.error?.code,success:!frame.error})
+      } catch {}
+    })
+  })
   page.setDefaultTimeout(60000)
   await page.waitForLoadState('domcontentloaded')
   await page.waitForFunction(() => [...document.querySelectorAll('button')].some(b => /Semantier Cloud/.test(b.textContent)) || document.querySelector('[contenteditable="true"]'), { timeout: 90000 })
   receipt.stage = 'provider_visible'
-  if (process.argv[5] === 'connect') {
+  if ((process.argv[5] || '').startsWith('settings')) {
+    await page.keyboard.press('Control+,')
+    await page.getByRole('button', { name: 'Providers', exact: true }).click()
+    await page.getByRole('button', { name: /Semantier Cloud/ }).first().waitFor({ timeout: 60000 })
+    receipt.stage = 'settings_provider_visible'
+    await page.screenshot({ path: path.join(root, `settings-${run}.png`) })
+  }
+  if (['connect','settings-connect'].includes(process.argv[5])) {
     const fixture = path.resolve(source, '../.tmp/windows-cloud-r1/cloud')
     const identity = JSON.parse(fs.readFileSync(path.join(fixture, 'identity.json'), 'utf8'))
     const sends = path.resolve(source, '../.tmp/windows-cloud-r1/proxy/controlled-sends.jsonl')
@@ -175,6 +195,12 @@ try {
     receipt.key_copies = 0
     const begin = page.getByRole('button', { name: /^Begin$/i })
     if (await begin.count()) await begin.click()
+    if (process.argv[5] === 'settings-connect') {
+      receipt.stage = 'settings_reauthorization_complete'
+      assert.equal(sendCount(),before,'Settings reauthorization must not infer')
+    } else {
+    const newSession = page.getByRole('button', { name: /^New session/ }).first()
+    if (await newSession.count()) await newSession.click()
     const composer = page.locator('[contenteditable="true"]').first()
     await composer.waitFor({ timeout: 60000 })
     await composer.fill('Controlled Windows device source acceptance. Reply briefly.')
@@ -186,6 +212,7 @@ try {
     receipt.controlled_sends = sendCount() - before
     assert.ok(receipt.controlled_sends >= 1)
     await page.screenshot({ path: path.join(root, `chat-${run}.png`) })
+    }
   }
   receipt.title = await page.title()
   receipt.text = (await page.locator('body').innerText()).slice(0, 8000)

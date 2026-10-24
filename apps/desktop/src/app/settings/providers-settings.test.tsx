@@ -494,14 +494,16 @@ describe('ProvidersSettings', () => {
 })
 
 it('starts the real Cloud provider through the shared coordinator and refreshes connection facts on focus', async () => {
+  const onClose = vi.fn()
   listOAuthProviders.mockResolvedValue({ providers: [provider('semantier-cloud', false, { name: 'Semantier Cloud' })] })
   render(
     <MemoryRouter>
-      <ProvidersSettings onClose={() => undefined} onViewChange={() => undefined} view="accounts" />
+      <ProvidersSettings onClose={onClose} onViewChange={() => undefined} view="accounts" />
     </MemoryRouter>
   )
   fireEvent.click(await screen.findByRole('button', { name: /Semantier Cloud/ }))
   expect(startManualProviderOAuth).toHaveBeenCalledWith('semantier-cloud', expect.anything())
+  expect(onClose).toHaveBeenCalledTimes(1)
   const count = listOAuthProviders.mock.calls.length
   act(() => window.dispatchEvent(new Event('focus')))
   await waitFor(() => expect(listOAuthProviders.mock.calls.length).toBeGreaterThan(count))

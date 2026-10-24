@@ -154,22 +154,22 @@ function buildProviderKeyGroups(vars: Record<string, EnvVarInfo>): ProviderKeyGr
 // sign-in flow; the key affordances open the API-key catalog below.
 function OAuthPicker({
   disconnecting,
+  onConnect,
   onDisconnect,
   onTerminalDisconnect,
   onWantApiKey,
   onWantLocalModels,
   onWantLocalEndpoint,
-  providers,
-  profile
+  providers
 }: {
   disconnecting: null | string
+  onConnect: (provider: OAuthProvider) => void
   onDisconnect: (provider: OAuthProvider) => void
   onTerminalDisconnect: (provider: OAuthProvider) => void
   onWantApiKey: () => void
   onWantLocalModels: () => void
   onWantLocalEndpoint: (reason: null | string) => void
   providers: OAuthProvider[]
-  profile?: string
 }) {
   const { t } = useI18n()
   const p = t.settings.providers
@@ -180,7 +180,7 @@ function OAuthPicker({
     return null
   }
 
-  const select = (p: OAuthProvider) => startManualProviderOAuth(p.id, profile)
+  const select = onConnect
 
   // The free tier holds a token but no account: it is never "connected"; the featured Nous row
   // names it (Nous · free tier) and offers the sign-in that keeps its connectors.
@@ -626,12 +626,15 @@ export function ProvidersSettings({
       <SettingsProfileScope className="mb-5" />
       <OAuthPicker
         disconnecting={disconnecting}
+        onConnect={provider => {
+          onClose()
+          startManualProviderOAuth(provider.id, scopeProfile)
+        }}
         onDisconnect={provider => void handleDisconnect(provider)}
         onTerminalDisconnect={provider => void handleTerminalDisconnect(provider)}
         onWantApiKey={() => onViewChange('keys')}
         onWantLocalEndpoint={reason => startManualLocalEndpoint(reason, scopeProfile)}
         onWantLocalModels={() => onViewChange('local')}
-        profile={scopeProfile}
         providers={oauthProviders}
       />
     </SettingsContent>

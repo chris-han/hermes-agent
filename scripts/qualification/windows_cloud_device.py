@@ -15,12 +15,32 @@ def main():
     parser.add_argument('--root',required=True,type=Path)
     parser.add_argument('--read',action='store_true')
     parser.add_argument('--inspect',action='store_true')
+    parser.add_argument('--chat',action='store_true')
     args = parser.parse_args()
     assert os.name == 'nt', 'real Windows is required'
     source=args.source.resolve();home=args.root.resolve()
     sys.path.insert(0,str(source))
     os.environ['HERMES_HOME']=str(home)
     from hermes_cli import cloud_device_client as device
+    if args.chat:
+        profile=home.parent/'profile'
+        for key,folder in {'HOME':profile,'USERPROFILE':profile,'APPDATA':profile/'AppData/Roaming','LOCALAPPDATA':profile/'AppData/Local','TEMP':home.parent/'tmp','TMP':home.parent/'tmp'}.items():
+            folder.mkdir(parents=True,exist_ok=True)
+            os.environ[key]=str(folder)
+        os.chdir(home)
+        for key in list(os.environ):
+            if key.endswith(('_API_KEY','_TOKEN','_SECRET','_PASSWORD','_CREDENTIALS')):
+                os.environ.pop(key,None)
+        from hermes_cli.runtime_provider import resolve_runtime_provider
+        from run_agent import AIAgent
+        runtime=resolve_runtime_provider(requested='semantier-cloud',target_model='device-controlled')
+        runtime.pop('source',None)
+        agent=AIAgent(model='device-controlled',**runtime,max_iterations=1,enabled_toolsets=[],
+            quiet_mode=True,skip_context_files=True,skip_memory=True,skip_background_review=True)
+        result=agent.run_conversation('Controlled native source acceptance. Reply briefly.',task_id='windows-source-explicit-chat')
+        assert 'Device controlled response.' in str(result.get('final_response','')), 'controlled native response absent'
+        print(json.dumps({'scope':'WINDOWS_NATIVE_SOURCE_ONLY','explicit_chat':True,'package_acceptance':False}))
+        return
     if args.inspect:
         state=device._read()
         result={k:state.get(k) for k in ('status','origin','portal_origin','expires_at','credential_ref','account_id')}
