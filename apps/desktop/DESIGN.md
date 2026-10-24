@@ -630,3 +630,7 @@ failed transcription keeps the original answer awaited. If the answer arrives
 while a candidate is being transcribed, retain it for playback after the empty
 candidate resolves; a confirmed interruption consumes the superseded answer.
 This uses the existing listening/thinking/speaking states and controls.
+
+## Provider settings entry order
+
+In Providers → Accounts, place the existing Local / custom endpoint row immediately before Run models locally. It opens the same profile-scoped custom-endpoint setup used by the API-key view. The featured portal card is labeled Semantier Cloud and opens `https://cloud.semantier.com` through the native external-link bridge. It does not start Nous OAuth or project a Nous account/free-tier status as Semantier Cloud connection status. Preserve actual connected-provider account and disconnect behavior.

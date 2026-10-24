@@ -1,5 +1,6 @@
 import { RowButton } from '@/components/ui/row-button'
 import { useI18n } from '@/i18n'
+import { openExternalLink } from '@/lib/external-link'
 import { Check, ChevronRight, Terminal } from '@/lib/icons'
 import { PROVIDER_DISPLAY_NAMES } from '@/lib/model-status-label'
 import type { OAuthProvider } from '@/types/hermes'
@@ -27,19 +28,21 @@ export const sortProviders = (providers: OAuthProvider[]) =>
 
 export function FeaturedProviderRow({
   onSelect,
-  provider
+  provider,
+  semantierCloud = false
 }: {
   onSelect: (provider: OAuthProvider) => void
   provider: OAuthProvider
+  semantierCloud?: boolean
 }) {
   const { t } = useI18n()
-  const freeTier = provider.status?.free_tier === true
-  const loggedIn = provider.status?.logged_in && !freeTier
+  const freeTier = !semantierCloud && provider.status?.free_tier === true
+  const loggedIn = !semantierCloud && provider.status?.logged_in && !freeTier
 
   return (
     <button
       className="group relative flex w-full items-center justify-between gap-4 rounded-[8px] bg-primary/[0.06] px-3 py-2.5 text-left transition-colors hover:bg-primary/10"
-      onClick={() => onSelect(provider)}
+      onClick={() => (semantierCloud ? openExternalLink('https://cloud.semantier.com') : onSelect(provider))}
       type="button"
     >
       <span aria-hidden className="arc-border arc-reverse arc-nous" />
@@ -47,7 +50,7 @@ export function FeaturedProviderRow({
         <div className="flex items-center gap-2">
           <img alt="" className="size-5 shrink-0 rounded" src={assetPath('apple-touch-icon.png')} />
           <span className="text-[length:var(--conversation-text-font-size)] font-semibold">
-            {freeTier ? t.freeTier.providerRowTitle : providerTitle(provider)}
+            {semantierCloud ? 'Semantier Cloud' : freeTier ? t.freeTier.providerRowTitle : providerTitle(provider)}
           </span>
           {freeTier ? (
             <FreeTierTag />
@@ -61,7 +64,7 @@ export function FeaturedProviderRow({
           )}
         </div>
         <p className="mt-1 text-xs leading-5 text-muted-foreground">
-          {freeTier ? t.freeTier.providerRowPitch : t.onboarding.featuredPitch}
+          {semantierCloud ? 'cloud.semantier.com' : freeTier ? t.freeTier.providerRowPitch : t.onboarding.featuredPitch}
         </p>
       </div>
       <ChevronRight className="size-4 shrink-0 text-primary transition group-hover:translate-x-0.5" />

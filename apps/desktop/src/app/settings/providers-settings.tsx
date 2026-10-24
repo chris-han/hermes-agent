@@ -158,6 +158,7 @@ function OAuthPicker({
   onTerminalDisconnect,
   onWantApiKey,
   onWantLocalModels,
+  onWantLocalEndpoint,
   providers,
   profile
 }: {
@@ -166,6 +167,7 @@ function OAuthPicker({
   onTerminalDisconnect: (provider: OAuthProvider) => void
   onWantApiKey: () => void
   onWantLocalModels: () => void
+  onWantLocalEndpoint: (reason: null | string) => void
   providers: OAuthProvider[]
   profile?: string
 }) {
@@ -210,8 +212,9 @@ function OAuthPicker({
       <p className="-mt-2 mb-1 text-[length:var(--conversation-caption-font-size)] leading-(--conversation-caption-line-height) text-(--ui-text-tertiary)">
         {p.intro}
       </p>
-      {featured && <FeaturedProviderRow onSelect={select} provider={featured} />}
-      {/* Slot #2 — the no-account path, matching onboarding. Behind the
+      {featured && <FeaturedProviderRow onSelect={select} provider={featured} semantierCloud />}
+      <LocalEndpointRow onOpen={onWantLocalEndpoint} />
+      {/* Slot #3 — the no-account path, matching onboarding. Behind the
           --local launch flag like every local-models surface. */}
       {$localModelsEnabled.get() && <LocalModelsProviderRow onClick={onWantLocalModels} />}
       {connected.length > 0 && (
@@ -610,6 +613,7 @@ export function ProvidersSettings({
         onDisconnect={provider => void handleDisconnect(provider)}
         onTerminalDisconnect={provider => void handleTerminalDisconnect(provider)}
         onWantApiKey={() => onViewChange('keys')}
+        onWantLocalEndpoint={reason => startManualLocalEndpoint(reason, scopeProfile)}
         onWantLocalModels={() => onViewChange('local')}
         profile={scopeProfile}
         providers={oauthProviders}

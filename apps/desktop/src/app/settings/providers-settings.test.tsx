@@ -4,7 +4,9 @@ import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ConfirmHost } from '@/components/confirm-host'
+import * as externalLinks from '@/lib/external-link'
 import { $confirmRequest } from '@/store/confirm'
+import { $localModelsEnabled } from '@/store/local-models-flag'
 import type { EnvVarInfo, OAuthProvider } from '@/types/hermes'
 
 const listOAuthProviders = vi.fn()
@@ -445,6 +447,32 @@ describe('ProvidersSettings', () => {
     expect(await screen.findByText('Zebra blurb')).toBeTruthy()
     expect(screen.queryByText('Acme blurb')).toBeNull()
     await waitFor(() => expect(Element.prototype.scrollIntoView).toHaveBeenCalled())
+  })
+
+  it('shows the custom endpoint before local models in Accounts and opens its setup', async () => {
+    $localModelsEnabled.set(true)
+
+    try {
+      listOAuthProviders.mockResolvedValue({ providers: [provider('nous', false)] })
+      render(<ProvidersSettings onClose={vi.fn()} onViewChange={vi.fn()} view="accounts" />)
+      const endpoint = await screen.findByText('Local / custom endpoint')
+      const localModels = screen.getByText('Run models locally')
+      expect(endpoint.compareDocumentPosition(localModels) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+      fireEvent.click(endpoint)
+      expect(startManualLocalEndpoint).toHaveBeenCalledWith(null)
+    } finally {
+      $localModelsEnabled.set(false)
+    }
+  })
+
+  it('opens Semantier Cloud from the featured card without starting Nous sign-in', async () => {
+    const open = vi.spyOn(externalLinks, 'openExternalLink').mockImplementation(() => {})
+    listOAuthProviders.mockResolvedValue({ providers: [provider('nous', false)] })
+    render(<ProvidersSettings onClose={vi.fn()} onViewChange={vi.fn()} view="accounts" />)
+    fireEvent.click(await screen.findByText('Semantier Cloud'))
+    expect(open).toHaveBeenCalledWith('https://cloud.semantier.com')
+    expect(startManualProviderOAuth).not.toHaveBeenCalled()
+    expect(screen.queryByText('Nous Portal')).toBeNull()
   })
 
   it('offers a Local / custom endpoint entry in the API-keys tab that opens the custom-endpoint flow', async () => {
