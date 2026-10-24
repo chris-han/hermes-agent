@@ -2,7 +2,7 @@
 from datetime import datetime, timedelta
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from .base import JsonValue, Result
 from .common import ProfileParams
@@ -118,6 +118,17 @@ class BillingMerchant(Result):
     display_name: str
 
 
+class AccountProvisioning(Result):
+    """Exact public projection from account_sync_store.account_provisioning."""
+    local_status: str
+    inference_ready: bool
+    gateway_sync_status: str | None = None
+    organization_id: str | None = None
+    billing_account_id: str | None = None
+    currency: str | None = None
+    reason: str | None = None
+
+
 class SemantierBillingV2(Result):
     schema_version: Literal['semantier.billing.v2']
     backend: Literal['semantier']
@@ -132,5 +143,17 @@ class SemantierBillingV2(Result):
     capabilities: BillingCommerceCapabilities
     portal: BillingPortal
     as_of: str = Field(pattern=r'^.+(?:Z|\+00:00)$')
+
+    account_provisioning: AccountProvisioning | None = None
+
+    @model_validator(mode='after')
+    def readiness_scope(self):
+        projection = self.account_provisioning
+        if projection and any(value is not None and value != expected for value, expected in (
+                (projection.organization_id,self.organization.id),
+                (projection.billing_account_id,self.billing_account_id),
+                (projection.currency,self.currency))):
+            raise ValueError('Billing readiness scope mismatch.')
+        return self
 
     _utc_timestamp = field_validator('as_of')(SemantierBillingState.utc_timestamp.__func__)

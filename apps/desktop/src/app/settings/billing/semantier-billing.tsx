@@ -4,7 +4,7 @@ import { useStore } from '@nanostores/react'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/i18n'
 import type { SemantierBillingCopy } from '@/i18n/semantier-billing'
-import { semantierCommerceCopy } from '@/i18n/semantier-commerce'
+import { semantierCommerceCopy, semantierReadinessCopy } from '@/i18n/semantier-commerce'
 import { BarChart3, Package } from '@/lib/icons'
 import { fmtDateTime } from '@/lib/time'
 import { $activeGatewayRoute } from '@/store/gateway'
@@ -108,6 +108,8 @@ export function SemantierBilling({ state, refusal }: SemantierBillingProps) {
 
   if (state.schema_version === 'semantier.billing.v2') {
     const commerce = semantierCommerceCopy[locale] ?? semantierCommerceCopy.en
+    const readiness = semantierReadinessCopy[locale] ?? semantierReadinessCopy.en
+    const projection = state.account_provisioning
     const tasks = ['manage', 'plans', 'topUp', 'orders'] as const
 
     return <>
@@ -122,6 +124,7 @@ export function SemantierBilling({ state, refusal }: SemantierBillingProps) {
         {state.subscription && row(commerce.term, commerce[state.subscription.term])}
         {state.subscription && row(commerce.expires, fmtDateTime.format(new Date(state.subscription.ends_at)))}
         {state.subscription && row(commerce.renewal, commerce.manual)}
+        {row(readiness.label, !projection ? c.unavailable : projection.inference_ready ? readiness.ready : projection.reason === 'PREPARING' ? readiness.preparing : readiness.notReady)}
         {row(commerce.environment, state.environment)}
       </SettingsSection>
       <SettingsSection icon={BarChart3} title={b.sections.usage}>

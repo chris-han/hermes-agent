@@ -70,3 +70,25 @@ def test_v2_bridge_uses_read_only_resource_and_bound_account(tmp_path, monkeypat
         server.shutdown()
         thread.join()
         server.server_close()
+
+
+def test_v2_accepts_producer_readiness_without_conflating_paid_and_ready():
+    payload=state()
+    payload['account_provisioning']={'local_status':'READY','organization_id':'org-a',
+        'billing_account_id':'account-a','currency':'CNY','gateway_sync_status':'PENDING',
+        'inference_ready':False,'reason':'PREPARING'}
+    result=SemantierBillingV2.model_validate(payload)
+    assert result.account_provisioning.inference_ready is False
+    assert result.credits.allowance.amount=='100.00'
+    payload['account_provisioning']['gateway_sync_status']='SYNCED'
+    payload['account_provisioning']['inference_ready']=True
+    payload['account_provisioning']['reason']=None
+    assert SemantierBillingV2.model_validate(payload).account_provisioning.inference_ready
+
+
+@pytest.mark.parametrize('field,value',[('billing_account_id','account-b'),('organization_id','org-b'),('currency','USD')])
+def test_v2_readiness_cannot_describe_a_foreign_scope(field,value):
+    payload=state()
+    payload['account_provisioning']={'local_status':'READY','inference_ready':True,field:value}
+    with pytest.raises(ValidationError,match='scope mismatch'):
+        SemantierBillingV2.model_validate(payload)

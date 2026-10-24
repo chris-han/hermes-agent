@@ -59,3 +59,13 @@ it('formats exact credit decimals without floating-point conversion or rounding'
 
   expect(state.credits.allowance.amount).toBe('100.000000000000')
 })
+
+it('keeps paid rights visible while inference readiness is pending', () => {
+  const {rerender}=render(<SemantierBilling state={{...state,account_provisioning:{local_status:'READY',gateway_sync_status:'PENDING',inference_ready:false,reason:'PREPARING'}}} />)
+  expect(screen.getByText('Professional')).toBeTruthy()
+  expect(screen.getAllByText('CNY 100.00')).toHaveLength(2)
+  expect(screen.getByText('Preparing inference access')).toBeTruthy()
+  expect(screen.queryByText('Ready for inference')).toBeNull()
+  rerender(<SemantierBilling state={{...state,account_provisioning:{local_status:'READY',gateway_sync_status:'SYNCED',inference_ready:true}}} />)
+  expect(screen.getByText('Ready for inference')).toBeTruthy()
+})

@@ -22,3 +22,9 @@ export const semantierCommerceCopy: Record<string, CommerceCopy> = {
   ru: copy(['Тариф', 'Без тарифа', 'Активен', 'Истёк', 'Действует до', 'Продление', 'Вручную', 'Включённый кредит', 'Купленный кредит', 'Среда', 'Управление оплатой', 'Выбрать / продлить тариф', 'Пополнить', 'Заказы', 'Продолжите в браузере. Для оплаты войдите отдельно; при возврате данные обновятся.', "Продавец", "Валюта", "Срок", "Годовой", "Месячный"]),
   ar: copy(['الخطة', 'لا توجد خطة', 'نشطة', 'منتهية', 'تنتهي في', 'التجديد', 'يدوي', 'الرصيد المشمول', 'الرصيد المشترى', 'البيئة', 'إدارة الفوترة', 'اختيار / تجديد الخطة', 'إضافة رصيد', 'الطلبات', 'تابع في المتصفح وسجّل الدخول بشكل مستقل لإدارة الفوترة. تُحدّث البيانات عند العودة.', "التاجر", "العملة", "المدة", "سنوي", "شهري"])
 }
+
+export const semantierReadinessCopy: Record<string, {label:string;ready:string;preparing:string;notReady:string}> = {
+  en: {label:'Inference readiness',ready:'Ready for inference',preparing:'Preparing inference access',notReady:'Inference access unavailable'},
+  zh: {label:'推理就绪状态',ready:'推理已就绪',preparing:'正在准备推理权限',notReady:'推理权限不可用'},
+  'zh-hant': {label:'推論就緒狀態',ready:'推論已就緒',preparing:'正在準備推論權限',notReady:'推論權限不可用'}
+}

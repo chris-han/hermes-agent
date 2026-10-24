@@ -194,7 +194,7 @@ try {
     .toBe(true)
   receipt.stage = 'provider_visible'
   if (scopeMode) await selectProfile('default')
-  if ((process.argv[5] || '').startsWith('settings') || process.argv[5] === 'scope-connect') {
+  if ((process.argv[5] || '').startsWith('settings') || ['scope-connect', 'visual'].includes(process.argv[5])) {
     await page.keyboard.press('Control+,')
     await page.getByRole('button', { name: 'Providers', exact: true }).click()
     await page
@@ -235,6 +235,16 @@ try {
       if (freshMode && !identity.registered) {
         await portal.goto(verification + '&lang=en')
         await portal.getByRole('button', { name: 'Create account', exact: true }).first().click()
+        const signupDialog = portal.getByRole('dialog')
+        await expect
+          .poll(
+            async () =>
+              (await portal.locator('input[name="password-confirm"]').count()) > 0 ||
+              (await signupDialog.getByRole('button', { name: 'Create account', exact: true }).count()) > 0
+          )
+          .toBe(true)
+        if (!(await portal.locator('input[name="password-confirm"]').count()))
+          await signupDialog.getByRole('button', { name: 'Create account', exact: true }).click()
         await portal.locator('input[name="username"]').fill(identity.login)
         await portal.locator('input[name="password"]').fill(identity.password)
         await portal.locator('input[name="password-confirm"]').fill(identity.password)
@@ -344,10 +354,29 @@ try {
           .toBe(true)
         receipt.native_installation_confirmed = true
       } else {
-        await page.getByRole('button', { name: /^Begin$/i }).waitFor({ timeout: 90000 })
+        await page.getByRole('button', { name: /Begin/i }).waitFor({ timeout: 90000 })
       }
     } else {
-      assert.equal(freshMode, false, 'fresh runtime must expose the real Connect entry before any send')
+      if (freshMode) {
+        assert.equal(identity.registered, true, 'fresh signup must already have an actual browser receipt')
+        assert.ok(fs.existsSync(path.join(fixture, 'browser-paid.json')))
+        const installed = spawnSync(
+          python,
+          [
+            path.join(source, 'scripts/qualification/windows_cloud_device.py'),
+            '--source',
+            source,
+            '--root',
+            home,
+            '--status'
+          ],
+          { env, cwd: source, encoding: 'utf8', timeout: 20000 }
+        )
+        assert.equal(installed.status, 0)
+        assert.equal(JSON.parse(installed.stdout).logged_in, true, 'restart recovery requires real native installation')
+        receipt.fresh_journey_recovery = true
+        receipt.prior_browser_stage_sha256 = hash(path.join(fixture, 'browser-paid.json'))
+      }
       receipt.recovery_state = 'installed_restart'
       receipt.purchase_created = false
     }
@@ -356,7 +385,7 @@ try {
     await page.screenshot({ path: path.join(root, `connected-${run}.png`) })
     receipt.zero_inference_before_send = true
     receipt.key_copies = 0
-    const begin = page.getByRole('button', { name: /^Begin$/i })
+    const begin = page.getByRole('button', { name: /Begin/i })
     if (await begin.count()) await begin.click()
     if (process.argv[5] === 'settings-connect' || scopeMode) {
       receipt.stage = scopeMode ? 'original_profile_return_installed' : 'settings_reauthorization_complete'
@@ -377,6 +406,59 @@ try {
       await page.screenshot({ path: path.join(root, `chat-${run}.png`) })
     }
   }
+  if (process.argv[5] === 'visual') {
+    const sends = path.resolve(source, '../.tmp/windows-cloud-r1/proxy/controlled-sends.jsonl')
+    const count = () => fs.readFileSync(sends, 'utf8').trim().split('\n').filter(Boolean).length
+    const before = count()
+    const win = await app.browserWindow(page)
+    receipt.visual = []
+    for (const mode of ['light', 'dark']) {
+      await page.getByRole('button', { name: 'Appearance', exact: true }).click()
+      await page.getByRole('button', { name: 'Theme', exact: true }).click()
+      await page.getByRole('button', { name: mode === 'light' ? 'Light' : 'Dark', exact: true }).click()
+      await expect.poll(() => page.evaluate(() => document.documentElement.dataset.hermesMode)).toBe(mode)
+      await page.getByRole('button', { name: 'Providers', exact: true }).click()
+      for (const [width, height] of [
+        [1440, 1000],
+        [1024, 760]
+      ]) {
+        await win.evaluate((window, size) => window.setSize(...size), [width, height])
+        await expect(page.getByRole('button', { name: /Semantier Cloud/ }).first()).toBeVisible()
+        await page.keyboard.press('Tab')
+        const focus = await page.evaluate(() => ({
+          tag: document.activeElement?.tagName,
+          label:
+            document.activeElement?.getAttribute('aria-label') || document.activeElement?.textContent?.slice(0, 100)
+        }))
+        assert.notEqual(focus.tag, 'BODY', 'keyboard focus reaches a control')
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+        const screenshot = `visual-en-${mode}-${width}-${run}.png`
+        await page.screenshot({ path: path.join(root, screenshot) })
+        receipt.visual.push({ locale: 'en', mode, width, height, screenshot, focus })
+      }
+    }
+    await page.getByRole('button', { name: 'Billing', exact: true }).click()
+    await expect(page.getByText(/CNY|¥/).first()).toBeVisible({ timeout: 60000 })
+    receipt.billing_text = (await page.locator('body').innerText()).slice(-6500)
+    await page.screenshot({ path: path.join(root, `billing-en-${run}.png`) })
+    await page.getByRole('button', { name: 'Appearance', exact: true }).click()
+    await page.getByRole('button', { name: 'General', exact: true }).click()
+    await page.getByRole('button', { name: 'Switch language', exact: true }).click()
+    await page.getByRole('option', { name: /简体中文/ }).click()
+    await page.getByRole('button', { name: '提供方', exact: true }).click()
+    await expect(page.getByRole('button', { name: /Semantier Cloud/ }).first()).toBeVisible()
+    await page.screenshot({ path: path.join(root, `visual-zh-dark-1024-${run}.png`) })
+    receipt.visual.push({ locale: 'zh', mode: 'dark', width: 1024, height: 760 })
+    await page.getByRole('button', { name: '外观', exact: true }).click()
+    await page.getByRole('button', { name: '常规', exact: true }).click()
+    await page.getByRole('button', { name: '切换语言', exact: true }).click()
+    await page.getByRole('option', { name: /English/ }).click()
+    await page.getByRole('button', { name: 'Theme', exact: true }).click()
+    await page.getByRole('button', { name: 'Light', exact: true }).click()
+    assert.equal(count(), before, 'visual, account Billing and locale/theme refresh must not infer')
+    receipt.zero_inference_visual_billing_refresh = true
+    receipt.stage = 'native_visual_billing_accessibility'
+  }
   receipt.title = await page.title()
   receipt.text = (await page.locator('body').innerText()).slice(0, 8000)
   await page.screenshot({ path: path.join(root, `provider-visible-${run}.png`) })
@@ -384,6 +466,16 @@ try {
   console.log(JSON.stringify({ stage: receipt.stage, package_acceptance: false }))
 } catch (error) {
   receipt.error = String(error).slice(0, 1000)
+  const portalFailure = browserContext?.pages().at(-1)
+  if (portalFailure) {
+    receipt.portal_text = (
+      await portalFailure
+        .locator('body')
+        .innerText()
+        .catch(() => '')
+    ).slice(0, 5000)
+    await portalFailure.screenshot({ path: path.join(root, `portal-failure-${run}.png`) }).catch(() => {})
+  }
   if (page) {
     receipt.text = (
       await page

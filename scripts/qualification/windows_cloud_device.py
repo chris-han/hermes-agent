@@ -18,6 +18,7 @@ def main():
     parser.add_argument('--inspect',action='store_true')
     parser.add_argument('--chat',action='store_true')
     parser.add_argument('--status',action='store_true')
+    parser.add_argument('--billing',action='store_true')
     parser.add_argument('--cancel',action='store_true')
     parser.add_argument('--task-id',default='windows-source-explicit-chat')
     parser.add_argument('--title',action='store_true')
@@ -31,6 +32,22 @@ def main():
     sys.path.insert(0,str(source))
     os.environ['HERMES_HOME']=str(home)
     from hermes_cli import cloud_device_client as device
+    if args.billing:
+        import requests
+        from agent.semantier_gateway import gateway_settings,billing_request
+        from tui_gateway.contracts.semantier_billing import SemantierBillingV2
+        from pydantic import ValidationError
+        settings=gateway_settings()
+        account=device._config()['billing']['account_id']
+        with requests.Session() as client:
+            client.trust_env=False
+            response=client.get(settings.base_url[:-3]+'/api/billing/commerce/state',params={'account_id':account},headers={'Authorization':'Bearer '+settings.api_key},timeout=15)
+        result={'http_status':response.status_code,'production_result':billing_request('state',schema_version='semantier.billing.v2')}
+        if response.status_code==200:
+            try:SemantierBillingV2.model_validate(response.json());result['schema_valid']=True
+            except ValidationError as error:result['schema_errors']=[{'loc':list(e['loc']),'type':e['type']} for e in error.errors()]
+        print(json.dumps(result))
+        return
     if args.cancel:
         print(json.dumps(device.cancel(device._read()['session_id'])))
         return

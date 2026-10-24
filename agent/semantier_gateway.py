@@ -181,7 +181,7 @@ def billing_request(resource: str, *, schema_version: str | None = None) -> dict
                 pass
             return refusal(code, 'Semantier billing is unavailable. Check the active connection and access.',
                            request_id=request_id)
-        payload = model.model_validate(response.json()).model_dump(mode='json', exclude_none=model is not SemantierBillingV2)
+        payload = model.model_validate(response.json()).model_dump(mode='json', exclude_none=model is not SemantierBillingV2, exclude_unset=model is SemantierBillingV2)
         if account_id and payload['billing_account_id'] != str(account_id):
             return refusal('billing_unavailable', 'The billing response does not match this profile account.')
         return {'ok': True, **payload}

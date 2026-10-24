@@ -395,6 +395,15 @@ export interface SemantierSubscriptionStateResponse {
 
 /** Negotiated read projection; all commerce remains browser authorized. */
 export interface SemantierBillingV2Response {
+  account_provisioning?: {
+    local_status: string
+    inference_ready: boolean
+    gateway_sync_status?: string | null
+    organization_id?: string | null
+    billing_account_id?: string | null
+    currency?: string | null
+    reason?: string | null
+  } | null
   ok: true
   backend: 'semantier'
   schema_version: 'semantier.billing.v2'
