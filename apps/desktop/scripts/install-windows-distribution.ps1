@@ -32,8 +32,8 @@ function Invoke-SemantierInstall([switch]$TrustCertificate) {
     throw 'Package checksum mismatch. Extract the complete original ZIP again.'
   }
   # Windows PowerShell 5.1 reports missing trust chains as UnknownError.
-  # The pinned file hash and signer identify the package before trust; only
-  # a Valid Windows signature after trust can authorize app installation.
+  # The pinned file hash and signer identify the package before trust.
+  # Add-AppxPackage applies Windows' AppX signature/trust policy during install.
   $signature = Get-AuthenticodeSignature -LiteralPath $package
   if (!$signature.SignerCertificate -or $signature.SignerCertificate.Thumbprint -ne $expectedThumbprint -or
       $signature.Status -notin @('Valid','NotTrusted','UnknownError')) { throw 'Package signature does not match this release.' }
@@ -52,10 +52,8 @@ function Invoke-SemantierInstall([switch]$TrustCertificate) {
     }
   }
 
-  $signature = Get-AuthenticodeSignature -LiteralPath $package
-  if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Thumbprint -ne $expectedThumbprint) {
-    throw "Windows could not verify the trusted package signature: $($signature.Status)"
-  }
+  # AppX validates the signature and TrustedPeople policy itself. Generic
+  # Authenticode CA-chain status is not an additional MSIX installation gate.
   Write-Host 'Installing Semantier Agent for the current Windows user...'
   Add-AppxPackage -Path $package
   Write-Host 'Semantier Agent installed. Open it from the Windows Start menu.'

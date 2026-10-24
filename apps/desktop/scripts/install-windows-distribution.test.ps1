@@ -38,13 +38,13 @@ try {
     return [pscustomobject]@{ExitCode=0}
   }
   function Add-AppxPackage { param($Path)
-    if (!$script:trusted -or (!$script:trustResolvesSignature -and $script:signatureStatus -ne 'Valid') -or $Path -ne $package) { throw 'Unsafe installation' }
+    if (!$script:trusted -or (!$script:trustResolvesSignature -and !$script:appxAcceptsPeerTrust -and $script:signatureStatus -ne 'Valid') -or $Path -ne $package) { throw 'Unsafe installation' }
     $script:installs++
   }
   function Reset-Case {
     $script:trusted=$false; $script:admin=$false; $script:cancel=$false
     $script:imports=0; $script:elevations=0; $script:installs=0
-    $script:signatureStatus='Valid'; $script:signer=$cert.Thumbprint; $script:trustResolvesSignature=$false
+    $script:signatureStatus='Valid'; $script:signer=$cert.Thumbprint; $script:trustResolvesSignature=$false; $script:appxAcceptsPeerTrust=$false
   }
   function Assert-Refused {
     $refused=$false
@@ -61,6 +61,11 @@ try {
   Reset-Case; $script:signatureStatus='UnknownError'; $script:trustResolvesSignature=$true
   Invoke-SemantierInstall
   if ($script:installs -ne 1 -or $script:elevations -ne 1) { throw 'Missing-chain trust repair failed' }
+  # AppX accepts its TrustedPeople publisher policy even when generic Authenticode
+  # still reports an incomplete CA chain. Native Add-AppxPackage owns that decision.
+  Reset-Case; $script:signatureStatus='UnknownError'; $script:appxAcceptsPeerTrust=$true
+  Invoke-SemantierInstall
+  if ($script:installs -ne 1 -or $script:elevations -ne 1) { throw 'Generic chain check blocked AppX peer trust' }
   Reset-Case; $script:signatureStatus='UnknownError'; Assert-Refused
   Reset-Case; $script:admin=$true
   Invoke-SemantierInstall -TrustCertificate
@@ -73,5 +78,5 @@ try {
   Add-Content -LiteralPath $package -Value 'tampered'
   Assert-Refused
   if ($script:elevations -or $script:imports) { throw 'Tampered package was trusted' }
-  Write-Output 'PASS: existing trust, trust-only elevation, correct install user, missing chain repair, unresolved error refusal, UAC cancellation, signer mismatch, invalid signature, tamper refusal'
+  Write-Output 'PASS: existing trust, trust-only elevation, correct install user, missing chain repair, AppX peer-trust policy, native signature error refusal, UAC cancellation, signer mismatch, invalid signature, tamper refusal'
 } finally { Remove-Item -LiteralPath $root -Recurse -Force }
