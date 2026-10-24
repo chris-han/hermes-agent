@@ -109,10 +109,13 @@ def test_hosted_route_cannot_escape_to_a_fallback(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize('purpose', ['compression', 'memory', 'vision', 'plugin', 'subagent', 'cron'])
-def test_unsupported_hosted_callers_fail_before_dispatch(tmp_path, monkeypatch, purpose):
+def test_other_callers_preserve_correlation_for_server_owned_cap_admission(tmp_path, monkeypatch, purpose):
     configure(tmp_path, monkeypatch)
-    with pytest.raises(ValueError, match='supports primary chat and title generation only'):
-        sg.attribute_request({}, base_url='http://127.0.0.1:8765/v1', purpose=purpose)
+    result=sg.attribute_request({},base_url='http://127.0.0.1:8765/v1',purpose=purpose,
+        task_id='task-owned',root_run_id='root-owned',run_id='child-owned',parent_run_id='parent-owned')
+    assert result['extra_headers']['X-Semantier-Purpose']==purpose
+    assert result['extra_headers']['X-Semantier-Root-Run-Id']=='root-owned'
+    assert result['extra_headers']['X-Semantier-Parent-Run-Id']=='parent-owned'
     assert sg.attribute_request({}, base_url='https://direct.example/v1', purpose=purpose) == {}
 
 

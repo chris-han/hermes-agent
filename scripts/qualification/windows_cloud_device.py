@@ -19,6 +19,7 @@ def main():
     parser.add_argument('--chat',action='store_true')
     parser.add_argument('--status',action='store_true')
     parser.add_argument('--billing',action='store_true')
+    parser.add_argument('--aux-cap-check',action='store_true')
     parser.add_argument('--cancel',action='store_true')
     parser.add_argument('--task-id',default='windows-source-explicit-chat')
     parser.add_argument('--title',action='store_true')
@@ -53,6 +54,33 @@ def main():
         return
     if args.status:
         print(json.dumps(device.status()))
+        return
+    if args.aux_cap_check:
+        from agent.auxiliary_client import call_llm
+        from agent.semantier_gateway import gateway_settings
+        from openai import APIStatusError
+        from uuid import uuid4
+        profile=home.parent/'profile'
+        for key,folder in {'HOME':profile,'USERPROFILE':profile,'APPDATA':profile/'AppData/Roaming','LOCALAPPDATA':profile/'AppData/Local','TEMP':home.parent/'tmp','TMP':home.parent/'tmp'}.items():
+            folder.mkdir(parents=True,exist_ok=True);os.environ[key]=str(folder)
+        settings=gateway_settings()
+        def invoke(root):
+            frozen=dict(provider='custom',model='device-controlled',base_url=settings.base_url,api_key=settings.api_key,
+                cloud_route=settings.base_url,session_id='windows-aux-preservation-r1',run_id='compression-'+uuid4().hex)
+            if root:frozen.update(task_id=root,root_run_id=root)
+            return call_llm('compression',provider='custom',model='device-controlled',base_url=settings.base_url,
+                api_key=settings.api_key,main_runtime=frozen,messages=[{'role':'user','content':'Controlled uncapped auxiliary preservation.'}],max_tokens=16)
+        checks=[]
+        for root,code in [(args.task_id,'capped_caller_unqualified'),(None,'task_context_required')]:
+            try:invoke(root)
+            except APIStatusError as error:
+                assert error.status_code==402 and code in str(error),str(error.status_code)
+                checks.append(code)
+            else:raise AssertionError('capped or rootless auxiliary request bypassed server admission')
+        result=invoke('windows-independent-uncapped-aux-r1-20261024')
+        assert 'Device controlled response.' in result.choices[0].message.content
+        print(json.dumps({'produced_at':datetime.now(UTC).isoformat(),'scope':'REAL_NATIVE_SERVER_OWNED_AUXILIARY_CAP_ADMISSION',
+            'denials':checks,'authorized_uncapped_compression':True,'root':args.task_id,'package_acceptance':False}))
         return
     if args.account_switch:
         import httpx
@@ -181,13 +209,6 @@ def main():
                 title=call_llm('title_generation',**options)
                 assert 'Device controlled response.' in title.choices[0].message.content
                 receipt['title']=True
-                try:
-                    call_llm('compression',**options)
-                except ValueError as error:
-                    assert 'primary chat and title' in str(error)
-                    receipt['unqualified_compression_refused']=True
-                else:
-                    raise AssertionError('unqualified native auxiliary caller dispatched')
         print(json.dumps(receipt))
         return
     if args.inspect:

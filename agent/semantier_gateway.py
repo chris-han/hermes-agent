@@ -112,8 +112,8 @@ def attribute_request(kwargs: dict, *, base_url: str, purpose: str,
     if settings is None:
         gateway_settings()  # Invalid configured endpoint/credential fails closed only on this route.
     purpose = {'title_generation':'title'}.get(purpose,purpose)
-    if purpose not in {'chat', 'title'}:
-        raise ValueError('This Semantier hosted profile supports primary chat and title generation only.')
+    # Caller support under a hard cap is server-owned admission policy. Keep
+    # authorized uncapped purposes usable; never discard their original root.
     headers = {key:value for key,value in (kwargs.get('extra_headers') or {}).items()
                if not key.lower().startswith('x-semantier-')}
     headers['Idempotency-Key'] = (str(uuid5(NAMESPACE_URL, f'hermes:{session_id}:{request_id}'))
