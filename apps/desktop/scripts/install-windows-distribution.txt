@@ -1,0 +1,23 @@
+﻿Semantier Agent 安装说明 / Installation
+
+1. 将整个 ZIP 解压到本地文件夹。不要直接在 ZIP 预览中运行。
+2. 使用要安装应用的 Windows 用户双击 Install.bat。无需手动“以管理员身份运行”。
+3. 首次安装会弹出 Windows 管理员权限请求，用于把本包的公钥证书导入：
+   本地计算机 → 受信任人（LocalMachine\TrustedPeople）。允许后将继续安装应用。
+   如需输入另一个管理员的凭据，应用仍安装到最初运行 Install.bat 的用户。
+4. 成功后从开始菜单打开 Semantier Agent。后续更新重复上述步骤即可。
+
+脚本核对包 SHA-256、证书指纹、证书有效期和 Windows 签名验证。
+取消管理员请求或验证失败时会停止，不会继续安装。
+无需导入 PFX、私钥，也无需把证书导入“受信任的根证书颁发机构”。
+
+如果遇到 0x800B010A / 0x800B0109：请完整解压后运行 Install.bat，允许证书导入。
+如果电脑由组织管理且策略不允许安装 MSIX，请联系该电脑的管理员；脚本不修改组织策略。
+如果提示应用正在运行，请先退出 Semantier Agent，再重试安装。
+证书过期、包损坏或签名不匹配时，请获取新的完整分发包。
+失败信息会显示在安装窗口中，可复制给开发人员排查。
+
+Extract the entire ZIP, then double-click Install.bat as the intended Windows user.
+Allow the administrator prompt for publisher certificate trust. Only that step is elevated;
+the MSIX installs for the original Windows user. The script verifies the package hash and
+signature, reuses existing certificate trust, and stops on any failure.

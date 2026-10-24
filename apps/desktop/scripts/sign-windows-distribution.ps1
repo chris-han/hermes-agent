@@ -77,6 +77,15 @@ try {
     signedSha256 = (Get-FileHash -LiteralPath $signed -Algorithm SHA256).Hash.ToLowerInvariant()
     signing = 'PASS'; verification = 'PASS: SignTool verify /pa /v'; trustedTimestamp = [bool]$TimestampUrl; timestampUrl = $TimestampUrl
   }
+  # Recipient entry points are bound to the exact post-signing package and public certificate.
+  $installer = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'install-windows-distribution.ps1'))
+  $installer = $installer.Replace('__CERTIFICATE_THUMBPRINT__',$cert.Thumbprint).
+    Replace('__PACKAGE_FILE__',([IO.Path]::GetFileName($signed).Replace("'","''"))).
+    Replace('__PACKAGE_SHA256__',$metadata.signedSha256)
+  [IO.File]::WriteAllText((Join-Path $dist 'Install.ps1'),$installer,(New-Object Text.UTF8Encoding($true)))
+  $batch = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'install-windows-distribution.bat')) -replace '\r?\n',"`r`n"
+  [IO.File]::WriteAllText((Join-Path $dist 'Install.bat'),$batch,[Text.Encoding]::ASCII)
+  Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'install-windows-distribution.txt') -Destination (Join-Path $dist 'README-Install.txt')
   $metadata | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $dist 'build-metadata.json') -Encoding utf8
   Get-ChildItem -LiteralPath $dist -File | Sort-Object Name | ForEach-Object {
     "$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $($_.Name)"
