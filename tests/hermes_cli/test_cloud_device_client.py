@@ -9,7 +9,7 @@ def native(tmp_path, monkeypatch):
     from hermes_cli import cloud_device_client as device
     from hermes_constants import set_hermes_home_override, reset_hermes_home_override
     token = set_hermes_home_override(str(tmp_path))
-    (tmp_path/'config.yaml').write_text('model:\n  provider: custom\n  base_url: http://127.0.0.1:8765/v1\n')
+    (tmp_path/'config.yaml').write_text('model:\n  provider: custom\n  base_url: http://127.0.0.1:8765/v1\nproviders:\n  semantier-cloud:\n    base_url: http://127.0.0.1:8765/v1\n')
     cipher = Fernet(Fernet.generate_key())
     monkeypatch.setattr(device, '_protect', cipher.encrypt)
     monkeypatch.setattr(device, '_unprotect', cipher.decrypt)
@@ -93,7 +93,7 @@ def install_wire(device, monkeypatch, *, ack_lost=False):
         return {'contract_version':device.CONTRACT,'intent_ref':'intent-test',
                 'expires_at':'2099-01-01T00:00:00+00:00','status':status,'data':data}
     monkeypatch.setattr(device,'_wire',wire)
-    monkeypatch.setattr(device,'_catalog',lambda *_:[{'id':'allowed-model'}])
+    monkeypatch.setattr(device,'_catalog',lambda *_:[{'id':'allowed-model','revision':'allowed-revision'}])
     return calls
 
 
@@ -279,3 +279,28 @@ def test_portal_navigation_origin_is_distinct_from_authenticated_billing_api_ori
     assert started['verification_url'].startswith('http://127.0.0.1:8766/')
     assert device.poll(started['session_id'])['status']=='approved'
     assert device._config()['billing']['portal_origin']=='http://127.0.0.1:8766'
+
+
+def test_connect_never_reuses_an_unrelated_provider_origin(native,monkeypatch):
+    device,home=native
+    (home/'config.yaml').write_text('model: {provider: custom, base_url: https://unrelated.invalid/v1, api_key: prior-secret}\n')
+    monkeypatch.setattr(device,'_wire',lambda *args,**kwargs:pytest.fail('unrelated endpoint contacted'))
+    with pytest.raises(ValueError,match='Cloud deployment origin'):
+        device.start()
+    assert not (home/'.cloud-device.bin').exists()
+
+
+def test_install_retains_embedded_previous_provider_and_capability_revision(native,monkeypatch):
+    device,home=native
+    cfg=device._config()
+    cfg['model'].update(api_key='old-provider-secret',default='old-model',api_mode='chat_completions')
+    from hermes_cli.config import atomic_config_replace
+    atomic_config_replace(home/'config.yaml',cfg)
+    install_wire(device,monkeypatch)
+    monkeypatch.setattr(device,'_catalog',lambda *_:[{'id':'allowed-model','revision':'allowed-revision'}])
+    started=device.start();device.poll(started['session_id'])
+    from hermes_cli.config_providers import get_compatible_custom_providers
+    installed=device._config()
+    prior=[row for row in get_compatible_custom_providers(installed) if row.get('api_key')=='old-provider-secret']
+    assert len(prior)==1 and prior[0]['base_url']=='http://127.0.0.1:8765/v1'
+    assert installed['model']['capability_revision']=='allowed-revision'

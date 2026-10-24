@@ -187,8 +187,13 @@ def _started(state):
 def _new_state(previous):
     cfg = _config()
     provider = (cfg.get('providers') or {}).get('semantier-cloud') or {}
-    base = provider.get('base_url') or (cfg.get('model') or {}).get('base_url')
-    origin = _origin(str(base or ''))
+    model = cfg.get('model') or {}
+    legacy = cfg.get('semantier_gateway') or {}
+    base = (provider.get('base_url') or (legacy.get('base_url') if legacy.get('enabled') is True else None)
+            or (model.get('base_url') if isinstance(model,dict) and model.get('provider') == 'semantier-cloud' else None))
+    if not base:
+        raise ValueError('Semantier Cloud deployment origin is not configured for this profile.')
+    origin = _origin(str(base))
     from hermes_constants import get_default_hermes_root
     home = str(get_hermes_home().resolve())
     return {'home':home, 'origin':origin, 'session_id':'cloud-'+secrets.token_urlsafe(24),
@@ -335,6 +340,23 @@ def _install(state, binding):
         cfg.setdefault('providers',{})['semantier-cloud'] = entry
         if not isinstance(cfg.get('model'),dict):
             cfg['model'] = {'default':str(cfg.get('model') or '')}
+        previous = cfg['model']
+        if previous.get('provider') != 'semantier-cloud' and (previous.get('api_key') or previous.get('key_env')):
+            from hermes_cli.config_providers import get_compatible_custom_providers
+            saved = {key:previous[key] for key in ('base_url','api_key','key_env','api_mode') if previous.get(key)}
+            if not saved.get('base_url'):
+                raise ValueError('Previous embedded provider credential needs its configured endpoint before switching.')
+            saved['default_model'] = previous.get('default','')
+            existing = get_compatible_custom_providers(cfg)
+            if not any(all(row.get(key) == value for key,value in saved.items() if key != 'default_model') for row in existing):
+                key = 'saved-'+_digest(saved['base_url'].encode())[:12]
+                name = key
+                suffix = 1
+                while name in cfg['providers']:
+                    suffix += 1
+                    name = key+'-'+str(suffix)
+                saved['name'] = urlsplit(saved['base_url']).hostname or str(previous.get('provider') or 'Saved provider')
+                cfg['providers'][name] = saved
         cfg['model'].update(provider='semantier-cloud', base_url=entry['base_url'])
         cfg['model'].pop('api_key',None)
         cfg['model'].pop('key_env',None)
@@ -344,6 +366,12 @@ def _install(state, binding):
         if selected not in allowed:
             selected = allowed[0] if allowed else ''
         cfg['model']['default'] = selected
+        cfg['model'].pop('capability_revision',None)
+        if selected:
+            revision = next(row.get('revision') for row in rows if row.get('id') == selected)
+            if not isinstance(revision,str) or not revision:
+                raise ValueError('Cloud model capability revision unavailable; retry the same connection.')
+            cfg['model']['capability_revision'] = revision
         state['model'] = selected
         cfg.setdefault('billing',{}).update(backend='semantier', account_id=data['account_id'], currency=data['currency'], portal_origin=state['portal_origin'])
         # Persist the complete intended config inside the protected journal before its atomic replace.
