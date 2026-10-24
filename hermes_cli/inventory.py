@@ -250,7 +250,7 @@ def build_model_options_payload(
             'capabilities':{p['id']:{'fast':False,'reasoning':p['capabilities'].get('reasoning') is True and bool(p['request_parameters']['reasoning_controls'])} for p in profiles},
             'models':[p['id'] for p in profiles],
             'model_profiles':{p['id']:p for p in profiles}, 'total_models':len(profiles)}],
-            'model':ctx.current_model,'provider':'semantier-cloud', 'source':'semantier-cloud'}
+            'model':ctx.current_model,'provider':'semantier-cloud'}
     refresh = bool(refresh)
     payload = build_models_payload(
         ctx, explicit_only=bool(explicit_only), include_unconfigured=bool(include_unconfigured),

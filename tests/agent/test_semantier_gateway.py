@@ -152,3 +152,14 @@ def test_auto_title_snapshots_native_run_correlation(tmp_path, monkeypatch):
     assert headers['X-Semantier-Session-Id'] == 'session-owned'
     assert headers['X-Semantier-Run-Id'] == 'task-owned'
     assert headers['X-Semantier-Purpose'] == 'title_generation'
+
+
+def test_cloud_model_options_matches_native_wire_contract(tmp_path, monkeypatch):
+    configure(tmp_path, monkeypatch)
+    from hermes_cli.inventory import ConfigContext, build_model_options_payload
+    from tui_gateway.contracts.config_free_tier_control import ModelOptionsResult
+    monkeypatch.setattr(sg, 'cloud_catalog', lambda **kwargs: {'data': []})
+    payload = build_model_options_payload(ConfigContext('semantier-cloud', '',
+        'http://127.0.0.1:8765/v1', {}, []))
+    result = ModelOptionsResult.model_validate(payload)
+    assert result.provider == 'semantier-cloud'

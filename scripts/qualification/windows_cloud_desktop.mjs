@@ -178,7 +178,9 @@ try {
     const composer = page.locator('[contenteditable="true"]').first()
     await composer.waitFor({ timeout: 60000 })
     await composer.fill('Controlled Windows device source acceptance. Reply briefly.')
-    await composer.press('Enter')
+    const privacy = page.getByRole('button', { name: 'No thanks', exact: true })
+    if (await privacy.count()) await privacy.click()
+    await page.getByRole('button', { name: /^Send$/i }).click()
     await page.getByText('Device controlled response.', { exact: false }).first().waitFor({ timeout: 60000 })
     receipt.stage = 'explicit_controlled_chat'
     receipt.controlled_sends = sendCount() - before
