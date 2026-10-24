@@ -116,6 +116,7 @@ let profileAsset =
         .readdirSync(path.join(source, 'apps/desktop/dist/assets'))
         .find(
           name =>
+            name.startsWith('profile-') &&
             name.endsWith('.js') &&
             fs.readFileSync(path.join(source, 'apps/desktop/dist/assets', name), 'utf8').includes('as selectProfile')
         )

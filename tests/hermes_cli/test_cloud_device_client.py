@@ -306,3 +306,20 @@ def test_install_retains_embedded_previous_provider_and_capability_revision(nati
     assert installed['model']['capability_revision']=='allowed-revision'
     assert installed['model']['api_mode']=='chat_completions'
     assert prior[0]['api_mode']=='anthropic_messages'
+
+
+def test_slow_down_keeps_intent_pending_and_bounds_poll_frequency(native,monkeypatch):
+    device,_=native
+    calls=install_wire(device,monkeypatch)
+    started=device.start()
+    original=device._wire
+    def slowed(origin,operation,body=None,bearer=None):
+        if operation.endswith('/poll'):
+            calls.append(operation)
+            return {'contract_version':device.CONTRACT,'intent_ref':'intent-test','status':'slow_down','retry_after':5}
+        return original(origin,operation,body,bearer)
+    monkeypatch.setattr(device,'_wire',slowed)
+    assert device.poll(started['session_id'])['status']=='pending'
+    assert device.poll(started['session_id'])['status']=='pending'
+    assert calls.count('intent-test/poll')==1
+    assert calls.count('intent-test/claim')==0

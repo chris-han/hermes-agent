@@ -14,7 +14,7 @@ parser=argparse.ArgumentParser()
 parser.add_argument('--source',type=Path,required=True)
 parser.add_argument('--root',type=Path,required=True)
 parser.add_argument('--fixture-root',type=Path,required=True)
-parser.add_argument('--operation',choices=['lifecycle','fault','expiry','runtime'],required=True)
+parser.add_argument('--operation',choices=['lifecycle','fault','expiry','runtime','profile-invalidations'],required=True)
 args=parser.parse_args()
 assert os.name=='nt'
 source=args.source.resolve();home=args.root.resolve()
@@ -74,7 +74,37 @@ with httpx.Client(base_url='http://127.0.0.1:55474',trust_env=False,timeout=20) 
     private=device._read()
     assert private['proof'].encode() not in (home/'.cloud-device.bin').read_bytes()
     assert private['proof'] not in json.dumps(started)
-    if args.operation=='runtime':
+    if args.operation=='profile-invalidations':
+        # The default profile is deliberately explicitly reconfigured after
+        # approval, through its existing atomic owner, before a late poll.
+        decide(started,'approve')
+        from hermes_cli.config import atomic_config_replace
+        changed={**initial,'model':{**initial['model'],'default':'explicit-local-user-model'}}
+        atomic_config_replace(home/'config.yaml',changed)
+        after=(home/'config.yaml').read_bytes()
+        assert device.poll(started['session_id'])['status']=='cancelled'
+        assert (home/'config.yaml').read_bytes()==after
+        from hermes_cli.profiles import create_profile,delete_profile
+        from hermes_constants import set_hermes_home_override,reset_hermes_home_override
+        deleted=create_profile('deleted-probe',clone_config=True,no_alias=True)
+        token=set_hermes_home_override(str(deleted))
+        try:
+            pending=device.start()
+            private=device._read()
+            decide(pending,'approve')
+        finally:reset_hermes_home_override(token)
+        delete_profile('deleted-probe',yes=True)
+        assert not deleted.exists()
+        token=set_hermes_home_override(str(deleted))
+        try:
+            try:device.poll(pending['session_id'])
+            except ValueError:pass
+            else:raise AssertionError('deleted profile accepted a late approval')
+        finally:reset_hermes_home_override(token)
+        device._wire(private['origin'],private['intent_ref']+'/cancel',{'proof':private['proof']})
+        assert (home/'config.yaml').read_bytes()==after
+        checks=['real_atomic_reconfiguration_invalidates_late_approval','explicit_local_model_and_other_provider_preserved','real_canonical_profile_deletion_refuses_late_approval','deleted_profile_intent_remotely_cancelled','default_profile_config_unchanged_by_named_profile_deletion']
+    elif args.operation=='runtime':
         decide(started,'approve')
         other=home.parent.parent/'runtime-other-user'/'hermes-home'
         other.mkdir(parents=True,exist_ok=False)
@@ -183,4 +213,4 @@ print(json.dumps({'status':device.poll(started['session_id'])['status']}))
         assert device._config()['providers']['local-preserved']==local
         checks.extend(['same_paid_account_reauthorization_without_purchase','native_disconnect_confirmed_remote_revocation'])
 for name,digest in sentinels.items():assert hashlib.sha256((home/name).read_bytes()).hexdigest()==digest
-print(json.dumps({'produced_at':datetime.now(UTC).isoformat(),'scope':'REAL_WINDOWS_NATIVE_SOURCE_LIFECYCLE','checks':checks,'sentinels_preserved':list(sentinels),'purchase_calls':0,'inference_calls':0,'package_acceptance':False}))
+print(json.dumps({'produced_at':datetime.now(UTC).isoformat(),'scope':'EXTRACTED_RUNTIME_COMPONENT_LIFECYCLE' if os.environ.get('HERMES_QUALIFICATION_PAYLOAD') else 'REAL_WINDOWS_NATIVE_SOURCE_LIFECYCLE','checks':checks,'sentinels_preserved':list(sentinels),'purchase_calls':0,'inference_calls':0,'package_acceptance':False}))

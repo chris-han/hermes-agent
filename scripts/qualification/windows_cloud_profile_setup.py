@@ -30,4 +30,4 @@ try:
     atomic_config_replace(beta/'config.yaml',config)
 finally:reset_hermes_home_override(token)
 print(json.dumps({'profile':'beta','owner_root':str(get_default_hermes_root()),'profile_home':str(beta),
-    'protected_store_not_cloned':True,'source_only':True,'package_acceptance':False}))
+    'protected_store_not_cloned':True,'source_only':not bool(os.environ.get('HERMES_QUALIFICATION_PAYLOAD')),'package_acceptance':False}))

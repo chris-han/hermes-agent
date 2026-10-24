@@ -1,4 +1,4 @@
-"""Native source-only DPAPI/restart probe. Never installer or joined acceptance."""
+"""Native component checks; extracted execution requires the isolated payload runner."""
 import argparse
 from datetime import UTC, datetime
 import hashlib
@@ -163,7 +163,7 @@ def main():
             return response
         agent._interruptible_api_call=observe_native_call
         result=agent.run_conversation('Controlled native source acceptance. Reply briefly.',task_id=args.task_id)
-        receipt={'scope':'WINDOWS_NATIVE_SOURCE_ONLY','produced_at':datetime.now(UTC).isoformat(),
+        receipt={'scope':'EXTRACTED_RUNTIME_COMPONENT_CHECK' if os.environ.get('HERMES_QUALIFICATION_PAYLOAD') else 'WINDOWS_NATIVE_SOURCE_ONLY','produced_at':datetime.now(UTC).isoformat(),
             'task':agent._semantier_task_context,'native_call_results':observed,'package_acceptance':False}
         if args.expect_denied:
             assert 402 in observed and 'Device controlled response.' not in str(result.get('final_response','')), 'native cap denial absent'
@@ -222,7 +222,7 @@ def main():
         pass
     else:
         raise AssertionError('tampered ciphertext accepted')
-    print(json.dumps({'scope':'WINDOWS_NATIVE_SOURCE_ONLY','dpapi_encrypted':True,
+    print(json.dumps({'scope':'EXTRACTED_RUNTIME_COMPONENT_CHECK' if os.environ.get('HERMES_QUALIFICATION_PAYLOAD') else 'WINDOWS_NATIVE_SOURCE_ONLY','dpapi_encrypted':True,
         'process_restart_read':True,'tamper_rejected':True,
         'module_sha256':hashlib.sha256((source/'hermes_cli/cloud_device_client.py').read_bytes()).hexdigest(),
         'python':sys.version.split()[0],'package_acceptance':False}))
