@@ -21,7 +21,8 @@ try {
     return Microsoft.PowerShell.Management\Test-Path -LiteralPath $LiteralPath -PathType $PathType
   }
   function Get-AuthenticodeSignature { param($LiteralPath)
-    return [pscustomobject]@{Status=$script:signatureStatus;SignerCertificate=[pscustomobject]@{Thumbprint=$script:signer}}
+    $status=if ($script:trustResolvesSignature -and $script:trusted) { 'Valid' } else { $script:signatureStatus }
+    return [pscustomobject]@{Status=$status;SignerCertificate=[pscustomobject]@{Thumbprint=$script:signer}}
   }
   function Import-Certificate { param($FilePath,$CertStoreLocation)
     if ($CertStoreLocation -ne 'Cert:\LocalMachine\TrustedPeople') { throw 'Wrong trust store' }
@@ -37,13 +38,13 @@ try {
     return [pscustomobject]@{ExitCode=0}
   }
   function Add-AppxPackage { param($Path)
-    if (!$script:trusted -or $script:signatureStatus -ne 'Valid' -or $Path -ne $package) { throw 'Unsafe installation' }
+    if (!$script:trusted -or (!$script:trustResolvesSignature -and $script:signatureStatus -ne 'Valid') -or $Path -ne $package) { throw 'Unsafe installation' }
     $script:installs++
   }
   function Reset-Case {
     $script:trusted=$false; $script:admin=$false; $script:cancel=$false
     $script:imports=0; $script:elevations=0; $script:installs=0
-    $script:signatureStatus='Valid'; $script:signer=$cert.Thumbprint
+    $script:signatureStatus='Valid'; $script:signer=$cert.Thumbprint; $script:trustResolvesSignature=$false
   }
   function Assert-Refused {
     $refused=$false
@@ -56,6 +57,11 @@ try {
   Reset-Case
   Invoke-SemantierInstall
   if ($script:installs -ne 1 -or $script:elevations -ne 1 -or $script:imports) { throw 'Trust-only elevation failed' }
+  # Windows PowerShell 5.1 maps CERT_E_CHAINING (0x800B010A) to UnknownError.
+  Reset-Case; $script:signatureStatus='UnknownError'; $script:trustResolvesSignature=$true
+  Invoke-SemantierInstall
+  if ($script:installs -ne 1 -or $script:elevations -ne 1) { throw 'Missing-chain trust repair failed' }
+  Reset-Case; $script:signatureStatus='UnknownError'; Assert-Refused
   Reset-Case; $script:admin=$true
   Invoke-SemantierInstall -TrustCertificate
   if ($script:imports -ne 1 -or $script:installs) { throw 'Elevated phase installed app' }
@@ -67,5 +73,5 @@ try {
   Add-Content -LiteralPath $package -Value 'tampered'
   Assert-Refused
   if ($script:elevations -or $script:imports) { throw 'Tampered package was trusted' }
-  Write-Output 'PASS: existing trust, trust-only elevation, correct install user, UAC cancellation, signer mismatch, invalid signature, tamper refusal'
+  Write-Output 'PASS: existing trust, trust-only elevation, correct install user, missing chain repair, unresolved error refusal, UAC cancellation, signer mismatch, invalid signature, tamper refusal'
 } finally { Remove-Item -LiteralPath $root -Recurse -Force }

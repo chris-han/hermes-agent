@@ -31,9 +31,12 @@ function Invoke-SemantierInstall([switch]$TrustCertificate) {
   if ((Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash -ne $expectedHash) {
     throw 'Package checksum mismatch. Extract the complete original ZIP again.'
   }
+  # Windows PowerShell 5.1 reports missing trust chains as UnknownError.
+  # The pinned file hash and signer identify the package before trust; only
+  # a Valid Windows signature after trust can authorize app installation.
   $signature = Get-AuthenticodeSignature -LiteralPath $package
   if (!$signature.SignerCertificate -or $signature.SignerCertificate.Thumbprint -ne $expectedThumbprint -or
-      $signature.Status -notin @('Valid','NotTrusted')) { throw 'Package signature does not match this release.' }
+      $signature.Status -notin @('Valid','NotTrusted','UnknownError')) { throw 'Package signature does not match this release.' }
 
   if (!(Test-Path -LiteralPath $trustedPath)) {
     Write-Host "Windows will request administrator permission to trust this publisher: $($cert.Subject)"
