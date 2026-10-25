@@ -439,8 +439,9 @@ def _(rid, params: dict) -> dict:
         requested = str(params.get("provider") or "").strip() or None
 
         def probe(profile, scoped):
-            startup_model, startup_provider = _resolve_startup_runtime()
+            startup_model, startup_provider = None, None
             try:
+                startup_model, startup_provider = _resolve_startup_runtime()
                 if requested:
                     model, runtime = startup_model, resolve_runtime_provider(
                         requested=requested, target_model=startup_model or None)

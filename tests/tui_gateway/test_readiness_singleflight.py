@@ -15,6 +15,8 @@ the single-flight there is exactly one probe and the pool stays responsive.
 from __future__ import annotations
 
 import threading
+
+import pytest
 import time
 
 from tui_gateway import server
@@ -275,14 +277,15 @@ def test_overlapping_poll_joins_a_fast_probe_instead_of_erroring(monkeypatch):
     assert joiner["result"]["ok"] is True
 
 
-def test_revoked_native_binding_keeps_cloud_source_for_legacy_custom_pin(monkeypatch):
+@pytest.mark.parametrize("failure_stage", ["startup", "runtime"])
+def test_revoked_native_binding_keeps_cloud_source_for_legacy_custom_pin(monkeypatch, failure_stage):
     from agent import semantier_gateway as cloud
     from hermes_cli.cloud_device_client import CloudCredentialError
     def refused(**kwargs):
         raise CloudCredentialError('Cloud credential unavailable or expired; reauthorize.')
     _patch_fast_probe_env(monkeypatch, refused)
     base = 'http://127.0.0.1:8765/v1'
-    monkeypatch.setattr(server, '_resolve_startup_runtime', lambda: ('cloud-model', 'custom'))
+    monkeypatch.setattr(server, '_resolve_startup_runtime', refused if failure_stage == 'startup' else lambda: ('cloud-model', 'custom'))
     monkeypatch.setattr(server, '_load_cfg', lambda: {'model': {'provider': 'custom', 'base_url': base}})
     monkeypatch.setattr(cloud, 'cloud_connection_config', lambda: {'base_url': base, 'credential_ref': 'native-ref'})
     transport = _RecordingTransport()
