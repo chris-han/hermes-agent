@@ -24,6 +24,11 @@ export function cloudServiceStatus(result: BillingResult<BillingBackendState>): 
   if (!('schema_version' in state) || state.schema_version !== 'semantier.billing.v2' || !state.account_provisioning) {
     return { state: 'unavailable' }
   }
+  // An incompatible/unknown availability projection is never zero credit or
+  // established inference readiness, even if routing provisioning is ready.
+  if (!state.credits.available || typeof state.credits.available.amount !== 'string') {
+    return { state: 'unavailable' }
+  }
 
   const projection = state.account_provisioning
 

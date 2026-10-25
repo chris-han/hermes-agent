@@ -42,6 +42,11 @@ describe('selected model-service facts', () => {
     expect(cloudServiceStatus({ ok: true, data: { ...pending, credits: { ...ready.credits, available: { amount: '0.000', currency: 'CNY' } } } }).state).toBe('credit')
   })
 
+  it('does not turn an incompatible unknown available-credit projection into readiness or zero credit', () => {
+    const incompatible = { ...ready, credits: { ...ready.credits, available: null } }
+    expect(cloudServiceStatus({ ok: true, data: incompatible as unknown as SemantierBillingV2Response }).state).toBe('unavailable')
+  })
+
   it('reads Billing only for the actual selected Cloud route and never invokes a model', async () => {
     const methods: string[] = []
     let cloud = false
