@@ -12,8 +12,7 @@ import type {
   OnboardingEndedPayload,
   OnboardingRunStateResult,
   OnboardingStartParams,
-  OnboardingStartResult,
-  OnboardingStateParams
+  OnboardingStartResult
 } from '@hermes/shared'
 import { atom, computed } from 'nanostores'
 
@@ -22,11 +21,9 @@ import type { GatewayRequester } from '@/lib/yolo-session'
 
 import { ackFreeTierNotice } from './free-tier'
 import { activeGatewayConnectionId } from './gateway'
-import { $gatewayReadyAt } from './live-sync'
 import { clearFreeTierIntro } from './onboarding'
-import { $decideExit } from './onboarding-intro'
 import { $onboardingPhase } from './onboarding-phase'
-import { markOnboardingDecided, ONBOARDING_DECIDE_OFFER_MS, setOnboardingSurfaceActive } from './onboarding-presence'
+import { markOnboardingDecided, setOnboardingSurfaceActive } from './onboarding-presence'
 import { $onboardingSession } from './onboarding-session'
 import { ensureGatewayProfile, newSessionInProfile } from './profile'
 import { $connection, $gatewayState, $selectedStoredSessionId } from './session'
@@ -214,85 +211,17 @@ function leaveSkipped(): void {
   newSessionInProfile(ONBOARDING_PROFILE)
 }
 
-let decision: null | Promise<void> = null
-
-/**
- * The main window's boot check, once per launch: open onboarding when the backend says it is due on
- * this install and the free tier can drive it. The launch starts the run over (`freshLaunch`); a
- * reconnect later in the launch only re-reads it (`watchRunEnd`). First-run surfaces wait until this has answered; the
- * presence surface is set before the answer is published, so they never see a clear moment in between.
- */
+/** Passive launch never submits the onboarding opening turn or changes profiles.
+ * Explicit Settings onboarding still uses startOnboarding through its existing owner.
+ * Keep the boot caller's signature while releasing its presentation hold immediately. */
 export function decideOnboarding(
-  request: OnboardingRequest,
-  resume: OnboardingResume,
-  options?: StartOptions
+  _request: OnboardingRequest,
+  _resume: OnboardingResume,
+  _options?: StartOptions
 ): Promise<void> {
-  decision ??= readAndStart(request, resume, options)
+  markOnboardingDecided()
 
-  return decision
-}
-
-async function readAndStart(
-  request: OnboardingRequest,
-  resume: OnboardingResume,
-  options?: StartOptions
-): Promise<void> {
-  // Continue on the boot overlay released this launch: a late answer opens nothing, and onboarding
-  // stays due on the backend for the next launch or Settings' Run onboarding again.
-  let released = false
-
-  const disarm = offerDecideExit(() => {
-    released = true
-    markOnboardingDecided()
-  })
-
-  try {
-    const params: OnboardingStateParams & RequestParams = {}
-
-    if (assumeFreshInstall()) {
-      params.assume_fresh = true
-    }
-
-    const state = await request<OnboardingRunStateResult>('onboarding.state', params, NO_DEADLINE)
-    disarm()
-
-    if (!released && state.run && state.eligible) {
-      await startOnboarding(request, resume, { ...options, freshLaunch: true })
-    }
-  } catch (error) {
-    console.warn('[onboarding] state could not be read', error)
-  } finally {
-    disarm()
-    markOnboardingDecided()
-  }
-}
-
-/** The due check's way out, armed like the intro's (`kickoff.ts`): `ONBOARDING_DECIDE_OFFER_MS` after
- *  the backend said ready, the boot overlay offers `release` through `$decideExit`. Returns the disarm. */
-function offerDecideExit(release: () => void): () => void {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  let stopWatching = (): void => undefined
-
-  const disarm = (): void => {
-    stopWatching()
-    clearTimeout(timer)
-    $decideExit.set(null)
-  }
-
-  const takeExit = (): void => {
-    disarm()
-    release()
-  }
-
-  stopWatching = $gatewayReadyAt.subscribe(readyAt => {
-    clearTimeout(timer)
-
-    if (readyAt !== null) {
-      timer = setTimeout(() => $decideExit.set(takeExit), readyAt + ONBOARDING_DECIDE_OFFER_MS - Date.now())
-    }
-  })
-
-  return disarm
+  return Promise.resolve()
 }
 
 /** The run ended: the model finished it or the user skipped. Later calls for the same run do nothing. */

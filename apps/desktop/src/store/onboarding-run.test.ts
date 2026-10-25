@@ -56,21 +56,15 @@ beforeEach(() => {
 })
 
 describe('onboarding run', () => {
-  it('opens the onboarding chat when due and never shows a clear moment before it', async () => {
-    const clear: boolean[] = []
-    const stop = $onboardingSurfaceClear.subscribe(value => clear.push(value))
+  it('leaves passive startup on its current profile without opening a model-driven tour', async () => {
     const { calls, request, starts } = backend({ eligible: true, run: true })
 
     await decideOnboarding(request, resume, { ensureProfile })
-    stop()
 
-    // The last read checks for an end sent while the chat was opening.
-    expect(calls).toEqual(['onboarding.state', 'onboarding.start', 'onboarding.state'])
-    // A new launch: a run the app was closed on does not count, so the backend starts over.
-    expect(starts).toEqual([expect.objectContaining({ fresh_launch: true })])
-    expect(resume).toHaveBeenCalledWith('st-1', true)
+    expect(calls).toEqual([])
+    expect(starts).toEqual([])
+    expect(resume).not.toHaveBeenCalled()
     expect($onboardingDecided.get()).toBe(true)
-    expect(clear).not.toContain(true)
   })
 
   it('keeps the run on a reconnect in the same launch: it is re-read, never started again', async () => {

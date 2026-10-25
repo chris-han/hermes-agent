@@ -68,7 +68,20 @@ afterEach(() => {
 })
 
 describe('the launch due check', () => {
-  it('waits for a slow answer with no client deadline and still opens onboarding', async () => {
+  it('never submits a model turn or moves profiles during passive startup', async () => {
+    const { run } = await freshStores()
+    const backend = slowBackend()
+    const open = vi.fn()
+    const changeProfile = vi.fn(async () => undefined)
+    const decided = run.decideOnboarding(backend.request, open, { ensureProfile: changeProfile })
+    backend.answer({ eligible: true, run: true })
+    await decided
+    expect(backend.calls).not.toContain('onboarding.start')
+    expect(open).not.toHaveBeenCalled()
+    expect(changeProfile).not.toHaveBeenCalled()
+  })
+
+  it('releases startup immediately without waiting for an unrequested onboarding read', async () => {
     const { run } = await freshStores()
     const backend = slowBackend()
 
@@ -77,10 +90,10 @@ describe('the launch due check', () => {
     backend.answer({ eligible: true, run: true })
     await decided
 
-    expect(backend.calls).toContain('onboarding.start')
+    expect(backend.calls).toEqual([])
   })
 
-  it('offers Continue a budget after gateway.ready, and a late due answer after it opens nothing', async () => {
+  it('never offers a boot wait or opens a run after later readiness and focus timing', async () => {
     const { intro, liveSync, presence, run } = await freshStores()
     const backend = slowBackend()
 
@@ -100,6 +113,6 @@ describe('the launch due check', () => {
     backend.answer({ eligible: true, run: true })
     await decided
 
-    expect(backend.calls).toEqual(['onboarding.state'])
+    expect(backend.calls).toEqual([])
   })
 })

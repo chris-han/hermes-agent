@@ -23,7 +23,6 @@ import { FreeTierSignInDialog } from '@/components/free-tier/sign-in-dialog'
 import { GatewayConnectingOverlay } from '@/components/gateway-connecting-overlay'
 import { NotificationStack } from '@/components/notifications'
 import { DesktopOnboardingOverlay } from '@/components/onboarding'
-import { firstRunIntro } from '@/components/onboarding/first-run/kickoff'
 import { OnboardingEnd } from '@/components/onboarding/onboarding-end'
 import { $newSessionTabAction, registerPaneCloser } from '@/components/pane-shell/tree/store'
 import {
@@ -218,15 +217,14 @@ function useRouteRequestNavigation(navigate: ReturnType<typeof useNavigate>): vo
   }, [navigate, routeRequest])
 }
 
-// The main window asks the backend whether first-run onboarding is due and opens it with main's
-// intro around it; every other window never runs it, so its first-run surfaces are free at once.
-// Settings' Run onboarding again opens its chat through the same opener.
+// Passive startup releases first-run presentation without starting a model turn or moving profiles.
+// Settings' explicitly requested onboarding still opens its chat through the existing opener.
 function useFirstRunOnboarding(request: OnboardingRequest, open: OnboardingResume, gatewayOpen: boolean): void {
   useEffect(() => {
     if (!isMainWindow()) {
       markOnboardingDecided()
     } else if (gatewayOpen) {
-      void decideOnboarding(request, open, { intro: firstRunIntro() })
+      void decideOnboarding(request, open)
     }
   }, [gatewayOpen, open, request])
 
