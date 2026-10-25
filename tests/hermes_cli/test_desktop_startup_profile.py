@@ -32,6 +32,9 @@ def test_saved_profile_keeps_data_and_credentials(owner):
     assert secret.read_bytes() == b"opaque protected credential"
     assert (home / "config.yaml").read_bytes() == before
     assert not (owner / "profiles/semantier-local").exists()
+    assert resolve(owner, 'work', explicit=True)['profile'] == 'work'
+    profiles.set_active_profile('work')
+    assert resolve(owner)['profile'] == 'work'
 
 
 def test_stale_ordinary_reference_creates_one_fallback_concurrently(owner):
@@ -74,3 +77,19 @@ def test_foreign_profile_namespace_is_not_adopted(owner, tmp_path):
     with pytest.raises(ValueError, match="owner"):
         resolve(owner)
     assert not list(foreign.iterdir())
+
+
+def test_unreadable_profile_config_is_not_replaced_by_a_fallback(owner):
+    from hermes_cli.config import atomic_config_replace
+    home = profiles.create_profile('work', no_alias=True, no_skills=True)
+    config = home / 'config.yaml'
+    atomic_config_replace(config, {'model': {'provider': 'custom', 'default': 'retained'}})
+    previous = config.read_bytes()
+    config.chmod(0)
+    try:
+        with pytest.raises(Exception, match='cannot be read'):
+            resolve(owner, 'work')
+        assert not (owner / 'profiles/semantier-local').exists()
+    finally:
+        config.chmod(0o600)
+    assert config.read_bytes() == previous
