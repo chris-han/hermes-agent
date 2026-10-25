@@ -42,9 +42,12 @@ describe('selected model-service facts', () => {
     expect(cloudServiceStatus({ ok: true, data: { ...pending, credits: { ...ready.credits, available: { amount: '0.000', currency: 'CNY' } } } }).state).toBe('credit')
   })
 
-  it('does not turn an incompatible unknown available-credit projection into readiness or zero credit', () => {
-    const incompatible = { ...ready, credits: { ...ready.credits, available: null } }
-    expect(cloudServiceStatus({ ok: true, data: incompatible as unknown as SemantierBillingV2Response }).state).toBe('unavailable')
+  it('keeps a null wallet unavailable without inventing exhaustion or overriding independent model readiness', () => {
+    const nonWallet = { ...ready, credits: { ...ready.credits, available: null } }
+    expect(cloudServiceStatus({ ok: true, data: nonWallet }).state).toBe('ready')
+    const notReady = { ...nonWallet, account_provisioning: { local_status: 'READY', inference_ready: false, reason: 'NO_ACCESS' } }
+    expect(cloudServiceStatus({ ok: true, data: notReady }).state).toBe('unavailable')
+    expect(cloudServiceStatus({ ok: true, data: { ...notReady, subscription: null } }).state).toBe('unavailable')
   })
 
   it('reads Billing only for the actual selected Cloud route and never invokes a model', async () => {

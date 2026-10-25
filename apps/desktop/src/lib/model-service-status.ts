@@ -24,9 +24,12 @@ export function cloudServiceStatus(result: BillingResult<BillingBackendState>): 
   if (!('schema_version' in state) || state.schema_version !== 'semantier.billing.v2' || !state.account_provisioning) {
     return { state: 'unavailable' }
   }
-  // An incompatible/unknown availability projection is never zero credit or
-  // established inference readiness, even if routing provisioning is ready.
-  if (!state.credits.available || typeof state.credits.available.amount !== 'string') {
+
+  // Billing v2 permits a non-wallet account's availability to be null. Never
+  // turn that into a zero balance; its model readiness is a separate owner fact.
+  const available = state.credits.available
+
+  if (available !== null && (!available || typeof available.amount !== 'string')) {
     return { state: 'unavailable' }
   }
 
@@ -42,12 +45,14 @@ export function cloudServiceStatus(result: BillingResult<BillingBackendState>): 
 
   if (projection.reason === 'PREPARING') { return { state: 'preparing' } }
 
+  if (available === null) { return { state: 'unavailable' } }
+
   if (!state.subscription) { return { state: 'plan', portalUrl } }
 
   if (state.subscription.status === 'expired') { return { state: 'expired', portalUrl } }
 
   // Exact decimal zero comparison; never round balances or derive spend permission here.
-  if (/^-?0+(?:\.0+)?$/.test(state.credits.available.amount)) { return { state: 'credit', portalUrl } }
+  if (/^-?0+(?:\.0+)?$/.test(available.amount)) { return { state: 'credit', portalUrl } }
 
   return { state: 'unavailable' }
 }
