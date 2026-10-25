@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 
-import { DESKTOP_PROFILE_NAME_RE } from './desktop-profile'
+import { DESKTOP_PROFILE_NAME_RE, type DesktopProfileRoute } from './desktop-profile'
 import { ticketRuntimeFor } from './local-gateway-python'
 import { hiddenWindowsChildOptions } from './windows-child-options'
 
@@ -35,4 +35,35 @@ export async function resolveDesktopStartupProfile(
   }
 
   return result
+}
+
+/** Resolve ordinary local intent before a window/device flow can capture it. */
+export async function prepareDesktopStartupProfile(deps: {
+  preference: { profile: string | null; defaultRoute: DesktopProfileRoute | null }
+  explicitProfile: string | null
+  isLocalConnection: (id: string) => boolean
+  isRemote: (profile: string | null) => boolean
+  resolve: (profile: string | null, explicit: boolean) => Promise<{ profile: string; recovered: boolean }>
+  remember: (profile: string) => void
+  setDefault: (route: DesktopProfileRoute) => void
+  log: (message: string) => void
+}): Promise<void> {
+  const route = deps.preference.defaultRoute
+  const selected = deps.explicitProfile || route?.profile || deps.preference.profile
+
+  if (route?.connectionId && !deps.isLocalConnection(route.connectionId)) { return }
+
+  if (deps.isRemote(selected)) { return }
+
+  const resolved = await deps.resolve(selected, Boolean(deps.explicitProfile))
+
+  deps.remember(resolved.profile)
+
+  if (route || resolved.profile === 'semantier-local') {
+    deps.setDefault({ connectionId: route?.connectionId ?? null, profile: resolved.profile })
+  }
+
+  if (resolved.recovered) {
+    deps.log(`[startup-profile] resolved ordinary local startup to ${resolved.profile}`)
+  }
 }

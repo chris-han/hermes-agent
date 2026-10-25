@@ -287,9 +287,19 @@ export function DesktopOnboardingOverlay({
   }
 
   useEffect(() => {
-    if (enabled || onboarding.requested) {
-      void refreshOnboarding(ctx)
+    let active = true
+    let inFlight = false
+
+    const refresh = () => {
+      if (inFlight || (!enabled && !onboarding.requested)) { return }
+      inFlight = true
+      void refreshOnboarding(ctx, () => active).finally(() => { inFlight = false })
     }
+
+    refresh()
+    window.addEventListener('focus', refresh)
+
+    return () => { active = false; window.removeEventListener('focus', refresh) }
   }, [ctx, enabled, onboarding.requested])
 
   // The boot bootstrap re-announces `setup.ready` when a background retry of
@@ -374,7 +384,7 @@ export function DesktopOnboardingOverlay({
   // do we know whether to dismiss (true) or surface the picker (false).
   // EXCEPTION: manual mode (user opened the selector from a working app to
   // add/switch a provider) shows the overlay regardless of configured state.
-  if (onboarding.configured === true && !onboarding.manual && !onboarding.freeTierReady) {
+  if (!onboarding.manual && !onboarding.requested) {
     return null
   }
 

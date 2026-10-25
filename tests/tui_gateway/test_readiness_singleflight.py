@@ -58,6 +58,21 @@ def _patch_fast_probe_env(monkeypatch, resolve):
     monkeypatch.setattr(server, "_resolve_startup_runtime", lambda: ("custom/m", None))
 
 
+def test_failed_selected_cloud_probe_preserves_producer_owned_service_identity(monkeypatch):
+    def unavailable(**kwargs):
+        raise ValueError('Credential unavailable')
+
+    _patch_fast_probe_env(monkeypatch, unavailable)
+    monkeypatch.setattr(server, '_resolve_startup_runtime', lambda: ('cloud-model', 'semantier-cloud'))
+    transport = _RecordingTransport()
+    _dispatch(transport, 'cloud-unavailable', 'setup.runtime_check', {'provider': 'semantier-cloud'})
+    result = transport.wait_for('cloud-unavailable')['result']
+    assert result['ok'] is False
+    assert result['provider'] == result['source'] == 'semantier-cloud'
+    assert result['model'] == 'cloud-model'
+    assert 'subscription' not in result
+
+
 def test_overlapping_runtime_checks_share_one_probe_and_keep_pool_responsive(monkeypatch):
     """Same-key polls join the in-flight probe; the shared pool answers an unrelated RPC."""
     started = threading.Event()

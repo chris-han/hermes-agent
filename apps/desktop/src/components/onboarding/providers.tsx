@@ -1,5 +1,6 @@
 import { RowButton } from '@/components/ui/row-button'
 import { useI18n } from '@/i18n'
+import { modelServiceCopy } from '@/i18n/model-service'
 import { Check, ChevronRight, Terminal } from '@/lib/icons'
 import { PROVIDER_DISPLAY_NAMES } from '@/lib/model-status-label'
 import type { OAuthProvider } from '@/types/hermes'
@@ -33,18 +34,18 @@ export function FeaturedProviderRow({
   onSelect: (provider: OAuthProvider) => void
   provider: OAuthProvider
 }) {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
+  const copy = modelServiceCopy[locale] ?? modelServiceCopy.en
   const semantierCloud = provider.id === 'semantier-cloud'
   const freeTier = !semantierCloud && provider.status?.free_tier === true
   const loggedIn = provider.status?.logged_in && !freeTier
 
   return (
     <button
-      className="group relative flex w-full items-center justify-between gap-4 rounded-[8px] bg-primary/[0.06] px-3 py-2.5 text-left transition-colors hover:bg-primary/10"
+      className="group flex w-full items-center justify-between gap-4 rounded-[6px] px-3 py-2.5 text-left transition-colors hover:bg-(--ui-control-hover-background)"
       onClick={() => onSelect(provider)}
       type="button"
     >
-      <span aria-hidden className="arc-border arc-reverse arc-nous" />
       <div className="min-w-0">
         <div className="flex items-center gap-2">
           <img alt="" className="size-5 shrink-0 rounded" src={assetPath('apple-touch-icon.png')} />
@@ -63,7 +64,7 @@ export function FeaturedProviderRow({
           )}
         </div>
         <p className="mt-1 text-xs leading-5 text-muted-foreground">
-          {semantierCloud ? t.common.connect : freeTier ? t.freeTier.providerRowPitch : t.onboarding.featuredPitch}
+          {semantierCloud ? (loggedIn ? copy.ready : copy.signIn) : freeTier ? t.freeTier.providerRowPitch : t.onboarding.featuredPitch}
         </p>
       </div>
       <ChevronRight className="size-4 shrink-0 text-primary transition group-hover:translate-x-0.5" />

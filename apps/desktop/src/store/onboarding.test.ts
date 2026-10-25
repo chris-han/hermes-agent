@@ -258,7 +258,7 @@ describe('refreshOnboarding', () => {
     expect(window.localStorage.getItem('hermes-desktop-onboarded-v1')).toBe('1')
   })
 
-  it('keeps an unknown readiness notice temporary and clears it on recovery (#124545)', async () => {
+  it('keeps a passive outage quiet while preserving its scoped readiness fact', async () => {
     vi.useFakeTimers()
     notifications.clearNotifications()
     installApiMock(vi.fn())
@@ -266,9 +266,8 @@ describe('refreshOnboarding', () => {
 
     try {
       await refreshOnboarding(onboardingContext(fallbackTimeoutGateway()))
-      expect(notifications.$notifications.get()).toEqual([
-        expect.objectContaining({ id: 'runtime-not-ready', kind: 'info' })
-      ])
+      expect(notifications.$notifications.get()).toEqual([])
+      expect($desktopOnboarding.get().readiness?.source).toBe('fallback')
       expect($desktopOnboarding.get().configured).toBe(true)
       await vi.advanceTimersByTimeAsync(5_000)
       expect(notifications.$notifications.get()).toEqual([])

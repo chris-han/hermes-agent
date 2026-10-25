@@ -7,6 +7,7 @@ import { KbdCombo } from '@/components/ui/kbd'
 import { Tip } from '@/components/ui/tooltip'
 import { getHermesConfigDefaults, getHermesConfigRecord, saveHermesConfig } from '@/hermes'
 import { useI18n } from '@/i18n'
+import { modelServiceCopy } from '@/i18n/model-service'
 import { triggerHaptic } from '@/lib/haptics'
 import {
   Archive,
@@ -101,7 +102,8 @@ const SUBPAGE_VIEWS: Partial<Record<SettingsViewId, ComponentType<{ subpage?: st
 export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: SettingsPageProps) {
   const scopeProfile = useStore($settingsScopeProfile)
   const activeConnectionId = useStore($activeConnectionId)
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
+  const serviceCopy = modelServiceCopy[locale] ?? modelServiceCopy.en
   const navigate = useNavigate()
   const { hash, pathname, search } = useLocation()
 
@@ -350,14 +352,14 @@ export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: Set
             gapBefore: true,
             icon: Zap,
             id: 'providers',
-            label: t.settings.nav.providers,
+            label: serviceCopy.title,
             onSelect: () => setActiveView('providers')
           },
           {
             active: activeView === 'gateway',
             icon: Globe,
             id: 'gateway',
-            label: t.settings.nav.gateway,
+            label: serviceCopy.advancedRuntime,
             onSelect: () => setActiveView('gateway')
           },
           {
@@ -434,6 +436,8 @@ export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: Set
       }),
     [
       activeView,
+      serviceCopy.advancedRuntime,
+      serviceCopy.title,
       billingView,
       canViewPlans,
       keysView,

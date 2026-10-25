@@ -105,7 +105,8 @@ describe('CustomEndpointsSettings', () => {
     expect(screen.getByText('API 模式')).toBeTruthy()
     expect(screen.getByRole('button', { name: '自動偵測' })).toBeTruthy()
     expect(saveCustomEndpoint).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: '儲存' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: '此端點不需要 API 金鑰' }))
+    fireEvent.click(screen.getByRole('button', { name: '儲存並使用' }))
     expect(saveCustomEndpoint).toHaveBeenCalledWith(
       expect.objectContaining({
         name: 'Fixture Ω',
@@ -144,13 +145,14 @@ describe('CustomEndpointsSettings', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Test' }))
     })
     fireEvent.change(screen.getByPlaceholderText('gpt-5.4'), { target: { value: 'gpt-5.6-sol-high' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'This endpoint requires no API key' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save and use' }))
 
     expect(validateCustomEndpoint).toHaveBeenCalledWith(
       expect.objectContaining({ api_mode: 'codex_responses' }),
       'default'
     )
-    expect(notify).toHaveBeenCalledWith(expect.objectContaining({ kind: 'success' }))
+    expect(screen.getByRole('status').textContent).toContain('No inference request is sent')
     expect(saveCustomEndpoint).toHaveBeenCalledWith(
       expect.objectContaining({
         api_mode: 'codex_responses',
@@ -191,7 +193,8 @@ describe('CustomEndpointsSettings', () => {
       target: { value: 'https://studio.example.com/v1' }
     })
     fireEvent.change(await screen.findByPlaceholderText('gpt-5.4'), { target: { value: 'studio-model' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'This endpoint requires no API key' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save and use' }))
 
     expect(saveCustomEndpoint).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'Studio gateway' }),
@@ -228,7 +231,8 @@ describe('CustomEndpointsSettings', () => {
       target: { value: 'http://profile-a.test/v1' }
     })
     fireEvent.change(screen.getByPlaceholderText('gpt-5.4'), { target: { value: 'model-a' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'This endpoint requires no API key' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save and use' }))
     expect(saveCustomEndpoint).toHaveBeenCalledTimes(1)
 
     // SettingsView keys ProvidersSettings by the selected profile, so a profile
@@ -243,7 +247,7 @@ describe('CustomEndpointsSettings', () => {
     expect(notifyError).not.toHaveBeenCalled()
   })
 
-  it('Test rewrites the URL field to the base that actually served /models (#65488)', async () => {
+  it('Test retains the typed URL and shows the discovered suggestion without changing it', async () => {
     getCustomEndpoints.mockResolvedValue(emptyResponse)
     validateCustomEndpoint.mockResolvedValue({
       ok: true,
@@ -260,6 +264,7 @@ describe('CustomEndpointsSettings', () => {
 
     // Save stores form.baseUrl verbatim and chat POSTs {base_url}/chat/completions, so the
     // typed bare root would 404 every request even though the test looked green.
-    expect(urlInput.value).toBe('http://h.test/v1')
+    expect(urlInput.value).toBe('http://h.test')
+    expect(screen.getByRole('status').textContent).toContain('http://h.test/v1')
   })
 })

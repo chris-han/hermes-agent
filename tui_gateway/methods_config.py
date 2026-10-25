@@ -440,11 +440,19 @@ def _(rid, params: dict) -> dict:
 
         def probe(profile, scoped):
             startup_model, startup_provider = _resolve_startup_runtime()
-            if requested:
-                model, runtime = startup_model, resolve_runtime_provider(
-                    requested=requested, target_model=startup_model or None)
-            else:
-                model, runtime = _resolve_agent_model_runtime(None, None)
+            try:
+                if requested:
+                    model, runtime = startup_model, resolve_runtime_provider(
+                        requested=requested, target_model=startup_model or None)
+                else:
+                    model, runtime = _resolve_agent_model_runtime(None, None)
+            except Exception as error:
+                cfg_model = _load_cfg().get('model') or {}
+                selected = requested or startup_provider or (cfg_model.get('provider') if isinstance(cfg_model, dict) else None)
+                if selected != 'semantier-cloud':
+                    raise
+                return {'ok': False, 'provider': selected, 'source': selected,
+                        'model': startup_model, 'error': str(error), **scoped}
             provider_configured = bool(_has_any_provider_configured(strict_profile_scope=bool(profile)))
             provider = runtime.get("provider") or "provider"
             source = str(runtime.get("source") or "")

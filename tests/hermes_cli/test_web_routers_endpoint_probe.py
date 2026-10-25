@@ -12,6 +12,56 @@ import asyncio
 import pytest
 
 
+def test_native_cloud_is_not_an_editable_custom_endpoint(monkeypatch):
+    import hermes_cli.web_routers.config_env as mod
+    from hermes_cli.web_models import CustomEndpointUpdate
+    from fastapi import HTTPException
+
+    cfg = {'providers': {'semantier-cloud': {'base_url': 'https://cloud.semantier.com/v1',
+                                          'credential_ref': 'protected-ref', 'model': 'cloud-model'}}}
+    assert mod._custom_endpoint_response(cfg)['endpoints'] == []
+    with pytest.raises(HTTPException):
+        mod._write_custom_endpoint(cfg, CustomEndpointUpdate(
+            id='semantier-cloud', name='Cloud', base_url='https://other.example/v1', model='m', api_key=''))
+    assert cfg['providers']['semantier-cloud']['credential_ref'] == 'protected-ref'
+
+
+def test_custom_endpoint_test_is_catalog_only_never_an_inference_post(monkeypatch):
+    import hermes_cli.web_routers.config_env as mod
+    from hermes_cli.web_models import CustomEndpointUpdate
+
+    calls = []
+
+    class Response:
+        status_code = 200
+        is_success = True
+        headers = {"content-type": "application/json"}
+
+        def json(self):
+            return {"data": [{"id": "manual-model"}]}
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, url, **kwargs):
+            calls.append(("GET", url))
+            return Response()
+
+        async def post(self, url, **kwargs):
+            calls.append(("POST", url))
+            return Response()
+
+    monkeypatch.setattr(mod, "_endpoint_probe_client", lambda *args: Client())
+    result = asyncio.run(mod.validate_custom_endpoint(CustomEndpointUpdate(
+        name="local", base_url="http://127.0.0.1:39080/v1", model="manual-model", api_key="")))
+    assert result["ok"] is True
+    assert calls == [("GET", "http://127.0.0.1:39080/v1/models")]
+
+
 @pytest.mark.parametrize(
     "url, trusts_env",
     [

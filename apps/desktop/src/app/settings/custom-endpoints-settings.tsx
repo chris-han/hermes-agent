@@ -13,6 +13,7 @@ import {
   validateCustomEndpoint
 } from '@/hermes'
 import { useI18n } from '@/i18n'
+import { modelServiceCopy } from '@/i18n/model-service'
 import { triggerHaptic } from '@/lib/haptics'
 import { Check, Globe, Loader2, Plus, Save, Trash2, Zap } from '@/lib/icons'
 import { cn } from '@/lib/utils'
@@ -45,6 +46,7 @@ interface EndpointForm {
   makeDefault: boolean
   model: string
   name: string
+  noApiKey: boolean
 }
 
 // Same choices as `hermes model`'s custom-provider setup; '' = runtime auto-detect.
@@ -64,7 +66,8 @@ const EMPTY_FORM: EndpointForm = {
   id: '',
   makeDefault: true,
   model: '',
-  name: ''
+  name: '',
+  noApiKey: false
 }
 
 function formFromEndpoint(endpoint: CustomEndpoint): EndpointForm {
@@ -77,7 +80,8 @@ function formFromEndpoint(endpoint: CustomEndpoint): EndpointForm {
     id: endpoint.id,
     makeDefault: Boolean(endpoint.is_current),
     model: endpoint.model,
-    name: endpoint.name
+    name: endpoint.name,
+    noApiKey: !endpoint.has_api_key
   }
 }
 
@@ -93,7 +97,7 @@ function toPayload(
     name: form.name.trim(),
     base_url: form.baseUrl.trim(),
     model: form.model.trim(),
-    api_key: form.apiKey.trim() || undefined,
+    api_key: form.noApiKey ? '' : form.apiKey.trim() || undefined,
     api_mode: form.apiMode,
     context_length: Number.isFinite(contextLength) && contextLength > 0 ? contextLength : undefined,
     discover_models: form.discoverModels,
@@ -104,7 +108,8 @@ function toPayload(
 }
 
 export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: CustomEndpointsSettingsProps) {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
+  const serviceCopy = modelServiceCopy[locale] ?? modelServiceCopy.en
   const ce = t.settings.customEndpoints
   const copyRef = useRef(ce)
   copyRef.current = ce
@@ -121,6 +126,7 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
+  const [validation, setValidation] = useState<string | null>(null)
   const [activating, setActivating] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
   const [endpoints, setEndpoints] = useState<CustomEndpoint[]>([])
@@ -226,11 +232,10 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
 
       setDiscoveredModels(response.models)
       setDiscoveredDetails(response.model_details ?? [])
+      setValidation(response.message || serviceCopy.coverage)
 
       if (response.ok) {
-        // Persist the URL that actually served /models (e.g. "<root>/v1" when the user typed the
-        // bare root): chat POSTs {base_url}/chat/completions verbatim, so saving the typed root
-        // would 404 every request even though the test looked green (#65488).
+        // Show a discovery suggestion without silently changing the entered URL.
         const resolvedBaseUrl = response.resolved_base_url?.trim()
 
         if (!form.model && response.models[0]) {
@@ -238,26 +243,15 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
         }
 
         if (resolvedBaseUrl && resolvedBaseUrl !== form.baseUrl.trim().replace(/\/+$/, '')) {
-          setForm(current => ({ ...current, baseUrl: resolvedBaseUrl }))
+          setValidation(`${serviceCopy.coverage} ${ce.fields.endpointUrl}: ${resolvedBaseUrl}`)
         }
 
-        // The backend also POSTed the transport the runtime will use; name it so an
-        // auto-detected mode is visible before Save (#93622).
-        const transport = apiModeOptions.find(option => option.id === response.transport_checked)?.label
-        const reachable = transport ? ce.endpointReachableTransport(transport) : ce.endpointReachable
-        notify({
-          kind: 'success',
-          message: response.models.length ? ce.endpointReachableModels(reachable, response.models.length) : reachable
-        })
       } else {
-        notify({
-          kind: response.reachable ? 'warning' : 'error',
-          message: response.message || ce.endpointValidationFailed
-        })
+        setValidation(response.message || ce.endpointValidationFailed)
       }
     } catch (err) {
       if (mounted.current) {
-        notifyError(err, ce.validationFailed)
+        setValidation(err instanceof Error ? err.message : ce.validationFailed)
       }
     } finally {
       if (mounted.current) {
@@ -339,7 +333,10 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
   }
 
   const allModelOptions = Array.from(new Set([...discoveredModels, form.model].filter(Boolean)))
+  const savedKey = endpoints.some(endpoint => endpoint.id === form.id && endpoint.has_api_key)
+
   const canSave = form.name.trim() && form.baseUrl.trim() && form.model.trim()
+    && (form.noApiKey || form.apiKey.trim() || savedKey)
 
   return (
     <SettingsContent>
@@ -473,6 +470,7 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
             <label className="grid gap-1.5 text-xs text-muted-foreground">
               {ce.fields.apiKey}
               <Input
+                disabled={form.noApiKey}
                 onChange={event => setForm(current => ({ ...current, apiKey: event.target.value }))}
                 placeholder={form.id ? ce.fields.apiKeyNewPlaceholder : ce.fields.apiKeyPlaceholder}
                 type="password"
@@ -480,6 +478,10 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
               />
             </label>
             <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+              <label className="flex items-center gap-2">
+                <Checkbox checked={form.noApiKey} onCheckedChange={checked => setForm(current => ({ ...current, noApiKey: checked === true, apiKey: '' }))} />
+                {serviceCopy.noKey}
+              </label>
               <label className="flex items-center gap-2">
                 <Checkbox
                   checked={form.makeDefault}
@@ -506,8 +508,13 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
               </Button>
               <Button disabled={saving || !canSave} onClick={() => void handleSave()}>
                 {saving ? <Loader2 className="animate-spin" /> : <Save />}
-                {ce.save}
+                {form.makeDefault ? serviceCopy.saveUse : ce.save}
               </Button>
+              <Button onClick={() => {
+                const previous = endpoints.find(endpoint => endpoint.id === form.id)
+                setForm(previous ? formFromEndpoint(previous) : EMPTY_FORM)
+                setValidation(null)
+              }} variant="text">{serviceCopy.cancel}</Button>
               <Button
                 className={cn(!form.id && 'hidden')}
                 onClick={() => {
@@ -521,6 +528,7 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
                 {ce.newEndpoint}
               </Button>
             </div>
+            {validation && <p className="text-xs text-(--ui-text-secondary)" role="status">{validation}</p>}
           </div>
         </section>
       </div>

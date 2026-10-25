@@ -486,6 +486,8 @@ def _custom_endpoint_response(cfg: dict[str, Any]) -> dict[str, Any]:
     providers = cfg.get("providers")
     if isinstance(providers, dict):
         for provider_id, raw_entry in providers.items():
+            if str(provider_id).strip().lower() == 'semantier-cloud':
+                continue  # Native device credentials are managed by their own owner.
             if not isinstance(raw_entry, dict):
                 continue
             base_url = str(raw_entry.get("base_url") or raw_entry.get("url") or raw_entry.get("api") or "").strip()
@@ -570,7 +572,13 @@ def _detach_main_model_from_provider(cfg: dict[str, Any], provider_key: str, ent
     cfg["model"] = model_cfg
 
 
+def _require_custom_endpoint_owner(identifier: str) -> None:
+    if _custom_endpoint_id(identifier) == 'semantier-cloud':
+        raise HTTPException(status_code=400, detail='Use the native Semantier Cloud connection settings.')
+
+
 def _write_custom_endpoint(cfg: dict[str, Any], body: CustomEndpointUpdate) -> tuple[str, dict[str, Any]]:
+    _require_custom_endpoint_owner(body.id or body.name)
     name = (body.name or "").strip()
     base_url = (body.base_url or "").strip().rstrip("/")
     model = (body.model or "").strip()
@@ -772,6 +780,7 @@ def _record_custom_endpoint_setup(home: Any) -> None:
 @router.post("/api/providers/custom-endpoints/{endpoint_id}/activate")
 def activate_custom_endpoint(endpoint_id: str, profile: Optional[str] = None):
     """Set a configured custom endpoint as the default model provider."""
+    _require_custom_endpoint_owner(endpoint_id)
     with http_failure(
         f"POST /api/providers/custom-endpoints/{endpoint_id}/activate failed", 500,
         detail="Failed to activate custom endpoint",
@@ -824,6 +833,7 @@ def activate_custom_endpoint(endpoint_id: str, profile: Optional[str] = None):
 @router.delete("/api/providers/custom-endpoints/{endpoint_id}")
 def delete_custom_endpoint(endpoint_id: str, profile: Optional[str] = None):
     """Remove a configured custom endpoint from ``providers``."""
+    _require_custom_endpoint_owner(endpoint_id)
     with http_failure(
         f"DELETE /api/providers/custom-endpoints/{endpoint_id} failed", 500,
         detail="Failed to delete custom endpoint",
@@ -850,15 +860,14 @@ def delete_custom_endpoint(endpoint_id: str, profile: Optional[str] = None):
 
 
 @router.post("/api/providers/custom-endpoints/validate")
-async def validate_custom_endpoint(body: CustomEndpointUpdate):
+async def validate_custom_endpoint(body: CustomEndpointUpdate, profile: Optional[str] = None):
     """Probe a custom endpoint by calling its OpenAI-compatible /models URL."""
+    _require_custom_endpoint_owner(body.id or body.name)
     base_url = (body.base_url or "").strip().rstrip("/")
     if not base_url:
         return {"ok": False, "reachable": True, "message": "Enter an endpoint URL first.", "models": []}
 
-    headers = {"Accept": "application/json"}
-    if body.api_key and body.api_key.strip():
-        headers["Authorization"] = f"Bearer {body.api_key.strip()}"
+    headers = _custom_endpoint_probe_headers(body, profile)
 
     resolved, resp = await _probe_openai_compatible_models(base_url, headers)
     if resp is None:
@@ -879,23 +888,30 @@ async def validate_custom_endpoint(body: CustomEndpointUpdate):
         # for endpoints that legitimately expose no model list.
         return {"ok": False, "reachable": True, "message": _no_models_probe_message(resp, resolved),
                 "models": [], "model_details": [], "resolved_base_url": resolved}
-    # /models answering proves nothing about the transport the runtime will POST to:
-    # a Responses-only host lists models fine and 404s every /chat/completions (#93622).
-    # Probe the route the saved mode (or the runtime's URL auto-detect) actually uses, on the
-    # base that actually served /models (#65488) — that is the URL the runtime will persist.
-    mode = _canonical_api_mode(body.api_mode or "").lower() or _auto_api_mode(resolved)
-    probe_model = (body.model or "").strip() or (ids[0] if ids else "")
-    try:
-        async with _endpoint_probe_client(resolved, 8.0) as client:
-            missing = await _probe_transport_route(client, resolved, mode, probe_model, headers)
-    except Exception:
-        missing = ""  # inconclusive (see _probe_transport_route): never block on a transport error
+    # Catalog/authentication only. A transport POST is inference, even at one
+    # token; readiness and an explicit user Send are separate facts.
+    return {"ok": True, "reachable": True, "message": "", "models": ids,
+            "model_details": entries, "resolved_base_url": resolved}
 
-    result = {"ok": True, "reachable": True, "message": "", "models": ids, "model_details": entries,
-              "transport_checked": mode, "resolved_base_url": resolved}
-    if missing:
-        result.update(ok=False, message=missing)
-    return result
+
+def _custom_endpoint_probe_headers(body: CustomEndpointUpdate, profile: Optional[str]) -> dict[str, str]:
+    """An unchanged masked key stays in its owning profile, never the renderer."""
+    key = body.api_key
+    if key is None and body.id:
+        with _config_profile_scope(profile):
+            cfg = load_config()
+            _stored, entry = _resolve_custom_endpoint_entry(cfg.get("providers"), body.id)
+            if entry:
+                previous = str(entry.get("base_url") or "").rstrip("/")
+                if previous != body.base_url.strip().rstrip("/"):
+                    raise HTTPException(status_code=400, detail="Enter a key explicitly when testing a changed endpoint URL.")
+                from hermes_cli.config import get_env_value
+                key_name = str(entry.get("key_env") or entry.get("api_key_env") or "")
+                key = get_env_value(key_name) if key_name else entry.get("api_key")
+    headers = {"Accept": "application/json"}
+    if key and key.strip():
+        headers["Authorization"] = f"Bearer {key.strip()}"
+    return headers
 
 def _no_models_probe_message(resp: Any, base_url: str) -> str:
     """Why a 200 ``/models`` probe yielded no usable models (#83128).
@@ -945,43 +961,7 @@ async def _probe_openai_compatible_models(base_url: str, headers: Optional[dict]
     return resolved, resp
 
 
-_TRANSPORT_ROUTES = {"chat_completions": "/chat/completions", "codex_responses": "/responses",
-                     "anthropic_messages": "/messages"}
-_TRANSPORT_LABELS = {"chat_completions": "Chat Completions", "codex_responses": "Responses API",
-                     "anthropic_messages": "Anthropic Messages"}
 
-
-def _auto_api_mode(base_url: str) -> str:
-    """The transport the runtime falls back to for an endpoint without a pinned ``api_mode``
-    (same resolver as ``runtime_provider_custom._custom_runtime``)."""
-    from hermes_cli.runtime_provider import _detect_api_mode_for_url
-    return _detect_api_mode_for_url(base_url) or "chat_completions"
-
-
-async def _probe_transport_route(client, base_url: str, mode: str, model: str, headers: dict[str, str]) -> str:
-    """POST a 1-token request to ``mode``'s route; return a failure message when the host does
-    not serve it (404/405/501), ``""`` otherwise. Any other status — 200, 400 (bad body), 401,
-    422, 429 — means the route exists, which is all the check needs to know; a network error or
-    timeout (a local server still loading the model) is inconclusive and does not block."""
-    route = _TRANSPORT_ROUTES.get(mode)
-    if route is None:
-        return ""
-    if mode == "anthropic_messages":
-        payload = {"model": model, "max_tokens": 1, "messages": [{"role": "user", "content": "hi"}]}
-        token = headers.get("Authorization", "").removeprefix("Bearer ")
-        headers = {**headers, "anthropic-version": "2023-06-01", **({"x-api-key": token} if token else {})}
-    elif mode == "codex_responses":
-        payload = {"model": model, "input": "hi", "max_output_tokens": 16}
-    else:
-        payload = {"model": model, "max_tokens": 1, "messages": [{"role": "user", "content": "hi"}]}
-    try:
-        resp = await client.post(base_url + route, json=payload, headers=headers)
-    except Exception:
-        return ""
-    if resp.status_code not in (404, 405, 501):
-        return ""
-    return (f"{base_url}/models answered, but POST {route} returned HTTP {resp.status_code}: this host "
-            f"does not serve the {_TRANSPORT_LABELS[mode]} API. Pick the API mode it does serve.")
 
 
 def _endpoint_probe_client(url: str, timeout: float):

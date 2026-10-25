@@ -65,6 +65,8 @@ export interface DesktopOnboardingState {
    *  returning users skip the boot overlay entirely instead of flashing it
    *  every reload. */
   configured: boolean | null
+  readiness?: RuntimeReadinessResult
+  readinessScope?: OnboardingScope
   flow: OnboardingFlow
   mode: OnboardingMode
   providers: null | OAuthProvider[]
@@ -789,8 +791,10 @@ export async function refreshOnboarding(ctx: OnboardingContext, stillWanted?: ()
   }
 
   if (runtime.ready) {
+    const explicitlyRequested = $desktopOnboarding.get().requested
     completeDesktopOnboarding()
-    await applyFreeTierIntro(ctx, runtime)
+
+    if (explicitlyRequested) { await applyFreeTierIntro(ctx, runtime) }
     ctx.onCompleted?.()
 
     return true
@@ -799,6 +803,8 @@ export async function refreshOnboarding(ctx: OnboardingContext, stillWanted?: ()
   const state = $desktopOnboarding.get()
 
   if (shouldPreserveConfiguredOnFallback(runtime, state)) {
+    patch({ readiness: runtime, readinessScope: ctx.scope ?? captureOnboardingScope(ctx.profile) })
+
     // Gateway probes timed out — don't downgrade to the blocking onboarding
     // overlay or claim an error verdict. Only a previously VERIFIED install
     // losing its backend is worth telling the user about; an unknown state is
@@ -806,16 +812,6 @@ export async function refreshOnboarding(ctx: OnboardingContext, stillWanted?: ()
     // on every cold launch would be noise. Use the temporary informational
     // notice with a stable id, so repeated calls during an outage dedup and
     // recovery clears it early.
-    if (state.configured === true) {
-      notify({
-        id: 'runtime-not-ready',
-        kind: 'info',
-        title: 'Runtime not ready',
-        message:
-          'Semantier Agent could not verify the running backend on startup. Some features may be unavailable until the gateway is reachable.'
-      })
-    }
-
     return false
   }
 
@@ -829,6 +825,8 @@ export async function refreshOnboarding(ctx: OnboardingContext, stillWanted?: ()
     return false
   }
 
+  patch({ readiness: runtime, readinessScope: ctx.scope ?? captureOnboardingScope(ctx.profile) })
+
   writeCachedConfigured(false)
   patch({ configured: false, reason })
 
@@ -836,7 +834,7 @@ export async function refreshOnboarding(ctx: OnboardingContext, stillWanted?: ()
     return false
   }
 
-  await refreshProviders()
+  if (state.requested) { await refreshProviders() }
 
   return false
 }

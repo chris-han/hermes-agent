@@ -454,12 +454,13 @@ describe('ProvidersSettings', () => {
 
     try {
       listOAuthProviders.mockResolvedValue({ providers: [provider('nous', false)] })
-      render(<ProvidersSettings onClose={vi.fn()} onViewChange={vi.fn()} view="accounts" />)
-      const endpoint = await screen.findByText('Local / custom endpoint')
+      const onViewChange = vi.fn()
+      render(<ProvidersSettings onClose={vi.fn()} onViewChange={onViewChange} view="accounts" />)
+      const endpoint = await screen.findByText('Custom endpoint')
       const localModels = screen.getByText('Run models locally')
       expect(endpoint.compareDocumentPosition(localModels) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
       fireEvent.click(endpoint)
-      expect(startManualLocalEndpoint).toHaveBeenCalledWith(null)
+      expect(onViewChange).toHaveBeenCalledWith('custom-endpoints')
     } finally {
       $localModelsEnabled.set(false)
     }
@@ -483,13 +484,14 @@ describe('ProvidersSettings', () => {
     getEnvVars.mockResolvedValue({})
     listOAuthProviders.mockResolvedValue({ providers: [] })
 
-    render(<ProvidersSettings onClose={vi.fn()} onViewChange={vi.fn()} view="keys" />)
+    const onViewChange = vi.fn()
+    render(<ProvidersSettings onClose={vi.fn()} onViewChange={onViewChange} view="keys" />)
 
-    const row = await screen.findByText('Local / custom endpoint')
+    const row = await screen.findByText('Custom endpoint')
 
     fireEvent.click(row)
 
-    await waitFor(() => expect(startManualLocalEndpoint).toHaveBeenCalledWith(null))
+    await waitFor(() => expect(onViewChange).toHaveBeenCalledWith('custom-endpoints'))
   })
 })
 

@@ -27,6 +27,10 @@ class CloudDeviceError(ValueError):
         super().__init__('Cloud connection unavailable (HTTP '+str(status)+'); retry or reauthorize.')
 
 
+class CloudCredentialError(ValueError):
+    """A definite native credential lifecycle refusal, not a network or entitlement verdict."""
+
+
 def _digest(value):
     return sha256(value).hexdigest()
 
@@ -442,7 +446,7 @@ def credential(ref, *, base_url):
         state = _read()
         data = state.get('credentials',{}).get(ref)
         if not data or _time(data['credential']['expires_at']) <= _now():
-            raise ValueError('Cloud credential unavailable or expired; reauthorize.')
+            raise CloudCredentialError('Cloud credential unavailable or expired; reauthorize.')
         if _origin(base_url) != _origin(data['inference_origin']) or urlsplit(base_url).path != '/v1':
             raise ValueError('Protected Cloud credential cannot be sent to another endpoint.')
         return data['credential']['secret']

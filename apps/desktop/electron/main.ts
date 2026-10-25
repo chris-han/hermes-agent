@@ -232,7 +232,7 @@ import {
 } from './desktop-profile'
 import { registryPrimaryBootRoute, resolveDesktopRemoteRoute, v1SshTerminalPoolKey } from './desktop-remote-route'
 import { type DesktopSharedMetrics, registerDesktopSharedMetrics } from './desktop-shared-metrics'
-import { resolveDesktopStartupProfile } from './desktop-startup-profile'
+import { prepareDesktopStartupProfile, resolveDesktopStartupProfile } from './desktop-startup-profile'
 import {
   buildPosixCleanupScript,
   buildWindowsCleanupScript,
@@ -9048,34 +9048,6 @@ function readActiveDesktopProfile() {
 
 function writeActiveDesktopProfile(name: string | null): string | null {
   return desktopProfilePreferences.remember(name)
-}
-
-async function prepareDesktopStartupProfile(): Promise<void> {
-  const preference = desktopProfilePreferences.readStartup()
-  const route = preference.defaultRoute
-  const selected = parseLaunchProfile(process.argv) || route?.profile || preference.profile
-
-  // A saved remote intent may have no local home at all. Never replace it.
-  if (route?.connectionId) {
-    const entry = readDesktopConnectionsRegistry().connections.find(source => source.id === route.connectionId)
-
-    if (!entry || entry.kind !== 'local') { return }
-  }
-
-  if (primaryBackendIsRemote() || (selected && profileHasRemoteOverride(selected))) { return }
-
-  const backend = await ensureRuntime(await resolveHermesBackend([]), () => undefined)
-  const resolved = await resolveDesktopStartupProfile(backend, HERMES_HOME, selected, Boolean(parseLaunchProfile(process.argv)))
-
-  writeActiveDesktopProfile(resolved.profile)
-
-  if (route || resolved.profile === 'semantier-local') {
-    desktopProfilePreferences.setDefault({ connectionId: route?.connectionId ?? null, profile: resolved.profile })
-  }
-
-  if (resolved.recovered) {
-    rememberLog(`[startup-profile] resolved ordinary local startup to ${resolved.profile}`)
-  }
 }
 
 // True when the given pid belongs to a running process whose command line
@@ -18275,7 +18247,17 @@ app.whenReady().then(async () => {
   // Resolve and commit the owner scope before a window or device action can
   // capture it. A refused owner is a stable runtime recovery, never a plan fact.
   try {
-    await prepareDesktopStartupProfile()
+    await prepareDesktopStartupProfile({
+      preference: desktopProfilePreferences.readStartup(),
+      explicitProfile: parseLaunchProfile(process.argv),
+      isLocalConnection: id => readDesktopConnectionsRegistry().connections.some(entry => entry.id === id && entry.kind === 'local'),
+      isRemote: profile => primaryBackendIsRemote() || Boolean(profile && profileHasRemoteOverride(profile)),
+      resolve: async (profile, explicit) => resolveDesktopStartupProfile(
+        await ensureRuntime(await resolveHermesBackend([]), () => undefined), HERMES_HOME, profile, explicit),
+      remember: profile => { writeActiveDesktopProfile(profile) },
+      setDefault: route => { desktopProfilePreferences.setDefault(route) },
+      log: rememberLog
+    })
   } catch (error) {
     backendStartFailure = error instanceof Error ? error : new Error(String(error))
     updateBootProgress({ error: backendStartFailure.message, message: backendStartFailure.message,

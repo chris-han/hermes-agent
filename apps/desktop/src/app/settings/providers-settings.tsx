@@ -19,13 +19,14 @@ import { SearchField } from '@/components/ui/search-field'
 import { Tip } from '@/components/ui/tooltip'
 import { disconnectOAuthProvider, listOAuthProviders } from '@/hermes'
 import { useI18n } from '@/i18n'
+import { modelServiceCopy } from '@/i18n/model-service'
 import { Check, ChevronDown, ChevronRight, KeyRound, Loader2, Terminal, Trash2 } from '@/lib/icons'
 import { normalize } from '@/lib/text'
 import { cn } from '@/lib/utils'
 import { confirm } from '@/store/confirm'
 import { $localModelsEnabled } from '@/store/local-models-flag'
 import { notify, notifyError } from '@/store/notifications'
-import { $desktopOnboarding, startManualLocalEndpoint, startManualProviderOAuth } from '@/store/onboarding'
+import { $desktopOnboarding, startManualProviderOAuth } from '@/store/onboarding'
 import { $settingsRequestProfile } from '@/store/settings-scope'
 import type { EnvVarInfo, OAuthProvider } from '@/types/hermes'
 
@@ -217,8 +218,8 @@ function OAuthPicker({
       <p className="-mt-2 mb-1 text-[length:var(--conversation-caption-font-size)] leading-(--conversation-caption-line-height) text-(--ui-text-tertiary)">
         {p.intro}
       </p>
-      {featured && <FeaturedProviderRow onSelect={select} provider={featured} />}
       <LocalEndpointRow onOpen={onWantLocalEndpoint} />
+      {featured && <FeaturedProviderRow onSelect={select} provider={featured} />}
       {/* Slot #3 — the no-account path, matching onboarding. Behind the
           --local launch flag like every local-models surface. */}
       {$localModelsEnabled.get() && <LocalModelsProviderRow onClick={onWantLocalModels} />}
@@ -373,8 +374,8 @@ function NoProviderKeys() {
 // verbatim as a banner (see ReasonNotice in onboarding/index.tsx), and we don't
 // want a raw identifier like "providers-keys-tab" showing as literal text.
 function LocalEndpointRow({ onOpen }: { onOpen: (reason: null | string) => void }) {
-  const { t } = useI18n()
-  const copy = t.settings.providers.localEndpoint
+  const { locale } = useI18n()
+  const copy = modelServiceCopy[locale] ?? modelServiceCopy.en
 
   return (
     <RowButton
@@ -382,9 +383,9 @@ function LocalEndpointRow({ onOpen }: { onOpen: (reason: null | string) => void 
       onClick={() => onOpen(null)}
     >
       <div className="flex min-w-0 flex-col gap-0.5">
-        <span className="truncate text-[length:var(--conversation-text-font-size)] font-semibold">{copy.title}</span>
+        <span className="text-[length:var(--conversation-text-font-size)] font-semibold">{copy.custom}</span>
         <span className="truncate text-[length:var(--conversation-caption-font-size)] leading-5 text-muted-foreground">
-          {copy.description}
+          {copy.customDescription}
         </span>
       </div>
       <ChevronRight className="size-4 text-muted-foreground transition group-hover:text-foreground" />
@@ -445,6 +446,7 @@ export function ProvidersSettings({
   }, [scopeProfile])
 
   useEffect(() => {
+    if (view !== 'accounts') { return }
     let cancelled = false
     let readGeneration = 0
 
@@ -472,7 +474,7 @@ export function ProvidersSettings({
       cancelled = true
       window.removeEventListener('focus', onFocus)
     }
-  }, [onboardingActive, scopeProfile])
+  }, [onboardingActive, scopeProfile, view])
 
   // External (CLI-managed) providers can't be cleared via the API by design —
   // Hermes never deletes creds another tool owns behind a silent API call.
@@ -573,7 +575,7 @@ export function ProvidersSettings({
     return (
       <SettingsContent>
         <SettingsProfileScope className="mb-5" />
-        <LocalEndpointRow onOpen={reason => startManualLocalEndpoint(reason, scopeProfile)} />
+        <LocalEndpointRow onOpen={() => onViewChange('custom-endpoints')} />
         {keyGroups.length > 0 ? (
           <div className="grid gap-3">
             <SearchField
@@ -633,7 +635,7 @@ export function ProvidersSettings({
         onDisconnect={provider => void handleDisconnect(provider)}
         onTerminalDisconnect={provider => void handleTerminalDisconnect(provider)}
         onWantApiKey={() => onViewChange('keys')}
-        onWantLocalEndpoint={reason => startManualLocalEndpoint(reason, scopeProfile)}
+        onWantLocalEndpoint={() => onViewChange('custom-endpoints')}
         onWantLocalModels={() => onViewChange('local')}
         providers={oauthProviders}
       />

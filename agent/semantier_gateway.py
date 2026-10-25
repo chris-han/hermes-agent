@@ -141,10 +141,13 @@ def billing_request(resource: str, *, schema_version: str | None = None) -> dict
         return refusal('unsupported_version', 'This client does not support Semantier billing v1.')
     if resource not in {'state', 'subscription'}:
         return refusal('unsupported_capability', 'Commercial billing actions are unavailable.')
+    from hermes_cli.cloud_device_client import CloudCredentialError
     try:
         settings = gateway_settings()
         if not settings:
             return refusal('provider_not_configured', 'Semantier Cloud Provider is disabled for this profile.')
+    except CloudCredentialError:
+        return refusal('unauthenticated', 'The profile credential expired or was revoked. Sign in again; local data and paid rights are preserved.')
     except ValueError:
         return refusal('provider_not_configured', 'Semantier endpoint or credential is unavailable for this profile.')
     import requests
@@ -185,6 +188,12 @@ def billing_request(resource: str, *, schema_version: str | None = None) -> dict
         if account_id and payload['billing_account_id'] != str(account_id):
             return refusal('billing_unavailable', 'The billing response does not match this profile account.')
         return {'ok': True, **payload}
+    except requests.exceptions.SSLError:
+        return refusal('tls_error', 'TLS certificate verification failed. Check this connection; do not disable certificate verification.')
+    except requests.exceptions.Timeout:
+        return refusal('timeout', 'Semantier billing timed out. Retry this connection.')
+    except requests.exceptions.ConnectionError:
+        return refusal('network_unavailable', 'Semantier Cloud is unreachable. Check the network and retry.')
     except (requests.RequestException, ValueError, ValidationError):
         return refusal('billing_unavailable', 'Semantier billing could not be loaded. Retry this connection.')
 

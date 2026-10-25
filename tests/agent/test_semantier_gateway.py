@@ -108,6 +108,37 @@ def test_hosted_route_cannot_escape_to_a_fallback(tmp_path, monkeypatch):
     assert try_activate_fallback(agent) is False
 
 
+@pytest.mark.parametrize('failure,code', [
+    ('SSLError', 'tls_error'), ('Timeout', 'timeout'),
+    ('ConnectionError', 'network_unavailable'),
+])
+def test_billing_transport_failure_never_claims_missing_plan(tmp_path, monkeypatch, failure, code):
+    import requests
+
+    configure(tmp_path, monkeypatch)
+
+    def unavailable(*args, **kwargs):
+        raise getattr(requests.exceptions, failure)('private upstream detail')
+
+    monkeypatch.setattr(requests, 'get', unavailable)
+    result = sg.billing_request('state', schema_version='semantier.billing.v2')
+    assert result['ok'] is False and result['error'] == code
+    assert 'private upstream detail' not in str(result)
+    assert 'subscription' not in result
+
+
+def test_expired_native_credential_requires_reauthorization_without_network(monkeypatch):
+    from hermes_cli.cloud_device_client import CloudCredentialError
+
+    def expired():
+        raise CloudCredentialError('private credential detail')
+
+    monkeypatch.setattr(sg, 'gateway_settings', expired)
+    result = sg.billing_request('state', schema_version='semantier.billing.v2')
+    assert result['error'] == 'unauthenticated'
+    assert 'private credential detail' not in str(result)
+
+
 @pytest.mark.parametrize('purpose', ['compression', 'memory', 'vision', 'plugin', 'subagent', 'cron'])
 def test_other_callers_preserve_correlation_for_server_owned_cap_admission(tmp_path, monkeypatch, purpose):
     configure(tmp_path, monkeypatch)

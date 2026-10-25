@@ -6,8 +6,33 @@ import path from 'node:path'
 import { test } from 'vitest'
 
 import { createDesktopProfilePreferences } from './desktop-profile'
-import { resolveDesktopStartupProfile } from './desktop-startup-profile'
+import { prepareDesktopStartupProfile, resolveDesktopStartupProfile } from './desktop-startup-profile'
 import { resolveSourcePython } from './source-python'
+
+test('startup commits resolved local scope before returning, but preserves saved remote intent', async () => {
+  const events: string[] = []
+
+  const deps = {
+    preference: { profile: 'retired', defaultRoute: null },
+    explicitProfile: null,
+    isLocalConnection: () => false,
+    isRemote: () => false,
+    resolve: async () => { events.push('resolve');
+
+ return { profile: 'semantier-local', recovered: true } },
+    remember: (profile: string) => { events.push(`remember:${profile}`) },
+    setDefault: (route: { profile: string }) => { events.push(`default:${route.profile}`) },
+    log: () => {}
+  }
+
+  await prepareDesktopStartupProfile(deps)
+  assert.deepEqual(events, ['resolve', 'remember:semantier-local', 'default:semantier-local'])
+  events.length = 0
+  await prepareDesktopStartupProfile({ ...deps, preference: {
+    profile: 'remote-work', defaultRoute: { connectionId: 'remote', profile: 'remote-work' }
+  } })
+  assert.deepEqual(events, [])
+})
 
 test('startup refuses unreadable preferences instead of overwriting them with a fallback', () => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'desktop-startup-preference-'))

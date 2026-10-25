@@ -1,3 +1,5 @@
+import type { ModelServiceStatus } from './model-service-status'
+
 export interface SetupStatusSnapshot {
   provider_configured?: boolean
   /** Additive launch-profile fields (newer backends only; absent on older
@@ -18,6 +20,7 @@ export interface SetupStatusSnapshot {
 }
 
 export interface RuntimeCheckSnapshot {
+  source?: string
   error?: string
   /** True when the resolved route is the free tier rather than a credential of
    *  the user's own. Absent on older backends. */
@@ -41,6 +44,7 @@ export interface RuntimeReadinessOptions {
 }
 
 export interface RuntimeReadinessResult {
+  modelService?: ModelServiceStatus
   checksDisagree: boolean
   /** Passed through from `setup.runtime_check`: the resolved route is the free
    *  tier. Undefined when the check did not answer (older backend, transport
@@ -203,6 +207,17 @@ export async function evaluateRuntimeReadiness(
   options: RuntimeReadinessOptions = {}
 ): Promise<RuntimeReadinessResult> {
   const signals = await fetchRuntimeReadinessSignals(requestGateway, options.requestedProvider)
+  const result = interpretRuntimeReadiness(signals, options)
 
-  return interpretRuntimeReadiness(signals, options)
+  if (signals.runtime?.source !== 'semantier-cloud') { return result }
+
+  // Only the selected Cloud route reads Cloud account readiness. BYOK/local
+  // routes never enumerate other provider accounts or perform inference probes.
+  const [{ createBillingApi }, { cloudServiceStatus }] = await Promise.all([
+    import('@/app/settings/billing/api'), import('./model-service-status')
+  ])
+
+  const modelService = cloudServiceStatus(await createBillingApi(requestGateway).fetchBillingState())
+
+  return { ...result, modelService, ready: result.ready && modelService.state === 'ready' }
 }
