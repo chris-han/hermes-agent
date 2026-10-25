@@ -14,6 +14,19 @@ def test_native_read_tool_loop_and_real_helper_attribution(tmp_path, monkeypatch
     requests = []
 
     class Upstream(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path != '/api/cloud-provider/catalog':
+                self.send_error(404)
+                return
+            payload = {'object':'list','data':[{'id':'fixture-model','label':'Fixture',
+                'context_window':128000,'max_output_tokens':8192,'protocol':'chat',
+                'revision':'fixture-r1','account_id':'fixture-account',
+                'capabilities':{'tools':True,'stream':False,'vision':False,'reasoning':False,'structured_output':False},
+                'request_parameters':{'output':'max_tokens','reasoning_controls':[]}}]}
+            self.send_response(200)
+            self.send_header('Content-Type','application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(payload).encode())
         def do_POST(self):
             if self.path != '/v1/chat/completions':
                 self.send_error(404)
@@ -70,7 +83,7 @@ def test_native_read_tool_loop_and_real_helper_attribution(tmp_path, monkeypatch
             'model': 'fixture-model', 'base_url': endpoint, 'api_key': 'local-token', 'api_mode': 'chat_completions'})
         assert helper == 'Read evidence'
         chat = [(headers, body) for headers, body in requests if headers.get('X-Semantier-Purpose') == 'chat']
-        title = [(headers, body) for headers, body in requests if headers.get('X-Semantier-Purpose') == 'title_generation']
+        title = [(headers, body) for headers, body in requests if headers.get('X-Semantier-Purpose') == 'title']
         assert len(chat) == 2 and len(title) == 1
         assert all(headers['Authorization'] == 'Bearer local-token' for headers, _ in requests)
         assert all(headers['X-Semantier-Session-Id'] == 'native-session' for headers, _ in requests)

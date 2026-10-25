@@ -2755,7 +2755,7 @@ def set_runtime_main(
     provider: str, model: str, *, requested_provider: str = "", base_url: str = "",
     api_key: Any = "", api_mode: str = "", auth_mode: str = "", session_id: str = "",
     cache_scope: str = "", task_id: str = "", root_run_id: str = "", parent_run_id: str = "",
-    run_id: str = "", business_object_ref: str = "", cloud_route: str = "",
+    run_id: str = "", business_object_ref: str = "", cloud_route: str = "", auxiliary_snapshot: Optional[dict] = None, capability_revision: str = "",
 ) -> contextvars.Token:
     """Record the current context's live main runtime for auxiliary routing.
 
@@ -2778,6 +2778,8 @@ def set_runtime_main(
         "session_id": (session_id or "").strip(),
         "cache_scope": (cache_scope or "").strip(),
         "cloud_route": cloud_route,
+        "capability_revision": capability_revision,
+        **({"auxiliary_snapshot": auxiliary_snapshot} if auxiliary_snapshot is not None else {}),
         **{k:v for k,v in {"task_id":task_id,"root_run_id":root_run_id,"parent_run_id":parent_run_id,"run_id":run_id,"business_object_ref":business_object_ref}.items() if v},
     }
     # Publish authoritative context before updating the locked mirrors.
@@ -3099,7 +3101,7 @@ def _try_anthropic(explicit_api_key: Optional[str | Callable[[], str]] = None,
 
 _MAIN_RUNTIME_FIELDS = ("provider", "model", "base_url", "api_key", "api_mode", "auth_mode")
 _MAIN_RUNTIME_CONTEXT_FIELDS = _MAIN_RUNTIME_FIELDS + (
-    "requested_provider", "session_id", "cache_scope", "run_id", "task_id", "root_run_id", "parent_run_id", "business_object_ref", "cloud_route",
+    "requested_provider", "session_id", "cache_scope", "run_id", "task_id", "root_run_id", "parent_run_id", "business_object_ref", "cloud_route", "capability_revision",
 )
 
 
@@ -3123,6 +3125,8 @@ def _normalize_main_runtime(main_runtime: Optional[dict[str, Any]]) -> dict[str,
             normalized[field] = value
         elif isinstance(value, str) and value.strip():
             normalized[field] = value.strip()
+    if isinstance(main_runtime.get('auxiliary_snapshot'),dict):
+        normalized['auxiliary_snapshot'] = main_runtime['auxiliary_snapshot']
     for identity_field in ("provider", "requested_provider"):
         identity = normalized.get(identity_field)
         if isinstance(identity, str):
@@ -6175,6 +6179,12 @@ def _resolve_task_provider_model(
     cfg_provider = cfg_model = cfg_base_url = cfg_api_key = resolved_api_mode = None
     if task:
         task_config = _get_auxiliary_task_config(task)
+        managed_key = (_scoped_key_env(task_config['key_env']) or None) if task_config.get('account_id') and str(task_config.get('key_env') or '').startswith('HERMES_CUSTOM_SEMANTIER_CLOUD_') else None
+        if task_config.get('account_id') and str(task_config.get('key_env') or '').startswith('HERMES_CUSTOM_SEMANTIER_CLOUD_'):
+            if ((provider and provider not in {'auto',task_config.get('provider')}) or
+                    (model and model not in {'auto',task_config.get('model')}) or
+                    (base_url and base_url != task_config.get('base_url')) or (api_key and api_key != managed_key)):
+                raise ValueError('Managed auxiliary selection cannot be overridden by provider hints.')
         cfg_provider = str(task_config.get("provider", "")).strip() or None
         cfg_model = str(task_config.get("model", "")).strip() or None
         cfg_base_url = str(task_config.get("base_url", "")).strip() or None
@@ -6183,6 +6193,8 @@ def _resolve_task_provider_model(
             cfg_key_env = str(task_config.get("key_env") or task_config.get("api_key_env") or "").strip()
             if cfg_key_env:
                 cfg_api_key = _scoped_key_env(cfg_key_env) or None
+        if (task_config.get('account_id') and str(task_config.get('key_env') or '').startswith('HERMES_CUSTOM_SEMANTIER_CLOUD_') and not cfg_api_key):
+            raise ValueError('Managed auxiliary credential unavailable; reconnect or save the purpose again.')
         # User-facing spellings (``responses``, ``anthropic``, …) canonicalize here so every
         # branch downstream compares against the transport names only (#39750).
         resolved_api_mode = _canonical_api_mode(str(task_config.get("api_mode") or "")).lower() or None
@@ -6254,7 +6266,14 @@ _COMPRESSION_TIMEOUT_FLOOR_SECONDS = 300.0
 
 # Read-time resolution of auxiliary.<task> (plugin defaults, inherit_from) lives in its own module;
 # re-exported here because callers and tests reach it as agent.auxiliary_client._get_auxiliary_task_config.
-from agent.auxiliary_task_config import _get_auxiliary_task_config
+from agent.auxiliary_task_config import _get_auxiliary_task_config as _read_auxiliary_task_config
+
+def _get_auxiliary_task_config(task):
+    runtime = _RUNTIME_MAIN_CONTEXT.get() or {}
+    if isinstance(runtime.get('auxiliary_snapshot'),dict):
+        return dict(runtime['auxiliary_snapshot'].get(task) or {})
+    return _read_auxiliary_task_config(task)
+
 
 
 class CompressionFastLane(NamedTuple):
@@ -7522,8 +7541,13 @@ def _prepare_aux_request(
     from agent.semantier_gateway import attribute_request, GatewaySettings
     frozen = _normalize_main_runtime(main_runtime)
     cloud_base = frozen.get('cloud_route')
-    bound = (GatewaySettings(cloud_base,frozen['api_key']) if cloud_base and
-        str(base_info or resolved_base_url or '').rstrip('/') == cloud_base and isinstance(frozen.get('api_key'),str) else None)
+    from agent.semantier_gateway import is_gateway_route
+    actual_base = str(base_info or resolved_base_url or '').rstrip('/')
+    actual_key = str(getattr(client, 'api_key', '') or resolved_api_key or '')
+    bound = (GatewaySettings(actual_base,actual_key) if actual_key and
+        (actual_base == cloud_base or is_gateway_route(actual_base)) else None)
+    if bound and task not in {'compression','title_generation','vision'}:
+        raise ValueError('This auxiliary purpose is unavailable through managed Cloud; configure an explicit custom provider.')
     kwargs = attribute_request(
         kwargs, base_url=base_info or resolved_base_url or '', purpose=task or 'auxiliary',
         settings=bound,
@@ -7532,7 +7556,9 @@ def _prepare_aux_request(
            for field in ("task_id","root_run_id","parent_run_id","run_id","business_object_ref")},
     )
     from agent.semantier_gateway import configure_cloud_request
-    kwargs = configure_cloud_request(kwargs,base_url=base_info or resolved_base_url or '',settings=bound)
+    role = _get_auxiliary_task_config(task) if task else {}
+    revision = role.get('capability_revision') if role.get('account_id') else frozen.get('capability_revision')
+    kwargs = configure_cloud_request(kwargs,base_url=base_info or resolved_base_url or '',settings=bound,expected_revision=revision)
     # Convert image blocks for Anthropic-compatible endpoints (e.g. MiniMax)
     client_base = str(getattr(client, "base_url", "") or "")
     if _is_anthropic_compat_endpoint(request_provider, client_base):
@@ -8224,7 +8250,8 @@ def _call_llm_impl(
         try:
             return _primary(provider=request_provider, base_url=req.base_info)
         except Exception as transient_err:
-            if not _should_retry_same_provider(task, transient_err, ""):
+            from agent.semantier_gateway import is_gateway_route
+            if is_gateway_route(req.base_info or req.resolved_base_url or '') or not _should_retry_same_provider(task, transient_err, ""):
                 raise
             _max_transient_retries = _transient_retry_count()
             _last_transient = transient_err
@@ -8384,7 +8411,8 @@ async def _async_call_llm_impl(
             return await _primary(provider=request_provider, base_url=req.base_info)
         except Exception as transient_err:
             # The async Codex adapter wraps the sync stream via to_thread: same TimeoutError here.
-            if not _should_retry_same_provider(task, transient_err, " (async)"):
+            from agent.semantier_gateway import is_gateway_route
+            if is_gateway_route(req.base_info or req.resolved_base_url or '') or not _should_retry_same_provider(task, transient_err, " (async)"):
                 raise
             logger.info("Auxiliary %s (async): transient transport error; retrying "
                         "once on the same provider before fallback: %s", task or "call", transient_err)

@@ -1093,6 +1093,14 @@ def _run_llm_review(prompt: str) -> dict[str, Any]:
         return result_meta
     rp, model_name, provider, request_overrides = _resolve_review_provider()
     result_meta["model"], result_meta["provider"] = model_name, provider or ""
+    from agent.semantier_gateway import require_managed_auxiliary_purpose
+    try:
+        require_managed_auxiliary_purpose('curator',rp.get('base_url',''))
+        if not rp and provider == 'semantier-cloud':
+            raise ValueError('Managed Cloud curator is unavailable; configure an explicit custom provider.')
+    except ValueError as error:
+        result_meta['error'] = result_meta['summary'] = str(error)
+        return result_meta
     review_agent = None
     try:
         agent_kwargs: dict[str, Any] = {}

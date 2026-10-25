@@ -530,6 +530,17 @@ def _apply_main_model_assignment(model_cfg: Any, result: "ModelSwitchResult", ap
     return model_cfg
 
 
+def _redact_managed_config(value, parent=''):
+    import re
+    if isinstance(value,list):
+        return [_redact_managed_config(item,parent) for item in value]
+    if not isinstance(value,dict):
+        return value
+    return {key:('[configured]' if item else '') if (re.search(r'api[_-]?key|token$|password$|secret$',key,re.I) or (parent=='model' and key=='api'))
+        and not re.search(r'(key_env|api_key_env|credential_ref)$',key) else _redact_managed_config(item,key)
+        for key,item in value.items()}
+
+
 def _normalize_config_for_web(config: dict[str, Any]) -> dict[str, Any]:
     """Flatten a dict-form ``model`` to its string form (the schema is built from
     DEFAULT_CONFIG where ``model`` is a string) and surface ``model_context_length``
@@ -797,6 +808,11 @@ def _apply_main_assignment_sync(cfg: dict, provider: str, model: str, base_url: 
             model_cfg.pop('api_key',None)
             model_cfg['key_env'] = cloud_config['api_key_env']
         model_cfg.pop('context_length',None)
+    if not is_gateway_route(model_cfg.get('base_url','')):
+        if str(model_cfg.get('key_env') or '').startswith('HERMES_CUSTOM_SEMANTIER_CLOUD_'):
+            model_cfg.pop('key_env',None)
+        for field in ('organization_id','account_id','capability_revision','credential_user_id'):
+            model_cfg.pop(field,None)
     cfg["model"] = model_cfg
 
     new_provider = provider.strip().lower()
@@ -918,6 +934,7 @@ def _apply_aux_assignment_sync(cfg: dict, provider: str, model: str, task: str, 
 def _apply_model_assignment_sync(
     scope: str, provider: str, model: str, task: str, base_url: str, api_key: str = "",
     reasoning_effort: Optional[str] = _UNSET, prepared: "Optional[tuple[str, ModelSwitchResult]]" = None,
+    cloud_profile: Optional[dict] = None, cloud_connection: Optional[dict] = None,
 ):
     """Synchronous body of POST /api/model/set.
 
@@ -925,7 +942,43 @@ def _apply_model_assignment_sync(
     the requested profile. Raises HTTPException for validation errors. ``prepared`` is a
     ``_prepare_main_assignment`` result computed outside the config lock.
     """
-    from hermes_cli.config import load_config
+    from hermes_cli.config import load_config, require_readable_config_before_write, save_config
+    if cloud_profile is not None:
+        cfg = require_readable_config_before_write()
+        connection = dict(cloud_connection or {})
+        fields = {"provider": "semantier-cloud", "default": cloud_profile["id"],
+            "base_url": connection["base_url"], "key_env": connection["key_env"],
+            "api_mode": "chat_completions", "account_id": cloud_profile["account_id"],
+            "organization_id": connection["organization_id"], "capability_revision": cloud_profile["revision"]}
+        providers = cfg.setdefault("providers", {})
+        if scope == "main" or "semantier-cloud" not in providers:
+            providers["semantier-cloud"] = {**providers.get("semantier-cloud", {}), **connection, "managed": True}
+            cfg["semantier_gateway"] = {"enabled": True, "base_url": connection["base_url"],
+                "api_key_env": connection["key_env"], "managed": True}
+        if scope == "main":
+            current = cfg.get("model")
+            current = dict(current) if isinstance(current, dict) else {}
+            for field in ("api_key", "api_key_env", "credential_ref", "context_length"):
+                current.pop(field, None)
+            cfg["model"] = {**current, **fields}
+        else:
+            current = dict(cfg.setdefault("auxiliary", {}).get(task) or {})
+            for field in ("api_key", "api_key_env", "credential_ref", "extra_body"):
+                current.pop(field, None)
+            fields.pop("default")
+            fields.update(provider="custom", model=cloud_profile["id"])
+            if task == "contextgraph_ai_ground":
+                fields = {"provider":"semantier_gateway", "model":cloud_profile["id"],
+                    "organization_id":connection["organization_id"],
+                    "account_id":cloud_profile["account_id"], "capability_revision":cloud_profile["revision"],
+                    "execution_transport":"admitted_gateway", "max_tokens":cloud_profile["max_output_tokens"],
+                    "structured_output_mode":"json_object"}
+                for field in ("base_url", "key_env"):
+                    current.pop(field, None)
+            cfg["auxiliary"][task] = {**current, **fields}
+        save_config(cfg)
+        return {"ok":True, "scope":scope, "provider":"semantier-cloud", "model":cloud_profile["id"],
+            "account_id":cloud_profile["account_id"], "revision":cloud_profile["revision"], "applies_to":"new_sessions"}
     cfg = load_config()
     if scope == "main":
         return _apply_main_assignment_sync(cfg, provider, model, base_url, api_key, prepared)

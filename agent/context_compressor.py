@@ -3908,6 +3908,10 @@ Summary generation was unavailable, so this is a best-effort deterministic fallb
             # NO max_tokens: Anthropic/NIM wires forward it and a hard cap truncates summaries
             # (thinking models burn it on reasoning). Timeout comes from call_llm config.
         }
+        scoped = getattr(self,'_semantier_main_runtime',None)
+        if scoped:
+            from uuid import uuid4
+            call_kwargs['main_runtime'].update(scoped, parent_run_id=scoped.get('run_id',''), run_id='compression-'+uuid4().hex)
         # Pinned route (stall fallback) replaces task routing so the retry leaves the stalled backend.
         self._apply_summary_route(call_kwargs, _pinned_summary_call_kwargs())
         # Compression is atomic: protect the in-flight summary call from a mid-turn gateway interrupt.
@@ -4191,6 +4195,10 @@ Write only the summary body. Do not include any preamble or prefix."""
         from agent.conversation_compression import _raise_if_stale_attempt
 
         _raise_if_stale_attempt(self)
+        if (getattr(self,'_semantier_main_runtime',{}) or {}).get('cloud_route'):
+            self._last_summary_auth_failure = True
+            self._last_summary_error = 'Cloud compression unavailable; conversation retained without automatic retry.'
+            return None
         # Only a genuine no-provider RuntimeError gets the long cooldown; empty/invalid-response
         # RuntimeErrors are transient and must get the main-model retry below first.
         # ``call_llm`` raises ``RuntimeError`` for two very different cases: 1. 2. An empty/invalid response

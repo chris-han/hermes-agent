@@ -2076,8 +2076,12 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
             route = {"model": model} if model else {}
             if provider:
                 route["provider"] = provider
+        from agent.semantier_gateway import session_cloud_route
+        cloud_route = session_cloud_route(lock.get("model_options"), model)
+        if cloud_route:
+            route.update(cloud_route)
         model_options = body.get("model_options")
-        if not isinstance(model_options, dict):
+        if cloud_route or not isinstance(model_options, dict):
             model_options = lock.get("model_options")
         return {
             "requested": {"provider": provider, "model": model, "raw_model": model},
@@ -2089,6 +2093,9 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
 
     def _effective_session_runtime_request(
         self, *, session: Optional[dict[str, Any]], body: dict[str, Any]) -> dict[str, Any]:
+        persisted = self._runtime_request_from_persisted_session_lock(session, body)
+        if persisted and (persisted.get("route") or {}).get("_semantier_cloud_bound"):
+            return persisted
         runtime_request = self._session_runtime_request_from_body(body)
         requested = runtime_request.get("requested") or {}
         if requested.get("model") or requested.get("provider"):
@@ -2277,7 +2284,10 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
             effective_model = (route_model or model) if route is not None else (request_model or model)
             effective_provider = request_provider or route_provider or current_provider
             applied = False
-            if effective_provider and (bool(request_provider or route_provider) or effective_model != model):
+            if route_cfg.get("_semantier_cloud_bound"):
+                runtime_kwargs.update({key:route_cfg[key] for key in ("provider","api_key","base_url")})
+                applied = True
+            elif effective_provider and (bool(request_provider or route_provider) or effective_model != model):
                 # A confirmed Browser lock fails closed: never fall through to the previous
                 # global provider's credentials.
                 applied = self._apply_provider_runtime(
@@ -2320,7 +2330,8 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         # RuntimeError is caught ONLY here (sole provider-auth raiser); the typed subclass keeps
         # run_conversation() errors distinct.
         try:
-            runtime_kwargs = _resolve_runtime_agent_kwargs()
+            runtime_kwargs = ({**{key:route[key] for key in ("provider","api_key","base_url")},"api_mode":"chat_completions"} if route and route.get("_semantier_cloud_bound")
+                              else _resolve_runtime_agent_kwargs())
         except RuntimeError as exc:
             raise _ProviderAuthResolutionError(str(exc)) from exc
         # A fallback-provider runtime carries its own ``model``: pop it (overrides config, and
@@ -2374,6 +2385,10 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         if request_service_tier is not _REQUEST_OPTION_MISSING:
             agent_kwargs["service_tier"] = request_service_tier
         agent = AIAgent(**agent_kwargs)
+        if route and route.get('_semantier_cloud_bound'):
+            from copy import deepcopy
+            agent._semantier_cloud_revision = route.get('_semantier_cloud_revision','')
+            agent._semantier_auxiliary_snapshot = deepcopy((model_options or {}).get('semantier_auxiliary') or {})
         route_source = (
             "session_model_lock" if confirmed_runtime_lock
             else "session_model_override" if session_override
@@ -4210,6 +4225,8 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         request_browser_control_transport_family = _api_request_browser_control_transport_family.get()
 
         def _run_unbound():
+            nonlocal route, requested_runtime, route_source, confirmed_runtime_lock
+            nonlocal requested_model, requested_provider, model_options, session_model
             from gateway.session_context import clear_session_vars
             with self._profile_scope(request_profile):
                 tokens = self._bind_api_server_session(
@@ -4226,6 +4243,22 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
                 from gateway.warning_notifications import diagnostic_turn_muted
                 muted = diagnostic_turn_muted({"notification_category": notification_category}, "api_server")
                 try:
+                    # Resolve persisted selection inside the existing authenticated actor/home
+                    # scope, in the worker rather than blocking the API event loop on metadata.
+                    # This covers the OpenAI-compatible bridge as well as native session chat.
+                    if session_id and not confirmed_runtime_lock:
+                        db = self._ensure_session_db()
+                        session = db.get_session(session_id) if db is not None else None
+                        locked = self._runtime_request_from_persisted_session_lock(session, {})
+                        if locked:
+                            requested_runtime = locked.get("requested") or {}
+                            requested_model = requested_runtime.get("model")
+                            requested_provider = requested_runtime.get("provider")
+                            model_options = locked.get("model_options") or {}
+                            route = locked["route"]
+                            route_source = "session_model_lock"
+                            confirmed_runtime_lock = True
+                            session_model = None
                     agent = self._create_agent(
                         ephemeral_system_prompt=ephemeral_system_prompt, session_id=session_id,
                         stream_delta_callback=stream_delta_callback, tool_progress_callback=tool_progress_callback,

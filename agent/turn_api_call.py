@@ -133,7 +133,7 @@ def perform_api_call(
     )
 
     from agent.semantier_gateway import configure_cloud_request
-    api_kwargs = configure_cloud_request(api_kwargs,base_url=str(agent.base_url or ''),settings=agent_cloud_settings(agent))
+    api_kwargs = configure_cloud_request(api_kwargs,base_url=str(agent.base_url or ''),settings=agent_cloud_settings(agent),expected_revision=getattr(agent,'_semantier_cloud_revision',None))
 
     from hermes_cli.middleware import run_llm_execution_middleware
 
