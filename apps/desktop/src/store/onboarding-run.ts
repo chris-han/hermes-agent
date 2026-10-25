@@ -4,8 +4,8 @@
  *
  * This module is the one writer of `$onboardingPhase` and of the `onboarding` presence surface. The
  * surface is open while a run is starting or its chat is on screen; in any other chat the app behaves
- * as it does outside onboarding (tips, the sign-in offer). The backend owns whether onboarding is due
- * (`onboarding.state`) and writes the install-level flag when a run ends.
+ * as it does outside onboarding (tips, the sign-in offer). The backend owns explicit onboarding state and writes the install-level flag when a run ends.
+ * Passive startup neither reads that eligibility nor starts the model-driven conversation.
  */
 
 import type {
@@ -39,9 +39,8 @@ export type OnboardingRequest = <T = unknown>(
 // The generated param interfaces carry no index signature; the requester's own param type supplies it.
 type RequestParams = NonNullable<Parameters<OnboardingRequest>[1]>
 
-// A cold first boot answers onboarding.state and onboarding.start late; a way-out offer on screen bounds
-// the wait instead of a deadline. The launch and Settings' Run again both pass the intro, so both starts
-// get the intro's way out; a start with no intro keeps the request's default deadline.
+// Explicit onboarding can answer late; the intro's way-out offer bounds the visible wait instead of
+// a request deadline. A start with no intro keeps the requester's default deadline.
 const NO_DEADLINE = 0
 
 /** Opens a stored session on screen, replacing the route (`useSessionActions().resumeSession`). */
