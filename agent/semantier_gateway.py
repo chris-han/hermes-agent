@@ -71,6 +71,10 @@ def gateway_settings() -> GatewaySettings | None:
 
 def is_gateway_route(base_url: str) -> bool:
     config = cloud_connection_config()
+    if config is None:
+        from hermes_cli.config import load_config_readonly
+        named = (load_config_readonly().get('providers') or {}).get('semantier-cloud')
+        config = named if isinstance(named,dict) else None
     return bool(config and config.get('base_url') and str(base_url).rstrip('/') == str(config['base_url']).rstrip('/'))
 
 
@@ -78,10 +82,9 @@ def capture_agent_route(agent):
     """Retain the native task's credential/account route across later profile edits."""
     agent._semantier_cloud_settings = None
     if is_gateway_route(str(agent.base_url or '')):
-        settings = gateway_settings()
-        if not settings or agent.api_key != settings.api_key:
-            raise ValueError('Cloud connection changed while the task started; retry.')
-        agent._semantier_cloud_settings = settings
+        if not isinstance(agent.api_key,str) or not agent.api_key:
+            raise ValueError('Cloud scoped credential required.')
+        agent._semantier_cloud_settings = GatewaySettings(str(agent.base_url).rstrip('/'),agent.api_key)
 
 
 def agent_cloud_settings(agent):
@@ -90,6 +93,18 @@ def agent_cloud_settings(agent):
             and agent.api_key == settings.api_key):
         return settings
     return None
+
+
+def require_managed_auxiliary_purpose(task, base_url):
+    if task not in {'compression','title_generation','vision'} and is_gateway_route(str(base_url or '')):
+        raise ValueError('This auxiliary purpose is unavailable through managed Cloud; configure an explicit custom provider.')
+
+
+def snapshot_auxiliary_assignments(config):
+    from copy import deepcopy
+    from hermes_cli.web_server_config import _aux_task_slots
+    from agent.auxiliary_task_config import _get_auxiliary_task_config
+    return {task:deepcopy(_get_auxiliary_task_config(task,_config=config)) for task in _aux_task_slots()}
 
 
 def bind_task_context(agent, task_id, run_id):
@@ -102,6 +117,16 @@ def bind_task_context(agent, task_id, run_id):
     if parent.get('business_object_ref'):
         context['business_object_ref'] = parent['business_object_ref']
     agent._semantier_task_context = context
+    if not hasattr(agent,'_semantier_auxiliary_snapshot'):
+        from hermes_cli.config import load_config_readonly
+        agent._semantier_auxiliary_snapshot = snapshot_auxiliary_assignments(load_config_readonly())
+    compressor = getattr(agent,'context_compressor',None)
+    if compressor is not None:
+        compressor._semantier_main_runtime = {**{key:getattr(agent,key,None) for key in
+            ('model','provider','base_url','api_key','api_mode','session_id')}, **context,
+            'cloud_route':getattr(getattr(agent,'_semantier_cloud_settings',None),'base_url',''),
+            'auxiliary_snapshot':agent._semantier_auxiliary_snapshot,
+            'capability_revision':getattr(agent,'_semantier_cloud_revision','')}
     return dict(context)
 
 
@@ -308,12 +333,14 @@ def cloud_model_profile(model, *, refresh=False, settings=None):
     return rows[0]
 
 
-def configure_cloud_request(kwargs, *, base_url, settings=None):
+def configure_cloud_request(kwargs, *, base_url, settings=None, expected_revision=None):
     """Compile protocol fields for the chosen alias; never substitute supplier transport."""
     if not (str(base_url).rstrip('/') == settings.base_url if settings else is_gateway_route(base_url)):
         return kwargs
     options = {'settings':settings} if settings is not None else {}
     profile = cloud_model_profile(kwargs.get('model'),**options)
+    if expected_revision and profile['revision'] != expected_revision:
+        raise ValueError('Cloud selection changed; refresh and start a new chat.')
     context, output = profile.get('context_window'), profile.get('max_output_tokens')
     if type(context) is not int or context <= 0 or type(output) is not int or output <= 0:
         raise ValueError('Semantier Cloud Provider context/output limits unknown; deployment configuration required.')
@@ -369,3 +396,23 @@ def cloud_switch_result(model, current_provider, *, is_global=False):
             runtime_capabilities={'supports_'+k:v is True for k,v in profile['capabilities'].items()})
     except ValueError as error:
         return ModelSwitchResult(success=False,error_message=str(error))
+
+
+def session_cloud_route(model_options, model):
+    """Resolve a persisted Cloud connection pointer in the active session's home."""
+    binding = (model_options or {}).get('semantier_cloud')
+    if not isinstance(binding,dict):
+        return None
+    from hermes_cli.config import get_env_value
+    key_env = binding.get('key_env')
+    base = str(binding.get('base_url') or '').rstrip('/')
+    if not isinstance(key_env,str) or not key_env.startswith('HERMES_CUSTOM_SEMANTIER_CLOUD_') or not is_gateway_route(base):
+        raise ValueError('Conversation Cloud connection is unavailable; choose a model for a new chat.')
+    key = get_env_value(key_env)
+    if not key:
+        raise ValueError('Conversation Cloud credential is unavailable; reconnect.')
+    settings = GatewaySettings(base,key)
+    profile = cloud_model_profile(model,settings=settings)
+    if profile['account_id'] != binding.get('account_id') or profile['revision'] != binding.get('capability_revision'):
+        raise ValueError('Conversation Cloud selection changed; choose a model for a new chat.')
+    return {'provider':'custom','base_url':base,'api_key':key,'model':model,'_semantier_cloud_bound':True,'_semantier_cloud_revision':profile['revision']}

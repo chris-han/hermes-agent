@@ -141,6 +141,9 @@ def begin_voice_turn_route(agent: Any, messages: list[dict[str, Any]], system_pr
     cfg = _get_auxiliary_task_config(TASK)
     effort = parse_reasoning_effort(cfg.get("reasoning_effort"))
     target = _route_target(agent, cfg)
+    from agent.semantier_gateway import require_managed_auxiliary_purpose
+    if target is None:
+        require_managed_auxiliary_purpose(TASK,getattr(agent,'base_url',''))
     if target is None and effort is None:
         return system_prompt
     state: dict[str, Any] = {"reasoning_config": copy.deepcopy(getattr(agent, "reasoning_config", None))}
@@ -157,10 +160,12 @@ def begin_voice_turn_route(agent: Any, messages: list[dict[str, Any]], system_pr
         if not reason and not _fits(agent, messages, system_prompt):
             reason = "the conversation is larger than its context window"
         if reason:
+            require_managed_auxiliary_purpose(TASK,state.get('base_url') or getattr(agent,'base_url',''))
             _reinstall(agent, state)
             _warn_once(agent, target, reason)
             agent._voice_route_state = {"reasoning_config": state["reasoning_config"]}
             return agent._cached_system_prompt or system_prompt
+        require_managed_auxiliary_purpose(TASK,getattr(agent,'base_url',''))
         from agent.chat_completion_helpers import rewrite_prompt_model_identity
         rewrite_prompt_model_identity(agent, agent.model, agent.provider)
         for name in _REJECTION_FIELDS:

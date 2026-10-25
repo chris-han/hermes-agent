@@ -85,8 +85,11 @@ async def get_config(profile: Optional[str] = None, include_defaults: bool = Tru
     # context, so the profile override stays scoped to the worker thread.
     # Opt in to saved values so clients can distinguish user choices from defaults.
     config = await scoped_to_thread(
-        profile, lambda: _normalize_config_for_web(load_config() if include_defaults else read_raw_config())
+        profile, lambda: _normalize_config_for_web(load_config() if include_defaults and os.environ.get('SEMANTIER_STORAGE_BACKEND') != 'postgresql' else read_raw_config())
     )
+    if os.environ.get('SEMANTIER_STORAGE_BACKEND') == 'postgresql':
+        from hermes_cli.web_server_config import _redact_managed_config
+        config = _redact_managed_config(config)
     # Strip internal keys that the frontend shouldn't see or send back
     return {k: v for k, v in config.items() if not k.startswith("_")}
 

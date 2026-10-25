@@ -13,7 +13,7 @@ from typing import Any, Dict
 logger = logging.getLogger(__name__)
 
 
-def _get_auxiliary_task_config(task: str, _seen: frozenset = frozenset()) -> dict[str, Any]:
+def _get_auxiliary_task_config(task: str, _seen: frozenset = frozenset(), *, _config=None) -> dict[str, Any]:
     """Config dict for auxiliary.<task>, or {} when unavailable. Plugin-registered tasks get their
     declared defaults layered under user config (user wins); built-in defaults live in DEFAULT_CONFIG.
     A task registered with ``inherit_from`` is resolved here, at read time, over the base task's
@@ -23,7 +23,7 @@ def _get_auxiliary_task_config(task: str, _seen: frozenset = frozenset()) -> dic
         return {}
     try:
         from hermes_cli.config import load_config_readonly
-        config = load_config_readonly()
+        config = load_config_readonly() if _config is None else _config
     except ImportError:
         return {}
     aux = config.get("auxiliary", {}) if isinstance(config, dict) else {}
@@ -42,7 +42,7 @@ def _get_auxiliary_task_config(task: str, _seen: frozenset = frozenset()) -> dic
                                        "ignoring inheritance", task)
                     if not _inherit or task in _seen:
                         return {**_defaults, **task_config}
-                    base = _get_auxiliary_task_config(_inherit, _seen | {task})
+                    base = _get_auxiliary_task_config(_inherit, _seen | {task}, _config=config)
                     return _layer_over_inherited({**base, **_defaults}, task_config)
                 break
     except Exception:  # health: allow BLE001 -- plugin discovery must never break aux config reads

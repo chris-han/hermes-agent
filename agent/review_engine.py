@@ -166,6 +166,11 @@ def start_review(parent_agent, messages: list[dict[str, Any]], user_prompt: str 
         raise ValueError("Nothing to review yet — the conversation is empty.")
     goal, context = build_review_task(snapshot, user_prompt, collect_parent_loaded_skills(parent_agent, messages))
     credentials_cfg = _load_review_credentials_cfg()
+    from agent.semantier_gateway import require_managed_auxiliary_purpose
+    if not credentials_cfg or credentials_cfg.get('provider') in ('','auto','semantier-cloud'):
+        require_managed_auxiliary_purpose('review',getattr(parent_agent,'base_url',''))
+    else:
+        require_managed_auxiliary_purpose('review',credentials_cfg.get('base_url',''))
 
     from tools.delegate_tool import delegate_task
     raw = delegate_task(goal=goal, context=context, background=True, parent_agent=parent_agent, credentials_cfg=credentials_cfg)

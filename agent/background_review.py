@@ -977,6 +977,8 @@ def build_cache_parity_fork(
     # Inherit the parent's live runtime: AIAgent.__init__'s env auto-resolution fails for
     # OAuth-only providers, session-scoped creds and credential pools.
     _rt = _resolve_review_runtime(agent, task_cfg)
+    from agent.semantier_gateway import require_managed_auxiliary_purpose
+    require_managed_auxiliary_purpose('background_review',_rt.get('base_url') or getattr(agent,'base_url',''))
     _routed = bool(_rt.get("routed"))
     # A configured effort is dropped on the same-model path (cache parity) — say so once, visible,
     # instead of leaving the set-but-ignored key invisible (#104116). Routed forks honor it
