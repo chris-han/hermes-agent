@@ -12,6 +12,30 @@ import asyncio
 import pytest
 
 
+@pytest.mark.parametrize('legacy', [False, True])
+def test_masked_endpoint_probe_uses_own_profile_key_and_refuses_changed_origin(tmp_path, monkeypatch, legacy):
+    from pathlib import Path
+    from fastapi import HTTPException
+    from hermes_cli import profiles
+    from hermes_cli.config import atomic_config_replace
+    import hermes_cli.web_routers.config_env as mod
+    from hermes_cli.web_models import CustomEndpointUpdate
+
+    monkeypatch.setattr(Path, 'home', lambda: tmp_path)
+    monkeypatch.setenv('HERMES_HOME', str(tmp_path / 'hermes'))
+    home = profiles.create_profile('probe-work', no_alias=True, no_skills=True)
+    entry = {'name': 'Retained endpoint', 'base_url': 'https://retained.example/v1', 'api_key': 'private-retained-key'}
+    cfg = {'custom_providers': [entry]} if legacy else {'providers': {'retained-endpoint': entry}}
+    atomic_config_replace(home / 'config.yaml', cfg)
+    original = (home / 'config.yaml').read_bytes()
+    body = CustomEndpointUpdate(id='retained-endpoint', name='Retained endpoint', base_url=entry['base_url'], model='manual')
+    assert mod._custom_endpoint_probe_headers(body, 'probe-work')['Authorization'] == 'Bearer private-retained-key'
+    body.base_url = 'https://changed.example/v1'
+    with pytest.raises(HTTPException):
+        mod._custom_endpoint_probe_headers(body, 'probe-work')
+    assert (home / 'config.yaml').read_bytes() == original
+
+
 def test_native_cloud_is_not_an_editable_custom_endpoint(monkeypatch):
     import hermes_cli.web_routers.config_env as mod
     from hermes_cli.web_models import CustomEndpointUpdate

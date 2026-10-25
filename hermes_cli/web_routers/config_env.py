@@ -901,6 +901,10 @@ def _custom_endpoint_probe_headers(body: CustomEndpointUpdate, profile: Optional
         with _config_profile_scope(profile):
             cfg = load_config()
             _stored, entry = _resolve_custom_endpoint_entry(cfg.get("providers"), body.id)
+            if entry is None:
+                entry = next((row for row in get_compatible_custom_providers(cfg)
+                              if not row.get('provider_key')
+                              and _custom_endpoint_id(row['name']) == body.id), None)
             if entry:
                 previous = str(entry.get("base_url") or "").rstrip("/")
                 if previous != body.base_url.strip().rstrip("/"):
