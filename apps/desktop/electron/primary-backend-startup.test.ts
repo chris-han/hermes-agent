@@ -267,3 +267,17 @@ test('reset rejects with a typed error and never enters either backend', async (
   assert.equal(options.connectRemote.mock.calls.length, 0)
   assert.equal(options.ensureLocalRuntime.mock.calls.length, 0)
 })
+
+test('a null registry primary classifies the following runtime failure as local', async () => {
+  let target: 'local' | 'remote' = 'remote'
+  const failure = new Error('Profile is unavailable')
+
+  const options = startupOptions({
+    selectRegistryPrimary: async () => null,
+    onLocalStart: () => { target = 'local' },
+    prepareLocalBackend: async () => { throw failure }
+  })
+
+  await assert.rejects(runPrimaryBackendStartup(options), failure)
+  assert.equal(target, 'local')
+})

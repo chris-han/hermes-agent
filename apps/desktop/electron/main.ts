@@ -232,6 +232,7 @@ import {
 } from './desktop-profile'
 import { registryPrimaryBootRoute, resolveDesktopRemoteRoute, v1SshTerminalPoolKey } from './desktop-remote-route'
 import { type DesktopSharedMetrics, registerDesktopSharedMetrics } from './desktop-shared-metrics'
+import { resolveDesktopStartupProfile } from './desktop-startup-profile'
 import {
   buildPosixCleanupScript,
   buildWindowsCleanupScript,
@@ -327,7 +328,7 @@ import { linuxOzoneBackend, resolveHudWindowing } from './hud-windowing'
 import { INSTALL_STAMP, installShape } from './install-stamp'
 import type { InstallStamp } from './install-stamp'
 import { createKeepAwakeController } from './keep-awake-controller'
-import { applyLaunchProfileOverride } from './launch-profile'
+import { applyLaunchProfileOverride, parseLaunchProfile } from './launch-profile'
 import { fetchLinkTitle, resolveFaviconCached } from './link-metadata'
 import { CHROMIUM_LOG_FILENAME, enableLinuxCrashDiagnostics, linuxCrashDiagnostics } from './linux-crash-diagnostics'
 import {
@@ -9049,6 +9050,34 @@ function writeActiveDesktopProfile(name: string | null): string | null {
   return desktopProfilePreferences.remember(name)
 }
 
+async function prepareDesktopStartupProfile(): Promise<void> {
+  const preference = desktopProfilePreferences.readStartup()
+  const route = preference.defaultRoute
+  const selected = parseLaunchProfile(process.argv) || route?.profile || preference.profile
+
+  // A saved remote intent may have no local home at all. Never replace it.
+  if (route?.connectionId) {
+    const entry = readDesktopConnectionsRegistry().connections.find(source => source.id === route.connectionId)
+
+    if (!entry || entry.kind !== 'local') { return }
+  }
+
+  if (primaryBackendIsRemote() || (selected && profileHasRemoteOverride(selected))) { return }
+
+  const backend = await ensureRuntime(await resolveHermesBackend([]), () => undefined)
+  const resolved = await resolveDesktopStartupProfile(backend, HERMES_HOME, selected, Boolean(parseLaunchProfile(process.argv)))
+
+  writeActiveDesktopProfile(resolved.profile)
+
+  if (route || resolved.profile === 'semantier-local') {
+    desktopProfilePreferences.setDefault({ connectionId: route?.connectionId ?? null, profile: resolved.profile })
+  }
+
+  if (resolved.recovered) {
+    rememberLog(`[startup-profile] resolved ordinary local startup to ${resolved.profile}`)
+  }
+}
+
 // True when the given pid belongs to a running process whose command line
 // contains "hermes", avoiding false positives from stale gateway.pid files
 // whose PID was recycled by the OS to an unrelated process.
@@ -12186,6 +12215,7 @@ async function startHermes(requestedProfile?: string) {
     }
 
     const setup = await runPrimaryBackendStartup({
+      onLocalStart: () => { attemptedRemote = false },
       signal: localBackendLifecycle.signal,
       assertCurrentAttempt: () => backendConnectionState.assertCurrentAttempt(connectionAttempt),
       connectRemote,
@@ -18168,7 +18198,7 @@ app.on('open-url', (event, url) => {
   handleDeepLink(url)
 })
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // Post-update relaunch detection (App Installer arm): when the previous
   // version wrote the one-shot pending-relaunch marker before quitting into
   // an OS package swap, consume it here — the renderer toasts "Hermes
@@ -18241,6 +18271,17 @@ app.whenReady().then(() => {
   void minimizeToTray.start()
   mainProcessLagWatchdog.start()
   f12Blocked = readPersistedDisableF12()
+
+  // Resolve and commit the owner scope before a window or device action can
+  // capture it. A refused owner is a stable runtime recovery, never a plan fact.
+  try {
+    await prepareDesktopStartupProfile()
+  } catch (error) {
+    backendStartFailure = error instanceof Error ? error : new Error(String(error))
+    updateBootProgress({ error: backendStartFailure.message, message: backendStartFailure.message,
+      phase: 'backend.error', progress: 8, running: false, retryable: false })
+  }
+
   // Seed this before the first window exists: a picker can open before
   // startHermes() finishes resolving the configured backend.
   const primaryProfile = primaryProfileKey()

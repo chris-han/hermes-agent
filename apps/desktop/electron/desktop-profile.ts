@@ -96,6 +96,10 @@ export function createDesktopProfilePreferences(
     try {
       const value = JSON.parse(fs.readFileSync(configPath, 'utf8'))
 
+      if (strict && (!value || typeof value !== 'object' || Array.isArray(value))) {
+        throw new Error('Invalid desktop profile preference')
+      }
+
       return value && typeof value === 'object' && !Array.isArray(value) ? value : {}
     } catch (error) {
       if (strict && (error as NodeJS.ErrnoException).code !== 'ENOENT') {
@@ -126,6 +130,20 @@ export function createDesktopProfilePreferences(
     const profile = typeof value === 'string' ? value.trim() : ''
 
     return DESKTOP_PROFILE_NAME_RE.test(profile) ? profile : null
+  }
+
+  function readStartup(): { profile: string | null; defaultRoute: DesktopProfileRoute | null } {
+    const value = read(true)
+    const profile = value.profile ?? null
+
+    if (profile !== null && (typeof profile !== 'string' || !DESKTOP_PROFILE_NAME_RE.test(profile))) {
+      throw new Error('Invalid startup profile preference')
+    }
+
+    return {
+      profile: typeof profile === 'string' ? profile : null,
+      defaultRoute: value.defaultRoute == null ? null : requireDesktopProfileRoute(value.defaultRoute)
+    }
   }
 
   function remember(name: unknown): null | string {
@@ -202,5 +220,5 @@ export function createDesktopProfilePreferences(
     }
   }
 
-  return { afterProfileRequest, connectionRemoved, getDefault, profileChanged, readActive, remember, setDefault }
+  return { afterProfileRequest, connectionRemoved, getDefault, profileChanged, readActive, readStartup, remember, setDefault }
 }

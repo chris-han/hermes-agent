@@ -19,6 +19,8 @@ export interface PrimaryBackendStartupOptions<Backend, RuntimeBackend, Remote, C
    * remote so a stale pre-update resolve cannot boot an empty local backend.
    */
   selectRegistryPrimary?: () => Promise<Remote | null>
+  /** Commit the local target after both remote-resolution rungs decline it. */
+  onLocalStart?: () => void
   waitForDecision: (backend: Backend) => Promise<FirstRunSetupDecision>
   waitForLocalStart: () => Promise<unknown>
 }
@@ -102,6 +104,7 @@ export async function runPrimaryBackendStartup<Backend, RuntimeBackend, Remote, 
   prepareLocalBackend,
   resolveRemote,
   selectRegistryPrimary,
+  onLocalStart,
   waitForDecision,
   waitForLocalStart,
   signal
@@ -133,6 +136,8 @@ export async function runPrimaryBackendStartup<Backend, RuntimeBackend, Remote, 
       return { kind: 'remote', connection: await step(() => connectRemote(registryPrimary)) }
     }
   }
+
+  onLocalStart?.()
 
   // Multiplex-only: one backend per HOST. Attach before resolving a runtime or
   // entering the first-run gate — a machine with a live backend is, by
