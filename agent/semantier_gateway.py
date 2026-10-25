@@ -362,8 +362,9 @@ def cloud_switch_result(model, current_provider, *, is_global=False):
         profile = cloud_model_profile(model,refresh=True)
         if profile['protocol'] not in {'chat','chat_completions'}:
             raise ValueError('Unsupported Semantier Cloud Provider protocol.')
-        return ModelSwitchResult(success=True,new_model=model,target_provider='custom',
-            provider_changed=current_provider!='custom',api_key=settings.api_key,base_url=settings.base_url,
+        target = 'semantier-cloud' if (cloud_connection_config() or {}).get('credential_ref') else 'custom'
+        return ModelSwitchResult(success=True,new_model=model,target_provider=target,
+            provider_changed=current_provider!=target,api_key=settings.api_key,base_url=settings.base_url,
             api_mode='chat_completions',provider_label='Semantier Cloud Provider',is_global=is_global,
             runtime_capabilities={'supports_'+k:v is True for k,v in profile['capabilities'].items()})
     except ValueError as error:

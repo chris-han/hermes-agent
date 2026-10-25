@@ -1804,7 +1804,10 @@ def model_selection_config_updates(result: ModelSwitchResult, current_model_cfg:
     if is_gateway_route(result.base_url):
         cloud_config = cloud_connection_config()
         updates['capability_revision'] = cloud_model_profile(result.new_model)['revision']
-        if cloud_config.get('api_key_env'):
+        if cloud_config.get('credential_ref'):
+            for field in ('api_key', 'api', 'key_env', 'api_key_env'):
+                updates[field] = None
+        elif cloud_config.get('api_key_env'):
             updates['api_key'] = None
             updates['key_env'] = cloud_config['api_key_env']
     return updates

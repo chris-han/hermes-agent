@@ -273,3 +273,37 @@ def test_overlapping_poll_joins_a_fast_probe_instead_of_erroring(monkeypatch):
     # Inside the join grace the joiner reads the shared result — the same
     # authoritative answer, not the retryable-in-progress error.
     assert joiner["result"]["ok"] is True
+
+
+def test_revoked_native_binding_keeps_cloud_source_for_legacy_custom_pin(monkeypatch):
+    from agent import semantier_gateway as cloud
+    from hermes_cli.cloud_device_client import CloudCredentialError
+    def refused(**kwargs):
+        raise CloudCredentialError('Cloud credential unavailable or expired; reauthorize.')
+    _patch_fast_probe_env(monkeypatch, refused)
+    base = 'http://127.0.0.1:8765/v1'
+    monkeypatch.setattr(server, '_resolve_startup_runtime', lambda: ('cloud-model', 'custom'))
+    monkeypatch.setattr(server, '_load_cfg', lambda: {'model': {'provider': 'custom', 'base_url': base}})
+    monkeypatch.setattr(cloud, 'cloud_connection_config', lambda: {'base_url': base, 'credential_ref': 'native-ref'})
+    transport = _RecordingTransport()
+    _dispatch(transport, 'native-alias-refused', 'setup.runtime_check')
+    result = transport.wait_for('native-alias-refused')['result']
+    assert result['ok'] is False
+    assert result['source'] == 'semantier-cloud'
+    assert 'subscription' not in result
+
+
+def test_custom_endpoint_without_native_binding_does_not_claim_cloud_source(monkeypatch):
+    from agent import semantier_gateway as cloud
+    def refused(**kwargs):
+        raise ValueError('Custom endpoint unavailable')
+    _patch_fast_probe_env(monkeypatch, refused)
+    base = 'http://127.0.0.1:8765/v1'
+    monkeypatch.setattr(server, '_resolve_startup_runtime', lambda: ('custom-model', 'custom'))
+    monkeypatch.setattr(server, '_load_cfg', lambda: {'model': {'provider': 'custom', 'base_url': base}})
+    monkeypatch.setattr(cloud, 'cloud_connection_config', lambda: {'base_url': base})
+    transport = _RecordingTransport()
+    _dispatch(transport, 'custom-unavailable', 'setup.runtime_check')
+    result = transport.wait_for('custom-unavailable')['result']
+    assert result['ok'] is False
+    assert result.get('source') != 'semantier-cloud'

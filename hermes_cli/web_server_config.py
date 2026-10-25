@@ -749,7 +749,7 @@ def _prepare_main_assignment(cfg: dict, provider: str, model: str, base_url: str
     ``_CONFIG_MUTATION_LOCK``; it writes nothing."""
     if not provider or not model:
         raise HTTPException(status_code=400, detail="provider and model required for main")
-    from agent.semantier_gateway import is_gateway_route, cloud_model_profile, gateway_settings
+    from agent.semantier_gateway import is_gateway_route, cloud_model_profile, gateway_settings, cloud_connection_config
     current = cfg.get('model') if isinstance(cfg.get('model'),dict) else {}
     current_cloud = is_gateway_route(str(current.get('base_url','')))
     if provider == 'semantier-cloud' or current_cloud and provider == current.get('provider') and not base_url or is_gateway_route(base_url):
@@ -762,7 +762,8 @@ def _prepare_main_assignment(cfg: dict, provider: str, model: str, base_url: str
         if profile_info.get('protocol') not in {'chat','chat_completions'}:
             raise HTTPException(422,'Cloud protocol unsupported by this Hermes version')
         from hermes_cli.model_switch import ModelSwitchResult
-        return settings.base_url, ModelSwitchResult(success=True,new_model=model,target_provider='custom',
+        target = 'semantier-cloud' if (cloud_connection_config() or {}).get('credential_ref') else 'custom'
+        return settings.base_url, ModelSwitchResult(success=True,new_model=model,target_provider=target,
             base_url=settings.base_url,api_mode='chat_completions',provider_label='Semantier Cloud Provider',is_global=True)
     provider, model = _normalize_main_model_assignment(provider, model)
     provider_entry = _provider_entry(cfg, provider)
@@ -793,7 +794,10 @@ def _apply_main_assignment_sync(cfg: dict, provider: str, model: str, base_url: 
         from agent.semantier_gateway import gateway_settings
         from agent.semantier_gateway import cloud_connection_config
         cloud_config = cloud_connection_config()
-        if cloud_config.get('api_key_env'):
+        if cloud_config.get('credential_ref'):
+            for field in ('api_key', 'api', 'key_env', 'api_key_env'):
+                model_cfg.pop(field, None)
+        elif cloud_config.get('api_key_env'):
             model_cfg.pop('api_key',None)
             model_cfg['key_env'] = cloud_config['api_key_env']
         model_cfg.pop('context_length',None)

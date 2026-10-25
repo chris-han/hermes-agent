@@ -323,3 +323,50 @@ def test_slow_down_keeps_intent_pending_and_bounds_poll_frequency(native,monkeyp
     assert device.poll(started['session_id'])['status']=='pending'
     assert calls.count('intent-test/poll')==1
     assert calls.count('intent-test/claim')==0
+
+
+def test_native_model_confirmation_preserves_provider_and_protected_custody(native, monkeypatch):
+    """The real /api/model/set owner must not demote a connected native service."""
+    from agent import semantier_gateway as cloud
+    from hermes_cli.config import atomic_config_replace
+    from hermes_cli.web_server_config import _apply_model_assignment_sync
+    device, home = native
+    install_wire(device, monkeypatch)
+    started = device.start()
+    device.poll(started['session_id'])
+    cfg = device._config()
+    cfg['model'].update(key_env='UNRELATED_PROVIDER_KEY', api_key='stale-inline-key')
+    cfg['providers']['other-provider'] = {'base_url': 'https://other.invalid/v1'}
+    atomic_config_replace(home/'config.yaml', cfg)
+    monkeypatch.setattr(cloud, 'cloud_model_profile', lambda *args, **kwargs: {
+        'protocol': 'chat_completions', 'revision': 'allowed-revision', 'capabilities': {}})
+    result = _apply_model_assignment_sync('main', 'semantier-cloud', 'allowed-model', '', '')
+    saved = device._config()
+    assert result['provider'] == saved['model']['provider'] == 'semantier-cloud'
+    assert saved['providers']['semantier-cloud']['credential_ref'] == 'token-test'
+    assert saved['providers']['other-provider'] == cfg['providers']['other-provider']
+    assert not {'api_key', 'key_env', 'api_key_env'} & saved['model'].keys()
+    assert 'private-account-token' not in (home/'config.yaml').read_text()
+    assert saved['model']['capability_revision'] == 'allowed-revision'
+
+
+def test_native_model_switch_preserves_logical_provider_and_drops_foreign_keys(native, monkeypatch):
+    from agent import semantier_gateway as cloud
+    from hermes_cli.config import atomic_config_replace
+    from hermes_cli.model_switch import switch_model, apply_model_selection
+    device, home = native
+    install_wire(device, monkeypatch)
+    started = device.start()
+    device.poll(started['session_id'])
+    cfg = device._config()
+    cfg['model'].update(key_env='UNRELATED_PROVIDER_KEY', api_key='stale-inline-key')
+    atomic_config_replace(home/'config.yaml', cfg)
+    monkeypatch.setattr(cloud, 'cloud_model_profile', lambda *args, **kwargs: {
+        'protocol': 'chat_completions', 'revision': 'allowed-revision', 'capabilities': {}})
+    result = switch_model('allowed-model', 'semantier-cloud', 'allowed-model',
+                          current_base_url=cfg['model']['base_url'], explicit_provider='semantier-cloud')
+    assert result.success and result.target_provider == 'semantier-cloud'
+    saved = apply_model_selection(cfg['model'], result)
+    assert saved['provider'] == 'semantier-cloud'
+    assert not {'api_key', 'key_env', 'api_key_env'} & saved.keys()
+    assert 'private-account-token' not in json.dumps(saved)

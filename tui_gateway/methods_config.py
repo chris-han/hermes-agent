@@ -449,6 +449,11 @@ def _(rid, params: dict) -> dict:
             except Exception as error:
                 cfg_model = _load_cfg().get('model') or {}
                 selected = requested or startup_provider or (cfg_model.get('provider') if isinstance(cfg_model, dict) else None)
+                if selected == 'custom' and isinstance(cfg_model, dict):
+                    from agent.semantier_gateway import cloud_connection_config, is_gateway_route
+                    binding = cloud_connection_config() or {}
+                    if binding.get('credential_ref') and is_gateway_route(cfg_model.get('base_url', '')):
+                        selected = 'semantier-cloud'
                 if selected != 'semantier-cloud':
                     raise
                 return {'ok': False, 'provider': selected, 'source': selected,
