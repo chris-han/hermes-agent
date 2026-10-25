@@ -6,6 +6,7 @@ Extracted from ``hermes_cli.web_server``; helpers/state that tests monkeypatch o
 
 import contextlib
 import logging
+import os
 import re
 import asyncio
 import time
