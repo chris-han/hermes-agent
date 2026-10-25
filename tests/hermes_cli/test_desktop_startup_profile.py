@@ -61,6 +61,25 @@ def test_tombstoned_selection_is_not_adopted(owner):
     assert not (owner / "profiles/semantier-local").exists()
 
 
+@pytest.mark.parametrize('retired', ['ordinary-retired', 'semantier-local'])
+def test_removed_ordinary_reference_can_fall_back_but_retired_fallback_is_never_recreated(owner, retired):
+    import shutil
+    from hermes_constants import mark_named_profile_deleted, profile_tombstone_path
+
+    home = profiles.create_profile(retired, no_alias=True, no_skills=True)
+    mark_named_profile_deleted(home)
+    marker = profile_tombstone_path(home)
+    previous = marker.read_bytes()
+    shutil.rmtree(home)
+    if retired == 'semantier-local':
+        with pytest.raises(FileExistsError, match='tombstoned'):
+            resolve(owner, 'ordinary-retired')
+    else:
+        assert resolve(owner, retired)['profile'] == 'semantier-local'
+    assert marker.read_bytes() == previous
+    assert not home.exists()
+
+
 def test_corrupt_saved_profile_is_not_replaced(owner):
     home = profiles.create_profile("work", no_alias=True, no_skills=True)
     (home / "config.yaml").write_text("[broken", encoding="utf-8")

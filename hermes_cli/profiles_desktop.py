@@ -23,12 +23,15 @@ def _validate_profile(owner: Path, name: str) -> bool:
     namespace = owner if name == "default" else owner / "profiles"
     if not home.resolve().is_relative_to(namespace.resolve()):
         raise ValueError("Profile path escapes its owner")
-    if name != "default" and named_profile_is_deleted(home):
-        raise ValueError("Profile is tombstoned; explicit recovery required")
     try:
         home.stat()
     except FileNotFoundError:
+        # A fully removed ordinary reference can resolve another identity;
+        # its retirement marker remains intact. ensure_profile still refuses
+        # to recreate a retired fallback, and explicit requests fail below.
         return False
+    if name != "default" and named_profile_is_deleted(home):
+        raise ValueError("Profile is tombstoned; explicit recovery required")
     if not home.is_dir() or not profiles.profile_exists(name):
         raise ValueError("Profile has no valid local identity")
     # Validate existing bytes, never load defaults and write them back over corruption.
