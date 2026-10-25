@@ -420,7 +420,7 @@ export interface SemantierBillingV2Response {
     ends_at: string
     manual_renewal: true
   }
-  credits: { allowance: SemantierMoney; purchased: SemantierMoney; held: SemantierMoney; available: SemantierMoney }
+  credits: { allowance: SemantierMoney; purchased: SemantierMoney; held: SemantierMoney; available: SemantierMoney | null }
   usage: { known_cost: SemantierMoney; period: 'lifetime' }
   capabilities: {
     can_read_usage: boolean

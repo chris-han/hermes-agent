@@ -131,7 +131,7 @@ export function SemantierBilling({ state, refusal }: SemantierBillingProps) {
         {row(commerce.allowance, formatSemantierMoney(state.credits.allowance))}
         {row(commerce.purchased, formatSemantierMoney(state.credits.purchased))}
         {row(c.held, formatSemantierMoney(state.credits.held))}
-        {row(c.available, formatSemantierMoney(state.credits.available))}
+        {row(c.available, state.credits.available === null ? c.unavailable : formatSemantierMoney(state.credits.available))}
         {row(`${c.knownCost} · ${c.lifetime}`, formatSemantierMoney(state.usage.known_cost))}
         {row(c.updated, fmtDateTime.format(new Date(state.as_of)))}
       </SettingsSection>

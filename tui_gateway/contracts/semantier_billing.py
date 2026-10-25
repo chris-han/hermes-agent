@@ -87,7 +87,7 @@ class BillingCredits(Result):
     allowance: Money
     purchased: Money
     held: Money
-    available: Money
+    available: Money | None
 
 
 class BillingCommerceUsage(Result):

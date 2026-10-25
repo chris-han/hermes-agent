@@ -41,6 +41,15 @@ it('renders actual rights separately and opens an account task with independent 
   expect(openExternal).toHaveBeenLastCalledWith('https://billing.example/pricing?organization_id=org-a&account_id=account-a')
 })
 
+it('renders unavailable customer-cloud credit without a crash or invented zero balance', () => {
+  render(<SemantierBilling state={{ ...state,
+    credits: { ...state.credits, available: null } }} />)
+  expect(screen.getByText('Professional')).toBeTruthy()
+  expect(screen.getByText('CNY 1.00')).toBeTruthy()
+  expect(screen.queryByText('CNY 0.00')).toBeNull()
+  expect(screen.getByRole('button', { name: 'Orders' })).toBeTruthy()
+})
+
 it('missing portal offers no commercial links and never substitutes Nous', () => {
   render(<SemantierBilling state={{ ...state, portal: { url: null } }} />)
   expect(screen.queryByRole('button')).toBeNull()

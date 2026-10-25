@@ -6642,7 +6642,14 @@
             "$ref": "#/components/schemas/Money"
           },
           "available": {
-            "$ref": "#/components/schemas/Money"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [

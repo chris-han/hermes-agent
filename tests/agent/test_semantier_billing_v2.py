@@ -20,6 +20,16 @@ def state():
             'portal': {'url': 'https://billing.example'}, 'as_of': '2026-10-20T00:00:00Z'}
 
 
+def test_v2_customer_cloud_null_credit_survives_validation_and_rpc():
+    from tui_gateway.contracts.registry import METHODS
+    payload = state()
+    payload['credits']['available'] = None
+    validated = SemantierBillingV2.model_validate(payload).model_dump(exclude_unset=True)
+    wire = METHODS['billing.state'].result.model_validate({'ok': True, **validated})
+    assert wire.credits.available is None
+    assert wire.credits.held.amount == '100.00'
+
+
 def test_v2_retains_literal_false_and_rejects_secret_bearing_portal():
     payload = state()
     assert SemantierBillingV2.model_validate(payload).portal.url == 'https://billing.example'

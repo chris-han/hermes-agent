@@ -176,7 +176,7 @@ export interface BillingCredits {
   allowance: Money
   purchased: Money
   held: Money
-  available: Money
+  available: Money | null
 }
 export interface BillingPortal {
   url: string | null
