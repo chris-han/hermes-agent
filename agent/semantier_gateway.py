@@ -49,6 +49,8 @@ def gateway_settings() -> GatewaySettings | None:
     if config is None:
         return None
     base = str(config.get('base_url') or '').rstrip('/')
+    if not base:
+        return None
     parsed = urlsplit(base)
     if (parsed.username or parsed.password or parsed.query or parsed.fragment
             or parsed.path != '/v1' or not parsed.hostname
@@ -63,7 +65,7 @@ def gateway_settings() -> GatewaySettings | None:
     if isinstance(key,str) and key.startswith('${') and key.endswith('}'):
         key = get_env_value(key[2:-1])
     if not key:
-        raise ValueError('Semantier Cloud Provider scoped credential is unavailable for this profile.')
+        return None
     return GatewaySettings(base, key)
 
 
@@ -149,7 +151,7 @@ def billing_request(resource: str, *, schema_version: str | None = None) -> dict
     except CloudCredentialError:
         return refusal('unauthenticated', 'The profile credential expired or was revoked. Sign in again; local data and paid rights are preserved.')
     except ValueError:
-        return refusal('provider_not_configured', 'Semantier endpoint or credential is unavailable for this profile.')
+        return refusal('billing_unavailable', 'The configured Semantier endpoint or protected credential binding is invalid. Check this connection.')
     import requests
     from pydantic import ValidationError
     from tui_gateway.contracts.semantier_billing import (

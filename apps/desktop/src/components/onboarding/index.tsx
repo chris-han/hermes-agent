@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import { getGlobalModelOptions } from '@/hermes'
 import { useI18n } from '@/i18n'
+import { modelServiceCopy } from '@/i18n/model-service'
 import { Check, ChevronDown, ChevronLeft, KeyRound, Loader2 } from '@/lib/icons'
 import { isSubmitEnter } from '@/lib/ime'
 import { isProviderSetupErrorMessage } from '@/lib/provider-setup-errors'
@@ -38,6 +39,7 @@ import {
   startProviderOAuth
 } from '@/store/onboarding'
 import { $onboardingSurfaces, onboardingSurfaceActive } from '@/store/onboarding-presence'
+import { setSettingsScope } from '@/store/settings-scope'
 import type { OAuthProvider } from '@/types/hermes'
 
 import { DocsLink, FlowPanel, Status } from './flow'
@@ -46,6 +48,7 @@ import { DecodedLabel } from './glyph'
 import {
   FeaturedProviderRow,
   FireworksProviderRow,
+  KeyProviderRow,
   LocalModelsProviderRow,
   OpenRouterProviderRow,
   ProviderRow,
@@ -625,7 +628,8 @@ const persistShowAll = (value: boolean) => {
 }
 
 export function Picker({ ctx }: { ctx: OnboardingContext }) {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
+  const serviceCopy = modelServiceCopy[locale] ?? modelServiceCopy.en
   const { localEndpoint, manual, mode, providers } = useStore($desktopOnboarding)
   const [showAll, setShowAll] = useState(readShowAll)
   // Which key-form option to preselect when we flip to 'apikey' mode. The
@@ -685,24 +689,26 @@ export function Picker({ ctx }: { ctx: OnboardingContext }) {
   // (same contract as ChooseLaterLink) so the blocking overlay never
   // re-nags; manual mode just closes. window.location keeps this picker
   // router-independent (it renders outside the route tree on first run).
-  const openLocalModels = () => {
+  const openProviderSettings = (view: 'local' | 'custom-endpoints') => {
     if (manual) {
       closeManualOnboarding()
     } else {
       dismissFirstRunOnboarding()
     }
 
-    window.location.hash = '#/settings?tab=providers&pview=local'
+    setSettingsScope((ctx.scope ?? captureOnboardingScope(ctx.profile)).profile || 'default')
+    window.location.hash = `#/settings?tab=providers&pview=${view}`
   }
 
   return (
     <div className="grid gap-2">
       <div className="grid max-h-[60dvh] gap-2 overflow-y-auto p-1">
+        <KeyProviderRow onClick={() => openProviderSettings('custom-endpoints')} pitch={serviceCopy.customDescription} title={serviceCopy.custom} />
         {featured ? <FeaturedProviderRow onSelect={select} provider={featured} /> : null}
         {/* The no-account path: everything runs on this machine. Shipped
             behind the --local launch flag. (Fireworks moved into the
             expanded list on main.) */}
-        {$localModelsEnabled.get() ? <LocalModelsProviderRow onClick={openLocalModels} /> : null}
+        {$localModelsEnabled.get() ? <LocalModelsProviderRow onClick={() => openProviderSettings('local')} /> : null}
         {showRest ? (
           <>
             {/* Fireworks leads the expanded list, matching CANONICAL_PROVIDERS

@@ -4,7 +4,7 @@ import type { BillingBackendState } from '@/app/settings/billing/types'
 
 /** Presentation of existing authoritative Billing v2 facts; never an entitlement authority. */
 export interface ModelServiceStatus {
-  state: 'ready' | 'plan' | 'preparing' | 'expired' | 'credit' | 'reauth' | 'denied' | 'unavailable'
+  state: 'setup' | 'ready' | 'plan' | 'preparing' | 'expired' | 'credit' | 'reauth' | 'denied' | 'unavailable'
   detail?: string
   portalUrl?: string
 }
@@ -12,7 +12,8 @@ export interface ModelServiceStatus {
 export function cloudServiceStatus(result: BillingResult<BillingBackendState>): ModelServiceStatus {
   if (!result.ok) {
     return {
-      state: result.refusal.kind === 'unauthenticated' ? 'reauth'
+      state: result.refusal.kind === 'provider_not_configured' ? 'setup'
+        : result.refusal.kind === 'unauthenticated' ? 'reauth'
         : ['insufficient_scope', 'membership_revoked'].includes(result.refusal.kind) ? 'denied' : 'unavailable',
       detail: result.refusal.message
     }

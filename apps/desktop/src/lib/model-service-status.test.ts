@@ -28,6 +28,7 @@ describe('selected model-service facts', () => {
       expect(cloudServiceStatus({ ok: false, refusal: { kind, message: 'Unavailable' } }).state).toBe('unavailable')
     }
 
+    expect(cloudServiceStatus({ ok: false, refusal: { kind: 'provider_not_configured', message: 'Not configured' } }).state).toBe('setup')
     expect(cloudServiceStatus({ ok: false, refusal: { kind: 'unauthenticated', message: 'Expired' } }).state).toBe('reauth')
     expect(cloudServiceStatus({ ok: false, refusal: { kind: 'membership_revoked', message: 'Denied' } }).state).toBe('denied')
   })

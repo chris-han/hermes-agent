@@ -79,6 +79,29 @@ afterEach(() => {
 })
 
 describe('CustomEndpointsSettings', () => {
+  it('preserves an unchanged masked key and manual model after catalog failure; Cancel drops a new secret', async () => {
+    const retained = { ...savedResponse, endpoints: [{ ...savedResponse.endpoints[0], has_api_key: true }] }
+    getCustomEndpoints.mockResolvedValue(retained)
+    saveCustomEndpoint.mockResolvedValue(retained)
+    validateCustomEndpoint.mockResolvedValue({ ok: false, reachable: true, models: [], message: 'Catalog unsupported' })
+    render(<CustomEndpointsSettings />)
+    await screen.findByText('Profile A')
+    const key = screen.getByLabelText<HTMLInputElement>('API Key')
+    expect(key.value).toBe('')
+    fireEvent.click(screen.getByRole('button', { name: 'Test' }))
+    await screen.findByText('Catalog unsupported')
+    expect(screen.getByPlaceholderText<HTMLInputElement>('gpt-5.4').value).toBe('model-a')
+    fireEvent.click(screen.getByRole('button', { name: 'Save and use' }))
+    await waitFor(() => expect(saveCustomEndpoint).toHaveBeenCalledWith(expect.objectContaining({
+      api_key: undefined, model: 'model-a', base_url: 'http://profile-a.test/v1'
+    }), 'default'))
+    fireEvent.change(key, { target: { value: 'unsaved-private-key' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(key.value).toBe('')
+    expect(saveCustomEndpoint).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText('unsaved-private-key')?.textContent).not.toContain('unsaved-private-key')
+  })
+
   it('localizes endpoint editing on language changes without changing transport or draft identifiers', async () => {
     getCustomEndpoints.mockResolvedValue(emptyResponse)
     saveCustomEndpoint.mockResolvedValue(savedResponse)
