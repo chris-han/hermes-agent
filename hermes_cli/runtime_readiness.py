@@ -27,14 +27,26 @@ def check_runtime_readiness(requested=None, *, strict_profile_scope=False, resol
         configured_model = str(cfg_model.get('default') or cfg_model.get('model') or '') or None
     else:
         configured_model = cfg_model if isinstance(cfg_model, str) and cfg_model else None
-    if resolve is not None:
-        model, runtime = resolve()
-    elif requested:
-        model = configured_model
-        runtime = resolve_runtime_provider(requested=requested, target_model=configured_model)
-    else:
-        runtime, entry = resolve_runtime_with_fallback(config, target_model=configured_model)
-        model = (entry or {}).get('model') or configured_model or runtime.get('model')
+    try:
+        if resolve is not None:
+            model, runtime = resolve()
+        elif requested:
+            model = configured_model
+            runtime = resolve_runtime_provider(requested=requested, target_model=configured_model)
+        else:
+            runtime, entry = resolve_runtime_with_fallback(config, target_model=configured_model)
+            model = (entry or {}).get('model') or configured_model or runtime.get('model')
+    except Exception as error:
+        selected = requested or (cfg_model.get('provider') if isinstance(cfg_model, dict) else None)
+        if selected == 'custom' and isinstance(cfg_model, dict):
+            from agent.semantier_gateway import cloud_connection_config, is_gateway_route
+            binding = cloud_connection_config() or {}
+            if binding.get('credential_ref') and is_gateway_route(cfg_model.get('base_url', '')):
+                selected = 'semantier-cloud'
+        if selected != 'semantier-cloud':
+            raise
+        return {'ok': False, 'provider': selected, 'source': selected,
+                'model': configured_model, 'error': str(error)}
     configured = bool(_has_any_provider_configured(strict_profile_scope=strict_profile_scope))
     provider = runtime.get('provider') or 'provider'
     source = str(runtime.get('source') or '')

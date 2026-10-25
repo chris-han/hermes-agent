@@ -44,3 +44,35 @@ def test_local_launch_bootstraps_before_provider_guard(monkeypatch):
                         lambda: events.append('inventory') or True)
     assert ensure_launch_provider(SimpleNamespace())
     assert events == [('boot', {'announce': False}), 'inventory']
+
+
+@pytest.mark.parametrize('provider,native_binding,expected_cloud', [
+    ('semantier-cloud', True, True),
+    ('custom', True, True),
+    ('custom', False, False),
+])
+def test_canonical_authority_retains_revoked_native_service_source(
+        monkeypatch, tmp_path, provider, native_binding, expected_cloud):
+    """The registered Desktop uses this authority path, independently of the legacy TUI."""
+    from gateway.session_readiness import readiness
+    from hermes_cli.cloud_device_client import CloudCredentialError
+    from agent import semantier_gateway as cloud
+    home = tmp_path / 'profile'
+    home.mkdir()
+    base = 'http://127.0.0.1:8899/v1'
+    monkeypatch.setattr('hermes_cli.config.load_config', lambda: {
+        'model': {'provider': provider, 'default': 'cloud-model', 'base_url': base}})
+    monkeypatch.setattr(cloud, 'cloud_connection_config', lambda: {
+        'base_url': base, **({'credential_ref': 'native-owned-ref'} if native_binding else {})})
+    def revoked(*args, **kwargs):
+        raise CloudCredentialError('Native credential revoked; reauthorize.')
+    monkeypatch.setattr('hermes_cli.runtime_provider.resolve_runtime_with_fallback', revoked)
+    authority = SimpleNamespace(profile_id=str(home))
+    actor = SimpleNamespace(profile_id=str(home), capabilities={'session:create'})
+    result = asyncio.run(readiness(authority, actor, {}, runtime=True))
+    assert result['ok'] is False
+    if expected_cloud:
+        assert result['source'] == result['provider'] == 'semantier-cloud'
+        assert result['model'] == 'cloud-model'
+    else:
+        assert result.get('source') != 'semantier-cloud'
