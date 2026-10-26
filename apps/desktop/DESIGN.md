@@ -43,7 +43,7 @@ one-off at the call site.
 7. **Immediate feedback.** Direct manipulation updates the view first. Network
    or disk persistence reconciles afterward and rolls back visibly on failure.
 
-The untitled default Bot is displayed as **Semantier** in the roster and empty-chat title. Both use the shared Bot display-name resolver; explicit titles, aliases and profile display names remain authoritative. The empty-chat wordmark retains the existing Manrope treatment.
+The confirmed native local desktop’s ordinary bot is **semantier-local** (shown as **Semantier Local** unless explicitly titled). Its legacy Hermes root is not a second ordinary Bots entry. Explicitly opened legacy-root chats retain their historical naming and identity. Explicit titles, aliases and profile display names remain authoritative. The empty-chat wordmark retains the existing Manrope treatment.
 
 ## Product presentation
 
@@ -650,3 +650,7 @@ On the native local source whose saved startup default is `semantier-local`, tha
 Test reports explicit localized reachability/model-discovery success immediately below the API key/Test row, with the catalog/authentication-only coverage note. Clear the previous result when another test starts; announce the fresh result through the existing polite status region. Failure remains failure even when the endpoint is reachable. Testing does not save configuration or send inference.
 
 The existing desktop default (`nous` identity retained for saved preferences) uses Asimov Action Yellow `#e8c92d` with dark action ink `#1a2028`. Its light accent text/focus role is `#665300`; dark uses the yellow role. The shared `text-primary` utility and explicit opacity consumers use the readable text role, while fills retain yellow. Preserve neutral chrome, typography, geometry, terminal/category colors, other selectable themes and shared upstream palettes. Imported themes retain their existing loud-fill behavior. This is an accent-only adjustment, not a full Asimov style migration.
+
+## Managed desktop bot roster
+
+Use the native saved default route mirrored read-only through `host.state.defaultProfileRoute`. When that route selects `local::semantier-local` and a current local managed row exists, omit only `local::default` from ordinary visible/hidden roster entries and their display counts. Prefer the managed bot for initial selection. Keep the complete underlying roster for group membership, mentions, canonical chats, metadata and existing selected owners; no profile deletion, aliasing, chat creation or inference follows from choosing an initial roster highlight. Missing/stale/ghost-only facts, other sources and remote roots retain their existing behavior. Existing valid selection always wins over the default preference.

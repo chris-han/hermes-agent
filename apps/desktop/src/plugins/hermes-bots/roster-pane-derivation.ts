@@ -30,6 +30,7 @@ export interface RosterGroupRow {
 
 interface RosterRowsInput {
   roster: RosterRow[]
+  displayRoster?: RosterRow[]
   allMeta: Record<string, BotMeta>
   gatewayFilter: string
   query: string
@@ -44,6 +45,7 @@ interface RosterRowsInput {
 
 export function deriveRosterRows({
   roster,
+  displayRoster = roster,
   allMeta,
   gatewayFilter,
   query,
@@ -58,8 +60,8 @@ export function deriveRosterRows({
   const activeSourceRoster = roster.filter(bot => !bot.remoteSource)
   // Hidden rows remain fully alive and recoverable at the bottom. Every
   // non-display consumer continues to receive the complete roster.
-  const hiddenBots = roster.filter(bot => isBotHidden(bot, allMeta))
-  const visibleRoster = roster.filter(bot => !isBotHidden(bot, allMeta))
+  const hiddenBots = displayRoster.filter(bot => isBotHidden(bot, allMeta))
+  const visibleRoster = displayRoster.filter(bot => !isBotHidden(bot, allMeta))
   const gatewayRoster = filterBotsByGateway(visibleRoster, gatewayFilter)
 
   const filteredRoster = filterBots(gatewayRoster, allMeta, query).filter((bot: RosterRow) =>

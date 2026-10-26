@@ -33,6 +33,7 @@ import {
   sourceByConnection,
   useRoster
 } from './data'
+import { desktopBotRoster, type NativeDefaultRoute, preferredDesktopBot } from './desktop-roster'
 import { $groupChats, $groupChatWorkspace, $groupClarify, $groupNeedsYou } from './group-chat'
 import { GroupChatWorkspace, openGroupChat } from './group-chat-view'
 import { groupChatMemberBots } from './group-membership'
@@ -123,7 +124,7 @@ function rosterWithSelectedOwner(roster: RosterRow[], sources: GatewaySource[], 
  *  first selection when there is none. PRESENTATION ONLY: it never opens,
  *  prepares, activates, or creates anything — an unreachable owner keeps its
  *  selection rather than falling back onto some other gateway's bot. */
-function reconcileRosterSelection(roster: RosterRow[], sources: GatewaySource[], metaByName: Record<string, BotMeta>) {
+export function reconcileRosterSelection(roster: RosterRow[], sources: GatewaySource[], metaByName: Record<string, BotMeta>, defaultRoute: NativeDefaultRoute) {
   if (!$rosterHydrated.get() || !$selectedRosterHydrated.get()) {
     return
   }
@@ -138,9 +139,11 @@ function reconcileRosterSelection(roster: RosterRow[], sources: GatewaySource[],
     clearSelectedRosterKey(key)
   }
 
-  const first = (Array.isArray(roster) ? roster : []).find(
+  const available = desktopBotRoster(Array.isArray(roster) ? roster : [], defaultRoute).filter(
     bot => !isBotHidden(bot, metaByName) && botSourceStatus(annotateBotSource(bot, sources)).available
   )
+
+  const first = preferredDesktopBot(available, defaultRoute) ?? available[0]
 
   if (first) {
     saveSelectedRosterBot(first)
@@ -204,7 +207,8 @@ function useReconcileRosterOwner(
   selectionHydrated: boolean,
   roster: RosterRow[],
   sourceSnapshot: GatewaySource[],
-  allMeta: Record<string, BotMeta>
+  allMeta: Record<string, BotMeta>,
+  defaultRoute: NativeDefaultRoute
 ) {
   // The roster has ANSWERED once data or a terminal error exists — that, not
   // row count, is what lets this pane stop showing its loading state (an empty
@@ -219,14 +223,14 @@ function useReconcileRosterOwner(
     $rosterHydrated.set(true)
 
     if (selectionHydrated) {
-      reconcileRosterSelection(roster, sourceSnapshot, allMeta)
+      reconcileRosterSelection(roster, sourceSnapshot, allMeta, defaultRoute)
       const selected = selectedRosterBot(roster, $selectedRosterKey.get())
 
       if ($botsPaneVisible.get() && !$groupChatWorkspace.get() && selected) {
         setBotsWorkspaceOwner(botWorkspaceOwnerKey(selected), selected)
       }
     }
-  }, [data, error, selectionHydrated, roster, sourceSnapshot, allMeta])
+  }, [data, error, selectionHydrated, roster, sourceSnapshot, allMeta, defaultRoute])
 }
 
 export function BotsPane() {
@@ -275,6 +279,7 @@ export function BotsPane() {
   const rosterHydrated = useValue($rosterHydrated)
   const selectionHydrated = useValue($selectedRosterHydrated)
   const selectedRosterKey = useValue($selectedRosterKey)
+  const defaultRoute = useValue(host.state.defaultProfileRoute)
 
   // The socket opening (boot, SSH reconnect, sleep/wake) is the signal to
   // retry immediately instead of waiting out the poll interval.
@@ -297,6 +302,7 @@ export function BotsPane() {
     selectionHydrated && rosterHydrated ? rosterWithSelectedOwner(source, sourceSnapshot, selectedRosterKey) : source
 
   const { roster, activityOf, isPinned } = sortRosterBots(sourceWithSelectedOwner, allMeta)
+  const displayRoster = desktopBotRoster(roster, defaultRoute)
 
   // Sections made on ANOTHER desktop arrive as id + name on each member's
   // ui_meta; rebuild the records this machine has never seen so the roster
@@ -320,7 +326,7 @@ export function BotsPane() {
     activeBots(roster, workingOwner, turnBusy, Date.now(), activeConnectionId, groupKeys).map(botRosterKey)
   )
 
-  const gatewayOptions = rosterGatewayOptions(sourceSnapshot, roster)
+  const gatewayOptions = rosterGatewayOptions(sourceSnapshot, displayRoster)
   const selectedGateway = gatewayOptions.find(option => option.connectionId === gatewayFilter)
   const gatewayFilterExists = gatewayFilter === 'all' || Boolean(selectedGateway)
   useEffect(() => {
@@ -342,6 +348,7 @@ export function BotsPane() {
     showGatewaySections
   } = deriveRosterRows({
     roster,
+    displayRoster,
     allMeta,
     gatewayFilter,
     query,
@@ -373,7 +380,7 @@ export function BotsPane() {
     filteredHiddenBots,
     hiddenBots,
     hiddenExpanded,
-    roster,
+    roster: displayRoster,
     groupNames,
     visibleRoster,
     gatewayOptions
@@ -410,7 +417,7 @@ export function BotsPane() {
   }, [hiddenExpanded, hasRosterConstraint])
   usePublishRosterSnapshot({ data, live, roster, allMeta, activeSourceRoster })
 
-  useReconcileRosterOwner(data, error, selectionHydrated, roster, sourceSnapshot, allMeta)
+  useReconcileRosterOwner(data, error, selectionHydrated, roster, sourceSnapshot, allMeta, defaultRoute)
 
   const staleNotice =
     error && !live && roster.length

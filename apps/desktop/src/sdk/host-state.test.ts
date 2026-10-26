@@ -32,6 +32,17 @@ describe('host.state focused-session atoms', () => {
     return { host, states, session }
   }
 
+  it('mirrors the native default profile route without changing the active conversation', async () => {
+    const { host } = await setup()
+    const { $defaultProfileRoute } = await import('@/store/default-profile')
+    const { $activeGatewayProfile } = await import('@/store/profile')
+    const active = $activeGatewayProfile.get()
+    $defaultProfileRoute.set({ connectionId: null, profile: 'semantier-local' })
+    expect(host.state.defaultProfileRoute.get()).toEqual({ connectionId: null, profile: 'semantier-local' })
+    expect($activeGatewayProfile.get()).toBe(active)
+    $defaultProfileRoute.set(null)
+  })
+
   it('exposes the registry source that owns the active gateway', async () => {
     const { host, session } = await setup()
 

@@ -50,6 +50,7 @@ import type { WorkspaceMode } from '@/contrib/types'
 import { deleteProfile, getLogs, getStatus, hermesApi, type HermesGateway } from '@/hermes'
 import { traceIdentityChange } from '@/lib/identity-trace'
 import { completeMcpDesktopOAuth } from '@/lib/mcp-dashboard-oauth'
+import { $defaultProfileRoute } from '@/store/default-profile'
 import {
   $gateway,
   activeGatewayConnectionId,
@@ -591,6 +592,8 @@ export const host = {
     busyBySession: readonlyAtom<Record<string, boolean>>($busyBySession),
     /** Registry source that owns the active gateway, when source-scoped. */
     connectionId: readonlyAtom<null | string>($activeConnectionId),
+    /** Native desktop startup preference, mirrored read-only; never a chat-owner alias. */
+    defaultProfileRoute: readonlyAtom($defaultProfileRoute),
     /** Active workspace cwd ('' when detached). */
     cwd: readonlyAtom<string>($currentCwd),
     /** Runtime id of the FOCUSED chat session — the interacted tile, else the
