@@ -30,7 +30,7 @@ def acceptance_request(*,commit,controller,version,source_version,base):
     value=dict(schema=1,buildId=uuid4().hex,channel='semantier-acceptance',sequence=sequence,
                repository='chris-han/hermes-agent',commit=commit,controllerCommit=controller,
                sourceVersion=source_version,version=version,windowsVersion=version+'.0',
-               releaseTag='v'+version,identity=IDENTITY,bundleEnv={},publicBase=base,
+               releaseTag='v'+version,identity=IDENTITY,bundleEnv={'HERMES_HOME':None,'HERMES_DATA_DIR_SUFFIX':'-semantier-acceptance'},publicBase=base,
                semantierScope='semantier-windows-x64/v1')
     validate_request(value)
     return value
