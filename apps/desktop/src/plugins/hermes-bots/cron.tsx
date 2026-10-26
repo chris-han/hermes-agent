@@ -1214,7 +1214,7 @@ export function RoutinesPane() {
   const bot = String(owner?.name || focusedOwner?.name || 'default').trim() || 'default'
   const allMeta = useValue($botMeta)
   const meta = owner ? botRosterMeta(owner, allMeta) : null
-  const { shape, color, image } = botAppearance(bot, meta)
+  const { shape, color, image } = botAppearance(bot, meta, owner)
   const { data, error, isLoading, refetch } = useRoutines(owner)
   const b = useBots()
   const { t } = useI18n()

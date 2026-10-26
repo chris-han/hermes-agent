@@ -196,6 +196,7 @@ export type BotsMessages = {
   /** Avatar picker: shapes, blobs, pets, uploads, generation. */
   avatar: {
     classicShapes: string
+    square: string
     blobFromName: string
     unlockFollowsName: string
     randomize: string

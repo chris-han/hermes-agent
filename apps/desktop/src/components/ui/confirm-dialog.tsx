@@ -132,9 +132,9 @@ export function ConfirmDialog({
       <DialogContent
         className="max-w-md"
         onKeyDown={event => {
-          // Enter/Space confirm regardless of which button holds focus
-          // (preventDefault stops a focused Cancel from swallowing it).
-          if ((event.key === 'Enter' || event.key === ' ') && !busy) {
+          // Enter/Space confirms from the primary action or dialog body.
+          // Other focused buttons retain their native keyboard action.
+          if ((event.key === 'Enter' || event.key === ' ') && !busy && !(event.target instanceof HTMLButtonElement && event.target !== confirmRef.current)) {
             event.preventDefault()
             void run()
           }

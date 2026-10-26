@@ -353,7 +353,7 @@ export interface GatewaySource {
   reachable?: boolean
 }
 
-export type AvatarShape = 'circle' | 'cloud' | 'drop' | 'hexagon' | 'pill' | 'squircle' | 'triangle'
+export type AvatarShape = 'circle' | 'cloud' | 'drop' | 'hexagon' | 'pill' | 'square' | 'squircle' | 'triangle'
 
 export type BlobKind =
   'boxy' | 'capsule' | 'cloud' | 'droplet' | 'hexagon' | 'nub' | 'organic' | 'round' | 'sun' | 'triangle'

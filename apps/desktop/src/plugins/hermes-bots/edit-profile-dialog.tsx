@@ -57,7 +57,7 @@ export function EditProfileDialog({ bot, open, onClose }: EditProfileDialogProps
   // returns null a few lines down when `bot` is null, so the seeded value is
   // thrown away before anything renders.
   const appearance: EditProfileAppearance = bot
-    ? botAppearance(bot.name, meta)
+    ? botAppearance(bot.name, meta, bot)
     : {
         shape: 'circle',
         color: null

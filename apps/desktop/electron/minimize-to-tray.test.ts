@@ -56,7 +56,7 @@ class Window extends EventEmitter {
   destroyed = false
   skipped = false
   focused = false
-  webContents = { send: vi.fn() }
+  webContents = { send: vi.fn(), mainFrame: {} }
   isDestroyed() {
     return this.destroyed
   }
@@ -158,9 +158,8 @@ test.runIf(process.platform === 'win32').each([false, true])(
   async enabled => {
     const { controller, main } = setup()
     await controller.setEnabled(enabled)
-    native.confirmClose.mockReturnValue(1)
-
     expect(main.close().preventDefault).toHaveBeenCalledOnce()
+    await answerClose(main, 'quit')
     expect(native.app.quit).toHaveBeenCalledOnce()
     expect(main.visible).toBe(true)
     expect(main.destroyed).toBe(false)
@@ -168,7 +167,7 @@ test.runIf(process.platform === 'win32').each([false, true])(
     controller.beginQuit()
     main.close()
     expect(main.destroyed).toBe(true)
-    expect(native.confirmClose).toHaveBeenCalledOnce()
+    expect(native.confirmClose).not.toHaveBeenCalled()
   }
 )
 
@@ -177,17 +176,16 @@ test.runIf(process.platform === 'win32').each([false, true])(
   async enabled => {
     const { controller, main } = setup()
     await controller.setEnabled(enabled)
-    native.confirmClose.mockReturnValue(2)
-
     expect(main.close().preventDefault).toHaveBeenCalledOnce()
+    await answerClose(main, 'cancel')
     expect(main.visible).toBe(true)
     expect(native.app.quit).not.toHaveBeenCalled()
 
-    native.confirmClose.mockReturnValue(0)
     main.close()
     main.close()
+    await answerClose(main, 'background')
     await flushDeferredHide()
-    expect(native.confirmClose).toHaveBeenCalledTimes(enabled ? 3 : 2)
+    expect(native.confirmClose).not.toHaveBeenCalled()
     expect(main.visible).toBe(false)
     expect(main.destroyed).toBe(false)
     expect(controller.status().available).toBe(true)
@@ -302,6 +300,7 @@ test('Windows tray hide releases keyboard focus before hiding (#126570)', async 
     const blur = vi.spyOn(main, 'blur')
     const hide = vi.spyOn(main, 'hide')
     main.close()
+    await answerClose(main, 'background')
     expect(main.visible).toBe(false)
     expect(main.focused).toBe(false)
     expect(blur).toHaveBeenCalledOnce()
@@ -439,7 +438,8 @@ test('persistence, disabling, failed tray creation, and handoff never strand hid
 
   if (process.platform === 'win32') {
     expect(failed.main.visible).toBe(true)
-    expect(native.confirmClose).toHaveBeenLastCalledWith(failed.main, expect.objectContaining({ type: 'warning' }))
+    expect(await answerClose(failed.main, 'background')).toEqual({ ok: false, reason: 'background-unavailable' })
+    expect(native.confirmClose).not.toHaveBeenCalled()
   }
 
   fs.writeFileSync(path.join(home, 'minimize-to-tray.json'), 'bad json')
@@ -449,4 +449,60 @@ test('persistence, disabling, failed tray creation, and handoff never strand hid
   disabled.main.close()
   expect(disabled.main.destroyed).toBe(process.platform !== 'win32')
   expect(native.app.quit).not.toHaveBeenCalled()
+})
+
+const closeRequest = (win: Window) => native.ipc.get('hermes:minimize-to-tray:close-request')!({ sender: win.webContents, senderFrame: win.webContents.mainFrame })
+
+const answerClose = (win: Window, action: string, id = closeRequest(win)?.id) =>
+  native.ipc.get('hermes:minimize-to-tray:close-answer')!({ sender: win.webContents, senderFrame: win.webContents.mainFrame }, id, action)
+
+test('Windows close uses a scoped renderer choice, coalesces close clicks and cancels without mutation', async () => {
+  setPlatform('win32')
+
+  try {
+    const { controller, main, peer } = setup()
+    await controller.start()
+    main.close()
+    main.close()
+    const request = closeRequest(main)
+    expect(request.id).toEqual(expect.any(String))
+    expect(main.webContents.send).toHaveBeenCalledWith('hermes:minimize-to-tray:close-requested', request)
+    expect(main.webContents.send.mock.calls.filter(([event]) => event.endsWith('close-requested'))).toHaveLength(1)
+    expect(closeRequest(peer)).toBeNull()
+    expect(await answerClose(peer, 'quit', request.id)).toEqual({ ok: false, reason: 'invalid-request' })
+    expect(await answerClose(main, 'quit', 'old-request')).toEqual({ ok: false, reason: 'invalid-request' })
+    expect(await answerClose(main, 'unknown')).toEqual({ ok: false, reason: 'invalid-request' })
+    expect(await native.ipc.get('hermes:minimize-to-tray:close-answer')!({ sender: main.webContents, senderFrame: {} }, request.id, 'quit')).toEqual({ ok: false, reason: 'invalid-request' })
+    expect(await answerClose(main, 'cancel')).toEqual({ ok: true })
+    expect(closeRequest(main)).toBeNull()
+    expect(main.visible).toBe(true)
+    expect(native.app.quit).not.toHaveBeenCalled()
+    expect(native.confirmClose).not.toHaveBeenCalled()
+  } finally { restorePlatform() }
+})
+
+test('Windows renderer background/quit choices retain lifecycle ownership and surface tray failure', async () => {
+  setPlatform('win32')
+
+  try {
+    const { controller, main } = setup()
+    await controller.setEnabled(false)
+    main.close()
+    native.fail = true
+    expect(await answerClose(main, 'background')).toEqual({ ok: false, reason: 'background-unavailable' })
+    expect(main.visible).toBe(true)
+    expect(closeRequest(main)).toBeTruthy()
+    native.fail = false
+    const background = answerClose(main, 'background')
+    expect(await answerClose(main, 'background')).toEqual({ ok: false, reason: 'busy' })
+    expect(await background).toEqual({ ok: true })
+    expect(main.visible).toBe(false)
+    expect(closeRequest(main)).toBeNull()
+    expect(JSON.parse(fs.readFileSync(path.join(home, 'minimize-to-tray.json'), 'utf8')).enabled).toBe(false)
+    controller.restore()
+    main.close()
+    expect(await answerClose(main, 'quit')).toEqual({ ok: true })
+    expect(native.app.quit).toHaveBeenCalledOnce()
+    expect(native.confirmClose).not.toHaveBeenCalled()
+  } finally { restorePlatform() }
 })

@@ -27,7 +27,7 @@ vi.mock('@hermes/plugin-sdk', async () => {
     atom,
     blobatarSvg: (seed: string, opts: unknown) => blobatarSvgMock(seed, opts) as string,
     createBudgetedLoop: undefined,
-    host: { state: { connectionId: { get: () => 'local' } } },
+    host: { state: { connectionId: { get: () => 'local' }, defaultProfileRoute: { get: () => ({ connectionId: null, profile: 'semantier-local' }) } } },
     profileColor: (name: string) => (name === 'inbox-triage' ? '#38bdf8' : '#8b5cf6'),
     PROFILE_SWATCHES: ['#38bdf8', '#8b5cf6'],
     queryClient: undefined,
@@ -158,7 +158,7 @@ describe('an SDK that predates blobatarSvg', () => {
         atom,
         blobatarSvg: undefined,
         createBudgetedLoop: undefined,
-        host: { state: { connectionId: { get: () => 'local' } } },
+        host: { state: { connectionId: { get: () => 'local' }, defaultProfileRoute: { get: () => ({ connectionId: null, profile: 'semantier-local' }) } } },
         profileColor: () => '#8b5cf6',
         PROFILE_SWATCHES: [],
         queryClient: undefined,
@@ -175,6 +175,16 @@ describe('an SDK that predates blobatarSvg', () => {
 })
 
 describe('primary bot appearance', () => {
+  it('uses a Semantier green square for the managed local bot, preserving explicit and remote choices', async () => {
+    const { botAppearance, BotFace } = await import('./avatar')
+    const local = { name: 'semantier-local', connectionId: 'local', connectionKind: 'local' }
+    expect(botAppearance(local.name, { color: '#8b5cf6', shape: 'drop' }, local)).toMatchObject({ color: '#9fe870', shape: 'square' })
+    expect(botAppearance(local.name, { custom: true, color: '#38bdf8', shape: 'cloud', image: 'photo.png' }, local)).toMatchObject({ color: '#38bdf8', shape: 'cloud', image: 'photo.png' })
+    expect(botAppearance(local.name, { color: '#8b5cf6', shape: 'drop' }, { ...local, connectionId: 'lab', connectionKind: 'remote' })).toMatchObject({ color: '#8b5cf6', shape: 'drop' })
+    const { container } = render(<BotFace color="#9fe870" name={local.name} shape="square" />)
+    expect(container.querySelector('svg[data-hb-shape="square"] path[fill="#9fe870"]')).toBeTruthy()
+  })
+
   it('uses Semantier green for the default bot while preserving explicit customization', async () => {
     const { botAppearance } = await import('./avatar')
 

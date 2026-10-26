@@ -1,12 +1,17 @@
+import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Tray } from 'electron'
+import { app, BrowserWindow, ipcMain, Menu, nativeImage, Tray } from 'electron'
 
 export interface MinimizeToTrayStatus {
   enabled: boolean
   available: boolean
 }
+
+export interface WindowCloseRequest { id: string }
+export type WindowCloseAction = 'background' | 'quit' | 'cancel'
+export interface WindowCloseResult { ok: boolean; reason?: 'invalid-request' | 'busy' | 'background-unavailable' }
 
 interface Options {
   preferencesPath: string
@@ -27,6 +32,12 @@ export function createMinimizeToTray(options: Options) {
   let pending = Promise.resolve()
   const windows = new Set<BrowserWindow>()
   const hidden = new Set<BrowserWindow>()
+  const closeRequests = new Map<BrowserWindow, WindowCloseRequest & { busy: boolean; background: () => Promise<boolean> }>()
+
+  const requestingWindow = (event: Electron.IpcMainInvokeEvent) => [...windows].find(win =>
+    !win.isDestroyed() && win.webContents === event.sender && event.senderFrame === win.webContents.mainFrame
+  )
+
 
   const status = (): MinimizeToTrayStatus => ({ enabled, available: !!tray && !tray.isDestroyed() })
 
@@ -280,30 +291,18 @@ export function createMinimizeToTray(options: Options) {
           return
         }
 
-        const response = dialog.showMessageBoxSync(win, {
-          type: 'question',
-          title: 'Close Semantier Agent',
-          message: 'Keep Semantier Agent running in the background?',
-          detail:
-            'Keep running hides this window in the system tray. Quit exits Semantier Agent and stops connections it manages. A separately managed gateway keeps running.',
-          buttons: ['Keep Running in Background', 'Quit Semantier Agent', 'Cancel'],
-          defaultId: 0,
-          cancelId: 2,
-          noLink: true
-        })
-
-        if (response === 0) {
-          if (!hide()) {
-            void startBackground()
-          }
-        } else if (response === 1) {
-          // Preserve the existing active-work confirmation and shutdown coordinator.
-          app.quit()
+        if (closeRequests.has(win)) {
+          return
         }
+
+        const request = { id: randomUUID(), busy: false, background: startBackground }
+        closeRequests.set(win, request)
+        win.webContents.send('hermes:minimize-to-tray:close-requested', { id: request.id })
+
       })
     }
 
-    async function startBackground() {
+    async function startBackground(): Promise<boolean> {
       backgroundPending = true
 
       try {
@@ -311,15 +310,8 @@ export function createMinimizeToTray(options: Options) {
         // Enable it for this run without rewriting the user's saved preference.
         await apply(true)
 
-        if (!hide() && !win.isDestroyed() && !quitting && !options.isQuittingForHandoff()) {
-          dialog.showMessageBoxSync(win, {
-            type: 'warning',
-            message: 'Background mode is unavailable.',
-            detail:
-              'Semantier could not create a system tray icon. The window will stay open so you can try again or quit.',
-            buttons: ['OK']
-          })
-        }
+        return hide() || win.isDestroyed() || quitting || options.isQuittingForHandoff()
+
       } finally {
         backgroundPending = false
       }
@@ -352,6 +344,7 @@ export function createMinimizeToTray(options: Options) {
     win.on('restore', release)
     win.on('closed', () => {
       windows.delete(win)
+      closeRequests.delete(win)
       hidden.delete(win)
       syncDock()
     })
@@ -393,10 +386,50 @@ export function createMinimizeToTray(options: Options) {
     return operation
   }
 
+  ipcMain.handle('hermes:minimize-to-tray:close-request', event => {
+    const win = requestingWindow(event)
+    const request = win && closeRequests.get(win)
+
+    return request ? { id: request.id } : null
+  })
+  ipcMain.handle('hermes:minimize-to-tray:close-answer', async (event, id: unknown, action: unknown): Promise<WindowCloseResult> => {
+    const win = requestingWindow(event)
+    const request = win && closeRequests.get(win)
+
+    if (!win || !request || request.id !== id || typeof action !== 'string' || !['background', 'quit', 'cancel'].includes(action)) {
+      return { ok: false, reason: 'invalid-request' }
+    }
+
+    if (request.busy) { return { ok: false, reason: 'busy' } }
+
+    if (action === 'background') {
+      request.busy = true
+
+      try {
+        if (!await request.background()) {
+          return { ok: false, reason: 'background-unavailable' }
+        }
+      } catch (error) {
+        options.log(`[tray] background choice failed: ${error}`)
+
+        return { ok: false, reason: 'background-unavailable' }
+      } finally {
+        request.busy = false
+      }
+    }
+
+    closeRequests.delete(win)
+
+    if (action === 'quit') { app.quit() }
+
+    return { ok: true }
+  })
+
   ipcMain.handle('hermes:minimize-to-tray:get', status)
   ipcMain.handle('hermes:minimize-to-tray:set', (_event, on) => setEnabled(on === true))
   app.on('will-quit', () => {
     quitting = true
+    closeRequests.clear()
     destroyTray()
   })
 

@@ -9,7 +9,8 @@
 import * as sdk from '@hermes/plugin-sdk'
 import { profileColor } from '@hermes/plugin-sdk'
 
-import type { AvatarAppearance, AvatarShape, BotMeta, FaceMood } from './types'
+import { preferredDesktopBot } from './desktop-roster'
+import type { AvatarAppearance, AvatarShape, BotMeta, FaceMood, RosterRow } from './types'
 
 // Deterministic blob avatars (name → face). Feature-detected: older SDKs
 // without the export fall back to the legacy math-face shapes below.
@@ -24,7 +25,7 @@ const createBudgetedLoop = typeof sdk === 'undefined' ? undefined : sdk.createBu
 // solids remain render-only so any bot that picked one during the experiments
 // keeps its look.
 const AVATAR_SHAPES: AvatarShape[] = ['circle', 'squircle', 'pill', 'triangle', 'hexagon', 'cloud', 'drop']
-export const AVATAR_PICKER_SHAPES = ['circle', 'blob', 'squircle', 'pill', 'triangle', 'hexagon', 'cloud', 'drop']
+export const AVATAR_PICKER_SHAPES = ['circle', 'blob', 'squircle', 'square', 'pill', 'triangle', 'hexagon', 'cloud', 'drop']
 
 /** xorshift PRNG seeded from a string — stable across sessions/platforms. */
 function sigilRng(text: string) {
@@ -529,6 +530,8 @@ function sampleFaceRing(shape: null | string | undefined, steps = 52): FacePoint
       rx = ry = 16.2
     } else if (kind === 'blob') {
       rx = ry = 16 + 1.7 * Math.sin(3 * a) + 0.7 * Math.cos(5 * a)
+    } else if (kind === 'square') {
+      rx = ry = 16.2 / (Math.max(Math.abs(c), Math.abs(s)) || 1)
     } else if (kind === 'squircle') {
       const p = 5
       const d = Math.pow(Math.abs(c) ** p + Math.abs(s) ** p, 1 / p) || 1
@@ -1131,19 +1134,20 @@ export function avatarColor(color: null | string | undefined, name: string): str
   return color || profileColor(name) || PRIMARY_AVATAR_COLOR
 }
 
-export function botAppearance(name: string, meta: BotMeta | null | undefined): AvatarAppearance {
+export function botAppearance(name: string, meta: BotMeta | null | undefined, owner?: RosterRow | null): AvatarAppearance {
   // The primary profile is literally named "default"; the SDK's profileColor
   // can hand it a near-black that renders as an ugly black square, and any
   // auto-seeded color in local bot-meta would otherwise stick. Give the
   // primary a fixed branded look (a Semantier green squircle). A user's
   // EXPLICIT customization still wins: an uploaded/generated/pet image, or a
   // shape/color they set via the editor (tracked by meta.custom === true).
-  const isPrimary = (name || '').trim().toLowerCase() === 'default'
+  const managed = Boolean(owner && preferredDesktopBot([owner], sdk.host?.state?.defaultProfileRoute?.get?.() ?? null))
+  const isPrimary = managed || (name || '').trim().toLowerCase() === 'default'
   const userCustomized = Boolean(meta?.custom)
 
   if (isPrimary && !userCustomized) {
     return {
-      shape: 'squircle',
+      shape: managed ? 'square' : 'squircle',
       color: PRIMARY_AVATAR_COLOR,
       image: meta?.image || null
     }

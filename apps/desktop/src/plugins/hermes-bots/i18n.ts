@@ -224,6 +224,7 @@ const en: BotsMessages = {
   },
   avatar: {
     classicShapes: 'Classic shapes',
+    square: 'Square',
     blobFromName: 'Blob face — drawn from the bot’s name',
     unlockFollowsName: 'Unlock — the face follows the bot’s name again',
     randomize: 'Randomize',
@@ -665,6 +666,7 @@ const ja: BotsMessages = {
   },
   avatar: {
     classicShapes: 'クラシックシェイプ',
+    square: '正方形',
     blobFromName: 'ブロブ顔 — ボットの名前から描画',
     unlockFollowsName: 'ロック解除 — 顔がボットの名前に再び追従します',
     randomize: 'ランダム',
@@ -1099,6 +1101,7 @@ const zh: BotsMessages = {
   },
   avatar: {
     classicShapes: '经典形状',
+    square: '正方形',
     blobFromName: '斑点脸 — 根据机器人名称绘制',
     unlockFollowsName: '解锁 — 面孔再次跟随机器人名称',
     randomize: '随机',
@@ -1526,6 +1529,7 @@ const zhHant: BotsMessages = {
   },
   avatar: {
     classicShapes: '經典形狀',
+    square: '正方形',
     blobFromName: '斑點臉 — 依機器人名稱繪製',
     unlockFollowsName: '解鎖 — 面孔再次跟隨機器人名稱',
     randomize: '隨機',
@@ -1781,11 +1785,11 @@ export const BOTS_LOCALES: PluginLocaleBundles = {
   ja,
   zh,
   'zh-hant': zhHant,
-  ar: { canonical: CANONICAL_GROUP_LOCALES.ar },
-  ru: { canonical: CANONICAL_GROUP_LOCALES.ru },
-  fr: { canonical: CANONICAL_GROUP_LOCALES.fr },
-  de: { canonical: CANONICAL_GROUP_LOCALES.de },
-  es: { canonical: CANONICAL_GROUP_LOCALES.es }
+  ar: { canonical: CANONICAL_GROUP_LOCALES.ar, avatar: { square: 'مربع' } },
+  ru: { canonical: CANONICAL_GROUP_LOCALES.ru, avatar: { square: 'Квадрат' } },
+  fr: { canonical: CANONICAL_GROUP_LOCALES.fr, avatar: { square: 'Carré' } },
+  de: { canonical: CANONICAL_GROUP_LOCALES.de, avatar: { square: 'Quadrat' } },
+  es: { canonical: CANONICAL_GROUP_LOCALES.es, avatar: { square: 'Cuadrado' } }
 }
 
 export type BotsText = Bound<BotsMessages>

@@ -142,7 +142,7 @@ export function BotRow({ bot, onDelete, onEdit, onGroup, onNewSection, showHandl
   // can highlight a remote row, which has no focusable local chat.
   const isActive = botRowOwnsWorkspace(bot, activeGroup, botChatFocused, focusedOwner, selectedRosterKey)
 
-  const { shape, color, image } = botAppearance(bot.name, meta)
+  const { shape, color, image } = botAppearance(bot.name, meta, bot)
   // Keep user photos/pets. Drop the 160px SVG backfill so the math face can move.
   const photo = Boolean(image && !isBackfilledFacePng(image))
   const turnBusy = useTurnBusy()

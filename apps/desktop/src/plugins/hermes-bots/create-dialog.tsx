@@ -1316,7 +1316,7 @@ export function CreateGroupChatDialog({ open, roster, onClose, onCreated }: Crea
             {visible.length ? (
               visible.map(bot => {
                 const meta = botRosterMeta(bot, allMeta)
-                const { shape, color, image } = botAppearance(bot.name, meta)
+                const { shape, color, image } = botAppearance(bot.name, meta, bot)
                 const isChecked = Boolean(checked[botRosterKey(bot)])
                 const disabled = !isChecked && atCap
                 const currentGroups = botGroups(meta)

@@ -1334,7 +1334,7 @@ function LegacyGroupChatWorkspace({ group, members, onBack, visible = true }: Gr
     // (custom image/pet, else deterministic shape+color face).
     // Source-qualified speakers use owner-aware botRosterMeta (#96432).
     // Non-null exactly when !isUser — the user's own lines carry no avatar.
-    const appearance = isUser ? null : botAppearance(entry.from.name, meta)
+    const appearance = isUser ? null : botAppearance(entry.from.name, meta, entry.from)
     const image = appearance?.image ?? null
     const photo = Boolean(image && !isBackfilledFacePng(image))
 

@@ -7,6 +7,7 @@ import type { ScreenshotApi } from '../electron/command-screenshot-types'
 import type { DesktopBranding } from '../electron/desktop-branding-types'
 import type { HudModifierApi } from '../electron/hud-modifier-types'
 import type { MachineProfile } from '../electron/machine-profile'
+import type { WindowCloseAction, WindowCloseRequest, WindowCloseResult } from '../electron/minimize-to-tray'
 import type { HermesNotification } from '../electron/notification-types'
 import type { KeepAwakeMode } from '../electron/power-save'
 import type { UpdateHoldWire } from '../electron/update-hold-types'
@@ -381,6 +382,9 @@ declare global {
         onChanged: (callback: (value: DesktopBranding) => void) => () => void
       }
       minimizeToTray?: {
+        getCloseRequest?: () => Promise<WindowCloseRequest | null>
+        answerClose?: (id: string, action: WindowCloseAction) => Promise<WindowCloseResult>
+        onCloseRequested?: (callback: (request: WindowCloseRequest) => void) => () => void
         get: () => Promise<{ enabled: boolean; available: boolean }>
         set: (on: boolean) => Promise<{ enabled: boolean; available: boolean }>
         onChanged: (callback: (status: { enabled: boolean; available: boolean }) => void) => () => void

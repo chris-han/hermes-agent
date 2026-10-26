@@ -389,6 +389,14 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
   },
   branding: createBrandingBridge(),
   minimizeToTray: {
+    getCloseRequest: () => ipcRenderer.invoke('hermes:minimize-to-tray:close-request'),
+    answerClose: (id, action) => ipcRenderer.invoke('hermes:minimize-to-tray:close-answer', id, action),
+    onCloseRequested: callback => {
+      const listener = (_event, request) => callback(request)
+      ipcRenderer.on('hermes:minimize-to-tray:close-requested', listener)
+
+      return () => ipcRenderer.removeListener('hermes:minimize-to-tray:close-requested', listener)
+    },
     get: () => ipcRenderer.invoke('hermes:minimize-to-tray:get'),
     set: on => ipcRenderer.invoke('hermes:minimize-to-tray:set', on),
     onChanged: callback => {

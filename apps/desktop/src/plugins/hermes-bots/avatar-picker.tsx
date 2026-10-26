@@ -218,7 +218,7 @@ export function AvatarPicker({ shape, color, image, onShape, onColor, onImage, g
               {(blobatarSvg ? ['blobatar', ...AVATAR_PICKER_SHAPES] : AVATAR_PICKER_SHAPES).map(s => (
                 <Tip key={s} label={s === 'blobatar' ? b.avatar.blobFromName : undefined}>
                   <RowButton
-                    aria-label={s === 'blobatar' ? b.avatar.blobFromName : s}
+                    aria-label={s === 'blobatar' ? b.avatar.blobFromName : s === 'square' ? b.avatar.square : s}
                     className={cn(
                       'flex size-11 items-center justify-center rounded-md transition-colors hover:bg-(--chrome-action-hover)',
                       s === shape && !image && 'ring-1 ring-(--ui-accent)'

@@ -47,4 +47,16 @@ describe('ConfirmDialog secondary action', () => {
     await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(1))
     expect(onSecondary).not.toHaveBeenCalled()
   })
+  it('does not turn Enter on Cancel or the secondary action into primary confirmation', async () => {
+    const { onConfirm } = renderWithSecondary()
+
+    for (const name of ['Cancel', 'Remove from sidebar']) {
+      const button = await screen.findByRole('button', { name })
+      button.focus()
+      const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+      expect(button.dispatchEvent(event)).toBe(true)
+      expect(onConfirm).not.toHaveBeenCalled()
+    }
+  })
+
 })

@@ -350,7 +350,8 @@ so glass and message-bubble transparency do not reveal scrolling text.
   master/detail empties with an icon and action. Don't hand-roll a third
   centered empty.
 - **Confirmation:** `ConfirmDialog` is the only way we ask "are you sure". It
-  opens focused on Confirm, so `Enter` confirms and `Esc` cancels, and it owns
+  opens focused on Confirm; Enter confirms there or from the body, while
+  focused Cancel/secondary buttons keep their native keyboard actions. Esc cancels. It owns
   the pending → done → close beat and the inline error — a call site passes an
   async `onConfirm` and nothing else. A third way out (e.g. "Remove from
   sidebar" beside "Delete worktree") goes in the one `secondaryAction` slot.
@@ -654,3 +655,9 @@ The existing desktop default (`nous` identity retained for saved preferences) us
 ## Managed desktop bot roster
 
 Use the native saved default route mirrored read-only through `host.state.defaultProfileRoute`. When that route selects `local::semantier-local` and a current local managed row exists, omit only `local::default` from ordinary visible/hidden roster entries and their display counts. Prefer the managed bot for initial selection. Keep the complete underlying roster for group membership, mentions, canonical chats, metadata and existing selected owners; no profile deletion, aliasing, chat creation or inference follows from choosing an initial roster highlight. Missing/stale/ghost-only facts, other sources and remote roots retain their existing behavior. Existing valid selection always wins over the default preference.
+
+## Managed bot avatar and Windows close choice
+
+The confirmed native local default `semantier-local` uses Semantier green `#9fe870` and the `square` shape when no explicit avatar customization exists. Resolve its source through the same native default/roster owner used by Bots; do not restyle a same-named remote profile. Preserve explicit photos, colors, shapes and the historical `squircle` geometry. Square is a new picker shape; other deterministic shape assignments do not change.
+
+The Windows Close Semantier Agent choice renders through shared ConfirmDialog/Dialog/Button primitives and the current yellow action theme. Keep running is the focused primary action; Quit is secondary and Cancel/Escape leaves the window open. Main owns coalescing, request IDs, exact registered-window/main-frame validation, tray creation/hiding and app.quit. Recover a request made before React mounts from the native snapshot; reject stale, foreign-frame/window and duplicate busy answers. Tray failure remains inline and retryable with the window visible. Choosing background mode changes only this run, not the saved preference. Existing active-work confirmation, session-end/handoff and quit teardown remain with their original owners. This styling change covers the close-choice dialog, not a wholesale native-dialog/style migration.
