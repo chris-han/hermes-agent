@@ -25,7 +25,7 @@ export interface NativeProcess {
 
 /** The identified listener, with how it was tied to this app (ancestry or this home's ledger). */
 export interface BackendProcess extends NativeProcess {
-  ownership: 'child' | 'host-ledger'
+  ownership: 'child' | 'host-ledger' | 'gateway-lifecycle'
 }
 
 /** What the caller already knows about the app that owns this listener. */
@@ -192,6 +192,7 @@ export function localBackendProcess(port: number, electronPid: number, hermesHom
   // its own child. Registration is only a candidate: the OS listener and the
   // caller's existing installed-tree checks must independently agree.
   let registered: number[] = []
+  let gatewayPid: number | undefined
 
   if (hermesHome) {
     // The product writes one machine-root ledger for every profile, and the app
@@ -216,9 +217,22 @@ export function localBackendProcess(port: number, electronPid: number, hermesHom
         })
         .map(record => record.pid)
     } catch { /* Missing/unreadable ledger provides no attachment evidence. */ }
+    // Canonical gateway ensure detaches its owner; it publishes a lifecycle
+    // record instead of an attachable serve entry. Require an exact live
+    // incarnation here, then independently bind the OS socket and source below.
+    try {
+      const record = z.object({ phase: z.literal('running'), pid: z.number().int().positive(),
+        create_time: z.number().finite().positive() }).parse(JSON.parse(
+        fs.readFileSync(path.join(ledgerRoot, 'state', 'gateway.lifecycle.json'), 'utf8')))
+      const started = processStartTime(record.pid)
+      if (started !== null && Math.abs(started - record.create_time) < 2) {
+        gatewayPid = record.pid
+      }
+    } catch { /* Missing, stale or malformed lifecycle state proves nothing. */ }
+
   }
 
-  const candidates = processes.filter(candidate => children.includes(candidate) || registered.includes(candidate.pid))
+  const candidates = processes.filter(candidate => children.includes(candidate) || registered.includes(candidate.pid) || candidate.pid === gatewayPid)
   let pids: number[]
 
   if (process.platform === 'win32') {
@@ -237,7 +251,7 @@ export function localBackendProcess(port: number, electronPid: number, hermesHom
     throw new Error(`Expected one Desktop-owned or registered host backend listener on port ${port}; found ${matches.length}`)
   }
 
-  const backend: BackendProcess = { ...matches[0], ownership: children.includes(matches[0]) ? 'child' : 'host-ledger' }
+  const backend: BackendProcess = { ...matches[0], ownership: children.includes(matches[0]) ? 'child' : matches[0].pid === gatewayPid ? 'gateway-lifecycle' : 'host-ledger' }
 
   if (process.platform === 'linux') {
     backend.executable = fs.readlinkSync(`/proc/${backend.pid}/exe`)

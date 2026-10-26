@@ -186,6 +186,32 @@ test.runIf(process.platform === 'linux' || process.platform === 'darwin')('a sha
   }
 })
 
+test.runIf(process.platform === 'linux')('canonical gateway lifecycle binds the live incarnation and installed origin', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'smoke-gateway-'))
+  const started = Date.now() / 1000
+  const child = spawn(process.execPath, ['-e', 'const s=require("node:net").createServer();s.listen(0,"127.0.0.1",()=>console.log(s.address().port))'], { stdio: ['ignore', 'pipe', 'pipe'] })
+  try {
+    const port = await new Promise<number>(resolve => child.stdout.once('data', data => resolve(Number(data.toString().trim()))))
+    fs.mkdirSync(path.join(home, 'state'))
+    const file = path.join(home, 'state', 'gateway.lifecycle.json')
+    const record = { phase: 'running', pid: child.pid, create_time: started }
+    for (const invalid of [{ ...record, phase: 'stopped' }, { ...record, create_time: started - 3600 }, { ...record, create_time: null }, { ...record, pid: process.pid }]) {
+      fs.writeFileSync(file, JSON.stringify(invalid))
+      expect(() => localBackendProcess(port, child.pid!, home)).toThrow('found 0')
+    }
+    fs.writeFileSync(file, JSON.stringify(record))
+    const backend = localBackendProcess(port, child.pid!, home)
+    expect(backend.ownership).toBe('gateway-lifecycle')
+    expect(backend.pid).toBe(child.pid)
+    expect(() => assertBackendOrigin(backend, home, 'bundled')).toThrow('agent-payload')
+    expect(() => localBackendProcess(port + 1, child.pid!, home)).toThrow('found 0')
+  } finally {
+    child.kill()
+    await new Promise<void>(resolve => child.once('exit', () => resolve()))
+    fs.rmSync(home, { recursive: true, force: true })
+  }
+})
+
 test.runIf(process.platform === 'linux' || process.platform === 'darwin')('a host ledger record proves only its own incarnation, read at the machine root', async (): Promise<void> => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'smoke-host-root-'))
   // A profile home: the product writes the ledger at the machine root above it.

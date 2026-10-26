@@ -116,6 +116,26 @@ try {
             foreach ($pkg in $remaining) {
                 if ($pkg.Publisher -cne $Expected.publisher -or $pkg.Version.ToString() -cne $inputMetadata.Version -or
                     ($installedFullName -and $pkg.PackageFullName -cne $installedFullName)) { throw 'Refusing cleanup of an unowned package' }
+                # gateway ensure owns a detached process, so closing Electron is
+                # insufficient. Only this fresh smoke home's live incarnation in
+                # this exact installed payload is eligible for cleanup.
+                foreach ($smokeHome in @($HomeDir, (Join-Path $UserData 'hermes-home'))) {
+                    $lifecycle = Join-Path $smokeHome 'state\gateway.lifecycle.json'
+                    if (-not (Test-Path -LiteralPath $lifecycle)) { continue }
+                    $record = Get-Content -Raw -LiteralPath $lifecycle | ConvertFrom-Json
+                    if ($record.phase -ne 'running') { continue }
+                    $owner = Get-CimInstance Win32_Process -Filter "ProcessId=$([int]$record.pid)"
+                    if (-not $owner) { continue }
+                    $created = ([DateTimeOffset]$owner.CreationDate).ToUnixTimeMilliseconds() / 1000.0
+                    $payloadPrefix = (Join-Path $pkg.InstallLocation 'app\resources\agent-payload').TrimEnd('\') + '\'
+                    if (-not $record.create_time -or [Math]::Abs($created - $record.create_time) -ge 2 -or
+                        -not $owner.ExecutablePath.StartsWith($payloadPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+                        throw 'Refusing cleanup of an unproven gateway incarnation'
+                    }
+                    Stop-Process -Id $owner.ProcessId -ErrorAction Stop
+                    Wait-Process -Id $owner.ProcessId -Timeout 15 -ErrorAction SilentlyContinue
+                    if (Get-Process -Id $owner.ProcessId -ErrorAction SilentlyContinue) { throw 'Owned gateway did not stop' }
+                }
                 Remove-AppxPackage -Package $pkg.PackageFullName -ErrorAction Stop
                 if (Get-AppxPackage -Name $Expected.msixIdentity) { throw 'Package removal did not complete' }
             }
