@@ -72,6 +72,9 @@ try {
   $sevenZip = Find-Tool $request.sevenZip @("$env:ProgramFiles\7-Zip\7z.exe", (Join-Path $repo '.build\desktop-job\packager\sevenZip\bin\7za.exe')) '7-Zip'
   $source = $request.commit
   if (!$request.unsignedReceipt) {
+    $payloadPrefix = Join-Path $work 'apps\desktop\build\agent-payload\'
+    $payloadUsers = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($payloadPrefix,[StringComparison]::OrdinalIgnoreCase) })
+    if ($payloadUsers.Count) { throw ('Bundled runtime is in use; preserve it and close the owning test runtime before rebuilding. PIDs: ' + (($payloadUsers | ForEach-Object ProcessId) -join ',')) }
     $marker = $work + '.distribution-owner.json'
     $existing = Test-Path -LiteralPath $work
     if (!$existing -and (Test-Path -LiteralPath $marker)) { throw 'Stale worktree owner marker requires inspection' }
