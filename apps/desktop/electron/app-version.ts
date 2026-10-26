@@ -90,7 +90,9 @@ export function appVersionInfo(
 
   return {
     appVersion: build
-      ? `${build.sourceVersion} (${build.channel} #${build.sequence}, ${build.commit.slice(0, 8)})`
+      ? build.semantierScope === 'semantier-windows-x64/v1'
+        ? build.version
+        : `${build.sourceVersion} (${build.channel} #${build.sequence}, ${build.commit.slice(0, 8)})`
       : stamp.payload === 'bootstrap'
         ? firstRealVersion([runtimeVersion, stamp.displayVersion, stamp.baseVersion, packageVersion])
         : firstRealVersion([stamp.displayVersion, stamp.baseVersion, packageVersion, runtimeVersion]),
