@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import { I18nProvider } from '@/i18n'
 
-import { openSemantierDiagnostics, SemantierFeedbackHost } from './semantier-feedback'
+import { openSemantierDiagnostics, SemantierFeedbackHost, SemantierFeedbackSettings } from './semantier-feedback'
 
 vi.mock('@/store/default-profile', async () => {
   const { atom } = await import('nanostores')
@@ -132,4 +132,26 @@ it('allows a corrected new draft after a definite size rejection', async () => {
   await screen.findByText('Report sent')
   expect(submit.mock.calls[1][0].submission_key).not.toBe(submit.mock.calls[0][0].submission_key)
   expect(submit.mock.calls[1][0].note).toBe('Shorter description')
+})
+
+
+it.each([false, true])('returns focus after Escape when the diagnostic action is replaced: %s', async replaceTrigger => {
+  const content = (key: number) => (
+    <I18nProvider configClient={null} initialLocale="en">
+      <SemantierFeedbackSettings key={key} />
+      <SemantierFeedbackHost />
+    </I18nProvider>
+  )
+
+  const view = render(content(0))
+  const trigger = screen.getByRole('button', { name: 'Send diagnostics' })
+  trigger.focus()
+  fireEvent.click(trigger)
+  await screen.findByRole('dialog')
+
+  if (replaceTrigger) {view.rerender(content(1))}
+
+  fireEvent.keyDown(window.document, { key: 'Escape' })
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  await waitFor(() => expect(window.document.activeElement).toBe(screen.getByRole('button', { name: 'Send diagnostics' })))
 })

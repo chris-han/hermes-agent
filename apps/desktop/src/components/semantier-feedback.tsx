@@ -1,6 +1,6 @@
 import { LOCAL_CONNECTION_ID } from '@hermes/shared'
 import { useStore } from '@nanostores/react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { capabilityScoped } from '@/api/client'
 import { Button } from '@/components/ui/button'
@@ -229,7 +229,7 @@ export function SemantierFeedbackSettings() {
       >
         {enabled ? copy.stopReportingAndClearUnsentEvents : copy.enableUpdateResultReporting}
       </Button>
-      <Button onClick={openSemantierDiagnostics} variant="secondary">
+      <Button data-semantier-diagnostics-trigger onClick={openSemantierDiagnostics} variant="secondary">
         {copy.sendDiagnostics}
       </Button>
       {authorization.pending && (
@@ -250,6 +250,12 @@ export function SemantierFeedbackHost() {
   const { locale, t: translations } = useI18n()
   const copy = translations.semantierFeedback
   const [profile, setProfile] = useState('')
+  const returnFocus = useRef<HTMLElement | null>(null)
+
+  const rememberReturnFocus = useCallback(() => {
+    returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  }, [])
+
   const authorization = useFeedbackAuthorization(profile)
   const [preview, setPreview] = useState<Preview | null>(null)
   const [receipt, setReceipt] = useState<Receipt | null>(null)
@@ -296,6 +302,7 @@ export function SemantierFeedbackHost() {
     }
 
     const listener = () => {
+      rememberReturnFocus()
       void open()
     }
 
@@ -307,7 +314,7 @@ export function SemantierFeedbackHost() {
       window.removeEventListener('semantier:send-diagnostics', listener)
       stop?.()
     }
-  }, [locale, copy])
+  }, [locale, copy, rememberReturnFocus])
   useEffect(() => {
     let live = true
     let running = false
@@ -480,7 +487,19 @@ export function SemantierFeedbackHost() {
       }}
       open={!!profile}
     >
-      <DialogContent>
+      <DialogContent
+        onCloseAutoFocus={event => {
+          event.preventDefault()
+          const origin = returnFocus.current
+
+          const target = origin?.isConnected && origin !== document.body
+            ? origin
+            : document.querySelector<HTMLElement>('[data-semantier-diagnostics-trigger]')
+
+          target?.focus()
+          returnFocus.current = null
+        }}
+      >
         <DialogHeader>
           <DialogTitle>{receipt ? copy.diagnosticReceipt : copy.sendDiagnostics}</DialogTitle>
           <DialogDescription>{copy.reviewTheSanitizedContentBeforeSendingTo}</DialogDescription>
