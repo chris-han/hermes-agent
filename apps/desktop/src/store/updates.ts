@@ -703,6 +703,8 @@ export async function setUpdateChannel(channel: SourceUpdateChannel): Promise<De
   }
 }
 
+export const $updateWorkReview = atom<DesktopUpdateApplyResult['workReview']>(undefined)
+
 export async function applyUpdates(opts: DesktopUpdateApplyOptions = {}): Promise<DesktopUpdateApplyResult> {
   if ($updateStatus.get()?.retirement) {
     openUpdateOverlayFor('client')
@@ -721,6 +723,15 @@ export async function applyUpdates(opts: DesktopUpdateApplyOptions = {}): Promis
 
   try {
     const result = await bridge.apply(opts)
+
+    if (result.workReview) {
+      resetUpdateApplyState()
+      $updateWorkReview.set(result.workReview)
+
+      return result
+    }
+
+    $updateWorkReview.set(undefined)
 
     // CLI install with no staged updater: not an error — the user just runs
     // `hermes update` themselves. Land on a dedicated manual state so the

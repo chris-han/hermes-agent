@@ -13,6 +13,7 @@ import type { KeepAwakeMode } from '../electron/power-save'
 import type { UpdateHoldWire } from '../electron/update-hold-types'
 import type { Observation } from '../electron/updater/semantier-observations'
 import type { UpdateRunReport } from '../electron/updater/update-metrics'
+import type { UpdateWorkReview } from '../electron/updater/work-review'
 import type { WindowSizeMode } from '../electron/window-size-types'
 import type { BrandShortcutBridge } from '../electron/windows-brand-shortcuts-types'
 
@@ -913,10 +914,12 @@ export interface DesktopUpdateStatus {
 export type DesktopUpdateDirtyStrategy = 'abort' | 'stash' | 'force'
 
 export interface DesktopUpdateApplyOptions {
+  workReviewToken?: string
   dirtyStrategy?: DesktopUpdateDirtyStrategy
 }
 
 export interface DesktopUpdateApplyResult {
+  workReview?: UpdateWorkReview
   ok: boolean
   /** False when the apply-time check found nothing to install. */
   updateAvailable?: boolean

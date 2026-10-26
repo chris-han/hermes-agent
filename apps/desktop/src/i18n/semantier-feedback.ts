@@ -1,5 +1,13 @@
 /** Semantier feedback copy; partial locales use the existing English fallback. */
 export const feedbackEnglish = {
+  updateWorkTitle: 'Restart with work running?',
+  updateWorkOwned: 'Restarting stops app-managed work. Save your changes or choose Later to finish first. Windows will complete installation; the next launch confirms the installed version.',
+  updateWorkAttached: 'Running work continues in the independent gateway. This window closes during installation. Save unsent changes first. The next launch confirms the installed version.',
+  updateWorkCount: 'Running tasks',
+  updateWorkLater: 'Later',
+  updateWorkConfirm: 'Update and restart',
+  updateWorkChanged: 'Work or the update target changed. Review the current details before restarting.',
+
   "reportingCouldNotChangeSignInOr": "Reporting could not change. Sign in or retry from this local profile.",
   "semantierDiagnosticsPrivacy": "Semantier diagnostics & privacy",
   "optionalUpdateResultReportingToSemantierCloud": "Optional update-result reporting to Semantier Cloud. Separate from Nous telemetry. Updates work with reporting off.",
@@ -42,6 +50,14 @@ export const feedbackEnglish = {
 }
 export type FeedbackCopy = typeof feedbackEnglish
 export const feedbackChinese: FeedbackCopy = {
+  updateWorkTitle: '仍有任务运行，是否重启？',
+  updateWorkOwned: '重启会停止应用管理的任务。请先保存修改，或选择“稍后”完成任务。Windows 将继续安装，下次启动时核对实际安装版本。',
+  updateWorkAttached: '任务会继续在独立网关中运行。安装期间此窗口会关闭，请先保存尚未发送的修改。下次启动时核对实际安装版本。',
+  updateWorkCount: '运行中的任务',
+  updateWorkLater: '稍后',
+  updateWorkConfirm: '更新并重启',
+  updateWorkChanged: '任务或更新目标已变化，请核对当前信息后再重启。',
+
   "reportingCouldNotChangeSignInOr": "上报设置未能完成，请使用此本地配置登录或重试。",
   "semantierDiagnosticsPrivacy": "Semantier 诊断与隐私",
   "optionalUpdateResultReportingToSemantierCloud": "可选向 Semantier Cloud 上报更新结果，与 Nous 遥测独立；关闭上报仍可更新。",

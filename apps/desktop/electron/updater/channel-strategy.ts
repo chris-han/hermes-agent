@@ -14,6 +14,7 @@ export interface ChannelStrategyDeps {
   build: ChannelBuild
   mechanism: 'electron-updater' | 'app-installer'
   nativeFactory: (target: ChannelTarget) => UpdaterStrategy
+  reviewApplyTarget?: (target: ChannelTarget) => UpdaterApplyResultWire | null
   onApplyTarget?: (target: ChannelTarget) => Promise<void>
 }
 interface NativeSelection {
@@ -156,6 +157,9 @@ export class ChannelStrategy implements UpdaterStrategy {
       }
 
       if (selected?.kind === 'native' && selected.available) {
+        const review = this.deps.reviewApplyTarget?.(selected.target)
+
+        if (review) { return review }
         await this.deps.onApplyTarget?.(selected.target)
 
         return await selected.strategy.apply()

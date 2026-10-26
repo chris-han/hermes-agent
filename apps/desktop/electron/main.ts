@@ -650,6 +650,7 @@ import {
 import { startUpdateRelaunchWaiter } from './updater/relaunch-waiter'
 import { preflightStateDb } from './updater/state-db-preflight'
 import { createStoreStrategy } from './updater/store-client'
+import { UpdateWorkGuard } from './updater/work-review'
 import { isExternalVenvHolder, isHermesOwnedVenvDaemon } from './venv-holder-select'
 import { fetchMarketplaceThemes, searchMarketplaceThemes } from './vscode-marketplace'
 import { createWakeIndicatorWindowController } from './wake-indicator-window'
@@ -3580,6 +3581,13 @@ async function createPackagedUpdateStrategy(): Promise<UpdaterStrategy | null> {
         arch: process.arch,
         signer: installed.signer
       }),
+      reviewApplyTarget: target => {
+        const review = updateWorkGuard.review(
+          `${target.manifest.request.buildId}:${target.package.artifact.sha256}`,
+          installed.nativeVersion, target.package.version, updateWorkToken
+        )
+        return review ? { ok: false, error: 'active-work-review', workReview: review } : null
+      },
       onApplyTarget: async target => {
         semantierObservations.begin({release_id: target.manifest.request.buildId, build_id: target.manifest.request.buildId,
           target_sha256: target.package.artifact.sha256, target_version: target.package.version,
@@ -3806,6 +3814,7 @@ function isLightVariant(): boolean {
 
 /** Invalidate connections and wait for every owned backend before the swap. */
 async function teardownBundledBackend(): Promise<void> {
+  updateWorkGuard.assertBeforeStop()
   isQuittingForHandoff = true
 
   const results = await Promise.allSettled([
@@ -4527,9 +4536,10 @@ async function releaseBackendLock(updateRoot: string, tag: string): Promise<{ un
 //
 // Detection (checkUpdates / commit changelog / "N behind") stays in the UI;
 // only this apply action changed.
-async function applyUpdates(): Promise<UpdaterApplyResultWire> {
+async function applyUpdates(token?: unknown): Promise<UpdaterApplyResultWire> {
   return updateOperation.apply(async (): Promise<UpdaterApplyResultWire> => {
     updateInFlight = true
+    updateWorkToken = token
     let handedOff: boolean = false
 
     try {
@@ -4554,11 +4564,13 @@ async function applyUpdates(): Promise<UpdaterApplyResultWire> {
       try { result = await desktopMetrics.trackUpdateApply(packaged, strategy) }
       catch (error) { semantierObservations.failed('native_update_failed'); throw error }
 
-      if (!result.ok) {semantierObservations.failed('native_update_refused')}
+      if (!result.ok && !result.workReview) {semantierObservations.failed('native_update_refused')}
       handedOff = result.handedOff === true
 
       return result
     } finally {
+      updateWorkToken = undefined
+      updateWorkGuard.finish()
       if (!handedOff) {
         updateInFlight = false
       }
@@ -16996,6 +17008,13 @@ ipcMain.handle('hermes:stopPreviewFileWatch', (_event, id) => stopPreviewFileWat
 // Each renderer reports the turns it has in flight; the quit guard reads the
 // merged picture. Keyed by webContents id so a closed window stops counting.
 const activeWorkByWebContents = new Map<number, ActiveWork>()
+let activeWorkRevision = 0
+let updateWorkToken: unknown
+const updateWorkGuard = new UpdateWorkGuard(() => ({
+  work: mergeActiveWork([...activeWorkByWebContents.values(), lastActiveWorkSeen]),
+  revision: activeWorkRevision,
+  stopsWork: quitStopsBackendWork()
+}))
 
 // Synchronous, webContents-independent cache of the most recent active-work
 // summary we heard from *any* renderer. The per-webContents map above is
@@ -17058,6 +17077,7 @@ ipcMain.on('hermes:active-work', (event, payload) => {
   }
 
   const work = normalizeActiveWork(payload)
+  if (JSON.stringify(activeWorkByWebContents.get(id)) !== JSON.stringify(work)) { activeWorkRevision += 1 }
   activeWorkByWebContents.set(id, work)
   lastActiveWorkSeen = work
   updateStreamThrottleFromActiveWork()
@@ -17587,7 +17607,7 @@ ipcMain.handle(
 )
 
 ipcMain.handle('hermes:updates:apply', async (_event, payload) =>
-  applyUpdates().catch(error => ({
+  applyUpdates(payload?.workReviewToken).catch(error => ({
     ok: false,
     error: 'apply-failed',
     message: error?.message || String(error)

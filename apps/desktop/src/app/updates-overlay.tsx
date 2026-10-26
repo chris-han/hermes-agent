@@ -20,6 +20,7 @@ import { ErrorIcon, ErrorState } from '@/components/ui/error-state'
 import { Loader } from '@/components/ui/loader'
 import { Progress } from '@/components/ui/progress'
 import { UpdateStatusCard, VersionHero } from '@/components/update-status'
+import { UpdateWorkReviewDialog } from '@/components/update-work-review'
 import { VersionDetails } from '@/components/version-details'
 import type {
   DesktopUpdateCommit,
@@ -43,6 +44,7 @@ import {
   $updateOverlayOpen,
   $updateOverlayTarget,
   $updateStatus,
+  $updateWorkReview,
   applyBackendUpdate,
   applyUpdates,
   checkBackendUpdates,
@@ -61,6 +63,7 @@ function totalItems(groups: readonly CommitGroup[]) {
 }
 
 export function UpdatesOverlay() {
+  const workReview = useStore($updateWorkReview)
   const open = useStore($updateOverlayOpen)
   const target = useStore($updateOverlayTarget)
 
@@ -117,6 +120,8 @@ export function UpdatesOverlay() {
   const handleInstall = () => {
     void install()
   }
+
+  if (workReview) { return <UpdateWorkReviewDialog key={workReview.token} review={workReview} /> }
 
   return (
     <Dialog onOpenChange={handleClose} open={open}>

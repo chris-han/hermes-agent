@@ -778,3 +778,31 @@ test('resolves an arbitrary R2 name through a real HTTP channel and digest-bound
     `/releases/channel-builds/${'c'.repeat(32)}/build.json`
   ])
 })
+
+test('active-work review precedes the attempt journal and native installation; cancel leaves both untouched', async () => {
+  const f = await fixture()
+  let reviewed = false
+  const effects: string[] = []
+
+  const strategy = new ChannelStrategy({
+    resolver: new ChannelResolver({ build: f.build, platform: 'darwin', arch: 'arm64', signer: 'ABCDE12345' }),
+    build: f.build,
+    mechanism: 'electron-updater',
+    reviewApplyTarget: () => reviewed ? null : { ok: false, error: 'active-work-review' },
+    onApplyTarget: async () => { effects.push('journal') },
+    nativeFactory: () => ({
+      mechanism: 'electron-updater',
+      check: async () => ({ supported: true, updateAvailable: true }),
+      apply: async () => { effects.push('install');
+
+ return { ok: true } }
+    })
+  })
+
+  await strategy.check()
+  expect(await strategy.apply()).toMatchObject({ ok: false, error: 'active-work-review' })
+  expect(effects).toEqual([])
+  reviewed = true
+  expect(await strategy.apply()).toMatchObject({ ok: true })
+  expect(effects).toEqual(['journal', 'install'])
+})
