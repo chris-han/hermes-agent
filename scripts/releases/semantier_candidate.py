@@ -20,6 +20,12 @@ def sha(path):
 def read(path):return json.loads(path.read_text(encoding='utf-8-sig'))
 def native_path(value):return Path(subprocess.check_output(['wslpath','-u',value],text=True).strip())
 
+def copy_artifact(source, destination):
+    # WSL sendfile can fail with ENOMEM after a partial multi-GB DrvFS copy.
+    # Bound userspace memory and preserve exclusive immutable staging creation.
+    with source.open('rb') as reader, destination.open('xb') as writer:
+        shutil.copyfileobj(reader, writer, length=1024 * 1024)
+
 
 def stage(output,native,incoming,notes):
     if os.environ.get('GITHUB_ACTIONS')!='true' or os.environ.get('GITHUB_REPOSITORY')!='chris-han/hermes-agent':raise ValueError('Real governed CI context required')
@@ -37,7 +43,7 @@ def stage(output,native,incoming,notes):
     key=prefix+artifact.name;feed_key=prefix+'win32/stable.appinstaller'
     target=incoming/key;target.parent.mkdir(parents=True,exist_ok=True)
     if target.exists():raise ValueError('Fresh immutable staging namespace required')
-    shutil.copyfile(artifact,target)
+    copy_artifact(artifact,target)
     if sha(target)!=digest:raise ValueError('Staged artifact mismatch')
     feed=incoming/feed_key
     write_appinstaller(feed,identity=signed['packageName'],publisher=signed['publisher'],version=signed['packageVersion'],self_uri=request['publicBase']+'/'+feed_key,artifact_uri=request['publicBase']+'/'+key,update_policy='pinned',package_arch='x64')
@@ -47,7 +53,7 @@ def stage(output,native,incoming,notes):
     archive_digest=sha(archive)
     if archive.with_name(archive.name+'.sha256').read_text().split()[0]!=archive_digest:raise ValueError('Distribution archive checksum mismatch')
     archive_fact={'key':prefix+archive.name,'sha256':archive_digest,'size':archive.stat().st_size}
-    archive_target=incoming/archive_fact['key'];shutil.copyfile(archive,archive_target)
+    archive_target=incoming/archive_fact['key'];copy_artifact(archive,archive_target)
     if sha(archive_target)!=archive_digest:raise ValueError('Staged archive mismatch')
     package['distributionArchive']=archive_fact
     full=installed['packageFullName'];family=signed['packageName']+'_'+full.rsplit('_',1)[1]
