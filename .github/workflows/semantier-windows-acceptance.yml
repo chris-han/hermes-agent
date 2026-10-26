@@ -26,6 +26,8 @@ jobs:
         with:
           persist-credentials: false
           path: hermes
+          # The Windows controller transfers a Git bundle, which needs complete ancestry.
+          fetch-depth: 0
       - name: Validate frozen controller reference
         env:
           CONTROLLER_COMMIT: ${{ env.ACCEPTANCE_CONTROLLER_COMMIT }}
