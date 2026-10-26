@@ -5,7 +5,7 @@ import path from 'node:path'
 
 import { expect, test } from 'vitest'
 
-import { resolveRegisteredChannelApp, verifyChannelDownload } from './channel-native'
+import { resolveRegisteredChannelApp, runChannelCommand, verifyChannelDownload } from './channel-native'
 
 test('registered package identity survives a volume junction without admitting escaped or undeclared executables', async (): Promise<void> => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'channel-registration-'))
@@ -60,4 +60,13 @@ test('download verification binds native bytes to the manifest size and digest b
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
+})
+
+
+test('native failure exposes a bounded exit reason without command paths or stderr payload', async (): Promise<void> => {
+  const failure = await runChannelCommand(process.execPath, ['-e', 'process.stderr.write("secret-canary C:/Users/Private/token"); process.exit(7)']).catch((error: Error) => error)
+  expect(failure).toBeInstanceOf(Error)
+  expect((failure as Error).message).toBe('Native channel operation failed (exit code 7)')
+  expect((failure as Error).message).not.toContain('secret-canary')
+  expect((failure as Error).cause).toBeInstanceOf(Error)
 })

@@ -3127,6 +3127,7 @@ export const ruOverrides = {
     releaseNotes: 'Заметки о выпуске',
     onLatest: 'У вас последняя версия.',
     installing: 'Сейчас устанавливается обновление.',
+    noPublishedRelease: "В этом канале пока нет доступных выпусков.",
     cantReach: "Не удалось проверить обновления.",
     tapCheck: 'Нажмите «Проверить сейчас», чтобы найти обновления.',
     updateReady: count =>

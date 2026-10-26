@@ -2817,6 +2817,7 @@ export const jaOverrides = {
     releaseNotes: 'リリースノート',
     onLatest: '最新バージョンです。',
     installing: '更新をインストール中です。',
+    noPublishedRelease: "このチャンネルにはまだリリースがありません。",
     cantReach: "更新を確認できませんでした。",
     tapCheck: '更新を探すには「今すぐ確認」を押してください。',
     updateReady: count => `新しい更新の準備ができました (${count} 件の変更を含みます)。`,

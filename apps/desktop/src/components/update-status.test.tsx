@@ -4,9 +4,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DesktopUpdateStatus, DesktopVersionInfo } from '@/global'
 import { I18nProvider, type Locale, TRANSLATIONS, type Translations } from '@/i18n'
 import { en } from '@/i18n/en'
-import type { UpdateApplyState } from '@/store/updates'
+import { $updateApply, $updateStatus, type UpdateApplyState } from '@/store/updates'
 
-import { deriveUpdateStatus, VersionHero } from './update-status'
+import { deriveUpdateStatus, UpdateStatusCard, VersionHero } from './update-status'
 
 // VersionHero is the shared About/overlay hero. Its module imports the real
 // updates store graph; mock it shallowly — these tests exercise the hero's
@@ -288,4 +288,26 @@ describe('VersionHero bundle banners', () => {
     expect(screen.queryByText(en.updates.bundleOutOfSync)).toBeNull()
     expect(screen.queryByText(en.updates.bundleSwapPending)).toBeNull()
   })
+})
+
+
+it('keeps failure details collapsed and leaves the check action available', () => {
+  $updateApply.set(IDLE_APPLY)
+  $updateStatus.set({ supported: true, error: 'check-failed', message: 'Native channel operation failed (exit code 7)' })
+  const { container } = render(<UpdateStatusCard target="client" />)
+  const detail = container.querySelector('details')
+  expect(detail).not.toBeNull()
+  expect(detail?.open).toBe(false)
+  expect(detail?.querySelector('summary')?.textContent).toBe(en.notifications.details)
+  expect(detail?.textContent).toContain('exit code 7')
+  expect(screen.getByRole('button', { name: en.updates.checkNow })).toBeTruthy()
+  $updateStatus.set(null)
+})
+
+
+it('does not claim latest when the channel explicitly has no published build', () => {
+  const view = derive({ supported: true, updateAvailable: false, reason: 'no-build-published' })
+  expect(view.line).toBe('No release is available on this channel yet.')
+  expect(view.updateAvailable).toBe(false)
+  expect(view.line).not.toBe(en.updates.latestBody)
 })

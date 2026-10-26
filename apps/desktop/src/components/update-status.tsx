@@ -149,6 +149,10 @@ function ordinaryUpdateStatus({
     }
   }
 
+  if (status?.reason === 'no-build-published') {
+    return { applying, line: u.noPublishedRelease, supported, tone: 'idle', updateAvailable: false }
+  }
+
   if (status) {
     // Stable pins to a release; name it. A checkout ahead of it (forward-only) is newer
     // than the release, so it keeps the generic line instead of claiming to be on it.
@@ -355,7 +359,14 @@ export function UpdateStatusCard({
         )}
         <div className="min-w-0">
           <p className="font-medium">{view.line}</p>
-          {view.error && <p className="mt-1 text-xs text-muted-foreground">{view.error}</p>}
+          {view.error && (status?.retirement ? (
+            <p className="mt-1 text-xs text-muted-foreground">{view.error}</p>
+          ) : (
+            <details className="mt-1 text-xs text-muted-foreground">
+              <summary className="cursor-pointer">{t.notifications.details}</summary>
+              <p className="mt-1 whitespace-pre-wrap break-words">{view.error}</p>
+            </details>
+          ))}
           {view.tone !== 'unsupported' && (
             <p className="mt-1 text-xs text-muted-foreground">
               {u.lastChecked(relativeTime(status?.fetchedAt, u))}

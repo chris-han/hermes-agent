@@ -4267,6 +4267,7 @@ export const esOverrides = {
     releaseNotes: 'Notas de la versión',
     onLatest: 'Ya tienes la versión más reciente.',
     installing: 'Se está instalando una actualización.',
+    noPublishedRelease: "Aún no hay ninguna versión disponible en este canal.",
     cantReach: "No pudimos comprobar las actualizaciones.",
     tapCheck: 'Pulsa "Comprobar ahora" para buscar actualizaciones.',
     updateReady: count =>

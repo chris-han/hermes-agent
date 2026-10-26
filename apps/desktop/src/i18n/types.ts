@@ -3236,6 +3236,7 @@ export interface Translations extends NoticeTranslations {
     releaseNotes: string
     onLatest: string
     installing: string
+    noPublishedRelease: string
     cantReach: string
     tapCheck: string
     updateReady: (count: number) => string

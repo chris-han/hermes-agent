@@ -3783,6 +3783,7 @@ export const zhOverrides = {
     releaseNotes: '发行说明',
     onLatest: '已是最新版本。',
     installing: '正在安装更新。',
+    noPublishedRelease: "此渠道尚无可用版本。",
     cantReach: "无法检查更新。",
     tapCheck: '点击“立即检查”以查找更新。',
     updateReady: count => `新更新已就绪（包含 ${count} 项变更）。`,

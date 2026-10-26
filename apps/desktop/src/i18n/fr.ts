@@ -4285,6 +4285,7 @@ export const frOverrides = {
     releaseNotes: 'Notes de version',
     onLatest: 'Vous utilisez la dernière version.',
     installing: "Une mise à jour est en cours d'installation.",
+    noPublishedRelease: "Aucune version n’est encore disponible sur ce canal.",
     cantReach: "Impossible de vérifier les mises à jour.",
     tapCheck: 'Cliquez sur « Vérifier maintenant » pour rechercher des mises à jour.',
     updateReady: count => `Une nouvelle mise à jour est prête (${count} changement${count === 1 ? '' : 's'} inclus).`,

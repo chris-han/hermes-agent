@@ -53,7 +53,15 @@ export function runChannelCommand(
       { encoding: 'utf8', windowsHide: true, timeout, maxBuffer: 4 * 1024 * 1024 },
       (error: Error | null, stdout: string, stderr: string): void => {
         if (error) {
-          reject(new Error(`Native channel operation failed: ${file}: ${stderr}`, { cause: error }))
+          // Native stderr may contain CLIXML, command lines, paths or credentials.
+          // Keep the original cause native-side; expose only a bounded exit reason.
+          const code = 'code' in error ? String(error.code) : ''
+
+          const reason = /^-?\d{1,10}$/.test(code)
+            ? `exit code ${code}`
+            : /^[A-Z][A-Z0-9_]{0,39}$/.test(code) ? code : 'interrupted or unavailable'
+
+          reject(new Error(`Native channel operation failed (${reason})`, { cause: error }))
 
           return
         }

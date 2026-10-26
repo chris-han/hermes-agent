@@ -119,6 +119,7 @@ export const arBoot = {
     releaseNotes: 'ملاحظات الإصدار',
     onLatest: 'أنت على أحدث إصدار',
     installing: 'جار التثبيت...',
+    noPublishedRelease: "لا يتوفر إصدار في هذه القناة بعد.",
     cantReach: "تعذر التحقق من التحديثات.",
     tapCheck: 'اضغط للتحقق من التحديثات.',
     updateReady: count => `${count} تحديث متاح`,

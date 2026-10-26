@@ -4272,6 +4272,7 @@ export const deOverrides = {
     releaseNotes: 'Versionshinweise',
     onLatest: 'Sie verwenden die neueste Version.',
     installing: 'Ein Update wird derzeit installiert.',
+    noPublishedRelease: "Für diesen Kanal ist noch keine Version verfügbar.",
     cantReach: "Updates konnten nicht geprüft werden.",
     tapCheck: 'Tippen Sie auf „Jetzt prüfen“, um nach Updates zu suchen.',
     updateReady: count => `Ein neues Update ist bereit (${count} Änderung${count === 1 ? '' : 'en'} enthalten).`,
