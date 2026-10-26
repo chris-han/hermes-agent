@@ -98,13 +98,14 @@ function Get-UserEnvironmentReset {
     return $lines + @('set "PATH=' + ($path -join ';') + '"')
 }
 
-function Invoke-BasicUserBatch([string]$Name, [string[]]$Lines, [string]$Directory, [int]$TimeoutMinutes) {
+function Invoke-BasicUserBatch([string]$Name, [string[]]$Lines, [string]$Directory, [int]$TimeoutMinutes, [string]$SmokeHome = "") {
     $batch = Join-Path $Directory "$Name.cmd"
-    Set-Content -LiteralPath $batch -Encoding ASCII -Value (@('@echo off') + (Get-UserEnvironmentReset) + $Lines)
+    $homeOverride = if ($SmokeHome) { @('set "HERMES_HOME=' + $SmokeHome + '"') } else { @() }
+    Set-Content -LiteralPath $batch -Encoding ASCII -Value (@('@echo off') + (Get-UserEnvironmentReset) + $homeOverride + $Lines)
     return [HermesBasicUser]::Run("cmd.exe /d /c `"$batch`"", $Directory, [uint32]($TimeoutMinutes * 60000))
 }
 
-function Test-BundlePluginInstall([string]$Root, [string]$Out) {
+function Test-BundlePluginInstall([string]$Root, [string]$Out, [switch]$IsolatedHome) {
     $manifest = Get-Content -Raw -LiteralPath (Join-Path $Root 'manifest.json') | ConvertFrom-Json
     $alias = Join-Path $env:LOCALAPPDATA ('Microsoft\WindowsApps\' + (Split-Path -Leaf $manifest.runtime.commands.hermes))
     if (-not (Test-Path -LiteralPath $alias)) { throw "Package CLI execution alias missing: $alias" }
@@ -113,9 +114,11 @@ function Test-BundlePluginInstall([string]$Root, [string]$Out) {
     # The CLI uses its default home (%LOCALAPPDATA%\hermes), as an installed user's does.
     $scratch = Join-Path $env:LOCALAPPDATA ('hermes-plugin-smoke-' + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $scratch | Out-Null
+    $smokeHome = if ($IsolatedHome) { Join-Path $scratch 'hermes-home' } else { '' }
+    if ($smokeHome) { New-Item -ItemType Directory -Path $smokeHome | Out-Null }
     try {
         # The token must reproduce a user's package ACL, or a green below proves nothing.
-        $denied = Invoke-BasicUserBatch 'probe' @("`"$python`" -c `"print(1)`" > probe.log 2>&1") $scratch 2
+        $denied = Invoke-BasicUserBatch 'probe' @("`"$python`" -c `"print(1)`" > probe.log 2>&1") $scratch 2 $smokeHome
         if ($denied -eq 0) { throw 'Basic-user token could start the packaged Python directly; it does not reproduce a user' }
 
         $plugin = Join-Path $scratch 'msix-smoke-plugin'
@@ -133,14 +136,14 @@ function Test-BundlePluginInstall([string]$Root, [string]$Out) {
 
         $code = Invoke-BasicUserBatch 'install' @(
             "`"$alias`" plugins install `"$url`" --enable --yes-deps > install.log 2>&1",
-            "`"$alias`" plugins list --json > list.json 2> list.err") $scratch 25
+            "`"$alias`" plugins list --json > list.json 2> list.err") $scratch 2 $smokeHome5
         foreach ($name in 'probe.log', 'install.log', 'list.json', 'list.err') {
             $file = Join-Path $scratch $name
             if (Test-Path -LiteralPath $file) { Copy-Item -LiteralPath $file -Destination (Join-Path $Out "plugin-smoke-$name") }
         }
         $listing = if (Test-Path -LiteralPath (Join-Path $scratch 'list.json')) { Get-Content -Raw -LiteralPath (Join-Path $scratch 'list.json') } else { '' }
         # Startup warnings may precede the JSON array; it is the block from a line starting '['.
-        $json = [regex]::Match($listing, '(?ms)^\[.*^\]')
+        $json = [regex]::Match([string]$listing, '(?ms)^\[.*^\]')
         $rows = if ($json.Success) { @($json.Value | ConvertFrom-Json) } else { @() }
         $row = @($rows | Where-Object { $_.name -ceq 'msix-smoke-plugin' })
         $installLog = if (Test-Path -LiteralPath (Join-Path $scratch 'install.log')) { Get-Content -Raw -LiteralPath (Join-Path $scratch 'install.log') } else { '' }

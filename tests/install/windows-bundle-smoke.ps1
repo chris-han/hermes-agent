@@ -102,7 +102,7 @@ try {
             '--home', $HomeDir, '--user-data', $UserData, '--out', $Out, '--phase', 'installed', '--expect-commit', $Commit)
     } finally { Pop-Location }
     # Plugins whose Python dependencies PM builds must work inside the package (#135236).
-    Test-BundlePluginInstall $root $Out
+    Test-BundlePluginInstall $root $Out -IsolatedHome:$SemantierAcceptanceHost
 } catch {
     $failed = $true
     $_ | Out-String | Set-Content -LiteralPath (Join-Path $Out 'native-install-error.txt')
@@ -133,8 +133,8 @@ try {
                         throw 'Refusing cleanup of an unproven gateway incarnation'
                     }
                     Stop-Process -Id $owner.ProcessId -ErrorAction Stop
-                    Wait-Process -Id $owner.ProcessId -Timeout 15 -ErrorAction SilentlyContinue
-                    if (Get-Process -Id $owner.ProcessId -ErrorAction SilentlyContinue) { throw 'Owned gateway did not stop' }
+                    Wait-Process -Id $owner.ProcessId -Timeout 60 -ErrorAction SilentlyContinue
+                    if (Get-CimInstance Win32_Process -Filter "ProcessId=$($owner.ProcessId)") { throw 'Owned gateway did not stop' }
                 }
                 Remove-AppxPackage -Package $pkg.PackageFullName -ErrorAction Stop
                 if (Get-AppxPackage -Name $Expected.msixIdentity) { throw 'Package removal did not complete' }
