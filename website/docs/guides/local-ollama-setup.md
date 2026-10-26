@@ -6,12 +6,11 @@ description: "Step-by-step guide to running Hermes Agent entirely on your own ma
 
 # Run Hermes Locally with Ollama — Zero API Cost
 
-:::tip Desktop users: there's a one-click path
-On the Hermes desktop app, **Settings → Providers → Local Models** installs
-and manages a local llama.cpp server for you — model downloads, memory
-fitting, and context sizing included. See [Local Models](../user-guide/local-models.md).
-This guide is for manual setup: Ollama specifically, CLI-first workflows,
-or servers you want to run yourself.
+:::tip Desktop endpoints
+In the desktop app, use **Settings → Model service → Custom Endpoints** to
+connect to a server you run independently, including localhost URLs.
+Desktop does not download or manage model runtimes. For terminal-managed
+setup, see [Local Models](../user-guide/local-models.md).
 :::
 
 ## The Problem

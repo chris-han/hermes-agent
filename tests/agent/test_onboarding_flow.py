@@ -410,3 +410,9 @@ def test_no_turn_note_once_every_card_is_settled():
     steps = run(facts, *answer_all(facts)[:-1])
 
     assert next_beat(steps[-1].record) is None and turn_note(steps[-1].record) == ""
+
+
+def test_opening_does_not_recommend_retired_desktop_model_installation():
+    text = opening_prompt(MACHINES['mac'])
+    assert 'Local Models' not in text
+    assert 'Never install a model runtime or download a model yourself.' in text

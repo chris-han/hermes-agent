@@ -457,7 +457,7 @@ def ensure_local_runtime(config: dict, force: bool = False) -> object | None:
 
             engine = installed_engine(section.get("backend", "auto"))
             if engine is None:
-                logger.info("local runtime enabled but no PM engine installed; use the Local Models pane")
+                logger.info("local runtime enabled but no PM engine installed; run hermes model")
                 return None
             _SERVING_ENGINE = engine
 

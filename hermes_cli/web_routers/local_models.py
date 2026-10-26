@@ -1,4 +1,4 @@
-"""Local-models dashboard routes — the desktop's window into the managed llama.cpp runtime.
+"""Shared managed llama.cpp routes and in-process handlers for terminal model setup.
 
 Every payload carries plain-language, pre-formatted facts the UI shows verbatim
 (what will this model do ON THIS MACHINE, how big is the download, what is the

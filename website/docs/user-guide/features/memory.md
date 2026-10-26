@@ -485,7 +485,7 @@ destructive changes directly. The default is an empty list.
 
 On a cloud provider the review finishes in seconds and runs alongside
 whatever you do next. When the review's runtime is the **managed local
-llama-server** (Settings → Local models), the same fork occupies the GPU your
+llama-server** (`hermes model` terminal setup), the same fork occupies the GPU your
 next prompt needs — for minutes on a large model — and sending a new prompt
 cancels it, discarding the learning. So on the managed local runtime, reviews
 are **deferred by default**: queued at turn end and executed once the machine
