@@ -50,7 +50,8 @@ vi.mock('@/store/settings-scope', () => ({
   $settingsRequestProfile: atom<string | undefined>('default'),
   $settingsScopeEditsNonDefault: atom(false),
   $settingsScopeOverride: atom<null | string>(null),
-  $settingsScopeProfile: atom<string>('default')
+  $settingsScopeProfile: atom<string>('default'),
+  $settingsScopeProfiles: atom([])
 }))
 
 vi.mock('@/store/projects', () => ({

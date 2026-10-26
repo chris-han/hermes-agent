@@ -1,6 +1,7 @@
 import { atom } from 'nanostores'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { HermesConnection } from '@/global'
 import type { ProfileInfo } from '@/types/hermes'
 
 // Keep store/profile's side-effecting imports inert — same seam as
@@ -18,6 +19,8 @@ vi.mock('@/hermes', () => ({
 vi.mock('@/lib/query-client', () => ({ invalidateProfileScopedQueries: vi.fn() }))
 vi.mock('@/store/starmap', () => ({ resetStarmapGraph: vi.fn() }))
 
+const { $defaultProfileRoute } = await import('@/store/default-profile')
+const { $connection } = await import('@/store/session')
 const { $activeGatewayProfile, $profiles } = await import('./profile')
 
 const {
@@ -29,12 +32,46 @@ const {
 } = await import('./settings-scope')
 
 beforeEach(() => {
+  $defaultProfileRoute.set(null)
+  $connection.set(null)
   $activeGatewayProfile.set('default')
   $settingsScopeOverride.set(null)
   $profiles.set([])
 })
 
 describe('settings scope store', () => {
+  it('uses the native semantier-local default without changing the concrete request scope', () => {
+    $connection.set({ mode: 'local', connectionId: 'local' } as HermesConnection)
+    $defaultProfileRoute.set({ connectionId: null, profile: 'semantier-local' })
+    $profiles.set([
+      { name: 'default', is_default: true },
+      { name: 'semantier-local', is_default: false },
+      { name: 'scout', is_default: false }
+    ] as ProfileInfo[])
+    $activeGatewayProfile.set('semantier-local')
+    expect($settingsScopeEditsNonDefault.get()).toBe(false)
+    expect($settingsRequestProfile.get()).toBe('semantier-local')
+    $activeGatewayProfile.set('scout')
+    expect($settingsScopeEditsNonDefault.get()).toBe(true)
+    expect($settingsRequestProfile.get()).toBe('scout')
+    setSettingsScope('default')
+    expect($settingsScopeProfile.get()).toBe('default')
+    expect($settingsRequestProfile.get()).toBe('default')
+    expect($settingsScopeEditsNonDefault.get()).toBe(true)
+  })
+
+  it.each([
+    { mode: 'remote', connectionId: 'lab' },
+    { mode: 'local', connectionId: 'another-local-source' }
+  ])('does not borrow the local desktop default on another source: %j', connection => {
+    $connection.set(connection as HermesConnection)
+    $defaultProfileRoute.set({ connectionId: null, profile: 'semantier-local' })
+    $profiles.set([{ name: 'default', is_default: true }, { name: 'semantier-local' }] as ProfileInfo[])
+    $activeGatewayProfile.set('semantier-local')
+    expect($settingsScopeEditsNonDefault.get()).toBe(true)
+    expect($settingsRequestProfile.get()).toBe('semantier-local')
+  })
+
   it('defaults to following the active gateway profile (no override)', () => {
     expect($settingsScopeOverride.get()).toBeNull()
     expect($settingsScopeProfile.get()).toBe('default')

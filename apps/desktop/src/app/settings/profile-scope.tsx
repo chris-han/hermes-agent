@@ -3,11 +3,12 @@ import { useEffect } from 'react'
 
 import { useI18n } from '@/i18n'
 import { cn } from '@/lib/utils'
-import { $profiles, normalizeProfileKey, profileLabel, refreshProfiles } from '@/store/profile'
+import { normalizeProfileKey, profileLabel, refreshProfiles } from '@/store/profile'
 import {
   $settingsScopeEditsNonDefault,
   $settingsScopeOverride,
   $settingsScopeProfile,
+  $settingsScopeProfiles,
   setSettingsScope
 } from '@/store/settings-scope'
 import type { ProfileInfo } from '@/types/hermes'
@@ -45,15 +46,15 @@ export function ScopeChip({ active, label, onSelect }: { active: boolean; label:
  *  (Model, Workspace, Safety, Memory & Context, Voice, Tools & Keys), Custom
  *  Endpoints, and the Messaging overlay. Backed by one nanostore
  *  ($settingsScopeOverride) so the selection persists across pages. Hidden with
- *  fewer than two profiles, so single-profile users never see it and every
- *  request keeps its unscoped default shape. */
+ *  fewer than two ordinary Settings targets, so a single-profile desktop
+ *  needs no selector. Requests still name the exact selected profile. */
 export function SettingsProfileScope({ className }: { className?: string }) {
   const { t } = useI18n()
   const scope = t.settings.profileScope
   const override = useStore($settingsScopeOverride)
   const selected = useStore($settingsScopeProfile)
   const editingNonDefault = useStore($settingsScopeEditsNonDefault)
-  const profiles = useStore($profiles)
+  const profiles = useStore($settingsScopeProfiles)
   // The note names the edit target with the same presentation label as its
   // chip (Bot title → display_name → slug); the slug alone can name a bot the
   // user has never seen called that.

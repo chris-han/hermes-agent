@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { atom } from 'nanostores'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { HermesConnection } from '@/global'
 import type { ProfileInfo } from '@/types/hermes'
 
 // Keep store/profile's side-effecting imports inert — same seam as
@@ -20,6 +21,8 @@ vi.mock('@/hermes', () => ({
 vi.mock('@/lib/query-client', () => ({ invalidateProfileScopedQueries: vi.fn() }))
 vi.mock('@/store/starmap', () => ({ resetStarmapGraph: vi.fn() }))
 
+const { $defaultProfileRoute } = await import('@/store/default-profile')
+const { $connection } = await import('@/store/session')
 const { $activeGatewayProfile, $profiles } = await import('@/store/profile')
 const { $settingsScopeOverride } = await import('@/store/settings-scope')
 const { SettingsProfileScope } = await import('./profile-scope')
@@ -28,6 +31,8 @@ const profile = (name: string, isDefault = false, extra: Partial<ProfileInfo> = 
   ({ has_env: false, is_default: isDefault, model: null, name, ...extra }) as ProfileInfo
 
 beforeEach(() => {
+  $defaultProfileRoute.set(null)
+  $connection.set(null)
   $activeGatewayProfile.set('default')
   $settingsScopeOverride.set(null)
   $profiles.set([])
@@ -36,6 +41,49 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('SettingsProfileScope', () => {
+  it('omits the redundant root choice and selector for the managed desktop default', () => {
+    $connection.set({ mode: 'local', connectionId: 'local' } as HermesConnection)
+    $defaultProfileRoute.set({ connectionId: null, profile: 'semantier-local' })
+    $activeGatewayProfile.set('semantier-local')
+    $profiles.set([profile('default', true), profile('semantier-local')])
+    const { container } = render(<SettingsProfileScope />)
+    expect(container.textContent).toBe('')
+  })
+
+  it('keeps real bot choices and scope warnings with semantier-local as the desktop default', () => {
+    $connection.set({ mode: 'local', connectionId: 'local' } as HermesConnection)
+    $defaultProfileRoute.set({ connectionId: null, profile: 'semantier-local' })
+    $activeGatewayProfile.set('semantier-local')
+    $profiles.set([profile('default', true), profile('semantier-local'), profile('scout')])
+    const { container } = render(<SettingsProfileScope />)
+    expect(screen.queryByRole('button', { name: 'default' })).toBeNull()
+    expect(container.querySelector('[role="status"]')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'scout' }))
+    expect(container.querySelector('[data-scope-loud="true"]')?.textContent).toContain('scout')
+    fireEvent.click(screen.getByRole('button', { name: 'semantier-local' }))
+    expect($settingsScopeOverride.get()).toBeNull()
+    expect(container.querySelector('[role="status"]')).toBeNull()
+  })
+
+  it('keeps an explicitly selected legacy root visible instead of silently retargeting', () => {
+    $connection.set({ mode: 'local', connectionId: 'local' } as HermesConnection)
+    $defaultProfileRoute.set({ connectionId: null, profile: 'semantier-local' })
+    $activeGatewayProfile.set('default')
+    $profiles.set([profile('default', true), profile('semantier-local')])
+    render(<SettingsProfileScope />)
+    expect(screen.getByRole('button', { name: 'default' })).toBeTruthy()
+    expect(screen.getByRole('status').textContent).toContain('default')
+  })
+
+  it('does not hide a real root merely because a profile is named semantier-local', () => {
+    $connection.set({ mode: 'local', connectionId: 'local' } as HermesConnection)
+    $activeGatewayProfile.set('semantier-local')
+    $profiles.set([profile('default', true), profile('semantier-local')])
+    render(<SettingsProfileScope />)
+    expect(screen.getByRole('button', { name: 'default' })).toBeTruthy()
+    expect(screen.getByRole('status').getAttribute('data-scope-loud')).toBe('true')
+  })
+
   it('renders nothing with fewer than two profiles', () => {
     $profiles.set([profile('default', true)])
 

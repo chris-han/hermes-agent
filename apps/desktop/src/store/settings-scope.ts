@@ -1,6 +1,9 @@
+import { LOCAL_CONNECTION_ID } from '@hermes/shared'
 import { atom, computed } from 'nanostores'
 
+import { $defaultProfileRoute } from '@/store/default-profile'
 import { $activeGatewayProfile, $profiles, normalizeProfileKey } from '@/store/profile'
+import { $connection } from '@/store/session'
 
 // ── Shared settings "Applies to" scope ──────────────────────────────────────
 // One selection shared by every config-backed settings page (Model, Workspace,
@@ -16,6 +19,28 @@ export const $settingsScopeProfile = computed([$settingsScopeOverride, $activeGa
   normalizeProfileKey(override ?? active)
 )
 
+// The native startup owner already selects the managed desktop home. Hermes'
+// is_default still identifies its legacy root; it must not make that root a
+// competing desktop default. Never borrow a local preference on another source.
+const $desktopLocalDefault = computed([$defaultProfileRoute, $connection, $profiles], (route, connection, profiles) => {
+  const localSource = connection?.mode === 'local' &&
+    (!connection.connectionId || connection.connectionId === LOCAL_CONNECTION_ID)
+
+  const localPreference = route && (!route.connectionId || route.connectionId === LOCAL_CONNECTION_ID)
+
+  return localSource && localPreference && route.profile === 'semantier-local' &&
+    profiles.some(profile => profile.name === route.profile) ? route.profile : null
+})
+
+// Ordinary Settings need no second root choice for a managed single-profile
+// desktop. An explicitly selected legacy root remains visible and keeps its
+// exact request scope; advanced profile access and all stored data stay intact.
+export const $settingsScopeProfiles = computed([$profiles, $desktopLocalDefault, $settingsScopeProfile], (profiles, desktopDefault, selected) =>
+  desktopDefault && selected !== 'default'
+    ? profiles.filter(profile => !(profile.is_default && normalizeProfileKey(profile.name) === 'default'))
+    : profiles
+)
+
 // Whether the settings pages are editing a profile OTHER than the default
 // one. The scope follows the app's active profile when no override is set —
 // which, after opening any Bot Mode chat, is the BOT's profile — so an edit
@@ -24,10 +49,10 @@ export const $settingsScopeProfile = computed([$settingsScopeOverride, $activeGa
 // loudly. Until the roster has loaded (no is_default entry yet) the root
 // profile's canonical key is assumed, so an unknown default fails loud, not
 // quiet.
-export const $settingsScopeEditsNonDefault = computed([$settingsScopeProfile, $profiles], (selected, profiles) => {
+export const $settingsScopeEditsNonDefault = computed([$settingsScopeProfile, $profiles, $desktopLocalDefault], (selected, profiles, desktopDefault) => {
   const defaultProfile = profiles.find(profile => profile.is_default)
 
-  return selected !== normalizeProfileKey(defaultProfile?.name)
+  return selected !== (desktopDefault ?? normalizeProfileKey(defaultProfile?.name))
 })
 
 // ── Request-scope form (THE value to hand to API helpers) ──────────────────
