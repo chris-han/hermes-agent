@@ -38,7 +38,9 @@ param(
   [switch]$Store,
   [string]$Python = '',
   [string]$Remote = 'origin',
-  [string]$ChannelRequest = ''
+  [string]$ChannelRequest = '',
+  [string]$AcceptancePublicBase = '',
+  [string]$ControllerCommit = ''
 )
 
 # 'Stop' turns the native stderr progress lines of the build into terminating errors on Windows PowerShell 5.
@@ -107,6 +109,11 @@ if (git status --porcelain --untracked-files=all) {
   exit 1
 }
 $sha = @(Git-Lines rev-parse HEAD)[0]
+if ($AcceptancePublicBase) {
+  if ($Store -or !$ChannelRequest -or $ControllerCommit -cnotmatch '^[a-f0-9]{40}$') { Fail 'Acceptance request requires bundled scope, output and exact controller' }
+  & $py scripts/releases/semantier_windows.py --source $Repo --commit $sha --controller $ControllerCommit --version $env:SEMANTIER_DESKTOP_VERSION --base $AcceptancePublicBase --output $ChannelRequest
+  if ($LASTEXITCODE) { Fail "acceptance request generation failed (exit $LASTEXITCODE)" }
+}
 
 if ($Repo.Length -gt 40) {
   Write-Warning "checkout path is $($Repo.Length) characters. On Windows ARM64 a long path can fail the cryptography build (LNK1104). Prefer C:\hsb."

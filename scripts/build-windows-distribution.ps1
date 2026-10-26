@@ -124,9 +124,7 @@ try {
     if ($request.python) { $arguments += @('-Python',$request.python) }
     if (($request.PSObject.Properties.Name -contains 'acceptancePublicBase') -and $request.acceptancePublicBase) {
       $channelRequest = Join-Path $output 'channel-request.json'
-      $generatorPython = if ($request.python) { $request.python } else { 'python' }
-      Native $generatorPython @((Join-Path $work 'scripts\releases\semantier_windows.py'),'--source',$work,'--commit',$source,'--controller',$request.commit,'--version',$semantierVersion,'--base',$request.acceptancePublicBase,'--output',$channelRequest)
-      $arguments += @('-ChannelRequest',$channelRequest)
+      $arguments += @('-ChannelRequest',$channelRequest,'-AcceptancePublicBase',$request.acceptancePublicBase,'-ControllerCommit',$request.commit)
     }
 
     # This controller holds the workspace lock until every native build child exits.
