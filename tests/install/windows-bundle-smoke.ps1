@@ -60,7 +60,7 @@ try {
         $signature.SignerCertificate.Subject -cne $Expected.publisher) { throw 'Artifact signature/publisher invalid' }
     $inputMetadata = Read-BundleSmokeMetadata $Artifact $Arch $Expected
     $inputMetadata | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Out 'artifact-metadata.json')
-    $existing = if ($SemantierAcceptanceHost) { @(Get-AppxPackage -Name $Expected.msixIdentity) } else { @(Get-AppxPackage -AllUsers -Name $Expected.msixIdentity) }
+    $existing = @(if ($SemantierAcceptanceHost) { Get-AppxPackage -Name $Expected.msixIdentity } else { Get-AppxPackage -AllUsers -Name $Expected.msixIdentity })
     if ($existing.Count) { throw 'Package identity already exists; refusing to replace it' }
     $attempted = $true
     Add-AppxPackage -Path $Artifact -ErrorAction Stop

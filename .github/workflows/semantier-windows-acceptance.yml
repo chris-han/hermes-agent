@@ -37,24 +37,31 @@ jobs:
           ref: ${{ env.ACCEPTANCE_CONTROLLER_COMMIT }}
           persist-credentials: false
           path: controller
+      - name: Resolve retained Python for CI helpers
+        shell: bash
+        run: |
+          set -euo pipefail
+          ci_python="$(uv python find --offline --managed-python 3.14)"
+          "$ci_python" -c 'import sys; assert sys.version_info >= (3, 11); print(sys.version)'
+          echo "SEMANTIER_CI_PYTHON=$ci_python" >> "$GITHUB_ENV"
       - name: Build and sign with existing non-exportable identity
         shell: bash
         run: |
           set -euo pipefail
           output="D:\\repo\\deliverables\\SemantierAgent-client-feedback-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           echo "ACCEPTANCE_OUTPUT=$(wslpath -u "$output")" >> "$GITHUB_ENV"
-          python3 controller/scripts/build_hermes_windows.py --source "$PWD/hermes" --output "$output" --thumbprint 57BF15739B4AA447842EAF388856A01B4E5029FF --acceptance-public-base http://127.0.0.1:8926
+          "$SEMANTIER_CI_PYTHON" controller/scripts/build_hermes_windows.py --source "$PWD/hermes" --output "$output" --thumbprint 57BF15739B4AA447842EAF388856A01B4E5029FF --acceptance-public-base http://127.0.0.1:8926
       - name: Real native installation and controlled inference-boundary smoke
         shell: bash
         run: |
           set -euo pipefail
           root="D:\\repo\\qualification-private\\client-feedback-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           echo "ACCEPTANCE_NATIVE=$(wslpath -u "$root")/out" >> "$GITHUB_ENV"
-          python3 hermes/scripts/releases/semantier_native_ci.py --output "$ACCEPTANCE_OUTPUT" --work "$root" --commit "$GITHUB_SHA"
+          "$SEMANTIER_CI_PYTHON" hermes/scripts/releases/semantier_native_ci.py --output "$ACCEPTANCE_OUTPUT" --work "$root" --commit "$GITHUB_SHA"
       - name: Stage receipt-bound candidate; never promote
         shell: bash
         env:
           SEMANTIER_CLIENT_RECEIPT_KEY: ${{ secrets.SEMANTIER_CLIENT_RECEIPT_KEY }}
         run: |
           set -euo pipefail
-          python3 hermes/scripts/releases/semantier_candidate.py --output "$ACCEPTANCE_OUTPUT" --native "$ACCEPTANCE_NATIVE" --incoming /tmp/semantier-client-release-feedback-v1/incoming --notes hermes/scripts/releases/semantier-acceptance-notes.json
+          "$SEMANTIER_CI_PYTHON" hermes/scripts/releases/semantier_candidate.py --output "$ACCEPTANCE_OUTPUT" --native "$ACCEPTANCE_NATIVE" --incoming /tmp/semantier-client-release-feedback-v1/incoming --notes hermes/scripts/releases/semantier-acceptance-notes.json
