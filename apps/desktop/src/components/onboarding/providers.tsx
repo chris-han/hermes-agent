@@ -64,7 +64,13 @@ export function FeaturedProviderRow({
           )}
         </div>
         <p className="mt-1 text-xs leading-5 text-muted-foreground">
-          {semantierCloud ? (loggedIn ? copy.ready : copy.signIn) : freeTier ? t.freeTier.providerRowPitch : t.onboarding.featuredPitch}
+          {semantierCloud
+            ? loggedIn
+              ? copy.ready
+              : copy.signIn
+            : freeTier
+              ? t.freeTier.providerRowPitch
+              : t.onboarding.featuredPitch}
         </p>
       </div>
       <ChevronRight className="size-4 shrink-0 text-primary transition group-hover:translate-x-0.5" />
@@ -114,16 +120,6 @@ export function FireworksProviderRow({ onClick }: { onClick: () => void }) {
   const { t } = useI18n()
 
   return <KeyProviderRow onClick={onClick} pitch={t.onboarding.fireworksPitch} title="Fireworks AI" />
-}
-
-/** Onboarding row for the managed local runtime: no account, no key — the
- *  destination is the Local Models pane where install/download live. */
-export function LocalModelsProviderRow({ onClick }: { onClick: () => void }) {
-  const { t } = useI18n()
-
-  return (
-    <KeyProviderRow onClick={onClick} pitch={t.onboarding.localModelsPitch} title={t.onboarding.localModelsTitle} />
-  )
 }
 
 export function OpenRouterProviderRow({ onClick }: { onClick: () => void }) {

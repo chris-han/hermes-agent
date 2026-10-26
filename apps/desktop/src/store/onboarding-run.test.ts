@@ -6,7 +6,6 @@ import { $onboardingPhase } from './onboarding-phase'
 import { $onboardingDecided, $onboardingSurfaceClear } from './onboarding-presence'
 import {
   $onboardingEnded,
-  $onboardingSettleFrom,
   decideOnboarding,
   noteOnboardingEnded,
   type OnboardingRequest,
@@ -51,7 +50,6 @@ beforeEach(() => {
   setPrimaryGatewayConnectionId('local')
   $onboardingPhase.set('idle')
   $onboardingEnded.set(null)
-  $onboardingSettleFrom.set(null)
   $selectedStoredSessionId.set(null)
 })
 
@@ -104,7 +102,6 @@ describe('onboarding run', () => {
 
     expect($onboardingPhase.get()).toBe('shown')
     expect($onboardingSurfaceClear.get()).toBe(true)
-    expect($onboardingSettleFrom.get()).not.toBeNull()
   })
 
   it('ignores the end of another run, like the old run a rerun closed', async () => {

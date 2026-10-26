@@ -263,11 +263,6 @@ export const zhHantChrome = {
       cacheRead: '快取讀取',
       priceTitle: (input: string, output: string, cache: string) =>
         `輸入 ${input}/Mtok · 輸出 ${output}/Mtok` + (cache ? ` · 快取讀取 ${cache}/Mtok` : ''),
-      localSetup: {
-        title: '本機執行 · 免費、私密',
-        text: (model: string, size: string) => `${model} 適合這台電腦 · 下載 ${size}`,
-        action: '設定'
-      },
       limited: '已限額',
       limitedUntil: (time: string) => `限額至 ${time}`,
       limitedTip: (provider: string, time: null | string) =>
@@ -379,15 +374,6 @@ export const zhHantChrome = {
       turnRunning: '執行中',
       contextUsage: '上下文使用量',
       compressions: count => `壓縮次數：${count}`,
-      systemResources: {
-        title: '系統資源',
-        loading: '資源…',
-        gpuUtilization: 'GPU 使用率',
-        gpuMemory: '顯示記憶體',
-        ram: '記憶體',
-        unifiedNote: '統一記憶體——GPU 與系統共享此記憶體池。',
-        toggle: '系統資源'
-      },
       contextUsagePanel: {
         categories: {
           conversation: '對話',

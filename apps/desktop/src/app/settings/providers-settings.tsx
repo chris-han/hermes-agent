@@ -3,16 +3,7 @@ import type { ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { runInTerminal } from '@/app/right-sidebar/store'
-import {
-  FEATURED_ID,
-  FeaturedProviderRow,
-  FireworksProviderRow,
-  LocalModelsProviderRow,
-  OpenRouterProviderRow,
-  ProviderRow,
-  providerTitle,
-  sortProviders
-} from '@/components/onboarding'
+import { FEATURED_ID, FeaturedProviderRow, providerTitle, sortProviders } from '@/components/onboarding'
 import { Button } from '@/components/ui/button'
 import { RowButton } from '@/components/ui/row-button'
 import { SearchField } from '@/components/ui/search-field'
@@ -20,11 +11,9 @@ import { Tip } from '@/components/ui/tooltip'
 import { disconnectOAuthProvider, listOAuthProviders } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { modelServiceCopy } from '@/i18n/model-service'
-import { Check, ChevronDown, ChevronRight, KeyRound, Loader2, Terminal, Trash2 } from '@/lib/icons'
+import { Check, ChevronRight, KeyRound, Loader2, Terminal, Trash2 } from '@/lib/icons'
 import { normalize } from '@/lib/text'
-import { cn } from '@/lib/utils'
 import { confirm } from '@/store/confirm'
-import { $localModelsEnabled } from '@/store/local-models-flag'
 import { notify, notifyError } from '@/store/notifications'
 import { $desktopOnboarding, startManualProviderOAuth } from '@/store/onboarding'
 import { $settingsRequestProfile } from '@/store/settings-scope'
@@ -34,7 +23,6 @@ import { isKeyVar, ProviderKeyRows } from './credential-key-ui'
 import { CustomEndpointsSettings } from './custom-endpoints-settings'
 import { SettingsCategoryHeading, useEnvCredentials } from './env-credentials'
 import { providerGroup, providerMeta, providerPriority } from './helpers'
-import { LocalModelsSettings } from './local-models-settings'
 import { SettingsContent, SettingsSkeleton } from './primitives'
 import { SettingsProfileScope } from './profile-scope'
 import { useDeepLinkHighlight } from './use-deep-link-highlight'
@@ -54,7 +42,7 @@ function GroupLabel({ children }: { children: ReactNode }) {
 }
 
 // Sub-views surfaced as a sidebar subnav: account sign-in vs raw API keys.
-export const PROVIDER_VIEWS = ['accounts', 'keys', 'custom-endpoints', 'local'] as const
+export const PROVIDER_VIEWS = ['accounts', 'keys', 'custom-endpoints'] as const
 
 export type ProviderView = (typeof PROVIDER_VIEWS)[number]
 
@@ -144,22 +132,13 @@ function buildProviderKeyGroups(vars: Record<string, EnvVarInfo>): ProviderKeyGr
   return groups.sort((a, b) => a.priority - b.priority || a.name.localeCompare(b.name))
 }
 
-// Deliberately a near-1:1 replica of the first-run onboarding picker
-// (`Picker` in desktop-onboarding-overlay): same recommended card, same
-// always-visible Local models row, same provider rows, same "Other
-// providers" disclosure (Fireworks and OpenRouter quick-key rows live
-// inside it on both surfaces), and the same bottom-right "I have an API
-// key" affordance. The leaf cards are the exact shared components, so
-// the two surfaces stay visually identical. Selecting a provider hands
-// off to the shared onboarding overlay, which runs that provider's real
-// sign-in flow; the key affordances open the API-key catalog below.
+// Accounts leads with model-service setup and preserves connected account controls.
 function OAuthPicker({
   disconnecting,
   onConnect,
   onDisconnect,
   onTerminalDisconnect,
   onWantApiKey,
-  onWantLocalModels,
   onWantLocalEndpoint,
   providers
 }: {
@@ -168,13 +147,11 @@ function OAuthPicker({
   onDisconnect: (provider: OAuthProvider) => void
   onTerminalDisconnect: (provider: OAuthProvider) => void
   onWantApiKey: () => void
-  onWantLocalModels: () => void
   onWantLocalEndpoint: (reason: null | string) => void
   providers: OAuthProvider[]
 }) {
   const { t } = useI18n()
   const p = t.settings.providers
-  const [showAll, setShowAll] = useState(false)
   const ordered = useMemo(() => sortProviders(providers), [providers])
 
   if (ordered.length === 0) {
@@ -197,9 +174,6 @@ function OAuthPicker({
   // providers hide behind the disclosure, so the page leads with what's set up.
   // Both lists preserve `sortProviders` order (curated priority, then name).
   const connected = rest.filter(isConnected)
-  const others = rest.filter(p => !isConnected(p))
-  const collapsible = others.length > 0
-  const showOthers = !collapsible || showAll
 
   return (
     <section className="mb-5 grid gap-2">
@@ -220,9 +194,7 @@ function OAuthPicker({
       </p>
       <LocalEndpointRow onOpen={onWantLocalEndpoint} />
       {featured && <FeaturedProviderRow onSelect={select} provider={featured} />}
-      {/* Slot #3 — the no-account path, matching onboarding. Behind the
-          --local launch flag like every local-models surface. */}
-      {$localModelsEnabled.get() && <LocalModelsProviderRow onClick={onWantLocalModels} />}
+
       {connected.length > 0 && (
         <>
           <GroupLabel>{p.connected}</GroupLabel>
@@ -237,28 +209,6 @@ function OAuthPicker({
             />
           ))}
         </>
-      )}
-      {showOthers && (
-        <>
-          {connected.length > 0 && <GroupLabel>{p.otherProviders}</GroupLabel>}
-          {others.map(p => (
-            <ProviderRow key={p.id} onSelect={select} provider={p} />
-          ))}
-          <FireworksProviderRow onClick={onWantApiKey} />
-          <OpenRouterProviderRow onClick={onWantApiKey} />
-        </>
-      )}
-      {collapsible && (
-        <Button
-          className="py-1 text-[length:var(--conversation-caption-font-size)]"
-          onClick={() => setShowAll(v => !v)}
-          size="inline"
-          type="button"
-          variant="text"
-        >
-          {showAll ? p.collapse : connected.length > 0 ? p.connectAnother : p.otherProviders}
-          <ChevronDown className={cn('size-3.5 transition', showAll && 'rotate-180')} />
-        </Button>
       )}
     </section>
   )
@@ -446,18 +396,26 @@ export function ProvidersSettings({
   }, [scopeProfile])
 
   useEffect(() => {
-    if (view !== 'accounts') { return }
+    if (view !== 'accounts') {
+      return
+    }
+
     let cancelled = false
     let readGeneration = 0
 
     const refresh = async () => {
-      if (onboardingActive) {return}
+      if (onboardingActive) {
+        return
+      }
+
       const generation = ++readGeneration
 
       try {
         const { providers } = await listOAuthProviders(scopeProfile)
 
-        if (!cancelled && generation === readGeneration) {setOauthProviders(providers)}
+        if (!cancelled && generation === readGeneration) {
+          setOauthProviders(providers)
+        }
       } catch {
         // Keep the last known scoped facts when a refresh is unavailable.
       }
@@ -616,13 +574,6 @@ export function ProvidersSettings({
     return <CustomEndpointsSettings onConfigSaved={onConfigSaved} onMainModelChanged={onMainModelChanged} />
   }
 
-  if (view === 'local') {
-    // Strict --local gate: without the launch flag the pane doesn't render
-    // even when local models are configured — a stale ?pview=local deep link
-    // (or an old shortcut) lands on the accounts view instead.
-    return $localModelsEnabled.get() ? <LocalModelsSettings /> : null
-  }
-
   return (
     <SettingsContent>
       <SettingsProfileScope className="mb-5" />
@@ -636,7 +587,6 @@ export function ProvidersSettings({
         onTerminalDisconnect={provider => void handleTerminalDisconnect(provider)}
         onWantApiKey={() => onViewChange('keys')}
         onWantLocalEndpoint={() => onViewChange('custom-endpoints')}
-        onWantLocalModels={() => onViewChange('local')}
         providers={oauthProviders}
       />
     </SettingsContent>

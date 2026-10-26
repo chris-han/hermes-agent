@@ -288,8 +288,6 @@ export const zhHantBoot = {
     connected: '已連線',
     featuredPitch: '一個訂閱，300+ 前沿模型 — 執行 Semantier 的建議方式',
     fireworksPitch: '直接模型 API — Fireworks 託管的前沿模型',
-    localModelsTitle: '本地執行模型',
-    localModelsPitch: '無需帳號——下載模型，在本機執行',
     openRouterPitch: '一個金鑰，數百個模型 — 穩定的預設選擇',
     apiKeyOptions: {
       fireworks: { short: '直接模型 API', description: '直接存取 Fireworks AI 託管的模型。' },
@@ -348,5 +346,12 @@ export const zhHantBoot = {
   }
 } satisfies Pick<
   TranslationOverrides,
-  'boot' | 'remoteDisplayBanner' | 'butterbar' | 'keepAwakeOffer' | 'promptNotices' | 'updates' | 'install' | 'onboarding'
+  | 'boot'
+  | 'remoteDisplayBanner'
+  | 'butterbar'
+  | 'keepAwakeOffer'
+  | 'promptNotices'
+  | 'updates'
+  | 'install'
+  | 'onboarding'
 >

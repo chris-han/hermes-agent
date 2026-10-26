@@ -700,7 +700,6 @@ const LOCAL_PRIMARY_SCOPED_ROUTES = new Set([
   'GET /api/logs',
   'GET /api/portal',
   'GET /api/hermes/update/check',
-  'POST /api/local-models/activate',
   'GET /api/dashboard/themes',
   'PUT /api/dashboard/theme',
   'GET /api/dashboard/font',

@@ -1779,8 +1779,6 @@ def cmd_gui(args: argparse.Namespace):
         launch_command = _packaged_desktop_launch_command(
             _installed_desktop_launch_target(desktop_dir, packaged_executable))
         launch_command.extend(config_electron_flags)
-    if getattr(args, "local", False):
-        launch_command.append("--local")
     # Out-of-band preview escape hatch (#97213): a fullscreened preview pane
     # owns all input, and Wayland has no xdotool/wmctrl to break out from a
     # terminal. `hermes desktop --close-preview` rides the single-instance

@@ -1,4 +1,4 @@
-/** First-run onboarding: the setup_beat cards and their receipts, Skip setup, the local-model offer
+/** First-run onboarding: the setup_beat cards and their receipts, Skip setup
  *  at the end, and the Settings row that runs it again. */
 export interface FirstRunCopy {
   /** Receipt labels, one per beat. */
@@ -33,12 +33,6 @@ export interface FirstRunCopy {
   skip: string
   skipTip: string
   skipFailed: string
-  localModel: {
-    title: string
-    text: (model: string, size: string) => string
-    setUp: string
-    notNow: string
-  }
   /** The first-run intro typed into the empty setup chat, two lines. The backend's scripted
    *  greeting (_GREETINGS in agent/onboarding_text.py) is the two joined: keep them equal. */
   intro: {

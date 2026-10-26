@@ -6,7 +6,6 @@ import { gatewayActivationEpoch } from '@/store/gateway'
 import type { FreeTierStatus } from '@/types/hermes'
 
 import { $freeTierStatus, type FreeTierRequester, NOUS_PROVIDER_ID, refreshFreeTierStatus } from './free-tier'
-import { $localModelOfferPending } from './local-model-offer'
 import { onboardingSurfaceActive } from './onboarding-presence'
 
 const POLL_MS = 2000
@@ -187,12 +186,8 @@ export function syncFreeTierOffer(status: FreeTierStatus | null, requestGateway:
   void claimFreeTierOffer(requestGateway)
 }
 
-// The local-model offer after onboarding goes first; the sign-in offer is claimed once it is answered.
-const offerBlocked = () =>
-  offerClaiming ||
-  onboardingSurfaceActive() ||
-  $localModelOfferPending.get() ||
-  $freeTierSignIn.get().status !== 'closed'
+// Offer only when onboarding and other sign-in surfaces are clear.
+const offerBlocked = () => offerClaiming || onboardingSurfaceActive() || $freeTierSignIn.get().status !== 'closed'
 
 async function claimFreeTierOffer(requestGateway: FreeTierRequester) {
   if (offerBlocked()) {

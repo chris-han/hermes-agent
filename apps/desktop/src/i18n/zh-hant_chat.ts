@@ -538,11 +538,6 @@ export const zhHantChat = {
         title: '附件與指令',
         text: '輸入 @ 把檔案帶入對話，輸入 / 執行指令。'
       },
-      'local-runtime-update': {
-        title: '本機引擎有可用更新',
-        text: '更新執行本機模型的引擎。進行中的本機請求可能會中斷。',
-        action: '立即更新'
-      },
       'right-pane': {
         title: '工作面板',
         text: '檔案、終端機、審閱與內建瀏覽器都在側邊面板裡。'

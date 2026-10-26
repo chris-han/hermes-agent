@@ -1,10 +1,10 @@
-"""``hermes model`` → Local models: the desktop's Local Models setup, in the terminal.
+"""``hermes model`` → Local models: terminal-owned managed runtime setup.
 
-The flow drives the handlers behind the desktop's Local Models pane
-(``hermes_cli/web_routers/local_models.py``) in-process, so both surfaces run one code path:
+The flow drives the shared runtime handlers
+(``hermes_cli/web_routers/local_models.py``) in-process:
 the catalog priced for this machine, quickstart (pinned engine via PM, model download, server
 start, default assignment) and activate for a model already on disk. Progress renders from the
-same job view the desktop polls; Ctrl+C pauses a download, and the next run resumes from the
+shared runtime job view; Ctrl+C pauses a download, and the next run resumes from the
 bytes already on disk.
 """
 

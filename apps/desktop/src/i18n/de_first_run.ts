@@ -28,13 +28,6 @@ export const deFirstRun: FirstRunCopy = {
   skip: 'Einrichtung überspringen',
   skipTip: 'Beendet die geführte Einrichtung und öffnet einen neuen Chat.',
   skipFailed: 'Einrichtung konnte nicht übersprungen werden',
-  localModel: {
-    title: 'Dieser Computer kann ein Modell lokal ausführen',
-    text: (model, size) =>
-      `${model} (${size}) passt zu deiner Hardware. Es läuft kostenlos, und deine Chats bleiben auf diesem Computer.`,
-    setUp: 'Einrichten',
-    notNow: 'Nicht jetzt'
-  },
   intro: {
     greeting: 'Hallo, ich bin Semantier.',
     plan: 'Richten wir alles für Sie ein. Danach machen wir etwas Cooles.'

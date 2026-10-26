@@ -4,7 +4,8 @@ export const frOnboarding: TranslationOverrides['onboarding'] = {
   headerTitle: 'Configurons Semantier Agent pour vous',
   headerDesc:
     'Connectez un fournisseur de modèles pour commencer à discuter. La plupart des options nécessitent un clic.',
-  preparingInstall: "Semantier finalise l'installation. Cela prend généralement moins d'une minute au premier lancement.",
+  preparingInstall:
+    "Semantier finalise l'installation. Cela prend généralement moins d'une minute au premier lancement.",
   starting: 'Démarrage de Semantier…',
   setupSlowTitle: 'La configuration prend plus de temps que d’habitude.',
   setupSlowBody: 'Semantier est toujours en cours de démarrage en arrière-plan.',
@@ -18,8 +19,6 @@ export const frOnboarding: TranslationOverrides['onboarding'] = {
   connected: 'Connecté',
   featuredPitch: 'Un abonnement, 300+ modèles de pointe — la méthode recommandée pour exécuter Semantier',
   fireworksPitch: 'API de modèles directe — modèles de pointe hébergés par Fireworks',
-  localModelsTitle: 'Exécuter des modèles en local',
-  localModelsPitch: 'Aucun compte requis — téléchargez un modèle et exécutez-le sur cette machine',
   openRouterPitch: 'Une clé, des centaines de modèles — une valeur par défaut solide',
   apiKeyOptions: {
     fireworks: {

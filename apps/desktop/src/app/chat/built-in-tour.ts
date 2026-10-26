@@ -13,7 +13,6 @@ import type { TourPreset } from '@hermes/shared'
 import { runtimeTranslations } from '@/i18n'
 import { startTour, type TourResult } from '@/lib/tour'
 import { $interfaceMode } from '@/store/interface-mode'
-import { readLocalSetupEligibility } from '@/store/local-setup-offer'
 
 const SELECTORS = {
   capabilities: '[data-tour="sidebar-nav-capabilities"]',
@@ -41,9 +40,6 @@ const PRESET_STOPS = {
   quick: () => ESSENTIALS
 } satisfies Record<TourPreset, () => StopId[]>
 
-/** A slow fit answer drops the local line rather than holding the tour. */
-const LOCAL_FIT_WAIT_MS = 2_000
-
 /** The tour collector's visibility rule minus its in-viewport test: a stop
  *  scrolled out of view still counts, because driver.js scrolls to it. A
  *  keep-alive tab hidden with `data-pane-hidden` keeps its box, so the
@@ -60,24 +56,9 @@ function onScreen(selector: string): boolean {
   return width >= 4 && height >= 4
 }
 
-/** Whether the model stop says this computer can run a local model: the
- *  local-setup eligibility answer (the backend's catalog `fits` check, on a local
- *  connection with Local Models on, with nothing set up yet). */
-async function canRunLocalModel(): Promise<boolean> {
-  const read = readLocalSetupEligibility().then(
-    ({ fit }) => fit !== null,
-    () => false
-  )
-
-  let timer: ReturnType<typeof setTimeout> | undefined
-  const late = new Promise<boolean>(resolve => (timer = setTimeout(() => resolve(false), LOCAL_FIT_WAIT_MS)))
-
-  return Promise.race([read, late]).finally(() => clearTimeout(timer))
-}
-
 /** Run the built-in tour. Never throws; failures come back like any tour
  *  action's, so the agent can say so in words. `stillActive` is asked again
- *  after the local-model wait: a chat switch during it answers `notActiveError`
+ *  before opening; a chat switch answers `notActiveError`
  *  instead of opening the tour over the other chat. */
 export async function runBuiltInTour(
   preset: TourPreset,
@@ -90,8 +71,6 @@ export async function runBuiltInTour(
     return { error: 'None of the built-in tour targets are on screen.', success: false }
   }
 
-  const localLine = stops.includes('model') && (await canRunLocalModel())
-
   if (!stillActive()) {
     return { error: notActiveError, success: false }
   }
@@ -101,7 +80,7 @@ export async function runBuiltInTour(
   return startTour(
     stops.map(id => ({
       selector: SELECTORS[id],
-      text: id === 'model' && localLine ? `${copy.model.text} ${copy.modelLocal}` : copy[id].text,
+      text: copy[id].text,
       title: copy[id].title
     }))
   )

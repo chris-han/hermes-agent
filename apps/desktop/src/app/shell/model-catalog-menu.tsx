@@ -44,14 +44,6 @@ import { foldIncludes, normalize } from '@/lib/text'
 import { cn } from '@/lib/utils'
 import { $customModels, addCustomModel, customModelCandidate, withCustomModels } from '@/store/custom-models'
 import { $favoriteModels, favoriteModelKey, toggleFavoriteModel } from '@/store/favorite-models'
-import { $localModelsEnabled } from '@/store/local-models-flag'
-import {
-  type LocalModelsOwner,
-  runningModelDownloads,
-  useLocalModelsOwner,
-  useLocalModelsStatus,
-  useLocalRuntimeJobs
-} from '@/store/local-runtime-jobs'
 import { $showModelPricing } from '@/store/model-pricing'
 import {
   $visibleModels,
@@ -65,7 +57,6 @@ import {
 } from '@/store/model-visibility'
 import { $collapsedProviders, toggleCollapsedProvider } from '@/store/provider-collapse'
 import { $defaultReasoningEffort } from '@/store/session'
-import type { LocalModelLoadProgress, LocalRuntimeJob } from '@/types/hermes'
 
 import { type FastControl, ModelEditSubmenu, resolveFastControl } from './model-edit-submenu'
 import { ModelMenuRowIcon, useModelMenuRowDecoration } from './model-menu-row-decorations'
@@ -171,8 +162,6 @@ interface ModelCatalogMenuProps {
   controller: ModelMenuController
   /** Rows appended under the catalog (Refresh Models, Edit Models, …). */
   footer?: ReactNode
-  /** Rows above the search, outside the keyboard list (the local-setup offer). */
-  header?: ReactNode
   gateway?: HermesGateway
   /** Owner-routed RPC for catalog reads. Preferred over `gateway.request` so
    *  a tile's menu queries the session owner's backend, not chrome's. */
@@ -200,31 +189,6 @@ function queryErrorMessage(error: unknown): null | string {
   return error ? (error instanceof Error ? error.message : String(error)) : null
 }
 
-function useDownloadRows(owner: LocalModelsOwner, localModelsEnabled: boolean) {
-  const downloadsKey: string = useLocalRuntimeJobs(
-    owner,
-    (jobs: readonly LocalRuntimeJob[]): string =>
-      localModelsEnabled
-        ? runningModelDownloads(jobs)
-            .map(job => `${job.job_id}\u0000${job.target}`)
-            .join('\u0001')
-        : '',
-    localModelsEnabled
-  )
-
-  return useMemo(
-    () =>
-      downloadsKey === ''
-        ? []
-        : downloadsKey.split('\u0001').map(pair => {
-            const [jobId, target] = pair.split('\u0000')
-
-            return { jobId, target }
-          }),
-    [downloadsKey]
-  )
-}
-
 /**
  * THE model catalog menu: searchable, provider-grouped, `-fast` families
  * collapsed to one row, per-row hover submenu for thinking/effort/fast, full
@@ -235,7 +199,6 @@ function useDownloadRows(owner: LocalModelsOwner, localModelsEnabled: boolean) {
 export function ModelCatalogMenu({
   controller,
   footer,
-  header,
   gateway,
   includeMoa = false,
   ownerConnectionId,
@@ -276,31 +239,6 @@ export function ModelCatalogMenu({
 
   const loading = modelOptions.isPending && !modelOptions.data
 
-  // Every local-models read in this menu sits behind the --local launch
-  // flag: no status polling, no download rows, and the llamacpp provider
-  // group hides even when models are staged (the flag is strict).
-  const localModelsEnabled = $localModelsEnabled.get()
-
-  // Live load state for the managed local server: which model is loading
-  // into memory right now, with a REAL percent (per-tensor callback relayed
-  // over the router's SSE stream). Polled only while this menu is mounted
-  // (it unmounts on close); errors read as "nothing loading" — remote-only
-  // installs have no local-models routes.
-  const owner: LocalModelsOwner = useLocalModelsOwner(profile, ownerConnectionId)
-  const localStatus = useLocalModelsStatus(owner, localModelsEnabled, true)
-
-  const loadingModels: Record<string, LocalModelLoadProgress> = localStatus.data?.loading ?? {}
-
-  // Models on their way into the local library (downloads + quickstart runs
-  // still fetching bytes) — rendered as disabled progress rows so the user
-  // sees the model coming instead of wondering where it went. The jobs store
-  // republishes every ~700ms with fresh byte counts while anything runs; a
-  // whole-store subscription here would re-render the entire menu per tick
-  // (breaking open submenus and focus — the #72163 class). Subscribe to a
-  // STABLE identity projection instead: it changes only when a download
-  // starts or ends. Each row selects its own percent scalar.
-  const downloads = useDownloadRows(owner, localModelsEnabled)
-
   const error = queryErrorMessage(modelOptions.error)
 
   const providers = modelOptions.data?.providers
@@ -313,29 +251,13 @@ export function ModelCatalogMenu({
   )
 
   const pickerProviders = useMemo(
-    () =>
-      withCustomModels(
-        providers?.filter(
-          provider =>
-            provider.slug.toLowerCase() !== 'moa' &&
-            // Strict --local gate: staged local models exist on disk, but
-            // without the flag the GUI doesn't offer them.
-            (localModelsEnabled || provider.slug !== LOCAL_PROVIDER_SLUG)
-        ) ?? [],
-        customModels
-      ),
-    [providers, localModelsEnabled, customModels]
+    () => withCustomModels(providers?.filter(provider => provider.slug.toLowerCase() !== 'moa') ?? [], customModels),
+    [providers, customModels]
   )
 
   const current = controller.current
 
   const q = normalize(search)
-
-  // In-flight downloads render inside the Local provider group when it
-  // exists, else as their own trailing 'Local' group (first download —
-  // nothing staged yet, so the catalog has no local provider row).
-  const shownDownloads = q ? downloads.filter(job => foldIncludes(job.target || '', q)) : downloads
-  const hasLocalGroup = pickerProviders.some(provider => provider.slug === LOCAL_PROVIDER_SLUG)
 
   // Resolve visibility HERE, against the catalog we actually fetched: an empty
   // provider list would otherwise resolve to an empty key set that reads as
@@ -394,7 +316,7 @@ export function ModelCatalogMenu({
   // section below it (MoA, custom slug) would sit under two separators.
   // Favorites count: a catalog whose every curated family is starred has
   // groups but no group rows, and the section must still paint.
-  const hasList = !hideCatalog && (groups.length > 0 || shownDownloads.length > 0 || favoriteRows.length > 0)
+  const hasList = !hideCatalog && (groups.length > 0 || favoriteRows.length > 0)
 
   // A typed id no provider lists is still a model to the backend. Offer it as
   // a row per configured provider (the current one first) so a slug the
@@ -680,7 +602,6 @@ export function ModelCatalogMenu({
 
   return (
     <>
-      {header}
       <DropdownMenuSearch
         aria-label={copy.search}
         onKeyDown={event => {
@@ -735,11 +656,7 @@ export function ModelCatalogMenu({
         <DropdownMenuItem className={dropdownMenuRow} disabled>
           {error}
         </DropdownMenuItem>
-      ) : groups.length === 0 &&
-        favoriteRows.length === 0 &&
-        moaPresets.length === 0 &&
-        shownDownloads.length === 0 &&
-        !customSlug ? (
+      ) : groups.length === 0 && favoriteRows.length === 0 && moaPresets.length === 0 && !customSlug ? (
         <DropdownMenuItem className={dropdownMenuRow} disabled>
           {copy.noModels}
         </DropdownMenuItem>
@@ -763,7 +680,6 @@ export function ModelCatalogMenu({
                     family={family}
                     favorite
                     kbProps={kbRowProps(`${provider.slug}:${family.id}`)}
-                    loadingModels={loadingModels}
                     onSelect={selectFamily}
                     onSubOpenChange={handleSubOpenChange}
                     provider={provider}
@@ -813,29 +729,15 @@ export function ModelCatalogMenu({
                       favorite={favoriteSet.has(favoriteModelKey(group.provider.slug, family.id))}
                       kbProps={kbRowProps(`${group.provider.slug}:${family.id}`)}
                       key={`${group.provider.slug}:${family.id}`}
-                      loadingModels={loadingModels}
                       onSelect={selectFamily}
                       onSubOpenChange={handleSubOpenChange}
                       provider={group.provider}
                       search={search}
                     />
                   ))}
-                {!collapsed &&
-                  slug === LOCAL_PROVIDER_SLUG &&
-                  shownDownloads.map(job => (
-                    <DownloadingModelRow jobId={job.jobId} key={job.jobId} owner={owner} target={job.target} />
-                  ))}
               </DropdownMenuGroup>
             )
           })}
-          {!hasLocalGroup && shownDownloads.length > 0 && (
-            <DropdownMenuGroup className="py-0.5" key="local-downloads">
-              <DropdownMenuLabel className={catalogGroupLabel}>{copyPicker.localDownloadsHeading}</DropdownMenuLabel>
-              {shownDownloads.map(job => (
-                <DownloadingModelRow jobId={job.jobId} key={job.jobId} owner={owner} target={job.target} />
-              ))}
-            </DropdownMenuGroup>
-          )}
         </div>
       ) : null}
 
@@ -973,7 +875,6 @@ interface ModelFamilyRowProps {
   /** Keyboard/hover props built by the host, so the Favorites section and
    *  the provider groups share ONE flat selection order. */
   kbProps: KbRowProps
-  loadingModels: Record<string, LocalModelLoadProgress>
   /** Commit this family — what a click means belongs to the host that owns it. */
   onSelect: (family: ModelFamily, provider: ModelOptionProvider) => Promise<boolean | void> | void
   /** Keyboard-focus round trip for the sub this row opens (#86966). */
@@ -993,7 +894,6 @@ function ModelFamilyRow({
   family,
   favorite,
   kbProps,
-  loadingModels,
   onSelect,
   onSubOpenChange,
   provider,
@@ -1025,10 +925,6 @@ function ModelFamilyRow({
   // it). A `-fast` sibling shares the base id's price: the collapsed row
   // fronts the base, so fall back to it when only the fast variant is unpriced.
   const pricing = provider.pricing?.[family.id] ?? (family.fastId ? provider.pricing?.[family.fastId] : undefined)
-
-  // Managed local model loading into memory right now: real load percent,
-  // keyed by exact model id (remote providers never collide with GGUF stems).
-  const loadProgress = loadingModels[family.id] ?? (family.fastId ? loadingModels[family.fastId] : undefined)
 
   // Effective settings for this row: the live choice when it's the active
   // model, otherwise its remembered preset. Row label AND submenu read from
@@ -1143,17 +1039,7 @@ function ModelFamilyRow({
           ) : null}
         </span>
         <ModelResetBadge time={limit.reset} />
-        {loadProgress ? (
-          <span className="flex shrink-0 items-center gap-1.5" title={copyPicker.loadingIntoMemory}>
-            <span className="h-1 w-14 overflow-hidden rounded-full bg-(--ui-bg-tertiary)">
-              <span
-                className="block h-full rounded-full bg-primary transition-[width] duration-500"
-                style={{ width: `${Math.max(2, loadProgress.percent)}%` }}
-              />
-            </span>
-            <span className="text-[0.62rem] tabular-nums text-(--ui-text-tertiary)">{loadProgress.percent}%</span>
-          </span>
-        ) : null}
+
         {showPricing && pricing ? <ModelPrice pricing={pricing} /> : null}
         {settings.map(setting => (
           <ModelChip key={setting} setting>
@@ -1190,10 +1076,6 @@ function caretAtEnd(input: HTMLInputElement): boolean {
 
   return selectionStart === value.length && selectionEnd === value.length
 }
-
-// The backend's provider row for staged local models (inventory.py's
-// _local_runtime_row). Downloads-in-flight attach to this group.
-const LOCAL_PROVIDER_SLUG = 'llamacpp'
 
 // Heading for every row group in the list (Favorites, providers, downloads).
 const catalogGroupLabel =
@@ -1242,74 +1124,6 @@ function ModelResetBadge({ time }: { time: null | string }): null | ReactElement
       </Badge>
     </Tip>
   ) : null
-}
-
-// A model still downloading: visible so the user knows it's coming (and
-// where it will land), disabled so it can't be selected early, with the
-// same byte progress the Local Models pane shows. Percent is selected HERE,
-// per row, so the 700ms byte ticks repaint this leaf only — the menu tree
-// above subscribes to download identity, not progress.
-function DownloadingModelRow({
-  owner,
-  jobId,
-  target
-}: {
-  owner: LocalModelsOwner
-  jobId: string
-  target: string
-}): ReactElement {
-  const { t } = useI18n()
-  const copyPicker = t.modelPicker
-  const copyLocal = t.settings.localModels
-
-  // The row's own scalar slice: percent for live rows, status for the
-  // paused fork (a paused download must stay listed with its Paused pill,
-  // not vanish — progress loss is information loss).
-  const percent: number | null = useLocalRuntimeJobs(
-    owner,
-    (jobs: readonly LocalRuntimeJob[]): number | null =>
-      jobs.find((job: LocalRuntimeJob): boolean => job.job_id === jobId)?.percent ?? null,
-    false
-  )
-
-  const paused: boolean = useLocalRuntimeJobs(
-    owner,
-    (jobs: readonly LocalRuntimeJob[]): boolean =>
-      jobs.find((job: LocalRuntimeJob): boolean => job.job_id === jobId)?.status === 'paused',
-    false
-  )
-
-  return (
-    <DropdownMenuItem
-      className={cn(dropdownMenuRow, 'opacity-60')}
-      disabled
-      onSelect={event => event.preventDefault()}
-      textValue=""
-    >
-      <span className="min-w-0 flex-1 truncate">{target}</span>
-      <span
-        className="ml-auto flex shrink-0 items-center gap-1.5"
-        title={paused ? copyLocal.downloadPausedLabel : copyPicker.downloading}
-      >
-        <span className="h-1 w-14 overflow-hidden rounded-full bg-(--ui-bg-tertiary)">
-          <span
-            className={cn(
-              'block h-full rounded-full',
-              paused ? 'bg-muted-foreground/60' : 'bg-primary transition-[width] duration-500'
-            )}
-            style={{ width: `${Math.max(2, percent ?? 0)}%` }}
-          />
-        </span>
-        <span className="text-[0.62rem] tabular-nums text-(--ui-text-tertiary)">
-          {paused
-            ? copyLocal.downloadPausedLabel
-            : typeof percent === 'number'
-              ? `${percent}%`
-              : copyPicker.downloading}
-        </span>
-      </span>
-    </DropdownMenuItem>
-  )
 }
 
 // Collapsed we show the user's chosen models (or the curated default); typing

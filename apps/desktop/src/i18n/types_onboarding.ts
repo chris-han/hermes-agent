@@ -15,8 +15,6 @@ export interface OnboardingTranslations {
   connected: string
   featuredPitch: string
   fireworksPitch: string
-  localModelsTitle: string
-  localModelsPitch: string
   openRouterPitch: string
   apiKeyOptions: Record<string, { short: string; description: string }>
   backToSignIn: string

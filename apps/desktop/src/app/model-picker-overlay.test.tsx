@@ -32,10 +32,6 @@ vi.mock('@/store/session-focus', async () => {
     TILE_PANE_PREFIX
   }
 })
-vi.mock('@/hermes', async importOriginal => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  getLocalModelsStatus: vi.fn().mockResolvedValue({ loading: {} })
-}))
 vi.mock('@/lib/model-options', async importOriginal => ({
   ...(await importOriginal<Record<string, unknown>>()),
   requestModelOptions: vi.fn().mockResolvedValue({ model: '', provider: '', providers: [] })

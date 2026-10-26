@@ -28,12 +28,6 @@ export const zhFirstRun: FirstRunCopy = {
   skip: '跳过设置',
   skipTip: '结束引导设置并打开新对话。',
   skipFailed: '无法跳过设置',
-  localModel: {
-    title: '这台电脑可以在本地运行模型',
-    text: (model, size) => `${model}（${size}）适合你的硬件。它免费运行，你的对话会留在这台电脑上。`,
-    setUp: '设置',
-    notNow: '暂不'
-  },
   intro: {
     greeting: '你好，我是 Semantier。',
     plan: '我们先帮你把一切设置好，然后一起做点很酷的事。'

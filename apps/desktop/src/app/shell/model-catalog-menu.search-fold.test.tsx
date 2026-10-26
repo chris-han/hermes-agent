@@ -3,7 +3,6 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 
 import { DropdownMenu, DropdownMenuContent } from '@/components/ui/dropdown-menu'
-import { $localModelsEnabled } from '@/store/local-models-flag'
 import { $visibleModels } from '@/store/model-visibility'
 
 import { ModelCatalogMenu, type ModelMenuController } from './model-catalog-menu'
@@ -19,14 +18,11 @@ const getGlobalModelOptions = vi.fn()
 
 vi.mock('@/hermes', () => ({
   getGlobalModelOptions: (...args: unknown[]) => getGlobalModelOptions(...args),
-  getLocalModelsJobs: vi.fn(async () => ({ jobs: [] })),
-  getLocalModelsStatus: vi.fn().mockResolvedValue({ loading: {} }),
   setApiRequestProfile: vi.fn()
 }))
 
 beforeEach(() => {
   $visibleModels.set(null)
-  $localModelsEnabled.set(false)
   getGlobalModelOptions.mockResolvedValue({
     providers: [{ models: ['qwen3.8-flash', 'gpt-5.1'], name: 'OpenRouter', slug: 'openrouter' }]
   })

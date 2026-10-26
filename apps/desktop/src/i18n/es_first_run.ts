@@ -28,13 +28,6 @@ export const esFirstRun: FirstRunCopy = {
   skip: 'Omitir configuración',
   skipTip: 'Termina la configuración guiada y abre un chat nuevo.',
   skipFailed: 'No se pudo omitir la configuración',
-  localModel: {
-    title: 'Este ordenador puede ejecutar un modelo localmente',
-    text: (model, size) =>
-      `${model} (${size}) encaja con tu hardware. Funciona gratis y tus chats se quedan en este ordenador.`,
-    setUp: 'Configurarlo',
-    notNow: 'Ahora no'
-  },
   intro: {
     greeting: 'Hola, soy Semantier.',
     plan: 'Vamos a dejarlo todo listo para ti. Luego haremos algo genial.'

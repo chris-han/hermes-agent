@@ -7,7 +7,6 @@ import { esClarify } from './es_clarify'
 import { esConnectorAccounts } from './es_connector_accounts'
 import { esConnectorCard } from './es_connector_card'
 import { esFirstRun } from './es_first_run'
-import { esLocalModels } from './es_local_models'
 import { esModelMenu } from './es_model_menu'
 import { esNotices } from './es_notices'
 import { esOnboarding } from './es_onboarding'
@@ -430,7 +429,8 @@ export const esOverrides = {
       elevenLabsRejectedKey:
         'ElevenLabs no aceptó tu clave API. Actualízala en Configuración → Claves e inténtalo de nuevo.',
       diskFull: 'Disco lleno — libera espacio y vuelve a intentarlo.',
-      storageFailure: 'Semantier no pudo guardar en su carpeta de datos. Abre Mantenimiento para comprobarla y repararla.',
+      storageFailure:
+        'Semantier no pudo guardar en su carpeta de datos. Abre Mantenimiento para comprobarla y repararla.',
       gatewayAuthFailed:
         'Este Semantier ya no acepta tu inicio de sesión guardado. Abre Gateways y vuelve a iniciar sesión (o pega un nuevo token de acceso) e inténtalo otra vez.',
       methodNotAllowed:
@@ -756,7 +756,6 @@ export const esOverrides = {
       providerAccounts: 'Cuentas',
       providerApiKeys: 'Claves API',
       providerCustomEndpoints: 'Endpoints personalizados',
-      providerLocalModels: 'Modelos locales',
       gateway: 'Gateway',
       apiKeys: 'Herramientas y claves',
       keybinds: 'Atajos de teclado',
@@ -1999,7 +1998,6 @@ export const esOverrides = {
       moaReferenceHint: 'asesora una vez por turno por defecto',
       tasks: esAuxTasks
     },
-    localModels: esLocalModels,
     billing: {
       semantier: semantierBillingCopy['es'],
       perMonth: (amount: string) => `${amount}/mes`,
@@ -2287,9 +2285,6 @@ export const esOverrides = {
       intro:
         'Inicia sesión con una suscripción, sin copiar claves API. Semantier ejecuta el inicio de sesión del navegador por ti, aquí mismo en la app.',
       connected: 'Conectado',
-      collapse: 'Contraer',
-      connectAnother: 'Conectar otro proveedor',
-      otherProviders: 'Otros proveedores',
       disconnect: 'Desconectar',
       disconnectInTerminal: 'Desconectar (ejecuta el comando de eliminación en el terminal)',
       removeConfirm: provider => `¿Eliminar ${provider}?`,
@@ -4542,9 +4537,6 @@ export const esOverrides = {
     noModels: 'No se encontraron modelos.',
     addProvider: 'Añadir proveedor',
     loadFailed: 'No se pudieron cargar los modelos',
-    loadingIntoMemory: 'Cargando en memoria',
-    downloading: 'Descargando',
-    localDownloadsHeading: 'Local',
     noAuthenticatedProviders: 'No hay proveedores autenticados.',
     pro: 'Pro',
     proNeedsSubscription: 'Los modelos Pro necesitan una suscripción de Nous de pago.',
@@ -4682,15 +4674,6 @@ export const esOverrides = {
       openStarmap: 'Abrir grafo de memoria',
       turnRunning: 'En ejecución',
       contextUsage: 'Uso de contexto',
-      systemResources: {
-        title: 'Recursos del sistema',
-        loading: 'Recursos…',
-        gpuUtilization: 'Uso de GPU',
-        gpuMemory: 'Memoria de GPU',
-        ram: 'RAM',
-        unifiedNote: 'Memoria unificada: la GPU y el sistema comparten este espacio.',
-        toggle: 'Recursos del sistema'
-      },
       contextUsagePanel: {
         categories: {
           conversation: 'Conversación',
@@ -5642,11 +5625,6 @@ export const esOverrides = {
       'composer-mentions': {
         title: 'Adjunta y ordena',
         text: 'Escribe @ para traer un archivo a la conversación y / para ejecutar un comando.'
-      },
-      'local-runtime-update': {
-        title: 'Hay una actualización del motor local',
-        text: 'Actualiza el motor que ejecuta tus modelos locales. Las solicitudes locales activas pueden interrumpirse.',
-        action: 'Actualizar ahora'
       },
       'right-pane': {
         title: 'El panel de trabajo',

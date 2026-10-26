@@ -5,7 +5,6 @@ import type { TranslucencyState } from '@hermes/shared/translucency'
 import type { ChallengeOutcome } from '../electron/challenge-window'
 import type { ScreenshotApi } from '../electron/command-screenshot-types'
 import type { DesktopBranding } from '../electron/desktop-branding-types'
-import type { BrandShortcutBridge } from '../electron/windows-brand-shortcuts-types'
 import type { HudModifierApi } from '../electron/hud-modifier-types'
 import type { MachineProfile } from '../electron/machine-profile'
 import type { HermesNotification } from '../electron/notification-types'
@@ -13,6 +12,7 @@ import type { KeepAwakeMode } from '../electron/power-save'
 import type { UpdateHoldWire } from '../electron/update-hold-types'
 import type { UpdateRunReport } from '../electron/updater/update-metrics'
 import type { WindowSizeMode } from '../electron/window-size-types'
+import type { BrandShortcutBridge } from '../electron/windows-brand-shortcuts-types'
 
 import type { WakeIndicatorState } from './lib/wake-indicator'
 import type {
@@ -366,8 +366,6 @@ declare global {
       glassSupported?: boolean
       /** Main-process fact: this OS can do any translucency at all (not Linux). */
       translucencySupported?: boolean
-      /** Feature flag: the local-models UI is enabled. */
-      localModelsEnabled?: boolean
       /** Dev-only launch flag (`--fresh-install`, unpackaged builds): onboarding treats this launch as a fresh install. */
       assumeFreshInstall?: boolean
       /** Sanitized local `display.skin`, available before any gateway connects. */

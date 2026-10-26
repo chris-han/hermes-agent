@@ -17,8 +17,6 @@ export const jaOnboarding: TranslationOverrides['onboarding'] = {
   connected: '接続済み',
   featuredPitch: '1 つのサブスクリプションで 300 以上の最先端モデル — Semantier を実行するための推奨方法',
   fireworksPitch: '直接モデル API — Fireworks がホストする最先端モデル',
-  localModelsTitle: 'モデルをローカルで実行',
-  localModelsPitch: 'アカウント不要——モデルをダウンロードしてこのマシンで実行',
   openRouterPitch: '1 つのキーで数百のモデル — 堅実なデフォルト',
   apiKeyOptions: {
     fireworks: {

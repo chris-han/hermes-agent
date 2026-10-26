@@ -7,7 +7,6 @@ import { frClarify } from './fr_clarify'
 import { frConnectorAccounts } from './fr_connector_accounts'
 import { frConnectorCard } from './fr_connector_card'
 import { frFirstRun } from './fr_first_run'
-import { frLocalModels } from './fr_local_models'
 import { frModelMenu } from './fr_model_menu'
 import { frNotices } from './fr_notices'
 import { frOnboarding } from './fr_onboarding'
@@ -219,7 +218,8 @@ export const frOverrides = {
       needsAuthBody: 'La connexion reste sur cet ordinateur. Rien ne le quitte.',
       retry: 'Réessayer',
       goneTitle: (name: string) => `${name} a quitté le catalogue.`,
-      goneBody: "Semantier ne peut plus l'appeler. La ligne reste jusqu'à ce que vous la supprimiez : rien ne disparaît.",
+      goneBody:
+        "Semantier ne peut plus l'appeler. La ligne reste jusqu'à ce que vous la supprimiez : rien ne disparaît.",
       remove: 'Supprimer',
       offTitle: (name: string) => `${name} est désactivé.`,
       offBody: "Activez-le avec l'interrupteur ci-dessus pour lire les outils qu'il apporte.",
@@ -753,7 +753,6 @@ export const frOverrides = {
       providerAccounts: 'Comptes',
       providerApiKeys: 'Clés API',
       providerCustomEndpoints: 'Points de terminaison personnalisés',
-      providerLocalModels: 'Modèles locaux',
       gateway: 'Gateway',
       apiKeys: 'Outils et clés',
       keybinds: 'Raccourcis clavier',
@@ -2010,7 +2009,6 @@ export const frOverrides = {
       moaReferenceHint: 'donne un avis une fois par tour par défaut',
       tasks: frAuxTasks
     },
-    localModels: frLocalModels,
     billing: {
       semantier: semantierBillingCopy['fr'],
       perMonth: (amount: string) => `${amount}/mois`,
@@ -2301,9 +2299,6 @@ export const frOverrides = {
       intro:
         "Connectez-vous avec un abonnement — pas de clé API à copier. Semantier lance la connexion navigateur pour vous, directement dans l'application.",
       connected: 'Connecté',
-      collapse: 'Réduire',
-      connectAnother: 'Connecter un autre fournisseur',
-      otherProviders: 'Autres fournisseurs',
       disconnect: 'Déconnecter',
       disconnectInTerminal: 'Déconnecter (exécute la commande de suppression dans le terminal)',
       removeConfirm: provider => `Supprimer ${provider} ?`,
@@ -3074,7 +3069,7 @@ export const frOverrides = {
     telegramQr: {
       title: 'Choisissez comment connecter votre bot Telegram',
       subtitle:
-        "Les deux méthodes connectent un bot que vous contrôlez et enregistrent ses identifiants uniquement dans cette installation de Semantier.",
+        'Les deux méthodes connectent un bot que vous contrôlez et enregistrent ses identifiants uniquement dans cette installation de Semantier.',
       quickSetup: 'Configuration rapide',
       recommended: 'Recommandé',
       quickHelp:
@@ -3736,7 +3731,8 @@ export const frOverrides = {
       title: 'La base de données des sessions est endommagée',
       body: (profiles: string) =>
         `Semantier ne peut pas lire tout l’historique des sessions de ${profiles}. Les conversations absentes de cette liste n’ont pas été supprimées ; le fichier qui les contient est endommagé.`,
-      action: 'Quittez Semantier sur ce profil, puis inspectez le fichier sans le modifier, ou restaurez un instantané :',
+      action:
+        'Quittez Semantier sur ce profil, puis inspectez le fichier sans le modifier, ou restaurez un instantané :',
       guide: 'Guide de récupération'
     },
     noFilterMatches: 'Aucune session ne correspond à ces filtres',
@@ -4556,9 +4552,6 @@ export const frOverrides = {
     noModels: 'Aucun modèle trouvé.',
     addProvider: 'Ajouter un fournisseur',
     loadFailed: 'Impossible de charger les modèles',
-    loadingIntoMemory: 'Chargement en mémoire',
-    downloading: 'Téléchargement',
-    localDownloadsHeading: 'Local',
     noAuthenticatedProviders: 'Aucun fournisseur authentifié.',
     pro: 'Pro',
     proNeedsSubscription: 'Les modèles Pro nécessitent un abonnement payant Nous.',
@@ -4696,15 +4689,6 @@ export const frOverrides = {
       openStarmap: 'Ouvrir le graphique de mémoire',
       turnRunning: 'En cours',
       contextUsage: 'Utilisation du contexte',
-      systemResources: {
-        title: 'Ressources système',
-        loading: 'Ressources…',
-        gpuUtilization: 'Utilisation du GPU',
-        gpuMemory: 'Mémoire GPU',
-        ram: 'RAM',
-        unifiedNote: 'Mémoire unifiée — le GPU et le système partagent cet espace.',
-        toggle: 'Ressources système'
-      },
       contextUsagePanel: {
         categories: {
           conversation: 'Conversation',
@@ -4848,7 +4832,8 @@ export const frOverrides = {
       askRestart: 'Demander à Semantier de redémarrer le serveur',
       lookingRestart: taskId => `Semantier recherche un serveur d'aperçu à redémarrer (${taskId})`,
       restartingTitle: "Redémarrage du serveur d'aperçu",
-      restartingMessage: "Semantier travaille en arrière-plan. Surveillez la console d'aperçu pour suivre la progression.",
+      restartingMessage:
+        "Semantier travaille en arrière-plan. Surveillez la console d'aperçu pour suivre la progression.",
       startRestartFailed: message => `Impossible de démarrer le redémarrage du serveur : ${message}`,
       restartFailed: 'Échec du redémarrage du serveur',
       hideConsole: "Masquer la console d'aperçu",
@@ -5126,7 +5111,8 @@ export const frOverrides = {
         },
         invalid_response: {
           title: "Le service d'IA a envoyé une réponse illisible",
-          body: provider => `${provider} a renvoyé une réponse que Semantier n'a pas pu lire. Réessayez dans un instant.`
+          body: provider =>
+            `${provider} a renvoyé une réponse que Semantier n'a pas pu lire. Réessayez dans un instant.`
         },
         empty_response: {
           title: "Le service d'IA a envoyé une réponse vide",
@@ -5656,11 +5642,6 @@ export const frOverrides = {
       'composer-mentions': {
         title: 'Joindre et commander',
         text: 'Saisissez @ pour joindre un fichier à la conversation, ou / pour exécuter une commande.'
-      },
-      'local-runtime-update': {
-        title: 'Une mise à jour du moteur local est disponible',
-        text: 'Mettez à jour le moteur qui exécute vos modèles locaux. Les requêtes locales actives peuvent être interrompues.',
-        action: 'Mettre à jour maintenant'
       },
       'right-pane': {
         title: 'Le volet de travail',

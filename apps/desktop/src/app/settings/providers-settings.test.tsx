@@ -3,10 +3,10 @@ import { atom } from 'nanostores'
 import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { useRouteEnumParam } from '@/app/hooks/use-route-enum-param'
 import { ConfirmHost } from '@/components/confirm-host'
 import * as externalLinks from '@/lib/external-link'
 import { $confirmRequest } from '@/store/confirm'
-import { $localModelsEnabled } from '@/store/local-models-flag'
 import type { EnvVarInfo, OAuthProvider } from '@/types/hermes'
 
 const listOAuthProviders = vi.fn()
@@ -44,7 +44,7 @@ vi.mock('@/store/onboarding', () => ({
 
 // Load once at module scope so no test's 15s budget pays the heavy transform
 // + import (the first-test timeout flake under CI load).
-const { ProvidersSettings } = await import('./providers-settings')
+const { PROVIDER_VIEWS, ProvidersSettings } = await import('./providers-settings')
 const { $settingsScopeOverride } = await import('@/store/settings-scope')
 const { $activeGatewayProfile, $profiles } = await import('@/store/profile')
 
@@ -271,7 +271,7 @@ describe('ProvidersSettings', () => {
     })
     listOAuthProviders.mockResolvedValue({ providers: [] })
 
-    const { ProvidersSettings } = await import('./providers-settings')
+    const { PROVIDER_VIEWS, ProvidersSettings } = await import('./providers-settings')
     render(<ProvidersSettings onClose={vi.fn()} onViewChange={vi.fn()} view="keys" />)
 
     expect(await screen.findByText('Qwen Cloud')).toBeTruthy()
@@ -325,7 +325,7 @@ describe('ProvidersSettings', () => {
     })
     listOAuthProviders.mockResolvedValue({ providers: [] })
 
-    const { ProvidersSettings } = await import('./providers-settings')
+    const { PROVIDER_VIEWS, ProvidersSettings } = await import('./providers-settings')
     const { container } = render(<ProvidersSettings onClose={vi.fn()} onViewChange={vi.fn()} view="keys" />)
 
     expect(await screen.findByText('Alibaba Cloud (Coding Plan, China)')).toBeTruthy()
@@ -449,21 +449,17 @@ describe('ProvidersSettings', () => {
     await waitFor(() => expect(Element.prototype.scrollIntoView).toHaveBeenCalled())
   })
 
-  it('shows the custom endpoint before local models in Accounts and opens its setup', async () => {
-    $localModelsEnabled.set(true)
-
-    try {
-      listOAuthProviders.mockResolvedValue({ providers: [provider('nous', false)] })
-      const onViewChange = vi.fn()
-      render(<ProvidersSettings onClose={vi.fn()} onViewChange={onViewChange} view="accounts" />)
-      const endpoint = await screen.findByText('Custom endpoint')
-      const localModels = screen.getByText('Run models locally')
-      expect(endpoint.compareDocumentPosition(localModels) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-      fireEvent.click(endpoint)
-      expect(onViewChange).toHaveBeenCalledWith('custom-endpoints')
-    } finally {
-      $localModelsEnabled.set(false)
-    }
+  it('keeps endpoint and Cloud setup without retired local-model or Other providers entries', async () => {
+    listOAuthProviders.mockResolvedValue({ providers: [provider('semantier-cloud', false), provider('nous', false)] })
+    const onViewChange = vi.fn()
+    render(<ProvidersSettings onClose={vi.fn()} onViewChange={onViewChange} view="accounts" />)
+    const endpoint = await screen.findByText('Custom endpoint')
+    expect(screen.queryByText('Run models locally')).toBeNull()
+    expect(screen.queryByText('Other providers')).toBeNull()
+    fireEvent.click(endpoint)
+    expect(onViewChange).toHaveBeenCalledWith('custom-endpoints')
+    fireEvent.click(screen.getByText('Semantier Cloud'))
+    expect(startManualProviderOAuth).toHaveBeenCalledWith('semantier-cloud', expect.anything())
   })
 
   it('preserves explicit Nous sign-in without branding it as Semantier Cloud', async () => {
@@ -509,4 +505,23 @@ it('starts the real Cloud provider through the shared coordinator and refreshes 
   const count = listOAuthProviders.mock.calls.length
   act(() => window.dispatchEvent(new Event('focus')))
   await waitFor(() => expect(listOAuthProviders.mock.calls.length).toBeGreaterThan(count))
+})
+
+it('resolves a saved retired local destination to Model service Accounts', async () => {
+  listOAuthProviders.mockResolvedValue({ providers: [provider('semantier-cloud', false, { name: 'Semantier Cloud' })] })
+
+  function SavedDestination() {
+    const [view, onViewChange] = useRouteEnumParam('pview', PROVIDER_VIEWS, 'accounts')
+
+    return <ProvidersSettings onClose={() => undefined} onViewChange={onViewChange} view={view} />
+  }
+
+  render(
+    <MemoryRouter initialEntries={['/settings?tab=providers&pview=local']}>
+      <SavedDestination />
+    </MemoryRouter>
+  )
+  expect(await screen.findByText('Custom endpoint')).toBeTruthy()
+  expect(screen.getByRole('button', { name: /Semantier Cloud/ })).toBeTruthy()
+  expect(screen.queryByText('Local Models')).toBeNull()
 })

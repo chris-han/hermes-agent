@@ -53,6 +53,8 @@ Desktop-owned chrome and agent narration use **Semantier**, with **Semantier Age
 
 ## Information architecture
 
+Model service Accounts leads with **Custom endpoint** and **Semantier Cloud**. API Keys and Custom Endpoints preserve saved providers and credentials. Desktop does not manage model installation/downloads or expose a Local Models destination; obsolete `pview=local` links resolve to Accounts. Custom endpoint accepts independently running local (including localhost) or remote OpenAI-compatible servers. The local Hermes agent runtime and advanced remote/SSH runtime controls are separate and remain available.
+
 - **Chat is the home surface.** The transcript and composer stay primary; tools,
   previews, files, review, and terminal complement the conversation.
 - **Pages are durable destinations.** Chat, Skills, Messaging, and Artifacts

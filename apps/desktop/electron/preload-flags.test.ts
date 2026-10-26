@@ -4,7 +4,7 @@ const host = vi.hoisted(() => ({
   exposeInMainWorld: vi.fn(),
   send: vi.fn<(channel: string, line: string) => void>(),
   sendSync: vi.fn((channel: string): unknown =>
-    channel === 'hermes:feature-flags' ? { localModels: true, assumeFreshInstall: true } : {}
+    channel === 'hermes:feature-flags' ? { assumeFreshInstall: true } : {}
   )
 }))
 
@@ -20,7 +20,7 @@ it('publishes the feature flags answered by main before the renderer starts', as
   const registration = host.exposeInMainWorld.mock.calls.find(([name]): boolean => name === 'hermesDesktop')
 
   expect(registration).toBeDefined()
-  expect(registration![1]).toMatchObject({ localModelsEnabled: true, assumeFreshInstall: true })
+  expect(registration![1]).toMatchObject({ assumeFreshInstall: true })
   expect(host.sendSync).toHaveBeenCalledWith('hermes:feature-flags')
 })
 

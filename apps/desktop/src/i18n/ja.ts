@@ -7,7 +7,6 @@ import { jaBoot } from './ja_boot'
 import { jaClarify } from './ja_clarify'
 import { jaConnectors } from './ja_connectors'
 import { jaFirstRun } from './ja_first_run'
-import { jaLocalModels } from './ja_local_models'
 import { jaModelMenu } from './ja_model_menu'
 import { jaNotices } from './ja_notices'
 import { jaOnboarding } from './ja_onboarding'
@@ -342,7 +341,6 @@ export const jaOverrides = {
       providerAccounts: 'アカウント',
       providerApiKeys: 'API キー',
       providerCustomEndpoints: 'カスタムエンドポイント',
-      providerLocalModels: 'ローカルモデル',
       gateway: 'ゲートウェイ',
       apiKeys: 'ツールとキー',
       keybinds: 'キーボードショートカット',
@@ -403,7 +401,8 @@ export const jaOverrides = {
       deleteAction: '保存済み項目を削除',
       otpField: '認証キー',
       otpPlaceholder: 'Base32 シークレットまたは otpauth:// リンク',
-      otpHint: '2FA を有効にするときにサイトが表示する「セットアップキー」。保存すると Semantier がコードを生成します。',
+      otpHint:
+        '2FA を有効にするときにサイトが表示する「セットアップキー」。保存すると Semantier がコードを生成します。',
       twoFactorBadge: '2FA 自動',
       deleteTitle: 'この項目を削除しますか？',
       deleteDescription: label => `「${label}」は暗号化ボールトから削除されます。元に戻せません。`,
@@ -1222,16 +1221,12 @@ export const jaOverrides = {
       providerDefault: '(プロバイダーのデフォルト)',
       tasks: jaAuxTasks
     },
-    localModels: jaLocalModels,
     providers: {
       connectAccount: 'アカウントを接続',
       haveApiKey: 'API キーをお持ちですか？',
       intro:
         'サブスクリプションでサインインします。API キーのコピーは不要です。Semantier がアプリ内でブラウザーサインインを代行します。',
       connected: '接続済み',
-      collapse: '折りたたむ',
-      connectAnother: '別のプロバイダーを接続',
-      otherProviders: 'その他のプロバイダー',
       removeConfirm: provider => `${provider} を削除しますか？`,
       removeKeyManaged: provider => `${provider} は API キーで設定されています。API Keys から削除してください。`,
       removedTitle: 'アカウントを削除しました',
@@ -1916,7 +1911,8 @@ export const jaOverrides = {
     setAsDefault: 'デフォルトに設定',
     defaultProfile: 'デフォルトのプロファイル',
     defaultSet: name => `${name} をデフォルトに設定しました`,
-    defaultDescription: 'Semantier の起動時と新しいチャットに使用します。既存のセッションのプロファイルは変わりません。',
+    defaultDescription:
+      'Semantier の起動時と新しいチャットに使用します。既存のセッションのプロファイルは変わりません。',
     failedSetDefault: 'デフォルトのプロファイルを設定できませんでした',
     setColor: color => `カラー ${color} に設定`,
     autoColor: '自動',
@@ -2767,7 +2763,8 @@ export const jaOverrides = {
     done: '完了',
     applyingBody:
       'Semantier アップデーターが独自のウィンドウで引き継ぎ、完了後に自動的に Semantier を再度開きます。更新中はご自分で Semantier を開き直さないでください。',
-    applyingBodyBackend: 'リモートバックエンドが更新を適用して再起動します。復帰すると Semantier が自動的に再接続します。',
+    applyingBodyBackend:
+      'リモートバックエンドが更新を適用して再起動します。復帰すると Semantier が自動的に再接続します。',
     applyingClose: 'このウィンドウは更新中に閉じ、その後 Semantier が自動的に再度開きます。',
     errorTitle: '更新が完了しませんでした',
     errorBody: 'ご安心ください。何も失われていません。今すぐ再試行できます。',
@@ -2922,8 +2919,6 @@ export const jaOverrides = {
     noModels: 'モデルが見つかりません。',
     addProvider: 'プロバイダーを追加',
     loadFailed: 'モデルを読み込めませんでした',
-    downloading: 'ダウンロード中',
-    localDownloadsHeading: 'ローカル',
     noAuthenticatedProviders: '認証済みプロバイダーがありません。',
     pro: 'Pro',
     proNeedsSubscription: 'Pro モデルには有料の Nous サブスクリプションが必要です。',
@@ -3047,15 +3042,6 @@ export const jaOverrides = {
       turnRunning: '実行中',
       contextUsage: 'コンテキスト使用状況',
       compressions: count => `圧縮回数: ${count}`,
-      systemResources: {
-        title: 'システムリソース',
-        loading: 'リソース…',
-        gpuUtilization: 'GPU 使用率',
-        gpuMemory: 'GPU メモリ',
-        ram: 'RAM',
-        unifiedNote: 'ユニファイドメモリ——GPU とシステムがこのプールを共有します。',
-        toggle: 'システムリソース'
-      },
       contextUsagePanel: {
         categories: {
           conversation: '会話',
@@ -3401,7 +3387,8 @@ export const jaOverrides = {
         },
         invalid_response: {
           title: 'AI サービスが読み取れない応答を返しました',
-          body: provider => `${provider} は Semantier が読み取れない内容を返しました。しばらくしてから再試行してください。`
+          body: provider =>
+            `${provider} は Semantier が読み取れない内容を返しました。しばらくしてから再試行してください。`
         },
         empty_response: {
           title: 'AI サービスが空の応答を返しました',
@@ -3798,11 +3785,6 @@ export const jaOverrides = {
       'composer-mentions': {
         title: 'ファイルとコマンド',
         text: '@ でファイルを会話に取り込み、/ でコマンドを実行できます。'
-      },
-      'local-runtime-update': {
-        title: 'ローカルエンジンの更新があります',
-        text: 'ローカルモデルを実行するエンジンを更新します。実行中のローカルリクエストが中断される場合があります。',
-        action: '今すぐ更新'
       },
       'right-pane': {
         title: '作業用ペイン',

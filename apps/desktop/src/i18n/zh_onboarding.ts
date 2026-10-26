@@ -17,8 +17,6 @@ export const zhOnboarding: TranslationOverrides['onboarding'] = {
   connected: '已连接',
   featuredPitch: '一个订阅，300+ 前沿模型 — 运行 Semantier 的推荐方式',
   fireworksPitch: '直接模型 API — Fireworks 托管的前沿模型',
-  localModelsTitle: '本地运行模型',
-  localModelsPitch: '无需账号——下载模型，在本机运行',
   openRouterPitch: '一个密钥，数百个模型 — 稳妥的默认选择',
   apiKeyOptions: {
     fireworks: { short: '直接模型 API', description: '直接访问 Fireworks AI 托管的模型。' },

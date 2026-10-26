@@ -17,8 +17,6 @@ export const esOnboarding: TranslationOverrides['onboarding'] = {
   connected: 'Conectado',
   featuredPitch: 'Una suscripción, más de 300 modelos frontier: la forma recomendada de usar Semantier',
   fireworksPitch: 'API directa de modelos: modelos frontier alojados en Fireworks',
-  localModelsTitle: 'Ejecutar modelos localmente',
-  localModelsPitch: 'Sin cuenta: descarga un modelo y ejecútalo en este equipo',
   openRouterPitch: 'Una clave, cientos de modelos: un buen valor predeterminado',
   apiKeyOptions: {
     fireworks: {

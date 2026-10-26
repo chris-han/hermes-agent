@@ -16,8 +16,7 @@ const translucencySupport = ipcRenderer.sendSync('hermes:translucency:support')
 const hudWindowing = ipcRenderer.sendSync('hermes:hud:windowing')
 const hudNativeDrag = hudWindowing?.nativeDrag === true
 
-const launchFlags: { localModels?: boolean; assumeFreshInstall?: boolean } | undefined =
-  ipcRenderer.sendSync('hermes:feature-flags')
+const launchFlags: { assumeFreshInstall?: boolean } | undefined = ipcRenderer.sendSync('hermes:feature-flags')
 
 // Local, sanitized skin payload for the first renderer theme paint. This does
 // not wait on `gateway.ready`, so an unreachable remote primary cannot force
@@ -29,9 +28,6 @@ import { unwrapExpectedNotFound } from './api-expected-404'
 contextBridge.exposeInMainWorld('hermesDesktop', {
   glassSupported: translucencySupport?.glass === true,
   translucencySupported: translucencySupport?.translucency === true,
-  // Launch-flag fact: the app was started with --local, so the renderer may
-  // show the local-models surfaces. Static for the window's lifetime.
-  localModelsEnabled: launchFlags?.localModels === true,
   // Dev-only launch fact: an unpackaged app started with --fresh-install, so
   // onboarding treats this launch as a fresh install. Always false when packaged.
   assumeFreshInstall: launchFlags?.assumeFreshInstall === true,

@@ -8,7 +8,6 @@ import { zhAuxTasks } from './zh_aux_tasks'
 import { zhClarify } from './zh_clarify'
 import { zhConnectorCard } from './zh_connector_card'
 import { zhFirstRun } from './zh_first_run'
-import { zhLocalModels } from './zh_local_models'
 import { zhModelMenu } from './zh_model_menu'
 import { zhNotices } from './zh_notices'
 import { zhOnboarding } from './zh_onboarding'
@@ -523,7 +522,6 @@ export const zhOverrides = {
       providerAccounts: '账号',
       providerApiKeys: 'API 密钥',
       providerCustomEndpoints: '自定义端点',
-      providerLocalModels: '本地模型',
       gateway: '网关',
       apiKeys: '工具与密钥',
       keybinds: '键盘快捷键',
@@ -1686,7 +1684,6 @@ export const zhOverrides = {
       moaReferenceHint: '默认每轮仅建议一次',
       tasks: zhAuxTasks
     },
-    localModels: zhLocalModels,
     billing: {
       semantier: semantierBillingCopy['zh'],
       perMonth: amount => `${amount}/月`,
@@ -1917,9 +1914,6 @@ export const zhOverrides = {
       haveApiKey: '改用 API 密钥？',
       intro: '使用订阅登录，无需复制 API 密钥。Semantier 会在应用中为你完成浏览器登录。',
       connected: '已连接',
-      collapse: '收起',
-      connectAnother: '连接其他提供方',
-      otherProviders: '其他提供方',
       disconnect: '断开连接',
       disconnectInTerminal: '断开连接（在终端中运行移除命令）',
       removeConfirm: provider => `移除 ${provider}？`,
@@ -3962,9 +3956,6 @@ export const zhOverrides = {
     noModels: '未找到模型。',
     addProvider: '添加提供方',
     loadFailed: '无法加载模型',
-    loadingIntoMemory: '正在载入内存',
-    downloading: '下载中',
-    localDownloadsHeading: '本地',
     noAuthenticatedProviders: '没有已认证的提供方。',
     pro: 'Pro',
     proNeedsSubscription: 'Pro 模型需要付费 Nous 订阅。',
@@ -4107,15 +4098,6 @@ export const zhOverrides = {
       turnRunning: '运行中',
       contextUsage: '上下文用量',
       compressions: count => `压缩次数：${count}`,
-      systemResources: {
-        title: '系统资源',
-        loading: '资源…',
-        gpuUtilization: 'GPU 利用率',
-        gpuMemory: '显存',
-        ram: '内存',
-        unifiedNote: '统一内存——GPU 与系统共享此内存池。',
-        toggle: '系统资源'
-      },
       contextUsagePanel: {
         categories: {
           conversation: '对话',
@@ -4836,11 +4818,6 @@ export const zhOverrides = {
       'composer-mentions': {
         title: '附件与命令',
         text: '输入 @ 把文件带入对话，输入 / 运行命令。'
-      },
-      'local-runtime-update': {
-        title: '本地引擎有可用更新',
-        text: '更新运行本地模型的引擎。正在进行的本地请求可能会中断。',
-        action: '立即更新'
       },
       'right-pane': {
         title: '工作面板',

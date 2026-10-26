@@ -53,10 +53,6 @@ export const $onboardingChatOpener = atom<null | OnboardingResume>(null)
 /** How the last run in this window ended; the end-of-onboarding surfaces wake on it. */
 export const $onboardingEnded = atom<'done' | 'skipped' | null>(null)
 
-/** When the end-of-onboarding surfaces (the local-model offer) may start their settle wait: the run
- *  ended, or the user first left its chat mid-run. Null until then. */
-export const $onboardingSettleFrom = atom<null | number>(null)
-
 // The backend runs onboarding in its root profile whichever profile the app was on; every ending
 // stays there, because the chats the run leaves behind live there.
 const ONBOARDING_PROFILE = 'default'
@@ -80,10 +76,6 @@ computed([$onboardingSession, $selectedStoredSessionId], (session, selected) =>
 
 $onboardingOnScreen.subscribe(onScreen => {
   setOnboardingSurfaceActive('onboarding', onScreen)
-
-  if (!onScreen && $onboardingPhase.get() === 'shown' && $onboardingSettleFrom.get() === null) {
-    $onboardingSettleFrom.set(Date.now())
-  }
 })
 
 /** Same machine as this app (`local`), or a backend somewhere else (`remote`). Only the local
@@ -234,7 +226,6 @@ export function endOnboarding(outcome: 'done' | 'skipped'): void {
   $onboardingSession.set(null)
   $onboardingPhase.set(outcome)
   $onboardingEnded.set(outcome)
-  $onboardingSettleFrom.set($onboardingSettleFrom.get() ?? Date.now())
 }
 
 /** Skip setup: the backend ends the run and closes the card that waits, and a new chat opens. A failed

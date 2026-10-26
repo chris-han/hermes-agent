@@ -12,7 +12,6 @@ import { GatewayMenuPanel } from '@/app/shell/gateway-menu-panel'
 import { useChangeWorkspaceItem } from '@/app/shell/hooks/use-change-workspace'
 import { useContextBreakdown } from '@/app/shell/hooks/use-context-breakdown'
 import { useFocusedSessionRow } from '@/app/shell/hooks/use-focused-session-row'
-import { useSystemResourcesStatusbarItem } from '@/app/shell/system-resources-statusbar'
 import { $paneVisible } from '@/components/pane-shell/tree/store'
 import { Badge } from '@/components/ui/badge'
 import { Codicon } from '@/components/ui/codicon'
@@ -353,7 +352,6 @@ export function useStatusbarItems({
   )
 
   const approvalModeItem = useApprovalModeStatusbarItem(activeGatewayProfile, requestApprovalModeGateway)
-  const systemResourcesItem = useSystemResourcesStatusbarItem()
 
   const gatewayMenuContent = useMemo(
     () => (close: () => void) => (
@@ -716,7 +714,6 @@ export function useStatusbarItems({
         toggleLabel: copy.toggleSessionTimer,
         variant: 'text'
       },
-      systemResourcesItem,
       {
         ...approvalModeItem,
         hidden: gatewayState !== 'open',
@@ -752,7 +749,6 @@ export function useStatusbarItems({
       gaugeUsage,
       sessionStartedAt,
       gatewayState,
-      systemResourcesItem,
       terminalShowing,
       tokensPerSecond,
       turnStartedAt

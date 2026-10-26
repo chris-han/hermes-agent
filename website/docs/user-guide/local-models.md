@@ -14,48 +14,20 @@ sizes, GPU layers, or quantization. You pick a model; Hermes does the rest.
 Nothing leaves your computer: no account, no API key, and no network access
 after a model is downloaded.
 
-## Desktop availability and downloads
+## Terminal setup and desktop endpoints
 
-Local Models is on by default in the desktop app on macOS, Windows, and Linux
-(x64 and arm64), on every release channel. On other platforms, launch the app
-with `--local` to show it. A runtime can already be bundled; its absence
-triggers the managed-tool install path, not an arbitrary latest llama.cpp
-download.
+The desktop app no longer installs, downloads or manages local models. Its
+**Settings → Model service → Accounts** offers Custom endpoint and Semantier Cloud.
+Use **Custom endpoint** for an independently running OpenAI-compatible local or
+remote server, including `http://localhost:8080/v1`. Existing model files and
+user caches are preserved.
 
-Use **Pause** and **Resume** on engine installs, engine updates, catalog models,
-Hugging Face downloads, and quickstart. Paused jobs remain visible when you
-leave and reopen Local Models. Pause stops the transfer at a chunk boundary;
-unpacking, verification, and server activation are separate phases.
-
-PM downloads every engine component, including CUDA runtime DLLs, from the
-URLs and SHA-256 pins in `pm/lock.json`. Model weights, split GGUF parts,
-vision projectors, and draft models use the same downloader. Byte progress
-covers the whole download plan, including completed files and resumed ranges.
-Quickstart labels engine and model progress as separate stages.
-
-Partial downloads use PM's writable `cache/partials` area, outside a signed
-app package. Range-capable hosts resume missing bytes. Hosts without Range
-support restart the current file. Completed files are reused.
-
-## Getting started
-
-1. Open **Settings → Providers → Local Models** (or choose **Run models
-   locally** during onboarding).
-2. Click **Install runtime**. Hermes downloads the official llama.cpp
-   build for your hardware (a few hundred MB), verifies it, and keeps it
-   updated.
-3. Pick a model from the catalog and click **Download**.
-4. Click **Use**. New chats now run on the local model.
-
-That's the whole flow. The server starts and stops with Hermes, restarts
-survive app restarts, and switching back to a cloud provider is one click
-in the model picker.
-
-From a terminal, `hermes model` → **Local models** runs the same setup: it
-lists the catalog priced for your machine (★ marks the recommendation),
-installs the pinned engine, downloads the model with live progress, starts
-the server, and makes the model your default. Models already on disk are
-offered too. Ctrl+C pauses a download; choosing the model again resumes it.
+From a terminal, `hermes model` → **Local models** retains the shared runtime setup:
+it lists the catalog for your machine, installs the pinned PM engine, downloads
+the model with live progress, starts the server and makes it your default.
+Models already on disk are offered too. Ctrl+C pauses a download; choosing the
+model again resumes it. No desktop download controls or local-model launch flag
+are provided.
 
 ## How Hermes picks what to download
 
@@ -110,28 +82,6 @@ end-to-end and exposes no knobs:
 - Idle models are unloaded after 15 minutes to free GPU memory; they
   reload automatically on the next message.
 
-## The status bar
-
-Right-click the status bar and enable **System resources** to see live GPU
-utilization, GPU memory, and RAM while local models run. The context meter
-always reflects the window the model is actually running with.
-
-## Finding more models
-
-The catalog is a curated starting point, not a boundary. The **Find more
-models** section on the same page searches all of Hugging Face:
-
-- Results show download counts and a per-file fit check sized to your
-  machine, so you know before downloading whether a build runs fully on
-  your GPU.
-- Anything you download behaves exactly like a catalog model — Hermes
-  reads the model file itself to pick its context window and memory
-  placement. The only difference: community models don't carry our
-  "validated" testing badge.
-- Already have a `.gguf` file on disk? **Add model file** links it into
-  your library without copying it (the original stays where it is), and
-  it's usable immediately.
-
 ## Using your own llama-server
 
 If a llama-server is already running on your machine, Hermes detects it
@@ -148,13 +98,11 @@ builds, headless CLI machines), see
 ## Configuration
 
 The managed runtime is controlled by the `local_runtime` section of
-`config.yaml`. The desktop UI writes these values for you; they're
-documented for CLI and headless use:
+`config.yaml` for CLI and headless use:
 
 ```yaml
 local_runtime:
   enabled: false     # true = start the managed server with Hermes.
-                     # The desktop "Use" button sets this automatically.
   backend: auto      # auto | cuda | metal | vulkan | hip | cpu
   detect_ports: [8081]  # extra ports to probe for a llama-server you run
                         # yourself (the default probe is :8080 only)
@@ -179,7 +127,7 @@ message.
 
 Engine versions come only from PM's lockfile, not a `local_runtime.tag`
 override. Boot uses an installed PM engine without downloading. When a new
-pin is available, install it with the desktop update button.
+pin is available, use the terminal setup flow to install it.
 
 Models live in the machine-shared `models/` directory. Engine binaries live
 in PM's store; `runtimes/llamacpp/` holds mutable presets and server state.

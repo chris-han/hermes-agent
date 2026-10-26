@@ -19,7 +19,6 @@ export {
 export type { ProfileScope, ResolvedOwner } from './api/client'
 export * from './api/config'
 export * from './api/cron'
-export * from './api/local-models'
 export * from './api/mcp'
 export * from './api/messaging'
 export * from './api/models'

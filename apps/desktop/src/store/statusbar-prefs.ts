@@ -44,7 +44,6 @@ export const STATUSBAR_HIDDEN_BY_DEFAULT: readonly string[] = [
   'cron',
   'running-timer',
   'session-timer',
-  'system-resources',
   'terminal',
   'tokens-per-second',
   'webhooks'

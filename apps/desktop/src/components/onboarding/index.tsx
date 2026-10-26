@@ -19,7 +19,6 @@ import { $desktopBoot, type DesktopBootState } from '@/store/boot'
 import { $freeTierStatus, FREE_TIER_MODEL, freeTierSetupFailure } from '@/store/free-tier'
 import { openFreeTierSignIn } from '@/store/free-tier-sign-in'
 import { $setupReadyTick } from '@/store/live-sync'
-import { $localModelsEnabled } from '@/store/local-models-flag'
 import {
   $desktopOnboarding,
   ackFreeTierIntro,
@@ -49,7 +48,6 @@ import {
   FeaturedProviderRow,
   FireworksProviderRow,
   KeyProviderRow,
-  LocalModelsProviderRow,
   OpenRouterProviderRow,
   ProviderRow,
   sortProviders
@@ -59,7 +57,6 @@ export {
   FeaturedProviderRow,
   FireworksProviderRow,
   KeyProviderRow,
-  LocalModelsProviderRow,
   OpenRouterProviderRow,
   ProviderRow,
   providerTitle,
@@ -294,15 +291,23 @@ export function DesktopOnboardingOverlay({
     let inFlight = false
 
     const refresh = () => {
-      if (inFlight || (!enabled && !onboarding.requested)) { return }
+      if (inFlight || (!enabled && !onboarding.requested)) {
+        return
+      }
+
       inFlight = true
-      void refreshOnboarding(ctx, () => active).finally(() => { inFlight = false })
+      void refreshOnboarding(ctx, () => active).finally(() => {
+        inFlight = false
+      })
     }
 
     refresh()
     window.addEventListener('focus', refresh)
 
-    return () => { active = false; window.removeEventListener('focus', refresh) }
+    return () => {
+      active = false
+      window.removeEventListener('focus', refresh)
+    }
   }, [ctx, enabled, onboarding.requested])
 
   // The boot bootstrap re-announces `setup.ready` when a background retry of
@@ -371,7 +376,8 @@ export function DesktopOnboardingOverlay({
     }
   }, [ctx, onboarding.flow.status, onboarding.manual, onboarding.providers])
 
-  const cloudFlow = ('provider' in onboarding.flow && onboarding.flow.provider?.id === 'semantier-cloud') ||
+  const cloudFlow =
+    ('provider' in onboarding.flow && onboarding.flow.provider?.id === 'semantier-cloud') ||
     (onboarding.flow.status === 'confirming_model' && onboarding.flow.providerSlug === 'semantier-cloud')
 
   if (onboarding.manual && cloudFlow && JSON.stringify(captureOnboardingScope()) !== JSON.stringify(ctx.scope)) {
@@ -684,12 +690,8 @@ export function Picker({ ctx }: { ctx: OnboardingContext }) {
   const collapsible = Boolean(featured)
   const showRest = !collapsible || showAll
 
-  // "Run models locally" leaves the picker for Settings -> Providers ->
-  // Local Models, where install/download live. First-run: persist the skip
-  // (same contract as ChooseLaterLink) so the blocking overlay never
-  // re-nags; manual mode just closes. window.location keeps this picker
-  // router-independent (it renders outside the route tree on first run).
-  const openProviderSettings = (view: 'local' | 'custom-endpoints') => {
+  // Open the existing profile-bound endpoint settings from either onboarding entry.
+  const openProviderSettings = (view: 'custom-endpoints') => {
     if (manual) {
       closeManualOnboarding()
     } else {
@@ -703,12 +705,13 @@ export function Picker({ ctx }: { ctx: OnboardingContext }) {
   return (
     <div className="grid gap-2">
       <div className="grid max-h-[60dvh] gap-2 overflow-y-auto p-1">
-        <KeyProviderRow onClick={() => openProviderSettings('custom-endpoints')} pitch={serviceCopy.customDescription} title={serviceCopy.custom} />
+        <KeyProviderRow
+          onClick={() => openProviderSettings('custom-endpoints')}
+          pitch={serviceCopy.customDescription}
+          title={serviceCopy.custom}
+        />
         {featured ? <FeaturedProviderRow onSelect={select} provider={featured} /> : null}
-        {/* The no-account path: everything runs on this machine. Shipped
-            behind the --local launch flag. (Fireworks moved into the
-            expanded list on main.) */}
-        {$localModelsEnabled.get() ? <LocalModelsProviderRow onClick={() => openProviderSettings('local')} /> : null}
+
         {showRest ? (
           <>
             {/* Fireworks leads the expanded list, matching CANONICAL_PROVIDERS

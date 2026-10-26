@@ -10,7 +10,6 @@ import { enClarify } from './en_clarify'
 import { enConnectorAccounts } from './en_connector_accounts'
 import { enConnectorCard } from './en_connector_card'
 import { enFirstRun } from './en_first_run'
-import { enLocalModels } from './en_local_models'
 import { enModelMenu } from './en_model_menu'
 import { enNotices } from './en_notices'
 import { enOnboarding } from './en_onboarding'
@@ -752,7 +751,6 @@ export const en: Translations = {
       providerAccounts: 'Accounts',
       providerApiKeys: 'API keys',
       providerCustomEndpoints: 'Custom Endpoints',
-      providerLocalModels: 'Local Models',
       gateway: 'Gateways',
       apiKeys: 'Tools & Keys',
       keybinds: 'Keyboard Shortcuts',
@@ -1648,7 +1646,6 @@ export const en: Translations = {
       moaReferenceHint: 'advises once per turn by default',
       tasks: enAuxTasks
     },
-    localModels: enLocalModels,
     billing: {
       semantier: semantierBillingCopy['en'],
       perMonth: amount => `${amount}/mo`,
@@ -1931,9 +1928,6 @@ export const en: Translations = {
       intro:
         'Sign in with a subscription — no API key to copy. Semantier runs the browser sign-in for you, right here in the app.',
       connected: 'Connected',
-      collapse: 'Collapse',
-      connectAnother: 'Connect another provider',
-      otherProviders: 'Other providers',
       disconnect: 'Disconnect',
       disconnectInTerminal: 'Disconnect (runs the removal command in the terminal)',
       removeConfirm: provider => `Remove ${provider}?`,
@@ -4116,9 +4110,6 @@ export const en: Translations = {
     noModels: 'No models found.',
     addProvider: 'Add provider',
     loadFailed: 'Could not load models',
-    loadingIntoMemory: 'Loading into memory',
-    downloading: 'Downloading',
-    localDownloadsHeading: 'Local',
     noAuthenticatedProviders: 'No authenticated providers.',
     pro: 'Pro',
     proNeedsSubscription: 'Pro models need a paid Nous subscription.',
@@ -4262,15 +4253,6 @@ export const en: Translations = {
       turnRunning: 'Running',
       contextUsage: 'Context usage',
       compressions: count => `Compressions: ${count}`,
-      systemResources: {
-        title: 'System Resources',
-        loading: 'Resources…',
-        gpuUtilization: 'GPU utilization',
-        gpuMemory: 'GPU memory',
-        ram: 'RAM',
-        unifiedNote: 'Unified memory — the GPU and system share this pool.',
-        toggle: 'System resources'
-      },
       contextUsagePanel: {
         categories: {
           conversation: 'Conversation',
@@ -5121,11 +5103,6 @@ export const en: Translations = {
       'composer-mentions': {
         title: 'Attach and command',
         text: 'Type @ to bring a file into the conversation, / to run a command.'
-      },
-      'local-runtime-update': {
-        title: 'A local engine update is available',
-        text: 'Update the engine that runs your local models. Active local requests may be interrupted.',
-        action: 'Update now'
       },
       'right-pane': {
         title: 'The working pane',

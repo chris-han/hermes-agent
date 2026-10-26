@@ -17,8 +17,6 @@ export const enOnboarding: Translations['onboarding'] = {
   connected: 'Connected',
   featuredPitch: 'One subscription, 300+ frontier models — the recommended way to run Semantier',
   fireworksPitch: 'Direct model API — Fireworks-hosted frontier models',
-  localModelsTitle: 'Run models locally',
-  localModelsPitch: 'No account needed — download a model and run it on this machine',
   openRouterPitch: 'One key, hundreds of models — a solid default',
   apiKeyOptions: {
     fireworks: {
@@ -34,7 +32,8 @@ export const enOnboarding: Translations['onboarding'] = {
     xai: { short: 'Grok models', description: 'Direct access to xAI Grok models.' },
     local: {
       short: 'self-hosted',
-      description: 'Point Semantier at a local or self-hosted OpenAI-compatible endpoint (vLLM, llama.cpp, Ollama, etc).'
+      description:
+        'Point Semantier at a local or self-hosted OpenAI-compatible endpoint (vLLM, llama.cpp, Ollama, etc).'
     }
   },
   backToSignIn: 'Back to sign in',

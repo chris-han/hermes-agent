@@ -28,13 +28,6 @@ export const frFirstRun: FirstRunCopy = {
   skip: 'Ignorer la configuration',
   skipTip: 'Termine la configuration guidée et ouvre une nouvelle discussion.',
   skipFailed: 'Impossible d’ignorer la configuration',
-  localModel: {
-    title: 'Cet ordinateur peut exécuter un modèle en local',
-    text: (model, size) =>
-      `${model} (${size}) convient à votre matériel. Il fonctionne gratuitement et vos conversations restent sur cet ordinateur.`,
-    setUp: 'Le configurer',
-    notNow: 'Pas maintenant'
-  },
   intro: {
     greeting: 'Bonjour, je suis Semantier.',
     plan: 'Configurons tout pour vous. Ensuite, nous ferons quelque chose de génial.'

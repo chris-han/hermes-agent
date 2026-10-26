@@ -28,13 +28,6 @@ export const jaFirstRun: FirstRunCopy = {
   skip: 'セットアップをスキップ',
   skipTip: 'ガイド付きセットアップを終了し、新しいチャットを開きます。',
   skipFailed: 'セットアップをスキップできませんでした',
-  localModel: {
-    title: 'このコンピューターはモデルをローカルで実行できます',
-    text: (model, size) =>
-      `${model}（${size}）はお使いのハードウェアに適しています。無料で動作し、チャットはこのコンピューターから出ません。`,
-    setUp: 'セットアップする',
-    notNow: '今はしない'
-  },
   intro: {
     greeting: 'こんにちは、Semantier です。',
     plan: 'まずはあなたに合わせて設定しましょう。そのあと、何かすごいものを作りましょう。'

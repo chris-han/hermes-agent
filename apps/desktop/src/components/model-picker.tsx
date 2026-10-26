@@ -2,7 +2,7 @@ import type { ModelOptionProvider, ModelPricing } from '@hermes/shared'
 import { fuzzyRank, modelSearchText } from '@hermes/shared'
 import { useStore } from '@nanostores/react'
 import { useQuery } from '@tanstack/react-query'
-import { type ReactElement, useMemo, useRef, useState } from 'react'
+import { type ReactElement, useRef, useState } from 'react'
 
 import { useI18n } from '@/i18n'
 import { catalogProviderMatches, modelOptionsQueryKey, requestModelOptions } from '@/lib/model-options'
@@ -11,15 +11,6 @@ import { accountResetMs, formatReset, modelResetMs } from '@/lib/provider-limit'
 import { foldIncludes, normalize } from '@/lib/text'
 import { cn } from '@/lib/utils'
 import { $customModels, addCustomModel, customModelCandidate, withCustomModels } from '@/store/custom-models'
-import { $localModelsEnabled } from '@/store/local-models-flag'
-import {
-  type LocalModelsOwner,
-  runningModelDownloads,
-  useLocalModelsOwner,
-  useLocalModelsStatus,
-  useLocalRuntimeJobs
-} from '@/store/local-runtime-jobs'
-import type { LocalModelLoadProgress, LocalRuntimeJob } from '@/types/hermes'
 
 import type { HermesGateway } from '../hermes'
 import { startManualOnboarding } from '../store/onboarding'
@@ -87,49 +78,6 @@ export function ModelPickerDialog({
     queryFn: () => requestModelOptions({ gateway: gw, profile, request, sessionId }),
     enabled: open
   })
-
-  // Live load state for the managed local server: which model is loading
-  // into memory right now, with a REAL percent (per-tensor callback relayed
-  // over the router's SSE stream). Polled only while the picker is open —
-  // 2s idle cadence is enough for a bar under a ~40s load. Errors read as
-  // "nothing loading" (remote-only installs have no local-models routes).
-  // Every local-models read here sits behind the --local launch flag (strict:
-  // the llamacpp provider group hides even with staged models on disk).
-  const localModelsEnabled = $localModelsEnabled.get()
-
-  const owner: LocalModelsOwner = useLocalModelsOwner(profile, ownerConnectionId)
-  const localStatus = useLocalModelsStatus(owner, open && localModelsEnabled, true)
-
-  const loadingModels: Record<string, LocalModelLoadProgress> = localStatus.data?.loading ?? {}
-
-  // Models on their way into the local library right now (downloads +
-  // quickstart runs), rendered as grayed progress rows. The jobs store
-  // republishes every ~700ms with fresh byte counts while anything runs —
-  // and this dialog stays MOUNTED app-wide when closed — so subscribe only
-  // to download identity (changes when a download starts/ends, and never
-  // while closed); each row selects its own percent scalar (#72163 class).
-  const downloadsKey: string = useLocalRuntimeJobs(
-    owner,
-    (jobs: readonly LocalRuntimeJob[]): string =>
-      open && localModelsEnabled
-        ? runningModelDownloads(jobs)
-            .map(job => `${job.job_id}\u0000${job.target}`)
-            .join('\u0001')
-        : '',
-    open && localModelsEnabled
-  )
-
-  const downloads = useMemo(
-    () =>
-      downloadsKey === ''
-        ? []
-        : downloadsKey.split('\u0001').map(pair => {
-            const [jobId, target] = pair.split('\u0000')
-
-            return { jobId, target }
-          }),
-    [downloadsKey]
-  )
 
   const customModels = useStore($customModels)
   const providers = withCustomModels(modelOptions.data?.providers ?? [], customModels)
@@ -203,14 +151,11 @@ export function ModelPickerDialog({
             <ModelResults
               currentModel={optionsModel || currentModel}
               currentProvider={optionsProvider || currentProvider}
-              downloads={downloads}
               error={error}
               loading={loading}
-              loadingModels={loadingModels}
               offerCustom={slugEntry}
               onSelectCustomModel={selectCustomModel}
               onSelectModel={selectModel}
-              owner={owner}
               providers={providers}
               search={search}
             />
@@ -234,27 +179,21 @@ export function ModelPickerDialog({
 }
 
 function ModelResults({
-  owner,
   loading,
   error,
   providers,
   currentModel,
   currentProvider,
-  downloads,
-  loadingModels,
   onSelectModel,
   onSelectCustomModel,
   offerCustom,
   search
 }: {
-  owner: LocalModelsOwner
   loading: boolean
   error: string | null
   providers: readonly ModelOptionProvider[]
   currentModel: string
   currentProvider: string
-  downloads: { jobId: string; target: string }[]
-  loadingModels: Record<string, LocalModelLoadProgress>
   onSelectModel: (provider: ModelOptionProvider, model: string) => void
   onSelectCustomModel: (provider: ModelOptionProvider, model: string) => void
   /** Offer the typed id as a custom model even while catalog rows match. */
@@ -295,32 +234,15 @@ function ModelResults({
     return fuzzyRank(models, q, modelSearchText).map(r => r.item)
   }
 
-  // Only configured providers (those with curated models) are selectable
-  // here. Switching to a NOT-yet-configured provider goes through the
-  // "Add provider" footer button, which opens the full onboarding selector.
-  // The local provider sits behind the --local launch flag (strict: staged
-  // models on disk don't show without it). Module-level read — a launch flag
-  // can't change mid-session.
-  const localModelsShown = $localModelsEnabled.get()
-
-  const configured = providers.filter(
-    p => (p.models ?? []).length > 0 && (localModelsShown || p.slug !== LOCAL_PROVIDER_SLUG)
-  )
-
-  // In-flight local downloads render as disabled progress rows: inside the
-  // Local group when it exists, else as their own group (first download —
-  // nothing staged yet, so the backend reports no Local provider at all).
-  const visibleDownloads = downloads.filter(job => !q || foldIncludes(job.target || '', q))
-  const hasLocalGroup = configured.some(p => p.slug === LOCAL_PROVIDER_SLUG)
+  const configured = providers.filter(p => (p.models ?? []).length > 0)
 
   const groups = configured.map(provider => ({
     provider,
     // Empty query: the backend's curated order, verbatim.
-    models: rankModels(provider, provider.models ?? []),
-    downloads: provider.slug === LOCAL_PROVIDER_SLUG ? visibleDownloads : []
+    models: rankModels(provider, provider.models ?? [])
   }))
 
-  const hasMatches = groups.some(g => g.models.length > 0 || g.downloads.length > 0)
+  const hasMatches = groups.some(g => g.models.length > 0)
 
   // A typed id nothing lists: one row per configured provider, current
   // provider first, so the slug is one Enter away and remembered afterwards.
@@ -337,8 +259,8 @@ function ModelResults({
 
   return (
     <>
-      {groups.map(({ provider, models, downloads: groupDownloads }) => {
-        if (models.length === 0 && groupDownloads.length === 0) {
+      {groups.map(({ provider, models }) => {
+        if (models.length === 0) {
           return null
         }
 
@@ -361,10 +283,6 @@ function ModelResults({
               const resetMs = modelResetMs(provider, model)
               const resetLabel = resetMs === null ? null : formatReset(resetMs)
               const dimmed = !locked && (accountLimited || resetLabel !== null)
-              // Managed local model loading into memory right now: show the
-              // real load percent inline (keyed by exact model id — remote
-              // providers never match).
-              const loadProgress = loadingModels[model]
 
               return (
                 <CommandItem
@@ -386,17 +304,7 @@ function ModelResults({
                   <span className={cn('min-w-0 flex-1 truncate', dimmed && !isCurrent && 'text-muted-foreground')}>
                     <HighlightMatches foldSeparators query={search} text={model} />
                   </span>
-                  {loadProgress && (
-                    <span className="flex shrink-0 items-center gap-1.5" title={copy.loadingIntoMemory}>
-                      <span className="h-1 w-16 overflow-hidden rounded-full bg-(--ui-bg-tertiary)">
-                        <span
-                          className="block h-full rounded-full bg-primary transition-[width] duration-500"
-                          style={{ width: `${Math.max(2, loadProgress.percent)}%` }}
-                        />
-                      </span>
-                      <span className="text-[0.62rem] tabular-nums text-muted-foreground">{loadProgress.percent}%</span>
-                    </span>
-                  )}
+
                   {locked && (
                     <span className="shrink-0 text-[0.62rem] uppercase tracking-wide opacity-80">{copy.pro}</span>
                   )}
@@ -414,9 +322,7 @@ function ModelResults({
                 </CommandItem>
               )
             })}
-            {groupDownloads.map(job => (
-              <DownloadingModelRow jobId={job.jobId} key={job.jobId} owner={owner} target={job.target} />
-            ))}
+
             {unavailable.size > 0 && (
               <div className="px-6 pb-2 pt-1 text-[0.62rem] leading-relaxed text-muted-foreground">
                 {copy.proNeedsSubscription}
@@ -425,13 +331,7 @@ function ModelResults({
           </CommandGroup>
         )
       })}
-      {!hasLocalGroup && visibleDownloads.length > 0 && (
-        <CommandGroup heading={copy.localDownloadsHeading} key="local-downloads">
-          {visibleDownloads.map(job => (
-            <DownloadingModelRow jobId={job.jobId} key={job.jobId} owner={owner} target={job.target} />
-          ))}
-        </CommandGroup>
-      )}
+
       {customSlug && customProviders.length > 0 && (
         <CommandGroup heading={copy.customModel} key="custom-model">
           {customProviders.map(provider => (
@@ -448,65 +348,6 @@ function ModelResults({
         </CommandGroup>
       )}
     </>
-  )
-}
-
-// The backend's provider row for staged local models (inventory.py's
-// _local_runtime_row). Downloads-in-flight attach to this group.
-const LOCAL_PROVIDER_SLUG = 'llamacpp'
-
-// A model still downloading: visible so the user knows it's coming (and
-// where it will land), disabled so it can't be selected early, with the
-// same byte progress the settings pane shows. Percent is selected here, per
-// row, so the poller's 700ms byte ticks repaint this leaf only.
-function DownloadingModelRow({
-  owner,
-  jobId,
-  target
-}: {
-  owner: LocalModelsOwner
-  jobId: string
-  target: string
-}): ReactElement {
-  const { t } = useI18n()
-  const copy = t.modelPicker
-  const copyLocal = t.settings.localModels
-
-  const percent: number | null = useLocalRuntimeJobs(
-    owner,
-    (jobs: readonly LocalRuntimeJob[]): number | null =>
-      jobs.find((job: LocalRuntimeJob): boolean => job.job_id === jobId)?.percent ?? null,
-    false
-  )
-
-  const paused: boolean = useLocalRuntimeJobs(
-    owner,
-    (jobs: readonly LocalRuntimeJob[]): boolean =>
-      jobs.find((job: LocalRuntimeJob): boolean => job.job_id === jobId)?.status === 'paused',
-    false
-  )
-
-  return (
-    <CommandItem className="flex items-center gap-2 pl-6 font-mono opacity-60" disabled value={`downloading:${jobId}`}>
-      <span className="min-w-0 flex-1 truncate">{target}</span>
-      <span
-        className="flex shrink-0 items-center gap-1.5"
-        title={paused ? copyLocal.downloadPausedLabel : copy.downloading}
-      >
-        <span className="h-1 w-16 overflow-hidden rounded-full bg-(--ui-bg-tertiary)">
-          <span
-            className={cn(
-              'block h-full rounded-full',
-              paused ? 'bg-muted-foreground/60' : 'bg-primary transition-[width] duration-500'
-            )}
-            style={{ width: `${Math.max(2, percent ?? 0)}%` }}
-          />
-        </span>
-        <span className="text-[0.62rem] tabular-nums text-muted-foreground">
-          {paused ? copyLocal.downloadPausedLabel : typeof percent === 'number' ? `${percent}%` : copy.downloading}
-        </span>
-      </span>
-    </CommandItem>
   )
 }
 

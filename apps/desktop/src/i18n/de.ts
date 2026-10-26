@@ -6,7 +6,6 @@ import { deClarify } from './de_clarify'
 import { deConnectorAccounts } from './de_connector_accounts'
 import { deConnectorCard } from './de_connector_card'
 import { deFirstRun } from './de_first_run'
-import { deLocalModels } from './de_local_models'
 import { deModelMenu } from './de_model_menu'
 import { deNotices } from './de_notices'
 import { deOnboarding } from './de_onboarding'
@@ -752,7 +751,6 @@ export const deOverrides = {
       providerAccounts: 'Konten',
       providerApiKeys: 'API-Schlüssel',
       providerCustomEndpoints: 'Benutzerdefinierte Endpunkte',
-      providerLocalModels: 'Lokale Modelle',
       gateway: 'Gateways',
       apiKeys: 'Tools & Schlüssel',
       keybinds: 'Tastaturkürzel',
@@ -2004,7 +2002,6 @@ export const deOverrides = {
       moaReferenceHint: 'berät standardmäßig einmal pro Turn',
       tasks: deAuxTasks
     },
-    localModels: deLocalModels,
     billing: {
       semantier: semantierBillingCopy['de'],
       perMonth: (amount: string) => `${amount}/Monat`,
@@ -2295,9 +2292,6 @@ export const deOverrides = {
       intro:
         'Melden Sie sich mit einem Abo an – kein API-Key zum Kopieren. Semantier übernimmt die Browser-Anmeldung für Sie, direkt hier in der App.',
       connected: 'Verbunden',
-      collapse: 'Einklappen',
-      connectAnother: 'Weiteren Provider verbinden',
-      otherProviders: 'Weitere Provider',
       disconnect: 'Trennen',
       disconnectInTerminal: 'Trennen (führt den Entfernungsbefehl im Terminal aus)',
       removeConfirm: provider => `${provider} entfernen?`,
@@ -4546,9 +4540,6 @@ export const deOverrides = {
     noModels: 'Keine Modelle gefunden.',
     addProvider: 'Anbieter hinzufügen',
     loadFailed: 'Modelle konnten nicht geladen werden',
-    loadingIntoMemory: 'Wird in den Speicher geladen',
-    downloading: 'Wird heruntergeladen',
-    localDownloadsHeading: 'Lokal',
     noAuthenticatedProviders: 'Keine authentifizierten Anbieter.',
     pro: 'Pro',
     proNeedsSubscription: 'Pro-Modelle benötigen ein bezahltes Nous-Abo.',
@@ -4686,15 +4677,6 @@ export const deOverrides = {
       openStarmap: 'Memory-Graph öffnen',
       turnRunning: 'Läuft',
       contextUsage: 'Kontext-Verbrauch',
-      systemResources: {
-        title: 'Systemressourcen',
-        loading: 'Ressourcen…',
-        gpuUtilization: 'GPU-Auslastung',
-        gpuMemory: 'GPU-Speicher',
-        ram: 'RAM',
-        unifiedNote: 'Unified Memory — die GPU und das System teilen sich diesen Speicherpool.',
-        toggle: 'Systemressourcen'
-      },
       contextUsagePanel: {
         categories: {
           conversation: 'Konversation',
@@ -5647,11 +5629,6 @@ export const deOverrides = {
       'composer-mentions': {
         title: 'Anhängen und befehlen',
         text: 'Geben Sie @ ein, um eine Datei in die Konversation zu holen, oder /, um einen Befehl auszuführen.'
-      },
-      'local-runtime-update': {
-        title: 'Ein Update für die lokale Engine ist verfügbar',
-        text: 'Aktualisieren Sie die Engine, die Ihre lokalen Modelle ausführt. Laufende lokale Anfragen können unterbrochen werden.',
-        action: 'Jetzt aktualisieren'
       },
       'right-pane': {
         title: 'Der Arbeitsbereich',

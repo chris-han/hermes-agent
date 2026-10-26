@@ -92,14 +92,21 @@ describe('CustomEndpointsSettings', () => {
     await screen.findByText('Catalog unsupported')
     expect(screen.getByPlaceholderText<HTMLInputElement>('gpt-5.4').value).toBe('model-a')
     fireEvent.click(screen.getByRole('button', { name: 'Save and use' }))
-    await waitFor(() => expect(saveCustomEndpoint).toHaveBeenCalledWith(expect.objectContaining({
-      api_key: undefined, model: 'model-a', base_url: 'http://profile-a.test/v1'
-    }), 'default'))
+    await waitFor(() =>
+      expect(saveCustomEndpoint).toHaveBeenCalledWith(
+        expect.objectContaining({
+          api_key: undefined,
+          model: 'model-a',
+          base_url: 'http://profile-a.test/v1'
+        }),
+        'default'
+      )
+    )
     fireEvent.change(key, { target: { value: 'unsaved-private-key' } })
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(key.value).toBe('')
     expect(saveCustomEndpoint).toHaveBeenCalledTimes(1)
-    expect(screen.queryByText('unsaved-private-key')?.textContent).not.toContain('unsaved-private-key')
+    expect(screen.queryByText('unsaved-private-key')).toBeNull()
   })
 
   it('localizes endpoint editing on language changes without changing transport or draft identifiers', async () => {
@@ -289,5 +296,22 @@ describe('CustomEndpointsSettings', () => {
     // typed bare root would 404 every request even though the test looked green.
     expect(urlInput.value).toBe('http://h.test')
     expect(screen.getByRole('status').textContent).toContain('http://h.test/v1')
+  })
+  it('preserves an independently running localhost endpoint without managed-model setup', async () => {
+    getCustomEndpoints.mockResolvedValue(emptyResponse)
+    saveCustomEndpoint.mockResolvedValue(savedResponse)
+    render(<CustomEndpointsSettings />)
+    await screen.findByText('No custom endpoints')
+    fireEvent.change(screen.getByPlaceholderText('Axet Proxy'), { target: { value: 'Independent local server' } })
+    fireEvent.change(screen.getByPlaceholderText('http://127.0.0.1:8081/v1'), {
+      target: { value: 'http://localhost:8081/v1' }
+    })
+    fireEvent.change(screen.getByPlaceholderText('gpt-5.4'), { target: { value: 'my-existing-model' } })
+    fireEvent.click(screen.getByRole('checkbox', { name: 'This endpoint requires no API key' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save and use' }))
+    expect(saveCustomEndpoint).toHaveBeenCalledWith(
+      expect.objectContaining({ base_url: 'http://localhost:8081/v1', model: 'my-existing-model' }),
+      'default'
+    )
   })
 })

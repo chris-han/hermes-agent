@@ -28,12 +28,6 @@ export const arFirstRun: FirstRunCopy = {
   skip: 'تخطي الإعداد',
   skipTip: 'إنهاء الإعداد الموجَّه وفتح محادثة جديدة.',
   skipFailed: 'تعذّر تخطي الإعداد',
-  localModel: {
-    title: 'يمكن لهذا الكمبيوتر تشغيل نموذج محليًا',
-    text: (model, size) => `${model} (${size}) يناسب أجهزتك. يعمل مجانًا، وتبقى محادثاتك على هذا الكمبيوتر.`,
-    setUp: 'إعداده',
-    notNow: 'ليس الآن'
-  },
   intro: {
     greeting: 'مرحبًا، أنا Semantier.',
     plan: 'لنجهّز كل شيء لك، ثم ننجز معًا شيئًا رائعًا.'

@@ -28,12 +28,6 @@ export const enFirstRun: FirstRunCopy = {
   skip: 'Skip setup',
   skipTip: 'End the guided setup and open a new chat.',
   skipFailed: 'Could not skip setup',
-  localModel: {
-    title: 'This computer can run a model locally',
-    text: (model, size) => `${model} (${size}) fits your hardware. It runs free, and your chats stay on this computer.`,
-    setUp: 'Set it up',
-    notNow: 'Not now'
-  },
   intro: {
     greeting: "Hi, I'm Semantier.",
     plan: "Let's set things up for you. Then we'll get something cool done."

@@ -581,7 +581,8 @@ export const ruOverrides = {
       modelPricingTitle: 'Цены моделей',
       modelPricingDesc: 'Показывать в выборе модели цены за миллион токенов: ввод, вывод и чтение из кэша.',
       reactionsTitle: 'Реакции на сообщения',
-      reactionsDesc: 'Эмодзи-тапбеки в стиле iMessage — реагируйте на сообщения, и Semantier сможет реагировать на ваши.',
+      reactionsDesc:
+        'Эмодзи-тапбеки в стиле iMessage — реагируйте на сообщения, и Semantier сможет реагировать на ваши.',
       composerPopoutTitle: 'Плавающий композер',
       composerPopoutDesc:
         'Позволяет вытягивать композер из его док-зоны. Когда выключено, он остаётся закреплённым внизу.',
@@ -1360,9 +1361,6 @@ export const ruOverrides = {
       intro:
         'Войдите по подписке — копировать API-ключ не нужно. Semantier проведёт вход в браузере прямо здесь, в приложении.',
       connected: 'Подключено',
-      collapse: 'Свернуть',
-      connectAnother: 'Подключить другой провайдер',
-      otherProviders: 'Другие провайдеры',
       disconnect: 'Отключить',
       disconnectInTerminal: 'Отключить (выполнит команду удаления в терминале)',
       removeConfirm: provider => `Удалить ${provider}?`,
@@ -1379,7 +1377,8 @@ export const ruOverrides = {
       noKeysMatch: 'Провайдеры, подходящие под поиск, не найдены.',
       localEndpoint: {
         title: 'Локальный / свой эндпоинт',
-        description: 'Направьте Semantier на любой OpenAI-совместимый эндпоинт (Zyphra, vLLM, llama.cpp, Ollama и т. д.).'
+        description:
+          'Направьте Semantier на любой OpenAI-совместимый эндпоинт (Zyphra, vLLM, llama.cpp, Ollama и т. д.).'
       },
       loading: 'Загрузка провайдеров…'
     },
@@ -2195,7 +2194,8 @@ export const ruOverrides = {
     setAsDefault: 'Сделать по умолчанию',
     defaultProfile: 'Профиль по умолчанию',
     defaultSet: name => `${name} теперь используется по умолчанию`,
-    defaultDescription: 'Используется при запуске Semantier и для новых чатов. Профили существующих сессий не меняются.',
+    defaultDescription:
+      'Используется при запуске Semantier и для новых чатов. Профили существующих сессий не меняются.',
     failedSetDefault: 'Не удалось установить профиль по умолчанию',
     setColor: color => `Установить цвет ${color}`,
     autoColor: 'Авто',
@@ -3521,7 +3521,8 @@ export const ruOverrides = {
       address: 'Адрес',
       addressPlaceholder: 'Введите адрес',
       blankPageBody: 'Введите адрес выше, чтобы просматривать, или попросите Semantier открыть страницу.',
-      finishedRestarting: message => `Semantier завершил перезапуск сервера предпросмотра${message ? `: ${message}` : ''}`,
+      finishedRestarting: message =>
+        `Semantier завершил перезапуск сервера предпросмотра${message ? `: ${message}` : ''}`,
       failedRestarting: message => `Перезапуск сервера не удался: ${message}`,
       unknownError: 'неизвестная ошибка',
       restartedTitle: 'Сервер предпросмотра перезапущен',

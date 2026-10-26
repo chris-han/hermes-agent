@@ -13,7 +13,6 @@ import {
   Archive,
   BarChart3,
   Bell,
-  Cpu,
   Download,
   Globe,
   Info,
@@ -35,7 +34,6 @@ import { confirm } from '@/store/confirm'
 import { $activeConnectionId } from '@/store/connections'
 import { recordFeatureUse, settingsArea } from '@/store/desktop-metrics'
 import { bindingsFor } from '@/store/keybinds'
-import { $localModelsEnabled } from '@/store/local-models-flag'
 import { notifyError } from '@/store/notifications'
 import { $settingsScopeProfile } from '@/store/settings-scope'
 
@@ -332,22 +330,7 @@ export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: Set
                 id: 'pview:custom-endpoints',
                 label: t.settings.nav.providerCustomEndpoints,
                 onSelect: () => openProviderView('custom-endpoints')
-              },
-              // Local models ships behind the --local launch flag: no flag, no
-              // nav entry (the pane itself also refuses to render, so a stale
-              // ?pview=local deep link falls back to accounts-shaped emptiness
-              // rather than a hidden feature).
-              ...($localModelsEnabled.get()
-                ? [
-                    {
-                      active: activeView === 'providers' && providerView === 'local',
-                      icon: Cpu,
-                      id: 'pview:local',
-                      label: t.settings.nav.providerLocalModels,
-                      onSelect: () => openProviderView('local')
-                    }
-                  ]
-                : [])
+              }
             ],
             gapBefore: true,
             icon: Zap,

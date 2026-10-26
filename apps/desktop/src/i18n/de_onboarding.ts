@@ -19,8 +19,6 @@ export const deOnboarding: TranslationOverrides['onboarding'] = {
   connected: 'Verbunden',
   featuredPitch: 'Ein Abo, 300+ Frontier-Modelle – die empfohlene Art, Semantier zu nutzen',
   fireworksPitch: 'Direkte Model-API – Fireworks-gehostete Frontier-Modelle',
-  localModelsTitle: 'Modelle lokal ausführen',
-  localModelsPitch: 'Kein Konto nötig – laden Sie ein Modell herunter und führen Sie es auf diesem Rechner aus',
   openRouterPitch: 'Ein Key, hunderte Modelle – ein solider Standard',
   apiKeyOptions: {
     fireworks: {
