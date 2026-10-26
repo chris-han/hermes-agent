@@ -3659,7 +3659,10 @@ function createNativePackagedStrategy(
     }
 
     return target
-      ? createChannelAppInstallerStrategy(deps, target, verifyPreparedChannelInstaller)
+      ? createChannelAppInstallerStrategy(deps, target, async (file, selected) => {
+          await verifyPreparedChannelInstaller(file, selected)
+          semantierObservations.verified(selected.package.artifact.sha256)
+        })
       : new AppInstallerStrategy(deps)
   }
 

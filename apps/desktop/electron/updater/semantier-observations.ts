@@ -18,6 +18,8 @@ export interface Observation extends ObservationTarget {
   stage: 'handoff' | 'verify' | 'restart_confirmation'
   outcome: 'pending' | 'unknown' | 'failed' | 'target_confirmed'
   occurred_at: string
+  /** Local journal evidence only; excluded from the reporting wire. */
+  verified_artifact_sha256?: string
   observed_version?: string
   observed_family?: string
   observed_sha256?: string
@@ -31,6 +33,7 @@ function validObservation(value: unknown): value is Observation {
 
   return e.schema_version === '1.0.0' && text.every(k => typeof e[k] === 'string' && (e[k] as string).length > 0 && (e[k] as string).length <= 160)
     && typeof e.target_sha256 === 'string' && /^[a-f0-9]{64}$/.test(e.target_sha256)
+    && (e.verified_artifact_sha256 === undefined || e.verified_artifact_sha256 === e.target_sha256)
     && typeof e.occurred_at === 'string' && Number.isFinite(Date.parse(e.occurred_at))
     && ['handoff','verify','restart_confirmation'].includes(String(e.stage))
     && ['pending','unknown','failed','target_confirmed'].includes(String(e.outcome))
@@ -185,6 +188,12 @@ export class SemantierObservations {
     this.state.pending = null
     this.save()
   }
+  verified(sha256: string) {
+    if (this.state.enabled && this.state.pending?.target_sha256 === sha256) {
+      this.state.pending.verified_artifact_sha256 = sha256
+      this.save()
+    }
+  }
   reconcile(actual: { version: string; family: string; buildId: string }) {
     const p = this.state.pending
 
@@ -193,6 +202,7 @@ export class SemantierObservations {
     }
 
     const exact =
+      p.verified_artifact_sha256 === p.target_sha256 &&
       p.target_version === actual.version && p.package_family === actual.family && p.build_id === actual.buildId
 
     const already = this.state.queue.some(
@@ -235,7 +245,7 @@ export class SemantierObservations {
       this.save()
     }
 
-    return this.state.queue.slice(0, 100).map(({ build_id: _, ...event }) => event)
+    return this.state.queue.slice(0, 100).map(({ build_id: _, verified_artifact_sha256: _verified, ...event }) => event)
   }
   ack(profile: string, ids: string[]) {
     if (profile !== this.state.profile) {
