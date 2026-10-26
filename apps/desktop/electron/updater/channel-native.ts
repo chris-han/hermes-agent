@@ -114,6 +114,39 @@ export interface RunningChannelApp {
   removalRoots: string[]
 }
 
+interface RegisteredChannelApp extends Omit<RunningChannelApp, 'applicationId'> {
+  applications: { id: string; executable: string }[]
+}
+
+/** Compare resolved filesystem identities, including WindowsApps volume junctions. */
+export async function resolveRegisteredChannelApp(
+  registered: RegisteredChannelApp,
+  executable: string
+): Promise<RunningChannelApp> {
+  const appPath = await realpath(registered.appPath)
+  const runningPath = await realpath(executable)
+  const relative = path.relative(appPath, runningPath)
+
+  if (!relative || path.isAbsolute(relative) || relative === '..' || relative.startsWith(`..${path.sep}`)) {
+    throw new Error('Running executable is outside registered package')
+  }
+
+  const applications = await Promise.all(registered.applications.map(async application => ({
+    id: application.id,
+    executable: await realpath(application.executable)
+  })))
+
+  const matches = applications.filter(application => path.relative(application.executable, runningPath) === '')
+
+  if (matches.length !== 1) {
+    throw new Error('Running executable is not the registered application')
+  }
+
+  const { applications: _applications, ...installed } = registered
+
+  return { ...installed, appPath, executable: runningPath, applicationId: matches[0].id }
+}
+
 /** Derive trust from the signed running application, never from an R2 document. */
 export async function inspectRunningChannelApp(build: ChannelBuild): Promise<RunningChannelApp> {
   const executable: string = await canonicalChannelPath(process.execPath)
@@ -150,16 +183,14 @@ $packages=@(Get-AppxPackage -Name $p.identity | Where-Object { $_.Name -ceq $p.i
 if ($packages.Count -ne 1) { throw 'Running channel package is not uniquely registered' }
 $pkg=$packages[0]
 if ($pkg.Status.ToString() -cne 'Ok' -or $pkg.SignatureKind.ToString() -cne 'Developer' -or $pkg.IsDevelopmentMode -or $pkg.NonRemovable) { throw 'Channel package is not a trusted current-user sideload' }
-if (-not $p.executable.StartsWith($pkg.InstallLocation.TrimEnd('\')+'\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Running executable is outside registered package' }
 $manifest=Get-AppxPackageManifest -Package $pkg.PackageFullName
-$apps=@($manifest.Package.Applications.Application | Where-Object { [IO.Path]::GetFullPath((Join-Path $pkg.InstallLocation $_.Executable)) -ieq $p.executable })
-if ($apps.Count -ne 1) { throw 'Running executable is not the registered application' }
-@{ identity=$pkg.Name; signer=$pkg.Publisher; appPath=$pkg.InstallLocation; nativeVersion=$pkg.Version.ToString(); executable=$p.executable; applicationId=$apps[0].Id; packageFullName=$pkg.PackageFullName; packageFamilyName=$pkg.PackageFamilyName; removalRoots=@($pkg.InstallLocation,(Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) ('Packages\'+$pkg.PackageFamilyName))) } | ConvertTo-Json -Compress
+$apps=@($manifest.Package.Applications.Application | ForEach-Object { @{ id=$_.Id; executable=[IO.Path]::GetFullPath((Join-Path $pkg.InstallLocation $_.Executable)) } })
+@{ identity=$pkg.Name; signer=$pkg.Publisher; appPath=$pkg.InstallLocation; nativeVersion=$pkg.Version.ToString(); executable=$p.executable; applications=$apps; packageFullName=$pkg.PackageFullName; packageFamilyName=$pkg.PackageFamilyName; removalRoots=@($pkg.InstallLocation,(Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) ('Packages\'+$pkg.PackageFamilyName))) } | ConvertTo-Json -Compress -Depth 4
 `,
     JSON.stringify({ identity: build.identity.msixAppIdWithOrg, executable })
   )
 
-  const installed: RunningChannelApp = JSON.parse(result.stdout)
+  const installed = await resolveRegisteredChannelApp(JSON.parse(result.stdout), executable)
 
   if (
     installed.nativeVersion !== build.windowsVersion ||

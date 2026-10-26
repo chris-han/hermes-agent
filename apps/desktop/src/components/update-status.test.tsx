@@ -142,6 +142,14 @@ describe('deriveUpdateStatus', () => {
     expect(view.error).toBe('ECONNREFUSED\ncheck-failed')
   })
 
+  it('does not describe a local registration failure as a server outage', () => {
+    const message = 'Running executable is outside registered package'
+    const view = derive({ supported: true, error: 'check-failed', message })
+
+    expect(view.line).not.toMatch(/server|reach|connect/i)
+    expect(view.error).toContain(message)
+  })
+
   it.each([undefined, ''])('keeps the error when the transport message is %s', message => {
     const view = derive({ supported: true, error: 'check-failed', message })
 

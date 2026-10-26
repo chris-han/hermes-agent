@@ -4272,7 +4272,7 @@ export const deOverrides = {
     releaseNotes: 'Versionshinweise',
     onLatest: 'Sie verwenden die neueste Version.',
     installing: 'Ein Update wird derzeit installiert.',
-    cantReach: 'Der Update-Server konnte nicht erreicht werden.',
+    cantReach: "Updates konnten nicht geprüft werden.",
     tapCheck: 'Tippen Sie auf „Jetzt prüfen“, um nach Updates zu suchen.',
     updateReady: count => `Ein neues Update ist bereit (${count} Änderung${count === 1 ? '' : 'en'} enthalten).`,
     updateReadyUnknown: 'Ein neues Update ist bereit.',
