@@ -11,6 +11,7 @@ import type { WindowCloseAction, WindowCloseRequest, WindowCloseResult } from '.
 import type { HermesNotification } from '../electron/notification-types'
 import type { KeepAwakeMode } from '../electron/power-save'
 import type { UpdateHoldWire } from '../electron/update-hold-types'
+import type { Observation } from '../electron/updater/semantier-observations'
 import type { UpdateRunReport } from '../electron/updater/update-metrics'
 import type { WindowSizeMode } from '../electron/window-size-types'
 import type { BrandShortcutBridge } from '../electron/windows-brand-shortcuts-types'
@@ -105,6 +106,13 @@ declare global {
       claimAmbientCue: (key: string) => Promise<boolean>
       // Renderer-drawn min/max/close for WSLg (`custom` true there only), sent
       // over hermes:window-control; Electron/OS chrome owns them elsewhere.
+      semantierFeedback?: {
+        onOpen?(callback: () => void): () => void
+        status(): Promise<{enabled:boolean;profile:string|null;queued:number;dropped:number}>
+        consent(enabled:boolean,profile:string): Promise<{enabled:boolean;profile:string|null;queued:number;dropped:number}>
+        drain(profile:string): Promise<Observation[]>
+        ack(profile:string,ids:string[]): Promise<unknown>
+      }
       windowControls: {
         custom: boolean
         minimize: () => void
@@ -859,6 +867,9 @@ export type UpdaterMechanismClient =
   'app-installer' | 'electron-updater' | 'external' | 'microsoft-store' | 'windows-handoff' | 'posix-handoff' | 'manual'
 
 export interface DesktopUpdateStatus {
+  installedReleaseId?: string
+  releaseId?: string
+  releaseNotes?: Record<string, string>
   supported: boolean
   retirement?: {
     state: 'discontinued'

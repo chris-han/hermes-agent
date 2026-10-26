@@ -1,0 +1,4 @@
+{
+  "en": "Acceptance release: target-bound Windows updates and explicit sanitized diagnostics. No automatic crash upload or model inference.",
+  "zh": "验收版本：绑定目标的 Windows 更新与主动脱敏诊断；不会自动上传崩溃数据或触发模型推理。"
+}

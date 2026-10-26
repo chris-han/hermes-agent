@@ -1305,6 +1305,13 @@ def _ensure_repo_local_runtime_config(
             encoding="utf-8",
         )
 
+    # Backend-created settings are also edited by the deployed workspace service.
+    runtime_uid = os.environ.get("SEMANTIER_WORKSPACE_RUNTIME_UID")
+    if runtime_uid:
+        from agents.workspace_permissions import grant_runtime_settings_access
+
+        grant_runtime_settings_access(runtime_root, int(runtime_uid))
+
 
 def _governed_transcription_temporary_directory(*, prefix: str, ignore_cleanup_errors: bool = False):
     """Keep native oversized-audio staging inside the calling task's artifacts."""
@@ -1655,7 +1662,7 @@ def run_runtime_cli(argv: Sequence[str] | None = None, *, program_name: str = "s
     completed_cleanly = False
     try:
         uvicorn.run(
-            "semantier.agents.gateway:app",
+            "apps.combined:app",
             host=args.host,
             port=args.port,
             reload=args.reload,
@@ -1835,7 +1842,7 @@ def run_api(argv: Sequence[str] | None = None) -> int:
     import uvicorn
 
     uvicorn.run(
-        "semantier.agents.gateway:app",
+        "apps.combined:app",
         host=args.host,
         port=args.port,
         reload=args.reload,

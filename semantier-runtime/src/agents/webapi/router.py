@@ -69,11 +69,15 @@ from agents.webapi.workshop_classroom_routes import router as workshop_classroom
 
 
 router = APIRouter(tags=["webapi-gateway"])
+from agents.webapi.client_operations_routes import router as client_operations_router
+router.include_router(client_operations_router)
 
 from agents.webapi.model_gateway_routes import router as model_gateway_router
 from agents.webapi.model_gateway_admin_routes import router as model_gateway_admin_router
 from agents.webapi.billing_routes import router as billing_router
 from agents.webapi.billing_commerce_routes import router as billing_commerce_router
+from agents.webapi.cloud_device_routes import router as cloud_device_router
+router.include_router(cloud_device_router)
 router.include_router(model_gateway_router)
 router.include_router(model_gateway_admin_router)
 router.include_router(billing_router)

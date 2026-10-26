@@ -294,7 +294,7 @@ class GraphIntentDiscoveryService:
             raise ValueError("graph intent prompt asset must be UTF-8") from exc
         prompt_hash = f"sha256:{sha256(prompt_bytes).hexdigest()}"
         prompt_ref = self._write_prompt_asset(prompt_bytes, prompt_hash)
-        prompt = self._prompt(prompt_template, profile_id, catalog, blocks)
+        prompt = self._prompt(prompt_template, profile_id, catalog, blocks, canonical)
         llm = self._llm_evidence(
             provider=llm_provider, model=llm_model, prompt=prompt, config=config,
             output_schema=graph_intent_proposal_output_schema(catalog),
@@ -2211,7 +2211,9 @@ class GraphIntentDiscoveryService:
         profile_id: str,
         catalog: dict[str, Any],
         blocks: list[Any],
+        canonical: CanonicalSourceDocument,
     ) -> str:
+        parents = {block.block_id: block for block in canonical.blocks}
         return template.format(
             profile_id=profile_id,
             profile_catalog=canonical_json(catalog),
@@ -2221,6 +2223,13 @@ class GraphIntentDiscoveryService:
                         "block_id": f"block_{index:06d}",
                         "block_type": item.block_type,
                         "content": item.content,
+                        "source_context": {
+                            "ordinal": item.ordinal,
+                            "structure": dict(item.structure),
+                            **({"parent_ordinal": parents[item.parent_block_id].ordinal,
+                                "parent_structure": dict(parents[item.parent_block_id].structure)}
+                               if item.parent_block_id in parents else {}),
+                        },
                     }
                     for index, item in enumerate(blocks, start=1)
                 ]
@@ -2287,6 +2296,9 @@ class GraphIntentDiscoveryService:
         )[:24]
         evidence_id = f"gipe_{request_id}"
         try:
+            if getattr(self.llm_evidence_runner, "reexecution_control", None) is not None:
+                # The durable command owner verifies material even on adoption.
+                raise KeyError(evidence_id)
             evidence = self.llm_evidence_runner.store.get_llm_proposal_evidence(
                 evidence_id
             )

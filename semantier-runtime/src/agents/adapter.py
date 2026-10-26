@@ -1,4 +1,4 @@
-from agents.gateway import execute
+from apps.combined import execute
 
 
 class SemantierAdapter:

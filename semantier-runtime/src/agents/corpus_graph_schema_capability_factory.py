@@ -43,7 +43,16 @@ class _HermesGraphIntentStructuredProvider:
         expected_model: str,
         instructions: str | None = None,
         repair_template: str | None = None,
+        request_context=None,
+        max_structured_attempts: int = 2,
+        reexecution_control=None, reexecution_evidence=None,
     ) -> None:
+        if type(max_structured_attempts) is not int or max_structured_attempts not in (1, 2):
+            raise ValueError("GraphIntent structured attempts must be 1 or 2")
+        if reexecution_control is not None and (max_structured_attempts != 1 or reexecution_evidence is None):
+            raise ValueError("GraphIntent reexecution requires durable evidence and one attempt")
+        self.reexecution_control, self.reexecution_evidence = reexecution_control, reexecution_evidence
+        self.max_structured_attempts = max_structured_attempts
         self.inference_home = inference_home.expanduser().resolve()
         self.expected_provider = expected_provider
         self.expected_model = expected_model
@@ -60,7 +69,7 @@ class _HermesGraphIntentStructuredProvider:
         if not self.repair_template.strip():
             raise ValueError("GraphIntent repair instruction asset is empty")
         self.generation_attempts: list[dict[str, Any]] = []
-        self.llm = HermesCurrentAgentStructuredLlm(hermes_home=self.inference_home)
+        self.llm = HermesCurrentAgentStructuredLlm(hermes_home=self.inference_home, request_context=request_context)
 
     def generate_structured(
         self,
@@ -84,8 +93,20 @@ class _HermesGraphIntentStructuredProvider:
     ) -> dict[str, Any]:
         schema = json_schema if json_schema is not None else graph_intent_proposal_output_schema()
         self.generation_attempts = []
+        execution = self.reexecution_evidence
+        if execution is not None:
+            material = execution.bind_material(prompt=prompt, instructions=self.instructions, schema=schema,
+                provider=self.expected_provider, model=self.expected_model)
+            saved = execution.read("result")
+            if saved is not None:
+                if saved["status"] == "passed" and (execution.read("prepare") is None or execution.read("observe") is None):
+                    raise ValueError("REEXECUTION_EVIDENCE_INTEGRITY")
+                self.generation_attempts = saved["attempts"]
+                if saved["status"] == "passed":
+                    return saved["parsed"]
+                raise StructuredGenerationError("retained GraphIntent invocation outcome; no resend")
         attempt_input = prompt
-        for attempt_number in (1, 2):
+        for attempt_number in range(1, self.max_structured_attempts + 1):
             attempt = {
                 "attempt_number": attempt_number,
                 "produced_at": datetime.now(timezone.utc).isoformat(),
@@ -106,8 +127,11 @@ class _HermesGraphIntentStructuredProvider:
                     json_schema=schema,
                     schema_name="semantier_graph_intent_proposal_evidence_v1",
                     purpose="contextgraph_graph_intent_proposal",
+                    **(dict(reexecution=self.reexecution_control,
+                        before_reexecution=lambda command: execution.prepare(command, material),
+                        after_reexecution=execution.observe) if execution is not None else {}),
                 )
-                attempt.update(usage=dict(generated.usage), output_text=generated.text,
+                attempt.update(usage=dict(generated.usage), audit=dict(generated.audit), output_text=generated.text,
                     output_hash="sha256:" + sha256(generated.text.encode("utf-8")).hexdigest())
                 if (generated.provider, generated.model) != (
                     self.expected_provider, self.expected_model,
@@ -122,6 +146,8 @@ class _HermesGraphIntentStructuredProvider:
                     validation = validation.__cause__
                 if not isinstance(validation, ValidationError):
                     attempt.update(status="failed", error_type=type(exc).__name__, error=str(exc))
+                    if execution is not None:
+                        execution.retain("result",dict(status="failed",attempts=self.generation_attempts))
                     raise
                 diagnostic = {
                     "path": list(validation.absolute_path),
@@ -129,7 +155,9 @@ class _HermesGraphIntentStructuredProvider:
                     "message": validation.message,
                 }
                 attempt.update(status="schema_rejected", validation_diagnostic=diagnostic)
-                if attempt_number == 2:
+                if attempt_number == self.max_structured_attempts:
+                    if execution is not None:
+                        execution.retain("result",dict(status="failed",attempts=self.generation_attempts))
                     raise
                 attempt_input = self.repair_template.format(
                     validation_error=json.dumps(diagnostic, ensure_ascii=False, sort_keys=True),
@@ -137,6 +165,8 @@ class _HermesGraphIntentStructuredProvider:
                 )
             else:
                 attempt["status"] = "passed"
+                if execution is not None:
+                    execution.retain("result",dict(status="passed",parsed=generated.parsed,attempts=self.generation_attempts))
                 return generated.parsed
         raise AssertionError("GraphIntent schema repair exhausted without an outcome")
 
@@ -146,6 +176,9 @@ class _HermesGraphIntentGenerator:
         self, *, inference_home: Path, provider: str, model: str,
         instructions: str | None = None,
         repair_template: str | None = None,
+        request_context=None,
+        max_structured_attempts: int = 2,
+        reexecution_control=None, reexecution_evidence=None,
     ) -> None:
         self.provider = _HermesGraphIntentStructuredProvider(
             inference_home=inference_home,
@@ -153,6 +186,9 @@ class _HermesGraphIntentGenerator:
             expected_model=model,
             instructions=instructions,
             repair_template=repair_template,
+            request_context=request_context,
+            max_structured_attempts=max_structured_attempts,
+            reexecution_control=reexecution_control, reexecution_evidence=reexecution_evidence,
         )
 
 
@@ -177,15 +213,34 @@ def build_corpus_graph_schema_capability(
     inference_home: str | Path | None = None,
     source_registry: KnowledgeBuilderStore | None = None,
     graph_intent_inference_enabled: bool = True,
+    request_context=None,
+    max_structured_attempts: int = 2,
+    reexecution_control=None,
 ) -> CorpusGraphSchemaCapabilityService:
     """Compose Web and Chat against one shared Hermes inference owner."""
+    if type(max_structured_attempts) is not int or max_structured_attempts not in (1, 2):
+        raise ValueError("GraphIntent structured attempts must be 1 or 2")
+    if request_context is not None and (
+        request_context.organization_id != organization_id
+        or request_context.workspace_id != workspace_id
+        or request_context.user_id != user_id
+        or Path(request_context.workspace_root).resolve() != Path(workspace_root).resolve()
+    ):
+        raise ValueError("GraphIntent request context scope mismatch")
+    if reexecution_control is not None:
+        from agents.auth_session import RequestContext
+        from contracts.model_gateway import ModelReexecutionControlV1
+        if not isinstance(reexecution_control, ModelReexecutionControlV1) or not isinstance(request_context, RequestContext) or not request_context.authenticated:
+            raise PermissionError("authenticated GraphIntent reexecution control required")
+        if max_structured_attempts != 1 or not graph_intent_inference_enabled:
+            raise ValueError("GraphIntent reexecution requires one enabled attempt")
     if not graph_intent_inference_enabled:
         return CorpusGraphSchemaCapabilityService(workspace_root=workspace_root, workspace_id=workspace_id,
             user_id=user_id, organization_id=organization_id, source_registry=source_registry,
             graph_intent_inference_enabled=False)
 
     resolved_inference_home = Path(
-        inference_home if inference_home is not None else platform_runtime_root()
+        inference_home if inference_home is not None else request_context.hermes_home if request_context is not None else platform_runtime_root()
     ).expanduser().resolve()
     provider_model = resolve_runtime_llm_provider_model(
         hermes_home=resolved_inference_home
@@ -203,6 +258,9 @@ def build_corpus_graph_schema_capability(
     binding = HermesCurrentAgentStructuredLlm._load_auxiliary_binding(
         resolved_inference_home
     )
+    if binding.get('execution_transport') == 'admitted_gateway':
+        # A failed paid structured attempt needs the existing explicit reexecution owner.
+        max_structured_attempts = 1
     # Pin the transport owner's resolved identity, not the raw configuration alias.
     # The attribution guard below must compare two views of this same binding.
     provider, model = binding["provider"], binding["model"]
@@ -218,9 +276,18 @@ def build_corpus_graph_schema_capability(
             "evidence_schema_hash": "sha256:" + content_hash(graph_intent_proposal_output_schema()),
             "instruction_asset_hash": "sha256:" + sha256(instructions.encode("utf-8")).hexdigest(),
             "repair_template_hash": "sha256:" + sha256(repair_template.encode("utf-8")).hexdigest(),
-            "maximum_structured_attempts": 2,
+            "maximum_structured_attempts": max_structured_attempts,
+            **({"reexecution": reexecution_control.model_dump(mode="json"),
+                "execution_request_config": {key: binding.get(key) for key in (
+                    "execution_transport", "max_tokens", "output_cap_parameter", "structured_output_mode", "enable_thinking")}}
+                if reexecution_control is not None else {}),
         }
     )
+    from storage.graph_schema_discovery_store import GraphSchemaDiscoveryStore
+    from services.graph_schema_llm_evidence_runner import GraphIntentReexecutionEvidence
+    evidence_store = GraphSchemaDiscoveryStore(workspace_root, workspace_id=workspace_id)
+    reexecution_evidence = (GraphIntentReexecutionEvidence(evidence_store, request_context, reexecution_control, transport_fingerprint)
+        if reexecution_control is not None else None)
     runner = GraphSchemaLlmEvidenceRunner(
         workspace_root,
         workspace_id=workspace_id,
@@ -230,11 +297,15 @@ def build_corpus_graph_schema_capability(
             model=requested_model,
             instructions=instructions,
             repair_template=repair_template,
+            request_context=request_context,
+            max_structured_attempts=max_structured_attempts,
+            reexecution_control=reexecution_control, reexecution_evidence=reexecution_evidence,
         ),
         managed_auth_available=lambda requested_provider: _managed_auth_available(
             resolved_inference_home, requested_provider
         ),
         transport_fingerprint=transport_fingerprint,
+        store=evidence_store, reexecution_control=reexecution_control,
     )
     return CorpusGraphSchemaCapabilityService(
         workspace_root=workspace_root,

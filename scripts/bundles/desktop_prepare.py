@@ -82,7 +82,9 @@ def validate_channel_request(value: dict) -> dict:
     if identity["windowsExecutableName"].endswith((".", " ")):
         raise ValueError("invalid channel native identity windowsExecutableName")
     if not value["publicBase"].startswith("https://"):
-        raise ValueError("channel publicBase must be HTTPS for packaged clients")
+        from scripts.releases.semantier_windows import is_acceptance_request
+        if not is_acceptance_request(value):
+            raise ValueError("channel publicBase must be HTTPS for packaged clients")
     return deepcopy(value)
 
 

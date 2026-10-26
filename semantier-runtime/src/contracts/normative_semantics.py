@@ -285,6 +285,7 @@ class NormativeSemanticProposalEvidenceV1(_Contract):
     provider_input_text: str | None = Field(default=None, exclude_if=lambda value: value is None)
     rejected_response_text: str | None = Field(default=None, exclude_if=lambda value: value is None)
     usage: dict | None = Field(default=None, exclude_if=lambda value: value is None)
+    reexecution_record_pin: ArtifactPinV1 | None = Field(default=None, exclude_if=lambda value: value is None)
     provider: str = Field(min_length=1)
     model: str = Field(min_length=1)
     compiler_ref: str = Field(min_length=1)

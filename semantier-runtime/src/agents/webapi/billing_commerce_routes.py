@@ -15,25 +15,16 @@ def commerce(request):
     return service,configured(service.billing)
 
 async def permitted_account_rows(service,actor,*,manage=False):
-    """Current account access narrows the existing organization-level grant."""
-    async with service.billing.connection() as connection:
-        accounts=await (await connection.execute(
-            """SELECT a.account_id,a.currency,a.funding,x.role FROM accounts a
-               JOIN semantier_gateway.account_access x USING(organization_id,account_id,currency)
-               JOIN semantier_gateway.account_scopes s USING(organization_id,account_id,currency)
-               WHERE a.organization_id=%s AND x.user_id=%s AND x.status='ACTIVE'
-                 AND s.billing_schema=%s AND s.funding=a.funding
-               ORDER BY a.account_id,a.currency""",
-            (actor.organization_id,actor.user_id,service.billing.schema),
-        )).fetchall()
-    rows=[]
-    for account in accounts:
-        owner=account['role'] in {'owner','billing_admin'}
-        if manage and not owner:continue
-        rows.append({'organization_id':actor.organization_id,'account_id':account['account_id'],
-                     'currency':account['currency'],'funding':account['funding'],
-                     'can_manage':owner and actor.token_id is None and 'billing:manage' in actor.permissions})
-    return rows
+    return await service.store.account_rows(actor,service.billing.schema,manage=manage)
+
+
+async def select_account_row(service,actor,aid=None,currency=None,*,manage=False):
+    rows=await permitted_account_rows(service,actor,manage=manage)
+    if aid is not None:rows=[r for r in rows if r['account_id']==aid]
+    if currency is not None:rows=[r for r in rows if r['currency']==currency]
+    if not rows:raise HTTPException(403,'billing account unavailable')
+    if len(rows)!=1:raise HTTPException(409,'account_selection_required')
+    return rows[0]
 
 
 async def actor_accounts(request,*,manage=False):
@@ -43,12 +34,8 @@ async def actor_accounts(request,*,manage=False):
 
 async def scoped(request,aid=None,*,manage=False):
     service,c,actor,rows=await actor_accounts(request,manage=manage)
-    if aid is None:
-        if len(rows)!=1: raise HTTPException(409,'explicit billing account required')
-        aid=rows[0]['account_id']
-    matches=[r for r in rows if r['account_id']==aid]
-    if len(matches)!=1: raise HTTPException(403,'billing account unavailable')
-    return c,actor,aid
+    row=await select_account_row(service,actor,aid,request.query_params.get('currency'),manage=manage)
+    return c,actor,row['account_id']
 
 async def body(request,fields):
     try: value=await request.json()

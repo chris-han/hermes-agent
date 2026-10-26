@@ -71,3 +71,17 @@ Interrupt only for missing policy/runtime document, material GraphIntent ambigui
 On stale revision, reload the server head and continue from its projected next action. Duplicate delivery must be idempotent. After restart or a new Chat, resume from SQLite; never reconstruct workflow state from transcript history.
 
 On `UPLOAD_UNAVAILABLE`, call `list_uploads` again and copy the returned `upload_ref` and `upload_hash` exactly. The reference is canonically percent-encoded ASCII; the original filename is separate display metadata. Do not decode, repair, translate, or guess a reference, and do not substitute another parser or filesystem path for governed import. If the selected upload is absent, ask the user to select or upload it again.
+
+## Source requirements and saved clarification
+
+<!-- runtime-owner: WORKFLOW invariant-class: WORKFLOW_HEURISTIC -->
+When the selected Tender journey has produced normative semantics, read its saved `requirements_review` using `tender_journey_action` / `read_requirements`. Source semantic production attaches a bounded assessment automatically. Use `assess_requirements` for a selected producer candidate whose basis needs rechecking. Descriptive graph exploration continues without a clarification ceremony.
+
+<!-- runtime-owner: TOOL invariant-class: EXPLAINED_AND_ENFORCED enforced-by: src/services/tender_journey_service.py::TenderJourneyService.requirements_command -->
+For a material unresolved question, copy the current review pin, question ID, dependency hash and journey revision into `review_requirement`. Save `answer`, `defer` or `reject` with the user's rationale; an accepted repair needs a persisted, reviewed candidate successor. An answer records clarification and rechecks the supported set; it does not admit or activate a rule. External source bytes remain unchanged.
+
+<!-- runtime-owner: WORKFLOW invariant-class: WORKFLOW_HEURISTIC -->
+On a new Chat, reload the selected journey and saved answers before asking again. A stale revision reloads; an exact interrupted command reuses its key and committed receipt. Keep policy defects, internal runtime-document contradictions and established compliance findings distinct. Conditional/exception/time gaps remain UNKNOWN; continue independent advisory work.
+
+<!-- runtime-owner: TOOL invariant-class: EXPLAINED_AND_ENFORCED enforced-by: src/services/tender_journey_service.py::TenderJourneyService.produce_normative_semantics -->
+For an exactly selected prepared runtime document, call `produce_normative_semantics` with `source_role: RUNTIME_TARGET`. The existing normative schema supplies typed vocabulary only; the producer reads the target's own pinned source, persists a separate runtime candidate and attaches its requirements review. Copy the current revision and retain the command/idempotency keys on recovery. A target contradiction is neither a policy defect nor a proved bidder violation. Model unavailability does not prevent independent source inspection or advisory work.

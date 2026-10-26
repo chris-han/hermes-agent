@@ -20,10 +20,23 @@ class _Frozen(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+class ProjectionCheckedScopeV2(_Frozen):
+    schema_version: Literal["projection_checked_scope.v2"] = "projection_checked_scope.v2"
+    basis: Literal["DECLARED_SELECTED_DEPENDENCIES"] = "DECLARED_SELECTED_DEPENDENCIES"
+    independent_legal_applicability: Literal["UNESTABLISHED"] = "UNESTABLISHED"
+    whole_corpus_closure: Literal["UNESTABLISHED"] = "UNESTABLISHED"
+    organization_id: str
+    workspace_id: str
+    context: ArtifactPinV1
+    working_context: ArtifactPinV1
+    declared_dependency_ids: tuple[str, ...]
+
+
 class ProjectionSufficiencyProofV1(_Frozen):
     schema_version: Literal["projection_sufficiency_proof.v1"] = "projection_sufficiency_proof.v1"
     proof_ref: str = Field(min_length=1)
     proof_hash: str = Field(pattern=_SHA)
+    checked_scope: ProjectionCheckedScopeV2 | None = Field(default=None, exclude_if=lambda v: v is None)
     status: Literal["SUFFICIENT", "INSUFFICIENT"]
     missing_dependency_ids: tuple[str, ...] = ()
     frontier_ref: str = Field(min_length=1)

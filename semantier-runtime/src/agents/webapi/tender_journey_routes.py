@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import ExitStack
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
@@ -14,6 +15,7 @@ from contracts.tender_journey import (
     TenderJourneyAdvanceRequestV1,
     TenderJourneyPrepareAuthorityRequestV1,
     TenderJourneyProduceNormativeSchemaRequestV1,
+    TenderJourneyProduceNormativeSemanticsRequestV1,
     TenderJourneyReviewCompetencyRequestV1,
     TenderJourneyReviewValidationCasesRequestV1,
     TenderJourneyReviewCoverageRequestV1,
@@ -832,7 +834,7 @@ async def produce_tender_journey_normative_schema(
                 graph_intent_inference_enabled=False)
             fields = {name: getattr(body, name) for name in type(body).model_fields if name != "surface"}
             head = await service.produce_normative_schema(ctx=ctx, journey_id=journey_id, **fields,
-                surface="WORKBENCH", capability=capability, producer=build_normative_schema_producer(),
+                surface="WORKBENCH", capability=capability, producer=build_normative_schema_producer(request_context=ctx),
                 build_store=owners.build_store, authority_resolver=owners.authority_resolver)
             return service.project(head)
         except RuntimeContextError as exc:
@@ -845,7 +847,7 @@ async def produce_tender_journey_normative_schema(
 
 @router.post("/api/tender-journeys/{journey_id}/produce-normative-semantics", response_model=TenderJourneyProjectionV1)
 async def produce_tender_journey_normative_semantics(
-    journey_id: str, request: Request, body: TenderJourneyRuntimeCommandV1,
+    journey_id: str, request: Request, body: TenderJourneyProduceNormativeSemanticsRequestV1,
 ):
     from agents.webapi.ontology_workbench_context_routes import _workbench_owner_context
     from agents.normative_schema_production_factory import build_normative_semantic_producer
@@ -861,10 +863,26 @@ async def produce_tender_journey_normative_semantics(
             owners = _workbench_owner_context(ctx=ctx, session_locator=sessions[0], channel="web")
             stack.callback(owners.source_registry.close)
             stack.callback(owners.build_store.close)
+            preparation = None
+            if body.source_role == "RUNTIME_TARGET":
+                import os
+                from services.workspace_artifact_service import WorkspaceArtifactService
+                from services.workspace_artifact_preparation_service import WorkspaceArtifactPreparationService, KnowledgeDesignSourcePreparationAdapter
+                from storage.knowledge_extraction_store import KnowledgeExtractionStore
+                extraction = KnowledgeExtractionStore(owners.source_registry._db_path)
+                stack.callback(extraction._conn.close)
+                max_bytes = int(os.environ.get("SEMANTIER_WORKSPACE_ARTIFACT_MAX_BYTES", "20971520"))
+                if max_bytes <= 0:
+                    raise ValueError("INVALID_BYTE_LENGTH")
+                artifacts = WorkspaceArtifactService(build_store=owners.build_store, authority_resolver=owners.authority_resolver, max_bytes=max_bytes)
+                preparation = WorkspaceArtifactPreparationService(artifact_service=artifacts,
+                    design_adapter=KnowledgeDesignSourcePreparationAdapter(artifact_service=artifacts,
+                        knowledge_store=owners.source_registry, extraction_store=extraction))
             fields = {name: getattr(body, name) for name in type(body).model_fields if name != "surface"}
             head = await service.produce_normative_semantics(ctx=ctx, journey_id=journey_id, **fields,
-                surface="WORKBENCH", producer=build_normative_semantic_producer(),
-                build_store=owners.build_store, authority_resolver=owners.authority_resolver)
+                surface="WORKBENCH", producer=build_normative_semantic_producer(request_context=ctx),
+                build_store=owners.build_store, authority_resolver=owners.authority_resolver,source_registry=owners.source_registry,
+                preparation_service=preparation)
             return service.project(head)
         except RuntimeContextError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
@@ -894,7 +912,7 @@ async def propose_tender_journey_validation_cases(
             stack.callback(owners.build_store.close)
             fields = {name: getattr(body, name) for name in type(body).model_fields if name != "surface"}
             head = await service.propose_validation_cases(ctx=ctx, journey_id=journey_id, **fields,
-                surface="WORKBENCH", producer=build_source_validation_case_producer(),
+                surface="WORKBENCH", producer=build_source_validation_case_producer(request_context=ctx),
                 build_store=owners.build_store, authority_resolver=owners.authority_resolver)
             return service.project(head)
         except RuntimeContextError as exc:
@@ -1050,3 +1068,55 @@ def review_tender_journey_source_coverage(journey_id: str, request: Request, bod
 
 
 __all__ = ["router"]
+
+
+from contracts.requirements_reconciliation import AssessRequirementsV1, ReviewRequirementV1
+
+
+def _requirements_route(journey_id, request, route_hint, body=None, source_role=None):
+    from agents.webapi.ontology_workbench_context_routes import _workbench_owner_context
+    from services.runtime_errors import RuntimeContextError
+    ctx = _context(request, route_hint)
+    sessions = request.headers.getlist("X-Workbench-Session-Ref")
+    if len(sessions) != 1 or not sessions[0].strip():
+        raise HTTPException(status_code=401, detail="AUTHORITY_CONTEXT_REQUIRED")
+    with ExitStack() as stack:
+        service = _service(ctx)
+        stack.callback(service.close)
+        try:
+            owners = _workbench_owner_context(ctx=ctx, session_locator=sessions[0], channel="web")
+            stack.callback(owners.source_registry.close)
+            stack.callback(owners.build_store.close)
+            head, _ = service.resolve_for_session(organization_id=ctx.organization_id,
+                workspace_id=ctx.workspace_id,actor_ref="user:"+ctx.user_id,
+                session_ref=owners.session_ref,journey_id=journey_id)
+            common = dict(ctx=ctx,journey_id=journey_id,build_store=owners.build_store,authority_resolver=owners.authority_resolver)
+            if body is None:
+                review = service.read_requirements(**common,source_role=source_role)
+            else:
+                head, review = service.requirements_command(**common,command=body,surface="WORKBENCH",source_registry=owners.source_registry)
+            return {"journey":service.project(head).model_dump(mode="json"),
+                "requirements_review":review.model_dump(mode="json") if review else None}
+        except KeyError as exc:
+            raise HTTPException(status_code=404,detail="JOURNEY_NOT_FOUND") from exc
+        except (RuntimeContextError,PermissionError) as exc:
+            raise HTTPException(status_code=403,detail="FORBIDDEN") from exc
+        except ValueError as exc:
+            raise _conflict(exc,service,ctx,journey_id) from exc
+
+
+@router.get("/api/tender-journeys/{journey_id}/requirements")
+def read_tender_requirements(journey_id: str, request: Request, source_role: Literal["DESIGN_SOURCE", "ACTIVE_RULE_BASIS", "RUNTIME_TARGET", "PREPARED_SENSITIVITY"] | None = None):
+    from agents.tender_journey_tool_api import JourneyReadRequirementsRequest
+    role = JourneyReadRequirementsRequest(source_role=source_role).source_role
+    return _requirements_route(journey_id,request,"GET /api/tender-journeys/{journey_id}/requirements",source_role=role)
+
+
+@router.post("/api/tender-journeys/{journey_id}/assess-requirements")
+def assess_tender_requirements(journey_id: str, request: Request, body: AssessRequirementsV1):
+    return _requirements_route(journey_id,request,"POST /api/tender-journeys/{journey_id}/assess-requirements",body)
+
+
+@router.post("/api/tender-journeys/{journey_id}/review-requirement")
+def review_tender_requirement(journey_id: str, request: Request, body: ReviewRequirementV1):
+    return _requirements_route(journey_id,request,"POST /api/tender-journeys/{journey_id}/review-requirement",body)

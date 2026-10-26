@@ -8,28 +8,29 @@ from services.normative_semantic_production_service import NormativeSemanticProd
 from services.source_validation_case_production_service import SourceValidationCaseProductionService
 
 
-def build_normative_schema_producer(*, inference_home: Path | None = None):
+def build_normative_schema_producer(*, inference_home: Path | None = None, request_context=None):
     home = inference_home or platform_runtime_root()
     binding = HermesCurrentAgentStructuredLlm._load_auxiliary_binding(home)
     return NormativeSchemaProductionService(
-        llm=HermesCurrentAgentStructuredLlm(hermes_home=home),
+        llm=HermesCurrentAgentStructuredLlm(hermes_home=home, request_context=request_context),
         provider=binding["provider"], model=binding["model"],
     )
 
 
-def build_normative_semantic_producer(*, inference_home: Path | None = None):
+def build_normative_semantic_producer(*, inference_home: Path | None = None, request_context=None, reexecution_control=None):
     home = inference_home or platform_runtime_root()
     binding = HermesCurrentAgentStructuredLlm._load_auxiliary_binding(home)
     return NormativeSemanticProductionService(
-        llm=HermesCurrentAgentStructuredLlm(hermes_home=home),
+        llm=HermesCurrentAgentStructuredLlm(hermes_home=home, request_context=request_context),
         provider=binding["provider"], model=binding["model"],
+        request_context=request_context, reexecution_control=reexecution_control,
     )
 
 
-def build_source_validation_case_producer(*, inference_home: Path | None = None):
+def build_source_validation_case_producer(*, inference_home: Path | None = None, request_context=None):
     home = inference_home or platform_runtime_root()
     binding = HermesCurrentAgentStructuredLlm._load_auxiliary_binding(home)
     return SourceValidationCaseProductionService(
-        llm=HermesCurrentAgentStructuredLlm(hermes_home=home),
+        llm=HermesCurrentAgentStructuredLlm(hermes_home=home, request_context=request_context),
         provider=binding["provider"], model=binding["model"],
     )

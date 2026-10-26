@@ -13,6 +13,9 @@ class GatewayActor:
     workspace_id: str
     permissions: frozenset[str]
     token_id: str | None = None
+    account_id: str | None = None
+    currency: str | None = None
+    client_namespace: str | None = None
 
 
 def current_membership(user_id, organization_id, workspace_id):
@@ -42,6 +45,17 @@ async def actor_for(request: Request, service, permission: str, *, browser_only=
         uid, org, ws = token['user_id'],token['organization_id'],token['workspace_id']
         permissions = set(token['permissions']) & await service.store.permissions(org,uid)
         tid = token['token_id']
+        aid, currency = token.get('account_id'), token.get('currency')
+        client_namespace = None
+        if aid is not None:
+            async with await service.store._connection() as connection:
+                access = await (await connection.execute("SELECT 1 FROM semantier_gateway.account_access WHERE organization_id=%s AND account_id=%s AND currency=%s AND user_id=%s AND status='ACTIVE'", (org, aid, currency, uid))).fetchone()
+                device = await (await connection.execute('SELECT context FROM semantier_gateway.device_connections WHERE token_id=%s', (tid,))).fetchone()
+                if device:
+                    from contracts.model_gateway import canonical_hash
+                    client_namespace=canonical_hash([device['context']['runtime_ref'],device['context']['profile_ref']])
+            if not access:
+                raise HTTPException(403, 'current account access required')
     else:
         ctx = require_route_authorization(request, authorization_class=RouteAuthorizationClass.TENANT_MEMBER,
                                           route_hint=f'{request.method} {request.url.path}')
@@ -51,6 +65,7 @@ async def actor_for(request: Request, service, permission: str, *, browser_only=
             raise HTTPException(409,'organization context changed; refresh before continuing')
         permissions = await service.store.permissions(org,uid)
         tid = None
+        aid, currency, client_namespace = None, None, None
         if request.method not in {'GET','HEAD'}:
             csrf(request)
     if not org or not current_membership(uid,org,ws):
@@ -58,4 +73,4 @@ async def actor_for(request: Request, service, permission: str, *, browser_only=
     required={permission} if isinstance(permission,str) else set(permission)
     if not required & permissions:
         raise HTTPException(403, 'explicit '+ ' or '.join(sorted(required))+' permission required')
-    return GatewayActor(uid,org,ws,frozenset(permissions),tid)
+    return GatewayActor(uid,org,ws,frozenset(permissions),tid,aid,currency,client_namespace)

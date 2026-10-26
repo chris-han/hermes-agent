@@ -8,6 +8,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from eos.artifact_hashing import content_hash
+from contracts.normative_schema import NormativeFactDefinitionV1
 
 
 SHA256_PATTERN = r"^sha256:[0-9a-f]{64}$"
@@ -25,6 +26,45 @@ class _Contract(BaseModel):
             ):
                 raise ValueError(f"{name} must be timezone-aware UTC")
         return self
+
+
+class NormativeDomainBasisV2(_Contract):
+    schema_version: Literal["normative_domain_basis.v2"] = "normative_domain_basis.v2"
+    organization_id: str
+    workspace_id: str
+    schema_ref: str
+    schema_hash: str = Field(pattern=SHA256_PATTERN)
+    facts: tuple[NormativeFactDefinitionV1, ...]
+
+    @model_validator(mode="after")
+    def unique_facts(self):
+        refs = tuple(f.fact_ref for f in self.facts)
+        if refs != tuple(sorted(set(refs))):
+            raise ValueError("domain facts must be unique and ordered")
+        return self
+
+    @classmethod
+    def from_schema(cls, schema):
+        return cls(organization_id=schema.organization_id, workspace_id=schema.workspace_id,
+                   schema_ref=schema.schema_ref, schema_hash=schema.schema_hash,
+                   facts=tuple(sorted(schema.fact_definitions or (), key=lambda f: f.fact_ref)))
+
+    def verify_candidate(self, candidate):
+        if (self.organization_id, self.workspace_id, self.schema_ref, self.schema_hash) != (
+            candidate.organization_id, candidate.workspace_id,
+            candidate.normative_schema_ref, candidate.normative_schema_hash,
+        ):
+            raise ValueError("NORMATIVE_DOMAIN_BASIS_MISMATCH")
+
+
+class NormativeAnalysisScopeV2(_Contract):
+    schema_version: Literal["normative_analysis_scope.v2"] = "normative_analysis_scope.v2"
+    policy: Literal["typed_bounded_algebra.v2"] = "typed_bounded_algebra.v2"
+    coverage: Literal["COMPLETE", "INCOMPLETE"]
+    checked_effect_refs: tuple[str, ...]
+    conflict_groups: tuple[tuple[str, ...], ...]
+    enumeration: Literal["DISCOVERED_FACT_GROUPS"] = "DISCOVERED_FACT_GROUPS"
+    minimality: Literal["NOT_CHECKED"] = "NOT_CHECKED"
 
 
 class NormativeEffectV1(_Contract):
@@ -64,6 +104,7 @@ class NormativeSetV1(_Contract):
     unknown_rule_refs: tuple[str, ...]
     closure_state: Literal["COMPLETE", "INCOMPLETE"]
     unresolved_refs: tuple[str, ...]
+    domain_basis: NormativeDomainBasisV2 | None = Field(default=None, exclude_if=lambda v: v is None)
     formed_at: datetime
 
     @model_validator(mode="after")
@@ -71,6 +112,10 @@ class NormativeSetV1(_Contract):
         for refs in (self.member_rule_refs, self.inactive_rule_refs, self.unknown_rule_refs, self.unresolved_refs):
             if refs != tuple(sorted(set(refs), key=lambda x: x.encode("utf-8"))):
                 raise ValueError("normative set refs must be unique and canonically ordered")
+        if self.domain_basis is not None and (
+            self.domain_basis.organization_id, self.domain_basis.workspace_id
+        ) != (self.organization_id, self.workspace_id):
+            raise ValueError("normative domain scope mismatch")
         effect_rules = {item.rule_ref for item in self.effects}
         if not effect_rules.issubset(set(self.member_rule_refs)):
             raise ValueError("normative effects must belong to member rules")
@@ -93,14 +138,25 @@ class NormativeCompatibilityResultV1(_Contract):
     unresolved_refs: tuple[str, ...]
     evaluator_ref: str
     evaluator_hash: str = Field(pattern=SHA256_PATTERN)
+    analysis_scope: NormativeAnalysisScopeV2 | None = Field(default=None, exclude_if=lambda v: v is None)
     evaluated_at: datetime
 
     @model_validator(mode="after")
     def identity(self):
-        if self.outcome == "CONFLICT" and len(self.conflicting_effect_refs) < 2:
-            raise ValueError("conflict requires at least two effects")
+        minimum = 1 if self.analysis_scope is not None else 2
+        if self.outcome == "CONFLICT" and len(self.conflicting_effect_refs) < minimum:
+            raise ValueError("conflict requires witness effects")
         if self.outcome != "CONFLICT" and self.conflicting_effect_refs:
             raise ValueError("non-conflict result cannot carry conflicting effects")
+        if self.analysis_scope is not None:
+            groups = self.analysis_scope.conflict_groups
+            discovered = tuple(sorted({ref for group in groups for ref in group}))
+            if discovered != self.conflicting_effect_refs or not set(discovered) <= set(self.analysis_scope.checked_effect_refs):
+                raise ValueError("conflict witnesses must conserve checked scope")
+            if self.outcome == "COMPATIBLE" and self.analysis_scope.coverage != "COMPLETE":
+                raise ValueError("incomplete scope cannot claim compatibility")
+            if self.unresolved_refs and self.analysis_scope.coverage == "COMPLETE":
+                raise ValueError("unresolved references require incomplete coverage")
         payload = self.model_dump(mode="json", exclude={"result_ref", "result_hash"})
         digest = content_hash(payload)
         if self.result_hash != "sha256:" + digest or self.result_ref != "normative-compatibility:" + digest:
@@ -207,13 +263,16 @@ class ConflictCoreV1(_Contract):
     compatibility_result_ref: str
     normative_set_ref: str
     context_ref: str
-    member_rule_refs: tuple[str, ...] = Field(min_length=2)
-    member_effect_refs: tuple[str, ...] = Field(min_length=2)
+    analysis_policy: Literal["typed_bounded_algebra.v2"] | None = Field(default=None, exclude_if=lambda v: v is None)
+    member_rule_refs: tuple[str, ...] = Field(min_length=1)
+    member_effect_refs: tuple[str, ...] = Field(min_length=1)
     minimality: Literal["VERIFIED_MINIMAL", "NOT_CHECKED"]
     evidence_refs: tuple[str, ...] = Field(min_length=1)
 
     @model_validator(mode="after")
     def identity(self):
+        if self.analysis_policy is None and (len(self.member_rule_refs) < 2 or len(self.member_effect_refs) < 2):
+            raise ValueError("legacy conflict cores require multiple members")
         if self.member_rule_refs != tuple(sorted(set(self.member_rule_refs), key=lambda x: x.encode("utf-8"))):
             raise ValueError("conflict core rule refs must be canonical")
         payload = self.model_dump(mode="json", exclude={"conflict_core_ref", "conflict_core_hash"})

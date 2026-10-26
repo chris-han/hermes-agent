@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "parent_commit": "1b07c68c2a66f6e2d400a28e03ea0d553770d1e6",
+  "parent_commit": "ef84c294bdd89a57d73a29159be1dfb7c9a8d6fe",
   "files": [
     {
       "path": "MODEL-NOTICE.txt",
@@ -232,7 +232,7 @@
     },
     {
       "path": "src/agents/__init__.py",
-      "sha256": "47f35f1bc7189afd892257da5bd948781e3325fd8c2ef08220e752a1ba45f85b"
+      "sha256": "d9469cf26221df9bacbf23cd22f60aa0a0219e87de12d6d3655fc3b028bed89a"
     },
     {
       "path": "src/agents/__main__.py",
@@ -240,7 +240,7 @@
     },
     {
       "path": "src/agents/adapter.py",
-      "sha256": "14375204b46ea36d5285e52de861a4ec3b440cea163903ad3cccc37eab65f458"
+      "sha256": "a8dbf0cdaa11e7f2deb1d8f471dad10bef390ef1ce327ab2c1e5a91a28b9ded6"
     },
     {
       "path": "src/agents/auth_db.py",
@@ -275,12 +275,48 @@
       "sha256": "749a82b8cea8660deac4e6b13c2b87c4e89d09cbbad43e71c75db23037a8e580"
     },
     {
+      "path": "src/agents/client_operations/__init__.py",
+      "sha256": "ad408e2bff618c984fccd3ca042ccc05a98da9d029d9467728f9fae868878f66"
+    },
+    {
+      "path": "src/agents/client_operations/authorization.py",
+      "sha256": "d292117c48be2facffb64643be0df312493df2c1a7c34b3abd451aa0be79fa5d"
+    },
+    {
+      "path": "src/agents/client_operations/ci.py",
+      "sha256": "6e0cfa4f4599ddab02dfac947c6e90d0a8065ad1e29e2fce43cd602bf1cd0765"
+    },
+    {
+      "path": "src/agents/client_operations/distribution.py",
+      "sha256": "2c97a0092f224c3d02b01637a724b406444ef08d8cee3f387b592005bfa32f7d"
+    },
+    {
+      "path": "src/agents/client_operations/feedback.py",
+      "sha256": "5535a1c06ed7e762c50fe34d673c2368f62b1e9a745cadb3c87f662cd1bcaef6"
+    },
+    {
+      "path": "src/agents/client_operations/publication.py",
+      "sha256": "f585756fdcecb94e18f4f18c16b07bd2fc7dfae6a2580d87f6fd430ecb225728"
+    },
+    {
+      "path": "src/agents/client_operations/runtime.py",
+      "sha256": "65f28d85fd2cdca3b10bca257d630065638cbcd56854a95116a1b0adeacb92d7"
+    },
+    {
+      "path": "src/agents/client_operations/schema.sql",
+      "sha256": "db5b01e67e3226764440bee0a255a92f3f5c4d1dde7ed97abb8db9d351925cfc"
+    },
+    {
+      "path": "src/agents/client_operations/store.py",
+      "sha256": "759df82f946b86e4583aa22991ea25dc0b71e7840d5f42e180e51ce54bf92564"
+    },
+    {
       "path": "src/agents/company_dataset_imports.py",
       "sha256": "623521966e5b4218a3b765ccaa77c4eaca9daceca1607143d5346853b6360a41"
     },
     {
       "path": "src/agents/compatible_model_transport.py",
-      "sha256": "899b38be7473534ef8872ce1f9bae1f19ca1474fd0fb81ced6c75d08f8885704"
+      "sha256": "b2e4c960e76d174b9ca023e24dc9faf86906b87af8eea1d275db51cc7fa479bb"
     },
     {
       "path": "src/agents/coordination_association.py",
@@ -288,7 +324,7 @@
     },
     {
       "path": "src/agents/corpus_graph_schema_capability_factory.py",
-      "sha256": "8124b7286428bef1a837faf8d7db6981b8ea6d3bdd515c60a3770e516b49459d"
+      "sha256": "f62c000d36f748dff3f96b89edb3ce35b3e0e5ca459f0723b87b7e4d2a624915"
     },
     {
       "path": "src/agents/corpus_graph_schema_tool_api.py",
@@ -351,10 +387,6 @@
       "sha256": "7bb6f29f885ca6fc54b1700ed70c52341e8f2b2897cf853d87333d9202635672"
     },
     {
-      "path": "src/agents/gateway.py",
-      "sha256": "fb7369a9a8aba22ae446031e449bc37b42090a3dba61d16f5748a11ec2b06fcc"
-    },
-    {
       "path": "src/agents/gateway_identity.py",
       "sha256": "c54f3b4e24af4711ca843b9095a279dc399fb6ec1d3c8a6875560ce72ac74a61"
     },
@@ -388,7 +420,7 @@
     },
     {
       "path": "src/agents/hermes_current_agent_llm.py",
-      "sha256": "50a36557ff7d7dfbcb6a41490565f5e0f7549959d045b059f14d38abe9a42c5d"
+      "sha256": "a9346997e3aa128112572990d468f8194557eff256007eb3d6eeb7db7129b734"
     },
     {
       "path": "src/agents/hermes_embedded_api.py",
@@ -420,7 +452,7 @@
     },
     {
       "path": "src/agents/launcher.py",
-      "sha256": "e8a0e3755e3fdd3ac70fb377493eb840ac6431e9c572ce750019b6aa6cf309b7"
+      "sha256": "0bbb86e72d6af8809831ef3cee633a4e4e67d83ee36aafdd3a116dc9b6a578ef"
     },
     {
       "path": "src/agents/meeting_api_origin.py",
@@ -448,23 +480,35 @@
     },
     {
       "path": "src/agents/model_gateway/account_sync_policy.py",
-      "sha256": "659c4f06d4c00545bf839ca4db3261292b547dd38fa84a53a7695aba224c6396"
+      "sha256": "bb1bb27fd59c3d6935cfc354189b847958b05d589f9f4b7c29691e9565e79966"
     },
     {
       "path": "src/agents/model_gateway/account_sync_store.py",
-      "sha256": "52376ba1c8c56a726b9ffd074772f3d835bca67d0e7ced88b29ada53d51aff4e"
+      "sha256": "28836435a2ec52a6e9df4ddddf093a9d91ad23fc5faeaec61fab7de73a0850a1"
     },
     {
       "path": "src/agents/model_gateway/admin.py",
-      "sha256": "00c193f12c0d922d1761113cf2a36cb708fa148a7bc8261c6411d13d56981e31"
+      "sha256": "290d4543f30b75067e436bf9a8710ef5c87b24a6a9c793bf94cbabf9f325b25a"
     },
     {
       "path": "src/agents/model_gateway/auth.py",
-      "sha256": "1dd141658e42cd10030daf38ba88eb5f65240d3d1774de49ee43dcd44cf0644e"
+      "sha256": "7a0abd76544929d26ada6eaafb034ffd34eb951cd09103a7a00a056a7884b49f"
+    },
+    {
+      "path": "src/agents/model_gateway/capabilities.py",
+      "sha256": "1a2f3479f1e805a439d4928a8c2ed37737e9c37b19c3bf8da3e8ef443a4e5342"
     },
     {
       "path": "src/agents/model_gateway/credential_store.py",
       "sha256": "f409cf572585ccd0fed84b3bf5da64eb42054430782552172a2a5a29875710d0"
+    },
+    {
+      "path": "src/agents/model_gateway/device_connections.py",
+      "sha256": "0b20a080ce3c0a788a996d8ccff7b8d2dd3d70109543df080118043f8a4ff669"
+    },
+    {
+      "path": "src/agents/model_gateway/device_connections.sql",
+      "sha256": "b3a9d9034c37dfe130fbdfae0648deb4975ab75fac758cf1a0274512d1a4807b"
     },
     {
       "path": "src/agents/model_gateway/identity_projection.py",
@@ -476,7 +520,7 @@
     },
     {
       "path": "src/agents/model_gateway/operator_diagnostics.py",
-      "sha256": "55999fb9008a625accca4127133f507dcf80c61abee2e465fceb08a3925f66b5"
+      "sha256": "d2aec0da6550e607f3f6d0efc47fe8fde776061f4a3e2c78511be4d8b66254c1"
     },
     {
       "path": "src/agents/model_gateway/physical_binding.py",
@@ -484,31 +528,39 @@
     },
     {
       "path": "src/agents/model_gateway/provision.py",
-      "sha256": "343f219858006e3b9f515276c72e7a46a52706422eca065e3f3dd12c02b88d8d"
+      "sha256": "e0237e737ec156b3a1b7658e2eeb2552d4458694338c92dc08910f6724fa242e"
     },
     {
       "path": "src/agents/model_gateway/proxy.py",
-      "sha256": "103c77d715d3b519cb4ddb5ede4a6fee1aec7c0e56e8063fb5ca2ae69c190053"
+      "sha256": "60ab91da2837b97558d32ab3b442405ce416b5e39e5cdd6bc5b1f3b41b581f17"
     },
     {
       "path": "src/agents/model_gateway/proxy_capture.py",
-      "sha256": "000962cd5219ff6af98f0eb8459a17c32d520afeeebba79d63fcadb62db07a13"
+      "sha256": "6588ffc0b86bb0845607de7aa1f7ec8498fde78f41b51a21c4716e1263adb3aa"
     },
     {
       "path": "src/agents/model_gateway/runtime.py",
-      "sha256": "93e038dd47270d5280e33e79302cc8d09f8dec3c823515f097b4fecabdd66aa9"
+      "sha256": "8e98d8eae4b42f888427546db108d6b5c58be168d9e3aa989e24df3ca487cdd4"
+    },
+    {
+      "path": "src/agents/model_gateway/selection.py",
+      "sha256": "0566d9deb6b90875d156eba9806f039d0c51a9775b34a8777e5029fad9f3bdb7"
     },
     {
       "path": "src/agents/model_gateway/service.py",
-      "sha256": "4ee3da8a16814c01addc42cb9b7ae7fc92a92f031f9f624b4fbdffdb3de61849"
+      "sha256": "c2717f405bd68d3879cfe6ad22640b9580953b19d55a1cad68ea47b6437224a9"
     },
     {
       "path": "src/agents/model_gateway/store.py",
-      "sha256": "32f03e76abf7f1678bb97497648c97dcdbc2fba403cff3c66813d5341a4e2521"
+      "sha256": "074f48776bdb5426da0707d18fbc4262c514abad035fc0157c878a1c464e69c0"
+    },
+    {
+      "path": "src/agents/model_gateway/tls_failure_capture.py",
+      "sha256": "121b23c2087256ed28eb55132fd810b28b196d2a255e9678b789ee51533eac77"
     },
     {
       "path": "src/agents/normative_schema_production_factory.py",
-      "sha256": "d42e0e1be4d1f200272176b07433e16d9344ab65c0674dcb4431333b2c2ebbed"
+      "sha256": "b7e386dd7731257e7429bded92b8e76e231950c87242f816b69e7967e6529085"
     },
     {
       "path": "src/agents/plugin_capability_contract.py",
@@ -540,7 +592,7 @@
     },
     {
       "path": "src/agents/route_policy.py",
-      "sha256": "be81a0d00f9b881ccd14025abba55c681ee20ef982d5e9b0089a620f1df461d8"
+      "sha256": "7127cc6e12389db0fb7abf2ea4a605c75992f70667b5af4f55b7a8fd1c743857"
     },
     {
       "path": "src/agents/runtime_feedback_to_candidate.py",
@@ -608,7 +660,7 @@
     },
     {
       "path": "src/agents/tender_journey_tool_api.py",
-      "sha256": "228e07467e5c2b99b478a84ff407629abc836f4839b718c5b8468a1ea85e0a2e"
+      "sha256": "776155c06290785e44085d88a983235b29fcccf79e3cf2f5cfae3afc6887cbe6"
     },
     {
       "path": "src/agents/timer_occurrence.py",
@@ -628,15 +680,23 @@
     },
     {
       "path": "src/agents/webapi/billing_commerce_routes.py",
-      "sha256": "9f9f40b9e04b8ab53169ba0b5d4bb8fc7c950df6b00670265b85f5fa56c9efb0"
+      "sha256": "78d2356b126a4aa60a49cf2701c9361e0fb61db64bb4844c6c85d5661bccb045"
     },
     {
       "path": "src/agents/webapi/billing_routes.py",
-      "sha256": "7b5849aa237c058091f335f67e08174f44891e88d3e29026c0a9328344cb24ea"
+      "sha256": "a7d7bed6af618edb352bea384ec76d73b8fe721692210c253afdb8bc13bef4b0"
     },
     {
       "path": "src/agents/webapi/business_answers_routes.py",
       "sha256": "5564c3f36d2b24b5f267d49fd28fa3e78dcaab2cf53f83f79e438ed966ca4408"
+    },
+    {
+      "path": "src/agents/webapi/client_operations_routes.py",
+      "sha256": "c7075e7053d6563da34b1eb85bbf7c088aa00f3bb7ebe0c9145487009f61ffbd"
+    },
+    {
+      "path": "src/agents/webapi/cloud_device_routes.py",
+      "sha256": "0282faca5c01d3882a6ef3cd112511d0b18b83155d3fe9f5feb321326a5b1d45"
     },
     {
       "path": "src/agents/webapi/company_dataset_routes.py",
@@ -664,7 +724,7 @@
     },
     {
       "path": "src/agents/webapi/embedded_proxy_routes.py",
-      "sha256": "e5227c02cb31603ebda51029a1a3514e6a64330630c11f9682a14b139e509fea"
+      "sha256": "a6234c0fb6d203f7315db795c29970e8c7c9c4a135dce7fed1852b777cae0b0c"
     },
     {
       "path": "src/agents/webapi/embedded_proxy_service.py",
@@ -768,7 +828,7 @@
     },
     {
       "path": "src/agents/webapi/model_gateway_routes.py",
-      "sha256": "ebfbb2d428d2200e133ee835a3de81fdc302736bc84c03e5a7e476dcddae8628"
+      "sha256": "fa5c390d133045e01e878fd13b759a5592074d430e4c496c6d28fddd85e7de14"
     },
     {
       "path": "src/agents/webapi/ontology_building_routes.py",
@@ -800,7 +860,7 @@
     },
     {
       "path": "src/agents/webapi/router.py",
-      "sha256": "00ba16f5450e723514c18082a14b6831655721ee70243ab25f137f83e6a280fa"
+      "sha256": "d83b8a80f0caa7b629ad5df61798d12db3b5a1c469d02a9dd10a3815bcbebf27"
     },
     {
       "path": "src/agents/webapi/runtime_context_authority_routes.py",
@@ -816,7 +876,7 @@
     },
     {
       "path": "src/agents/webapi/session_routes.py",
-      "sha256": "35ef717c4356d9ec0d85c5eb4b3a6a4d3befa718bf7fcef1565868ec5212f0ce"
+      "sha256": "526c780bfc0828685f8366fd17da420e349d7b45304480f5add87641fcd61de9"
     },
     {
       "path": "src/agents/webapi/session_service.py",
@@ -852,7 +912,7 @@
     },
     {
       "path": "src/agents/webapi/tender_journey_routes.py",
-      "sha256": "3de59f78ac32b93f25cd2bae763c6f1677dc392e64e8b44af68198f5f7e4f699"
+      "sha256": "adf7341d509e48c5912e3185757e1fa04338871b621f3d5703751996f77c5fc1"
     },
     {
       "path": "src/agents/webapi/tender_review_routes.py",
@@ -887,12 +947,16 @@
       "sha256": "af2c3d04a8e90c2cad363cf5fc22799f9cf1d19983b999ce6786e8fc91d8c26d"
     },
     {
+      "path": "src/agents/workspace_permissions.py",
+      "sha256": "fdd18d1cdf81bce8551ef4e5e431ddc59242d790c65a3e9720291add7d52a4cf"
+    },
+    {
       "path": "src/agents/workspace_session_layout_migration.py",
       "sha256": "3696458274073984d68d35ee9fa08f52f9c8264d55e8c1302620a2935cfcc97c"
     },
     {
       "path": "src/agents/workspace_session_logs.py",
-      "sha256": "8b43f3cd20a10cf236d0cb52fc03b484ed8f8d77d7b58f139cbef8747ea5087b"
+      "sha256": "6af9ebf112c9a6cd52bf2d6f19e90c9d40f737f82d7645d4f18803e78ddfb34d"
     },
     {
       "path": "src/agents/workspace_storage_provisioning.py",
@@ -905,6 +969,14 @@
     {
       "path": "src/approval.py",
       "sha256": "fc5bc05052b0095add2f546765ec4d7ffb17836001b16c78738985dae4708787"
+    },
+    {
+      "path": "src/apps/__init__.py",
+      "sha256": "32c8480da23267c132ecb4872c6dfa86d39c2b5732eb31d6a6a210dcb50d0645"
+    },
+    {
+      "path": "src/apps/combined.py",
+      "sha256": "7964c6573a60a81e0cc3f68ce67992fef66c5988e1fef4c9e44826b2c201946b"
     },
     {
       "path": "src/assets/workshop/resume-teaching-basis-v1.json",
@@ -928,19 +1000,19 @@
     },
     {
       "path": "src/billing/rating.py",
-      "sha256": "1507717f25c6e652ace0bf3fdd309b22afafb91f27832cafd77a4f0b17b58288"
+      "sha256": "59492919d8fc85cc6a8ab53ccccb0307dea56039451fab63222d36f6182f74c2"
     },
     {
       "path": "src/billing/replay.py",
-      "sha256": "153a5c453fa45f1b83bb45665f496250af2497baca06e6b9056532edc77174ea"
+      "sha256": "31eb890bb0d7103307315d1091ed7662c29e7ea4bcb0fe4d7d4b761927063dd4"
     },
     {
       "path": "src/billing/schema.sql",
-      "sha256": "dce07a9a2a7591412ed2fe5827d21b6f204c9bc7cbe3b99f026ad9a953b258f2"
+      "sha256": "bcaabea07f96a0bf0aac293f5fe14128df4ed13e5bacd068fae1bdcb04cfb97b"
     },
     {
       "path": "src/billing/store.py",
-      "sha256": "9a44357c1d5448b7b3e528cf5e52da5201bdefb8e0128645f816aef06dd2ec45"
+      "sha256": "f2b281a4f6201be9c74751b36edc496df8338549c5abe2abac522500400885ae"
     },
     {
       "path": "src/billing/worker.py",
@@ -1079,6 +1151,22 @@
       "sha256": "d8aa84d47f2d5647f4e31b71c68fa90fd0ab68349e828caf83e6f7816591456e"
     },
     {
+      "path": "src/contracts/client-operations-v1.fixture.json",
+      "sha256": "c2e091c5dbb0fdd4da0dcfaaee65062293a8c989ab9ee2d625197a9797892cb3"
+    },
+    {
+      "path": "src/contracts/client-operations-v1.schema.json",
+      "sha256": "0cad508de4bce7d0a8ee060c693dfd88d1f9910ccbca7f4d4f29d0deab66cc28"
+    },
+    {
+      "path": "src/contracts/client_operations.py",
+      "sha256": "cb6777897fe065b5e814200a6bbd58cc54a55d33209ba537e79fda14c712835c"
+    },
+    {
+      "path": "src/contracts/cloud_device.py",
+      "sha256": "75879c4e4a53475c71d2bfd969f3e9737b32831a6cf67acd3f26effb1068829b"
+    },
+    {
       "path": "src/contracts/commitment_transition.py",
       "sha256": "16eace29d535a9d18eb80bb17c81ca5569b6d05cd312ce428a63b81f7c19f2c2"
     },
@@ -1104,7 +1192,7 @@
     },
     {
       "path": "src/contracts/decision_graph_projection.py",
-      "sha256": "3e278d5a20ad896d955ae44a24bbdd567950253acf2a911cae0ab07ada0ac13c"
+      "sha256": "4841e79eaea6fdc4277a884755441481cf3322e7bc9ed61ad4fd7016935c1a8d"
     },
     {
       "path": "src/contracts/decision_ledger.py",
@@ -1188,7 +1276,7 @@
     },
     {
       "path": "src/contracts/governed_delta.py",
-      "sha256": "4a284b5e3b9e5b3725fe01d58ad375304d3867a95cfe4e4857e8d2299f3ae5a9"
+      "sha256": "c98a30ea3b5861e0503dde3d69c08edb4996278660063d55131437ae6a6883af"
     },
     {
       "path": "src/contracts/governed_extract.py",
@@ -1332,11 +1420,11 @@
     },
     {
       "path": "src/contracts/model_gateway.py",
-      "sha256": "f68aafcf52d40ede0092b9e83318fec064ae408e8e0cc26101720cf406598685"
+      "sha256": "f162616d19a4eb9e59b41f74c0fe1aab99fc7f6ab49585301e4bd68b927f6710"
     },
     {
       "path": "src/contracts/normative_conflict.py",
-      "sha256": "a898f6ecd60612baaa2615347ffed89b1dadd26e324c84fdbe7045a08ef52761"
+      "sha256": "2dc7039c702881795ac2b1cfccef802c72dc571bfc4b173da56df2ec16497c9c"
     },
     {
       "path": "src/contracts/normative_schema.py",
@@ -1344,7 +1432,7 @@
     },
     {
       "path": "src/contracts/normative_semantics.py",
-      "sha256": "d0676246eb7f2888c5d5611f98db09729ca82b3a111c5094f9e85df09431f65d"
+      "sha256": "8d1eecbcc5463a2a2630c23d475eff57de77cdd36c838fe710001545ec2d3ca0"
     },
     {
       "path": "src/contracts/observed_constraint_hypothesis.py",
@@ -1424,7 +1512,7 @@
     },
     {
       "path": "src/contracts/ontology_validation.py",
-      "sha256": "9813e751f774a1198e1a4a0cd5e905074b837316f4962c5a9cd34cadf9226fc1"
+      "sha256": "31be30d8c00923360ebf216ad8bedf025fd2872c71affd8d40a681624b286002"
     },
     {
       "path": "src/contracts/ontology_workbench_context.py",
@@ -1485,6 +1573,10 @@
     {
       "path": "src/contracts/requirements_plugin_domain.py",
       "sha256": "e5d1a701d0411af2aceb7644e7d27b61be24846f75951bc7fc395f1e3bf2693c"
+    },
+    {
+      "path": "src/contracts/requirements_reconciliation.py",
+      "sha256": "2b37338811b54e0ba2f97c204f98ee57fe891a948a8e74642aec658fb30d7da4"
     },
     {
       "path": "src/contracts/research_claim_result.py",
@@ -1680,7 +1772,7 @@
     },
     {
       "path": "src/contracts/tender_journey.py",
-      "sha256": "034ae263d23e2234933685906c261bc6c34385248ae8514adbe3d6d82c26c1ad"
+      "sha256": "8e763e809e0016d24184cf60d059b492b5c829099546cf0a39a2139a95362c8e"
     },
     {
       "path": "src/contracts/tender_legal_compliance.py",
@@ -1688,7 +1780,7 @@
     },
     {
       "path": "src/contracts/tender_observed_facts_projection.py",
-      "sha256": "0754aeb1c47b82eb6751a66293917d511b74da717bb2e477ea84479620de6907"
+      "sha256": "00004279e957e991a872509f7e42049606cd894091533f79c73e5c48cd51fb2f"
     },
     {
       "path": "src/contracts/tender_owner_adoption.py",
@@ -1696,7 +1788,7 @@
     },
     {
       "path": "src/contracts/tender_review.py",
-      "sha256": "8e685e6fc905b4e274e56aa95b26ecab28d8df07fb041a62065d800239400155"
+      "sha256": "c43b2b5db5fbf33f21ee09e8eec8c54ab5a18c24eefa84c94f50758df8aac968"
     },
     {
       "path": "src/contracts/tender_sensitive_term_detection_modeling_core.py",
@@ -1744,7 +1836,7 @@
     },
     {
       "path": "src/eos/api.py",
-      "sha256": "30a0be055e47c170d46369edd302234a60c9ec8b6257500a3f559dd01d4f10e9"
+      "sha256": "11362eede4a6f28c09a049abbb3ef1612537b055a9181387aec32d578cd1b305"
     },
     {
       "path": "src/eos/artifact_hashing.py",
@@ -1900,7 +1992,7 @@
     },
     {
       "path": "src/eos/legal_authority_runtime.py",
-      "sha256": "6fb7a6342d4c645f88fa871d6ef1171ab0bb9a4f7c73ce5cc865fb90caa56c65"
+      "sha256": "16ec202e13c3243cdf1b0c88f02711aadaef50fdb20e7c9adc6d428ac78f1ddc"
     },
     {
       "path": "src/eos/legal_candidate_compilation.py",
@@ -1912,7 +2004,7 @@
     },
     {
       "path": "src/eos/legal_corpus_store.py",
-      "sha256": "2f2a27741a2b945344729157bc0fa2cb93076d2d6dfbef324f1e82df0213d45a"
+      "sha256": "e8f28fc6060607ddd9659496de81867a93c84aa37427f16aeb40f081e61a8a08"
     },
     {
       "path": "src/eos/legal_regulatory_monitor.py",
@@ -2952,11 +3044,11 @@
     },
     {
       "path": "src/plugins/tender_journey/plugin.yaml",
-      "sha256": "7f7f09445d97c70db46c220a1495390aa0bb6c0f20b960a4cc614adfe4b57afb"
+      "sha256": "22c8c976ad52114e167c3a87005839aae9f2d7f6f18df879f88dad2633613d79"
     },
     {
       "path": "src/plugins/tender_journey/schemas.json",
-      "sha256": "867b3d9ac5d612f8d4035e06b26ab3031661aa4503e40de91137a5c7c650cad6"
+      "sha256": "ff8ba32960b7ee66bb879c2708782f2d121ec349b8d85d52fc14c9809fcc754f"
     },
     {
       "path": "src/plugins/tender_journey/tools.py",
@@ -3188,7 +3280,7 @@
     },
     {
       "path": "src/prompts/graph_intent_discovery_v1.txt",
-      "sha256": "6679abd81a48d4d62ed0ae20d874929583a2423641732956a13db16f8d0fa884"
+      "sha256": "5e963c5c304169dda82a6f76e956c38db2265222a04f5708d17feaa0a8d44c33"
     },
     {
       "path": "src/prompts/graph_intent_partial_policy_v1.json",
@@ -3341,6 +3433,10 @@
     {
       "path": "src/prompts/normative_semantic_production_v9.txt",
       "sha256": "c93e3cad257e2b0f47a211d03b6a3ed8efae0a3804f87698d1dd6a6bb20543e5"
+    },
+    {
+      "path": "src/prompts/normative_semantic_runtime_target_v1.txt",
+      "sha256": "0d769177728fde7c1fb88a6929ca63e316a235a18d9345fa5534aad5bcefbda0"
     },
     {
       "path": "src/prompts/ontology_capability_profile/ia_analysis_v1.md",
@@ -3785,10 +3881,6 @@
     {
       "path": "src/semantier/agents/__init__.py",
       "sha256": "ea1788c63dbb039cfdc0eb3710cb745809ea18db359a6d291a91ea1c48a15f52"
-    },
-    {
-      "path": "src/semantier/agents/gateway.py",
-      "sha256": "5331eda89c3bb7f434d9863681c72f7cb8487a3657d52f49a0ae8baeb4e9c44a"
     },
     {
       "path": "src/semantier/agents/launcher.py",
@@ -4312,7 +4404,7 @@
     },
     {
       "path": "src/services/decision_graph_projection_service.py",
-      "sha256": "1f83f42ebf6ac94434c79064a08fed18d1f27e92574b00b857faf63c936e9d42"
+      "sha256": "d5286d132ea57f130c407c15b549cd1604da85b8bcc6bce7692f191bf2ae55ac"
     },
     {
       "path": "src/services/decision_local_projection_service.py",
@@ -4332,7 +4424,7 @@
     },
     {
       "path": "src/services/deterministic_rule_evaluator.py",
-      "sha256": "5a4246156677f45c0f5a09fbb99d146ac15bbce2eaf5493d28bf6a588cb03db8"
+      "sha256": "7e1c550a35c16f6f32ea122dd7d57178beb1b5fa5205d8ca46d9022dd1b59cff"
     },
     {
       "path": "src/services/effective_restriction_runtime_context_service.py",
@@ -4448,7 +4540,7 @@
     },
     {
       "path": "src/services/graph_intent_discovery_service.py",
-      "sha256": "7e5c8a4c3b62cafb43f01f37b4ad57a61ee0cad8ffabbb305ccca47043969bb7"
+      "sha256": "4e4823a12dbac7be6bf80f743a65e9a24889db0041cdb6f1c52ec1d8eca9e59f"
     },
     {
       "path": "src/services/graph_intent_witness_adjudication_service.py",
@@ -4456,7 +4548,7 @@
     },
     {
       "path": "src/services/graph_schema_discovery_service.py",
-      "sha256": "6261bd884e251a4c1c1fc576d4ca92e0d7e83b4cdf92fef9c1a883ab0b457509"
+      "sha256": "63e12e0b01d25c4666e832c9ba68999c3897da7a583510810cc7fdb60f550f96"
     },
     {
       "path": "src/services/graph_schema_learning_service.py",
@@ -4464,7 +4556,7 @@
     },
     {
       "path": "src/services/graph_schema_llm_evidence_runner.py",
-      "sha256": "b19c75bc2496bf46152204de4206b763e33a8957f31dd5e050f2eb9e883ff19b"
+      "sha256": "e0d6bcbfbe58259dcba239305c45a1ff30badbe89fdfc73071ff486ea97d4a53"
     },
     {
       "path": "src/services/harness_task_adapters/legal_review.py",
@@ -4604,7 +4696,7 @@
     },
     {
       "path": "src/services/normative_conflict_analysis.py",
-      "sha256": "151467859c1e40880f5c365be1f06f3ebd3deda83853edecfe4e3e6502651bac"
+      "sha256": "0bfd63af463034fb15925e4c28c7fdab983d5dad48caea24337417caba5fe9a4"
     },
     {
       "path": "src/services/normative_legal_source_context.py",
@@ -4620,7 +4712,7 @@
     },
     {
       "path": "src/services/normative_semantic_production_service.py",
-      "sha256": "8e232c99a113c78160e6fdbc01295f9b33a7ba12df393eee130f5e361ab8a248"
+      "sha256": "c7daf7d142d2b077ed5fde33c7a2eb4c1c527b08998bb9c44b05c0b3c5f415ff"
     },
     {
       "path": "src/services/normative_source_prompt_view.py",
@@ -4700,11 +4792,11 @@
     },
     {
       "path": "src/services/ontology_quality_evaluation_service.py",
-      "sha256": "b00a87d5db2605f2a7ac78030adae842db4ab85cc32f56945458627445d1d713"
+      "sha256": "3ef649414ef6ad8fb83a9aa332cc9de0199e6c1770b307f7f732c1911d492f72"
     },
     {
       "path": "src/services/ontology_quality_evaluators.py",
-      "sha256": "b2f22e0cccfa2cb89081c3823409b1c2020b0ebd2161f5edd5d42fb1e87ff86c"
+      "sha256": "ff728486c46aa5822bee39e6608bce630680d92ee906b797de98cdeaa341855c"
     },
     {
       "path": "src/services/ontology_quality_profile_service.py",
@@ -4720,7 +4812,7 @@
     },
     {
       "path": "src/services/ontology_rule_plan_compiler.py",
-      "sha256": "ab5345a4ef432945119e9750c026cc4c2f0f8cb75255a2eaa44192612f782c4f"
+      "sha256": "1258d98618eac986b17e3bf9476766eec9e34dfc3bb5176c665179213c3d29f4"
     },
     {
       "path": "src/services/ontology_schema_adequacy_service.py",
@@ -4829,6 +4921,10 @@
     {
       "path": "src/services/requirements_change_candidate_service.py",
       "sha256": "e9cf99de6667ceaaaa536c513d2334333d2646590bcad7d8fb1145895e5c82a9"
+    },
+    {
+      "path": "src/services/requirements_reconciliation_service.py",
+      "sha256": "01e485a6751861a06d3308400e18e4eb75d637758d0000e79aadef5ef68e3de9"
     },
     {
       "path": "src/services/resume_screening_lineage.py",
@@ -5088,11 +5184,11 @@
     },
     {
       "path": "src/services/tender_epistemic_lineage_service.py",
-      "sha256": "bf81e04b0f61426419dc836ac6829e416592444dcc08e9fc5f7a39ead971ca71"
+      "sha256": "f9aa788d99f6485882edbda7f132e34d6158c960be3bf5ebb4a972227bc4785f"
     },
     {
       "path": "src/services/tender_fact_observation_service.py",
-      "sha256": "9f3de84b253f578032bace22b1cd4d1cc4338c9ddb2d4275dcd488149ecdd25d"
+      "sha256": "dcb928c4b23ccc806039f74c353530d7e6efec6961ce5d9a3379d84cd0a7d9ea"
     },
     {
       "path": "src/services/tender_finding_decision_service.py",
@@ -5112,7 +5208,7 @@
     },
     {
       "path": "src/services/tender_journey_service.py",
-      "sha256": "f483b3bddea2e31b2e79837508c21e4de4b45ad036587ad3b347c03df0d50fb5"
+      "sha256": "a06f387205287ea3fdf3a1d3fdbeccd51d6cdb3b3afdacb69ed5b7b1c2b7b638"
     },
     {
       "path": "src/services/tender_legal_compliance_service.py",
@@ -5124,11 +5220,11 @@
     },
     {
       "path": "src/services/tender_observed_facts_projection_service.py",
-      "sha256": "be3114b380afc5fe15a4cddef35b5f5107dfde29f3d74b58a1a6a21d99df525c"
+      "sha256": "e4096ff9b41b5c1e8e82d91b0811caff11f191442ee49792c936a0ad87606699"
     },
     {
       "path": "src/services/tender_owner_adoption_service.py",
-      "sha256": "9e6c50720febdc13b14fbfde87415b43963a8e5fab4ea42fc14ddcbc0a4d9f26"
+      "sha256": "4c506a4a7a41d0a86b91945c826bef4bc50c66e4d7abc37758b3eb8b437f7bb0"
     },
     {
       "path": "src/services/tender_precedent_observed_expression_lookup_service.py",
@@ -5136,11 +5232,11 @@
     },
     {
       "path": "src/services/tender_review_docx.py",
-      "sha256": "9bd23399fef1c1633c649194f362252fa44e04590a528eb257bee9abfbf546c8"
+      "sha256": "0fd223a2aa6ea07c80fa1a88e869095d4626ce0791df3f4b32853995665173e6"
     },
     {
       "path": "src/services/tender_review_service.py",
-      "sha256": "341a1d32aad0b63c9c4a924025989f9ba21335642896bf030ae5bd39c9444db4"
+      "sha256": "43dbc6a5144b5b32b319703809c7a1be99c82aa23418c77eefe98b1a04c31057"
     },
     {
       "path": "src/services/unified_learning_runtime_service.py",
@@ -5188,11 +5284,11 @@
     },
     {
       "path": "src/skills/governance/corpus-graph-schema-induction/SKILL.md",
-      "sha256": "d1d75ede03115671ad4dba62d2d8f7bfd2fc19e45b1fff94ef421eb341f0732e"
+      "sha256": "365850ac0ee3ed05c61f8c83806a492d101a39078f1b743de76d504b2c2d85a7"
     },
     {
       "path": "src/skills/governance/knowledge-graph-building/SKILL.md",
-      "sha256": "3cfd52b6bf58feb804fd835fa6846d87b247e171a8a1652c5ae937ea2eb94fd4"
+      "sha256": "4d74c8922943a0e96753c4bbe9f6ee8103b560e8ab23bf854f8f9ae6414815c3"
     },
     {
       "path": "src/skills/governance/metadata-semantic-drift-monitor/SKILL.md",
@@ -5200,7 +5296,7 @@
     },
     {
       "path": "src/skills/governance/tender-review-journey/SKILL.md",
-      "sha256": "b3052e0a49a3181981117c7cfad70f554b18c91ad0a22f838fffa5bf2c08d3c1"
+      "sha256": "611b29e6832ee3d9a238ce3c3e241ca11fe188872e706e8b7bad652c3a206135"
     },
     {
       "path": "src/skills/productivity/expense-reimbursement/SKILL.md",
@@ -5440,7 +5536,7 @@
     },
     {
       "path": "src/storage/ontology_build_store.py",
-      "sha256": "2e7507c8670a98848af2f5093c6bbb75443b42855a3f37fb62084d29473c1e85"
+      "sha256": "df9a5f3efd686365fd548fe54f64cc8c72ca8823a7754c67cc0aac874e83cca3"
     },
     {
       "path": "src/storage/ontology_postgres_connection.py",
@@ -5564,7 +5660,7 @@
     },
     {
       "path": "src/storage/tender_journey_store.py",
-      "sha256": "655094557c9627f84063c81628b00cbe9c8a6463cd4003586d0cfcdd9d0fe81c"
+      "sha256": "69760711cbdd85d9140204cb6a5fc001cdc0370271145b74825f6b278249c9f8"
     },
     {
       "path": "src/storage/tender_mvl_observation_store.py",

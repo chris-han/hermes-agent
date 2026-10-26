@@ -14,6 +14,7 @@ from contracts.tender_journey import (
     TenderJourneyBuildContextRequestV1,
     TenderJourneyPrepareAuthorityRequestV1,
     TenderJourneyProduceNormativeSchemaRequestV1,
+    TenderJourneyProduceNormativeSemanticsRequestV1,
     TenderJourneyReviewCompetencyRequestV1,
     TenderJourneyReviewValidationCasesRequestV1,
     TenderJourneyReviewCoverageRequestV1,
@@ -25,12 +26,17 @@ from contracts.tender_journey import (
     TenderJourneySelectPolicyRequestV1,
     TenderJourneySelectRuntimeDocumentRequestV1,
 )
+from contracts.requirements_reconciliation import AssessRequirementsV1, ReviewRequirementV1
 from services.tender_journey_service import TenderJourneyService
 from contracts.ontology_building import ArtifactPinV1
 
 
 class _Closed(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+class JourneyReadRequirementsRequest(_Closed):
+    source_role: Literal["DESIGN_SOURCE", "ACTIVE_RULE_BASIS", "RUNTIME_TARGET", "PREPARED_SENSITIVITY"] | None = None
 
 
 class JourneyResolveRequest(_Closed):
@@ -73,10 +79,13 @@ _ARTIFACT_ACTIONS = ("preflight", "list_uploads", "list_artifacts", "import_uplo
 
 
 _ACTION_MODELS = {
+    "assess_requirements": AssessRequirementsV1,
+    "review_requirement": ReviewRequirementV1,
+    "read_requirements": JourneyReadRequirementsRequest,
     "preflight": _Closed,
     "propose_competency": TenderJourneyRuntimeCommandV1,
     "produce_normative_schema": TenderJourneyProduceNormativeSchemaRequestV1,
-    "produce_normative_semantics": TenderJourneyRuntimeCommandV1,
+    "produce_normative_semantics": TenderJourneyProduceNormativeSemanticsRequestV1,
     "propose_validation_cases": TenderJourneyRuntimeCommandV1,
     "review_validation_cases": TenderJourneyReviewValidationCasesRequestV1,
     "validate_source_semantics": TenderJourneyRuntimeCommandV1,
@@ -109,6 +118,7 @@ _ACTION_MODELS = {
 
 class JourneyActionRequest(_Closed):
     action: Literal[
+        "assess_requirements", "review_requirement", "read_requirements",
         "preflight", "list_uploads", "list_artifacts", "import_upload", "prepare_artifact",
         "review_source_coverage", "review_competency", "propose_competency", "prepare_authority_dependencies", "create", "pause", "resume", "cancel", "select_policy", "select_document",
         "discover_intent", "build_context", "produce_normative_schema", "produce_normative_semantics", "propose_validation_cases", "review_validation_cases", "validate_source_semantics", "certify_context", "select_certification",
@@ -123,7 +133,7 @@ def _schemas(actions) -> dict[str, Any]:
     for action in actions:
         model = _ACTION_MODELS[action]
         schema = model.model_json_schema()
-        schema["properties"].pop("surface", None)
+        schema.setdefault("properties", {}).pop("surface", None)
         schema["properties"].pop("schema_version", None)
         result[action] = schema
     return result
@@ -188,6 +198,15 @@ class TenderJourneyToolAPI:
                         "action_schemas": _schemas((*_ARTIFACT_ACTIONS, "create")),
                     }
                 if operation == "action":
+                    if request.action in {"assess_requirements", "review_requirement", "read_requirements"}:
+                        if request.action == "read_requirements":
+                            review = service.read_requirements(ctx=ctx, journey_id=head.journey_id,
+                                build_store=owners.build_store, authority_resolver=owners.authority_resolver, source_role=body.source_role)
+                        else:
+                            head, review = service.requirements_command(ctx=ctx, journey_id=head.journey_id,
+                                command=body, build_store=owners.build_store,authority_resolver=owners.authority_resolver,surface="CHAT",source_registry=owners.source_registry)
+                        return {"journey":service.project(head).model_dump(mode="json"),
+                            "requirements_review":review.model_dump(mode="json") if review else None}
                     if request.action in {"read_intent", "review_intent"}:
                         from agents.corpus_graph_schema_capability_factory import build_corpus_graph_schema_capability
                         capability = build_corpus_graph_schema_capability(workspace_root=ctx.workspace_root,
@@ -247,17 +266,18 @@ class TenderJourneyToolAPI:
                             **scope, user_id=ctx.user_id, source_registry=owners.source_registry,
                             graph_intent_inference_enabled=False)
                         head = asyncio.run(service.produce_normative_schema(ctx=ctx, **common,
-                            capability=capability, producer=build_normative_schema_producer(),
+                            capability=capability, producer=build_normative_schema_producer(request_context=ctx),
                             build_store=owners.build_store, authority_resolver=owners.authority_resolver))
                     elif action == "produce_normative_semantics":
                         from agents.normative_schema_production_factory import build_normative_semantic_producer
                         head = asyncio.run(service.produce_normative_semantics(ctx=ctx, **common,
-                            producer=build_normative_semantic_producer(), build_store=owners.build_store,
-                            authority_resolver=owners.authority_resolver))
+                            producer=build_normative_semantic_producer(request_context=ctx), build_store=owners.build_store,
+                            authority_resolver=owners.authority_resolver,source_registry=owners.source_registry,
+                            preparation_service=self._preparation(ctx, owners, stack) if body.source_role == "RUNTIME_TARGET" else None))
                     elif action == "propose_validation_cases":
                         from agents.normative_schema_production_factory import build_source_validation_case_producer
                         head = asyncio.run(service.propose_validation_cases(ctx=ctx, **common,
-                            producer=build_source_validation_case_producer(), build_store=owners.build_store,
+                            producer=build_source_validation_case_producer(request_context=ctx), build_store=owners.build_store,
                             authority_resolver=owners.authority_resolver))
                     elif action == "inspect":
                         from agents.webapi.tender_document_review_routes import _runtime_semantic_inspection_service
@@ -295,6 +315,9 @@ class TenderJourneyToolAPI:
                 "REVIEW_OR_INSPECT_NEXT_DOCUMENT": ("next_document",),
                 "RESUME_JOURNEY": ("resume",),
             }.get(projection.next_action_code, ())
+            if (head.lifecycle_status == "ACTIVE" and head.current_phase in {"FORMING_RUNTIME_CONTEXT", "INSPECTING", "REVIEW_RESULTS"}
+                and all(any(b.role == role for b in head.artifact_bindings) for role in ("runtime_document", "runtime_document_preparation", "normative_schema"))):
+                suggested = (*suggested, "produce_normative_semantics")
             lifecycle = ("pause", "cancel") if head.lifecycle_status == "ACTIVE" else ("cancel",) if head.lifecycle_status == "PAUSED" else ()
             build = next((item.pin for item in head.artifact_bindings if item.role == "context_build"), None)
             workbench_url = "/ontology-workbench2?" + urlencode({"journeyRef": head.journey_id,
@@ -343,7 +366,10 @@ class TenderJourneyToolAPI:
                 head=head, build_store=owners.build_store)
             validation_execution, validation_run, validation_status = service.resolve_source_validation(
                 head=head, build_store=owners.build_store)
+            requirements = service.read_requirements(ctx=ctx, journey_id=head.journey_id,
+                build_store=owners.build_store, authority_resolver=owners.authority_resolver)
             return {
+                "requirements_review": requirements.model_dump(mode="json") if requirements else None,
                 "status": "RESOLVED", "journey": projection.model_dump(mode="json"),
                 "certification_competency": competency.model_dump(mode="json") if competency is not None else None,
                 "normative_schema": normative.model_dump(mode="json") if normative is not None else None,
@@ -366,7 +392,7 @@ class TenderJourneyToolAPI:
                     and item.to_phase == "REVIEW_RESULTS" and item.operation_receipt is not None
                     and item.operation_receipt.role == "inspection_result"],
                 "latest_transition": transition.model_dump(mode="json") if transition else None,
-                "action_schemas": _schemas((*suggested, *lifecycle, *_ARTIFACT_ACTIONS, "read_intent", "read_episode", "create")),
+                "action_schemas": _schemas((*suggested, *lifecycle, *_ARTIFACT_ACTIONS, "assess_requirements", "read_requirements", "review_requirement", "read_intent", "read_episode", "create")),
             }
 
     @staticmethod

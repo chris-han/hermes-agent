@@ -1,0 +1,630 @@
+{
+  "contract": "semantier-client-operations/v1",
+  "version": "1.1.0",
+  "schemas": {
+    "UpdateEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "event_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "update_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Update Id",
+          "type": "string"
+        },
+        "installation_ref": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Installation Ref",
+          "type": "string"
+        },
+        "release_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Release Id",
+          "type": "string"
+        },
+        "target_sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Target Sha256",
+          "type": "string"
+        },
+        "from_version": {
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
+          "title": "From Version",
+          "type": "string"
+        },
+        "target_version": {
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
+          "title": "Target Version",
+          "type": "string"
+        },
+        "package_family": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Package Family",
+          "type": "string"
+        },
+        "stage": {
+          "enum": [
+            "check",
+            "download",
+            "verify",
+            "handoff",
+            "restart_confirmation"
+          ],
+          "title": "Stage",
+          "type": "string"
+        },
+        "outcome": {
+          "enum": [
+            "pending",
+            "unknown",
+            "failed",
+            "target_confirmed"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "error_code": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Code"
+        },
+        "occurred_at": {
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "observed_version": {
+          "anyOf": [
+            {
+              "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Observed Version"
+        },
+        "observed_family": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Observed Family"
+        },
+        "observed_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[a-f0-9]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Observed Sha256"
+        }
+      },
+      "required": [
+        "schema_version",
+        "event_id",
+        "update_id",
+        "installation_ref",
+        "release_id",
+        "target_sha256",
+        "from_version",
+        "target_version",
+        "package_family",
+        "stage",
+        "outcome",
+        "occurred_at"
+      ],
+      "title": "UpdateEvent",
+      "type": "object"
+    },
+    "EventBatch": {
+      "$defs": {
+        "UpdateEvent": {
+          "additionalProperties": false,
+          "properties": {
+            "schema_version": {
+              "const": "1.0.0",
+              "title": "Schema Version",
+              "type": "string"
+            },
+            "event_id": {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+              "title": "Event Id",
+              "type": "string"
+            },
+            "update_id": {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+              "title": "Update Id",
+              "type": "string"
+            },
+            "installation_ref": {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+              "title": "Installation Ref",
+              "type": "string"
+            },
+            "release_id": {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+              "title": "Release Id",
+              "type": "string"
+            },
+            "target_sha256": {
+              "pattern": "^[a-f0-9]{64}$",
+              "title": "Target Sha256",
+              "type": "string"
+            },
+            "from_version": {
+              "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
+              "title": "From Version",
+              "type": "string"
+            },
+            "target_version": {
+              "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
+              "title": "Target Version",
+              "type": "string"
+            },
+            "package_family": {
+              "maxLength": 160,
+              "minLength": 1,
+              "title": "Package Family",
+              "type": "string"
+            },
+            "stage": {
+              "enum": [
+                "check",
+                "download",
+                "verify",
+                "handoff",
+                "restart_confirmation"
+              ],
+              "title": "Stage",
+              "type": "string"
+            },
+            "outcome": {
+              "enum": [
+                "pending",
+                "unknown",
+                "failed",
+                "target_confirmed"
+              ],
+              "title": "Outcome",
+              "type": "string"
+            },
+            "error_code": {
+              "anyOf": [
+                {
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Error Code"
+            },
+            "occurred_at": {
+              "title": "Occurred At",
+              "type": "string"
+            },
+            "observed_version": {
+              "anyOf": [
+                {
+                  "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Observed Version"
+            },
+            "observed_family": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Observed Family"
+            },
+            "observed_sha256": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-f0-9]{64}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Observed Sha256"
+            }
+          },
+          "required": [
+            "schema_version",
+            "event_id",
+            "update_id",
+            "installation_ref",
+            "release_id",
+            "target_sha256",
+            "from_version",
+            "target_version",
+            "package_family",
+            "stage",
+            "outcome",
+            "occurred_at"
+          ],
+          "title": "UpdateEvent",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "events": {
+          "items": {
+            "$ref": "#/$defs/UpdateEvent"
+          },
+          "maxItems": 100,
+          "minItems": 1,
+          "title": "Events",
+          "type": "array"
+        }
+      },
+      "required": [
+        "events"
+      ],
+      "title": "EventBatch",
+      "type": "object"
+    },
+    "Diagnostic": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "submission_key": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Submission Key",
+          "type": "string"
+        },
+        "app_version": {
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
+          "title": "App Version",
+          "type": "string"
+        },
+        "release_id": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Release Id"
+        },
+        "update_id": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Update Id"
+        },
+        "error_code": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Code"
+        },
+        "platform": {
+          "const": "win32",
+          "title": "Platform",
+          "type": "string"
+        },
+        "note": {
+          "default": "",
+          "maxLength": 4000,
+          "title": "Note",
+          "type": "string"
+        },
+        "sections": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "maxProperties": 8,
+          "title": "Sections",
+          "type": "object"
+        }
+      },
+      "required": [
+        "schema_version",
+        "submission_key",
+        "app_version",
+        "platform",
+        "sections"
+      ],
+      "title": "Diagnostic",
+      "type": "object"
+    },
+    "Classification": {
+      "additionalProperties": false,
+      "properties": {
+        "expected_revision": {
+          "minimum": 0,
+          "title": "Expected Revision",
+          "type": "integer"
+        },
+        "category": {
+          "enum": [
+            "unclassified",
+            "startup",
+            "update",
+            "provider",
+            "ui",
+            "other"
+          ],
+          "title": "Category",
+          "type": "string"
+        },
+        "severity": {
+          "enum": [
+            "unassessed",
+            "low",
+            "medium",
+            "high"
+          ],
+          "title": "Severity",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "new",
+            "triaged",
+            "resolved"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "fix_release_id": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fix Release Id"
+        },
+        "operator_note": {
+          "default": "",
+          "maxLength": 4000,
+          "title": "Operator Note",
+          "type": "string"
+        }
+      },
+      "required": [
+        "expected_revision",
+        "category",
+        "severity",
+        "status"
+      ],
+      "title": "Classification",
+      "type": "object"
+    },
+    "ReleaseCandidate": {
+      "additionalProperties": false,
+      "properties": {
+        "release_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Release Id",
+          "type": "string"
+        },
+        "manifest": {
+          "additionalProperties": true,
+          "title": "Manifest",
+          "type": "object"
+        },
+        "notes": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "maxProperties": 9,
+          "minProperties": 1,
+          "title": "Notes",
+          "type": "object"
+        },
+        "native_receipt": {
+          "additionalProperties": true,
+          "title": "Native Receipt",
+          "type": "object"
+        },
+        "receipt_hmac": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Receipt Hmac",
+          "type": "string"
+        }
+      },
+      "required": [
+        "release_id",
+        "manifest",
+        "notes",
+        "native_receipt",
+        "receipt_hmac"
+      ],
+      "title": "ReleaseCandidate",
+      "type": "object"
+    },
+    "Promotion": {
+      "additionalProperties": false,
+      "properties": {
+        "release_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Release Id",
+          "type": "string"
+        },
+        "expected_revision": {
+          "minimum": 0,
+          "title": "Expected Revision",
+          "type": "integer"
+        },
+        "idempotency_key": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Idempotency Key",
+          "type": "string"
+        }
+      },
+      "required": [
+        "release_id",
+        "expected_revision",
+        "idempotency_key"
+      ],
+      "title": "Promotion",
+      "type": "object"
+    },
+    "ChannelControl": {
+      "additionalProperties": false,
+      "properties": {
+        "expected_revision": {
+          "minimum": 0,
+          "title": "Expected Revision",
+          "type": "integer"
+        },
+        "idempotency_key": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Idempotency Key",
+          "type": "string"
+        }
+      },
+      "required": [
+        "expected_revision",
+        "idempotency_key"
+      ],
+      "title": "ChannelControl",
+      "type": "object"
+    },
+    "FeedbackAuthorization": {
+      "additionalProperties": false,
+      "properties": {
+        "intent_ref": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Intent Ref",
+          "type": "string"
+        },
+        "proof_challenge": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Proof Challenge",
+          "type": "string"
+        },
+        "purpose": {
+          "enum": [
+            "diagnostic",
+            "reporting"
+          ],
+          "title": "Purpose",
+          "type": "string"
+        },
+        "profile_ref": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Profile Ref",
+          "type": "string"
+        }
+      },
+      "required": [
+        "intent_ref",
+        "proof_challenge",
+        "purpose",
+        "profile_ref"
+      ],
+      "title": "FeedbackAuthorization",
+      "type": "object"
+    },
+    "FeedbackProof": {
+      "additionalProperties": false,
+      "properties": {
+        "proof": {
+          "maxLength": 128,
+          "minLength": 32,
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "title": "Proof",
+          "type": "string"
+        }
+      },
+      "required": [
+        "proof"
+      ],
+      "title": "FeedbackProof",
+      "type": "object"
+    },
+    "FeedbackDecision": {
+      "additionalProperties": false,
+      "properties": {
+        "decision": {
+          "enum": [
+            "approve",
+            "deny"
+          ],
+          "title": "Decision",
+          "type": "string"
+        }
+      },
+      "required": [
+        "decision"
+      ],
+      "title": "FeedbackDecision",
+      "type": "object"
+    }
+  }
+}

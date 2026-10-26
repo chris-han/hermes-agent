@@ -14,6 +14,7 @@ from contracts.tender_observed_facts_projection import (
     TenderCategoricalFactSensorContractV1,
     TenderCategoricalFactObservationReceiptV1,
     TenderFactObservationReceiptV1,
+    TenderFactObservationReceiptV2, TenderObservedFactsProjectionReceiptV2,
     TenderFactSensorContractV1,
     TenderObservedFactsProjectionReceiptV1,
 )
@@ -140,6 +141,7 @@ class TenderObservedFactsProjectionService:
         document_date_observations: tuple[TenderDocumentDateObservationV1, ...] = (),
         subject_binding: TenderFactSubjectBindingV1 | None = None,
         categorical_observations: tuple[TenderCategoricalFactObservationReceiptV1, ...] = (),
+        support_rule_store=None,
     ) -> tuple[ObservedFactsV1, TenderObservedFactsProjectionReceiptV1]:
         plan = CompiledRulePlanV1.model_validate(plan.model_dump(mode="json"))
         schema = NormativeSchemaContractV1.model_validate(schema.model_dump(mode="json"))
@@ -196,9 +198,8 @@ class TenderObservedFactsProjectionService:
 
         observations_by_fact: dict[str, TenderFactObservationReceiptV1] = {}
         for supplied in observations:
-            observation = TenderFactObservationReceiptV1.model_validate(
-                supplied.model_dump(mode="json")
-            )
+            observation = (TenderFactObservationReceiptV2 if isinstance(supplied, TenderFactObservationReceiptV2)
+                           else TenderFactObservationReceiptV1).model_validate(supplied.model_dump(mode="json"))
             if (
                 observation.organization_id,
                 observation.workspace_id,
@@ -219,7 +220,7 @@ class TenderObservedFactsProjectionService:
             if observation.subject_binding != subject_binding:
                 raise ValueError("BOOLEAN_SUBJECT_MISMATCH")
             from services.tender_fact_observation_service import TenderFactObservationService
-            TenderFactObservationService.verify_receipt(store=store, receipt=observation, sensor=sensor)
+            TenderFactObservationService.verify_receipt(store=store, receipt=observation, sensor=sensor, support_rule_store=support_rule_store)
             observations_by_fact[observation.fact_ref] = observation
 
         date_observations_by_fact: dict[str, TenderDocumentDateObservationV1] = {}
@@ -352,6 +353,11 @@ class TenderObservedFactsProjectionService:
             subject_binding=subject_binding,
             frozen_at=frozen_at,
         )
+        supported=tuple(sorted(o.receipt_ref for o in observations_by_fact.values()
+                               if isinstance(o,TenderFactObservationReceiptV2)))
+        if supported:
+            receipt=TenderObservedFactsProjectionReceiptV2.create(**receipt.model_dump(
+                exclude={'schema_version','projection_ref','projection_hash'}),support_observation_refs=supported)
         store.put_many(
             (
                 *date_observations_by_fact.values(),
@@ -360,6 +366,51 @@ class TenderObservedFactsProjectionService:
             )
         )
         return facts, receipt
+
+
+    @staticmethod
+    def support_availability(*, store, observation, sensor, rule_store=None,
+                             withdrawn_groups=(), unavailable_refs=(), unknown_refs=(), current_at=None):
+        """Read-only direct availability of a validated finite declaration, never observed truth."""
+        if not isinstance(observation,TenderFactObservationReceiptV2):
+            return {'status':'UNKNOWN','reason':'UNDECLARED_SUPPORT'}
+        from services.tender_fact_observation_service import TenderFactObservationService
+        value=TenderFactObservationService.verify_support_receipt(store=store,receipt=observation,
+            sensor=sensor,rule_store=rule_store)
+        if current_at is None:
+            from datetime import timezone
+            current_at=datetime.now(timezone.utc)
+        try:
+            TenderFactObservationService.verify_support_receipt(store=store,receipt=value,
+                sensor=sensor,rule_store=rule_store,current_at=current_at)
+        except ValueError:
+            return {'status':'UNKNOWN','reason':'CURRENT_PROFILE_UNAVAILABLE'}
+        profile=value.support_declaration.profile
+        groups={g.group_id:g for g in profile.groups}
+        if not set(withdrawn_groups)<=set(groups):
+            return {'status':'UNKNOWN','reason':'UNKNOWN_GROUP_MAPPING'}
+        refs={p.artifact_ref for p in profile.premises}
+        if not (set(unavailable_refs)|set(unknown_refs))<=refs or set(unavailable_refs)&set(unknown_refs):
+            raise ValueError('INVALID_AVAILABILITY_INPUT')
+        lost={i for key in withdrawn_groups for i in groups[key].members}
+        mapped={i for g in profile.groups for i in g.members}
+        states=[]
+        for i,pin in enumerate(profile.premises):
+            if i in lost or pin.artifact_ref in unavailable_refs:
+                states.append('UNAVAILABLE')
+            elif pin.artifact_ref in unknown_refs or (withdrawn_groups and i not in mapped):
+                states.append('UNKNOWN')
+            else:
+                states.append('AVAILABLE')
+        bundles=[]
+        for bundle in profile.bundles:
+            values=[states[i] for i in bundle.premises]
+            bundles.append('UNAVAILABLE' if 'UNAVAILABLE' in values else
+                           'UNKNOWN' if 'UNKNOWN' in values else 'AVAILABLE')
+        status=('AVAILABLE' if 'AVAILABLE' in bundles else
+                'UNAVAILABLE' if set(bundles)=={'UNAVAILABLE'} and profile.alternatives_coverage=='COMPLETE'
+                else 'UNKNOWN')
+        return {'status':status,'reason':None if status!='UNKNOWN' else 'INCOMPLETE_SUPPORT_COVERAGE'}
 
 
 __all__ = ["TenderObservedFactsProjectionService"]

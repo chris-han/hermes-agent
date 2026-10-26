@@ -34,3 +34,9 @@ This is a non-selectable internal compiler capability invoked by `knowledge-grap
 8. Hand an accepted candidate to the governed schema/graph lifecycle. Do not silently activate, mutate historical artifacts, or bypass the independent persistence and projection trust gates.
 
 Keep procedural wording in this skill. Keep profile selection, validation, candidate identity, review authority, persistence, replay, and handoff logic in Semantier core.
+
+
+## Normative source review
+
+<!-- runtime-owner: WORKFLOW invariant-class: WORKFLOW_HEURISTIC -->
+When this source is modeled through a selected Tender journey, follow `tender-review-journey` → Source requirements and saved clarification. Rehydrate its saved review and answers through the shared authenticated actions. Keep descriptive graph work available; report unsupported context/exception semantics as UNKNOWN. This routing adds no generic requirements engine or rule activation.

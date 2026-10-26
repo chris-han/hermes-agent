@@ -50,7 +50,7 @@ class TenderOwnerAdoptionService:
         plan = self._get(scope, plan_pin, CompiledRulePlanV1)
         expected = OntologyRulePlanCompiler(compiler_ref=plan.compiler_ref, compiler_hash=plan.compiler_hash).compile(
             candidate=candidate, validation_contract_ref=plan.validation_contract_ref, validation_contract_hash=plan.validation_contract_hash,
-            competency_refs=plan.rules[0].competency_refs, compiled_at=plan.compiled_at)
+            competency_refs=plan.rules[0].competency_refs, compiled_at=plan.compiled_at, domain_basis=plan.domain_basis)
         if plan != expected or rule_ref not in {rule.rule_id for rule in plan.rules}:
             raise ValueError('OWNER_ADOPTION_PLAN_RULE_MISMATCH')
         context = self._get(scope,context_pin,ContextGraph)

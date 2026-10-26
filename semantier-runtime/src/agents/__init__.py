@@ -16,7 +16,7 @@ __all__ = [
 
 def __getattr__(name: str) -> Any:
     if name in {"app", "execute"}:
-        module = import_module("agents.gateway")
+        module = import_module("apps.combined")
         return getattr(module, name)
     if name == "SemantierAgent":
         module = import_module("agents.semantier_agent")

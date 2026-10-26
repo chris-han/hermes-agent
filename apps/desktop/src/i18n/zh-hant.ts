@@ -1,5 +1,6 @@
 import { defineLocale, type TranslationOverrides } from './define-locale'
 import { introZhHant } from './intro-zh-hant'
+import { feedbackEnglish } from './semantier-feedback'
 import { zhHantArtifacts } from './zh-hant_artifacts'
 import { zhHantAssistant } from './zh-hant_assistant'
 import { zhHantBoot } from './zh-hant_boot'
@@ -14,6 +15,7 @@ import { zhHantFirstRun } from './zh-hant_first_run'
 import { zhHantSettings } from './zh-hant_settings'
 
 export const zhHantOverrides = {
+  semantierFeedback: feedbackEnglish,
   connectors: {
     directory: {
       suggested: '推薦',

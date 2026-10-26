@@ -31,6 +31,9 @@
       "properties": {
         "action": {
           "enum": [
+            "assess_requirements",
+            "review_requirement",
+            "read_requirements",
             "preflight",
             "list_uploads",
             "list_artifacts",

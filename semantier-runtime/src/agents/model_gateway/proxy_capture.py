@@ -5,6 +5,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 import hashlib
 import json
+import zlib
 from urllib.parse import urlsplit
 
 import httpx
@@ -22,6 +23,62 @@ class AttemptCapture:
 
 _attempt: ContextVar[AttemptCapture | None] = ContextVar('semantier_proxy_attempt', default=None)
 MAX_WIRE_BYTES = 8 * 1024 * 1024
+CHAT_PATHS = {'/v1/chat/completions', '/chat/completions'}
+RESPONSES_PATHS = {'/v1/responses', '/responses', '/openai/v1/responses'}
+MESSAGES_PATHS = {'/v1/messages'}
+
+
+class ProtocolBoundaryMiddleware:
+    """Reject unmetered inference before LiteLLM selects any outbound client.
+
+    Administrative routes keep their native owners. HTTP inference transports
+    still enforce admission; WebSocket inference has no admitted transport yet.
+    """
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        kind, path = scope['type'], scope.get('path', '')
+        if kind not in {'http', 'websocket'}:
+            return await self.app(scope, receive, send)
+        if kind == 'http' and scope.get('method') == 'OPTIONS':
+            return await self.app(scope, receive, send)
+        supported = path in CHAT_PATHS | RESPONSES_PATHS | MESSAGES_PATHS
+        if kind == 'http' and supported and scope.get('method') == 'POST':
+            return await self.app(scope, receive, send)
+        canonical = path.rstrip('/')
+        for prefix in ('/openai/v1', '/v1beta', '/v1', '/v2'):
+            if canonical.startswith(prefix + '/'):
+                canonical = canonical[len(prefix):]
+                break
+        roots = ('/chat/completions', '/completions', '/responses', '/messages',
+                 '/embeddings', '/images', '/audio', '/videos', '/moderations',
+                 '/rerank', '/realtime', '/live', '/interactions', '/batches')
+        inference = kind == 'websocket' or supported or any(canonical == root or canonical.startswith(root + '/') for root in roots)
+        # These are alternate supplier/legacy inference paths, not model CRUD.
+        inference = inference or path.startswith(('/openai/deployments/', '/engines/',
+            '/providers/', '/anthropic/', '/bedrock/', '/gemini/', '/openai/',
+            '/openai_passthrough/', '/vertex_ai/', '/deepgram/'))
+        inference = inference or canonical.endswith((':generateContent', ':streamGenerateContent'))
+        if not inference:
+            return await self.app(scope, receive, send)
+        from starlette.responses import JSONResponse
+        response = JSONResponse({'error': {
+            'code': 'unsupported_model_protocol',
+            'message': 'This protocol or operation is not admitted by this Semantier listener. '
+                       'Use POST /v1/chat/completions, /v1/responses or /v1/messages '
+                       'with a configured model; HTTP streaming is supported. '
+                       'Realtime/WebSocket and other supplier operations require metering support.'}}, 422)
+        if kind == 'websocket':
+            from starlette.websockets import WebSocket
+            websocket = WebSocket(scope, receive, send)
+            if 'websocket.http.response' in scope.get('extensions', {}):
+                # The WebSocket server computes its own denial body length;
+                # forwarding JSONResponse's header duplicates Content-Length.
+                del response.headers['content-length']
+                return await websocket.send_denial_response(response)
+            return await websocket.close(code=1008, reason='unsupported_model_protocol')
+        return await response(scope, receive, send)
 
 
 def native_usage(wire: bytes, content_type: str):
@@ -58,10 +115,11 @@ def native_usage(wire: bytes, content_type: str):
 
 
 class ReceiptStream(httpx.AsyncByteStream):
-    def __init__(self, original, *, store, attempt, provider, content_type, status, request_id):
+    def __init__(self, original, *, store, attempt, provider, content_type, status, request_id, content_encoding=''):
         self.original = original
         self.store, self.attempt, self.provider = store, attempt, provider
         self.content_type, self.status, self.request_id = content_type, status, request_id
+        self.content_encoding = content_encoding.strip().lower()
         self.blocks, self.size, self.overflow, self.recorded = [], 0, False, False
         self.digest = hashlib.sha256()
 
@@ -70,9 +128,37 @@ class ReceiptStream(httpx.AsyncByteStream):
             return
         usage, complete = None, False
         response_model = None
+        decoded_digest = None
+        failure = 'wire_limit' if self.overflow else None
         if not self.overflow:
             try:
                 wire = b''.join(self.blocks)
+                # Transport streams precede httpx content decoding. Preserve
+                # original wire bytes/hash; parse only a bounded decoded copy.
+                if self.content_encoding not in ('', 'identity'):
+                    if self.content_encoding not in ('gzip', 'deflate'):
+                        failure = 'unsupported_encoding'
+                        raise ValueError('unsupported native content encoding')
+                    decoder = zlib.decompressobj(31 if self.content_encoding == 'gzip' else 15)
+                    failure = 'invalid_encoding'
+                    try:
+                        decoded = decoder.decompress(wire, MAX_WIRE_BYTES + 1)
+                    except zlib.error:
+                        if self.content_encoding != 'deflate':
+                            raise
+                        # HTTPX also accepts raw RFC1951 deflate. This is a
+                        # local bounded decode, never another transport send.
+                        decoder = zlib.decompressobj(-15)
+                        decoded = decoder.decompress(wire, MAX_WIRE_BYTES + 1)
+                    wire = decoded
+                    if len(wire) > MAX_WIRE_BYTES or decoder.unconsumed_tail:
+                        self.overflow = True
+                        failure = 'decoded_limit'
+                        raise ValueError('decoded native body exceeds bound')
+                    if not decoder.eof or decoder.unused_data:
+                        raise ValueError('incomplete or multiple encoded native bodies')
+                decoded_digest = hashlib.sha256(wire).hexdigest()
+                failure = 'invalid_native_payload'
                 usage, complete = native_usage(wire, self.content_type)
                 if 'text/event-stream' in self.content_type:
                     models = [json.loads(line[5:].strip()).get('model')
@@ -83,6 +169,7 @@ class ReceiptStream(httpx.AsyncByteStream):
                     response_model = json.loads(wire).get('model')
                 if not isinstance(response_model,str) or len(response_model)>200:
                     response_model = None
+                failure = None if usage else 'missing_usage'
             except Exception:
                 pass
         native_terminal = ('text/event-stream' in self.content_type or
@@ -92,10 +179,12 @@ class ReceiptStream(httpx.AsyncByteStream):
         digest = self.digest.hexdigest()
         await self.store.append_raw_observation(
             self.attempt.attempt_id, f'native:{self.attempt.sends}:{digest}', self.provider,
-            usage, {'transport': 'httpx-native-wire-v1', 'wire_sha256': digest,
+            usage, {'transport': 'httpx-native-wire-v2', 'wire_sha256': digest,
+                    'content_encoding': self.content_encoding, 'decoded_sha256': decoded_digest,
                     'content_type': self.content_type, 'http_status': self.status,
                     'response_model': response_model, 'response_model_basis': 'provider_reported' if response_model else 'UNRESOLVED',
-                    'provider_request_id': self.request_id, 'body_limit_exceeded': self.overflow},
+                    'provider_request_id': self.request_id, 'body_limit_exceeded': self.overflow,
+                    'capture_failure': failure or (None if final else 'incomplete_response')},
             self.attempt.sends, state)
         self.recorded = True
 
@@ -124,9 +213,10 @@ class ReceiptStream(httpx.AsyncByteStream):
 
 class CaptureTransport(httpx.AsyncBaseTransport):
     def __init__(self, store, origins, *, transport=None):
+        from agents.model_gateway.tls_failure_capture import TlsFailureTransport
         self.store = store
         self.origins = dict(origins)
-        self.native = transport or httpx.AsyncHTTPTransport(retries=0, trust_env=False)
+        self.native = transport or TlsFailureTransport(correlation=_attempt.get)
 
     async def handle_async_request(self, request):
         origin = str(request.url.copy_with(path='/', query=None, fragment=None)).rstrip('/')
@@ -141,7 +231,7 @@ class CaptureTransport(httpx.AsyncBaseTransport):
         if attempt.diagnostic_output_limit is not None:
             body = json.loads(request.content)
             cap = body.get('max_completion_tokens', body.get('max_tokens'))
-            if (len(request.content) > 16384 or isinstance(cap, bool) or
+            if (len(request.content) > MAX_WIRE_BYTES or isinstance(cap, bool) or
                     not isinstance(cap, int) or not 1 <= cap <= attempt.diagnostic_output_limit):
                 raise ValueError('diagnostic native request exceeds its admitted limits')
         await self.store.claim_native_send(attempt.attempt_id,attempt.invocation_id,provider)
@@ -149,6 +239,7 @@ class CaptureTransport(httpx.AsyncBaseTransport):
         response = await self.native.handle_async_request(request)
         response.stream = ReceiptStream(response.stream, store=self.store, attempt=attempt,
             provider=provider, content_type=response.headers.get('content-type', ''),
+            content_encoding=response.headers.get('content-encoding', ''),
             status=response.status_code, request_id=response.headers.get('apim-request-id') or
             response.headers.get('x-amzn-requestid') or response.headers.get('x-request-id'))
         return response
@@ -163,7 +254,7 @@ class AdmittedAttemptMiddleware:
         self.app, self.store = app, store
 
     async def __call__(self, scope, receive, send):
-        if scope['type'] != 'http' or scope.get('path') not in ('/v1/chat/completions', '/chat/completions'):
+        if scope['type'] != 'http' or scope.get('path') not in CHAT_PATHS:
             return await self.app(scope, receive, send)
         # Only the authenticated outer operator command can establish this
         # context without facade metadata; HTTP clients cannot set ContextVars.

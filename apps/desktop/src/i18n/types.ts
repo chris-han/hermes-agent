@@ -8,6 +8,7 @@ import type { ErrorCodeKey } from '@/lib/error-surface'
 import type { TipId } from '@/lib/tips/catalog'
 
 import type { enBranding } from './branding'
+import type { FeedbackCopy } from './semantier-feedback'
 import type { AppTourTranslations } from './types_app_tour'
 import type { AuxTaskCopyMap } from './types_aux_tasks'
 import type { BillingSemantierTranslations, BillingTranslations } from './types_billing'
@@ -78,6 +79,7 @@ interface ModeOptionCopy {
 }
 
 export interface Translations extends NoticeTranslations {
+  semantierFeedback: FeedbackCopy
   branding: typeof enBranding
 
   /** Shared-metrics consent: first-run dialog + Settings › Safety toggles. */

@@ -4,6 +4,7 @@ import { zhBranding } from './branding'
 import { defineLocale, type TranslationOverrides } from './define-locale'
 import { introZh } from './intro-zh'
 import { semantierBillingCopy } from './semantier-billing'
+import { feedbackChinese } from './semantier-feedback'
 import { zhAuxTasks } from './zh_aux_tasks'
 import { zhClarify } from './zh_clarify'
 import { zhConnectorCard } from './zh_connector_card'
@@ -17,6 +18,7 @@ import { zhThemePicker } from './zh_theme_picker'
 import { zhUpdateChannel } from './zh_update_channel'
 
 export const zhOverrides = {
+  semantierFeedback: feedbackChinese,
   branding: zhBranding,
   externalOpenFailed: {
     title: '无法打开此链接',

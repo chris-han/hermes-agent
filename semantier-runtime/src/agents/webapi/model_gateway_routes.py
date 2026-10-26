@@ -32,7 +32,59 @@ async def model_gateway_models(request: Request):
     service=gateway(request)
     actor=await actor_for(request,service,'model:invoke')
     return {'object':'list','data':[{'id':d.alias,'object':'model','owned_by':'semantier'}
-        for d in await service.store.deployments(actor.organization_id) if d.enabled]}
+        for d in await service.authorized_deployments(actor)]}
+
+
+@router.get('/api/cloud-provider/catalog')
+async def cloud_provider_catalog(request: Request):
+    service=gateway(request)
+    actor=await actor_for(request,service,'model:invoke')
+    from agents.auth_db import get_workspace_config
+    from agents.model_gateway.selection import assignment_projection,supported_tasks
+    from starlette.concurrency import run_in_threadpool
+    payload=await service.catalog(actor,account_id=request.query_params.get('account_id'))
+    config=await run_in_threadpool(get_workspace_config,actor.workspace_id)
+    return {**payload,'organization_id':actor.organization_id,'assignments':assignment_projection(config,actor.organization_id),'supported_purposes':supported_tasks()}
+
+
+@router.get('/api/cloud-provider/model-info')
+async def cloud_provider_model_info(request: Request, model: str):
+    service=gateway(request)
+    actor=await actor_for(request,service,'model:invoke')
+    return await service.catalog(actor,model,account_id=request.query_params.get('account_id'))
+
+
+@router.get('/api/model/options')
+async def cloud_model_options(request: Request, refresh: bool = False):
+    from agents.webapi.deps import require_authenticated_context
+    from runtime_paths import bind_workspace_env
+    from starlette.concurrency import run_in_threadpool
+    ctx=require_authenticated_context(request)
+    def options():
+        from hermes_cli.inventory import build_model_options_payload,load_picker_context
+        with bind_workspace_env(ctx.hermes_home):
+            return build_model_options_payload(load_picker_context(),refresh=refresh)
+    return await run_in_threadpool(options)
+
+
+@router.patch('/api/config')
+async def hosted_configuration_patch(request: Request):
+    from agents.webapi.deps import require_route_authorization
+    from agents.route_policy import RouteAuthorizationClass
+    from agents.model_gateway.auth import csrf
+    from agents.model_gateway.selection import patch_configuration
+    ctx=require_route_authorization(request,authorization_class=RouteAuthorizationClass.TENANT_MEMBER,route_hint='PATCH /api/config')
+    csrf(request)
+    return await patch_configuration(ctx,await request.json())
+
+
+@router.post('/api/model/set')
+async def cloud_model_set(request: Request):
+    service=gateway(request)
+    actor=await actor_for(request,service,'model:invoke',browser_only=True)
+    from agents.webapi.deps import require_authenticated_context
+    from agents.model_gateway.selection import set_assignment
+    return await set_assignment(service,actor,require_authenticated_context(request),await request.json())
 
 
 @router.post('/v1/chat/completions')
@@ -51,10 +103,12 @@ async def model_gateway_chat(request: Request):
         body=json.loads(wire)
     except ValueError as exc:
         raise HTTPException(400,'JSON required') from exc
-    correlation={key:request.headers.get(header) for key,header in [('session_id','x-semantier-session-id'),('run_id','x-semantier-run-id'),('purpose','x-semantier-purpose')] if request.headers.get(header)}
-    if any(len(value)>200 for value in correlation.values()):
-        raise HTTPException(422,'correlation exceeds bound')
-    return await service.chat(actor,body,request.headers.get('idempotency-key'),correlation)
+    from contracts.model_gateway import TASK_HEADERS
+    correlation={key:request.headers[header] for key,header in TASK_HEADERS.items() if request.headers.get(header)}
+    return await service.chat(actor,body,request.headers.get('idempotency-key'),correlation,
+        account_id=request.headers.get('x-semantier-account-id'),
+        expected_profile_revision=request.headers.get('x-semantier-capability-revision'))
+
 
 
 @router.post('/api/model-gateway/credentials')
@@ -97,9 +151,14 @@ async def model_gateway_invocation(invocation_id: str,request: Request):
         result=await service.billing.get_invocation(actor.organization_id,invocation_id)
     except ValueError as exc:
         raise HTTPException(404,'invocation not found') from exc
+    if result and actor.account_id is not None and (result['account_id'],result['currency']) != (actor.account_id,actor.currency):
+        raise HTTPException(404,'invocation not found')
+    scopes={(r['account_id'],r['currency']) for r in await service.store.account_rows(actor,service.billing.schema)}
+    if result and (result['account_id'],result['currency']) not in scopes:raise HTTPException(404,'invocation not found')
     if not result or (result.get('attribution',{}).get('actor_user_id') != actor.user_id and 'usage:read_org' not in actor.permissions):
         raise HTTPException(404,'invocation not found')
-    return result
+    lineage=await service.billing.reexecution_lineage(actor.organization_id,invocation_id)
+    return {**result,'reexecution':lineage} if lineage else result
 
 
 @router.get('/api/model-gateway/invocations/{invocation_id}/evidence')
@@ -110,12 +169,30 @@ async def model_gateway_invocation_evidence(invocation_id: str,request: Request)
         invocation=await service.billing.get_invocation(actor.organization_id,invocation_id)
     except ValueError as exc:
         raise HTTPException(404,'invocation not found') from exc
+    if actor.account_id is not None and (invocation['account_id'],invocation['currency']) != (actor.account_id,actor.currency):
+        raise HTTPException(404,'invocation not found')
     if invocation.get('attribution',{}).get('actor_user_id')!=actor.user_id and 'usage:read_org' not in actor.permissions:
         raise HTTPException(404,'invocation not found')
+    scopes={(r['account_id'],r['currency']) for r in await service.store.account_rows(actor,service.billing.schema)}
+    if (invocation['account_id'],invocation['currency']) not in scopes:raise HTTPException(404,'invocation not found')
     bundle=await service.billing.export_invocation(actor.organization_id,invocation_id)
-    return {'schema_version':'semantier.invocation-evidence.v1','invocation_id':invocation_id,
+    lineage=await service.billing.reexecution_lineage(actor.organization_id,invocation_id)
+    return {**({'reexecution':lineage} if lineage else {}),'schema_version':'semantier.invocation-evidence.v1','invocation_id':invocation_id,
             'bundle':bundle,'hold_reference':{'invocation_id':invocation_id,'active':invocation.get('hold_active'),
                 'amount':{'amount':invocation['max_cost'],'currency':invocation['currency']},
                 'settlement_state':invocation['settlement_state']},
             'links':{'invocation':'/api/model-gateway/invocations/'+invocation_id,
                      'usage':'/api/billing/usage','admin_usage':'/api/admin/model-gateway/usage'}}
+
+
+@router.post('/api/model-gateway/invocations/{invocation_id}/reexecutions')
+async def model_gateway_reexecute(invocation_id: str, request: Request):
+    service=gateway(request)
+    actor=await actor_for(request,service,'model:invoke')
+    wire=bytearray()
+    async for chunk in request.stream():
+        wire.extend(chunk)
+        if len(wire)>1050624: raise HTTPException(413,'reexecution command exceeds bound')
+    try: command=json.loads(wire)
+    except ValueError as exc: raise HTTPException(400,'JSON required') from exc
+    return await service.reexecute(actor,invocation_id,command,request.headers.get('idempotency-key'))

@@ -852,6 +852,14 @@ class GraphSchemaDiscoveryService:
 
             def current_evidence(witness: SourceSemanticWitnessV1) -> EvidenceRef:
                 matches = current_blocks_by_text_hash.get(witness.exact_text_hash, [])
+                rebind = None
+                if not matches:
+                    rebind = next((proof for proof in exemplar_gate.get("source_rebindings", [])
+                        if proof["accepted_witness_ref"] == witness.witness_id
+                        and proof["accepted_witness_hash"] == witness.witness_hash), None)
+                    if rebind is not None:
+                        matches = [block for block in positive.document.blocks
+                            if block.block_id == rebind["current_block_id"]]
                 if len(matches) != 1:
                     raise ValueError("runtime source does not reproduce trusted W1 evidence")
                 block = matches[0]
@@ -866,6 +874,7 @@ class GraphSchemaDiscoveryService:
                     update={
                         "provenance": {
                             **evidence.provenance,
+                            **({"source_witness_rebinding": rebind} if rebind else {}),
                             "canonical_source_ir_ref": (
                                 graph_intent.source_binding.canonical_source_ir_ref
                             ),
@@ -2566,6 +2575,59 @@ class GraphSchemaDiscoveryService:
         return _resolve_trusted_witness_gate_package(package)
 
     @staticmethod
+    def _native_terminal_linebreak_rebind(package, witness, graph_intent):
+        """Prove a parser-only terminal LF/CR difference at the same DOCX cell.
+
+        Historical evidence is never rewritten. The prospective gate records
+        both identities; source bytes, native anchor and nonterminal text must
+        agree. This is not fuzzy matching or new witness acceptance.
+        """
+        document = package.document
+        binding = graph_intent.source_binding
+        if (document.source_identity_ref != binding.source_identity_ref
+            or canonical_ir_content_hash(document.model_dump(mode="json", by_alias=True,
+                exclude_none=False)) != binding.canonical_source_ir_hash
+            or witness.source_binding.source_hash != binding.source_hash
+            or package.source_identity.source_hash != binding.source_hash
+            or len(witness.evidence_refs) != 1):
+            return None
+        evidence = witness.evidence_refs[0]
+        expected = evidence.selector.exact_quote
+        anchor = evidence.provenance.get("source_locator", {})
+        if (not isinstance(expected, str) or not expected
+            or "sha256:" + sha256(expected.encode("utf-8")).hexdigest() != witness.exact_text_hash
+            or anchor.get("format") != "docx" or anchor.get("nativeProvider") != "ooxml"
+            or anchor.get("sourceHash") != binding.source_hash
+            or not anchor.get("nativeId") or not anchor.get("packagePart")):
+            return None
+        matches = []
+        for mapping in document.source_map.mappings:
+            for locator in mapping.source_locators:
+                if (locator.native_id, locator.package_part) == (anchor["nativeId"], anchor["packagePart"]):
+                    matches.append((mapping, locator))
+        if len(matches) != 1:
+            return None
+        mapping, locator = matches[0]
+        if (len(mapping.block_ids) != 1 or locator.native_provider != "ooxml"
+            or locator.format != "docx" or locator.source_hash != binding.source_hash
+            or locator.source_identity_ref != binding.source_identity_ref):
+            return None
+        blocks = [b for b in document.blocks if b.block_id == mapping.block_ids[0]]
+        if len(blocks) != 1:
+            return None
+        block = blocks[0]
+        if (block.block_type != "cell" or not isinstance(block.content, str)
+            or canonical_ir_content_hash(block.content) != block.content_hash
+            or block.content == expected or block.content.rstrip("\r\n") != expected):
+            return None
+        return dict(match_kind="SAME_BYTES_NATIVE_ANCHOR_TERMINAL_LINEBREAK",
+            witness_ref=witness.witness_id, witness_hash=witness.witness_hash,
+            historical_text_hash=witness.exact_text_hash, source_hash=binding.source_hash,
+            current_ir_hash=binding.canonical_source_ir_hash, current_block_id=block.block_id,
+            current_text_hash="sha256:" + sha256(block.content.encode("utf-8")).hexdigest(),
+            native_id=locator.native_id, package_part=locator.package_part)
+
+    @staticmethod
     def _verify_accepted_witness_gate(
         witness_packages: tuple[_ResolvedAcceptedWitnessGatePackage, ...],
         *,
@@ -2599,6 +2661,7 @@ class GraphSchemaDiscoveryService:
             raise ValueError("positive witness package semantic spine mismatch")
 
         mismatches: list[dict[str, str]] = []
+        source_rebindings = []
         for package in witness_packages:
             if len(package.proposed_witnesses) != len(package.accepted_witnesses):
                 raise ValueError("witness proposal/acceptance count mismatch")
@@ -2652,9 +2715,17 @@ class GraphSchemaDiscoveryService:
                 }
                 for witness in package.proposed_witnesses:
                     if witness.exact_text_hash not in current_text_hashes:
-                        raise ValueError(
-                            "runtime source does not reproduce trusted W1 positive witness"
-                        )
+                        proof = GraphSchemaDiscoveryService._native_terminal_linebreak_rebind(
+                            package, witness, graph_intent)
+                        if proof is None:
+                            raise ValueError(
+                                "runtime source does not reproduce trusted W1 positive witness"
+                            )
+                        accepted = next(item for item in package.accepted_witnesses
+                            if item.review.predecessor_witness_ref == witness.witness_id)
+                        source_rebindings.append({**proof,
+                            "accepted_witness_ref": accepted.witness_id,
+                            "accepted_witness_hash": accepted.witness_hash})
                 discovered = list(package.proposed_witnesses)
             else:
                 discovered = SourceSemanticWitnessService().discover(
@@ -2728,6 +2799,7 @@ class GraphSchemaDiscoveryService:
                 witness.witness_id for witness in negative.accepted_witnesses
             ],
             "material_mismatches": mismatches,
+            **({"source_rebindings": source_rebindings} if source_rebindings else {}),
         }
 
     def start_run(

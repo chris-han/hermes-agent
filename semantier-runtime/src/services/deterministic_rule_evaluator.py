@@ -533,7 +533,7 @@ class DeterministicRuleEvaluator:
             compiler_ref=plan.compiler_ref, compiler_hash=plan.compiler_hash,
         ).compile(candidate=candidate, validation_contract_ref=plan.validation_contract_ref,
                   validation_contract_hash=plan.validation_contract_hash,
-                  competency_refs=rules[0].competency_refs, compiled_at=plan.compiled_at)
+                  competency_refs=rules[0].competency_refs, compiled_at=plan.compiled_at, domain_basis=plan.domain_basis)
         if recompiled != plan:
             raise ValueError("NORMATIVE_PLAN_CONTENT_MISMATCH")
         bundle = self.evaluate(
@@ -589,8 +589,8 @@ class DeterministicRuleEvaluator:
         resolution = None
         if len(normative_set.member_rule_refs) > 1 or normative_set.unknown_rule_refs:
             evaluator = NormativeCompatibilityEvaluator(
-                evaluator_ref="source-rule-effect-compatibility:v1",
-                evaluator_hash="sha256:" + content_hash({"policy": "source_rule_effect_disposition.v1"}),
+                evaluator_ref="source-rule-effect-compatibility:v2",
+                evaluator_hash="sha256:" + content_hash({"policy": "source_rule_effect_disposition.v2"}),
             )
             compatibility = evaluator.evaluate(normative_set=normative_set, evaluated_at=evaluated_at)
             if compatibility.outcome == "CONFLICT":
@@ -608,7 +608,7 @@ class DeterministicRuleEvaluator:
             elif compatibility.outcome != "COMPATIBLE" and outcome != "NOT_APPLICABLE":
                 outcome, reason = "UNKNOWN", "NORMATIVE_DEPENDENCY_CLOSURE_UNRESOLVED"
         return dict(
-            policy_version="source_rule_effect_disposition.v1", rule_id=rule_id,
+            policy_version="source_rule_effect_disposition.v2", rule_id=rule_id,
             qualification="REQUIRES_VERIFIED_BINDING", proposed_outcome=outcome,
             reason_code=reason, evaluation=bundle, effect_results=effects,
             applicability_results=applicability, normative_set=normative_set,

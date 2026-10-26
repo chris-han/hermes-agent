@@ -31,6 +31,7 @@ export interface PayloadRuntime {
 
 /** Immutable admitted channel build. Native names come from R2, never the slug. */
 export interface ChannelBuildRequest {
+  semantierScope?: 'semantier-windows-x64/v1'
   schema: 1
   buildId: string
   channel: string

@@ -53,8 +53,10 @@ const legacyDisplayName = buildCommit
     : name.display
 
 // Local Windows packaging has a human version independent of the upstream runtime.
+const { channelBuildRequest } = require('../../scripts/msix-shared.mjs')
+const request = channelBuildRequest()
 const semantierVersion = process.env.SEMANTIER_DESKTOP_VERSION || ''
-const semantierBuild = Boolean(semantierVersion && buildCommit && variant === 'bundled' && !store)
+const semantierBuild = Boolean(semantierVersion && (buildCommit || request?.semantierScope === 'semantier-windows-x64/v1') && variant === 'bundled' && !store)
 if (
   semantierVersion &&
   (!semantierBuild ||
@@ -99,9 +101,6 @@ const identity = {
       }
     : {})
 }
-
-const { channelBuildRequest } = require('../../scripts/msix-shared.mjs')
-const request = channelBuildRequest()
 
 // A channel created with --branding stable copies stable's identity, so it IS
 // the regular app. It must also run like one: a token would make the runtime

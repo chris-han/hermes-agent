@@ -148,11 +148,8 @@ def stage_distribution_assets(repo: Path, cache: Path) -> None:
     if distribution_extras(repo, target=current_target()) is None:
         return
     parent = repo / "semantier-runtime"
-    manifest = json.loads((parent / "composition.json").read_text(encoding="utf-8"))
-    for entry in manifest["files"]:
-        path = parent / entry["path"]
-        if not path.resolve().is_relative_to(parent.resolve()) or hashlib.sha256(path.read_bytes()).hexdigest() != entry["sha256"]:
-            raise ValueError("parent composition integrity mismatch: " + entry["path"])
+    from scripts.bundles.parent_composition import verify
+    manifest = verify(parent)
     # Product-owned implementation stays in the parent composition. Only the
     # staged distribution exposes it through Hermes' bundled backend owner;
     # copying into user plugins would require a separate user activation.

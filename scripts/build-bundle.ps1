@@ -37,7 +37,8 @@
 param(
   [switch]$Store,
   [string]$Python = '',
-  [string]$Remote = 'origin'
+  [string]$Remote = 'origin',
+  [string]$ChannelRequest = ''
 )
 
 # 'Stop' turns the native stderr progress lines of the build into terminating errors on Windows PowerShell 5.
@@ -149,7 +150,11 @@ try {
     if ($LASTEXITCODE) { Fail "Store packaging failed (exit $LASTEXITCODE)" }
   } else {
     Write-Host "build-bundle: building $sha (sideload)"
-    & $py scripts/bundles/desktop.py --commit $sha --variant bundled --clean
+    if ($ChannelRequest) {
+      & $py scripts/bundles/desktop.py --channel-request $ChannelRequest --variant bundled --clean
+    } else {
+      & $py scripts/bundles/desktop.py --commit $sha --variant bundled --clean
+    }
     if ($LASTEXITCODE) { Fail "build failed (exit $LASTEXITCODE)" }
   }
 } finally {

@@ -31,6 +31,7 @@ def _aux(timeout, *, reasoning_effort=True, **extra):
 
 
 DEFAULT_CONFIG = {
+    'client_feedback': {'service_url': '', 'portal_origin': ''},
     "model": "",
     "providers": {},
     "fallback_providers": [],

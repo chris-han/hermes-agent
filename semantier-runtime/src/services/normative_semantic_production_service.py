@@ -27,9 +27,11 @@ class _Proposal(BaseModel):
 
 class NormativeSemanticProductionService:
     COMPILER_REF = "compiler:source-normative-semantics:v3"
+    RUNTIME_COMPILER_REF = "compiler:source-normative-semantics:runtime-v1"
 
-    def __init__(self, *, llm, provider: str, model: str):
+    def __init__(self, *, llm, provider: str, model: str, request_context=None, reexecution_control=None):
         self.llm, self.provider, self.model = llm, provider, model
+        self.request_context, self.reexecution_control = request_context, reexecution_control
         self.instructions = (Path(__file__).resolve().parents[1] /
             "prompts/normative_semantic_production_v19.txt").read_text(encoding="utf-8")
         self.compiler_hash = "sha256:" + sha256(Path(__file__).read_bytes() + PROMPT_VIEW_HASH.encode('ascii') + LEGAL_SOURCE_CONTEXT_HASH.encode('ascii')).hexdigest()
@@ -50,85 +52,408 @@ class NormativeSemanticProductionService:
         return ArtifactPinV1(artifact_kind="normative_semantic_candidate_set",
             artifact_ref=candidate.candidate_set_ref, artifact_hash=candidate.candidate_set_hash)
 
-    async def produce_persisted(self, *, store, organization_id, workspace_id,
-                                actor_ref, schema_pin, request_id, created_at, predecessor_proposal_pin=None, teaching_context=None):
+    @staticmethod
+    def _runtime_source_context(store, scope, preparation, source):
+        """Bind target bytes/IR through the published preparation, never policy text."""
+        from contracts.canonical_source_ir import CanonicalSourceDocument
+        from contracts.evidence_location import SourceIdentity
+        from contracts.ontology_workbench_context import (
+            WorkspaceArtifactPreparationV1,
+            WorkspaceArtifactV1,
+        )
+        from semantier.knowledge_feature_packs.evidence_selector_builder import (
+            evidence_ref_for_block,
+        )
+        from semantier.knowledge_feature_packs.evidence_resolver import (
+            resolve_evidence_ref,
+        )
+
+        if (
+            not isinstance(preparation, WorkspaceArtifactPreparationV1)
+            or len(source) != 2
+        ):
+            raise TypeError(
+                "runtime semantics require a published preparation and exact source pair"
+            )
+        identity, document = source
+        if not isinstance(identity, SourceIdentity) or not isinstance(
+            document, CanonicalSourceDocument
+        ):
+            raise TypeError("runtime semantics require the existing source contracts")
+        saved = store.get(
+            **scope,
+            artifact_ref=preparation.preparation_ref,
+            contract_type=WorkspaceArtifactPreparationV1,
+        )
+        artifact = store.get(
+            **scope,
+            artifact_ref=preparation.artifact_pin.artifact_ref,
+            contract_type=WorkspaceArtifactV1,
+        )
+        identity_hash = "sha256:" + content_hash(
+            identity.model_dump(mode="json", by_alias=True, exclude_none=False)
+        )
+        document_hash = "sha256:" + content_hash(
+            document.model_dump(mode="json", by_alias=True, exclude_none=False)
+        )
+        if (
+            saved != preparation
+            or preparation.purpose != "RUNTIME_TARGET"
+            or preparation.outcome != "READY"
+            or (preparation.organization_id, preparation.workspace_id)
+            != (scope["organization_id"], scope["workspace_id"])
+            or artifact is None
+            or artifact.artifact_hash != preparation.artifact_pin.artifact_hash
+            or preparation.source_identity_pin is None
+            or preparation.canonical_source_ir_pin is None
+            or (identity.organization_id, identity.workspace_id)
+            != (scope["organization_id"], scope["workspace_id"])
+            or (identity.source_identity_ref, identity_hash)
+            != (
+                preparation.source_identity_pin.artifact_ref,
+                preparation.source_identity_pin.artifact_hash,
+            )
+            or identity.source_hash != artifact.content_hash
+            or document.source_identity_ref != identity.source_identity_ref
+            or document_hash != preparation.canonical_source_ir_pin.artifact_hash
+            or any(
+                locator.source_identity_ref != identity.source_identity_ref
+                or locator.source_hash != identity.source_hash
+                for mapping in document.source_map.mappings
+                for locator in mapping.source_locators
+            )
+        ):
+            raise ValueError("NORMATIVE_RUNTIME_SOURCE_BINDING_MISMATCH")
+        evidence = []
+        for block in document.blocks:
+            if not isinstance(block.content, str) or not block.content.strip():
+                continue
+            ref = evidence_ref_for_block(
+                document,
+                block,
+                source_identity=identity,
+                created_at=preparation.prepared_at,
+            )
+            provenance = {
+                **ref.provenance,
+                "canonical_source_ir_ref": preparation.canonical_source_ir_pin.artifact_ref,
+                "canonical_source_ir_hash": document_hash,
+            }
+            resolved = resolve_evidence_ref(
+                ref,
+                document,
+                artifact_ref=identity.artifact_ref,
+                selector_hash=ref.selector_hash,
+            )
+            if resolved.status in {"exact", "relocated_exact"}:
+                provenance.update(
+                    presentation_location=resolved.location,
+                    presentation_source_hash=identity.source_hash,
+                )
+            evidence.append(
+                ref.model_copy(update={"provenance": provenance}).model_dump(
+                    mode="json", by_alias=True
+                )
+            )
+        if not evidence:
+            raise ValueError("NORMATIVE_RUNTIME_SOURCE_EVIDENCE_REQUIRED")
+        context = dict(
+            **scope,
+            source_role="RUNTIME_TARGET",
+            boundary=dict(
+                **scope,
+                source_identity_ref=identity.source_identity_ref,
+                source_hash=identity.source_hash,
+                canonical_source_ir_ref=preparation.canonical_source_ir_pin.artifact_ref,
+                canonical_source_ir_hash=document_hash,
+            ),
+            canonical_source=document.model_dump(
+                mode="json", by_alias=True, exclude_none=False
+            ),
+            source_evidence=evidence,
+            source_citation_keys={
+                f"source-evidence:{index:04d}": item["evidenceRef"]
+                for index, item in enumerate(evidence, start=1)
+            },
+        )
+        context["source_reading_index"] = (
+            NormativeSchemaProductionService.source_reading_index(context)
+        )
+        return context
+
+
+    @classmethod
+    def _verify_source_context(cls, store, scope, request, schema_receipt):
+        binding = request.get("runtime_source_binding")
+        if binding is None:
+            return request["source_context"] == json.loads(schema_receipt.input_text)
+        from contracts.canonical_source_ir import CanonicalSourceDocument
+        from contracts.evidence_location import SourceIdentity
+        from contracts.ontology_workbench_context import WorkspaceArtifactPreparationV1
+
+        if set(binding) != {"preparation_pin", "source_identity", "canonical_source"}:
+            return False
+        pin = ArtifactPinV1.model_validate(binding["preparation_pin"])
+        preparation = store.get(
+            **scope,
+            artifact_ref=pin.artifact_ref,
+            contract_type=WorkspaceArtifactPreparationV1,
+        )
+        if (
+            pin.artifact_kind != "workspace_artifact_preparation"
+            or preparation is None
+            or preparation.preparation_hash != pin.artifact_hash
+        ):
+            return False
+        source = (
+            SourceIdentity.model_validate(binding["source_identity"]),
+            CanonicalSourceDocument.model_validate(binding["canonical_source"]),
+        )
+        return request["source_context"] == cls._runtime_source_context(
+            store, scope, preparation, source
+        )
+
+
+    async def produce_persisted(
+        self,
+        *,
+        store,
+        organization_id,
+        workspace_id,
+        actor_ref,
+        schema_pin,
+        request_id,
+        created_at,
+        predecessor_proposal_pin=None,
+        teaching_context=None,
+        runtime_preparation=None,
+        runtime_source=None,
+        reexecution_control=None,
+        verify_before_commit=None,
+    ):
         if not isinstance(store, OntologyBuildStore):
-            raise TypeError("semantic production requires the production artifact owner")
+            raise TypeError(
+                "semantic production requires the production artifact owner"
+            )
         if created_at.utcoffset() != timedelta(0):
             raise ValueError("semantic production requires UTC time")
+        execution = reexecution_control if reexecution_control is not None else self.reexecution_control
+        if execution is not None:
+            from contracts.model_gateway import ModelReexecutionControlV1
+            from agents.auth_session import RequestContext
+            ctx=self.request_context
+            if not isinstance(execution,ModelReexecutionControlV1) or not isinstance(ctx,RequestContext) or not ctx.authenticated or (ctx.organization_id,ctx.workspace_id,'user:'+ctx.user_id)!=(organization_id,workspace_id,actor_ref):
+                raise PermissionError('authenticated explicit reexecution scope required')
+            request_id='reexecution:'+execution.command_id
         scope = dict(organization_id=organization_id, workspace_id=workspace_id)
         source_schema, source_report = NormativeSchemaProductionService.read_persisted(
-            store=store, **scope, schema_pin=schema_pin)
+            store=store, **scope, schema_pin=schema_pin
+        )
+        runtime_binding = None
+        instructions = self.instructions
+        compiler_ref = self.COMPILER_REF
+        if (runtime_preparation is None) != (runtime_source is None):
+            raise ValueError("NORMATIVE_RUNTIME_SOURCE_REQUIRED")
+        if runtime_preparation is not None:
+            runtime_context = self._runtime_source_context(
+                store, scope, runtime_preparation, runtime_source
+            )
+            identity, document = runtime_source
+            runtime_binding = dict(
+                preparation_pin=ArtifactPinV1(
+                    artifact_kind="workspace_artifact_preparation",
+                    artifact_ref=runtime_preparation.preparation_ref,
+                    artifact_hash=runtime_preparation.preparation_hash,
+                ).model_dump(mode="json"),
+                source_identity=identity.model_dump(
+                    mode="json", by_alias=True, exclude_none=False
+                ),
+                canonical_source=document.model_dump(
+                    mode="json", by_alias=True, exclude_none=False
+                ),
+            )
+            instructions = (
+                (
+                    Path(__file__).resolve().parents[1]
+                    / "prompts/normative_semantic_runtime_target_v1.txt"
+                ).read_text(encoding="utf-8")
+                + "\n"
+                + instructions
+            )
+            compiler_ref = self.RUNTIME_COMPILER_REF
         if source_schema.teaching_candidate:
             from services.teaching_candidate_scope import require_teaching_scope
             from storage.ontology_build_store import ontology_build_store_path
+
             require_teaching_scope(teaching_context, **scope)
-            if (actor_ref != "user:" + teaching_context.user_id or
-                store._path.resolve() != ontology_build_store_path(teaching_context.workspace_root).resolve()):
+            if (
+                actor_ref != "user:" + teaching_context.user_id
+                or store._path.resolve()
+                != ontology_build_store_path(teaching_context.workspace_root).resolve()
+            ):
                 raise PermissionError("NORMATIVE_SEMANTIC_TEACHING_SCOPE_MISMATCH")
-        correction_pin = ({"predecessor_proposal": predecessor_proposal_pin.model_dump(mode="json")}
-            if predecessor_proposal_pin is not None else {})
-        request_hash = "sha256:" + content_hash(dict(**correction_pin, schema=schema_pin.model_dump(mode="json"),
-            instructions=self.instructions, output_schema=self.output_schema,
-            compiler_hash=self.compiler_hash, provider=self.provider, model=self.model))
-        operation = dict(**scope, actor_ref=actor_ref, operation="PRODUCE_NORMATIVE_SEMANTICS",
-                         request_id=request_id, request_hash=request_hash)
-        prior = store.get_operation_result(**operation, artifact_kind="normative_semantic_candidate_set")
+        correction_pin = (
+            {"predecessor_proposal": predecessor_proposal_pin.model_dump(mode="json")}
+            if predecessor_proposal_pin is not None
+            else {}
+        )
+        request_hash = "sha256:" + content_hash(
+            dict(
+                **correction_pin,
+                **({'model_reexecution':execution.model_dump()} if execution is not None else {}),
+                schema=schema_pin.model_dump(mode="json"),
+                instructions=instructions,
+                output_schema=self.output_schema,
+                compiler_hash=self.compiler_hash,
+                provider=self.provider,
+                model=self.model,
+                **(
+                    {"runtime_source_binding": runtime_binding}
+                    if runtime_binding is not None
+                    else {}
+                ),
+            )
+        )
+        operation = dict(
+            **scope,
+            actor_ref=actor_ref,
+            operation="PRODUCE_NORMATIVE_SEMANTICS",
+            request_id=request_id,
+            request_hash=request_hash,
+        )
+        prior = store.get_operation_result(
+            **operation, artifact_kind="normative_semantic_candidate_set"
+        )
         if prior is not None:
             return self.read_persisted(store=store, **scope, candidate_pin=prior)
         generation_operation = {**operation, "operation": "PROPOSE_NORMATIVE_SEMANTICS"}
-        generation_pin = store.get_operation_result(**generation_operation,
-            artifact_kind="normative_semantic_proposal_evidence")
+        generation_pin = store.get_operation_result(
+            **generation_operation, artifact_kind="normative_semantic_proposal_evidence"
+        )
         if generation_pin is None:
             schema, report = source_schema, source_report
             if schema.fact_definitions is None:
                 raise ValueError("NORMATIVE_SEMANTIC_FACT_DEFINITIONS_REQUIRED")
-            source_receipt = store.get(**scope, artifact_ref=schema.proposal_evidence_ref,
-                                       contract_type=NormativeSchemaProposalEvidenceV1)
-            request = dict(source_context=json.loads(source_receipt.input_text),
-                normative_schema=schema.model_dump(mode="json"), schema_adequacy=report.model_dump(mode="json"))
+            source_receipt = store.get(
+                **scope,
+                artifact_ref=schema.proposal_evidence_ref,
+                contract_type=NormativeSchemaProposalEvidenceV1,
+            )
+            request = dict(
+                source_context=json.loads(source_receipt.input_text),
+                normative_schema=schema.model_dump(mode="json"),
+                schema_adequacy=report.model_dump(mode="json"),
+            )
+            if runtime_binding is not None:
+                request.update(
+                    source_context=runtime_context,
+                    runtime_source_binding=runtime_binding,
+                )
             if predecessor_proposal_pin is not None:
                 request["zz_correction_context"] = self._correction_context(
-                    store, scope, predecessor_proposal_pin, request)
+                    store, scope, predecessor_proposal_pin, request
+                )
             input_text = canonical_json(request)
             from contracts.ai_grounding import StructuredGenerationError
+
+            execution_pin = None
+            execution_basis = None
+            def retain_execution(command):
+                nonlocal execution_basis, execution_pin
+                from contracts.model_gateway import ModelReexecutionRecordV1, canonical_hash
+                execution_basis=dict(schema_version='model_reexecution_record.v1',**scope,actor_ref=actor_ref,
+                    control=execution.model_dump(),command_hash=command.command_hash(execution.predecessor_id,actor_ref.removeprefix('user:'),workspace_id),
+                    request_hash=canonical_hash(command.request),material_hash=canonical_hash(dict(input=input_text,instructions=instructions,output_schema=self.output_schema)),
+                    schema_pin=schema_pin.model_dump(mode='json'),lineage=None,created_at=created_at.isoformat().replace('+00:00','Z'))
+                execution_pin=retain_record(execution_basis,'PREPARE_MODEL_REEXECUTION')
+            def retain_record(basis, operation_name):
+                from contracts.model_gateway import ModelReexecutionRecordV1
+                h=content_hash(basis)
+                record=ModelReexecutionRecordV1(artifact_ref='model-reexecution:'+h,artifact_hash='sha256:'+h,**basis)
+                return store.put_many_with_operation_result(**{**operation,'operation':operation_name},artifacts=(record,),
+                    result_pin=ArtifactPinV1(artifact_kind='model_reexecution_record',artifact_ref=record.artifact_ref,artifact_hash=record.artifact_hash),verify_before_commit=verify_before_commit)
+            def retain_lineage(lineage):
+                nonlocal execution_pin
+                if not lineage: raise ValueError('authoritative reexecution lineage required')
+                execution_pin=retain_record({**execution_basis,'lineage':lineage},'OBSERVE_MODEL_REEXECUTION')
             rejected_text = None
             usage = None
             try:
-                generated = await self.llm.generate_structured(instructions=self.instructions,
-                    input_text=provider_input_text(input_text), json_schema=self.output_schema,
-                    schema_name="normative_semantic_proposal_v1", purpose="normative_semantic_proposal")
-                provider, model, output = generated.provider, generated.model, generated.parsed
+                generated = await self.llm.generate_structured(
+                    instructions=instructions,
+                    input_text=provider_input_text(input_text),
+                    json_schema=self.output_schema,
+                    schema_name="normative_semantic_proposal_v1",
+                    purpose="normative_semantic_proposal",
+                    **(dict(reexecution=execution,before_reexecution=retain_execution,after_reexecution=retain_lineage) if execution is not None else {}),
+                )
+                provider, model, output = (
+                    generated.provider,
+                    generated.model,
+                    generated.parsed,
+                )
                 usage = dict(generated.usage)
             except StructuredGenerationError as exc:
                 raw = exc.raw_response
                 if raw is None:
                     raise
-                provider, model, rejected_text = raw['provider'], raw['model'], raw['text']
+                provider, model, rejected_text = (
+                    raw["provider"],
+                    raw["model"],
+                    raw["text"],
+                )
                 output = {}
-                usage = raw.get('usage')
+                usage = raw.get("usage")
             if (provider, model) != (self.provider, self.model):
                 raise ValueError("NORMATIVE_SEMANTIC_PROVIDER_ATTRIBUTION_MISMATCH")
-            basis = dict(schema_version="normative_semantic_proposal_evidence.v1", **scope,
-                instructions=self.instructions, input_text=input_text, provider_input_text=provider_input_text(input_text), output_schema=self.output_schema,
-                output=output, provider=provider, model=model,
-                compiler_ref=self.COMPILER_REF, compiler_hash=self.compiler_hash,
-                created_at=created_at.isoformat().replace("+00:00", "Z"))
+            basis = dict(
+                schema_version="normative_semantic_proposal_evidence.v1",
+                **scope,
+                instructions=instructions,
+                input_text=input_text,
+                provider_input_text=provider_input_text(input_text),
+                output_schema=self.output_schema,
+                output=output,
+                provider=provider,
+                model=model,
+                compiler_ref=compiler_ref,
+                compiler_hash=self.compiler_hash,
+                created_at=created_at.isoformat().replace("+00:00", "Z"),
+            )
+            if execution_pin is not None:
+                basis["reexecution_record_pin"] = execution_pin.model_dump(mode="json")
             if usage is not None:
                 basis["usage"] = usage
             if rejected_text is not None:
-                basis['rejected_response_text'] = rejected_text
+                basis["rejected_response_text"] = rejected_text
             digest = content_hash(basis)
-            receipt = NormativeSemanticProposalEvidenceV1(evidence_ref="normative-semantic-proposal:" + digest,
-                evidence_hash="sha256:" + digest, **basis)
-            generation_pin = store.put_many_with_operation_result(**generation_operation, artifacts=(receipt,),
-                result_pin=ArtifactPinV1(artifact_kind="normative_semantic_proposal_evidence",
-                    artifact_ref=receipt.evidence_ref, artifact_hash=receipt.evidence_hash))
-        receipt = self._receipt(store, scope, generation_pin.artifact_ref, generation_pin.artifact_hash)
+            receipt = NormativeSemanticProposalEvidenceV1(
+                evidence_ref="normative-semantic-proposal:" + digest,
+                evidence_hash="sha256:" + digest,
+                **basis,
+            )
+            generation_pin = store.put_many_with_operation_result(
+                **generation_operation,
+                artifacts=(receipt,),
+                result_pin=ArtifactPinV1(
+                    artifact_kind="normative_semantic_proposal_evidence",
+                    artifact_ref=receipt.evidence_ref,
+                    artifact_hash=receipt.evidence_hash,
+                ),
+                verify_before_commit=verify_before_commit,
+            )
+        receipt = self._receipt(
+            store, scope, generation_pin.artifact_ref, generation_pin.artifact_hash
+        )
         candidate = self._compile(receipt)
-        winner = store.put_many_with_operation_result(**operation, artifacts=(candidate,),
-            result_pin=self._pin(candidate))
+        winner = store.put_many_with_operation_result(
+            **operation,
+            artifacts=(candidate,),
+            result_pin=self._pin(candidate),
+            verify_before_commit=verify_before_commit,
+        )
         return self.read_persisted(store=store, **scope, candidate_pin=winner)
+
 
     @classmethod
     def review_rejected_proposal_persisted(cls, *, ctx, authority_resolver, store,
@@ -142,7 +467,8 @@ class NormativeSemanticProductionService:
         if not ctx.authenticated or store._path.resolve() != ontology_build_store_path(ctx.workspace_root).resolve():
             raise ValueError("NORMATIVE_SEMANTIC_REVIEW_WORKSPACE_MISMATCH")
         actor = RuntimeContextDTO(organization_id=ctx.organization_id, workspace_id=ctx.workspace_id, actor_id=ctx.user_id)
-        authorize = lambda: authority_resolver.require_current_actor(actor_context=actor, authorization_class="TENANT_ADMIN")
+        def authorize():
+            authority_resolver.require_current_actor(actor_context=actor, authorization_class="TENANT_ADMIN")
         authorize()
         if reviewed_at.utcoffset() != timedelta(0) or not rationale.strip():
             raise ValueError("semantic review requires UTC time and a rationale")
@@ -184,11 +510,12 @@ class NormativeSemanticProductionService:
             retained = json.loads(prior.input_text)
             if (retained["normative_schema"] != schema.model_dump(mode="json")
                 or retained["schema_adequacy"] != adequacy.model_dump(mode="json")
-                or source_receipt is None or retained["source_context"] != json.loads(source_receipt.input_text)):
+                or source_receipt is None or not cls._verify_source_context(store, scope, retained, source_receipt)):
                 raise ValueError("NORMATIVE_SEMANTIC_REVIEW_SCHEMA_MISMATCH")
             winner = store.put_many_with_operation_result(**operation, artifacts=(review, candidate),
                 result_pin=cls._pin(candidate), verify_before_commit=authorize)
         return cls.read_persisted(store=store, **scope, candidate_pin=winner)
+
 
     @classmethod
     def _correction_context(cls, store, scope, pin, request, *, retained_diagnostic=None):
@@ -196,7 +523,7 @@ class NormativeSemanticProductionService:
             raise ValueError("NORMATIVE_SEMANTIC_CORRECTION_KIND_MISMATCH")
         prior = cls._receipt(store, scope, pin.artifact_ref, pin.artifact_hash)
         old = json.loads(prior.input_text)
-        keys = ("source_context", "normative_schema", "schema_adequacy")
+        keys = ("source_context", "normative_schema", "schema_adequacy", "runtime_source_binding")
         if any(old.get(key) != request.get(key) for key in keys):
             raise ValueError("NORMATIVE_SEMANTIC_CORRECTION_INPUT_MISMATCH")
         from contracts.ai_grounding import StructuredGenerationError
@@ -228,11 +555,25 @@ class NormativeSemanticProductionService:
         return dict(predecessor=pin.model_dump(mode="json"),
             rejected_output=rejected, rejection_error=error)
 
+
     @staticmethod
     def _receipt(store, scope, ref, digest):
         receipt = store.get(**scope, artifact_ref=ref, contract_type=NormativeSemanticProposalEvidenceV1)
         if receipt is None or receipt.evidence_hash != digest:
             raise ValueError("NORMATIVE_SEMANTIC_PROPOSAL_PIN_MISMATCH")
+        if receipt.reexecution_record_pin is not None:
+            from contracts.model_gateway import ModelReexecutionRecordV1
+            pin=receipt.reexecution_record_pin
+            record=store.get(**scope,artifact_ref=pin.artifact_ref,contract_type=ModelReexecutionRecordV1)
+            if record.artifact_hash!=pin.artifact_hash or record.lineage is None:
+                raise ValueError('reexecution lineage pin mismatch')
+            from contracts.model_gateway import canonical_hash
+            material=canonical_hash(dict(input=receipt.input_text,instructions=receipt.instructions,output_schema=receipt.output_schema))
+            schema=json.loads(receipt.input_text).get('normative_schema',{})
+            if record.material_hash!=material:
+                raise ValueError('reexecution material mismatch')
+            if (record.schema_pin.artifact_kind,record.schema_pin.artifact_ref,record.schema_pin.artifact_hash)!=('normative_schema_contract',schema.get('schema_ref'),schema.get('schema_hash')):
+                raise ValueError('reexecution schema binding mismatch')
         return receipt
 
     @classmethod
@@ -248,13 +589,15 @@ class NormativeSemanticProductionService:
             raise StructuredGenerationError('NORMATIVE_SEMANTIC_STRUCTURED_RESPONSE_REJECTED',
                 raw_response=dict(text=receipt.rejected_response_text, provider=receipt.provider, model=receipt.model))
         request = json.loads(receipt.input_text)
+        if ("runtime_source_binding" in request) != (receipt.compiler_ref == cls.RUNTIME_COMPILER_REF):
+            raise ValueError("NORMATIVE_RUNTIME_COMPILER_BINDING_MISMATCH")
         source = request["source_context"]
         schema = NormativeSchemaContractV1.model_validate(request["normative_schema"])
         if (schema.organization_id, schema.workspace_id) != (receipt.organization_id, receipt.workspace_id):
             raise ValueError("NORMATIVE_SEMANTIC_SCOPE_MISMATCH")
         output = NormativeSchemaProductionService.resolve_source_citations(
             review.corrected_output if review else receipt.output, source)
-        if receipt.compiler_ref in {"compiler:source-normative-semantics:v2", "compiler:source-normative-semantics:v3"}:
+        if receipt.compiler_ref in {"compiler:source-normative-semantics:v2", "compiler:source-normative-semantics:v3", cls.RUNTIME_COMPILER_REF}:
             blocks = {item["evidenceRef"]: item["provenance"]["source_block_id"] for item in NormativeSchemaProductionService.source_evidence(source)}
             region_keys = {key: blocks[ref] for key, ref in source.get("source_citation_keys", {}).items()}
             output = {**output, "frames": [{**frame, "source_region_refs": [region_keys.get(ref, ref)
@@ -310,7 +653,8 @@ class NormativeSemanticProductionService:
         if "rule_effects" in entity_schema.get("required", ()):
             unresolved.update(frame.frame_id for frame in frames
                 if frame.frame_kind == "entity_distinction" and not frame.rule_effects)
-        unresolved.update(slot.dimension for slot in schema.slots if slot.epistemic_status != "FOUND")
+        if receipt.compiler_ref != cls.RUNTIME_COMPILER_REF:
+            unresolved.update(slot.dimension for slot in schema.slots if slot.epistemic_status != "FOUND")
         unresolved.update(frame.frame_id for frame in frames if frame.epistemic_status != "FOUND")
         kinds = {frame.frame_kind for frame in frames}
         if "relative_temporal_condition" in kinds:
@@ -357,6 +701,7 @@ class NormativeSemanticProductionService:
         digest = content_hash(basis)
         return NormativeSemanticCandidateSetV1(candidate_set_ref="normative-candidate:" + digest,
             candidate_set_hash="sha256:" + digest, compiled_at=review.reviewed_at if review else receipt.created_at, **basis)
+
 
     @staticmethod
     def _validate_frames(frames, source_evidence):
@@ -449,6 +794,6 @@ class NormativeSemanticProductionService:
                 retained_diagnostic=context.get("rejection_error")):
                 raise ValueError("NORMATIVE_SEMANTIC_CORRECTION_REPLAY_MISMATCH")
         if (request["normative_schema"] != schema.model_dump(mode="json") or
-            request["source_context"] != json.loads(source_receipt.input_text) or cls._compile(receipt, review=review) != candidate):
+            not cls._verify_source_context(store, scope, request, source_receipt) or cls._compile(receipt, review=review) != candidate):
             raise ValueError("NORMATIVE_SEMANTIC_REPLAY_MISMATCH")
         return candidate

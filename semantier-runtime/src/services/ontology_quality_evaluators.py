@@ -163,7 +163,7 @@ class ReplayQualityEvaluator:
             expected = OntologyRulePlanCompiler(compiler_ref=plan.compiler_ref, compiler_hash=plan.compiler_hash).compile(
                 candidate=candidate, validation_contract_ref=validation.validation_contract_ref,
                 validation_contract_hash=validation.validation_contract_hash,
-                competency_refs=plan.rules[0].competency_refs, compiled_at=plan.compiled_at)
+                competency_refs=plan.rules[0].competency_refs, compiled_at=plan.compiled_at, domain_basis=plan.domain_basis)
             if expected != plan:
                 reconstruction_failures.append('replay:projection-mismatch')
         except (ValueError, IndexError) as exc:

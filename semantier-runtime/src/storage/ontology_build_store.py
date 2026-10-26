@@ -70,6 +70,7 @@ from contracts.ontology_validation import CompiledRulePlanV1
 from contracts.tender_document_date_observation import TenderDocumentDateObservationV1
 from contracts.tender_observed_facts_projection import (
     TenderFactObservationReceiptV1, TenderCategoricalFactObservationReceiptV1,
+    TenderFactObservationReceiptV2, TenderObservedFactsProjectionReceiptV2,
 )
 from contracts.ontology_repair import (
     AdvisoryNextProposalCommandV1,
@@ -709,6 +710,8 @@ _IDENTITY_FIELDS: dict[str, tuple[str, str]] = {
 }
 
 _WORKSPACE_ARTIFACT_MODELS = {
+    "tender_fact_observation_receipt.v2": (TenderFactObservationReceiptV2, "receipt_ref", "receipt_hash"),
+    "tender_observed_facts_projection_receipt.v2": (TenderObservedFactsProjectionReceiptV2, "projection_ref", "projection_hash"),
     "etl_run_receipt.v1": (EtlReceipt, "receipt_ref", "receipt_hash"),
     "tender_categorical_fact_observation_receipt.v1": (
         TenderCategoricalFactObservationReceiptV1, "receipt_ref", "receipt_hash",
@@ -823,6 +826,12 @@ for _hr_model in (HrJobModelV1, HrScreeningRunV1, HrSourceBindingV1, HrJobModelV
     _hr_schema = _hr_model.model_fields["schema_version"].default
     _TASK909_MODELS[_hr_schema] = (_hr_model,)
     _IDENTITY_FIELDS[_hr_schema] = ("artifact_ref", "artifact_hash")
+from contracts.model_gateway import ModelReexecutionRecordV1
+_TASK909_MODELS['model_reexecution_record.v1'] = (ModelReexecutionRecordV1,)
+_IDENTITY_FIELDS['model_reexecution_record.v1'] = ('artifact_ref', 'artifact_hash')
+from contracts.requirements_reconciliation import RequirementsReviewV1
+_TASK909_MODELS['requirements_review.v1'] = (RequirementsReviewV1,)
+_IDENTITY_FIELDS['requirements_review.v1'] = ('review_ref', 'review_hash')
 from contracts.policy_revision import PolicyRevisionRecordV1
 _TASK909_MODELS['policy_revision_record.v1'] = (PolicyRevisionRecordV1,)
 _IDENTITY_FIELDS['policy_revision_record.v1'] = ('artifact_ref', 'artifact_hash')
@@ -3494,6 +3503,144 @@ class OntologyBuildStore:
         requests = self._connection.execute(sql_query("SELECT request_id FROM hr_screening_operations "
             "WHERE organization_id=? AND workspace_id=? AND actor_id=? AND session_id=? ORDER BY started_at,request_id",'SELECT request_id FROM hr_screening_operations WHERE organization_id=%s AND workspace_id=%s AND actor_id=%s AND session_id=%s ORDER BY started_at,request_id'), scope).fetchall()
         return [self.hr_operation(scope=scope, request_id=r[0]) for r in requests]
+
+    def requirements_head(
+        self, *, organization_id, workspace_id, journey_id, source_role
+    ):
+        row = self._connection.execute(
+            sql_query(
+                "SELECT receipt_ref,receipt_hash FROM workspace_operation_request_index WHERE organization_id=? AND workspace_id=? AND actor_ref=? AND operation=? AND request_id=?",
+                "SELECT receipt_ref,receipt_hash FROM workspace_operation_request_index WHERE organization_id=%s AND workspace_id=%s AND actor_ref=%s AND operation=%s AND request_id=%s",
+            ),
+            (
+                organization_id,
+                workspace_id,
+                "system:requirements",
+                "REQUIREMENTS_HEAD",
+                journey_id + ":" + source_role,
+            ),
+        ).fetchone()
+        if row is None:
+            return None
+        review = self.get(
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            artifact_ref=row[0],
+            contract_type=RequirementsReviewV1,
+        )
+        if review is None or review.review_hash != row[1]:
+            raise ValueError("REQUIREMENTS_HEAD_INTEGRITY")
+        return review
+
+    def publish_requirements_review(
+        self, *, review, request_id, request_hash, verify_before_commit
+    ):
+        """Append result and command receipt with a per-task/source-role CAS.
+
+        Uses the existing operation index on both SQLite and PostgreSQL.
+        """
+        review = RequirementsReviewV1.model_validate(review.model_dump(mode="json"))
+        scope = dict(
+            organization_id=review.organization_id, workspace_id=review.workspace_id
+        )
+        winner = review.pin()
+        command_scope = (
+            review.organization_id,
+            review.workspace_id,
+            review.actor_ref,
+            "REQUIREMENTS_COMMAND",
+            request_id,
+        )
+        head_scope = (
+            review.organization_id,
+            review.workspace_id,
+            "system:requirements",
+            "REQUIREMENTS_HEAD",
+            review.journey_id + ":" + review.source_role,
+        )
+
+        def validate(connection):
+            nonlocal winner
+            prior = self.get_operation_result(
+                **scope,
+                actor_ref=review.actor_ref,
+                operation="REQUIREMENTS_COMMAND",
+                request_id=request_id,
+                request_hash=request_hash,
+                artifact_kind="requirements_review",
+            )
+            if prior is not None:
+                winner = prior
+                verify_before_commit(replay=True)
+                return False
+            current = self.requirements_head(
+                **scope, journey_id=review.journey_id, source_role=review.source_role
+            )
+            if (current.pin() if current else None) != review.predecessor_pin:
+                raise ValueError("STALE_REQUIREMENTS_REVIEW")
+            if (
+                current is not None
+                and current.journey_revision >= review.journey_revision
+            ):
+                raise ValueError("REQUIREMENTS_ADOPTION_REQUIRED")
+            verify_before_commit(replay=False)
+            return True
+
+        def indexes(connection):
+            connection.execute(
+                sql_query(
+                    "INSERT INTO workspace_operation_request_index VALUES (?,?,?,?,?,?,?,?)",
+                    "INSERT INTO workspace_operation_request_index VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+                ),
+                (*command_scope, request_hash, review.review_ref, review.review_hash),
+            )
+            if review.predecessor_pin is None:
+                connection.execute(
+                    sql_query(
+                        "INSERT INTO workspace_operation_request_index VALUES (?,?,?,?,?,?,?,?)",
+                        "INSERT INTO workspace_operation_request_index VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+                    ),
+                    (*head_scope, request_hash, review.review_ref, review.review_hash),
+                )
+            else:
+                updated = connection.execute(
+                    sql_query(
+                        "UPDATE workspace_operation_request_index SET request_hash=?,receipt_ref=?,receipt_hash=? WHERE organization_id=? AND workspace_id=? AND actor_ref=? AND operation=? AND request_id=? AND receipt_ref=? AND receipt_hash=?",
+                        "UPDATE workspace_operation_request_index SET request_hash=%s,receipt_ref=%s,receipt_hash=%s WHERE organization_id=%s AND workspace_id=%s AND actor_ref=%s AND operation=%s AND request_id=%s AND receipt_ref=%s AND receipt_hash=%s",
+                    ),
+                    (
+                        request_hash,
+                        review.review_ref,
+                        review.review_hash,
+                        *head_scope,
+                        review.predecessor_pin.artifact_ref,
+                        review.predecessor_pin.artifact_hash,
+                    ),
+                )
+                if updated.rowcount != 1:
+                    raise ValueError("STALE_REQUIREMENTS_REVIEW")
+
+        try:
+            self.atomic_write(
+                artifacts=(review,),
+                validate_before_insert=validate,
+                mutate_indexes=indexes,
+                verify_before_commit=lambda: verify_before_commit(replay=False),
+            )
+        except integrity_errors() as exc:
+            replay = self.get_operation_result(
+                **scope,
+                actor_ref=review.actor_ref,
+                operation="REQUIREMENTS_COMMAND",
+                request_id=request_id,
+                request_hash=request_hash,
+                artifact_kind="requirements_review",
+            )
+            if replay is None:
+                raise ValueError("STALE_REQUIREMENTS_REVIEW") from exc
+            verify_before_commit(replay=True)
+            return replay
+        return winner
 
     def get_operation_result(
         self, *, organization_id: str, workspace_id: str, actor_ref: str,

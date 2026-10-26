@@ -1,0 +1,177 @@
+{
+  "contract": "semantier-client-operations/v1",
+  "version": "1.1.0",
+  "schema_sha256": "0cad508de4bce7d0a8ee060c693dfd88d1f9910ccbca7f4d4f29d0deab66cc28",
+  "update_events": [
+    {
+      "name": "exact-target",
+      "input": {
+        "schema_version": "1.0.0",
+        "event_id": "event-one",
+        "update_id": "update-one",
+        "installation_ref": "install-one",
+        "release_id": "release-one",
+        "target_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "from_version": "0.0.36.0",
+        "target_version": "0.0.37.0",
+        "package_family": "Semantier.Agent.Acceptance_testpublisher",
+        "stage": "restart_confirmation",
+        "outcome": "target_confirmed",
+        "observed_version": "0.0.37.0",
+        "observed_family": "Semantier.Agent.Acceptance_testpublisher",
+        "observed_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "occurred_at": "2026-10-26T04:00:00+00:00"
+      },
+      "expected": "accepted"
+    },
+    {
+      "name": "reject-observed_version",
+      "input": {
+        "schema_version": "1.0.0",
+        "event_id": "event-one",
+        "update_id": "update-one",
+        "installation_ref": "install-one",
+        "release_id": "release-one",
+        "target_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "from_version": "0.0.36.0",
+        "target_version": "0.0.37.0",
+        "package_family": "Semantier.Agent.Acceptance_testpublisher",
+        "stage": "restart_confirmation",
+        "outcome": "target_confirmed",
+        "observed_version": "0.0.38.0",
+        "observed_family": "Semantier.Agent.Acceptance_testpublisher",
+        "observed_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "occurred_at": "2026-10-26T04:00:00+00:00"
+      },
+      "expected": "rejected"
+    },
+    {
+      "name": "reject-observed_family",
+      "input": {
+        "schema_version": "1.0.0",
+        "event_id": "event-one",
+        "update_id": "update-one",
+        "installation_ref": "install-one",
+        "release_id": "release-one",
+        "target_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "from_version": "0.0.36.0",
+        "target_version": "0.0.37.0",
+        "package_family": "Semantier.Agent.Acceptance_testpublisher",
+        "stage": "restart_confirmation",
+        "outcome": "target_confirmed",
+        "observed_version": "0.0.37.0",
+        "observed_family": "Other_test",
+        "observed_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "occurred_at": "2026-10-26T04:00:00+00:00"
+      },
+      "expected": "rejected"
+    },
+    {
+      "name": "reject-observed_sha256",
+      "input": {
+        "schema_version": "1.0.0",
+        "event_id": "event-one",
+        "update_id": "update-one",
+        "installation_ref": "install-one",
+        "release_id": "release-one",
+        "target_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "from_version": "0.0.36.0",
+        "target_version": "0.0.37.0",
+        "package_family": "Semantier.Agent.Acceptance_testpublisher",
+        "stage": "restart_confirmation",
+        "outcome": "target_confirmed",
+        "observed_version": "0.0.37.0",
+        "observed_family": "Semantier.Agent.Acceptance_testpublisher",
+        "observed_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "occurred_at": "2026-10-26T04:00:00+00:00"
+      },
+      "expected": "rejected"
+    },
+    {
+      "name": "reject-stage",
+      "input": {
+        "schema_version": "1.0.0",
+        "event_id": "event-one",
+        "update_id": "update-one",
+        "installation_ref": "install-one",
+        "release_id": "release-one",
+        "target_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "from_version": "0.0.36.0",
+        "target_version": "0.0.37.0",
+        "package_family": "Semantier.Agent.Acceptance_testpublisher",
+        "stage": "handoff",
+        "outcome": "target_confirmed",
+        "observed_version": "0.0.37.0",
+        "observed_family": "Semantier.Agent.Acceptance_testpublisher",
+        "observed_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "occurred_at": "2026-10-26T04:00:00+00:00"
+      },
+      "expected": "rejected"
+    },
+    {
+      "name": "reject-occurred_at",
+      "input": {
+        "schema_version": "1.0.0",
+        "event_id": "event-one",
+        "update_id": "update-one",
+        "installation_ref": "install-one",
+        "release_id": "release-one",
+        "target_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "from_version": "0.0.36.0",
+        "target_version": "0.0.37.0",
+        "package_family": "Semantier.Agent.Acceptance_testpublisher",
+        "stage": "restart_confirmation",
+        "outcome": "target_confirmed",
+        "observed_version": "0.0.37.0",
+        "observed_family": "Semantier.Agent.Acceptance_testpublisher",
+        "observed_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "occurred_at": "2026-10-26T04:00:00"
+      },
+      "expected": "rejected"
+    },
+    {
+      "name": "reject-account_id",
+      "input": {
+        "schema_version": "1.0.0",
+        "event_id": "event-one",
+        "update_id": "update-one",
+        "installation_ref": "install-one",
+        "release_id": "release-one",
+        "target_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "from_version": "0.0.36.0",
+        "target_version": "0.0.37.0",
+        "package_family": "Semantier.Agent.Acceptance_testpublisher",
+        "stage": "restart_confirmation",
+        "outcome": "target_confirmed",
+        "observed_version": "0.0.37.0",
+        "observed_family": "Semantier.Agent.Acceptance_testpublisher",
+        "observed_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "occurred_at": "2026-10-26T04:00:00+00:00",
+        "account_id": "untrusted"
+      },
+      "expected": "rejected"
+    }
+  ],
+  "feedback_authorizations": [
+    {
+      "name": "diagnostic-only",
+      "input": {
+        "intent_ref": "intent-one",
+        "proof_challenge": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "purpose": "diagnostic",
+        "profile_ref": "profile-one"
+      },
+      "expected": "accepted"
+    },
+    {
+      "name": "no-inference-scope",
+      "input": {
+        "intent_ref": "intent-one",
+        "proof_challenge": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "purpose": "inference",
+        "profile_ref": "profile-one"
+      },
+      "expected": "rejected"
+    }
+  ]
+}

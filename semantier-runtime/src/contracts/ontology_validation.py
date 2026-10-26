@@ -9,6 +9,10 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
+from eos.artifact_hashing import content_hash
+from contracts.normative_conflict import NormativeDomainBasisV2
+
+
 SHA256_PATTERN = r"^sha256:[0-9a-f]{64}$"
 
 
@@ -92,7 +96,9 @@ class CompiledPrecedenceV1(_Contract):
     evidence_refs: tuple[str, ...] = Field(min_length=1)
 
 
+
 class CompiledRulePlanV1(_Contract):
+    domain_basis: NormativeDomainBasisV2 | None = Field(default=None, exclude_if=lambda v: v is None)
     teaching_candidate: Literal[True] | None = Field(default=None, exclude_if=lambda value: value is None)
     schema_version: Literal["compiled_rule_plan.v1"] = "compiled_rule_plan.v1"
     plan_ref: str = Field(min_length=1)
@@ -136,6 +142,37 @@ class CompiledRulePlanV1(_Contract):
             tuple(TopologicalSorter(dependencies).static_order())
         except CycleError as exc:
             raise ValueError("precedence cycle is not executable") from exc
+        return self
+
+
+class LegalClaimRuleBindingV2(_Contract):
+    claim_ref: str
+    claim_hash: str
+    source_span_hash: str
+    rule_ref: str
+
+
+class LegalPrecedenceBasisV2(_Contract):
+    """Explicit mapping certified with the existing legal issue-model owner."""
+    schema_version: Literal["legal_precedence_basis.v2"] = "legal_precedence_basis.v2"
+    organization_id: str
+    issue_model_id: str
+    ontology_version_ref: str
+    plan: CompiledRulePlanV1
+    bindings: tuple[LegalClaimRuleBindingV2, ...]
+
+    @model_validator(mode="after")
+    def exact_plan_and_mapping(self):
+        if self.organization_id != self.plan.organization_id:
+            raise ValueError("legal precedence organization mismatch")
+        if len({b.claim_ref for b in self.bindings}) != len(self.bindings) or len({b.rule_ref for b in self.bindings}) != len(self.bindings):
+            raise ValueError("legal precedence requires unique exact endpoints")
+        if {b.rule_ref for b in self.bindings} != {r.rule_id for r in self.plan.rules}:
+            raise ValueError("legal precedence rule mapping is incomplete")
+        payload = self.plan.model_dump(mode="json", exclude={"schema_version", "plan_ref", "plan_hash", "organization_id", "workspace_id", "compiled_at"})
+        digest = content_hash(dict(payload, compiled_at=self.plan.compiled_at.isoformat()))
+        if (self.plan.plan_ref, self.plan.plan_hash) != ("compiled-rule-plan:"+digest, "sha256:"+digest):
+            raise ValueError("legal precedence compiled plan identity mismatch")
         return self
 
 

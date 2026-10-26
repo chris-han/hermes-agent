@@ -54,9 +54,12 @@ class AdminFacade:
         info=body.get('model_info',{})
         if not isinstance(info,dict) or set(info)-{'id'}:
             raise HTTPException(422,'unsupported model metadata')
-        controlled={'timeout':10.0,'num_retries':0,'max_retries':0,'fallbacks':[]}
+        timeout = params.get('timeout', 10.0)
+        if type(timeout) not in (int, float) or not 1 <= timeout <= 120:
+            raise HTTPException(422, 'provider timeout must be between 1 and 120 seconds')
+        controlled={'timeout':timeout,'num_retries':0,'max_retries':0,'fallbacks':[]}
         if any(key in params and params[key]!=value for key,value in controlled.items()):
-            raise HTTPException(422,'native retry/timeout/fallback policy cannot be changed')
+            raise HTTPException(422,'native retry/fallback policy cannot be changed')
         if any(not isinstance(value,str) for key,value in params.items() if key not in controlled):
             raise HTTPException(422,'provider configuration values must be strings')
         if not isinstance(body.get('model_name'),str) or not body['model_name'].isascii():
@@ -83,7 +86,7 @@ class AdminFacade:
             name=namespace+name
         body={**body,'model_name':name}
         await self.service.store.audit(actor.organization_id,actor.user_id,'model.update' if mid else 'model.create',mid or body['model_name'],canonical_hash(body))
-        body={**body,'litellm_params':{**params,'timeout':10.0,'num_retries':0,'max_retries':0,'fallbacks':[]}}
+        body={**body,'litellm_params':{**params,**controlled}}
         result=await self.service.proxy.operation('PATCH' if mid else 'POST',
             '/model/'+quote(mid,safe='')+'/update' if mid else '/model/new',body)
         new_id=(result.get('model_info') or {}).get('id') or result.get('id') or mid

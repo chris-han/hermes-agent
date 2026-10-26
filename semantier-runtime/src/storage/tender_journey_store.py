@@ -421,7 +421,7 @@ class TenderJourneyStore:
             if current.current_phase == "REVIEW_RESULTS" and transition.to_phase in {
                 "CONTEXT_READY", "NEEDS_RUNTIME_DOCUMENT",
             }:
-                for role in ("runtime_document", "runtime_document_preparation", "runtime_context", "inspection_result"):
+                for role in ("runtime_document", "runtime_document_preparation", "runtime_context", "inspection_result", "runtime_normative_semantics"):
                     bindings.pop(role, None)
             bindings.update({binding.role: binding for binding in transition.artifact_bindings})
             now = transition.created_at

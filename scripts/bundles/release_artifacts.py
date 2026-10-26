@@ -292,15 +292,17 @@ def publish(manifest: dict, root: Path, public_base: str) -> None:
 
 
 def write_appinstaller(out: Path, *, identity: str, publisher: str, version: str,
-                       self_uri: str, artifact_uri: str, update_policy: str = "automatic") -> None:
+                       self_uri: str, artifact_uri: str, update_policy: str = "automatic", package_arch: str | None = None) -> None:
     """Serialize verified package facts; callers own channel/acceptance policy."""
     if not all((identity, publisher, version, self_uri, artifact_uri)):
         raise ValueError("Explicit identity, publisher, version, self URI and artifact URI are required")
     ns = "http://schemas.microsoft.com/appx/appinstaller/2017/2"
     ET.register_namespace("", ns)
     descriptor = ET.Element(f"{{{ns}}}AppInstaller", {"Uri": self_uri, "Version": version})
-    ET.SubElement(descriptor, f"{{{ns}}}MainBundle", {
+    if package_arch not in (None, 'x64', 'arm64'):raise ValueError('Unsupported single-package architecture')
+    ET.SubElement(descriptor, f"{{{ns}}}" + ('MainPackage' if package_arch else 'MainBundle'), {
         "Name": identity, "Publisher": publisher, "Version": version, "Uri": artifact_uri,
+        **({'ProcessorArchitecture': package_arch} if package_arch else {}),
     })
     if update_policy not in ("automatic", "pinned"):
         raise ValueError("Unknown App Installer update policy")

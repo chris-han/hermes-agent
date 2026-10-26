@@ -37,6 +37,8 @@ async def proxy_v1(request: Request, upstream_path: str) -> Response:
     if not forwarded_upstream_allowed(target):
         raise HTTPException(status_code=404, detail="Not found")
     _require_authenticated_context(request)
+    if target.startswith("/api/config") and request.method not in {"GET", "HEAD"}:
+        raise HTTPException(status_code=405, detail="Configuration introspection is read-only; use the validated model assignment owner.")
     return await _forward_embedded_request(request, target)
 
 
@@ -49,4 +51,6 @@ async def proxy_api(request: Request, upstream_path: str) -> Response:
     if not forwarded_upstream_allowed(target):
         raise HTTPException(status_code=404, detail="Not found")
     _require_authenticated_context(request)
+    if target.startswith("/api/config") and request.method not in {"GET", "HEAD"}:
+        raise HTTPException(status_code=405, detail="Configuration introspection is read-only; use the validated model assignment owner.")
     return await _forward_embedded_request(request, target)

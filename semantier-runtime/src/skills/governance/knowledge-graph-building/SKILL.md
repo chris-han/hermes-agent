@@ -88,3 +88,9 @@ Direct requests to induce a corpus schema, call a tool/API, or execute a profile
 - Recompiling occurrence-only or routed systematic feedback instead of recording `route_only`.
 - Recording journey learning under the compiler identity, or compiler/profile learning under the journey identity.
 - Rewriting an old run, learning row, decision, or release instead of creating a successor and comparable re-test.
+
+
+## Normative source review
+
+<!-- runtime-owner: WORKFLOW invariant-class: WORKFLOW_HEURISTIC -->
+When this source is modeled through a selected Tender journey, follow `tender-review-journey` → Source requirements and saved clarification. Rehydrate its saved review and answers through the shared authenticated actions. Keep descriptive graph work available; report unsupported context/exception semantics as UNKNOWN. This routing adds no generic requirements engine or rule activation.

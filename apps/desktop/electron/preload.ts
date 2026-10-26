@@ -65,6 +65,15 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     return () => ipcRenderer.removeListener('hermes:browser-popout:closed', listener)
   },
   claimAmbientCue: key => ipcRenderer.invoke('hermes:ambient:claim', key),
+  semantierFeedback: {
+    onOpen: callback => { const listener = () => callback(); ipcRenderer.on('semantier:feedback:open', listener);
+
+ return () => ipcRenderer.removeListener('semantier:feedback:open', listener) },
+    status: () => ipcRenderer.invoke('semantier:feedback', 'status', {}),
+    consent: (enabled, profile) => ipcRenderer.invoke('semantier:feedback', 'consent', {enabled, profile}),
+    drain: profile => ipcRenderer.invoke('semantier:feedback', 'drain', {profile}),
+    ack: (profile, ids) => ipcRenderer.invoke('semantier:feedback', 'ack', {profile, ids})
+  },
   windowControls: {
     custom: customWindowControlsEnabled(),
     minimize: () => ipcRenderer.send('hermes:window-control', 'minimize'),

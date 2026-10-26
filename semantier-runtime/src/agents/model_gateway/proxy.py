@@ -27,8 +27,8 @@ class ProxyClient:
         await self._client.aclose()
 
 
-    async def verify_binding(self,deployment):
-        data=await self.operation('GET','/model/info')
+    async def verify_binding(self,deployment, *, snapshot=None):
+        data=snapshot if snapshot is not None else await self.operation('GET','/model/info')
         rows=data.get('data',[]) if isinstance(data,dict) else []
         candidates=[r for r in rows if r.get('model_name')==deployment.proxy_model]
         if len(candidates)!=1 or str(candidates[0].get('model_info',{}).get('id','')) != deployment.native_model_id:
@@ -58,10 +58,20 @@ class ProxyClient:
             raise HTTPException(403,'native credential scope mismatch')
         if hashlib.sha256(credential.secret.encode()).hexdigest()!=credential.native_key_hash:
             raise HTTPException(503,'verified scoped native credential required')
+        body=dict(body)
+        context=body.pop('semantier_task_context',{})
+        metadata={}
+        if context.get('schema_version')=='semantier.task-consumption.v1':
+            metadata={'tags':['semantier.task:'+context['scope_id']] if context.get('scope_id') else [],
+                'spend_logs_metadata':{k:context[k] for k in ('task_id','root_run_id','parent_run_id','run_id','session_id','purpose','business_object_ref','namespace','provenance') if k in context}}
         body={**body,'num_retries':0,'fallbacks':[], 'metadata': {
+            **metadata,
             **credential.metadata,'semantier_invocation_id':invocation_id,'semantier_attempt_id':attempt_id}}
         req=self._client.build_request('POST',self.base_url+'/v1/chat/completions',json=body,
-                                       headers={'Authorization':'Bearer '+credential.secret})
+                                       headers={'Authorization':'Bearer '+credential.secret},
+                                       # Native owner caps provider wait at 120s. Keep
+                                       # management calls short, with no retry.
+                                       timeout=httpx.Timeout(125, connect=5))
         return await self._client.send(req,stream=True)
 
     async def management_get(self, path, params):

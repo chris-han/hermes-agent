@@ -42,7 +42,10 @@ class OntologyRulePlanCompiler:
         competency_refs: tuple[str, ...],
         compiled_at: datetime,
         teaching_context=None,
+        domain_basis=None,
     ) -> CompiledRulePlanV1:
+        if domain_basis is not None:
+            domain_basis.verify_candidate(candidate)
         if candidate.teaching_candidate:
             from services.teaching_candidate_scope import require_teaching_scope
             require_teaching_scope(teaching_context, organization_id=candidate.organization_id, workspace_id=candidate.workspace_id)
@@ -197,6 +200,8 @@ class OntologyRulePlanCompiler:
             "semantic_profile": "semantier_deterministic_v1",
             "rules": [rule.model_dump(mode="json") for rule in rules],
         }
+        if domain_basis is not None:
+            basis["domain_basis"] = domain_basis.model_dump(mode="json")
         if candidate.teaching_candidate:
             basis["teaching_candidate"] = True
         if precedences:

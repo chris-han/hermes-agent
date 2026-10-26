@@ -21,6 +21,29 @@ class CompatibilityFailure(RuntimeError):
         super().__init__(reason)
 
 
+def bind_openai_structured_request(body, *, instructions, input_text, json_schema):
+    """Verify complete material for ordinary admitted OpenAI candidate generation.
+
+    This is deliberately not a token-capacity or qualified-execution receipt.
+    The strict Messages/count_tokens path below retains its existing contract.
+    """
+    from contracts.model_gateway import canonical_hash
+    texts = _texts(body)
+    schema_text = json.dumps(json_schema, ensure_ascii=False, sort_keys=True)
+    if (input_text not in texts
+        or not any(instructions.strip() in text and schema_text in text for text in texts)):
+        raise CompatibilityFailure('MATERIAL_BINDING_MISMATCH')
+    output = body.get('response_format', {})
+    if output.get('type') == 'json_schema':
+        if output.get('json_schema', {}).get('schema') != json_schema:
+            raise CompatibilityFailure('MATERIAL_BINDING_MISMATCH')
+    elif output != {'type': 'json_object'}:
+        raise CompatibilityFailure('STRUCTURED_PROTOCOL_UNSUPPORTED')
+    return {'protocol': 'openai_chat_completions', 'request_hash': canonical_hash(body),
+            'material_binding': 'VERIFIED', 'capacity': 'NOT_ASSESSED',
+            'output_mode': output['type']}
+
+
 
 
 class CompleteRequestCompatibilityTransport(httpx.BaseTransport):

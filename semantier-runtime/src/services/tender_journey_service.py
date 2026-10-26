@@ -111,8 +111,14 @@ class TenderJourneyService:
             workspace_id=workspace_id,
         )
 
-    def history(self, *, journey_id: str, organization_id: str, workspace_id: str) -> tuple[TenderJourneyTransitionV1, ...]:
-        return self._store.list_transitions(journey_id=journey_id, organization_id=organization_id, workspace_id=workspace_id)
+    def history(
+        self, *, journey_id: str, organization_id: str, workspace_id: str
+    ) -> tuple[TenderJourneyTransitionV1, ...]:
+        return self._store.list_transitions(
+            journey_id=journey_id,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+        )
 
     def list_active(
         self, *, organization_id: str, workspace_id: str
@@ -120,6 +126,541 @@ class TenderJourneyService:
         return self._store.list_active_heads(
             organization_id=organization_id, workspace_id=workspace_id
         )
+
+    def _requirements_access(
+        self,
+        *,
+        ctx,
+        journey_id,
+        build_store,
+        authority_resolver,
+        authorization_class="TENANT_MEMBER",
+    ):
+        from contracts.knowledge_classification import RuntimeContextDTO
+        from services.runtime_context_transition_service import RuntimeAuthorityResolver
+        from storage.ontology_build_store import OntologyBuildStore
+
+        if not isinstance(
+            authority_resolver, RuntimeAuthorityResolver
+        ) or not isinstance(build_store, OntologyBuildStore):
+            raise TypeError("requirements review requires production owners")
+        if (
+            not ctx.authenticated
+            or build_store._path.resolve() != self._store.db_path.resolve()
+            or self._store.db_path.resolve()
+            != ontology_build_store_path(ctx.workspace_root).resolve()
+        ):
+            raise ValueError("JOURNEY_WORKSPACE_OWNER_MISMATCH")
+        actor = RuntimeContextDTO(
+            organization_id=ctx.organization_id,
+            workspace_id=ctx.workspace_id,
+            actor_id=ctx.user_id,
+        )
+        authority_resolver.require_current_actor(
+            actor_context=actor, authorization_class=authorization_class
+        )
+        # Identity resolution and authorization are separate: the existing
+        # resolver exposes the current governed membership, without inferring it
+        # from a cached RequestContext or from a saved answer.
+        _, membership = authority_resolver._current_identity_context(actor)
+        if membership["membership_status"] != "active" or (
+            authorization_class == "TENANT_ADMIN"
+            and not membership["can_change_settings"]
+        ):
+            from services.runtime_errors import RuntimeContextError
+
+            raise RuntimeContextError("FORBIDDEN_ACTOR")
+        return self.get(
+            journey_id=journey_id,
+            organization_id=ctx.organization_id,
+            workspace_id=ctx.workspace_id,
+        )
+
+    @staticmethod
+    def _requirements_source_matches(
+        *, head, candidate, source_role, build_store, scope
+    ):
+        pin = ArtifactPinV1(
+            artifact_kind="normative_semantic_candidate_set",
+            artifact_ref=candidate.candidate_set_ref,
+            artifact_hash=candidate.candidate_set_hash,
+        )
+        if source_role == "ACTIVE_RULE_BASIS":
+            return False  # No active rule authority may be inferred from a candidate.
+        if source_role != "RUNTIME_TARGET":
+            role = (
+                "normative_semantics"
+                if source_role == "DESIGN_SOURCE"
+                else "sensitivity_normative_semantics"
+            )
+            return any(b.role == role and b.pin == pin for b in head.artifact_bindings)
+        from contracts.ontology_workbench_context import (
+            WorkspaceArtifactPreparationV1,
+            WorkspaceArtifactV1,
+        )
+
+        preparations = [
+            b.pin
+            for b in head.artifact_bindings
+            if b.role == "runtime_document_preparation"
+        ]
+        documents = [
+            b.pin for b in head.artifact_bindings if b.role == "runtime_document"
+        ]
+        if len(preparations) != 1 or len(documents) != 1:
+            return False
+        prepared = build_store.get(
+            **scope,
+            artifact_ref=preparations[0].artifact_ref,
+            contract_type=WorkspaceArtifactPreparationV1,
+        )
+        document = build_store.get(
+            **scope,
+            artifact_ref=documents[0].artifact_ref,
+            contract_type=WorkspaceArtifactV1,
+        )
+        return (
+            prepared is not None
+            and document is not None
+            and prepared.preparation_hash == preparations[0].artifact_hash
+            and document.artifact_hash == documents[0].artifact_hash
+            and prepared.artifact_pin == documents[0]
+            and prepared.purpose == "RUNTIME_TARGET"
+            and prepared.outcome == "READY"
+            and prepared.source_identity_pin is not None
+            and prepared.canonical_source_ir_pin is not None
+            and candidate.source_identity_ref
+            == prepared.source_identity_pin.artifact_ref
+            and (candidate.canonical_source_ir_ref, candidate.canonical_source_ir_hash)
+            == (
+                prepared.canonical_source_ir_pin.artifact_ref,
+                prepared.canonical_source_ir_pin.artifact_hash,
+            )
+            and candidate.source_hash == document.content_hash
+        )
+
+    def read_requirements(
+        self,
+        *,
+        ctx,
+        journey_id,
+        build_store,
+        authority_resolver,
+        source_role=None,
+    ):
+        head = self._requirements_access(
+            ctx=ctx,
+            journey_id=journey_id,
+            build_store=build_store,
+            authority_resolver=authority_resolver,
+        )
+        if source_role is None:
+            from contracts.requirements_reconciliation import RequirementsReviewV1
+
+            pins = [
+                b.pin for b in head.artifact_bindings if b.role == "requirements_review"
+            ]
+            source_role = "DESIGN_SOURCE"
+            if pins:
+                if len(pins) != 1:
+                    raise ValueError("REQUIREMENTS_REVIEW_PIN_MISMATCH")
+                selected = build_store.get(
+                    organization_id=ctx.organization_id,
+                    workspace_id=ctx.workspace_id,
+                    artifact_ref=pins[0].artifact_ref,
+                    contract_type=RequirementsReviewV1,
+                )
+                if (
+                    selected is None
+                    or selected.pin() != pins[0]
+                    or selected.journey_id != journey_id
+                ):
+                    raise ValueError("REQUIREMENTS_REVIEW_PIN_MISMATCH")
+                source_role = selected.source_role
+        return build_store.requirements_head(
+            organization_id=ctx.organization_id,
+            workspace_id=ctx.workspace_id,
+            journey_id=journey_id,
+            source_role=source_role,
+        )
+
+    def requirements_command(
+        self,
+        *,
+        ctx,
+        journey_id,
+        command,
+        build_store,
+        authority_resolver,
+        surface,
+        source_registry=None,
+    ):
+        from contracts.requirements_reconciliation import (
+            AssessRequirementsV1,
+            ReviewRequirementV1,
+            RequirementsReviewV1,
+            RequirementDispositionV1,
+        )
+        from contracts.normative_semantics import NormativeSemanticCandidateSetV1
+        from services.requirements_reconciliation_service import (
+            RequirementsReconciliationService,
+        )
+
+        head = self._requirements_access(
+            ctx=ctx,
+            journey_id=journey_id,
+            build_store=build_store,
+            authority_resolver=authority_resolver,
+        )
+        scope = dict(organization_id=ctx.organization_id, workspace_id=ctx.workspace_id)
+        actor_ref = "user:" + ctx.user_id
+        request_hash = "sha256:" + content_hash(
+            dict(journey_id=journey_id, command=command.model_dump(mode="json"))
+        )
+        # Bind key to the whole semantic command, independent of transport.
+        request_id = journey_id + ":" + command.idempotency_key
+        saved = build_store.get_operation_result(
+            **scope,
+            actor_ref=actor_ref,
+            operation="REQUIREMENTS_COMMAND",
+            request_id=request_id,
+            request_hash=request_hash,
+            artifact_kind="requirements_review",
+        )
+        adoption_revision = command.expected_revision
+
+        def is_adopted(pin):
+            return any(b.pin == pin for b in head.artifact_bindings) or any(
+                t.operation_receipt is not None and t.operation_receipt.pin == pin
+                for t in self.history(**scope, journey_id=journey_id)
+            )
+
+        if saved is not None:
+            review = build_store.get(
+                **scope,
+                artifact_ref=saved.artifact_ref,
+                contract_type=RequirementsReviewV1,
+            )
+            if any(b.pin == saved for b in head.artifact_bindings):
+                return head, review
+            history = self.history(**scope, journey_id=journey_id)
+            if any(
+                t.operation_receipt is not None and t.operation_receipt.pin == saved
+                for t in history
+            ):
+                return head, review
+            current = build_store.requirements_head(
+                **scope, journey_id=journey_id, source_role=review.source_role
+            )
+            if current is None or current.pin() != saved:
+                raise ValueError("REQUIREMENTS_REVIEW_SUPERSEDED")
+            if head.lifecycle_status != "ACTIVE":
+                raise ValueError("JOURNEY_NOT_ACTIVE")
+            if type(command) is AssessRequirementsV1:
+                input_pin = command.candidate_pin
+            else:
+                original = build_store.get(
+                    **scope,
+                    artifact_ref=command.review_pin.artifact_ref,
+                    contract_type=RequirementsReviewV1,
+                )
+                input_pin = ArtifactPinV1(
+                    artifact_kind="normative_semantic_candidate_set",
+                    artifact_ref=original.candidate.candidate_set_ref,
+                    artifact_hash=original.candidate.candidate_set_hash,
+                )
+            input_candidate = build_store.get(
+                **scope,
+                artifact_ref=input_pin.artifact_ref,
+                contract_type=NormativeSemanticCandidateSetV1,
+            )
+            if (
+                input_candidate is None
+                or input_candidate.candidate_set_hash != input_pin.artifact_hash
+                or not self._requirements_source_matches(
+                    head=head,
+                    candidate=input_candidate,
+                    source_role=review.source_role,
+                    build_store=build_store,
+                    scope=scope,
+                )
+            ):
+                raise ValueError("REQUIREMENTS_INPUT_CHANGED")
+            adoption_revision = head.revision
+        else:
+            if head.revision != command.expected_revision:
+                raise ValueError("STALE_JOURNEY_REVISION")
+            if head.lifecycle_status != "ACTIVE":
+                raise ValueError("JOURNEY_NOT_ACTIVE")
+            if type(command) is AssessRequirementsV1:
+                if (
+                    command.candidate_pin.artifact_kind
+                    != "normative_semantic_candidate_set"
+                ):
+                    raise ValueError("REQUIREMENTS_CANDIDATE_PIN_MISMATCH")
+                candidate = build_store.get(
+                    **scope,
+                    artifact_ref=command.candidate_pin.artifact_ref,
+                    contract_type=NormativeSemanticCandidateSetV1,
+                )
+                if (
+                    candidate is None
+                    or candidate.candidate_set_hash
+                    != command.candidate_pin.artifact_hash
+                ):
+                    raise ValueError("REQUIREMENTS_CANDIDATE_PIN_MISMATCH")
+                if not self._requirements_source_matches(
+                    head=head,
+                    candidate=candidate,
+                    source_role=command.source_role,
+                    build_store=build_store,
+                    scope=scope,
+                ):
+                    raise ValueError("REQUIREMENTS_TASK_SOURCE_MISMATCH")
+                if command.source_role == "RUNTIME_TARGET":
+                    from services.normative_semantic_production_service import (
+                        NormativeSemanticProductionService,
+                    )
+
+                    candidate = NormativeSemanticProductionService.read_persisted(
+                        store=build_store, **scope, candidate_pin=command.candidate_pin
+                    )
+                prior = build_store.requirements_head(
+                    **scope, journey_id=journey_id, source_role=command.source_role
+                )
+                if (
+                    prior is not None
+                    and not is_adopted(prior.pin())
+                    and prior.candidate.candidate_set_hash
+                    == candidate.candidate_set_hash
+                ):
+                    raise ValueError("REQUIREMENTS_ADOPTION_REQUIRED")
+                review = RequirementsReconciliationService.assess(
+                    candidate=candidate,
+                    journey_id=journey_id,
+                    source_role=command.source_role,
+                    actor_ref=actor_ref,
+                    prior=prior,
+                    source_evidence=RequirementsReconciliationService.persisted_source_evidence(
+                        build_store, candidate, prior=prior
+                    ),
+                    journey_revision=command.expected_revision,
+                    domain_basis=RequirementsReconciliationService.persisted_domain_basis(
+                        build_store, candidate
+                    ),
+                    source_predecessor_ref=RequirementsReconciliationService.persisted_source_predecessor(
+                        source_registry, candidate, prior
+                    ),
+                )
+            elif type(command) is ReviewRequirementV1:
+                prior = build_store.get(
+                    **scope,
+                    artifact_ref=command.review_pin.artifact_ref,
+                    contract_type=RequirementsReviewV1,
+                )
+                if (
+                    prior is None
+                    or prior.pin() != command.review_pin
+                    or prior.journey_id != journey_id
+                ):
+                    raise ValueError("REQUIREMENTS_REVIEW_PIN_MISMATCH")
+                current = build_store.requirements_head(
+                    **scope, journey_id=journey_id, source_role=prior.source_role
+                )
+                if current is None or current.pin() != prior.pin():
+                    raise ValueError("STALE_REQUIREMENTS_REVIEW")
+                if not is_adopted(prior.pin()):
+                    raise ValueError("REQUIREMENTS_ADOPTION_REQUIRED")
+                if not self._requirements_source_matches(
+                    head=head,
+                    candidate=prior.candidate,
+                    source_role=prior.source_role,
+                    build_store=build_store,
+                    scope=scope,
+                ):
+                    raise ValueError("REQUIREMENTS_INPUT_CHANGED")
+                q = next(
+                    (
+                        q
+                        for q in prior.questions
+                        if (q.question_id, q.dependency_hash)
+                        == (command.question_id, command.dependency_hash)
+                    ),
+                    None,
+                )
+                if q is None:
+                    raise ValueError("REQUIREMENTS_QUESTION_BASIS_MISMATCH")
+                if any(
+                    d.question_id == q.question_id and d.decision != "defer"
+                    for d in prior.dispositions
+                ):
+                    raise ValueError("REQUIREMENTS_ANSWER_ALREADY_COMMITTED")
+                candidate = prior.candidate
+                if command.decision == "accept_repair":
+                    if command.successor_candidate_pin is None:
+                        raise ValueError("REQUIREMENTS_ACCEPTED_SUCCESSOR_REQUIRED")
+                    from services.normative_semantic_production_service import (
+                        NormativeSemanticProductionService,
+                    )
+
+                    successor = NormativeSemanticProductionService.read_persisted(
+                        store=build_store,
+                        **scope,
+                        candidate_pin=command.successor_candidate_pin,
+                    )
+                    if (
+                        successor is None
+                        or successor.candidate_set_hash
+                        != command.successor_candidate_pin.artifact_hash
+                        or (
+                            successor.predecessor_candidate_set_ref,
+                            successor.predecessor_candidate_set_hash,
+                        )
+                        != (candidate.candidate_set_ref, candidate.candidate_set_hash)
+                        or (successor.source_identity_ref, successor.source_hash)
+                        != (candidate.source_identity_ref, candidate.source_hash)
+                        or successor.source_review_ref is None
+                    ):
+                        raise ValueError("REQUIREMENTS_ACCEPTED_SUCCESSOR_REQUIRED")
+                    from contracts.knowledge_classification import RuntimeContextDTO
+
+                    authority_resolver.require_current_owner(
+                        actor_context=RuntimeContextDTO(
+                            organization_id=ctx.organization_id,
+                            workspace_id=ctx.workspace_id,
+                            actor_id=ctx.user_id,
+                        )
+                    )
+                    candidate = successor
+                elif command.successor_candidate_pin is not None:
+                    raise ValueError("REQUIREMENTS_UNACCEPTED_SUCCESSOR")
+                disposition = RequirementDispositionV1(
+                    question_id=q.question_id,
+                    dependency_hash=q.dependency_hash,
+                    decision=command.decision,
+                    rationale=command.rationale,
+                    actor_ref=actor_ref,
+                    successor_candidate_pin=command.successor_candidate_pin,
+                )
+                dispositions = tuple(
+                    d for d in prior.dispositions if d.question_id != q.question_id
+                ) + (disposition,)
+                review = RequirementsReconciliationService.assess(
+                    candidate=candidate,
+                    journey_id=journey_id,
+                    source_role=prior.source_role,
+                    actor_ref=actor_ref,
+                    prior=prior,
+                    dispositions=dispositions,
+                    source_evidence=RequirementsReconciliationService.persisted_source_evidence(
+                        build_store, candidate, prior=prior
+                    ),
+                    journey_revision=command.expected_revision,
+                    domain_basis=RequirementsReconciliationService.persisted_domain_basis(
+                        build_store, candidate
+                    ),
+                    source_predecessor_ref=RequirementsReconciliationService.persisted_source_predecessor(
+                        source_registry, candidate, prior
+                    ),
+                )
+            else:
+                raise TypeError("typed requirements command required")
+
+            def verify(*, replay=False):
+                current_head = self._requirements_access(
+                    ctx=ctx,
+                    journey_id=journey_id,
+                    build_store=build_store,
+                    authority_resolver=authority_resolver,
+                    authorization_class="TENANT_ADMIN"
+                    if type(command) is ReviewRequirementV1
+                    and command.decision == "accept_repair"
+                    else "TENANT_MEMBER",
+                )
+                if not replay and current_head.revision != command.expected_revision:
+                    raise ValueError("STALE_JOURNEY_REVISION")
+
+            saved = build_store.publish_requirements_review(
+                review=review,
+                request_id=request_id,
+                request_hash=request_hash,
+                verify_before_commit=verify,
+            )
+            review = build_store.get(
+                **scope,
+                artifact_ref=saved.artifact_ref,
+                contract_type=RequirementsReviewV1,
+            )
+        # Result is committed before adoption. An exact retry never reassesses.
+        self._requirements_access(
+            ctx=ctx,
+            journey_id=journey_id,
+            build_store=build_store,
+            authority_resolver=authority_resolver,
+            authorization_class="TENANT_ADMIN"
+            if type(command) is ReviewRequirementV1
+            and command.decision == "accept_repair"
+            else "TENANT_MEMBER",
+        )
+        binding = JourneyArtifactBindingV1(
+            role="requirements_review",
+            owner_kind="RequirementsReconciliationService",
+            pin=saved,
+        )
+        bindings = (binding,)
+        if (
+            type(command) is AssessRequirementsV1
+            and command.source_role == "RUNTIME_TARGET"
+        ):
+            bindings += (
+                JourneyArtifactBindingV1(
+                    role="runtime_normative_semantics",
+                    owner_kind="NormativeSemanticProductionService",
+                    pin=command.candidate_pin,
+                ),
+            )
+        if type(command) is ReviewRequirementV1 and command.decision == "accept_repair":
+            from contracts.knowledge_classification import RuntimeContextDTO
+
+            authority_resolver.require_current_owner(
+                actor_context=RuntimeContextDTO(
+                    organization_id=ctx.organization_id,
+                    workspace_id=ctx.workspace_id,
+                    actor_id=ctx.user_id,
+                )
+            )
+            candidate_binding = JourneyArtifactBindingV1(
+                role={
+                    "DESIGN_SOURCE": "normative_semantics",
+                    "ACTIVE_RULE_BASIS": "normative_semantics",
+                    "RUNTIME_TARGET": "runtime_normative_semantics",
+                    "PREPARED_SENSITIVITY": "sensitivity_normative_semantics",
+                }[review.source_role],
+                owner_kind="NormativeSemanticProductionService",
+                pin=command.successor_candidate_pin,
+            )
+            bindings += (candidate_binding,)
+        transition = TenderJourneyTransitionV1(
+            transition_id="tender-journey-transition:" + uuid4().hex,
+            journey_id=journey_id,
+            predecessor_revision=adoption_revision,
+            successor_revision=adoption_revision + 1,
+            from_phase=head.current_phase,
+            to_phase=head.current_phase,
+            cause_code="REQUIREMENTS_REVIEW_COMMITTED",
+            actor_ref=actor_ref,
+            surface=surface,
+            command_id=command.command_id,
+            idempotency_key="requirements:" + command.idempotency_key,
+            artifact_bindings=bindings,
+            operation_receipt=binding,
+            blocker_code=head.blocker_code,
+            created_at=datetime.now(timezone.utc),
+        )
+        result = self._store.append_transition(
+            **scope, expected_revision=adoption_revision, transition=transition
+        )
+        return result, review
 
     def project(self, head: TenderJourneyHeadV1) -> TenderJourneyProjectionV1:
         if head.lifecycle_status != "ACTIVE":
@@ -129,7 +670,9 @@ class TenderJourneyService:
                 current_phase=head.current_phase,
                 lifecycle_status=head.lifecycle_status,
                 blocker_code=head.blocker_code,
-                next_action_code="RESUME_JOURNEY" if head.lifecycle_status == "PAUSED" else "NONE",
+                next_action_code="RESUME_JOURNEY"
+                if head.lifecycle_status == "PAUSED"
+                else "NONE",
                 next_action_requires_user=head.lifecycle_status == "PAUSED",
                 artifact_bindings=head.artifact_bindings,
             )
@@ -837,7 +1380,8 @@ class TenderJourneyService:
     async def produce_normative_semantics(
         self, *, ctx: RequestContext, journey_id: str, expected_revision: int,
         producer, build_store, authority_resolver, command_id: str,
-        idempotency_key: str, surface: TenderJourneySurface,
+        idempotency_key: str, surface: TenderJourneySurface, source_registry=None,
+        source_role="DESIGN_SOURCE", preparation_service=None,
     ) -> TenderJourneyHeadV1:
         from contracts.knowledge_classification import RuntimeContextDTO
         from contracts.ontology_building import CompetencyContractV1
@@ -849,13 +1393,16 @@ class TenderJourneyService:
             or not isinstance(authority_resolver, RuntimeAuthorityResolver)
             or not isinstance(producer, NormativeSemanticProductionService)):
             raise TypeError("normative semantic preparation requires production owners")
+        self._requirements_access(ctx=ctx,journey_id=journey_id,build_store=build_store,authority_resolver=authority_resolver)
         actor = RuntimeContextDTO(organization_id=ctx.organization_id,
             workspace_id=ctx.workspace_id, actor_id=ctx.user_id)
         authority_resolver.require_current_actor(actor_context=actor)
         if (not ctx.authenticated or build_store._path.resolve() != self._store.db_path.resolve()
             or self._store.db_path.resolve() != ontology_build_store_path(ctx.workspace_root).resolve()):
             raise ValueError("JOURNEY_WORKSPACE_OWNER_MISMATCH")
-        identity = dict(command_id=command_id, actor_ref=f"user:{ctx.user_id}",
+        if source_role not in {"DESIGN_SOURCE", "RUNTIME_TARGET"}:
+            raise ValueError("NORMATIVE_SOURCE_ROLE_UNSUPPORTED")
+        identity = dict(command_id=command_id if source_role == "DESIGN_SOURCE" else command_id + ":runtime-target", actor_ref=f"user:{ctx.user_id}",
             surface=surface, cause_code="NORMATIVE_SEMANTICS_PRODUCED")
         scope = dict(journey_id=journey_id, organization_id=ctx.organization_id, workspace_id=ctx.workspace_id)
         replay = self._store.replay_command(**scope, idempotency_key=idempotency_key,
@@ -867,7 +1414,10 @@ class TenderJourneyService:
             raise ValueError("STALE_JOURNEY_REVISION")
         if head.lifecycle_status != "ACTIVE":
             raise ValueError("JOURNEY_NOT_ACTIVE")
-        if head.current_phase != "CERTIFYING_CONTEXT":
+        if (
+            source_role == "DESIGN_SOURCE"
+            and head.current_phase != "CERTIFYING_CONTEXT"
+        ):
             raise ValueError("CERTIFICATION_NOT_REQUIRED_IN_CURRENT_PHASE")
         selected = {}
         for role in ("normative_schema", "competency_contract", "graph_intent"):
@@ -875,56 +1425,245 @@ class TenderJourneyService:
             if len(pins) != 1:
                 raise ValueError("JOURNEY_SEMANTIC_INPUT_MISMATCH")
             selected[role] = pins[0]
-        artifact_scope = dict(organization_id=ctx.organization_id, workspace_id=ctx.workspace_id)
+        artifact_scope = dict(
+            organization_id=ctx.organization_id, workspace_id=ctx.workspace_id
+        )
         schema, _ = NormativeSchemaProductionService.read_persisted(
-            store=build_store, **artifact_scope, schema_pin=selected["normative_schema"])
-        competency_pin, intent_pin = selected["competency_contract"], selected["graph_intent"]
-        competency = build_store.get(**artifact_scope, artifact_ref=competency_pin.artifact_ref,
-            contract_type=CompetencyContractV1)
-        if (competency is None or competency.competency_contract_hash != competency_pin.artifact_hash
+            store=build_store, **artifact_scope, schema_pin=selected["normative_schema"]
+        )
+        competency_pin, intent_pin = (
+            selected["competency_contract"],
+            selected["graph_intent"],
+        )
+        competency = build_store.get(
+            **artifact_scope,
+            artifact_ref=competency_pin.artifact_ref,
+            contract_type=CompetencyContractV1,
+        )
+        if (
+            competency is None
+            or competency.competency_contract_hash != competency_pin.artifact_hash
             or (schema.competency_contract_ref, schema.competency_contract_hash)
-                != (competency_pin.artifact_ref, competency_pin.artifact_hash)
+            != (competency_pin.artifact_ref, competency_pin.artifact_hash)
             or (competency.graph_intent_brief_ref, competency.graph_intent_brief_hash)
-                != (intent_pin.artifact_ref, intent_pin.artifact_hash)):
+            != (intent_pin.artifact_ref, intent_pin.artifact_hash)
+        ):
             raise ValueError("JOURNEY_SEMANTIC_INPUT_MISMATCH")
-        candidate = await producer.produce_persisted(store=build_store, **artifact_scope,
-            actor_ref=identity["actor_ref"], schema_pin=selected["normative_schema"],
-            request_id="journey-normative-semantics:" + content_hash(dict(journey_id=journey_id,
-                idempotency_key=idempotency_key, command_id=command_id)), created_at=datetime.now(timezone.utc))
-        binding = JourneyArtifactBindingV1(role="normative_semantics",
-            owner_kind="NormativeSemanticProductionService", pin=ArtifactPinV1(
-                artifact_kind="normative_semantic_candidate_set", artifact_ref=candidate.candidate_set_ref,
-                artifact_hash=candidate.candidate_set_hash))
+        runtime_inputs = {}
+        if source_role == "RUNTIME_TARGET":
+            if (
+                not isinstance(preparation_service, WorkspaceArtifactPreparationService)
+                or preparation_service._build._path.resolve()
+                != build_store._path.resolve()
+            ):
+                raise TypeError(
+                    "runtime requirements need the current preparation owner"
+                )
+            documents = [
+                b.pin for b in head.artifact_bindings if b.role == "runtime_document"
+            ]
+            preparations = [
+                b.pin
+                for b in head.artifact_bindings
+                if b.role == "runtime_document_preparation"
+            ]
+            if len(documents) != 1 or len(preparations) != 1:
+                raise ValueError("RUNTIME_DOCUMENT_REQUIRED")
+            prepared = preparation_service.resolve(
+                ctx=ctx,
+                artifact_pin=documents[0],
+                preparation_pin=preparations[0],
+                purpose="RUNTIME_TARGET",
+            )
+            source = preparation_service.resolve_runtime_target(
+                ctx=ctx, artifact_pin=documents[0], preparation_pin=preparations[0]
+            )
+            runtime_inputs = dict(runtime_preparation=prepared, runtime_source=source)
+        candidate = await producer.produce_persisted(
+            store=build_store,
+            **artifact_scope,
+            actor_ref=identity["actor_ref"],
+            schema_pin=selected["normative_schema"],
+            request_id="journey-normative-semantics:"
+            + content_hash(
+                dict(
+                    journey_id=journey_id,
+                    idempotency_key=idempotency_key,
+                    command_id=identity["command_id"],
+                )
+            ),
+            created_at=datetime.now(timezone.utc),
+            **runtime_inputs,
+            verify_before_commit=lambda: self._requirements_access(
+                ctx=ctx,
+                journey_id=journey_id,
+                build_store=build_store,
+                authority_resolver=authority_resolver,
+            ),
+        )
+        binding = JourneyArtifactBindingV1(
+            role="normative_semantics"
+            if source_role == "DESIGN_SOURCE"
+            else "runtime_normative_semantics",
+            owner_kind="NormativeSemanticProductionService",
+            pin=ArtifactPinV1(
+                artifact_kind="normative_semantic_candidate_set",
+                artifact_ref=candidate.candidate_set_ref,
+                artifact_hash=candidate.candidate_set_hash,
+            ),
+        )
+        from services.requirements_reconciliation_service import (
+            RequirementsReconciliationService,
+        )
+
+        prior = build_store.requirements_head(
+            **artifact_scope, journey_id=journey_id, source_role=source_role
+        )
+        review_request = (
+            "source-requirements:"
+            if source_role == "DESIGN_SOURCE"
+            else "runtime-source-requirements:"
+        ) + content_hash(
+            dict(journey_id=journey_id, candidate=candidate.candidate_set_hash)
+        )
+        review_hash = "sha256:" + content_hash(
+            dict(candidate=candidate.candidate_set_hash, source_role=source_role)
+        )
+        review_pin = build_store.get_operation_result(
+            **artifact_scope,
+            actor_ref=identity["actor_ref"],
+            operation="REQUIREMENTS_COMMAND",
+            request_id=review_request,
+            request_hash=review_hash,
+            artifact_kind="requirements_review",
+        )
+        if review_pin is None:
+            review = RequirementsReconciliationService.assess(
+                candidate=candidate,
+                journey_id=journey_id,
+                source_role=source_role,
+                actor_ref=identity["actor_ref"],
+                prior=prior,
+                source_evidence=RequirementsReconciliationService.persisted_source_evidence(
+                    build_store, candidate, prior=prior
+                ),
+                journey_revision=expected_revision,
+                domain_basis=RequirementsReconciliationService.persisted_domain_basis(
+                    build_store, candidate
+                ),
+                source_predecessor_ref=RequirementsReconciliationService.persisted_source_predecessor(
+                    source_registry, candidate, prior
+                ),
+            )
+            review_pin = build_store.publish_requirements_review(
+                review=review,
+                request_id=review_request,
+                request_hash=review_hash,
+                verify_before_commit=lambda **kw: self._requirements_access(
+                    ctx=ctx,
+                    journey_id=journey_id,
+                    build_store=build_store,
+                    authority_resolver=authority_resolver,
+                ),
+            )
+        review_binding = JourneyArtifactBindingV1(
+            role="requirements_review",
+            owner_kind="RequirementsReconciliationService",
+            pin=review_pin,
+        )
         authority_resolver.require_current_actor(actor_context=actor)
-        return self.advance(**scope, expected_revision=expected_revision, to_phase="CERTIFYING_CONTEXT",
-            **identity, idempotency_key=idempotency_key, operation_receipt=binding, artifact_bindings=(binding,))
+        if source_role == "RUNTIME_TARGET":
+            self._requirements_access(
+                ctx=ctx,
+                journey_id=journey_id,
+                build_store=build_store,
+                authority_resolver=authority_resolver,
+            )
+            transition = TenderJourneyTransitionV1(
+                transition_id="tender-journey-transition:" + uuid4().hex,
+                journey_id=journey_id,
+                predecessor_revision=expected_revision,
+                successor_revision=expected_revision + 1,
+                from_phase=head.current_phase,
+                to_phase=head.current_phase,
+                **identity,
+                idempotency_key=idempotency_key,
+                operation_receipt=binding,
+                artifact_bindings=(binding, review_binding),
+                created_at=datetime.now(timezone.utc),
+            )
+            return self._store.append_transition(
+                **artifact_scope, expected_revision=expected_revision, transition=transition
+            )
+        return self.advance(
+            **scope,
+            expected_revision=expected_revision,
+            to_phase="CERTIFYING_CONTEXT",
+            **identity,
+            idempotency_key=idempotency_key,
+            operation_receipt=binding,
+            artifact_bindings=(binding, review_binding),
+        )
 
     async def propose_validation_cases(
-        self, *, ctx: RequestContext, journey_id: str, expected_revision: int,
-        producer, build_store, authority_resolver, command_id: str,
-        idempotency_key: str, surface: TenderJourneySurface,
+        self,
+        *,
+        ctx: RequestContext,
+        journey_id: str,
+        expected_revision: int,
+        producer,
+        build_store,
+        authority_resolver,
+        command_id: str,
+        idempotency_key: str,
+        surface: TenderJourneySurface,
     ) -> TenderJourneyHeadV1:
         from contracts.knowledge_classification import RuntimeContextDTO
         from contracts.ontology_building import CompetencyContractV1
-        from services.normative_schema_production_service import NormativeSchemaProductionService
-        from services.source_validation_case_production_service import SourceValidationCaseProductionService
+        from services.normative_schema_production_service import (
+            NormativeSchemaProductionService,
+        )
+        from services.source_validation_case_production_service import (
+            SourceValidationCaseProductionService,
+        )
         from services.runtime_context_transition_service import RuntimeAuthorityResolver
         from storage.ontology_build_store import OntologyBuildStore
-        if (not isinstance(build_store, OntologyBuildStore)
+
+        if (
+            not isinstance(build_store, OntologyBuildStore)
             or not isinstance(authority_resolver, RuntimeAuthorityResolver)
-            or not isinstance(producer, SourceValidationCaseProductionService)):
+            or not isinstance(producer, SourceValidationCaseProductionService)
+        ):
             raise TypeError("validation case proposal requires production owners")
-        actor = RuntimeContextDTO(organization_id=ctx.organization_id,
-            workspace_id=ctx.workspace_id, actor_id=ctx.user_id)
+        actor = RuntimeContextDTO(
+            organization_id=ctx.organization_id,
+            workspace_id=ctx.workspace_id,
+            actor_id=ctx.user_id,
+        )
         authority_resolver.require_current_actor(actor_context=actor)
-        if (not ctx.authenticated or build_store._path.resolve() != self._store.db_path.resolve()
-            or self._store.db_path.resolve() != ontology_build_store_path(ctx.workspace_root).resolve()):
+        if (
+            not ctx.authenticated
+            or build_store._path.resolve() != self._store.db_path.resolve()
+            or self._store.db_path.resolve()
+            != ontology_build_store_path(ctx.workspace_root).resolve()
+        ):
             raise ValueError("JOURNEY_WORKSPACE_OWNER_MISMATCH")
-        identity = dict(command_id=command_id, actor_ref=f"user:{ctx.user_id}",
-            surface=surface, cause_code="VALIDATION_CASES_PROPOSED")
-        scope = dict(journey_id=journey_id, organization_id=ctx.organization_id, workspace_id=ctx.workspace_id)
-        replay = self._store.replay_command(**scope, idempotency_key=idempotency_key,
-            command={**identity, "predecessor_revision": expected_revision})
+        identity = dict(
+            command_id=command_id,
+            actor_ref=f"user:{ctx.user_id}",
+            surface=surface,
+            cause_code="VALIDATION_CASES_PROPOSED",
+        )
+        scope = dict(
+            journey_id=journey_id,
+            organization_id=ctx.organization_id,
+            workspace_id=ctx.workspace_id,
+        )
+        replay = self._store.replay_command(
+            **scope,
+            idempotency_key=idempotency_key,
+            command={**identity, "predecessor_revision": expected_revision},
+        )
         if replay is not None:
             return replay
         head = self.get(**scope)
@@ -940,40 +1679,92 @@ class TenderJourneyService:
             if len(pins) != 1:
                 raise ValueError("JOURNEY_VALIDATION_INPUT_MISMATCH")
             selected[role] = pins[0]
-        artifact_scope = dict(organization_id=ctx.organization_id, workspace_id=ctx.workspace_id)
+        artifact_scope = dict(
+            organization_id=ctx.organization_id, workspace_id=ctx.workspace_id
+        )
         schema, _ = NormativeSchemaProductionService.read_persisted(
-            store=build_store, **artifact_scope, schema_pin=selected["normative_schema"])
-        competency_pin, intent_pin = selected["competency_contract"], selected["graph_intent"]
-        competency = build_store.get(**artifact_scope, artifact_ref=competency_pin.artifact_ref,
-            contract_type=CompetencyContractV1)
-        if (competency is None or competency.competency_contract_hash != competency_pin.artifact_hash
+            store=build_store, **artifact_scope, schema_pin=selected["normative_schema"]
+        )
+        competency_pin, intent_pin = (
+            selected["competency_contract"],
+            selected["graph_intent"],
+        )
+        competency = build_store.get(
+            **artifact_scope,
+            artifact_ref=competency_pin.artifact_ref,
+            contract_type=CompetencyContractV1,
+        )
+        if (
+            competency is None
+            or competency.competency_contract_hash != competency_pin.artifact_hash
             or (schema.competency_contract_ref, schema.competency_contract_hash)
-                != (competency_pin.artifact_ref, competency_pin.artifact_hash)
+            != (competency_pin.artifact_ref, competency_pin.artifact_hash)
             or (competency.graph_intent_brief_ref, competency.graph_intent_brief_hash)
-                != (intent_pin.artifact_ref, intent_pin.artifact_hash)):
+            != (intent_pin.artifact_ref, intent_pin.artifact_hash)
+        ):
             raise ValueError("JOURNEY_VALIDATION_INPUT_MISMATCH")
-        receipt, _ = await producer.produce_persisted(store=build_store, **artifact_scope,
-            actor_ref=identity["actor_ref"], schema_pin=selected["normative_schema"],
-            request_id="journey-validation-cases:" + content_hash(dict(journey_id=journey_id,
-                idempotency_key=idempotency_key, command_id=command_id)), created_at=datetime.now(timezone.utc))
-        binding = JourneyArtifactBindingV1(role="validation_case_proposal",
-            owner_kind="SourceValidationCaseProductionService", pin=ArtifactPinV1(
-                artifact_kind="source_validation_proposal_evidence", artifact_ref=receipt.evidence_ref,
-                artifact_hash=receipt.evidence_hash))
+        receipt, _ = await producer.produce_persisted(
+            store=build_store,
+            **artifact_scope,
+            actor_ref=identity["actor_ref"],
+            schema_pin=selected["normative_schema"],
+            request_id="journey-validation-cases:"
+            + content_hash(
+                dict(
+                    journey_id=journey_id,
+                    idempotency_key=idempotency_key,
+                    command_id=command_id,
+                )
+            ),
+            created_at=datetime.now(timezone.utc),
+        )
+        binding = JourneyArtifactBindingV1(
+            role="validation_case_proposal",
+            owner_kind="SourceValidationCaseProductionService",
+            pin=ArtifactPinV1(
+                artifact_kind="source_validation_proposal_evidence",
+                artifact_ref=receipt.evidence_ref,
+                artifact_hash=receipt.evidence_hash,
+            ),
+        )
         authority_resolver.require_current_actor(actor_context=actor)
-        return self.advance(**scope, expected_revision=expected_revision, to_phase="CERTIFYING_CONTEXT",
-            **identity, idempotency_key=idempotency_key, operation_receipt=binding, artifact_bindings=(binding,))
+        return self.advance(
+            **scope,
+            expected_revision=expected_revision,
+            to_phase="CERTIFYING_CONTEXT",
+            **identity,
+            idempotency_key=idempotency_key,
+            operation_receipt=binding,
+            artifact_bindings=(binding,),
+        )
 
     @staticmethod
     def source_validation_proposal_is_current(head, receipt) -> bool:
         """A retained review only applies to its exact current source selection."""
         import json
+
         schema = json.loads(receipt.input_text)["normative_schema"]
         expected = {
-            "normative_schema": ("normative_schema_contract", schema["schema_ref"], schema["schema_hash"]),
-            "competency_contract": ("competency_contract", schema["competency_contract_ref"], schema["competency_contract_hash"]),
-            "graph_intent": ("graph_intent_brief", schema["graph_intent_brief_ref"], schema["graph_intent_brief_hash"]),
-            "validation_case_proposal": ("source_validation_proposal_evidence", receipt.evidence_ref, receipt.evidence_hash),
+            "normative_schema": (
+                "normative_schema_contract",
+                schema["schema_ref"],
+                schema["schema_hash"],
+            ),
+            "competency_contract": (
+                "competency_contract",
+                schema["competency_contract_ref"],
+                schema["competency_contract_hash"],
+            ),
+            "graph_intent": (
+                "graph_intent_brief",
+                schema["graph_intent_brief_ref"],
+                schema["graph_intent_brief_hash"],
+            ),
+            "validation_case_proposal": (
+                "source_validation_proposal_evidence",
+                receipt.evidence_ref,
+                receipt.evidence_hash,
+            ),
         }
         for role, values in expected.items():
             pins = [binding.pin for binding in head.artifact_bindings if binding.role == role]

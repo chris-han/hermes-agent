@@ -56,7 +56,7 @@ async def provision(config,operation,body):
         result={'target_user_id':user,'workspace_id':workspace,'permissions':sorted(permissions)}
     else:
         data=body['deployment']
-        if not isinstance(data,dict) or set(data)-{'deployment_id','alias','native_model_id','revision','account_id','funding','currency','max_cost','provider','region','protocol','credential_binding_id','customer_price_version','supplier_price_version','fx_version','capabilities','model_version','version_status'}:
+        if not isinstance(data,dict) or set(data)-{'deployment_id','alias','native_model_id','revision','account_id','funding','currency','max_cost','provider','region','protocol','credential_binding_id','customer_price_version','supplier_price_version','fx_version','capabilities','model_version','version_status','tokens_per_minute','capability_profile','normalizer_version','inclusion_rules_version'}:
             raise ValueError('unsupported deployment fields')
         from agents.model_gateway.proxy import ProxyClient
         proxy=ProxyClient(config.proxy_url,config.proxy_key)

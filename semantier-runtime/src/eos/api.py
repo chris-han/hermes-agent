@@ -228,7 +228,7 @@ def run_with_contextual_policy(policy_version: str, justification: dict, availab
 
 
 # ---------------------------------------------------------------------------
-# EOS route handlers — mounted by agents/gateway.py onto the canonical app
+# EOS route handlers — mounted by apps/combined.py onto the canonical app
 # ---------------------------------------------------------------------------
 
 try:

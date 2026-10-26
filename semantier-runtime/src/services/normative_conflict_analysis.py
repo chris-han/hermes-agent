@@ -13,6 +13,7 @@ from contracts.normative_conflict import (
     NormativeCompatibilityResultV1,
     NormativeEffectV1,
     NormativeSetV1,
+    NormativeAnalysisScopeV2,
 )
 from contracts.knowledge_conflict_review import (
     ConflictType,
@@ -92,7 +93,7 @@ class NormativeSetCompiler:
             effects.extend(self._effect(rule, effect) for effect in rule.rule_effects)
 
         if candidate.completeness_state != "COMPLETE":
-            unresolved.extend(candidate.unresolved_slot_refs)
+            unresolved.extend(candidate.unresolved_slot_refs or (candidate.candidate_set_ref,))
         unresolved = sorted(set(unresolved), key=lambda x: x.encode("utf-8"))
         payload = dict(
             schema_version="normative_set.v1",
@@ -110,6 +111,9 @@ class NormativeSetCompiler:
             unresolved_refs=tuple(unresolved),
             formed_at=formed_at,
         )
+        if plan.domain_basis is not None:
+            plan.domain_basis.verify_candidate(candidate)
+            payload["domain_basis"] = plan.domain_basis.model_dump(mode="json")
         digest = _digest({**payload, "effects": [x.model_dump(mode="json") for x in payload["effects"]]})
         return NormativeSetV1(
             normative_set_ref="normative-set:" + digest,
@@ -124,68 +128,94 @@ class NormativeCompatibilityEvaluator:
         self.evaluator_hash = evaluator_hash
 
     @staticmethod
-    def _numeric_conflict(effects):
-        lower = None
-        upper = None
-        lower_strict = upper_strict = False
-        lower_refs, upper_refs = [], []
-        for effect in effects:
-            if effect.modality != "obligation" or effect.operator not in {"GE", "GT", "LE", "LT"}:
-                continue
-            value = effect.expected_value
-            if type(value) not in {int, float}:
-                continue
-            if effect.operator in {"GE", "GT"} and (
-                lower is None or value > lower or (value == lower and effect.operator == "GT")
-            ):
-                lower, lower_strict, lower_refs = value, effect.operator == "GT", [effect.effect_ref]
-            elif effect.operator in {"LE", "LT"} and (
-                upper is None or value < upper or (value == upper and effect.operator == "LT")
-            ):
-                upper, upper_strict, upper_refs = value, effect.operator == "LT", [effect.effect_ref]
-        if (
-            lower is not None
-            and upper is not None
-            and (lower > upper or (lower == upper and (lower_strict or upper_strict)))
-        ):
-            return tuple(lower_refs + upper_refs)
-        return ()
+    def _group(effects, definition):
+        """Intersect supported restrictions using the declared source domain."""
+        import math
+        if definition is None or definition.value_type not in {"number", "integer", "string", "boolean"}:
+            return (), tuple(e.effect_ref for e in effects)
+        supported, unsupported = [], []
+        for e in effects:
+            if definition.accepts_predicate(e.operator, e.expected_value):
+                supported.append(e)
+            else:
+                unsupported.append(e.effect_ref)
+        if not supported:
+            return (), tuple(unsupported)
+        if definition.value_type in {"number", "integer"}:
+            lower, upper = float("-inf"), float("inf")
+            ls = us = False
+            excluded = set()
+            for e in supported:
+                op, v = e.operator, e.expected_value
+                if op == "IN":
+                    unsupported.append(e.effect_ref)
+                    continue  # Numeric disjunction is outside this algebra.
+                if e.modality == "prohibition":
+                    if op == "EQ":
+                        excluded.add(v)
+                        continue
+                    op = {"GE": "LT", "GT": "LE", "LE": "GT", "LT": "GE"}[op]
+                if op == "EQ":
+                    if v > lower:
+                        lower, ls = v, False
+                    if v < upper:
+                        upper, us = v, False
+                elif op in {"GE", "GT"}:
+                    if v > lower or (v == lower and op == "GT"):
+                        lower, ls = v, op == "GT"
+                elif v < upper or (v == upper and op == "LT"):
+                    upper, us = v, op == "LT"
+            if definition.value_type == "integer":
+                if lower != float("-inf"):
+                    lower = math.floor(lower) + 1 if ls else math.ceil(lower)
+                if upper != float("inf"):
+                    upper = math.ceil(upper) - 1 if us else math.floor(upper)
+                conflict = lower > upper or (
+                    lower != float("-inf") and upper != float("inf")
+                    and upper - lower + 1 <= len(excluded)
+                    and sum(lower <= v <= upper for v in excluded) == upper - lower + 1)
+            else:
+                conflict = lower > upper or (lower == upper and (ls or us or lower in excluded))
+        else:
+            allowed = set(definition.allowed_values) if definition.allowed_values is not None else (
+                {True, False} if definition.value_type == "boolean" else None)
+            denied = set()
+            for e in supported:
+                values = {e.expected_value} if e.operator == "EQ" else set(e.expected_value)
+                if e.modality == "obligation":
+                    allowed = values if allowed is None else allowed & values
+                else:
+                    denied |= values
+            conflict = allowed is not None and not (allowed - denied)
+        checked = tuple(sorted({e.effect_ref for e in supported} - set(unsupported)))
+        return (checked if conflict else ()), tuple(unsupported)
 
-    @staticmethod
-    def _categorical_conflict(effects):
-        obligations = [e for e in effects if e.modality == "obligation" and e.operator in {"EQ", "IN"}]
-        prohibited = [e for e in effects if e.modality == "prohibition" and e.operator in {"EQ", "IN"}]
-        allowed = None
-        support = []
-        for effect in obligations:
-            values = {effect.expected_value} if effect.operator == "EQ" else set(effect.expected_value)
-            allowed = values if allowed is None else allowed & values
-            support.append(effect.effect_ref)
-        if obligations and not allowed:
-            return tuple(support)
-        if allowed is not None:
-            for effect in prohibited:
-                denied = {effect.expected_value} if effect.operator == "EQ" else set(effect.expected_value)
-                if allowed and allowed.issubset(denied):
-                    return tuple(support + [effect.effect_ref])
-        return ()
-
-    def _conflicting_refs(self, normative_set: NormativeSetV1) -> tuple[str, ...]:
+    def _analysis(self, normative_set):
         by_fact = {}
         for effect in normative_set.effects:
             by_fact.setdefault(effect.fact_ref, []).append(effect)
-        for effects in by_fact.values():
-            refs = self._categorical_conflict(effects) or self._numeric_conflict(effects)
+        definitions = {f.fact_ref: f for f in normative_set.domain_basis.facts} if normative_set.domain_basis else {}
+        groups, unsupported = [], []
+        for fact, effects in sorted(by_fact.items()):
+            refs, unknown = self._group(effects, definitions.get(fact))
             if refs:
-                return tuple(sorted(set(refs), key=lambda x: x.encode("utf-8")))
-        return ()
+                groups.append(refs)
+            unsupported.extend(unknown)
+        return tuple(groups), tuple(sorted(set(unsupported)))
+
+    def _conflicting_refs(self, normative_set):
+        return tuple(sorted({ref for group in self._analysis(normative_set)[0] for ref in group}))
 
     def evaluate(self, *, normative_set: NormativeSetV1, evaluated_at: datetime) -> NormativeCompatibilityResultV1:
-        if normative_set.closure_state != "COMPLETE":
-            outcome, proof, refs = "UNKNOWN", "incomplete_semantics", ()
+        groups, unsupported = self._analysis(normative_set)
+        refs = tuple(sorted({ref for group in groups for ref in group}))
+        unresolved = tuple(sorted(set(normative_set.unresolved_refs) | set(unsupported)))
+        if refs:
+            outcome, proof = "CONFLICT", "bounded_effect_algebra"
+        elif normative_set.closure_state != "COMPLETE" or unresolved:
+            outcome, proof = "UNKNOWN", "incomplete_semantics"
         else:
-            refs = self._conflicting_refs(normative_set)
-            outcome, proof = ("CONFLICT", "bounded_effect_algebra") if refs else ("COMPATIBLE", "bounded_effect_algebra")
+            outcome, proof = "COMPATIBLE", "bounded_effect_algebra"
         payload = dict(
             schema_version="normative_compatibility_result.v1",
             normative_set_ref=normative_set.normative_set_ref,
@@ -193,9 +223,14 @@ class NormativeCompatibilityEvaluator:
             outcome=outcome,
             proof_kind=proof,
             conflicting_effect_refs=refs,
-            unresolved_refs=normative_set.unresolved_refs,
+            unresolved_refs=unresolved,
             evaluator_ref=self.evaluator_ref,
             evaluator_hash=self.evaluator_hash,
+            analysis_scope=NormativeAnalysisScopeV2(
+                coverage="INCOMPLETE" if unresolved or normative_set.closure_state != "COMPLETE" else "COMPLETE",
+                checked_effect_refs=tuple(sorted({e.effect_ref for e in normative_set.effects} - set(unsupported))),
+                conflict_groups=groups,
+            ).model_dump(mode="json"),
             evaluated_at=evaluated_at,
         )
         digest = _digest(payload)
@@ -213,6 +248,12 @@ class NormativeCompatibilityEvaluator:
     ) -> ConflictCoreV1:
         if result.outcome != "CONFLICT":
             raise ValueError("conflict core requires a verified conflict")
+        NormativeSetV1.model_validate(normative_set.model_dump(mode="json"))
+        NormativeCompatibilityResultV1.model_validate(result.model_dump(mode="json"))
+        if (result.normative_set_ref, result.normative_set_hash) != (
+            normative_set.normative_set_ref, normative_set.normative_set_hash
+        ):
+            raise ValueError("conflict result/set binding mismatch")
         effects = {e.effect_ref: e for e in normative_set.effects}
         selected = [effects[ref] for ref in result.conflicting_effect_refs]
         rule_refs = tuple(sorted({e.rule_ref for e in selected}, key=lambda x: x.encode("utf-8")))
@@ -224,9 +265,12 @@ class NormativeCompatibilityEvaluator:
             context_ref=normative_set.context_ref,
             member_rule_refs=rule_refs,
             member_effect_refs=tuple(sorted(result.conflicting_effect_refs, key=lambda x: x.encode("utf-8"))),
-            minimality="VERIFIED_MINIMAL" if len(selected) == 2 else "NOT_CHECKED",
+            minimality="NOT_CHECKED",
+            analysis_policy="typed_bounded_algebra.v2" if result.analysis_scope is not None else None,
             evidence_refs=evidence_refs,
         )
+        if payload["analysis_policy"] is None:
+            payload.pop("analysis_policy")
         digest = _digest(payload)
         return ConflictCoreV1(
             conflict_core_ref="conflict-core:" + digest,
@@ -238,15 +282,12 @@ class NormativeCompatibilityEvaluator:
 class ConflictResolver:
     """Apply governed precedence only after a verified conflict core exists."""
 
-    def resolve(
-        self,
-        *,
-        core: ConflictCoreV1,
-        plan: CompiledRulePlanV1,
-        observed_facts: dict[str, Any],
-        resolved_at: datetime,
-    ) -> ConflictResolutionV1:
-        members = set(core.member_rule_refs)
+    @staticmethod
+    def controllers(*, plan, members, observed_facts):
+        """Shared explicit-controller seam for normative and legal consumers."""
+        members = set(members)
+        if len(members) < 2:
+            return (), ()
         checks = tuple(
             item
             for item in DeterministicRuleEvaluator().evaluate_rule_precedences(
@@ -265,6 +306,17 @@ class ConflictResolver:
             }
             if members - {higher} <= covered:
                 candidates.append(higher)
+        return tuple(candidates), checks
+
+    def resolve(
+        self,
+        *,
+        core: ConflictCoreV1,
+        plan: CompiledRulePlanV1,
+        observed_facts: dict[str, Any],
+        resolved_at: datetime,
+    ) -> ConflictResolutionV1:
+        candidates, checks = self.controllers(plan=plan, members=core.member_rule_refs, observed_facts=observed_facts)
         if len(candidates) == 1:
             outcome = "RESOLVED_BY_PRECEDENCE"
             controlling = (candidates[0],)

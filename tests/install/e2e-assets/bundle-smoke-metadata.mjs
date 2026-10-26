@@ -22,7 +22,7 @@ export function bundleIdentity(commit, tag = '', channelRequest = null) {
   if (channelRequest !== null) {
     const request = admitChannelRequest(channelRequest, commit, tag)
     return { appId: request.identity.appId, msixIdentity: request.identity.msixAppIdWithOrg,
-      applicationId: request.identity.appNamePascal, publisher: OUT_OF_STORE_PUBLISHER,
+      applicationId: request.identity.appNamePascal, publisher: request.semantierScope === 'semantier-windows-x64/v1' && request.identity.msixAppIdWithOrg === 'Semantier.Agent.Acceptance' ? 'CN=Semantier Technology, O=Semantier Technology' : OUT_OF_STORE_PUBLISHER,
       windowsVersion: request.windowsVersion }
   }
   // The production module reads build flags at require-time. A child avoids

@@ -78,6 +78,7 @@ export interface ChannelPackage {
   feed: { key: string; channel: string }
 }
 export interface ChannelManifest {
+  notes?: Record<string, string>
   schema: 1
   request: ChannelRequest
   packages: ChannelPackage[]
@@ -482,6 +483,19 @@ export function decodeChannelManifest(body: string): ChannelManifest {
 
   if (fields.get('receiverProtocol') !== undefined) {
     manifest.receiverProtocol = fields.integer('receiverProtocol')
+  }
+
+  if (fields.get('notes') !== undefined) {
+    const notes = fields.object('notes')
+
+    if (notes.keys().length > 9) {throw new Error('Too many release note languages')}
+    manifest.notes = Object.fromEntries(notes.keys().map(key => {
+      const value = notes.get(key)
+
+      if (!/^[a-z]{2}(?:-[a-z]+)?$/.test(key) || typeof value !== 'string' || !value.length || value.length > 16000 || [...value].some(char => char.charCodeAt(0) < 32 && !['\n', '\r', '\t'].includes(char))) {throw new Error('Invalid localized release notes')}
+
+      return [key, value]
+    }))
   }
 
   return manifest

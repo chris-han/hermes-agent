@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 from dataclasses import dataclass, field
@@ -108,6 +109,10 @@ except Exception:  # pragma: no cover - non-POSIX fallback
 def _sessions_dir(hermes_home: Path) -> Path:
     path = hermes_home / "sessions"
     path.mkdir(parents=True, exist_ok=True)
+    runtime_uid = os.environ.get("SEMANTIER_WORKSPACE_RUNTIME_UID")
+    if runtime_uid:
+        from agents.workspace_permissions import grant_runtime_directory
+        grant_runtime_directory(path, int(runtime_uid))
     return path
 
 
@@ -183,6 +188,17 @@ def _session_file_key(session_id: str) -> str:
 def workspace_session_dir(hermes_home: Path, session_id: str) -> Path:
     path = _session_dir_path(hermes_home, session_id)
     path.mkdir(parents=True, exist_ok=True)
+    runtime_uid = os.environ.get("SEMANTIER_WORKSPACE_RUNTIME_UID")
+    if runtime_uid:
+        from agents.workspace_permissions import grant_runtime_directory
+        uid = int(runtime_uid)
+        grant_runtime_directory(path, uid)
+        # Retained directories predate inherited service ACLs. Repair only the
+        # known session containers, preserving file bytes, owners and other ACLs.
+        for name in ("runs", "uploads", "artifacts", "logs"):
+            child = path / name
+            if child.exists() or child.is_symlink():
+                grant_runtime_directory(child, uid)
     return path
 
 

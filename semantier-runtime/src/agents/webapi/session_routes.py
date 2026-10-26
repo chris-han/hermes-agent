@@ -2958,6 +2958,15 @@ def _db_message_to_workspace_message(message: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def _cloud_session_selection(session):
+    raw=session.get('model_config') or {}
+    if isinstance(raw,str):
+        try:raw=json.loads(raw)
+        except (ValueError,TypeError):raw={}
+    binding=(((raw.get('browser_model_lock') or {}).get('model_options') or {}).get('semantier_cloud') or {}) if isinstance(raw,dict) else {}
+    return {'modelAccountId':binding.get('account_id'), 'modelRevision':binding.get('capability_revision')}
+
+
 def _db_session_to_workspace_record(
     session: dict[str, Any],
     *,
@@ -2993,6 +3002,7 @@ def _db_session_to_workspace_record(
         "display_name": display_name,
         "source": source,
         "model": model,
+        **_cloud_session_selection(session),
         "platform": platform,
         "parent_session_id": session.get("parent_session_id"),
         "lineage_root_id": session.get("lineage_root_id"),
@@ -3028,7 +3038,14 @@ def _list_workspace_sessions_primary(
             str(item.get("session_id") or item.get("id") or ""),
         )
     )
-    return rows[offset : offset + limit]
+    selected=rows[offset : offset + limit]
+    db=_workspace_session_db(ctx,read_only=True)
+    try:
+        for record in selected:
+            record.update(_cloud_session_selection(db.get_session(_session_identifier(record)) or {}))
+    finally:
+        db.close()
+    return selected
 
 
 def _get_workspace_session_detail_primary(
@@ -3197,6 +3214,8 @@ def _to_semantier_session_summary(
         "source": session.get("source"),
         "platform": session.get("platform"),
         "model": session.get("model"),
+        "modelAccountId": session.get("modelAccountId") or _cloud_session_selection(session).get("modelAccountId"),
+        "modelRevision": session.get("modelRevision") or _cloud_session_selection(session).get("modelRevision"),
         "isActive": session.get("is_active"),
         "messageCount": session.get("message_count"),
         "parentSessionId": (
@@ -3355,6 +3374,33 @@ def _normalize_workspace_session_route_key(
     return requested
 
 
+def _require_managed_conversation(ctx, session_key):
+    from agents.auth_db import get_workspace_config,is_postgresql
+    if not is_postgresql():
+        return
+    internal=_resolve_workspace_runtime_session_id(ctx,session_key)
+    db=_workspace_session_db(ctx,read_only=True)
+    try:
+        session=db.get_session(internal) if internal else None
+    finally:
+        db.close()
+    raw=(session or {}).get("model_config") or {}
+    raw=json.loads(raw) if isinstance(raw,str) else raw
+    lock=raw.get("browser_model_lock") or {}
+    binding=(lock.get("model_options") or {}).get("semantier_cloud")
+    if isinstance(binding,dict):
+        if binding.get("organization_id")!=ctx.organization_id:
+            raise HTTPException(403,"Conversation account belongs to another organization.")
+        return
+    if lock.get("confirmed") and lock.get("provider") not in (None,"","auto","semantier-cloud"):
+        return  # Existing explicit custom conversations retain their own pinned route.
+    model=get_workspace_config(ctx.workspace_id).get("model") or {}
+    model=model if isinstance(model,dict) else {}
+    if model.get("provider") not in (None,"","auto","semantier-cloud"):
+        return
+    raise HTTPException(409,"This conversation has no account-bound model. Choose an authorized default and start a new chat; its history is retained.")
+
+
 def _create_session_record(
     ctx: RequestContext,
     *,
@@ -3408,6 +3454,18 @@ def _create_session_record(
     db = _workspace_session_db(ctx)
     try:
         db.create_session(resolved_session_id, "api_server")
+        from agents.auth_db import get_workspace_config
+        from agent.semantier_gateway import snapshot_auxiliary_assignments
+        configuration = get_workspace_config(ctx.workspace_id)
+        configured = configuration.get("model") or {}
+        if isinstance(configured, dict) and configured.get("provider") == "semantier-cloud" and configured.get("organization_id") == ctx.organization_id and configured.get("account_id"):
+            binding = {key:configured.get(key) for key in ("key_env","base_url","account_id","organization_id","capability_revision")}
+            db.update_session_runtime_lock(resolved_session_id, model=configured.get("default"), provider="semantier-cloud",
+                model_options={"semantier_cloud":binding, "semantier_auxiliary":snapshot_auxiliary_assignments(configuration)},route_source="raw_request",confirmed=True)
+
+        if isinstance(configured,dict) and configured.get('provider') not in (None,'','auto','semantier-cloud') and configured.get('default'):
+            db.update_session_runtime_lock(resolved_session_id,model=configured['default'],provider=configured['provider'],model_options={},route_source='raw_request',confirmed=True)
+
         if resolved_label:
             resolved_label = _set_unique_session_title(db, resolved_session_id, resolved_label)
     finally:
@@ -4175,6 +4233,7 @@ async def api_session_chat(session_id: str, request: Request) -> Any:
     if "tool_action" in body:
         return _run_explicit_chat_tool(ctx, session_id, message, body["tool_action"])
 
+    _require_managed_conversation(ctx, session_id)
     raw_model = body.get("model")
     model = (
         raw_model.strip() if isinstance(raw_model, str) and raw_model.strip() else None
@@ -4280,6 +4339,7 @@ async def api_session_chat_stream(session_id: str, request: Request) -> Response
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    _require_managed_conversation(ctx, session_id)
     raw_model = body.get("model")
     model = (
         raw_model.strip() if isinstance(raw_model, str) and raw_model.strip() else None
@@ -4375,6 +4435,7 @@ async def api_sessions_send(request: Request) -> Any:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    _require_managed_conversation(ctx, session_key)
     raw_model = body.get("model")
     model = (
         raw_model.strip() if isinstance(raw_model, str) and raw_model.strip() else None

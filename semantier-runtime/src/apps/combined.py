@@ -1,8 +1,8 @@
 # ---------------------------------------------------------------------------
-# agents/gateway.py — canonical public surface for all gateways
+# apps/combined.py — canonical combined Semantier HTTP application
 #
 # Owns the FastAPI app instance and exposes execute() for programmatic use.
-# This is the canonical REST API surface under semantier.agents.
+# Composes the existing Cloud, runtime and EOS HTTP routers and lifecycles.
 # CLI and Hermes gateway startup are exposed from agents.launcher.
 # ---------------------------------------------------------------------------
 
@@ -53,8 +53,12 @@ try:
 
         try:
             await start_gateway(_app)
+            from agents.client_operations.runtime import start as start_client_operations
+            await start_client_operations(_app)
             yield
         finally:
+            from agents.client_operations.runtime import stop as stop_client_operations
+            await stop_client_operations(_app)
             await stop_gateway(_app)
             from agents.hermes_embedded_api import get_embedded_hermes_api_service
 
@@ -144,11 +148,11 @@ try:
         return execute(req)
 
 except ImportError as exc:
-    raise RuntimeError("FastAPI gateway initialization failed") from exc
+    raise RuntimeError("Semantier API application initialization failed") from exc
 
 
 def execute(req: dict) -> dict:
-    """Programmatic execute entrypoint for all gateway adapters."""
+    """Programmatic governed execution entrypoint for Semantier adapters."""
     return execute_with_governance(
         org_id=req["org_id"],
         J_t=req["justification"],

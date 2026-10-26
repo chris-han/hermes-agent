@@ -139,7 +139,8 @@ class AccountSyncStore:
     async def require_ready(self):
         async with await self.connection() as c:
             version=await (await c.execute('SELECT max(version) AS version FROM semantier_gateway.schema_version')).fetchone()
-            if version['version']!=2:raise ValueError('Explicit account synchronization migration required')
+            from agents.model_gateway.store import GATEWAY_SCHEMA_VERSION
+            if version['version']!=GATEWAY_SCHEMA_VERSION:raise ValueError('Explicit account synchronization migration required')
             expected={'account_scope_organization':('account_scopes','semantier_identity.organizations',['organization_id']),
                       'account_scope_financial':('account_scopes',self.billing_schema+'.accounts',['organization_id','account_id','currency']),
                       'account_access_user':('account_access','semantier_identity.users',['user_id']),
@@ -152,7 +153,7 @@ class AccountSyncStore:
                     (parent,columns,columns,'semantier_gateway.'+table,name))).fetchone()
                 if not relation or not relation['valid']:raise ValueError('Explicit account authority relation migration required')
             await c.execute('SELECT ciphertext,nonce,encryption_key_id FROM semantier_gateway.native_credentials LIMIT 0')
-        return {'schema_version':2,'status':'ready'}
+        return {'schema_version':GATEWAY_SCHEMA_VERSION,'status':'ready'}
 
     @staticmethod
     async def _policy(c,org,aid,currency,billing_schema):
@@ -382,6 +383,13 @@ class AccountSyncStore:
                   WHERE i.target_instance_id=p.target_instance_id AND i.environment_namespace=p.environment_namespace AND i.organization_id=p.organization_id AND i.account_id=p.account_id AND i.currency=p.currency AND i.revision=p.desired_revision
                   AND p.target_instance_id=%s AND p.environment_namespace=%s AND p.organization_id=%s AND p.account_id=%s AND p.currency=%s AND i.status='DONE' ''',(self.target_instance_id,self.environment_namespace,row['organization_id'],row['account_id'],row['currency']))
             return len(rows)
+
+    async def require_reexecution_access(self, actor, account_id, currency):
+        """Read recovery needs current account access, never a live historical route."""
+        from fastapi import HTTPException
+        async with await self.connection() as c:
+            row=await (await c.execute("SELECT status FROM semantier_gateway.account_access WHERE organization_id=%s AND account_id=%s AND currency=%s AND user_id=%s",(actor.organization_id,account_id,currency,actor.user_id))).fetchone()
+            if not row or row['status']!='ACTIVE': raise HTTPException(404,'invocation not found')
 
     async def selected_credential(self,actor,deployment,current_revision=None):
         from fastapi import HTTPException

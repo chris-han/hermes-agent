@@ -1,16 +1,18 @@
-# Real deployment of receipt-verified bytes. Never run on a developer desktop.
+# Real deployment of receipt-verified bytes. Default requires disposable CI; the
+# explicit Semantier switch permits only the separately owned acceptance family.
 param(
     [Parameter(Mandatory=$true)][string]$Artifact,
     [Parameter(Mandatory=$true)][ValidateSet('x64','arm64')][string]$Arch,
     [Parameter(Mandatory=$true)][string]$Commit,
     [string]$Tag = '',
     [string]$ChannelRequest = '',
+    [switch]$SemantierAcceptanceHost,
     [Parameter(Mandatory=$true)][string]$Work,
     [Parameter(Mandatory=$true)][string]$Out
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
-if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or $env:OS -cne 'Windows_NT') {
+if ((!$SemantierAcceptanceHost -and ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted')) -or $env:OS -cne 'Windows_NT') {
     throw 'Disposable native GitHub-hosted Windows runner required'
 }
 if ($Commit -cnotmatch '^[a-f0-9]{40}$') { throw 'Expected exact lowercase full commit SHA' }
@@ -34,6 +36,11 @@ $identityArgs = @('--commit', $Commit)
 if ($Tag) { $identityArgs += @('--tag', $Tag) }
 if ($ChannelRequest) { $identityArgs += @('--channel-request', $ChannelRequest) }
 $Expected = (Run-Node (@($Metadata, 'identity') + $identityArgs)) | ConvertFrom-Json
+if ($SemantierAcceptanceHost) {
+    if (!$ChannelRequest -or $Expected.msixIdentity -cne 'Semantier.Agent.Acceptance' -or $Expected.publisher -cne 'CN=Semantier Technology, O=Semantier Technology') { throw 'Owned acceptance identity required' }
+    $scope = Get-Content -Raw -LiteralPath $ChannelRequest | ConvertFrom-Json
+    if ($scope.semantierScope -cne 'semantier-windows-x64/v1' -or $scope.channel -cne 'semantier-acceptance') { throw 'Acceptance scope required' }
+}
 Run-Node @($Metadata, 'prepare', '--work', $Work, '--out', $Out)
 . (Join-Path $Assets 'windows-bundle-metadata.ps1')
 . (Join-Path $Assets 'windows-bundle-plugin-smoke.ps1')
@@ -53,7 +60,8 @@ try {
         $signature.SignerCertificate.Subject -cne $Expected.publisher) { throw 'Artifact signature/publisher invalid' }
     $inputMetadata = Read-BundleSmokeMetadata $Artifact $Arch $Expected
     $inputMetadata | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Out 'artifact-metadata.json')
-    if (@(Get-AppxPackage -AllUsers -Name $Expected.msixIdentity).Count) { throw 'Package identity already exists; refusing to replace it' }
+    $existing = if ($SemantierAcceptanceHost) { @(Get-AppxPackage -Name $Expected.msixIdentity) } else { @(Get-AppxPackage -AllUsers -Name $Expected.msixIdentity) }
+    if ($existing.Count) { throw 'Package identity already exists; refusing to replace it' }
     $attempted = $true
     Add-AppxPackage -Path $Artifact -ErrorAction Stop
     $packages = @(Get-AppxPackage -Name $Expected.msixIdentity)

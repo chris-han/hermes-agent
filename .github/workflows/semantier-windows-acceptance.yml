@@ -1,0 +1,56 @@
+name: Semantier Windows acceptance
+on:
+  workflow_dispatch:
+    inputs:
+      controller_commit:
+        description: Reviewed exact semantier-runtime controller commit
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: semantier-windows-owned-signing
+  cancel-in-progress: false
+jobs:
+  windows-x64:
+    # A dedicated WSL runner on the authorized Windows host, never a public PR.
+    runs-on: [self-hosted, Linux, X64, semantier-windows-signing-bridge]
+    environment: semantier-acceptance
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
+        with:
+          persist-credentials: false
+          path: hermes
+      - name: Validate frozen controller reference
+        env:
+          CONTROLLER_COMMIT: ${{ inputs.controller_commit }}
+        run: '[[ "$CONTROLLER_COMMIT" =~ ^[0-9a-f]{40}$ ]]'
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
+        with:
+          repository: chris-han/semantier-runtime
+          token: ${{ secrets.SEMANTIER_CONTROLLER_READ_TOKEN }}
+          ref: ${{ inputs.controller_commit }}
+          persist-credentials: false
+          path: controller
+      - name: Build and sign with existing non-exportable identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="D:\\repo\\deliverables\\SemantierAgent-client-feedback-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "ACCEPTANCE_OUTPUT=$(wslpath -u "$output")" >> "$GITHUB_ENV"
+          python3 controller/scripts/build_hermes_windows.py --source "$PWD/hermes" --output "$output" --thumbprint 57BF15739B4AA447842EAF388856A01B4E5029FF --acceptance-public-base http://127.0.0.1:8926
+      - name: Real native installation and controlled inference-boundary smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="D:\\repo\\qualification-private\\client-feedback-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "ACCEPTANCE_NATIVE=$(wslpath -u "$root")/out" >> "$GITHUB_ENV"
+          python3 hermes/scripts/releases/semantier_native_ci.py --output "$ACCEPTANCE_OUTPUT" --work "$root" --commit "$GITHUB_SHA"
+      - name: Stage receipt-bound candidate; never promote
+        shell: bash
+        env:
+          SEMANTIER_CLIENT_RECEIPT_KEY: ${{ secrets.SEMANTIER_CLIENT_RECEIPT_KEY }}
+        run: |
+          set -euo pipefail
+          python3 hermes/scripts/releases/semantier_candidate.py --output "$ACCEPTANCE_OUTPUT" --native "$ACCEPTANCE_NATIVE" --incoming /tmp/semantier-client-release-feedback-v1/incoming --notes hermes/scripts/releases/semantier-acceptance-notes.json

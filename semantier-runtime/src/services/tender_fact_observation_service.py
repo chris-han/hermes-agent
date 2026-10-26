@@ -124,9 +124,13 @@ class TenderFactObservationService:
         return payload, tuple(p for p, _ in records)
 
     @staticmethod
-    def verify_receipt(*, store, receipt, sensor):
+    def verify_receipt(*, store, receipt, sensor, support_rule_store=None):
         """Re-read producer lineage without a provider call."""
         import json
+        from contracts.tender_observed_facts_projection import TenderFactObservationReceiptV2
+        if isinstance(receipt, TenderFactObservationReceiptV2):
+            return TenderFactObservationService.verify_support_receipt(
+                store=store, receipt=receipt, sensor=sensor, rule_store=support_rule_store)
 
         if not isinstance(
             receipt,
@@ -680,6 +684,158 @@ class TenderFactObservationService:
         )
         if stored_pin != self.pin(receipt):
             raise ValueError("FACT_OBSERVATION_PERSISTENCE_MISMATCH")
+        return receipt
+
+
+    @staticmethod
+    def resolve_support_profile(*, rule_store, version_pin, activation_id, organization_id,
+                                workspace_id, at):
+        """Resolve the explicit license through existing reviewed rule/activation owners."""
+        import json
+        from storage.governed_rule_store import GovernedRuleStore, _db_path
+        from contracts.tender_observed_facts_projection import BooleanSupportProfileV1
+        if not isinstance(rule_store, GovernedRuleStore):
+            raise ValueError("SUPPORT_PROFILE_AUTHORITY_UNAVAILABLE")
+        if rule_store._db_path.resolve()!=_db_path().resolve():
+            raise ValueError("SUPPORT_PROFILE_OWNER_MISMATCH")
+        if at.tzinfo is None or at.utcoffset() != timezone.utc.utcoffset(at):
+            raise ValueError("SUPPORT_UTC_REQUIRED")
+        version_pin=ArtifactPinV1.model_validate(version_pin)
+        row=rule_store.get_rule_version(version_pin.artifact_ref)
+        if (version_pin.artifact_kind!='governed_rule_version' or row is None
+            or 'sha256:'+row['content_hash'] != version_pin.artifact_hash
+            or row['rule_family']!='fact_support_boolean.v1'
+            or row['authority_domain']!='fact_support' or row['semantic_tier']!='T4'
+            or row['organization_id']!=organization_id):
+            raise ValueError("SUPPORT_PROFILE_VERSION_MISMATCH")
+        profile=BooleanSupportProfileV1.model_validate_json(row['governed_rule_text'])
+        if canonical_json(json.loads(row['governed_rule_text']))!=canonical_json(profile.model_dump(mode='json')):
+            raise ValueError('SUPPORT_EXPLICIT_PROFILE_FIELDS_REQUIRED')
+        if (profile.organization_id,profile.workspace_id)!=(organization_id,workspace_id):
+            raise ValueError("SUPPORT_PROFILE_SCOPE_MISMATCH")
+        license={'profile_hash':profile.profile_hash,'licenses':
+                 ['complete_premises','sufficient_bundles','origin_groups','bounded_coverage']}
+        candidate=rule_store._candidate_store.get_candidate(row['rule_candidate_id'])
+        if (candidate is None
+            or candidate['draft_rule_text']!=row['governed_rule_text']
+            or candidate['approval_evidence']!=license or row['approval_evidence']!=license
+            or row['rule_state']!='APPROVED'):
+            raise ValueError("SUPPORT_PROFILE_NOT_ADMITTED")
+        # Follow and verify the append-only candidate chain, independent of same-time UUID ordering.
+        events=rule_store._candidate_store.list_events(row['rule_candidate_id'])
+        by_prior={}
+        for event in events:
+            prior=event['prior_event_hash']
+            if prior in by_prior:
+                raise ValueError("SUPPORT_APPROVAL_CHAIN_INVALID")
+            payload={k:event[k] for k in ('rule_candidate_id','event_type','actor','actor_authority',
+                'from_state','to_state','prior_event_hash','created_at')}
+            payload['event_payload']=json.loads(event['event_json'])
+            if content_hash(canonical_json(payload))!=event['event_hash']:
+                raise ValueError("SUPPORT_APPROVAL_CHAIN_INVALID")
+            by_prior[prior]=event
+        prior=None;visited=[]
+        while prior in by_prior:
+            event=by_prior[prior];visited.append(event);prior=event['event_hash']
+            if len(visited)>len(events):
+                raise ValueError("SUPPORT_APPROVAL_CHAIN_INVALID")
+        approved=[e for e in visited if e['from_state']=='NEEDS_REVIEW' and e['to_state']=='APPROVED'
+                  and e['event_type']=='APPROVED' and e['actor_authority']=='policy_owner'
+                  and json.loads(e['event_json']).get('approval_evidence')==license]
+        if len(visited)!=len(events) or len(approved)!=1:
+            raise ValueError("SUPPORT_PROFILE_NOT_ADMITTED")
+        effective=[e for e in visited if datetime.fromisoformat(e['created_at'])<=at]
+        if not effective or effective[-1]['to_state'] not in ('APPROVED','ACTIVATED'):
+            raise ValueError('SUPPORT_PROFILE_NOT_EFFECTIVE')
+        activation=rule_store._activation_store.resolve_executable_activations(
+            activation_ids=[activation_id],organization_id=organization_id,
+            workspace_id=workspace_id,effective_at=at.isoformat())[0]
+        if (activation['rule_version_id']!=row['rule_version_id']
+            or activation['approval_event_ref']!=approved[0]['event_hash']):
+            raise ValueError("SUPPORT_ACTIVATION_APPROVAL_MISMATCH")
+        return profile
+
+    @staticmethod
+    def _verify_support_origins(profile, target_evidence, source):
+        for group in profile.groups:
+            origin=group.origin
+            evidence_origin=origin.artifact_kind=='evidence' and origin in target_evidence
+            source_origin=(origin.artifact_kind=='source' and
+                (origin.artifact_ref,origin.artifact_hash)==(source.get('source_identity_ref'),source.get('source_hash')))
+            if not (evidence_origin or source_origin):
+                raise ValueError('SUPPORT_ORIGIN_NOT_RETAINED')
+
+    @staticmethod
+    def verify_support_receipt(*, store, receipt, sensor, rule_store, current_at=None):
+        from contracts.tender_observed_facts_projection import TenderFactObservationReceiptV2
+        value=TenderFactObservationReceiptV2.model_validate(receipt.model_dump(mode='json'))
+        d=value.support_declaration
+        scope=dict(organization_id=value.organization_id,workspace_id=value.workspace_id)
+        retained=store.get(**scope,artifact_ref=value.receipt_ref,contract_type=TenderFactObservationReceiptV2)
+        original=store.get(**scope,artifact_ref=d.original_observation.artifact_ref,
+                           contract_type=TenderFactObservationReceiptV1)
+        if retained!=value or original is None or original.pin()!=d.original_observation:
+            raise ValueError('SUPPORT_RETAINED_OBSERVATION_MISMATCH')
+        TenderFactObservationService.verify_receipt(store=store,receipt=original,sensor=sensor)
+        common=original.model_dump(mode='json',exclude={'schema_version','receipt_ref','receipt_hash'})
+        if common!=value.model_dump(mode='json',exclude={'schema_version','receipt_ref','receipt_hash','support_declaration'}):
+            raise ValueError('SUPPORT_ORIGINAL_OBSERVATION_MISMATCH')
+        profile=TenderFactObservationService.resolve_support_profile(rule_store=rule_store,
+            version_pin=d.rule_version,activation_id=d.activation_id,**scope,at=d.licensed_at)
+        if profile!=d.profile or value.sensor!=sensor.pin():
+            raise ValueError('SUPPORT_PROFILE_BINDING_MISMATCH')
+        # Every origin unit must be an exact retained input, not an invented name/hash.
+        import json
+        request_pin=next(p for p in original.basis if p.artifact_kind=='runtime_judgment_request')
+        request=store.get(**scope,artifact_ref=request_pin.artifact_ref,contract_type=RuntimeJudgmentRequestV1)
+        target=json.loads(request.judgment_request['input_text'])['target']
+        source=target.get('source_binding',{})
+        TenderFactObservationService._verify_support_origins(profile,original.target_evidence,source)
+        if current_at is not None:
+            TenderFactObservationService.resolve_support_profile(rule_store=rule_store,
+                version_pin=d.rule_version,activation_id=d.activation_id,**scope,at=current_at)
+        return value
+
+    async def observe_supported(self, *, rule_store=None, profile_version=None,
+                                activation_id=None, **inputs):
+        """Emit from a retained original observation plus an explicit governed finite license."""
+        if profile_version is None:
+            return await self.observe(**inputs)
+        from contracts.tender_observed_facts_projection import (
+            TenderFactObservationReceiptV2, FactSupportDeclarationV1)
+        actor=inputs['actor_context'];inputs['authority_resolver'].require_current_actor(actor_context=actor)
+        at=datetime.now(timezone.utc)
+        profile=self.resolve_support_profile(rule_store=rule_store,version_pin=profile_version,
+            activation_id=activation_id,organization_id=actor.organization_id,
+            workspace_id=actor.workspace_id,at=at)
+        sensor=TenderFactSensorContractV1.from_schema(schema=inputs['schema'],fact_ref=inputs['fact_ref'])
+        if profile.sensor!=sensor.pin() or profile.subject_binding!=inputs.get('subject_binding'):
+            raise ValueError('SUPPORT_PROFILE_FACT_SCHEMA_SUBJECT_MISMATCH')
+        target=(self._categorical_source(store=inputs['store'],binding=profile.subject_binding)[1]
+                if profile.subject_binding else tuple(ArtifactPinV1(artifact_kind='evidence',
+                artifact_ref=e['evidence_ref'],artifact_hash=e['evidence_hash'])
+                for e in self._source_payload(inputs['source_region'])['evidence']))
+        if not set(profile.premises)<=set(target):
+            raise ValueError('SUPPORT_PREMISES_NOT_RETAINED')
+        source=(self._categorical_source(store=inputs['store'],binding=profile.subject_binding)[0]
+                if profile.subject_binding else self._source_payload(inputs['source_region']))
+        self._verify_support_origins(profile,target,source.get('source_binding',{}))
+        original=await self.observe(**inputs)
+        if original.semantic_result=='UNKNOWN':
+            return original  # An unavailable observation never acquires a signed value.
+        if profile.value!=(original.semantic_result=='TRUE'):
+            raise ValueError('SUPPORT_CONFLICTING_VALUE')
+        at=datetime.now(timezone.utc)
+        if self.resolve_support_profile(rule_store=rule_store,version_pin=profile_version,
+            activation_id=activation_id,organization_id=actor.organization_id,
+            workspace_id=actor.workspace_id,at=at)!=profile:
+            raise ValueError('SUPPORT_PROFILE_CHANGED_DURING_OBSERVATION')
+        declaration=FactSupportDeclarationV1(profile=profile,rule_version=profile_version,
+            activation_id=activation_id,original_observation=original.pin(),licensed_at=at)
+        receipt=TenderFactObservationReceiptV2.create(**original.model_dump(
+            exclude={'schema_version','receipt_ref','receipt_hash'}),support_declaration=declaration)
+        inputs['store'].put(receipt)
+        self.verify_support_receipt(store=inputs['store'],receipt=receipt,sensor=sensor,rule_store=rule_store)
         return receipt
 
 

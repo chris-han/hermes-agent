@@ -168,9 +168,11 @@ class QualityEvaluationService:
                 contract_type=NormativeSemanticCandidateSetV1)
             if predecessor is not None and predecessor.candidate_set_hash != candidate.predecessor_candidate_set_hash:
                 raise ValueError('SOURCE_VALIDATION_PREDECESSOR_PIN_MISMATCH')
+        from services.requirements_reconciliation_service import RequirementsReconciliationService
         receipt, artifacts = self._compute_source_run(candidate=candidate, review=review, validation=validation,
             profile=profile, code_units=code_units, environment=environment, executed_at=executed_at,
-            authority=authority, predecessor=predecessor, applicability_review=applicability_review)
+            authority=authority, predecessor=predecessor, applicability_review=applicability_review,
+            domain_basis=RequirementsReconciliationService.persisted_domain_basis(store, candidate))
         winner = store.put_many_with_operation_result(**operation, artifacts=(*artifacts, receipt),
             result_pin=ArtifactPinV1(artifact_kind="source_validation_execution",
                 artifact_ref=receipt.execution_ref, artifact_hash=receipt.execution_hash),
@@ -185,7 +187,7 @@ class QualityEvaluationService:
                 raise ValueError("SOURCE_VALIDATION_INPUT_MISMATCH:" + name)
 
     def _compute_source_run(self, *, candidate, review, validation, profile, code_units, environment, executed_at,
-                            authority=None, predecessor=None, applicability_review=None):
+                            authority=None, predecessor=None, applicability_review=None, domain_basis=None):
         from contracts.ontology_paired_evaluation import ArtifactPayloadPinV1
         from contracts.source_validation_execution import SourceValidationExecutionV1
         from services.ontology_quality_evaluators import FitnessQualityEvaluator, LogicalQualityEvaluator, _result, candidate_pin
@@ -203,7 +205,7 @@ class QualityEvaluationService:
                 candidate=candidate, validation_contract_ref=validation.validation_contract_ref,
                 validation_contract_hash=validation.validation_contract_hash,
                 competency_refs=tuple(sorted({test.competency_id for test in validation.executable_tests})),
-                compiled_at=executed_at)
+                compiled_at=executed_at, domain_basis=domain_basis)
         except ValueError as exc:
             compilation_error = str(exc)
             run = self.assemble(profile=profile, subject=candidate_pin(candidate),

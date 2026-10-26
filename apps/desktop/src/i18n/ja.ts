@@ -16,8 +16,10 @@ import { jaSharedMetrics } from './ja_shared_metrics'
 import { jaThemePicker } from './ja_theme_picker'
 import { jaUpdateChannel } from './ja_update_channel'
 import { semantierBillingCopy } from './semantier-billing'
+import { feedbackEnglish } from './semantier-feedback'
 
 export const jaOverrides = {
+  semantierFeedback: feedbackEnglish,
   connectors: jaConnectors.connectors,
   externalOpenFailed: {
     title: 'このリンクを開けませんでした',

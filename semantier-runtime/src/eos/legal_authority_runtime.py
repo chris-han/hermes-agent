@@ -28,7 +28,8 @@ LEGAL_RUNTIME_NO_ACTIVE_ISSUE_MODEL = "LEGAL_RUNTIME_NO_ACTIVE_ISSUE_MODEL"
 LEGAL_RUNTIME_UNRESOLVED_MATERIAL_ISSUES = "LEGAL_RUNTIME_UNRESOLVED_MATERIAL_ISSUES"
 
 LEGAL_RUNTIME_REF = "legal_authority_runtime.v1"
-LEGAL_RESOLUTION_RULES_VERSION = "legal_resolution_rules.v1"
+LEGAL_RESOLUTION_RULES_VERSION = "legal_resolution_rules.v2"
+LEGAL_RUNTIME_RESOLUTION_POLICY_UNSUPPORTED = "LEGAL_RUNTIME_RESOLUTION_POLICY_UNSUPPORTED"
 LEGAL_RELEASE_POLICY_VERSION = "legal_release_policy.v1"
 
 LEGAL_DISPOSITIONS = {
@@ -132,7 +133,7 @@ class LegalAuthorityRuntime:
                 release_decision="BLOCK",
                 disposition="ESCALATE",
             )
-        pins = {**pins, **issue_model}
+        pins = {**pins, **issue_model, "resolution_rules_version_ref": pins["resolution_rules_version_ref"]}
         result = self._execute_with_pins(
             query_ir=query_ir,
             fact_set=fact_set,
@@ -149,6 +150,7 @@ class LegalAuthorityRuntime:
         fact_set: NormalizedFactSet,
         pins: dict[str, Any],
         renderer_contract_version: str,
+        historical_replay: bool = False,
     ) -> dict[str, Any]:
         claims = self._pinned_claims(pins=pins, query_ir=query_ir)
         if not claims:
@@ -191,7 +193,15 @@ class LegalAuthorityRuntime:
                 disposition="ESCALATE",
             )
 
-        governing_claims = _governing_claims(applicable)
+        policy = pins.get("resolution_rules_version_ref")
+        if policy == "legal_resolution_rules.v1" and historical_replay:
+            governing_claims = _governing_claims_v1(applicable)
+        elif policy == "legal_resolution_rules.v2":
+            governing_claims = _governing_claims_v2(applicable, pins=pins, facts=fact_set.facts)
+        else:
+            return self._closed_result(query_ir=query_ir, fact_set=fact_set, pins=pins,
+                claims=applicable, reason_code=LEGAL_RUNTIME_RESOLUTION_POLICY_UNSUPPORTED,
+                release_decision="ESCALATE", disposition="UNRESOLVED")
         dispositions = {_claim_disposition(claim) for claim in governing_claims}
         if len(dispositions) != 1:
             return self._closed_result(
@@ -309,6 +319,7 @@ class LegalAuthorityRuntime:
             fact_set=fact_set,
             pins=pins,
             renderer_contract_version=renderer_contract_version,
+            historical_replay=True,
         )
         manifest = result["legal_execution_manifest"]
         pinned_keys = required - {"manifest_hash"}
@@ -670,6 +681,9 @@ class LegalAuthorityRuntime:
             or code_revision is None
         ):
             raise ValueError(LEGAL_RUNTIME_REPLAY_PIN_MISSING)
+        for artifact in (resolution_rules, release_policy, runtime_artifact, code_revision):
+            if content_hash(json.loads(artifact["payload_json"])) != artifact["artifact_hash"]:
+                raise ValueError(LEGAL_RUNTIME_REPLAY_PIN_MISSING)
         source_version_ids = json.loads(snapshot["source_version_ids_json"])
         issue_model = json.loads(issue_model_row["model_json"])
         if content_hash(issue_model) != execution_manifest["issue_model_hash"]:
@@ -1015,7 +1029,7 @@ def _claim_disposition(claim: dict[str, Any]) -> str:
     return disposition
 
 
-def _governing_claims(claims: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _governing_claims_v1(claims: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ranked = sorted(claims, key=lambda claim: (_authority_rank(claim), -_specificity(claim)))
     if not ranked:
         return []
@@ -1023,6 +1037,37 @@ def _governing_claims(claims: list[dict[str, Any]]) -> list[dict[str, Any]]:
     same_rank = [claim for claim in ranked if _authority_rank(claim) == best_rank]
     best_specificity = max(_specificity(claim) for claim in same_rank)
     return [claim for claim in same_rank if _specificity(claim) == best_specificity]
+
+
+def _governing_claims_v2(claims, *, pins, facts):
+    """Consume a certified exact mapping; absent basis preserves all competitors."""
+    from contracts.ontology_validation import LegalPrecedenceBasisV2
+    from services.normative_conflict_analysis import ConflictResolver
+    model = pins.get("issue_model") or {}
+    raw = model.get("precedence_basis")
+    if raw is None:
+        return claims
+    try:
+        basis = LegalPrecedenceBasisV2.model_validate(raw)
+        if (basis.organization_id, basis.issue_model_id, basis.ontology_version_ref) != (
+            model.get("organization_id"), model.get("issue_model_id"), pins.get("ontology_version_ref")
+        ):
+            return claims
+        bindings = {b.claim_ref: b for b in basis.bindings}
+        for claim in claims:
+            b = bindings.get(claim["candidate_id"])
+            if b is None or (b.claim_hash, b.source_span_hash) != (
+                claim["candidate_hash"], content_hash(claim["source_span"])
+            ):
+                return claims
+        members = {bindings[c["candidate_id"]].rule_ref for c in claims}
+        controllers, _checks = ConflictResolver.controllers(
+            plan=basis.plan, members=members, observed_facts=facts)
+        if len(controllers) == 1:
+            return [c for c in claims if bindings[c["candidate_id"]].rule_ref == controllers[0]]
+    except (ValueError, KeyError, TypeError):
+        pass
+    return claims
 
 
 def _authority_rank(claim: dict[str, Any]) -> int:

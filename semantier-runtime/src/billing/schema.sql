@@ -165,3 +165,36 @@ END $$;
 DROP TRIGGER IF EXISTS frozen_attempt ON commerce_payment_attempts;
 CREATE TRIGGER frozen_attempt BEFORE UPDATE OR DELETE ON commerce_payment_attempts FOR EACH ROW EXECUTE FUNCTION freeze_commerce_attempt();
 INSERT INTO schema_version(version) VALUES (7) ON CONFLICT DO NOTHING;
+
+-- v8: explicit child intent is independent of ordinary delivery/recovery.
+CREATE UNIQUE INDEX IF NOT EXISTS invocation_scope_identity ON invocations(invocation_id,organization_id,account_id,currency);
+CREATE TABLE IF NOT EXISTS invocation_reexecutions (
+ organization_id text NOT NULL, account_id text NOT NULL, currency text NOT NULL,
+ actor_user_id text NOT NULL, workspace_id text NOT NULL, command_id text NOT NULL,
+ command_hash text NOT NULL, predecessor_invocation_id text NOT NULL, child_invocation_id text NOT NULL UNIQUE,
+ predecessor_request_hash text NOT NULL, request_hash text NOT NULL,
+ request_relation text NOT NULL CHECK(request_relation IN ('SAME_REQUEST','CHANGED_REQUEST')),
+ reason_code text NOT NULL CHECK(reason_code IN ('EXPLICIT_REPEAT','POST_REPAIR_VALIDATION','REVISED_REQUEST')),
+ reason text NOT NULL CHECK(length(btrim(reason)) BETWEEN 1 AND 1000), created_at timestamptz NOT NULL DEFAULT now(),
+ PRIMARY KEY(organization_id,account_id,actor_user_id,workspace_id,command_id),
+ FOREIGN KEY(predecessor_invocation_id,organization_id,account_id,currency) REFERENCES invocations(invocation_id,organization_id,account_id,currency),
+ FOREIGN KEY(child_invocation_id,organization_id,account_id,currency) REFERENCES invocations(invocation_id,organization_id,account_id,currency),
+ CHECK(predecessor_invocation_id<>child_invocation_id),
+ CHECK((request_relation='CHANGED_REQUEST')=(reason_code='REVISED_REQUEST'))
+);
+INSERT INTO schema_version(version) VALUES (8) ON CONFLICT DO NOTHING;
+
+-- v9: task policy is a financial-policy projection, never a second wallet.
+CREATE TABLE IF NOT EXISTS task_finops_scopes (
+ scope_id text PRIMARY KEY, organization_id text NOT NULL, account_id text NOT NULL, currency text NOT NULL,
+ namespace text NOT NULL,root_run_id text NOT NULL,actor_user_id text NOT NULL,workspace_id text NOT NULL,
+ policy_event_id text NOT NULL REFERENCES financial_policy_events(event_id),token_limit bigint CHECK(token_limit>=0),
+ allocation_target text,token_used bigint NOT NULL DEFAULT 0 CHECK(token_used>=0),token_held bigint NOT NULL DEFAULT 0 CHECK(token_held>=0),
+ FOREIGN KEY(organization_id,account_id,currency) REFERENCES accounts
+);
+CREATE TABLE IF NOT EXISTS task_token_reservations (
+ invocation_id text PRIMARY KEY REFERENCES invocations,scope_id text NOT NULL REFERENCES task_finops_scopes,
+ policy_event_id text NOT NULL REFERENCES financial_policy_events(event_id),reserved_tokens bigint NOT NULL CHECK(reserved_tokens>0),
+ used_tokens bigint NOT NULL DEFAULT 0 CHECK(used_tokens>=0),state text NOT NULL CHECK(state IN ('HELD','USED','RELEASED'))
+);
+INSERT INTO schema_version(version) VALUES (9) ON CONFLICT DO NOTHING;

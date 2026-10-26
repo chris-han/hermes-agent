@@ -48,6 +48,9 @@ TenderJourneyPhase = Literal[
 TenderJourneySurface = Literal["CHAT", "WORKBENCH", "SYSTEM"]
 TenderJourneyLifecycle = Literal["ACTIVE", "COMPLETED", "PAUSED", "CANCELLED"]
 TenderJourneyBindingRole = Literal[
+    "requirements_review",
+    "runtime_normative_semantics",
+    "sensitivity_normative_semantics",
     "policy_source",
     "canonical_ir",
     "graph_intent",
@@ -228,6 +231,10 @@ class TenderJourneyRuntimeCommandV1(_Contract):
     command_id: str = Field(min_length=1)
     idempotency_key: str = Field(min_length=1)
     surface: TenderJourneySurface = "WORKBENCH"
+
+
+class TenderJourneyProduceNormativeSemanticsRequestV1(TenderJourneyRuntimeCommandV1):
+    source_role: Literal["DESIGN_SOURCE", "RUNTIME_TARGET"] = "DESIGN_SOURCE"
 
 
 class TenderJourneySelectRuntimeDocumentRequestV1(_Contract):

@@ -35,6 +35,8 @@ Return exactly one JSON object with this shape. Every ellipsis below means a sou
 
 Do not collapse typed objects into strings. Do not invent source block IDs. Omit an unresolved question only when the cited source evidence supports a complete typed claim. The hard_negative_questions array must reproduce every PROFILE_CATALOG hard-negative object exactly and only once, preserving its exact question_id, text, and distinction_to_preserve; do not omit, summarize, translate, reorder within an object, or invent hard negatives. These remain non-authoritative evaluation boundaries, and every copied array item still requires claim_evidence from a source block relevant to testing that distinction.
 
+Source_context contains canonical identities, order and native structural coordinates, not semantic authority. Preserve cell row/column/parent context and paragraph order when interpreting shared headings or independent conditions. Do not infer merged cells or header status where the source does not supply it. Claim_evidence must still use block_id aliases.
+
 PROFILE_ID: {profile_id}
 PROFILE_CATALOG: {profile_catalog}
 CANONICAL_SOURCE_BLOCKS: {canonical_source_blocks}

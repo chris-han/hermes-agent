@@ -125,7 +125,7 @@ class TenderReviewService:
             evidence = evidence_ref_for_block(document, block, source_identity=identity, created_at=identity.created_at, selector=selectors[block.block_id])
             location = resolve_evidence_ref(evidence, document, artifact_ref=preparation.canonical_source_ir_pin.artifact_ref,
                                             selector_hash=evidence.selector_hash)
-            if location.status not in ("exact", "relocated_exact"):
+            if location.status not in ("exact", "relocated_exact", "block", "text_fallback"):
                 continue
             result.append(dict(subject=dict(kind="SOURCE_OCCURRENCE", source_block_ref=block.block_id,
                                            evidence_ref=evidence.evidence_ref, selector_hash=evidence.selector_hash),
@@ -133,6 +133,65 @@ class TenderReviewService:
                                block_type=block.block_type, ordinal=block.ordinal,
                                evidence=evidence.model_dump(mode="json", by_alias=True)))
         return result
+
+    def _reference_materials(self, ctx, target_pin):
+        """Available files are not clause links. No parser, evaluation or adoption runs here."""
+        projection = self._artifacts.list(ctx=ctx)
+        references = []
+        for entry in projection.artifacts:
+            artifact = entry.artifact
+            pin = ArtifactPinV1(artifact_kind="workspace_artifact", artifact_ref=artifact.artifact_ref, artifact_hash=artifact.artifact_hash)
+            if pin == target_pin:
+                continue
+            prepared = [p for p in projection.preparations if p.artifact_pin == pin
+                        and any(h.artifact_ref == p.preparation_ref and h.artifact_hash == p.preparation_hash for h in entry.active_preparation_pins)]
+            row = dict(artifact_pin=pin.model_dump(mode="json"), original_name=artifact.original_name,
+                       access_state=entry.access_state, preparation_status="NOT_PREPARED",
+                       relationship="AVAILABLE_UNLINKED", provisions=[])
+            for prep in prepared:
+                row["preparation_status"] = prep.outcome
+                if entry.access_state != "AVAILABLE" or prep.outcome != "READY" or prep.canonical_source_ir_pin is None:
+                    continue
+                prep_pin = ArtifactPinV1(artifact_kind="workspace_artifact_preparation", artifact_ref=prep.preparation_ref, artifact_hash=prep.preparation_hash)
+                try:
+                    identity, document = (self._preparation.resolve_design_source(ctx=ctx, artifact_pin=pin, preparation_pin=prep_pin)
+                        if prep.purpose == "DESIGN_SOURCE" else self._preparation.resolve_runtime_target(ctx=ctx, artifact_pin=pin, preparation_pin=prep_pin))
+                    if not hasattr(document, "blocks"):
+                        continue
+                    for item in self._items(identity, document, prep):
+                        row["provisions"].append(dict(schema_version="tender_supporting_citation.v1",
+                            artifact_pin=pin.model_dump(mode="json"), preparation_pin=prep_pin.model_dump(mode="json"), preparation_purpose=prep.purpose,
+                            source_identity_ref=identity.source_identity_ref, source_hash=identity.source_hash,
+                            source_identity=identity.model_dump(mode="json", by_alias=True),
+                            canonical_source_ir_pin=prep.canonical_source_ir_pin.model_dump(mode="json"),
+                            subject=item["subject"], evidence=item["evidence"], exact_quote=item["exact_quote"],
+                            resolved_location=item["resolved_location"], provision_label="",
+                            selection_origin="REVIEWER_SELECTED", applicability="UNKNOWN"))
+                except (FileNotFoundError, KeyError, ValueError, PermissionError):
+                    row["preparation_status"] = "UNAVAILABLE"
+            references.append(row)
+        return references
+
+    def _validate_supporting_citations(self, ctx, citations):
+        # Resolve exact historical preparations, never substitute the current head.
+        seen = set()
+        for citation in citations or ():
+            artifact = self._artifacts.resolve(ctx=ctx, artifact_pin=citation.artifact_pin)
+            prep = self._preparation.resolve(ctx=ctx, artifact_pin=citation.artifact_pin,
+                preparation_pin=citation.preparation_pin, purpose=citation.preparation_purpose)
+            identity, document = (self._preparation.resolve_design_source(ctx=ctx, artifact_pin=citation.artifact_pin, preparation_pin=citation.preparation_pin)
+                if citation.preparation_purpose == "DESIGN_SOURCE" else self._preparation.resolve_runtime_target(ctx=ctx, artifact_pin=citation.artifact_pin, preparation_pin=citation.preparation_pin))
+            item = next((i for i in self._items(identity, document, prep) if i["subject"] == citation.subject.model_dump(mode="json")), None)
+            if (item is None or citation.source_identity_ref != identity.source_identity_ref or citation.source_hash != identity.source_hash
+                or citation.source_identity != identity.model_dump(mode="json", by_alias=True)
+                or citation.canonical_source_ir_pin != prep.canonical_source_ir_pin
+                or citation.exact_quote != item["exact_quote"] or citation.evidence != item["evidence"]
+                or citation.resolved_location != item["resolved_location"] or citation.provision_label != ""):
+                raise ValueError("SUPPORTING_CITATION_MISMATCH")
+            key = (citation.preparation_pin.artifact_hash, citation.subject.evidence_ref)
+            if key in seen:
+                raise ValueError("DUPLICATE_SUPPORTING_CITATION")
+            seen.add(key)
 
     def context(self, *, ctx, cursor_ref=None, journey_ref=None, episode_ref=None):
         cursor = self._cursor(ctx, cursor_ref)
@@ -150,6 +209,7 @@ class TenderReviewService:
                       preparation_pin=entry.preparation_pin.model_dump(mode="json"), source_identity_ref=identity.source_identity_ref,
                       source_hash=identity.source_hash, canonical_source_ir_pin=preparation.canonical_source_ir_pin.model_dump(mode="json"),
                       document_name=artifact.original_name, media_type=artifact.media_type, source_items=self._items(identity, document, preparation))
+        result["reference_materials"] = self._reference_materials(ctx, entry.artifact_pin)
         from services.tender_documentary_candidate import read_authored_query
         result['authored_queries'] = []
         for item in self._artifacts.list(ctx=ctx).artifacts:
@@ -294,6 +354,7 @@ class TenderReviewService:
             item = next((item for item in items if item["subject"]["source_block_ref"] == command.subject.source_block_ref), None)
         if item is None or (item["subject"]["source_block_ref"], item["subject"]["evidence_ref"], item["subject"]["selector_hash"]) != (command.subject.source_block_ref, command.subject.evidence_ref, command.subject.selector_hash):
             raise ValueError("SOURCE_SUBJECT_MISMATCH")
+        self._validate_supporting_citations(ctx, command.supporting_citations)
         fields = command.model_dump(mode="json", exclude={"cursor_ref", "expected_material_context_revision", "target_artifact_pin", "preparation_pin"})
         value = TenderReviewRecordV1.create(**self._basis(ctx, target), **fields, schema_version="tender_review_record.v1",
                                             predecessor_record_pin=fields["expected_head_pin"], exact_quote=item["exact_quote"],
@@ -305,6 +366,7 @@ class TenderReviewService:
                 if current.revision != command.expected_material_context_revision:
                     raise ValueError("STALE_MATERIAL_CONTEXT")
                 self._target(ctx, current, command.target_artifact_pin, command.preparation_pin)
+                self._validate_supporting_citations(ctx, command.supporting_citations)
         pin = self._store.publish_tender_review(artifact=value, command=command, verify_before_commit=verify)
         return self.get_record(ctx=ctx, pin=pin)
 
@@ -450,6 +512,8 @@ class TenderReviewService:
         from services.tender_review_docx import render_native_report_docx
         report = self.get_report(ctx=ctx, pin=report_pin)
         artifact = self._artifacts.resolve(ctx=ctx, artifact_pin=report.target_artifact_pin)
+        if artifact.media_type != "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+            raise ValueError("DOCX_ORIGINAL_REQUIRED")
         identity, document = self._preparation.resolve_runtime_target(ctx=ctx,
             artifact_pin=report.target_artifact_pin, preparation_pin=report.preparation_pin)
         if (identity.source_identity_ref, identity.source_hash) != (report.source_identity_ref, report.source_hash):
@@ -500,7 +564,7 @@ class TenderReviewService:
             report.target_artifact_pin, report.preparation_pin, report.source_hash,
             report.source_identity_ref, report.canonical_source_ir_pin)
             or derivative.projection_manifest.get("decision_pins") != expected_pins
-            or derivative.projection_manifest.get("native_projection_policy") != (report.native_basis_snapshot or {}).get("docx_projection_policy", "tender_native_report_docx.v1")):
+            or derivative.projection_manifest.get("native_projection_policy") != (report.native_basis_snapshot or {}).get("docx_projection_policy", "tender_documentary_opinion_docx.v1" if report.episode_pin is None and report.records else "tender_native_report_docx.v1")):
             raise ValueError("NATIVE_DOCX_REPORT_BINDING_MISMATCH")
         blobs = WorkspaceArtifactBlobStore(ctx=ctx, max_bytes=self._artifacts._max_bytes)
         with blobs.exact_get(byte_owner_ref=derivative.byte_owner_ref, expected_hash=derivative.content_hash,

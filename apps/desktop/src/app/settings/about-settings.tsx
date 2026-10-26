@@ -2,12 +2,13 @@ import { useStore } from '@nanostores/react'
 import { type ReactElement, useEffect } from 'react'
 
 import { SemantierAttribution } from '@/components/organization-brand'
+import { SemantierFeedbackSettings } from '@/components/semantier-feedback'
 import { UpdateStatusCard, VersionHero } from '@/components/update-status'
 import { VersionDetails } from '@/components/version-details'
 import { useI18n } from '@/i18n'
 import { RefreshCw } from '@/lib/icons'
 import { $connection } from '@/store/session'
-import { $desktopVersion, checkBackendUpdates, refreshDesktopVersion } from '@/store/updates'
+import { $desktopVersion, $updateStatus, checkBackendUpdates, refreshDesktopVersion } from '@/store/updates'
 
 import { SectionHeading, SettingsContent } from './primitives'
 import { SETTING_IDS, settingElementId } from './settings-manifest'
@@ -40,6 +41,8 @@ interface AppUpdatesSettingsProps {
 function AppUpdatesSettings({ includeUninstall }: AppUpdatesSettingsProps): ReactElement {
   const { t } = useI18n()
   const version = useStore($desktopVersion)
+  const update = useStore($updateStatus)
+  const { locale } = useI18n()
   const connection = useStore($connection)
   const remote = connection?.mode === 'remote'
 
@@ -65,11 +68,13 @@ function AppUpdatesSettings({ includeUninstall }: AppUpdatesSettingsProps): Reac
         <SectionHeading icon={RefreshCw} title={t.settings.about.updates} />
         <div className="grid gap-3" id={settingElementId(SETTING_IDS.about.updates)}>
           <UpdateStatusCard target="client" />
+          {update?.releaseNotes && <details><summary>{locale.startsWith('zh') ? '版本说明' : 'Release notes'}</summary><pre className="whitespace-pre-wrap font-sans">{update.releaseNotes[locale.startsWith('zh') ? 'zh' : 'en'] ?? Object.values(update.releaseNotes)[0]}</pre></details>}
           <UpdateChannelRow />
           {/* Client and remote backend updates are independent. Only the client has release notes. */}
           {remote && <UpdateStatusCard showReleaseNotes={false} target="backend" />}
         </div>
         {version && <VersionDetails version={version} />}
+        <SemantierFeedbackSettings />
         {includeUninstall && <UninstallSection />}
       </div>
     </SettingsContent>

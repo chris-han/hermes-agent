@@ -3480,6 +3480,7 @@ class LegalCorpusStore:
         created_by: str,
         proposal_ref: str | None = None,
         supersedes_issue_model_version_id: str | None = None,
+        precedence_basis: dict[str, Any] | None = None,
     ) -> LegalIssueModelVersion:
         self._require_nonempty(
             {
@@ -3536,6 +3537,14 @@ class LegalCorpusStore:
             if effective_to
             else None,
         }
+        if precedence_basis is not None:
+            from contracts.ontology_validation import LegalPrecedenceBasisV2
+            basis = LegalPrecedenceBasisV2.model_validate(precedence_basis)
+            if (basis.organization_id, basis.issue_model_id, basis.ontology_version_ref) != (
+                organization_id, issue_model_id, ontology_version_ref
+            ) or resolution_rules_version_ref != "legal_resolution_rules.v2":
+                raise ValueError("LEGAL_PRECEDENCE_SCOPE_MISMATCH")
+            payload["precedence_basis"] = basis.model_dump(mode="json")
         model_hash = content_hash(payload)
         issue_model_version_id = f"legal_issue_model_{uuid4().hex}"
         with self._connect() as conn:

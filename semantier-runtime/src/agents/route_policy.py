@@ -44,6 +44,46 @@ class RouteAuthorizationClass(str, Enum):
 #   docs/derived/gateway-unified-multitenant-design.md section 8.1.1.
 # - Until then, they remain target contract surfaces, not callable gateway routes.
 ROUTE_POLICY_MAP: dict[tuple[str, str], RoutePolicy] = {
+    ('POST', '/api/client-operations/authorizations'): RoutePolicy.PUBLIC,
+    ('GET', '/api/client-operations/authorizations/{intent_ref}'): RoutePolicy.AUTHENTICATED,
+    ('POST', '/api/client-operations/authorizations/{intent_ref}/decision'): RoutePolicy.AUTHENTICATED,
+    ('POST', '/api/client-operations/authorizations/{intent_ref}/poll'): RoutePolicy.PUBLIC,
+    ('POST', '/api/client-operations/authorizations/{intent_ref}/cancel'): RoutePolicy.PUBLIC,
+    ('GET', '/api/client-operations/context'): RoutePolicy.AUTHENTICATED,
+    ('GET', '/api/client-operations/releases'): RoutePolicy.AUTHENTICATED,
+    ('GET', '/api/client-operations/releases/{release_id}'): RoutePolicy.AUTHENTICATED,
+    ('POST', '/api/client-operations/releases'): RoutePolicy.PUBLIC,
+    ('GET', '/api/client-operations/channels/{channel}'): RoutePolicy.AUTHENTICATED,
+    ('POST', '/api/client-operations/channels/{channel}/promotions'): RoutePolicy.AUTHENTICATED,
+    ('POST', '/api/client-operations/channels/{channel}/pause'): RoutePolicy.AUTHENTICATED,
+    ('POST', '/api/client-operations/channels/{channel}/resume'): RoutePolicy.AUTHENTICATED,
+    ('GET', '/api/client-operations/operations/{operation_id}'): RoutePolicy.AUTHENTICATED,
+    ('GET', '/api/client-operations/updates'): RoutePolicy.AUTHENTICATED,
+    ('GET', '/api/client-operations/updates/{update_id}'): RoutePolicy.AUTHENTICATED,
+    ('GET', '/api/client-operations/distribution'): RoutePolicy.AUTHENTICATED,
+    ('POST', '/api/client-operations/installations'): RoutePolicy.AUTHENTICATED,
+    ('DELETE', '/api/client-operations/installations/{installation_ref}/reporting'): RoutePolicy.AUTHENTICATED,
+    ('POST', '/api/client-operations/events'): RoutePolicy.PUBLIC,
+    ('POST', '/api/client-operations/diagnostics'): RoutePolicy.AUTHENTICATED,
+    ('GET', '/api/client-operations/diagnostics/receipts'): RoutePolicy.AUTHENTICATED,
+    ('GET', '/api/client-operations/diagnostics'): RoutePolicy.AUTHENTICATED,
+    ('GET', '/api/client-operations/diagnostics/{diagnostic_id}'): RoutePolicy.AUTHENTICATED,
+    ('PATCH', '/api/client-operations/diagnostics/{diagnostic_id}'): RoutePolicy.AUTHENTICATED,
+    ('DELETE', '/api/client-operations/diagnostics/{diagnostic_id}/payload'): RoutePolicy.AUTHENTICATED,
+    ('GET', '/api/billing/task-policy'): RoutePolicy.AUTHENTICATED,
+    ('POST', '/api/billing/task-policy'): RoutePolicy.AUTHENTICATED,
+    # Public transport entries use native possession authentication in the handler.
+    ('POST', '/api/cloud-provider/device/start'): RoutePolicy.PUBLIC,
+    ('GET', '/api/cloud-provider/device/{intent_ref}'): RoutePolicy.AUTHENTICATED,
+    ('POST', '/api/cloud-provider/device/{intent_ref}/continue'): RoutePolicy.AUTHENTICATED,
+    ('POST', '/api/cloud-provider/device/{intent_ref}/approve'): RoutePolicy.AUTHENTICATED,
+    ('POST', '/api/cloud-provider/device/{intent_ref}/poll'): RoutePolicy.PUBLIC,
+    ('POST', '/api/cloud-provider/device/{intent_ref}/claim'): RoutePolicy.PUBLIC,
+    ('POST', '/api/cloud-provider/device/{intent_ref}/ack'): RoutePolicy.PUBLIC,
+    ('POST', '/api/cloud-provider/device/{intent_ref}/cancel'): RoutePolicy.PUBLIC,
+    ('POST', '/api/cloud-provider/device/revoke'): RoutePolicy.AUTHENTICATED,
+    ('POST', '/api/cloud-provider/device/renew'): RoutePolicy.AUTHENTICATED,
+    ('GET', '/api/cloud-provider/device/readiness'): RoutePolicy.AUTHENTICATED,
     ('POST', '/api/billing/budget'): RoutePolicy.AUTHENTICATED,
     ('GET', '/api/billing/prices'): RoutePolicy.AUTHENTICATED,
     ('POST', '/api/billing/prices'): RoutePolicy.AUTHENTICATED,
@@ -57,11 +97,17 @@ ROUTE_POLICY_MAP: dict[tuple[str, str], RoutePolicy] = {
     ('POST', '/api/admin/model-gateway/models/{model_id}/block'): RoutePolicy.AUTHENTICATED,
     ('POST', '/api/admin/model-gateway/models/{model_id}/unblock'): RoutePolicy.AUTHENTICATED,
 
+    ('GET', '/api/model/options'): RoutePolicy.AUTHENTICATED,
+    ('POST', '/api/model/set'): RoutePolicy.AUTHENTICATED,
+    ('PATCH', '/api/config'): RoutePolicy.AUTHENTICATED,
+    ('GET', '/api/cloud-provider/catalog'): RoutePolicy.AUTHENTICATED,
+    ('GET', '/api/cloud-provider/model-info'): RoutePolicy.AUTHENTICATED,
     ('GET', '/v1/models'): RoutePolicy.AUTHENTICATED,
     ('POST', '/v1/chat/completions'): RoutePolicy.AUTHENTICATED,
     ('POST', '/api/model-gateway/credentials'): RoutePolicy.AUTHENTICATED,
     ('DELETE', '/api/model-gateway/credentials/{token_id}'): RoutePolicy.AUTHENTICATED,
     ('GET', '/api/model-gateway/invocations/{invocation_id}'): RoutePolicy.AUTHENTICATED,
+    ('POST', '/api/model-gateway/invocations/{invocation_id}/reexecutions'): RoutePolicy.AUTHENTICATED,
     ('GET', '/api/admin/model-gateway/models'): RoutePolicy.AUTHENTICATED,
     ('POST', '/api/admin/model-gateway/models'): RoutePolicy.AUTHENTICATED,
     ('DELETE', '/api/admin/model-gateway/models/{model_id}'): RoutePolicy.AUTHENTICATED,
@@ -329,6 +375,9 @@ ROUTE_POLICY_MAP: dict[tuple[str, str], RoutePolicy] = {
     ("GET", "/api/runtime-context-scope-policies/{policy_ref}"): RoutePolicy.AUTHENTICATED,
     ("POST", "/api/runtime-context-admissions"): RoutePolicy.AUTHENTICATED,
     ("GET", "/api/runtime-context-admissions/{admission_ref}"): RoutePolicy.AUTHENTICATED,
+    ("GET", "/api/tender-journeys/{journey_id}/requirements"): RoutePolicy.AUTHENTICATED,
+    ("POST", "/api/tender-journeys/{journey_id}/assess-requirements"): RoutePolicy.AUTHENTICATED,
+    ("POST", "/api/tender-journeys/{journey_id}/review-requirement"): RoutePolicy.AUTHENTICATED,
     ("POST", "/api/tender-journeys"): RoutePolicy.AUTHENTICATED,
     ("GET", "/api/tender-journeys"): RoutePolicy.AUTHENTICATED,
     ("GET", "/api/tender-journeys/preflight"): RoutePolicy.AUTHENTICATED,
@@ -704,6 +753,35 @@ ROUTE_POLICY_PROXY_PATHS: frozenset[str] = frozenset(
 # This mapping is intentionally scoped to tenant-facing handlers where role
 # semantics must be explicit and testable.
 ROUTE_AUTHZ_CLASS_MAP: dict[tuple[str, str], RouteAuthorizationClass] = {
+    ('GET', '/api/client-operations/authorizations/{intent_ref}'): RouteAuthorizationClass.SELF_ONLY,
+    ('POST', '/api/client-operations/authorizations/{intent_ref}/decision'): RouteAuthorizationClass.SELF_ONLY,
+    ('GET', '/api/client-operations/context'): RouteAuthorizationClass.SELF_ONLY,  # Handler enforces explicit platform grants.
+    ('GET', '/api/client-operations/releases'): RouteAuthorizationClass.SELF_ONLY,  # Handler enforces explicit platform grants.
+    ('GET', '/api/client-operations/releases/{release_id}'): RouteAuthorizationClass.SELF_ONLY,  # Handler enforces explicit platform grants.
+    ('GET', '/api/client-operations/channels/{channel}'): RouteAuthorizationClass.SELF_ONLY,  # Handler enforces explicit platform grants.
+    ('POST', '/api/client-operations/channels/{channel}/promotions'): RouteAuthorizationClass.SELF_ONLY,  # Handler enforces explicit platform grants.
+    ('POST', '/api/client-operations/channels/{channel}/pause'): RouteAuthorizationClass.SELF_ONLY,  # Handler enforces explicit platform grants.
+    ('POST', '/api/client-operations/channels/{channel}/resume'): RouteAuthorizationClass.SELF_ONLY,  # Handler enforces explicit platform grants.
+    ('GET', '/api/client-operations/operations/{operation_id}'): RouteAuthorizationClass.SELF_ONLY,  # Handler enforces explicit platform grants.
+    ('GET', '/api/client-operations/updates'): RouteAuthorizationClass.SELF_ONLY,  # Handler enforces explicit platform grants.
+    ('GET', '/api/client-operations/updates/{update_id}'): RouteAuthorizationClass.SELF_ONLY,  # Handler enforces explicit platform grants.
+    ('GET', '/api/client-operations/distribution'): RouteAuthorizationClass.SELF_ONLY,  # Handler enforces explicit platform grants.
+    ('POST', '/api/client-operations/installations'): RouteAuthorizationClass.SELF_ONLY,  # Handler enforces explicit platform grants.
+    ('DELETE', '/api/client-operations/installations/{installation_ref}/reporting'): RouteAuthorizationClass.SELF_ONLY,  # Handler enforces explicit platform grants.
+    ('POST', '/api/client-operations/diagnostics'): RouteAuthorizationClass.SELF_ONLY,  # Handler enforces explicit platform grants.
+    ('GET', '/api/client-operations/diagnostics/receipts'): RouteAuthorizationClass.SELF_ONLY,  # Handler enforces explicit platform grants.
+    ('GET', '/api/client-operations/diagnostics'): RouteAuthorizationClass.SELF_ONLY,  # Handler enforces explicit platform grants.
+    ('GET', '/api/client-operations/diagnostics/{diagnostic_id}'): RouteAuthorizationClass.SELF_ONLY,  # Handler enforces explicit platform grants.
+    ('PATCH', '/api/client-operations/diagnostics/{diagnostic_id}'): RouteAuthorizationClass.SELF_ONLY,  # Handler enforces explicit platform grants.
+    ('DELETE', '/api/client-operations/diagnostics/{diagnostic_id}/payload'): RouteAuthorizationClass.SELF_ONLY,  # Handler enforces explicit platform grants.
+    ('GET', '/api/billing/task-policy'): RouteAuthorizationClass.TENANT_MEMBER,
+    ('POST', '/api/billing/task-policy'): RouteAuthorizationClass.TENANT_MEMBER,
+    ('GET', '/api/cloud-provider/device/{intent_ref}'): RouteAuthorizationClass.TENANT_MEMBER,
+    ('POST', '/api/cloud-provider/device/{intent_ref}/continue'): RouteAuthorizationClass.TENANT_MEMBER,
+    ('POST', '/api/cloud-provider/device/{intent_ref}/approve'): RouteAuthorizationClass.TENANT_MEMBER,
+    ('POST', '/api/cloud-provider/device/revoke'): RouteAuthorizationClass.TENANT_MEMBER,
+    ('POST', '/api/cloud-provider/device/renew'): RouteAuthorizationClass.TENANT_MEMBER,
+    ('GET', '/api/cloud-provider/device/readiness'): RouteAuthorizationClass.TENANT_MEMBER,
     ('POST', '/api/billing/budget'): RouteAuthorizationClass.TENANT_MEMBER,
     ('GET', '/api/billing/prices'): RouteAuthorizationClass.TENANT_MEMBER,
     ('POST', '/api/billing/prices'): RouteAuthorizationClass.TENANT_MEMBER,
@@ -717,11 +795,17 @@ ROUTE_AUTHZ_CLASS_MAP: dict[tuple[str, str], RouteAuthorizationClass] = {
     ('POST', '/api/admin/model-gateway/models/{model_id}/block'): RouteAuthorizationClass.TENANT_MEMBER,
     ('POST', '/api/admin/model-gateway/models/{model_id}/unblock'): RouteAuthorizationClass.TENANT_MEMBER,
 
+    ('GET', '/api/model/options'): RouteAuthorizationClass.TENANT_MEMBER,
+    ('POST', '/api/model/set'): RouteAuthorizationClass.TENANT_MEMBER,
+    ('PATCH', '/api/config'): RouteAuthorizationClass.TENANT_MEMBER,
+    ('GET', '/api/cloud-provider/catalog'): RouteAuthorizationClass.TENANT_MEMBER,
+    ('GET', '/api/cloud-provider/model-info'): RouteAuthorizationClass.TENANT_MEMBER,
     ('GET', '/v1/models'): RouteAuthorizationClass.TENANT_MEMBER,
     ('POST', '/v1/chat/completions'): RouteAuthorizationClass.TENANT_MEMBER,
     ('POST', '/api/model-gateway/credentials'): RouteAuthorizationClass.TENANT_MEMBER,
     ('DELETE', '/api/model-gateway/credentials/{token_id}'): RouteAuthorizationClass.TENANT_MEMBER,
     ('GET', '/api/model-gateway/invocations/{invocation_id}'): RouteAuthorizationClass.TENANT_MEMBER,
+    ('POST', '/api/model-gateway/invocations/{invocation_id}/reexecutions'): RouteAuthorizationClass.TENANT_MEMBER,
     ('GET', '/api/admin/model-gateway/models'): RouteAuthorizationClass.TENANT_MEMBER,
     ('POST', '/api/admin/model-gateway/models'): RouteAuthorizationClass.TENANT_MEMBER,
     ('DELETE', '/api/admin/model-gateway/models/{model_id}'): RouteAuthorizationClass.TENANT_MEMBER,
@@ -1314,6 +1398,9 @@ ROUTE_AUTHZ_CLASS_MAP: dict[tuple[str, str], RouteAuthorizationClass] = {
     ("POST", "/api/tender-journeys/{journey_id}/build-context"): RouteAuthorizationClass.TENANT_MEMBER,
     ("POST", "/api/tender-journeys/{journey_id}/discover-intent"): RouteAuthorizationClass.TENANT_MEMBER,
     ("POST", "/api/tender-journeys/{journey_id}/review-intent"): RouteAuthorizationClass.TENANT_MEMBER,
+    ("GET", "/api/tender-journeys/{journey_id}/requirements"): RouteAuthorizationClass.TENANT_MEMBER,
+    ("POST", "/api/tender-journeys/{journey_id}/assess-requirements"): RouteAuthorizationClass.TENANT_MEMBER,
+    ("POST", "/api/tender-journeys/{journey_id}/review-requirement"): RouteAuthorizationClass.TENANT_MEMBER,
     ("POST", "/api/tender-journeys/{journey_id}/select-certification"): RouteAuthorizationClass.TENANT_MEMBER,
     ("POST", "/api/tender-journeys/{journey_id}/certify-context"): RouteAuthorizationClass.TENANT_MEMBER,
     ("POST", "/api/tender-journeys/{journey_id}/block"): RouteAuthorizationClass.TENANT_MEMBER,

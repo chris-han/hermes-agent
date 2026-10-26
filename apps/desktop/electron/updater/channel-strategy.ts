@@ -14,10 +14,12 @@ export interface ChannelStrategyDeps {
   build: ChannelBuild
   mechanism: 'electron-updater' | 'app-installer'
   nativeFactory: (target: ChannelTarget) => UpdaterStrategy
+  onApplyTarget?: (target: ChannelTarget) => Promise<void>
 }
 interface NativeSelection {
   kind: 'native'
   strategy: UpdaterStrategy
+  target: ChannelTarget
   available: boolean
 }
 interface RetirementSelection {
@@ -65,6 +67,7 @@ export class ChannelStrategy implements UpdaterStrategy {
       mechanism: this.mechanism,
       channel: this.deps.build.channel,
       currentVersion: this.deps.build.version,
+      installedReleaseId: this.deps.build.buildId,
       fetchedAt: Date.now()
     }
 
@@ -111,7 +114,12 @@ export class ChannelStrategy implements UpdaterStrategy {
     if (!options.crossChannel && target.manifest.request.sequence <= this.deps.build.sequence) {
       this.selection = { kind: 'empty' }
 
-      return { ...base, updateAvailable: false }
+      return {
+        ...base,
+        updateAvailable: false,
+        releaseId: target.manifest.request.buildId,
+        releaseNotes: target.manifest.notes
+      }
     }
 
     const strategy = this.deps.nativeFactory(target)
@@ -121,13 +129,15 @@ export class ChannelStrategy implements UpdaterStrategy {
       throw new Error(status.error || 'Native update availability unknown')
     }
 
-    this.selection = { kind: 'native', strategy, available: status.updateAvailable }
+    this.selection = { kind: 'native', strategy, target, available: status.updateAvailable }
 
     return {
       ...status,
       ...base,
       latestTag: `v${target.manifest.request.version}`,
-      targetSha: target.manifest.request.commit
+      targetSha: target.manifest.request.commit,
+      releaseId: target.manifest.request.buildId,
+      releaseNotes: target.manifest.notes
     }
   }
 
@@ -146,6 +156,8 @@ export class ChannelStrategy implements UpdaterStrategy {
       }
 
       if (selected?.kind === 'native' && selected.available) {
+        await this.deps.onApplyTarget?.(selected.target)
+
         return await selected.strategy.apply()
       }
 

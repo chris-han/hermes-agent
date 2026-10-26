@@ -3,7 +3,7 @@
 These four explicit schema families are authored protocol contracts, not a live
 provider qualification or an assertion that every native usage field is supported.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from decimal import Decimal, localcontext, ROUND_HALF_EVEN
 from types import MappingProxyType
@@ -22,7 +22,7 @@ def _counter(value):
     return value
 
 
-def normalize_usage(provider: str, raw: dict) -> NormalizedUsage:
+def _normalize_usage_v1(provider: str, raw: dict) -> NormalizedUsage:
     provider = {'azure_openai': 'azure', 'aws_bedrock': 'bedrock', 'volcano': 'ark', 'alibaba': 'dashscope'}.get(provider, provider)
     if provider == 'bedrock':
         names = {'inputTokens', 'outputTokens', 'totalTokens', 'cacheReadInputTokens', 'cacheWriteInputTokens'}
@@ -57,6 +57,54 @@ def normalize_usage(provider: str, raw: dict) -> NormalizedUsage:
     missing = tuple(k for k, v in [('input_total', total), ('output_total', output)] if v is None)
     complete = 'MISSING' if len(missing) == 2 else 'PARTIAL' if missing or unknown else 'PROVIDER_REPORTED'
     return NormalizedUsage(provider,total,output,ordinary,read,write,reasoning,complete,missing,tuple(sorted(unknown)))
+
+
+def normalize_usage(provider: str, raw: dict, *, normalizer_version='native-usage.v1',
+                    inclusion_rules_version='provider-inclusion.v1') -> NormalizedUsage:
+    """Fixed replay dispatch; the v1 interpretation and defaults remain frozen."""
+    versions = (normalizer_version, inclusion_rules_version)
+    if versions == ('native-usage.v1', 'provider-inclusion.v1'):
+        return _normalize_usage_v1(provider, raw)
+    if versions != ('native-usage.v2', 'provider-inclusion.v2'):
+        raise ValueError('unsupported pinned normalizer version')
+    if provider not in ('dashscope', 'alibaba'):
+        raise ValueError('v2 requires Dashscope OpenAI-compatible text usage')
+    if not isinstance(raw, dict):
+        raise ValueError('native usage must be an object')
+    # Do not merge the separate Dashscope-native aliases into this schema.
+    if any(key in raw for key in ('input_tokens', 'output_tokens', 'input_tokens_details',
+                                  'output_tokens_details', 'cached_tokens')):
+        raise ValueError('unsupported mixed native usage schema')
+    clean = dict(raw)
+    for key in ('prompt_tokens_details', 'completion_tokens_details'):
+        detail = raw.get(key)
+        if detail is not None and not isinstance(detail, dict):
+            raise ValueError('native token details must be objects or null')
+    details = dict(raw.get('completion_tokens_details') or {})
+    text = None
+    if 'text_tokens' in details:
+        text = _counter(details.pop('text_tokens'))
+        if text is None:
+            raise ValueError('reported text_tokens requires an integer')
+    clean['completion_tokens_details'] = details
+    usage = _normalize_usage_v1(provider, clean)
+    unsupported = set(usage.unsupported_fields)
+    missing = list(usage.missing_fields)
+    # Text is reporting detail including reasoning, not an additional charge.
+    if text is not None:
+        if usage.reasoning_subset is not None and usage.reasoning_subset > text:
+            raise ValueError('reasoning subset exceeds text')
+        if usage.output_total is not None and text != usage.output_total:
+            unsupported.add('text_tokens_total_mismatch')
+    if raw.get('total_tokens') is None:
+        missing.append('total_tokens')
+    completeness = usage.completeness
+    if completeness == 'PROVIDER_REPORTED' and (missing or unsupported):
+        completeness = 'PARTIAL'
+    return replace(usage, completeness=completeness, missing_fields=tuple(missing),
+                   unsupported_fields=tuple(sorted(unsupported)),
+                   normalizer_version=normalizer_version,
+                   inclusion_rules_version=inclusion_rules_version)
 
 
 @dataclass(frozen=True)

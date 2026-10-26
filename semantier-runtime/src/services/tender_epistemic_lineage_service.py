@@ -17,6 +17,7 @@ from contracts.governed_delta import (
     DeltaEnvelopeV1,
     DeltaLens,
     ImpactProjectionV1,
+    ImpactPopulationScopeV2,
     ImpactRelation,
     ImpactStatus,
 )
@@ -90,6 +91,8 @@ class TenderEpistemicLineageViewV1:
     predicate_refs: tuple[str, ...]
     assertion_refs: tuple[str, ...]
     edges: tuple[EpistemicLineageEdgeV1, ...]
+    organization_id: str | None = None
+    workspace_id: str | None = None
 
     @property
     def material_basis_refs(self) -> tuple[str, ...]:
@@ -98,6 +101,7 @@ class TenderEpistemicLineageViewV1:
 
 @dataclass(frozen=True)
 class TenderEvidenceImpactV1:
+    population_scope: ImpactPopulationScopeV2
     evidence_ref: str
     assertion_refs: tuple[str, ...]
     predicate_refs: tuple[str, ...]
@@ -275,6 +279,8 @@ class TenderEpistemicLineageService:
             predicate_refs=(predicate_id,),
             assertion_refs=_ordered(assertion_ids),
             edges=ordered_edges,
+            organization_id=projection.legacy.organization_id,
+            workspace_id=projection.legacy.workspace_id,
         )
 
     @staticmethod
@@ -295,11 +301,22 @@ class TenderEpistemicLineageService:
         )
 
     @staticmethod
+    def _population(views):
+        scopes = {(v.organization_id, v.workspace_id) for v in views}
+        if len(scopes) > 1:
+            raise ValueError("LINEAGE_POPULATION_SCOPE_MISMATCH")
+        scope = next(iter(scopes), (None, None))
+        return ImpactPopulationScopeV2(organization_id=scope[0], workspace_id=scope[1],
+            member_pins=tuple(sorted({(v.projection_ref, v.projection_hash, v.decision_ref, v.decision_hash) for v in views})))
+
+    @staticmethod
     def impact(
         *,
         evidence_ref: str,
         views: Iterable[TenderEpistemicLineageViewV1],
     ) -> TenderEvidenceImpactV1:
+        views = tuple(views)
+        population_scope = TenderEpistemicLineageService._population(views)
         assertions: set[str] = set()
         predicates: set[str] = set()
         decisions: set[str] = set()
@@ -348,6 +365,7 @@ class TenderEpistemicLineageService:
                     )
                 }
         return TenderEvidenceImpactV1(
+            population_scope=population_scope,
             evidence_ref=evidence_ref,
             assertion_refs=_ordered(assertions),
             predicate_refs=_ordered(predicates),
@@ -362,6 +380,7 @@ class TenderEpistemicLineageService:
         views: Iterable[TenderEpistemicLineageViewV1],
     ) -> tuple[str, ...]:
         view_tuple = tuple(views)
+        self._population(view_tuple)
         decisions: set[str] = set()
         for evidence_ref in changed_evidence_refs:
             decisions.update(
@@ -409,6 +428,7 @@ class TenderEpistemicLineageService:
         )
         hash_payload = {
             "schema_version": "governed_delta_impact_projection.v1",
+            "population_scope": self._population(view_tuple).model_dump(mode="json"),
             "delta_ref": delta.delta_id,
             "delta_hash": delta.content_hash,
             "affected_artifacts": [

@@ -969,3 +969,29 @@ async def cancel_oauth_session(session_id: str, request: Request, profile: Optio
     from hermes_cli.observability.shared_metrics_setup import settle_oauth_setup
     await asyncio.to_thread(settle_oauth_setup, sess)
     return {"ok": True, "session_id": session_id}
+
+
+@router.post('/api/client-feedback/{operation}')
+async def client_feedback(operation: str, request: Request, profile: Optional[str] = None):
+    """Typed allowlist; protected credentials stay in the initiating profile owner."""
+    _require_token(request)
+    _validate_oauth_profile(profile)
+    allowed={'status','consent','preview','submit','erase','record','flush','authorization_start','authorization_poll','authorization_cancel'}
+    if operation not in allowed:raise HTTPException(404,'Unsupported feedback operation')
+    raw=await request.body()
+    if len(raw)>5*1024*1024:raise HTTPException(413,'Diagnostic too large')
+    import json
+    try:
+        body=json.loads(raw or b'{}')
+        if not isinstance(body,dict):raise ValueError('Object required')
+        from hermes_cli import client_feedback as feedback
+        commands={'status':lambda:feedback.status(),'consent':lambda:feedback.consent(body['enabled']),
+                  'preview':lambda:feedback.preview(body),'submit':lambda:feedback.submit(body),
+                  'erase':lambda:feedback.erase(body['diagnostic_id']),
+                  'record':lambda:feedback.record(body['events']),'flush':lambda:feedback.flush(),
+                  'authorization_start':lambda:feedback.authorization_start(body['purpose']),
+                  'authorization_poll':lambda:feedback.authorization_poll(),
+                  'authorization_cancel':lambda:feedback.authorization_cancel()}
+        return await scoped_to_thread(profile,commands[operation])
+    except (ValueError,KeyError):
+        raise HTTPException(409,'Feedback unavailable; retry or sign in from the same profile') from None

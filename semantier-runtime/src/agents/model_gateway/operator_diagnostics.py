@@ -14,10 +14,19 @@ from starlette.responses import JSONResponse
 
 from contracts.model_gateway import canonical_hash, CHAT_FIELDS
 from agents.model_gateway.physical_binding import extract_physical_binding
-from agents.model_gateway.proxy_capture import AttemptCapture, _attempt, MAX_WIRE_BYTES
+from agents.model_gateway.proxy_capture import (AttemptCapture, _attempt, MAX_WIRE_BYTES,
+                                                CHAT_PATHS, RESPONSES_PATHS, MESSAGES_PATHS)
 from billing.native_evidence import final_native_observation
 
-PATHS = {"/v1/chat/completions", "/chat/completions", "/health/test_connection"}
+PATHS = CHAT_PATHS | RESPONSES_PATHS | MESSAGES_PATHS | {"/health/test_connection"}
+# Stateless generation with client-executed function tools only. Supplier-hosted
+# tools and stored-response lookup require their own admission boundaries.
+RESPONSES_FIELDS = {"model", "input", "instructions", "max_output_tokens", "stream",
+                    "temperature", "top_p", "reasoning", "text", "litellm_trace_id",
+                    "store", "tools", "tool_choice", "parallel_tool_calls", "include", "prompt_cache_key"}
+MESSAGES_FIELDS = {"model", "messages", "system", "max_tokens", "stream", "temperature",
+                   "top_p", "top_k", "stop_sequences", "tools", "tool_choice", "thinking",
+                   "litellm_trace_id"}
 
 
 @dataclass(frozen=True)
@@ -80,23 +89,60 @@ class DiagnosticPolicy:
             return {**body, "mode":"chat", "model_info":{"id":self.native_model_id},
                     "litellm_params":{**params, "model":self.physical_binding["provider_model_id"],
                                       "max_tokens":32, **({"enable_thinking":False} if self.provider == "dashscope" else {})}}
-        unsupported = set(body) - (CHAT_FIELDS | {"litellm_trace_id"})
+        responses = path in RESPONSES_PATHS
+        messages = path in MESSAGES_PATHS
+        fields = RESPONSES_FIELDS if responses else MESSAGES_FIELDS if messages else CHAT_FIELDS | {"litellm_trace_id"}
+        unsupported = set(body) - fields
         if unsupported:
             raise ValueError("Unsupported diagnostic parameters: " + ", ".join(sorted(unsupported))[:200] + ". Endpoint, credentials and payer remain server-owned.")
-        if body.get("model") not in self.aliases or not isinstance(body.get("messages"), list):
+        valid_input = isinstance(body.get("input"), (str, list)) if responses else isinstance(body.get("messages"), list)
+        if body.get("model") not in self.aliases or not valid_input:
             raise ValueError("Model is not enabled for platform diagnostics. Select: " + ", ".join(self.aliases))
-        cap = body.get("max_completion_tokens", body.get("max_tokens",256))
+        cap = body.get("max_output_tokens", 256) if responses else body.get("max_completion_tokens", body.get("max_tokens",256))
         if isinstance(cap,bool) or not isinstance(cap,int) or not 1 <= cap <= 32768:
-            raise ValueError("max_tokens or max_completion_tokens must be an integer from 1 to 32768.")
+            field = "max_output_tokens" if responses else "max_tokens or max_completion_tokens"
+            raise ValueError(field + " must be an integer from 1 to 32768.")
         if "max_tokens" in body and "max_completion_tokens" in body:
             raise ValueError("choose one output cap")
         trace = body.get("litellm_trace_id")
         if trace is not None and (not isinstance(trace,str) or not trace.isascii() or not 1 <= len(trace) <= 200):
             raise ValueError("bounded diagnostic correlation required")
         prepared = dict(body)
-        if "max_completion_tokens" not in prepared:
+        if responses:
+            if body.get("store", False) is not False:
+                raise ValueError("stored responses are not supported; store must be false")
+            tools = body.get("tools", [])
+            if not isinstance(tools, list) or any(
+                not isinstance(tool, dict) or tool.get("type") != "function" or
+                set(tool) - {"type", "name", "description", "parameters", "strict"} or
+                not isinstance(tool.get("name"), str) or not tool["name"] or
+                not isinstance(tool.get("parameters"), dict)
+                for tool in tools
+            ):
+                raise ValueError("only client-executed function tools are supported")
+            choice = body.get("tool_choice", "auto")
+            if isinstance(choice, dict):
+                if (set(choice) != {"type", "name"} or choice.get("type") != "function" or
+                        choice.get("name") not in [tool["name"] for tool in tools]):
+                    raise ValueError("tool_choice must select a declared client function")
+            elif choice not in ("auto", "none", "required"):
+                raise ValueError("unsupported tool_choice")
+            if "parallel_tool_calls" in body and type(body["parallel_tool_calls"]) is not bool:
+                raise ValueError("parallel_tool_calls must be boolean")
+            include = body.get("include", [])
+            if not isinstance(include, list) or any(not isinstance(item, str) for item in include):
+                raise ValueError("include must be a list of response fields")
+            cache_key = body.get("prompt_cache_key")
+            if cache_key is not None and not isinstance(cache_key, str):
+                raise ValueError("prompt_cache_key must be a string")
+            prepared["max_output_tokens"] = cap
+            prepared["store"] = False
+            # Use LiteLLM's existing bridge for every admitted provider. Native
+            # Responses endpoints/usage are a different physical binding.
+            prepared["use_chat_completions_api"] = True
+        elif "max_completion_tokens" not in prepared:
             prepared["max_tokens"] = cap
-        if prepared.get("stream"):
+        if not responses and not messages and prepared.get("stream"):
             prepared["stream_options"] = {"include_usage": True}
         return prepared
 
@@ -158,8 +204,6 @@ class OperatorDiagnosticsMiddleware:
             metadata = body.get("metadata",{}) if isinstance(body,dict) else {}
             if isinstance(metadata,dict) and metadata.get("semantier_attempt_id"):
                 return await self.app(scope,replay(bytes(wire)),send)
-            if len(wire) > 8192:
-                return await JSONResponse({"error":{"message":"diagnostic request exceeds 8 KiB"}},413)(scope,receive,send)
             auth = await self.authorize(Request(scope,receive=replay(bytes(wire))))
             role = getattr(auth.user_role,"value",auth.user_role)
             if role != "proxy_admin" or not auth.user_id:
@@ -185,7 +229,7 @@ class OperatorDiagnosticsMiddleware:
         except HTTPException as exc:
             return await JSONResponse({"error":{"message":str(exc.detail)}},exc.status_code)(scope,receive,send)
         except (ValueError,TypeError):
-            return await JSONResponse({"error":{"message":"Use the configured MaaS model; diagnostics require a bounded chat request without endpoint, credential or payer overrides."}},422)(scope,receive,send)
+            return await JSONResponse({"error":{"message":"Use the configured MaaS model; diagnostics require a bounded generation request without endpoint, credential or payer overrides."}},422)(scope,receive,send)
         except Exception as exc:
             raw_status = getattr(exc, "status_code", getattr(exc, "code", 503))
             try:
@@ -208,7 +252,7 @@ class OperatorDiagnosticsMiddleware:
         capture = AttemptCapture(attempt_id,invocation_id=invocation,provider=p.provider,
                                  physical_binding=p.physical_binding,
                                  diagnostic_output_limit=32 if scope["path"] == "/health/test_connection" else
-                                     body.get("max_completion_tokens",body.get("max_tokens")))
+                                     body.get("max_output_tokens", body.get("max_completion_tokens",body.get("max_tokens"))))
         token = _attempt.set(capture)
         if scope["path"] != "/health/test_connection":
             body["metadata"] = {"semantier_attempt_id":attempt_id,"semantier_invocation_id":invocation}
@@ -250,5 +294,5 @@ async def authorize_proxy_admin(request):
     # Use the same production auth owner as the endpoint; never trust role headers.
     from litellm.proxy.auth.user_api_key_auth import user_api_key_auth
     return await user_api_key_auth(request,api_key=request.headers.get("authorization"),
-        azure_api_key_header=None,anthropic_api_key_header=None,google_ai_studio_api_key_header=None,
+        azure_api_key_header=None,anthropic_api_key_header=request.headers.get("x-api-key"),google_ai_studio_api_key_header=None,
         azure_apim_header=None,custom_litellm_key_header=None)

@@ -71,8 +71,7 @@ def resolve_runtime_llm_provider_model(
     model = str(
         env.get("HERMES_INFERENCE_MODEL") or env.get("HERMES_MODEL") or ""
     ).strip()
-    if provider and model:
-        return _provider_model(provider, model)
+    hosted = env.get("SEMANTIER_STORAGE_BACKEND") == "postgresql"
 
     config_paths: list[Path] = []
     if hermes_home is not None:
@@ -101,8 +100,13 @@ def resolve_runtime_llm_provider_model(
         task = task if isinstance(task, dict) else {}
         model_config = config.get("model")
         model_config = model_config if isinstance(model_config, dict) else {}
-        resolved_provider = str(task.get("provider") or provider or "").strip()
-        resolved_model = str(task.get("model") or model or "").strip()
+        cloud = config.get("semantier_gateway")
+        managed = (hosted or model_config.get("provider") == "semantier-cloud"
+                   or isinstance(cloud, dict) and cloud.get("enabled") is True)
+        if not managed and provider and model:
+            return _provider_model(provider, model)
+        resolved_provider = str(task.get("provider") or ("" if managed else provider)).strip()
+        resolved_model = str(task.get("model") or ("" if managed else model)).strip()
         if resolved_provider in {"", "auto"}:
             resolved_provider = str(model_config.get("provider") or "").strip()
         if not resolved_model:
@@ -111,7 +115,103 @@ def resolve_runtime_llm_provider_model(
             ).strip()
         if resolved_provider and resolved_provider != "auto" and resolved_model:
             return _provider_model(resolved_provider, resolved_model)
+        if managed:
+            return None
+    if not hosted and provider and model:
+        return _provider_model(provider, model)
     return None
+
+
+class GraphIntentReexecutionEvidence:
+    """Durable stages in the existing proposal evidence owner; no transport owner."""
+
+    def __init__(self, store, context, control, transport_fingerprint):
+        self.store, self.context, self.control = store, context, control
+        self.transport_fingerprint = transport_fingerprint
+        self.prefix = "gire_" + content_hash(dict(organization=context.organization_id,
+            workspace=context.workspace_id, actor=context.user_id, command=control.command_id))
+
+    def read(self, stage):
+        try:
+            row = self.store.get_llm_proposal_evidence(self.prefix + "_" + stage)
+        except KeyError:
+            return None
+        data = row["diagnostics"]
+        if data.get("sha256") != content_hash(data.get("payload")):
+            raise ValueError("REEXECUTION_EVIDENCE_INTEGRITY")
+        payload = data["payload"]
+        if stage in {"prepare", "observe"}:
+            from contracts.model_gateway import ModelReexecutionRecordV1, canonical_hash
+            record = ModelReexecutionRecordV1.model_validate(payload["record"] if stage == "prepare" else payload)
+            if record.control != self.control or (record.organization_id,record.workspace_id,record.actor_ref) != (
+                self.context.organization_id,self.context.workspace_id,"user:"+self.context.user_id):
+                raise ValueError("REEXECUTION_MATERIAL_CONFLICT")
+            if stage == "prepare" and (record.request_hash != canonical_hash(payload["command"]["request"])
+                    or record.material_hash != canonical_hash(payload["material"])):
+                raise ValueError("REEXECUTION_EVIDENCE_INTEGRITY")
+        return payload
+
+    def retain(self, stage, payload):
+        prior = self.read(stage)
+        if prior is not None:
+            if prior != payload:
+                raise ValueError("REEXECUTION_MATERIAL_CONFLICT")
+            return prior
+        try:
+            self.store.record_llm_proposal_evidence(
+                semantica_commit=SEMANTICA_COMMIT, skill_major_version=SKILL_MAJOR_VERSION,
+                provider_contract_version="graph-intent-reexecution.v1", provider="semantier_gateway",
+                model="durable-command", status="unavailable", evidence_id=self.prefix + "_" + stage,
+                diagnostics={"stage": stage, "payload": payload, "sha256": content_hash(payload)})
+        except Exception:
+            # A concurrent delivery may win the unique evidence id. Compare its
+            # complete immutable value; never suppress an unrelated store error.
+            prior = self.read(stage)
+            if prior is None:
+                raise
+            if prior != payload:
+                raise ValueError("REEXECUTION_MATERIAL_CONFLICT")
+        return payload
+
+    def bind_material(self, *, prompt, instructions, schema, provider, model):
+        material = dict(input=prompt, instructions=instructions, output_schema=schema)
+        self.retain("material", dict(control=self.control.model_dump(mode="json"),
+            organization_id=self.context.organization_id, workspace_id=self.context.workspace_id,
+            actor_ref="user:" + self.context.user_id, provider=provider, model=model,
+            transport_fingerprint=self.transport_fingerprint, material=material))
+        return material
+
+    def prepare(self, command, material):
+        from contracts.model_gateway import ModelReexecutionRecordV1, canonical_hash
+        from datetime import datetime, timezone
+        prior = self.read("prepare")
+        # The material row wins atomically before PREPARE. Its persisted time
+        # keeps concurrent first deliveries byte-identical, rather than treating
+        # different local clock readings as changed command intent.
+        prepared_at = (prior["record"]["created_at"] if prior else
+            datetime.fromisoformat(self.store.get_llm_proposal_evidence(
+                self.prefix + "_material")["observed_at"]).astimezone(timezone.utc).isoformat().replace("+00:00", "Z"))
+        basis = dict(schema_version="model_reexecution_record.v1",
+            organization_id=self.context.organization_id, workspace_id=self.context.workspace_id,
+            actor_ref="user:" + self.context.user_id, control=self.control.model_dump(mode="json"),
+            command_hash=command.command_hash(self.control.predecessor_id,self.context.user_id,self.context.workspace_id),
+            request_hash=canonical_hash(command.request), material_hash=canonical_hash(material),
+            schema_pin=dict(artifact_kind="graph_intent_output_schema", artifact_ref="graph-intent-output-schema:" + content_hash(material["output_schema"]),
+                artifact_hash="sha256:" + content_hash(material["output_schema"])), lineage=None,
+            created_at=prepared_at)
+        h=content_hash(basis)
+        record=ModelReexecutionRecordV1(artifact_ref="model-reexecution:"+h,artifact_hash="sha256:"+h,**basis)
+        self.retain("prepare",dict(record=record.model_dump(mode="json"),command=command.model_dump(mode="json"),material=material))
+
+    def observe(self, lineage):
+        from contracts.model_gateway import ModelReexecutionRecordV1
+        if not lineage:
+            raise ValueError("authoritative reexecution lineage required")
+        basis={**self.read("prepare")["record"],"lineage":lineage}
+        basis.pop("artifact_ref");basis.pop("artifact_hash")
+        h=content_hash(basis)
+        record=ModelReexecutionRecordV1(artifact_ref="model-reexecution:"+h,artifact_hash="sha256:"+h,**basis)
+        self.retain("observe",record.model_dump(mode="json"))
 
 
 class GraphSchemaLlmEvidenceRunner:
@@ -127,6 +227,7 @@ class GraphSchemaLlmEvidenceRunner:
         generator_factory: GeneratorFactory | None = None,
         managed_auth_available: ManagedAuthAvailable | None = None,
         transport_fingerprint: str | None = None,
+        reexecution_control=None,
     ) -> None:
         if environ is not None and not isinstance(environ, Mapping):
             raise ValueError("LLM proposal evidence environ must be a mapping")
@@ -144,6 +245,7 @@ class GraphSchemaLlmEvidenceRunner:
         self.generator_factory = generator_factory
         self.managed_auth_available = managed_auth_available
         self.transport_fingerprint = str(transport_fingerprint or "").strip()
+        self.reexecution_control = reexecution_control
 
     def run(
         self,
@@ -212,6 +314,11 @@ class GraphSchemaLlmEvidenceRunner:
                 )
             if not isinstance(ontology, dict):
                 raise ValueError("LLM proposal output must be an object")
+            if self.reexecution_control is not None and evidence_id is not None:
+                try:
+                    return self.store.get_llm_proposal_evidence(evidence_id)
+                except KeyError:
+                    pass
             proposal = self._proposal_payload(
                 ontology=ontology,
                 provider=provider_key,
@@ -258,6 +365,13 @@ class GraphSchemaLlmEvidenceRunner:
                 diagnostics=diagnostics,
             )
         except Exception as exc:
+            if str(exc) == "REEXECUTION_MATERIAL_CONFLICT":
+                raise
+            if self.reexecution_control is not None and evidence_id is not None:
+                try:
+                    return self.store.get_llm_proposal_evidence(evidence_id)
+                except KeyError:
+                    pass
             if provider_key == "ollama" and (
                 isinstance(exc, ModuleNotFoundError) or "ollama" in str(exc).lower()
             ):

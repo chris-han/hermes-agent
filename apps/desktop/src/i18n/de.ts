@@ -16,8 +16,10 @@ import { deUpdateChannel } from './de_update_channel'
 import { defineLocale, type TranslationOverrides } from './define-locale'
 import { introDe } from './intro-de'
 import { semantierBillingCopy } from './semantier-billing'
+import { feedbackEnglish } from './semantier-feedback'
 
 export const deOverrides = {
+  semantierFeedback: feedbackEnglish,
   sharedMetrics: deSharedMetrics,
   firstRun: deFirstRun,
   intro: introDe,

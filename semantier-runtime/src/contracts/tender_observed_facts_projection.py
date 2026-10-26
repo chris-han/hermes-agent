@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator, TypeAdapter, StrictInt
 
 from contracts.artifact_pin import ArtifactPinV1
 from contracts.normative_schema import NormativeSchemaContractV1
@@ -450,3 +450,143 @@ __all__ = [
 ]
 
 TenderFactObservationReceiptV1.model_rebuild()
+
+
+class SupportBundleV1(_Contract):
+    operator: Literal['ALL_AVAILABLE'] = 'ALL_AVAILABLE'
+    premises: tuple[StrictInt, ...] = Field(min_length=1, max_length=4)
+    complete: Literal[True] = True
+
+    @model_validator(mode='after')
+    def unique(self):
+        if tuple(sorted(set(self.premises))) != self.premises:
+            raise ValueError('SUPPORT_DUPLICATE_PREMISES')
+        return self
+
+
+class SupportOriginGroupV1(_Contract):
+    group_id: str = Field(pattern=r'^[A-Za-z0-9_.:-]+$')
+    origin: ArtifactPinV1
+    members: tuple[StrictInt, ...] = Field(min_length=1, max_length=4)
+
+    @model_validator(mode='after')
+    def unique(self):
+        if tuple(sorted(set(self.members))) != self.members:
+            raise ValueError('SUPPORT_DUPLICATE_GROUP_MEMBERS')
+        return self
+
+
+class BooleanSupportProfileV1(_Contract):
+    """Finite license payload interpreted only after existing rule-governance checks."""
+    kind: Literal['fact_support_boolean.v1'] = 'fact_support_boolean.v1'
+    organization_id: str
+    workspace_id: str
+    sensor: ArtifactPinV1
+    subject_binding: TenderFactSubjectBindingV1 | None = None
+    value: bool = Field(strict=True)
+    operator: Literal['ANY_SUFFICIENT_BUNDLE'] = 'ANY_SUFFICIENT_BUNDLE'
+    premises: tuple[ArtifactPinV1, ...] = Field(min_length=1, max_length=4)
+    bundles: tuple[SupportBundleV1, ...] = Field(min_length=1, max_length=4)
+    alternatives_coverage: Literal['COMPLETE','PARTIAL','UNKNOWN']
+    groups: tuple[SupportOriginGroupV1, ...] = Field(max_length=4)
+    group_coverage: Literal['COMPLETE','PARTIAL','UNKNOWN']
+
+    @property
+    def profile_hash(self):
+        return 'sha256:' + content_hash(self.model_dump(mode='json'))
+
+    @model_validator(mode='after')
+    def finite(self):
+        if len(set(self.premises)) != len(self.premises):
+            raise ValueError('SUPPORT_DUPLICATE_PREMISES')
+        if any(p.artifact_kind != 'evidence' for p in self.premises):
+            raise ValueError('UNSUPPORTED_DERIVATION')
+        indices=set(range(len(self.premises)))
+        if any(not set(b.premises)<=indices for b in self.bundles):
+            raise ValueError('SUPPORT_DANGLING_PREMISE')
+        if len({b.premises for b in self.bundles})!=len(self.bundles):
+            raise ValueError('SUPPORT_DUPLICATE_BUNDLE')
+        if set(i for b in self.bundles for i in b.premises)!=indices:
+            raise ValueError('SUPPORT_UNUSED_PREMISE')
+        if len({g.origin for g in self.groups})!=len(self.groups):
+            raise ValueError('SUPPORT_DUPLICATE_ORIGIN')
+        if len({g.group_id for g in self.groups})!=len(self.groups):
+            raise ValueError('SUPPORT_DUPLICATE_GROUP')
+        members=[i for g in self.groups for i in g.members]
+        if not set(members)<=indices or len(set(members))!=len(members):
+            raise ValueError('SUPPORT_AMBIGUOUS_GROUP_MAPPING')
+        if self.group_coverage=='COMPLETE' and set(members)!=indices:
+            raise ValueError('SUPPORT_INCOMPLETE_GROUP_MAPPING')
+        return self
+
+
+class FactSupportDeclarationV1(_Contract):
+    profile: BooleanSupportProfileV1
+    rule_version: ArtifactPinV1
+    activation_id: str
+    original_observation: ArtifactPinV1
+    licensed_at: datetime
+
+
+def _create_v2(cls, prefix, ref_field, hash_field, values):
+    values=dict(values)
+    values.pop('schema_version',None)
+    values={k:TypeAdapter(cls.model_fields[k].annotation).validate_python(v) for k,v in values.items()}
+    draft=cls.model_construct(**values, **{ref_field:'pending',hash_field:'sha256:'+'0'*64})
+    body=draft.model_dump(mode='json',exclude={ref_field,hash_field})
+    digest=content_hash(body)
+    return cls.model_validate({**body,ref_field:prefix+digest,hash_field:'sha256:'+digest})
+
+
+class TenderFactObservationReceiptV2(TenderFactObservationReceiptV1):
+    schema_version: Literal['tender_fact_observation_receipt.v2']='tender_fact_observation_receipt.v2'
+    support_declaration: FactSupportDeclarationV1
+
+    @model_validator(mode='after')
+    def exact_identity(self):
+        body=self.model_dump(mode='json',exclude={'receipt_ref','receipt_hash'})
+        digest=content_hash(body)
+        if (self.receipt_ref,self.receipt_hash)!=('tender-fact-observation:v2:'+digest,'sha256:'+digest):
+            raise ValueError('OBSERVATION_HASH_MISMATCH')
+        legacy={k:v for k,v in body.items() if k not in {'schema_version','support_declaration'}}
+        legacy['schema_version']='tender_fact_observation_receipt.v1'
+        old_digest=content_hash(legacy)
+        TenderFactObservationReceiptV1.model_validate({**legacy,'receipt_ref':'tender-fact-observation:'+old_digest,'receipt_hash':'sha256:'+old_digest})
+        p=self.support_declaration.profile
+        if ((p.organization_id,p.workspace_id,p.sensor,p.subject_binding) !=
+            (self.organization_id,self.workspace_id,self.sensor,self.subject_binding)
+            or self.semantic_result not in ('TRUE','FALSE')
+            or p.value != (self.semantic_result=='TRUE')
+            or not set(p.premises)<=set(self.target_evidence)):
+            raise ValueError('SUPPORT_OBSERVATION_BINDING_MISMATCH')
+        if self.support_declaration.original_observation.artifact_kind!='tender_fact_observation_receipt':
+            raise ValueError('SUPPORT_ORIGINAL_OBSERVATION_REQUIRED')
+        return self
+
+    @classmethod
+    def create(cls, **values):
+        return _create_v2(cls,'tender-fact-observation:v2:','receipt_ref','receipt_hash',values)
+
+
+class TenderObservedFactsProjectionReceiptV2(TenderObservedFactsProjectionReceiptV1):
+    schema_version: Literal['tender_observed_facts_projection_receipt.v2']='tender_observed_facts_projection_receipt.v2'
+    support_observation_refs: tuple[str,...] = Field(min_length=1)
+
+    @model_validator(mode='after')
+    def exact_identity(self):
+        body=self.model_dump(mode='json',exclude={'projection_ref','projection_hash'})
+        digest=content_hash(body)
+        if (self.projection_ref,self.projection_hash)!=('tender-observed-facts-projection:v2:'+digest,'sha256:'+digest):
+            raise ValueError('PROJECTION_HASH_MISMATCH')
+        legacy={k:v for k,v in body.items() if k not in {'schema_version','support_observation_refs'}}
+        legacy['schema_version']='tender_observed_facts_projection_receipt.v1'
+        old_digest=content_hash(legacy)
+        TenderObservedFactsProjectionReceiptV1.model_validate({**legacy,'projection_ref':'tender-observed-facts-projection:'+old_digest,'projection_hash':'sha256:'+old_digest})
+        if (tuple(sorted(set(self.support_observation_refs)))!=self.support_observation_refs
+            or not set(self.support_observation_refs)<={p.artifact_ref for p in self.observation_receipts}):
+            raise ValueError('SUPPORT_PROJECTION_BINDING_MISMATCH')
+        return self
+
+    @classmethod
+    def create(cls, **values):
+        return _create_v2(cls,'tender-observed-facts-projection:v2:','projection_ref','projection_hash',values)

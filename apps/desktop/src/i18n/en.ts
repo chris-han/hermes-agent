@@ -19,9 +19,11 @@ import { enThemePicker } from './en_theme_picker'
 import { enUninstallSection } from './en_uninstall_section'
 import { enUpdateChannel } from './en_update_channel'
 import { semantierBillingCopy } from './semantier-billing'
+import { feedbackEnglish } from './semantier-feedback'
 import type { Translations } from './types'
 
 export const en: Translations = {
+  semantierFeedback: feedbackEnglish,
   branding: enBranding,
   externalOpenFailed: {
     title: 'Couldn’t open this link',

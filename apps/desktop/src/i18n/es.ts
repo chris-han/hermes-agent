@@ -16,8 +16,10 @@ import { esThemePicker } from './es_theme_picker'
 import { esUpdateChannel } from './es_update_channel'
 import { introEs } from './intro-es'
 import { semantierBillingCopy } from './semantier-billing'
+import { feedbackEnglish } from './semantier-feedback'
 
 export const esOverrides = {
+  semantierFeedback: feedbackEnglish,
   sharedMetrics: esSharedMetrics,
   firstRun: esFirstRun,
   intro: introEs,

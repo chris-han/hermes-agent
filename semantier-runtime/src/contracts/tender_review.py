@@ -47,12 +47,32 @@ class GovernedFindingSubjectV1(_Contract):
 Subject = Annotated[SourceOccurrenceSubjectV1 | GovernedFindingSubjectV1, Field(discriminator="kind")]
 
 
+class TenderSupportingCitationV1(_Contract):
+    """Exact reviewer-selected source occurrence; the enclosing record owns attribution."""
+    schema_version: Literal["tender_supporting_citation.v1"]
+    artifact_pin: ArtifactPinV1
+    preparation_pin: ArtifactPinV1
+    preparation_purpose: Literal["DESIGN_SOURCE", "RUNTIME_TARGET"]
+    source_identity_ref: Id
+    source_hash: Hash
+    source_identity: dict
+    canonical_source_ir_pin: ArtifactPinV1
+    subject: SourceOccurrenceSubjectV1
+    evidence: dict
+    exact_quote: str = Field(strict=True, min_length=1)
+    resolved_location: dict
+    provision_label: str
+    selection_origin: Literal["REVIEWER_SELECTED"]
+    applicability: Literal["UNKNOWN"]
+
+
 class _Opinion(_Contract):
     status: Literal["DRAFT", "RECORDED"]
     action: Action | None
     user_note: Note
     proposed_replacement: Note
     requested_material: Material
+    supporting_citations: tuple[TenderSupportingCitationV1, ...] | None = Field(default=None, max_length=100, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def actionable_opinion(self):
@@ -146,6 +166,9 @@ class _Artifact(_Contract):
         for name, field in cls.model_fields.items():
             if name not in values and not field.is_required():
                 values[name] = field.get_default(call_default_factory=True)
+        # Absent optional citations preserve every legacy hash and wire shape.
+        if values.get("supporting_citations") is None:
+            values.pop("supporting_citations", None)
         digest = content_hash(values)
         return cls.model_validate({**values, cls.REF_FIELD: cls.KIND.replace("_", "-") + ":" + digest, cls.HASH_FIELD: "sha256:" + digest})
 
@@ -273,7 +296,7 @@ class TenderReviewDocxDerivativeV1(_Artifact):
         if (self.report_pin.artifact_kind != "tender_review_report"
             or self.byte_owner_ref != f"artifacts/workspace-originals/sha256/{digest[:2]}/{digest}"
             or self.projection_manifest.get("report_pin") != self.report_pin.model_dump(mode="json")
-            or self.projection_manifest.get("native_projection_policy") not in {"tender_native_report_docx.v1", "tender_native_report_docx.v2"}):
+            or self.projection_manifest.get("native_projection_policy") not in {"tender_native_report_docx.v1", "tender_native_report_docx.v2", "tender_documentary_opinion_docx.v1"}):
             raise ValueError("NATIVE_DOCX_REPORT_BINDING_MISMATCH")
         return self
 

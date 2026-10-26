@@ -21,13 +21,15 @@ def render_native_report_docx(*, report, document, source_bytes):
     """Use frozen decisions only, without legacy detection-run membership."""
     report = TenderReviewReportV1.model_validate(report.model_dump(mode="json"))
     document = CanonicalSourceDocument.model_validate(document.model_dump(mode="json", by_alias=True))
-    if report.episode_pin is None or report.native_basis_snapshot is None:
-        raise ValueError("NATIVE_REPORT_REQUIRED")
     if (document.source_identity_ref != report.source_identity_ref
         or "sha256:" + sha256(source_bytes).hexdigest() != report.source_hash
         or "sha256:" + content_hash(document.model_dump(mode="json", by_alias=True, exclude_none=False))
             != report.canonical_source_ir_pin.artifact_hash):
         raise ValueError("REPORT_SOURCE_PIN_MISMATCH")
+    if report.episode_pin is None and report.native_basis_snapshot is None and report.records:
+        return _render_opinions(report=report, document=document, source_bytes=source_bytes)
+    if report.episode_pin is None or report.native_basis_snapshot is None:
+        raise ValueError("NATIVE_REPORT_REQUIRED")
     entries = tuple(TenderFrozenComplianceDecisionV1.model_validate(raw)
                     for raw in report.native_basis_snapshot.get("compliance_decisions", ()))
     if not entries:
@@ -156,4 +158,92 @@ def render_native_report_docx(*, report, document, source_bytes):
     manifest.update(native_projection_policy=policy, report_pin=report.pin().model_dump(mode="json"),
                     decision_pins=[entry.decision.pin().model_dump(mode="json") for entry in entries])
     manifest["unsupported_findings"] = unsupported + manifest["unsupported_findings"]
-    return rendered, manifest
+    return _append_citation_register(rendered, report), manifest
+
+
+def _render_opinions(*, report, document, source_bytes):
+    """Documentary notes on original bytes; no assessment is manufactured."""
+    elements, findings, unsupported = [], [], []
+    blocks = {b.block_id:b for b in document.blocks}
+    with zipfile.ZipFile(BytesIO(source_bytes)) as archive:
+        root = ElementTree.fromstring(archive.read("word/document.xml"))
+        existing = "word/comments.xml" in archive.namelist() or root.find(".//"+_W+"commentReference") is not None
+        body = root.find(_W+"body")
+        nodes = [] if body is None else [n for n in body if n.tag in {_W+"p",_W+"tbl"}]
+    for record in report.records:
+        location = record.resolved_location
+        block = blocks.get(record.subject.source_block_ref)
+        path = location.get("structuralPath", [])
+        node = nodes[path[0]-1] if path and type(path[0]) is int and 1 <= path[0] <= len(nodes) else None
+        reason = None
+        if existing:
+            reason = "EXISTING_DOCX_COMMENTS_UNSUPPORTED"
+        elif (location.get("kind") != "docx_structural_range" or block is None or block.block_type != "paragraph"
+              or len(path) != 1 or node is None or node.tag != _W+"p"):
+            reason = "DOCUMENTARY_DOCX_LOCATION_UNSUPPORTED"
+        elif (any(c.tag not in {_W+"pPr",_W+"r"} for c in node)
+              or any(c.tag not in {_W+"rPr",_W+"t"} for r in node.findall(_W+"r") for c in r)):
+            reason = "DOCX_LOCATION_OR_MARKUP_UNSUPPORTED"
+        if reason:
+            unsupported.append(dict(finding_id=record.record_ref, reason=reason))
+            continue
+        citations = []
+        for citation in record.supporting_citations or ():
+            citations.append("\n".join((
+                "Reviewer-selected supporting citation; applicability UNKNOWN",
+                f"Source: {citation.source_identity['originalName']}; source/version: {citation.source_identity_ref} {citation.source_hash}",
+                f"IR: {citation.canonical_source_ir_pin.artifact_ref} {citation.canonical_source_ir_pin.artifact_hash}",
+                f"Occurrence: {citation.subject.evidence_ref}; selector: {citation.subject.selector_hash}",
+                "Location: " + __import__('json').dumps(citation.resolved_location, ensure_ascii=False, sort_keys=True),
+                "Quote: " + citation.exact_quote)))
+        note = "\n".join(("Documentary reviewer opinion; no legal conclusion", f"Record: {record.record_ref} {record.record_hash}",
+            f"Reviewer: {record.recorded_by}; status: {record.status}; action: {record.action}",
+            record.user_note, record.proposed_replacement, record.requested_material, *citations))
+        elements.append(dict(anchor_ref=record.record_ref,kind="paragraph",text=block.content,body_index=path[0]))
+        findings.append(dict(finding_id=record.record_ref,target_anchor_ref=record.record_ref,
+            matched_text=location["exactText"],start_offset=location["startOffset"],end_offset=location["endOffset"],
+            issue_type="DOCUMENTARY_OPINION",judgment_basis=note))
+    if findings:
+        rendered, manifest = write_labeled_docx_bytes(source_docx_bytes=source_bytes, canonical_document={"elements":elements},
+            findings=findings, created_by=report.recorded_by, created_at=report.recorded_at.isoformat())
+    else:
+        rendered, manifest = source_bytes, dict(comments_written=0,unsupported_findings=[],comment_ranges=[])
+    manifest.update(native_projection_policy="tender_documentary_opinion_docx.v1",report_pin=report.pin().model_dump(mode="json"),
+        decision_pins=[],review_record_pins=[r.pin().model_dump(mode="json") for r in report.records])
+    manifest["unsupported_findings"] = unsupported + manifest["unsupported_findings"]
+    return _append_citation_register(rendered, report), manifest
+
+
+def _append_citation_register(rendered, report):
+    """A readable frozen reference register also covers unsupported comment positions."""
+    records = [r for r in report.records if r.supporting_citations]
+    if not records:
+        return rendered  # Keep every historical no-citation byte unchanged.
+    with zipfile.ZipFile(BytesIO(rendered)) as archive:
+        root = ElementTree.fromstring(archive.read("word/document.xml"))
+        body = root.find(_W+"body")
+        if body is None:
+            raise ValueError("DOCX_BODY_REQUIRED")
+        lines = ["Reviewer-selected supporting references — documentary opinion; applicability UNKNOWN"]
+        for record in records:
+            lines.extend((f"Opinion: {record.record_ref} {record.record_hash}", f"Reviewer: {record.recorded_by}; saved: {record.recorded_at.isoformat()}"))
+            for citation in record.supporting_citations:
+                lines.extend((f"Source: {citation.source_identity['originalName']}; version: {citation.source_hash}",
+                    f"Source identity: {citation.source_identity_ref}",
+                    f"Preparation: {citation.preparation_pin.artifact_ref} {citation.preparation_pin.artifact_hash}",
+                    f"IR: {citation.canonical_source_ir_pin.artifact_ref} {citation.canonical_source_ir_pin.artifact_hash}",
+                    f"Occurrence: {citation.subject.evidence_ref}; selector: {citation.subject.selector_hash}",
+                    "Location: " + __import__('json').dumps(citation.resolved_location, ensure_ascii=False, sort_keys=True),
+                    "Quote: " + citation.exact_quote))
+        section = body.find(_W+"sectPr")
+        insert = list(body).index(section) if section is not None else len(body)
+        for line in lines:
+            para = ElementTree.Element(_W+"p")
+            text = ElementTree.SubElement(ElementTree.SubElement(para,_W+"r"),_W+"t")
+            text.text = line
+            body.insert(insert,para); insert += 1
+        result = BytesIO()
+        with zipfile.ZipFile(result,"w") as output:
+            for info in archive.infolist():
+                output.writestr(info,ElementTree.tostring(root,encoding="utf-8",xml_declaration=True) if info.filename=="word/document.xml" else archive.read(info.filename))
+    return result.getvalue()

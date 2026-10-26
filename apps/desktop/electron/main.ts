@@ -14,6 +14,7 @@ import {
   runGatewayEnsure
 } from './local-gateway'
 import { closeGatewayTicketBridges, createGatewayTicketResolver } from './local-gateway-python'
+import { SemantierObservations } from './updater/semantier-observations'
 const localGatewayDials = createLocalGatewayDials()
 configurePythonGatewayTicketClient(
   createGatewayTicketResolver(
@@ -3537,6 +3538,7 @@ let updateInFlight = false
 const updateOperation: UpdateOperation = new UpdateOperation(createPackagedUpdateStrategy)
 
 const desktopMetrics: DesktopSharedMetrics = registerDesktopSharedMetrics()
+const semantierObservations = new SemantierObservations(app.getPath('userData'))
 
 function resolvePackagedUpdateStrategy(): Promise<UpdaterStrategy | null> {
   return updateOperation.resolve()
@@ -3556,6 +3558,7 @@ async function createPackagedUpdateStrategy(): Promise<UpdaterStrategy | null> {
   if (INSTALL_STAMP?.channelBuild && (mechanism === 'electron-updater' || mechanism === 'app-installer')) {
     const build = INSTALL_STAMP.channelBuild
     const installed = await inspectRunningChannelApp(build)
+    semantierObservations.reconcile({version: installed.nativeVersion, family: installed.packageFamilyName ?? '', buildId: build.buildId})
 
     // Platform/arch/signing are the channel's own preconditions. The Python
     // payload is not: electron-updater swaps the .app without it, and the
@@ -3577,6 +3580,11 @@ async function createPackagedUpdateStrategy(): Promise<UpdaterStrategy | null> {
         arch: process.arch,
         signer: installed.signer
       }),
+      onApplyTarget: async target => {
+        semantierObservations.begin({release_id: target.manifest.request.buildId, build_id: target.manifest.request.buildId,
+          target_sha256: target.package.artifact.sha256, target_version: target.package.version,
+          package_family: installed.packageFamilyName ?? ''}, installed.nativeVersion)
+      },
       nativeFactory: (target: ChannelTarget): UpdaterStrategy => createNativePackagedStrategy(mechanism, target)
     })
   }
@@ -4541,7 +4549,12 @@ async function applyUpdates(): Promise<UpdaterApplyResultWire> {
 
       const packaged: UpdaterStrategy | null = await resolvePackagedUpdateStrategy()
       const strategy: UpdaterStrategy = packaged ?? resolveCheckoutUpdateStrategy()
-      const result: UpdaterApplyResultWire = await desktopMetrics.trackUpdateApply(packaged, strategy)
+      let result: UpdaterApplyResultWire
+
+      try { result = await desktopMetrics.trackUpdateApply(packaged, strategy) }
+      catch (error) { semantierObservations.failed('native_update_failed'); throw error }
+
+      if (!result.ok) {semantierObservations.failed('native_update_refused')}
       handedOff = result.handedOff === true
 
       return result
@@ -6641,7 +6654,7 @@ function buildApplicationMenu() {
   template.push({
     label: 'Help',
     role: 'help',
-    submenu: [checkForUpdatesItem]
+    submenu: [checkForUpdatesItem, {label: app.getLocale().startsWith('zh') ? '发送诊断' : 'Send diagnostics', click: () => {const target = BrowserWindow.getFocusedWindow() ?? mainWindow; target?.webContents.send('semantier:feedback:open')}}]
   })
 
   return Menu.buildFromTemplate(template)
@@ -17580,6 +17593,31 @@ ipcMain.handle('hermes:updates:apply', async (_event, payload) =>
     message: error?.message || String(error)
   }))
 )
+
+// Main-frame application viewers only; no remote popout or embedded frame can
+// enable collection, read another profile journal or acknowledge its events.
+ipcMain.handle('semantier:feedback', (event, command: string, value: {enabled?:boolean;profile?:string;ids?:string[]}) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+
+  if (!win || (win !== mainWindow && !chatWindows.has(win)) || event.senderFrame !== win.webContents.mainFrame) {throw new Error('Application main frame required')}
+
+  if (command === 'status') {return semantierObservations.status()}
+  const profile = value?.profile
+
+  if (typeof profile !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(profile)) {throw new Error('Original local profile required')}
+
+  if (command === 'consent' && typeof value.enabled === 'boolean') {semantierObservations.consent(value.enabled, profile);
+
+ return semantierObservations.status()}
+
+  if (command === 'drain') {return semantierObservations.drain(profile)}
+
+  if (command === 'ack' && Array.isArray(value.ids) && value.ids.length <= 100 && value.ids.every(id => typeof id === 'string' && id.length <= 128)) {semantierObservations.ack(profile,value.ids);
+
+return semantierObservations.status()}
+
+  throw new Error('Unsupported feedback operation')
+})
 
 // About ▸ Updates channel selector; source checkouts only (packages bake their channel).
 ipcMain.handle('hermes:updates:channel:set', async (_event, name: unknown): Promise<UpdaterStatusWire> => {

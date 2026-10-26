@@ -15,6 +15,9 @@ import uuid
 from contracts.model_gateway import Deployment, PERMISSIONS
 
 
+GATEWAY_SCHEMA_VERSION = 3
+
+
 class GatewayStore:
     def __init__(self, dsn: str):
         self.dsn = dsn
@@ -53,6 +56,7 @@ class GatewayStore:
               PRIMARY KEY(kind,object_id))''')
             from pathlib import Path
             await c.execute(Path(__file__).with_name('account_sync.sql').read_text())
+            await c.execute(Path(__file__).with_name('device_connections.sql').read_text())
 
     async def migrate_account_sync(self, billing_schema):
         """Explicit cross-owner links, after identity and billing migrations."""
@@ -60,7 +64,7 @@ class GatewayStore:
         async with await self._connection() as c:
             await c.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',('semantier-gateway-migrate',))
             await install_account_relations(c,billing_schema)
-        return {'gateway_schema_version':2,'account_sync_links':'ready'}
+        return {'gateway_schema_version':GATEWAY_SCHEMA_VERSION,'account_sync_links':'ready'}
 
     async def grant(self, organization_id, user_id, permissions):
         if not set(permissions) <= PERMISSIONS:
@@ -79,7 +83,7 @@ class GatewayStore:
             r = await (await c.execute('SELECT permissions FROM semantier_gateway.grants WHERE organization_id=%s AND user_id=%s', (organization_id,user_id))).fetchone()
             return set(r['permissions']) if r else set()
 
-    async def issue(self, *, organization_id, user_id, workspace_id, permissions, expires_at):
+    async def issue(self, *, organization_id, user_id, workspace_id, permissions, expires_at, account_id=None, currency=None):
         if expires_at.tzinfo is None or expires_at <= datetime.now(timezone.utc):
             raise ValueError('future aware expiry required')
         expires_at=expires_at.astimezone(timezone.utc)
@@ -88,23 +92,28 @@ class GatewayStore:
         secret = 'smg_' + secrets.token_urlsafe(32)
         token_id = str(uuid.uuid4())
         async with await self._connection() as c:
-            await c.execute('INSERT INTO semantier_gateway.tokens VALUES(%s,%s,%s,%s,%s,%s::jsonb,%s,NULL)',
-              (token_id,hashlib.sha256(secret.encode()).hexdigest(),user_id,organization_id,workspace_id,json.dumps(sorted(permissions)),expires_at))
+            await c.execute('INSERT INTO semantier_gateway.tokens(token_id,token_hash,user_id,organization_id,workspace_id,permissions,expires_at,account_id,currency) VALUES(%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s)',
+              (token_id,hashlib.sha256(secret.encode()).hexdigest(),user_id,organization_id,workspace_id,json.dumps(sorted(permissions)),expires_at,account_id,currency))
         return {'token_id': token_id, 'secret': secret, 'expires_at': expires_at.isoformat()}
 
     async def token(self, secret):
         async with await self._connection() as c:
-            return await (await c.execute('''SELECT token_id,user_id,organization_id,workspace_id,permissions,expires_at
+            return await (await c.execute('''SELECT token_id,user_id,organization_id,workspace_id,permissions,expires_at,account_id,currency
               FROM semantier_gateway.tokens WHERE token_hash=%s AND revoked_at IS NULL AND expires_at>now()''',
               (hashlib.sha256(secret.encode()).hexdigest(),))).fetchone()
 
     async def revoke(self, organization_id, user_id, token_id):
         async with await self._connection() as c:
             cursor = await c.execute('UPDATE semantier_gateway.tokens SET revoked_at=now() WHERE token_id=%s AND organization_id=%s AND user_id=%s', (token_id,organization_id,user_id))
-            return cursor.rowcount == 1
+            revoked = cursor.rowcount == 1
+            if revoked:
+                await c.execute("UPDATE semantier_gateway.device_connections SET status='revoked',ciphertext=NULL,nonce=NULL,encryption_key_id=NULL WHERE token_id=%s", (token_id,))
+            return revoked
 
     async def bind(self, deployment: Deployment):
         body = asdict(deployment)
+        if body['tokens_per_minute'] is None:
+            del body['tokens_per_minute']
         body['max_cost'] = str(deployment.max_cost)
         async with await self._connection() as c:
             previous=await (await c.execute('SELECT body FROM semantier_gateway.deployments WHERE organization_id=%s AND deployment_id=%s FOR UPDATE',(deployment.organization_id,deployment.deployment_id))).fetchone()
@@ -150,3 +159,21 @@ class GatewayStore:
     async def audit(self, organization_id, user_id, operation, target, revision=None):
         async with await self._connection() as c:
             await c.execute('INSERT INTO semantier_gateway.audit VALUES(%s,now(),%s,%s,%s,%s,%s)', (str(uuid.uuid4()),organization_id,user_id,operation,target,revision))
+
+    async def account_rows(self,actor,billing_schema,*,manage=False):
+        """Current gateway account access, joined only through its explicit scope owner."""
+        from psycopg import sql
+        async with await self._connection() as c:
+            query=sql.SQL("""SELECT s.organization_id,s.account_id,s.currency,a.funding,x.role FROM semantier_gateway.account_scopes s
+                JOIN semantier_gateway.account_access x USING(organization_id,account_id,currency)
+                JOIN {}.accounts a USING(organization_id,account_id,currency)
+                WHERE s.organization_id=%s AND x.user_id=%s AND x.status='ACTIVE' AND s.billing_schema=%s
+                  AND s.funding=a.funding ORDER BY s.account_id,s.currency""").format(sql.Identifier(billing_schema))
+            rows=await (await c.execute(query,(actor.organization_id,actor.user_id,billing_schema))).fetchall()
+        out=[]
+        for r in rows:
+            if getattr(actor,'account_id',None) is not None and (r['account_id'],r['currency'])!=(actor.account_id,actor.currency):continue
+            owner=r.pop('role') in {'owner','billing_admin'}
+            if manage and not owner:continue
+            out.append({**r,'can_manage':owner and getattr(actor,'token_id',None) is None and 'billing:manage' in actor.permissions})
+        return out

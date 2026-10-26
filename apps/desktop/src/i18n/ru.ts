@@ -15,6 +15,7 @@ import { ruSharedMetrics } from './ru_shared_metrics'
 import { ruThemePicker } from './ru_theme_picker'
 import { ruUpdateChannel } from './ru_update_channel'
 import { semantierBillingCopy } from './semantier-billing'
+import { feedbackEnglish } from './semantier-feedback'
 
 // RU_PLURAL: (count, one, few, many) — русские формы сущ. падежа
 // RU_NOUN: (count, one, few, many) — формы род. множественного
@@ -38,6 +39,7 @@ const RU_NOUN = (count: number | string, one: string, few: string, many: string)
 }
 
 export const ruOverrides = {
+  semantierFeedback: feedbackEnglish,
   connectors: ruConnectors.connectors,
   sharedMetrics: ruSharedMetrics,
   firstRun: ruFirstRun,

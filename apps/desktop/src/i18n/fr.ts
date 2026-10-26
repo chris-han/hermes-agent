@@ -16,8 +16,10 @@ import { frThemePicker } from './fr_theme_picker'
 import { frUpdateChannel } from './fr_update_channel'
 import { introFr } from './intro-fr'
 import { semantierBillingCopy } from './semantier-billing'
+import { feedbackEnglish } from './semantier-feedback'
 
 export const frOverrides = {
+  semantierFeedback: feedbackEnglish,
   sharedMetrics: frSharedMetrics,
   firstRun: frFirstRun,
   intro: introFr,

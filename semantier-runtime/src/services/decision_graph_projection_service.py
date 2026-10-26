@@ -9,6 +9,7 @@ from contracts.decision_graph_projection import (
     DecisionGraphProjectionReceiptV1,
     DecisionGraphProjectionV1,
     ProjectionSufficiencyProofV1,
+    ProjectionCheckedScopeV2,
 )
 from contracts.decision_local_projection_v2 import DecisionLocalProjectionV2
 from contracts.typed_decision_model import TypedDecisionFrontierV1
@@ -57,11 +58,15 @@ class DecisionGraphProjectionService:
         )
         return tuple(sorted(missing, key=lambda item: item.encode("utf-8")))
 
-    def compile(
+    def compile(self, *, dlp, frontier):
+        return self._compile(dlp=dlp, frontier=frontier, historical=False)
+
+    def _compile(
         self,
         *,
         dlp: DecisionLocalProjectionV2,
         frontier: TypedDecisionFrontierV1,
+        historical: bool,
     ) -> DecisionGraphProjectionBundleV1:
         if not isinstance(dlp, DecisionLocalProjectionV2):
             raise TypeError("DGP requires DecisionLocalProjectionV2")
@@ -96,7 +101,13 @@ class DecisionGraphProjectionService:
         ))
         conflicts = self._ordered_text(dlp.context.formation.conflicts)
 
+        scope_fields = {} if historical else {"checked_scope": ProjectionCheckedScopeV2(
+            organization_id=scope[0], workspace_id=scope[1], context=dlp.context.pin(),
+            working_context=working.pin(), declared_dependency_ids=tuple(sorted({
+                r.dependency_id for p in dlp.decision_contract.semantic_predicates for r in p.material_requirements
+            }))) }
         proof = ProjectionSufficiencyProofV1.create(
+            **scope_fields,
             status="INSUFFICIENT" if missing else "SUFFICIENT",
             missing_dependency_ids=missing,
             frontier_ref=frontier.frontier_ref,
@@ -167,6 +178,6 @@ class DecisionGraphProjectionService:
         bundle: DecisionGraphProjectionBundleV1,
     ) -> None:
         """Replay verification is exact derivation comparison; it performs no retrieval."""
-        expected = self.compile(dlp=dlp, frontier=frontier)
+        expected = self._compile(dlp=dlp, frontier=frontier, historical=bundle.sufficiency.checked_scope is None)
         if bundle != expected:
             raise ValueError("DGP_DERIVATION_MISMATCH")

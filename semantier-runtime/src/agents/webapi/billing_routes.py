@@ -4,17 +4,15 @@ from datetime import datetime, timezone
 from fastapi import APIRouter,HTTPException,Request
 from agents.model_gateway.auth import actor_for
 from agents.webapi.model_gateway_routes import gateway
-from agents.webapi.billing_commerce_routes import permitted_account_rows
+from agents.webapi.billing_commerce_routes import permitted_account_rows,select_account_row
 
 router=APIRouter(prefix='/api/billing',tags=['billing'])
 
 
 async def account(request,permission='billing:read',*,browser_only=False):
     service=gateway(request); actor=await actor_for(request,service,permission,browser_only=browser_only)
-    rows=await permitted_account_rows(service,actor,manage=isinstance(permission,str) and permission.endswith(':manage'))
-    if len(rows)!=1:
-        raise HTTPException(409,'billing account unavailable or ambiguous')
-    aid,currency,funding=(rows[0][key] for key in ('account_id','currency','funding'))
+    row=await select_account_row(service,actor,request.query_params.get('account_id'),request.query_params.get('currency'),manage=isinstance(permission,str) and permission.endswith(':manage'))
+    aid,currency,funding=(row[key] for key in ('account_id','currency','funding'))
     return service,actor,aid,currency,funding
 
 
@@ -52,12 +50,28 @@ async def billing_subscription(request: Request):
 async def billing_usage(request: Request):
     service=gateway(request)
     actor=await actor_for(request,service,{'usage:read_self','usage:read_org'})
-    rows=await service.billing.list_usage(actor.organization_id)
-    if 'usage:read_org' not in actor.permissions:
-        rows=[r for r in rows if r.get('attribution',{}).get('actor_user_id')==actor.user_id]
+    allowed=await permitted_account_rows(service,actor)
+    aid=request.query_params.get('account_id');currency=request.query_params.get('currency')
+    if aid is not None:allowed=[r for r in allowed if r['account_id']==aid]
+    if currency is not None:allowed=[r for r in allowed if r['currency']==currency]
+    if not allowed:raise HTTPException(403,'billing account unavailable')
+    query=dict(request.query_params)
+    try:
+        limit=int(query.pop('limit','100'));offset=int(query.pop('offset','0'))
+        if not 1<=limit<=500 or offset<0:raise ValueError('invalid pagination')
+        query.pop('account_id',None);query.pop('currency',None)
+        rows=await service.billing.list_usage(actor.organization_id,limit=limit+1,offset=offset,
+            accounts=[(r['account_id'],r['currency']) for r in allowed],
+            actor_user_id=None if 'usage:read_org' in actor.permissions else actor.user_id,filters=query)
+    except (ValueError,TypeError) as exc:raise HTTPException(422,str(exc)) from exc
+    more=len(rows)>limit;rows=rows[:limit]
     for row in rows:
         row['evidence_url']='/api/model-gateway/invocations/'+row['invocation_id']+'/evidence'
-    return {'schema_version':'semantier.billing.v1','backend':'semantier','data':rows}
+    return {'schema_version':'semantier.billing.v1','backend':'semantier','data':rows,
+        'page':{'limit':limit,'offset':offset,'has_more':more,'next_offset':offset+limit if more else None},
+        'completeness':'PAGE_ONLY' if more or offset else 'SCOPED_COMPLETE',
+        'tags_overlap':True,'source':'semantier_usage_observations'}
+
 
 
 @router.get('/comparison')
@@ -174,3 +188,42 @@ async def billing_price_create(request: Request):
         return await service.billing.create_customer_price(actor.organization_id,price,actor.user_id)
     except ValueError as exc:
         raise HTTPException(422,str(exc)) from exc
+
+
+async def task_scope_actor(service,actor,account_id,currency,device_token_id=None):
+    if device_token_id is None:return actor
+    from dataclasses import replace
+    from contracts.model_gateway import canonical_hash
+    async with await service.store._connection() as c:
+        device=await (await c.execute('''SELECT d.context FROM semantier_gateway.device_connections d JOIN semantier_gateway.tokens t USING(token_id)
+            WHERE t.token_id=%s AND t.user_id=%s AND t.organization_id=%s AND t.workspace_id=%s AND t.account_id=%s AND t.currency=%s
+              AND t.revoked_at IS NULL AND t.expires_at>now()''',(device_token_id,actor.user_id,actor.organization_id,actor.workspace_id,account_id,currency))).fetchone()
+    if not device:raise HTTPException(403,'device task scope unavailable')
+    return replace(actor,client_namespace=canonical_hash([device['context']['runtime_ref'],device['context']['profile_ref']]))
+
+
+@router.get('/task-policy')
+async def billing_task_policy(request: Request):
+    service,actor,aid,currency,_=await account(request)
+    actor=await task_scope_actor(service,actor,aid,currency,request.query_params.get('device_token_id'))
+    from contracts.model_gateway import task_context
+    try:
+        context=task_context(actor,aid,currency,{'root_run_id':request.query_params.get('root_run_id','')})
+    except ValueError as exc:raise HTTPException(422,str(exc)) from exc
+    policy=await service.billing.task_policy(actor.organization_id,aid,currency,context['scope_id'])
+    return {'schema_version':'semantier.task-finops-policy.v1','unit':'tokens','window':'root_lifetime','inclusion':'input_total+output_total','policy':policy,'scope_id':context['scope_id']}
+
+
+@router.post('/task-policy')
+async def billing_task_policy_update(request: Request):
+    service,actor,aid,currency,_=await account(request,'budgets:manage',browser_only=True)
+    command=await request.json()
+    fields={'task','token_limit','allocation_target','expected_policy_event_id','device_token_id'}
+    if not isinstance(command,dict) or set(command)-fields or not {'task','token_limit','allocation_target','expected_policy_event_id'}<=set(command):
+        raise HTTPException(422,'explicit task, token limit, allocation and expected revision required')
+    actor=await task_scope_actor(service,actor,aid,currency,command.get('device_token_id'))
+    from contracts.model_gateway import task_context
+    try:
+        context=task_context(actor,aid,currency,command['task'])
+        return await service.billing.set_task_policy(actor.organization_id,aid,currency,context,token_limit=command['token_limit'],allocation_target=command['allocation_target'],actor_user_id=actor.user_id,expected_policy_event_id=command['expected_policy_event_id'])
+    except ValueError as exc:raise HTTPException(409 if getattr(exc,'code',None) else 422,str(exc)) from exc

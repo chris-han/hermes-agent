@@ -262,7 +262,29 @@ class RequiredQualificationV1(_FrozenContract):
     status: QualificationStatus
 
 
+class ImpactPopulationScopeV2(_FrozenContract):
+    schema_version: Literal["impact_population_scope.v2"] = "impact_population_scope.v2"
+    basis: Literal["SUPPLIED_VIEWS"] = "SUPPLIED_VIEWS"
+    organization_id: str | None
+    workspace_id: str | None
+    query: Literal["EXACT_EVIDENCE_DEPENDENTS"] = "EXACT_EVIDENCE_DEPENDENTS"
+    member_pins: tuple[tuple[str, str, str, str], ...]
+    supplied_enumeration_complete: Literal[True] = True
+    owner_population: Literal["UNESTABLISHED"] = "UNESTABLISHED"
+    legal_population: Literal["UNESTABLISHED"] = "UNESTABLISHED"
+    traversal: Literal["DECLARED_EVIDENCE_MEANING_STRUCTURE_DECISION"] = "DECLARED_EVIDENCE_MEANING_STRUCTURE_DECISION"
+
+    @model_validator(mode="after")
+    def exact_members(self):
+        if self.member_pins != tuple(sorted(set(self.member_pins))):
+            raise ValueError("impact members must be unique and ordered")
+        if len({p[2] for p in self.member_pins}) != len(self.member_pins):
+            raise ValueError("impact contains conflicting decision versions")
+        return self
+
+
 class ImpactProjectionV1(_FrozenContract):
+    population_scope: ImpactPopulationScopeV2 | None = Field(default=None, exclude_if=lambda v: v is None)
     schema_version: Literal["governed_delta_impact_projection.v1"] = (
         "governed_delta_impact_projection.v1"
     )

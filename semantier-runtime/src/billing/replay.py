@@ -19,9 +19,9 @@ def rerate_bundle(bundle):
     rows=[]
     for obs in bundle['usage_observations']:
         original=obs['normalized']
-        if original.get('normalizer_version')!='native-usage.v1' or original.get('inclusion_rules_version')!='provider-inclusion.v1':
-            raise ValueError('unsupported pinned normalizer version')
-        normalized=normalize_usage(original['provider'],obs['raw_usage'])
+        normalized=normalize_usage(original['provider'],obs['raw_usage'],
+            normalizer_version=original.get('normalizer_version'),
+            inclusion_rules_version=original.get('inclusion_rules_version'))
         if normalized.to_dict()!=original:
             # JSON turns tuple fields into lists; compare canonical JSON values.
             if json.dumps(normalized.to_dict(),sort_keys=True)!=json.dumps(original,sort_keys=True):
@@ -40,7 +40,10 @@ def rerate_bundle(bundle):
                 context.prec=50
                 target=bundle['invocation']['currency']
                 reported=native if supplier_price.currency==target else quotes[obs['fx_version']].convert(native,supplier_price.currency,target).quantize(Decimal('.000000000001'))
-            if native!=Decimal(obs['supplier_native_cost']) or reported!=Decimal(obs['supplier_cost']):
+        for computed, retained in ((native, obs.get('supplier_native_cost')),
+                                   (reported, obs.get('supplier_cost'))):
+            if ((computed is None) != (retained is None) or
+                    (computed is not None and computed != Decimal(retained))):
                 raise ValueError('supplier rating mismatch')
         rows.append({'event_id':obs['event_id'],'customer_cost':format(cost,'f') if cost is not None else None,'price_version':obs['price_version'],'currency':price.currency if price else None,'supplier_native_cost':format(native,'f') if native is not None else None,'supplier_cost':format(reported,'f') if reported is not None else None})
     return {'invocation_id':bundle['invocation']['invocation_id'],'bundle_sha256':bundle['sha256'],'ratings':rows,'posting_ids':sorted({p['id'] for p in bundle['postings']}),'network_access':'NOT_USED'}

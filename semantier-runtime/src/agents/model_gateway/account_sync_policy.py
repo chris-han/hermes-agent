@@ -37,6 +37,9 @@ def _assemble(account,access,routes,expired,grants):
     if not account:raise ValueError('Canonical billing account required')
     routes=[r['body'] for r in routes if r['body'].get('funding')==account['funding']]
     models=sorted({r['proxy_model'] for r in routes if isinstance(r.get('proxy_model'),str) and r['proxy_model']})
+    token_limits = [r.get('tokens_per_minute', 60000) for r in routes]
+    if any(type(limit) is not int or not 1 <= limit <= 1000000 for limit in token_limits):
+        raise ValueError('invalid governed tokens_per_minute')
     reason='SUSPENDED' if account['blocked'] else 'BUDGET_UNAVAILABLE' if account['budget_limit']<=account['budget_spent'] else None
     eligible=reason is None and bool(models)
     if account['funding']=='SEMANTIER_CREDITS':
@@ -57,7 +60,7 @@ def _assemble(account,access,routes,expired,grants):
     if account['funding']=='SEMANTIER_CREDITS':
         basis=[{k:(v.astimezone(timezone.utc).isoformat() if isinstance(v,datetime) else v) for k,v in r.items()} for r in grants]
     return {'schema_version':1,'funding':account['funding'],'account_eligible':bool(eligible),'eligibility_reason':reason,
-        'models':models,'members':members,'limits':{'rpm_limit':60,'tpm_limit':60000,'max_parallel_requests':2},
+        'models':models,'members':members,'limits':{'rpm_limit':60,'tpm_limit':max(token_limits, default=60000),'max_parallel_requests':2},
         'routes':[{'deployment_id':r['deployment_id'],'revision':r['revision'],'config_fingerprint':r['config_fingerprint']} for r in routes],
         'grant_basis':basis}
 

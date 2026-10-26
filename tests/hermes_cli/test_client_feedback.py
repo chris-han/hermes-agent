@@ -1,0 +1,71 @@
+"""Feedback custody tests: real profile storage, substituted OS crypto/wire only."""
+import hashlib
+import json
+from pathlib import Path
+import sys
+sys.path.insert(0,str(Path(__file__).resolve().parents[3]/"src"))
+import pytest
+from cryptography.fernet import Fernet
+
+@pytest.fixture
+def native(tmp_path,monkeypatch):
+    from hermes_cli import client_feedback as owner
+    from hermes_constants import set_hermes_home_override,reset_hermes_home_override
+    token=set_hermes_home_override(str(tmp_path))
+    config='model: {provider: custom, base_url: "http://localhost:4000/v1"}\nclient_feedback: {service_url: "http://127.0.0.1:8927", portal_origin: "http://127.0.0.1:3326"}\n'
+    (tmp_path/'config.yaml').write_text(config)
+    cipher=Fernet(Fernet.generate_key())
+    monkeypatch.setattr(owner.device,'_protect',cipher.encrypt)
+    monkeypatch.setattr(owner.device,'_unprotect',cipher.decrypt)
+    yield owner,tmp_path,config
+    reset_hermes_home_override(token)
+
+
+def test_feedback_authorization_does_not_touch_model_or_expose_capability(native,monkeypatch):
+    owner,home,config=native
+    calls=[]
+    def wire(origin,secret,method,path,body=None):
+        calls.append((origin,secret,method,path,body))
+        state=owner._read()
+        if path=='/authorizations':
+            assert body['proof_challenge']==hashlib.sha256(state['authorization']['proof'].encode()).hexdigest()
+            return {'authorization_url':'http://127.0.0.1:3326/client-feedback/authorize?intent_ref='+body['intent_ref'],'expires_at':'2099-01-01T00:00:00+00:00'}
+        return {'status':'approved','purpose':'diagnostic','profile_ref':state['profile_ref'],'capability':'feedback-only-secret','capability_expires_at':'2099-01-01T00:00:00+00:00'}
+    monkeypatch.setattr(owner,'_request',wire)
+    first=owner.authorization_start('diagnostic')
+    assert owner.authorization_start('diagnostic')==first
+    assert len(calls)==1
+    result=owner.authorization_poll()
+    assert result=={'status':'approved','purpose':'diagnostic'}
+    assert 'feedback-only-secret' not in json.dumps(owner.status())
+    assert b'feedback-only-secret' not in (home/'.semantier-feedback.bin').read_bytes()
+    assert owner.status()['enabled'] is False
+    assert owner.status()['diagnostic_signed_in'] is True
+    assert (home/'config.yaml').read_text()==config
+    assert not (home/'.cloud-device.bin').exists()
+    with pytest.raises(ValueError,match='authorization'):owner.consent(True)
+
+
+def test_lost_start_reply_reuses_intent_and_proof(native,monkeypatch):
+    owner,_,_=native;seen=[]
+    def wire(origin,secret,method,path,body=None):
+        seen.append(body)
+        if len(seen)==1:raise OSError('lost reply')
+        return {'authorization_url':'http://127.0.0.1:3326/client-feedback/authorize?intent_ref='+body['intent_ref'],'expires_at':'2099-01-01T00:00:00+00:00'}
+    monkeypatch.setattr(owner,'_request',wire)
+    with pytest.raises(OSError):owner.authorization_start('reporting')
+    owner.authorization_start('reporting')
+    assert seen[0]==seen[1]
+
+
+def test_same_shared_fixture_is_consumed_without_client_extensions():
+    from contracts.client_operations import UpdateEvent,FeedbackAuthorization
+    from pydantic import ValidationError
+    path=Path(__file__).resolve().parents[3]/'src/contracts/client-operations-v1.fixture.json'
+    fixture=json.loads(path.read_text())
+    assert hashlib.sha256(path.with_name('client-operations-v1.schema.json').read_bytes()).hexdigest()==fixture['schema_sha256']
+    for collection,model in [('update_events',UpdateEvent),('feedback_authorizations',FeedbackAuthorization)]:
+        for vector in fixture[collection]:
+            if vector['expected']=='accepted':model.model_validate(vector['input'])
+            else:
+                with pytest.raises(ValidationError):model.model_validate(vector['input'])
