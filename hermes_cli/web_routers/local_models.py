@@ -1,4 +1,4 @@
-"""Shared managed llama.cpp routes and in-process handlers for terminal model setup.
+"""Shared in-process handlers for terminal model setup; no GUI HTTP routes.
 
 Every payload carries plain-language, pre-formatted facts the UI shows verbatim
 (what will this model do ON THIS MACHINE, how big is the download, what is the
@@ -8,32 +8,27 @@ start-POST -> {job_id} -> GET poll with byte progress.
 
 from __future__ import annotations
 
-import asyncio
 import collections
 import contextlib
 import json
 import logging
-import os
 import re
-import shutil
 import threading
 import time
 import urllib.parse
 import urllib.request
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import HTTPException
 from pydantic import BaseModel
 
-from starlette.concurrency import run_in_threadpool
 
 from hermes_cli import config as config_mod, web_deps
 from hermes_cli.web_routers._common import _CONFIG_MUTATION_LOCK, _config_profile_scope
 from hermes_cli.local_runtime import (
-    binaries, bootstrap, catalog, context_policy, estimator, growth, hardware, hf_browse,
-    load_progress, presets, supervisor,
+    binaries, bootstrap, catalog, estimator, hardware, load_progress, presets,
 )
 from agent.memory_provider import spawn_context_thread
 from pm.downloader import Download, DownloadPaused, Source
@@ -43,7 +38,6 @@ from hermes_cli.local_runtime.gguf import split_parts
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
 
 _JOBS: dict[str, dict[str, Any]] = {}
 _JOBS_LOCK = threading.Lock()
@@ -66,37 +60,12 @@ class RuntimeInstallBody(BaseModel):
     backend: Optional[str] = None   # None/auto -> detect
 
 
-class ModelDownloadBody(BaseModel):
-    model_id: str
-
-
-class JobIdBody(BaseModel):
-    job_id: str
-
-
 class QuickstartBody(BaseModel):
     model_id: str | None = None   # default: the catalog's recommended entry
 
 
-class ServerActionBody(BaseModel):
-    action: str                 # "stop" | "start"
-
-
-class ModelEjectBody(BaseModel):
-    model_id: str
-
-
 class ModelActivateBody(BaseModel):
     model_id: str               # exact variant id (a staged .gguf stem)
-
-
-class BrowsedDownloadBody(BaseModel):
-    repo: str
-    paths: list[str]            # one GGUF, or every part of a split, in order
-
-
-class SideloadBody(BaseModel):
-    path: str                   # absolute path to a .gguf on this machine
 
 
 def _human_gb(n: float) -> str:
@@ -406,16 +375,6 @@ def _model_id_for(gguf: Path) -> str:
     return re.sub(_SPLIT_PART_RE + "$", "", gguf.stem)
 
 
-def _variant_files_on_disk(model_id: str) -> list[Path]:
-    """Every local file of a staged model: all split parts plus catalog-declared assets (mmproj/draft/MTP head) when present."""
-    files = [p for p in bootstrap.models_dir().glob("*.gguf") if _model_id_for(p) == model_id]
-    hit = catalog.find_entry_for_model(model_id)
-    assets = (hit[0].mmproj, hit[0].draft, hit[0].mtp_head) if hit is not None else ()
-    files += [bootstrap.assets_dir() / a.local_name for a in assets
-              if a is not None and (bootstrap.assets_dir() / a.local_name).exists()]
-    return files
-
-
 def _download_plan(entry, variant) -> list:
     """Everything a variant needs: split parts + mmproj/draft/MTP head assets, as (url, dest, bytes) tuples."""
     plan = [(_hf_url(entry.repo, a.path, a.revision), bootstrap.models_dir() / a.local_name, a.size_bytes)
@@ -489,7 +448,6 @@ def _active_llamacpp_model_id() -> str | None:
     return _quiet(read, None)
 
 
-@router.get("/api/local-models/status")
 def local_models_status():
     """Cheap, immediate: config state + installed runtime + staged models + supervisor state (GPU facts live
     in /hardware). Sync def on purpose: blocking urlopen/scans run in the threadpool."""
@@ -549,7 +507,6 @@ def _nvidia_smi_facts() -> dict:
     )
 
 
-@router.get("/api/local-models/hardware")
 def local_models_hardware():
     """The budget as plain facts, polled by the pane and statusbar. Sync def: shells out to nvidia-smi — threadpool."""
     budget = hardware.probe_budget()
@@ -622,7 +579,6 @@ def _catalog_row(entry, budget, recommended, recommended_reason, staged_ids) -> 
     return row
 
 
-@router.get("/api/local-models/catalog")
 def local_models_catalog():
     """Every entry answers up front: how big is the download, will it fit, what context/speed shape will I
     get. The row advertises the BEST build for this machine (highest quality fully on GPU at the 64K floor;
@@ -668,7 +624,6 @@ def _install_engine_job(job: dict[str, Any], backend: str):
     )
 
 
-@router.post("/api/local-models/runtime/install")
 def local_models_runtime_install(body: RuntimeInstallBody, profile: Optional[str] = None):
     tag, backend = _runtime_target(body.backend)
     job = _job("runtime-install", f"llama.cpp {tag} ({backend})")
@@ -688,74 +643,6 @@ def local_models_runtime_install(body: RuntimeInstallBody, profile: Optional[str
 
 
 # ── model download (job with byte progress) ──────────────────
-def _download_target(model_id: str):
-    """(entry, variant) for a family id (this machine's selected variant — the same planning budget as the
-    catalog, so the user downloads exactly the build the row advertised) or an exact variant model_id."""
-    entry = catalog.catalog_by_id().get(model_id)
-    if entry is None:  # exact variant id, or nothing we know (404)
-        return catalog.find_entry_for_model(model_id) or _entry_or_404(model_id)
-    if _engine_too_old(entry.min_engine):
-        raise HTTPException(status_code=409, detail=(
-            f"{entry.display_name} needs llama.cpp {entry.min_engine} or newer — update the engine first"))
-    choice = catalog.select_variant(entry, hardware.probe_budget(planning=True))
-    if choice is None:
-        raise HTTPException(status_code=409, detail=f"no variant of {entry.id} fits this machine")
-    return entry, choice.variant
-
-
-@router.post("/api/local-models/download")
-def local_models_download(body: ModelDownloadBody):
-    """Accepts either a family id (downloads this machine's selected variant) or an exact variant model_id."""
-    entry, variant = _download_target(body.model_id)
-    plan = _download_plan(entry, variant)
-    if plan and all(dest.is_file() for _, dest, _ in plan):
-        return {"job_id": None, "already_downloaded": True, "model_id": variant.model_id}
-    job = _job("model-download", f"{entry.display_name} ({variant.quant})", model_id=entry.id)
-    def _run():
-        _run_download_plan(job, plan, entry.display_name)
-        _finish(job, f"{entry.display_name} ready")
-        _refresh_runtime("post-download runtime refresh skipped")
-
-    _spawn_job(job, "lr-model-download", _run, fail_msg="model download failed: %s", resumable=True)
-    return {"job_id": job["job_id"], "model_id": variant.model_id}
-
-
-@router.post("/api/local-models/download/pause")
-async def local_models_download_pause(body: JobIdBody):
-    """Pause the download phase of a model, component or quickstart job."""
-    job = _JOBS.get(body.job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="unknown download job")
-    with _JOBS_LOCK:
-        if not _job_view(job)["can_pause"]:
-            return {"ok": True, "paused": False}
-        _RUNNING[body.job_id]["pause"].set()
-    return {"ok": True, "paused": True}
-
-
-@router.post("/api/local-models/download/resume")
-async def local_models_download_resume(body: JobIdBody):
-    """Restart the same job; PM reuses verified files and durable ranges."""
-    if body.job_id not in _JOBS:
-        raise HTTPException(status_code=404, detail="unknown download job")
-    resume = _RUNNING.get(body.job_id, {}).get("resume")
-    return {"ok": True, "resumed": bool(resume and resume())}
-
-
-@router.delete("/api/local-models/models/{model_id}")
-async def local_models_delete(model_id: str):
-    """Remove every split part plus private assets, then bounce the router off the request thread (deleting
-    the active file mid-serve is exactly the stale state the refresh exists for)."""
-    files = _variant_files_on_disk(model_id)
-    if not files:
-        raise HTTPException(status_code=404, detail="model not found")
-    for path in files:
-        path.unlink(missing_ok=True)
-    # Growth state dies with the model: a re-download starts back at its zero-spill window, not a stale grown one.
-    _quiet(lambda: growth.clear_window_override(model_id), None, debug="window-override clear skipped")
-    spawn_context_thread(_refresh_runtime, args=("post-delete runtime refresh skipped",),
-                         name="lr-post-delete").start()
-    return {"ok": True}
 
 
 # ── quickstart: one click from nothing to a working default ──
@@ -774,7 +661,7 @@ def _quickstart_target(body: QuickstartBody, budget):
         if picked is None:
             raise HTTPException(
                 status_code=409,
-                detail="No automatic recommendation for this machine — open Local Models to browse or choose a model explicitly",
+                detail="No automatic recommendation for this machine — choose a model explicitly in hermes model",
             )
         candidates = [picked[0]] + [e for e in catalog.CATALOG if e.id != picked[0].id]
     for candidate in candidates:
@@ -782,7 +669,7 @@ def _quickstart_target(body: QuickstartBody, budget):
         if choice is not None and not _engine_too_old(candidate.min_engine):
             return candidate, choice.variant
     raise HTTPException(status_code=409, detail=(
-        "no catalog model fits this machine — open Local Models to browse for a smaller build"))
+        "no catalog model fits this machine — configure an independently running endpoint"))
 
 
 def _repriced_quickstart(job: dict[str, Any], body: QuickstartBody, variant):
@@ -796,7 +683,6 @@ def _repriced_quickstart(job: dict[str, Any], body: QuickstartBody, variant):
     return entry, picked, plan if any(not dest.is_file() for _, dest, _ in plan) else []
 
 
-@router.post("/api/local-models/quickstart")
 def local_models_quickstart(body: QuickstartBody, profile: Optional[str] = None):
     """One job: install the runtime (if missing), download this machine's build of the recommended model (if
     missing), make it the default. Each leg uses the same code as the individual setup routes.
@@ -828,7 +714,7 @@ def local_models_quickstart(body: QuickstartBody, profile: Optional[str] = None)
         _step(job, "starting-server", "Starting the local server")
         with _config_profile_scope(profile):
             _ensure_server(job, _set_runtime_enabled(True), variant.model_id,
-                           fail_detail="The local server could not start — open Local Models for details",
+                           fail_detail="The local server could not start — run hermes model for details",
                            skip_msg="quickstart rescan check skipped")
             _assign_default(job, variant.model_id)
         _finish(job, f"{entry.display_name} is ready — new chats use it")
@@ -840,66 +726,11 @@ def local_models_quickstart(body: QuickstartBody, profile: Optional[str] = None)
 
 
 # ── server lifecycle: turn the engine on/off ─────────────────
-def _terminate_state_pid() -> None:
-    """Explicit recovery, never raw-PID termination of another live owner."""
-    from hermes_cli.local_runtime.recovery import stop_recorded_orphan
-
-    if not stop_recorded_orphan():
-        raise HTTPException(status_code=409, detail=(
-            "Another Hermes process owns this server, or its ownership could not be verified"))
-
-
-def _stop_server() -> None:
-    if bootstrap.get_supervisor() is not None:
-        bootstrap.shutdown_local_runtime()
-    else:
-        _terminate_state_pid()
-    _set_runtime_enabled(False)
-
-
-def _start_server() -> None:
-    _start_local_server(_set_runtime_enabled(True), _SERVER_START_FAILED)
-
-
-_SERVER_ACTIONS = {"stop": _stop_server, "start": _start_server}
-
-
-@router.post("/api/local-models/server")
-async def local_models_server(body: ServerActionBody):
-    """Turn the local engine off (stop the server, free ALL GPU memory, disable auto-start) or back on. Unlike
-    per-model eject the off switch IS durable: the user said off, so boots stay off until they say on."""
-    action = (body.action or "").strip().lower()
-    if action not in _SERVER_ACTIONS:
-        raise HTTPException(status_code=400, detail="action must be 'stop' or 'start'")
-    try:
-        await asyncio.to_thread(_SERVER_ACTIONS[action])
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return {"ok": True, "action": action}
 
 
 # ── eject / activate ─────────────────────────────────────────
-@router.post("/api/local-models/eject")
-def local_models_eject(body: ModelEjectBody):
-    """Free a loaded model's GPU memory now; only demand (the next message) reloads it — residency v2 has no
-    automatic loading anywhere. Sync def: the fallback path blocks on a 120s urlopen — threadpool, never the loop."""
-    sup = bootstrap.get_supervisor()
-    if sup is not None:
-        with _http_error(502):
-            sup.unload_model(body.model_id)
-        return {"ok": True}
-    # Server owned by another process (or state-file only): drive the router directly with the persisted endpoint.
-    endpoint = _state_endpoint()
-    if endpoint is None:
-        raise HTTPException(status_code=409, detail="local server is not running")
-    with _http_error(502):
-        _router_request(endpoint, "/models/unload", timeout=120, payload={"model": body.model_id})
-    return {"ok": True}
 
 
-@router.post("/api/local-models/activate")
 async def local_models_activate(body: ModelActivateBody, profile: Optional[str] = None):
     """Make a downloaded model the default for new chats: a config write via the same machinery as
     /api/model/set plus making sure the server is up. NO model loading (residency v2: models load on first
@@ -926,84 +757,6 @@ async def local_models_activate(body: ModelActivateBody, profile: Optional[str] 
 
 
 # ── job polling ──────────────────────────────────────────────
-@router.get("/api/local-models/jobs")
-async def local_models_jobs():
-    """All recent jobs, running first — the pane and app-level poller rediscover in-flight work here after a remount."""
-    with _JOBS_LOCK:
-        jobs = sorted(_JOBS.values(), key=lambda job: -job["started_at"])
-        active = [job for job in jobs if job["status"] in ("running", "paused")]
-        recent = [job for job in jobs if job["status"] in ("done", "error")][:20]
-        return {"jobs": [_job_view(job) for job in [*active, *recent]]}
-
-
-@router.get("/api/local-models/jobs/{job_id}")
-async def local_models_job(job_id: str):
-    with _JOBS_LOCK:
-        job = _JOBS.get(job_id)
-        if job is None:
-            raise HTTPException(status_code=404, detail="job not found")
-        return _job_view(job)
 
 
 # ── Hugging Face browser: search, repo files, arbitrary download ─
-@router.get("/api/local-models/search")
-async def local_models_search(q: str, limit: int = 20):
-    """Full-text HF search over GGUF models — the firehose behind the curated catalog; fit pills come from /search/files."""
-    if not q.strip():
-        return {"hits": []}
-    with _http_error(502, "Hugging Face search unavailable: "):
-        return {"hits": [h.__dict__ for h in await run_in_threadpool(hf_browse.search_models, q, limit)]}
-
-
-@router.get("/api/local-models/search/files")
-async def local_models_search_files(repo: str):
-    """Servable GGUFs in one HF repo with a rough pre-download fit verdict per quant (file size + conservative
-    fill-ins; the GGUF header refines it)."""
-    with _http_error(502, f"Could not list {repo}: "):
-        groups = await run_in_threadpool(hf_browse.priced_repo_files, repo, hardware.probe_budget(planning=True))
-    return {"files": [dict(g.__dict__, paths=list(g.paths)) for g in groups]}
-
-
-@router.post("/api/local-models/download-browsed")
-async def local_models_download_browsed(body: BrowsedDownloadBody):
-    """Download an arbitrary HF GGUF into the managed models dir. Once landed it is a normal staged model (the
-    post-download bounce regenerates presets from its real header); with no catalog entry it serves
-    'unverified', capabilities answered from the live server only."""
-    paths = [p for p in (body.paths or []) if p.lower().endswith(".gguf")]
-    if not paths:
-        raise HTTPException(status_code=422, detail="no .gguf files given")
-    model_id = re.sub(rf"(?:{_SPLIT_PART_RE})?\.gguf$", "", paths[0].rsplit("/", 1)[-1], flags=re.IGNORECASE)
-    if model_id in bootstrap.staged_model_ids():
-        return {"job_id": None, "already_downloaded": True, "model_id": model_id}
-    job = _job("model-download", f"{model_id} (from {body.repo})", model_id=model_id)
-
-    plan = [(_hf_url(body.repo, urllib.parse.quote(path)),
-             bootstrap.models_dir() / path.rsplit("/", 1)[-1], 0) for path in paths]
-
-    def _fetch():
-        _run_download_plan(job, plan, model_id)
-
-    _spawn_job(job, "lm-download-browsed", _fetch, download_label=model_id, resumable=True)
-    return {"job_id": job["job_id"], "model_id": model_id}
-
-
-@router.post("/api/local-models/sideload")
-async def local_models_sideload(body: SideloadBody):
-    """Register a GGUF already on this machine: link it into the managed models dir (copy only when linking is
-    impossible) and bounce the router. The original stays put; delete-from-Hermes removes only our link."""
-    src = Path(body.path)
-    if not src.is_file() or src.suffix.lower() != ".gguf":
-        raise HTTPException(status_code=422, detail="Pick a .gguf model file")
-    dest = bootstrap.models_dir() / src.name
-    if dest.exists():
-        return {"ok": True, "model_id": dest.stem, "already_present": True}
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        os.link(src, dest)          # hardlink: instant, no extra disk
-    except OSError:
-        try:
-            os.symlink(src, dest)   # cross-volume fallback
-        except OSError:
-            await run_in_threadpool(shutil.copyfile, src, dest)
-    _refresh_runtime("post-sideload runtime refresh skipped")
-    return {"ok": True, "model_id": dest.stem}

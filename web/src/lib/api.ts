@@ -139,7 +139,6 @@ const PROFILE_SCOPED_PREFIXES = [
   "/api/dashboard/plugin-providers",
   // Model/runtime activation persists into config.yaml; the read routes ignore an extra param.
   "/api/model/recommended-default",
-  "/api/local-models",
   "/api/dashboard/theme",
   "/api/dashboard/font",
   "/api/dashboard/plugins",

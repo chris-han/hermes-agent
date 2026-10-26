@@ -1,76 +1,15 @@
-"""Server on/off lifecycle route (round-9 feedback: 'we should be able to
-completely turn off the local engine'). Contract: stop tears the server
-down AND persists enabled=false (durable, unlike eject); start persists
-enabled=true and boots."""
+"""Shared terminal status reads the live managed runtime without GUI HTTP exposure."""
 
 from __future__ import annotations
 
 import pytest
-from fastapi.testclient import TestClient
 
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
-    from hermes_cli import web_server
-
-    test_client = TestClient(web_server.app)
-    token = getattr(web_server, "_SESSION_TOKEN", "")
-    if token:
-        test_client.headers["Authorization"] = f"Bearer {token}"
-    return test_client
-
-
-def test_stop_disables_and_tears_down(client, monkeypatch):
-    stopped = {"called": False}
-
-    def _shutdown():
-        stopped["called"] = True
-
-    class _FakeSup:
-        pass
-
-    monkeypatch.setattr("hermes_cli.local_runtime.bootstrap.get_supervisor",
-                        lambda: _FakeSup())
-    monkeypatch.setattr("hermes_cli.local_runtime.bootstrap.shutdown_local_runtime",
-                        _shutdown)
-
-    r = client.post("/api/local-models/server", json={"action": "stop"})
-    assert r.status_code == 200
-    assert stopped["called"] is True
-
-    from hermes_cli.config import load_config
-
-    assert load_config()["local_runtime"]["enabled"] is False
-
-
-def test_start_enables_and_boots(client, monkeypatch):
-    booted = {"called": False}
-
-    class _FakeSup:
-        base_url = "http://127.0.0.1:18434/v1"
-
-    def _ensure(config, force=False):
-        booted["called"] = True
-        assert force is True
-        return _FakeSup()
-
-    monkeypatch.setattr("hermes_cli.local_runtime.bootstrap.ensure_local_runtime",
-                        _ensure)
-
-    r = client.post("/api/local-models/server", json={"action": "start"})
-    assert r.status_code == 200
-    assert booted["called"] is True
-
-    from hermes_cli.config import load_config
-
-    assert load_config()["local_runtime"]["enabled"] is True
-
-
-def test_bogus_action_rejected(client):
-    r = client.post("/api/local-models/server", json={"action": "reboot"})
-    assert r.status_code == 400
-
+    from tests.hermes_cli._local_runtime_handlers import client as handler_client
+    return handler_client()
 
 def test_status_reports_loaded_models_from_live_router(client, monkeypatch):
     """Round-11 regression: the loaded-models read inside the status route
@@ -112,26 +51,3 @@ def test_status_reports_loaded_models_from_live_router(client, monkeypatch):
         assert payload["loaded_models"] == {"m-loaded": "loaded", "m-loading": "loading"}
     finally:
         server.shutdown()
-
-
-@pytest.mark.parametrize("refuse", [False, True])
-def test_stop_forwards_recovery_and_preserves_conflict(client, tmp_path, monkeypatch, refuse):
-    from fastapi import HTTPException
-    from hermes_cli.web_routers import local_models
-    from hermes_cli.local_runtime import supervisor
-
-    monkeypatch.setattr(supervisor, "runtimes_root", lambda: tmp_path)
-    supervisor.state_path().write_text("{}")
-    monkeypatch.setattr(local_models.bootstrap, "get_supervisor", lambda: None)
-    monkeypatch.setattr(local_models, "_state_endpoint", lambda: None)
-    called, disabled = [], []
-    def recover():
-        called.append(True)
-        if refuse:
-            raise HTTPException(409, "Another Hermes process owns this server, or its ownership could not be verified")
-    monkeypatch.setattr(local_models, "_terminate_state_pid", recover)
-    monkeypatch.setattr(local_models, "_set_runtime_enabled", lambda value: disabled.append(value))
-    response = client.post("/api/local-models/server", json={"action": "stop"})
-    assert response.status_code == (409 if refuse else 200), response.text
-    assert called == [True]
-    assert disabled == ([] if refuse else [False])

@@ -28,7 +28,7 @@ def _wait_for(predicate, timeout=10):
     "legacy-key", "legacy-models", "busy", "state-replaced", "wrong-parent",
 ])
 def test_startup_preserves_trees_and_explicit_stop_checks_owner(tmp_path, monkeypatch, case):
-    from hermes_cli.local_runtime import bootstrap, supervisor
+    from hermes_cli.local_runtime import bootstrap, supervisor, recovery
 
     root = tmp_path / "managed runtime"
     root.mkdir()
@@ -101,9 +101,7 @@ def test_startup_preserves_trees_and_explicit_stop_checks_owner(tmp_path, monkey
         if case == "legacy-models":
             monkeypatch.setattr(bootstrap, "models_dir", lambda: tmp_path / "other models")
         supervisor.state_path().write_text(json.dumps(state), encoding="utf-8")
-        from fastapi import HTTPException
         from hermes_cli.local_runtime import endpoint
-        from hermes_cli.web_routers import local_models
         if case == "wrong-parent":
             state["owner_pid"] = os.getpid()
             supervisor.state_path().write_text(json.dumps(state))
@@ -115,24 +113,11 @@ def test_startup_preserves_trees_and_explicit_stop_checks_owner(tmp_path, monkey
             state = {**state, "owner_pid": os.getpid(), "owner_create_time": psutil.Process().create_time()}
             supervisor.state_path().write_text(json.dumps(state))
         if case in ("modern", "legacy", "busy"):
-            if case == "modern":
-                from fastapi import FastAPI
-                from fastapi.testclient import TestClient
-                app = FastAPI()
-                app.include_router(local_models.router)
-                disabled = []
-                monkeypatch.setattr(local_models, "_set_runtime_enabled", lambda value: disabled.append(value))
-                response = TestClient(app).post("/api/local-models/server", json={"action": "stop"})
-                assert response.status_code == 200, response.text
-                assert disabled == [False]
-            else:
-                local_models._terminate_state_pid()
+            assert recovery.stop_recorded_orphan() is True
             _wait_for(lambda: not any(p.is_running() for p in processes))
             assert endpoint._state_endpoint() is None
         else:
-            with pytest.raises(HTTPException) as exc:
-                local_models._terminate_state_pid()
-            assert exc.value.status_code == 409
+            assert recovery.stop_recorded_orphan() is False
             assert all(p.is_running() for p in processes), f"unsafe recovery: {case}"
         assert json.loads(supervisor.state_path().read_text()) == state
     finally:

@@ -1,4 +1,4 @@
-"""``hermes model`` → Local models runs the desktop's Local Models setup in the terminal."""
+"""``hermes model`` → Local models runs the retained shared model setup."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ def test_local_models_row_follows_the_engine_pin_and_exclusions():
 
 @pytest.mark.parametrize("outcome", ["done", "error"])
 def test_picked_model_runs_the_quickstart_job_and_reports_how_it_ended(monkeypatch, capsys, outcome):
-    """The CLI starts the same quickstart job the desktop's button does and reports that job's
+    """The CLI starts the shared quickstart job and reports its
     terminal state; only a finished job claims the default changed."""
     import hermes_cli.main_provider_setup as provider_setup
     from hermes_cli import setup

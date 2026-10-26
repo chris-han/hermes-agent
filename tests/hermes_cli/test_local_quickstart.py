@@ -14,19 +14,19 @@ import time
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
 from hermes_cli.local_runtime.binaries import Engine
 
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
-    from hermes_cli import web_server
-
-    test_client = TestClient(web_server.app)
-    test_client.headers[web_server._SESSION_HEADER_NAME] = web_server._SESSION_TOKEN
-    return test_client
-
+    from hermes_cli.web_routers import local_models as handlers
+    # The sequence tests do not own a live router; status/rescan has separate real-boundary tests.
+    monkeypatch.setattr(handlers, '_router_request', lambda *_a, **_kw: {
+        'data': [{'id': path.stem} for path in handlers.bootstrap.staged_models()]
+    })
+    from tests.hermes_cli._local_runtime_handlers import client as handler_client
+    return handler_client()
 
 def _wait_job(client, job_id: str, timeout: float = 10.0) -> dict:
     deadline = time.monotonic() + timeout
@@ -118,7 +118,7 @@ def test_quickstart_refuses_when_nothing_fits(client, monkeypatch):
         "hermes_cli.local_runtime.catalog.select_variant", lambda *a, **k: None)
     r = client.post("/api/local-models/quickstart", json={})
     assert r.status_code == 409
-    assert "Local Models" in r.json()["detail"]
+    assert "hermes model" in r.json()["detail"]
 
 
 @pytest.fixture

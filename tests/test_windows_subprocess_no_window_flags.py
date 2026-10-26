@@ -566,7 +566,7 @@ def test_safe_directory_git_config_probes_hide_console_window(monkeypatch):
 
 # ── #101895 nvidia-smi statusbar / hardware probes ──────────────────────────
 #
-# The desktop GPU statusbar polls /api/local-models/hardware every 5s. Before
+# The shared terminal hardware probe queries nvidia-smi. Before
 # the consolidation that endpoint spawned console-subsystem nvidia-smi twice
 # per poll (VRAM budget in hardware._nvidia_vram, then name/util in the
 # router) from a windowless backend — two console flashes per poll. Everything

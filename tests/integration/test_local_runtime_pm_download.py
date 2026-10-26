@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import subprocess
 import threading
@@ -28,7 +27,8 @@ def test_live_pinned_cuda_download_pause_resume_and_execute(tmp_path, monkeypatc
     monkeypatch.setattr(lm, "_JOBS", {})
     monkeypatch.setattr(lm, "_RUNNING", {})
     app = FastAPI()
-    app.include_router(lm.router)
+    from tests.hermes_cli._local_runtime_handlers import router as handler_router
+    app.include_router(handler_router())
     pinned = Lockfile(paths.lockfile_path()).artifacts("llamacpp-cuda", pm.current_target())
     flowing = threading.Event()
     release = threading.Event()

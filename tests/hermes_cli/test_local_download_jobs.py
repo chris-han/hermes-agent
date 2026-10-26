@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import threading
 import time
 from collections import deque
-from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
@@ -41,7 +39,8 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(lm, "_RUNNING", {})
     monkeypatch.setattr(lm.bootstrap, "refresh_local_runtime", lambda: False)
     app = FastAPI()
-    app.include_router(lm.router)
+    from tests.hermes_cli._local_runtime_handlers import router as handler_router
+    app.include_router(handler_router())
     with TestClient(app) as client:
         yield client
 
@@ -58,48 +57,6 @@ def poll(client, job_id, until=("done", "error", "paused")):
     raise AssertionError(f"job did not settle: {job}")
 
 
-def test_browsed_download_can_pause_and_resume_pm_transfer(client, monkeypatch, dl_server):
-    from hermes_cli.web_routers import local_models as lm
-
-    payload = bytes(range(256)) * (32 * 1024)
-    RangeHandler.payloads["/test.gguf"] = payload
-    monkeypatch.setattr(lm, "_hf_url", lambda repo, path: url(dl_server, "/test.gguf"))
-    flowing, release = threading.Event(), threading.Event()
-    real_download = lm.Download
-
-    class ObservedDownload(real_download):
-        def run(self, progress=None):
-            def tick(done, total, ranges):
-                if progress is not None:
-                    progress(done, total, ranges)
-                if 0 < done < total and not flowing.is_set():
-                    flowing.set()
-                    assert release.wait(15)
-            return super().run(progress=tick)
-
-    monkeypatch.setattr(lm, "Download", ObservedDownload)
-    response = client.post("/api/local-models/download-browsed", json={"repo": "a/b", "paths": ["test.gguf"]})
-    job_id = response.json()["job_id"]
-    try:
-        assert flowing.wait(5), "browsed download bypassed PM's downloader"
-        assert client.post("/api/local-models/download/pause", json={"job_id": job_id}).json()["paused"]
-    finally:
-        release.set()
-    job = poll(client, job_id)
-    assert job["status"] == "paused", job
-    assert job["can_resume"] and not job["can_pause"]
-    assert job["error"] is None
-    # A parked transfer reports no live rate: the frozen speed would read as
-    # the current one on every surface that renders the job view.
-    assert "bytes_per_sec" not in job and "eta_seconds" not in job
-    before = job["done_bytes"]
-    assert before > 0
-    assert client.post("/api/local-models/download/resume", json={"job_id": job_id}).json()["resumed"]
-    job = poll(client, job_id, until=("done", "error"))
-    assert job["status"] == "done", job
-    assert job["done_bytes"] == job["total_bytes"] == len(payload)
-    assert (lm.bootstrap.models_dir() / "test.gguf").read_bytes() == payload
-    assert not job["can_pause"] and not job["can_resume"]
 
 
 def test_quickstart_plan_progress_uses_actual_whole_plan_bytes(client, monkeypatch, dl_server, tmp_path):
@@ -122,7 +79,11 @@ def test_existing_weights_do_not_skip_missing_companion_download(client, monkeyp
 
     entry = replace(lm.catalog.CATALOG[0], mmproj=AssetFile("projector.gguf", 1000), draft=None)
     variant = entry.variants[0]
-    monkeypatch.setattr(lm, "_download_target", lambda model_id: (entry, variant))
+    monkeypatch.setattr(lm, "_quickstart_target", lambda *args: (entry, variant))
+    monkeypatch.setattr(lm, "_runtime_target", lambda *args: ("test-engine", "cpu"))
+    monkeypatch.setattr(lm.binaries, "installed_engine", lambda *args: object())
+    monkeypatch.setattr(lm, "_ensure_server", lambda *args, **kwargs: None)
+    monkeypatch.setattr(lm, "_assign_default", lambda *args: None)
     monkeypatch.setattr(lm.bootstrap, "staged_model_ids", lambda: [variant.model_id])
     weights = tmp_path / "weights.gguf"
     weights.write_bytes(b"already downloaded")
@@ -131,7 +92,7 @@ def test_existing_weights_do_not_skip_missing_companion_download(client, monkeyp
     plan = [(url(dl_server, "/weights"), weights, 1000),
             (url(dl_server, "/projector"), companion, 1000)]
     monkeypatch.setattr(lm, "_download_plan", lambda *args: plan)
-    response = client.post("/api/local-models/download", json={"model_id": entry.id})
+    response = client.post("/api/local-models/quickstart", json={"model_id": entry.id})
     assert response.json().get("job_id"), "weights-only staging incorrectly skipped the projector"
     job = poll(client, response.json()["job_id"])
     assert job["status"] == "done", job

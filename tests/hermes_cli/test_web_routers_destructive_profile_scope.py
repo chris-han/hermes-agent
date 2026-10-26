@@ -379,31 +379,6 @@ def test_memory_provider_readiness_is_judged_in_the_profile_being_written(
     assert "memory" not in _cfg(homes["launch"])
 
 
-def test_local_models_quickstart_activates_into_the_named_profile(client, homes, monkeypatch):
-    """Quickstart is ``activate`` plus a download; its config writes must follow ``?profile=``."""
-    from hermes_cli.config import get_hermes_home
-    from hermes_cli.web_routers import local_models as lm
-
-    entry = type("_Entry", (), {"id": "m1", "display_name": "M One", "min_engine": None})()
-    variant = type("_Variant", (), {"model_id": "m1-q4"})()
-    seen = []
-
-    monkeypatch.setattr(lm.hardware, "probe_budget", lambda **_kw: None)
-    monkeypatch.setattr(lm, "_quickstart_target", lambda _body, _budget: (entry, variant))
-    monkeypatch.setattr(lm, "_runtime_target", lambda *_a: ("b1", "cpu"))
-    monkeypatch.setattr(lm, "_download_plan", lambda *_a: [])
-    monkeypatch.setattr(lm.binaries, "installed_engine", lambda _backend: "installed")
-    monkeypatch.setattr(lm.bootstrap, "staged_model_ids", lambda: {"m1-q4"})
-    monkeypatch.setattr(lm, "_set_runtime_enabled", lambda _on: (lambda: None))
-    monkeypatch.setattr(lm, "_ensure_server", lambda *_a, **_k: None)
-    monkeypatch.setattr(lm, "_assign_default", lambda *_a: seen.append(str(get_hermes_home())))
-    # Run the job body inline; the real spawner's ``on_exit`` is what frees the quickstart lock.
-    monkeypatch.setattr(lm, "_spawn_job", lambda job, name, body, **kw: (body(), kw["on_exit"]()))
-
-    resp = client.post("/api/local-models/quickstart?profile=worker_beta", json={})
-
-    assert resp.status_code == 200, resp.text
-    assert seen == [str(homes["worker_beta"])]
 
 
 # --- the read/side-effect routes scoped in the same sweep ---------------------------
@@ -465,3 +440,30 @@ def test_memory_provider_setup_runs_in_the_named_profiles_home(client, homes, mo
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["home"] == str(homes["worker_beta"])
+
+
+def test_terminal_model_quickstart_activates_into_the_named_profile(homes, monkeypatch):
+    """Quickstart is ``activate`` plus a download; its config writes must follow the explicit profile."""
+    from hermes_cli.config import get_hermes_home
+    from hermes_cli.web_routers import local_models as lm
+
+    entry = type("_Entry", (), {"id": "m1", "display_name": "M One", "min_engine": None})()
+    variant = type("_Variant", (), {"model_id": "m1-q4"})()
+    seen = []
+
+    monkeypatch.setattr(lm.hardware, "probe_budget", lambda **_kw: None)
+    monkeypatch.setattr(lm, "_quickstart_target", lambda _body, _budget: (entry, variant))
+    monkeypatch.setattr(lm, "_runtime_target", lambda *_a: ("b1", "cpu"))
+    monkeypatch.setattr(lm, "_download_plan", lambda *_a: [])
+    monkeypatch.setattr(lm.binaries, "installed_engine", lambda _backend: "installed")
+    monkeypatch.setattr(lm.bootstrap, "staged_model_ids", lambda: {"m1-q4"})
+    monkeypatch.setattr(lm, "_set_runtime_enabled", lambda _on: (lambda: None))
+    monkeypatch.setattr(lm, "_ensure_server", lambda *_a, **_k: None)
+    monkeypatch.setattr(lm, "_assign_default", lambda *_a: seen.append(str(get_hermes_home())))
+    # Run the job body inline; the real spawner's ``on_exit`` is what frees the quickstart lock.
+    monkeypatch.setattr(lm, "_spawn_job", lambda job, name, body, **kw: (body(), kw["on_exit"]()))
+
+    result = lm.local_models_quickstart(lm.QuickstartBody(), profile="worker_beta")
+
+    assert result["job_id"]
+    assert seen == [str(homes["worker_beta"])]
