@@ -311,3 +311,17 @@ it('does not claim latest when the channel explicitly has no published build', (
   expect(view.updateAvailable).toBe(false)
   expect(view.line).not.toBe(en.updates.latestBody)
 })
+
+
+it('names the exact channel target before the user starts an update', () => {
+  const view = derive({ supported: true, updateAvailable: true, latestTag: 'v0.0.42', installedReleaseId: 'baseline-build' })
+  expect(view.line).toBe(en.updates.availableBodyRelease('v0.0.42'))
+})
+
+it('does not offer unrelated upstream release notes for a verified channel installation', () => {
+  $updateApply.set(IDLE_APPLY)
+  $updateStatus.set({ supported: true, updateAvailable: false, installedReleaseId: 'baseline-build', reason: 'no-build-published' })
+  render(<UpdateStatusCard target="client" />)
+  expect(screen.queryByRole('link', { name: en.updates.releaseNotes })).toBeNull()
+  $updateStatus.set(null)
+})

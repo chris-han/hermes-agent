@@ -68,7 +68,7 @@ function AppUpdatesSettings({ includeUninstall }: AppUpdatesSettingsProps): Reac
         <SectionHeading icon={RefreshCw} title={t.settings.about.updates} />
         <div className="grid gap-3" id={settingElementId(SETTING_IDS.about.updates)}>
           <UpdateStatusCard target="client" />
-          {update?.releaseNotes && <details><summary>{locale.startsWith('zh') ? '版本说明' : 'Release notes'}</summary><pre className="whitespace-pre-wrap font-sans">{update.releaseNotes[locale.startsWith('zh') ? 'zh' : 'en'] ?? Object.values(update.releaseNotes)[0]}</pre></details>}
+          {update?.releaseNotes && <details><summary>{t.updates.releaseNotes}</summary><pre className="whitespace-pre-wrap font-sans">{update.releaseNotes[locale.startsWith('zh') ? 'zh' : 'en'] ?? Object.values(update.releaseNotes)[0]}</pre></details>}
           <UpdateChannelRow />
           {/* Client and remote backend updates are independent. Only the client has release notes. */}
           {remote && <UpdateStatusCard showReleaseNotes={false} target="backend" />}

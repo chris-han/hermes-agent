@@ -101,6 +101,10 @@ function availableLine(
     return rollback(back)
   }
 
+  if (status?.latestTag) {
+    return u.availableBodyRelease(status.latestTag)
+  }
+
   return behind > 0 ? u.updateReady(behind) : u.updateReadyUnknown
 }
 
@@ -390,7 +394,7 @@ export function UpdateStatusCard({
 
           <UpdateActions target={target} u={u} view={view} />
 
-          {showReleaseNotes && (
+          {showReleaseNotes && !status?.installedReleaseId && (
             <Button asChild className="ml-auto" size="sm" variant="text">
               <a
                 href={RELEASE_NOTES_URL}
