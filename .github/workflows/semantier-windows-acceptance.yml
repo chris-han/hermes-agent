@@ -9,7 +9,7 @@ on:
         required: true
         type: string
 env:
-  ACCEPTANCE_CONTROLLER_COMMIT: ${{ inputs.controller_commit || '455d07c6356aa529a49a2fbbfd74596e9b080130' }}
+  ACCEPTANCE_CONTROLLER_COMMIT: ${{ inputs.controller_commit || 'e8bb2a8ec7095144dbf3692413b572424acd7521' }}
 permissions:
   contents: read
 concurrency:
@@ -18,7 +18,7 @@ concurrency:
 jobs:
   windows-x64:
     # A dedicated WSL runner on the authorized Windows host, never a public PR.
-    runs-on: [self-hosted, Linux, X64, semantier-windows-signing-bridge]
+    runs-on: [semantier-windows-signing-bridge]
     environment: semantier-acceptance
     timeout-minutes: 240
     steps:
@@ -33,7 +33,7 @@ jobs:
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
         with:
           repository: chris-han/semantier-runtime
-          token: ${{ secrets.SEMANTIER_CONTROLLER_READ_TOKEN }}
+          ssh-key: ${{ secrets.SEMANTIER_CONTROLLER_SSH_KEY }}
           ref: ${{ env.ACCEPTANCE_CONTROLLER_COMMIT }}
           persist-credentials: false
           path: controller
