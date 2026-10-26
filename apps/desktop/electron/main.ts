@@ -3516,6 +3516,7 @@ async function checkUpdates(opts: { force?: boolean } = {}): Promise<UpdaterStat
     return {
       supported: true,
       mechanism: strategy?.mechanism,
+      installedReleaseId: INSTALL_STAMP?.channelBuild?.buildId,
       error: 'check-failed',
       message: error instanceof Error ? error.message : String(error),
       fetchedAt: Date.now()
@@ -17603,6 +17604,7 @@ ipcMain.handle(
     checkUpdates({ force: Boolean(opts?.force) }).catch((error: Error): UpdaterStatusWire => ({
       supported: true,
       branch: readDesktopUpdateConfig().branch,
+      installedReleaseId: INSTALL_STAMP?.channelBuild?.buildId,
       error: 'check-failed',
       message: error?.message || String(error),
       fetchedAt: Date.now()

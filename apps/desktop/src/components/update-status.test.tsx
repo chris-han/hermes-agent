@@ -320,8 +320,13 @@ it('names the exact channel target before the user starts an update', () => {
 
 it('does not offer unrelated upstream release notes for a verified channel installation', () => {
   $updateApply.set(IDLE_APPLY)
-  $updateStatus.set({ supported: true, updateAvailable: false, installedReleaseId: 'baseline-build', reason: 'no-build-published' })
-  render(<UpdateStatusCard target="client" />)
-  expect(screen.queryByRole('link', { name: en.updates.releaseNotes })).toBeNull()
+
+  for (const state of [{ reason: 'no-build-published' }, { error: 'check-failed' }]) {
+    $updateStatus.set({ supported: true, updateAvailable: false, installedReleaseId: 'baseline-build', ...state })
+    const { unmount } = render(<UpdateStatusCard target="client" />)
+    expect(screen.queryByRole('link', { name: en.updates.releaseNotes })).toBeNull()
+    unmount()
+  }
+
   $updateStatus.set(null)
 })
