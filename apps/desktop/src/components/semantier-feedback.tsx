@@ -41,6 +41,27 @@ function feedback<T>(profile: string, operation: string, body: object = {}) {
   })
 }
 
+// The native API bridge serializes HTTP errors as "status: JSON", sometimes
+// wrapped by Electron IPC. Do not classify numbers inside arbitrary log text.
+function feedbackFailure(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error)
+  const match = message.match(/(?:^\s*|error:\s*)([45]\d\d):\s*(.*)$/i)
+  const status = Number(match?.[1] ?? 0)
+  let retryAfter = 30
+
+  if (status === 429) {
+    try {
+      const value = Number(JSON.parse(match?.[2] ?? '{}')?.detail?.retry_after_seconds)
+
+      if (Number.isFinite(value) && value > 0) {retryAfter = Math.max(1, Math.min(Math.ceil(value), 900))}
+    } catch {
+      /* Missing server guidance uses the bounded local retry delay. */
+    }
+  }
+
+  return { status, retryAfter }
+}
+
 interface FeedbackState {
   enabled: boolean
   diagnostic_signed_in: boolean
@@ -192,9 +213,7 @@ export function SemantierFeedbackSettings() {
   return (
     <section className="mt-4 grid gap-3">
       <h3>{copy.semantierDiagnosticsPrivacy}</h3>
-      <p>
-        {copy.optionalUpdateResultReportingToSemantierCloud}
-      </p>
+      <p>{copy.optionalUpdateResultReportingToSemantierCloud}</p>
       <p>
         {copy.reporting}: {enabled ? copy.on : copy.off}
       </p>
@@ -208,9 +227,7 @@ export function SemantierFeedbackSettings() {
         onClick={() => void consent()}
         variant="secondary"
       >
-        {enabled
-          ? copy.stopReportingAndClearUnsentEvents
-          : copy.enableUpdateResultReporting}
+        {enabled ? copy.stopReportingAndClearUnsentEvents : copy.enableUpdateResultReporting}
       </Button>
       <Button onClick={openSemantierDiagnostics} variant="secondary">
         {copy.sendDiagnostics}
@@ -223,12 +240,7 @@ export function SemantierFeedbackSettings() {
           </Button>
         </p>
       )}
-      {(error || authorization.error) && (
-        <p role="alert">
-          {error ||
-            copy.authorizationNotConfirmedRetryOrCancelThis}
-        </p>
-      )}
+      {(error || authorization.error) && <p role="alert">{error || copy.authorizationNotConfirmedRetryOrCancelThis}</p>}
     </section>
   )
 }
@@ -247,8 +259,15 @@ export function SemantierFeedbackHost() {
   const [sending, setSending] = useState(false)
   const [draftKey, setDraftKey] = useState('')
   const [submitted, setSubmitted] = useState(false)
+  const [retryAfter, setRetryAfter] = useState(0)
   const version = useStore($desktopVersion)
   const update = useStore($updateStatus)
+  useEffect(() => {
+    if (!retryAfter) {return}
+    const timer = setTimeout(() => setRetryAfter(value => Math.max(0, value - 1)), 1000)
+
+    return () => clearTimeout(timer)
+  }, [retryAfter])
   useEffect(() => {
     let live = true
 
@@ -267,6 +286,7 @@ export function SemantierFeedbackHost() {
 
       setDraftKey(crypto.randomUUID())
       setSubmitted(false)
+      setRetryAfter(0)
       setInclude(false)
       setProfile(route.profile)
       setPreview(null)
@@ -401,6 +421,7 @@ export function SemantierFeedbackHost() {
     setError('')
     setDraftKey('')
     setSubmitted(false)
+    setRetryAfter(0)
   }
 
   async function send() {
@@ -410,7 +431,7 @@ export function SemantierFeedbackHost() {
       return
     }
 
-    if (!preview || sending) {
+    if (!preview || sending || retryAfter) {
       return
     }
 
@@ -421,10 +442,30 @@ export function SemantierFeedbackHost() {
     try {
       const reply = await feedback<{ receipt: Receipt }>(profile, 'submit', preview.payload)
       setReceipt(reply.receipt)
-    } catch {
-      setError(
-        copy.reportNotConfirmedSignInOrRetry
-      )
+    } catch (failure) {
+      const recovery = feedbackFailure(failure)
+
+      const messages: Record<number, string> = {
+        401: copy.reportSignInAgain,
+        403: copy.reportPermissionDenied,
+        413: copy.reportTooLarge,
+        422: copy.reportContentRejected,
+        429: copy.reportRateLimited,
+        503: copy.reportServiceUnavailable
+      }
+
+      setError(messages[recovery.status] ?? copy.reportNotConfirmedSignInOrRetry)
+
+      if (recovery.status === 413 || recovery.status === 422) {
+        // Definite rejection permits a new editable draft. Ambiguous replies
+        // retain the exact original payload/key for receipt recovery.
+        setSubmitted(false)
+        setDraftKey(crypto.randomUUID())
+      }
+
+      if (recovery.status === 429) {setRetryAfter(recovery.retryAfter)}
+
+      if (recovery.status === 401) {void authorization.refresh().catch(() => undefined)}
     } finally {
       setSending(false)
     }
@@ -442,9 +483,7 @@ export function SemantierFeedbackHost() {
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{receipt ? copy.diagnosticReceipt : copy.sendDiagnostics}</DialogTitle>
-          <DialogDescription>
-            {copy.reviewTheSanitizedContentBeforeSendingTo}
-          </DialogDescription>
+          <DialogDescription>{copy.reviewTheSanitizedContentBeforeSendingTo}</DialogDescription>
         </DialogHeader>
         {receipt ? (
           <div className="grid gap-3">
@@ -461,10 +500,7 @@ export function SemantierFeedbackHost() {
               onClick={() => {
                 void confirm({
                   title: copy.removeUploadedLog,
-                  description:
-                    receipt.diagnostic_id +
-                    ' · ' +
-                    copy.minimalReceiptAndAuditMetadataRemain,
+                  description: receipt.diagnostic_id + ' · ' + copy.minimalReceiptAndAuditMetadataRemain,
                   onConfirm: async () => {
                     const r = await feedback<{ receipt: Receipt }>(profile, 'erase', {
                       diagnostic_id: receipt.diagnostic_id
@@ -476,9 +512,7 @@ export function SemantierFeedbackHost() {
               }}
               variant="secondary"
             >
-              {receipt.deleted_at
-                ? copy.uploadedLogRemoved
-                : copy.removeUploadedLog}
+              {receipt.deleted_at ? copy.uploadedLogRemoved : copy.removeUploadedLog}
             </Button>
           </div>
         ) : (
@@ -511,25 +545,21 @@ export function SemantierFeedbackHost() {
               {copy.includeStructuredUpdateError}
             </label>
             <p>
-              {preview?.bytes ?? '—'} {copy.uTF8Bytes} · {preview?.redactions ?? '—'}{' '}
-              {copy.redactions} · {copy.payloadRetained30Days}
+              {preview?.bytes ?? '—'} {copy.uTF8Bytes} · {preview?.redactions ?? '—'} {copy.redactions} ·{' '}
+              {copy.payloadRetained30Days}
             </p>
             <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all">
               {preview
                 ? JSON.stringify({ note: preview.payload.note, sections: preview.payload.sections }, null, 2)
                 : copy.preparingPreview}
             </pre>
-            <p>
-              {copy.excludesConversationsDocumentsArbitraryFilesAndCrash}
-            </p>
+            <p>{copy.excludesConversationsDocumentsArbitraryFilesAndCrash}</p>
             <Button
               disabled={authorization.pending}
               onClick={() => void authorization.begin('diagnostic')}
               variant="secondary"
             >
-              {authorization.state?.diagnostic_signed_in
-                ? copy.renewDiagnosticAuthorization
-                : copy.signInToSend}
+              {authorization.state?.diagnostic_signed_in ? copy.renewDiagnosticAuthorization : copy.signInToSend}
             </Button>
             {authorization.pending && (
               <p role="status">
@@ -539,25 +569,29 @@ export function SemantierFeedbackHost() {
                 </Button>
               </p>
             )}
-            {authorization.error && (
-              <p role="alert">{copy.authorizationNotConfirmedRetryOrCancel}</p>
-            )}
+            {authorization.error && <p role="alert">{copy.authorizationNotConfirmedRetryOrCancel}</p>}
           </div>
         )}
-        {error && <p role="alert">{error}</p>}
+        {error && (
+          <p role="alert">
+            {error === copy.reportRateLimited
+              ? retryAfter > 0
+                ? copy.reportRateLimited.replace('{seconds}', String(retryAfter))
+                : copy.reportRetryReady
+              : error}
+          </p>
+        )}
         <DialogFooter>
           <Button disabled={sending} onClick={close} variant="secondary">
             {copy.close}
           </Button>
           <Button
-            disabled={sending || (!receipt && (!preview || !authorization.state?.diagnostic_signed_in))}
+            disabled={
+              sending || retryAfter > 0 || (!receipt && (!preview || !authorization.state?.diagnostic_signed_in))
+            }
             onClick={() => void send()}
           >
-            {sending
-              ? copy.sending
-              : receipt
-                ? copy.done
-                : copy.sendDiagnosticReport}
+            {sending ? copy.sending : receipt ? copy.done : copy.sendDiagnosticReport}
           </Button>
         </DialogFooter>
       </DialogContent>

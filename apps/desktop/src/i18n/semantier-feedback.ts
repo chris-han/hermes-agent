@@ -1,5 +1,13 @@
 /** Semantier feedback copy; partial locales use the existing English fallback. */
 export const feedbackEnglish = {
+  reportSignInAgain: 'Sign in again to send this report. Your preview is retained.',
+  reportPermissionDenied: 'This account cannot upload diagnostics. Your preview is retained.',
+  reportTooLarge: 'The report is too large. Remove the update excerpt or shorten the description.',
+  reportContentRejected: 'The report content was rejected. Review the description and selected excerpt.',
+  reportRateLimited: 'Too many requests. Retry is available in {seconds} seconds.',
+  reportRetryReady: 'You can retry now. The same report ID is retained.',
+  reportServiceUnavailable: 'The feedback service is unavailable. Retry keeps the same report ID.',
+
   updateWorkTitle: 'Restart with work running?',
   updateWorkOwned: 'Restarting stops app-managed work. Save your changes or choose Later to finish first. Windows will complete installation; the next launch confirms the installed version.',
   updateWorkAttached: 'Running work continues in the independent gateway. This window closes during installation. Save unsent changes first. The next launch confirms the installed version.',
@@ -50,6 +58,14 @@ export const feedbackEnglish = {
 }
 export type FeedbackCopy = typeof feedbackEnglish
 export const feedbackChinese: FeedbackCopy = {
+  reportSignInAgain: '请重新登录后发送报告；当前预览已保留。',
+  reportPermissionDenied: '此账户无权上传诊断；当前预览已保留。',
+  reportTooLarge: '报告内容过大，请移除更新错误摘要或缩短问题描述。',
+  reportContentRejected: '报告内容未被接受，请核对问题描述和所选摘要。',
+  reportRateLimited: '请求过于频繁，请在 {seconds} 秒后重试。',
+  reportRetryReady: '现在可以重试；保留同一报告 ID。',
+  reportServiceUnavailable: '诊断服务暂时不可用；重试将保留同一报告 ID。',
+
   updateWorkTitle: '仍有任务运行，是否重启？',
   updateWorkOwned: '重启会停止应用管理的任务。请先保存修改，或选择“稍后”完成任务。Windows 将继续安装，下次启动时核对实际安装版本。',
   updateWorkAttached: '任务会继续在独立网关中运行。安装期间此窗口会关闭，请先保存尚未发送的修改。下次启动时核对实际安装版本。',

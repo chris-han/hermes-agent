@@ -981,6 +981,9 @@ async def client_feedback(operation: str, request: Request, profile: Optional[st
     raw=await request.body()
     if len(raw)>5*1024*1024:raise HTTPException(413,'Diagnostic too large')
     import json
+    import httpx
+    from pydantic import ValidationError
+    from hermes_cli.cloud_device_client import CloudDeviceError
     try:
         body=json.loads(raw or b'{}')
         if not isinstance(body,dict):raise ValueError('Object required')
@@ -993,5 +996,15 @@ async def client_feedback(operation: str, request: Request, profile: Optional[st
                   'authorization_poll':lambda:feedback.authorization_poll(),
                   'authorization_cancel':lambda:feedback.authorization_cancel()}
         return await scoped_to_thread(profile,commands[operation])
+    except CloudDeviceError as error:
+        detail={'message':'Semantier feedback request was not confirmed'}
+        if error.status==429:
+            detail['retry_after_seconds']=getattr(error,'retry_after_seconds',30)
+        status=error.status if 400<=error.status<=599 else 502
+        raise HTTPException(status,detail) from None
+    except httpx.HTTPError:
+        raise HTTPException(503,'Semantier feedback service could not be reached') from None
+    except (ValidationError,json.JSONDecodeError):
+        raise HTTPException(422,'Review the diagnostic content') from None
     except (ValueError,KeyError):
         raise HTTPException(409,'Feedback unavailable; retry or sign in from the same profile') from None

@@ -50,14 +50,22 @@ def _request(origin,secret,method,path,body=None):
     import httpx
     with httpx.Client(timeout=15,follow_redirects=False,trust_env=False) as client:
         r=client.request(method,origin+'/api/client-operations'+path,json=body,headers={'authorization':'Bearer '+secret} if secret else {})
-    if r.status_code not in {200,201}:raise device.CloudDeviceError(r.status_code)
+    if r.status_code not in {200,201}:
+        error=device.CloudDeviceError(r.status_code)
+        if r.status_code==429:
+            try:delay=int(r.headers.get('retry-after','30'))
+            except ValueError:delay=30
+            error.retry_after_seconds=max(1,min(delay,900))
+        raise error
     return r.json()
 
 
 def status():
     with device._locked():
         state=_read()
-        return {'enabled':state['enabled'],'purpose':'update_results_only','destination':'Semantier Cloud','consent_version':CONSENT,'queued':len(state['queue']),'dropped':state['dropped'],'revocation_pending':bool(state.get('revocation_pending')),'authorization_pending':(state.get('authorization') or {}).get('purpose'), 'diagnostic_signed_in':bool(state.get('diagnostic_authorization'))}
+        diagnostic=state.get('diagnostic_authorization')
+        signed_in=bool(diagnostic and datetime.fromisoformat(diagnostic['expires_at'])>datetime.now(UTC))
+        return {'enabled':state['enabled'],'purpose':'update_results_only','destination':'Semantier Cloud','consent_version':CONSENT,'queued':len(state['queue']),'dropped':state['dropped'],'revocation_pending':bool(state.get('revocation_pending')),'authorization_pending':(state.get('authorization') or {}).get('purpose'), 'diagnostic_signed_in':signed_in}
 
 
 def consent(enabled):
@@ -123,7 +131,7 @@ def authorization_cancel():
 
 def _diagnostic_identity():
     item=_read().get('diagnostic_authorization')
-    if not item or datetime.fromisoformat(item['expires_at'])<=datetime.now(UTC):raise ValueError('Sign in to send diagnostics')
+    if not item or datetime.fromisoformat(item['expires_at'])<=datetime.now(UTC):raise device.CloudDeviceError(401)
     return item['origin'],item['capability']
 
 
@@ -204,11 +212,16 @@ def submit(body):
     data=Diagnostic.model_validate(body).model_dump()
     with device._locked():
         origin,secret=_diagnostic_identity()
-        # A lost POST response can be recovered without another submission.
-        try:return _request(origin,secret,'GET','/diagnostics/receipts?submission_key='+data['submission_key'])
+        try:
+            # A lost POST response can be recovered without another submission.
+            try:return _request(origin,secret,'GET','/diagnostics/receipts?submission_key='+data['submission_key'])
+            except device.CloudDeviceError as error:
+                if error.status!=404:raise
+            return _request(origin,secret,'POST','/diagnostics',data)
         except device.CloudDeviceError as error:
-            if error.status!=404:raise
-        return _request(origin,secret,'POST','/diagnostics',data)
+            if error.status==401:
+                state=_read();state.pop('diagnostic_authorization',None);_write(state)
+            raise
 
 
 def erase(diagnostic_id):
