@@ -79,6 +79,28 @@ afterEach(() => {
 })
 
 describe('CustomEndpointsSettings', () => {
+  it('orders URL, key and Test before model setup without sending an automatic request', async () => {
+    getCustomEndpoints.mockResolvedValue(emptyResponse)
+    validateCustomEndpoint.mockResolvedValue({ ok: true, reachable: true, models: [], message: '' })
+    render(<CustomEndpointsSettings />)
+    const url = await screen.findByPlaceholderText<HTMLInputElement>('http://localhost:4000/v1')
+    const key = screen.getByLabelText<HTMLInputElement>('API Key')
+    const test = screen.getByRole('button', { name: 'Test' })
+    const mode = screen.getByRole('group', { name: 'API Mode' })
+    expect(url.compareDocumentPosition(key) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(key.compareDocumentPosition(mode) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(key.closest('label')?.parentElement?.contains(test)).toBe(true)
+    expect(url.value).toBe('')
+    expect(validateCustomEndpoint).not.toHaveBeenCalled()
+    fireEvent.change(url, { target: { value: 'http://localhost:4000/v1' } })
+    fireEvent.change(key, { target: { value: 'test-key-only' } })
+    fireEvent.click(test)
+    await waitFor(() => expect(validateCustomEndpoint).toHaveBeenCalledWith(
+      expect.objectContaining({ base_url: 'http://localhost:4000/v1', api_key: 'test-key-only' }),
+      'default'
+    ))
+  })
+
   it('preserves an unchanged masked key and manual model after catalog failure; Cancel drops a new secret', async () => {
     const retained = { ...savedResponse, endpoints: [{ ...savedResponse.endpoints[0], has_api_key: true }] }
     getCustomEndpoints.mockResolvedValue(retained)
@@ -167,7 +189,7 @@ describe('CustomEndpointsSettings', () => {
 
     await screen.findByText('No custom endpoints')
     fireEvent.change(screen.getByPlaceholderText('Axet Proxy'), { target: { value: 'Responses gateway' } })
-    fireEvent.change(screen.getByPlaceholderText('http://127.0.0.1:8081/v1'), {
+    fireEvent.change(screen.getByPlaceholderText('http://localhost:4000/v1'), {
       target: { value: 'https://responses-gateway.example.com/v1' }
     })
     fireEvent.click(screen.getByRole('button', { name: 'Responses API' }))
@@ -219,7 +241,7 @@ describe('CustomEndpointsSettings', () => {
     expect(screen.getByText('Applies to')).toBeTruthy()
 
     fireEvent.change(await screen.findByPlaceholderText('Axet Proxy'), { target: { value: 'Studio gateway' } })
-    fireEvent.change(await screen.findByPlaceholderText('http://127.0.0.1:8081/v1'), {
+    fireEvent.change(await screen.findByPlaceholderText('http://localhost:4000/v1'), {
       target: { value: 'https://studio.example.com/v1' }
     })
     fireEvent.change(await screen.findByPlaceholderText('gpt-5.4'), { target: { value: 'studio-model' } })
@@ -257,7 +279,7 @@ describe('CustomEndpointsSettings', () => {
 
     await screen.findByText('No custom endpoints')
     fireEvent.change(screen.getByPlaceholderText('Axet Proxy'), { target: { value: 'Profile A' } })
-    fireEvent.change(screen.getByPlaceholderText('http://127.0.0.1:8081/v1'), {
+    fireEvent.change(screen.getByPlaceholderText('http://localhost:4000/v1'), {
       target: { value: 'http://profile-a.test/v1' }
     })
     fireEvent.change(screen.getByPlaceholderText('gpt-5.4'), { target: { value: 'model-a' } })
@@ -288,7 +310,7 @@ describe('CustomEndpointsSettings', () => {
     render(<CustomEndpointsSettings onConfigSaved={vi.fn()} onMainModelChanged={vi.fn()} />)
 
     await screen.findByText('No custom endpoints')
-    const urlInput = screen.getByPlaceholderText<HTMLInputElement>('http://127.0.0.1:8081/v1')
+    const urlInput = screen.getByPlaceholderText<HTMLInputElement>('http://localhost:4000/v1')
     fireEvent.change(urlInput, { target: { value: 'http://h.test' } })
     await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Test' })))
 
@@ -303,7 +325,7 @@ describe('CustomEndpointsSettings', () => {
     render(<CustomEndpointsSettings />)
     await screen.findByText('No custom endpoints')
     fireEvent.change(screen.getByPlaceholderText('Axet Proxy'), { target: { value: 'Independent local server' } })
-    fireEvent.change(screen.getByPlaceholderText('http://127.0.0.1:8081/v1'), {
+    fireEvent.change(screen.getByPlaceholderText('http://localhost:4000/v1'), {
       target: { value: 'http://localhost:8081/v1' }
     })
     fireEvent.change(screen.getByPlaceholderText('gpt-5.4'), { target: { value: 'my-existing-model' } })

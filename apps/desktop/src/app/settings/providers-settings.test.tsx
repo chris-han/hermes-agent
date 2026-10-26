@@ -454,12 +454,21 @@ describe('ProvidersSettings', () => {
     const onViewChange = vi.fn()
     render(<ProvidersSettings onClose={vi.fn()} onViewChange={onViewChange} view="accounts" />)
     const endpoint = await screen.findByText('Custom endpoint')
+    expect(screen.getByText('Semantier Cloud').compareDocumentPosition(endpoint) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(screen.queryByText('Run models locally')).toBeNull()
     expect(screen.queryByText('Other providers')).toBeNull()
     fireEvent.click(endpoint)
     expect(onViewChange).toHaveBeenCalledWith('custom-endpoints')
     fireEvent.click(screen.getByText('Semantier Cloud'))
     expect(startManualProviderOAuth).toHaveBeenCalledWith('semantier-cloud', expect.anything())
+  })
+
+  it('keeps a connected Semantier Cloud account above Custom endpoint', async () => {
+    listOAuthProviders.mockResolvedValue({ providers: [provider('semantier-cloud', true, { name: 'Semantier Cloud' })] })
+    render(<ProvidersSettings onClose={vi.fn()} onViewChange={vi.fn()} view="accounts" />)
+    const endpoint = await screen.findByText('Custom endpoint')
+    expect(screen.getByText('Semantier Cloud').compareDocumentPosition(endpoint) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(screen.getAllByText('Connected').length).toBeGreaterThan(0)
   })
 
   it('preserves explicit Nous sign-in without branding it as Semantier Cloud', async () => {

@@ -192,7 +192,6 @@ function OAuthPicker({
       <p className="-mt-2 mb-1 text-[length:var(--conversation-caption-font-size)] leading-(--conversation-caption-line-height) text-(--ui-text-tertiary)">
         {p.intro}
       </p>
-      <LocalEndpointRow onOpen={onWantLocalEndpoint} />
       {featured && <FeaturedProviderRow onSelect={select} provider={featured} />}
 
       {connected.length > 0 && (
@@ -210,6 +209,7 @@ function OAuthPicker({
           ))}
         </>
       )}
+      <LocalEndpointRow onOpen={onWantLocalEndpoint} />
     </section>
   )
 }

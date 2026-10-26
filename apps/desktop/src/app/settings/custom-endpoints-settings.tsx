@@ -434,10 +434,30 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
               {ce.fields.endpointUrl}
               <Input
                 onChange={event => setForm(current => ({ ...current, baseUrl: event.target.value }))}
-                placeholder="http://127.0.0.1:8081/v1"
+                placeholder="http://localhost:4000/v1"
                 value={form.baseUrl}
               />
             </label>
+            <div className="flex items-end gap-2">
+              <label className="grid min-w-0 flex-1 gap-1.5 text-xs text-muted-foreground">
+                {ce.fields.apiKey}
+                <Input
+                  disabled={form.noApiKey}
+                  onChange={event => setForm(current => ({ ...current, apiKey: event.target.value }))}
+                  placeholder={form.id ? ce.fields.apiKeyNewPlaceholder : ce.fields.apiKeyPlaceholder}
+                  type="password"
+                  value={form.apiKey}
+                />
+              </label>
+              <Button
+                disabled={testing || !form.baseUrl.trim()}
+                onClick={() => void handleValidate()}
+                variant="outline"
+              >
+                {testing ? <Loader2 className="animate-spin" /> : <Zap />}
+                {ce.test}
+              </Button>
+            </div>
             <fieldset className="grid min-w-0 gap-1.5 text-xs text-muted-foreground">
               <legend className="mb-1.5">{ce.apiMode}</legend>
               <SegmentedControl
@@ -467,16 +487,6 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
                 />
               </label>
             </div>
-            <label className="grid gap-1.5 text-xs text-muted-foreground">
-              {ce.fields.apiKey}
-              <Input
-                disabled={form.noApiKey}
-                onChange={event => setForm(current => ({ ...current, apiKey: event.target.value }))}
-                placeholder={form.id ? ce.fields.apiKeyNewPlaceholder : ce.fields.apiKeyPlaceholder}
-                type="password"
-                value={form.apiKey}
-              />
-            </label>
             <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
               <label className="flex items-center gap-2">
                 <Checkbox checked={form.noApiKey} onCheckedChange={checked => setForm(current => ({ ...current, noApiKey: checked === true, apiKey: '' }))} />
@@ -498,14 +508,6 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
               </label>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Button
-                disabled={testing || !form.baseUrl.trim()}
-                onClick={() => void handleValidate()}
-                variant="outline"
-              >
-                {testing ? <Loader2 className="animate-spin" /> : <Zap />}
-                {ce.test}
-              </Button>
               <Button disabled={saving || !canSave} onClick={() => void handleSave()}>
                 {saving ? <Loader2 className="animate-spin" /> : <Save />}
                 {form.makeDefault ? serviceCopy.saveUse : ce.save}
