@@ -13,10 +13,8 @@ const seedAt = (hue: number) => withHue(nousTheme.colors.primary, hue)
 
 const NOUS_BLUE = '#0053FD'
 
-// The two seeds are the whole point of the fork, and both are load-bearing:
-// `#0053FD` is the brand color and passes on the light sidebar, but only 3.6:1
-// on the near-black dark one — so dark carries a lifted twin rather than the
-// literal brand hex. Anything that re-derives these must keep both legible.
+// Action fill and accent text are distinct roles: bright yellow carries dark
+// ink; the text/focus role must remain legible on its own sidebar.
 describe('the shipped nous accents', () => {
   const cases = [
     { appearance: 'light', colors: nousTheme.colors },
@@ -24,7 +22,7 @@ describe('the shipped nous accents', () => {
   ] as const
 
   it.each(cases)('$appearance clears AA on its own sidebar', ({ colors }) => {
-    expect(contrastRatio(colors.primary, colors.sidebarBackground!)).toBeGreaterThanOrEqual(4.5)
+    expect(contrastRatio(colors.midground!, colors.sidebarBackground!)).toBeGreaterThanOrEqual(4.5)
   })
 
   it.each(cases)('$appearance keeps text on the accent readable', ({ colors }) => {
@@ -72,7 +70,7 @@ describe('retintTheme', () => {
   })
 
   it('keeps the four seed slots locked together', () => {
-    const teal = retintTheme(nousTheme, seedAt(195)).colors
+    const teal = retintTheme(githubTheme, seedAt(195)).colors
 
     expect(teal.ring).toBe(teal.primary)
     expect(teal.midground).toBe(teal.primary)
@@ -91,10 +89,10 @@ describe('retintTheme', () => {
   })
 
   it('holds perceived lightness and chroma while only the hue moves', () => {
-    const base = hexToOklch(nousTheme.colors.primary)!
+    const base = hexToOklch(githubTheme.colors.primary)!
 
     for (const hue of HUES) {
-      const seed = hexToOklch(retintTheme(nousTheme, seedAt(hue)).colors.primary)!
+      const seed = hexToOklch(retintTheme(githubTheme, withHue(githubTheme.colors.primary, hue)).colors.primary)!
 
       expect(Math.abs(seed.l - base.l), `L at ${hue}`).toBeLessThan(0.02)
       // Chroma can only be REDUCED, and only where sRGB can't show it.

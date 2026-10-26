@@ -79,6 +79,31 @@ afterEach(() => {
 })
 
 describe('CustomEndpointsSettings', () => {
+  it('shows explicit success beside Test and announces it again on a repeated test', async () => {
+    getCustomEndpoints.mockResolvedValue(emptyResponse)
+    validateCustomEndpoint.mockResolvedValueOnce({ ok: true, reachable: true, models: ['example-model'], message: '' })
+    let finish!: (value: unknown) => void
+    validateCustomEndpoint.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    render(<CustomEndpointsSettings />)
+    const url = await screen.findByPlaceholderText('http://localhost:4000/v1')
+    fireEvent.change(url, { target: { value: 'http://localhost:4000/v1' } })
+    const test = screen.getByRole('button', { name: 'Test' })
+    fireEvent.click(test)
+    const result = await screen.findByRole('status')
+    expect(result.textContent).toContain('Endpoint is reachable.')
+    expect(result.textContent).toContain('Found 1 models.')
+    expect(result.textContent).toContain('No inference request is sent')
+    expect(test.parentElement?.nextElementSibling).toBe(result)
+    expect(result.getAttribute('aria-live')).toBe('polite')
+    fireEvent.click(test)
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(test.hasAttribute('disabled')).toBe(true)
+    await act(async () => finish({ ok: true, reachable: true, models: [], message: '' }))
+    expect((await screen.findByRole('status')).textContent).toContain('Endpoint is reachable.')
+    expect(validateCustomEndpoint).toHaveBeenCalledTimes(2)
+    expect(saveCustomEndpoint).not.toHaveBeenCalled()
+  })
+
   it('orders URL, key and Test before model setup without sending an automatic request', async () => {
     getCustomEndpoints.mockResolvedValue(emptyResponse)
     validateCustomEndpoint.mockResolvedValue({ ok: true, reachable: true, models: [], message: '' })

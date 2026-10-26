@@ -1,3 +1,5 @@
+import { THEME_PRESET_PALETTES } from '@hermes/shared'
+import { contrastRatio } from '@hermes/shared/color'
 import { describe, expect, it } from 'vitest'
 
 import { BUILTIN_THEME_LIST, DEFAULT_TYPOGRAPHY, nousTheme } from './presets'
@@ -59,5 +61,20 @@ describe('theme typography Latin Extended fallback (#61392)', () => {
     expect(DEFAULT_TYPOGRAPHY.fontMono).toContain('DejaVu Sans Mono')
     expect(DEFAULT_TYPOGRAPHY.fontMono).toContain('Liberation Mono')
     expect(DEFAULT_TYPOGRAPHY.fontMono).toContain('Noto Sans Mono')
+  })
+})
+
+describe('Semantier desktop action accent', () => {
+  it.each(['colors', 'darkColors'] as const)('%s uses yellow with readable action ink and focus, preserving neutral chrome', mode => {
+    const c = nousTheme[mode]!
+    expect(c.primary).toBe('#e8c92d')
+    expect(c.primaryForeground).toBe('#1a2028')
+    expect(contrastRatio(c.primary, c.primaryForeground)).toBeGreaterThanOrEqual(4.5)
+    expect(contrastRatio(c.midground!, c.sidebarBackground!)).toBeGreaterThanOrEqual(4.5)
+    expect(contrastRatio(c.ring, c.background)).toBeGreaterThanOrEqual(3)
+
+    for (const key of ['background', 'foreground', 'card', 'border', 'sidebarBackground', 'destructive'] as const) {
+      expect(c[key]).toBe(THEME_PRESET_PALETTES.nous[mode]![key])
+    }
   })
 })

@@ -26,6 +26,23 @@ describe('ThemeProvider ← backend skin sync', () => {
 
   afterEach(cleanup)
 
+  it('keeps the default action fill yellow with dark ink in both modes', () => {
+    let theme!: ReturnType<typeof useTheme>
+
+    function Probe() { theme = useTheme();
+
+ return null }
+
+    render(<ThemeProvider><Probe /></ThemeProvider>)
+
+    for (const mode of ['light', 'dark'] as const) {
+      act(() => theme.setMode(mode))
+      expect(cssVar('--theme-primary')).toBe('#e8c92d')
+      expect(cssVar('--dt-primary-solid')).toBe('#e8c92d')
+      expect(cssVar('--dt-primary-solid-foreground')).toBe('#1a2028')
+    }
+  })
+
   it('applies an activated backend skin', () => {
     render(
       <ThemeProvider>

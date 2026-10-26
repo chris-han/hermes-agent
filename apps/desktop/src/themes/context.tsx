@@ -273,9 +273,8 @@ function renderedModeFor(colors: DesktopThemeColors, mode: 'light' | 'dark'): 'l
 // styles.css --theme-neutral-chrome — keep in sync.
 const NEUTRAL_CHROME = { light: '#f3f3f3', dark: '#0d0d0e' } as const
 
-// The one foreground --dt-primary-solid is built to carry. Fixed rather than
-// measured: the surface is derived to suit IT, not the other way round.
-// styles.css --dt-primary-solid-foreground fallback — keep in sync.
+// Imported themes retain their fixed light foreground for loud surfaces.
+// The desktop default uses its explicit dark action foreground instead.
 const PRIMARY_SOLID_FOREGROUND = '#fcfcfc'
 
 const chromeBackground = (background: string, isDark: boolean) =>
@@ -323,6 +322,7 @@ function applyTheme(theme: DesktopTheme, mode: 'light' | 'dark', chatFontFamily 
   const isDark = rendered === 'dark'
   const midground = c.midground ?? c.ring
   const skinName = theme.name.endsWith(`-${mode}`) ? theme.name.slice(0, -mode.length - 1) : theme.name
+  const solidForeground = skinName === 'nous' ? c.primaryForeground : PRIMARY_SOLID_FOREGROUND
 
   root.style.setProperty('color-scheme', rendered)
   root.dataset.hermesTheme = skinName
@@ -339,6 +339,7 @@ function applyTheme(theme: DesktopTheme, mode: 'light' | 'dark', chatFontFamily 
   const seeds: Record<string, string> = {
     '--theme-foreground': c.foreground,
     '--theme-primary': c.primary,
+    '--theme-primary-text': skinName === 'nous' ? midground : c.primary,
     '--theme-secondary': c.secondary,
     '--theme-accent-soft': c.accent,
     '--theme-midground': midground,
@@ -366,10 +367,11 @@ function applyTheme(theme: DesktopTheme, mode: 'light' | 'dark', chatFontFamily 
     // valid primary, and the honest `primaryForeground` for it is near-black —
     // so the "loud" surface comes out a pastel card with dark text on it,
     // whispering. Deepening the hue until the LIGHT foreground clears AA keeps
-    // one look across every theme: no-ops on an accent that is already deep,
+    // imported-theme contrast. The desktop default instead retains its
+    // yellow fill/dark action ink. No-ops on an accent that already passes,
     // and only ever darkens, so the hue survives.
-    '--dt-primary-solid': ensureContrast(c.primary, PRIMARY_SOLID_FOREGROUND, 4.5),
-    '--dt-primary-solid-foreground': PRIMARY_SOLID_FOREGROUND,
+    '--dt-primary-solid': ensureContrast(c.primary, solidForeground, 4.5),
+    '--dt-primary-solid-foreground': solidForeground,
     '--dt-composer-ring': c.composerRing ?? midground,
     '--dt-destructive': c.destructive,
     '--dt-destructive-foreground': c.destructiveForeground,

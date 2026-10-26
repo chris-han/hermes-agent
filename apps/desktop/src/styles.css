@@ -213,16 +213,17 @@
     color-scheme: light;
 
     --theme-foreground: #17171a;
-    --theme-primary: #0053fd;
-    --theme-secondary: color-mix(in srgb, #0053fd 7%, #ffffff);
-    --theme-accent-soft: color-mix(in srgb, #0053fd 10%, #ffffff);
-    --theme-midground: #0053fd;
+    --theme-primary: #e8c92d;
+    --theme-primary-text: #665300;
+    --theme-secondary: color-mix(in srgb, #e8c92d 7%, #ffffff);
+    --theme-accent-soft: color-mix(in srgb, #e8c92d 10%, #ffffff);
+    --theme-midground: #665300;
     --theme-warm: #cf806d;
     --theme-background-seed: #f8faff;
     --theme-sidebar-seed: #f3f7ff;
     --theme-card-seed: #ffffff;
     --theme-elevated-seed: #ffffff;
-    --theme-bubble-seed: color-mix(in srgb, #0053fd 6%, #ffffff);
+    --theme-bubble-seed: color-mix(in srgb, #e8c92d 6%, #ffffff);
     --theme-neutral-chrome: #f3f3f3;
     --theme-neutral-sidebar: #f3f3f3;
     --theme-neutral-card: #fcfcfc;
@@ -436,12 +437,11 @@
     --dt-popover: color-mix(in srgb, var(--ui-bg-elevated) 96%, transparent);
     --dt-popover-foreground: var(--ui-text-primary);
     --dt-primary: var(--theme-primary);
-    --dt-primary-foreground: #fcfcfc;
-    /* Boot-paint fallbacks. themes/context.tsx replaces --dt-primary-solid with
-       the hue deepened until #fcfcfc clears AA on it; until it runs, the raw
-       primary is the closest honest guess. */
+    --dt-primary-foreground: #1a2028;
+    /* Desktop default boot paint uses yellow action fill with dark ink.
+       themes/context.tsx supplies the selected skin’s contrast-safe pair. */
     --dt-primary-solid: var(--theme-primary);
-    --dt-primary-solid-foreground: #fcfcfc;
+    --dt-primary-solid-foreground: #1a2028;
     --dt-secondary: var(--theme-secondary);
     --dt-secondary-foreground: var(--ui-text-secondary);
     --dt-accent: var(--theme-accent-soft);
@@ -608,6 +608,8 @@
   }
 
   :root.dark {
+    --theme-midground: #e8c92d;
+    --theme-primary-text: #e8c92d;
     /* Per-mode mix knobs — overridden inline by `applyTheme()` per skin. */
     --theme-mix-chrome: 74%;
     --theme-mix-card: 38%;
@@ -3894,4 +3896,11 @@ html[data-hud-window] [data-slot='popover-content'] {
    author `!important` rule beats the widget's inline non-important style. */
 [data-pane-hidden] * {
   visibility: inherit !important;
+}
+
+/* Action fills and readable accent text have distinct roles on light panels.
+   Existing text-primary consumers and their variants keep one shared owner. */
+@utility text-primary {
+  /* Tailwind also emits its generic primary color for this exact utility. */
+  color: var(--theme-primary-text, var(--dt-primary)) !important;
 }

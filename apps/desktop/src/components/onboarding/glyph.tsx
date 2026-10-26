@@ -159,10 +159,10 @@ export function HackeryButton({
       onClick={onClick}
       type="button"
     >
-      <span className="text-primary/40 transition-colors group-hover:text-primary">[</span>
+      <span className="text-(--theme-primary-text)/40 transition-colors group-hover:text-primary">[</span>
       {loading ? <Loader2 className="size-3 animate-spin" /> : null}
       <span className="-mr-[0.25em] pl-[0.25em] tracking-[0.25em]">{label}</span>
-      <span className="text-primary/40 transition-colors group-hover:text-primary">]</span>
+      <span className="text-(--theme-primary-text)/40 transition-colors group-hover:text-primary">]</span>
     </button>
   )
 }

@@ -224,6 +224,7 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
   async function handleValidate() {
     try {
       setTesting(true)
+      setValidation(null)
       const response = await validateCustomEndpoint(toPayload(form), scopeProfile)
 
       if (!mounted.current) {
@@ -232,7 +233,6 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
 
       setDiscoveredModels(response.models)
       setDiscoveredDetails(response.model_details ?? [])
-      setValidation(response.message || serviceCopy.coverage)
 
       if (response.ok) {
         // Show a discovery suggestion without silently changing the entered URL.
@@ -242,9 +242,16 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
           setForm(current => ({ ...current, model: response.models[0] }))
         }
 
-        if (resolvedBaseUrl && resolvedBaseUrl !== form.baseUrl.trim().replace(/\/+$/, '')) {
-          setValidation(`${serviceCopy.coverage} ${ce.fields.endpointUrl}: ${resolvedBaseUrl}`)
-        }
+        const reachable = response.transport_checked
+          ? ce.endpointReachableTransport(response.transport_checked)
+          : ce.endpointReachable
+
+        const success = response.models.length ? ce.endpointReachableModels(reachable, response.models.length) : reachable
+
+        const suggestion = resolvedBaseUrl && resolvedBaseUrl !== form.baseUrl.trim().replace(/\/+$/, '')
+          ? `${ce.fields.endpointUrl}: ${resolvedBaseUrl}` : ''
+
+        setValidation([success, response.message, serviceCopy.coverage, suggestion].filter(Boolean).join(' '))
 
       } else {
         setValidation(response.message || ce.endpointValidationFailed)
@@ -458,6 +465,7 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
                 {ce.test}
               </Button>
             </div>
+            {validation && <p aria-live="polite" className="text-xs text-(--ui-text-secondary)" role="status">{validation}</p>}
             <fieldset className="grid min-w-0 gap-1.5 text-xs text-muted-foreground">
               <legend className="mb-1.5">{ce.apiMode}</legend>
               <SegmentedControl
@@ -530,7 +538,6 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
                 {ce.newEndpoint}
               </Button>
             </div>
-            {validation && <p className="text-xs text-(--ui-text-secondary)" role="status">{validation}</p>}
           </div>
         </section>
       </div>

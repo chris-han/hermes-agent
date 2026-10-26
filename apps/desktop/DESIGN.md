@@ -644,3 +644,9 @@ For a native SDK-bound Semantier Cloud connection, every main-model confirmation
 ## Managed desktop default in Settings
 
 On the native local source whose saved startup default is `semantier-local`, that profile is the desktop default. Ordinary Settings omit the legacy Hermes root `default` choice, and hide the scope selector when only `semantier-local` remains. Additional bot profiles retain explicit scope selection and non-default edit guidance. An explicitly selected legacy root remains visible and routes exactly to that root; advanced profile access, root data and remote/other-source behavior are unchanged. Use the existing native default preference and shared Settings scope store; never globally alias `default` to a named profile or redirect captured conversation/settings requests.
+
+## Endpoint Test feedback and action-yellow accent
+
+Test reports explicit localized reachability/model-discovery success immediately below the API key/Test row, with the catalog/authentication-only coverage note. Clear the previous result when another test starts; announce the fresh result through the existing polite status region. Failure remains failure even when the endpoint is reachable. Testing does not save configuration or send inference.
+
+The existing desktop default (`nous` identity retained for saved preferences) uses Asimov Action Yellow `#e8c92d` with dark action ink `#1a2028`. Its light accent text/focus role is `#665300`; dark uses the yellow role. The shared `text-primary` utility and explicit opacity consumers use the readable text role, while fills retain yellow. Preserve neutral chrome, typography, geometry, terminal/category colors, other selectable themes and shared upstream palettes. Imported themes retain their existing loud-fill behavior. This is an accent-only adjustment, not a full Asimov style migration.

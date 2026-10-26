@@ -20,6 +20,7 @@
 
 import { THEME_PRESET_PALETTES } from '@hermes/shared'
 
+import { mixOklab } from './color'
 import { skinToDesktopTheme } from './skin'
 import type { DesktopTheme, DesktopThemeTypography } from './types'
 
@@ -45,16 +46,6 @@ const SYSTEM_MONO =
 
 export const DEFAULT_TYPOGRAPHY: DesktopThemeTypography = { fontSans: SYSTEM_SANS, fontMono: SYSTEM_MONO }
 
-/**
- * Nous — the canonical Hermes desktop identity, forked from the GitHub VS Code
- * theme (github.github-vscode-theme). Light is GitHub Light Default, dark is
- * GitHub Dark Default, both converted through the same path a Marketplace
- * install takes, so the palette here is byte-identical to importing the
- * extension yourself.
- *
- * Typography stays Hermes's own: a VS Code theme carries no font opinion, and
- * these are the stacks every skin has been rendering with.
- */
 /**
  * GitHub — the upstream palette, unmodified.
  *
@@ -114,24 +105,40 @@ export const githubTheme: DesktopTheme = {
   }
 }
 
-/** Catppuccin — Latte in light, Mocha in dark (Catppuccin.catppuccin-vsc). */
+/** Desktop default: retain GitHub neutral chrome and the persisted `nous`
+ * identity, replacing only its accent family with Asimov Action Yellow.
+ * Light text/focus uses the contrast-safe agency role, not bright yellow. */
+const ACTION_YELLOW = '#e8c92d'
+const ACTION_INK = '#1a2028'
 
-/**
- * Nous — the canonical Hermes desktop identity: GitHub's chrome carrying Nous
- * blue. Forked from github.github-vscode-theme (Light Default / Dark Default),
- * with only the accent family re-seeded; every neutral is upstream's.
- *
- * Two seeds, one blue. `#0053FD` is the brand color and reads at 5.4:1 on the
- * light sidebar, but only 3.6:1 on the near-black dark one — so dark carries
- * `#4a84fe`, the same hue (263°) lifted to clear AA at 5.9:1. The soft
- * surfaces below are mixed from those seeds in OKLab, which is what keeps a
- * saturated blue from drifting violet on its way to white.
- */
 export const nousTheme: DesktopTheme = {
   name: 'nous',
   label: 'Nous',
-  description: 'GitHub chrome, Nous blue accent',
-  ...THEME_PRESET_PALETTES.nous,
+  description: 'GitHub chrome, Asimov action-yellow accent',
+  colors: {
+    ...THEME_PRESET_PALETTES.nous.colors,
+    primary: ACTION_YELLOW,
+    primaryForeground: ACTION_INK,
+    secondary: mixOklab(ACTION_YELLOW, THEME_PRESET_PALETTES.nous.colors.background, 0.86),
+    accent: mixOklab(ACTION_YELLOW, THEME_PRESET_PALETTES.nous.colors.background, 0.88),
+    ring: '#665300',
+    midground: '#665300',
+    midgroundForeground: '#ffffff',
+    composerRing: '#665300',
+    userBubble: mixOklab(THEME_PRESET_PALETTES.nous.colors.card, ACTION_YELLOW, 0.12)
+  },
+  darkColors: {
+    ...THEME_PRESET_PALETTES.nous.darkColors,
+    primary: ACTION_YELLOW,
+    primaryForeground: ACTION_INK,
+    secondary: mixOklab(ACTION_YELLOW, THEME_PRESET_PALETTES.nous.darkColors.background, 0.72),
+    accent: mixOklab(ACTION_YELLOW, THEME_PRESET_PALETTES.nous.darkColors.background, 0.82),
+    ring: ACTION_YELLOW,
+    midground: ACTION_YELLOW,
+    midgroundForeground: ACTION_INK,
+    composerRing: ACTION_YELLOW,
+    userBubble: mixOklab(THEME_PRESET_PALETTES.nous.darkColors.card, ACTION_YELLOW, 0.18)
+  },
   typography: {
     fontSans: SYSTEM_SANS,
     fontMono: SYSTEM_MONO,
