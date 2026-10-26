@@ -17,6 +17,7 @@ test('review binds target, work revision and expiry; idle does not need consent'
   expect(guard.review('a', '1', '2', expiring.token)).not.toBeNull()
   const fresh = guard.review('a', '1', '2')!
   expect(guard.review('a', '1', '2', fresh.token)).toBeNull()
+  now += 120_001 // A large verified download does not expire accepted intent.
   expect(() => guard.assertBeforeStop()).not.toThrow()
   state.revision++
   expect(() => guard.assertBeforeStop()).toThrow('Active work changed')
