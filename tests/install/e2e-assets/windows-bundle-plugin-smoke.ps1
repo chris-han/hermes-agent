@@ -8,6 +8,8 @@
 # the packaged interpreter and exits 101 (#135236). The Safer NORMALUSER token
 # below turns the admin group deny-only, so the runner sees what a user sees.
 
+Set-StrictMode -Version Latest
+
 Add-Type -TypeDefinition @'
 using System;
 using System.ComponentModel;
@@ -136,7 +138,7 @@ function Test-BundlePluginInstall([string]$Root, [string]$Out, [switch]$Isolated
 
         $code = Invoke-BasicUserBatch 'install' @(
             "`"$alias`" plugins install `"$url`" --enable --yes-deps > install.log 2>&1",
-            "`"$alias`" plugins list --json > list.json 2> list.err") $scratch 2 $smokeHome5
+            "`"$alias`" plugins list --json > list.json 2> list.err") $scratch 25 $smokeHome
         foreach ($name in 'probe.log', 'install.log', 'list.json', 'list.err') {
             $file = Join-Path $scratch $name
             if (Test-Path -LiteralPath $file) { Copy-Item -LiteralPath $file -Destination (Join-Path $Out "plugin-smoke-$name") }
