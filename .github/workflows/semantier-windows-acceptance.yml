@@ -1,11 +1,15 @@
 name: Semantier Windows acceptance
 on:
+  push:
+    branches: [staging/client-release-feedback-mvl-v1]
   workflow_dispatch:
     inputs:
       controller_commit:
         description: Reviewed exact semantier-runtime controller commit
         required: true
         type: string
+env:
+  ACCEPTANCE_CONTROLLER_COMMIT: ${{ inputs.controller_commit || '455d07c6356aa529a49a2fbbfd74596e9b080130' }}
 permissions:
   contents: read
 concurrency:
@@ -24,13 +28,13 @@ jobs:
           path: hermes
       - name: Validate frozen controller reference
         env:
-          CONTROLLER_COMMIT: ${{ inputs.controller_commit }}
+          CONTROLLER_COMMIT: ${{ env.ACCEPTANCE_CONTROLLER_COMMIT }}
         run: '[[ "$CONTROLLER_COMMIT" =~ ^[0-9a-f]{40}$ ]]'
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
         with:
           repository: chris-han/semantier-runtime
           token: ${{ secrets.SEMANTIER_CONTROLLER_READ_TOKEN }}
-          ref: ${{ inputs.controller_commit }}
+          ref: ${{ env.ACCEPTANCE_CONTROLLER_COMMIT }}
           persist-credentials: false
           path: controller
       - name: Build and sign with existing non-exportable identity
