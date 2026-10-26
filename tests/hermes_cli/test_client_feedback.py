@@ -3,7 +3,6 @@ import hashlib
 import json
 from pathlib import Path
 import sys
-sys.path.insert(0,str(Path(__file__).resolve().parents[3]/"src"))
 import pytest
 from cryptography.fernet import Fernet
 
@@ -59,9 +58,11 @@ def test_lost_start_reply_reuses_intent_and_proof(native,monkeypatch):
 
 
 def test_same_shared_fixture_is_consumed_without_client_extensions():
-    from contracts.client_operations import UpdateEvent,FeedbackAuthorization
+    from hermes_cli.client_feedback import _contract
+    contract = _contract()
+    UpdateEvent, FeedbackAuthorization = contract.UpdateEvent, contract.FeedbackAuthorization
     from pydantic import ValidationError
-    path=Path(__file__).resolve().parents[3]/'src/contracts/client-operations-v1.fixture.json'
+    path=Path(__file__).resolve().parents[2]/'semantier-runtime/src/contracts/client-operations-v1.fixture.json'
     fixture=json.loads(path.read_text())
     assert hashlib.sha256(path.with_name('client-operations-v1.schema.json').read_bytes()).hexdigest()==fixture['schema_sha256']
     for collection,model in [('update_events',UpdateEvent),('feedback_authorizations',FeedbackAuthorization)]:
@@ -150,3 +151,20 @@ def test_feedback_protocol_refusal_cannot_become_a_local_success(native,monkeypa
     with TestClient(app) as client:
         response=client.post('/api/client-feedback/authorization_start',headers={'X-Hermes-Session-Token':_SESSION_TOKEN},json={'purpose':'diagnostic'})
     assert response.status_code==502
+
+
+def test_feedback_preview_uses_shipped_contract_without_parent_pythonpath():
+    """Registered desktop starts Hermes without the parent checkout on sys.path."""
+    import subprocess
+    code = """
+import json, sys
+sys.path.insert(0, sys.argv[1])
+from hermes_cli import client_feedback
+reply = client_feedback.preview({'app_version':'0.0.41.0', 'note':'api_key=preview-canary'})
+assert 'preview-canary' not in json.dumps(reply)
+assert reply['redactions'] == 1
+assert reply['payload']['app_version'] == '0.0.41.0'
+"""
+    result = subprocess.run([sys.executable, '-I', '-c', code, str(Path(__file__).resolve().parents[2])],
+                            capture_output=True, text=True, timeout=30, check=False)
+    assert result.returncode == 0, result.stderr

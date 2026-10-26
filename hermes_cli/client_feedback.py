@@ -5,6 +5,8 @@ The reporting capability remains DPAPI-protected and is never returned locally.
 """
 from datetime import datetime,timedelta,timezone, UTC
 import json
+from functools import cache
+import importlib.util
 import os
 from uuid import uuid4
 from hermes_constants import get_hermes_home
@@ -13,6 +15,19 @@ from hermes_cli import cloud_device_client as device
 CONSENT='semantier-operational-reporting/1'
 MAX_QUEUE=1000
 MAX_BYTES=1024*1024
+
+
+@cache
+def _contract():
+    """Load the exact shared contract shipped with this Hermes composition."""
+    from pm.paths import repo_root
+    path = repo_root() / 'semantier-runtime/src/contracts/client_operations.py'
+    spec = importlib.util.spec_from_file_location('semantier_client_operations_contract', path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError('Shipped Semantier feedback contract is unavailable')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _path():
@@ -145,7 +160,7 @@ def _revoke(state):
 
 
 def record(events):
-    from contracts.client_operations import UpdateEvent
+    UpdateEvent = _contract().UpdateEvent
     with device._locked():
         state=_read()
         if not state['enabled']:return status()
@@ -194,13 +209,14 @@ def flush():
 
 
 def preview(body):
-    from contracts.client_operations import sanitize,MAX_DIAGNOSTIC_BYTES
+    contract = _contract()
+    sanitize, MAX_DIAGNOSTIC_BYTES = contract.sanitize, contract.MAX_DIAGNOSTIC_BYTES
     note,n=sanitize(str(body.get('note',''))[:4000]);context,m=sanitize(str(body.get('context',''))[:32768])
     payload={'schema_version':'1.0.0','submission_key':body.get('submission_key') or uuid4().hex,
              'app_version':body['app_version'],'platform':'win32','release_id':body.get('release_id'),
              'update_id':body.get('update_id'),'error_code':body.get('error_code'),
              'note':note,'sections':{'update':context} if body.get('include_update',True) else {}}
-    from contracts.client_operations import Diagnostic
+    Diagnostic = _contract().Diagnostic
     payload=Diagnostic.model_validate(payload).model_dump()
     size=len(json.dumps(payload,ensure_ascii=False).encode())
     if size>MAX_DIAGNOSTIC_BYTES:raise ValueError('Diagnostic too large')
@@ -208,7 +224,7 @@ def preview(body):
 
 
 def submit(body):
-    from contracts.client_operations import Diagnostic
+    Diagnostic = _contract().Diagnostic
     data=Diagnostic.model_validate(body).model_dump()
     with device._locked():
         origin,secret=_diagnostic_identity()
