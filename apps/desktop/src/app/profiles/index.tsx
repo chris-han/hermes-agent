@@ -289,7 +289,7 @@ function SoulEditor({ profileName }: { profileName: string }) {
 
     void (async () => {
       try {
-        const soul = await getProfileSoul(profileName)
+        const soul = await getProfileSoul(profileName, profileName)
 
         if (requestRef.current === profileName) {
           setContent(soul.content)
@@ -315,7 +315,7 @@ function SoulEditor({ profileName }: { profileName: string }) {
     setError(null)
 
     try {
-      await updateProfileSoul(profileName, content)
+      await updateProfileSoul(profileName, content, profileName)
       setOriginal(content)
       setMissing(false)
       notify({ kind: 'success', title: p.soulSaved, message: profileName })

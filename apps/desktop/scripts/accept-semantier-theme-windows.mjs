@@ -195,12 +195,16 @@ async function productionSurfaces(page, app) {
   checks.push('T10 production language overlay keyboard entry/Escape/return')
   // System mode follows the native Electron theme service, without changing Windows settings.
   await mode(page,'system')
+  await page.emulateMedia({colorScheme:null,reducedMotion:null})
   for(const theme of ['dark','light']) {
-    await app.evaluate(({nativeTheme},value)=>{nativeTheme.themeSource=value},theme)
+    // The production owner keeps nativeTheme at system; stimulate its media input instead of racing that owner.
+    await page.emulateMedia({colorScheme:theme})
     await expect(page.locator('html')).toHaveAttribute('data-hermes-mode',theme)
+    assert.equal(await app.evaluate(({nativeTheme})=>nativeTheme.themeSource),'system')
   }
-  await app.evaluate(({nativeTheme})=>{nativeTheme.themeSource='system'})
-  observations.push({systemMode:'nativeTheme dark/light/system'})
+  await page.emulateMedia({colorScheme:null,reducedMotion:null})
+  await expect.poll(async()=>({rendered:await page.locator('html').getAttribute('data-hermes-mode'),native:await app.evaluate(({nativeTheme})=>nativeTheme.shouldUseDarkColors?'dark':'light')})).toEqual({rendered:await app.evaluate(({nativeTheme})=>nativeTheme.shouldUseDarkColors?'dark':'light'),native:await app.evaluate(({nativeTheme})=>nativeTheme.shouldUseDarkColors?'dark':'light')})
+  observations.push({systemMode:'packaged renderer media-input dark/light simulation; actual native system restored',native:await app.evaluate(({nativeTheme})=>({source:nativeTheme.themeSource,dark:nativeTheme.shouldUseDarkColors}))})
   // Open the actual integrated terminal; no shell or model command is sent.
   await page.evaluate(()=>{location.hash='/'})
   await page.keyboard.press('Control+Backquote')
@@ -223,7 +227,7 @@ async function productionSurfaces(page, app) {
 
 async function createProfile(page,name) {
   await page.evaluate(()=>{location.hash='/profiles'})
-  await page.getByRole('button',{name:'New profile',exact:true}).click()
+  await page.locator('[data-overlay-surface]').getByRole('button',{name:'New profile',exact:true}).click()
   const dialog=page.getByRole('dialog').filter({has:page.locator('#new-profile-name')})
   await expect(dialog.getByRole('button',{name:'Create profile',exact:true})).toBeDisabled()
   await expect(dialog.locator('#new-profile-name')).toBeFocused()
@@ -241,7 +245,11 @@ async function createProfile(page,name) {
     await expect(dialog.locator('#new-profile-clone-from')).toBeFocused()
     await page.keyboard.press('Escape')
     await expect(dialog).toHaveCount(0)
-    await page.getByRole('button',{name:'New profile',exact:true}).click()
+    await page.locator('[data-overlay-surface]').getByRole('button',{name:'New profile',exact:true}).click()
+  }
+  if(name==='inherited') {
+    await dialog.locator('#new-profile-clone-from').click()
+    await page.getByRole('option',{name:'None (blank)',exact:true}).click()
   }
   await dialog.locator('#new-profile-name').fill(name)
   await dialog.locator('#new-profile-soul').fill('native-theme-preservation:'+name)
@@ -251,10 +259,8 @@ async function createProfile(page,name) {
 }
 async function selectProfile(page,name) {
   await page.evaluate(()=>{location.hash='/'})
-  const composer=page.locator('[data-slot="composer-rich-input"][contenteditable="true"]').first()
-  await composer.fill('/profile '+name)
-  await composer.press('Escape')
-  await composer.press('Enter')
+  const rail=page.getByRole('group',{name:/^Profiles$|^配置档案$/})
+  await rail.getByRole('button',{name:name==='default'?/^default(?:,|$)|^默认/i:new RegExp('^'+name+'(?:,|$)')}).click()
   await expect.poll(()=>page.evaluate(()=>localStorage.getItem('hermes-desktop-active-profile-v1')),{timeout:120000}).toBe(name)
 }
 
@@ -311,7 +317,13 @@ try {
   await expect(page.locator('html')).toHaveAttribute('lang','zh',{timeout:120000})
   checks.push('T12 explicit English and Chinese survive full process restart; nonlanguage sentinel retained')
   await language(page,'en')
+  const rawLanguage=profile=>page.evaluate(async profile=>{const config=await window.hermesDesktop.api({connectionId:'local',profile,path:'/api/config?include_defaults=false',priority:'foreground'});return config.display?.language??null},profile)
+  const cloneLanguage=await rawLanguage('default')
   for(const name of ['legacy','explicit','inherited']) await createProfile(page,name)
+  assert.equal(await rawLanguage('legacy'),cloneLanguage)
+  assert.equal(await rawLanguage('explicit'),cloneLanguage)
+  assert.equal(await rawLanguage('inherited'),null)
+  observations.push({profileLocaleBasis:{cloneSource:'default',cloneLanguage,blankLanguage:null}})
   const souls=Object.fromEntries(['legacy','explicit','inherited'].map(name=>{
     const file=path.join(fresh,'hermes','profiles',name,'SOUL.md')
     assert.ok(fs.readFileSync(file,'utf8').includes('native-theme-preservation:'+name))
@@ -342,11 +354,12 @@ try {
   await language(page,'zh')
   await selectProfile(page,'explicit')
   await expect(page.locator('html')).toHaveAttribute('data-hermes-theme','nous')
-  await expect(page.locator('html')).toHaveAttribute('lang','en',{timeout:60000})
+  await expect(page.locator('html')).toHaveAttribute('lang',cloneLanguage||'zh',{timeout:60000})
+  await language(page,'en')
   await selectProfile(page,'inherited')
   await expect(page.locator('html')).toHaveAttribute('data-hermes-theme','semantier')
   await expect(page.locator('html')).toHaveAttribute('data-hermes-mode','light')
-  await expect(page.locator('html')).toHaveAttribute('lang','en',{timeout:60000})
+  await expect(page.locator('html')).toHaveAttribute('lang','zh',{timeout:60000})
   await selectProfile(page,'legacy')
   await expect(page.locator('html')).toHaveAttribute('lang','zh',{timeout:60000})
   await selectProfile(page,'default')
