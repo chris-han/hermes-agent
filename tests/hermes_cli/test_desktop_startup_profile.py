@@ -112,3 +112,144 @@ def test_unreadable_profile_config_is_not_replaced_by_a_fallback(owner):
     finally:
         config.chmod(0o600)
     assert config.read_bytes() == previous
+
+
+def test_generated_internal_profile_is_retired_with_exact_recoverable_data(owner):
+    from hermes_cli.config import atomic_config_replace
+    legacy = profiles.create_profile('tender-runtime-expert', no_alias=True, no_skills=True)
+    atomic_config_replace(legacy / 'config.yaml', {
+        'display': {'language': 'en'}, 'model': {'provider': 'custom', 'default': 'saved'},
+        'plugins': {'enabled': ['tender_contextgraph_runtime']},
+    })
+    for name, data in {'sessions/chat.json': b'preserved chat', '.env': b'CUSTOM_API_KEY=fixture',
+                       'memories/MEMORY.md': b'preserved memory', 'state.db': b'opaque fixture database', 'gateway.lock': b''}.items():
+        target = legacy / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+    before = {str(p.relative_to(legacy)): p.read_bytes() for p in legacy.rglob('*') if p.is_file()}
+    profiles.set_active_profile('tender-runtime-expert')
+    result = resolve(owner, 'tender-runtime-expert')
+    assert result['profile'] == 'semantier-local'
+    assert not legacy.exists()
+    retained = list((owner / '.desktop-retired-profiles').glob('*/tender-runtime-expert'))
+    assert len(retained) == 1
+    assert {str(p.relative_to(retained[0])): p.read_bytes() for p in retained[0].rglob('*') if p.is_file()} == before
+    from hermes_constants import named_profile_is_deleted
+    assert named_profile_is_deleted(legacy)
+    assert profiles.get_active_profile(owner) == 'semantier-local'
+    assert 'tender-runtime-expert' not in profiles.list_profile_names()
+    assert profiles._load_yaml_dict(owner / 'profiles/semantier-local/config.yaml')['display']['language'] == 'en'
+    assert resolve(owner)['profile'] == 'semantier-local'
+    assert len(list((owner / '.desktop-retired-profiles').iterdir())) == 1
+
+
+def test_retirement_preserves_existing_local_profile_and_its_language(owner):
+    from hermes_cli.config import atomic_config_replace
+    local = profiles.create_profile('semantier-local', no_alias=True, no_skills=True)
+    atomic_config_replace(local / 'config.yaml', {'display': {'language': 'zh'}, 'model': {'default': 'local-choice'}})
+    original = (local / 'config.yaml').read_bytes()
+    legacy = profiles.create_profile('tender-runtime-expert', no_alias=True, no_skills=True)
+    atomic_config_replace(legacy / 'config.yaml', {'display': {'language': 'en'}})
+    assert resolve(owner, 'tender-runtime-expert')['profile'] == 'semantier-local'
+    assert (local / 'config.yaml').read_bytes() == original
+    assert not legacy.exists()
+
+
+def test_retirement_refuses_a_live_legacy_owner_without_mutation(owner, monkeypatch):
+    legacy = profiles.create_profile('tender-runtime-expert', no_alias=True, no_skills=True)
+    import gateway.status
+    monkeypatch.setattr(gateway.status, '_is_gateway_runtime_lock_active_strict', lambda *a, **kw: True)
+    with pytest.raises(RuntimeError, match='running|owned'):
+        resolve(owner, 'tender-runtime-expert')
+    assert legacy.exists()
+    assert not (owner / '.desktop-retired-profiles').exists()
+
+
+def test_fresh_desktop_discovers_only_its_local_profile_but_keeps_real_default_data(owner):
+    assert resolve(owner)['profile'] == 'semantier-local'
+    assert [p.name for p in profiles.list_profiles(lazy_skill_count=True)] == ['semantier-local']
+    (owner / 'state.db').write_bytes(b'retained default chat store')
+    assert {p.name for p in profiles.list_profiles(lazy_skill_count=True)} == {'default', 'semantier-local'}
+
+
+def test_fallback_discovery_uses_live_profile_identity(owner):
+    from hermes_cli.web_server_profiles import _fallback_profile_dicts
+    resolve(owner)
+    assert [p['name'] for p in _fallback_profile_dicts(profiles)] == ['semantier-local']
+    ghost = owner / 'profiles/tender-runtime-expert'
+    ghost.mkdir()
+    (ghost / 'logs').mkdir()
+    assert [p['name'] for p in _fallback_profile_dicts(profiles)] == ['semantier-local']
+
+
+@pytest.mark.parametrize('namespace', ['.desktop-retired-profiles', 'profiles/.deleted'])
+def test_retirement_refuses_linked_backup_or_marker_namespace(owner, tmp_path, namespace):
+    legacy = profiles.create_profile('tender-runtime-expert', no_alias=True, no_skills=True)
+    foreign = tmp_path / 'outside'
+    foreign.mkdir()
+    (owner / namespace).symlink_to(foreign, target_is_directory=True)
+    with pytest.raises(ValueError, match='owner'):
+        resolve(owner, 'tender-runtime-expert')
+    assert legacy.exists()
+    assert not list(foreign.iterdir())
+
+
+def test_interrupted_retirement_resumes_same_backup(owner, monkeypatch):
+    legacy = profiles.create_profile('tender-runtime-expert', no_alias=True, no_skills=True)
+    original = Path.rename
+    with monkeypatch.context() as patch:
+        def interrupted(source, target):
+            if source == legacy:
+                raise SystemExit('interrupted before directory move')
+            return original(source, target)
+        patch.setattr(Path, 'rename', interrupted)
+        with pytest.raises(SystemExit):
+            resolve(owner, 'tender-runtime-expert')
+    assert legacy.exists()
+    assert resolve(owner, 'tender-runtime-expert')['profile'] == 'semantier-local'
+    assert not legacy.exists()
+    assert len(list((owner / '.desktop-retired-profiles').iterdir())) == 1
+
+
+def test_dangling_retirement_marker_cannot_create_a_foreign_file(owner, tmp_path):
+    from hermes_constants import profile_tombstone_path
+    legacy = profiles.create_profile('tender-runtime-expert', no_alias=True, no_skills=True)
+    marker = profile_tombstone_path(legacy)
+    marker.parent.mkdir(exist_ok=True)
+    foreign = tmp_path / 'foreign-marker'
+    marker.symlink_to(foreign)
+    with pytest.raises(ValueError, match='owner'):
+        resolve(owner, 'tender-runtime-expert')
+    assert not foreign.exists()
+    assert legacy.exists()
+
+
+def test_remembered_empty_default_resolves_to_desktop_local(owner):
+    assert resolve(owner, 'default')['profile'] == 'semantier-local'
+    assert [p.name for p in profiles.list_profiles(lazy_skill_count=True)] == ['semantier-local']
+
+
+def test_interactive_profile_writer_prevents_retirement(owner):
+    import os
+    import subprocess
+    import sys
+    legacy = profiles.create_profile('tender-runtime-expert', no_alias=True, no_skills=True)
+    process = subprocess.Popen([sys.executable, '-c', "print('ready', flush=True); input()", "hermes_cli.main"],
+                               env={**os.environ, 'HERMES_HOME': str(legacy)},
+                               stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    try:
+        assert process.stdout.readline().strip() == 'ready'
+        with pytest.raises(RuntimeError, match='owned'):
+            resolve(owner, 'tender-runtime-expert')
+        assert legacy.exists()
+        assert not (owner / '.desktop-retired-profiles').exists()
+    finally:
+        process.communicate('finish\n', timeout=10)
+
+
+def test_restart_after_move_repairs_sticky_owner_route(owner):
+    profiles.create_profile('tender-runtime-expert', no_alias=True, no_skills=True)
+    resolve(owner, 'tender-runtime-expert')
+    (owner / 'active_profile').write_text('tender-runtime-expert\n')
+    assert resolve(owner)['profile'] == 'semantier-local'
+    assert profiles.get_active_profile(owner) == 'semantier-local'

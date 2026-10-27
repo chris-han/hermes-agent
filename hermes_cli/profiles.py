@@ -1032,6 +1032,16 @@ def _profile_info(name: str, path: Path, *, is_default: bool, alias_name: Option
     )
 
 
+def _default_profile_is_discoverable(home: Path) -> bool:
+    # Desktop's owner directory is infrastructure, not a second empty profile.
+    # A real default identity (including old chats/credentials) always remains visible.
+    from hermes_cli.profiles_desktop import DESKTOP_FALLBACK
+    return home.is_dir() and (
+        named_profile_has_identity(home)
+        or not named_profile_is_live(home / "profiles" / DESKTOP_FALLBACK)
+    )
+
+
 def list_profiles(*, lazy_skill_count: bool = False) -> list[ProfileInfo]:
     """Return info for all profiles, including the default.
 
@@ -1040,7 +1050,7 @@ def list_profiles(*, lazy_skill_count: bool = False) -> list[ProfileInfo]:
     a skill tree (#114041). Default ``False`` counts synchronously (CLI, detail views)."""
     profiles = []
     default_home = _get_default_hermes_home()
-    if default_home.is_dir():
+    if _default_profile_is_discoverable(default_home):
         profiles.append(_profile_info("default", default_home, is_default=True,
                                       lazy_skill_count=lazy_skill_count))
     named = _iter_named_profile_dirs()

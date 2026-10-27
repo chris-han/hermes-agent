@@ -161,7 +161,7 @@ def _fallback_profile_entry(profiles_mod, name: str, home: Path, *, is_default: 
 def _fallback_profile_dicts(profiles_mod) -> list[dict[str, Any]]:
     profiles: list[dict[str, Any]] = []
     default_home = profiles_mod._get_default_hermes_home()
-    if default_home.is_dir():
+    if profiles_mod._default_profile_is_discoverable(default_home):
         profiles.append(_fallback_profile_entry(
             profiles_mod, "default", default_home, is_default=True,
             has_env=(default_home / ".env").exists(),
@@ -176,7 +176,8 @@ def _fallback_profile_dicts(profiles_mod) -> list[dict[str, Any]]:
             entries = sorted(scan, key=lambda e: e.name)
         for entry in entries:
             home = Path(entry.path)
-            if not entry.is_dir() or not profiles_mod._PROFILE_ID_RE.match(entry.name):
+            if (not entry.is_dir() or not profiles_mod._PROFILE_ID_RE.match(entry.name)
+                    or not profiles_mod.named_profile_is_live(home)):
                 continue
             profiles.append(_fallback_profile_entry(
                 profiles_mod, entry.name, home, is_default=False,
