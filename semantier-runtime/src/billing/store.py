@@ -41,7 +41,7 @@ def _exact_money(method):
     return invoke
 
 
-BILLING_SCHEMA_VERSION = 9
+BILLING_SCHEMA_VERSION = 10
 
 
 class BillingStore:
@@ -358,6 +358,42 @@ class BillingStore:
             if row is None: raise BillingError('price_unavailable')
             return PriceVersion(**row['payload'])
 
+    async def put_supplier_catalog(self, catalog):
+        """Explicit operator ingestion into the existing immutable supplier owner."""
+        from billing.supplier_catalog import SupplierCatalog
+        catalog = SupplierCatalog.from_dict(catalog.to_dict())
+        key = 'supplier-catalog:' + catalog.version_id
+        payload = catalog.to_dict()
+        async with self.connection() as conn:
+            old = await self._one(conn, "INSERT INTO prices(version_id,kind,payload) VALUES(%s,'supplier',%s) ON CONFLICT DO NOTHING RETURNING payload",
+                                  (key, Jsonb(payload)), required=False)
+            if old is None:
+                old = await self._one(conn, "SELECT payload FROM prices WHERE version_id=%s AND kind='supplier'", (key,))
+            if old['payload'] != payload:
+                raise BillingError('immutable_price')
+
+    async def supplier_catalog_options(self):
+        from billing.supplier_catalog import SupplierCatalog
+        async with self.connection() as conn:
+            rows = await (await conn.execute(
+                "SELECT payload FROM prices WHERE kind='supplier' AND version_id LIKE 'supplier-catalog:%' ORDER BY version_id LIMIT 100"
+            )).fetchall()
+        catalogs = [SupplierCatalog.from_dict(row['payload']) for row in rows]
+        return [{'version_id': c.version_id, 'collected_at': c.raw['collected_at'],
+                 'completeness': c.completeness, 'inventory_scope': c.inventory_scope,
+                 'models': sorted({m['model'] for p in c.raw.get('responses', [])
+                     for m in p.get('body', {}).get('output', {}).get('models', [])})}
+                for c in catalogs]
+
+    async def get_supplier_catalog(self, version_id):
+        from billing.supplier_catalog import SupplierCatalog
+        async with self.connection() as conn:
+            row = await self._one(conn, "SELECT payload FROM prices WHERE version_id=%s AND kind='supplier'",
+                                  ('supplier-catalog:' + version_id,), required=False)
+        if row is None:
+            raise BillingError('supplier_catalog_unavailable')
+        return SupplierCatalog.from_dict(row['payload'])
+
     async def put_fx(self,quote:FxQuote):
         payload=quote.__dict__
         async with self.connection() as conn:
@@ -478,6 +514,25 @@ class BillingStore:
             row=await self._one(conn,'UPDATE outbox SET delivered_at=now() WHERE id=%s AND lease_owner=%s AND lease_until>=now() AND delivered_at IS NULL RETURNING id',(event_id,worker_id),required=False)
             if row is None: raise BillingError('lease_lost')
 
+    async def feedback_subject(self, context, invocation_id, attempt_id):
+        """Resolve feedback attribution from the financial invocation owner."""
+        async with self.connection() as conn:
+            row = await self._one(conn,
+                'SELECT i.* FROM invocations i JOIN attempts a USING(invocation_id) WHERE i.organization_id=%s AND i.invocation_id=%s AND a.attempt_id=%s',
+                (context.organization_id, invocation_id, attempt_id), required=False)
+        if row is None:
+            raise PermissionError('FEEDBACK_INVOCATION_UNAVAILABLE')
+        attribution = row['attribution']
+        if (attribution.get('actor_user_id') != context.user_id
+                or attribution.get('workspace_id') != context.workspace_id
+                or not attribution.get('session_id')):
+            raise PermissionError('FEEDBACK_SUBJECT_SCOPE')
+        task = attribution.get('task_context') or {}
+        root = task.get('root_run_id') or row.get('task_id') or attribution.get('run_id')
+        if not root:
+            raise ValueError('QUALITY_ATTACHMENT_UNAVAILABLE_NO_TASK')
+        return dict(account_id=row['account_id'], root_task_id=root, session_id=attribution['session_id'])
+
     async def get_invocation(self,organization_id,invocation_id):
         async with self.connection() as conn: return _wire(await self._invocation(conn,organization_id,invocation_id))
 
@@ -503,7 +558,7 @@ class BillingStore:
                 clauses.append('i.created_at'+('>=' if key=='from' else '<')+'%s');params.append(at)
             else:raise ValueError('unsupported usage filter')
         query="""SELECT i.*,a.attempt_id,to_jsonb(u) AS usage FROM invocations i JOIN attempts a USING(invocation_id)
-            LEFT JOIN LATERAL (SELECT normalized,customer_cost,supplier_cost,supplier_native_cost,supplier_currency,price_version,supplier_price_version,fx_version,id
+            LEFT JOIN LATERAL (SELECT raw_usage,normalized,customer_cost,supplier_cost,supplier_native_cost,supplier_currency,price_version,supplier_price_version,fx_version,id
               FROM usage_observations WHERE attempt_id=a.attempt_id ORDER BY
               (normalized->>'completeness' IN ('PROVIDER_REPORTED','RECONCILED')) DESC,
               (coalesce((normalized->>'input_total')::bigint,0)+coalesce((normalized->>'output_total')::bigint,0)) DESC,id DESC LIMIT 1) u ON true

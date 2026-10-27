@@ -205,12 +205,12 @@ export function I18nProvider({
             return
           }
 
-          // Keep inference unsaved so OS language changes apply on the next boot
-          // until the user explicitly picks a language.
+          // Keep the platform default unsaved so explicit and inherited preferences
+          // remain authoritative; Windows fresh state uses Chinese.
           const machineProfile = await window.hermesDesktop?.getMachineProfile?.().catch(() => null)
 
           if (!cancelled && !userLocaleRef.current) {
-            setLocaleState(resolveInitialLocale(undefined, machineProfile?.locale))
+            setLocaleState(resolveInitialLocale(undefined, machineProfile?.locale, machineProfile?.platform))
           }
         })
         .catch(error => {

@@ -72,7 +72,7 @@ import { $zoomPercent, setZoomPercent } from '@/store/zoom'
 import { getBaseColors, useTheme } from '@/themes/context'
 import { installVscodeThemeFromMarketplace } from '@/themes/install'
 import type { DesktopTheme } from '@/themes/types'
-import { $marketplaceInstalls, isUserTheme, removeUserTheme } from '@/themes/user-themes'
+import { $marketplaceInstalls, isUserTheme, removeUserTheme, resolveTheme } from '@/themes/user-themes'
 
 import { setHermesConfigCache, useHermesConfigRecord } from '../hooks/use-config-record'
 
@@ -139,6 +139,7 @@ function ThemePreview({ name, mode }: { name: string; mode: 'light' | 'dark' }) 
   // palette in Light — synthesizing one for dark-only themes — so every card
   // tracks the Light/Dark toggle, exactly like the app itself does.
   const c = getBaseColors(name, mode)
+  const asimov = (resolveTheme(name)?.accentOf ?? name) === 'semantier'
 
   return (
     <div
@@ -158,7 +159,7 @@ function ThemePreview({ name, mode }: { name: string; mode: 'light' | 'dark' }) 
           <div className="h-2 w-24 rounded-full" style={{ backgroundColor: c.mutedForeground }} />
           <div className="mt-auto flex justify-end">
             <div
-              className="h-5 w-16 rounded-full border"
+              className={cn('h-5 w-16 border', asimov ? 'rounded-md' : 'rounded-full')}
               style={{
                 backgroundColor: c.userBubble ?? c.muted,
                 borderColor: c.userBubbleBorder ?? c.border
@@ -617,6 +618,7 @@ export function AppearanceSettings({ subpage }: AppearanceSettingsProps = {}) {
                           return (
                             <div className="group relative" key={theme.name}>
                               <button
+                                aria-pressed={active}
                                 className={cn('w-full p-2 text-left', selectableCardClass({ active, prominent: true }))}
                                 onClick={() => {
                                   triggerHaptic('crisp')

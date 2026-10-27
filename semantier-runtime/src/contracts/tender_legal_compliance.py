@@ -3,7 +3,7 @@
 Structural binding is not legal qualification. The production verifier must resolve
 retained owner records before publishing a scoped EVALUATION DecisionRecord.
 """
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, model_validator
@@ -13,7 +13,7 @@ from contracts.governed_frame_finding_v1 import GovernedFrameFindingV1
 from contracts.normative_schema import NormativeSchemaContractV1
 from contracts.normative_semantics import NormativeSemanticCandidateSetV1
 from contracts.ontology_building import ArtifactPinV1
-from contracts.semantic_kernel import DecisionRecord
+from contracts.semantic_kernel import DecisionRecord, _ContentAddressed
 from contracts.ontology_certification import NormativeAuthorityDependencySetV1
 from contracts.ontology_paired_evaluation import ObservedFactsV1
 from contracts.ontology_validation import CompiledRulePlanV1
@@ -147,6 +147,100 @@ class TenderOwnerAdvisoryInputsV1(BaseModel):
         return self
 
 
+class TenderSourceSubclaimV1(BaseModel):
+    """Descriptive source support; this carrier cannot grant legal qualification."""
+    model_config = ConfigDict(extra='forbid', frozen=True)
+    subclaim_id: str = Field(pattern=r'^[A-Za-z0-9][A-Za-z0-9._:/@+\-]*$')
+    evidence: tuple[EvidenceRef, ...]
+    source_traceability: Literal['AVAILABLE', 'UNKNOWN']
+    rule_temporal_validity: Literal['UNKNOWN'] = 'UNKNOWN'
+    case_applicability: Literal['UNKNOWN'] = 'UNKNOWN'
+    fact_sufficiency: Literal['UNKNOWN'] = 'UNKNOWN'
+    missing_premises: tuple[str, ...] = Field(min_length=1)
+
+    @model_validator(mode='after')
+    def support_is_not_truth(self):
+        if self.source_traceability != ('AVAILABLE' if self.evidence else 'UNKNOWN'):
+            raise ValueError('SOURCE_SUPPORT_EVIDENCE_REQUIRED')
+        refs = [e.evidence_ref for e in self.evidence]
+        if len(refs) != len(set(refs)):
+            raise ValueError('DUPLICATE_SOURCE_OCCURRENCE')
+        return self
+
+
+class TenderSourceDocumentV1(BaseModel):
+    model_config = ConfigDict(extra='forbid', frozen=True)
+    role: Literal['ORIGINAL', 'CORRECTION', 'REPLACEMENT', 'ANNOUNCEMENT', 'RULE']
+    identity: SourceIdentity
+    canonical_source_ir: ArtifactPinV1
+    normalized_document_ref: str
+    derivation_input: ArtifactPinV1 | None = Field(default=None, exclude_if=lambda value: value is None)
+
+
+
+
+class TenderSourceCaseBindingV1(_ContentAddressed):
+    """Nested frozen source expression, not a standalone authority/store family."""
+    ARTIFACT_KIND = 'tender_source_case_binding'
+    schema_version: Literal['tender_source_case_binding.v1'] = 'tender_source_case_binding.v1'
+    organization_id: str
+    workspace_id: str
+    prepared_by: str
+    case_id: str = Field(min_length=1)
+    package_id: int = Field(gt=0)
+    event_date: date
+    date_precision: Literal['DAY'] = 'DAY'
+    ordering: Literal['EXPLICIT_VERSION', 'UNRESOLVED_SAME_DAY']
+    recovery_run_id: str
+    recovery_hash: str = Field(pattern=SHA)
+    documents: tuple[TenderSourceDocumentV1, ...] = Field(min_length=1)
+    original_ref: str
+    correction_refs: tuple[str, ...]
+    replacement_ref: str | None
+    operative: Literal['ORIGINAL', 'ORIGINAL_WITH_CORRECTIONS', 'REPLACEMENT']
+    precedence_evidence: tuple[EvidenceRef, ...]
+    subclaims: tuple[TenderSourceSubclaimV1, ...] = Field(min_length=1)
+
+    @model_validator(mode='after')
+    def expression(self):
+        docs = {d.identity.source_identity_ref: d for d in self.documents}
+        if len(docs) != len(self.documents) or len(set(self.correction_refs)) != len(self.correction_refs):
+            raise ValueError('AMBIGUOUS_SOURCE_EXPRESSION')
+        expected = [(self.original_ref, 'ORIGINAL'), *((r, 'CORRECTION') for r in self.correction_refs)]
+        if self.replacement_ref is not None:
+            expected.append((self.replacement_ref, 'REPLACEMENT'))
+        for ref, role in expected:
+            if ref not in docs or docs[ref].role != role:
+                raise ValueError('SOURCE_EXPRESSION_ROLE_MISMATCH')
+        if self.operative == 'REPLACEMENT' and self.replacement_ref is None:
+            raise ValueError('EXPLICIT_REPLACEMENT_REQUIRED')
+        if self.operative == 'ORIGINAL_WITH_CORRECTIONS' and not self.correction_refs:
+            raise ValueError('EXPLICIT_CORRECTION_REQUIRED')
+        if self.correction_refs and not self.precedence_evidence:
+            raise ValueError('AMENDMENT_PRECEDENCE_EVIDENCE_REQUIRED')
+        operative_sources = ({self.replacement_ref} if self.operative == 'REPLACEMENT' else
+            {self.original_ref, *self.correction_refs} if self.operative == 'ORIGINAL_WITH_CORRECTIONS' else {self.original_ref})
+        if any(e.source_identity_ref not in operative_sources for c in self.subclaims for e in c.evidence):
+            raise ValueError('SOURCE_CASE_OPERATIVE_VERSION_MISMATCH')
+        if len({c.subclaim_id for c in self.subclaims}) != len(self.subclaims):
+            raise ValueError('DUPLICATE_SUBCLAIM')
+        scope = (self.organization_id, self.workspace_id)
+        for d in self.documents:
+            if (d.identity.organization_id, d.identity.workspace_id) != scope:
+                raise ValueError('SOURCE_CASE_SCOPE_MISMATCH')
+            if not d.identity.source_version or d.canonical_source_ir.artifact_kind != 'canonical_source_ir':
+                raise ValueError('EXACT_SOURCE_VERSION_REQUIRED')
+        for e in (*self.precedence_evidence, *(e for c in self.subclaims for e in c.evidence)):
+            if (e.organization_id, e.workspace_id) != scope or e.source_identity_ref not in docs:
+                raise ValueError('SOURCE_CASE_SCOPE_MISMATCH')
+        from semantier.knowledge_feature_packs.evidence_selector_builder import evidence_ref_pin
+        for e in (*self.precedence_evidence, *(e for c in self.subclaims for e in c.evidence)):
+            evidence_ref_pin(e)
+            if e.provenance.get('source_hash') != docs[e.source_identity_ref].identity.source_hash:
+                raise ValueError('SOURCE_CASE_HASH_MISMATCH')
+        return self
+
+
 class TenderLegalComplianceBasisV1(BaseModel):
     model_config = ConfigDict(extra='forbid', frozen=True)
     schema_version: Literal['tender_legal_compliance_basis.v1'] = 'tender_legal_compliance_basis.v1'
@@ -162,6 +256,7 @@ class TenderLegalComplianceBasisV1(BaseModel):
     advisory: TenderOwnerAdvisoryInputsV1 | None = Field(default=None, exclude_if=lambda value: value is None)
     supersedes_assessment: ArtifactPinV1 | None = Field(default=None, exclude_if=lambda value: value is None)
     gaps: tuple[str, ...]
+    source_case_binding: TenderSourceCaseBindingV1 | None = Field(default=None, exclude_if=lambda value: value is None)
     frozen_at: datetime
 
     @property
@@ -173,6 +268,8 @@ class TenderLegalComplianceBasisV1(BaseModel):
         if self.frozen_at.tzinfo is None or self.frozen_at.utcoffset() != timedelta(0):
             raise ValueError('UTC_REQUIRED')
         scope = (self.organization_id, self.workspace_id)
+        if self.source_case_binding is not None and (self.source_case_binding.organization_id, self.source_case_binding.workspace_id) != scope:
+            raise ValueError('SOURCE_CASE_SCOPE_MISMATCH')
         if (self.finding.organization_id, self.finding.workspace_id) != scope:
             raise ValueError('FINDING_SCOPE_MISMATCH')
         for pin, kind in ((self.episode, 'tender_journey_inspection_episode'),

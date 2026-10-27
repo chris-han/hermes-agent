@@ -8,5 +8,5 @@
   },
   "files": ["electron/backend-discovery.ts"],
   "include": ["e2e", "playwright.config.ts", "../../tests-js/scripts", "../../tests/install/e2e-assets/desktop-smoke.ts"],
-  "exclude": ["src", "electron"]
+  "exclude": ["src", "electron", "e2e/**/*.fixture.tsx"]
 }

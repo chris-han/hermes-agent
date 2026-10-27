@@ -7,23 +7,25 @@ from .publication import OperationError
 
 def verify_workflow(receipt):
     run=str(receipt.get('workflow_run_id',''))
-    if not re.fullmatch('[1-9][0-9]{0,19}',run):raise OperationError(422,'github_run_identity_required')
+    attempt=receipt.get('workflow_run_attempt')
+    if not re.fullmatch('[1-9][0-9]{0,19}',run) or type(attempt) is not int or not 1<=attempt<=999999999:
+        raise OperationError(422,'github_run_identity_required')
     token=os.environ.get('SEMANTIER_CLIENT_GITHUB_TOKEN','')
     headers={'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'}
     if token:headers['Authorization']='Bearer '+token
     with httpx.Client(timeout=15,follow_redirects=False,trust_env=False) as client:
-        response=client.get('https://api.github.com/repos/chris-han/hermes-agent/actions/runs/'+run,headers=headers)
+        response=client.get(f'https://api.github.com/repos/chris-han/hermes-agent/actions/runs/{run}/attempts/{attempt}',headers=headers)
     if response.status_code!=200:raise OperationError(503,'github_provenance_unavailable')
     value=response.json()
     if value.get('status')!='completed':raise OperationError(503,'github_run_pending')
     if (value.get('conclusion')!='success' or value.get('head_sha')!=receipt['source_commit']
         or value.get('head_repository',{}).get('full_name')!='chris-han/hermes-agent'
-        or value.get('event')!='workflow_dispatch'
+        or not (value.get('event')=='workflow_dispatch' or (value.get('event')=='push' and value.get('head_branch')=='staging/client-release-feedback-mvl-v1'))
         or value.get('path')!='.github/workflows/semantier-windows-acceptance.yml'
         or value.get('run_attempt')!=receipt.get('workflow_run_attempt')):
         raise OperationError(422,'github_provenance_mismatch')
     return {'run_id':value['id'],'run_attempt':value['run_attempt'],'head_sha':value['head_sha'],
-            'path':value['path'],'conclusion':'success','html_url':value['html_url']}
+            'path':value['path'],'event':value['event'],'branch':value.get('head_branch'),'conclusion':'success','html_url':value['html_url']}
 
 
 def reconcile_candidates(owner):

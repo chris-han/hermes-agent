@@ -37,11 +37,11 @@ async def scoped(request,aid=None,*,manage=False):
     row=await select_account_row(service,actor,aid,request.query_params.get('currency'),manage=manage)
     return c,actor,row['account_id']
 
-async def body(request,fields):
+async def body(request,fields,optional=()):
     try: value=await request.json()
     except ValueError as exc: raise HTTPException(422,'JSON object required') from exc
-    if not isinstance(value,dict) or set(value)!=set(fields): raise HTTPException(422,'explicit supported fields required')
-    if any(not isinstance(value[f],str) or not 0<len(value[f])<=512 for f in fields if f!='confirmed'):
+    if not isinstance(value,dict) or not set(fields)<=set(value) or set(value)-set(fields)-set(optional): raise HTTPException(422,'explicit supported fields required')
+    if any(not isinstance(value[f],str) or not 0<len(value[f])<=512 for f in value if f!='confirmed'):
         raise HTTPException(422,'bounded string fields required')
     return value
 
@@ -90,9 +90,10 @@ async def test_payment(request:Request,order_id:str):
 
 @router.post('/orders/{order_id}/payment-attempts')
 async def start_payment(request:Request,order_id:str):
-    b=await body(request,{'account_id','method'})
+    b=await body(request,{'account_id','method'},optional={'language'})
+    if b.get('language','en') not in {'en','zh'}:raise HTTPException(422,'unsupported language')
     c,a,aid=await scoped(request,b['account_id'],manage=True)
-    return await run(c.start_payment(a.organization_id,aid,order_id,b['method']))
+    return await run(c.start_payment(a.organization_id,aid,order_id,b['method'],language=b.get('language','en')))
 
 @router.post('/orders/{order_id}/payment-attempts/{attempt_id}/simulate')
 async def simulate_payment(request:Request,order_id:str,attempt_id:str):
@@ -117,3 +118,28 @@ async def state(request:Request,account_id:str|None=None):
     can_manage=any(row['account_id']==aid and row['can_manage'] for row in permitted)
     result['capabilities']={'can_read_usage':bool({'usage:read_self','usage:read_org'}&a.permissions),'can_manage_billing':can_manage,'can_open_portal':bool(valid),'can_charge':False,'can_change_plan':False,'can_auto_top_up':False}
     return result
+
+
+@router.post('/notifications/{method}')
+async def channel_notification(request:Request,method:str):
+    # Channel signatures authenticate this public edge; no browser return path.
+    _,c=commerce(request)
+    payload=bytearray()
+    async for part in request.stream():
+        payload.extend(part)
+        if len(payload)>65536:raise HTTPException(413,'notification too large')
+    await run(c.notify(method,dict(request.headers),bytes(payload)))
+    from fastapi.responses import PlainTextResponse, JSONResponse
+    return PlainTextResponse('success') if method=='alipay' else JSONResponse({'code':'SUCCESS','message':'成功'})
+
+@router.post('/orders/{order_id}/payment-attempts/{attempt_id}/query')
+async def query_channel(request:Request,order_id:str,attempt_id:str):
+    b=await body(request,{'account_id'})
+    c,a,aid=await scoped(request,b['account_id'],manage=True)
+    return await run(c.query_channel_payment(a.organization_id,aid,order_id,attempt_id))
+
+@router.post('/orders/{order_id}/payment-attempts/{attempt_id}/close')
+async def close_channel(request:Request,order_id:str,attempt_id:str):
+    b=await body(request,{'account_id'})
+    c,a,aid=await scoped(request,b['account_id'],manage=True)
+    return await run(c.query_channel_payment(a.organization_id,aid,order_id,attempt_id,close=True))

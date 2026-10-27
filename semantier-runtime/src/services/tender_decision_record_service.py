@@ -150,6 +150,7 @@ class TenderDecisionRecordService:
                 raise ValueError("UNRESOLVABLE_DECISION_BASIS")
         if projection.context.state != "ADMITTED" or projection.context.ontology != projection.ontology.pin():
             raise ValueError("ADMITTED_CONTEXT_REQUIRED")
+        compliance_owner.verify_source_case_binding(actor_context=actor_context,basis=basis)
         previous = compliance_owner.read_episode(store=self._store,episode=episode)
         expected_assessments = {entry['decision'].pin() for entry in previous if entry['basis'].finding==basis.finding}
         if basis.supersedes_assessment is None and expected_assessments:
@@ -192,10 +193,11 @@ class TenderDecisionRecordService:
             reasoner_identity=verification.policy.artifact_ref, authorization=None, outcome_observation=None,
             recorded_at=basis.frozen_at)
         self._authority.require_current_actor(actor_context=actor_context)
-        if basis.advisory is None and basis.supersedes_assessment is None:
+        if basis.advisory is None and basis.supersedes_assessment is None and basis.source_case_binding is None:
             self._store.put_many((basis, decision))
         else:
             def validate(_connection):
+                compliance_owner.verify_source_case_binding(actor_context=actor_context,basis=basis)
                 current = compliance_owner.read_episode(store=self._store,episode=episode)
                 current_pins = {entry['decision'].pin() for entry in current if entry['basis'].finding==basis.finding}
                 if current_pins != expected_assessments:

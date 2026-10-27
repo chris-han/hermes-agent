@@ -15,7 +15,7 @@ import { atom, computed } from 'nanostores'
 import { registry } from '@/contrib/registry'
 
 import { $backendThemes } from './backend-sync'
-import { BUILTIN_THEMES } from './presets'
+import { BUILTIN_THEMES, RETIRED_SKINS } from './presets'
 import { type DesktopTheme, isValidTheme } from './types'
 
 const USER_THEMES_KEY = 'hermes-desktop-user-themes-v1'
@@ -43,7 +43,7 @@ function readStored(): Record<string, DesktopTheme> {
 
     for (const [key, value] of Object.entries(parsed)) {
       // Never let a stored theme shadow a built-in name.
-      if (!BUILTIN_THEMES[key] && isValidTheme(value)) {
+      if (!BUILTIN_THEMES[key] && !RETIRED_SKINS.has(key) && isValidTheme(value)) {
         out[key] = value
       }
     }
@@ -67,7 +67,7 @@ export const $userThemes = atom<Record<string, DesktopTheme>>(typeof window === 
 
 /** Install (or replace) a user theme. Returns the stored theme. */
 export function installUserTheme(theme: DesktopTheme): DesktopTheme {
-  if (BUILTIN_THEMES[theme.name]) {
+  if (BUILTIN_THEMES[theme.name] || RETIRED_SKINS.has(theme.name)) {
     throw new Error(`"${theme.name}" collides with a built-in theme.`)
   }
 
@@ -138,7 +138,13 @@ export function contributedThemes(): DesktopTheme[] {
   for (const c of registry.getArea(THEMES_AREA)) {
     const theme = c.data as DesktopTheme | undefined
 
-    if (theme && isValidTheme(theme) && !BUILTIN_THEMES[theme.name] && !seen.has(theme.name)) {
+    if (
+      theme &&
+      isValidTheme(theme) &&
+      !BUILTIN_THEMES[theme.name] &&
+      !RETIRED_SKINS.has(theme.name) &&
+      !seen.has(theme.name)
+    ) {
       seen.add(theme.name)
       out.push(theme)
     }

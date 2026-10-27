@@ -44,6 +44,26 @@ describe('I18nProvider', () => {
     expect(screen.getByTestId('label').textContent).toBe('Language')
   })
 
+  it.each([undefined, 'invalid'])('defaults Windows unset/invalid language %s to Chinese without saving', async saved => {
+    const original = window.hermesDesktop
+    Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: {
+      getMachineProfile: vi.fn().mockResolvedValue({ platform: 'win32', locale: 'en-US' })
+    } })
+
+    const configClient: I18nConfigClient = {
+      getConfig: vi.fn().mockResolvedValue({ display: { language: saved } }),
+      saveConfig: vi.fn()
+    }
+
+    try {
+      render(<I18nProvider configClient={configClient}><LanguageProbe /></I18nProvider>)
+      await waitFor(() => expect(screen.getByTestId('locale').textContent).toBe('zh'))
+      expect(configClient.saveConfig).not.toHaveBeenCalled()
+    } finally {
+      Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: original })
+    }
+  })
+
   it('normalizes an initial locale alias and switches translations', async () => {
     render(
       <I18nProvider configClient={null} initialLocale="zh-CN">

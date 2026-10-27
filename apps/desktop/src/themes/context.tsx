@@ -15,6 +15,7 @@ import { createContext, type ReactNode, useCallback, useContext, useEffect, useM
 
 import { $registryVersion } from '@/contrib/registry'
 import { matchesQuery, useMediaQuery } from '@/hooks/use-media-query'
+import { AsimovIconContext } from '@/lib/icons'
 import { persistString, persistStringRecord, storedString, storedStringRecord } from '@/lib/storage'
 import { recordFeatureUse } from '@/store/desktop-metrics'
 import { $activeGatewayProfile, normalizeProfileKey } from '@/store/profile'
@@ -31,7 +32,7 @@ import {
 } from './backend-sync'
 import { $chatFontFamily, resolveChatFontFamily } from './chat-font'
 import { harmonize, normalizeHex, readableInk } from './color'
-import { BUILTIN_THEME_LIST, DEFAULT_SKIN_NAME, DEFAULT_TYPOGRAPHY, nousTheme, RETIRED_SKINS } from './presets'
+import { BUILTIN_THEME_LIST, DEFAULT_SKIN_NAME, DEFAULT_TYPOGRAPHY, RETIRED_SKINS, semantierTheme } from './presets'
 import { $pendingModeApply } from './request'
 import { retintTheme } from './retint'
 import type { DesktopTheme, DesktopThemeColors, DesktopThemeTypography } from './types'
@@ -101,6 +102,24 @@ const profilePref = <T extends string>(record: string, legacy: string, normalize
   const stored = (profile: string): string | null => {
     promoteUnanimousLegacy(record, legacy)
 
+    // Migrate the retired preset before either profile or global inheritance paints.
+    if (legacy === SKIN_KEY) {
+      if (storedString(legacy) === 'nous-alt') {
+        persistString(legacy, DEFAULT_SKIN_NAME)
+      }
+
+      const assignments = storedStringRecord(record)
+
+      if (Object.values(assignments).includes('nous-alt')) {
+        persistStringRecord(
+          record,
+          Object.fromEntries(
+            Object.entries(assignments).map(([key, value]) => [key, value === 'nous-alt' ? DEFAULT_SKIN_NAME : value])
+          )
+        )
+      }
+    }
+
     return storedStringRecord(record)[profile] ?? storedString(legacy)
   }
 
@@ -137,7 +156,7 @@ const storedSkin = (profile: string): string =>
 
 /** The live profile's committed theme: what the ThemeProvider paints without a preview. */
 export const committedTheme = (): DesktopTheme =>
-  resolveTheme(normalizeSkin(storedSkin(normalizeProfileKey($activeGatewayProfile.get())))) ?? nousTheme
+  resolveTheme(normalizeSkin(storedSkin(normalizeProfileKey($activeGatewayProfile.get())))) ?? semantierTheme
 
 /** Everything a peer window could change that this one has to repaint for. */
 const APPEARANCE_KEYS = new Set([SKIN_KEY, PROFILE_SKINS_KEY, MODE_KEY, PROFILE_MODES_KEY])
@@ -186,7 +205,7 @@ function synthLightColors(seed: DesktopTheme): DesktopThemeColors {
 
 /** Returns the seed palette for a given skin + mode (no overrides applied). */
 export function getBaseColors(skinName: string, mode: 'light' | 'dark'): DesktopThemeColors {
-  return paletteFor(resolveTheme(skinName) ?? nousTheme, mode)
+  return paletteFor(resolveTheme(skinName) ?? semantierTheme, mode)
 }
 
 function paletteFor(seed: DesktopTheme, mode: 'light' | 'dark'): DesktopThemeColors {
@@ -215,7 +234,7 @@ function deriveFrom(seed: DesktopTheme, mode: 'light' | 'dark'): DesktopTheme {
 }
 
 const deriveTheme = (skinName: string, mode: 'light' | 'dark'): DesktopTheme =>
-  deriveFrom({ ...(resolveTheme(skinName) ?? nousTheme), name: skinName }, mode)
+  deriveFrom({ ...(resolveTheme(skinName) ?? semantierTheme), name: skinName }, mode)
 
 /** The theme a saved accent was retinted from; any other theme is its own base. */
 export const accentBase = (theme: DesktopTheme): DesktopTheme =>
@@ -317,15 +336,24 @@ function applyTheme(theme: DesktopTheme, mode: 'light' | 'dark', chatFontFamily 
 
   const root = document.documentElement
   const c = theme.colors
-  const typo = { ...DEFAULT_TYPOGRAPHY, ...nousTheme.typography, ...theme.typography }
+  const typo = { ...DEFAULT_TYPOGRAPHY, ...theme.typography }
   const rendered = renderedModeFor(c, mode)
   const isDark = rendered === 'dark'
   const midground = c.midground ?? c.ring
   const skinName = theme.name.endsWith(`-${mode}`) ? theme.name.slice(0, -mode.length - 1) : theme.name
-  const solidForeground = skinName === 'nous' ? c.primaryForeground : PRIMARY_SOLID_FOREGROUND
+  const asimov = (theme.accentOf ?? skinName) === 'semantier'
+  const actionInk = asimov || skinName === 'nous'
+  const solidForeground = actionInk ? c.primaryForeground : PRIMARY_SOLID_FOREGROUND
 
   root.style.setProperty('color-scheme', rendered)
   root.dataset.hermesTheme = skinName
+
+  if (asimov) {
+    root.dataset.hermesDesign = 'asimov'
+  } else {
+    delete root.dataset.hermesDesign
+  }
+
   root.dataset.hermesMode = rendered
   root.classList.toggle('dark', isDark)
 
@@ -339,7 +367,8 @@ function applyTheme(theme: DesktopTheme, mode: 'light' | 'dark', chatFontFamily 
   const seeds: Record<string, string> = {
     '--theme-foreground': c.foreground,
     '--theme-primary': c.primary,
-    '--theme-primary-text': skinName === 'nous' ? midground : c.primary,
+    '--theme-primary-text': actionInk ? midground : c.primary,
+    '--theme-muted-foreground': c.mutedForeground,
     '--theme-secondary': c.secondary,
     '--theme-accent-soft': c.accent,
     '--theme-midground': midground,
@@ -381,7 +410,7 @@ function applyTheme(theme: DesktopTheme, mode: 'light' | 'dark', chatFontFamily 
     // instead of clashing with it. A green accent barely moves it (see
     // `harmonize`); a blue one turns the sidebar's finished dots teal rather
     // than leaving eight emerald spots fighting the theme.
-    '--ui-success': harmonize('#10b981', midground, 0.25),
+    '--ui-success': asimov ? (isDark ? '#53b8a7' : '#26776d') : harmonize('#10b981', midground, 0.25),
     '--dt-font-sans': resolveChatFontFamily(chatFontFamily, typo.fontSans),
     '--dt-font-mono': typo.fontMono,
     '--noise-opacity-mul': isDark ? 'calc(0.04 / 0.21)' : 'calc(0.34 / 0.21)'
@@ -393,7 +422,7 @@ function applyTheme(theme: DesktopTheme, mode: 'light' | 'dark', chatFontFamily 
 
   applyTypographyKnobs(root, typo)
 
-  const chromeBg = chromeBackground(c.background, isDark)
+  const chromeBg = asimov ? c.background : chromeBackground(c.background, isDark)
 
   window.hermesDesktop?.setTitleBarTheme?.({
     background: chromeBg,
@@ -492,7 +521,7 @@ interface ThemeContextValue {
 const SKIN_LIST = BUILTIN_THEME_LIST.map(({ name, label, description }) => ({ name, label, description }))
 
 const ThemeContext = createContext<ThemeContextValue>({
-  theme: nousTheme,
+  theme: semantierTheme,
   themeName: DEFAULT_SKIN_NAME,
   mode: 'light',
   resolvedMode: 'light',
@@ -610,7 +639,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     () =>
       accentOverride === null
         ? activeTheme
-        : deriveFrom(accentedTheme(resolveTheme(paintedName) ?? nousTheme, accentOverride), paintedMode),
+        : deriveFrom(accentedTheme(resolveTheme(paintedName) ?? semantierTheme, accentOverride), paintedMode),
     [activeTheme, accentOverride, paintedName, paintedMode]
   )
 
@@ -704,7 +733,13 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     ]
   )
 
-  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>
+  return (
+    <ThemeContext.Provider value={value}>
+      <AsimovIconContext.Provider value={(paintedTheme.accentOf ?? paintedName) === 'semantier'}>
+        {children}
+      </AsimovIconContext.Provider>
+    </ThemeContext.Provider>
+  )
 }
 
 export const useTheme = (): ThemeContextValue => useContext(ThemeContext)

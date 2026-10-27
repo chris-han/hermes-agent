@@ -157,11 +157,23 @@ def operation(operation_id:str,request:Request):
     return envelope(owner,{'operation':row},permissions)
 
 
+def reporting_window(days,start_at,end_at):
+    if start_at is None and end_at is None:
+        if days not in {1,7,30}:raise OperationError(422,'unsupported_window')
+        end=datetime.now(timezone.utc)
+        return end-timedelta(days=days),end
+    if start_at is None or end_at is None:raise OperationError(422,'incomplete_window')
+    if start_at.tzinfo is None or end_at.tzinfo is None:raise OperationError(422,'timezone_required')
+    start,end=start_at.astimezone(timezone.utc),end_at.astimezone(timezone.utc)
+    if start>=end:raise OperationError(422,'invalid_window_order')
+    return start,end
+
+
 @router.get('/updates')
-def updates(request:Request,release_id:str|None=None,days:int=7):
+def updates(request:Request,release_id:str|None=None,days:int=7,start_at:datetime|None=None,end_at:datetime|None=None):
     owner,ctx,permissions=browser(request,'release_read')
-    if days not in {1,7,30}:raise OperationError(422,'unsupported_window')
-    return envelope(owner,owner.feedback.attempts(release_id,days),permissions)
+    start,end=reporting_window(days,start_at,end_at)
+    return envelope(owner,owner.feedback.attempts(release_id,days,start,end),permissions)
 
 
 @router.get('/updates/{update_id}')
@@ -175,17 +187,16 @@ def update(update_id:str,request:Request):
 
 
 @router.get('/distribution')
-def distribution(request:Request,release_id:str|None=None,days:int=7):
+def distribution(request:Request,release_id:str|None=None,days:int=7,start_at:datetime|None=None,end_at:datetime|None=None):
     owner,ctx,permissions=browser(request,'release_read')
-    if days not in {1,7,30}:raise OperationError(422,'unsupported_window')
+    start,end=reporting_window(days,start_at,end_at)
     with owner.store.connection() as c:
         rows=c.execute('SELECT body FROM releases WHERE (%s::text IS NULL OR release_id=%s)',(release_id,release_id)).fetchall()
     if release_id and not rows:raise OperationError(404,'release_unavailable')
     # Health probes and arbitrary URL requests are never labeled downloads.
-    keys=[p['artifact']['key'] for row in rows for p in row['body']['manifest']['packages']]
+    keys=[a['key'] for row in rows for p in row['body']['manifest']['packages'] for a in [p['artifact']]+([p['distributionArchive']] if p.get('distributionArchive') else [])]
     from agents.client_operations.distribution import summary
-    now=datetime.now(timezone.utc)
-    return envelope(owner,summary(owner.store,keys,now-timedelta(days=days),now),permissions)
+    return envelope(owner,summary(owner.store,keys,start,end),permissions)
 
 
 class Enrollment(Strict):

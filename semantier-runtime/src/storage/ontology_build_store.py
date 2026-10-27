@@ -1103,8 +1103,21 @@ class OntologyBuildStore:
         return self.learning_review_state(organization_id=organization_id,workspace_id=workspace_id,
             actor_ref=actor_ref,notice_id=notice_id)
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, read_only: bool = False) -> None:
         self._path = Path(path)
+        if read_only:
+            if enabled():
+                raise ValueError('read-only replay requires an explicit retained local snapshot')
+            self._connection = sqlite3.connect(self._path.resolve().as_uri() + '?mode=ro', uri=True, factory=_WorkspaceConnection)
+            try:
+                version = self._connection.execute('PRAGMA user_version').fetchone()[0]
+                if version != _ADVISORY_SUITE_ACTIVATION_VERSION:
+                    raise RuntimeError('unsupported read-only ontology build store user_version')
+                self._connection.execute('SELECT artifact_ref FROM ontology_build_artifacts LIMIT 0')
+            except BaseException:
+                self._connection.close()
+                raise
+            return
         if enabled():
             from storage.ontology_postgres_connection import connect_ontology,ontology_owned_tables
             self._connection=connect_ontology(self._path)
@@ -4706,6 +4719,14 @@ class OntologyBuildStore:
             "SELECT artifact_ref, artifact_hash, schema_version FROM ontology_build_artifacts WHERE organization_id=%s AND workspace_id=%s AND COALESCE(payload_json::jsonb->>'owner_ref',payload_json::jsonb->'profile'->>'owner_ref')=%s AND (schema_version IN ('skill_artifact_version.v1','learned_skill_proposal.v1','learned_skill_assessment.v1','learned_skill_publication_receipt.v1','retained_context_item_change.v1','learning_trace_observation.v1') OR schema_version='semantier.change_candidate.v2') AND recorded_at::timestamptz<=%s::timestamptz AND artifact_ref>%s ORDER BY artifact_ref LIMIT %s"),
             (organization_id,workspace_id,owner_ref,as_of,after_ref,min(201,max(1,limit)))).fetchall()
         return tuple(dict(artifact_ref=r[0],artifact_hash=r[1],schema_version=r[2]) for r in rows)
+
+    def list_routing_feedback_pins(self, *, organization_id, workspace_id, owner_ref, session_id, limit):
+        rows = self._connection.execute(sql_query(
+            "SELECT artifact_ref, artifact_hash FROM ontology_build_artifacts WHERE organization_id=? AND workspace_id=? AND schema_version='routing_feedback_observation.v1' AND json_extract(payload_json,'$.owner_ref')=? AND json_extract(payload_json,'$.session_id')=? ORDER BY artifact_ref LIMIT ?",
+            "SELECT artifact_ref, artifact_hash FROM ontology_build_artifacts WHERE organization_id=%s AND workspace_id=%s AND schema_version='routing_feedback_observation.v1' AND payload_json::jsonb->>'owner_ref'=%s AND payload_json::jsonb->>'session_id'=%s ORDER BY artifact_ref LIMIT %s"),
+            (organization_id, workspace_id, owner_ref, session_id, limit)).fetchall()
+        return tuple(ArtifactPinV1(artifact_kind='routing_feedback_observation', artifact_ref=ref, artifact_hash=digest)
+                     for ref, digest in rows)
 
     def list_learning_trace_pins(self, *, organization_id, workspace_id, owner_ref, session_id, limit):
         """Bound the selected observation scope before decoding any payloads."""

@@ -32,6 +32,15 @@ class TenderLegalComplianceService:
         self.store, self.authority = build_store, authority_resolver
         self.workspace_root, self.db_path = Path(workspace_root), Path(db_path)
 
+    def bind_sources(self, *, actor_context, **inputs):
+        from services.tender_source_case_binding import construct
+        return construct(self, actor_context=actor_context, **inputs)
+
+    def verify_source_case_binding(self, *, actor_context, basis):
+        if basis.source_case_binding is not None:
+            from services.tender_source_case_binding import verify_live
+            verify_live(self, basis.source_case_binding, actor_context=actor_context, finding=basis.finding)
+
     @contextmanager
     def _adoptions(self, actor_context):
         from storage.knowledge_builder_store import KnowledgeBuilderStore
@@ -298,7 +307,7 @@ class TenderLegalComplianceService:
             registry.close()
         return review
 
-    def publish_episode(self, *, actor_context, episode, inspection_service, basis_by_finding=None):
+    def publish_episode(self, *, actor_context, episode, inspection_service, basis_by_finding=None, source_bindings_by_finding=None):
         """Append decisions after the immutable episode; repeated calls reuse exact pins."""
         from storage.runtime_semantic_hypothesis_artifact_store import RuntimeSemanticHypothesisArtifactStore
         from services.tender_review_service import TenderReviewService
@@ -311,6 +320,9 @@ class TenderLegalComplianceService:
             organization_id=result.organization_id, workspace_id=result.workspace_id)
         decisions = []
         supplied = basis_by_finding or {}
+        bindings = source_bindings_by_finding or {}
+        if not set(bindings).issubset({f.finding_id for f in result.governed_findings}):
+            raise ValueError('FINDING_NOT_IN_EPISODE')
         if not set(supplied).issubset({f.finding_id for f in result.governed_findings}):
             raise ValueError('FINDING_NOT_IN_EPISODE')
         for finding in result.governed_findings:
@@ -318,12 +330,21 @@ class TenderLegalComplianceService:
                                                   hypothesis_hash=finding.observed_hypothesis_hash)
             projection = artifacts.get_bounded_projection(projection_ref=hypothesis.decision_projection_ref,
                                                           projection_hash=hypothesis.decision_projection_hash)
+            binding = bindings.get(finding.finding_id)
+            if binding is not None:
+                from services.tender_source_case_binding import verify_live
+                binding = verify_live(self, binding, actor_context=actor_context, finding=finding)
             basis = supplied.get(finding.finding_id)
+            if basis is not None and binding is not None and basis.source_case_binding != binding:
+                raise ValueError('SOURCE_CASE_BINDING_CONFLICT')
             if basis is None:
                 # Resolve adopted mapping on the ordinary publication path. A
                 # retained exact assessment is reused on recovery, not recomputed.
                 advisory, gaps = self._advisory_inputs(actor_context=actor_context, finding=finding,
                     projection=projection, frozen_at=datetime.now(timezone.utc))
+                if binding is not None:
+                    from services.tender_source_case_binding import LEGAL_GAPS
+                    gaps = tuple(dict.fromkeys((*gaps, *LEGAL_GAPS)))
                 previous = [entry for entry in self.read_episode(store=self.store,episode=episode)
                     if entry['basis'].finding == finding]
                 def comparable(a):
@@ -339,9 +360,10 @@ class TenderLegalComplianceService:
                 selection=freeze_assessment_selection(inventory=(finding_pin,),entries=previous)[0]
                 active = [entry for entry in previous if entry['decision'].pin() not in selection.superseded]
                 exact = [entry for entry in active if comparable(entry['basis'].advisory)==comparable(advisory)
-                    and entry['basis'].gaps==gaps]
+                    and entry['basis'].gaps==gaps and entry['basis'].source_case_binding==binding]
                 if len(exact)==1:
                     self.verify_advisory_owners(actor_context=actor_context,basis=exact[0]['basis'],projection=projection)
+                    self.verify_source_case_binding(actor_context=actor_context,basis=exact[0]['basis'])
                     decisions.append(exact[0]['decision'])
                     continue
                 predecessor = selection.selected
@@ -353,8 +375,8 @@ class TenderLegalComplianceService:
                         artifact_ref=result.result_ref, artifact_hash=result.result_hash),
                     finding=finding, target_ir=ArtifactPinV1(artifact_kind='canonical_source_ir',
                         artifact_ref=result.canonical_source_ir_ref, artifact_hash=result.canonical_source_ir_hash),
-                    normative=None, advisory=advisory, gaps=gaps, supersedes_assessment=predecessor,
-                    frozen_at=advisory.projection.frozen_at if advisory is not None and advisory.projection is not None else datetime.now(timezone.utc) if advisory is not None or predecessor is not None else projection.context.recorded_at)
+                    normative=None, advisory=advisory, gaps=gaps, source_case_binding=binding, supersedes_assessment=predecessor,
+                    frozen_at=advisory.projection.frozen_at if advisory is not None and advisory.projection is not None else datetime.now(timezone.utc) if advisory is not None or predecessor is not None or binding is not None else projection.context.recorded_at)
             decision = TenderDecisionRecordService(build_store=self.store, authority_resolver=self.authority).record_evaluation(
                 actor_context=actor_context, episode=episode, basis=basis, projection=projection, hypothesis=hypothesis,
                 compliance_owner=self)
@@ -375,7 +397,7 @@ class TenderLegalComplianceService:
             "AND EXISTS (SELECT 1 FROM json_each(payload_json,'$.reasoning.invocations[0].inputs') AS input "
             "WHERE json_extract(input.value,'$.artifact_kind')='tender_journey_inspection_episode' "
             "AND json_extract(input.value,'$.artifact_ref')=?) "
-            "ORDER BY artifact_ref","SELECT payload_json FROM ontology_build_artifacts WHERE organization_id=%s AND workspace_id=%s AND schema_version='semantier.decision_record.v1' AND (payload_json::jsonb #>> '{reasoning,strategy}')='tender_scoped_compliance_evaluation' AND EXISTS (SELECT 1 FROM json_each(payload_json,'$.reasoning.invocations[0].inputs') AS input WHERE (input.value::jsonb #>> '{artifact_kind}')='tender_journey_inspection_episode' AND (input.value::jsonb #>> '{artifact_ref}')=%s) ORDER BY artifact_ref"),
+            "ORDER BY artifact_ref","SELECT payload_json FROM ontology_build_artifacts WHERE organization_id=%s AND workspace_id=%s AND schema_version='semantier.decision_record.v1' AND (payload_json::jsonb #>> '{reasoning,strategy}')='tender_scoped_compliance_evaluation' AND EXISTS (SELECT 1 FROM jsonb_array_elements(payload_json::jsonb #> '{reasoning,invocations,0,inputs}') AS input(value) WHERE (input.value #>> '{artifact_kind}')='tender_journey_inspection_episode' AND (input.value #>> '{artifact_ref}')=%s) ORDER BY artifact_ref"),
             (result.organization_id,result.workspace_id,episode.transition_id),
         ).fetchall()
         retained = []

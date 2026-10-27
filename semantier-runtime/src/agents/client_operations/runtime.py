@@ -17,7 +17,15 @@ class ClientOperations:
         self.store=Store(env['SEMANTIER_DATABASE_URL'],env.get('SEMANTIER_CLIENT_SCHEMA','semantier_client_operations'))
         key=env.get('SEMANTIER_CLIENT_RECEIPT_KEY','').encode()
         identity=json.loads(env['SEMANTIER_CLIENT_IDENTITY_JSON'])
-        self.publisher=Publisher(self.store,env['SEMANTIER_CLIENT_PUBLIC_ROOT'],env['SEMANTIER_CLIENT_INCOMING_ROOT'],env['SEMANTIER_CLIENT_PUBLIC_BASE'],key,identity,self.channel)
+        target=env.get('SEMANTIER_CLIENT_PUBLICATION_TARGET','filesystem')
+        if target not in {'filesystem','r2'}:raise ValueError('unknown client publication target')
+        remote=None
+        if target=='r2':
+            from .r2_target import R2Target
+            remote=R2Target.configured()
+            if env['SEMANTIER_CLIENT_PUBLIC_BASE']!='https://update2.semantier.com':
+                raise ValueError('R2 update2 publication base required')
+        self.publisher=Publisher(self.store,env['SEMANTIER_CLIENT_PUBLIC_ROOT'],env['SEMANTIER_CLIENT_INCOMING_ROOT'],env['SEMANTIER_CLIENT_PUBLIC_BASE'],key,identity,self.channel,remote_target=remote)
         self.feedback=Feedback(self.store,self.channel)
         self.logs=Path(env['SEMANTIER_CLIENT_LOG_ROOT'])
         from .authorization import FeedbackAuthorizations
@@ -42,6 +50,7 @@ async def start(app,env=None):
     app.state.client_operations=None;app.state.client_operations_task=None
     if env.get('SEMANTIER_CLIENT_OPERATIONS_ENABLED')!='1':return
     service=ClientOperations(env);await asyncio.to_thread(service.check)
+    await asyncio.to_thread(service.publisher.initialize_channel)
     app.state.client_operations=service
     async def tick():
         while True:

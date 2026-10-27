@@ -77,6 +77,14 @@ class GatewayService:
             raise HTTPException(422, 'structured completion must be non-streaming')
         return await self.chat(actor, body, idempotency_key, correlation, account_id=account_id, expected_profile_revision=expected_profile_revision)
 
+    async def routed_chat_for_context(self, ctx, body, idempotency_key, correlation=None, **policy):
+        """Explicit private producer seam; no browser policy or customer activation."""
+        from agents.model_gateway.routing import choose_only
+        actor = await self._actor_for_context(ctx)
+        chosen, decision = await choose_only(self, actor, body, **policy)
+        return await self.chat(actor, {**body, 'model': chosen.alias}, idempotency_key,
+            correlation, account_id=chosen.account_id, _routing_decision=decision)
+
     async def reexecute_for_context(self, ctx, predecessor_id, command, idempotency_key):
         actor = await self._actor_for_context(ctx)
         return await self.reexecute(actor, predecessor_id, command, idempotency_key)
@@ -154,7 +162,7 @@ class GatewayService:
                            admitted['invocation_id'],admitted['attempt_id'])
             await self.billing.mark_uncertain(actor.organization_id,admitted['invocation_id'])
 
-    async def chat(self, actor, body, idempotency_key, correlation=None, *, _reexecution=None, expected_profile_revision=None, account_id=None):
+    async def chat(self, actor, body, idempotency_key, correlation=None, *, _reexecution=None, expected_profile_revision=None, account_id=None, _routing_decision=None):
         try:
             body=validate_chat(body)
         except ValueError as exc:
@@ -165,6 +173,9 @@ class GatewayService:
             d,physical_binding,profile=await self.resolve(actor,body['model'],with_profile=True,account_id=account_id)
         else:
             d,physical_binding,profile=await self.resolve(actor,body['model'],with_profile=True)
+        if _routing_decision is not None:
+            from agents.model_gateway.routing import validate_choice
+            await validate_choice(self, actor, d, _routing_decision, body)
         try: context=task_context(actor,d.account_id,d.currency,correlation or {})
         except ValueError as exc:raise HTTPException(422,str(exc)) from exc
         from agents.model_gateway.capabilities import validate_profile_request
@@ -182,6 +193,7 @@ class GatewayService:
             admission=dict(organization_id=actor.organization_id,account_id=d.account_id,
                 deployment_id=d.deployment_id,funding=d.funding,
                 currency=d.currency,max_cost=d.max_cost,attribution={'actor_user_id':actor.user_id,
+                **({'routing_decision': _routing_decision} if _routing_decision is not None else {}),
                 'native_credential_generation':credential.generation,
                 'native_desired_revision':credential.desired_revision,
                 'native_target_instance_id':credential.target_instance_id,

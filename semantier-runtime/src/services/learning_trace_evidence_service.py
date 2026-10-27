@@ -10,8 +10,9 @@ class LearningTraceEvidenceService:
     MAX_PAYLOAD_BYTES = 1024 * 1024
     MAX_SNAPSHOT_OBSERVATIONS = 1000
 
-    def __init__(self, *, store):
+    def __init__(self, *, store, billing=None):
         self.store = store
+        self.billing = billing
 
     @staticmethod
     def scope(context):
@@ -73,6 +74,46 @@ class LearningTraceEvidenceService:
                     'adapter_revision', 'captured_at'}) == values:
                 return row
         row = candidate
+        self.store.put(row)
+        return row
+
+    def routing_feedback(self, *, context, session_id):
+        from contracts.learning_trace_evidence import RoutingFeedbackObservationV1
+        scope = self.scope(context)
+        if not session_id.startswith(context.workspace_id + ':'):
+            raise PermissionError('FORBIDDEN_TRACE_SESSION')
+        pins = self.store.list_routing_feedback_pins(**scope, owner_ref=context.user_id,
+            session_id=session_id, limit=self.MAX_SNAPSHOT_OBSERVATIONS + 1)
+        if len(pins) > self.MAX_SNAPSHOT_OBSERVATIONS:
+            raise ValueError('TRACE_SCOPE_LIMIT_EXCEEDED')
+        return [self.store.get(**scope, artifact_ref=p.artifact_ref,
+                contract_type=RoutingFeedbackObservationV1) for p in pins]
+
+    async def record_routing_feedback(self, *, context, **values):
+        """Internal producer seam; HTTP clients cannot claim identity or reference quality."""
+        from contracts.learning_trace_evidence import RoutingFeedbackObservationV1
+        scope = self.scope(context)
+        self._safe_payload(values)
+        if len(json.dumps(values, default=str).encode()) > self.MAX_PAYLOAD_BYTES:
+            raise ValueError('TRACE_PAYLOAD_LIMIT_EXCEEDED')
+        if self.billing is None:
+            raise ValueError('QUALITY_ATTACHMENT_UNAVAILABLE_NO_BILLING_OWNER')
+        bound = await self.billing.feedback_subject(context, values['invocation_id'], values['attempt_id'])
+        for key in ('account_id', 'root_task_id', 'session_id'):
+            if values[key] != bound[key]:
+                raise PermissionError('FEEDBACK_SUBJECT_MISMATCH')
+        prior = self.routing_feedback(context=context, session_id=values['session_id'])
+        if values.get('supersedes_ref'):
+            predecessor = next((r for r in prior if r.artifact_ref == values['supersedes_ref']), None)
+            subject = ('account_id', 'root_task_id', 'invocation_id', 'attempt_id', 'dimension')
+            if predecessor is None or any(getattr(predecessor, key) != values[key] for key in subject):
+                raise ValueError('FEEDBACK_PREDECESSOR_OUTSIDE_SUBJECT')
+        row = RoutingFeedbackObservationV1.create(**scope, owner_ref=context.user_id, **values)
+        for old in prior:
+            if old.artifact_ref == row.artifact_ref:
+                return old
+        if len(prior) >= self.MAX_SNAPSHOT_OBSERVATIONS:
+            raise ValueError('TRACE_SCOPE_LIMIT_EXCEEDED')
         self.store.put(row)
         return row
 
