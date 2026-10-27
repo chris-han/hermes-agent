@@ -603,6 +603,7 @@ def put_object(
     fetcher: Callable[..., Response] | None = None,
     *,
     multipart_part_size: int = 64 * 1024 * 1024,
+    on_multipart_created: Callable[[str], None] | None = None,
 ) -> None:
     """Stream file paths, using multipart for large artifacts, or send bytes.
 
@@ -638,7 +639,8 @@ def put_object(
             if is_path and size > multipart_part_size:
                 from .r2_multipart import upload_file
 
-                upload_file(url, cast(str, payload), size, creds, content_type, extra, multipart_part_size)
+                upload_file(url, cast(str, payload), size, creds, content_type, extra, multipart_part_size,
+                            on_created=on_multipart_created)
                 break
             response = (
                 fetcher(method="PUT", url=url, body_hash=body_hash, body=body,

@@ -5,6 +5,11 @@ export class UpdateOperation {
   private strategy: Promise<UpdaterStrategy | null> | undefined
   private applying: boolean = false
   private checking: number = 0
+  private lastCheckStatus: 'failed' | 'completed' | undefined
+
+  get checkStatus(): 'checking' | 'failed' | 'completed' | undefined {
+    return this.checking ? 'checking' : this.lastCheckStatus
+  }
 
   constructor(private readonly initialize: () => Promise<UpdaterStrategy | null>) {}
 
@@ -25,13 +30,22 @@ export class UpdateOperation {
     if (this.applying) { throw new Error('An update is already in progress.') }
     this.checking++
 
-    try { return await run() } finally { this.checking-- }
+    try {
+      const result = await run()
+      this.lastCheckStatus = result.error ? 'failed' : 'completed'
+
+      return result
+    } catch (error) {
+      this.lastCheckStatus = 'failed'
+      throw error
+    } finally { this.checking-- }
   }
 
   changeSelection(save: () => void): void {
     if (this.applying || this.checking) { throw new Error('An update operation is already in progress.') }
     save()
     this.strategy = undefined
+    this.lastCheckStatus = undefined
   }
 
   async apply(run: () => Promise<UpdaterApplyResultWire>): Promise<UpdaterApplyResultWire> {

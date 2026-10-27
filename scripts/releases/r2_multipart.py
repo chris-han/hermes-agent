@@ -4,7 +4,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import http.client
-from typing import Iterable
+from typing import Callable, Iterable
 from xml.etree import ElementTree as ET
 
 
@@ -22,6 +22,7 @@ def _file_range(path: str, offset: int, size: int) -> Iterable[bytes]:
 def upload_file(
     url: str, path: str, size: int, creds: dict[str, str],
     content_type: str | None, headers: dict[str, str], part_size: int,
+    *, on_created: Callable[[str], None] | None = None,
 ) -> None:
     from . import r2
 
@@ -59,6 +60,9 @@ def upload_file(
         return number, etag
 
     try:
+        # Commit external upload identity before any part can consume storage.
+        if on_created is not None:
+            on_created(upload_id)
         # Each worker reopens its range on retries; no whole-artifact buffer.
         with ThreadPoolExecutor() as pool:
             parts = list(pool.map(upload_part, range(0, size, part_size)))

@@ -830,3 +830,40 @@ def test_canonical_header_whitespace_is_collapsed():
         "PUT", "/p", "", {"host": "h", "Content-Type": "application/msix   extra\tvalue"}, "x"
     )
     assert "content-type:application/msix extra value" in canon
+
+
+def test_multipart_owner_receipt_precedes_parts_and_failure_aborts(r2_server, tmp_path):
+    payload = tmp_path / 'owned.msix'
+    payload.write_bytes(b'x' * (5 * 1024 * 1024 + 1))
+    creds, base, bucket = r2.credentials()
+    seen = []
+
+    def capture(upload_id):
+        assert upload_id
+        assert not r2_server.multipart.parts
+        seen.append(upload_id)
+
+    key = 'releases/channel-builds/' + 'b' * 32 + '/owned.msix'
+    r2.put_object(creds, base, bucket, key, payload, NOW, 'application/msixbundle',
+                  {'If-None-Match': '*'}, multipart_part_size=5 * 1024 * 1024,
+                  on_multipart_created=capture)
+    assert len(seen) == 1
+    assert r2_server.store[key][0] == payload.read_bytes()
+
+
+def test_uncommitted_multipart_owner_cannot_upload_parts(r2_server, tmp_path):
+    payload = tmp_path / 'unowned.msix'
+    payload.write_bytes(b'x' * (5 * 1024 * 1024 + 1))
+    creds, base, bucket = r2.credentials()
+
+    def refuse(_):
+        raise OSError('durable journal unavailable')
+
+    key = 'releases/channel-builds/' + 'c' * 32 + '/unowned.msix'
+    with pytest.raises(OSError, match='durable journal unavailable'):
+        r2.put_object(creds, base, bucket, key, payload, NOW, 'application/msixbundle',
+                      {'If-None-Match': '*'}, multipart_part_size=5 * 1024 * 1024,
+                      on_multipart_created=refuse)
+    assert not r2_server.multipart.parts
+    assert r2_server.multipart.aborted == 1
+    assert key not in r2_server.store

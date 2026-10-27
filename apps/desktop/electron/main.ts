@@ -3514,7 +3514,19 @@ async function checkUpdates(opts: { force?: boolean } = {}): Promise<UpdaterStat
     const selection = process.platform === 'win32' ? packagedChannelSelection(INSTALL_STAMP?.channelBuild, DESKTOP_UPDATE_CONFIG_PATH) : null
 
     return selection ? { ...status, releaseChannel: selection.choice } : status
-  } finally { updateChecks -= 1 }
+  } finally {
+    updateChecks -= 1
+    if (canSelectDeliverySource()) {
+      try {
+        const selection = { ...deliverySources.status(), checkStatus: updateOperation.checkStatus }
+        for (const win of BrowserWindow.getAllWindows()) {
+          if (!win.isDestroyed()) { win.webContents.send('hermes:updates:delivery:changed', selection) }
+        }
+      } catch {
+        rememberLog('[updates] Delivery-source status could not be broadcast')
+      }
+    }
+  }
 }
 
 async function checkUpdatesForSelection(opts: { force?: boolean } = {}): Promise<UpdaterStatusWire> {

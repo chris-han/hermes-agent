@@ -659,6 +659,8 @@ declare global {
         setChannel?: (name: 'main' | 'stable' | 'production' | 'development') => Promise<DesktopUpdateStatus>
         getDeliverySources?: () => Promise<DeliverySourceStatus | null>
         setDeliverySource?: (name: DeliverySourceId) => Promise<{
+          saved: true
+          check_status: 'failed' | 'completed'
           selection: DeliverySourceStatus
           status: DesktopUpdateStatus
         }>

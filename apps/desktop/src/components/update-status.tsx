@@ -17,6 +17,8 @@ import {
   $backendUpdateStatus,
   $updateApply,
   $updateChecking,
+  $updateSourceChecking,
+  $updateSourceLoading,
   $updateStatus,
   checkBackendUpdates,
   checkUpdates,
@@ -327,6 +329,8 @@ export function UpdateStatusCard({
   const isBackend = target === 'backend'
   const status = useStore(isBackend ? $backendUpdateStatus : $updateStatus)
   const checking = useStore(isBackend ? $backendUpdateChecking : $updateChecking)
+  const sourceLoading = useStore($updateSourceLoading)
+  const sourceChecking = useStore($updateSourceChecking)
   const apply = useStore(isBackend ? $backendUpdateApply : $updateApply)
   const [justChecked, setJustChecked] = useState<boolean>(false)
 
@@ -383,7 +387,7 @@ export function UpdateStatusCard({
       {view.tone !== 'unsupported' && (
         <div className="mt-3 flex flex-wrap items-center gap-4">
           <Button
-            disabled={checking || view.applying}
+            disabled={checking || view.applying || (!isBackend && (sourceLoading || sourceChecking))}
             onClick={() => void handleCheck()}
             size="sm"
             variant="textStrong"

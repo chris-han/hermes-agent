@@ -8,6 +8,7 @@ import { channelPublicBase } from './channel-protocol'
 export type DeliverySourceId = 'channel1' | 'channel2' | 'channel3'
 export interface DeliverySourceStatus {
   selected: DeliverySourceId
+  checkStatus?: 'checking' | 'completed' | 'failed'
   options: { id: DeliverySourceId; publicBase: string }[]
 }
 const ids: DeliverySourceId[] = ['channel1', 'channel2', 'channel3']

@@ -1,9 +1,8 @@
+import { updateDebt } from '@hermes/shared'
 /**
  * Desktop self-update store. Tracks distance from the configured branch,
  * surfaces it as an ambient pill, and orchestrates the apply flow.
  */
-
-import { updateDebt } from '@hermes/shared'
 import { atom } from 'nanostores'
 
 import { CANONICAL_GATEWAY_PROTOCOL } from '@/api/canonical-protocol'
@@ -25,6 +24,8 @@ import { reconnectGateway } from '@/store/gateway-reconnect'
 import { dismissNotification, notify } from '@/store/notifications'
 import { $connection } from '@/store/session'
 import type { BackendUpdateCheckResponse, UpdateReceiptSummary } from '@/types/hermes'
+
+import type { DeliverySourceStatus } from '../../electron/updater/delivery-source'
 
 /** Keyed per retired-channel revision: a new retirement (or a revision bump on
  *  the same channel) re-shows the notice, a plain re-check never does. */
@@ -57,6 +58,21 @@ const IDLE: UpdateApplyState = {
 export const $desktopVersion = atom<DesktopVersionInfo | null>(null)
 export const $updateApply = atom<UpdateApplyState>(IDLE)
 export const $updateChecking = atom<boolean>(false)
+export const $updateSourceLoading = atom<boolean>(false)
+export const $updateSourceChecking = atom<boolean>(false)
+export const $updateDeliverySource = atom<DeliverySourceStatus | null>(null)
+let deliverySourceGeneration = 0
+let deliverySourceSelected: string | undefined
+
+export function ingestDeliverySource(value: DeliverySourceStatus, changed = false): void {
+  if (changed && value.selected !== deliverySourceSelected) { deliverySourceGeneration += 1 }
+  deliverySourceSelected = value.selected
+  $updateDeliverySource.set(value)
+  $updateSourceChecking.set(value.checkStatus === 'checking')
+
+  if (changed) { $updateStatus.set(null) }
+}
+
 export const $updateOverlayOpen = atom<boolean>(false)
 export const $updateStatus = atom<DesktopUpdateStatus | null>(null)
 
@@ -602,14 +618,20 @@ export async function checkBackendUpdates({
 export async function checkUpdates({ force = false }: UpdateCheckOptions = {}): Promise<DesktopUpdateStatus | null> {
   const bridge = window.hermesDesktop?.updates
 
-  if (!bridge || $updateChecking.get()) {
+  if (!bridge || $updateChecking.get() || $updateSourceLoading.get() || $updateSourceChecking.get()) {
     return $updateStatus.get()
   }
 
+  const sourceGeneration = deliverySourceGeneration
   $updateChecking.set(true)
 
   try {
     const status = await bridge.check({ force })
+
+    if (sourceGeneration !== deliverySourceGeneration) { return $updateStatus.get() }
+    const selected = $updateDeliverySource.get()
+
+    if (selected) { ingestDeliverySource({ ...selected, checkStatus: status.error ? 'failed' : 'completed' }) }
     $updateStatus.set(status)
 
     if (status.retirement) {
@@ -621,6 +643,7 @@ export async function checkUpdates({ force = false }: UpdateCheckOptions = {}): 
 
     return status
   } catch (error) {
+    if (sourceGeneration !== deliverySourceGeneration) { return $updateStatus.get() }
     const previous = $updateStatus.get()
 
     const fallback: DesktopUpdateStatus = {
@@ -1316,6 +1339,7 @@ function ingestProgress(payload: DesktopUpdateProgress): void {
 let pollerStarted = false
 let backgroundTimer: ReturnType<typeof setInterval> | null = null
 let connectionUnsub: (() => void) | null = null
+let deliverySourceUnsub: (() => void) | null = null
 let lastConnectionKey: string | undefined
 
 // mode alone can't tell two remote backends apart — switching directly from
@@ -1360,6 +1384,7 @@ export function startUpdatePoller(): void {
   }
 
   pollerStarted = true
+  deliverySourceUnsub = bridge.onDeliverySourceChanged?.(value => { ingestDeliverySource(value, true) }) ?? null
   runPassiveChecks()
   void refreshDesktopVersion()
   bridge.onProgress(ingestProgress)
@@ -1387,6 +1412,9 @@ export function startUpdatePoller(): void {
 }
 
 export function stopUpdatePoller(): void {
+  deliverySourceUnsub?.()
+  deliverySourceUnsub = null
+
   if (backgroundTimer !== null) {
     clearInterval(backgroundTimer)
     backgroundTimer = null
