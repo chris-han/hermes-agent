@@ -202,6 +202,43 @@ async function productionSurfaces(page, app) {
   await terminal.locator('textarea').press('Control+u')
   checks.push('T13 real integrated terminal in light/dark; no command sent')
 }
+
+async function createProfile(page,name) {
+  await page.evaluate(()=>{location.hash='/profiles'})
+  await page.getByRole('button',{name:'New profile',exact:true}).click()
+  const dialog=page.getByRole('dialog').filter({has:page.locator('#new-profile-name')})
+  await expect(dialog.getByRole('button',{name:'Create profile',exact:true})).toBeDisabled()
+  await expect(dialog.locator('#new-profile-name')).toBeFocused()
+  if(name==='legacy') {
+    await dialog.locator('#new-profile-name').fill('x'.repeat(65))
+    await expect(dialog.locator('#new-profile-name')).toHaveAttribute('aria-invalid','true')
+    await expect(dialog.getByRole('button',{name:'Create profile',exact:true})).toBeDisabled()
+    observations.push({invalidProfile:await dialog.evaluate(el=>{
+      const s=getComputedStyle(el);return {background:s.backgroundColor,shadow:s.boxShadow,radius:s.borderRadius}
+    })})
+    await page.screenshot({path:path.join(output,'profile-invalid-and-disabled.png'),fullPage:true})
+    await dialog.locator('#new-profile-clone-from').click()
+    await expect(page.getByRole('listbox')).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(dialog.locator('#new-profile-clone-from')).toBeFocused()
+    await page.keyboard.press('Escape')
+    await expect(dialog).toHaveCount(0)
+    await page.getByRole('button',{name:'New profile',exact:true}).click()
+  }
+  await dialog.locator('#new-profile-name').fill(name)
+  await dialog.getByRole('button',{name:'Create profile',exact:true}).click()
+  await expect(dialog).toHaveCount(0,{timeout:60000})
+  observations.push({createdProfile:name,via:'production profile dialog'})
+}
+async function selectProfile(page,name) {
+  await page.evaluate(()=>{location.hash='/'})
+  const composer=page.locator('[data-slot="composer-rich-input"][contenteditable="true"]').first()
+  await composer.fill('/profile '+name)
+  await composer.press('Escape')
+  await composer.press('Enter')
+  await expect.poll(()=>page.evaluate(()=>localStorage.getItem('hermes-desktop-active-profile-v1')),{timeout:120000}).toBe(name)
+}
+
 async function fontsAndRoles(page) {
   const evidence=await page.evaluate(async()=>{
     const samples=[['Manrope','Semantier'],['Noto Sans SC','中文默认语言'],['JetBrains Mono','0O1Il']]
@@ -254,6 +291,8 @@ try {
   ;({app,page}=await launch(fresh))
   await expect(page.locator('html')).toHaveAttribute('lang','zh',{timeout:120000})
   checks.push('T12 explicit English and Chinese survive full process restart; nonlanguage sentinel retained')
+  await language(page,'en')
+  for(const name of ['legacy','explicit','inherited']) await createProfile(page,name)
   await page.evaluate(()=>{
     localStorage.setItem('hermes-desktop-theme-v2','nous-alt')
     localStorage.setItem('hermes-desktop-mode-v1','light')
@@ -273,7 +312,21 @@ try {
   assert.deepEqual(migrated.themes,{legacy:'semantier',explicit:'nous'})
   assert.deepEqual(migrated.modes,{legacy:'dark',explicit:'system'})
   observations.push({mixedProfileMigration:migrated})
-  checks.push('T05 mixed profile migration retains explicit alternate theme/modes')
+  await selectProfile(page,'legacy')
+  await expect(page.locator('html')).toHaveAttribute('data-hermes-theme','semantier')
+  await expect(page.locator('html')).toHaveAttribute('data-hermes-mode','dark')
+  await language(page,'zh')
+  await selectProfile(page,'explicit')
+  await expect(page.locator('html')).toHaveAttribute('data-hermes-theme','nous')
+  await expect(page.locator('html')).toHaveAttribute('lang','en',{timeout:60000})
+  await selectProfile(page,'inherited')
+  await expect(page.locator('html')).toHaveAttribute('data-hermes-theme','semantier')
+  await expect(page.locator('html')).toHaveAttribute('data-hermes-mode','light')
+  await expect(page.locator('html')).toHaveAttribute('lang','en',{timeout:60000})
+  await selectProfile(page,'legacy')
+  await expect(page.locator('html')).toHaveAttribute('lang','zh',{timeout:60000})
+  await selectProfile(page,'default')
+  checks.push('T05 real profiles migrate/retain/inherit appearance; profile language choices remain separate')
   await language(page,'en')
   await routeSettings(page,'theme')
   await page.getByRole('button',{name:/Classic Hermes/}).click()
