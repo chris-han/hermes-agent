@@ -78,7 +78,8 @@ async function launch(root) {
   page.on('pageerror',error=>errors.push(error.message))
   await page.waitForLoadState('domcontentloaded')
   await expect(page.locator('html')).toHaveAttribute('data-hermes-theme', /.+/, {timeout:120000})
-  identities.push({...identity,pid:app.process().pid,produced_at:new Date().toISOString()})
+  const nativeWindows=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().map(win=>({title:win.getTitle(),background:win.getBackgroundColor(),bounds:win.getBounds()})))
+  identities.push({...identity,nativeWindows,pid:app.process().pid,produced_at:new Date().toISOString()})
   await page.screenshot({path:path.join(output,'first-window-'+identities.length+'.png')})
   instance = {...instance,app,page,identity}
   return instance
