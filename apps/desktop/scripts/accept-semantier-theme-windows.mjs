@@ -60,6 +60,16 @@ async function launch(root) {
   assert.equal(path.resolve(identity.executable),path.resolve(binding.executable.path))
   assert.equal(path.resolve(identity.userData),path.resolve(root,'userdata'))
   const page = await app.firstWindow({timeout:120000})
+  if(!identities.length) {
+    const cdp=await page.context().newCDPSession(page)
+    let frame=0,last=0
+    cdp.on('Page.screencastFrame',event=>{
+      cdp.send('Page.screencastFrameAck',{sessionId:event.sessionId}).catch(()=>{})
+      if(frame<40&&Date.now()-last>=250) {last=Date.now();fs.writeFileSync(path.join(output,'startup-frame-'+String(++frame).padStart(2,'0')+'.png'),Buffer.from(event.data,'base64'))}
+    })
+    await cdp.send('Page.startScreencast',{format:'png',maxWidth:1440,maxHeight:1000,everyNthFrame:2})
+    instance.startupCapture=cdp
+  }
   await page.context().route('**/*', async route => {
     const url = new URL(route.request().url())
     if (['http:','https:'].includes(url.protocol) && !['localhost','127.0.0.1','[::1]'].includes(url.hostname)) return route.abort()
@@ -70,7 +80,7 @@ async function launch(root) {
   await expect(page.locator('html')).toHaveAttribute('data-hermes-theme', /.+/, {timeout:120000})
   identities.push({...identity,pid:app.process().pid,produced_at:new Date().toISOString()})
   await page.screenshot({path:path.join(output,'first-window-'+identities.length+'.png')})
-  instance = {app,page,identity}
+  instance = {...instance,app,page,identity}
   return instance
 }
 async function routeSettings(page, subpage) {
@@ -212,16 +222,27 @@ async function productionSurfaces(page, app) {
   await page.keyboard.press('Control+Backquote')
   const terminal=page.locator('.xterm').first()
   await expect(terminal).toBeVisible({timeout:60000})
-  await terminal.locator('textarea').focus()
-  await page.keyboard.type('0O1Il') // Visible glyph sample only; never press Enter.
+  // Observe the real terminal owner's serialized output; never inject shell output.
+  const terminalBuffer=()=>page.evaluate(()=>{
+    const state=JSON.parse(localStorage.getItem('hermes.desktop.terminals.v1')||'{}')
+    return state.terminals?.find(item=>item.id===state.activeTerminalId)?.reviveBuffer||''
+  })
+  await expect.poll(terminalBuffer,{timeout:60000}).toMatch(/PS [^\r\n]*>/)
+  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setSize(1440,1000))
   for(const appearance of ['light','dark']) {
     await mode(page,appearance)
     await page.evaluate(()=>{location.hash='/'})
     await expect(terminal).toBeVisible()
+    await terminal.locator('textarea').focus()
+    await terminal.locator('textarea').press('Control+u')
+    await page.keyboard.type('0O1Il') // Visible glyph sample only; never press Enter.
+    await expect.poll(terminalBuffer,{timeout:10000}).toContain('0O1Il')
     observations.push({terminal:appearance,style:await terminal.evaluate(el=>{
       const s=getComputedStyle(el),measure=el.querySelector('.xterm-char-measure-element'),screen=el.querySelector('.xterm-screen');return {font:s.fontFamily,measuredFont:measure?getComputedStyle(measure).fontFamily:null,screenBackground:screen?getComputedStyle(screen).backgroundColor:null,foreground:s.color,background:s.backgroundColor}
     })})
     await capture(page,app,'terminal-'+appearance,1440)
+    await terminal.locator('textarea').press('Control+u')
+    await expect.poll(terminalBuffer,{timeout:10000}).not.toContain('0O1Il')
   }
   await terminal.locator('textarea').press('Control+u')
   checks.push('T13 real integrated terminal in light/dark; no command sent')
@@ -306,6 +327,8 @@ try {
   assert.match(identity.locale,/^en/i,'fresh Chinese case requires actual English host app locale')
   await expect(page.locator('html')).toHaveAttribute('lang','zh',{timeout:120000})
   await expect(page.locator('html')).toHaveAttribute('data-hermes-theme','semantier')
+  await page.screenshot({path:path.join(output,'fresh-chinese-ready.png')})
+  if(instance.startupCapture) {await instance.startupCapture.send('Page.stopScreencast');await instance.startupCapture.detach();delete instance.startupCapture}
   checks.push('T02 packaged Windows identity and isolated userData','T03 fresh Chinese and Semantier on English host')
   for(const lang of ['en','zh']) {
     await language(page,lang)
