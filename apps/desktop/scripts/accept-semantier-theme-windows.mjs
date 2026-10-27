@@ -78,7 +78,7 @@ async function language(page, id) {
 }
 async function mode(page, value) {
   await routeSettings(page,'theme')
-  const names={light:/^Light$|^浅色$/,dark:/^Dark$|^深色$/,system:/^System$|^跟随系统$|^系统$/}
+  const names={light:/^Light$|^明亮$/,dark:/^Dark$|^暗色$/,system:/^System$|^跟随系统$|^系统$/}
   await page.getByRole('button',{name:names[value]}).click()
   if(value!=='system') await expect(page.locator('html')).toHaveAttribute('data-hermes-mode',value)
 }
