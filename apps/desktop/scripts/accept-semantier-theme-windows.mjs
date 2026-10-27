@@ -78,7 +78,14 @@ async function language(page, id) {
   await routeSettings(page,'general')
   const trigger=page.getByRole('button',{name:/Switch language|切换语言/i})
   await trigger.click()
-  await page.locator('[cmdk-item][data-value="'+id+'"]').click()
+  await page.screenshot({path:path.join(output,'language-menu-'+id+'.png')})
+  fs.writeFileSync(path.join(output,'language-menu-'+id+'.json'),JSON.stringify(await page.locator('[cmdk-root], [cmdk-list], [cmdk-item]').evaluateAll(nodes=>nodes.map(node=>{const r=node.getBoundingClientRect();return {tag:node.tagName,value:node.getAttribute('data-value'),text:node.textContent?.slice(0,100),rect:{x:r.x,y:r.y,width:r.width,height:r.height},hit:document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.outerHTML.slice(0,500)}})),null,2))
+  const option=page.locator('[cmdk-item][data-value="'+id+'"]')
+  const bounds=await option.boundingBox()
+  assert.ok(bounds)
+  // Shared keyboard-first lists intentionally ignore a parked pointer until it moves.
+  await page.mouse.move(bounds.x+bounds.width/2,bounds.y+bounds.height/2)
+  await option.click()
   await expect(page.locator('html')).toHaveAttribute('lang',id)
   await expect(page.getByRole('button',{name:/Switch language|切换语言/i})).toBeEnabled()
   await expect(page.locator('[cmdk-input]')).toHaveCount(0)
@@ -155,7 +162,11 @@ async function productionSurfaces(page, app) {
   await page.keyboard.press('Control+k')
   const input = page.locator('[cmdk-input]')
   await input.fill('Everforest')
-  await page.locator('[cmdk-item]').filter({hasText:'Everforest'}).first().hover()
+  const preview=page.locator('[cmdk-item]').filter({hasText:'Everforest'}).first()
+  const previewBounds=await preview.boundingBox()
+  assert.ok(previewBounds)
+  await page.mouse.move(previewBounds.x+previewBounds.width/2,previewBounds.y+previewBounds.height/2)
+  await preview.hover()
   await expect(page.locator('html')).toHaveAttribute('data-hermes-theme', 'everforest')
   await page.keyboard.press('Escape')
   await expect(page.locator('html')).toHaveAttribute('data-hermes-theme', 'semantier')
@@ -356,6 +367,7 @@ try {
   await close()
   assert.deepEqual(errors,[])
 } catch(error) {
+  if(instance?.page) await instance.page.screenshot({path:path.join(output,'failure.png')}).catch(()=>{})
   errors.push(String(error.stack||error))
   throw error
 } finally {
