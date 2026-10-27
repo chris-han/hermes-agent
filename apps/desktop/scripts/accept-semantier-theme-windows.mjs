@@ -86,12 +86,16 @@ async function launch(root) {
 async function routeSettings(page, subpage) {
   await page.evaluate(value=>{location.hash='/settings?tab=config:appearance&page='+value},subpage)
 }
+let languageCapture=0
 async function language(page, id) {
   await routeSettings(page,'general')
   const trigger=page.getByRole('button',{name:/Switch language|切换语言/i})
   await trigger.click()
-  await page.screenshot({path:path.join(output,'language-menu-'+id+'.png')})
-  fs.writeFileSync(path.join(output,'language-menu-'+id+'.json'),JSON.stringify(await page.locator('[cmdk-root], [cmdk-list], [cmdk-item]').evaluateAll(nodes=>nodes.map(node=>{const r=node.getBoundingClientRect();return {tag:node.tagName,value:node.getAttribute('data-value'),text:node.textContent?.slice(0,100),rect:{x:r.x,y:r.y,width:r.width,height:r.height},hit:document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.outerHTML.slice(0,500)}})),null,2))
+  const menuContext=await page.locator('html').evaluate(el=>({theme:el.dataset.hermesTheme,mode:el.dataset.hermesMode,lang:el.lang}))
+  const menuName='language-menu-'+(++languageCapture)+'-'+menuContext.theme+'-'+menuContext.mode+'-to-'+id
+  observations.push({languageMenu:menuName,...menuContext})
+  await page.screenshot({path:path.join(output,menuName+'.png')})
+  fs.writeFileSync(path.join(output,menuName+'.json'),JSON.stringify(await page.locator('[cmdk-root], [cmdk-list], [cmdk-item]').evaluateAll(nodes=>nodes.map(node=>{const r=node.getBoundingClientRect();return {tag:node.tagName,value:node.getAttribute('data-value'),text:node.textContent?.slice(0,100),rect:{x:r.x,y:r.y,width:r.width,height:r.height},hit:document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.outerHTML.slice(0,500)}})),null,2))
   const option=page.locator('[cmdk-item][data-value="'+id+'"]')
   const bounds=await option.boundingBox()
   assert.ok(bounds)
