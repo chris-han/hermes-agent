@@ -260,7 +260,7 @@ async function createProfile(page,name) {
 async function selectProfile(page,name) {
   await page.evaluate(()=>{location.hash='/'})
   const rail=page.getByRole('group',{name:/^Profiles$|^配置档案$/})
-  await rail.getByRole('button',{name:name==='default'?/^default(?:,|$)|^默认/i:new RegExp('^'+name+'(?:,|$)')}).click()
+  await rail.getByRole('button',{name:name==='default'?/default|默认/i:new RegExp('^'+name+'(?:,|$)')}).click()
   await expect.poll(()=>page.evaluate(()=>localStorage.getItem('hermes-desktop-active-profile-v1')),{timeout:120000}).toBe(name)
 }
 
