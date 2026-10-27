@@ -12,7 +12,14 @@ assert.ok(bindingPath && outputArg, 'usage: node accept-semantier-theme-windows.
 const binding = JSON.parse(fs.readFileSync(bindingPath, 'utf8'))
 assert.match(binding.source, /^[a-f0-9]{40}$/)
 assert.match(binding.version, /^\d+\.\d+\.\d+$/)
-const digest = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')
+const digest = file => {
+  const hash=crypto.createHash('sha256'), buffer=Buffer.alloc(1024*1024), fd=fs.openSync(file,'r')
+  try {
+    let size
+    while((size=fs.readSync(fd,buffer,0,buffer.length,null))>0) hash.update(buffer.subarray(0,size))
+    return hash.digest('hex')
+  } finally { fs.closeSync(fd) }
+}
 for (const name of ['executable', 'asar', 'msix']) {
   assert.ok(path.isAbsolute(binding[name].path))
   assert.equal(digest(binding[name].path), binding[name].sha256, name + ' binding')
