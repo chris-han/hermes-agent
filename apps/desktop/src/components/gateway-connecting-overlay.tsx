@@ -100,7 +100,7 @@ function ConnectingOverlayView({ decoding, onExit, phase }: ConnectingOverlayVie
         <DecodeText
           active={decoding}
           className={cn(
-            'pl-[0.4em] text-(--theme-primary) transition duration-300 ease-out',
+            'pl-[0.4em] text-primary transition duration-300 ease-out',
             leaving ? 'translate-y-2 opacity-0 saturate-0' : 'translate-y-0 opacity-100 saturate-100'
           )}
           cursor

@@ -148,9 +148,12 @@ async function contrastRoles(page) {
 }
 
 async function capture(page,app,name,width) {
-  await app.evaluate(({BrowserWindow},width)=>BrowserWindow.getAllWindows()[0].setSize(width,1000),width)
+  const nativeWindow=await app.browserWindow(page)
+  await nativeWindow.evaluate(win=>{if(win.isFullScreen())win.setFullScreen(false);if(win.isMaximized())win.unmaximize()})
+  await expect.poll(()=>nativeWindow.evaluate(win=>win.isMaximized()||win.isFullScreen())).toBe(false)
+  await nativeWindow.evaluate((win,width)=>win.setSize(width,1000),width)
   await page.emulateMedia({reducedMotion:'reduce'})
-  const bounds=await app.evaluate(({BrowserWindow})=>({bounds:BrowserWindow.getAllWindows()[0].getBounds(),minimum:BrowserWindow.getAllWindows()[0].getMinimumSize()}))
+  const bounds=await nativeWindow.evaluate(win=>({id:win.id,bounds:win.getBounds(),minimum:win.getMinimumSize()}))
   await page.evaluate(()=>document.fonts.ready)
   const geometry=await page.evaluate(()=>({width:innerWidth,height:innerHeight,scroll:document.documentElement.scrollWidth,
     theme:document.documentElement.dataset.hermesTheme,mode:document.documentElement.dataset.hermesMode,lang:document.documentElement.lang,
@@ -224,38 +227,36 @@ async function productionSurfaces(page, app) {
   observations.push({systemMode:'packaged renderer media-input dark/light simulation; actual native system restored',native:await app.evaluate(({nativeTheme})=>({source:nativeTheme.themeSource,dark:nativeTheme.shouldUseDarkColors}))})
   // Open the actual integrated terminal; no shell or model command is sent.
   await page.evaluate(()=>{location.hash='/'})
-  await page.keyboard.press('Control+Backquote')
+  if(await page.evaluate(()=>localStorage.getItem('hermes.desktop.terminalTakeover'))!=='true') await page.keyboard.press('Control+Backquote')
   const terminal=page.locator('.xterm').first()
   await expect(terminal).toBeVisible({timeout:60000})
-  // Observe the real terminal owner's serialized output; never inject shell output.
-  const terminalBuffer=()=>page.evaluate(()=>{
-    const state=JSON.parse(localStorage.getItem('hermes.desktop.terminals.v1')||'{}')
-    return state.terminals?.find(item=>item.id===state.activeTerminalId)?.reviveBuffer||''
-  })
-  // Idle prompts are intentionally excluded from persisted history. A harmless
-  // unsubmitted sample enables the real owner's snapshot; clear it after readiness.
-  await terminal.locator('textarea').focus()
-  await page.keyboard.type('0O1Il')
+  await capture(page,app,'terminal-before-sample',1440)
+  // Select all uses the production xterm menu and mirrors real canvas text into
+  // its helper textarea. Reading it neither changes clipboard nor injects output.
+  const terminalBuffer=async()=>{
+    await terminal.click({button:'right',position:{x:30,y:30}})
+    await page.getByRole('menuitem',{name:/Select all/}).click()
+    const value=await terminal.locator('textarea').inputValue()
+    await terminal.locator('textarea').press('ArrowRight')
+    await expect(terminal.locator('textarea')).toHaveValue('')
+    return value
+  }
   await expect.poll(terminalBuffer,{timeout:15000}).toMatch(/PS [^\r\n]*>/)
-  await terminal.locator('textarea').press('Control+u')
-  await expect.poll(terminalBuffer,{timeout:10000}).not.toContain('0O1Il')
-  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setSize(1440,1000))
   for(const appearance of ['light','dark']) {
     await mode(page,appearance)
     await page.evaluate(()=>{location.hash='/'})
     await expect(terminal).toBeVisible()
     await terminal.locator('textarea').focus()
-    await terminal.locator('textarea').press('Control+u')
     await page.keyboard.type('0O1Il') // Visible glyph sample only; never press Enter.
     await expect.poll(terminalBuffer,{timeout:10000}).toContain('0O1Il')
     observations.push({terminal:appearance,style:await terminal.evaluate(el=>{
       const s=getComputedStyle(el),measure=el.querySelector('.xterm-char-measure-element'),screen=el.querySelector('.xterm-screen');return {font:s.fontFamily,measuredFont:measure?getComputedStyle(measure).fontFamily:null,screenBackground:screen?getComputedStyle(screen).backgroundColor:null,foreground:s.color,background:s.backgroundColor}
     })})
     await capture(page,app,'terminal-'+appearance,1440)
-    await terminal.locator('textarea').press('Control+u')
+    await terminal.screenshot({path:path.join(output,'terminal-'+appearance+'-glyphs.png')})
+    for(let i=0;i<5;i++) await terminal.locator('textarea').press('Backspace')
     await expect.poll(terminalBuffer,{timeout:10000}).not.toContain('0O1Il')
   }
-  await terminal.locator('textarea').press('Control+u')
   checks.push('T13 real integrated terminal in light/dark; no command sent')
 }
 
