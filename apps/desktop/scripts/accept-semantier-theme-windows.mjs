@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
+import { fileURLToPath } from 'node:url'
 import { _electron, expect } from '@playwright/test'
 
 const [bindingPath, outputArg] = process.argv.slice(2)
@@ -22,7 +23,7 @@ const output = path.resolve(outputArg)
 assert.ok(!fs.existsSync(output), 'output must be fresh and owned')
 fs.mkdirSync(output, { recursive: true })
 fs.writeFileSync(path.join(output, 'owner.json'), JSON.stringify({ owner: 'windows-semantier-theme-build-v1', source: binding.source }))
-const checks = [], errors = [], captures = []
+const checks = [], errors = [], captures = [], identities = []
 let instance
 const baseEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) =>
   /^(PATH|SYSTEMROOT|WINDIR|COMSPEC|PATHEXT|USERPROFILE|SYSTEMDRIVE|PROCESSOR_ARCHITECTURE|NUMBER_OF_PROCESSORS)$/i.test(k)))
@@ -58,6 +59,8 @@ async function launch(root) {
   page.on('pageerror',error=>errors.push(error.message))
   await page.waitForLoadState('domcontentloaded')
   await expect(page.locator('html')).toHaveAttribute('data-hermes-theme', /.+/, {timeout:120000})
+  identities.push({...identity,pid:app.process().pid,produced_at:new Date().toISOString()})
+  await page.screenshot({path:path.join(output,'first-window-'+identities.length+'.png')})
   instance = {app,page,identity}
   return instance
 }
@@ -70,6 +73,8 @@ async function language(page, id) {
   await trigger.click()
   await page.locator('[cmdk-item][data-value="'+id+'"]').click()
   await expect(page.locator('html')).toHaveAttribute('lang',id)
+  await expect(page.getByRole('button',{name:/Switch language|切换语言/i})).toBeEnabled()
+  await expect(page.locator('[cmdk-input]')).toHaveCount(0)
 }
 async function mode(page, value) {
   await routeSettings(page,'theme')
@@ -236,9 +241,12 @@ try {
 
   await close()
   assert.deepEqual(errors,[])
+} catch(error) {
+  errors.push(String(error.stack||error))
+  throw error
 } finally {
   await close()
-  fs.writeFileSync(path.join(output,'acceptance.json'),JSON.stringify({produced_at:new Date().toISOString(),binding,checks,errors,captures,observations,
+  fs.writeFileSync(path.join(output,'acceptance.json'),JSON.stringify({produced_at:new Date().toISOString(),binding,harness_sha256:digest(fileURLToPath(import.meta.url)),checks,errors,captures,observations,identities,
     pending:['T05 profile inheritance','T07 offline glyph inspection','T08 contrast','T09 controls','T10 overlays','T11 preset/preview/command','T13 terminal','T14 integration'],
     registered_installation:'NOT_RUN',human_usability:'UNMEASURED'},null,2))
 }
