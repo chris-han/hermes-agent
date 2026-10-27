@@ -207,8 +207,15 @@ async function productionSurfaces(page, app) {
   await expect(page.locator('[cmdk-input]')).toBeFocused()
   const surface = await page.locator('[cmdk-root]').evaluate(el => {
     const cs=getComputedStyle(el.closest('[data-radix-popper-content-wrapper]')?.firstElementChild || el)
-    return {background:cs.backgroundColor,shadow:cs.boxShadow,radius:cs.borderRadius}
+    return {background:cs.backgroundColor,shadow:cs.boxShadow,radius:cs.borderRadius,
+      reducedMotion:matchMedia('(prefers-reduced-motion: reduce)').matches,
+      animationDuration:cs.animationDuration,transitionDuration:cs.transitionDuration}
   })
+  assert.equal(surface.reducedMotion,true)
+  for(const durations of [surface.animationDuration,surface.transitionDuration]) {
+    for(const value of durations.split(',')) assert.ok(parseFloat(value)<=0.000011,JSON.stringify(surface))
+  }
+  assert.equal(surface.shadow,'none')
   observations.push({overlay:surface})
   await page.keyboard.press('Escape')
   await expect(trigger).toBeFocused()
