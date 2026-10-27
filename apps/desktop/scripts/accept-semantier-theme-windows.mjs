@@ -12,6 +12,8 @@ assert.ok(bindingPath && outputArg, 'usage: node accept-semantier-theme-windows.
 const binding = JSON.parse(fs.readFileSync(bindingPath, 'utf8'))
 assert.match(binding.source, /^[a-f0-9]{40}$/)
 assert.match(binding.version, /^\d+\.\d+\.\d+$/)
+assert.match(binding.governing_plan_sha256, /^[a-f0-9]{64}$/)
+assert.match(binding.candidate_inputs_sha256, /^[a-f0-9]{64}$/)
 const digest = file => {
   const hash=crypto.createHash('sha256'), buffer=Buffer.alloc(1024*1024), fd=fs.openSync(file,'r')
   try {
@@ -217,7 +219,7 @@ async function productionSurfaces(page, app) {
     await page.evaluate(()=>{location.hash='/'})
     await expect(terminal).toBeVisible()
     observations.push({terminal:appearance,style:await terminal.evaluate(el=>{
-      const s=getComputedStyle(el);return {font:s.fontFamily,foreground:s.color,background:s.backgroundColor}
+      const s=getComputedStyle(el),measure=el.querySelector('.xterm-char-measure-element'),screen=el.querySelector('.xterm-screen');return {font:s.fontFamily,measuredFont:measure?getComputedStyle(measure).fontFamily:null,screenBackground:screen?getComputedStyle(screen).backgroundColor:null,foreground:s.color,background:s.backgroundColor}
     })})
     await capture(page,app,'terminal-'+appearance,1440)
   }
@@ -255,7 +257,17 @@ async function createProfile(page,name) {
   await dialog.locator('#new-profile-soul').fill('native-theme-preservation:'+name)
   await dialog.getByRole('button',{name:'Create profile',exact:true}).click()
   await expect(dialog).toHaveCount(0,{timeout:60000})
-  observations.push({createdProfile:name,via:'production profile dialog'})
+  const soulEditor=page.locator('[data-overlay-surface] .cm-content[contenteditable="true"]')
+  await expect(soulEditor).toHaveText('native-theme-preservation:'+name,{timeout:60000})
+  await soulEditor.fill('native-theme-preservation:'+name+'\n')
+  const saveSoul=page.getByRole('button',{name:'Save SOUL.md',exact:true})
+  await saveSoul.evaluate(el=>{window.__nativeSaveStates=[];window.__nativeSaveObserver=new MutationObserver(()=>{const s=getComputedStyle(el);window.__nativeSaveStates.push({label:el.textContent,disabled:el.disabled,color:s.color,background:s.backgroundColor,border:s.borderColor})});window.__nativeSaveObserver.observe(el,{subtree:true,childList:true,attributes:true,characterData:true})})
+  await saveSoul.click()
+  await expect(saveSoul).toBeDisabled()
+  await expect.poll(()=>page.evaluate(async name=>(await window.hermesDesktop.api({connectionId:'local',profile:name,path:'/api/profiles/'+encodeURIComponent(name)+'/soul'})).content,name)).toBe('native-theme-preservation:'+name+'\n')
+  const saveStates=await page.evaluate(()=>{window.__nativeSaveObserver.disconnect();return window.__nativeSaveStates})
+  assert.ok(saveStates.some(state=>state.disabled&&/saving/i.test(state.label)),'actual saving state observed')
+  observations.push({createdProfile:name,via:'production profile dialog',soulReadWrite:'selected-profile UI scope',saveStates})
 }
 async function selectProfile(page,name) {
   await page.evaluate(()=>{location.hash='/'})
@@ -356,6 +368,15 @@ try {
   await expect(page.locator('html')).toHaveAttribute('data-hermes-theme','nous')
   await expect(page.locator('html')).toHaveAttribute('lang',cloneLanguage||'zh',{timeout:60000})
   await language(page,'en')
+  const peerPromise=app.waitForEvent('window',{timeout:120000})
+  assert.equal((await page.evaluate(()=>window.hermesDesktop.openWindow({connectionId:'local',profile:'explicit'}))).ok,true)
+  const peer=await peerPromise
+  await expect(peer.locator('html')).toHaveAttribute('lang','en',{timeout:120000})
+  await expect(peer.locator('html')).toHaveAttribute('data-hermes-theme','nous')
+  await peer.screenshot({path:path.join(output,'explicit-profile-peer-window.png')})
+  observations.push({peerWindow:{profile:'explicit',language:'en',theme:'nous',url:peer.url()}})
+  await (await app.browserWindow(peer)).evaluate(window=>window.close())
+  checks.push('T12 native peer window inherits explicit profile language and theme')
   await selectProfile(page,'inherited')
   await expect(page.locator('html')).toHaveAttribute('data-hermes-theme','semantier')
   await expect(page.locator('html')).toHaveAttribute('data-hermes-mode','light')
