@@ -232,7 +232,13 @@ async function productionSurfaces(page, app) {
     const state=JSON.parse(localStorage.getItem('hermes.desktop.terminals.v1')||'{}')
     return state.terminals?.find(item=>item.id===state.activeTerminalId)?.reviveBuffer||''
   })
-  await expect.poll(terminalBuffer,{timeout:60000}).toMatch(/PS [^\r\n]*>/)
+  // Idle prompts are intentionally excluded from persisted history. A harmless
+  // unsubmitted sample enables the real owner's snapshot; clear it after readiness.
+  await terminal.locator('textarea').focus()
+  await page.keyboard.type('0O1Il')
+  await expect.poll(terminalBuffer,{timeout:15000}).toMatch(/PS [^\r\n]*>/)
+  await terminal.locator('textarea').press('Control+u')
+  await expect.poll(terminalBuffer,{timeout:10000}).not.toContain('0O1Il')
   await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setSize(1440,1000))
   for(const appearance of ['light','dark']) {
     await mode(page,appearance)
