@@ -82,6 +82,40 @@ async function mode(page, value) {
   await page.getByRole('button',{name:names[value]}).click()
   if(value!=='system') await expect(page.locator('html')).toHaveAttribute('data-hermes-mode',value)
 }
+
+async function contrastRoles(page) {
+  const result=await page.evaluate(()=>{
+    const style=getComputedStyle(document.documentElement)
+    const canvas=new OffscreenCanvas(1,1), context=canvas.getContext('2d',{willReadFrequently:true})
+    const color=value=>{
+      if(!value.trim()) throw new Error('missing rendered role')
+      context.clearRect(0,0,1,1);context.fillStyle=value;context.fillRect(0,0,1,1)
+      return [...context.getImageData(0,0,1,1).data]
+    }
+    const luminance=rgb=>rgb.slice(0,3).map(v=>v/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4)
+      .reduce((sum,v,i)=>sum+v*[.2126,.7152,.0722][i],0)
+    const definitions=[
+      ['action','--dt-primary-solid-foreground','--dt-primary-solid',4.5],
+      ['intelligence','--ui-intelligence-foreground','--ui-intelligence',4.5],
+      ['text','--ui-text-primary','--ui-bg-editor',4.5],
+      ['secondary','--ui-text-secondary','--ui-bg-editor',4.5],
+      ['tertiary','--ui-text-tertiary','--ui-bg-editor',4.5],
+      ['destructive','--dt-destructive-foreground','--dt-destructive',4.5],
+      ['focus','--dt-ring','--ui-bg-chrome',3],
+      ['success','--ui-success','--ui-bg-editor',4.5],
+      ['warning','--ui-warning','--ui-bg-editor',4.5],
+      ['info','--ui-info','--ui-bg-editor',4.5]
+    ]
+    return definitions.map(([name,fg,bg,minimum])=>{
+      const foreground=color(style.getPropertyValue(fg)),background=color(style.getPropertyValue(bg))
+      const a=luminance(foreground),b=luminance(background)
+      return {name,foreground,background,minimum,ratio:(Math.max(a,b)+.05)/(Math.min(a,b)+.05)}
+    })
+  })
+  for(const row of result) assert.ok(row.ratio>=row.minimum,JSON.stringify(row))
+  return result
+}
+
 async function capture(page,app,name,width) {
   await app.evaluate(({BrowserWindow},width)=>BrowserWindow.getAllWindows()[0].setSize(width,1000),width)
   await page.emulateMedia({reducedMotion:'reduce'})
@@ -92,7 +126,7 @@ async function capture(page,app,name,width) {
     fonts:[...document.fonts].filter(f=>f.status==='loaded').map(f=>({family:f.family,weight:f.weight}))}))
   assert.ok(geometry.scroll<=geometry.width+1,'shell overflow')
   await page.screenshot({path:path.join(output,name+'.png'),fullPage:true})
-  captures.push({name,bounds,geometry})
+  captures.push({name,bounds,geometry,contrast:await contrastRoles(page)})
 }
 
 const observations = []
@@ -145,6 +179,8 @@ async function productionSurfaces(page, app) {
   await page.keyboard.press('Control+Backquote')
   const terminal=page.locator('.xterm').first()
   await expect(terminal).toBeVisible({timeout:60000})
+  await terminal.locator('textarea').focus()
+  await page.keyboard.type('0O1Il') // Visible glyph sample only; never press Enter.
   for(const appearance of ['light','dark']) {
     await mode(page,appearance)
     await page.evaluate(()=>{location.hash='/'})
@@ -154,6 +190,7 @@ async function productionSurfaces(page, app) {
     })})
     await capture(page,app,'terminal-'+appearance,1440)
   }
+  await terminal.locator('textarea').press('Control+u')
   checks.push('T13 real integrated terminal in light/dark; no command sent')
 }
 async function fontsAndRoles(page) {
@@ -162,11 +199,11 @@ async function fontsAndRoles(page) {
     const fonts=[]
     for(const [family,sample] of samples) for(const weight of [400,500,600,700]) {
       const loaded=await document.fonts.load(weight+' 16px "'+family+'"',sample)
-      fonts.push({family,weight,count:loaded.length,status:loaded.map(f=>f.status)})
+      fonts.push({family,weight,count:loaded.length,status:loaded.map(f=>f.status),matched:loaded.map(f=>({family:f.family,weight:f.weight,style:f.style}))})
     }
     const style=getComputedStyle(document.documentElement)
-    const names=['--background','--foreground','--primary','--primary-foreground','--destructive','--ring',
-      '--ui-bg','--ui-text-primary','--ui-text-secondary','--ui-action-primary','--ui-intelligence']
+    const names=['--theme-background-seed','--theme-foreground','--theme-primary','--dt-primary-foreground','--dt-destructive','--dt-ring',
+      '--ui-bg-chrome','--ui-text-primary','--ui-text-secondary','--dt-primary-solid','--ui-intelligence']
     return {fonts,roles:Object.fromEntries(names.map(n=>[n,style.getPropertyValue(n)])),
       controls:[...document.querySelectorAll('button,input,[role="combobox"]')].filter(e=>e.getBoundingClientRect().width>0).slice(0,60).map(el=>{
         const c=getComputedStyle(el),r=el.getBoundingClientRect()
