@@ -640,6 +640,7 @@ import { readSourceUpdate, sourceChannelName, type SourceUpdate } from './update
 import { ExternalStrategy } from './updater/external'
 import { readUpdatesFeedBaseFromConfig, resolveFeedBaseUrl } from './updater/feed-config'
 import { createChannelMacStrategy, createMacStrategy } from './updater/mac-client'
+import { nativeUpdateFetch } from './updater/network'
 import { UpdateOperation } from './updater/operation'
 import {
   type ConsumedRelaunch,
@@ -3587,6 +3588,7 @@ async function createPackagedUpdateStrategy(): Promise<UpdaterStrategy | null> {
       installedChannel: installedBuild.channel,
       mechanism,
       resolver: new ChannelResolver({
+        fetch: process.platform === 'win32' ? fetchDesktopUpdate : undefined,
         build,
         platform: process.platform,
         arch: process.arch,
@@ -3611,6 +3613,10 @@ async function createPackagedUpdateStrategy(): Promise<UpdaterStrategy | null> {
 
   return createNativePackagedStrategy(mechanism)
 }
+
+// Use the operating system's network/proxy policy without sending browser cookies.
+const fetchDesktopUpdate = nativeUpdateFetch((input, init) =>
+  electronNet.fetch(input instanceof URL ? input.href : input, init))
 
 function createNativePackagedStrategy(
   mechanism: UpdaterStrategy['mechanism'],
@@ -3647,7 +3653,7 @@ function createNativePackagedStrategy(
       light: isLightVariant(),
       feedBaseUrl: resolveDesktopFeedBaseUrl(),
       installer: {
-        prepare: url => stageAppInstallerFile(url, path.join(app.getPath('userData'), 'updates')),
+        prepare: url => stageAppInstallerFile(url, path.join(app.getPath('userData'), 'updates'), fetchDesktopUpdate),
         open: file => shell.openPath(file)
       },
       teardownBundledBackend,
@@ -3672,7 +3678,7 @@ function createNativePackagedStrategy(
 
     return target
       ? createChannelAppInstallerStrategy(deps, target, async (file, selected) => {
-          await verifyPreparedChannelInstaller(file, selected)
+          await verifyPreparedChannelInstaller(file, selected, undefined, fetchDesktopUpdate)
           semantierObservations.verified(selected.package.artifact.sha256)
         })
       : new AppInstallerStrategy(deps)
