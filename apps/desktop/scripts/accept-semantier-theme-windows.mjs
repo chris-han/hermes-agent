@@ -412,6 +412,8 @@ try {
   const peer=await peerPromise
   await expect(peer.locator('html')).toHaveAttribute('lang','en',{timeout:120000})
   await expect(peer.locator('html')).toHaveAttribute('data-hermes-theme','nous')
+  await expect(peer.locator('[data-glass-opaque][class*="z-(--z-connecting)"]')).toHaveCount(0,{timeout:120000})
+  await expect(peer.getByRole('button',{name:/New session/}).first()).toBeVisible()
   await peer.screenshot({path:path.join(output,'explicit-profile-peer-window.png')})
   observations.push({peerWindow:{profile:'explicit',language:'en',theme:'nous',url:peer.url()}})
   await (await app.browserWindow(peer)).evaluate(window=>window.close())
