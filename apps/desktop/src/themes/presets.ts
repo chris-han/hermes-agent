@@ -15,7 +15,7 @@
  *
  * Re-convert marketplace forks from the upstream extension rather than
  * hand-editing hexes; hand edits drift from upstream silently and can't be
- * re-derived. `nous-alt` is first-party — do not re-derive it from GitHub.
+ * re-derived. `semantier` is the first-party Asimov adapter, not a marketplace fork.
  */
 
 import { THEME_PRESET_PALETTES } from '@hermes/shared'
@@ -105,8 +105,8 @@ export const githubTheme: DesktopTheme = {
   }
 }
 
-/** Desktop default: retain GitHub neutral chrome and the persisted `nous`
- * identity, replacing only its accent family with Asimov Action Yellow.
+/** Optional legacy Nous palette: retain GitHub neutral chrome and the persisted
+ * `nous` identity, with its existing Asimov Action Yellow accent.
  * Light text/focus uses the contrast-safe agency role, not bright yellow. */
 const ACTION_YELLOW = '#e8c92d'
 const ACTION_INK = '#1a2028'
@@ -330,19 +330,113 @@ export const solarizedTheme: DesktopTheme = {
   }
 }
 
-/**
- * Nous Alt — the hand-authored Nous from before the GitHub fork. Light is
- * glass neutrals with brand blue; dark is cream on mission-blue.
- */
-export const nousAltTheme: DesktopTheme = {
-  name: 'nous-alt',
-  label: 'Nous Alt',
-  description: 'Glass neutrals, cream on mission-blue',
-  ...THEME_PRESET_PALETTES['nous-alt'],
+/** Native adapter of docs/operational/design.md §2–3. Palette values live here;
+ * styles.css maps the adapter into the desktop's existing surface roles. */
+export const semantierTheme: DesktopTheme = {
+  name: 'semantier',
+  label: 'Semantier',
+  description: 'Asimov — neutral instruments, yellow actions, green intelligence',
+  colors: {
+    background: '#f3f4f5',
+    foreground: '#1a1b1e',
+    card: '#ffffff',
+    cardForeground: '#1a1b1e',
+    muted: '#ebebec',
+    mutedForeground: '#43474e',
+    popover: '#ffffff',
+    popoverForeground: '#1a1b1e',
+    primary: ACTION_YELLOW,
+    primaryForeground: ACTION_INK,
+    secondary: '#dde0e3',
+    secondaryForeground: '#1a1b1e',
+    accent: '#ebebec',
+    accentForeground: '#1a1b1e',
+    border: '#c2c7ce',
+    input: '#72787e',
+    ring: '#665300',
+    midground: '#665300',
+    midgroundForeground: '#ffffff',
+    composerRing: '#665300',
+    destructive: '#c43418',
+    destructiveForeground: '#ffffff',
+    sidebarBackground: '#f8f9fa',
+    sidebarBorder: '#c2c7ce',
+    userBubble: '#ffffff',
+    userBubbleBorder: '#c2c7ce'
+  },
+  darkColors: {
+    background: '#1a1b1e',
+    foreground: '#ffffff',
+    card: '#191c1d',
+    cardForeground: '#ffffff',
+    muted: '#2e3132',
+    mutedForeground: '#c2c7ce',
+    popover: '#191c1d',
+    popoverForeground: '#ffffff',
+    primary: ACTION_YELLOW,
+    primaryForeground: ACTION_INK,
+    secondary: '#3a3e40',
+    secondaryForeground: '#ffffff',
+    accent: '#2e3132',
+    accentForeground: '#ffffff',
+    border: '#43474e',
+    input: '#72787e',
+    ring: ACTION_YELLOW,
+    midground: ACTION_YELLOW,
+    midgroundForeground: ACTION_INK,
+    composerRing: ACTION_YELLOW,
+    destructive: '#e05a3f',
+    destructiveForeground: '#1a1b1e',
+    sidebarBackground: '#191c1d',
+    sidebarBorder: '#43474e',
+    userBubble: '#191c1d',
+    userBubbleBorder: '#43474e'
+  },
   typography: {
-    fontSans: SYSTEM_SANS,
-    fontMono: SYSTEM_MONO,
-    fontUrl: 'https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&display=swap'
+    fontSans: '"Manrope", "Noto Sans SC", "Microsoft YaHei", "PingFang SC", ' + SYSTEM_SANS,
+    fontMono: SYSTEM_MONO
+  },
+  terminal: {
+    foreground: '#1a1b1e',
+    cursor: '#665300',
+    selectionBackground: '#e8c92d55',
+    black: '#1a1b1e',
+    red: '#c43418',
+    green: '#26776d',
+    yellow: '#665300',
+    blue: '#2b6c92',
+    magenta: '#765292',
+    cyan: '#267180',
+    white: '#5e646a',
+    brightBlack: '#43474e',
+    brightRed: '#b12b14',
+    brightGreen: '#20675e',
+    brightYellow: '#7d5000',
+    brightBlue: '#245d7e',
+    brightMagenta: '#65447f',
+    brightCyan: '#205f6b',
+    brightWhite: '#72787e'
+  },
+  darkTerminal: {
+    foreground: '#ffffff',
+    cursor: ACTION_YELLOW,
+    selectionBackground: '#e8c92d44',
+    black: '#72787e',
+    red: '#e05a3f',
+    green: '#53b8a7',
+    yellow: '#e8a020',
+    blue: '#6fb5e0',
+    magenta: '#ba9ada',
+    cyan: '#74c2cd',
+    white: '#c2c7ce',
+    brightBlack: '#a3a9b0',
+    brightRed: '#f08067',
+    brightGreen: '#70d0be',
+    brightYellow: ACTION_YELLOW,
+    brightBlue: '#92c9ea',
+    brightMagenta: '#d2b5eb',
+    brightCyan: '#94d6dd',
+    brightWhite: '#ffffff'
   }
 }
 
@@ -378,7 +472,7 @@ const classicPalette = (colors: Record<string, string>) => skinToDesktopTheme({ 
 /**
  * Classic Hermes — the CLI's stock `default` skin (gold on navy), offered as a
  * Desktop pick under its OWN id. Never `default`: stock config ships
- * `display.skin: default`, and Desktop reads that as "no pick" (→ nous), so a
+ * `display.skin: default`, and Desktop reads that as "no pick" (→ semantier), so a
  * user only ever gets Classic by choosing it (#76579). Both palettes go through
  * the converter a backend skin takes, so each mode paints what the CLI paints
  * in a dark or light terminal.
@@ -449,12 +543,12 @@ export const slateTheme: DesktopTheme = {
 }
 
 export const BUILTIN_THEMES: Record<string, DesktopTheme> = {
+  semantier: semantierTheme,
   nous: nousTheme,
   github: githubTheme,
   catppuccin: catppuccinTheme,
   everforest: everforestTheme,
   solarized: solarizedTheme,
-  'nous-alt': nousAltTheme,
   classic: classicTheme,
   midnight: midnightTheme,
   ember: emberTheme,
@@ -466,10 +560,10 @@ export const BUILTIN_THEMES: Record<string, DesktopTheme> = {
 export const BUILTIN_THEME_LIST = Object.values(BUILTIN_THEMES)
 
 /** Skin used when nothing is persisted or the persisted name is retired. */
-export const DEFAULT_SKIN_NAME = 'nous'
+export const DEFAULT_SKIN_NAME = 'semantier'
 
 /** Names that no longer resolve to a skin of their own. A stored pick of one
  *  falls back to DEFAULT_SKIN_NAME, and a cached backend theme under one is
  *  dropped (the reverted #130015 build cached the CLI `default` skin as a
  *  second "Classic Hermes"). */
-export const RETIRED_SKINS = new Set(['nous-light', 'default', 'gold'])
+export const RETIRED_SKINS = new Set(['nous-alt', 'nous-light', 'default', 'gold'])

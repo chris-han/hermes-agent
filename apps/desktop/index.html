@@ -28,9 +28,19 @@
         if (!win || ['hud', 'overlay', 'quick', 'wake'].indexOf(win) === -1) {
           let bg = localStorage.getItem('hermes-boot-background')
           let scheme = localStorage.getItem('hermes-boot-color-scheme')
+          const profile = localStorage.getItem('hermes-desktop-active-profile-v1') || 'default'
+          const record = key => {
+            try { return JSON.parse(localStorage.getItem(key) || '{}') || {} } catch { return {} }
+          }
+          const selected = record('hermes-desktop-profile-themes-v1')[profile] ||
+            localStorage.getItem('hermes-desktop-theme-v2')
+          // A retired Nous Alt pick must not flash its old blue boot cache.
+          if (selected === 'nous-alt') bg = null
           if (!bg) {
-            const dark = window.matchMedia('(prefers-color-scheme: dark)').matches
-            bg = dark ? '#111111' : '#f7f7f7'
+            const pref = record('hermes-desktop-profile-modes-v1')[profile] ||
+              localStorage.getItem('hermes-desktop-mode-v1') || 'system'
+            const dark = pref === 'dark' || (pref === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+            bg = dark ? '#1a1b1e' : '#f3f4f5'
             scheme = dark ? 'dark' : 'light'
           }
           document.documentElement.style.backgroundColor = bg

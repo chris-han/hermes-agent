@@ -67,6 +67,7 @@ export function SearchField({
         !value && 'opacity-30 focus-within:opacity-100',
         containerClassName
       )}
+      data-slot="search-field"
     >
       <Search className="pointer-events-none size-3.5 shrink-0 text-muted-foreground/70" />
       <input

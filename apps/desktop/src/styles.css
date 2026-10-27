@@ -3,6 +3,14 @@
 @import 'tw-shimmer';
 @import 'katex/dist/katex.min.css';
 @import '@vscode/codicons/dist/codicon.css';
+@import '@fontsource/manrope/400.css';
+@import '@fontsource/manrope/500.css';
+@import '@fontsource/manrope/600.css';
+@import '@fontsource/manrope/700.css';
+@import '@fontsource/noto-sans-sc/400.css';
+@import '@fontsource/noto-sans-sc/500.css';
+@import '@fontsource/noto-sans-sc/600.css';
+@import '@fontsource/noto-sans-sc/700.css';
 
 /* Titlebar clusters: 24×24 hit targets, 13.9px glyphs. codicon.css is
    unlayered (`font: 16px/1`); Tailwind utilities in @layer lose that fight. */
@@ -92,14 +100,7 @@
    (this variant) flatten everything into one shared scroll. See ChatSidebar. */
 @custom-variant compact (@media (max-height: 768px));
 
-/* Bundled for offline wordmarks; the font's OFL notice ships beside it. */
-@font-face {
-  font-family: 'Manrope';
-  src: url('./fonts/Manrope-Bold.woff2') format('woff2');
-  font-style: normal;
-  font-weight: 700;
-  font-display: swap;
-}
+/* Manrope/Noto Sans SC are bundled above, including every UI weight. */
 
 @font-face {
   font-family: 'Collapse';
@@ -162,14 +163,14 @@
 
   --spacing-mul: var(--dt-spacing-mul, 1);
 
-  --radius-xs: calc(var(--radius-scalar) * 0.125rem);
-  --radius-sm: calc(var(--radius-scalar) * 0.5rem);
-  --radius-md: calc(var(--radius-scalar) * 0.625rem);
-  --radius-lg: calc(var(--radius-scalar) * 0.75rem);
-  --radius-xl: calc(var(--radius-scalar) * 1rem);
-  --radius-2xl: calc(var(--radius-scalar) * 1.5rem);
-  --radius-3xl: calc(var(--radius-scalar) * 2rem);
-  --radius-4xl: calc(var(--radius-scalar) * 2.5rem);
+  --radius-xs: var(--dt-radius-control, calc(var(--radius-scalar) * 0.125rem));
+  --radius-sm: var(--dt-radius-control, calc(var(--radius-scalar) * 0.5rem));
+  --radius-md: var(--dt-radius-content, calc(var(--radius-scalar) * 0.625rem));
+  --radius-lg: var(--dt-radius-panel, calc(var(--radius-scalar) * 0.75rem));
+  --radius-xl: var(--dt-radius-panel, calc(var(--radius-scalar) * 1rem));
+  --radius-2xl: var(--dt-radius-panel, calc(var(--radius-scalar) * 1.5rem));
+  --radius-3xl: var(--dt-radius-panel, calc(var(--radius-scalar) * 2rem));
+  --radius-4xl: var(--dt-radius-panel, calc(var(--radius-scalar) * 2.5rem));
 
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
@@ -672,7 +673,7 @@
      pinned back to the opaque chrome mix: xterm resolves its surface var to a
      concrete color for its canvas (see right-sidebar/terminal/selection.ts),
      which does not composite page alpha. */
-  :root[data-hermes-glass] {
+  :root[data-hermes-glass]:not([data-hermes-design='asimov']) {
     background-color: transparent !important;
     --ui-chat-surface-background: transparent;
     --ui-sidebar-surface-background: transparent;
@@ -680,7 +681,7 @@
     --ui-terminal-surface-background: var(--ui-bg-chrome);
   }
 
-  :root[data-hermes-glass] body {
+  :root[data-hermes-glass]:not([data-hermes-design='asimov']) body {
     background: color-mix(in srgb, var(--ui-bg-chrome) var(--translucency-glass-keep, 100%), transparent);
   }
 
@@ -692,7 +693,7 @@
      no smear across the seam; RTL mirrors via html[dir='rtl']. The content
      column's own surfaces stay transparent (they'd double-paint the tint
      otherwise) — the body backdrop alone restores the opaque look. */
-  :root[data-hermes-glass][data-hermes-glass-scope='sidebar'] body {
+  :root[data-hermes-glass]:not([data-hermes-design='asimov'])[data-hermes-glass-scope='sidebar'] body {
     background: linear-gradient(
       to right,
       color-mix(in srgb, var(--ui-bg-chrome) var(--translucency-glass-keep, 100%), transparent)
@@ -701,7 +702,7 @@
     );
   }
 
-  :root[data-hermes-glass][data-hermes-glass-scope='sidebar'][dir='rtl'] body {
+  :root[data-hermes-glass]:not([data-hermes-design='asimov'])[data-hermes-glass-scope='sidebar'][dir='rtl'] body {
     background: linear-gradient(
       to left,
       color-mix(in srgb, var(--ui-bg-chrome) var(--translucency-glass-keep, 100%), transparent)
@@ -715,8 +716,8 @@
      surface. Their fills are Tailwind utilities (bg-(--ui-bg-chrome) /
      bg-background), which cascade-layer above these base rules — hence the
      !important. Clearing them makes <body> the window's only field paint. */
-  :root[data-hermes-glass] [data-contrib-shell],
-  :root[data-hermes-glass] [data-slot='sidebar-wrapper'] {
+  :root[data-hermes-glass]:not([data-hermes-design='asimov']) [data-contrib-shell],
+  :root[data-hermes-glass]:not([data-hermes-design='asimov']) [data-slot='sidebar-wrapper'] {
     background-color: transparent !important;
   }
 
@@ -725,7 +726,7 @@
      Anything that paints over its own siblings declares `data-glass-opaque`
      at its call site (the diff gutter, a dragged sidebar row), rather than
      styles.css reaching in by class name. */
-  :root[data-hermes-glass] [data-glass-opaque] {
+  :root[data-hermes-glass]:not([data-hermes-design='asimov']) [data-glass-opaque] {
     --ui-chat-surface-background: var(--ui-bg-chrome);
     --ui-editor-surface-background: var(--ui-bg-chrome);
     --ui-sidebar-surface-background: var(--ui-bg-sidebar);
@@ -737,7 +738,7 @@
      more than 94%. The card wears the chat token and its internal nav asides
      wear the sidebar token, so both come back as almost-solid fills and the
      two-tone layout survives. */
-  :root[data-hermes-glass] [data-glass-raised] {
+  :root[data-hermes-glass]:not([data-hermes-design='asimov']) [data-glass-raised] {
     --ui-chat-surface-background: color-mix(
       in srgb,
       var(--ui-bg-chrome) max(94%, var(--translucency-glass-keep, 100%)),
@@ -757,7 +758,8 @@
      shape: the bar belongs to the opaque content column across the full
      width, and the rail's glass ends at its top edge. Window scope has no
      seam, so the bar stays transparent there. */
-  :root[data-hermes-glass][data-hermes-glass-scope='sidebar'] [data-slot='statusbar'] {
+  :root[data-hermes-glass]:not([data-hermes-design='asimov'])[data-hermes-glass-scope='sidebar']
+    [data-slot='statusbar'] {
     --ui-sidebar-surface-background: var(--ui-bg-chrome);
   }
 
@@ -3903,4 +3905,192 @@ html[data-hud-window] [data-slot='popover-content'] {
 @utility text-primary {
   /* Tailwind also emits its generic primary color for this exact utility. */
   color: var(--theme-primary-text, var(--dt-primary)) !important;
+}
+
+/* Semantier native Asimov adapter. The preset owns palette seeds; this shared
+   owner binds desktop roles without changing routes or per-profile preferences.
+   Optional imported themes retain their own presentation. */
+:root[data-hermes-design='asimov'] {
+  --ui-bg-chrome: var(--theme-background-seed);
+  --ui-bg-sidebar: var(--theme-sidebar-seed);
+  --ui-bg-editor: var(--theme-card-seed);
+  --ui-bg-elevated: var(--theme-elevated-seed);
+  --ui-bg-card: var(--theme-card-seed);
+  --ui-bg-input: var(--dt-muted);
+  --ui-bg-primary: var(--theme-secondary);
+  --ui-bg-secondary: var(--dt-muted);
+  --ui-bg-tertiary: var(--dt-muted);
+  --ui-bg-quaternary: var(--dt-muted);
+  --ui-bg-quinary: var(--theme-sidebar-seed);
+  --ui-row-hover-background: var(--dt-muted);
+  --ui-row-active-background: var(--theme-secondary);
+  --ui-row-open-background: var(--dt-muted);
+  --ui-control-hover-background: var(--theme-secondary);
+  --ui-control-active-background: var(--dt-muted);
+  --ui-text-primary: var(--ui-base);
+  --ui-text-secondary: var(--theme-muted-foreground);
+  --ui-text-tertiary: #5e646a;
+  --ui-text-quaternary: var(--ui-text-tertiary);
+  --conversation-scaffold-text: var(--ui-text-secondary);
+  --conversation-scaffold-meta: var(--ui-text-tertiary);
+  --ui-stroke-primary: var(--dt-input);
+  --ui-stroke-secondary: var(--dt-border);
+  --ui-stroke-tertiary: var(--dt-border);
+  --ui-stroke-quaternary: var(--dt-border);
+  --sidebar-edge-border: var(--dt-sidebar-border);
+  --stroke-nous: var(--dt-border);
+  --ui-chat-surface-background: var(--dt-muted);
+  --ui-sidebar-surface-background: var(--ui-bg-sidebar);
+  --ui-editor-surface-background: var(--ui-bg-editor);
+  --ui-terminal-surface-background: var(--ui-chat-surface-background);
+  --ui-widget-surface-background: var(--ui-bg-editor);
+  --ui-chat-bubble-background: var(--theme-bubble-seed);
+  --ui-chat-bubble-opaque-background: var(--theme-bubble-seed);
+  --ui-inline-code-background: var(--theme-secondary);
+  --ui-inline-code-foreground: var(--ui-text-primary);
+  --ui-selection-background: color-mix(in srgb, var(--theme-primary) 32%, transparent);
+  --dt-popover: var(--ui-bg-elevated);
+  --dt-input-border: 100%;
+  --dt-input-bg: 100%;
+  --dt-input-inset: none;
+  --dt-scrollbar-thumb: var(--ui-text-tertiary);
+  --ui-intelligence: #9fe870;
+  --ui-intelligence-foreground: #163300;
+  --ui-warning: #7d5000;
+  --ui-info: #2b6c92;
+  --ui-red: var(--dt-destructive);
+  --ui-green: var(--ui-success);
+  --ui-yellow: var(--ui-warning);
+  --ui-blue: var(--ui-info);
+  --conversation-text-base-size: 0.875rem;
+  --conversation-tool-base-size: 0.75rem;
+  --conversation-base-line-height: 1.25rem;
+  --dt-radius-control: 3px;
+  --dt-radius-content: 4px;
+  --dt-radius-panel: 8px;
+}
+
+:root.dark[data-hermes-design='asimov'] {
+  --ui-chat-surface-background: #000000;
+  --ui-text-tertiary: #a3a9b0;
+  --ui-warning: #e8a020;
+  --ui-info: #6fb5e0;
+}
+
+/* Role-based radii replace the scalar only for the native Asimov theme.
+   Full circles (avatars, switches, activity dots) keep their semantic geometry. */
+:root[data-hermes-design='asimov']
+  :is(
+    [data-slot='button']:not([data-size='grip']),
+    .desktop-input-chrome,
+    [data-slot='tabs-trigger'],
+    [data-slot='toggle'],
+    [data-slot='toggle-group-item']
+  ) {
+  border-radius: var(--dt-radius-control);
+}
+
+:root[data-hermes-design='asimov']
+  :is(
+    [data-slot='dialog-content'],
+    [data-overlay-surface],
+    [data-slot='dropdown-menu-content'],
+    [data-slot='select-content'],
+    [data-slot='popover-content']
+  ) {
+  border-radius: var(--dt-radius-panel);
+  border-color: var(--dt-border);
+  background-color: var(--dt-popover);
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+:root[data-hermes-design='asimov'] :is(.shadow-xs, .shadow-sm, .shadow-md, .shadow-lg, .shadow-nous, .shadow-composer) {
+  box-shadow: none;
+}
+
+:root[data-hermes-design='asimov']
+  :is(
+    [data-slot='composer-root'],
+    [data-slot='composer-root'][data-thread-scrolled-up],
+    [data-slot='composer-dock']:is(:hover, :focus-within) [data-slot='composer-root'][data-thread-scrolled-up]
+  ) {
+  --composer-fill: var(--theme-card-seed);
+}
+
+:root[data-hermes-design='asimov'] :is([data-slot='composer-root'], .composerSurfaceGlass) {
+  border-radius: var(--dt-radius-panel);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+:root[data-hermes-design='asimov']
+  :is(
+    button,
+    a[href],
+    input,
+    textarea,
+    select,
+    [role='button'],
+    [role='combobox'],
+    [role='tab'],
+    summary
+  ):focus-visible {
+  outline: 2px solid var(--dt-ring);
+  outline-offset: 2px;
+}
+
+:root[data-hermes-design='asimov'] [data-slot='search-field'] {
+  opacity: 1;
+}
+
+:root[data-hermes-design='asimov'] input::placeholder,
+:root[data-hermes-design='asimov'] textarea::placeholder {
+  color: var(--ui-text-tertiary);
+  opacity: 1;
+}
+
+:root[data-hermes-design='asimov'] .desktop-input-chrome {
+  border-color: var(--dt-input);
+}
+
+:root[data-hermes-design='asimov'] .desktop-input-chrome:is(:focus, :focus-within, [data-state='open']) {
+  border-color: var(--dt-ring);
+  box-shadow: none;
+}
+
+:root[data-hermes-design='asimov'] .desktop-input-chrome[aria-invalid='true'] {
+  border-color: var(--dt-destructive);
+  outline-color: var(--dt-destructive);
+}
+
+:root[data-hermes-design='asimov']
+  :is(button, a[href], select, [role='button'], [role='tab'], summary):not(:disabled):not([aria-disabled='true']) {
+  cursor: pointer;
+}
+
+:root[data-hermes-design='asimov'] :is(button, input, textarea, select):disabled,
+:root[data-hermes-design='asimov'] [aria-disabled='true'] {
+  cursor: not-allowed;
+}
+
+:root[data-hermes-design='asimov'] :is(.font-mono, code, pre, kbd) {
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-feature-settings:
+    'zero' 1,
+    'calt' 1;
+}
+
+:root[data-hermes-design='asimov'] body {
+  font-feature-settings: 'calt' 1;
+}
+
+:root[data-hermes-design='asimov']:lang(zh)
+  :is(
+    [data-slot='aui_assistant-message-content'],
+    [data-slot='aui_user-message-content'],
+    [data-slot='composer-rich-input']
+  ) {
+  font-family: var(--dt-font-sans);
 }

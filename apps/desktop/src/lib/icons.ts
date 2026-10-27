@@ -1,280 +1,277 @@
 import {
-  IconActivity as Activity,
-  IconAlertCircle as AlertCircle,
-  IconAlertTriangle as AlertTriangle,
-  IconAppWindow as AppWindow,
-  IconArchive as Archive,
-  IconArchiveOff as ArchiveOff,
-  IconArrowBarToDown as ArrowBarToDown,
-  IconArrowBarToUp as ArrowBarToUp,
-  IconArrowUp as ArrowUp,
-  IconArrowUpRight as ArrowUpRight,
-  IconAt as AtSign,
-  IconWaveSine as AudioLines,
-  IconChartBar as BarChart3,
-  IconBell as Bell,
-  IconBook as Book,
-  IconBookmark as Bookmark,
-  IconBookmarkFilled as BookmarkFilled,
-  IconBox as Box,
-  IconBrain as Brain,
-  IconBug as Bug,
-  IconCheck as Check,
-  IconCircleCheck as CheckCircle2,
-  IconCheck as CheckIcon,
-  IconChevronDown as ChevronDown,
-  IconChevronDown as ChevronDownIcon,
-  IconChevronLeft as ChevronLeft,
-  IconChevronLeft as ChevronLeftIcon,
-  IconChevronRight as ChevronRight,
-  IconChevronRight as ChevronRightIcon,
-  IconChevronUp as ChevronUp,
-  IconCircle as CircleIcon,
-  IconCircleLetterA as CircleLetterA,
-  IconClipboard as Clipboard,
-  IconClock as Clock,
-  IconCloud as Cloud,
-  IconCommand as Command,
-  IconCopy as Copy,
-  IconCopy as CopyIcon,
-  IconCornerDownLeft as CornerDownLeft,
-  IconCpu as Cpu,
-  IconCreditCard as CreditCard,
-  IconDownload as Download,
-  IconEar as Ear,
-  IconEarOff as EarOff,
-  IconEgg as Egg,
-  IconPlayerEjectFilled as Eject,
-  IconExternalLink as ExternalLink,
-  IconEye as Eye,
-  IconEyeOff as EyeOff,
-  IconPhoto as FileImage,
-  IconFileText as FileText,
-  IconFolderOpen as FolderOpen,
-  IconGitBranch as GitBranch,
-  IconGitBranch as GitBranchIcon,
-  IconGitFork as GitFork,
-  IconGitFork as GitForkIcon,
-  IconGlobe as Globe,
-  IconHash as Hash,
-  IconHelpCircle as HelpCircle,
-  IconPhoto as ImageIcon,
-  IconInfoCircle as Info,
-  IconKeyboard as Keyboard,
-  IconKey as KeyRound,
-  IconLayersIntersect2 as Layers3,
-  IconLayoutDashboard as LayoutDashboard,
-  IconLink as Link,
-  IconLink as Link2,
-  IconLink as LinkIcon,
-  IconLoader2 as Loader2,
-  IconLoader2 as Loader2Icon,
-  IconLock as Lock,
-  IconLogin as LogIn,
-  IconMail as Mail,
-  IconMaximize as Maximize,
-  IconMessageCircle as MessageCircle,
-  IconMessageCode as MessageCode,
-  IconMessageQuestion as MessageQuestion,
-  IconMessage2 as MessageSquareText,
-  IconMicrophone as Mic,
-  IconMicrophoneOff as MicOff,
-  IconDeviceDesktop as Monitor,
-  IconDeviceDesktopAnalytics as MonitorPlay,
-  IconMoon as Moon,
-  IconDots as MoreHorizontal,
-  IconDots as MoreHorizontalIcon,
-  IconDotsVertical as MoreVertical,
-  IconNetwork as Network,
-  IconNotebook as NotebookTabs,
-  IconPackage as Package,
-  IconPalette as Palette,
-  IconLayoutBottombar as PanelBottom,
-  IconLayoutSidebar as PanelLeftIcon,
-  IconLayoutNavbar as PanelTop,
-  IconPlayerPause as Pause,
-  IconPaw as PawPrint,
-  IconPencil as Pencil,
-  IconPencil as PencilIcon,
-  IconPencil as PencilLine,
-  IconPin as Pin,
-  IconPlayerPlay as Play,
-  IconPlug as Plug,
-  IconPlus as Plus,
-  IconPower as Power,
-  IconQrcode as QrCode,
-  IconRefresh as RefreshCw,
-  IconRefresh as RefreshCwIcon,
-  IconDeviceFloppy as Save,
-  IconSearch as Search,
-  IconSearch as SearchIcon,
-  IconSend as Send,
-  IconSettings as Settings,
-  IconSettings2 as Settings2,
-  IconShieldLock as ShieldLock,
-  IconAdjustmentsHorizontal as SlidersHorizontal,
-  IconMoodPlus as SmilePlusIcon,
-  IconSquare as Square,
-  IconChartDots3 as Starmap,
-  IconSteeringWheel as SteeringWheel,
-  IconPlayerStopFilled as StopFilled,
-  IconSun as Sun,
-  IconTerminal2 as Terminal,
-  IconTrash as Trash2,
-  IconUpload as Upload,
-  IconUsers as Users,
-  IconVolume2 as Volume2,
-  IconVolume2 as Volume2Icon,
-  IconVolumeOff as VolumeX,
-  IconVolumeOff as VolumeXIcon,
-  IconTool as Wrench,
-  IconX as X,
-  IconX as XIcon,
-  IconBolt as Zap,
-  IconBoltFilled as ZapFilled,
-  IconZoomIn as ZoomIn,
-  IconZoomOut as ZoomOut
-} from '@tabler/icons-react'
+  AppWindow as AsimovAppWindow,
+  Archive as AsimovArchive,
+  ArrowClockwise as AsimovArrowClockwise,
+  ArrowElbowDownLeft as AsimovArrowElbowDownLeft,
+  ArrowLineDown as AsimovArrowLineDown,
+  ArrowLineUp as AsimovArrowLineUp,
+  ArrowSquareOut as AsimovArrowSquareOut,
+  ArrowUp as AsimovArrowUp,
+  ArrowUpRight as AsimovArrowUpRight,
+  At as AsimovAt,
+  Bell as AsimovBell,
+  Book as AsimovBook,
+  BookmarkSimple as AsimovBookmarkSimple,
+  Brain as AsimovBrain,
+  Browser as AsimovBrowser,
+  Bug as AsimovBug,
+  CaretDown as AsimovCaretDown,
+  CaretLeft as AsimovCaretLeft,
+  CaretRight as AsimovCaretRight,
+  CaretUp as AsimovCaretUp,
+  ChartBar as AsimovChartBar,
+  ChatCircle as AsimovChatCircle,
+  ChatCircleDots as AsimovChatCircleDots,
+  ChatText as AsimovChatText,
+  Check as AsimovCheck,
+  CheckCircle as AsimovCheckCircle,
+  Circle as AsimovCircle,
+  Clipboard as AsimovClipboard,
+  Clock as AsimovClock,
+  Cloud as AsimovCloud,
+  Command as AsimovCommand,
+  Copy as AsimovCopy,
+  CornersOut as AsimovCornersOut,
+  Cpu as AsimovCpu,
+  CreditCard as AsimovCreditCard,
+  Cube as AsimovCube,
+  DotsThree as AsimovDotsThree,
+  DotsThreeVertical as AsimovDotsThreeVertical,
+  DownloadSimple as AsimovDownloadSimple,
+  Ear as AsimovEar,
+  EarSlash as AsimovEarSlash,
+  Egg as AsimovEgg,
+  Eject as AsimovEject,
+  Envelope as AsimovEnvelope,
+  Eye as AsimovEye,
+  EyeSlash as AsimovEyeSlash,
+  FileImage as AsimovFileImage,
+  FileText as AsimovFileText,
+  FloppyDisk as AsimovFloppyDisk,
+  FolderOpen as AsimovFolderOpen,
+  Gear as AsimovGear,
+  GearSix as AsimovGearSix,
+  GitBranch as AsimovGitBranch,
+  GitFork as AsimovGitFork,
+  Globe as AsimovGlobe,
+  Graph as AsimovGraph,
+  Hash as AsimovHash,
+  Image as AsimovImage,
+  Info as AsimovInfo,
+  Key as AsimovKey,
+  Keyboard as AsimovKeyboard,
+  Layout as AsimovLayout,
+  Lightning as AsimovLightning,
+  Link as AsimovLink,
+  Lock as AsimovLock,
+  MagnifyingGlass as AsimovMagnifyingGlass,
+  MagnifyingGlassMinus as AsimovMagnifyingGlassMinus,
+  MagnifyingGlassPlus as AsimovMagnifyingGlassPlus,
+  Microphone as AsimovMicrophone,
+  MicrophoneSlash as AsimovMicrophoneSlash,
+  Monitor as AsimovMonitor,
+  MonitorPlay as AsimovMonitorPlay,
+  Moon as AsimovMoon,
+  Notebook as AsimovNotebook,
+  Package as AsimovPackage,
+  Palette as AsimovPalette,
+  PaperPlaneTilt as AsimovPaperPlaneTilt,
+  Pause as AsimovPause,
+  PawPrint as AsimovPawPrint,
+  PencilLine as AsimovPencilLine,
+  PencilSimple as AsimovPencilSimple,
+  Play as AsimovPlay,
+  Plug as AsimovPlug,
+  Plus as AsimovPlus,
+  Power as AsimovPower,
+  Pulse as AsimovPulse,
+  PushPin as AsimovPushPin,
+  PuzzlePiece as AsimovPuzzlePiece,
+  QrCode as AsimovQrCode,
+  Question as AsimovQuestion,
+  ShieldCheck as AsimovShieldCheck,
+  SidebarSimple as AsimovSidebarSimple,
+  SignIn as AsimovSignIn,
+  SlidersHorizontal as AsimovSlidersHorizontal,
+  Smiley as AsimovSmiley,
+  SpeakerHigh as AsimovSpeakerHigh,
+  SpeakerSlash as AsimovSpeakerSlash,
+  SpinnerGap as AsimovSpinnerGap,
+  Square as AsimovSquare,
+  SquaresFour as AsimovSquaresFour,
+  Stack as AsimovStack,
+  SteeringWheel as AsimovSteeringWheel,
+  Stop as AsimovStop,
+  Sun as AsimovSun,
+  TerminalWindow as AsimovTerminalWindow,
+  TextAa as AsimovTextAa,
+  Trash as AsimovTrash,
+  UploadSimple as AsimovUploadSimple,
+  Users as AsimovUsers,
+  Warning as AsimovWarning,
+  WarningCircle as AsimovWarningCircle,
+  Waveform as AsimovWaveform,
+  Wrench as AsimovWrench,
+  X as AsimovX,
+  type IconWeight,
+  type Icon as PhosphorIcon
+} from '@phosphor-icons/react'
+import * as Legacy from '@tabler/icons-react'
+import type { Icon as IconComponent } from '@tabler/icons-react'
+import { createContext, createElement, useContext } from 'react'
 
-export {
-  Activity,
-  AlertCircle,
-  AlertTriangle,
-  AppWindow,
-  Archive,
-  ArchiveOff,
-  ArrowBarToDown,
-  ArrowBarToUp,
-  ArrowUp,
-  ArrowUpRight,
-  AtSign,
-  AudioLines,
-  BarChart3,
-  Bell,
-  Book,
-  Bookmark,
-  BookmarkFilled,
-  Box,
-  Brain,
-  Bug,
-  Check,
-  CheckCircle2,
-  CheckIcon,
-  ChevronDown,
-  ChevronDownIcon,
-  ChevronLeft,
-  ChevronLeftIcon,
-  ChevronRight,
-  ChevronRightIcon,
-  ChevronUp,
-  CircleIcon,
-  CircleLetterA,
-  Clipboard,
-  Clock,
-  Cloud,
-  Command,
-  Copy,
-  CopyIcon,
-  CornerDownLeft,
-  Cpu,
-  CreditCard,
-  Download,
-  Ear,
-  EarOff,
-  Egg,
-  Eject,
-  ExternalLink,
-  Eye,
-  EyeOff,
-  FileImage,
-  FileText,
-  FolderOpen,
-  GitBranch,
-  GitBranchIcon,
-  GitFork,
-  GitForkIcon,
-  Globe,
-  Hash,
-  HelpCircle,
-  ImageIcon,
-  Info,
-  Keyboard,
-  KeyRound,
-  Layers3,
-  LayoutDashboard,
-  Link,
-  Link2,
-  LinkIcon,
-  Loader2,
-  Loader2Icon,
-  Lock,
-  LogIn,
-  Mail,
-  Maximize,
-  MessageCircle,
-  MessageCode,
-  MessageQuestion,
-  MessageSquareText,
-  Mic,
-  MicOff,
-  Monitor,
-  MonitorPlay,
-  Moon,
-  MoreHorizontal,
-  MoreHorizontalIcon,
-  MoreVertical,
-  Network,
-  NotebookTabs,
-  Package,
-  Palette,
-  PanelBottom,
-  PanelLeftIcon,
-  PanelTop,
-  Pause,
-  PawPrint,
-  Pencil,
-  PencilIcon,
-  PencilLine,
-  Pin,
-  Play,
-  Plug,
-  Plus,
-  Power,
-  QrCode,
-  RefreshCw,
-  RefreshCwIcon,
-  Save,
-  Search,
-  SearchIcon,
-  Send,
-  Settings,
-  Settings2,
-  ShieldLock,
-  SlidersHorizontal,
-  SmilePlusIcon,
-  Square,
-  Starmap,
-  SteeringWheel,
-  StopFilled,
-  Sun,
-  Terminal,
-  Trash2,
-  Upload,
-  Users,
-  Volume2,
-  Volume2Icon,
-  VolumeX,
-  VolumeXIcon,
-  Wrench,
-  X,
-  XIcon,
-  Zap,
-  ZapFilled,
-  ZoomIn,
-  ZoomOut
+/** ThemeProvider owns the visual grammar; icons retain existing names/props and
+ * native/brand glyphs remain independent of this UI icon boundary. */
+export const AsimovIconContext = createContext(false)
+
+function themedIcon(legacy: IconComponent, modern: PhosphorIcon, weight: IconWeight = 'thin'): IconComponent {
+  return function ThemedIcon(props: Legacy.IconProps) {
+    const asimov = useContext(AsimovIconContext)
+
+    return asimov
+      ? createElement(modern, { ...props, stroke: undefined, size: props.size ?? 24, weight })
+      : createElement(legacy, props)
+  }
 }
 
-export type { Icon as IconComponent } from '@tabler/icons-react'
+export const Activity = themedIcon(Legacy.IconActivity, AsimovPulse)
+export const AlertCircle = themedIcon(Legacy.IconAlertCircle, AsimovWarningCircle)
+export const AlertTriangle = themedIcon(Legacy.IconAlertTriangle, AsimovWarning)
+export const AppWindow = themedIcon(Legacy.IconAppWindow, AsimovAppWindow)
+export const Archive = themedIcon(Legacy.IconArchive, AsimovArchive)
+export const ArchiveOff = themedIcon(Legacy.IconArchiveOff, AsimovArchive)
+export const ArrowBarToDown = themedIcon(Legacy.IconArrowBarToDown, AsimovArrowLineDown)
+export const ArrowBarToUp = themedIcon(Legacy.IconArrowBarToUp, AsimovArrowLineUp)
+export const ArrowUp = themedIcon(Legacy.IconArrowUp, AsimovArrowUp)
+export const ArrowUpRight = themedIcon(Legacy.IconArrowUpRight, AsimovArrowUpRight)
+export const AtSign = themedIcon(Legacy.IconAt, AsimovAt)
+export const AudioLines = themedIcon(Legacy.IconWaveSine, AsimovWaveform)
+export const BarChart3 = themedIcon(Legacy.IconChartBar, AsimovChartBar)
+export const Bell = themedIcon(Legacy.IconBell, AsimovBell)
+export const Book = themedIcon(Legacy.IconBook, AsimovBook)
+export const Bookmark = themedIcon(Legacy.IconBookmark, AsimovBookmarkSimple)
+export const BookmarkFilled = themedIcon(Legacy.IconBookmarkFilled, AsimovBookmarkSimple, 'fill')
+export const Box = themedIcon(Legacy.IconBox, AsimovCube)
+export const Brain = themedIcon(Legacy.IconBrain, AsimovBrain)
+export const Bug = themedIcon(Legacy.IconBug, AsimovBug)
+export const Check = themedIcon(Legacy.IconCheck, AsimovCheck)
+export const CheckCircle2 = themedIcon(Legacy.IconCircleCheck, AsimovCheckCircle)
+export const CheckIcon = themedIcon(Legacy.IconCheck, AsimovCheck)
+export const ChevronDown = themedIcon(Legacy.IconChevronDown, AsimovCaretDown)
+export const ChevronDownIcon = themedIcon(Legacy.IconChevronDown, AsimovCaretDown)
+export const ChevronLeft = themedIcon(Legacy.IconChevronLeft, AsimovCaretLeft)
+export const ChevronLeftIcon = themedIcon(Legacy.IconChevronLeft, AsimovCaretLeft)
+export const ChevronRight = themedIcon(Legacy.IconChevronRight, AsimovCaretRight)
+export const ChevronRightIcon = themedIcon(Legacy.IconChevronRight, AsimovCaretRight)
+export const ChevronUp = themedIcon(Legacy.IconChevronUp, AsimovCaretUp)
+export const CircleIcon = themedIcon(Legacy.IconCircle, AsimovCircle)
+export const CircleLetterA = themedIcon(Legacy.IconCircleLetterA, AsimovTextAa)
+export const Clipboard = themedIcon(Legacy.IconClipboard, AsimovClipboard)
+export const Clock = themedIcon(Legacy.IconClock, AsimovClock)
+export const Cloud = themedIcon(Legacy.IconCloud, AsimovCloud)
+export const Command = themedIcon(Legacy.IconCommand, AsimovCommand)
+export const Copy = themedIcon(Legacy.IconCopy, AsimovCopy)
+export const CopyIcon = themedIcon(Legacy.IconCopy, AsimovCopy)
+export const CornerDownLeft = themedIcon(Legacy.IconCornerDownLeft, AsimovArrowElbowDownLeft)
+export const Cpu = themedIcon(Legacy.IconCpu, AsimovCpu)
+export const CreditCard = themedIcon(Legacy.IconCreditCard, AsimovCreditCard)
+export const Download = themedIcon(Legacy.IconDownload, AsimovDownloadSimple)
+export const Ear = themedIcon(Legacy.IconEar, AsimovEar)
+export const EarOff = themedIcon(Legacy.IconEarOff, AsimovEarSlash)
+export const Egg = themedIcon(Legacy.IconEgg, AsimovEgg)
+export const Eject = themedIcon(Legacy.IconPlayerEjectFilled, AsimovEject, 'fill')
+export const ExternalLink = themedIcon(Legacy.IconExternalLink, AsimovArrowSquareOut)
+export const Eye = themedIcon(Legacy.IconEye, AsimovEye)
+export const EyeOff = themedIcon(Legacy.IconEyeOff, AsimovEyeSlash)
+export const FileImage = themedIcon(Legacy.IconPhoto, AsimovFileImage)
+export const FileText = themedIcon(Legacy.IconFileText, AsimovFileText)
+export const FolderOpen = themedIcon(Legacy.IconFolderOpen, AsimovFolderOpen)
+export const GitBranch = themedIcon(Legacy.IconGitBranch, AsimovGitBranch)
+export const GitBranchIcon = themedIcon(Legacy.IconGitBranch, AsimovGitBranch)
+export const GitFork = themedIcon(Legacy.IconGitFork, AsimovGitFork)
+export const GitForkIcon = themedIcon(Legacy.IconGitFork, AsimovGitFork)
+export const Globe = themedIcon(Legacy.IconGlobe, AsimovGlobe)
+export const Hash = themedIcon(Legacy.IconHash, AsimovHash)
+export const HelpCircle = themedIcon(Legacy.IconHelpCircle, AsimovQuestion)
+export const ImageIcon = themedIcon(Legacy.IconPhoto, AsimovImage)
+export const Info = themedIcon(Legacy.IconInfoCircle, AsimovInfo)
+export const Keyboard = themedIcon(Legacy.IconKeyboard, AsimovKeyboard)
+export const KeyRound = themedIcon(Legacy.IconKey, AsimovKey)
+export const Layers3 = themedIcon(Legacy.IconLayersIntersect2, AsimovStack)
+export const LayoutDashboard = themedIcon(Legacy.IconLayoutDashboard, AsimovSquaresFour)
+export const Link = themedIcon(Legacy.IconLink, AsimovLink)
+export const Link2 = themedIcon(Legacy.IconLink, AsimovLink)
+export const LinkIcon = themedIcon(Legacy.IconLink, AsimovLink)
+export const Loader2 = themedIcon(Legacy.IconLoader2, AsimovSpinnerGap)
+export const Loader2Icon = themedIcon(Legacy.IconLoader2, AsimovSpinnerGap)
+export const Lock = themedIcon(Legacy.IconLock, AsimovLock)
+export const LogIn = themedIcon(Legacy.IconLogin, AsimovSignIn)
+export const Mail = themedIcon(Legacy.IconMail, AsimovEnvelope)
+export const Maximize = themedIcon(Legacy.IconMaximize, AsimovCornersOut)
+export const MessageCircle = themedIcon(Legacy.IconMessageCircle, AsimovChatCircle)
+export const MessageCode = themedIcon(Legacy.IconMessageCode, AsimovChatText)
+export const MessageQuestion = themedIcon(Legacy.IconMessageQuestion, AsimovChatCircleDots)
+export const MessageSquareText = themedIcon(Legacy.IconMessage2, AsimovChatText)
+export const Mic = themedIcon(Legacy.IconMicrophone, AsimovMicrophone)
+export const MicOff = themedIcon(Legacy.IconMicrophoneOff, AsimovMicrophoneSlash)
+export const Monitor = themedIcon(Legacy.IconDeviceDesktop, AsimovMonitor)
+export const MonitorPlay = themedIcon(Legacy.IconDeviceDesktopAnalytics, AsimovMonitorPlay)
+export const Moon = themedIcon(Legacy.IconMoon, AsimovMoon)
+export const MoreHorizontal = themedIcon(Legacy.IconDots, AsimovDotsThree)
+export const MoreHorizontalIcon = themedIcon(Legacy.IconDots, AsimovDotsThree)
+export const MoreVertical = themedIcon(Legacy.IconDotsVertical, AsimovDotsThreeVertical)
+export const Network = themedIcon(Legacy.IconNetwork, AsimovGraph)
+export const NotebookTabs = themedIcon(Legacy.IconNotebook, AsimovNotebook)
+export const Package = themedIcon(Legacy.IconPackage, AsimovPackage)
+export const Palette = themedIcon(Legacy.IconPalette, AsimovPalette)
+export const PanelBottom = themedIcon(Legacy.IconLayoutBottombar, AsimovLayout)
+export const PanelLeftIcon = themedIcon(Legacy.IconLayoutSidebar, AsimovSidebarSimple)
+export const PanelTop = themedIcon(Legacy.IconLayoutNavbar, AsimovBrowser)
+export const Pause = themedIcon(Legacy.IconPlayerPause, AsimovPause)
+export const PawPrint = themedIcon(Legacy.IconPaw, AsimovPawPrint)
+export const Pencil = themedIcon(Legacy.IconPencil, AsimovPencilSimple)
+export const PencilIcon = themedIcon(Legacy.IconPencil, AsimovPencilSimple)
+export const PencilLine = themedIcon(Legacy.IconPencil, AsimovPencilLine)
+export const Pin = themedIcon(Legacy.IconPin, AsimovPushPin)
+export const Play = themedIcon(Legacy.IconPlayerPlay, AsimovPlay)
+export const Plug = themedIcon(Legacy.IconPlug, AsimovPlug)
+export const Plus = themedIcon(Legacy.IconPlus, AsimovPlus)
+export const Power = themedIcon(Legacy.IconPower, AsimovPower)
+export const QrCode = themedIcon(Legacy.IconQrcode, AsimovQrCode)
+export const RefreshCw = themedIcon(Legacy.IconRefresh, AsimovArrowClockwise)
+export const RefreshCwIcon = themedIcon(Legacy.IconRefresh, AsimovArrowClockwise)
+export const Save = themedIcon(Legacy.IconDeviceFloppy, AsimovFloppyDisk)
+export const Search = themedIcon(Legacy.IconSearch, AsimovMagnifyingGlass)
+export const SearchIcon = themedIcon(Legacy.IconSearch, AsimovMagnifyingGlass)
+export const Send = themedIcon(Legacy.IconSend, AsimovPaperPlaneTilt)
+export const Settings = themedIcon(Legacy.IconSettings, AsimovGear)
+export const Settings2 = themedIcon(Legacy.IconSettings2, AsimovGearSix)
+export const ShieldLock = themedIcon(Legacy.IconShieldLock, AsimovShieldCheck)
+export const SlidersHorizontal = themedIcon(Legacy.IconAdjustmentsHorizontal, AsimovSlidersHorizontal)
+export const SmilePlusIcon = themedIcon(Legacy.IconMoodPlus, AsimovSmiley)
+export const Square = themedIcon(Legacy.IconSquare, AsimovSquare)
+export const Starmap = themedIcon(Legacy.IconChartDots3, AsimovGraph)
+export const SteeringWheel = themedIcon(Legacy.IconSteeringWheel, AsimovSteeringWheel)
+export const StopFilled = themedIcon(Legacy.IconPlayerStopFilled, AsimovStop, 'fill')
+export const Sun = themedIcon(Legacy.IconSun, AsimovSun)
+export const Terminal = themedIcon(Legacy.IconTerminal2, AsimovTerminalWindow)
+export const Trash2 = themedIcon(Legacy.IconTrash, AsimovTrash)
+export const Upload = themedIcon(Legacy.IconUpload, AsimovUploadSimple)
+export const Users = themedIcon(Legacy.IconUsers, AsimovUsers)
+export const Volume2 = themedIcon(Legacy.IconVolume2, AsimovSpeakerHigh)
+export const Volume2Icon = themedIcon(Legacy.IconVolume2, AsimovSpeakerHigh)
+export const VolumeX = themedIcon(Legacy.IconVolumeOff, AsimovSpeakerSlash)
+export const VolumeXIcon = themedIcon(Legacy.IconVolumeOff, AsimovSpeakerSlash)
+export const Wrench = themedIcon(Legacy.IconTool, AsimovWrench)
+export const X = themedIcon(Legacy.IconX, AsimovX)
+export const XIcon = themedIcon(Legacy.IconX, AsimovX)
+export const Zap = themedIcon(Legacy.IconBolt, AsimovLightning)
+export const ZapFilled = themedIcon(Legacy.IconBoltFilled, AsimovLightning, 'fill')
+export const ZoomIn = themedIcon(Legacy.IconZoomIn, AsimovMagnifyingGlassPlus)
+export const ZoomOut = themedIcon(Legacy.IconZoomOut, AsimovMagnifyingGlassMinus)
+export const Puzzle = themedIcon(Legacy.IconPuzzle, AsimovPuzzlePiece)
+
+export type { IconComponent }
 
 /**
  * Named icon-size scale — the single source of truth for SVG icon dimensions,

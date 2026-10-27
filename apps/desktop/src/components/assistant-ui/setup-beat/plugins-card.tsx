@@ -3,7 +3,6 @@
 import type { CatalogPluginPresence, PluginsManageResult } from '@hermes/shared'
 import { useStore } from '@nanostores/react'
 import { useQuery } from '@tanstack/react-query'
-import { Puzzle } from 'lucide-react'
 import { useEffect } from 'react'
 
 import { useSessionView } from '@/app/chat/session-view'
@@ -12,6 +11,7 @@ import { useConnectionOwner } from '@/components/assistant-ui/use-connection-own
 import { Button } from '@/components/ui/button'
 import { Chip } from '@/components/ui/chip'
 import { useI18n } from '@/i18n'
+import { Puzzle } from '@/lib/icons'
 import { lookupPluginCatalogEntry } from '@/lib/plugin-catalog'
 import { cn } from '@/lib/utils'
 import { $agentPlugins, $agentPluginsProfile, loadAgentPlugins } from '@/store/agent-plugins'
