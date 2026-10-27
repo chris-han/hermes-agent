@@ -407,6 +407,7 @@ try {
 } finally {
   await close()
   fs.writeFileSync(path.join(output,'acceptance.json'),JSON.stringify({produced_at:new Date().toISOString(),binding,harness_sha256:digest(fileURLToPath(import.meta.url)),checks,errors,captures,observations,identities,
-    pending:['T05 profile inheritance','T07 offline glyph inspection','T08 contrast','T09 controls','T10 overlays','T11 preset/preview/command','T13 terminal','T14 integration'],
-    registered_installation:'NOT_RUN',human_usability:'UNMEASURED'},null,2))
+    result:errors.length?'FAIL':'AUTOMATED_NATIVE_CHECKS_PASS',
+    pending:errors.length?['Native sequence incomplete; inspect checks and errors']:['T03/T06/T07/T08/T09/T10/T13 visual review','T14 integration'],
+    registered_installation:'NOT_RUN',os_upgrade:'NOT_RUN',human_usability:'UNMEASURED',business_benefit:'UNMEASURED'},null,2))
 }
