@@ -637,6 +637,8 @@ import { ChannelStrategy } from './updater/channel-strategy'
 import { verifyPreparedChannelInstaller } from './updater/channel-windows-host'
 import { type CheckoutStrategy, createCheckoutStrategy } from './updater/checkout'
 import { readSourceUpdate, sourceChannelName, type SourceUpdate } from './updater/checkout-source'
+import { DeliverySources } from './updater/delivery-source'
+import { registerDeliverySourceIpc } from './updater/delivery-source-ipc'
 import { ExternalStrategy } from './updater/external'
 import { readUpdatesFeedBaseFromConfig, resolveFeedBaseUrl } from './updater/feed-config'
 import { createChannelMacStrategy, createMacStrategy } from './updater/mac-client'
@@ -3502,7 +3504,14 @@ function emitUpdateProgress(payload) {
   }
 }
 
+let updateChecks = 0
 async function checkUpdates(opts: { force?: boolean } = {}): Promise<UpdaterStatusWire> {
+  updateChecks += 1
+  try { return await checkUpdatesFromSelectedSource(opts) }
+  finally { updateChecks -= 1 }
+}
+
+async function checkUpdatesFromSelectedSource(opts: { force?: boolean } = {}): Promise<UpdaterStatusWire> {
   // A packaged install delegates to the update owner named by its stamp.
   let strategy: UpdaterStrategy | null = null
 
@@ -3538,6 +3547,14 @@ let updateInFlight = false
  * Its identity comes from the packaged app, not its optional Python payload.
  */
 const updateOperation: UpdateOperation = new UpdateOperation(createPackagedUpdateStrategy)
+const deliverySources = new DeliverySources(
+  path.join(app.getPath('userData'), 'update-delivery-source.json'),
+  path.join(HERMES_HOME, 'config.yaml'),
+  INSTALL_STAMP?.channelBuild?.publicBase ?? ''
+)
+function canSelectDeliverySource(): boolean {
+  return process.platform === 'win32' && INSTALL_STAMP?.updateMechanism === 'app-installer' && Boolean(INSTALL_STAMP.channelBuild)
+}
 
 const desktopMetrics: DesktopSharedMetrics = registerDesktopSharedMetrics()
 const semantierObservations = new SemantierObservations(app.getPath('userData'))
@@ -3558,8 +3575,9 @@ async function createPackagedUpdateStrategy(): Promise<UpdaterStrategy | null> {
   }
 
   if (INSTALL_STAMP?.channelBuild && (mechanism === 'electron-updater' || mechanism === 'app-installer')) {
-    const build = INSTALL_STAMP.channelBuild
-    const installed = await inspectRunningChannelApp(build)
+    const stampedBuild = INSTALL_STAMP.channelBuild
+    const build = canSelectDeliverySource() ? { ...stampedBuild, publicBase: deliverySources.base() } : stampedBuild
+    const installed = await inspectRunningChannelApp(stampedBuild)
     semantierObservations.reconcile({version: installed.nativeVersion, family: installed.packageFamilyName ?? '', buildId: build.buildId})
 
     // Platform/arch/signing are the channel's own preconditions. The Python
@@ -17642,6 +17660,27 @@ ipcMain.handle('semantier:feedback', (event, command: string, value: {enabled?:b
 return semantierObservations.status()}
 
   throw new Error('Unsupported feedback operation')
+})
+
+// Delivery source is a native install preference, separate from a release track.
+function assertDeliveryViewer(event: Electron.IpcMainInvokeEvent): void {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  if (!win || (win !== mainWindow && !chatWindows.has(win)) || event.senderFrame !== win.webContents.mainFrame) {
+    throw new Error('Application main frame required')
+  }
+}
+registerDeliverySourceIpc(ipcMain, {
+  assertViewer: assertDeliveryViewer,
+  eligible: canSelectDeliverySource,
+  busy: () => Boolean(updateChecks || updateInFlight),
+  sources: deliverySources,
+  operation: updateOperation,
+  changed: selection => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send('hermes:updates:delivery:changed', selection)
+    }
+  },
+  check: () => checkUpdates({ force: true })
 })
 
 // About ▸ Updates channel selector; source checkouts only (packages bake their channel).

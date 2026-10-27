@@ -680,6 +680,13 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     check: opts => ipcRenderer.invoke('hermes:updates:check', opts),
     apply: opts => ipcRenderer.invoke('hermes:updates:apply', opts),
     setChannel: name => ipcRenderer.invoke('hermes:updates:channel:set', name),
+    getDeliverySources: () => ipcRenderer.invoke('hermes:updates:delivery:get'),
+    setDeliverySource: name => ipcRenderer.invoke('hermes:updates:delivery:set', name),
+    onDeliverySourceChanged: callback => {
+      const listener = (_event, selection) => callback(selection)
+      ipcRenderer.on('hermes:updates:delivery:changed', listener)
+      return () => ipcRenderer.removeListener('hermes:updates:delivery:changed', listener)
+    },
     onProgress: callback => {
       const listener = (_event, payload) => callback(payload)
       ipcRenderer.on('hermes:updates:progress', listener)

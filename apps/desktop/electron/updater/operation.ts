@@ -16,6 +16,11 @@ export class UpdateOperation {
     return this.strategy
   }
 
+  reset(): void {
+    if (this.applying) {throw new Error('An update is already in progress.')}
+    this.strategy = undefined
+  }
+
   async apply(run: () => Promise<UpdaterApplyResultWire>): Promise<UpdaterApplyResultWire> {
     if (this.applying) {
       throw new Error('An update is already in progress.')

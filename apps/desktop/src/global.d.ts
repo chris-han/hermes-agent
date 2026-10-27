@@ -11,6 +11,7 @@ import type { WindowCloseAction, WindowCloseRequest, WindowCloseResult } from '.
 import type { HermesNotification } from '../electron/notification-types'
 import type { KeepAwakeMode } from '../electron/power-save'
 import type { UpdateHoldWire } from '../electron/update-hold-types'
+import type { DeliverySourceId, DeliverySourceStatus } from '../electron/updater/delivery-source'
 import type { Observation } from '../electron/updater/semantier-observations'
 import type { UpdateRunReport } from '../electron/updater/update-metrics'
 import type { UpdateWorkReview } from '../electron/updater/work-review'
@@ -656,6 +657,12 @@ declare global {
         apply: (opts?: DesktopUpdateApplyOptions) => Promise<DesktopUpdateApplyResult>
         /** Persist this source install's update channel and return the fresh check. */
         setChannel?: (name: 'main' | 'stable') => Promise<DesktopUpdateStatus>
+        getDeliverySources?: () => Promise<DeliverySourceStatus | null>
+        setDeliverySource?: (name: DeliverySourceId) => Promise<{
+          selection: DeliverySourceStatus
+          status: DesktopUpdateStatus
+        }>
+        onDeliverySourceChanged?: (callback: (selection: DeliverySourceStatus) => void) => () => void
         onProgress: (callback: (payload: DesktopUpdateProgress) => void) => () => void
         /** Claim the pending packaged self-update run (null when none or already claimed). */
         takePendingRun?: () => Promise<UpdateRunReport | null>

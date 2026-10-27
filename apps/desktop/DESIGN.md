@@ -53,6 +53,8 @@ Desktop-owned chrome and agent narration use **Semantier**, with **Semantier Age
 
 ## Information architecture
 
+Windows App Installer channel builds expose one **Update source** selector in Version and Update: Channel 1 · Alibaba Cloud ECS, Channel 2 · Cloudflare, Channel 3 · Local development. This is separate from stable/main release-track controls. Native Electron owns the install-wide persisted source; a source change clears the prior actionable target and rechecks. Retain the existing Select primitive, keyboard behavior, localized copy and compact layout. Display the resolved endpoint or its missing-configuration state; never silently fall back to another provider.
+
 Model service Accounts leads with **Semantier Cloud** followed by **Custom endpoint**. API Keys and Custom Endpoints preserve saved providers and credentials. Desktop does not manage model installation/downloads or expose a Local Models destination; obsolete `pview=local` links resolve to Accounts. Custom endpoint accepts independently running local (including localhost) or remote OpenAI-compatible servers. The local Hermes agent runtime and advanced remote/SSH runtime controls are separate and remain available.
 
 - **Chat is the home surface.** The transcript and composer stay primary; tools,
