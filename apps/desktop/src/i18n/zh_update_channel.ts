@@ -1,4 +1,7 @@
 export const zhUpdateChannel = {
+  production: "正式版",
+  development: "开发版",
+  packagedDescription: "正式版跟随已发布版本，开发版包含测试构建。切换只检查更新，安装仍由你决定。",
   title: '更新渠道',
   description: '稳定版只安装已发布的版本。每个提交会随 main 分支的变更持续更新。',
   stable: '稳定版发布',

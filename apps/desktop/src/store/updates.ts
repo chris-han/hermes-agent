@@ -640,6 +640,7 @@ export async function checkUpdates({ force = false }: UpdateCheckOptions = {}): 
 }
 
 export type SourceUpdateChannel = 'main' | 'stable'
+export type UpdateChannel = SourceUpdateChannel | 'production' | 'development'
 
 /** What a source checkout follows, for display; null where a package owns the channel. */
 export type SourceUpdateTrack = { kind: 'stable' } | { kind: 'main' } | { kind: 'branch'; name: string }
@@ -683,7 +684,7 @@ export function sourceUpdateChannel(status: DesktopUpdateStatus | null): SourceU
  * Persist the source checkout's channel; the reply is a fresh check against it.
  * An unreachable release still returns a status naming the saved channel.
  */
-export async function setUpdateChannel(channel: SourceUpdateChannel): Promise<DesktopUpdateStatus> {
+export async function setUpdateChannel(channel: UpdateChannel): Promise<DesktopUpdateStatus> {
   const setChannel = window.hermesDesktop?.updates?.setChannel
 
   if (!setChannel) {
@@ -722,7 +723,8 @@ export async function applyUpdates(opts: DesktopUpdateApplyOptions = {}): Promis
   $updateApply.set({ ...IDLE, applying: true, stage: 'prepare', message: 'Starting update…' })
 
   try {
-    const result = await bridge.apply(opts)
+    const releaseChannel = $updateStatus.get()?.releaseChannel
+    const result = await bridge.apply(releaseChannel ? { ...opts, expectedReleaseChannel: releaseChannel } : opts)
 
     if (result.workReview) {
       resetUpdateApplyState()

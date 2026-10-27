@@ -1,9 +1,10 @@
-import type { UpdaterApplyResultWire, UpdaterStrategy } from './index'
+import type { UpdaterApplyResultWire, UpdaterStatusWire, UpdaterStrategy } from './index'
 
 /** Preserve one native selection across check/apply and one owner through handoff. */
 export class UpdateOperation {
   private strategy: Promise<UpdaterStrategy | null> | undefined
   private applying: boolean = false
+  private checking: number = 0
 
   constructor(private readonly initialize: () => Promise<UpdaterStrategy | null>) {}
 
@@ -16,8 +17,21 @@ export class UpdateOperation {
     return this.strategy
   }
 
+  async check(run: () => Promise<UpdaterStatusWire>): Promise<UpdaterStatusWire> {
+    if (this.applying) { throw new Error('An update is already in progress.') }
+    this.checking++
+
+    try { return await run() } finally { this.checking-- }
+  }
+
+  changeSelection(save: () => void): void {
+    if (this.applying || this.checking) { throw new Error('An update operation is already in progress.') }
+    save()
+    this.strategy = undefined
+  }
+
   async apply(run: () => Promise<UpdaterApplyResultWire>): Promise<UpdaterApplyResultWire> {
-    if (this.applying) {
+    if (this.applying || this.checking) {
       throw new Error('An update is already in progress.')
     }
 

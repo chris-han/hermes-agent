@@ -1,4 +1,7 @@
 export const frUpdateChannel = {
+  production: "Production",
+  development: "Développement",
+  packagedDescription: "Production suit les versions publiées. Développement inclut les versions de test. Changer de canal vérifie les mises à jour sans les installer.",
   title: 'Canal de mise à jour',
   description:
     'Stable installe uniquement les versions publiées. Chaque commit suit la branche main au fil des changements.',

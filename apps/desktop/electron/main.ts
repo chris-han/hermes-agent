@@ -648,6 +648,7 @@ import {
   type RelaunchRegistration
 } from './updater/relaunch'
 import { startUpdateRelaunchWaiter } from './updater/relaunch-waiter'
+import { assertPackagedChannelSelection, packagedChannelSelection, savePackagedChannel, supportsPackagedChannels } from './updater/semantier-channel'
 import { preflightStateDb } from './updater/state-db-preflight'
 import { createStoreStrategy } from './updater/store-client'
 import { UpdateWorkGuard } from './updater/work-review'
@@ -3503,6 +3504,13 @@ function emitUpdateProgress(payload) {
 }
 
 async function checkUpdates(opts: { force?: boolean } = {}): Promise<UpdaterStatusWire> {
+  const status = await updateOperation.check(() => checkUpdatesForSelection(opts))
+  const selection = process.platform === 'win32' ? packagedChannelSelection(INSTALL_STAMP?.channelBuild, DESKTOP_UPDATE_CONFIG_PATH) : null
+
+  return selection ? { ...status, releaseChannel: selection.choice } : status
+}
+
+async function checkUpdatesForSelection(opts: { force?: boolean } = {}): Promise<UpdaterStatusWire> {
   // A packaged install delegates to the update owner named by its stamp.
   let strategy: UpdaterStrategy | null = null
 
@@ -3558,8 +3566,9 @@ async function createPackagedUpdateStrategy(): Promise<UpdaterStrategy | null> {
   }
 
   if (INSTALL_STAMP?.channelBuild && (mechanism === 'electron-updater' || mechanism === 'app-installer')) {
-    const build = INSTALL_STAMP.channelBuild
-    const installed = await inspectRunningChannelApp(build)
+    const installedBuild = INSTALL_STAMP.channelBuild
+    const build = packagedChannelSelection(installedBuild, DESKTOP_UPDATE_CONFIG_PATH, resolveDesktopFeedBaseUrl())?.build ?? installedBuild
+    const installed = await inspectRunningChannelApp(installedBuild)
     semantierObservations.reconcile({version: installed.nativeVersion, family: installed.packageFamilyName ?? '', buildId: build.buildId})
 
     // Platform/arch/signing are the channel's own preconditions. The Python
@@ -3575,6 +3584,7 @@ async function createPackagedUpdateStrategy(): Promise<UpdaterStrategy | null> {
 
     return new ChannelStrategy({
       build,
+      installedChannel: installedBuild.channel,
       mechanism,
       resolver: new ChannelResolver({
         build,
@@ -3587,6 +3597,7 @@ async function createPackagedUpdateStrategy(): Promise<UpdaterStrategy | null> {
           `${target.manifest.request.buildId}:${target.package.artifact.sha256}`,
           installed.nativeVersion, target.package.version, updateWorkToken
         )
+
         return review ? { ok: false, error: 'active-work-review', workReview: review } : null
       },
       onApplyTarget: async target => {
@@ -4540,8 +4551,14 @@ async function releaseBackendLock(updateRoot: string, tag: string): Promise<{ un
 //
 // Detection (checkUpdates / commit changelog / "N behind") stays in the UI;
 // only this apply action changed.
-async function applyUpdates(token?: unknown): Promise<UpdaterApplyResultWire> {
+async function applyUpdates(token?: unknown, expectedReleaseChannel?: unknown, requireSelection = false): Promise<UpdaterApplyResultWire> {
   return updateOperation.apply(async (): Promise<UpdaterApplyResultWire> => {
+    if (requireSelection && process.platform === 'win32') {
+      const selection = packagedChannelSelection(INSTALL_STAMP?.channelBuild, DESKTOP_UPDATE_CONFIG_PATH)
+
+      if (selection) { assertPackagedChannelSelection(selection.choice, expectedReleaseChannel) }
+    }
+
     updateInFlight = true
     updateWorkToken = token
     let handedOff: boolean = false
@@ -4575,6 +4592,7 @@ async function applyUpdates(token?: unknown): Promise<UpdaterApplyResultWire> {
     } finally {
       updateWorkToken = undefined
       updateWorkGuard.finish()
+
       if (!handedOff) {
         updateInFlight = false
       }
@@ -17014,6 +17032,7 @@ ipcMain.handle('hermes:stopPreviewFileWatch', (_event, id) => stopPreviewFileWat
 const activeWorkByWebContents = new Map<number, ActiveWork>()
 let activeWorkRevision = 0
 let updateWorkToken: unknown
+
 const updateWorkGuard = new UpdateWorkGuard(() => ({
   work: mergeActiveWork([...activeWorkByWebContents.values(), lastActiveWorkSeen]),
   revision: activeWorkRevision,
@@ -17081,6 +17100,7 @@ ipcMain.on('hermes:active-work', (event, payload) => {
   }
 
   const work = normalizeActiveWork(payload)
+
   if (JSON.stringify(activeWorkByWebContents.get(id)) !== JSON.stringify(work)) { activeWorkRevision += 1 }
   activeWorkByWebContents.set(id, work)
   lastActiveWorkSeen = work
@@ -17612,7 +17632,7 @@ ipcMain.handle(
 )
 
 ipcMain.handle('hermes:updates:apply', async (_event, payload) =>
-  applyUpdates(payload?.workReviewToken).catch(error => ({
+  applyUpdates(payload?.workReviewToken, payload?.expectedReleaseChannel, true).catch(error => ({
     ok: false,
     error: 'apply-failed',
     message: error?.message || String(error)
@@ -17644,8 +17664,21 @@ return semantierObservations.status()}
   throw new Error('Unsupported feedback operation')
 })
 
-// About ▸ Updates channel selector; source checkouts only (packages bake their channel).
-ipcMain.handle('hermes:updates:channel:set', async (_event, name: unknown): Promise<UpdaterStatusWire> => {
+// About ▸ Updates: native packaged preferences and existing source-checkout policy.
+ipcMain.handle('hermes:updates:channel:set', async (event, name: unknown): Promise<UpdaterStatusWire> => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+
+  if (!win || (win !== mainWindow && !chatWindows.has(win)) || event.senderFrame !== win.webContents.mainFrame) {
+    throw new Error('Application main frame required')
+  }
+
+  if (process.platform === 'win32' && supportsPackagedChannels(INSTALL_STAMP?.channelBuild)) {
+    updateOperation.changeSelection(() => savePackagedChannel(DESKTOP_UPDATE_CONFIG_PATH, name,
+      (file, text) => writeSecretFileAtomic(file, text)))
+
+    return checkUpdates({ force: true })
+  }
+
   assertSourceUpdateChannel(INSTALL_STAMP)
 
   return resolveCheckoutUpdateStrategy().check({ force: true, setChannel: sourceChannelName(name) })
