@@ -9,7 +9,8 @@ import { type NativeCommandResult, runChannelPowerShell } from './channel-native
 export async function verifyPreparedChannelInstaller(
   file: string,
   target: ChannelTarget,
-  command: (script: string, input: string) => Promise<NativeCommandResult> = runChannelPowerShell
+  command: (script: string, input: string) => Promise<NativeCommandResult> = runChannelPowerShell,
+  fetchArtifact: typeof fetch = fetch
 ): Promise<void> {
   const pkg = target.package
 
@@ -25,7 +26,7 @@ export async function verifyPreparedChannelInstaller(
       sha256: pkg.artifact.sha256,
       size: pkg.artifact.size,
       format: pkg.artifact.key.endsWith('.msixbundle') ? 'msixbundle' : 'msix'
-    })
+    }, fetchArtifact)
 
     await command(
       String.raw`

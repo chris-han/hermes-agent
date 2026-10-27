@@ -1,4 +1,7 @@
 export const jaUpdateChannel = {
+  production: "製品版",
+  development: "開発版",
+  packagedDescription: "製品版は公開済みリリース、開発版はテストビルドを確認します。切り替えでは更新の確認のみを行い、インストールは別途選択します。",
   title: 'アップデートチャンネル',
   description:
     '安定版は公開済みのリリースのみをインストールします。すべてのコミットは main ブランチの変更に追従します。',

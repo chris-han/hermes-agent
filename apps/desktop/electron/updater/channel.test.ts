@@ -806,3 +806,22 @@ test('active-work review precedes the attempt journal and native installation; c
   expect(await strategy.apply()).toMatchObject({ ok: true })
   expect(effects).toEqual(['journal', 'install'])
 })
+
+test('a selected different stream delegates version ordering to native instead of comparing unrelated sequences', async () => {
+  const f = await fixture()
+  const build = { ...f.build, sequence: 100 }
+  let checked = 0
+
+  const strategy = new ChannelStrategy({
+    build, installedChannel: 'another-stream', mechanism: 'electron-updater',
+    resolver: new ChannelResolver({ build, platform: 'darwin', arch: 'arm64', signer: 'ABCDE12345' }),
+    nativeFactory: () => ({ mechanism: 'electron-updater', check: async () => { checked++;
+
+ return { supported: true, updateAvailable: false } }, apply: async () => { throw new Error('Must not install an older target') } })
+  })
+
+  expect(await strategy.check()).toMatchObject({ updateAvailable: false })
+  expect(checked).toBe(1)
+  // No available target is an existing successful no-op; native apply must not run.
+  expect(await strategy.apply()).toMatchObject({ ok: true })
+})

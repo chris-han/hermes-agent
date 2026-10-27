@@ -642,6 +642,7 @@ import { registerDeliverySourceIpc } from './updater/delivery-source-ipc'
 import { ExternalStrategy } from './updater/external'
 import { readUpdatesFeedBaseFromConfig, resolveFeedBaseUrl } from './updater/feed-config'
 import { createChannelMacStrategy, createMacStrategy } from './updater/mac-client'
+import { nativeUpdateFetch } from './updater/network'
 import { UpdateOperation } from './updater/operation'
 import {
   type ConsumedRelaunch,
@@ -650,6 +651,7 @@ import {
   type RelaunchRegistration
 } from './updater/relaunch'
 import { startUpdateRelaunchWaiter } from './updater/relaunch-waiter'
+import { assertPackagedChannelSelection, packagedChannelSelection, savePackagedChannel, supportsPackagedChannels } from './updater/semantier-channel'
 import { preflightStateDb } from './updater/state-db-preflight'
 import { createStoreStrategy } from './updater/store-client'
 import { UpdateWorkGuard } from './updater/work-review'
@@ -3507,11 +3509,15 @@ function emitUpdateProgress(payload) {
 let updateChecks = 0
 async function checkUpdates(opts: { force?: boolean } = {}): Promise<UpdaterStatusWire> {
   updateChecks += 1
-  try { return await checkUpdatesFromSelectedSource(opts) }
-  finally { updateChecks -= 1 }
+  try {
+    const status = await updateOperation.check(() => checkUpdatesForSelection(opts))
+    const selection = process.platform === 'win32' ? packagedChannelSelection(INSTALL_STAMP?.channelBuild, DESKTOP_UPDATE_CONFIG_PATH) : null
+
+    return selection ? { ...status, releaseChannel: selection.choice } : status
+  } finally { updateChecks -= 1 }
 }
 
-async function checkUpdatesFromSelectedSource(opts: { force?: boolean } = {}): Promise<UpdaterStatusWire> {
+async function checkUpdatesForSelection(opts: { force?: boolean } = {}): Promise<UpdaterStatusWire> {
   // A packaged install delegates to the update owner named by its stamp.
   let strategy: UpdaterStrategy | null = null
 
@@ -3575,9 +3581,10 @@ async function createPackagedUpdateStrategy(): Promise<UpdaterStrategy | null> {
   }
 
   if (INSTALL_STAMP?.channelBuild && (mechanism === 'electron-updater' || mechanism === 'app-installer')) {
-    const stampedBuild = INSTALL_STAMP.channelBuild
-    const build = canSelectDeliverySource() ? { ...stampedBuild, publicBase: deliverySources.base() } : stampedBuild
-    const installed = await inspectRunningChannelApp(stampedBuild)
+    const installedBuild = INSTALL_STAMP.channelBuild
+    const selectedBuild = packagedChannelSelection(installedBuild, DESKTOP_UPDATE_CONFIG_PATH, resolveDesktopFeedBaseUrl())?.build ?? installedBuild
+    const build = canSelectDeliverySource() ? { ...selectedBuild, publicBase: deliverySources.base() } : selectedBuild
+    const installed = await inspectRunningChannelApp(installedBuild)
     semantierObservations.reconcile({version: installed.nativeVersion, family: installed.packageFamilyName ?? '', buildId: build.buildId})
 
     // Platform/arch/signing are the channel's own preconditions. The Python
@@ -3593,8 +3600,10 @@ async function createPackagedUpdateStrategy(): Promise<UpdaterStrategy | null> {
 
     return new ChannelStrategy({
       build,
+      installedChannel: installedBuild.channel,
       mechanism,
       resolver: new ChannelResolver({
+        fetch: process.platform === 'win32' ? fetchDesktopUpdate : undefined,
         build,
         platform: process.platform,
         arch: process.arch,
@@ -3605,6 +3614,7 @@ async function createPackagedUpdateStrategy(): Promise<UpdaterStrategy | null> {
           `${target.manifest.request.buildId}:${target.package.artifact.sha256}`,
           installed.nativeVersion, target.package.version, updateWorkToken
         )
+
         return review ? { ok: false, error: 'active-work-review', workReview: review } : null
       },
       onApplyTarget: async target => {
@@ -3618,6 +3628,10 @@ async function createPackagedUpdateStrategy(): Promise<UpdaterStrategy | null> {
 
   return createNativePackagedStrategy(mechanism)
 }
+
+// Use the operating system's network/proxy policy without sending browser cookies.
+const fetchDesktopUpdate = nativeUpdateFetch((input, init) =>
+  electronNet.fetch(input instanceof URL ? input.href : input, init))
 
 function createNativePackagedStrategy(
   mechanism: UpdaterStrategy['mechanism'],
@@ -3654,7 +3668,7 @@ function createNativePackagedStrategy(
       light: isLightVariant(),
       feedBaseUrl: resolveDesktopFeedBaseUrl(),
       installer: {
-        prepare: url => stageAppInstallerFile(url, path.join(app.getPath('userData'), 'updates')),
+        prepare: url => stageAppInstallerFile(url, path.join(app.getPath('userData'), 'updates'), fetchDesktopUpdate),
         open: file => shell.openPath(file)
       },
       teardownBundledBackend,
@@ -3679,7 +3693,7 @@ function createNativePackagedStrategy(
 
     return target
       ? createChannelAppInstallerStrategy(deps, target, async (file, selected) => {
-          await verifyPreparedChannelInstaller(file, selected)
+          await verifyPreparedChannelInstaller(file, selected, undefined, fetchDesktopUpdate)
           semantierObservations.verified(selected.package.artifact.sha256)
         })
       : new AppInstallerStrategy(deps)
@@ -4558,8 +4572,14 @@ async function releaseBackendLock(updateRoot: string, tag: string): Promise<{ un
 //
 // Detection (checkUpdates / commit changelog / "N behind") stays in the UI;
 // only this apply action changed.
-async function applyUpdates(token?: unknown): Promise<UpdaterApplyResultWire> {
+async function applyUpdates(token?: unknown, expectedReleaseChannel?: unknown, requireSelection = false): Promise<UpdaterApplyResultWire> {
   return updateOperation.apply(async (): Promise<UpdaterApplyResultWire> => {
+    if (requireSelection && process.platform === 'win32') {
+      const selection = packagedChannelSelection(INSTALL_STAMP?.channelBuild, DESKTOP_UPDATE_CONFIG_PATH)
+
+      if (selection) { assertPackagedChannelSelection(selection.choice, expectedReleaseChannel) }
+    }
+
     updateInFlight = true
     updateWorkToken = token
     let handedOff: boolean = false
@@ -4593,6 +4613,7 @@ async function applyUpdates(token?: unknown): Promise<UpdaterApplyResultWire> {
     } finally {
       updateWorkToken = undefined
       updateWorkGuard.finish()
+
       if (!handedOff) {
         updateInFlight = false
       }
@@ -17032,6 +17053,7 @@ ipcMain.handle('hermes:stopPreviewFileWatch', (_event, id) => stopPreviewFileWat
 const activeWorkByWebContents = new Map<number, ActiveWork>()
 let activeWorkRevision = 0
 let updateWorkToken: unknown
+
 const updateWorkGuard = new UpdateWorkGuard(() => ({
   work: mergeActiveWork([...activeWorkByWebContents.values(), lastActiveWorkSeen]),
   revision: activeWorkRevision,
@@ -17099,6 +17121,7 @@ ipcMain.on('hermes:active-work', (event, payload) => {
   }
 
   const work = normalizeActiveWork(payload)
+
   if (JSON.stringify(activeWorkByWebContents.get(id)) !== JSON.stringify(work)) { activeWorkRevision += 1 }
   activeWorkByWebContents.set(id, work)
   lastActiveWorkSeen = work
@@ -17630,7 +17653,7 @@ ipcMain.handle(
 )
 
 ipcMain.handle('hermes:updates:apply', async (_event, payload) =>
-  applyUpdates(payload?.workReviewToken).catch(error => ({
+  applyUpdates(payload?.workReviewToken, payload?.expectedReleaseChannel, true).catch(error => ({
     ok: false,
     error: 'apply-failed',
     message: error?.message || String(error)
@@ -17683,8 +17706,21 @@ registerDeliverySourceIpc(ipcMain, {
   check: () => checkUpdates({ force: true })
 })
 
-// About ▸ Updates channel selector; source checkouts only (packages bake their channel).
-ipcMain.handle('hermes:updates:channel:set', async (_event, name: unknown): Promise<UpdaterStatusWire> => {
+// About ▸ Updates: native packaged preferences and existing source-checkout policy.
+ipcMain.handle('hermes:updates:channel:set', async (event, name: unknown): Promise<UpdaterStatusWire> => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+
+  if (!win || (win !== mainWindow && !chatWindows.has(win)) || event.senderFrame !== win.webContents.mainFrame) {
+    throw new Error('Application main frame required')
+  }
+
+  if (process.platform === 'win32' && supportsPackagedChannels(INSTALL_STAMP?.channelBuild)) {
+    updateOperation.changeSelection(() => savePackagedChannel(DESKTOP_UPDATE_CONFIG_PATH, name,
+      (file, text) => writeSecretFileAtomic(file, text)))
+
+    return checkUpdates({ force: true })
+  }
+
   assertSourceUpdateChannel(INSTALL_STAMP)
 
   return resolveCheckoutUpdateStrategy().check({ force: true, setChannel: sourceChannelName(name) })

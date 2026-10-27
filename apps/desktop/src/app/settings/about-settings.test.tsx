@@ -118,6 +118,17 @@ describe('AboutSettings', (): void => {
     expect(checkBackendUpdates).toHaveBeenCalledTimes(2)
   })
 
+  it('keeps packaged channels selectable when offline and never installs on selection', async () => {
+    $updateStatus.set({ supported: true, mechanism: 'app-installer', releaseChannel: 'development', error: 'check-failed' })
+    vi.mocked(setUpdateChannel).mockResolvedValueOnce({ supported: true, mechanism: 'app-installer', releaseChannel: 'production', reason: 'no-build-published' })
+    render(<AboutSettings />)
+    expect(screen.getByRole('button', { name: 'Development' }).getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(screen.getByRole('button', { name: 'Production' }))
+    await waitFor(() => expect(setUpdateChannel).toHaveBeenCalledWith('production'))
+    expect($confirmRequest.get()).toBeNull()
+    expect(startActiveUpdate).not.toHaveBeenCalled()
+  })
+
   it('shows the fixed package channel with no selector', (): void => {
     $desktopVersion.set({ ...$desktopVersion.get()!, channel: 'canary' })
     render(<AboutSettings />)

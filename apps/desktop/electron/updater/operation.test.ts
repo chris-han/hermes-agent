@@ -83,3 +83,35 @@ test('apply ownership precedes async resolution, survives restoration, and retai
   })
   await expect(operation.apply(async () => ({ ok: true }))).rejects.toThrow('already in progress')
 })
+
+test('channel changes invalidate selected target and cannot race checks or installation', async () => {
+  let creations = 0
+
+  const operation = new UpdateOperation(async () => { creations++;
+
+ return strategy() })
+
+  await operation.resolve()
+  let saves = 0
+  operation.changeSelection(() => { saves++ })
+  await operation.resolve()
+  expect(creations).toBe(2)
+  const pending = deferred<void>()
+
+  const checking = operation.check(async () => { await pending.promise;
+
+ return { supported: true } })
+
+  expect(() => operation.changeSelection(() => { saves++ })).toThrow('progress')
+  expect(() => operation.reset()).toThrow('progress')
+  pending.resolve()
+  await checking
+  await operation.apply(async () => {
+    expect(() => operation.changeSelection(() => { saves++ })).toThrow('progress')
+
+    return { ok: true, handedOff: true }
+  })
+  expect(() => operation.changeSelection(() => { saves++ })).toThrow('progress')
+  expect(() => operation.reset()).toThrow('progress')
+  expect(saves).toBe(1)
+})

@@ -656,7 +656,7 @@ declare global {
         check: (opts?: { force?: boolean }) => Promise<DesktopUpdateStatus>
         apply: (opts?: DesktopUpdateApplyOptions) => Promise<DesktopUpdateApplyResult>
         /** Persist this source install's update channel and return the fresh check. */
-        setChannel?: (name: 'main' | 'stable') => Promise<DesktopUpdateStatus>
+        setChannel?: (name: 'main' | 'stable' | 'production' | 'development') => Promise<DesktopUpdateStatus>
         getDeliverySources?: () => Promise<DeliverySourceStatus | null>
         setDeliverySource?: (name: DeliverySourceId) => Promise<{
           selection: DeliverySourceStatus
@@ -904,6 +904,7 @@ export interface DesktopUpdateStatus {
   channel?: string
   /** The install's source_check can persist a channel (older runtimes cannot). */
   channelSelectable?: boolean
+  releaseChannel?: 'production' | 'development'
   /** The latest release tag on a release-feed channel, e.g. `v0.18.0`. */
   latestTag?: string | null
   /** Source stable: the release version the channel resolves to, e.g. `0.21.6`. */
@@ -921,6 +922,7 @@ export interface DesktopUpdateStatus {
 export type DesktopUpdateDirtyStrategy = 'abort' | 'stash' | 'force'
 
 export interface DesktopUpdateApplyOptions {
+  expectedReleaseChannel?: 'production' | 'development'
   workReviewToken?: string
   dirtyStrategy?: DesktopUpdateDirtyStrategy
 }

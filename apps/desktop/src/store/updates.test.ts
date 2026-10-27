@@ -1004,6 +1004,14 @@ describe('applyUpdates terminal state', () => {
     delete (globalThis as unknown as { window?: unknown }).window
   })
 
+  it('binds apply to the packaged channel displayed in this window', async () => {
+    $updateStatus.set({ supported: true, releaseChannel: 'development' })
+    applyMock.mockResolvedValue({ ok: false })
+    await applyUpdates()
+    expect(applyMock).toHaveBeenCalledWith({ expectedReleaseChannel: 'development' })
+    $updateStatus.set(null)
+  })
+
   it('holds the restart view when a relauncher hands off (no close, no toast)', async () => {
     applyMock.mockResolvedValue({ ok: true, handedOff: true })
 

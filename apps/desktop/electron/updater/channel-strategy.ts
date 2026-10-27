@@ -11,6 +11,7 @@ export interface ChannelRetirementStatus {
 }
 export interface ChannelStrategyDeps {
   resolver: Pick<ChannelResolver, 'resolve'>
+  installedChannel?: string
   build: ChannelBuild
   mechanism: 'electron-updater' | 'app-installer'
   nativeFactory: (target: ChannelTarget) => UpdaterStrategy
@@ -104,7 +105,7 @@ export class ChannelStrategy implements UpdaterStrategy {
       }
     }
 
-    return await this.selectNative(base, result.target)
+    return await this.selectNative(base, result.target, { crossChannel: this.deps.installedChannel !== undefined && this.deps.installedChannel !== result.target.manifest.request.channel })
   }
 
   private async selectNative(
