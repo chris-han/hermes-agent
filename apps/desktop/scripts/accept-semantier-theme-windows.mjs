@@ -260,6 +260,39 @@ async function productionSurfaces(page, app) {
   checks.push('T13 real integrated terminal in light/dark; no command sent')
 }
 
+
+async function profileTextEvidence(page, name, appearance) {
+  const panel=page.locator('[data-overlay-surface]').first()
+  const machinePath=panel.locator('p.font-mono[title]').first()
+  await expect(machinePath).toBeVisible()
+  const measure=()=>panel.evaluate(root=>{
+    const context=new OffscreenCanvas(1,1).getContext('2d',{willReadFrequently:true})
+    const rgba=value=>{context.clearRect(0,0,1,1);context.fillStyle=value;context.fillRect(0,0,1,1);return [...context.getImageData(0,0,1,1).data].map((v,i)=>i===3?v/255:v)}
+    const blend=(fg,bg)=>fg.slice(0,3).map((v,i)=>v*fg[3]+bg[i]*(1-fg[3]))
+    const luminance=rgb=>rgb.map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4}).reduce((sum,v,i)=>sum+v*[.2126,.7152,.0722][i],0)
+    return [...root.querySelectorAll('[class~="text-muted-foreground/50"],[class~="text-muted-foreground/55"]')].filter(el=>el.getBoundingClientRect().width&&el.textContent.trim()&&!el.closest('[aria-hidden="true"],[aria-disabled="true"],button:disabled')).map(el=>{
+      const ancestors=[];let node=el
+      while(node){const style=getComputedStyle(node);assertOpacity(style.opacity);ancestors.unshift(style.backgroundColor);node=node.parentElement}
+      function assertOpacity(value){if(Number(value)!==1)throw Error('unqualified ancestor opacity')}
+      let background=[255,255,255]
+      for(const color of ancestors)background=blend(rgba(color),background)
+      const style=getComputedStyle(el),foreground=blend(rgba(style.color),background),a=luminance(foreground),b=luminance(background)
+      return {text:el.textContent.trim(),foreground,background,ratio:(Math.max(a,b)+.05)/(Math.min(a,b)+.05),font:style.fontFamily,features:style.fontFeatureSettings,numeric:style.fontVariantNumeric}
+    })
+  })
+  const normal=await measure()
+  await machinePath.hover()
+  const hovered=await measure()
+  assert.ok(normal.length>=3)
+  for(const row of [...normal,...hovered])assert.ok(row.ratio>=4.5,JSON.stringify(row))
+  const font=await machinePath.evaluate(el=>{const s=getComputedStyle(el);return {font:s.fontFamily,features:s.fontFeatureSettings,numeric:s.fontVariantNumeric,text:el.textContent}})
+  assert.match(font.font,/JetBrains Mono/)
+  assert.match(font.numeric,/slashed-zero/)
+  assert.match(font.features,/zero/)
+  await machinePath.screenshot({path:path.join(output,'profile-machine-path-'+appearance+'.png')})
+  observations.push({profileQuietText:{profile:name,appearance,normal,hovered,font}})
+}
+
 async function createProfile(page,name) {
   await page.evaluate(()=>{location.hash='/profiles'})
   await page.locator('[data-overlay-surface]').getByRole('button',{name:'New profile',exact:true}).click()
@@ -301,6 +334,13 @@ async function createProfile(page,name) {
   const saveStates=await page.evaluate(()=>{window.__nativeSaveObserver.disconnect();return window.__nativeSaveStates})
   assert.ok(saveStates.some(state=>state.disabled&&/saving/i.test(state.label)),'actual saving state observed')
   observations.push({createdProfile:name,via:'production profile dialog',soulReadWrite:'selected-profile UI scope',saveStates})
+  if(name==='legacy') for(const appearance of ['light','dark']) {
+    await mode(page,appearance)
+    await page.evaluate(()=>{location.hash='/profiles'})
+    await page.locator('[data-overlay-surface]').getByRole('button',{name,exact:true}).first().click()
+    await expect(soulEditor).toHaveText('native-theme-preservation:'+name+'\n')
+    await profileTextEvidence(page,name,appearance)
+  }
 }
 async function selectProfile(page,name) {
   await page.evaluate(()=>{location.hash='/'})
