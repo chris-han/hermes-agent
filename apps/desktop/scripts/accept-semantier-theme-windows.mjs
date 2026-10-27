@@ -370,6 +370,8 @@ try {
     return [file,digest(file)]
   }))
   await page.evaluate(()=>{
+    localStorage.setItem('hermes-boot-background','#123456')
+    localStorage.setItem('hermes-boot-color-scheme','dark')
     localStorage.setItem('hermes-desktop-theme-v2','nous-alt')
     localStorage.setItem('hermes-desktop-mode-v1','light')
     localStorage.setItem('hermes-desktop-profile-themes-v1',JSON.stringify({legacy:'nous-alt',explicit:'nous'}))
@@ -380,7 +382,9 @@ try {
   await expect(page.locator('html')).toHaveAttribute('data-hermes-theme','semantier')
   await expect(page.locator('html')).toHaveAttribute('data-hermes-mode','light')
   assert.equal(await page.evaluate(()=>localStorage.getItem('native-theme-nonappearance-sentinel')),'retain-me')
-  checks.push('T04 legacy global Nous Alt migration and saved light mode')
+  assert.equal(await page.locator('html').evaluate(el=>el.style.backgroundColor),'rgb(243, 244, 245)')
+  observations.push({legacyBootCache:{seed:'#123456',prepaintInlineBackground:'rgb(243, 244, 245)',savedMode:'light'}})
+  checks.push('T04 legacy global Nous Alt migration, stale boot-cache rejection and saved light mode')
   const migrated=await page.evaluate(()=>({
     themes:JSON.parse(localStorage.getItem('hermes-desktop-profile-themes-v1')),
     modes:JSON.parse(localStorage.getItem('hermes-desktop-profile-modes-v1'))
