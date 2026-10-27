@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import re
+import math
 from typing import Any, Literal, Mapping, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -48,6 +49,19 @@ def _ordered_unique_refs(value: Any, field: str) -> tuple[str, ...]:
 
 
 def _validate_json(value: Any, field: str) -> None:
+    # Native PDF locators carry finite geometry, not semantic numeric values.
+    # Preserve those exact bytes in retrieval snapshots; candidate frames and
+    # all other query fields retain the existing no-floating-point contract.
+    if field in (
+        "query.evidence_refs.provenance.source_locator.native_metadata.bbox",
+        "query.evidence_refs.provenance.source_locator.native_metadata.text_spans.bbox",
+    ):
+        if not isinstance(value, (list, tuple)) or len(value) != 4 or any(
+            isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v)
+            for v in value
+        ):
+            raise ValueError(f"{field} must contain four finite geometry coordinates")
+        return
     if isinstance(value, float):
         raise ValueError(f"{field} contains a forbidden floating-point value")
     if isinstance(value, Mapping):

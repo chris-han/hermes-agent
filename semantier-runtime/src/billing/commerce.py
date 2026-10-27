@@ -1,4 +1,5 @@
 """Development commerce over the core financial owner. No live merchant connector."""
+import asyncio
 import calendar
 import os
 from datetime import datetime, timedelta, timezone
@@ -26,15 +27,24 @@ def month(at, n):
     return at.replace(year=y,month=m+1,day=min(at.day,calendar.monthrange(y,m+1)[1]))
 
 class CommerceService:
-    def __init__(self,billing,*,development=False):
+    def __init__(self,billing,*,development=False,channels=None):
         self.billing=billing
         self.development=development
+        self.channels=dict(channels or {}) if development else {}
+
+    @property
+    def payment_environment(self):
+        return 'ALIPAY_SANDBOX' if any(a.environment=='ALIPAY_SANDBOX' for a in self.channels.values()) else 'DEVELOPMENT'
+
+    @property
+    def merchant_id(self):
+        return self.channels['alipay'].merchant_id if self.payment_environment=='ALIPAY_SANDBOX' else 'local-development'
 
     def catalog(self):
-        return {'version':VERSION,'environment':'DEVELOPMENT' if self.development else 'UNAVAILABLE',
-                'available':self.development,'merchant':{'id':'local-development','display_name':'LOCAL DEVELOPMENT — no real merchant'} if self.development else None,
-                'products':[p.copy() for p in PRODUCTS] if self.development else [],
-                'payment_methods':['wechat_test','alipay_test'] if self.development else [],'overseas_available':False}
+        return {'version':VERSION,'environment':self.payment_environment if self.development else 'UNAVAILABLE',
+                'available':self.development,'merchant':{'id':self.merchant_id,'display_name':'ALIPAY SANDBOX — virtual funds only' if self.payment_environment=='ALIPAY_SANDBOX' else 'LOCAL DEVELOPMENT — no real merchant'} if self.development else None,
+                'products':[(p|{'purchasable':p['purchasable'] and (self.payment_environment!='ALIPAY_SANDBOX' or p['product_id'] in {'professional_monthly','credits_100'})}) for p in PRODUCTS] if self.development else [],
+                'payment_methods':list(self.channels) or ['wechat_test','alipay_test'] if self.development else [],'overseas_available':False}
 
     def enabled(self):
         if not self.development: raise ValueError('commercial service unavailable')
@@ -71,6 +81,7 @@ class CommerceService:
 
     async def quote(self,org,aid,product_id):
         self.enabled()
+        if self.payment_environment=='ALIPAY_SANDBOX' and product_id not in {'professional_monthly','credits_100'}:raise ValueError('sandbox product unavailable')
         product=next((p for p in PRODUCTS if p['product_id']==product_id and p['purchasable']),None)
         if product is None and product_id!='enterprise': raise ValueError('product unavailable')
         async with self.billing.connection() as c:
@@ -83,12 +94,14 @@ class CommerceService:
                 expiry=min(expiry,offer['expires_at'])
             a=await self.billing._account(c,org,aid,'CNY')
             if a['funding']!='SEMANTIER_CREDITS': raise ValueError('account ineligible')
-            snapshot=product|{'version':VERSION,'environment':'DEVELOPMENT','merchant_id':'local-development'}
+            snapshot=product|{'version':VERSION,'environment':self.payment_environment,'merchant_id':self.merchant_id}
+            if self.channels:
+                snapshot['channel_bindings']={name:{'merchant_id':a.merchant_id,'app_id':a.app_id,'environment':a.environment} for name,a in self.channels.items()}
             q=await self.billing._one(c,'INSERT INTO commerce_quotes(quote_id,organization_id,account_id,product,expires_at) VALUES(%s,%s,%s,%s,%s) RETURNING *',(uuid4().hex,org,aid,Jsonb(snapshot),expiry))
             return _wire(q)|snapshot
 
     def wire_order(self,row):
-        return _wire(row)|{'amount':row['product']['amount'],'currency':row['product']['currency'],'environment':'DEVELOPMENT'}
+        return _wire(row)|{'amount':row['product']['amount'],'currency':row['product']['currency'],'environment':row['product'].get('environment','DEVELOPMENT')}
 
     async def order(self,org,aid,quote_id,key,confirmed):
         self.enabled()
@@ -111,8 +124,11 @@ class CommerceService:
         async with self.billing.connection() as c:
             order=self.wire_order(await self.billing._one(c,'SELECT * FROM commerce_orders WHERE organization_id=%s AND account_id=%s AND order_id=%s FOR UPDATE',(org,aid,oid)))
             order['payment_attempt']=_wire(await self.payment_attempt(c,oid))
+        if self.development and order['status']=='PAID_PENDING_FULFILLMENT':
+            await self.fulfill(oid)
+            return await self.get_order(org,aid,oid)
         if (self.development and order['status']=='PENDING_PAYMENT' and order['payment_attempt']
-                and order['payment_attempt']['status']=='SUCCEEDED'):
+                and order['payment_attempt']['status']=='SUCCEEDED' and order['payment_attempt']['method'] in {'wechat_test','alipay_test'}):
             await self.ingest(self.fixture_event(order),verified=True)
             await self.fulfill(oid)
             return await self.get_order(org,aid,oid)
@@ -129,12 +145,15 @@ class CommerceService:
         await c.execute("UPDATE commerce_payment_attempts SET status='EXPIRED' WHERE order_id=%s AND status='AWAITING_PAYMENT' AND expires_at<=now()",(oid,))
         return await self.billing._one(c,'SELECT * FROM commerce_payment_attempts WHERE order_id=%s ORDER BY created_at DESC,attempt_id DESC LIMIT 1',(oid,),required=False)
 
-    async def start_payment(self,org,aid,oid,method):
+    async def start_payment(self,org,aid,oid,method,*,language='en'):
         self.enabled()
-        if method not in {'wechat_test','alipay_test'}: raise ValueError('payment method unavailable')
+        if method in self.channels:
+            return await self.start_channel_payment(org,aid,oid,method,language=language)
+        if method not in {'wechat_test','alipay_test'} or self.channels: raise ValueError('payment method unavailable')
         async with self.billing.connection() as c:
             o=await self.billing._one(c,'SELECT * FROM commerce_orders WHERE organization_id=%s AND account_id=%s AND order_id=%s FOR UPDATE',(org,aid,oid))
             await self.binding(c,org,aid)
+            if o['product'].get('channel_bindings'):raise ValueError('quoted SDK channel cannot use simulator')
             if o['status']!='PENDING_PAYMENT': raise ValueError('order already paid; refresh status')
             old=await self.payment_attempt(c,oid)
             if old and old['status']=='AWAITING_PAYMENT':
@@ -151,10 +170,12 @@ class CommerceService:
         if outcome not in statuses: raise ValueError('unsupported mock outcome')
         expired=False
         async with self.billing.connection() as c:
-            await self.billing._one(c,'SELECT * FROM commerce_orders WHERE organization_id=%s AND account_id=%s AND order_id=%s FOR UPDATE',(org,aid,oid))
+            order=await self.billing._one(c,'SELECT * FROM commerce_orders WHERE organization_id=%s AND account_id=%s AND order_id=%s FOR UPDATE',(org,aid,oid))
+            if order['product'].get('channel_bindings'):raise ValueError('quoted SDK channel cannot use simulator')
             await self.binding(c,org,aid)
             await self.payment_attempt(c,oid)
             a=await self.billing._one(c,'SELECT * FROM commerce_payment_attempts WHERE order_id=%s AND attempt_id=%s',(oid,attempt_id))
+            if a['method'] not in {'wechat_test','alipay_test'}:raise ValueError('channel payment cannot be simulated')
             if a['status']=='EXPIRED':
                 expired=True
             elif a['status'] not in {'AWAITING_PAYMENT',statuses[outcome]}:
@@ -174,6 +195,7 @@ class CommerceService:
         self.enabled()
         if method not in {'wechat_test','alipay_test'}: raise ValueError('payment method unavailable')
         order=await self.get_order(org,aid,oid)
+        if order['product'].get('channel_bindings'):raise ValueError('quoted SDK channel cannot use simulator')
         if order['status']!='PENDING_PAYMENT':
             await self.ingest(self.fixture_event(order),verified=True)
             await self.fulfill(oid)
@@ -189,6 +211,7 @@ class CommerceService:
         async with self.billing.connection() as c:
             o=await self.billing._one(c,'SELECT * FROM commerce_orders WHERE order_id=%s FOR UPDATE',(event.get('order_id'),))
             await self.binding(c,o['organization_id'],o['account_id'])
+            if o['product'].get('channel_bindings'):raise ValueError('quoted SDK channel cannot use simulator')
             expected=self.fixture_event(self.wire_order(o))
             if event.get('status') in {'REFUND_REQUESTED','ADJUSTMENT_REQUIRED'}:
                 expected.update(status=event['status'],event_id=expected['event_id']+':'+event['status'])
@@ -205,6 +228,101 @@ class CommerceService:
             if o['status']=='PENDING_PAYMENT':
                 await c.execute("UPDATE commerce_orders SET status='PAID_PENDING_FULFILLMENT' WHERE order_id=%s",(o['order_id'],))
                 await c.execute('INSERT INTO commerce_fulfillment(order_id) VALUES(%s) ON CONFLICT DO NOTHING',(o['order_id'],))
+
+    def channel(self,method):
+        self.enabled()
+        if method not in self.channels:raise ValueError('payment channel unavailable')
+        return self.channels[method]
+
+    def check_channel_binding(self,order,method,adapter):
+        binding=order['product'].get('channel_bindings',{}).get(method)
+        expected={'merchant_id':adapter.merchant_id,'app_id':adapter.app_id,'environment':adapter.environment}
+        if binding!=expected or adapter.environment not in {'DEVELOPMENT','ALIPAY_SANDBOX'} or (adapter.environment=='ALIPAY_SANDBOX' and method!='alipay'):raise ValueError('immutable channel binding mismatch')
+
+    async def start_channel_payment(self,org,aid,oid,method,*,language='en'):
+        adapter=self.channel(method)
+        async with self.billing.connection() as c:
+            o=await self.billing._one(c,'SELECT * FROM commerce_orders WHERE organization_id=%s AND account_id=%s AND order_id=%s FOR UPDATE',(org,aid,oid))
+            await self.binding(c,org,aid)
+            self.check_channel_binding(o,method,adapter)
+            if o['status']!='PENDING_PAYMENT':raise ValueError('order already paid; refresh status')
+            old=await self.payment_attempt(c,oid)
+            if old and old['status']!='CANCELED':
+                if old['method']!=method:raise ValueError('resolve existing payment attempt before changing method')
+                # Even locally expired attempts may have succeeded externally.
+                attempt=old
+            else:
+                attempt=await self.billing._one(c,"INSERT INTO commerce_payment_attempts(attempt_id,order_id,method,status,expires_at) VALUES(%s,%s,%s,'AWAITING_PAYMENT',%s) RETURNING *",(uuid4().hex,oid,method,datetime.now(timezone.utc)+timedelta(minutes=10)))
+        local_page_recovery=(old and old['status'] in {'AWAITING_PAYMENT','EXPIRED'} and not old.get('checkout') and adapter.environment=='ALIPAY_SANDBOX')
+        if old and old['status']!='CANCELED' and not local_page_recovery:
+            if old.get('checkout') and old['status']=='AWAITING_PAYMENT':return _wire(old)
+            event=await asyncio.to_thread(adapter.query,attempt['attempt_id'])
+            if event:
+                if event['attempt_id']!=attempt['attempt_id']:raise ValueError('query attempt mismatch')
+                await self.ingest_channel(event)
+                return _wire(attempt)|{'status':'SUCCEEDED','checkout':None}
+            raise ValueError('existing channel attempt pending; query or close before retry')
+        checkout=await asyncio.to_thread(adapter.create,attempt['attempt_id'],o['product']|{'order_id':oid,'account_id':aid,'language':language})
+        async with self.billing.connection() as c:
+            row=await self.billing._one(c,'UPDATE commerce_payment_attempts SET checkout=%s WHERE attempt_id=%s AND checkout IS NULL RETURNING *',(Jsonb(checkout),attempt['attempt_id']),required=False)
+            if row is None:
+                row=await self.billing._one(c,'SELECT * FROM commerce_payment_attempts WHERE attempt_id=%s',(attempt['attempt_id'],))
+        return _wire(row)
+
+    async def notify(self,method,headers,body):
+        if len(body)>65536:raise ValueError('notification too large')
+        event=await asyncio.to_thread(self.channel(method).notification,headers,body)
+        if event is None:raise ValueError('payment not confirmed')
+        await self.ingest_channel(event)
+        return {'accepted':True}
+
+    async def ingest_channel(self,event):
+        adapter=self.channel(event.get('method'))
+        async with self.billing.connection() as c:
+            attempt=await self.billing._one(c,'SELECT * FROM commerce_payment_attempts WHERE attempt_id=%s',(event.get('attempt_id'),))
+            o=await self.billing._one(c,'SELECT * FROM commerce_orders WHERE order_id=%s FOR UPDATE',(attempt['order_id'],))
+            self.check_channel_binding(o,event['method'],adapter)
+            await self.binding(c,o['organization_id'],o['account_id'])
+            from billing.payment_channels import amount
+            expected={'attempt_id':attempt['attempt_id'],'reference':event.get('reference'),'amount':amount(o['product']['amount']),'currency':o['product']['currency'],'merchant_id':adapter.merchant_id,'app_id':adapter.app_id,'environment':adapter.environment,'method':attempt['method'],'status':'SUCCESS'}
+            if event!=expected or not isinstance(event.get('reference'),str) or not 0<len(event['reference'])<=128:raise ValueError('payment binding mismatch')
+            # Channel transaction is canonical across callback/query notification IDs.
+            eid=event['method']+':'+adapter.merchant_id+':'+event['reference']
+            if adapter.environment=='ALIPAY_SANDBOX':
+                import hashlib,json
+                eid='alipay:ALIPAY_SANDBOX:'+hashlib.sha256(json.dumps([adapter.environment,adapter.app_id,adapter.merchant_id,event['reference']],separators=(',',':')).encode()).hexdigest()
+            await c.execute('SELECT pg_advisory_xact_lock(hashtextextended(%s,0))',(eid,))
+            old=await self.billing._one(c,'SELECT order_id,payload FROM commerce_payment_events WHERE event_id=%s',(eid,),required=False)
+            if old:
+                if old['order_id']!=o['order_id'] or old['payload']!=event:raise ValueError('payment event conflict')
+                return
+            # A second successful channel transaction is retained as an exception,
+            # never another grant or silently ignored cash.
+            paid=await self.billing._one(c,'SELECT event_id FROM commerce_payment_events WHERE order_id=%s',(o['order_id'],),required=False)
+            await c.execute('INSERT INTO commerce_payment_events(event_id,order_id,payload) VALUES(%s,%s,%s)',(eid,o['order_id'],Jsonb(event)))
+            await c.execute("UPDATE commerce_payment_attempts SET status='SUCCEEDED' WHERE attempt_id=%s",(attempt['attempt_id'],))
+            if paid:
+                await c.execute("UPDATE commerce_orders SET status='PAID_REQUIRES_RECONCILIATION' WHERE order_id=%s",(o['order_id'],))
+                await c.execute("UPDATE commerce_fulfillment SET reconciliation_reason='multiple_payment_transactions' WHERE order_id=%s",(o['order_id'],))
+            elif o['status']=='PENDING_PAYMENT':
+                await c.execute("UPDATE commerce_orders SET status='PAID_PENDING_FULFILLMENT' WHERE order_id=%s",(o['order_id'],))
+                await c.execute('INSERT INTO commerce_fulfillment(order_id) VALUES(%s) ON CONFLICT DO NOTHING',(o['order_id'],))
+
+    async def query_channel_payment(self,org,aid,oid,attempt_id,*,close=False):
+        self.enabled()
+        async with self.billing.connection() as c:
+            o=await self.billing._one(c,'SELECT * FROM commerce_orders WHERE organization_id=%s AND account_id=%s AND order_id=%s',(org,aid,oid))
+            a=await self.billing._one(c,'SELECT * FROM commerce_payment_attempts WHERE order_id=%s AND attempt_id=%s',(oid,attempt_id))
+            adapter=self.channel(a['method']);self.check_channel_binding(o,a['method'],adapter)
+        event=await asyncio.to_thread(adapter.query,attempt_id)
+        if event:
+            if event['attempt_id']!=attempt_id:raise ValueError('query attempt mismatch')
+            await self.ingest_channel(event)
+        elif close:
+            await asyncio.to_thread(adapter.close,attempt_id)
+            async with self.billing.connection() as c:
+                await c.execute("UPDATE commerce_payment_attempts SET status='CANCELED' WHERE attempt_id=%s AND status<>'SUCCEEDED'",(attempt_id,))
+        return await self.get_order(org,aid,oid)
 
     async def grant(self,c,org,aid,gid,kind,amount,start,end):
         inserted=await self.billing._one(c,'INSERT INTO credit_grants(grant_id,organization_id,account_id,currency,kind,amount,remaining,starts_at,expires_at) VALUES(%s,%s,%s,\'CNY\',%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING RETURNING grant_id',(gid,org,aid,kind,amount,amount,start,end),required=False)
@@ -275,9 +393,16 @@ class CommerceService:
         return {'schema_version':'semantier.billing.v2','backend':'semantier','organization':{'id':org},'billing_account_id':aid,'currency':a['currency'],'environment':'DEVELOPMENT' if self.development else 'UNAVAILABLE','subscription':subscription,'merchant':{'id':binding['merchant_id'],'display_name':'LOCAL DEVELOPMENT — no real merchant'} if binding and self.development else None,'credits':{'allowance':{'amount':amounts.get('allowance','0'),'currency':a['currency']},'purchased':{'amount':amounts.get('purchased','0'),'currency':a['currency']},'held':summary['held'],'available':summary['available']},'usage':{'known_cost':{'amount':summary['budget']['spent'],'currency':a['currency']},'period':'lifetime'},'as_of':now.isoformat()}
 
 
-def configured(billing):
+def configured(billing,*,channels=None):
     development=(os.getenv('SEMANTIER_COMMERCE_ENVIRONMENT')=='DEVELOPMENT'
                  and os.getenv('SEMANTIER_ENVIRONMENT','').lower()=='development'
                  and all(os.getenv(name,'').lower() not in {'production','prod'}
                          for name in ('NODE_ENV','ENVIRONMENT')))
-    return CommerceService(billing,development=development)
+    if development and billing is not None and os.getenv('SEMANTIER_ALIPAY_SANDBOX_CONFIG'):
+        from psycopg.conninfo import conninfo_to_dict
+        if not conninfo_to_dict(billing.dsn).get('dbname','').startswith('alipay_sandbox_'):
+            raise ValueError('isolated Alipay sandbox Billing store required')
+    if development and channels is None:
+        from billing.payment_channels import configured_channels
+        channels=configured_channels()
+    return CommerceService(billing,development=development,channels=channels)

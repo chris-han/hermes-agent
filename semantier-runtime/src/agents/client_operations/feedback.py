@@ -38,7 +38,7 @@ class Feedback:
                 data=event.model_dump();key=(event.installation_ref,event.event_id)
                 if event.installation_ref!=owner['installation_ref']:
                     receipts.append({'event_id':event.event_id,'result':'rejected','code':'installation_scope_mismatch'});continue
-                release=c.execute('SELECT body FROM releases WHERE release_id=%s',(event.release_id,)).fetchone()
+                release=c.execute("SELECT body FROM releases WHERE release_id=%s AND qualification='verified'",(event.release_id,)).fetchone()
                 if not release:
                     receipts.append({'event_id':event.event_id,'result':'rejected','code':'release_unavailable'});continue
                 target=release['body']['manifest']['packages'][0]
@@ -55,7 +55,7 @@ class Feedback:
                 receipts.append({'event_id':event.event_id,'result':result})
         return {'items':receipts,'source':'client_reported'}
 
-    def attempts(self,release_id=None,days=7):
+    def attempts(self,release_id=None,days=7,start=None,end=None):
         with self.store.connection() as c:
             rows=c.execute('SELECT * FROM events WHERE (%s::text IS NULL OR release_id=%s) ORDER BY received_at,event_id',(release_id,release_id)).fetchall()
             grouped={}
@@ -63,9 +63,10 @@ class Feedback:
             for row in rows:
                 key=(row['installation_ref'],row['update_id']);old=grouped.get(key)
                 if old is None or rank[row['body']['outcome']]>=rank[old['body']['outcome']]:grouped[key]=row
-            cutoff=datetime.now(timezone.utc)-timedelta(days=days)
-            items=[row for row in grouped.values() if row['received_at']>=cutoff]
-            return {'items':items,'summary':summarize_attempts(r['body']['outcome'] for r in items),'reporting_installations':len({r['installation_ref'] for r in items}),'coverage':'observed_only','source':'client_reported'}
+            end=end or datetime.now(timezone.utc)
+            start=start or end-timedelta(days=days)
+            items=[row for row in grouped.values() if start<=row['received_at']<end]
+            return {'items':items,'summary':summarize_attempts(r['body']['outcome'] for r in items),'reporting_installations':len({r['installation_ref'] for r in items}),'coverage':'observed_only','source':'client_reported','window_basis':'received_at_utc','window_start':start,'window_end':end}
 
     def submit(self,user_id,diagnostic):
         body=diagnostic.model_dump()

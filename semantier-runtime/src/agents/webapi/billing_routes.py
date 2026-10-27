@@ -30,6 +30,12 @@ async def billing_state(request: Request):
                  'status':'PARTIAL' if summary.get('unresolved_attempts') else 'RATED',
                  'unresolved_attempts':summary.get('unresolved_attempts'),'period':'lifetime'},
         'as_of':datetime.now(timezone.utc).isoformat()}
+    if funding == 'CUSTOMER_CLOUD' and 'billing:manage' not in actor.permissions:
+        # Shadow budget tracks supplier spending, not a customer tariff.
+        result['account'] = {**summary, 'budget': {'status': 'UNAVAILABLE'}}
+        result['usage']['known_cost']['amount'] = None
+        result['usage']['status'] = 'UNAVAILABLE'
+        result['usage']['reason'] = 'supplier_basis_requires_management'
     import asyncio
     from agents.gateway_identity import account_provisioning_for_user
     readiness=await asyncio.to_thread(account_provisioning_for_user,user_id=actor.user_id,
@@ -65,6 +71,9 @@ async def billing_usage(request: Request):
             actor_user_id=None if 'usage:read_org' in actor.permissions else actor.user_id,filters=query)
     except (ValueError,TypeError) as exc:raise HTTPException(422,str(exc)) from exc
     more=len(rows)>limit;rows=rows[:limit]
+    if 'billing:manage' not in actor.permissions:
+        from billing.visibility import customer_projection
+        rows = customer_projection(rows)
     for row in rows:
         row['evidence_url']='/api/model-gateway/invocations/'+row['invocation_id']+'/evidence'
     return {'schema_version':'semantier.billing.v1','backend':'semantier','data':rows,
@@ -77,7 +86,9 @@ async def billing_usage(request: Request):
 @router.get('/comparison')
 async def billing_comparison(request: Request):
     service,actor,aid,currency,funding=await account(request)
-    allowed={'provider','raw_usage'}
+    if request.query_params.get('kind'):
+        return await optimization_comparison(request, service, actor, aid, currency)
+    allowed={'provider','raw_usage','account_id','currency'}
     if set(request.query_params)-allowed:
         raise HTTPException(422,'unsupported comparison fields')
     if len(request.query_params.get('raw_usage',''))>16384:
@@ -104,6 +115,126 @@ async def billing_comparison(request: Request):
     except ValueError as exc:
         raise HTTPException(422,str(exc)) from exc
     return {'schema_version':'semantier.billing.v1','backend':'semantier','data':data}
+
+
+async def optimization_comparison(request, service, actor, aid, currency):
+    from billing.optimization import price_comparison
+    from contracts.billing import BillingError
+    query = dict(request.query_params)
+    allowed = {'kind', 'basis', 'account_id', 'currency', 'baseline', 'candidate', 'raw_usage',
+               'from', 'to', 'root_run_id', 'purpose', 'catalog_version', 'supplier_assumptions'}
+    if set(query) - allowed:
+        raise HTTPException(422, 'unsupported comparison fields')
+    kind, basis = query.get('kind'), query.get('basis', 'CUSTOMER')
+    if kind not in {'same_usage_estimate', 'what_if', 'observed_results'} or basis not in {'CUSTOMER', 'SUPPLIER'}:
+        raise HTTPException(422, 'unsupported comparison kind or basis')
+    if basis == 'SUPPLIER' and 'billing:manage' not in actor.permissions:
+        raise HTTPException(403, 'supplier basis requires billing management')
+    if not {'usage:read_self', 'usage:read_org'} & actor.permissions:
+        raise HTTPException(403, 'usage permission required')
+    deployments = [d for d in await service.authorized_deployments(actor)
+                   if d.account_id == aid and d.currency == currency]
+    options = [{'id': d.deployment_id, 'label': d.alias, 'revision': d.revision} for d in deployments]
+    result = {'schema_version': 'semantier.optimization.v1', 'kind': kind, 'basis': basis,
+        'scope': {'organization_id': actor.organization_id, 'account_id': aid, 'currency': currency,
+                  'filters': {k: query[k] for k in ('from', 'to', 'root_run_id', 'purpose') if query.get(k)}},
+        'capabilities': {'supplier_basis': 'billing:manage' in actor.permissions,
+            'save_draft': False, 'publish': False, 'reason': 'policy_publication_owner_unavailable'},
+        'candidates': options, 'data': [], 'quality': 'UNMEASURED', 'business_benefit': 'UNMEASURED',
+        'status': 'UNAVAILABLE', 'reason': None, 'coverage': {'covered': 0, 'required': 0},
+        'actual_with_without': {'status': 'UNAVAILABLE', 'reason': 'qualified_observed_cohorts_unavailable'}}
+    if 'billing:manage' in actor.permissions:
+        result['supplier_catalogs'] = await service.billing.supplier_catalog_options()
+    catalog = None
+    assumptions = None
+    if query.get('catalog_version') or query.get('supplier_assumptions'):
+        if basis != 'SUPPLIER':
+            raise HTTPException(422, 'catalog scenarios require supplier basis')
+        try:
+            encoded = query.get('supplier_assumptions', '')
+            if len(encoded) > 8192:
+                raise ValueError('supplier assumptions exceed bound')
+            assumptions = json.loads(encoded)
+            if not isinstance(assumptions, dict):
+                raise ValueError('explicit supplier assumptions required')
+            catalog = await service.billing.get_supplier_catalog(query['catalog_version'])
+        except (ValueError, KeyError) as exc:
+            raise HTTPException(422, 'pinned catalog and explicit supplier assumptions required') from exc
+    if kind == 'observed_results':
+        result['reason'] = 'qualified_observed_cohorts_unavailable'
+        return result
+    by_id = {d.deployment_id: d for d in deployments}
+    baseline, candidate = by_id.get(query.get('baseline')), by_id.get(query.get('candidate'))
+    if not baseline or not candidate:
+        if query.get('baseline') or query.get('candidate'):
+            raise HTTPException(403, 'comparison deployment outside authorized scope')
+        result['reason'] = 'select_current_baseline_and_candidate'
+        return result
+    price_kind = 'supplier' if basis == 'SUPPLIER' else 'customer'
+    async def price(d):
+        version = d.supplier_price_version if basis == 'SUPPLIER' else d.customer_price_version
+        if not version:
+            return None
+        try:
+            return await service.billing.get_price(version, price_kind)
+        except BillingError:
+            return None
+    old, new = await price(baseline), await price(candidate)
+    valuation_at = datetime.now(timezone.utc).isoformat()
+    result['valuation_at'] = valuation_at
+    if kind == 'what_if':
+        encoded = query.get('raw_usage', '')
+        if len(encoded) > 16384:
+            raise HTTPException(413, 'scenario exceeds bound')
+        try:
+            raw = json.loads(encoded)
+            if not isinstance(raw, dict) or not raw:
+                raise ValueError('explicit scenario required')
+        except ValueError as exc:
+            raise HTTPException(422, 'invalid scenario') from exc
+        rows = [{'invocation_id': None, 'usage': {'raw_usage': raw},
+                 'attribution': {'provider': baseline.provider,
+                     'normalizer_version': 'native-usage.v1',
+                     'inclusion_rules_version': 'provider-inclusion.v1'}}]
+        result['usage_basis'] = 'USER_ASSUMED_TOTALS_V1'
+        result['deployment_normalizer_version'] = baseline.normalizer_version
+    else:
+        rows = await service.billing.list_usage(actor.organization_id, limit=501, accounts=[(aid, currency)],
+            actor_user_id=None if 'usage:read_org' in actor.permissions else actor.user_id,
+            filters=result['scope']['filters'])
+        result['completeness'] = 'PARTIAL_LIMIT' if len(rows) > 500 else 'SCOPED_COMPLETE'
+        rows = rows[:500]
+    for row in rows:
+        usage = row.get('usage') or {}
+        raw = usage.get('raw_usage')
+        if not isinstance(raw, dict):
+            item = {'status': 'UNAVAILABLE', 'amount': None, 'difference': None, 'reason': 'RAW_USAGE_UNAVAILABLE'}
+        elif kind != 'what_if' and (row.get('attribution') or {}).get('provider') != baseline.provider:
+            item = {'status': 'UNAVAILABLE', 'amount': None, 'difference': None, 'reason': 'HISTORICAL_PROVIDER_BINDING_CHANGED'}
+        elif kind != 'what_if' and row.get('deployment_id') != baseline.deployment_id:
+            item = {'status': 'UNAVAILABLE', 'amount': None, 'difference': None, 'reason': 'DIFFERENT_BASELINE_DEPLOYMENT'}
+        else:
+            attribution = row.get('attribution') or {}
+            retained = usage.get('normalized') or {}
+            legacy_v2 = (attribution.get('usage_normalization_policy') == 'dashscope-openai-details.v2'
+                and baseline.provider in ('dashscope', 'alibaba') and 'completion_tokens_details' in raw)
+            item = price_comparison(valuation_at=valuation_at, raw_usage=raw, provider=baseline.provider, baseline=old, candidate=new,
+                kind=kind, basis=basis, normalizer_version=retained.get('normalizer_version') or attribution.get('normalizer_version') or ('native-usage.v2' if legacy_v2 else 'native-usage.v1'),
+                inclusion_rules_version=retained.get('inclusion_rules_version') or attribution.get('inclusion_rules_version') or ('provider-inclusion.v2' if legacy_v2 else 'provider-inclusion.v1'))
+            if catalog is not None:
+                from billing.optimization import catalog_comparison
+                item = catalog_comparison(catalog=catalog, raw_usage=raw, provider=baseline.provider,
+                    normalizer_version=retained.get('normalizer_version') or attribution.get('normalizer_version') or ('native-usage.v2' if legacy_v2 else 'native-usage.v1'),
+                    inclusion_rules_version=retained.get('inclusion_rules_version') or attribution.get('inclusion_rules_version') or ('provider-inclusion.v2' if legacy_v2 else 'provider-inclusion.v1'),
+                    kind=kind, assumptions=assumptions)
+        result['data'].append({'invocation_id': row['invocation_id'], **item})
+    if catalog is not None:
+        result['catalog_version'] = catalog.version_id
+        result['comparison_currency'] = assumptions.get('currency')
+    result['coverage'] = {'covered': sum(r['amount'] is not None for r in result['data']), 'required': len(rows)}
+    result['status'] = 'ESTIMATE' if result['coverage']['covered'] else 'UNAVAILABLE'
+    result['reason'] = None if result['coverage']['covered'] else 'no_priced_usage_in_scope'
+    return result
 
 
 @router.post('/charges')

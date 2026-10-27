@@ -60,4 +60,56 @@ class ActionableLearningLessonV1(_Contract):
     utility: Literal['unmeasured'] = 'unmeasured'
 
 
-LEARNING_TRACE_ARTIFACT_MODELS = {'learning_trace_observation.v1': LearningTraceObservationV1}
+class RoutingFeedbackObservationV1(_ContentAddressed):
+    """Producer-attached feedback, never an independent quality certification."""
+    ARTIFACT_KIND = 'routing_feedback_observation'
+    schema_version: Literal['routing_feedback_observation.v1'] = 'routing_feedback_observation.v1'
+    organization_id: str = Field(min_length=1)
+    workspace_id: str = Field(min_length=1)
+    owner_ref: str = Field(min_length=1)
+    session_id: str = Field(min_length=1)
+    account_id: str = Field(min_length=1)
+    root_task_id: str = Field(min_length=1)
+    invocation_id: str = Field(min_length=1)
+    attempt_id: str = Field(min_length=1)
+    source_ref: str = Field(min_length=1)
+    evaluator_version: str = Field(min_length=1)
+    acceptance_rule_ref: str = Field(min_length=1)
+    dimension: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
+    severity: Literal['minor', 'major', 'critical', 'unspecified']
+    outcome: Literal['PASS', 'FAIL', 'UNRESOLVED', 'UNKNOWN', 'UNLABELLED', 'DISPUTED']
+    source_kind: Literal['mechanical', 'expert', 'judge', 'implicit']
+    evidence_refs: tuple[str, ...] = Field(min_length=1)
+    reference_refs: tuple[str, ...]
+    observed_at: datetime
+    synthetic: bool
+    review_method: str = Field(min_length=1)
+    review_inclusion_probability: str | None
+    review_probability_source: str | None
+    action_propensity: str | None
+    propensity_status: Literal['KNOWN', 'UNAVAILABLE']
+    propensity_source: str | None
+    supersedes_ref: str | None = None
+    quality_qualification: Literal['UNMEASURED'] = 'UNMEASURED'
+
+    @model_validator(mode='after')
+    def probabilities(self):
+        from decimal import Decimal, InvalidOperation
+        for value, source in ((self.review_inclusion_probability, self.review_probability_source),
+                              (self.action_propensity, self.propensity_source)):
+            if value is not None:
+                try:
+                    number = Decimal(value)
+                    if not number.is_finite() or not 0 < number <= 1 or not source:
+                        raise ValueError('PROBABILITY_BASIS_REQUIRED')
+                except InvalidOperation as exc:
+                    raise ValueError('INVALID_PROBABILITY') from exc
+        if (self.propensity_status == 'KNOWN') != (self.action_propensity is not None):
+            raise ValueError('PROPENSITY_STATUS_MISMATCH')
+        return self
+
+
+LEARNING_TRACE_ARTIFACT_MODELS = {
+    'learning_trace_observation.v1': LearningTraceObservationV1,
+    'routing_feedback_observation.v1': RoutingFeedbackObservationV1,
+}

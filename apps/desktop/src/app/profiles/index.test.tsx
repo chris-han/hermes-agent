@@ -143,7 +143,7 @@ describe('ProfilesView', () => {
     expect(screen.getByText(missing)).toBeTruthy()
 
     await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Save SOUL.md' })))
-    expect(updateProfileSoul).toHaveBeenLastCalledWith('default', '# My instructions')
+    expect(updateProfileSoul).toHaveBeenLastCalledWith('default', '# My instructions', 'default')
     expect(screen.queryByText(missing)).toBeNull()
 
     // An existing empty file is not a missing file. Selecting a row remounts
@@ -152,7 +152,7 @@ describe('ProfilesView', () => {
       screen.getAllByRole('button', { name }).find(button => !button.hasAttribute('aria-haspopup'))!
 
     await act(async () => fireEvent.click(selectRow(NAMED_PROFILE)))
-    expect(getProfileSoul).toHaveBeenLastCalledWith(NAMED_PROFILE)
+    expect(getProfileSoul).toHaveBeenLastCalledWith(NAMED_PROFILE, NAMED_PROFILE)
     expect(screen.queryByText(missing)).toBeNull()
 
     vi.mocked(getProfileSoul).mockRejectedValueOnce(new Error('Could not read SOUL.md'))

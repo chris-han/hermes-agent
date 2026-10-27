@@ -274,11 +274,19 @@ def adapt_html_bytes(raw, *, source_identity_ref):
                     "contentHash": content_hash(packet["text"]),
                 }
             ],
-            "sourceMap": {"mappings": []},
+            "sourceMap": {"mappings": [{
+                "sourceLocators": [{"sourceIdentityRef": source_identity_ref,
+                    "sourceHash": "sha256:" + sha(raw), "mediaType": "text/html",
+                    "nativeProvider": "python.html.parser", "format": "html",
+                    "nativeId": "html:" + packet["sha256"], "ordinalPath": ["html", "text"],
+                    "nativeMetadata": {"projection_hash": packet["sha256"]}}],
+                "blockIds": ["html:" + packet["sha256"]],
+                "transformation": {"kind": "structural_normalization", "transformRef": VERSION}
+            }]},
             "assets": [{"kind": "original_html_projection", "packet": packet}],
             "parserTrace": {
                 "provider": "python.html.parser",
-                "adapterVersion": VERSION,
+                "adapterVersion": "semantier.canonical_source_ir.native.html.v2",
                 "canonicalIrVersion": "canonical_source_ir.v1",
                 "warnings": [
                     "Inert text projection; styles/attributes/active subtrees excluded; not pixel-identical."

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from hashlib import sha256
 from datetime import datetime, timezone
 from typing import Any
 
@@ -79,6 +80,16 @@ def _location(evidence_ref: EvidenceRef, document: CanonicalSourceDocument, bloc
     structural_path = list(locator.ordinal_path)
     if not structural_path:
         structural_path = [locator.paragraph_id or locator.native_id or block.block_id]
+    if locator.format == "html":
+        return ResolvedLocation(schemaVersion="semantier.resolved_location.v1",
+            evidenceRef=evidence_ref.evidence_ref, sourceIdentityRef=evidence_ref.source_identity_ref,
+            representationType="html_text", representationRef=artifact_ref,
+            representationHash=locator.source_hash, locationType="character_range", status=status,
+            location={"kind":"html_text_range", "structuralPath":structural_path,
+                "startOffset":start_offset, "endOffset":start_offset+len(exact), "exactText":exact,
+                "sourceHash":locator.source_hash, "projectionHash":"sha256:"+locator.native_metadata["projection_hash"],
+                "quoteHash":"sha256:"+sha256(exact.encode()).hexdigest(), "mappingVersion":"original-html-text/1"},
+            matchedText=exact, resolverVersion=RESOLVER_VERSION, resolvedAt=datetime.now(timezone.utc))
     if block.block_type == "cell":
         location_type = "table_cell"
         location = {"kind": "docx_structural_range", "structuralPath": structural_path,

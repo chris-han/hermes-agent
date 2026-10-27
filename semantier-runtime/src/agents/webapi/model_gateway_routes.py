@@ -158,7 +158,11 @@ async def model_gateway_invocation(invocation_id: str,request: Request):
     if not result or (result.get('attribution',{}).get('actor_user_id') != actor.user_id and 'usage:read_org' not in actor.permissions):
         raise HTTPException(404,'invocation not found')
     lineage=await service.billing.reexecution_lineage(actor.organization_id,invocation_id)
-    return {**result,'reexecution':lineage} if lineage else result
+    result = {**result,'reexecution':lineage} if lineage else result
+    if 'billing:manage' not in actor.permissions:
+        from billing.visibility import customer_projection
+        result = customer_projection(result)
+    return result
 
 
 @router.get('/api/model-gateway/invocations/{invocation_id}/evidence')
@@ -176,8 +180,35 @@ async def model_gateway_invocation_evidence(invocation_id: str,request: Request)
     scopes={(r['account_id'],r['currency']) for r in await service.store.account_rows(actor,service.billing.schema)}
     if (invocation['account_id'],invocation['currency']) not in scopes:raise HTTPException(404,'invocation not found')
     bundle=await service.billing.export_invocation(actor.organization_id,invocation_id)
+    if 'billing:manage' not in actor.permissions:
+        from billing.visibility import customer_projection
+        bundle = customer_projection(bundle)
     lineage=await service.billing.reexecution_lineage(actor.organization_id,invocation_id)
-    return {**({'reexecution':lineage} if lineage else {}),'schema_version':'semantier.invocation-evidence.v1','invocation_id':invocation_id,
+    quality = {'status': 'UNAVAILABLE', 'reason': 'qualified_quality_reference_unavailable', 'observations': []}
+    attribution = invocation.get('attribution', {})
+    session_id = attribution.get('session_id', '')
+    if (actor.workspace_id and attribution.get('workspace_id') == actor.workspace_id
+            and attribution.get('actor_user_id') == actor.user_id
+            and session_id.startswith(actor.workspace_id + ':')):
+        import asyncio
+        from agents.auth_session import RequestContext
+        from runtime_paths import workspace_root_path, workspace_hermes_home_path
+        from storage.ontology_build_store import OntologyBuildStore, ontology_build_store_path
+        from services.learning_trace_evidence_service import LearningTraceEvidenceService
+        def read_feedback():
+            context = RequestContext(True, actor.user_id, actor.workspace_id, actor.workspace_id,
+                workspace_root_path(actor.workspace_id), workspace_hermes_home_path(actor.workspace_id),
+                organization_id=actor.organization_id, membership_status='active')
+            store = OntologyBuildStore(ontology_build_store_path(context.workspace_root))
+            try:
+                return [row.model_dump(mode='json') for row in
+                    LearningTraceEvidenceService(store=store).routing_feedback(context=context, session_id=session_id)
+                    if row.invocation_id == invocation_id]
+            finally:
+                store.close()
+        quality['observations'] = await asyncio.to_thread(read_feedback)
+        # Observations, including synthetic protocol labels, are never a quality qualification.
+    return {'quality_evidence': quality, **({'reexecution':lineage} if lineage else {}),'schema_version':'semantier.invocation-evidence.v1','invocation_id':invocation_id,
             'bundle':bundle,'hold_reference':{'invocation_id':invocation_id,'active':invocation.get('hold_active'),
                 'amount':{'amount':invocation['max_cost'],'currency':invocation['currency']},
                 'settlement_state':invocation['settlement_state']},

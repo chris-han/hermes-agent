@@ -54,10 +54,30 @@ def immutable_write(target,body):
 
 
 class Publisher:
-    def __init__(self,store,public_root,incoming_root,public_base,receipt_key,identity,channel,workflow_verifier=None):
+    def __init__(self,store,public_root,incoming_root,public_base,receipt_key,identity,channel,workflow_verifier=None,remote_target=None):
         self.store,self.root,self.incoming=store,Path(public_root),Path(incoming_root)
         self.base,self.receipt_key,self.identity,self.channel=public_base,receipt_key,identity,channel
         self.workflow_verifier=workflow_verifier
+        self.remote_target=remote_target
+
+    def empty_record(self):
+        return {'schema':1,'name':self.channel,'repository':'chris-han/hermes-agent','policy':'stable-release','revision':1,'nextSequence':1,'identity':self.identity,'head':None,'state':'active'}
+
+    def initialize_channel(self):
+        """Expose an explicit configured empty channel; never promote on startup."""
+        record=self.empty_record()
+        with self.store.connection() as c:
+            c.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',(self.store.schema+':'+self.channel,))
+            existing=c.execute('SELECT record FROM channels WHERE channel=%s',(self.channel,)).fetchone()
+            if existing:
+                if self.remote_target:self.remote_target.initialize(existing['record'])
+                return
+            target=safe_file(self.root,'releases/channels/'+self.channel+'.json')
+            if target.exists() and json.loads(target.read_bytes())!=record:raise OperationError(503,'channel_provenance_mismatch')
+            immutable_write(target,canonical(record))
+            c.execute('INSERT INTO channels(channel,record) VALUES(%s,%s::jsonb)',(self.channel,json.dumps(record)))
+            self.store.audit(c,'configured-owner','channel_initialized',self.channel,{'head':None,'identity':self.identity})
+            if self.remote_target:self.remote_target.initialize(record)
 
     def admit(self,candidate,principal):
         from agents.webapi.deps import ensure_repo_hermes_agent_on_path
@@ -65,8 +85,7 @@ class Publisher:
         from hermes_cli.release_channels import validate_manifest,validate_record,build_prefix
         data=candidate.model_dump();manifest={**data['manifest'],'notes':data['notes']};data['manifest']=manifest;request=manifest.get('request',{})
         if data['release_id']!=request.get('buildId'):raise OperationError(422,'release_build_identity_mismatch')
-        record={'schema':1,'name':self.channel,'repository':'chris-han/hermes-agent','policy':'stable-release',
-                'revision':1,'nextSequence':1,'identity':self.identity,'head':None,'state':'active'}
+        record=self.empty_record()
         try:
             validate_record(record)
             validate_manifest(manifest,record,self.base)
@@ -81,6 +100,15 @@ class Publisher:
                   'publisher':package['publisher'],'application_id':self.identity['appNamePascal'],
                   'windows_version':request['windowsVersion'],'sha256':package['artifact']['sha256'],
                   'size':package['artifact']['size'],'notes_sha256':digest(data['notes']),'signature_result':'PASS','qualification':'windows-x64-native'}
+        archive=package.get('distributionArchive')
+        if archive is not None:
+            if (not isinstance(archive,dict) or set(archive)!={'key','sha256','size'}
+                or not isinstance(archive['key'],str) or not archive['key'].startswith(build_prefix(request['buildId']))
+                or not archive['key'].endswith('.zip') or not isinstance(archive['sha256'],str)
+                or len(archive['sha256'])!=64 or any(c not in '0123456789abcdef' for c in archive['sha256'])
+                or type(archive['size']) is not int or archive['size']<=0):
+                raise OperationError(422,'distribution_archive_contract_mismatch')
+            expected['distribution_archive']=archive
         if (not self.receipt_key or not hmac.compare_digest(hmac.new(self.receipt_key,canonical(receipt),hashlib.sha256).hexdigest(),data['receipt_hmac'])
             or any(receipt.get(k)!=v for k,v in expected.items()) or not receipt.get('workflow_run_id')
             or receipt.get('workflow_result')!='native_gates_passed'
@@ -90,14 +118,15 @@ class Publisher:
         ci_verification=(self.workflow_verifier or verify_workflow)(receipt)
         data['ci_verification']=ci_verification
         # Receipt-signer is CI-only. Operators cannot turn uploads into qualification.
-        artifact=package['artifact'];keys=[artifact['key'],package['feed']['key']]
-        prefix=build_prefix(request['buildId']);manifest_key=prefix+'manifest.json'
+        artifact=package['artifact'];artifacts=[artifact]+([archive] if archive else []);keys=[a['key'] for a in artifacts]+[package['feed']['key']]
+        prefix=build_prefix(request['buildId']);manifest_key=prefix+'build.json'
         for key in keys:
             source=safe_file(self.incoming,key)
             try:body=source.read_bytes()
             except OSError as error:raise OperationError(422,'staged_artifact_unavailable') from error
             if key==package['feed']['key']:self.verify_descriptor(body,package,request)
-            if key==artifact['key'] and (len(body)!=artifact['size'] or hashlib.sha256(body).hexdigest()!=artifact['sha256']):
+            bound=next((a for a in artifacts if a['key']==key),None)
+            if bound and (len(body)!=bound['size'] or hashlib.sha256(body).hexdigest()!=bound['sha256']):
                 raise OperationError(422,'artifact_integrity_mismatch')
             destination=safe_file(self.root,key)
             if destination.exists() and destination.read_bytes()!=body:raise OperationError(409,'immutable_artifact_conflict')
@@ -169,6 +198,9 @@ class Publisher:
             raise
 
     def _reconcile(self,operation_id):
+        from agents.webapi.deps import ensure_repo_hermes_agent_on_path
+        ensure_repo_hermes_agent_on_path()
+        from hermes_cli.release_channels import build_prefix,validate_record
         with self.store.connection() as c:
             c.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',(self.store.schema+':'+self.channel,))
             op=c.execute('SELECT * FROM operations WHERE operation_id=%s FOR UPDATE',(operation_id,)).fetchone()
@@ -180,17 +212,34 @@ class Publisher:
             release=c.execute("SELECT body FROM releases WHERE release_id=%s AND qualification='verified'",(request['release_id'],)).fetchone()
             if not release:raise OperationError(422,'verified_release_required')
             release=release['body'];manifest=release['manifest'];build=manifest['request']
+            # Retain historical admissions; publish their exact manifest at the
+            # canonical native-consumer key, including pre-repair admissions.
+            manifest_key=build_prefix(build['buildId'])+'build.json'
+            manifest_body=canonical(manifest)
+            if hashlib.sha256(manifest_body).hexdigest()!=release['manifest_sha256']:
+                raise OperationError(422,'manifest_integrity_mismatch')
+            manifest_target=safe_file(self.root,manifest_key)
+            immutable_write(manifest_target,manifest_body)
+            if manifest_target.read_bytes()!=manifest_body:
+                raise OperationError(503,'manifest_readback_failed')
             record={**channel['record'],'revision':channel['revision']+1,'nextSequence':max(channel['record']['nextSequence'],build['sequence']+1),
-                    'head':{'buildId':build['buildId'],'sequence':build['sequence'],'manifestKey':release['manifest_key'],'sha256':release['manifest_sha256']}}
+                    'head':{'buildId':build['buildId'],'sequence':build['sequence'],'manifestKey':manifest_key,'sha256':release['manifest_sha256']}}
+            try:validate_record(record)
+            except ValueError as exc:raise OperationError(422,'channel_contract_mismatch') from exc
             # Verify bytes again immediately before head publication.
             for package in manifest['packages']:
-                artifact=package['artifact'];raw=safe_file(self.root,artifact['key']).read_bytes()
-                if len(raw)!=artifact['size'] or hashlib.sha256(raw).hexdigest()!=artifact['sha256']:raise OperationError(422,'artifact_integrity_mismatch')
-            target=safe_file(self.root,'releases/channels/'+self.channel+'.json')
-            actual=json.loads(target.read_bytes()) if target.exists() else None
-            if actual not in (None,channel['record'],record):raise OperationError(503,'publication_reconciliation_required')
-            if actual!=record:atomic_write(target,canonical(record))
-            if json.loads(target.read_bytes())!=record:raise OperationError(503,'publication_readback_failed')
+                self.verify_descriptor(safe_file(self.root,package['feed']['key']).read_bytes(),package,build)
+                for artifact in [package['artifact']]+([package['distributionArchive']] if package.get('distributionArchive') else []):
+                    raw=safe_file(self.root,artifact['key']).read_bytes()
+                    if len(raw)!=artifact['size'] or hashlib.sha256(raw).hexdigest()!=artifact['sha256']:raise OperationError(422,'artifact_integrity_mismatch')
+            if self.remote_target:
+                self.remote_target.promote({**release,'manifest_key':manifest_key},self.root,channel['record'],record)
+            else:
+                target=safe_file(self.root,'releases/channels/'+self.channel+'.json')
+                actual=json.loads(target.read_bytes()) if target.exists() else None
+                if actual not in (None,channel['record'],record):raise OperationError(503,'publication_reconciliation_required')
+                if actual!=record:atomic_write(target,canonical(record))
+                if json.loads(target.read_bytes())!=record:raise OperationError(503,'publication_readback_failed')
             c.execute('UPDATE channels SET revision=%s,release_id=%s,record=%s::jsonb WHERE channel=%s',(record['revision'],request['release_id'],json.dumps(record),self.channel))
             c.execute("UPDATE operations SET status='published',updated_at=now() WHERE operation_id=%s",(operation_id,))
             self.store.audit(c,op['user_id'],'promotion',request['release_id'],{'operation_id':operation_id,'expected_revision':request['expected_revision'],'actual_revision':record['revision']})

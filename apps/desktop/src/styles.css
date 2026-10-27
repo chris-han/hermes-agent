@@ -4041,6 +4041,13 @@ html[data-hud-window] [data-slot='popover-content'] {
   outline-offset: 2px;
 }
 
+/* Quiet metadata remains readable text, including shared panel labels.
+   Keep the original opacity treatments for optional imported presets. */
+:root[data-hermes-design='asimov']
+  :is([class~='text-muted-foreground/50'], [class~='text-muted-foreground/55']) {
+  color: var(--ui-text-secondary);
+}
+
 :root[data-hermes-design='asimov'] [data-slot='search-field'] {
   opacity: 1;
 }

@@ -198,3 +198,18 @@ CREATE TABLE IF NOT EXISTS task_token_reservations (
  used_tokens bigint NOT NULL DEFAULT 0 CHECK(used_tokens>=0),state text NOT NULL CHECK(state IN ('HELD','USED','RELEASED'))
 );
 INSERT INTO schema_version(version) VALUES (9) ON CONFLICT DO NOTHING;
+
+-- v10: real SDK-controlled channels reuse existing durable attempt identity.
+ALTER TABLE commerce_payment_attempts DROP CONSTRAINT IF EXISTS commerce_payment_attempts_method_check;
+ALTER TABLE commerce_payment_attempts ADD CONSTRAINT commerce_payment_attempts_method_check
+ CHECK(method IN ('wechat_test','alipay_test','wechat','alipay'));
+INSERT INTO schema_version(version) VALUES (10) ON CONFLICT DO NOTHING;
+
+ALTER TABLE commerce_payment_attempts ADD COLUMN IF NOT EXISTS checkout jsonb;
+CREATE OR REPLACE FUNCTION freeze_commerce_attempt() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF TG_OP='DELETE' OR (to_jsonb(NEW)-'status'-'checkout') IS DISTINCT FROM (to_jsonb(OLD)-'status'-'checkout')
+ OR (OLD.checkout IS NOT NULL AND NEW.checkout IS DISTINCT FROM OLD.checkout)
+ THEN RAISE EXCEPTION 'immutable commerce payment attempt'; END IF;
+ RETURN NEW;
+END $$;
