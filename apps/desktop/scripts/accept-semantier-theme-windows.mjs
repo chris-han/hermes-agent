@@ -233,6 +233,7 @@ async function createProfile(page,name) {
     await page.getByRole('button',{name:'New profile',exact:true}).click()
   }
   await dialog.locator('#new-profile-name').fill(name)
+  await dialog.locator('#new-profile-soul').fill('native-theme-preservation:'+name)
   await dialog.getByRole('button',{name:'Create profile',exact:true}).click()
   await expect(dialog).toHaveCount(0,{timeout:60000})
   observations.push({createdProfile:name,via:'production profile dialog'})
@@ -300,6 +301,11 @@ try {
   checks.push('T12 explicit English and Chinese survive full process restart; nonlanguage sentinel retained')
   await language(page,'en')
   for(const name of ['legacy','explicit','inherited']) await createProfile(page,name)
+  const souls=Object.fromEntries(['legacy','explicit','inherited'].map(name=>{
+    const file=path.join(fresh,'hermes','profiles',name,'SOUL.md')
+    assert.ok(fs.readFileSync(file,'utf8').includes('native-theme-preservation:'+name))
+    return [file,digest(file)]
+  }))
   await page.evaluate(()=>{
     localStorage.setItem('hermes-desktop-theme-v2','nous-alt')
     localStorage.setItem('hermes-desktop-mode-v1','light')
@@ -343,7 +349,9 @@ try {
   await expect(page.locator('html')).toHaveAttribute('data-hermes-theme','classic')
   await expect(page.locator('html')).toHaveAttribute('data-hermes-mode','dark')
   await expect(page.locator('html')).toHaveAttribute('lang','en')
-  checks.push('T12 explicit alternate theme/dark/English survive full restart')
+  for(const [file,sha] of Object.entries(souls)) assert.equal(digest(file),sha,'profile SOUL preservation')
+  observations.push({nonappearanceSoulHashes:souls})
+  checks.push('T12 explicit alternate theme/dark/English and profile SOUL data survive full restart')
 
   await close()
   assert.deepEqual(errors,[])
