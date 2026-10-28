@@ -36,7 +36,8 @@ def test_parent_snapshot_hash_and_path_are_verified_without_source_rewrites(tmp_
     with pytest.raises(ValueError,match='integrity'):verify(tmp_path)
 
 
-def test_staging_survives_unavailable_kernel_fast_copy(tmp_path, monkeypatch):
+@pytest.mark.parametrize('valid_archive', [True, False])
+def test_staging_survives_unavailable_kernel_fast_copy(tmp_path, monkeypatch, valid_archive):
     """WSL sendfile can raise ENOMEM after a partial cross-filesystem copy."""
     import errno
     import hashlib
@@ -91,6 +92,12 @@ def test_staging_survives_unavailable_kernel_fast_copy(tmp_path, monkeypatch):
 
     monkeypatch.setattr(os, 'sendfile', partial_then_unavailable, raising=False)
     monkeypatch.setattr(os, 'copy_file_range', unavailable, raising=False)
+    if not valid_archive:
+        archive.with_suffix('.zip.sha256').write_text('0'*64+'  candidate.zip\n')
+        with pytest.raises(ValueError, match='Distribution archive checksum mismatch'):
+            stage(output, native, incoming, {'en': 'Unit fixture, not CI evidence'})
+        assert archive.is_file() and not (incoming/'ci-candidates').exists()
+        return
     result = stage(output, native, incoming, {'en': 'Unit fixture, not CI evidence'})
     candidate = json.loads(Path(result['candidate_path']).read_text())
     package = candidate['manifest']['packages'][0]
@@ -100,6 +107,11 @@ def test_staging_survives_unavailable_kernel_fast_copy(tmp_path, monkeypatch):
     assert candidate['native_receipt']['chunk_descriptor_sha256'] == hashlib.sha256(
         json.dumps(descriptor, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
     assert (incoming/package['artifact']['key']).read_bytes() == artifact.read_bytes()
-    assert (incoming/package['distributionArchive']['key']).read_bytes() == archive.read_bytes()
+    assert 'distributionArchive' not in package
+    assert 'distribution_archive' not in candidate['native_receipt']
+    assert candidate['native_receipt']['local_distribution_archive'] == {
+        'name': archive.name, 'sha256': archive_digest, 'size': archive.stat().st_size}
+    assert not list(incoming.rglob('*.zip'))
+    assert hashlib.sha256(archive.read_bytes()).hexdigest() == archive_digest
     with pytest.raises(ValueError, match='Fresh immutable'):
         stage(output, native, incoming, {'en': 'must not overwrite'})

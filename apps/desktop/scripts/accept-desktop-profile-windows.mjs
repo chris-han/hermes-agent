@@ -147,11 +147,11 @@ try {
     await assertLocal(root, 'legacy-selection', withLocal ? 'zh' : 'en')
     const batches = fs.readdirSync(path.join(profileHome(root), '.desktop-retired-profiles'))
     assert.equal(batches.length, 1)
-    const backup = path.join(root, 'hermes/.desktop-retired-profiles', batches[0], 'tender-runtime-expert')
+    const backup = path.join(profileHome(root), '.desktop-retired-profiles', batches[0], 'tender-runtime-expert')
     assert.deepEqual(snapshot(backup), seeded.files)
     assert.ok(fs.existsSync(path.join(profileHome(root), 'profiles/.deleted/tender-runtime-expert')))
     if (seeded.local) {
-      for (const file of ['.env', 'SOUL.md']) assert.equal(digest(path.join(root, 'hermes/profiles/semantier-local', file)), seeded.local[file])
+      for (const file of ['.env', 'SOUL.md']) assert.equal(digest(path.join(profileHome(root), 'profiles/semantier-local', file)), seeded.local[file])
       assert.ok(fs.readFileSync(path.join(profileHome(root), 'profiles/semantier-local/config.yaml'), 'utf8').includes('keep-local-provider'))
     }
     observations.push({ retainedBackup: backup, hashes: seeded.files, localHashes: seeded.local })

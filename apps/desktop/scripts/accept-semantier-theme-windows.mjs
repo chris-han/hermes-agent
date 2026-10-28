@@ -31,15 +31,19 @@ assert.equal(path.resolve(binding.asar.path), path.resolve(path.dirname(binding.
 const output = path.resolve(outputArg)
 assert.ok(!fs.existsSync(output), 'output must be fresh and owned')
 fs.mkdirSync(output, { recursive: true })
-fs.writeFileSync(path.join(output, 'owner.json'), JSON.stringify({ owner: 'windows-semantier-theme-build-v1', source: binding.source }))
+fs.writeFileSync(path.join(output, 'owner.json'), JSON.stringify({ owner: 'windows-update-profile-regression-v1', source: binding.source }))
 const checks = [], errors = [], captures = [], identities = []
 let instance
 const baseEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) =>
   /^(PATH|SYSTEMROOT|WINDIR|COMSPEC|PATHEXT|USERPROFILE|SYSTEMDRIVE|PROCESSOR_ARCHITECTURE|NUMBER_OF_PROCESSORS)$/i.test(k)))
+const profileHome = root => path.join(root, 'userdata', 'hermes-home')
 function environment(root) {
   const dirs = Object.fromEntries(['home','appdata','localappdata','temp','userdata','hermes'].map(name => [name, path.join(root,name)]))
+  dirs.appdata = path.join(dirs.home, 'AppData', 'Roaming')
+  dirs.localappdata = path.join(dirs.home, 'AppData', 'Local')
+  dirs.hermes = profileHome(root)
   for (const dir of Object.values(dirs)) fs.mkdirSync(dir,{recursive:true})
-  return { ...baseEnv, HOME:dirs.home, APPDATA:dirs.appdata, LOCALAPPDATA:dirs.localappdata, TEMP:dirs.temp, TMP:dirs.temp,
+  return { ...baseEnv, HOME:dirs.home, USERPROFILE:dirs.home, APPDATA:dirs.appdata, LOCALAPPDATA:dirs.localappdata, TEMP:dirs.temp, TMP:dirs.temp,
     HERMES_HOME:dirs.hermes, HERMES_DESKTOP_USER_DATA_DIR:dirs.userdata,
     HERMES_DESKTOP_IGNORE_EXISTING:'1', HERMES_DESKTOP_SKIP_QUIT_CONFIRM:'1',
     HERMES_DESKTOP_SKIP_PROTOCOL_REGISTRATION:'1', HERMES_DESKTOP_CDP_PORT:'off',
@@ -51,7 +55,7 @@ async function close() {
 }
 async function launch(root) {
   assert.ok(path.resolve(root).startsWith(output + path.sep))
-  const app = await _electron.launch({ executablePath:binding.executable.path, args:[], env:environment(root), timeout:120000 })
+  const app = await _electron.launch({ executablePath:binding.executable.path, cwd:path.dirname(binding.executable.path), args:[], env:environment(root), timeout:120000 })
   instance = {app}
   const identity = await app.evaluate(({app}) => ({packaged:app.isPackaged, version:app.getVersion(), executable:process.execPath,
     platform:process.platform, resources:process.resourcesPath, userData:app.getPath('userData'), locale:app.getLocale()}))
@@ -325,6 +329,9 @@ async function createProfile(page,name) {
   if(name==='inherited') {
     await dialog.locator('#new-profile-clone-from').click()
     await page.getByRole('option',{name:'None (blank)',exact:true}).click()
+  } else {
+    await dialog.locator('#new-profile-clone-from').click()
+    await page.getByRole('option',{name:/semantier-local/}).click()
   }
   await dialog.locator('#new-profile-name').fill(name)
   await dialog.locator('#new-profile-soul').fill('native-theme-preservation:'+name)
@@ -412,14 +419,14 @@ try {
   checks.push('T12 explicit English and Chinese survive full process restart; nonlanguage sentinel retained')
   await language(page,'en')
   const rawLanguage=profile=>page.evaluate(async profile=>{const config=await window.hermesDesktop.api({connectionId:'local',profile,path:'/api/config?include_defaults=false',priority:'foreground'});return config.display?.language??null},profile)
-  const cloneLanguage=await rawLanguage('default')
+  const cloneLanguage=await rawLanguage('semantier-local')
   for(const name of ['legacy','explicit','inherited']) await createProfile(page,name)
   assert.equal(await rawLanguage('legacy'),cloneLanguage)
   assert.equal(await rawLanguage('explicit'),cloneLanguage)
   assert.equal(await rawLanguage('inherited'),null)
-  observations.push({profileLocaleBasis:{cloneSource:'default',cloneLanguage,blankLanguage:null}})
+  observations.push({profileLocaleBasis:{cloneSource:'semantier-local',cloneLanguage,blankLanguage:null}})
   const souls=Object.fromEntries(['legacy','explicit','inherited'].map(name=>{
-    const file=path.join(fresh,'hermes','profiles',name,'SOUL.md')
+    const file=path.join(profileHome(fresh),'profiles',name,'SOUL.md')
     assert.ok(fs.readFileSync(file,'utf8').includes('native-theme-preservation:'+name))
     return [file,digest(file)]
   }))
@@ -471,7 +478,7 @@ try {
   await expect(page.locator('html')).toHaveAttribute('lang','zh',{timeout:60000})
   await selectProfile(page,'legacy')
   await expect(page.locator('html')).toHaveAttribute('lang','zh',{timeout:60000})
-  await selectProfile(page,'default')
+  await selectProfile(page,'semantier-local')
   checks.push('T05 real profiles migrate/retain/inherit appearance; profile language choices remain separate')
   await language(page,'en')
   await routeSettings(page,'theme')
