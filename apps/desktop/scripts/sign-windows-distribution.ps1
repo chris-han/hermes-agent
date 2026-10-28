@@ -77,6 +77,14 @@ try {
     signedSha256 = (Get-FileHash -LiteralPath $signed -Algorithm SHA256).Hash.ToLowerInvariant()
     signing = 'PASS'; verification = 'PASS: SignTool verify /pa /v'; trustedTimestamp = [bool]$TimestampUrl; timestampUrl = $TimestampUrl
   }
+  # Native-capable hosts emit the platform digest independently from file SHA256.
+  # Older supported hosts retain legacy delivery; absence never grants native capability.
+  $null=[Windows.Foundation.Metadata.ApiInformation,Windows.Foundation,ContentType=WindowsRuntime]
+  if ([Windows.Foundation.Metadata.ApiInformation]::IsPropertyPresent('Windows.Management.Deployment.AddPackageOptions','ExpectedDigests')) {
+    . (Join-Path $PSScriptRoot 'native-package-digest.ps1')
+    $metadata.nativeDigest = Get-NativePackageDigest $signed
+    $metadata.nativeDigestAlgorithm = 'IAppxDigestProvider.GetDigest'
+  }
   # Recipient entry points are bound to the exact post-signing package and public certificate.
   $installer = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'install-windows-distribution.ps1'))
   $installer = $installer.Replace('__CERTIFICATE_THUMBPRINT__',$cert.Thumbprint).
