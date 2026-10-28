@@ -52,7 +52,7 @@ if ($env:GITHUB_ACTIONS -ne 'true') {
     $package=@(Get-AppxPackage -Name 'Semantier.Agent.Acceptance')
     if ($actualSid -cne $ExpectedSid -or $actualSid -ceq 'S-1-5-21-1928370875-4287869425-2092521300-1003' -or
         -not $native -or $native.SessionId -ne (Get-Process -Id $PID).SessionId -or
-        $native.ExecutablePath -cne $ExpectedExecutable -or ([DateTimeOffset]$native.CreationDate).ToUniversalTime().ToString('o') -cne $ExpectedBirth -or
+        $native.ExecutablePath -cne $ExpectedExecutable -or ([DateTimeOffset](Get-Process -Id $OldProcessId).StartTime).ToUniversalTime().ToString('o') -cne $ExpectedBirth -or
         $package.Count -ne 1 -or -not $ExpectedExecutable.StartsWith($package[0].InstallLocation+'\',[StringComparison]::OrdinalIgnoreCase) -or
         (Invoke-CimMethod -InputObject $native -MethodName GetOwnerSid).Sid -cne $actualSid) { throw 'Isolated UIA ownership mismatch' }
     # The registered orchestrator loads the OS collector; standalone calls fail closed.
@@ -62,6 +62,7 @@ if ($env:GITHUB_ACTIONS -ne 'true') {
 }
 $oldProcess = Get-Process -Id $OldProcessId
 $oldBirth = $oldProcess.StartTime
+if ($SemantierIsolated) { $null=$oldProcess.Handle; if(([DateTimeOffset]$oldBirth).ToUniversalTime().ToString('o') -cne $ExpectedBirth -or $oldProcess.Path -ine $ExpectedExecutable){throw 'UIA process changed before ownership hold'} }
 $ProcessName = $oldProcess.ProcessName
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
 

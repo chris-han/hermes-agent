@@ -76,6 +76,15 @@ try {
    return @{name=$expected.msixIdentity;publisher=$expected.publisher;version=$metadata.Version;arch='X64';commit=$stamp.commit;build_id=$stamp.channelBuild.buildId}
   }finally{$physical.handle.Dispose()}
  }
+ function ExactBirth($proc) {
+  $handle=Get-Process -Id $proc.ProcessId -ErrorAction Stop
+  try{
+   $null=$handle.Handle
+   $birth=[DateTimeOffset]$handle.StartTime
+   if([Math]::Abs(($birth.ToUniversalTime()-([DateTimeOffset]$proc.CreationDate).ToUniversalTime()).Ticks) -ge 10 -or $handle.Path -ine $proc.ExecutablePath){throw 'Process changed during observation'}
+   return $birth.ToUniversalTime().ToString('o')
+  }finally{$handle.Dispose()}
+ }
  function GatewayIdentity($package) {
   $file=Join-Path $root 'userdata\hermes-home\state\gateway.lifecycle.json'
   if(-not (Test-Path -LiteralPath $file)){return $null}
@@ -89,7 +98,7 @@ try {
   $epoch=([DateTimeOffset]$proc.CreationDate).ToUnixTimeMilliseconds()/1000.0
   if(-not $life.create_time -or [Math]::Abs($epoch-$life.create_time) -ge 2){throw 'Gateway lifecycle incarnation mismatch'}
   $exeHold=Physical $proc.ExecutablePath
-  try{return @{pid=$proc.ProcessId;birth=([DateTimeOffset]$proc.CreationDate).ToUniversalTime().ToString('o');exe=$proc.ExecutablePath;exe_id=$exeHold.id;packageFullName=$package.full}}finally{$exeHold.handle.Dispose()}
+  try{return @{pid=$proc.ProcessId;birth=(ExactBirth $proc);exe=$proc.ExecutablePath;exe_id=$exeHold.id;packageFullName=$package.full}}finally{$exeHold.handle.Dispose()}
  }
  function VerifyDownload {
   $target=$r.target
@@ -126,7 +135,7 @@ try {
     $package=@{name=$p.Name;publisher=$p.Publisher;version=$p.Version.ToString();arch=$p.Architecture.ToString();commit=$stamp.commit;build_id=$stamp.channelBuild.buildId;full=$p.PackageFullName;family=$p.PackageFamilyName;install_path=$p.InstallLocation;exe=$exe;exe_id=$physical.id}
     $rows=Main-Processes $exe
     if($rows.Count -gt 1){throw 'Ambiguous installed main process'}
-    if($rows.Count){$row=$rows[0];$owner=Invoke-CimMethod -InputObject $row -MethodName GetOwnerSid;if($owner.Sid -cne $sid -or $row.SessionId -ne $session){throw 'Process belongs to different user/session'};$process=@{pid=$row.ProcessId;birth=([DateTimeOffset]$row.CreationDate).ToUniversalTime().ToString('o');exe=$exe;exe_id=$physical.id}}
+    if($rows.Count){$row=$rows[0];$owner=Invoke-CimMethod -InputObject $row -MethodName GetOwnerSid;if($owner.Sid -cne $sid -or $row.SessionId -ne $session){throw 'Process belongs to different user/session'};$process=@{pid=$row.ProcessId;birth=(ExactBirth $row);exe=$exe;exe_id=$physical.id}}
    }finally{$physical.handle.Dispose()}
   }
   return @{sid=$sid;session=$session;root_id=$held.id;package=$package;process=$process}
