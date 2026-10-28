@@ -161,7 +161,8 @@ def _fallback_profile_entry(profiles_mod, name: str, home: Path, *, is_default: 
 def _fallback_profile_dicts(profiles_mod) -> list[dict[str, Any]]:
     profiles: list[dict[str, Any]] = []
     default_home = profiles_mod._get_default_hermes_home()
-    if profiles_mod._default_profile_is_discoverable(default_home):
+    from hermes_cli.profiles_desktop import default_profile_is_discoverable
+    if default_profile_is_discoverable(default_home):
         profiles.append(_fallback_profile_entry(
             profiles_mod, "default", default_home, is_default=True,
             has_env=(default_home / ".env").exists(),

@@ -646,9 +646,6 @@ def _apply_profile_override() -> None:
         from hermes_cli.profiles import resolve_profile_env
 
         hermes_home = resolve_profile_env(profile_name)
-        if profile_name == 'default' and not from_sticky_profile:
-            from hermes_cli.profiles_desktop import claim_default_profile
-            claim_default_profile(owner)
     except FileNotFoundError as exc:
         hermes_home = _resolve_sudo_user_profile_env(profile_name)
         error = str(exc)

@@ -1,4 +1,4 @@
-import type { IpcMain, IpcMainInvokeEvent } from 'electron'
+import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron'
 
 import type { DeliverySourceId, DeliverySources, DeliverySourceStatus } from './delivery-source'
 import type { UpdateOperation } from './operation'
@@ -13,6 +13,35 @@ interface Deps {
   operation: Pick<UpdateOperation, 'reset' | 'check' | 'checkStatus'>
   changed: (selection: DeliverySourceStatus) => void
   check: () => Promise<UpdaterStatusWire>
+}
+
+export function assertApplicationMainFrame(
+  event: IpcMainInvokeEvent,
+  win: BrowserWindow | null,
+  mainWindow: BrowserWindow | null,
+  chatWindows: ReadonlySet<BrowserWindow>
+): void {
+  if (!win || (win !== mainWindow && !chatWindows.has(win)) || event.senderFrame !== win.webContents.mainFrame) {
+    throw new Error('Application main frame required')
+  }
+}
+
+/** Broadcast an ordinary check result to the approved application windows. */
+export function broadcastDeliverySourceCheck(
+  sources: DeliverySources,
+  checkStatus: DeliverySourceStatus['checkStatus'],
+  windows: BrowserWindow[],
+  log: (message: string) => void
+): void {
+  try {
+    const selection = { ...sources.status(), checkStatus }
+
+    for (const win of windows) {
+      if (!win.isDestroyed()) { win.webContents.send('hermes:updates:delivery:changed', selection) }
+    }
+  } catch {
+    log('[updates] Delivery-source status could not be broadcast')
+  }
 }
 
 /** Source mutation is privileged native composition; the renderer supplies only an enum. */

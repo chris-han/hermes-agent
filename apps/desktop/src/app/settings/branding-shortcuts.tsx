@@ -6,12 +6,13 @@ import { Input } from '@/components/ui/input'
 import { useI18n } from '@/i18n'
 import { Monitor, Search } from '@/lib/icons'
 
-import { desktopBrandingName, type DesktopBranding } from '../../../electron/desktop-branding-types'
+import { type DesktopBranding, desktopBrandingName } from '../../../electron/desktop-branding-types'
 import {
-  validBrandShortcutName,
   type BrandShortcutResult,
-  type ShortcutDestination
+  type ShortcutDestination,
+  validBrandShortcutName
 } from '../../../electron/windows-brand-shortcuts-types'
+
 import { SectionHeading } from './primitives'
 
 interface BrandingShortcutsProps {
@@ -33,57 +34,51 @@ export function BrandingShortcuts({ draft, dirty, disabled, onApply, onBusy }: B
   const [results, setResults] = useState<BrandShortcutResult[]>([])
   const [resultName, setResultName] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const alive = useRef(true)
-  useEffect(() => {
-    alive.current = true
-    return () => {
-      alive.current = false
-    }
-  }, [])
   useEffect(() => {
     if (!editedName.current) {
       setName(desktopBrandingName(draft, locale))
     }
-  }, [draft.displayName, draft.displayNameZh, locale])
+  }, [draft, locale])
 
   if (!bridge?.available) {
     return null
   }
+
   const failed = results.filter(row => row.status === 'failed').map(row => row.destination)
+
   const label = (destination: ShortcutDestination) =>
     destination === 'desktop' ? c.shortcutDesktop : c.shortcutStartMenu
+
   const create = async (destinations: ShortcutDestination[]) => {
     setRunning(true)
     onBusy(true)
     setError(null)
     const chosenName = name
+
     try {
       const branding = dirty ? await onApply() : draft
+
       if (!branding) {
-        if (alive.current) {
-          setError(c.saveFailed)
-        }
+        setError(c.saveFailed)
+
         return
       }
+
       const next = await bridge.create({ name: chosenName, destinations, branding })
-      if (alive.current) {
-        setResultName(chosenName)
-        setResults(previous => [...previous.filter(row => !destinations.includes(row.destination)), ...next])
-      }
+
+      setResultName(chosenName)
+      setResults(previous => [...previous.filter(row => !destinations.includes(row.destination)), ...next])
     } catch {
-      if (alive.current) {
-        setError(c.shortcutError)
-      }
+      setError(c.shortcutError)
     } finally {
-      if (alive.current) {
-        setRunning(false)
-      }
+      setRunning(false)
+
       onBusy(false)
     }
   }
 
   return (
-    <section className="mt-8 border-t border-(--ui-stroke-secondary) pt-6" aria-label={c.shortcutTitle}>
+    <section aria-label={c.shortcutTitle} className="mt-8 border-t border-(--ui-stroke-secondary) pt-6">
       <SectionHeading icon={Monitor} title={c.shortcutTitle} />
       <p className="mb-4 text-sm text-muted-foreground">{c.shortcutScope}</p>
       <div className="grid min-w-0 gap-5 lg:grid-cols-2">
@@ -91,17 +86,17 @@ export function BrandingShortcuts({ draft, dirty, disabled, onApply, onBusy }: B
           <label className="grid gap-2 text-sm" htmlFor="branding-shortcut-name">
             {c.shortcutName}
             <Input
+              aria-invalid={!validBrandShortcutName(name)}
+              disabled={disabled || running}
               id="branding-shortcut-name"
               maxLength={120}
-              value={name}
-              disabled={disabled || running}
-              aria-invalid={!validBrandShortcutName(name)}
               onChange={event => {
                 editedName.current = true
                 setName(event.target.value)
                 setResults([])
                 setError(null)
               }}
+              value={name}
             />
           </label>
           {!validBrandShortcutName(name) && (
@@ -113,10 +108,10 @@ export function BrandingShortcuts({ draft, dirty, disabled, onApply, onBusy }: B
             <legend className="mb-2 text-sm">{c.shortcutDestinations}</legend>
             {(['desktop', 'startMenu'] as const).map(destination => {
               const Icon = destination === 'desktop' ? Monitor : Search
+
               return (
-                <label key={destination} className="flex cursor-pointer items-center gap-2 text-sm">
+                <label className="flex cursor-pointer items-center gap-2 text-sm" key={destination}>
                   <input
-                    type="checkbox"
                     checked={selected.includes(destination)}
                     onChange={event =>
                       setSelected(previous =>
@@ -125,6 +120,7 @@ export function BrandingShortcuts({ draft, dirty, disabled, onApply, onBusy }: B
                           : previous.filter(item => item !== destination)
                       )
                     }
+                    type="checkbox"
                   />
                   <Icon className="size-4" />
                   {label(destination)}
@@ -133,16 +129,16 @@ export function BrandingShortcuts({ draft, dirty, disabled, onApply, onBusy }: B
             })}
           </fieldset>
         </div>
-        <div className="min-w-0" aria-label={c.shortcutPreview}>
+        <div aria-label={c.shortcutPreview} className="min-w-0">
           <OrganizationBrand compact draft={{ ...draft, displayName: name, displayNameZh: name }} showDefault />
           <p className="mt-2 text-xs text-muted-foreground">{c.shortcutSnapshot}</p>
         </div>
       </div>
       <div className="mt-4 flex flex-wrap gap-2">
         <Button
-          size="sm"
           disabled={disabled || running || !selected.length || !validBrandShortcutName(name)}
           onClick={() => void create(selected)}
+          size="sm"
         >
           {running
             ? c.shortcutCreating
@@ -153,19 +149,19 @@ export function BrandingShortcuts({ draft, dirty, disabled, onApply, onBusy }: B
                 : c.shortcutCreate}
         </Button>
         {failed.length > 0 && (
-          <Button size="sm" variant="secondary" disabled={disabled || running} onClick={() => void create(failed)}>
+          <Button disabled={disabled || running} onClick={() => void create(failed)} size="sm" variant="secondary">
             {c.shortcutRetry}
           </Button>
         )}
       </div>
-      <div className="mt-3 grid gap-2 text-sm" aria-live="polite" aria-busy={running}>
+      <div aria-busy={running} aria-live="polite" className="mt-3 grid gap-2 text-sm">
         {error && (
-          <p role="alert" className="text-destructive">
+          <p className="text-destructive" role="alert">
             {error}
           </p>
         )}
         {results.map(row => (
-          <div key={row.destination} className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2" key={row.destination}>
             <span>
               {label(row.destination)} ·{' '}
               {row.status === 'created'
@@ -178,16 +174,14 @@ export function BrandingShortcuts({ draft, dirty, disabled, onApply, onBusy }: B
             </span>
             {(row.status === 'created' || row.status === 'updated') && (
               <Button
-                size="sm"
-                variant="ghost"
                 disabled={running}
                 onClick={() =>
                   void bridge.reveal({ name: resultName, destination: row.destination }).catch(() => {
-                    if (alive.current) {
-                      setError(c.shortcutRevealFailed)
-                    }
+                    setError(c.shortcutRevealFailed)
                   })
                 }
+                size="sm"
+                variant="ghost"
               >
                 {c.shortcutReveal}
               </Button>

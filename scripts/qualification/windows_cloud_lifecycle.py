@@ -49,19 +49,19 @@ if args.operation=='fault':
     raise AssertionError('fault publication was not reached')
 
 home.mkdir(parents=True,exist_ok=False)
-(home.parent/'.owner.json').write_text(json.dumps({'owner':'windows-cloud-client-r1'}))
+(home.parent/'.owner.json').write_text(json.dumps({'owner':'windows-cloud-client-r1'}),encoding='utf-8')
 local={'base_url':'http://127.0.0.1:55479/v1','api_key':'fixture-only-local-preserved'}
 initial={'model':{'provider':'local-preserved','base_url':local['base_url'],'default':'local-model'},
     'providers':{'local-preserved':local,'semantier-cloud':{'base_url':'http://127.0.0.1:55474/v1','portal_origin':'http://127.0.0.1:3358'}},'memory':{'enabled':True}}
-(home/'config.yaml').write_text(json.dumps(initial))
+(home/'config.yaml').write_text(json.dumps(initial),encoding='utf-8')
 sentinels={}
 for name in ['memories/fixture.md','skills/fixture/SKILL.md','history-preservation-sentinel.txt']:
-    path=home/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text('Owned retention fixture only.\n')
+    path=home/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text('Owned retention fixture only.\n',encoding='utf-8')
     sentinels[name]=hashlib.sha256(path.read_bytes()).hexdigest()
 original_config=(home/'config.yaml').read_bytes()
 import httpx
-identity=json.loads((args.fixture_root/'identity.json').read_text())
-account=json.loads((args.fixture_root/'account.json').read_text())['account_id']
+identity=json.loads((args.fixture_root/'identity.json').read_text(encoding='utf-8-sig'))
+account=json.loads((args.fixture_root/'account.json').read_text(encoding='utf-8-sig'))['account_id']
 checks=[]
 with httpx.Client(base_url='http://127.0.0.1:55474',trust_env=False,timeout=20) as browser:
     assert browser.post('/auth/password/login',json={k:identity[k] for k in ('login','password')}).status_code==200
@@ -108,8 +108,8 @@ with httpx.Client(base_url='http://127.0.0.1:55474',trust_env=False,timeout=20) 
         decide(started,'approve')
         other=home.parent.parent/'runtime-other-user'/'hermes-home'
         other.mkdir(parents=True,exist_ok=False)
-        (other.parent/'.owner.json').write_text(json.dumps({'owner':'windows-cloud-client-r1'}))
-        (other/'config.yaml').write_text(json.dumps(initial))
+        (other.parent/'.owner.json').write_text(json.dumps({'owner':'windows-cloud-client-r1'}),encoding='utf-8')
+        (other/'config.yaml').write_text(json.dumps(initial),encoding='utf-8')
         other_before=(other/'config.yaml').read_bytes()
         probe = """import json,sys
 sys.path.insert(0,sys.argv[1])
@@ -131,7 +131,7 @@ except ValueError:print(json.dumps({'foreign_runtime_refused':True}))
 else:raise AssertionError('foreign runtime consumed authorization')
 """
         child_env={**os.environ,'HERMES_HOME':str(other)}
-        foreign=subprocess.run(child_command(['-c',probe,str(source),started['session_id']]),env=child_env,capture_output=True,text=True,timeout=45,check=False)
+        foreign=subprocess.run(child_command(['-c',probe,str(source),started['session_id']]),env=child_env,capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=45,check=False)
         assert foreign.returncode==0,foreign.stderr[-500:]
         assert json.loads(foreign.stdout)['foreign_runtime_refused']
         assert (home/'config.yaml').read_bytes()==original_config
@@ -156,7 +156,7 @@ started=device.start()
 assert started['session_id']==sys.argv[2]
 print(json.dumps({'status':device.poll(started['session_id'])['status']}))
 """
-        resumed=subprocess.run(child_command(['-c',resume,str(source),started['session_id']]),capture_output=True,text=True,timeout=90,check=False)
+        resumed=subprocess.run(child_command(['-c',resume,str(source),started['session_id']]),capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=90,check=False)
         assert resumed.returncode==0,resumed.stderr[-500:]
         assert json.loads(resumed.stdout)['status']=='approved'
         assert (other/'config.yaml').read_bytes()==other_before
@@ -185,7 +185,7 @@ print(json.dumps({'status':device.poll(started['session_id'])['status']}))
         decide(install,'approve','windows-inaccessible-r1',403)
         assert (home/'config.yaml').read_bytes()==original_config
         decide(install,'approve')
-        child=subprocess.run(child_command([str(Path(__file__).resolve()),'--source',str(source),'--root',str(home),'--fixture-root',str(args.fixture_root),'--operation','fault']),capture_output=True,text=True,timeout=45,check=False)
+        child=subprocess.run(child_command([str(Path(__file__).resolve()),'--source',str(source),'--root',str(home),'--fixture-root',str(args.fixture_root),'--operation','fault']),capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=45,check=False)
         assert child.returncode==77,(child.returncode,child.stderr[-500:])
         assert device._read()['status']=='installing'
         staged_ref=device._read()['credential_ref']

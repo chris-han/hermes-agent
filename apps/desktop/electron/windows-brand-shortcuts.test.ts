@@ -4,8 +4,8 @@ import path from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { createBrandShortcutService, pngsToIco, validateShortcutName, type ShortcutServiceOptions } from './windows-brand-shortcuts'
 import type { DesktopBranding } from './desktop-branding-types'
+import { createBrandShortcutService, pngsToIco, type ShortcutServiceOptions, validateShortcutName } from './windows-brand-shortcuts'
 
 const mocks = vi.hoisted(() => ({ failWrite: false, reveal: vi.fn(), png: Buffer.alloc(0) }))
 vi.mock('./product-identity', () => ({ PRODUCT_IDENTITY: { appId: 'test', msixAppIdWithOrg: 'test' } }))
@@ -17,6 +17,7 @@ vi.mock('electron', () => {
     toBitmap: () => Buffer.alloc(width * height * 4),
     toPNG: () => mocks.png
   })
+
   return {
     app: { getAppPath: () => '/unused' },
     nativeImage: {
@@ -31,7 +32,9 @@ vi.mock('electron', () => {
         if (mocks.failWrite) {
           return false
         }
+
         fs.writeFileSync(file, JSON.stringify(details))
+
         return true
       }
     }
@@ -54,6 +57,7 @@ beforeEach(() => {
 })
 afterEach(() => fs.rmSync(root, { recursive: true, force: true }))
 const roots = () => ({ desktop: path.join(root, 'Desktop'), startMenu: path.join(root, 'Start') })
+
 const service = (target: ShortcutServiceOptions['target'] = async () => ({ target: 'C:\\app.exe', args: '', appUserModelId: 'test' })) =>
   createBrandShortcutService({ directory: path.join(root, 'state'), roots: roots(), branding: () => branding, target })
 
@@ -61,6 +65,7 @@ describe('branding shortcuts', () => {
   it('accepts Chinese and English names and refuses paths and reserved Windows filenames', () => {
     expect(validateShortcutName('司序科技')).toBe('司序科技')
     expect(validateShortcutName('Semantier Agent')).toBe('Semantier Agent')
+
     for (const name of ['', 'CON', 'nul.txt', '../app', 'C:\\app', 'name.', ' name', 'a/b']) {
       expect(() => validateShortcutName(name)).toThrow('Invalid shortcut name')
     }
@@ -70,6 +75,7 @@ describe('branding shortcuts', () => {
       { size: 16, png: Buffer.from('small') },
       { size: 256, png: Buffer.from('large') }
     ])
+
     expect(ico.readUInt16LE(2)).toBe(1)
     expect(ico.readUInt16LE(4)).toBe(2)
     expect(ico[6]).toBe(16)
@@ -116,8 +122,10 @@ describe('branding shortcuts', () => {
   it('rejects stale branding and unknown destinations before writes', async () => {
     const instance = service(async () => {
       branding = { ...branding, displayName: 'New' }
+
       return { target: 'C:\\app.exe' }
     })
+
     await expect(instance.create({ name: 'Research', destinations: ['desktop'], branding })).rejects.toThrow(
       'Branding changed'
     )

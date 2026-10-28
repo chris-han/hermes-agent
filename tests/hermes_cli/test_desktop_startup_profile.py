@@ -1,6 +1,9 @@
 """Desktop startup resolution uses the real profile lifecycle, before gateway boot."""
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+import os
+import subprocess
+import sys
 
 import pytest
 
@@ -19,6 +22,23 @@ def owner(tmp_path, monkeypatch):
 def resolve(owner, profile=None, explicit=False):
     from hermes_cli.profiles_desktop import resolve_desktop_startup_profile
     return resolve_desktop_startup_profile(owner, profile, explicit=explicit)
+
+
+def test_internal_default_cli_selector_does_not_claim_desktop_owner(owner):
+    from hermes_cli.profiles_desktop import desktop_owner_is_runtime_only
+
+    assert resolve(owner)['profile'] == 'semantier-local'
+    assert desktop_owner_is_runtime_only(owner)
+    env = {**os.environ, 'HERMES_HOME': str(owner)}
+    result = subprocess.run(
+        [sys.executable, '-c',
+         'import sys; sys.argv = ["hermes", "--profile", "default", "--version"]; '
+         'import hermes_cli.main'],
+        env=env, capture_output=True, text=True, encoding='utf-8', timeout=45, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert desktop_owner_is_runtime_only(owner)
+    assert [profile.name for profile in profiles.list_profiles()] == ['semantier-local']
 
 
 def test_saved_profile_keeps_data_and_credentials(owner):

@@ -34,7 +34,7 @@ def managed_home():
         if path.is_symlink():
             continue
         try:
-            record = json.loads(path.read_text())
+            record = json.loads(path.read_text(encoding='utf-8-sig'))
             if isinstance(record, dict) and record.get('custody') and record.get('exact_capture'):
                 return True
         except (OSError,ValueError):
@@ -191,7 +191,7 @@ def generation(*, live=False):
     path = root/'active-generation.json'
     if not path.exists(): return {}
     if path.is_symlink(): raise ValueError('MANAGED_GENERATION_UNAVAILABLE')
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding='utf-8-sig'))
     if data.get('schema_version') != 'hermes.managed_generation.v1' or data.get('generation_hash') != digest(data.get('packages')):
         raise ValueError('MANAGED_GENERATION_TAMPERED')
     return data['packages']

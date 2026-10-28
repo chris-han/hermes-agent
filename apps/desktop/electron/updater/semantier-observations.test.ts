@@ -2,14 +2,34 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
+import type { IpcMain, IpcMainInvokeEvent } from 'electron'
 import { afterEach, expect, it } from 'vitest'
 
+import { registerSemantierFeedbackIpc } from './semantier-feedback-ipc'
 import { SemantierObservations } from './semantier-observations'
 const roots: string[] = []
 afterEach(() => {
   for (const r of roots.splice(0)) {
     rmSync(r, { recursive: true, force: true })
   }
+})
+
+it('feedback IPC requires an application viewer before any journal operation', () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'semantier-feedback-ipc-'))
+  roots.push(dir)
+  const owner = new SemantierObservations(dir)
+  const trusted = {} as IpcMainInvokeEvent
+  let handler: (event: IpcMainInvokeEvent, command: string, value?: unknown) => unknown = () => null
+  registerSemantierFeedbackIpc(
+    { handle: (_name, callback) => { handler = callback } } as Pick<IpcMain, 'handle'>,
+    owner,
+    event => { if (event !== trusted) { throw new Error('Application main frame required') } }
+  )
+  expect(() => handler({} as IpcMainInvokeEvent, 'consent', { enabled: true, profile: 'semantier-local' })).toThrow('main frame')
+  expect(owner.status().enabled).toBe(false)
+  expect(() => handler(trusted, 'consent', { enabled: true, profile: '../other' })).toThrow('Original local profile')
+  expect(handler(trusted, 'consent', { enabled: true, profile: 'semantier-local' })).toMatchObject({ enabled: true })
+  expect(handler(trusted, 'drain', { profile: 'other' })).toEqual([])
 })
 it('requires explicit consent and exact restart target; preserves pending through handoff', () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'semantier-observation-'))

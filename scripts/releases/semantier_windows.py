@@ -39,10 +39,10 @@ def acceptance_request(*,commit,controller,version,source_version,base):
 def main():
     p=argparse.ArgumentParser();p.add_argument('--source',type=Path,required=True);p.add_argument('--commit',required=True);p.add_argument('--controller',required=True);p.add_argument('--version',required=True);p.add_argument('--base',required=True);p.add_argument('--output',type=Path,required=True);a=p.parse_args()
     import tomllib
-    source_version=tomllib.loads((a.source/'pyproject.toml').read_text())['project']['version']
+    source_version=tomllib.loads((a.source/'pyproject.toml').read_text(encoding='utf-8-sig'))['project']['version']
     value=acceptance_request(commit=a.commit,controller=a.controller,version=a.version,source_version=source_version,base=a.base)
     if a.output.exists():raise ValueError('preserve existing channel request')
-    a.output.write_text(json.dumps(value,indent=2)+'\n')
+    a.output.write_text(json.dumps(value,indent=2)+'\n',encoding='utf-8')
 
 
 if __name__=='__main__':main()

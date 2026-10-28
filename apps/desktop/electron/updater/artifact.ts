@@ -33,18 +33,26 @@ export async function verifyPinnedArtifact(file: string, artifact: PinnedArtifac
   }
 }
 
+async function alreadyVerified(file: string, artifact: PinnedArtifact): Promise<boolean> {
+  try {
+    await verifyPinnedArtifact(file, artifact)
+
+    return true
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+      return false
+    }
+
+    throw error
+  }
+}
+
 /** Caller owns private storage and its lifetime. Redirects cannot change authority. */
 export async function downloadPinnedArtifact(directory: string, artifact: PinnedArtifact, fetchArtifact: typeof fetch = fetch): Promise<string> {
   const file: string = path.join(directory, `destination.${artifact.format}`)
 
-  try {
-    await verifyPinnedArtifact(file, artifact)
-
+  if (await alreadyVerified(file, artifact)) {
     return file
-  } catch (error) {
-    if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') {
-      throw error
-    }
   }
 
   if (artifact.chunks) {

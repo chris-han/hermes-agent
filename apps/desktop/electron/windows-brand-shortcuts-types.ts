@@ -22,7 +22,8 @@ export function validBrandShortcutName(value: unknown): value is string {
     Boolean(value.trim()) &&
     value === value.trim() &&
     value.length <= 120 &&
-    !/[<>:"/\\|?*\x00-\x1f\x7f]/.test(value) &&
+    !/[<>:"/\\|?*]/.test(value) &&
+    !Array.from(value).some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127) &&
     !/[. ]$/.test(value) &&
     !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(value)
   )

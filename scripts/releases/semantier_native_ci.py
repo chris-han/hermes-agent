@@ -21,7 +21,7 @@ if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--output',type=Path,required=True);p.add_argument('--work',required=True);p.add_argument('--commit',required=True);a=p.parse_args()
     # All interpolated paths go through PowerShell literal quoting, never shell evaluation.
     quote=lambda value:"'"+str(value).replace("'","''")+"'"
-    windows=lambda path:subprocess.check_output(['wslpath','-w',str(path)],text=True).strip()
+    windows=lambda path:subprocess.check_output(['wslpath','-w',str(path)],text=True,encoding='utf-8',errors='replace',timeout=30).strip()
     files=list((a.output/'signed/distribution').glob('*.msix'))
     if len(files)!=1:raise ValueError('One signed candidate required')
     if len(a.commit)!=40 or any(c not in 'abcdef0123456789' for c in a.commit):raise ValueError('Exact source required')

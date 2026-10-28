@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 import hashlib
 import json
 import os
@@ -22,7 +22,7 @@ def diagnostic(root: Path, **values) -> None:
     path = root / 'diagnostics/runtime.jsonl'
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open('a', encoding='utf-8') as stream:
-        stream.write(json.dumps({'producedAt': datetime.now(timezone.utc).isoformat(), **values}) + '\n')
+        stream.write(json.dumps({'producedAt': datetime.now(UTC).isoformat(), **values}) + '\n')
 
 
 @contextmanager
@@ -87,7 +87,7 @@ def publish_dependencies(prepared: Path, key: str) -> None:
     data = json.loads(prepared.read_text(encoding='utf-8-sig'))
     components = {name: data['digests'][name] for name in sorted(DEPENDENCY_COMPONENTS)}
     record = {'schema': 1, 'key': key, 'out': data['out'], 'source': data['source'],
-              'producedAt': datetime.now(timezone.utc).isoformat(),
+              'producedAt': datetime.now(UTC).isoformat(),
               'preparedRevision': data['revision'], 'components': components}
     _atomic_bytes(dependencies_path(Path(data['out'])), json.dumps(record).encode())
 
@@ -139,7 +139,7 @@ def retained_runtime(out: Path, source: Path | None = None, key: str | None = No
         marker = retention_path(out)
         if marker.is_symlink() or out.absolute() != out.resolve():
             return False
-        data = json.loads(marker.read_text(encoding='utf-8'))
+        data = json.loads(marker.read_text(encoding='utf-8-sig'))
         return (data['schema'] == 1 and data.get('kind') == 'hermes-native-runtime-retention-v1'
                 and data['out'] == str(out)
                 and isinstance(data['source'], str) and Path(data['source']).is_absolute()

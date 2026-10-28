@@ -329,8 +329,6 @@ export function UpdateStatusCard({
   const isBackend = target === 'backend'
   const status = useStore(isBackend ? $backendUpdateStatus : $updateStatus)
   const checking = useStore(isBackend ? $backendUpdateChecking : $updateChecking)
-  const sourceLoading = useStore($updateSourceLoading)
-  const sourceChecking = useStore($updateSourceChecking)
   const apply = useStore(isBackend ? $backendUpdateApply : $updateApply)
   const [justChecked, setJustChecked] = useState<boolean>(false)
 
@@ -343,12 +341,6 @@ export function UpdateStatusCard({
     target,
     u
   })
-
-  const handleCheck = async (): Promise<void> => {
-    setJustChecked(false)
-    const next = await (isBackend ? checkBackendUpdates({ force: true }) : checkUpdates({ force: true }))
-    setJustChecked(Boolean(next))
-  }
 
   return (
     <div
@@ -386,15 +378,13 @@ export function UpdateStatusCard({
 
       {view.tone !== 'unsupported' && (
         <div className="mt-3 flex flex-wrap items-center gap-4">
-          <Button
-            disabled={checking || view.applying || (!isBackend && (sourceLoading || sourceChecking))}
-            onClick={() => void handleCheck()}
-            size="sm"
-            variant="textStrong"
-          >
-            {checking ? <Loader2 className="size-3 animate-spin" /> : <RefreshCw className="size-3" />}
-            {checking ? u.checkingShort : u.checkNow}
-          </Button>
+          <UpdateCheckButton
+            applying={view.applying}
+            checking={checking}
+            onChecked={setJustChecked}
+            target={target}
+            u={u}
+          />
 
           <UpdateActions target={target} u={u} view={view} />
 
@@ -417,5 +407,35 @@ export function UpdateStatusCard({
         </div>
       )}
     </div>
+  )
+}
+
+function UpdateCheckButton({ applying, checking, onChecked, target, u }: {
+  applying: boolean
+  checking: boolean
+  onChecked: (checked: boolean) => void
+  target: UpdateTarget
+  u: Translations['updates']
+}): ReactElement {
+  const sourceLoading = useStore($updateSourceLoading)
+  const sourceChecking = useStore($updateSourceChecking)
+  const isBackend = target === 'backend'
+
+  const handleCheck = async (): Promise<void> => {
+    onChecked(false)
+    const next = await (isBackend ? checkBackendUpdates({ force: true }) : checkUpdates({ force: true }))
+    onChecked(Boolean(next))
+  }
+
+  return (
+    <Button
+      disabled={checking || applying || (!isBackend && (sourceLoading || sourceChecking))}
+      onClick={() => void handleCheck()}
+      size="sm"
+      variant="textStrong"
+    >
+      {checking ? <Loader2 className="size-3 animate-spin" /> : <RefreshCw className="size-3" />}
+      {checking ? u.checkingShort : u.checkNow}
+    </Button>
   )
 }

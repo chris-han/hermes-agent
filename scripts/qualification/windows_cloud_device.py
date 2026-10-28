@@ -94,8 +94,8 @@ def main():
         os.chdir(home)
         for key in list(os.environ):
             if key.endswith(('_API_KEY','_TOKEN','_SECRET','_PASSWORD','_CREDENTIALS')):os.environ.pop(key,None)
-        identity=json.loads((args.fixture_root/'identity.json').read_text())
-        mapped=json.loads(args.account_map.read_text())
+        identity=json.loads((args.fixture_root/'identity.json').read_text(encoding='utf-8-sig'))
+        mapped=json.loads(args.account_map.read_text(encoding='utf-8-sig'))
         original=device._read()['account_id']
         assert original==mapped['bound_account_id']
         runtime=resolve_runtime_provider(requested='semantier-cloud',target_model='device-controlled');runtime.pop('source',None)
@@ -130,8 +130,8 @@ def main():
         from openai import OpenAI, APIStatusError
         from agent.semantier_gateway import gateway_settings, attribute_request, configure_cloud_request
         fixture_path=source.parent/'tests/fixtures/cloud-task-finops-v1/contract.json'
-        fixture=json.loads(fixture_path.read_text())
-        mapped=json.loads(args.account_map.read_text())
+        fixture=json.loads(fixture_path.read_text(encoding='utf-8-sig'))
+        mapped=json.loads(args.account_map.read_text(encoding='utf-8-sig'))
         replacements={fixture['account_override_authority'][key]:value for key,value in mapped.items()}
         def translate(value):
             if isinstance(value,dict):return {k:translate(v) for k,v in value.items()}
@@ -228,13 +228,13 @@ def main():
         print(json.dumps({'restart_read':True}))
         return
     home.mkdir(parents=True,exist_ok=False)
-    (home/'config.yaml').write_text('{}\n')
+    (home/'config.yaml').write_text('{}\n',encoding='utf-8')
     original={'proof':'disposable-native-custody-probe','session_id':'cloud-source-probe','status':'pending'}
     device._write(original)
     ciphertext=(home/'.cloud-device.bin').read_bytes()
     assert original['proof'].encode() not in ciphertext
     assert device._read()['proof']==original['proof']
-    child=subprocess.run([sys.executable,str(Path(__file__).resolve()),'--source',str(source),'--root',str(home),'--read'],capture_output=True,text=True,check=True)
+    child=subprocess.run([sys.executable,str(Path(__file__).resolve()),'--source',str(source),'--root',str(home),'--read'],capture_output=True,text=True,encoding='utf-8',timeout=45,check=True)
     assert json.loads(child.stdout)['restart_read'] is True
     (home/'.cloud-device.bin').write_bytes(ciphertext[:-8]+b'tampered')
     try:

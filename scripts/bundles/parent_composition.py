@@ -6,7 +6,7 @@ from pathlib import Path, PurePosixPath
 
 def verify(parent: Path):
     parent = parent.resolve()
-    manifest = json.loads((parent / 'composition.json').read_text(encoding='utf-8'))
+    manifest = json.loads((parent / 'composition.json').read_text(encoding='utf-8-sig'))
     seen = set()
     for entry in manifest['files']:
         key = entry['path']

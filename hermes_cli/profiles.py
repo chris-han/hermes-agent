@@ -20,6 +20,7 @@ from agent.file_safety import HOME_CREDENTIAL_DIRS
 from hermes_cli.archive_safe import archive_root_dirs, make_targz, normalize_archive_parts, safe_extract_targz
 from hermes_cli.home_data_layout import PM_RUNTIME_ROOT_DIRS
 from hermes_cli.profiles_remove import _rmtree_make_writable, _rmtree_with_retry, wait_profile_unowned
+from hermes_cli.profiles_active import retarget_active_profile as _retarget_active_profile
 from hermes_constants import (
     LOCAL_RUNTIME_ROOT_DIRS, PROFILE_ID_RE, clear_named_profile_deleted, mark_named_profile_deleted,
     named_profile_has_identity, named_profile_is_deleted, named_profile_is_live,
@@ -1032,18 +1033,6 @@ def _profile_info(name: str, path: Path, *, is_default: bool, alias_name: Option
     )
 
 
-def _default_profile_is_discoverable(home: Path) -> bool:
-    # Desktop's owner directory is infrastructure, not a second empty profile.
-    # A real default identity (including old chats/credentials) always remains visible.
-    from hermes_cli.profiles_desktop import DESKTOP_FALLBACK, desktop_owner_is_runtime_only
-    if desktop_owner_is_runtime_only(home):
-        return False
-    return home.is_dir() and (
-        named_profile_has_identity(home)
-        or not named_profile_is_live(home / "profiles" / DESKTOP_FALLBACK)
-    )
-
-
 def list_profiles(*, lazy_skill_count: bool = False) -> list[ProfileInfo]:
     """Return info for all profiles, including the default.
 
@@ -1052,7 +1041,8 @@ def list_profiles(*, lazy_skill_count: bool = False) -> list[ProfileInfo]:
     a skill tree (#114041). Default ``False`` counts synchronously (CLI, detail views)."""
     profiles = []
     default_home = _get_default_hermes_home()
-    if _default_profile_is_discoverable(default_home):
+    from hermes_cli.profiles_desktop import default_profile_is_discoverable
+    if default_profile_is_discoverable(default_home):
         profiles.append(_profile_info("default", default_home, is_default=True,
                                       lazy_skill_count=lazy_skill_count))
     named = _iter_named_profile_dirs()
@@ -2112,14 +2102,6 @@ def set_active_profile(name: str) -> None:
         tmp = path.with_suffix(".tmp")  # atomic write
         tmp.write_text(canon + "\n", encoding="utf-8")
         tmp.replace(path)
-
-
-def _retarget_active_profile(old: str, new: str, message: str) -> None:
-    """If the sticky active profile is *old*, point it at *new* and print *message*. Never raises."""
-    with contextlib.suppress(Exception):
-        if get_active_profile() == old:
-            set_active_profile(new)
-            print(message)
 
 
 def get_active_profile_name() -> str:

@@ -59,7 +59,7 @@ def stage(output,native,incoming,notes):
     archive=output/'signed'/signed['archiveName']
     if archive.name!=signed['archiveName'] or archive.is_symlink() or not archive.is_file():raise ValueError('Signed distribution archive required')
     archive_digest=sha(archive)
-    if archive.with_name(archive.name+'.sha256').read_text().split()[0]!=archive_digest:raise ValueError('Distribution archive checksum mismatch')
+    if archive.with_name(archive.name+'.sha256').read_text(encoding='utf-8-sig').split()[0]!=archive_digest:raise ValueError('Distribution archive checksum mismatch')
     # Keep the required signed ZIP locally; update delivery already needs the
     # whole MSIX for older receivers plus chunks. A third copy prevents a second
     # protected multi-GB release from fitting within the R2 storage budget.

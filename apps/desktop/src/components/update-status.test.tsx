@@ -20,6 +20,8 @@ vi.mock('@/store/updates', async () => {
     $backendUpdateStatus: atom<DesktopUpdateStatus | null>(null),
     $updateApply: atom<UpdateApplyState | null>(null),
     $updateChecking: atom<boolean>(false),
+    $updateSourceChecking: atom<boolean>(false),
+    $updateSourceLoading: atom<boolean>(false),
     $updateStatus: atom<DesktopUpdateStatus | null>(null),
     checkBackendUpdates: vi.fn(),
     checkUpdates: vi.fn(),

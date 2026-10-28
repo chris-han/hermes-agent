@@ -14,6 +14,7 @@ import {
   runGatewayEnsure
 } from './local-gateway'
 import { closeGatewayTicketBridges, createGatewayTicketResolver } from './local-gateway-python'
+import { registerSemantierFeedbackIpc } from './updater/semantier-feedback-ipc'
 import { SemantierObservations } from './updater/semantier-observations'
 const localGatewayDials = createLocalGatewayDials()
 configurePythonGatewayTicketClient(
@@ -639,7 +640,7 @@ import { verifyPreparedChannelInstaller } from './updater/channel-windows-host'
 import { type CheckoutStrategy, createCheckoutStrategy } from './updater/checkout'
 import { readSourceUpdate, sourceChannelName, type SourceUpdate } from './updater/checkout-source'
 import { DeliverySources } from './updater/delivery-source'
-import { registerDeliverySourceIpc } from './updater/delivery-source-ipc'
+import { assertApplicationMainFrame, broadcastDeliverySourceCheck, registerDeliverySourceIpc } from './updater/delivery-source-ipc'
 import { ExternalStrategy } from './updater/external'
 import { readUpdatesFeedBaseFromConfig, resolveFeedBaseUrl } from './updater/feed-config'
 import { createChannelMacStrategy, createMacStrategy } from './updater/mac-client'
@@ -3521,15 +3522,7 @@ async function checkUpdates(opts: { force?: boolean } = {}): Promise<UpdaterStat
     updateChecks -= 1
 
     if (canSelectDeliverySource()) {
-      try {
-        const selection = { ...deliverySources.status(), checkStatus: updateOperation.checkStatus }
-
-        for (const win of BrowserWindow.getAllWindows()) {
-          if (!win.isDestroyed()) { win.webContents.send('hermes:updates:delivery:changed', selection) }
-        }
-      } catch {
-        rememberLog('[updates] Delivery-source status could not be broadcast')
-      }
+      broadcastDeliverySourceCheck(deliverySources, updateOperation.checkStatus, BrowserWindow.getAllWindows(), rememberLog)
     }
   }
 }
@@ -17696,42 +17689,15 @@ ipcMain.handle('hermes:updates:apply', async (_event, payload) =>
   }))
 )
 
-// Main-frame application viewers only; no remote popout or embedded frame can
-// enable collection, read another profile journal or acknowledge its events.
-ipcMain.handle('semantier:feedback', (event, command: string, value: {enabled?:boolean;profile?:string;ids?:string[]}) => {
-  const win = BrowserWindow.fromWebContents(event.sender)
-
-  if (!win || (win !== mainWindow && !chatWindows.has(win)) || event.senderFrame !== win.webContents.mainFrame) {throw new Error('Application main frame required')}
-
-  if (command === 'status') {return semantierObservations.status()}
-  const profile = value?.profile
-
-  if (typeof profile !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(profile)) {throw new Error('Original local profile required')}
-
-  if (command === 'consent' && typeof value.enabled === 'boolean') {semantierObservations.consent(value.enabled, profile);
-
- return semantierObservations.status()}
-
-  if (command === 'drain') {return semantierObservations.drain(profile)}
-
-  if (command === 'ack' && Array.isArray(value.ids) && value.ids.length <= 100 && value.ids.every(id => typeof id === 'string' && id.length <= 128)) {semantierObservations.ack(profile,value.ids);
-
-return semantierObservations.status()}
-
-  throw new Error('Unsupported feedback operation')
-})
+registerSemantierFeedbackIpc(ipcMain, semantierObservations, assertApplicationViewer)
 
 // Delivery source is a native install preference, separate from a release track.
-function assertDeliveryViewer(event: Electron.IpcMainInvokeEvent): void {
-  const win = BrowserWindow.fromWebContents(event.sender)
-
-  if (!win || (win !== mainWindow && !chatWindows.has(win)) || event.senderFrame !== win.webContents.mainFrame) {
-    throw new Error('Application main frame required')
-  }
+function assertApplicationViewer(event: Electron.IpcMainInvokeEvent): void {
+  assertApplicationMainFrame(event, BrowserWindow.fromWebContents(event.sender), mainWindow, chatWindows)
 }
 
 registerDeliverySourceIpc(ipcMain, {
-  assertViewer: assertDeliveryViewer,
+  assertViewer: assertApplicationViewer,
   eligible: canSelectDeliverySource,
   busy: () => Boolean(updateChecks || updateInFlight),
   sources: deliverySources,
@@ -17746,11 +17712,7 @@ registerDeliverySourceIpc(ipcMain, {
 
 // About ▸ Updates: native packaged preferences and existing source-checkout policy.
 ipcMain.handle('hermes:updates:channel:set', async (event, name: unknown): Promise<UpdaterStatusWire> => {
-  const win = BrowserWindow.fromWebContents(event.sender)
-
-  if (!win || (win !== mainWindow && !chatWindows.has(win)) || event.senderFrame !== win.webContents.mainFrame) {
-    throw new Error('Application main frame required')
-  }
+  assertApplicationViewer(event)
 
   if (process.platform === 'win32' && supportsPackagedChannels(INSTALL_STAMP?.channelBuild)) {
     updateOperation.changeSelection(() => savePackagedChannel(DESKTOP_UPDATE_CONFIG_PATH, name,

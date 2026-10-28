@@ -5,7 +5,7 @@ This module is stdlib-only until preparation runs inside the isolated child.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 import hashlib
 import json
 import os
@@ -245,7 +245,7 @@ def native_cache_path(cache: Path, env: Mapping[str, str], *, family: str = "pyt
     # uv builds sdists below this root. Keep the partition compact so compiler
     # outputs fit Windows MAX_PATH; the target is already part of the identity.
     digest = hashlib.sha256(encoded.encode()).hexdigest()[:32] if complete else uuid.uuid4().hex
-    record = {"producedAt": datetime.now(timezone.utc).isoformat(),
+    record = {"producedAt": datetime.now(UTC).isoformat(),
               "family": family, "target": target, "complete": complete, "key": digest,
               "missing": missing, "inputHashes": {key: hashlib.sha256(value.encode()).hexdigest() for key, value in selected.items()},
               "tools": [{"command": probe[0][0], "version": next((line for line in probe[1].splitlines()
@@ -301,7 +301,7 @@ def reusable_wheel_cache(cache: Path, env: Mapping[str, str], *, toolchain: str 
     expected = {"schema": 1, "target": target, "toolchain": toolchain}
     if toolchain is not None:
         try:
-            if json.loads(qualification.read_text(encoding="utf-8")) == expected and shared.is_dir():
+            if json.loads(qualification.read_text(encoding="utf-8-sig")) == expected and shared.is_dir():
                 print(f"Reusing qualified wheel cache: {shared}", flush=True)
                 return shared
         except (OSError, ValueError):
@@ -310,7 +310,7 @@ def reusable_wheel_cache(cache: Path, env: Mapping[str, str], *, toolchain: str 
     # when UV cleans or rebuilds source wheels in this shared serial cache.
     qualification.unlink(missing_ok=True)
     lock = Path(env["HERMES_PYTHON_SRC_ROOT"]) / "uv.lock"
-    packages = tomllib.loads(lock.read_text(encoding="utf-8"))["package"]
+    packages = tomllib.loads(lock.read_text(encoding="utf-8-sig"))["package"]
     names.update(package["name"] for package in packages if "registry" not in package["source"])
     if names:
         import pm

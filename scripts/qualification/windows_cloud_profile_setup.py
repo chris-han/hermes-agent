@@ -11,7 +11,7 @@ parser.add_argument('--root',type=Path,required=True)
 args=parser.parse_args()
 assert os.name=='nt'
 home=args.root.resolve();source=args.source.resolve()
-assert json.loads((home.parent/'.owner.json').read_text())['owner']=='windows-cloud-client-r1'
+assert json.loads((home.parent/'.owner.json').read_text(encoding='utf-8-sig'))['owner']=='windows-cloud-client-r1'
 os.environ['HERMES_HOME']=str(home)
 for key in ('HOME','USERPROFILE'):os.environ[key]=str(home.parent/'profile')
 sys.path.insert(0,str(source))

@@ -18,7 +18,7 @@ parser.add_argument('arguments', nargs=argparse.REMAINDER)
 args = parser.parse_args()
 assert os.name == 'nt' and sys.flags.isolated, 'shipped Windows base Python -I required'
 payload = args.payload.resolve()
-manifest = json.loads((payload / 'manifest.json').read_text())
+manifest = json.loads((payload / 'manifest.json').read_text(encoding='utf-8-sig'))
 runtime = manifest['runtime']
 executable = (payload / runtime['storePython']).resolve()
 assert Path(sys.executable).resolve() == executable
@@ -54,7 +54,7 @@ def retain_origins():
     (home.parent / ('payload-origins-' + str(os.getpid()) + '.json')).write_text(json.dumps({
         'scope': 'EXTRACTED_RUNTIME_ONLY', 'source_commit': manifest['ref'],
         'executable': str(executable), 'base_prefix': sys.base_prefix,
-        'modules': origins}, indent=2))
+        'modules': origins}, indent=2), encoding='utf-8')
 
 
 sys.argv = [str(script), *arguments]

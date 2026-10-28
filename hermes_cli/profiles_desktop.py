@@ -37,7 +37,7 @@ def _read_owner_role(owner: Path) -> dict | None:
             return None
         if not stat.S_ISREG(info.st_mode) or info.st_size > 4096:
             raise ValueError('Invalid desktop owner role file')
-        value = json.loads(marker.read_text(encoding='utf-8'))
+        value = json.loads(marker.read_text(encoding='utf-8-sig'))
         if (not isinstance(value, dict) or set(value) != {'schema', 'role'}
                 or type(value['schema']) is not int or value['schema'] != 1
                 or value['role'] not in {'runtime_owner', 'user_profile'}):
@@ -64,6 +64,17 @@ def _write_owner_role(owner: Path, role: str) -> None:
 def desktop_owner_is_runtime_only(owner: Path) -> bool:
     role = _read_owner_role(owner)
     return bool(role and role['role'] == 'runtime_owner')
+
+
+def default_profile_is_discoverable(owner: Path) -> bool:
+    # Desktop's owner directory is infrastructure, not a second empty profile.
+    # A real default identity (including old chats/credentials) remains visible.
+    if desktop_owner_is_runtime_only(owner):
+        return False
+    return owner.is_dir() and (
+        profiles.named_profile_has_identity(owner)
+        or not profiles.named_profile_is_live(owner / 'profiles' / DESKTOP_FALLBACK)
+    )
 
 
 def claim_default_profile(owner: Path) -> None:
@@ -156,7 +167,7 @@ def _retirement_marker(owner: Path) -> tuple[Path, Path | None]:
     if not marker.exists():
         return marker, None
     try:
-        record = json.loads(marker.read_text(encoding="utf-8"))
+        record = json.loads(marker.read_text(encoding="utf-8-sig"))
         relative = Path(record["backup"])
         if record["kind"] != "desktop-internal-profile-retirement-v1" or relative.is_absolute():
             raise ValueError("Not a Desktop retirement marker")
@@ -243,7 +254,7 @@ def resolve_desktop_startup_profile(
         selected = requested
         if not selected:
             try:
-                selected = (owner / "active_profile").read_text(encoding="utf-8").strip() or None
+                selected = (owner / "active_profile").read_text(encoding="utf-8-sig").strip() or None
             except FileNotFoundError:
                 pass
         with profiles._profile_lifecycle_lock(owner):
