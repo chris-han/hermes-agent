@@ -1035,7 +1035,9 @@ def _profile_info(name: str, path: Path, *, is_default: bool, alias_name: Option
 def _default_profile_is_discoverable(home: Path) -> bool:
     # Desktop's owner directory is infrastructure, not a second empty profile.
     # A real default identity (including old chats/credentials) always remains visible.
-    from hermes_cli.profiles_desktop import DESKTOP_FALLBACK
+    from hermes_cli.profiles_desktop import DESKTOP_FALLBACK, desktop_owner_is_runtime_only
+    if desktop_owner_is_runtime_only(home):
+        return False
     return home.is_dir() and (
         named_profile_has_identity(home)
         or not named_profile_is_live(home / "profiles" / DESKTOP_FALLBACK)
@@ -2103,6 +2105,8 @@ def set_active_profile(name: str) -> None:
     path = _get_active_profile_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     if canon == "default":
+        from hermes_cli.profiles_desktop import claim_default_profile
+        claim_default_profile(_get_default_hermes_home())
         path.unlink(missing_ok=True)
     else:
         tmp = path.with_suffix(".tmp")  # atomic write

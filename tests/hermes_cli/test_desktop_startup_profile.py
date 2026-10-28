@@ -169,6 +169,7 @@ def test_fresh_desktop_discovers_only_its_local_profile_but_keeps_real_default_d
     assert resolve(owner)['profile'] == 'semantier-local'
     assert [p.name for p in profiles.list_profiles(lazy_skill_count=True)] == ['semantier-local']
     (owner / 'state.db').write_bytes(b'retained default chat store')
+    assert resolve(owner, 'default', explicit=True)['profile'] == 'default'
     assert {p.name for p in profiles.list_profiles(lazy_skill_count=True)} == {'default', 'semantier-local'}
 
 
@@ -253,3 +254,69 @@ def test_restart_after_move_repairs_sticky_owner_route(owner):
     (owner / 'active_profile').write_text('tender-runtime-expert\n')
     assert resolve(owner)['profile'] == 'semantier-local'
     assert profiles.get_active_profile(owner) == 'semantier-local'
+
+
+def test_host_bootstrap_files_do_not_create_a_second_desktop_identity(owner):
+    from hermes_cli.config import atomic_config_replace
+    from hermes_state import SessionDB
+    assert resolve(owner)['profile'] == 'semantier-local'
+    # The actual packaged host bootstrap creates these after profile resolution.
+    atomic_config_replace(owner/'config.yaml', {'model': {'default': 'semantier-runtime'}})
+    (owner/'SOUL.md').write_text('Generated host scaffold\n')
+    db = SessionDB(owner/'state.db'); db.close()
+    before = {name: (owner/name).read_bytes() for name in ['config.yaml', 'SOUL.md', 'state.db']}
+    assert [p.name for p in profiles.list_profiles(lazy_skill_count=True)] == ['semantier-local']
+    assert resolve(owner, 'semantier-local')['profile'] == 'semantier-local'
+    assert [p.name for p in profiles.list_profiles(lazy_skill_count=True)] == ['semantier-local']
+    assert {name: (owner/name).read_bytes() for name in before} == before
+
+
+def test_existing_unclassified_default_data_stays_visible_and_unchanged(owner):
+    (owner/'config.yaml').write_text('display:\n  language: en\n')
+    (owner/'state.db').write_bytes(b'legacy retained chat store')
+    before = (owner/'state.db').read_bytes()
+    assert resolve(owner)['profile'] == 'semantier-local'
+    assert {p.name for p in profiles.list_profiles(lazy_skill_count=True)} == {'default', 'semantier-local'}
+    assert resolve(owner, 'default', explicit=True)['profile'] == 'default'
+    assert (owner/'state.db').read_bytes() == before
+    assert 'language: en' in (owner/'config.yaml').read_text()
+
+
+@pytest.mark.parametrize('claim', ['launch', 'sticky'])
+def test_deliberate_default_claim_keeps_existing_bytes_and_selection(owner, claim):
+    resolve(owner)
+    (owner/'config.yaml').write_text('display:\n  language: en\n')
+    (owner/'state.db').write_bytes(b'retained default conversations')
+    before = {p.name: p.read_bytes() for p in [owner/'config.yaml', owner/'state.db']}
+    assert [p.name for p in profiles.list_profiles(lazy_skill_count=True)] == ['semantier-local']
+    if claim == 'launch':
+        assert resolve(owner, 'default', explicit=True)['profile'] == 'default'
+    else:
+        profiles.set_active_profile('default')
+        assert resolve(owner)['profile'] == 'default'
+    assert {p.name for p in profiles.list_profiles(lazy_skill_count=True)} == {'default', 'semantier-local'}
+    assert resolve(owner, 'default')['profile'] == 'default'
+    assert {name: (owner/name).read_bytes() for name in before} == before
+
+
+@pytest.mark.parametrize('body', ['{invalid', '{"schema":2,"role":"runtime_owner"}'])
+def test_unknown_owner_role_holds_without_rewriting_data(owner, body):
+    resolve(owner)
+    marker = owner/'profiles/.desktop-owner-root.json'
+    marker.write_text(body)
+    with pytest.raises(RuntimeError, match='role requires recovery'):
+        profiles.list_profiles(lazy_skill_count=True)
+    with pytest.raises(RuntimeError, match='role requires recovery'):
+        resolve(owner, 'semantier-local')
+    assert marker.read_text() == body
+
+
+def test_linked_owner_role_cannot_reclassify_a_profile(owner, tmp_path):
+    resolve(owner)
+    marker = owner/'profiles/.desktop-owner-root.json'
+    marker.unlink()
+    foreign = tmp_path/'foreign-role.json'; foreign.write_text('{"schema":1,"role":"runtime_owner"}')
+    marker.symlink_to(foreign)
+    with pytest.raises(ValueError, match='escapes its owner'):
+        profiles.list_profiles(lazy_skill_count=True)
+    assert foreign.read_text() == '{"schema":1,"role":"runtime_owner"}'

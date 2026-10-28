@@ -7,6 +7,7 @@ import json
 import sys
 import tempfile
 import os
+import stat
 from pathlib import Path
 
 from hermes_cli import profiles
@@ -19,9 +20,63 @@ DESKTOP_FALLBACK = "semantier-local"
 _RETIRED_INTERNAL_PROFILE = "tender-runtime-expert"
 
 
+def _owner_role_path(owner: Path) -> Path:
+    namespace = owner / 'profiles'
+    marker = namespace / '.desktop-owner-root.json'
+    if any(path.is_symlink() or profiles._junction_target(str(path)) for path in (namespace, marker)):
+        raise ValueError('Desktop owner role escapes its owner')
+    return marker
+
+
+def _read_owner_role(owner: Path) -> dict | None:
+    marker = _owner_role_path(owner)
+    try:
+        try:
+            info = marker.stat()
+        except FileNotFoundError:
+            return None
+        if not stat.S_ISREG(info.st_mode) or info.st_size > 4096:
+            raise ValueError('Invalid desktop owner role file')
+        value = json.loads(marker.read_text(encoding='utf-8'))
+        if (not isinstance(value, dict) or set(value) != {'schema', 'role'}
+                or type(value['schema']) is not int or value['schema'] != 1
+                or value['role'] not in {'runtime_owner', 'user_profile'}):
+            raise ValueError('Invalid desktop owner role')
+        return value
+    except (OSError, ValueError) as error:
+        raise RuntimeError('Desktop owner role requires recovery') from error
+
+
+def _write_owner_role(owner: Path, role: str) -> None:
+    marker = _owner_role_path(owner)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix='.desktop-owner-root-', dir=marker.parent)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+            json.dump({'schema': 1, 'role': role}, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, marker)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
+def desktop_owner_is_runtime_only(owner: Path) -> bool:
+    role = _read_owner_role(owner)
+    return bool(role and role['role'] == 'runtime_owner')
+
+
+def claim_default_profile(owner: Path) -> None:
+    """Explicit profile selection can claim the host root without changing its data."""
+    with profiles._profile_lifecycle_lock(owner):
+        if desktop_owner_is_runtime_only(owner):
+            _write_owner_role(owner, 'user_profile')
+
+
 def _validate_profile(owner: Path, name: str, *, retiring: bool = False) -> bool:
     home = profiles.get_profile_dir(name)
-    if name == "default" and not profiles.named_profile_has_identity(home):
+    if name == "default" and (not profiles.named_profile_has_identity(home)
+                              or desktop_owner_is_runtime_only(owner)):
         return False
     if home.is_symlink() or profiles._junction_target(str(home)):
         raise ValueError("Profile path escapes its owner")
@@ -192,6 +247,18 @@ def resolve_desktop_startup_profile(
             except FileNotFoundError:
                 pass
         with profiles._profile_lifecycle_lock(owner):
+            # Record known-empty provenance before host bootstrap adds config,
+            # SOUL and empty databases. Never reclassify legacy root data.
+            role = _read_owner_role(owner)
+            if role is None and not profiles.named_profile_has_identity(owner):
+                _write_owner_role(owner, 'runtime_owner')
+            elif selected is None and role and role['role'] == 'user_profile':
+                # The canonical sticky-default representation is an absent
+                # active_profile file. Only a deliberate recorded claim can
+                # distinguish it from fresh desktop infrastructure.
+                selected = 'default'
+            if selected == 'default' and explicit:
+                claim_default_profile(owner)
             retired = _retire_internal_desktop_profile(owner, selected)
             if selected == _RETIRED_INTERNAL_PROFILE and (retired or named_profile_is_deleted(
                     owner / "profiles" / _RETIRED_INTERNAL_PROFILE)):

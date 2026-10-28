@@ -193,3 +193,19 @@ operations are HOME-anchored (`_get_profiles_root()` returns
 `hermes -p coder profile list` sees all profiles regardless of which one is active — intentional.
 Profile-safe coding rules are in the root `AGENTS.md`; multiplex secret-scope rules in
 `gateway/AGENTS.md`.
+
+Desktop resolves local startup through `hermes_cli.profiles_desktop` before starting
+the host backend. An empty owner creates/selects only `semantier-local`. The
+existing profile lifecycle namespace records that an initially empty owner root
+is runtime infrastructure in `profiles/.desktop-owner-root.json`; later generated
+config, SOUL and database files do not turn that root into a discoverable user
+profile. Pre-existing root identities remain discoverable and unchanged. Explicit
+`default` selection through the profile owner can claim a recorded runtime root;
+malformed or linked role records require recovery instead of guessing.
+
+Generated `tender-runtime-expert` state is retired atomically into
+`.desktop-retired-profiles/` with the existing profile tombstone retaining its
+backup reference. Retirement preserves the whole directory and refuses an active
+owner; it neither deletes user data nor merges credentials or chats into another
+profile. A selected legacy profile's saved language may transfer only when the
+fallback is newly created, through the existing config/locale boundary.
