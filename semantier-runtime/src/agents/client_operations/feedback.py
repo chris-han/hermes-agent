@@ -3,7 +3,7 @@ from datetime import datetime,timedelta,timezone
 import json
 from uuid import uuid4
 from contracts.client_operations import canonical,digest,sanitize,summarize_attempts,MAX_DIAGNOSTIC_BYTES
-from .publication import OperationError
+from .artifact_io import OperationError
 
 
 class Feedback:

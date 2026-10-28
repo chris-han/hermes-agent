@@ -28,19 +28,26 @@ fs.writeFileSync(path.join(output, 'owner.json'), JSON.stringify({ owner: 'windo
 const results = {}, observations = [], errors = [], identities = []
 let app, page
 const baseEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => /^(PATH|SYSTEMROOT|WINDIR|COMSPEC|PATHEXT|USERPROFILE|SYSTEMDRIVE|PROCESSOR_ARCHITECTURE|NUMBER_OF_PROCESSORS)$/i.test(key)))
+// Acceptance-family bundle clears ambient HERMES_HOME; the existing production
+// resolver scopes its effective root beneath the explicit userData directory.
+const profileHome = root => path.join(root, 'userdata', 'hermes-home')
 function environment(root) {
   assert.ok(path.resolve(root).startsWith(output + path.sep))
-  const dirs = Object.fromEntries(['home', 'appdata', 'localappdata', 'temp', 'userdata', 'hermes'].map(name => [name, path.join(root, name)]))
+  const dirs = Object.fromEntries(['home', 'appdata', 'localappdata', 'temp', 'userdata'].map(name => [name, path.join(root, name)]))
+  dirs.appdata = path.join(dirs.home, 'AppData', 'Roaming')
+  dirs.localappdata = path.join(dirs.home, 'AppData', 'Local')
+  dirs.hermes = profileHome(root)
   for (const dir of Object.values(dirs)) fs.mkdirSync(dir, { recursive: true })
-  return { ...baseEnv, HOME: dirs.home, APPDATA: dirs.appdata, LOCALAPPDATA: dirs.localappdata, TEMP: dirs.temp, TMP: dirs.temp,
+  return { ...baseEnv, HOME: dirs.home, USERPROFILE: dirs.home, APPDATA: dirs.appdata, LOCALAPPDATA: dirs.localappdata, TEMP: dirs.temp, TMP: dirs.temp,
     HERMES_HOME: dirs.hermes, HERMES_DESKTOP_USER_DATA_DIR: dirs.userdata,
     HERMES_DESKTOP_SKIP_QUIT_CONFIRM: '1', HERMES_DESKTOP_SKIP_PROTOCOL_REGISTRATION: '1', HERMES_DESKTOP_CDP_PORT: 'off',
+    ELECTRON_ENABLE_LOGGING: '1', ELECTRON_ENABLE_STACK_DUMPING: '1', ELECTRON_LOG_FILE: path.join(dirs.temp, 'electron.log'),
     HTTP_PROXY: 'http://127.0.0.1:9', HTTPS_PROXY: 'http://127.0.0.1:9', ALL_PROXY: 'http://127.0.0.1:9', NO_PROXY: '127.0.0.1,localhost,::1' }
 }
 async function close() { if (app) { await app.close(); app = null; page = null } }
 async function launch(root, label, executable = binding.executable.path) {
-  app = await _electron.launch({ executablePath: executable, env: environment(root), timeout: 120000 })
-  const identity = await app.evaluate(({ app }) => ({ platform: process.platform, packaged: app.isPackaged, version: app.getVersion(), executable: process.execPath, userData: app.getPath('userData'), locale: app.getLocale() }))
+  app = await _electron.launch({ executablePath: executable, cwd: path.dirname(executable), env: environment(root), timeout: 120000 })
+  const identity = await app.evaluate(({ app }) => ({ platform: process.platform, packaged: app.isPackaged, version: app.getVersion(), executable: process.execPath, userData: app.getPath('userData'), home: app.getPath('home'), locale: app.getLocale() }))
   assert.equal(identity.platform, 'win32'); assert.equal(identity.packaged, true)
   assert.equal(path.resolve(identity.executable), path.resolve(executable))
   assert.equal(path.resolve(identity.userData), path.resolve(root, 'userdata'))
@@ -67,9 +74,9 @@ async function assertLocal(root, label, locale = 'zh') {
   assert.deepEqual(state.names, ['semantier-local']); assert.equal(state.current, 'semantier-local')
   const preference = JSON.parse(fs.readFileSync(path.join(root, 'userdata/active-profile.json'), 'utf8'))
   assert.equal(preference.profile, 'semantier-local'); assert.equal(preference.defaultRoute.profile, 'semantier-local')
-  const named = fs.readdirSync(path.join(root, 'hermes/profiles'), { withFileTypes: true }).filter(e => e.isDirectory() && !e.name.startsWith('.')).map(e => e.name).sort()
+  const named = fs.readdirSync(path.join(profileHome(root), 'profiles'), { withFileTypes: true }).filter(e => e.isDirectory() && !e.name.startsWith('.')).map(e => e.name).sort()
   assert.deepEqual(named, ['semantier-local'])
-  assert.ok(!fs.existsSync(path.join(root, 'hermes/eos.db')))
+  assert.ok(!fs.existsSync(path.join(profileHome(root), 'eos.db')))
   observations.push({ label, state, preference, named })
 }
 function snapshot(root) {
@@ -86,7 +93,7 @@ function snapshot(root) {
 }
 function seedLegacy(root, withLocal) {
   environment(root)
-  const legacy = path.join(root, 'hermes/profiles/tender-runtime-expert')
+  const legacy = path.join(profileHome(root), 'profiles/tender-runtime-expert')
   for (const dir of ['sessions', 'memories', 'plugins']) fs.mkdirSync(path.join(legacy, dir), { recursive: true })
   fs.writeFileSync(path.join(legacy, 'config.yaml'), 'display:\n  language: en\nmodel:\n  provider: custom\n  default: retained-fixture\nplugins:\n  enabled: [tender_contextgraph_runtime]\n')
   fs.writeFileSync(path.join(legacy, '.env'), 'CUSTOM_API_KEY=isolated-noncredential-fixture\n')
@@ -102,16 +109,17 @@ function seedLegacy(root, withLocal) {
   const code = "from pathlib import Path; import sys; from hermes_state import SessionDB; db=SessionDB(Path(sys.argv[1])/'state.db'); db.create_session('profile-preservation', 'desktop'); db.append_message('profile-preservation','user','Retain this chat 中文'); db.close()"
   execFileSync(python, ['-P', '-c', code, legacy], { env: { ...environment(root), PYTHONPATH: [repo, path.join(payload, runtime.sitePackages)].join(path.delimiter), PYTHONIOENCODING: 'utf-8' }, cwd: repo, windowsHide: true, timeout: 120000 })
   if (withLocal) {
-    const local = path.join(root, 'hermes/profiles/semantier-local'); fs.mkdirSync(local, { recursive: true })
+    const local = path.join(profileHome(root), 'profiles/semantier-local'); fs.mkdirSync(local, { recursive: true })
     fs.writeFileSync(path.join(local, 'config.yaml'), 'display:\n  language: zh\nmodel:\n  default: keep-local-provider\n')
     fs.writeFileSync(path.join(local, '.env'), 'CUSTOM_API_KEY=local-fixture-preserve\n')
     fs.writeFileSync(path.join(local, 'SOUL.md'), 'Existing local user data\n')
   }
-  fs.writeFileSync(path.join(root, 'hermes/active_profile'), 'tender-runtime-expert\n')
+  fs.writeFileSync(path.join(profileHome(root), 'active_profile'), 'tender-runtime-expert\n')
   fs.writeFileSync(path.join(root, 'userdata/active-profile.json'), JSON.stringify({ profile: 'tender-runtime-expert', defaultRoute: { connectionId: null, profile: 'tender-runtime-expert' } }))
-  return { legacy, files: snapshot(legacy), local: withLocal ? snapshot(path.join(root, 'hermes/profiles/semantier-local')) : null }
+  return { legacy, files: snapshot(legacy), local: withLocal ? snapshot(path.join(profileHome(root), 'profiles/semantier-local')) : null }
 }
 async function language(value) {
+  await page.evaluate(() => { location.hash = '/settings?tab=config:appearance&page=general' })
   await page.getByRole('button', { name: /Switch language|切换语言/i }).click()
   const option = page.locator('[cmdk-item][data-value="' + value + '"]')
   const bounds = await option.boundingBox(); assert.ok(bounds)
@@ -137,14 +145,14 @@ try {
     const seeded = seedLegacy(root, withLocal)
     await launch(root, withLocal ? 'legacy-local-migrated' : 'legacy-only-migrated')
     await assertLocal(root, 'legacy-selection', withLocal ? 'zh' : 'en')
-    const batches = fs.readdirSync(path.join(root, 'hermes/.desktop-retired-profiles'))
+    const batches = fs.readdirSync(path.join(profileHome(root), '.desktop-retired-profiles'))
     assert.equal(batches.length, 1)
     const backup = path.join(root, 'hermes/.desktop-retired-profiles', batches[0], 'tender-runtime-expert')
     assert.deepEqual(snapshot(backup), seeded.files)
-    assert.ok(fs.existsSync(path.join(root, 'hermes/profiles/.deleted/tender-runtime-expert')))
+    assert.ok(fs.existsSync(path.join(profileHome(root), 'profiles/.deleted/tender-runtime-expert')))
     if (seeded.local) {
       for (const file of ['.env', 'SOUL.md']) assert.equal(digest(path.join(root, 'hermes/profiles/semantier-local', file)), seeded.local[file])
-      assert.ok(fs.readFileSync(path.join(root, 'hermes/profiles/semantier-local/config.yaml'), 'utf8').includes('keep-local-provider'))
+      assert.ok(fs.readFileSync(path.join(profileHome(root), 'profiles/semantier-local/config.yaml'), 'utf8').includes('keep-local-provider'))
     }
     observations.push({ retainedBackup: backup, hashes: seeded.files, localHashes: seeded.local })
     await close(); await launch(root, withLocal ? 'legacy-local-full-restart' : 'legacy-full-restart')

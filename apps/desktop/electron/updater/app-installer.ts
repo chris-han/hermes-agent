@@ -35,7 +35,7 @@ export interface AppInstallerStrategyDeps {
   /** Channel + variant from the baked install stamp. */
   channel: string
   /** Verification must bind descriptor, artifact digest, native identity and signer. */
-  feed?: { url: string; version: string; verifyPrepared: (file: string) => Promise<void> }
+  feed?: { url: string; version: string; verifyPrepared: (file: string) => Promise<string | void> }
   light: boolean
   /** The App Installer feed base URL; empty when nothing configured it. */
   feedBaseUrl: string
@@ -77,7 +77,7 @@ export function appInstallerCheckToStatus(check: AppInstallerCheck, appVersion: 
 export function createChannelAppInstallerStrategy(
   deps: AppInstallerStrategyDeps,
   target: ChannelTarget,
-  verifyPrepared: (file: string, target: ChannelTarget) => Promise<void>
+  verifyPrepared: (file: string, target: ChannelTarget) => Promise<string | void>
 ): AppInstallerStrategy {
   if (target.package.platform !== 'win32') {
     throw new Error('Expected Windows channel target')
@@ -90,7 +90,7 @@ export function createChannelAppInstallerStrategy(
     feed: {
       url: target.feedUrl,
       version: target.package.version,
-      verifyPrepared: (file: string): Promise<void> => verifyPrepared(file, target)
+      verifyPrepared: (file: string): Promise<string | void> => verifyPrepared(file, target)
     }
   })
 }
@@ -183,9 +183,9 @@ export class AppInstallerStrategy {
           {
             prepare: async (url: string): Promise<string> => {
               const file = await this.deps.installer.prepare(url)
-              await this.deps.feed?.verifyPrepared(file)
+              const verified = await this.deps.feed?.verifyPrepared(file)
 
-              return file
+              return verified || file
             },
             open: this.deps.installer.open
           },

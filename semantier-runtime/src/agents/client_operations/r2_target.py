@@ -1,4 +1,4 @@
-"""Private R2 publication target, reusing Hermes' qualified SigV4/multipart transport."""
+"""R2 publication target with separate private control custody."""
 from contextlib import contextmanager, nullcontext
 from datetime import datetime
 import hashlib
@@ -9,7 +9,9 @@ import re
 from uuid import uuid4
 from xml.etree import ElementTree as ET
 
-from .publication import OperationError, canonical
+from .artifact_io import OperationError
+
+from contracts.client_operations import canonical
 
 MAX_BYTES = 10_000_000_000
 MAX_RELEASES = 3
@@ -34,6 +36,10 @@ def capacity_plan(objects, manifests, protected, incoming_size=0, incoming_build
             group["keys"].append(key)
             group["size"] += size
     protected = set(protected) | ({incoming_build} if incoming_build else set())
+    # Missing admission provenance still prevents deletion. It need not prevent
+    # an allocation whose complete inventory fits without deleting anything.
+    if len(set(groups) | protected) <= MAX_RELEASES and total + incoming_size < MAX_BYTES:
+        return [], total + incoming_size
     admission_order = admission_order or {}
     def order(build):
         entry = admission_order.get(build, {})
@@ -63,23 +69,40 @@ def capacity_plan(objects, manifests, protected, incoming_size=0, incoming_build
 
 
 class R2Target:
-    def __init__(self, transport, creds, base, bucket):
+    def __init__(self, transport, creds, base, bucket, *, control_target=None):
         self.transport, self.creds, self.base, self.bucket = transport, creds, base, bucket
+        if control_target and (control_target.control_target or
+                (control_target.base, control_target.bucket) == (base, bucket)):
+            raise ValueError('R2 private control requires a separate non-nested bucket')
+        self.control_target = control_target
 
     @classmethod
-    def configured(cls):
+    def configured(cls, *, public_delivery=True):
         from agents.webapi.deps import ensure_repo_hermes_agent_on_path
         ensure_repo_hermes_agent_on_path()
         from scripts.releases import r2
         if any(not os.environ.get(key) for key in ('CLOUDFLARE_R2_ACCESS_KEY_ID','CLOUDFLARE_R2_SECRET_ACCESS_KEY','CLOUDFLARE_R2_ACCOUNT_ID','CLOUDFLARE_R2_BUCKET')):
             raise OperationError(503, 'delivery_target_credentials_unavailable')
         creds, base, bucket = r2.credentials()
-        return cls(r2, creds, base, bucket)
+        control = None
+        if public_delivery:
+            fields = ('CLOUDFLARE_R2_CONTROL_BUCKET', 'CLOUDFLARE_R2_CONTROL_ACCESS_KEY_ID',
+                      'CLOUDFLARE_R2_CONTROL_SECRET_ACCESS_KEY')
+            if any(not os.environ.get(key) for key in fields):
+                raise OperationError(503, 'delivery_private_control_credentials_unavailable')
+            control = cls(r2, {'access_key_id': os.environ[fields[1]], 'secret_key': os.environ[fields[2]]},
+                          base, os.environ[fields[0]])
+            r2.R2Scope.configured().bucket_url(base, control.bucket)
+        return cls(r2, creds, base, bucket, control_target=control)
 
     def url(self, key):
         return self.transport.R2Scope.configured().object_url(self.base, self.bucket, key)
 
     def request(self, method, key, body=None, headers=None, query=""):
+        if self.control_target and key.startswith('_control/'):
+            return self.control_target.request(method, key, body, headers, query)
+        if method == 'PUT' and key.startswith('releases/channels/'):
+            headers = {**(headers or {}), 'Cache-Control': 'no-store', 'Content-Type': 'application/json'}
         try:
             return self.transport.signed_request(
                 method, self.url(key) + query, creds=self.creds, now=self.transport.amz_timestamp(),
@@ -262,6 +285,15 @@ class R2Target:
                 break
             if not token or len(objects) > 10000:
                 raise OperationError(503, "r2_inventory_incomplete")
+        if self.control_target:
+            if any(key.startswith('_control/') for key in objects):
+                # Public visibility is not control authorization. Preserve and
+                # hold legacy records until an exact owned migration occurs.
+                raise OperationError(503, 'r2_public_control_objects_require_migration')
+            private_objects, _, _ = self.control_target.inventory()
+            if any(not key.startswith('_control/') for key in private_objects):
+                raise OperationError(503, 'r2_private_control_inventory_invalid')
+            objects.update(private_objects)
         # An abandoned upload may still consume storage; never allocate through that uncertainty.
         if self.pending_uploads():
             raise OperationError(409, "r2_incomplete_upload_requires_recovery")
@@ -294,7 +326,10 @@ class R2Target:
 
     def files(self, release, public_root):
         files = {}
+        from .chunks import chunk_entries
         for package in release['manifest']['packages']:
+            for chunk in chunk_entries(package['artifact'], release['manifest']['request']['buildId']):
+                files[chunk['key']] = Path(public_root)/chunk['key']
             for item in [package['artifact'], package.get('distributionArchive'), package['feed']]:
                 if item:
                     files[item['key']] = Path(public_root)/item['key']

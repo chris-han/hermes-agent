@@ -7,7 +7,7 @@ from typing import Literal
 from fastapi.routing import APIRoute
 from pydantic import ValidationError
 from contracts.client_operations import ReleaseCandidate,Promotion,ChannelControl,EventBatch,Diagnostic,Classification,Identifier,Strict,PublicationIntent,PublicationRetry,TargetBindingAdmission
-from agents.client_operations.publication import OperationError
+from agents.client_operations.artifact_io import OperationError
 from agents.webapi.deps import require_authenticated_context
 from agents.model_gateway.auth import csrf
 

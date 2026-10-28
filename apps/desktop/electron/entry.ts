@@ -1,10 +1,10 @@
-import { readFileSync } from 'node:fs'
+import { mkdirSync, readFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
 import { app } from 'electron'
 
-import { resolveDesktopHermesHome } from './data-paths'
+import { resolveDesktopHermesHome, resolveDesktopUserData } from './data-paths'
 import { readDesktopLaunchConfig } from './renderer-heap-flags'
 import { wslgLaunchArgs } from './wslg-launch'
 import { spawnWslgLaunch } from './wslg-launch-process'
@@ -74,5 +74,13 @@ if (args) {
     process.once(signal, () => child.kill(signal))
   }
 } else {
+  // Imported owners can resolve userData during module initialization. Bind
+  // the supported explicit root before importing any of those owners.
+  if (process.env.HERMES_DESKTOP_USER_DATA_DIR) {
+    const directory = resolveDesktopUserData('')
+    mkdirSync(directory, { recursive: true })
+    app.setPath('userData', directory)
+  }
+
   await import('./main')
 }

@@ -70,7 +70,7 @@ describe('AppInstallerStrategy.apply', () => {
     const result = await new AppInstallerStrategy(deps).apply()
     expect(result.ok).toBe(true)
     expect(calls).toContain('quit')
-    expect(progress.some(message => message.includes('Reopen Hermes'))).toBe(true)
+    expect(progress.some(message => message.includes('Reopen Semantier'))).toBe(true)
   })
 
   it('uses the package registered source when no feed override is configured', async () => {
@@ -213,3 +213,21 @@ it.each([
     expect(calls).toEqual(['relaunch-marker', 'teardown', 'restore'])
   }
 )
+
+it('hands the verified local MSIX to Windows after verification and before quitting', async (): Promise<void> => {
+  const opened: string[] = []
+
+  const { deps, calls } = makeDeps({
+    appVersion: '0.0.54.0',
+    feedBaseUrl: 'https://s3.semantier.com',
+    feed: { url: 'https://s3.semantier.com/releases/fixed.appinstaller', version: '0.0.55.0',
+      verifyPrepared: async () => 'C:/owned/updates/verified.msix' },
+    installer: { prepare: async () => 'C:/owned/updates/update.appinstaller', open: async file => { opened.push(file);
+
+ return '' } }
+  })
+
+  await new AppInstallerStrategy(deps).apply()
+  expect(opened).toEqual(['C:/owned/updates/verified.msix'])
+  expect(calls).toEqual(['relaunch-marker', 'teardown', 'quit'])
+})

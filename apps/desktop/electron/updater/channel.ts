@@ -251,6 +251,7 @@ export class ChannelResolver {
       const expectedVersion = entry.platform === 'darwin' ? request.version : request.windowsVersion
 
       if (
+        (entry.artifact.chunks && entry.artifact.chunks.buildId !== request.buildId) ||
         entry.identity !== expectedIdentity ||
         entry.version !== expectedVersion ||
         entry.feed.channel !== 'stable' ||

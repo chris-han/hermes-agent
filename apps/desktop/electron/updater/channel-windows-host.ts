@@ -3,6 +3,7 @@ import path from 'node:path'
 
 import { downloadPinnedArtifact } from './artifact'
 import type { ChannelTarget } from './channel'
+import { prepareChannelArtifactCache } from './channel-artifact-cache'
 import { type NativeCommandResult, runChannelPowerShell } from './channel-native'
 
 /** Verify downloaded bytes and native metadata before App Installer can stop the backend. */
@@ -11,18 +12,25 @@ export async function verifyPreparedChannelInstaller(
   target: ChannelTarget,
   command: (script: string, input: string) => Promise<NativeCommandResult> = runChannelPowerShell,
   fetchArtifact: typeof fetch = fetch
-): Promise<void> {
+): Promise<string | void> {
   const pkg = target.package
 
   if (pkg.platform !== 'win32' || !pkg.publisher) {
     throw new Error('Expected a publisher-bound Windows package')
   }
 
-  const directory: string = await mkdtemp(path.join(path.dirname(file), '.channel-artifact-'))
+  const directory: string = pkg.artifact.chunks
+    ? await prepareChannelArtifactCache(path.dirname(file), {
+        manifestSha256: target.manifestSha256, artifactSha256: pkg.artifact.sha256,
+        buildId: target.manifest.request.buildId, version: pkg.version, identity: pkg.identity, publisher: pkg.publisher
+      })
+    : await mkdtemp(path.join(path.dirname(file), '.channel-artifact-'))
 
   try {
     const artifact: string = await downloadPinnedArtifact(directory, {
       url: target.artifactUrl,
+      chunks: pkg.artifact.chunks,
+      chunkBase: target.manifest.request.publicBase,
       sha256: pkg.artifact.sha256,
       size: pkg.artifact.size,
       format: pkg.artifact.key.endsWith('.msixbundle') ? 'msixbundle' : 'msix'
@@ -70,7 +78,14 @@ try {
         arch: pkg.arch
       })
     )
+
+    // Keep exact verified bytes alive for Windows' local-package handoff.
+    if (pkg.artifact.chunks) {
+      await rm(path.join(directory, `chunks-${pkg.artifact.sha256}`), { recursive: true, force: true })
+
+      return artifact
+    }
   } finally {
-    await rm(directory, { recursive: true, force: true })
+    if (!pkg.artifact.chunks) { await rm(directory, { recursive: true, force: true }) }
   }
 }

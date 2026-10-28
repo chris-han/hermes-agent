@@ -6,7 +6,8 @@ import logging
 import os
 from pathlib import Path
 from .store import Store
-from .publication import Publisher, OperationError
+from .publication import Publisher
+from .artifact_io import OperationError
 from .feedback import Feedback
 from .targets import DeliveryTargets
 from .publications import Publications
@@ -37,13 +38,13 @@ class ClientOperations:
             kind = spec['kind']
             if kind not in {'filesystem', 'r2'} or (kind=='r2') != (target_id=='channel2'):
                 raise ValueError('delivery target owner mismatch')
-            if kind=='r2' and spec['public_base']!='https://update2.semantier.com':
-                raise ValueError('R2 update2 publication base required')
+            if kind=='r2' and spec['public_base'] not in {'https://update2.semantier.com', 'https://s3.semantier.com'}:
+                raise ValueError('R2 qualified publication base required')
             remote = None
             if kind=='r2':
                 from .r2_target import R2Target
                 try:
-                    remote = R2Target.configured()
+                    remote = R2Target.configured(public_delivery=True)
                 except (OperationError, ValueError, RuntimeError, SystemExit):
                     # A missing provider capability is not another filesystem
                     # publisher and cannot disable independent configured owners.

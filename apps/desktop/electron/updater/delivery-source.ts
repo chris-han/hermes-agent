@@ -12,7 +12,8 @@ export interface DeliverySourceStatus {
   options: { id: DeliverySourceId; publicBase: string }[]
 }
 const ids: DeliverySourceId[] = ['channel1', 'channel2', 'channel3']
-const cloudflare = 'https://update2.semantier.com'
+const cloudflare = 'https://s3.semantier.com'
+const cloudflareOrigins = [cloudflare, 'https://update2.semantier.com']
 
 function sourceId(value: unknown): DeliverySourceId {
   if (!ids.includes(value as DeliverySourceId)) {throw new Error('Invalid update delivery source')}
@@ -33,7 +34,7 @@ export class DeliverySources {
       return sourceId(JSON.parse(readFileSync(this.file, 'utf8')).source)
     }
 
-    return this.stampedBase === cloudflare ? 'channel2' : this.stampedBase && local(this.stampedBase) ? 'channel3' : 'channel1'
+    return cloudflareOrigins.includes(this.stampedBase) ? 'channel2' : this.stampedBase && local(this.stampedBase) ? 'channel3' : 'channel1'
   }
 
   private endpoints(): Record<DeliverySourceId, string> {
@@ -47,7 +48,7 @@ export class DeliverySources {
     const primary = configured || this.stampedBase
 
     return {
-      channel1: primary && primary !== cloudflare && !local(primary) ? primary : '',
+      channel1: primary && !cloudflareOrigins.includes(primary) && !local(primary) ? primary : '',
       channel2: cloudflare,
       channel3: dev || (this.stampedBase && local(this.stampedBase) ? this.stampedBase : '')
     }

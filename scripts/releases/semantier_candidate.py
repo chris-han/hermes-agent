@@ -39,6 +39,13 @@ def stage(output,native,incoming,notes):
     if len(files)!=1 or files[0].is_symlink():raise ValueError('One signed MSIX required')
     artifact=files[0];digest=sha(artifact)
     if digest!=signed['signedSha256'] or digest!=artifact_meta['sha256']:raise ValueError('Artifact bytes mismatch')
+    # Reuse the artifact-pinned parent publisher's chunk contract, never a
+    # second CI-only splitter. Verify its composed source before consuming it.
+    from scripts.bundles.parent_composition import verify
+    composition = ROOT/'semantier-runtime'
+    verify(composition)
+    sys.path.insert(0, str(composition/'src'))
+    from agents.client_operations.chunks import prepare_chunks
     prefix='releases/channel-builds/'+request['buildId']+'/'
     key=prefix+artifact.name;feed_key=prefix+'win32/stable.appinstaller'
     target=incoming/key;target.parent.mkdir(parents=True,exist_ok=True)
@@ -48,6 +55,7 @@ def stage(output,native,incoming,notes):
     feed=incoming/feed_key
     write_appinstaller(feed,identity=signed['packageName'],publisher=signed['publisher'],version=signed['packageVersion'],self_uri=request['publicBase']+'/'+feed_key,artifact_uri=request['publicBase']+'/'+key,update_policy='pinned',package_arch='x64')
     package={'platform':'win32','arch':'x64','variant':'bundled','version':signed['packageVersion'],'identity':signed['packageName'],'publisher':signed['publisher'],'artifact':{'key':key,'sha256':digest,'size':artifact.stat().st_size},'feed':{'key':feed_key,'channel':'stable'}}
+    package['artifact']['chunks'] = prepare_chunks(target, incoming, request['buildId'], package['artifact'])
     archive=output/'signed'/signed['archiveName']
     if archive.name!=signed['archiveName'] or archive.is_symlink() or not archive.is_file():raise ValueError('Signed distribution archive required')
     archive_digest=sha(archive)
@@ -59,6 +67,7 @@ def stage(output,native,incoming,notes):
     full=installed['packageFullName'];family=signed['packageName']+'_'+full.rsplit('_',1)[1]
     receipt={'source_commit':request['commit'],'controller_commit':request['controllerCommit'],'build_id':request['buildId'],'repository':'chris-han/hermes-agent','platform':'win32','arch':'x64','identity':signed['packageName'],'publisher':signed['publisher'],'application_id':request['identity']['appNamePascal'],'windows_version':signed['packageVersion'],'sha256':digest,'size':artifact.stat().st_size,'signature_result':'PASS','qualification':'windows-x64-native','workflow_run_id':os.environ['GITHUB_RUN_ID'],'workflow_run_attempt':int(os.environ['GITHUB_RUN_ATTEMPT']),'workflow_result':'native_gates_passed','package_family':family,'notes_sha256':hashlib.sha256(canonical(notes)).hexdigest(),'native_receipt_sha256':sha(native/'installed-identity.json'),'trusted_timestamp':signed['trustedTimestamp']}
     receipt['distribution_archive']=archive_fact
+    receipt['chunk_descriptor_sha256']=hashlib.sha256(canonical(package['artifact']['chunks'])).hexdigest()
     secret=os.environ['SEMANTIER_CLIENT_RECEIPT_KEY'].encode()
     if len(secret)<32:raise ValueError('CI-only receipt key required')
     candidate={'release_id':request['buildId'],'manifest':{'schema':1,'request':request,'packages':[package]},'notes':notes,'native_receipt':receipt,'receipt_hmac':hmac.new(secret,canonical(receipt),hashlib.sha256).hexdigest()}

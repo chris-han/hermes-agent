@@ -32,7 +32,7 @@ test('real native source owner rejects guest/busy writes and the next check uses
     await expect(select(trusted, 'channel2')).rejects.toThrow('progress')
     expect(sources.status().selected).toBe('channel3')
     busy = false
-    expect(await select(trusted, 'channel2')).toMatchObject({ status: { message: 'https://update2.semantier.com' } })
+    expect(await select(trusted, 'channel2')).toMatchObject({ status: { message: 'https://s3.semantier.com' } })
     expect(new DeliverySources(path.join(root, 'source.json'), path.join(root, 'config.yaml'), '').status().selected).toBe('channel2')
   } finally { rmSync(root, { force: true, recursive: true }) }
 })

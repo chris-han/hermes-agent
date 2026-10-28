@@ -30,6 +30,7 @@ import type {
   UpdaterMechanismClient
 } from '@/global'
 import { useI18n } from '@/i18n'
+import { deliverySourceCopy } from '@/i18n/delivery-source'
 import { buildCommitChangelog, type CommitGroup, formatFullChangelogText } from '@/lib/commit-changelog'
 import { AlertCircle, Check, Copy, Terminal } from '@/lib/icons'
 import { resolveUpdateCopy, rollbackRelease, type UpdateTarget } from '@/lib/update-copy'
@@ -567,7 +568,12 @@ function ApplyingView({
 }
 
 function ErrorView({ message, onDismiss, onRetry }: { message: string; onDismiss: () => void; onRetry: () => void }) {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
+
+  const description = /(?:^|: )pending_update_installation$/.test(message)
+    ? (deliverySourceCopy[locale] ?? deliverySourceCopy.en).pendingInstallation
+    : message
+
   const u = t.updates
 
   return (
@@ -575,7 +581,7 @@ function ErrorView({ message, onDismiss, onRetry }: { message: string; onDismiss
       className="px-6 pb-6 pt-7 pr-8"
       description={
         <DialogDescription className="max-w-prose text-center text-sm leading-5 text-muted-foreground">
-          {message || u.errorBody}
+          {description || u.errorBody}
         </DialogDescription>
       }
       title={<DialogTitle className="text-center text-xl font-semibold tracking-tight">{u.errorTitle}</DialogTitle>}

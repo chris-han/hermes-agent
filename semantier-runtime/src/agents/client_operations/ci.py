@@ -2,7 +2,7 @@
 import os
 import re
 import httpx
-from .publication import OperationError
+from .artifact_io import OperationError
 
 
 def verify_workflow(receipt):

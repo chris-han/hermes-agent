@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "parent_commit": "86f3936bcca04eccf6f2e05bbe7b810a71ef7bb5",
+  "parent_commit": "808ec583792b7a95bead1cb398a733c920f299b4",
   "files": [
     {
       "path": "MODEL-NOTICE.txt",
@@ -279,12 +279,20 @@
       "sha256": "ad408e2bff618c984fccd3ca042ccc05a98da9d029d9467728f9fae868878f66"
     },
     {
+      "path": "src/agents/client_operations/artifact_io.py",
+      "sha256": "7e868d06c6d001662d256778e72ea3f07eae3b826f170e362c2dd7c0b6430065"
+    },
+    {
       "path": "src/agents/client_operations/authorization.py",
-      "sha256": "d292117c48be2facffb64643be0df312493df2c1a7c34b3abd451aa0be79fa5d"
+      "sha256": "246a88f6bf5603ae71fe4ec7fa93821331833ea3692f324b8ca5c60317f852a5"
+    },
+    {
+      "path": "src/agents/client_operations/chunks.py",
+      "sha256": "f4da53dd7a41f6f71bae7e61468c5e9cb0d8e514a407d9108dd40564f01e2673"
     },
     {
       "path": "src/agents/client_operations/ci.py",
-      "sha256": "ad05638c46f22c011851accd1f51308dbec8bcd1d7ae6d126248c37d9600761f"
+      "sha256": "b646831bcfa708e7a35ae073a329bb0ee4c86a6b5bf802512f16253499085e26"
     },
     {
       "path": "src/agents/client_operations/distribution.py",
@@ -292,23 +300,23 @@
     },
     {
       "path": "src/agents/client_operations/feedback.py",
-      "sha256": "74c80f9917a1fa29647a2e26d417030a9af6b522840c3fd5cab38bef77dcac0c"
+      "sha256": "7d97edf23e287b85afd5fa1c2ddd1b868d3b0e374e17255e0d23d671f3b55ca7"
     },
     {
       "path": "src/agents/client_operations/publication.py",
-      "sha256": "9c67bf0108a13e7c05ac498e7fae5716ac683f1d8fee5df50b9894ab77ad5ce6"
+      "sha256": "0cb11a9213683fc62eb5e077a5211ca4d5888cded9e745ed85765c771ea3b64b"
     },
     {
       "path": "src/agents/client_operations/publications.py",
-      "sha256": "6b97f887d5adc8f16a0a2c50e88d3ddf2b316c942f363db70043559bf60cac0a"
+      "sha256": "871378724778f94043c0fa1fb9cfc3ce5933472b3671f83b39a3385ad44e9409"
     },
     {
       "path": "src/agents/client_operations/r2_target.py",
-      "sha256": "034f3dbb38920293dadb1697a783f29bd41b39afd5deb887d8fd7d9be478b746"
+      "sha256": "f65522b8902fad30924220893a83b68b17e5d8cf8cf8c0f0c1f1a4a3f6eacef2"
     },
     {
       "path": "src/agents/client_operations/runtime.py",
-      "sha256": "ac6d42b44ec953c9f95fa87a1e3c2302d2fa4dc0805f98a781858ac327142d3d"
+      "sha256": "03965c87f44749bd9b30d427975558424516e0ef8222e23a099c09274eebe747"
     },
     {
       "path": "src/agents/client_operations/schema.sql",
@@ -320,7 +328,7 @@
     },
     {
       "path": "src/agents/client_operations/targets.py",
-      "sha256": "0ba58ef202e8b3dbb815c5e2d589cfbc7e3f4bfe3d2caa4132e8d574b233fdfb"
+      "sha256": "92e384fd02516eecbd39d54c1b542970c06ec270c21a0d9fb3929d961c97db53"
     },
     {
       "path": "src/agents/company_dataset_imports.py",
@@ -708,7 +716,7 @@
     },
     {
       "path": "src/agents/webapi/client_operations_routes.py",
-      "sha256": "324ffe04dd124e82b4b33b2c134512b8d93d68047000e8aa5eec8df726fb85b3"
+      "sha256": "f18818381fa2992fde203c32cf320f92dfdb7bc9759f024c7e1f56876b232c98"
     },
     {
       "path": "src/agents/webapi/cloud_device_routes.py",

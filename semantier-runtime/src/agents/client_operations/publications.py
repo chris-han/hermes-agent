@@ -5,7 +5,7 @@ import os
 import socket
 from uuid import uuid4
 from contracts.client_operations import digest
-from .publication import OperationError
+from .artifact_io import OperationError
 
 
 ACTIVE = {'queued', 'preflighting', 'running', 'uncertain'}

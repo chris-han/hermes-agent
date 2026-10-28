@@ -632,6 +632,7 @@ import {
 import { AppInstallerStrategy } from './updater/app-installer'
 import { createChannelAppInstallerStrategy } from './updater/app-installer'
 import { ChannelResolver, type ChannelTarget } from './updater/channel'
+import { markChannelArtifactHandoff, retireInstalledChannelArtifacts } from './updater/channel-artifact-cache'
 import { inspectRunningChannelApp } from './updater/channel-native'
 import { ChannelStrategy } from './updater/channel-strategy'
 import { verifyPreparedChannelInstaller } from './updater/channel-windows-host'
@@ -3507,8 +3508,10 @@ function emitUpdateProgress(payload) {
 }
 
 let updateChecks = 0
+
 async function checkUpdates(opts: { force?: boolean } = {}): Promise<UpdaterStatusWire> {
   updateChecks += 1
+
   try {
     const status = await updateOperation.check(() => checkUpdatesForSelection(opts))
     const selection = process.platform === 'win32' ? packagedChannelSelection(INSTALL_STAMP?.channelBuild, DESKTOP_UPDATE_CONFIG_PATH) : null
@@ -3516,9 +3519,11 @@ async function checkUpdates(opts: { force?: boolean } = {}): Promise<UpdaterStat
     return selection ? { ...status, releaseChannel: selection.choice } : status
   } finally {
     updateChecks -= 1
+
     if (canSelectDeliverySource()) {
       try {
         const selection = { ...deliverySources.status(), checkStatus: updateOperation.checkStatus }
+
         for (const win of BrowserWindow.getAllWindows()) {
           if (!win.isDestroyed()) { win.webContents.send('hermes:updates:delivery:changed', selection) }
         }
@@ -3565,11 +3570,13 @@ let updateInFlight = false
  * Its identity comes from the packaged app, not its optional Python payload.
  */
 const updateOperation: UpdateOperation = new UpdateOperation(createPackagedUpdateStrategy)
+
 const deliverySources = new DeliverySources(
   path.join(app.getPath('userData'), 'update-delivery-source.json'),
   path.join(HERMES_HOME, 'config.yaml'),
   INSTALL_STAMP?.channelBuild?.publicBase ?? ''
 )
+
 function canSelectDeliverySource(): boolean {
   return process.platform === 'win32' && INSTALL_STAMP?.updateMechanism === 'app-installer' && Boolean(INSTALL_STAMP.channelBuild)
 }
@@ -3597,6 +3604,14 @@ async function createPackagedUpdateStrategy(): Promise<UpdaterStrategy | null> {
     const selectedBuild = packagedChannelSelection(installedBuild, DESKTOP_UPDATE_CONFIG_PATH, resolveDesktopFeedBaseUrl())?.build ?? installedBuild
     const build = canSelectDeliverySource() ? { ...selectedBuild, publicBase: deliverySources.base() } : selectedBuild
     const installed = await inspectRunningChannelApp(installedBuild)
+
+    if (process.platform === 'win32') {
+      await retireInstalledChannelArtifacts(path.join(app.getPath('userData'), 'updates'), {
+        buildId: installedBuild.buildId, version: installed.nativeVersion,
+        identity: installedBuild.identity.msixAppIdWithOrg, publisher: installed.signer
+      })
+    }
+
     semantierObservations.reconcile({version: installed.nativeVersion, family: installed.packageFamilyName ?? '', buildId: build.buildId})
 
     // Platform/arch/signing are the channel's own preconditions. The Python
@@ -3681,7 +3696,14 @@ function createNativePackagedStrategy(
       feedBaseUrl: resolveDesktopFeedBaseUrl(),
       installer: {
         prepare: url => stageAppInstallerFile(url, path.join(app.getPath('userData'), 'updates'), fetchDesktopUpdate),
-        open: file => shell.openPath(file)
+        open: async file => {
+          const rollback = await markChannelArtifactHandoff(path.join(app.getPath('userData'), 'updates'), file)
+          const error = await shell.openPath(file)
+
+          if (error) { await rollback?.() }
+
+          return error
+        }
       },
       teardownBundledBackend,
       restoreBundledBackend,
@@ -3705,8 +3727,10 @@ function createNativePackagedStrategy(
 
     return target
       ? createChannelAppInstallerStrategy(deps, target, async (file, selected) => {
-          await verifyPreparedChannelInstaller(file, selected, undefined, fetchDesktopUpdate)
+          const verified = await verifyPreparedChannelInstaller(file, selected, undefined, fetchDesktopUpdate)
           semantierObservations.verified(selected.package.artifact.sha256)
+
+          return verified
         })
       : new AppInstallerStrategy(deps)
   }
@@ -17700,10 +17724,12 @@ return semantierObservations.status()}
 // Delivery source is a native install preference, separate from a release track.
 function assertDeliveryViewer(event: Electron.IpcMainInvokeEvent): void {
   const win = BrowserWindow.fromWebContents(event.sender)
+
   if (!win || (win !== mainWindow && !chatWindows.has(win)) || event.senderFrame !== win.webContents.mainFrame) {
     throw new Error('Application main frame required')
   }
 }
+
 registerDeliverySourceIpc(ipcMain, {
   assertViewer: assertDeliveryViewer,
   eligible: canSelectDeliverySource,

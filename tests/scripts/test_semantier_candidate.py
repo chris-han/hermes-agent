@@ -94,6 +94,11 @@ def test_staging_survives_unavailable_kernel_fast_copy(tmp_path, monkeypatch):
     result = stage(output, native, incoming, {'en': 'Unit fixture, not CI evidence'})
     candidate = json.loads(Path(result['candidate_path']).read_text())
     package = candidate['manifest']['packages'][0]
+    descriptor = package['artifact']['chunks']
+    assert descriptor['artifact'] == {'size': artifact.stat().st_size, 'sha256': digest}
+    assert (incoming/descriptor['chunks'][0]['key']).read_bytes() == artifact.read_bytes()
+    assert candidate['native_receipt']['chunk_descriptor_sha256'] == hashlib.sha256(
+        json.dumps(descriptor, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
     assert (incoming/package['artifact']['key']).read_bytes() == artifact.read_bytes()
     assert (incoming/package['distributionArchive']['key']).read_bytes() == archive.read_bytes()
     with pytest.raises(ValueError, match='Fresh immutable'):

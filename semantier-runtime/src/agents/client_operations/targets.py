@@ -4,7 +4,7 @@ import hmac
 import json
 from copy import deepcopy
 from contracts.client_operations import DELIVERY_TARGET_IDS, canonical, digest, utcnow
-from .publication import OperationError, file_facts, safe_file
+from .artifact_io import OperationError, file_facts, safe_file
 
 
 class DeliveryTargets:

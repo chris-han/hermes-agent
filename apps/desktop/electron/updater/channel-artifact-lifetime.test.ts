@@ -117,6 +117,35 @@ test('ordinary Windows preparation owns temporary bytes while a resumable downlo
       })
     ).rejects.toThrow('signature refused')
     expect(await readdir(directory)).toEqual(['stable.appinstaller'])
+    const chunkTarget: ChannelTarget = structuredClone(target)
+    const buildId = chunkTarget.manifest.request.buildId
+    const facts = { size: bytes.length, sha256: chunkTarget.package.artifact.sha256 }
+    chunkTarget.manifest.request.publicBase = new URL(url).origin
+    chunkTarget.package.artifact.key = `releases/channel-builds/${buildId}/app.msixbundle`
+    chunkTarget.artifactUrl = `${chunkTarget.manifest.request.publicBase}/${chunkTarget.package.artifact.key}`
+    chunkTarget.package.artifact.chunks = {
+      schema: 1, buildId, artifact: facts, chunkSize: 134217728,
+      chunks: [{ key: `releases/channel-builds/${buildId}/chunks/${facts.sha256}/000000.part`, offset: 0, ...facts }]
+    }
+    let chunkReads = 0
+
+    const chunkFetch: typeof fetch = async (): Promise<Response> => {
+      chunkReads++
+
+      return new Response(new Uint8Array(bytes))
+    }
+
+    const local = await verifyPreparedChannelInstaller(file, chunkTarget, command, chunkFetch)
+    expect(local).toMatch(/destination\.msixbundle$/)
+
+    if (typeof local !== 'string') { throw new Error('Expected verified local package') }
+    expect(await readFile(local)).toEqual(bytes)
+    expect(await verifyPreparedChannelInstaller(file, chunkTarget, command, chunkFetch)).toBe(local)
+    expect(chunkReads).toBe(1)
+    await expect(verifyPreparedChannelInstaller(file, chunkTarget, async (): Promise<never> => {
+      throw new Error('native signature refused')
+    }, chunkFetch)).rejects.toThrow('signature refused')
+
     const durable: string = path.join(directory, 'durable-download')
     await mkdir(durable, { mode: 0o700 })
     const artifact = { url, sha256: target.package.artifact.sha256, size: bytes.length, format: 'msixbundle' as const }

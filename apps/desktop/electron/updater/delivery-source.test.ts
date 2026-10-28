@@ -18,7 +18,7 @@ test('three independent origins persist without changing the build stamp and rej
     expect(source.status().selected).toBe('channel3')
     expect(source.status().options.map(row => row.id)).toEqual(['channel1', 'channel2', 'channel3'])
     source.select('channel2')
-    expect(new DeliverySources(file, config, 'http://127.0.0.1:18780').base()).toBe('https://update2.semantier.com')
+    expect(new DeliverySources(file, config, 'http://127.0.0.1:18780').base()).toBe('https://s3.semantier.com')
     source.select('channel1')
     expect(source.base()).toBe('https://ecs.example.com')
     expect(() => source.select('https://evil.example')).toThrow()
@@ -45,4 +45,16 @@ test('reset discards old target and is refused during apply and after handoff', 
     return { ok: true, handedOff: true }
   })
   expect(() => operation.reset()).toThrow(/progress/)
+})
+
+
+test('legacy Cloudflare stamp retains source selection while resolving the new public origin', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'update-source-migration-'))
+
+  try {
+    const source = new DeliverySources(path.join(root, 'source.json'), path.join(root, 'config.yaml'), 'https://update2.semantier.com')
+    expect(source.status().selected).toBe('channel2')
+    expect(source.base()).toBe('https://s3.semantier.com')
+    expect(source.status().options.find(row => row.id === 'channel1')?.publicBase).toBe('')
+  } finally { rmSync(root, { recursive: true, force: true }) }
 })

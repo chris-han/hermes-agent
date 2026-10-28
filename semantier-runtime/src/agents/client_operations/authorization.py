@@ -6,7 +6,7 @@ import json
 import secrets
 from uuid import uuid4
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from .publication import OperationError
+from .artifact_io import OperationError
 
 
 class FeedbackAuthorizations:

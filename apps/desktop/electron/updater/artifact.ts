@@ -1,14 +1,18 @@
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { lstat, open, rename, unlink } from 'node:fs/promises'
+import { lstat, mkdir, open, rename, unlink } from 'node:fs/promises'
 import type { FileHandle } from 'node:fs/promises'
 import path from 'node:path'
+
+import { type ArtifactChunks, channelPublicBase, decodeArtifactChunks } from './channel-protocol'
 
 export interface PinnedArtifact {
   url: string
   sha256: string
   size: number
   format: 'zip' | 'msix' | 'msixbundle'
+  chunks?: ArtifactChunks
+  chunkBase?: string
 }
 
 export async function verifyPinnedArtifact(file: string, artifact: PinnedArtifact): Promise<void> {
@@ -41,6 +45,10 @@ export async function downloadPinnedArtifact(directory: string, artifact: Pinned
     if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') {
       throw error
     }
+  }
+
+  if (artifact.chunks) {
+    return await downloadChunkedArtifact(directory, artifact, fetchArtifact)
   }
 
   const temporary: string = `${file}.partial`
@@ -141,4 +149,55 @@ export async function downloadPinnedArtifact(directory: string, artifact: Pinned
   }
 
   throw lastError ?? new Error('Pinned artifact transfer interrupted')
+}
+
+/** Chunk state is scoped to the complete digest; verified chunks survive retries. */
+async function downloadChunkedArtifact(directory: string, artifact: PinnedArtifact, fetchArtifact: typeof fetch): Promise<string> {
+  const descriptor = decodeArtifactChunks(artifact.chunks, artifact)
+  const base = channelPublicBase(artifact.chunkBase ?? '')
+
+  if (!artifact.url.startsWith(`${base}/releases/`) || new URL(artifact.url).origin !== new URL(base).origin) {
+    throw new Error('Artifact chunk origin mismatch')
+  }
+
+  const parts: string[] = []
+
+  for (const [index, chunk] of descriptor.chunks.entries()) {
+    const storage = path.join(directory, `chunks-${artifact.sha256}`, String(index))
+
+    for (const folder of [path.dirname(storage), storage]) {
+      try {
+        const info = await lstat(folder)
+
+        if (!info.isDirectory() || info.isSymbolicLink()) { throw new Error('Artifact chunk storage type mismatch') }
+      } catch (error) {
+        if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') { throw error }
+        await mkdir(folder, { mode: 0o700 })
+      }
+    }
+
+    parts.push(await downloadPinnedArtifact(storage, {
+      url: `${base}/${chunk.key}`, sha256: chunk.sha256, size: chunk.size, format: artifact.format
+    }, fetchArtifact))
+  }
+
+  const file = path.join(directory, `destination.${artifact.format}`)
+  const temporary = `${file}.partial`
+  await unlink(temporary).catch((error: NodeJS.ErrnoException): void => {
+    if (error.code !== 'ENOENT') { throw error }
+  })
+  const output = await open(temporary, 'wx', 0o600)
+
+  try {
+    for (const part of parts) {
+      for await (const body of createReadStream(part)) { await output.writeFile(body) }
+    }
+
+    await output.sync()
+  } finally { await output.close() }
+
+  await verifyPinnedArtifact(temporary, artifact)
+  await rename(temporary, file)
+
+  return file
 }

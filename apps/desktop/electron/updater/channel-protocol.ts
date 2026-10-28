@@ -66,13 +66,20 @@ export interface RetiredChannel extends ChannelRecordBase {
   lastHead: ChannelHead | null
 }
 export type ChannelRecord = ActiveChannel | RetiredChannel
+export interface ArtifactChunks {
+  schema: 1
+  buildId: string
+  artifact: { size: number; sha256: string }
+  chunkSize: number
+  chunks: { key: string; offset: number; size: number; sha256: string }[]
+}
 export interface ChannelPackage {
   platform: 'darwin' | 'win32'
   arch: 'x64' | 'arm64'
   variant: 'bundled'
   version: string
   identity: string
-  artifact: { key: string; sha256: string; size: number }
+  artifact: { key: string; sha256: string; size: number; chunks?: ArtifactChunks }
   publisher?: string
   teamId?: string
   feed: { key: string; channel: string }
@@ -430,6 +437,42 @@ function request(fields: Fields): ChannelRequest {
   }
 }
 
+export function decodeArtifactChunks(value: unknown, artifact: { size: number; sha256: string }): ArtifactChunks {
+  const fields = new Fields(value)
+  fields.schema()
+  const buildId = fields.text('buildId', BUILD_ID)
+  const bound = fields.object('artifact')
+  const chunkSize = fields.integer('chunkSize')
+  const entries = fields.get('chunks')
+
+  if (chunkSize !== 134217728 || artifact.size >= 10_000_000_000 ||
+    bound.integer('size') !== artifact.size || bound.text('sha256', SHA256) !== artifact.sha256 ||
+    !Array.isArray(entries) || entries.length !== Math.ceil(artifact.size / chunkSize)) {
+    throw new Error('Invalid artifact chunk coverage or identity')
+  }
+
+  let offset = 0
+
+  const chunks = entries.map((entry: unknown, index: number) => {
+    const row = new Fields(entry)
+    const key = channelKey(row.text('key'))
+    const size = row.integer('size', chunkSize)
+    const sha256 = row.text('sha256', SHA256)
+    const expectedKey = `releases/channel-builds/${buildId}/chunks/${artifact.sha256}/${String(index).padStart(6, '0')}.part`
+
+    if (row.get('offset') !== offset || key !== expectedKey || size !== Math.min(chunkSize, artifact.size - offset)) {
+      throw new Error('Invalid artifact chunk order, key or length')
+    }
+
+    const chunk = { key, offset, size, sha256 }
+    offset += size
+
+    return chunk
+  })
+
+  return { schema: 1, buildId, artifact: { size: artifact.size, sha256: artifact.sha256 }, chunkSize, chunks }
+}
+
 function packageEntry(value: unknown): ChannelPackage {
   const fields = new Fields(value)
   const platform = fields.text('platform')
@@ -455,7 +498,8 @@ function packageEntry(value: unknown): ChannelPackage {
     artifact: {
       key: channelKey(artifact.text('key')),
       sha256: artifact.text('sha256', SHA256),
-      size: artifact.integer('size')
+      size: artifact.integer('size'),
+      ...(artifact.get('chunks') === undefined ? {} : { chunks: decodeArtifactChunks(artifact.get('chunks'), { size: artifact.integer('size'), sha256: artifact.text('sha256', SHA256) }) })
     },
     publisher: fields.optional('publisher'),
     teamId: fields.optional('teamId', /^[A-Z0-9]{10}$/),
