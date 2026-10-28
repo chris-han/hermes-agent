@@ -6,7 +6,7 @@ import re
 from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-CONTRACT_VERSION = '1.1.0'
+CONTRACT_VERSION = '1.2.0'
 Identifier = Annotated[str, Field(pattern=r'^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$')]
 Digest = Annotated[str, Field(pattern=r'^[a-f0-9]{64}$')]
 WindowsVersion = Annotated[str, Field(pattern=r'^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$')]
@@ -166,3 +166,57 @@ class FeedbackProof(Strict):
 
 class FeedbackDecision(Strict):
     decision: Literal['approve','deny']
+
+
+DeliveryTargetId = Literal['channel1', 'channel2', 'channel3']
+DELIVERY_TARGET_IDS = ('channel1', 'channel2', 'channel3')
+DELIVERY_ACTIONS = frozenset({'read', 'publish', 'ingest'})
+
+
+class PublicationIntent(Strict):
+    release_id: Identifier
+    channel: Identifier
+    delivery_target_ids: Annotated[list[DeliveryTargetId], Field(min_length=1, max_length=3)]
+    target_bindings: dict[DeliveryTargetId, Digest]
+    expected_revisions: dict[DeliveryTargetId, Annotated[int, Field(ge=1)]]
+    preview_plan_digests: dict[DeliveryTargetId, Digest]
+    idempotency_key: Identifier
+
+    @field_validator('delivery_target_ids')
+    @classmethod
+    def normalized_targets(cls, value):
+        if len(value) != len(set(value)):
+            raise ValueError('duplicate delivery target')
+        return sorted(value)
+
+    @model_validator(mode='after')
+    def captured_maps(self):
+        selected = set(self.delivery_target_ids)
+        if any(set(value) != selected for value in
+               (self.target_bindings, self.expected_revisions, self.preview_plan_digests)):
+            raise ValueError('target maps must exactly match captured selection')
+        return self
+
+
+class PublicationRetry(Strict):
+    delivery_target_ids: Annotated[list[DeliveryTargetId], Field(min_length=1, max_length=3)]
+    expected_batch_revision: Annotated[int, Field(ge=1)]
+    expected_revisions: dict[DeliveryTargetId, Annotated[int, Field(ge=1)]]
+    preview_plan_digests: dict[DeliveryTargetId, Digest]
+    idempotency_key: Identifier
+
+    @model_validator(mode='after')
+    def exact_subset(self):
+        if len(set(self.delivery_target_ids)) != len(self.delivery_target_ids):
+            raise ValueError('duplicate retry target')
+        if any(set(value) != set(self.delivery_target_ids) for value in (self.preview_plan_digests, self.expected_revisions)):
+            raise ValueError('retry preview must match exact target subset')
+        self.delivery_target_ids = sorted(self.delivery_target_ids)
+        return self
+
+
+class TargetBindingAdmission(Strict):
+    delivery_target_id: DeliveryTargetId
+    candidate: ReleaseCandidate
+    descriptor_receipt: dict
+    descriptor_receipt_hmac: Digest

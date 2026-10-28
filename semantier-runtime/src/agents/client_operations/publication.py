@@ -10,7 +10,9 @@ from contracts.client_operations import canonical,digest,utcnow
 
 
 class OperationError(ValueError):
-    def __init__(self,status,code):self.status,self.code=status,code;super().__init__(code)
+    def __init__(self,status,code,*,mutation_outcome='unknown'):
+        self.status,self.code,self.mutation_outcome=status,code,mutation_outcome
+        super().__init__(code)
 
 
 def safe_file(root,key):
@@ -53,33 +55,81 @@ def immutable_write(target,body):
         if os.path.exists(name):os.unlink(name)
 
 
+def file_facts(source):
+    checksum = hashlib.sha256()
+    size = 0
+    with source.open('rb') as stream:
+        for chunk in iter(lambda: stream.read(8 * 1024 * 1024), b''):
+            checksum.update(chunk)
+            size += len(chunk)
+    return size, checksum.hexdigest()
+
+
+def immutable_copy(source, destination, expected):
+    """Stage signed multi-GB bytes without materializing the package in memory."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix='.admitting-', dir=destination.parent)
+    checksum = hashlib.sha256()
+    size = 0
+    try:
+        with os.fdopen(fd, 'wb') as output, source.open('rb') as incoming:
+            for chunk in iter(lambda: incoming.read(8 * 1024 * 1024), b''):
+                output.write(chunk)
+                checksum.update(chunk)
+                size += len(chunk)
+            output.flush()
+            os.fsync(output.fileno())
+        if size != expected['size'] or checksum.hexdigest() != expected['sha256']:
+            raise OperationError(422, 'artifact_integrity_mismatch')
+        try:
+            os.link(name, destination)
+        except FileExistsError:
+            if file_facts(destination) != (size, checksum.hexdigest()):
+                raise OperationError(409, 'immutable_artifact_conflict')
+        if file_facts(destination) != (size, checksum.hexdigest()):
+            raise OperationError(503, 'artifact_readback_failed')
+        directory = os.open(destination.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        Path(name).unlink(missing_ok=True)
+
+
 class Publisher:
-    def __init__(self,store,public_root,incoming_root,public_base,receipt_key,identity,channel,workflow_verifier=None,remote_target=None):
+    def __init__(self,store,public_root,incoming_root,public_base,receipt_key,identity,channel,workflow_verifier=None,remote_target=None,target_id=None):
         self.store,self.root,self.incoming=store,Path(public_root),Path(incoming_root)
         self.base,self.receipt_key,self.identity,self.channel=public_base,receipt_key,identity,channel
         self.workflow_verifier=workflow_verifier
         self.remote_target=remote_target
+        self.target_id = target_id or ("channel2" if remote_target else "channel1")
+        if self.target_id not in {"channel1", "channel2", "channel3"}:
+            raise ValueError("unsupported publication target")
 
     def empty_record(self):
         return {'schema':1,'name':self.channel,'repository':'chris-han/hermes-agent','policy':'stable-release','revision':1,'nextSequence':1,'identity':self.identity,'head':None,'state':'active'}
 
     def initialize_channel(self):
-        """Expose an explicit configured empty channel; never promote on startup."""
-        record=self.empty_record()
+        """One target head, separate from shared track policy; no auto-promotion."""
+        record = self.empty_record()
         with self.store.connection() as c:
-            c.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',(self.store.schema+':'+self.channel,))
-            existing=c.execute('SELECT record FROM channels WHERE channel=%s',(self.channel,)).fetchone()
-            if existing:
-                if self.remote_target:self.remote_target.initialize(existing['record'])
-                return
-            target=safe_file(self.root,'releases/channels/'+self.channel+'.json')
-            if target.exists() and json.loads(target.read_bytes())!=record:raise OperationError(503,'channel_provenance_mismatch')
-            immutable_write(target,canonical(record))
-            c.execute('INSERT INTO channels(channel,record) VALUES(%s,%s::jsonb)',(self.channel,json.dumps(record)))
-            self.store.audit(c,'configured-owner','channel_initialized',self.channel,{'head':None,'identity':self.identity})
-            if self.remote_target:self.remote_target.initialize(record)
+            c.execute('SELECT pg_advisory_xact_lock(hashtext(%s))', (self.store.schema+':'+self.channel,))
+            c.execute('INSERT INTO channels(channel,record) VALUES(%s,%s::jsonb) ON CONFLICT DO NOTHING',
+                      (self.channel, json.dumps(record)))
+            c.execute('INSERT INTO delivery_heads(target_id,channel,record) VALUES(%s,%s,%s::jsonb) ON CONFLICT DO NOTHING',
+                      (self.target_id, self.channel, json.dumps(record)))
+            head = c.execute('SELECT record FROM delivery_heads WHERE target_id=%s AND channel=%s',
+                             (self.target_id, self.channel)).fetchone()['record']
+            if self.remote_target:
+                self.remote_target.initialize(head)
+            else:
+                target = safe_file(self.root, 'releases/channels/'+self.channel+'.json')
+                if target.exists() and json.loads(target.read_bytes()) != head:
+                    raise OperationError(503, 'channel_provenance_mismatch')
+                immutable_write(target, canonical(head))
 
-    def admit(self,candidate,principal):
+    def admit(self,candidate,principal,*,persist=True):
         from agents.webapi.deps import ensure_repo_hermes_agent_on_path
         ensure_repo_hermes_agent_on_path()
         from hermes_cli.release_channels import validate_manifest,validate_record,build_prefix
@@ -121,22 +171,27 @@ class Publisher:
         artifact=package['artifact'];artifacts=[artifact]+([archive] if archive else []);keys=[a['key'] for a in artifacts]+[package['feed']['key']]
         prefix=build_prefix(request['buildId']);manifest_key=prefix+'build.json'
         for key in keys:
-            source=safe_file(self.incoming,key)
-            try:body=source.read_bytes()
-            except OSError as error:raise OperationError(422,'staged_artifact_unavailable') from error
-            if key==package['feed']['key']:self.verify_descriptor(body,package,request)
-            bound=next((a for a in artifacts if a['key']==key),None)
-            if bound and (len(body)!=bound['size'] or hashlib.sha256(body).hexdigest()!=bound['sha256']):
-                raise OperationError(422,'artifact_integrity_mismatch')
-            destination=safe_file(self.root,key)
-            if destination.exists() and destination.read_bytes()!=body:raise OperationError(409,'immutable_artifact_conflict')
-            immutable_write(destination,body)
-            if destination.read_bytes()!=body:raise OperationError(503,'artifact_readback_failed')
+            source = safe_file(self.incoming, key)
+            destination = safe_file(self.root, key)
+            bound = next((item for item in artifacts if item['key'] == key), None)
+            try:
+                if bound:
+                    immutable_copy(source, destination, bound)
+                else:
+                    if source.stat().st_size > 1024 * 1024:
+                        raise OperationError(422, 'native_descriptor_mismatch')
+                    body = source.read_bytes()
+                    self.verify_descriptor(body, package, request)
+                    immutable_write(destination, body)
+            except OSError as error:
+                raise OperationError(422, 'staged_artifact_unavailable') from error
         body=canonical(manifest);target=safe_file(self.root,manifest_key)
         if target.exists() and target.read_bytes()!=body:raise OperationError(409,'immutable_manifest_conflict')
         immutable_write(target,body)
         data['manifest_key']=manifest_key;data['manifest_sha256']=hashlib.sha256(body).hexdigest()
         data['received_at']=utcnow();data['qualification']='verified'
+        if not persist:
+            return data
         with self.store.connection() as c:
             old=c.execute('SELECT body_hash,body FROM releases WHERE release_id=%s OR build_id=%s FOR UPDATE',(data['release_id'],request['buildId'])).fetchone()
             input_hash=digest(candidate.model_dump())
@@ -145,8 +200,107 @@ class Publisher:
                 return old['body']
             c.execute('INSERT INTO releases(release_id,build_id,body,body_hash,qualification) VALUES(%s,%s,%s::jsonb,%s,%s)',(data['release_id'],request['buildId'],json.dumps(data),input_hash,'verified'))
             c.execute('INSERT INTO channels(channel,record) VALUES(%s,%s::jsonb) ON CONFLICT DO NOTHING',(self.channel,json.dumps(record)))
+            c.execute('INSERT INTO delivery_heads(target_id,channel,record) VALUES(%s,%s,%s::jsonb) ON CONFLICT DO NOTHING', (self.target_id,self.channel,json.dumps(record)))
             self.store.audit(c,principal['principal_id'],'release_ingest',data['release_id'],{'build_id':request['buildId'],'scope':'windows-x64-native'})
         return data
+
+    def read_record(self):
+        if self.remote_target:
+            raw, _ = self.remote_target.read('releases/channels/'+self.channel+'.json')
+            return json.loads(raw) if raw is not None else None
+        target = safe_file(self.root, 'releases/channels/'+self.channel+'.json')
+        if not target.exists():
+            return None
+        if target.stat().st_size > 4 * 1024 * 1024:
+            raise OperationError(503, 'channel_metadata_too_large')
+        return json.loads(target.read_bytes())
+
+    def verify_release(self, release):
+        manifest = release['manifest']
+        if digest(manifest) != release['manifest_sha256']:
+            raise OperationError(422, 'manifest_integrity_mismatch')
+        for package in manifest['packages']:
+            descriptor = safe_file(self.root, package['feed']['key'])
+            if descriptor.stat().st_size > 1024 * 1024:
+                raise OperationError(422, 'native_descriptor_mismatch')
+            self.verify_descriptor(descriptor.read_bytes(), package, manifest['request'])
+            for artifact in [package['artifact']]+([package['distributionArchive']] if package.get('distributionArchive') else []):
+                if file_facts(safe_file(self.root, artifact['key'])) != (artifact['size'], artifact['sha256']):
+                    raise OperationError(422, 'artifact_integrity_mismatch')
+        return manifest
+
+    def preflight(self, release, *, remote_reservation=None):
+        self.verify_release(release)
+        if self.remote_target:
+            return self.remote_target.preflight(release, self.root, reservation=remote_reservation)
+        return None
+
+    def intended_record(self, release, previous):
+        from hermes_cli.release_channels import validate_record
+        build = release['manifest']['request']
+        record = {**previous, 'revision': previous['revision']+1,
+                  'nextSequence': max(previous['nextSequence'], build['sequence']+1),
+                  'head': {'buildId': build['buildId'], 'sequence': build['sequence'],
+                           'manifestKey': release['manifest_key'], 'sha256': release['manifest_sha256']}}
+        try:
+            validate_record(record)
+        except ValueError as error:
+            raise OperationError(422, 'channel_contract_mismatch') from error
+        return record
+
+    def publish_variant(self, release, operation_id, *, remote_reservation=None, authorize):
+        """Publish one reserved target; actual head readback precedes DB projection.
+
+        A crash between these boundaries is reconciled against the captured exact
+        intended head, never by allocating another revision or another operation.
+        """
+        with self.store.connection() as c:
+            c.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',
+                      (self.store.schema+':delivery:'+self.target_id+':'+self.channel,))
+            target = c.execute('SELECT t.*,p.user_id,p.release_id,v.first_admitted_at FROM publication_targets t '
+                               'JOIN publications p USING(publication_id) JOIN release_delivery_variants v ON v.release_id=p.release_id '
+                               'AND v.target_id=t.target_id AND v.variant_hash=t.variant_hash WHERE operation_id=%s FOR UPDATE OF t',
+                               (operation_id,)).fetchone()
+            if not target or target['target_id'] != self.target_id or target['channel'] != self.channel:
+                raise OperationError(404, 'publication_target_unavailable')
+            if target['status'] in {'published', 'already_current'}:
+                return {'revision': target['actual_revision'], 'readback_digest': target['readback_digest'],
+                        'maintenance_status': target['maintenance_status']}
+            if not target['reserved'] or not target['previous_head'] or not target['intended_head']:
+                raise OperationError(409, 'publication_reservation_required')
+            previous, intended = target['previous_head'], target['intended_head']
+            if self.intended_record(release, previous) != intended:
+                raise OperationError(409, 'publication_intent_changed')
+            head = c.execute('SELECT * FROM delivery_heads WHERE target_id=%s AND channel=%s FOR UPDATE',
+                             (self.target_id, self.channel)).fetchone()
+            if not head or head['record'] not in (previous, intended):
+                raise OperationError(409, 'channel_revision_conflict')
+            self.verify_release(release)
+            actual = self.read_record()
+            if actual not in (previous, intended):
+                raise OperationError(503, 'publication_reconciliation_required')
+            # Authorization may have been revoked since the captured request.
+            authorize()
+            maintenance = 'none'
+            if self.remote_target:
+                bound_release = {**release, 'retention_admission': {'release_id': target['release_id'],
+                                  'first_admitted_at': target['first_admitted_at'].isoformat()}}
+                outcome = self.remote_target.promote(bound_release, self.root, previous, intended,
+                                                     reservation=remote_reservation, authorize=authorize)
+                maintenance = (outcome or {}).get('maintenance_status', 'none')
+            elif actual != intended:
+                atomic_write(safe_file(self.root, 'releases/channels/'+self.channel+'.json'), canonical(intended))
+            if self.read_record() != intended:
+                raise OperationError(503, 'publication_readback_failed')
+            if head['record'] != intended:
+                c.execute('UPDATE delivery_heads SET revision=%s,release_id=%s,record=%s::jsonb '
+                          'WHERE target_id=%s AND channel=%s',
+                          (intended['revision'], target['release_id'], json.dumps(intended), self.target_id, self.channel))
+                self.store.audit(c, target['user_id'], 'target_publication', target['release_id'],
+                                 {'operation_id': operation_id, 'target_id': self.target_id,
+                                  'revision': intended['revision']})
+            return {'revision': intended['revision'], 'readback_digest': digest(intended),
+                    'maintenance_status': maintenance}
 
     def record_rejection(self,candidate,code,principal):
         """Keep failed candidates inspectable without granting publication eligibility."""
@@ -178,6 +332,8 @@ class Publisher:
         request=body.model_dump()
         with self.store.connection() as c:
             c.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',(self.store.schema+':'+self.channel,))
+            if c.execute('SELECT 1 FROM publication_targets WHERE channel=%s AND target_id=%s AND reserved LIMIT 1',(self.channel,self.target_id)).fetchone():
+                raise OperationError(409,'delivery_target_busy')
             old=c.execute('SELECT * FROM operations WHERE user_id=%s AND idempotency_key=%s',(user_id,body.idempotency_key)).fetchone()
             if old:
                 if old['request_hash']!=digest(request):raise OperationError(409,'operation_idempotency_conflict')
@@ -207,6 +363,8 @@ class Publisher:
             if not op:raise OperationError(404,'operation_unavailable')
             if op['status']!='preparing':return op
             request=op['body'];channel=c.execute('SELECT * FROM channels WHERE channel=%s FOR UPDATE',(self.channel,)).fetchone()
+            head=c.execute('SELECT * FROM delivery_heads WHERE target_id=%s AND channel=%s FOR UPDATE',(self.target_id,self.channel)).fetchone()
+            if not head:raise OperationError(503,'delivery_head_unavailable')
             if channel['paused']:raise OperationError(409,'promotions_paused')
             if channel['revision']!=request['expected_revision']:raise OperationError(409,'channel_revision_conflict')
             release=c.execute("SELECT body FROM releases WHERE release_id=%s AND qualification='verified'",(request['release_id'],)).fetchone()
@@ -222,7 +380,7 @@ class Publisher:
             immutable_write(manifest_target,manifest_body)
             if manifest_target.read_bytes()!=manifest_body:
                 raise OperationError(503,'manifest_readback_failed')
-            record={**channel['record'],'revision':channel['revision']+1,'nextSequence':max(channel['record']['nextSequence'],build['sequence']+1),
+            record={**head['record'],'revision':head['revision']+1,'nextSequence':max(head['record']['nextSequence'],build['sequence']+1),
                     'head':{'buildId':build['buildId'],'sequence':build['sequence'],'manifestKey':manifest_key,'sha256':release['manifest_sha256']}}
             try:validate_record(record)
             except ValueError as exc:raise OperationError(422,'channel_contract_mismatch') from exc
@@ -230,17 +388,17 @@ class Publisher:
             for package in manifest['packages']:
                 self.verify_descriptor(safe_file(self.root,package['feed']['key']).read_bytes(),package,build)
                 for artifact in [package['artifact']]+([package['distributionArchive']] if package.get('distributionArchive') else []):
-                    raw=safe_file(self.root,artifact['key']).read_bytes()
-                    if len(raw)!=artifact['size'] or hashlib.sha256(raw).hexdigest()!=artifact['sha256']:raise OperationError(422,'artifact_integrity_mismatch')
+                    if file_facts(safe_file(self.root,artifact['key']))!=(artifact['size'],artifact['sha256']):raise OperationError(422,'artifact_integrity_mismatch')
             if self.remote_target:
-                self.remote_target.promote({**release,'manifest_key':manifest_key},self.root,channel['record'],record)
+                self.remote_target.promote({**release,'manifest_key':manifest_key},self.root,head['record'],record)
             else:
                 target=safe_file(self.root,'releases/channels/'+self.channel+'.json')
                 actual=json.loads(target.read_bytes()) if target.exists() else None
-                if actual not in (None,channel['record'],record):raise OperationError(503,'publication_reconciliation_required')
+                if actual not in (None,head['record'],record):raise OperationError(503,'publication_reconciliation_required')
                 if actual!=record:atomic_write(target,canonical(record))
                 if json.loads(target.read_bytes())!=record:raise OperationError(503,'publication_readback_failed')
-            c.execute('UPDATE channels SET revision=%s,release_id=%s,record=%s::jsonb WHERE channel=%s',(record['revision'],request['release_id'],json.dumps(record),self.channel))
+            c.execute('UPDATE delivery_heads SET revision=%s,release_id=%s,record=%s::jsonb WHERE target_id=%s AND channel=%s',(record['revision'],request['release_id'],json.dumps(record),self.target_id,self.channel))
+            c.execute('UPDATE channels SET revision=revision+1 WHERE channel=%s',(self.channel,))
             c.execute("UPDATE operations SET status='published',updated_at=now() WHERE operation_id=%s",(operation_id,))
             self.store.audit(c,op['user_id'],'promotion',request['release_id'],{'operation_id':operation_id,'expected_revision':request['expected_revision'],'actual_revision':record['revision']})
             return {**op,'status':'published'}

@@ -1,7 +1,7 @@
 {
   "contract": "semantier-client-operations/v1",
-  "version": "1.1.0",
-  "schema_sha256": "0cad508de4bce7d0a8ee060c693dfd88d1f9910ccbca7f4d4f29d0deab66cc28",
+  "version": "1.2.0",
+  "schema_sha256": "224c6a912955f651c130a1d7c1c90a5f47e065e58aab47ddfa1814677ccdd7e8",
   "update_events": [
     {
       "name": "exact-target",

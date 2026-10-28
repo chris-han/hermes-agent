@@ -18,3 +18,34 @@ ALTER TABLE principals DROP CONSTRAINT IF EXISTS principals_kind_check;
 ALTER TABLE principals ADD CONSTRAINT principals_kind_check CHECK(kind IN ('ci','reporting','diagnostic'));
 CREATE TABLE IF NOT EXISTS authorizations(intent_ref text PRIMARY KEY,proof_challenge text NOT NULL,purpose text NOT NULL CHECK(purpose IN ('diagnostic','reporting')),profile_ref text NOT NULL,status text NOT NULL DEFAULT 'pending',user_id text,ciphertext bytea,nonce bytea,token_hash text,expires_at timestamptz NOT NULL DEFAULT now()+interval '15 minutes',created_at timestamptz NOT NULL DEFAULT now());
 INSERT INTO schema_version(version) VALUES(2) ON CONFLICT DO NOTHING;
+-- v3: target-scoped immutable admission and durable multi-target publication.
+CREATE TABLE IF NOT EXISTS delivery_grants(
+ principal_id text NOT NULL, channel text NOT NULL, target_id text NOT NULL CHECK(target_id IN ('channel1','channel2','channel3')),
+ action text NOT NULL CHECK(action IN ('read','publish','ingest')), PRIMARY KEY(principal_id,channel,target_id,action));
+CREATE TABLE IF NOT EXISTS release_delivery_variants(
+ release_id text NOT NULL REFERENCES releases, target_id text NOT NULL CHECK(target_id IN ('channel1','channel2','channel3')),
+ variant_hash text NOT NULL, body jsonb NOT NULL, first_admitted_at timestamptz NOT NULL DEFAULT now(),
+ PRIMARY KEY(release_id,target_id,variant_hash));
+CREATE TABLE IF NOT EXISTS delivery_heads(
+ target_id text NOT NULL CHECK(target_id IN ('channel1','channel2','channel3')), channel text NOT NULL REFERENCES channels,
+ revision bigint NOT NULL DEFAULT 1, release_id text REFERENCES releases, record jsonb NOT NULL,
+ PRIMARY KEY(target_id,channel));
+CREATE TABLE IF NOT EXISTS publications(
+ publication_id text PRIMARY KEY, user_id text NOT NULL, environment text NOT NULL, channel text NOT NULL REFERENCES channels,
+ release_id text NOT NULL REFERENCES releases, idempotency_key text NOT NULL, request_hash text NOT NULL, intent jsonb NOT NULL,
+ status text NOT NULL DEFAULT 'preflighting', lifecycle text NOT NULL DEFAULT 'active' CHECK(lifecycle IN ('active','settled')),
+ batch_revision bigint NOT NULL DEFAULT 1, maintenance_status text NOT NULL DEFAULT 'none',
+ created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+ UNIQUE(user_id,environment,idempotency_key));
+CREATE TABLE IF NOT EXISTS publication_targets(
+ publication_id text NOT NULL REFERENCES publications, target_id text NOT NULL CHECK(target_id IN ('channel1','channel2','channel3')),
+ environment text NOT NULL, channel text NOT NULL, attempt integer NOT NULL, variant_hash text NOT NULL,
+ operation_id text NOT NULL UNIQUE, status text NOT NULL DEFAULT 'queued', stage text NOT NULL DEFAULT 'preflight',
+ reserved boolean NOT NULL DEFAULT true, expected_revision bigint NOT NULL, previous_head jsonb, intended_head jsonb,
+ preview_plan_digest text NOT NULL, capacity jsonb, error_code text, actual_revision bigint, readback_digest text,
+ owner_instance jsonb, remote_lock jsonb, maintenance_status text NOT NULL DEFAULT 'none',
+ created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+ PRIMARY KEY(publication_id,target_id,attempt));
+CREATE UNIQUE INDEX IF NOT EXISTS one_delivery_reservation ON publication_targets(environment,target_id,channel) WHERE reserved;
+CREATE INDEX IF NOT EXISTS publication_history ON publications(environment,channel,release_id,created_at DESC,publication_id);
+INSERT INTO schema_version(version) VALUES(3) ON CONFLICT DO NOTHING;

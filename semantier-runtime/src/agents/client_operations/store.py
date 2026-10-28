@@ -24,19 +24,28 @@ class Store:
             c.execute("SET LOCAL TIME ZONE 'UTC'")
             yield c
 
-    def migrate(self,app_role=None):
+    def migrate(self,app_role=None,*,legacy_target_id=None):
         with self.connection() as c:
             c.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',(self.schema+'-migration',))
             c.execute(sql.SQL('CREATE SCHEMA IF NOT EXISTS {}').format(sql.Identifier(self.schema)))
             c.execute(Path(__file__).with_name('schema.sql').read_text())
+            legacy = c.execute('SELECT 1 FROM channels ch WHERE NOT EXISTS(SELECT 1 FROM delivery_heads h WHERE h.channel=ch.channel) LIMIT 1').fetchone()
+            if legacy:
+                from contracts.client_operations import DELIVERY_TARGET_IDS
+                if legacy_target_id not in DELIVERY_TARGET_IDS:
+                    raise ValueError('verified legacy delivery target is required for migration')
+                c.execute('INSERT INTO delivery_heads(target_id,channel,revision,release_id,record) '
+                          'SELECT %s,ch.channel,ch.revision,ch.release_id,ch.record FROM channels ch '
+                          'WHERE NOT EXISTS(SELECT 1 FROM delivery_heads h WHERE h.channel=ch.channel)', (legacy_target_id,))
             if app_role:
                 role=sql.Identifier(app_role);schema=sql.Identifier(self.schema)
                 c.execute(sql.SQL('GRANT USAGE ON SCHEMA {} TO {}').format(schema,role))
                 c.execute(sql.SQL('GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA {} TO {}').format(schema,role))
-                for table in ['schema_version','grants']:
+                for table in ['schema_version','grants','delivery_grants']:
                     c.execute(sql.SQL('REVOKE INSERT,UPDATE,DELETE,TRUNCATE ON {}.{} FROM {}').format(schema,sql.Identifier(table),role))
                 c.execute(sql.SQL('REVOKE UPDATE,DELETE,TRUNCATE ON {}.audit FROM {}').format(schema,role))
-        return {'schema':self.schema,'version':2}
+                c.execute(sql.SQL('REVOKE UPDATE,DELETE,TRUNCATE ON {}.release_delivery_variants FROM {}').format(schema,role))
+        return {'schema':self.schema,'version':3}
 
     def grant(self,user_id,capabilities,channel):
         if not set(capabilities)<=GRANTS:raise ValueError('unsupported capability')
@@ -48,6 +57,27 @@ class Store:
     def permissions(self,user_id,channel):
         with self.connection() as c:
             return {r['capability'] for r in c.execute('SELECT capability FROM grants WHERE user_id=%s AND channel=%s',(user_id,channel))}
+
+    def grant_targets(self, principal_id, target_ids, actions, channel):
+        from contracts.client_operations import DELIVERY_ACTIONS, DELIVERY_TARGET_IDS
+        if not set(target_ids) <= set(DELIVERY_TARGET_IDS) or not set(actions) <= DELIVERY_ACTIONS:
+            raise ValueError('unsupported delivery target grant')
+        with self.connection() as c:
+            c.execute('DELETE FROM delivery_grants WHERE principal_id=%s AND channel=%s', (principal_id, channel))
+            for target_id in sorted(set(target_ids)):
+                for action in sorted(set(actions)):
+                    c.execute('INSERT INTO delivery_grants VALUES(%s,%s,%s,%s)', (principal_id, channel, target_id, action))
+            self.audit(c, 'migration-owner', 'delivery_grant', principal_id,
+                       {'channel': channel, 'target_ids': sorted(set(target_ids)), 'actions': sorted(set(actions))})
+
+    def target_permissions(self, principal_id, channel):
+        with self.connection() as c:
+            rows = c.execute('SELECT target_id,action FROM delivery_grants WHERE principal_id=%s AND channel=%s',
+                             (principal_id, channel)).fetchall()
+        result = {}
+        for row in rows:
+            result.setdefault(row['target_id'], set()).add(row['action'])
+        return result
 
     def issue(self,*,kind,channel,expires_at,user_id=None,installation_ref=None):
         with self.connection() as c:

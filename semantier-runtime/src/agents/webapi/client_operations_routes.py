@@ -6,7 +6,7 @@ from fastapi import APIRouter,HTTPException,Request,Query
 from typing import Literal
 from fastapi.routing import APIRoute
 from pydantic import ValidationError
-from contracts.client_operations import ReleaseCandidate,Promotion,ChannelControl,EventBatch,Diagnostic,Classification,Identifier,Strict
+from contracts.client_operations import ReleaseCandidate,Promotion,ChannelControl,EventBatch,Diagnostic,Classification,Identifier,Strict,PublicationIntent,PublicationRetry,TargetBindingAdmission
 from agents.client_operations.publication import OperationError
 from agents.webapi.deps import require_authenticated_context
 from agents.model_gateway.auth import csrf
@@ -18,7 +18,7 @@ class Errors(APIRoute):
         async def guarded(request):
             try:return await handler(request)
             except OperationError as e:
-                raise HTTPException(e.status,{'code':e.code,'message':e.code.replace('_',' '),'retryable':e.status in {429,503},'correlation_id':uuid4().hex}) from e
+                raise HTTPException(e.status,{'code':e.code,'message':e.code.replace('_',' '),'retryable':e.status in {429,503},'correlation_id':uuid4().hex,'mutation_outcome':e.mutation_outcome}) from e
             except HTTPException as e:
                 raise HTTPException(e.status_code,{'code':{401:'authentication_required',403:'scope_denied',409:'context_changed'}.get(e.status_code,'request_refused'),'message':'Client operation unavailable','retryable':e.status_code in {429,503},'correlation_id':uuid4().hex}) from e
             except ValidationError as e:
@@ -68,7 +68,7 @@ async def body(request,model,limit=5*1024*1024):
         raw.extend(chunk)
         if len(raw)>limit:raise OperationError(413,'payload_limit')
     try:return model.model_validate_json(raw)
-    except (ValueError,ValidationError) as e:raise OperationError(422,'schema_mismatch') from e
+    except (ValueError,ValidationError) as e:raise OperationError(422,'schema_mismatch',mutation_outcome='not_started') from e
 
 
 def envelope(owner,data,permissions=()):
@@ -85,7 +85,7 @@ def context(request:Request):
 def releases(request:Request,q:str=Query('',max_length=128),qualification:Literal['all','verified','rejected']='all',published:Literal['all','published','unpublished']='all',sort:Literal['newest','oldest']='newest',offset:int=Query(0,ge=0,le=10000)):
     owner,ctx,permissions=browser(request,'release_read')
     with owner.store.connection() as c:
-        rows=c.execute("SELECT r.release_id,r.body,r.qualification,r.received_at FROM releases r LEFT JOIN channels ch ON ch.channel=%s AND ch.release_id=r.release_id WHERE (%s='all' OR r.qualification=%s) AND (%s='all' OR (%s='published' AND ch.release_id IS NOT NULL) OR (%s='unpublished' AND ch.release_id IS NULL)) AND (%s='' OR strpos(lower(r.body#>>'{manifest,request,version}'),lower(%s))>0 OR strpos(lower(r.build_id),lower(%s))>0) ORDER BY CASE WHEN %s='oldest' THEN r.received_at END ASC,r.received_at DESC,r.release_id LIMIT 101 OFFSET %s",(owner.channel,qualification,qualification,published,published,published,q,q,q,sort,offset)).fetchall()
+        rows=c.execute("SELECT r.release_id,r.body,r.qualification,r.received_at FROM releases r LEFT JOIN delivery_heads ch ON ch.channel=%s AND ch.target_id=%s AND ch.release_id=r.release_id WHERE (%s='all' OR r.qualification=%s) AND (%s='all' OR (%s='published' AND ch.release_id IS NOT NULL) OR (%s='unpublished' AND ch.release_id IS NULL)) AND (%s='' OR strpos(lower(r.body#>>'{manifest,request,version}'),lower(%s))>0 OR strpos(lower(r.build_id),lower(%s))>0) ORDER BY CASE WHEN %s='oldest' THEN r.received_at END ASC,r.received_at DESC,r.release_id LIMIT 101 OFFSET %s",(owner.channel,owner.primary_target_id if hasattr(owner,'primary_target_id') else getattr(getattr(owner,'publisher',None),'target_id','channel1'),qualification,qualification,published,published,published,q,q,q,sort,offset)).fetchall()
     return envelope(owner,{'items':rows[:100],'coverage':'retained_candidates','limit':100,'offset':offset,'next_offset':offset+100 if len(rows)>100 else None},permissions)
 
 
@@ -114,7 +114,7 @@ async def ingest(request:Request):
 def channel(channel:str,request:Request):
     owner,ctx,permissions=browser(request,'release_read')
     if channel!=owner.channel:raise OperationError(403,'channel_scope_denied')
-    with owner.store.connection() as c:row=c.execute('SELECT * FROM channels WHERE channel=%s',(channel,)).fetchone()
+    with owner.store.connection() as c:row=c.execute('SELECT ch.*,h.release_id AS release_id,h.record AS record FROM channels ch LEFT JOIN delivery_heads h ON h.channel=ch.channel AND h.target_id=%s WHERE ch.channel=%s',(owner.primary_target_id if hasattr(owner,'primary_target_id') else owner.publisher.target_id,channel)).fetchone()
     return envelope(owner,{'channel':row,'coverage':'known_empty' if row is None else 'current'},permissions)
 
 
@@ -122,8 +122,10 @@ def channel(channel:str,request:Request):
 async def promote(channel:str,request:Request):
     owner,ctx,permissions=browser(request,'release_manage')
     if channel!=owner.channel:raise OperationError(403,'channel_scope_denied')
+    if 'publish' not in owner.store.target_permissions(ctx.user_id,owner.channel).get(owner.publisher.target_id,set()):raise OperationError(403,'delivery_target_scope_denied')
     data=await body(request,Promotion,8192)
-    return envelope(owner,{'operation':owner.publisher.promote(ctx.user_id,data)},permissions)
+    result = owner.publications.promote_legacy(ctx.user_id,data) if hasattr(owner,'publications') else owner.publisher.promote(ctx.user_id,data)
+    return envelope(owner,{'operation':result},permissions)
 
 
 @router.post('/channels/{channel}/pause')
@@ -133,7 +135,8 @@ async def control(channel:str,request:Request):
     if channel!=owner.channel:raise OperationError(403,'channel_scope_denied')
     data=await body(request,ChannelControl,8192);paused=request.url.path.endswith('/pause')
     with owner.store.connection() as c:
-        c.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',(owner.store.schema+':'+channel,))
+        if not c.execute('SELECT pg_try_advisory_xact_lock(hashtext(%s)) AS acquired',(owner.store.schema+':'+channel,)).fetchone()['acquired']:
+            raise OperationError(409,'publication_in_progress')
         from contracts.client_operations import digest
         intent={**data.model_dump(),'control':'pause' if paused else 'resume'}
         previous=c.execute('SELECT * FROM operations WHERE user_id=%s AND idempotency_key=%s',(ctx.user_id,data.idempotency_key)).fetchone()
@@ -141,6 +144,7 @@ async def control(channel:str,request:Request):
             if previous['request_hash']!=digest(intent):raise OperationError(409,'operation_idempotency_conflict')
             return envelope(owner,{'channel':previous['body']['result']},permissions)
         if c.execute("SELECT 1 FROM operations WHERE channel=%s AND status='preparing'",(channel,)).fetchone():raise OperationError(409,'publication_in_progress')
+        if c.execute('SELECT 1 FROM publication_targets WHERE channel=%s AND reserved LIMIT 1',(channel,)).fetchone():raise OperationError(409,'publication_in_progress')
         row=c.execute('UPDATE channels SET paused=%s,revision=revision+1 WHERE channel=%s AND revision=%s RETURNING *',(paused,channel,data.expected_revision)).fetchone()
         if not row:raise OperationError(409,'channel_revision_conflict')
         c.execute('INSERT INTO operations(operation_id,user_id,channel,idempotency_key,request_hash,body,status) VALUES(%s,%s,%s,%s,%s,%s::jsonb,%s)',(uuid4().hex,ctx.user_id,channel,data.idempotency_key,digest(intent),json.dumps({**intent,'result':row},default=str),'published'))
@@ -153,8 +157,65 @@ def operation(operation_id:str,request:Request):
     owner,ctx,permissions=browser(request,'release_read')
     with owner.store.connection() as c:row=c.execute('SELECT * FROM operations WHERE (operation_id=%s OR (idempotency_key=%s AND user_id=%s)) AND channel=%s',(operation_id,operation_id,ctx.user_id,owner.channel)).fetchone()
     if not row:raise OperationError(404,'operation_unavailable')
-    if row['status']=='preparing' and 'release_manage' in permissions:row=owner.publisher.reconcile(row['operation_id'])
+    if 'publication_intent' in row['body'] and hasattr(owner,'publications'):
+        try:
+            publication=owner.publications.lookup(ctx.user_id,row['body']['idempotency_key'])
+            row={**row,'publication_id':publication['publication_id'],'status':owner.publications.legacy_status(publication)}
+        except OperationError as error:
+            if error.status!=404:raise
+            row={**row,'status':'preparing'}
     return envelope(owner,{'operation':row},permissions)
+
+
+@router.get('/delivery-targets')
+def delivery_targets(request:Request,release_id:str=Query(...,min_length=1,max_length=128)):
+    owner,ctx,permissions=browser(request,'release_read')
+    return envelope(owner,owner.targets.catalog(ctx.user_id,release_id),permissions)
+
+
+@router.post('/delivery-targets/bindings')
+async def target_binding(request:Request):
+    owner,principal=capability(request,'ci')
+    data=await body(request,TargetBindingAdmission,2*1024*1024)
+    return envelope(owner,{'binding':owner.targets.admit(data,principal)})
+
+
+@router.post('/publications')
+async def publication_submit(request:Request):
+    owner,ctx,permissions=browser(request,'release_manage')
+    data=await body(request,PublicationIntent,32768)
+    return envelope(owner,{'publication':owner.publications.submit(ctx.user_id,data)},permissions)
+
+
+@router.get('/publications')
+def publications(request:Request,release_id:str|None=None,status:Literal['active','all']='all',offset:int=Query(0,ge=0,le=10000)):
+    owner,ctx,permissions=browser(request,'release_read')
+    return envelope(owner,owner.publications.list(ctx.user_id,release_id,status,offset),permissions)
+
+
+@router.get('/publications/{publication_id}')
+def publication_snapshot(publication_id:str,request:Request):
+    owner,ctx,permissions=browser(request,'release_read')
+    return envelope(owner,{'publication':owner.publications.snapshot(ctx.user_id,publication_id)},permissions)
+
+
+@router.get('/publication-requests/{key}')
+def publication_lookup(key:str,request:Request):
+    owner,ctx,permissions=browser(request,'release_read')
+    return envelope(owner,{'publication':owner.publications.lookup(ctx.user_id,key)},permissions)
+
+
+@router.post('/publications/{publication_id}/reconcile')
+def publication_reconcile(publication_id:str,request:Request):
+    owner,ctx,permissions=browser(request,'release_manage')
+    return envelope(owner,{'publication':owner.publications.reconcile(ctx.user_id,publication_id)},permissions)
+
+
+@router.post('/publications/{publication_id}/retry')
+async def publication_retry(publication_id:str,request:Request):
+    owner,ctx,permissions=browser(request,'release_manage')
+    data=await body(request,PublicationRetry,32768)
+    return envelope(owner,{'publication':owner.publications.retry(ctx.user_id,publication_id,data)},permissions)
 
 
 def reporting_window(days,start_at,end_at):

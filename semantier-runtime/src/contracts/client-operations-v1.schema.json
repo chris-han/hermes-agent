@@ -1,6 +1,6 @@
 {
   "contract": "semantier-client-operations/v1",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "schemas": {
     "UpdateEvent": {
       "additionalProperties": false,
@@ -624,6 +624,244 @@
         "decision"
       ],
       "title": "FeedbackDecision",
+      "type": "object"
+    },
+    "PublicationIntent": {
+      "additionalProperties": false,
+      "properties": {
+        "release_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Release Id",
+          "type": "string"
+        },
+        "channel": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Channel",
+          "type": "string"
+        },
+        "delivery_target_ids": {
+          "items": {
+            "enum": [
+              "channel1",
+              "channel2",
+              "channel3"
+            ],
+            "type": "string"
+          },
+          "maxItems": 3,
+          "minItems": 1,
+          "title": "Delivery Target Ids",
+          "type": "array"
+        },
+        "target_bindings": {
+          "additionalProperties": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "propertyNames": {
+            "enum": [
+              "channel1",
+              "channel2",
+              "channel3"
+            ]
+          },
+          "title": "Target Bindings",
+          "type": "object"
+        },
+        "expected_revisions": {
+          "additionalProperties": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "propertyNames": {
+            "enum": [
+              "channel1",
+              "channel2",
+              "channel3"
+            ]
+          },
+          "title": "Expected Revisions",
+          "type": "object"
+        },
+        "preview_plan_digests": {
+          "additionalProperties": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "propertyNames": {
+            "enum": [
+              "channel1",
+              "channel2",
+              "channel3"
+            ]
+          },
+          "title": "Preview Plan Digests",
+          "type": "object"
+        },
+        "idempotency_key": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Idempotency Key",
+          "type": "string"
+        }
+      },
+      "required": [
+        "release_id",
+        "channel",
+        "delivery_target_ids",
+        "target_bindings",
+        "expected_revisions",
+        "preview_plan_digests",
+        "idempotency_key"
+      ],
+      "title": "PublicationIntent",
+      "type": "object"
+    },
+    "PublicationRetry": {
+      "additionalProperties": false,
+      "properties": {
+        "delivery_target_ids": {
+          "items": {
+            "enum": [
+              "channel1",
+              "channel2",
+              "channel3"
+            ],
+            "type": "string"
+          },
+          "maxItems": 3,
+          "minItems": 1,
+          "title": "Delivery Target Ids",
+          "type": "array"
+        },
+        "expected_batch_revision": {
+          "minimum": 1,
+          "title": "Expected Batch Revision",
+          "type": "integer"
+        },
+        "expected_revisions": {
+          "additionalProperties": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "propertyNames": {
+            "enum": [
+              "channel1",
+              "channel2",
+              "channel3"
+            ]
+          },
+          "title": "Expected Revisions",
+          "type": "object"
+        },
+        "preview_plan_digests": {
+          "additionalProperties": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "propertyNames": {
+            "enum": [
+              "channel1",
+              "channel2",
+              "channel3"
+            ]
+          },
+          "title": "Preview Plan Digests",
+          "type": "object"
+        },
+        "idempotency_key": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Idempotency Key",
+          "type": "string"
+        }
+      },
+      "required": [
+        "delivery_target_ids",
+        "expected_batch_revision",
+        "expected_revisions",
+        "preview_plan_digests",
+        "idempotency_key"
+      ],
+      "title": "PublicationRetry",
+      "type": "object"
+    },
+    "TargetBindingAdmission": {
+      "$defs": {
+        "ReleaseCandidate": {
+          "additionalProperties": false,
+          "properties": {
+            "release_id": {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+              "title": "Release Id",
+              "type": "string"
+            },
+            "manifest": {
+              "additionalProperties": true,
+              "title": "Manifest",
+              "type": "object"
+            },
+            "notes": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "maxProperties": 9,
+              "minProperties": 1,
+              "title": "Notes",
+              "type": "object"
+            },
+            "native_receipt": {
+              "additionalProperties": true,
+              "title": "Native Receipt",
+              "type": "object"
+            },
+            "receipt_hmac": {
+              "pattern": "^[a-f0-9]{64}$",
+              "title": "Receipt Hmac",
+              "type": "string"
+            }
+          },
+          "required": [
+            "release_id",
+            "manifest",
+            "notes",
+            "native_receipt",
+            "receipt_hmac"
+          ],
+          "title": "ReleaseCandidate",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "delivery_target_id": {
+          "enum": [
+            "channel1",
+            "channel2",
+            "channel3"
+          ],
+          "title": "Delivery Target Id",
+          "type": "string"
+        },
+        "candidate": {
+          "$ref": "#/$defs/ReleaseCandidate"
+        },
+        "descriptor_receipt": {
+          "additionalProperties": true,
+          "title": "Descriptor Receipt",
+          "type": "object"
+        },
+        "descriptor_receipt_hmac": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Descriptor Receipt Hmac",
+          "type": "string"
+        }
+      },
+      "required": [
+        "delivery_target_id",
+        "candidate",
+        "descriptor_receipt",
+        "descriptor_receipt_hmac"
+      ],
+      "title": "TargetBindingAdmission",
       "type": "object"
     }
   }

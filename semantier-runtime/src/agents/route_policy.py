@@ -44,6 +44,15 @@ class RouteAuthorizationClass(str, Enum):
 #   docs/derived/gateway-unified-multitenant-design.md section 8.1.1.
 # - Until then, they remain target contract surfaces, not callable gateway routes.
 ROUTE_POLICY_MAP: dict[tuple[str, str], RoutePolicy] = {
+    ('GET', '/api/client-operations/delivery-targets'): RoutePolicy.AUTHENTICATED,
+    ('POST', '/api/client-operations/delivery-targets/bindings'): RoutePolicy.PUBLIC,
+    ('POST', '/api/client-operations/publications'): RoutePolicy.AUTHENTICATED,
+    ('GET', '/api/client-operations/publications'): RoutePolicy.AUTHENTICATED,
+    ('GET', '/api/client-operations/publications/{publication_id}'): RoutePolicy.AUTHENTICATED,
+    ('GET', '/api/client-operations/publication-requests/{key}'): RoutePolicy.AUTHENTICATED,
+    ('POST', '/api/client-operations/publications/{publication_id}/reconcile'): RoutePolicy.AUTHENTICATED,
+    ('POST', '/api/client-operations/publications/{publication_id}/retry'): RoutePolicy.AUTHENTICATED,
+
     ('POST', '/api/client-operations/authorizations'): RoutePolicy.PUBLIC,
     ('GET', '/api/client-operations/authorizations/{intent_ref}'): RoutePolicy.AUTHENTICATED,
     ('POST', '/api/client-operations/authorizations/{intent_ref}/decision'): RoutePolicy.AUTHENTICATED,
@@ -756,6 +765,14 @@ ROUTE_POLICY_PROXY_PATHS: frozenset[str] = frozenset(
 # This mapping is intentionally scoped to tenant-facing handlers where role
 # semantics must be explicit and testable.
 ROUTE_AUTHZ_CLASS_MAP: dict[tuple[str, str], RouteAuthorizationClass] = {
+    ('GET', '/api/client-operations/delivery-targets'): RouteAuthorizationClass.SELF_ONLY,  # Handler enforces explicit target authority.
+    ('POST', '/api/client-operations/publications'): RouteAuthorizationClass.SELF_ONLY,  # Handler enforces explicit target authority.
+    ('GET', '/api/client-operations/publications'): RouteAuthorizationClass.SELF_ONLY,  # Handler enforces explicit target authority.
+    ('GET', '/api/client-operations/publications/{publication_id}'): RouteAuthorizationClass.SELF_ONLY,  # Handler enforces explicit target authority.
+    ('GET', '/api/client-operations/publication-requests/{key}'): RouteAuthorizationClass.SELF_ONLY,  # Handler enforces explicit target authority.
+    ('POST', '/api/client-operations/publications/{publication_id}/reconcile'): RouteAuthorizationClass.SELF_ONLY,  # Handler enforces explicit target authority.
+    ('POST', '/api/client-operations/publications/{publication_id}/retry'): RouteAuthorizationClass.SELF_ONLY,  # Handler enforces explicit target authority.
+
     ('GET', '/api/client-operations/authorizations/{intent_ref}'): RouteAuthorizationClass.SELF_ONLY,
     ('POST', '/api/client-operations/authorizations/{intent_ref}/decision'): RouteAuthorizationClass.SELF_ONLY,
     ('GET', '/api/client-operations/context'): RouteAuthorizationClass.SELF_ONLY,  # Handler enforces explicit platform grants.
