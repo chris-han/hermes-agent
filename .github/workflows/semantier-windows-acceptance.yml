@@ -9,6 +9,7 @@ on:
         required: true
         type: string
 env:
+  ACCEPTANCE_INCOMING_ROOT: ${{ vars.SEMANTIER_ACCEPTANCE_INCOMING_ROOT }}
   ACCEPTANCE_CONTROLLER_COMMIT: ${{ inputs.controller_commit || 'e8bb2a8ec7095144dbf3692413b572424acd7521' }}
 permissions:
   contents: read
@@ -50,6 +51,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test -n "$ACCEPTANCE_INCOMING_ROOT"
+          test -d "$ACCEPTANCE_INCOMING_ROOT"
+          test -w "$ACCEPTANCE_INCOMING_ROOT"
+          test ! -L "$ACCEPTANCE_INCOMING_ROOT"
           output="D:\\repo\\deliverables\\SemantierAgent-client-feedback-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           echo "ACCEPTANCE_OUTPUT=$(wslpath -u "$output")" >> "$GITHUB_ENV"
           "$SEMANTIER_CI_PYTHON" controller/scripts/build_hermes_windows.py --source "$PWD/hermes" --output "$output" --thumbprint 57BF15739B4AA447842EAF388856A01B4E5029FF --acceptance-public-base http://127.0.0.1:8926
@@ -66,4 +71,4 @@ jobs:
           SEMANTIER_CLIENT_RECEIPT_KEY: ${{ secrets.SEMANTIER_CLIENT_RECEIPT_KEY }}
         run: |
           set -euo pipefail
-          "$SEMANTIER_CI_PYTHON" hermes/scripts/releases/semantier_candidate.py --output "$ACCEPTANCE_OUTPUT" --native "$ACCEPTANCE_NATIVE" --incoming /tmp/semantier-client-release-feedback-v1/incoming --notes hermes/scripts/releases/semantier-acceptance-notes.json
+          "$SEMANTIER_CI_PYTHON" hermes/scripts/releases/semantier_candidate.py --output "$ACCEPTANCE_OUTPUT" --native "$ACCEPTANCE_NATIVE" --incoming "$ACCEPTANCE_INCOMING_ROOT" --notes hermes/scripts/releases/semantier-acceptance-notes.json

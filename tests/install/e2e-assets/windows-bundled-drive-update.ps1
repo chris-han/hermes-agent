@@ -29,6 +29,11 @@ param(
     [Parameter(Mandatory = $true)][int]$OldProcessId,
     [Parameter(Mandatory = $true)][string]$ProofDir,
     [string]$ResultPath = "",
+    [switch]$SemantierIsolated,
+    [string]$ExpectedSid,
+    [string]$ExpectedExecutable,
+    [string]$ExpectedBirth,
+    [string]$ExpectedTargetVersion,
     # How long to keep looking for the in-app button (the app may still be
     # booting its backend when the driver starts).
     [int]$ButtonTimeoutSec = 300,
@@ -40,7 +45,21 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-if ($env:GITHUB_ACTIONS -ne 'true') { throw 'Disposable CI runner required' }
+if ($env:GITHUB_ACTIONS -ne 'true') {
+    if (-not $SemantierIsolated) { throw 'Disposable CI runner required' }
+    $actualSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $native=Get-CimInstance Win32_Process -Filter "ProcessId=$OldProcessId"
+    $package=@(Get-AppxPackage -Name 'Semantier.Agent.Acceptance')
+    if ($actualSid -cne $ExpectedSid -or $actualSid -ceq 'S-1-5-21-1928370875-4287869425-2092521300-1003' -or
+        -not $native -or $native.SessionId -ne (Get-Process -Id $PID).SessionId -or
+        $native.ExecutablePath -cne $ExpectedExecutable -or ([DateTimeOffset]$native.CreationDate).ToUniversalTime().ToString('o') -cne $ExpectedBirth -or
+        $package.Count -ne 1 -or -not $ExpectedExecutable.StartsWith($package[0].InstallLocation+'\',[StringComparison]::OrdinalIgnoreCase) -or
+        (Invoke-CimMethod -InputObject $native -MethodName GetOwnerSid).Sid -cne $actualSid) { throw 'Isolated UIA ownership mismatch' }
+    # The registered orchestrator loads the OS collector; standalone calls fail closed.
+    $buffer=[IntPtr]::Zero;$bytes=0
+    if (-not [SemantierNativeFacts]::WTSQuerySessionInformation([IntPtr]::Zero,$native.SessionId,8,[ref]$buffer,[ref]$bytes)) { throw 'UIA session unavailable' }
+    try {if($bytes -lt 4 -or [Runtime.InteropServices.Marshal]::ReadInt32($buffer) -ne 0){throw 'UIA session not active'}} finally {[SemantierNativeFacts]::WTSFreeMemory($buffer)}
+}
 $oldProcess = Get-Process -Id $OldProcessId
 $oldBirth = $oldProcess.StartTime
 $ProcessName = $oldProcess.ProcessName
@@ -134,7 +153,8 @@ while ((Get-Date) -lt $deadline -and -not $clicked) {
         $hit = Find-InvokableButton -Root $win -Patterns @(
             '^Update now',            # en: the packaged overlay's primary action
             'Update Hermes',          # en settings: About surface
-            '^Update$'
+            '^Update$',
+            ('^' + ([char]0x7acb + [char]0x5373 + [char]0x66f4 + [char]0x65b0) + '$')
         )
         if ($hit) {
             Save-Shot "01-before-update-click"
@@ -142,7 +162,7 @@ while ((Get-Date) -lt $deadline -and -not $clicked) {
             if (Invoke-Button $hit.Element) { $clicked = $hit } else { Write-Host "  [uia] invoke pattern unavailable; retrying" }
         } else {
             # Use the visible settings flow; never call the updater bridge.
-            $navigation = Find-InvokableButton -Root $win -Patterns @('^Open settings$', '^About$', '^Check now$', 'choose a provider later')
+            $navigation = Find-InvokableButton -Root $win -Patterns @('^Open settings$', '^About$', '^Check now$', 'choose a provider later', ('^' + ([char]0x6253 + [char]0x5f00 + [char]0x8bbe + [char]0x7f6e) + '$'), ('^' + ([char]0x5173 + [char]0x4e8e) + '$'), ('^' + ([char]0x7acb + [char]0x5373 + [char]0x68c0 + [char]0x67e5) + '$'))
             if ($navigation) { [void](Invoke-Button $navigation.Element) }
         }
     }
@@ -161,13 +181,27 @@ $cDeadline = (Get-Date).AddSeconds($ConfirmTimeoutSec)
 $confirmed = $false
 while ((Get-Date) -lt $cDeadline -and -not $confirmed) {
     $installer = Get-Process -Name "AppInstaller" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($SemantierIsolated -and $installer) {
+        $candidate=Get-CimInstance Win32_Process -Filter "ProcessId=$($installer.Id)"
+        $installerPackage=@(Get-AppxPackage -Name 'Microsoft.DesktopAppInstaller')
+        if (-not $candidate -or $candidate.SessionId -ne (Get-Process -Id $PID).SessionId -or
+            (Invoke-CimMethod -InputObject $candidate -MethodName GetOwnerSid).Sid -cne $ExpectedSid -or
+            $candidate.CreationDate -lt $oldBirth -or $installerPackage.Count -ne 1 -or
+            -not $candidate.ExecutablePath.StartsWith($installerPackage[0].InstallLocation+'\',[StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Installer confirmation ownership ambiguous; preserve it'
+        }
+    }
     if ($installer) {
         $root = [System.Windows.Automation.AutomationElement]::RootElement
         $cond = New-Object System.Windows.Automation.PropertyCondition(
             [System.Windows.Automation.AutomationElement]::ProcessIdProperty, $installer.Id)
         $win = $root.FindFirst([System.Windows.Automation.TreeScope]::Children, $cond)
         if ($win) {
-            $hit = Find-InvokableButton -Root $win -Patterns @('^Update$', '^Install$', '^(Reinstall|Update) .*')
+            if ($SemantierIsolated) {
+                $text=($win.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object { $_.Current.Name }) -join ' '
+                if (-not $ExpectedTargetVersion -or $text -notmatch 'Semantier' -or $text -notmatch [regex]::Escape($ExpectedTargetVersion)) { throw 'Installer target not identifiable; no confirmation click' }
+            }
+            $hit = Find-InvokableButton -Root $win -Patterns @('^Update$', '^Install$', '^(Reinstall|Update) .*', ('^' + ([char]0x66f4 + [char]0x65b0) + '$'), ('^' + ([char]0x5b89 + [char]0x88c5) + '$'))
             if ($hit) {
                 Save-Shot "02-appinstaller-confirm"
                 Write-Host "  [uia] App Installer dialog: clicking '$($hit.Name)'"
