@@ -36,6 +36,74 @@ def acceptance_request(*,commit,controller,version,source_version,base):
     return value
 
 
+
+def validate_native_graph(value, *, build_id, identity, publisher, version, arch):
+    """Producer-side structural gate; never proof of signing or native execution.
+
+    Remote URIs are derived from qualified base + immutable keys, never supplied
+    independently. Every referenced outer/inner object has its own bytes/digest
+    binding. Keep this gate separate from admission until real layout proof.
+    """
+    import base64
+    from hermes_cli.release_channels import artifact_key, build_prefix, require_sha256
+    if not isinstance(value, dict) or type(value.get('schema')) is not int or value['schema'] != 1 or value.get('transport') != 'windows-package-uri':
+        raise ValueError('Unsupported native graph')
+    require_sha256(value.get('payloadInventorySha256'))
+    prefix=build_prefix(build_id)
+    objects=value.get('objects')
+    if not isinstance(objects,list) or not objects or len(objects)>64:
+        raise ValueError('Invalid native object set')
+    rows={}
+    identities=set()
+    for row in objects:
+        if not isinstance(row,dict):raise ValueError('Invalid native object')
+        key=artifact_key(row.get('key'))
+        if not key.startswith(prefix) or key in rows:raise ValueError('Native object build/uniqueness mismatch')
+        kind=row.get('kind')
+        if kind not in ('main-package','optional-package','main-bundle','optional-bundle'):
+            raise ValueError('Invalid native object kind')
+        extension='.msixbundle' if kind.endswith('bundle') else '.msix'
+        if not key.endswith(extension):raise ValueError('Native object extension mismatch')
+        name=row.get('identity')
+        if not isinstance(name,str) or not re.fullmatch(r'[A-Za-z0-9.-]{3,50}',name):raise ValueError('Invalid native identity')
+        if (name,kind) in identities:raise ValueError('Ambiguous native package identity')
+        identities.add((name,kind))
+        if kind.startswith('main-') and name!=identity:raise ValueError('Main native identity mismatch')
+        if kind.startswith('optional-') and (name==identity or not name.startswith(identity+'.')):
+            raise ValueError('Related native identity mismatch')
+        if any(row.get(k)!=v for k,v in dict(publisher=publisher,version=version,arch=arch).items()):
+            raise ValueError('Native identity/version/architecture mismatch')
+        if type(row.get('size')) is not int or not 0<row['size']<=480_000_000:
+            raise ValueError('Native object exceeds cacheable cap')
+        require_sha256(row.get('sha256'))
+        digest=row.get('nativeDigest')
+        try:
+            decoded=base64.b64decode(digest,validate=True)
+            if len(decoded)!=32 or base64.b64encode(decoded).decode()!=digest:raise ValueError('Invalid native digest')
+        except (ValueError,TypeError) as exc:raise ValueError('Invalid native digest') from exc
+        refs=row.get('references')
+        if not isinstance(refs,list) or any(not isinstance(k,str) for k in refs) or len(set(refs))!=len(refs):
+            raise ValueError('Invalid native references')
+        if kind.endswith('package') and refs:raise ValueError('Package cannot introduce unbound dependencies')
+        rows[key]=row
+    root=value.get('root')
+    if not isinstance(root,str) or root not in rows or rows[root]['kind'] not in ('main-package','main-bundle'):
+        raise ValueError('Invalid native graph root')
+    if sum(r['kind']=='main-package' for r in objects)!=1 or sum(r['kind']=='main-bundle' for r in objects)>1:
+        raise ValueError('Ambiguous native main package')
+    seen=set(); active=set()
+    def visit(key):
+        if key not in rows:raise ValueError('Missing native object')
+        if key in active:raise ValueError('Native graph cycle')
+        if key in seen:return
+        active.add(key)
+        for reference in rows[key]['references']:visit(reference)
+        active.remove(key);seen.add(key)
+    visit(root)
+    if seen!=set(rows):raise ValueError('Unreachable native graph object')
+    return value
+
+
 def main():
     p=argparse.ArgumentParser();p.add_argument('--source',type=Path,required=True);p.add_argument('--commit',required=True);p.add_argument('--controller',required=True);p.add_argument('--version',required=True);p.add_argument('--base',required=True);p.add_argument('--output',type=Path,required=True);a=p.parse_args()
     import tomllib

@@ -10,7 +10,7 @@ import subprocess
 import sys
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT))
-from scripts.releases.semantier_windows import is_acceptance_request
+from scripts.releases.semantier_windows import is_acceptance_request, validate_native_graph
 from scripts.bundles.release_artifacts import write_appinstaller
 
 
@@ -31,6 +31,11 @@ def stage(output,native,incoming,notes):
     if os.environ.get('GITHUB_ACTIONS')!='true' or os.environ.get('GITHUB_REPOSITORY')!='chris-han/hermes-agent':raise ValueError('Real governed CI context required')
     result=read(output/'result.json');request=read(output/'channel-request.json');signed=read(output/'signed/receipt.json')
     if not is_acceptance_request(request) or result['result']!='PASS' or request['commit']!=os.environ['GITHUB_SHA'] or result['sourceCommit']!=request['commit']:raise ValueError('Exact completed source required')
+    if 'nativeGraph' in signed:
+        validate_native_graph(signed['nativeGraph'],build_id=request['buildId'],
+            identity=request['identity']['msixAppIdWithOrg'],publisher=signed['publisher'],
+            version=request['windowsVersion'],arch='x64')
+        raise ValueError('Native graph requires graph-bound installed qualification; legacy staging refused')
     installed=read(native/'installed-identity.json');exit_result=read(native/'native-install-exit.json');artifact_meta=read(native/'artifact.json')
     if exit_result.get('exitCode')!=0 or signed.get('signing')!='PASS' or not signed.get('verification','').startswith('PASS:'):raise ValueError('Native installation and signature gates required')
     if signed['packageName']!=request['identity']['msixAppIdWithOrg'] or signed['publisher']!='CN=Semantier Technology, O=Semantier Technology' or signed['packageVersion']!=request['windowsVersion']:raise ValueError('Package identity mismatch')
