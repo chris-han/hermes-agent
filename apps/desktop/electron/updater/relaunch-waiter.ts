@@ -39,6 +39,7 @@ export interface NativeUpdateHandoff {
   base: string
   graph: NativePackageGraph
   manifestSha256: string
+  graphSha256: string
   publisher: string
   identity: string
   version: string
@@ -49,6 +50,7 @@ export interface NativeUpdateHandoff {
   familyName: string
   applicationId: string
   executable: string
+  userDataDirectory: string
   journalDirectory: string
 }
 

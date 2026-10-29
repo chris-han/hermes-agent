@@ -136,3 +136,51 @@ function Recover-WD1NativeUri($Graph,[string]$Base,[string]$Root,$State,$Target,
  $proof|ConvertTo-Json -Depth 10|Set-Content -LiteralPath (Join-Path $Evidence 'native-uri-reconciled.json') -Encoding utf8
  return $proof
 }
+
+# CI-only complete-object digest refusal/registration proof. No publication authority.
+function Invoke-CINativeGraphUri($Graph,[string]$GraphPath,[string]$Artifact,[string]$Node,[string]$Out,[string]$ExpectedSid,$State) {
+ if($env:GITHUB_ACTIONS -cne 'true' -or !$ExpectedSid -or $ExpectedSid -cin @('S-1-5-21-1928370875-4287869425-2092521300-1003','S-1-5-21-1928370875-4287869425-2092521300-1011') -or !(Get-Command Assert-CISession -ErrorAction SilentlyContinue)){throw 'Separate genuine CI session required'}
+ $context=Assert-CISession
+ if($context.sid -cne $ExpectedSid){throw 'CI URI actor mismatch'}
+ . (Join-Path $PSScriptRoot '..\..\..\apps\desktop\scripts\native-package-digest.ps1')
+ $ready=Join-Path $Out 'native-origin-ready.json';$log=Join-Path $Out 'native-origin-requests.jsonl'
+ $hash=(Get-FileHash -LiteralPath $GraphPath -Algorithm SHA256).Hash.ToLowerInvariant()
+ $originScript=Join-Path $PSScriptRoot 'native-package-origin.mjs'
+ $argv=@($originScript,'--directory',(Split-Path -Parent $Artifact),'--graph',$GraphPath,'--graph-sha256',$hash,'--ready',$ready,'--log',$log)
+ $quoted=@($argv|ForEach-Object{'"'+$_.Replace('"','\"')+'"'})
+ $process=Start-Process -FilePath $Node -ArgumentList $quoted -WorkingDirectory $Out -PassThru -RedirectStandardOutput (Join-Path $Out 'native-origin.stdout.log') -RedirectStandardError (Join-Path $Out 'native-origin.stderr.log')
+ $null=$process.Handle
+ $State.origin=@{pid=$process.Id;birth=([DateTimeOffset]$process.StartTime).ToUniversalTime().ToString('o');exe=$Node;script=$originScript;graphSha256=$hash}
+ try{
+  $deadline=[DateTimeOffset]::UtcNow.AddMinutes(10)
+  while(!(Test-Path -LiteralPath $ready)){
+   if($process.HasExited -or [DateTimeOffset]::UtcNow -gt $deadline){throw 'CI pinned native origin unavailable'}
+   Start-Sleep -Milliseconds 500
+  }
+  $origin=Get-Content -LiteralPath $ready -Raw -Encoding UTF8|ConvertFrom-Json
+  if($origin.pid -ne $process.Id -or $origin.graphSha256 -cne $hash -or $origin.base -cnotmatch '^http://127\.0\.0\.1:[1-9][0-9]{0,4}$'){throw 'CI native origin binding mismatch'}
+  $rows=@($Graph.objects);$uris=@($rows|ForEach-Object{$origin.base+'/'+$_.key});$digests=@($rows|ForEach-Object{[string]$_.nativeDigest});$refusals=@()
+  foreach($index in 0..($rows.Count-1)){
+   $State.unknown=$true
+   $expected=[string[]]$digests.Clone();$bytes=[Convert]::FromBase64String($expected[$index]);$bytes[0]=$bytes[0] -bxor 1;$expected[$index]=[Convert]::ToBase64String($bytes)
+   $refusal=Invoke-BoundNativePackageUri $uris $expected ($origin.base+'/'+$Graph.root) 2
+   $refusals+=@{key=$rows[$index].key;result=$refusal}
+   @{graphSha256=$hash;refusals=$refusals}|ConvertTo-Json -Depth 12|Set-Content -LiteralPath (Join-Path $Out 'native-uri-refusals.json') -Encoding UTF8
+   $present=@(Get-AppxPackage -Name $rows[$index].identity)+@(Get-AppxPackage -PackageTypeFilter Resource -Name $rows[$index].identity)
+   $refusals[-1].registrationAbsentAfterRefusal=($present.Count -eq 0)
+   if($refusal.status -cne 'FAILURE' -or $refusal.hresult -cne '80080219' -or $present.Count){throw 'Exact per-object native digest refusal and unchanged registration required'}
+   $State.unknown=$false
+  }
+  $State.unknown=$true
+  $positive=Invoke-BoundNativePackageUri $uris $digests ($origin.base+'/'+$Graph.root) 25
+  $positive|ConvertTo-Json -Depth 12|Set-Content -LiteralPath (Join-Path $Out 'native-uri-positive.json') -Encoding UTF8
+  if($positive.status -cne 'SUCCESS'){throw 'Native URI registration unresolved; preserve CI intent, origin and packages'}
+  $State.unknown=$false
+  $after=Assert-CISession
+  @{scope='CI_NATIVE_URI_GRAPH_ONLY_NOT_DIFFERENTIAL_OR_CACHE';producedAt=[DateTime]::UtcNow.ToString('o');graphSha256=$hash;sourceBuildId=($Graph.root -split '/')[2];contextBefore=$context;contextAfter=$after;uris=$uris;digests=$digests;refusals=$refusals;positive=$positive;nativeRemoteDigestEnforcement='PASS'}|ConvertTo-Json -Depth 16|Set-Content -LiteralPath (Join-Path $Out 'native-uri-proof.json') -Encoding UTF8
+ }finally{
+  if($State.unknown){$State|ConvertTo-Json -Depth 8|Set-Content -LiteralPath (Join-Path $Out 'native-uri-unknown.json') -Encoding UTF8}
+  elseif(!$process.HasExited){$process.Kill();if(!$process.WaitForExit(10000)){throw 'Owned CI native origin did not stop'}}
+  $process.Dispose()
+ }
+}

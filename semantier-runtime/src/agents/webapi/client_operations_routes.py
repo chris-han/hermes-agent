@@ -156,7 +156,7 @@ async def control(channel:str,request:Request):
 def operation(operation_id:str,request:Request):
     owner,ctx,permissions=browser(request,'release_read')
     with owner.store.connection() as c:row=c.execute('SELECT * FROM operations WHERE (operation_id=%s OR (idempotency_key=%s AND user_id=%s)) AND channel=%s',(operation_id,operation_id,ctx.user_id,owner.channel)).fetchone()
-    if not row:raise OperationError(404,'operation_unavailable')
+    if not row or row['user_id']=='system:release-retention':raise OperationError(404,'operation_unavailable')
     if 'publication_intent' in row['body'] and hasattr(owner,'publications'):
         try:
             publication=owner.publications.lookup(ctx.user_id,row['body']['idempotency_key'])

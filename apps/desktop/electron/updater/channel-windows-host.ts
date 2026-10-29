@@ -120,6 +120,8 @@ $p=[Console]::In.ReadToEnd()|ConvertFrom-Json
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
 $null=[Windows.Management.Deployment.PackageManager,Windows.Management.Deployment,ContentType=WindowsRuntime]
 $null=[Windows.Foundation.Metadata.ApiInformation,Windows.Foundation,ContentType=WindowsRuntime]
+$cpus=@(Get-CimInstance Win32_Processor)
+if(!$cpus.Count -or @($cpus|Where-Object{$_.Architecture -ne 9}).Count){@{supported=$false;reason='native-x64-host-unavailable'}|ConvertTo-Json -Compress;exit 0}
 $api=[Windows.Foundation.Metadata.ApiInformation]::IsMethodPresent('Windows.Management.Deployment.PackageManager','AddPackageByUriAsync') -and [Windows.Foundation.Metadata.ApiInformation]::IsPropertyPresent('Windows.Management.Deployment.AddPackageOptions','ExpectedDigests')
 if(!$api){@{supported=$false;reason='native-api-unavailable'}|ConvertTo-Json -Compress;exit 0}
 $manager=[Windows.Management.Deployment.PackageManager]::new()
@@ -196,6 +198,7 @@ export function createNativeUriAppInstallerStrategy(
               base: target.manifest.request.publicBase,
               graph,
               manifestSha256: target.manifestSha256,
+              graphSha256: target.package.native!.graph.sha256,
               publisher: target.package.publisher!,
               identity: installed.identity,
               version: target.package.version,
@@ -206,6 +209,7 @@ export function createNativeUriAppInstallerStrategy(
               familyName: installed.packageFamilyName!,
               applicationId: installed.applicationId!,
               executable: installed.executable,
+              userDataDirectory: context.app.getPath('userData'),
               journalDirectory: path.join(updates, `native-${target.manifestSha256}-${randomUUID().replaceAll('-', '')}`)
             }
           )

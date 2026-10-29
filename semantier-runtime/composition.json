@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "parent_commit": "808ec583792b7a95bead1cb398a733c920f299b4",
+  "parent_commit": "179552760bc8a72bff52e80f349ce7d333e97266",
   "files": [
     {
       "path": "MODEL-NOTICE.txt",
@@ -292,7 +292,7 @@
     },
     {
       "path": "src/agents/client_operations/ci.py",
-      "sha256": "b646831bcfa708e7a35ae073a329bb0ee4c86a6b5bf802512f16253499085e26"
+      "sha256": "f898c72e90435cb1e38153e29c86f5fbc0f20e24051ebe1fa4a71619b2587979"
     },
     {
       "path": "src/agents/client_operations/distribution.py",
@@ -303,8 +303,12 @@
       "sha256": "7d97edf23e287b85afd5fa1c2ddd1b868d3b0e374e17255e0d23d671f3b55ca7"
     },
     {
+      "path": "src/agents/client_operations/package_graph.py",
+      "sha256": "e457992d59aba0665d3d9d16d0cec8cdc0875e7973ff951f2a62eeb4ac40167e"
+    },
+    {
       "path": "src/agents/client_operations/publication.py",
-      "sha256": "0cb11a9213683fc62eb5e077a5211ca4d5888cded9e745ed85765c771ea3b64b"
+      "sha256": "a09dc6a3d91187a656067c961b6e547419fe3c9a89792259cb4702488421a198"
     },
     {
       "path": "src/agents/client_operations/publications.py",
@@ -312,11 +316,15 @@
     },
     {
       "path": "src/agents/client_operations/r2_target.py",
-      "sha256": "f65522b8902fad30924220893a83b68b17e5d8cf8cf8c0f0c1f1a4a3f6eacef2"
+      "sha256": "737c0f28ab3c0bdd891cf9cf9ca280b8daebf5eba163ea61a0b04e6175e909e2"
+    },
+    {
+      "path": "src/agents/client_operations/remote_publication.py",
+      "sha256": "96d9cb5351c8ba6414d11329bf754eaf7801dfc368729be930617ab214e71c71"
     },
     {
       "path": "src/agents/client_operations/runtime.py",
-      "sha256": "03965c87f44749bd9b30d427975558424516e0ef8222e23a099c09274eebe747"
+      "sha256": "6ffca5bab459b0e74244929b0bb8eca1264f4ed04679c2145a87dfbc3da12920"
     },
     {
       "path": "src/agents/client_operations/schema.sql",
@@ -716,7 +724,7 @@
     },
     {
       "path": "src/agents/webapi/client_operations_routes.py",
-      "sha256": "f18818381fa2992fde203c32cf320f92dfdb7bc9759f024c7e1f56876b232c98"
+      "sha256": "5c8f8ad669ec7e9bed45e13680b6ca920eeba7255dab1ee28b8e98fd70de86d4"
     },
     {
       "path": "src/agents/webapi/cloud_device_routes.py",

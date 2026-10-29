@@ -36,6 +36,7 @@ param(
     [string]$ExpectedTargetVersion,
     # How long to keep looking for the in-app button (the app may still be
     # booting its backend when the driver starts).
+    [switch]$NativePackageUri,
     [int]$ButtonTimeoutSec = 300,
     # How long to wait for the App Installer confirmation dialog, if the OS
     # shows one at all.
@@ -73,6 +74,7 @@ New-Item -ItemType Directory -Path $ProofDir -Force | Out-Null
 if (-not $ResultPath) { $ResultPath = Join-Path $ProofDir "drive-update-result.json" }
 
 function Save-Shot([string]$Name) {
+    if($SemantierIsolated){Write-Host '[uia] isolated whole-desktop capture skipped; owned-window rendering remains unverified';return}
     try {
         $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
         $bmp = New-Object System.Drawing.Bitmap($b.Width, $b.Height)
@@ -177,6 +179,7 @@ Write-Host "  [uia] in-app update trigger clicked: $($clicked.Name)"
 
 # 2. the OS App Installer confirmation, if the OS shows one -------------------
 
+if(-not $NativePackageUri){
 Write-Host "[uia] watching for an App Installer confirmation (up to ${ConfirmTimeoutSec}s) ..."
 $cDeadline = (Get-Date).AddSeconds($ConfirmTimeoutSec)
 $confirmed = $false
@@ -215,6 +218,7 @@ while ((Get-Date) -lt $cDeadline -and -not $confirmed) {
 }
 if ($confirmed) { Write-Host "  [uia] App Installer confirmation clicked" }
 else { Write-Host "  [uia] no App Installer dialog appeared (OnLaunch ShowPrompt=false + real source registration): ok" }
+}
 Save-Shot "03-after-trigger"
 
 # 3. wait for the app to exit (the hand-off quits it; never kill it here) -----

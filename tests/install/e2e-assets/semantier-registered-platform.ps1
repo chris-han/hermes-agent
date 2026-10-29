@@ -229,6 +229,7 @@ try {
   try{return @{pid=$proc.ProcessId;birth=(ExactBirth $proc);exe=$proc.ExecutablePath;exe_id=$exeHold.id;packageFullName=$package.full}}finally{$exeHold.handle.Dispose()}
  }
  function VerifyDownload {
+  if($r.PSObject.Properties['native_graph_value']){return Read-NativeProductionHandoff}
   $target=$r.target
   if($target.manifest_sha256 -cnotmatch '^[a-f0-9]{64}$' -or $target.chunk_descriptor_sha256 -cnotmatch '^[a-f0-9]{64}$'){throw 'Qualified target manifest/chunk identities required'}
   $directory=Join-Path $root 'userdata';$queue=[Collections.Generic.Queue[string]]::new();$queue.Enqueue($directory);$records=@();$matches=@()
@@ -247,6 +248,60 @@ try {
   }
   if($records.Count -ne 1 -or $matches.Count -ne 1){throw 'Exact production download custody not established'}
   return @{manifestSha256=$target.manifest_sha256;artifactSha256=$target.sha256;expectedChunkDescriptorSha256=$target.chunk_descriptor_sha256;chunkObservation='NOT_RUN';scope='full package hash/signature and production manifest cache record';file=$matches[0]}
+ }
+ function Read-NativeProductionHandoff {
+  $target=$r.target
+  if($target.manifest_sha256 -cnotmatch '^[a-f0-9]{64}$'){throw 'Qualified native manifest required'}
+  $directory=Join-Path $root 'userdata\updates';$directoryHold=Physical $directory
+  $matches=@()
+  try{
+   foreach($attempt in @(Get-ChildItem -LiteralPath $directory -Directory -Filter ('native-'+$target.manifest_sha256+'-*'))){
+    $attemptHold=Physical $attempt.FullName
+    try{
+     if(@('intent.json','deployment.json','relaunch-intent.json','completed.json'|Where-Object{!(Test-Path -LiteralPath (Join-Path $attempt.FullName $_))}).Count){continue}
+     $record=@{transport='windows-package-uri'}
+     foreach($binding in @(@('intent','intent.json'),@('deployment','deployment.json'),@('relaunch_intent','relaunch-intent.json'),@('completion','completed.json'))){
+      $path=Join-Path $attempt.FullName $binding[1]
+      $hold=Physical $path
+      try{if((Get-Item -LiteralPath $path).Length -gt 4194304){throw 'Native handoff record oversized'};$record[$binding[0]]=Get-Content -LiteralPath $path -Raw -Encoding UTF8|ConvertFrom-Json}finally{$hold.handle.Dispose()}
+     }
+     if($record.intent.manifestSha256 -ceq $target.manifest_sha256 -and $record.deployment.status -ceq 'OS_SUCCESS'){$record.observed=Observe;$record.directory=$attempt.FullName;$matches+=$record}
+    }finally{$attemptHold.handle.Dispose()}
+   }
+  }finally{$directoryHold.handle.Dispose()}
+  if($matches.Count -ne 1){throw 'Exactly one complete native production handoff required; preserve ambiguous state'}
+  return $matches[0]
+ }
+ function Assert-NativeJobsSettled {
+  $directory=Join-Path $root 'userdata\updates'
+  if(!(Test-Path -LiteralPath $directory)){return}
+  $heldDirectory=Physical $directory
+  try{
+   foreach($entry in @(Get-ChildItem -LiteralPath $directory -Directory -Filter 'native-*')){
+    $attempt=Physical $entry.FullName
+    try{
+     $intentPath=Join-Path $entry.FullName 'intent.json'
+     if(!(Test-Path -LiteralPath $intentPath)){throw 'Unknown native transaction directory; preserve it'}
+     $hold=Physical $intentPath
+     try{if((Get-Item -LiteralPath $intentPath).Length -gt 4194304){throw 'Native intent oversized'};$intent=Get-Content -LiteralPath $intentPath -Raw -Encoding UTF8|ConvertFrom-Json}finally{$hold.handle.Dispose()}
+     if($intent.authorizedSid -cne $sid -or $intent.session -ne $session){throw 'Native transaction belongs to another actor; preserve it'}
+     $waiter=Get-Process -Id $intent.waiterPid -ErrorAction SilentlyContinue
+     if($waiter -and ([DateTimeOffset]$waiter.StartTime).ToUniversalTime().ToString('o') -ceq ([DateTimeOffset]::Parse($intent.waiterBirth)).ToUniversalTime().ToString('o')){throw 'Native deployment waiter remains live; no cleanup'}
+     $settled=$false
+     foreach($name in @('completed.json','reconciled.json')){
+      $path=Join-Path $entry.FullName $name
+      if(!(Test-Path -LiteralPath $path)){continue}
+      $receiptHold=Physical $path
+      try{
+       if((Get-Item -LiteralPath $path).Length -gt 4194304){throw 'Native outcome oversized'}
+       $outcome=Get-Content -LiteralPath $path -Raw -Encoding UTF8|ConvertFrom-Json
+       if($outcome.manifestSha256 -ceq $intent.manifestSha256 -and $outcome.status -cin @('TARGET_GRAPH_REGISTERED_PROCESS_LAUNCHED','NOT_STARTED','TARGET_GRAPH_REGISTERED')){$settled=$true}
+      }finally{$receiptHold.handle.Dispose()}
+     }
+     if(!$settled){throw 'Native deployment UNKNOWN hold; no cleanup'}
+    }finally{$attempt.handle.Dispose()}
+   }
+  }finally{$heldDirectory.handle.Dispose()}
  }
  function Related-Packages {
   $result=@()
@@ -363,21 +418,27 @@ try {
   }
   update {
    $target=Artifact 'target';$before=Observe
+   $oldGateway=GatewayIdentity $before.package
    if(-not $before.process -or [version]$target.version -le [version]$before.package.version){throw 'Update precondition failed'}
    $proof=Join-Path $root 'proof';$log=Join-Path $root 'ui-driver.log'
    if((Test-Path -LiteralPath $proof) -or (Test-Path -LiteralPath $log)){throw 'Existing UI evidence requires inspection; no overwrite'}
    New-Item -ItemType Directory -Path $proof -ErrorAction Stop|Out-Null
    $proofHold=Physical $proof
    try{
-    $uiOutput=& (Join-Path $PSScriptRoot 'windows-bundled-drive-update.ps1') -OldProcessId $before.process.pid -ProofDir $proof -SemantierIsolated -ExpectedSid $sid -ExpectedExecutable $before.process.exe -ExpectedBirth $before.process.birth -ExpectedTargetVersion $target.version *>&1
+    $uiOutput=& (Join-Path $PSScriptRoot 'windows-bundled-drive-update.ps1') -OldProcessId $before.process.pid -ProofDir $proof -SemantierIsolated -ExpectedSid $sid -ExpectedExecutable $before.process.exe -ExpectedBirth $before.process.birth -ExpectedTargetVersion $target.version -NativePackageUri:([bool]$r.PSObject.Properties['native_graph_value']) *>&1
     $uiExit=$LASTEXITCODE
     $logHandle=[IO.File]::Open($log,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
     try{$bytes=[Text.Encoding]::UTF8.GetBytes(($uiOutput|Out-String));$logHandle.Write($bytes,0,$bytes.Length);$logHandle.Flush($true)}finally{$logHandle.Dispose()}
     if($uiExit -ne 0){throw 'Production UI update failed'}
    }finally{$proofHold.handle.Dispose()}
-   $deadline=(Get-Date).AddMinutes(15)
+   $minutes=if($r.PSObject.Properties['native_graph_value']){35}else{15}
+   $deadline=(Get-Date).AddMinutes($minutes)
    do{Start-Sleep -Seconds 2;$result=Observe}while(((-not $result.process) -or $result.package.version -cne $target.version) -and (Get-Date)-lt $deadline)
    if(-not $result.process -or $result.package.version -cne $target.version){throw 'Successor did not automatically relaunch'}
+   if($oldGateway){
+    $old=Get-Process -Id $oldGateway.pid -ErrorAction SilentlyContinue
+    if($old -and ([DateTimeOffset]$old.StartTime).ToUniversalTime().ToString('o') -ceq $oldGateway.birth){throw 'Old owned gateway remains after update; preserve it'}
+   }
    $oldPayload=@(Get-CimInstance Win32_Process|Where-Object{$_.ExecutablePath -and $_.ExecutablePath.StartsWith($before.package.install_path+'\',[StringComparison]::OrdinalIgnoreCase)})
    if($oldPayload.Count){throw 'Old payload processes remain; preserve update state'}
   }
@@ -463,6 +524,7 @@ try {
    }
   }
   remove {
+   Assert-NativeJobsSettled
    $before=Observe;if(-not $before.package){throw 'No registered package'}
    $owned=@($r.owned_packages|Where-Object{$_.full -ceq $before.package.full -and $_.exe_id -ceq $before.package.exe_id -and $_.family -ceq $before.package.family})
    if(-not $owned.Count){throw 'Unowned registration: preserve it'}

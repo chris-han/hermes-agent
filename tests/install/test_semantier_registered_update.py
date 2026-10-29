@@ -413,3 +413,42 @@ def test_prior_proof_source_refuses_changed_staged_bytes(prior_proof_source):
     p,root,_=prior_proof_source
     file=root/'tests/install/semantier_registered_update.py';file.write_bytes(file.read_bytes()+b'\n')
     with pytest.raises(ValueError,match='source bytes changed'):p.proof_bindings(p.proof_binding())
+
+
+def native_handoff_case():
+    request={'authorized_sid':'actor','selected_delivery_base':'https://s3.semantier.com',
+             'native_handoff_source_sha256':'a'*64,'native_graph_value':{'root':'bound','objects':[{'sha256':'b'*64}]},
+             'target':{'manifest_sha256':'c'*64,'native_graph':{'sha256':'d'*64},'build_id':'e'*32,'commit':'f'*40,'version':'0.0.61.0'}}
+    before={'package':{'full':'baseline','version':'0.0.60.0','family':'same-family'},'process':{'pid':1,'birth':'2026-10-29T14:00:00.0000000+00:00'},'session':1}
+    process={'pid':2,'birth':'2026-10-29T14:01:03.0000000+00:00','exe':'registered.exe','exe_id':'file-id'}
+    intent={'authorizedSid':'actor','session':1,'manifestSha256':'c'*64,'graphSha256':'d'*64,'graph':request['native_graph_value'],
+            'sourceSha256':'a'*64,'base':request['selected_delivery_base'],'targetBuildId':'e'*32,'targetCommit':'f'*40,
+            'version':'0.0.61.0','currentVersion':'0.0.60.0','fullName':'baseline','familyName':'same-family'}
+    proof={'transport':'windows-package-uri','intent':intent,'deployment':{'status':'OS_SUCCESS','manifestSha256':'c'*64,'activityId':'11111111-1111-1111-1111-111111111111','producedAt':'2026-10-29T14:01:01Z'},
+           'relaunch_intent':{'manifestSha256':'c'*64,'producedAt':'2026-10-29T14:01:02Z'},
+           'completion':{'status':'TARGET_GRAPH_REGISTERED_PROCESS_LAUNCHED','manifestSha256':'c'*64,'fullName':'successor','pid':2,'birth':process['birth'],'exe':'registered.exe','exeId':'file-id','sid':'actor','session':1,'producedAt':'2026-10-29T14:01:04Z'},
+           'observed':{'sid':'actor','session':1,'process':process,'package':{'full':'successor','family':'same-family','commit':'f'*40,'build_id':'e'*32,'version':'0.0.61.0'}}}
+    return request,before,proof
+
+
+def test_native_handoff_binds_real_production_owner_and_successor_incarnation():
+    request,before,proof=native_handoff_case()
+    assert d.verify_native_handoff(proof,request,before)==proof
+
+
+@pytest.mark.parametrize('part,key,value',[
+    ('intent','sourceSha256','wrong'),('intent','base','https://other.invalid'),('intent','authorizedSid','other'),
+    ('intent','graph',{'root':'different'}),('intent','graphSha256','0'*64),('deployment','status','UNKNOWN'),
+    ('completion','pid',3),('completion','birth','2026-10-29T13:00:00Z'),('completion','exeId','other'),
+    ('completion','status','TARGET_GRAPH_REGISTERED_ACTIVATION_REQUESTED'),('relaunch_intent','producedAt','2026-10-29T14:01:09Z')])
+def test_native_handoff_refuses_unbound_or_manual_successor_claims(part,key,value):
+    request,before,proof=native_handoff_case();proof[part][key]=value
+    with pytest.raises(ValueError):d.verify_native_handoff(proof,request,before)
+
+
+def test_readonly_precondition_refusal_does_not_leave_an_action_intent(tx):
+    t,p=tx;seed(t,p)
+    def refuse(*_args):raise ValueError('missing native binding')
+    p.check=refuse
+    with pytest.raises(ValueError,match='missing native binding'):t.operation('register',{'full':'target'})
+    assert t.pending() is None and p.calls==[]

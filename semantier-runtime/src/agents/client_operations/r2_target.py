@@ -9,12 +9,15 @@ import re
 from uuid import uuid4
 from xml.etree import ElementTree as ET
 
-from .artifact_io import OperationError
+from .artifact_io import OperationError, safe_file
 
 from contracts.client_operations import canonical
 
 MAX_BYTES = 10_000_000_000
 MAX_RELEASES = 3
+# Cover the simultaneous 60,000-byte retention projection, 16,000-byte upload
+# journal, and bounded publication lock/head metadata throughout publication.
+CONTROL_ALLOCATION_BYTES = 128 * 1024
 LOCK_KEY = "_control/publication.lock"
 RETENTION_KEY = "_control/retention.json"
 BUILD = re.compile(r"^releases/channel-builds/([a-f0-9]{32})/")
@@ -308,9 +311,25 @@ class R2Target:
             elif re.fullmatch(r"releases/channels/[a-z0-9-]+.json", key):
                 raw, _ = self.read(key)
                 record = json.loads(raw)
-                if record.get("head"):
-                    heads.add(record["head"]["buildId"])
+                for field in ('head','nativeHead','destinationHead','lastHead'):
+                    if record.get(field):heads.add(record[field]['buildId'])
+        self.verify_native_inventory(objects,manifests)
         return objects, manifests, heads
+
+    def verify_native_inventory(self, objects, manifests):
+        from .package_graph import graph_descriptor,decode_package_graph
+        for build,manifest in manifests.items():
+            if manifest.get('schema')!=2:continue
+            try:
+                packages=manifest['packages']
+                if len(packages)!=1:raise ValueError('ambiguous native package')
+                package=packages[0];descriptor=graph_descriptor(package,build)
+                body,_=self.read(descriptor['key'])
+                graph=decode_package_graph(body,package,build)
+                if any(objects.get(row['key'])!=row['size'] for row in [*graph['objects'],descriptor]):
+                    raise ValueError('native object inventory missing or changed')
+            except (OperationError,ValueError,TypeError,KeyError) as error:
+                raise OperationError(503,'native_graph_inventory_unresolved') from error
 
     def initialize(self, record):
         key = "releases/channels/" + record["name"] + ".json"
@@ -326,13 +345,10 @@ class R2Target:
 
     def files(self, release, public_root):
         files = {}
-        from .chunks import chunk_entries
+        from .package_graph import package_objects
         for package in release['manifest']['packages']:
-            for chunk in chunk_entries(package['artifact'], release['manifest']['request']['buildId']):
-                files[chunk['key']] = Path(public_root)/chunk['key']
-            for item in [package['artifact'], package.get('distributionArchive'), package['feed']]:
-                if item:
-                    files[item['key']] = Path(public_root)/item['key']
+            for item in package_objects(package,release['manifest']['request']['buildId'],public_root):
+                files[item['key']]=safe_file(public_root,item['key'])
         files[release['manifest_key']] = Path(public_root)/release['manifest_key']
         return files
 
@@ -362,7 +378,7 @@ class R2Target:
             # ephemeral lock ids; every actual object remains in inventory bytes.
             lock_bytes = objects.get(LOCK_KEY, 0)
             control = sum(size for key, size in objects.items() if key.startswith('_control/')) - lock_bytes
-            allocation = max(0, sum(self.files(release, public_root)[key].stat().st_size for key in missing) + 65536 - control)
+            allocation = max(0, sum(self.files(release, public_root)[key].stat().st_size for key in missing) + CONTROL_ALLOCATION_BYTES - control)
             incoming = max(0, allocation - lock_bytes)
             delete, projected = capacity_plan(objects, manifests, heads | set(projection['inflight']), incoming, build,
                                               admission_order=projection['admissions'])
@@ -382,11 +398,7 @@ class R2Target:
             if not recovering and actual != previous:
                 raise OperationError(409, 'r2_channel_revision_conflict')
             files = self.files(release, public_root)
-            if recovering:
-                for file_key, file_path in files.items():
-                    self.transport.verify_remote_artifact(self.url(file_key), self.creds, self.transport.amz_timestamp(),
-                        file_path.stat().st_size, self.transport.file_sha256(str(file_path)), algorithm='sha256', encoding='hex')
-            else:
+            if not recovering:
                 plan = self.preflight(release, public_root, reservation=held)
                 authorize()
                 projection = plan['retention']
@@ -397,20 +409,19 @@ class R2Target:
                 self.request('PUT', RETENTION_KEY, canonical(projection))
                 for old in plan['delete_keys']:
                     self.request('DELETE', old)
-                for file_key, file_path in files.items():
-                    self.verify_reservation(held)
-                    if file_key in plan['missing_keys']:
-                        self.transport.put_object(self.creds, self.base, self.bucket, file_key, str(file_path),
-                            self.transport.amz_timestamp(), self.transport.content_type_for(file_key), {'If-None-Match': '*'},
-                            on_multipart_created=lambda upload_id, file_key=file_key: self.journal_upload(held, file_key, upload_id))
-                    self.transport.verify_remote_artifact(self.url(file_key), self.creds, self.transport.amz_timestamp(),
-                        file_path.stat().st_size, self.transport.file_sha256(str(file_path)), algorithm='sha256', encoding='hex')
-                authorize()
-                self.verify_reservation(held)
-                self.request('PUT', key, canonical(record), {'If-Match': etag})
-                readback, _ = self.read(key)
-                if readback != canonical(record):
-                    raise OperationError(503, 'r2_head_readback_failed')
+            from .remote_publication import publish_objects_then_head
+            def upload(file_key, file_path):
+                if file_key in plan['missing_keys']:
+                    self.transport.put_object(self.creds, self.base, self.bucket, file_key, str(file_path),
+                        self.transport.amz_timestamp(), self.transport.content_type_for(file_key), {'If-None-Match': '*'},
+                        on_multipart_created=lambda upload_id: self.journal_upload(held, file_key, upload_id))
+            def verify(file_key, file_path):
+                self.transport.verify_remote_artifact(self.url(file_key), self.creds, self.transport.amz_timestamp(),
+                    file_path.stat().st_size, self.transport.file_sha256(str(file_path)), algorithm='sha256', encoding='hex')
+            publish_objects_then_head(files, recovering=recovering,
+                assert_reservation=lambda: self.verify_reservation(held), upload=upload, verify=verify,
+                authorize=authorize, commit_head=lambda: self.request('PUT', key, canonical(record), {'If-Match': etag}),
+                read_head=lambda: self.read(key)[0], intended_bytes=canonical(record), readback_error='r2_head_readback_failed')
             # A confirmed head remains Published even if subsequent maintenance fails.
             try:
                 projection = self.retention()
@@ -425,6 +436,18 @@ class R2Target:
                 return {'maintenance_status': 'none'}
             except (OperationError, OSError, self.transport.R2RequestError):
                 return {'maintenance_status': 'failed'}
+
+    def maintain_retention(self, owner, *, reservation):
+        """Backend backstop: protect current/in-flight builds; never change a head."""
+        with self.locked(owner, reservation=reservation):
+            objects, manifests, heads = self.inventory()
+            projection = self.retention()
+            delete, projected = capacity_plan(objects, manifests, heads | set(projection['inflight']),
+                                               admission_order=projection['admissions'])
+            for key in delete:
+                self.verify_reservation(reservation)
+                self.request('DELETE', key)
+            return {'deleted_keys': delete, 'projected_bytes': projected}
 
     def cleanup(self, confirmed_build, authorize, *, reservation):
         """Retention-only recovery: never write a channel head."""

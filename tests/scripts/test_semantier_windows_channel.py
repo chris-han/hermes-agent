@@ -65,7 +65,8 @@ def test_native_graph_cannot_mint_legacy_ci_qualification(tmp_path,monkeypatch):
         'signed/receipt.json':{'publisher':'CN=Semantier Technology, O=Semantier Technology','nativeGraph':native_graph()}}
     for name,value in records.items():(tmp_path/name).write_text(json.dumps(value),encoding='utf-8')
     for key,value in {'GITHUB_ACTIONS':'true','GITHUB_REPOSITORY':'chris-han/hermes-agent','GITHUB_SHA':request['commit']}.items():monkeypatch.setenv(key,value)
-    with pytest.raises(ValueError,match='graph-bound installed qualification'):stage(tmp_path,tmp_path,tmp_path,{'en':'test'})
+    with pytest.raises(ValueError,match='Final signed source proof required'):stage(tmp_path,tmp_path,tmp_path,{'en':'test'})
+    assert not (tmp_path/'ci-candidates').exists()
 
 
 def test_native_graph_rejects_same_identity_at_two_remote_keys():

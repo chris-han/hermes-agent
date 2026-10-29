@@ -47,12 +47,14 @@ try{
  $state=$baseline|ConvertFrom-Json
  $state|Add-Member -NotePropertyName authorizedSid -NotePropertyValue ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
  $state|Add-Member manifestSha256 ('d'*64)
+ $state|Add-Member baselineResources @()
  $state|Add-Member -NotePropertyName fullName -NotePropertyValue 'unit-baseline'
+ $state|Add-Member currentVersion '0.0.1.0'
  $state|Add-Member -NotePropertyName familyName -NotePropertyValue 'unit-family'
  $state|Add-Member -NotePropertyName targetBuildId -NotePropertyValue (($state.graph.root -split '/')[2])
  $state|Add-Member -NotePropertyName targetCommit -NotePropertyValue ('e'*40)
  $state|Add-Member -NotePropertyName waiterPid -NotePropertyValue 123
- $state|Add-Member -NotePropertyName waiterBirth -NotePropertyValue 1
+ $state|Add-Member -NotePropertyName waiterBirth -NotePropertyValue '1970-01-01T00:00:00.0010000+00:00'
  $state|Add-Member sourceSha256 (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'native-package-update.ps1') -Algorithm SHA256).Hash.ToLowerInvariant()
  $state|ConvertTo-Json -Depth 16|Set-Content -LiteralPath (Join-Path $fixture 'intent.json') -Encoding UTF8
  $global:nativeUnitPackage=[pscustomobject]@{Name=$state.identity;PackageFullName='unit-baseline';PackageFamilyName='unit-family';Publisher=$state.publisher;Version=[Version]'0.0.1.0';Architecture='X64';Status='Ok';InstallLocation=$fixture}
@@ -62,6 +64,24 @@ try{
  $global:nativeUnitWaiter=$null
  [IO.File]::WriteAllText((Join-Path $fixture 'deployment-intent.json'),'{}')
  if((Get-NativeUpdateReconciliation $fixture).status -cne 'UNKNOWN'){throw 'Unresolved deployment was released'}
+ $failure=@{status='FAILURE';operationCompleted=$true;manifestSha256=$state.manifestSha256;hresult='80080219'}
+ $failure|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $fixture 'deployment-unresolved.json') -Encoding UTF8
+ if((Get-NativeUpdateReconciliation $fixture).status -cne 'BASELINE_INTACT_FAILED'){throw 'Completed failure with intact baseline not distinguished'}
+ $failure.operationCompleted=$false
+ $failure|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $fixture 'deployment-unresolved.json') -Encoding UTF8
+ if((Get-NativeUpdateReconciliation $fixture).status -cne 'UNKNOWN'){throw 'Pending failure was released'}
+ $failure.operationCompleted=$true
+ $failure|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $fixture 'deployment-unresolved.json') -Encoding UTF8
+ $originalSource=$state.sourceSha256;$state.sourceSha256='0'*64
+ $state|ConvertTo-Json -Depth 16|Set-Content -LiteralPath (Join-Path $fixture 'intent.json') -Encoding UTF8
+ if((Get-NativeUpdateReconciliation $fixture).status -cne 'UNKNOWN'){throw 'Failure from unbound source was released'}
+ $state.sourceSha256=$originalSource
+ $state|ConvertTo-Json -Depth 16|Set-Content -LiteralPath (Join-Path $fixture 'intent.json') -Encoding UTF8
+ $global:nativeUnitResources=@([pscustomobject]@{PackageFamilyName=$state.familyName;PackageFullName='unexpected-resource'})
+ if((Get-NativeUpdateReconciliation $fixture).status -cne 'UNKNOWN'){throw 'Changed resource registration was released'}
+ $global:nativeUnitResources=@()
+ Remove-Item -LiteralPath (Join-Path $fixture 'deployment-unresolved.json')
+
  $global:nativeUnitPackage.Version=[Version]$state.version
  $global:nativeUnitPackage.PackageFullName='unit-target'
  $global:nativeUnitResources=@($state.graph.objects|Where-Object{$_.kind -ceq 'asset-package'}|ForEach-Object{[pscustomobject]@{ResourceId=$_.resourceId;Publisher=$state.publisher;Version=[Version]$state.version;PackageFamilyName=$state.familyName;Architecture='Neutral';Status='Ok'}})
@@ -69,9 +89,27 @@ try{
  if((Get-NativeUpdateReconciliation $fixture).status -cne 'TARGET_GRAPH_REGISTERED'){throw 'Complete exact target did not reconcile'}
  @{commit=('f'*40);channelBuild=@{buildId=$state.targetBuildId}}|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $fixture 'app\resources\install-stamp.json') -Encoding UTF8
  if((Get-NativeUpdateReconciliation $fixture).status -cne 'UNKNOWN'){throw 'Wrong installed source was released'}
- @{scope='DETERMINISTIC_RECONCILIATION_OS_FACTS_SUBSTITUTED';status='PASS';cases=5;producedAt=[DateTime]::UtcNow.ToString('o')}|ConvertTo-Json -Compress
+ @{scope='DETERMINISTIC_RECONCILIATION_OS_FACTS_SUBSTITUTED';status='PASS';cases=9;producedAt=[DateTime]::UtcNow.ToString('o')}|ConvertTo-Json -Compress
 }finally{
  Remove-Item -LiteralPath $fixture -Recurse -Force
  Remove-Item Function:Get-AppxPackage,Function:Get-Process
  Remove-Variable nativeUnitPackage,nativeUnitResources,nativeUnitWaiter -Scope Global
 }
+
+
+# Compile the actual production native fact type without initialization/deployment.
+$tokens=$null;$errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'native-package-update.ps1'),[ref]$tokens,[ref]$errors)
+$type=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -ceq 'Add-Type' -and $node.Extent.Text.Contains('public static class SemantierNativeUpdateFacts')},$true))
+if($type.Count -ne 1){throw 'Actual native fact declaration ambiguous'}
+& ([scriptblock]::Create($type[0].Extent.Text))
+$file=Join-Path ([IO.Path]::GetTempPath()) ('native-file-id-unit-'+[guid]::NewGuid().ToString('N'))
+$created=[IO.File]::Open($file,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+$created.Dispose()
+$created=[IO.File]::OpenRead($file)
+try{
+ $first=Get-NativeUpdateFileId $created
+ $reopened=[IO.File]::OpenRead($file)
+ try{if((Get-NativeUpdateFileId $reopened) -cne $first){throw 'Native held file identity changed'}}finally{$reopened.Dispose()}
+ @{scope='READ_ONLY_NATIVE_FACT_ABI';status='PASS';producedAt=[DateTime]::UtcNow.ToString('o')}|ConvertTo-Json -Compress
+}finally{$created.Dispose();[IO.File]::Delete($file)}

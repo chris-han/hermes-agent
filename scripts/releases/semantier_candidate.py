@@ -35,7 +35,8 @@ def stage(output,native,incoming,notes):
         validate_native_graph(signed['nativeGraph'],build_id=request['buildId'],
             identity=request['identity']['msixAppIdWithOrg'],publisher=signed['publisher'],
             version=request['windowsVersion'],arch='x64')
-        raise ValueError('Native graph requires graph-bound installed qualification; legacy staging refused')
+        from scripts.releases.semantier_native_candidate import stage_native_graph
+        return stage_native_graph(output,native,incoming,notes,request,signed)
     installed=read(native/'installed-identity.json');exit_result=read(native/'native-install-exit.json');artifact_meta=read(native/'artifact.json')
     if exit_result.get('exitCode')!=0 or signed.get('signing')!='PASS' or not signed.get('verification','').startswith('PASS:'):raise ValueError('Native installation and signature gates required')
     if signed['packageName']!=request['identity']['msixAppIdWithOrg'] or signed['publisher']!='CN=Semantier Technology, O=Semantier Technology' or signed['packageVersion']!=request['windowsVersion']:raise ValueError('Package identity mismatch')

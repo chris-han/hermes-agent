@@ -1,4 +1,4 @@
-# Read-only SDK digest for ExpectedDigests. Never substitutes a file SHA256.
+# SDK native digest/map and bounded deployment seam; caller owns authorization and intent.
 function Initialize-NativePackageInterop {
   if (-not ('Semantier.NativeDigest' -as [type])) {
     Add-Type -TypeDefinition @'
@@ -163,4 +163,48 @@ function Set-NativeExpectedDigests($Options, [string[]]$Uris, [string[]]$Digests
 function Get-NativePackageIdentity([string]$Package) {
   Initialize-NativePackageInterop
   return [Semantier.NativeDigest]::Identity((Resolve-Path -LiteralPath $Package).Path)
+}
+
+# Low-level supported API seam. Callers own authorization, durable intent and cleanup.
+function Invoke-BoundNativePackageUri([string[]]$Uris,[string[]]$Digests,[string]$Root,[int]$Minutes=25) {
+ Add-Type -AssemblyName System.Runtime.WindowsRuntime
+ $null=[Windows.Management.Deployment.PackageManager,Windows.Management.Deployment,ContentType=WindowsRuntime]
+ $null=[Windows.Management.Deployment.AddPackageOptions,Windows.Management.Deployment,ContentType=WindowsRuntime]
+ $manager=[Windows.Management.Deployment.PackageManager]::new()
+ $method=[Windows.Management.Deployment.PackageManager].GetMethod('AddPackageByUriAsync')
+ if(!$method -or $Minutes -lt 1 -or $Minutes -gt 25 -or $Root -cnotin $Uris){throw 'Bounded native deployment API/root unavailable'}
+ $options=[Windows.Management.Deployment.AddPackageOptions]::new()
+ $null=Set-NativeExpectedDigests $options $Uris $Digests
+ $binding=@([System.WindowsRuntimeSystemExtensions].GetMethods()|Where-Object{$_.Name -ceq 'AsTask' -and $_.IsGenericMethodDefinition -and $_.GetGenericArguments().Count -eq 2 -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -ceq 'IAsyncOperationWithProgress`2'})
+ if($binding.Count -ne 1){throw 'Native asynchronous binding unavailable'}
+ $asTask=$binding[0].MakeGenericMethod($method.ReturnType.GetGenericArguments())
+ $operation=$null;$task=$null;$watch=[Diagnostics.Stopwatch]::StartNew()
+ $result=@{startedAt=[DateTime]::UtcNow.ToString('o');status='UNKNOWN';activityId=$null;operationCompleted=$false}
+ try{
+  $operation=$manager.AddPackageByUriAsync([Uri]$Root,$options)
+  $task=$asTask.Invoke($null,@($operation))
+  if(!$task.Wait([TimeSpan]::FromMinutes($Minutes))){$result.hresult='80131505';return $result}
+  $result.operationCompleted=$true
+  $deployment=$task.Result
+  if($deployment.ExtendedErrorCode){throw $deployment.ExtendedErrorCode}
+  $result.status='SUCCESS';$result.hresult='00000000';$result.activityId=[string]$deployment.ActivityId
+  $result.isRegistered=[bool]$deployment.IsRegistered
+  return $result
+ }catch{
+  $failure=$_.Exception.GetBaseException()
+  $result.operationCompleted=($null -ne $task -and $task.IsCompleted)
+  $result.status=if($result.operationCompleted){'FAILURE'}else{'UNKNOWN'}
+  $result.hresult=[BitConverter]::ToUInt32([BitConverter]::GetBytes([int]$failure.HResult),0).ToString('X8')
+  if($operation -and $task -and $task.IsCompleted){
+   try{
+    $deployment=$method.ReturnType.GetMethod('GetResults').Invoke($operation,@())
+    if($deployment){
+     $result.activityId=[string]$deployment.ActivityId;$result.isRegistered=[bool]$deployment.IsRegistered
+     if($deployment.ExtendedErrorCode){$failure=$deployment.ExtendedErrorCode.GetBaseException()}
+    }
+   }catch{$failure=$_.Exception.GetBaseException()}
+   $result.hresult=[BitConverter]::ToUInt32([BitConverter]::GetBytes([int]$failure.HResult),0).ToString('X8')
+  }
+  return $result
+ }finally{$watch.Stop();$result.producedAt=[DateTime]::UtcNow.ToString('o');$result.elapsedSeconds=$watch.Elapsed.TotalSeconds}
 }

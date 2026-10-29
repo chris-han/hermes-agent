@@ -62,6 +62,7 @@ New-Item -ItemType Directory -Path $HomeDir, $UserData | Out-Null
 Start-Transcript -Path (Join-Path $Out 'native-install.log') | Out-Null
 $attempted = $false
 $installedFullName = $null
+$nativeUriState=@{unknown=$false}
 $failed = $false
 try {
     $beforeHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $Artifact).Hash.ToLowerInvariant()
@@ -72,6 +73,7 @@ try {
     $externalPackage = $null
     $graph = $null
     if ($NativeGraph) {
+        $layoutHash = (Get-FileHash -LiteralPath $NativeLayoutPlan -Algorithm SHA256).Hash.ToLowerInvariant()
         $graphHash = (Get-FileHash -LiteralPath $NativeGraph -Algorithm SHA256).Hash.ToLowerInvariant()
         $graph = Get-Content -LiteralPath $NativeGraph -Raw | ConvertFrom-Json
         $members = @($graph.objects)
@@ -98,13 +100,17 @@ try {
         if (($readback | ConvertTo-Json -Depth 16 -Compress) -cne ($graph | ConvertTo-Json -Depth 16 -Compress)) { throw 'Final native graph readback differs' }
         $externalPackage = $main[0]
         if (@(Get-AppxPackage -PackageTypeFilter Resource -Name $Expected.msixIdentity).Count) { throw 'Existing related resources conflict; preserve them' }
+        if (@(Get-AppxPackage -PackageTypeFilter Optional -Name ($Expected.msixIdentity+'.*')).Count) { throw 'Existing related optional package conflict; preserve it' }
     }
     $inputMetadata = Read-BundleSmokeMetadata $Artifact $Arch $Expected $externalPackage
     $inputMetadata | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Out 'artifact-metadata.json')
     $existing = @(if ($SemantierAcceptanceHost) { Get-AppxPackage -Name $Expected.msixIdentity } else { Get-AppxPackage -AllUsers -Name $Expected.msixIdentity })
     if ($existing.Count) { throw 'Package identity already exists; refusing to replace it' }
     $attempted = $true
-    Add-AppxPackage -Path $Artifact -ErrorAction Stop
+    if($graph){
+        . (Join-Path $Assets 'native-package-deployment.ps1')
+        Invoke-CINativeGraphUri $graph $NativeGraph $Artifact $Node $Out $ExpectedSid $nativeUriState
+    }else{Add-AppxPackage -Path $Artifact -ErrorAction Stop}
     $packages = @(Get-AppxPackage -Name $Expected.msixIdentity)
     if ($packages.Count -ne 1) { throw 'Expected exactly one deployed package' }
     $pkg = $packages[0]
@@ -149,7 +155,7 @@ try {
             $child = $matches[0]
             $installedMembers += @{full=$child.PackageFullName;family=$child.PackageFamilyName;name=$child.Name;publisher=$child.Publisher;version=$child.Version.ToString();arch=$child.Architecture.ToString();resource_id=$child.ResourceId}
         }
-        @{producedAt=[DateTime]::UtcNow.ToString('o');graphSha256=$graphHash;related=$installedMembers;sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;nativeRemoteDigestEnforcement='NOT_RUN'} | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath (Join-Path $Out 'native-installed-graph.json') -Encoding utf8
+        @{producedAt=[DateTime]::UtcNow.ToString('o');graphSha256=$graphHash;layoutPlanSha256=$layoutHash;related=$installedMembers;sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;nativeRemoteDigestEnforcement='PASS'} | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath (Join-Path $Out 'native-installed-graph.json') -Encoding utf8
     }
     Push-Location $Work
     try {
@@ -159,7 +165,7 @@ try {
     if ($NativeGraph) { Test-BundleNativePayload $root $pkg $Commit $stamp.channelBuild.buildId $Out }
     # Plugins whose Python dependencies PM builds must work inside the package (#135236).
     Test-BundlePluginInstall $root $Out -IsolatedHome:$SemantierAcceptanceHost
-    if ($NativeGraph -and (Get-FileHash -LiteralPath $NativeGraph -Algorithm SHA256).Hash.ToLowerInvariant() -cne $graphHash) { throw 'Native graph changed during qualification' }
+    if ($NativeGraph -and ((Get-FileHash -LiteralPath $NativeGraph -Algorithm SHA256).Hash.ToLowerInvariant() -cne $graphHash -or (Get-FileHash -LiteralPath $NativeLayoutPlan -Algorithm SHA256).Hash.ToLowerInvariant() -cne $layoutHash)) { throw 'Native graph or layout changed during qualification' }
 } catch {
     $failed = $true
     $_ | Out-String | Set-Content -LiteralPath (Join-Path $Out 'native-install-error.txt')
@@ -168,6 +174,7 @@ try {
     try {
         # A failed deployment can still have registered the package. Admission
         # ruled out prior identities, so only this invocation's exact package is eligible.
+        if ($nativeUriState.unknown) { throw 'Native URI UNKNOWN hold; preserve registered resources and origin' }
         if ($attempted) {
             $remaining = @(Get-AppxPackage -Name $Expected.msixIdentity)
             foreach ($pkg in $remaining) {

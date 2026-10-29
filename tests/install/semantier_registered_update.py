@@ -188,8 +188,9 @@ class Transaction:
         if self.pending(): raise ValueError('Pending intent: reconcile first')
         before = self.platform.observe()
         if action != 'register': self.assert_owned(before, require_process=action=='update')
+        self.platform.check(action, args, before) if hasattr(self.platform, 'check') else None
         intent = self.record('intent', action=action, args=args, before=before)
-        self.validate(); self.platform.check(action, args, before) if hasattr(self.platform, 'check') else None
+        self.validate()
         if self.fault == 'before_action': raise Interrupted('before action')
         try:
             self.platform.perform(action, args)
@@ -279,7 +280,7 @@ class Windows:
         script = Path(__file__).parent/'e2e-assets/semantier-registered-platform.ps1'
         result = subprocess.run([self.powershell,'-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',str(script)],
             input=json.dumps(payload), text=True, capture_output=True, check=False,
-            timeout=1800 if action in ('update','native-proof') or (action=='register' and self.request.get('native_origin')) else 60 if action == 'download' else 300)
+            timeout=2400 if action=='update' and self.request.get('target',{}).get('native_graph') else 1800 if action in ('update','native-proof') or (action=='register' and self.request.get('native_origin')) else 60 if action == 'download' else 300)
         if result.returncode: raise RuntimeError(result.stderr.strip())
         return json.loads(result.stdout.lstrip('\ufeff'))
     def observe(self):
@@ -300,6 +301,7 @@ class Windows:
 
     def check(self, action, args, before):
         self.precondition = before
+        if action=='update' and self.request.get('target',{}).get('native_graph'):validate_native_update_inputs(self.request)
         self.recovery_check({'action':action,'args':args})
         if action == 'register' and before['package'] is not None: raise ValueError('Conflicting package')
         if action in ('launch','remove','update') and before['package'] is None: raise ValueError('Owned package absent')
@@ -308,6 +310,15 @@ class Windows:
             if before['package'] not in owned: raise ValueError('Unowned package: preserve it')
     def perform(self, action, args):
         if action != 'update': return self.call(action, operation=args, expected_before=self.precondition)
+        if self.request.get('target',{}).get('native_graph'):
+            result=self.call(action,operation=args,expected_before=self.precondition)
+            proof=self.call('download',expected_before=self.precondition)
+            verify_native_handoff(proof,self.request,self.precondition)
+            file=Path(self.request['root'])/'download-readback.json'
+            if file.exists():raise ValueError('Existing native handoff evidence requires inspection')
+            with safe_file(file,'a') as stream:
+                stream.write(json.dumps(proof)+'\n');stream.flush();os.fsync(stream.fileno())
+            return result
         # Capture while the production handoff cache exists; successor startup
         # may retire it. A missed receipt is a failure, never inferred success.
         stop = threading.Event(); captured = []
@@ -330,6 +341,11 @@ class Windows:
         return result
 
     def successor(self, args, before, after):
+        if self.request.get('target',{}).get('native_graph'):
+            proof=self.call('download',expected_before=before)
+            verify_native_handoff(proof,self.request,before)
+            if any(proof['observed'].get(key)!=after.get(key) for key in ('package','process','related')):
+                raise ValueError('Native successor changed across handoff readback')
         return (Transaction.package_matches(args, after) and after['process'] is not None and before['process'] is not None
             and after['process']['birth'] > before['process']['birth'] and after['process']['pid'] != before['process']['pid']
             and after['package']['family'] == before['package']['family'])
@@ -370,6 +386,56 @@ def load_native_target(request):
     if row['sha256']!=target['sha256'] or row['key'].rsplit('/',1)[1]!=Path(target['path']).name:
         raise ValueError('Native graph root differs from pinned artifact')
     return graph
+
+
+def validate_native_update_inputs(request):
+    import re
+    from hermes_cli.release_channels import public_base
+    value=request.get('selected_delivery_base')
+    if not isinstance(value,str) or public_base(value)!=value:
+        raise ValueError('Pinned selected delivery base required')
+    if re.fullmatch('[a-f0-9]{64}',request.get('native_handoff_source_sha256','')) is None:
+        raise ValueError('Qualified baseline handoff helper hash required')
+
+
+def verify_native_handoff(proof, request, before):
+    """Receipt/OS-incarnation binding only; never differential/cache acceptance."""
+    validate_native_update_inputs(request)
+    try:
+        target=request['target'];intent=proof['intent'];completion=proof['completion']
+        expected={'authorizedSid':request['authorized_sid'],'session':before['session'],
+                  'manifestSha256':target['manifest_sha256'],'graphSha256':target['native_graph']['sha256'],
+                  'sourceSha256':request['native_handoff_source_sha256'],'base':request['selected_delivery_base'],
+                  'targetBuildId':target['build_id'],'targetCommit':target['commit'],'version':target['version'],
+                  'currentVersion':before['package']['version'],'fullName':before['package']['full'],
+                  'familyName':before['package']['family'],'graph':request['native_graph_value']}
+        if proof['transport']!='windows-package-uri' or not Transaction.matches(expected,intent):
+            raise ValueError('Native handoff input binding mismatch')
+        verify_native_successor(proof,request,before)
+        times=[datetime.fromisoformat(value) for value in
+               (proof['deployment']['producedAt'],proof['relaunch_intent']['producedAt'],completion['birth'],completion['producedAt'])]
+        if any(value.tzinfo is None or value.utcoffset().total_seconds()!=0 for value in times) or times!=sorted(times):
+            raise ValueError('Native handoff UTC chronology mismatch')
+        return proof
+    except (KeyError,TypeError,AttributeError) as error:
+        raise ValueError('Native handoff evidence incomplete') from error
+
+
+def verify_native_successor(proof, request, before):
+    from uuid import UUID
+    target=request['target'];completion=proof['completion'];observed=proof['observed']
+    if (proof['deployment']['status']!='OS_SUCCESS' or completion['status']!='TARGET_GRAPH_REGISTERED_PROCESS_LAUNCHED'
+            or any(proof[part]['manifestSha256']!=target['manifest_sha256'] for part in ('deployment','relaunch_intent','completion'))
+            or UUID(proof['deployment']['activityId']).int==0):
+        raise ValueError('Native deployment/relaunch result unproved')
+    package={'full':completion['fullName'],'family':before['package']['family'],'commit':target['commit'],
+             'build_id':target['build_id'],'version':target['version']}
+    process={'pid':completion['pid'],'birth':completion['birth'],'exe':completion['exe'],'exe_id':completion['exeId']}
+    if (not Transaction.matches(package,observed['package']) or not Transaction.matches(process,observed['process'])
+            or completion['sid']!=request['authorized_sid'] or completion['session']!=before['session']
+            or observed['sid']!=request['authorized_sid'] or observed['session']!=before['session']
+            or completion['pid']==before['process']['pid'] or completion['birth']<=before['process']['birth']):
+        raise ValueError('Native automatically launched incarnation mismatch')
 
 
 def run_upgrade(tx, platform):

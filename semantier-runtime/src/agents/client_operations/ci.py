@@ -13,8 +13,12 @@ def verify_workflow(receipt):
     token=os.environ.get('SEMANTIER_CLIENT_GITHUB_TOKEN','')
     headers={'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'}
     if token:headers['Authorization']='Bearer '+token
-    with httpx.Client(timeout=15,follow_redirects=False,trust_env=False) as client:
-        response=client.get(f'https://api.github.com/repos/chris-han/hermes-agent/actions/runs/{run}/attempts/{attempt}',headers=headers)
+    try:
+        with httpx.Client(timeout=15,follow_redirects=False,trust_env=False,verify=True,
+                          proxy=os.environ.get('SEMANTIER_CLIENT_GITHUB_PROXY') or None) as client:
+            response=client.get(f'https://api.github.com/repos/chris-han/hermes-agent/actions/runs/{run}/attempts/{attempt}',headers=headers)
+    except httpx.RequestError as error:
+        raise OperationError(503,'github_provenance_unavailable') from error
     if response.status_code!=200:raise OperationError(503,'github_provenance_unavailable')
     value=response.json()
     if value.get('status')!='completed':raise OperationError(503,'github_run_pending')

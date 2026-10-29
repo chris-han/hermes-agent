@@ -37,7 +37,8 @@ def test_parent_snapshot_hash_and_path_are_verified_without_source_rewrites(tmp_
 
 
 @pytest.mark.parametrize('valid_archive', [True, False])
-def test_staging_survives_unavailable_kernel_fast_copy(tmp_path, monkeypatch, valid_archive):
+@pytest.mark.parametrize('with_capability', [False, True])
+def test_staging_survives_unavailable_kernel_fast_copy(tmp_path, monkeypatch, valid_archive, with_capability):
     """WSL sendfile can raise ENOMEM after a partial cross-filesystem copy."""
     import errno
     import hashlib
@@ -74,6 +75,7 @@ def test_staging_survives_unavailable_kernel_fast_copy(tmp_path, monkeypatch, va
         native/'native-install-exit.json': {'exitCode': 0},
         native/'artifact.json': {'sha256': digest},
     }
+    if with_capability:records[native/'installed-identity.json']['stamp']['receiverCapabilities']={'windowsPackageUri':1}
     for path, value in records.items():
         path.write_text(json.dumps(value))
     for key, value in {'GITHUB_ACTIONS': 'true', 'GITHUB_REPOSITORY': 'chris-han/hermes-agent',
@@ -100,6 +102,8 @@ def test_staging_survives_unavailable_kernel_fast_copy(tmp_path, monkeypatch, va
         return
     result = stage(output, native, incoming, {'en': 'Unit fixture, not CI evidence'})
     candidate = json.loads(Path(result['candidate_path']).read_text())
+    assert candidate['manifest'].get('receiverCapabilities')==({'windowsPackageUri':1} if with_capability else None)
+    assert candidate['native_receipt'].get('receiver_capabilities')==candidate['manifest'].get('receiverCapabilities')
     package = candidate['manifest']['packages'][0]
     descriptor = package['artifact']['chunks']
     assert descriptor['artifact'] == {'size': artifact.stat().st_size, 'sha256': digest}

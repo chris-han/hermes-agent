@@ -5,8 +5,10 @@ function Initialize-NativeUpdate($RequestPath, [int]$ParentId, [long]$ParentBirt
  $ErrorActionPreference='Stop'
  if((Get-Item -LiteralPath $RequestPath).Length -gt 4194304){throw 'Native request exceeds metadata limit'}
  $request=Get-Content -LiteralPath $RequestPath -Raw -Encoding UTF8|ConvertFrom-Json
- if($request.schema -ne 1 -or $request.identity -cne $Package.Name -or $request.fullName -cne $Package.PackageFullName -or $request.familyName -cne $Package.PackageFamilyName -or $request.publisher -cne $Package.Publisher -or $request.currentVersion -cne $Package.Version.ToString() -or [Version]$request.version -le $Package.Version -or $request.manifestSha256 -cnotmatch '^[a-f0-9]{64}$'){throw 'Native current package binding mismatch'}
+ if($request.schema -ne 1 -or $request.identity -cne $Package.Name -or $request.fullName -cne $Package.PackageFullName -or $request.familyName -cne $Package.PackageFamilyName -or $request.publisher -cne $Package.Publisher -or $request.currentVersion -cne $Package.Version.ToString() -or [Version]$request.version -le $Package.Version -or $request.manifestSha256 -cnotmatch '^[a-f0-9]{64}$' -or $request.graphSha256 -cnotmatch '^[a-f0-9]{64}$'){throw 'Native current package binding mismatch'}
  if($Package.Status.ToString() -cne 'Ok' -or $Package.SignatureKind.ToString() -cne 'Developer' -or $Package.IsDevelopmentMode -or $Package.NonRemovable){throw 'Native current package trust mismatch'}
+ $cpus=@(Get-CimInstance Win32_Processor)
+ if(!$cpus.Count -or @($cpus|Where-Object{$_.Architecture -ne 9}).Count){throw 'Actual native x64 host required'}
  Add-Type -AssemblyName System.Runtime.WindowsRuntime
  $null=[Windows.Management.Deployment.PackageManager,Windows.Management.Deployment,ContentType=WindowsRuntime]
  $null=[Windows.Management.Deployment.AddPackageOptions,Windows.Management.Deployment,ContentType=WindowsRuntime]
@@ -58,7 +60,7 @@ public static class SemantierNativeUpdateFacts {
   if($other.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'Native transaction reparse directory refused'}
   if((Test-Path -LiteralPath (Join-Path $other.FullName 'intent.json')) -and !(Test-Path -LiteralPath (Join-Path $other.FullName 'completed.json')) -and !(Test-Path -LiteralPath (Join-Path $other.FullName 'reconciled.json'))){
    $reconciliation=Get-NativeUpdateReconciliation $other.FullName
-   if($reconciliation.status -cnotin @('TARGET_GRAPH_REGISTERED','NOT_STARTED')){throw 'Native unresolved transaction exists; preserve its UNKNOWN hold'}
+   if($reconciliation.status -cnotin @('TARGET_GRAPH_REGISTERED','NOT_STARTED','BASELINE_INTACT_FAILED')){throw 'Native unresolved transaction exists; preserve its UNKNOWN hold'}
    Write-NativeUpdateReceipt @{directory=$other.FullName} 'reconciled.json' $reconciliation
   }
  }
@@ -67,8 +69,11 @@ public static class SemantierNativeUpdateFacts {
  $acl=[Security.AccessControl.DirectorySecurity]::new();$acl.SetAccessRuleProtection($true,$false);$acl.SetOwner([Security.Principal.SecurityIdentifier]::new($sid))
  foreach($principal in @($sid,'S-1-5-18','S-1-5-32-544')){$acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new($principal),'FullControl','ContainerInherit,ObjectInherit','None','Allow'))}
  [IO.Directory]::SetAccessControl($directory,$acl)
+ $resources=@(Get-AppxPackage -PackageTypeFilter Resource|Where-Object{$_.PackageFamilyName -ceq $request.familyName}|ForEach-Object{$_.PackageFullName}|Sort-Object)
+ $request|Add-Member -NotePropertyName baselineResources -NotePropertyValue $resources
+ $request|Add-Member -NotePropertyName producedAt -NotePropertyValue ([DateTime]::UtcNow.ToString('o'))
  $request|Add-Member -NotePropertyName waiterPid -NotePropertyValue $PID
- $request|Add-Member -NotePropertyName waiterBirth -NotePropertyValue ([DateTimeOffset]$self.StartTime).ToUnixTimeMilliseconds()
+ $request|Add-Member -NotePropertyName waiterBirth -NotePropertyValue ([DateTimeOffset]$self.StartTime).ToUniversalTime().ToString('o')
  $request|Add-Member -NotePropertyName sourceSha256 -NotePropertyValue (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'native-package-update.ps1') -Algorithm SHA256).Hash.ToLowerInvariant()
  $request|Add-Member -NotePropertyName authorizedSid -NotePropertyValue $sid
  $request|Add-Member -NotePropertyName session -NotePropertyValue $self.SessionId
@@ -83,23 +88,20 @@ function Invoke-NativePackageUpdate($Context) {
  $request=$Context.request
  $before=@(Get-AppxPackage -Name $request.identity|Where-Object{$_.Name -ceq $request.identity})
  if($before.Count -ne 1 -or $before[0].PackageFullName -cne $request.fullName -or $before[0].Publisher -cne $request.publisher){throw 'Native installed baseline changed before deployment'}
- $options=[Windows.Management.Deployment.AddPackageOptions]::new()
  $uris=@($Context.rows|ForEach-Object{$request.base.TrimEnd('/')+'/'+$_.key})
  $digests=@($Context.rows|ForEach-Object{[string]$_.nativeDigest})
- $null=Set-NativeExpectedDigests $options $uris $digests
- $asTask=@([System.WindowsRuntimeSystemExtensions].GetMethods()|Where-Object{$_.Name -ceq 'AsTask' -and $_.IsGenericMethodDefinition -and $_.GetGenericArguments().Count -eq 2 -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -ceq 'IAsyncOperationWithProgress`2'})
- if($asTask.Count -ne 1){throw 'Native asynchronous binding unavailable'}
- $binding=$asTask[0].MakeGenericMethod($Context.method.ReturnType.GetGenericArguments())
  $start=[DateTime]::UtcNow.ToString('o')
- Write-NativeUpdateReceipt $Context 'deployment-intent.json' @{schema=1;status='DEPLOYMENT_INTENT';producedAt=$start;manifestSha256=$request.manifestSha256;uri=($request.base.TrimEnd('/')+'/'+$request.graph.root);sid=$request.authorizedSid;session=$request.session}
- $operation=$Context.manager.AddPackageByUriAsync([Uri]($request.base.TrimEnd('/')+'/'+$request.graph.root),$options)
- $task=$binding.Invoke($null,@($operation))
- # A timeout is UNKNOWN: Windows may complete later. Never cancel/redeploy/delete intent.
- if(!$task.Wait([TimeSpan]::FromMinutes(25))){throw 'Native deployment UNKNOWN; retain intent and reconcile OS state'}
- $result=$task.Result
- if($result.ExtendedErrorCode){throw $result.ExtendedErrorCode}
- $receipt=@{schema=1;startedAt=$start;producedAt=[DateTime]::UtcNow.ToString('o');status='OS_SUCCESS';activityId=[string]$result.ActivityId;manifestSha256=$request.manifestSha256}
+ $uri=$request.base.TrimEnd('/')+'/'+$request.graph.root
+ Write-NativeUpdateReceipt $Context 'deployment-intent.json' @{schema=1;status='DEPLOYMENT_INTENT';producedAt=$start;manifestSha256=$request.manifestSha256;uri=$uri;sid=$request.authorizedSid;session=$request.session}
+ $deployment=Invoke-BoundNativePackageUri $uris $digests $uri 25
+ $deployment.manifestSha256=$request.manifestSha256
+ if($deployment.status -cne 'SUCCESS'){
+  Write-NativeUpdateReceipt $Context 'deployment-unresolved.json' $deployment
+  throw 'Native deployment unresolved; preserve intent and reconcile OS state'
+ }
+ $receipt=@{schema=1;startedAt=$deployment.startedAt;producedAt=$deployment.producedAt;status='OS_SUCCESS';activityId=$deployment.activityId;manifestSha256=$request.manifestSha256}
  Write-NativeUpdateReceipt $Context 'deployment.json' $receipt
+
 }
 
 function Test-NativeUpdateInstalled($Context, $Package) {
@@ -155,17 +157,67 @@ function Get-NativeUpdateReconciliation([string]$Directory) {
  $request=Get-Content -LiteralPath $intent -Raw -Encoding UTF8|ConvertFrom-Json
  $result=@{schema=1;status='UNKNOWN';producedAt=[DateTime]::UtcNow.ToString('o');manifestSha256=$request.manifestSha256}
  if($request.authorizedSid -cne $sid){throw 'Native journal actor mismatch'}
+ if($request.sourceSha256 -cne (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'native-package-update.ps1') -Algorithm SHA256).Hash.ToLowerInvariant()){return $result}
  $rows=@(Read-NativeUpdateGraph $request)
+ $waiter=Get-Process -Id $request.waiterPid -ErrorAction SilentlyContinue
+ if($waiter -and ([DateTimeOffset]$waiter.StartTime).ToUniversalTime().ToString('o') -ceq ([DateTimeOffset]::Parse($request.waiterBirth)).ToUniversalTime().ToString('o')){return $result}
  $packages=@(Get-AppxPackage -Name $request.identity|Where-Object{$_.Name -ceq $request.identity})
  if($packages.Count -ne 1){return $result}
  if(Test-NativeUpdateInstalled @{request=$request;rows=$rows} $packages[0]){
   $result.status='TARGET_GRAPH_REGISTERED';$result.fullName=$packages[0].PackageFullName
   return $result
  }
- if($packages[0].PackageFullName -cne $request.fullName -or $packages[0].Publisher -cne $request.publisher -or (Test-Path -LiteralPath (Join-Path $Directory 'deployment-intent.json'))){return $result}
- if($request.sourceSha256 -cne (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'native-package-update.ps1') -Algorithm SHA256).Hash.ToLowerInvariant()){return $result}
- $waiter=Get-Process -Id $request.waiterPid -ErrorAction SilentlyContinue
- if($waiter -and [Math]::Abs(([DateTimeOffset]$waiter.StartTime).ToUnixTimeMilliseconds()-$request.waiterBirth) -le 3000){return $result}
+ if($packages[0].PackageFullName -cne $request.fullName -or $packages[0].Publisher -cne $request.publisher -or $packages[0].PackageFamilyName -cne $request.familyName -or $packages[0].Version.ToString() -cne $request.currentVersion -or $packages[0].Architecture.ToString() -cne 'X64' -or $packages[0].Status.ToString() -cne 'Ok'){return $result}
+ $failureFile=Join-Path $Directory 'deployment-unresolved.json'
+ if(Test-Path -LiteralPath $failureFile){
+  $failure=Get-Content -LiteralPath $failureFile -Raw -Encoding UTF8|ConvertFrom-Json
+  $resources=@(Get-AppxPackage -PackageTypeFilter Resource|Where-Object{$_.PackageFamilyName -ceq $request.familyName}|ForEach-Object{$_.PackageFullName}|Sort-Object)
+  if($failure.status -ceq 'FAILURE' -and $failure.operationCompleted -eq $true -and $failure.manifestSha256 -ceq $request.manifestSha256 -and ($resources -join '|') -ceq (@($request.baselineResources) -join '|')){
+   $result.status='BASELINE_INTACT_FAILED';$result.fullName=$packages[0].PackageFullName;$result.hresult=$failure.hresult
+  }
+  return $result
+ }
+ if(Test-Path -LiteralPath (Join-Path $Directory 'deployment-intent.json')){return $result}
  $result.status='NOT_STARTED';$result.fullName=$packages[0].PackageFullName
  return $result
+}
+
+
+function Start-NativeUpdateSuccessor($Context, $Package) {
+ $r=$Context.request
+ if(!(Test-NativeUpdateInstalled $Context $Package)){throw 'Native successor graph not established'}
+ $manifest=Get-AppxPackageManifest -Package $Package.PackageFullName
+ $application=@($manifest.Package.Applications.Application|Where-Object{$_.Id -ceq $r.applicationId})
+ if($application.Count -ne 1){throw 'Native successor application identity ambiguous'}
+ $exe=[IO.Path]::GetFullPath((Join-Path $Package.InstallLocation $application[0].Executable))
+ if(!$exe.StartsWith($Package.InstallLocation.TrimEnd('\')+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Native successor executable escaped package'}
+ $file=[IO.File]::OpenRead($exe)
+ try{
+  $expected=Get-NativeUpdateFileId $file
+  foreach($existing in Get-CimInstance Win32_Process|Where-Object{$_.ExecutablePath -and [IO.Path]::GetFileName($_.ExecutablePath) -ieq [IO.Path]::GetFileName($exe) -and $_.CommandLine -notmatch '(?:^|\s)--type(?:=|\s)'}){
+   $probe=[IO.File]::OpenRead($existing.ExecutablePath)
+   try{if((Get-NativeUpdateFileId $probe) -ceq $expected){throw 'Unrecorded successor already running; preserve it'}}finally{$probe.Dispose()}
+  }
+  if(![IO.Path]::IsPathRooted($r.userDataDirectory) -or $r.userDataDirectory -match '["\x00\r\n]'){throw 'Native userData binding invalid'}
+  $env:HERMES_DESKTOP_USER_DATA_DIR=$r.userDataDirectory
+  $started=[DateTimeOffset]::UtcNow
+  Write-NativeUpdateReceipt $Context 'relaunch-intent.json' @{schema=1;producedAt=$started.ToString('o');manifestSha256=$r.manifestSha256;fullName=$Package.PackageFullName;applicationId=$r.applicationId;exeId=$expected}
+  $process=Start-Process -FilePath $exe -WorkingDirectory ([IO.Path]::GetTempPath()) -PassThru -ErrorAction Stop
+  try{
+   $null=$process.Handle
+   $row=Get-CimInstance Win32_Process -Filter ('ProcessId='+$process.Id)
+   if(!$row -or $row.SessionId -ne $r.session -or (Invoke-CimMethod -InputObject $row -MethodName GetOwnerSid).Sid -cne $r.authorizedSid){throw 'Native successor actor/session unavailable'}
+   $birth=[DateTimeOffset]$process.StartTime
+   if($birth.ToUniversalTime() -lt $started -or [Math]::Abs(($birth.ToUniversalTime()-([DateTimeOffset]$row.CreationDate).ToUniversalTime()).Ticks) -ge 10){throw 'Native successor incarnation mismatch'}
+   $actual=[IO.File]::OpenRead($row.ExecutablePath)
+   try{if((Get-NativeUpdateFileId $actual) -cne $expected){throw 'Native successor executable changed'}}finally{$actual.Dispose()}
+   return @{schema=1;status='TARGET_GRAPH_REGISTERED_PROCESS_LAUNCHED';producedAt=[DateTime]::UtcNow.ToString('o');manifestSha256=$r.manifestSha256;fullName=$Package.PackageFullName;pid=$process.Id;birth=$birth.ToUniversalTime().ToString('o');exe=$row.ExecutablePath;exeId=$expected;sid=$r.authorizedSid;session=$r.session;readiness='NOT_RUN'}
+  }finally{$process.Dispose()}
+ }finally{$file.Dispose()}
+}
+
+function Get-NativeUpdateFileId($Stream) {
+ $info=New-Object SemantierNativeUpdateFacts+Info
+ if(![SemantierNativeUpdateFacts]::GetFileInformationByHandle($Stream.SafeFileHandle,[ref]$info)){throw 'Native file identity unavailable'}
+ return ('{0}:{1}:{2}' -f $info.volume,$info.indexHigh,$info.indexLow)
 }

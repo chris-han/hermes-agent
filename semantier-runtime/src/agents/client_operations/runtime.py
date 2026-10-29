@@ -4,6 +4,8 @@ import asyncio
 import json
 import logging
 import os
+import time
+from uuid import uuid4
 from pathlib import Path
 from .store import Store
 from .publication import Publisher
@@ -55,6 +57,7 @@ class ClientOperations:
         self.targets = DeliveryTargets(self.store, self.environment, publishers, self.channel,
             errors=errors, legacy_target_id=primary_id, origins={key: spec['public_base'] for key,spec in specs.items()})
         self.publications = Publications(self.targets)
+        self._retention_next_check = 0.0
         self.feedback=Feedback(self.store,self.channel)
         self.logs=Path(env['SEMANTIER_CLIENT_LOG_ROOT'])
         from .authorization import FeedbackAuthorizations
@@ -71,6 +74,7 @@ class ClientOperations:
             c.execute('SELECT 1 FROM grants LIMIT 0')
 
     def maintain(self):
+        self.maintain_retention()
         from .distribution import ingest_logs
         from .ci import reconcile_candidates
         try:
@@ -90,6 +94,64 @@ class ClientOperations:
                     raise
         ingest_logs(self.store,self.logs)
         self.store.retain()
+
+    def maintain_retention(self):
+        now = time.monotonic()
+        if now < self._retention_next_check:
+            return
+        self._retention_next_check = now + 900
+        for target_id, publisher in self.targets.publishers.items():
+            if publisher.remote_target:
+                try:
+                    self._maintain_r2_target(target_id, publisher.remote_target)
+                except (OperationError, OSError):
+                    logging.getLogger(__name__).exception('R2 retention backstop held; independent owners remain available')
+
+    def _maintain_r2_target(self, target_id, remote):
+        """Existing operation journal owns intent before any remote lock write."""
+        if remote.control_target is None:
+            raise OperationError(503, 'delivery_private_control_credentials_unavailable')
+        actor = 'system:release-retention'
+        with self.store.connection() as claim:
+            acquired = claim.execute('SELECT pg_try_advisory_xact_lock(hashtext(%s)) AS acquired',
+                                     (self.store.schema+':retention:'+target_id,)).fetchone()['acquired']
+            if not acquired:
+                return
+            with self.store.connection() as c:
+                pending = c.execute("SELECT operation_id,body FROM operations WHERE user_id=%s AND channel=%s "
+                                    "AND status='retention_pending' AND body->>'target_id'=%s ORDER BY created_at LIMIT 2",
+                                    (actor, self.channel, target_id)).fetchall()
+            if len(pending) > 1:
+                raise OperationError(503, 'retention_journal_requires_recovery')
+            for row in pending:
+                body = row['body']
+                if body.get('remote') != [remote.base, remote.bucket, remote.control_target.bucket]:
+                    raise OperationError(503, 'retention_target_binding_changed')
+                remote.recover_owned_lock(body['remote_lock'], body['owner_instance'],
+                                          current_instance=self.publications.instance)
+                with self.store.connection() as c:
+                    c.execute("UPDATE operations SET status='retention_recovered',updated_at=now() WHERE operation_id=%s",
+                              (row['operation_id'],))
+            operation_id = uuid4().hex
+            identity = {**self.publications.instance, 'kind': 'retention-maintenance', 'operation_id': operation_id}
+            reservation = {'owner': identity, 'id': uuid4().hex}
+            body = {'target_id': target_id, 'remote': [remote.base, remote.bucket, remote.control_target.bucket],
+                    'owner_instance': identity, 'remote_lock': reservation}
+            from contracts.client_operations import digest
+            with self.store.connection() as c:
+                c.execute("INSERT INTO operations(operation_id,user_id,channel,idempotency_key,request_hash,body,status) "
+                          "VALUES(%s,%s,%s,%s,%s,%s::jsonb,'retention_pending')",
+                          (operation_id, actor, self.channel, operation_id, digest(body), json.dumps(body)))
+            try:
+                result = remote.maintain_retention(identity, reservation=reservation)
+            except (OperationError, OSError) as error:
+                with self.store.connection() as c:
+                    c.execute("UPDATE operations SET body=body || %s::jsonb,updated_at=now() WHERE operation_id=%s",
+                              (json.dumps({'error_code': error.code if isinstance(error, OperationError) else 'retention_transport_uncertain'}), operation_id))
+                raise
+            with self.store.connection() as c:
+                c.execute("UPDATE operations SET status='retention_succeeded',body=body || %s::jsonb,updated_at=now() "
+                          "WHERE operation_id=%s", (json.dumps({'result': result}), operation_id))
 
 
 async def start(app,env=None):

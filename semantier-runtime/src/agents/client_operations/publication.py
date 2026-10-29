@@ -2,6 +2,8 @@
 import hashlib
 import hmac
 import json
+import re
+from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 from contracts.client_operations import canonical,digest,utcnow
@@ -51,13 +53,14 @@ class Publisher:
         record=self.empty_record()
         try:
             validate_record(record)
-            validate_manifest(manifest,record,self.base)
+            validate_manifest(manifest,record,self.base,allow_native=manifest.get('schema')==2)
         except ValueError as exc:raise OperationError(422,'manifest_contract_mismatch') from exc
         packages=manifest['packages']
         if len(packages)!=1 or (packages[0]['platform'],packages[0]['arch'])!=('win32','x64'):
             raise OperationError(422,'windows_x64_scope_required')
         receipt=data['native_receipt'];package=packages[0]
-        from .chunks import chunk_entries, prepare_chunks
+        native_fields=self.native_receipt_fields(package,request,receipt)
+        from .chunks import chunk_entries
         chunk_entries(package['artifact'], request['buildId'])
         expected={'source_commit':request['commit'],'controller_commit':request.get('controllerCommit'),
                   'build_id':request['buildId'],'repository':record['repository'],
@@ -67,7 +70,10 @@ class Publisher:
                   'size':package['artifact']['size'],'notes_sha256':digest(data['notes']),'signature_result':'PASS','qualification':'windows-x64-native'}
         if package['artifact'].get('chunks') is not None:
             expected['chunk_descriptor_sha256'] = digest(package['artifact']['chunks'])
+        if 'receiverCapabilities' in manifest:expected['receiver_capabilities']=manifest['receiverCapabilities']
+        expected.update(native_fields)
         archive=package.get('distributionArchive')
+        if native_fields and archive is not None:raise OperationError(422,'native_remote_archive_forbidden')
         if archive is not None:
             if (not isinstance(archive,dict) or set(archive)!={'key','sha256','size'}
                 or not isinstance(archive['key'],str) or not archive['key'].startswith(build_prefix(request['buildId']))
@@ -85,27 +91,8 @@ class Publisher:
         ci_verification=(self.workflow_verifier or verify_workflow)(receipt)
         data['ci_verification']=ci_verification
         # Receipt-signer is CI-only. Operators cannot turn uploads into qualification.
-        artifact=package['artifact'];artifacts=[artifact]+([archive] if archive else []);keys=[a['key'] for a in artifacts]+[package['feed']['key']]
         prefix=build_prefix(request['buildId']);manifest_key=prefix+'build.json'
-        for key in keys:
-            source = safe_file(self.incoming, key)
-            destination = safe_file(self.root, key)
-            bound = next((item for item in artifacts if item['key'] == key), None)
-            try:
-                if bound:
-                    immutable_copy(source, destination, bound)
-                else:
-                    if source.stat().st_size > 1024 * 1024:
-                        raise OperationError(422, 'native_descriptor_mismatch')
-                    body = source.read_bytes()
-                    self.verify_descriptor(body, package, request)
-                    immutable_write(destination, body)
-            except OSError as error:
-                raise OperationError(422, 'staged_artifact_unavailable') from error
-        if artifact.get('chunks') is not None:
-            prepared = prepare_chunks(safe_file(self.root, artifact['key']), self.root, request['buildId'], artifact)
-            if prepared != artifact['chunks']:
-                raise OperationError(422, 'chunk_integrity_mismatch')
+        self.stage_package(package, request)
         body=canonical(manifest);target=safe_file(self.root,manifest_key)
         if target.exists() and target.read_bytes()!=body:raise OperationError(409,'immutable_manifest_conflict')
         immutable_write(target,body)
@@ -125,6 +112,57 @@ class Publisher:
             self.store.audit(c,principal['principal_id'],'release_ingest',data['release_id'],{'build_id':request['buildId'],'scope':'windows-x64-native'})
         return data
 
+    def native_receipt_fields(self, package, request, receipt):
+        if not package.get('native'):return {}
+        try:
+            if (receipt.get('qualification_contract')!='windows-native-uri-graph/v1'
+                or re.fullmatch('[a-f0-9]{40}',receipt.get('runtime_parent_commit','')) is None
+                or re.fullmatch('[a-f0-9]{64}',receipt.get('runtime_composition_sha256','')) is None):
+                raise ValueError('Final composition binding absent')
+            times=[datetime.fromisoformat(receipt[key].replace('Z','+00:00')) for key in
+                   ('produced_at','native_qualified_at','native_payload_verified_at')]
+            if any(value.utcoffset()!=timedelta(0) for value in times) or any(value>times[0] for value in times[1:]):
+                raise ValueError('Qualification chronology differs')
+        except (KeyError,TypeError,ValueError,AttributeError) as error:
+            raise OperationError(422,'trusted_native_receipt_required') from error
+
+        from .package_graph import read_package_graph
+        graph=read_package_graph(self.incoming,package,request['buildId'])
+        return {'qualification':'windows-x64-native-uri-graph',
+                'native_graph_sha256':package['native']['graph']['sha256'],
+                'native_objects_sha256':digest(graph['objects']),
+                'native_remote_digest_enforcement':'PASS','installed_graph_result':'PASS','payload_result':'PASS'}
+
+    def stage_package(self, package, request):
+        from .package_graph import package_objects
+        from .chunks import prepare_chunks
+        # Validate all metadata and complete-byte bindings before copying any object.
+        objects=package_objects(package,request['buildId'],self.incoming)
+        if package.get('native'):
+            self.verify_incoming_objects(objects)
+        else:
+            objects=[package['artifact'],*([package['distributionArchive']] if package.get('distributionArchive') else []),package['feed']]
+        for item in objects:
+            source=safe_file(self.incoming,item['key']);destination=safe_file(self.root,item['key'])
+            try:
+                if 'sha256' in item:
+                    immutable_copy(source,destination,item)
+                else:
+                    if source.stat().st_size>1024*1024:raise OperationError(422,'native_descriptor_mismatch')
+                    body=source.read_bytes();self.verify_descriptor(body,package,request);immutable_write(destination,body)
+            except OSError as error:raise OperationError(422,'staged_artifact_unavailable') from error
+        artifact=package['artifact']
+        if artifact.get('chunks') is not None:
+            prepared=prepare_chunks(safe_file(self.root,artifact['key']),self.root,request['buildId'],artifact)
+            if prepared!=artifact['chunks']:raise OperationError(422,'chunk_integrity_mismatch')
+
+    def verify_incoming_objects(self, objects):
+        for item in objects:
+            try:
+                actual=file_facts(safe_file(self.incoming,item['key']))
+            except OSError as error:raise OperationError(422,'staged_artifact_unavailable') from error
+            if actual!=(item['size'],item['sha256']):raise OperationError(422,'artifact_integrity_mismatch')
+
     def read_record(self):
         if self.remote_target:
             raw, _ = self.remote_target.read('releases/channels/'+self.channel+'.json')
@@ -140,18 +178,16 @@ class Publisher:
         manifest = release['manifest']
         if digest(manifest) != release['manifest_sha256']:
             raise OperationError(422, 'manifest_integrity_mismatch')
-        from .chunks import chunk_entries
+        from .package_graph import package_objects
         for package in manifest['packages']:
-            for chunk in chunk_entries(package['artifact'], manifest['request']['buildId']):
-                if file_facts(safe_file(self.root, chunk['key'])) != (chunk['size'], chunk['sha256']):
-                    raise OperationError(422, 'chunk_integrity_mismatch')
-            descriptor = safe_file(self.root, package['feed']['key'])
-            if descriptor.stat().st_size > 1024 * 1024:
-                raise OperationError(422, 'native_descriptor_mismatch')
-            self.verify_descriptor(descriptor.read_bytes(), package, manifest['request'])
-            for artifact in [package['artifact']]+([package['distributionArchive']] if package.get('distributionArchive') else []):
-                if file_facts(safe_file(self.root, artifact['key'])) != (artifact['size'], artifact['sha256']):
-                    raise OperationError(422, 'artifact_integrity_mismatch')
+            if not package.get('native'):
+                descriptor=safe_file(self.root,package['feed']['key'])
+                if descriptor.stat().st_size>1024*1024:raise OperationError(422,'native_descriptor_mismatch')
+                self.verify_descriptor(descriptor.read_bytes(),package,manifest['request'])
+            for artifact in package_objects(package,manifest['request']['buildId'],self.root):
+                if 'sha256' in artifact and file_facts(safe_file(self.root,artifact['key'])) != (artifact['size'],artifact['sha256']):
+                    code='chunk_integrity_mismatch' if artifact['key'].endswith('.part') else 'artifact_integrity_mismatch'
+                    raise OperationError(422,code)
         return manifest
 
     def preflight(self, release, *, remote_reservation=None):
@@ -163,15 +199,32 @@ class Publisher:
     def intended_record(self, release, previous):
         from hermes_cli.release_channels import validate_record
         build = release['manifest']['request']
-        record = {**previous, 'revision': previous['revision']+1,
-                  'nextSequence': max(previous['nextSequence'], build['sequence']+1),
-                  'head': {'buildId': build['buildId'], 'sequence': build['sequence'],
-                           'manifestKey': release['manifest_key'], 'sha256': release['manifest_sha256']}}
-        try:
-            validate_record(record)
-        except ValueError as error:
-            raise OperationError(422, 'channel_contract_mismatch') from error
+        head = {'buildId':build['buildId'],'sequence':build['sequence'],
+                'manifestKey':release['manifest_key'],'sha256':release['manifest_sha256']}
+        record = {**previous,'revision':previous['revision']+1,
+                  'nextSequence':max(previous['nextSequence'],build['sequence']+1)}
+        if release['manifest']['schema']==2:
+            self.require_native_bridge(previous)
+            record['nativeHead']=head
+        else:
+            record['head']=head
+            record.pop('nativeHead',None)
+        try:validate_record(record)
+        except ValueError as error:raise OperationError(422,'channel_contract_mismatch') from error
         return record
+
+    def require_native_bridge(self, record):
+        from hermes_cli.release_channels import decode_json,validate_manifest
+        head=record.get('head')
+        if not head:raise OperationError(422,'native_bridge_required')
+        path=safe_file(self.root,head['manifestKey'])
+        try:
+            if path.stat().st_size>4*1024*1024:raise ValueError('bridge metadata oversized')
+            body=path.read_bytes()
+            if hashlib.sha256(body).hexdigest()!=head['sha256']:raise ValueError('bridge bytes differ')
+            manifest=validate_manifest(decode_json(body),record,self.base)
+            if manifest.get('receiverCapabilities')!={'windowsPackageUri':1}:raise ValueError('bridge receiver not capable')
+        except (OSError,ValueError) as error:raise OperationError(422,'native_bridge_required') from error
 
     def publish_variant(self, release, operation_id, *, remote_reservation=None, authorize):
         """Publish one reserved target; actual head readback precedes DB projection.
@@ -281,7 +334,7 @@ class Publisher:
     def _reconcile(self,operation_id):
         from agents.webapi.deps import ensure_repo_hermes_agent_on_path
         ensure_repo_hermes_agent_on_path()
-        from hermes_cli.release_channels import build_prefix,validate_record
+        from hermes_cli.release_channels import build_prefix
         with self.store.connection() as c:
             c.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',(self.store.schema+':'+self.channel,))
             op=c.execute('SELECT * FROM operations WHERE operation_id=%s FOR UPDATE',(operation_id,)).fetchone()
@@ -305,10 +358,7 @@ class Publisher:
             immutable_write(manifest_target,manifest_body)
             if manifest_target.read_bytes()!=manifest_body:
                 raise OperationError(503,'manifest_readback_failed')
-            record={**head['record'],'revision':head['revision']+1,'nextSequence':max(head['record']['nextSequence'],build['sequence']+1),
-                    'head':{'buildId':build['buildId'],'sequence':build['sequence'],'manifestKey':manifest_key,'sha256':release['manifest_sha256']}}
-            try:validate_record(record)
-            except ValueError as exc:raise OperationError(422,'channel_contract_mismatch') from exc
+            record=self.intended_record({**release,'manifest_key':manifest_key},head['record'])
             # Recheck chunks, native descriptors and pinned bytes before the head.
             self.verify_release(release)
             if self.remote_target:

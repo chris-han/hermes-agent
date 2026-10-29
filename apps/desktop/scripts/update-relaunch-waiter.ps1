@@ -62,8 +62,10 @@ try {
     if ($current -and $current.Version -ne $fromVersion -and $current.PackageFamilyName -eq $familyName) {
       if($nativeContext -and !(Test-NativeUpdateInstalled $nativeContext $current)){Write-WaiterLog 'native graph registration incomplete';exit 5}
       Write-WaiterLog "package is now $($current.Version); launching"
-      Start-Process "shell:AppsFolder\$familyName!$appId"
-      if($nativeContext){Write-NativeUpdateReceipt $nativeContext 'completed.json' @{schema=1;status='TARGET_GRAPH_REGISTERED_ACTIVATION_REQUESTED';producedAt=[DateTime]::UtcNow.ToString('o');manifestSha256=$nativeContext.request.manifestSha256;fullName=$current.PackageFullName}}
+      if($nativeContext){
+        $launched=Start-NativeUpdateSuccessor $nativeContext $current
+        Write-NativeUpdateReceipt $nativeContext 'completed.json' $launched
+      }else{Start-Process "shell:AppsFolder\$familyName!$appId"}
       Write-WaiterLog 'launched'
       exit 0
     }
