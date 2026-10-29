@@ -215,10 +215,16 @@ class Windows:
             timeout=1800 if action == 'update' else 60 if action == 'download' else 300)
         if result.returncode: raise RuntimeError(result.stderr.strip())
         return json.loads(result.stdout.lstrip('\ufeff'))
-    def observe(self): return self.call('observe')
+    def observe(self):
+        now = self.call('observe')
+        if not now.get('session_sid') or now['session_sid'] != now.get('sid'):
+            raise ValueError('WTS signed-in account differs from process account')
+        return now
     def validate(self, owner):
         now = self.observe()
-        if any(now[k] != owner[k] for k in ('sid','session','root_id')): raise ValueError('OS owner or physical root changed')
+        if not owner.get('session_sid') or owner['session_sid'] != owner.get('sid'):
+            raise ValueError('Recorded WTS account binding unavailable; preserve transaction')
+        if any(now[k] != owner[k] for k in ('sid','session','session_sid','root_id')): raise ValueError('OS owner or physical root changed')
     def recovery_check(self, intent):
         if intent['action'] in ('register','update'):
             side = 'baseline' if intent['action']=='register' else 'target'

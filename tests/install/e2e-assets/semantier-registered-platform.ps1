@@ -15,7 +15,7 @@ using System;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 public static class SemantierNativeFacts {
- [DllImport("wtsapi32.dll",SetLastError=true)] public static extern bool WTSQuerySessionInformation(IntPtr s,int id,int info,out IntPtr b,out int n);
+ [DllImport("wtsapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] public static extern bool WTSQuerySessionInformation(IntPtr s,int id,int info,out IntPtr b,out int n);
  [DllImport("wtsapi32.dll")] public static extern void WTSFreeMemory(IntPtr p);
  [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] public static extern SafeFileHandle CreateFile(string n,uint access,uint share,IntPtr sa,uint disposition,uint flags,IntPtr template);
  [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] public static extern uint GetFinalPathNameByHandle(SafeFileHandle h,System.Text.StringBuilder p,uint n,uint flags);
@@ -26,6 +26,15 @@ public static class SemantierNativeFacts {
 $b=[IntPtr]::Zero;$n=0
 if (-not [SemantierNativeFacts]::WTSQuerySessionInformation([IntPtr]::Zero,$session,8,[ref]$b,[ref]$n)) { throw 'WTS state unavailable' }
 try { if($n -lt 4 -or [Runtime.InteropServices.Marshal]::ReadInt32($b) -ne 0){throw 'Session not active'} } finally {[SemantierNativeFacts]::WTSFreeMemory($b)}
+function Wts-Text([int]$kind) {
+ $buffer=[IntPtr]::Zero;$length=0
+ if(-not [SemantierNativeFacts]::WTSQuerySessionInformation([IntPtr]::Zero,$session,$kind,[ref]$buffer,[ref]$length)){throw 'WTS account unavailable'}
+ try{if($length -lt 2){throw 'Empty WTS account'};return [Runtime.InteropServices.Marshal]::PtrToStringUni($buffer)}finally{[SemantierNativeFacts]::WTSFreeMemory($buffer)}
+}
+$wtsUser=Wts-Text 5;$wtsDomain=Wts-Text 6
+if(-not $wtsUser -or -not $wtsDomain){throw 'Signed-in WTS account unavailable'}
+$sessionSid=([Security.Principal.NTAccount]::new($wtsDomain,$wtsUser)).Translate([Security.Principal.SecurityIdentifier]).Value
+if($sessionSid -cne $sid){throw 'Actual signed-in WTS account differs from process account'}
 function Physical([string]$path) {
  $item=Get-Item -LiteralPath $path -Force
  $cursor=$item
@@ -138,13 +147,13 @@ try {
     if($rows.Count){$row=$rows[0];$owner=Invoke-CimMethod -InputObject $row -MethodName GetOwnerSid;if($owner.Sid -cne $sid -or $row.SessionId -ne $session){throw 'Process belongs to different user/session'};$process=@{pid=$row.ProcessId;birth=(ExactBirth $row);exe=$exe;exe_id=$physical.id}}
    }finally{$physical.handle.Dispose()}
   }
-  return @{sid=$sid;session=$session;root_id=$held.id;package=$package;process=$process}
+  return @{sid=$sid;session_sid=$sessionSid;session=$session;root_id=$held.id;package=$package;process=$process}
  }
  $result=$null
  if($r.action -in @('register','launch','update','remove')){
   if(-not $r.PSObject.Properties['expected_before']){throw 'Durable intent precondition required'}
   $actual=Observe;$expected=$r.expected_before
-  if($actual.sid -cne $expected.sid -or $actual.session -ne $expected.session -or $actual.root_id -cne $expected.root_id){throw 'Intent context changed'}
+  if($actual.sid -cne $expected.sid -or $actual.session_sid -cne $expected.session_sid -or $actual.session -ne $expected.session -or $actual.root_id -cne $expected.root_id){throw 'Intent context changed'}
   foreach($kind in @('package','process')){
    if(($null -eq $actual[$kind]) -ne ($null -eq $expected.$kind)){throw 'Intent OS state changed'}
    if($actual[$kind]){foreach($property in $expected.$kind.PSObject.Properties){if($actual[$kind][$property.Name] -cne $property.Value){throw 'Intent identity changed'}}}

@@ -165,3 +165,21 @@ def test_settled_process_replacement_cannot_be_cleaned(tx):
     p.state['process']={'pid':1,'birth':'reused'}
     with pytest.raises(ValueError,match='replaced'):t.operation('remove',{})
     assert 'remove' not in p.calls
+
+
+@pytest.mark.parametrize('session_sid',[None,'different-signed-in-user'])
+def test_windows_observation_requires_actual_wts_account(session_sid):
+    w=d.Windows.__new__(d.Windows)
+    state={'sid':'test-account','session':2,'root_id':'owned','package':None,'process':None}
+    if session_sid is not None:state['session_sid']=session_sid
+    w.call=lambda action:state
+    with pytest.raises(ValueError,match='WTS'):w.observe()
+
+
+def test_windows_recovery_rejects_missing_recorded_wts_binding():
+    w=d.Windows.__new__(d.Windows)
+    state={'sid':'test-account','session_sid':'test-account','session':2,'root_id':'owned','package':None,'process':None}
+    w.call=lambda action:state
+    owner={k:v for k,v in state.items() if k!='session_sid'}
+    with pytest.raises(ValueError,match='WTS'):w.validate(owner)
+    w.validate(state)
