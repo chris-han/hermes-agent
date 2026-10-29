@@ -8,7 +8,7 @@ if($errors.Count){throw 'Platform parser failure'}
 $type=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Add-Type' -and $node.Extent.Text.Contains('public static class SemantierNativeFacts')},$true))
 if($type.Count -ne 1){throw 'Native physical API definition missing'}
 Invoke-Expression $type[0].Extent.Text
-foreach($name in @('Physical','Registered-Root')){
+foreach($name in @('Physical','Registered-Root','Installed-File')){
  $function=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name},$true))
  if($function.Count -ne 1){throw 'Physical package function missing'}
  Invoke-Expression $function[0].Extent.Text
@@ -34,3 +34,10 @@ function Get-AppxVolume { return @($volumes|ForEach-Object{[pscustomobject]@{Pac
 Reject { Registered-Root $package }
 Remove-Item Function:\Get-AppxVolume
 Write-Output 'PASS: exact OS package-volume redirect and physical identity; arbitrary/name/ambiguous/offline destinations refused; strict Physical still refuses junctions'
+
+$aliasFile=Join-Path $LogicalRoot 'app\Semantier Agent.exe'
+$physicalFile=Join-Path $ExpectedPhysicalRoot 'app\Semantier Agent.exe'
+$a=Installed-File $package $aliasFile;$b=Physical $physicalFile
+try{if($a.id -cne $b.id -or $a.path -ine $physicalFile){throw 'Registered logical process file differs from physical executable'}}finally{$a.handle.Dispose();$b.handle.Dispose()}
+Reject { Installed-File $package (Join-Path ([IO.Path]::GetTempPath()) 'other.exe') }
+Write-Output 'PASS: logical process executable matches exact physical file ID; unrelated process path refused'

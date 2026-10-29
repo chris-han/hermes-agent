@@ -195,6 +195,22 @@ try {
    return $birth.ToUniversalTime().ToString('o')
   }finally{$handle.Dispose()}
  }
+ function Installed-File($pkg,[string]$path) {
+  $physicalRoot=Registered-Root $pkg
+  $logicalRoot=[IO.Path]::GetFullPath($pkg.InstallLocation).TrimEnd('\')
+  $full=[IO.Path]::GetFullPath($path)
+  if($full.StartsWith($physicalRoot+'\',[StringComparison]::OrdinalIgnoreCase)){return Physical $full}
+  if(-not $full.StartsWith($logicalRoot+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Process file outside registered package'}
+  $physical=Physical (Join-Path $physicalRoot $full.Substring($logicalRoot.Length+1))
+  $handle=$null
+  try {
+   $handle=[SemantierNativeFacts]::CreateFile($full,0,1,[IntPtr]::Zero,3,0x02000000,[IntPtr]::Zero)
+   if($handle.IsInvalid){throw 'Registered process file unavailable'}
+   $info=New-Object SemantierNativeFacts+Info
+   if(-not [SemantierNativeFacts]::GetFileInformationByHandle($handle,[ref]$info) -or ('{0}:{1}:{2}' -f $info.volume,$info.indexHigh,$info.indexLow) -cne $physical.id){throw 'Registered process file physical identity mismatch'}
+   return $physical
+  }catch{$physical.handle.Dispose();throw}finally{if($handle){$handle.Dispose()}}
+ }
  function GatewayIdentity($package) {
   $file=Join-Path $root 'userdata\hermes-home\state\gateway.lifecycle.json'
   if(-not (Test-Path -LiteralPath $file)){return $null}
@@ -203,11 +219,13 @@ try {
   if($life.phase -cne 'running'){return $null}
   $proc=Get-CimInstance Win32_Process -Filter "ProcessId=$([int]$life.pid)"
   if(-not $proc){return $null}
+  $pkg=@(Get-AppxPackage -Name 'Semantier.Agent.Acceptance'|Where-Object{$_.PackageFullName -ceq $package.full});if($pkg.Count -ne 1){throw 'Gateway package changed'}
   $prefix=Join-Path $package.install_path 'app\resources\agent-payload\'
-  if($proc.SessionId -ne $session -or (Invoke-CimMethod -InputObject $proc -MethodName GetOwnerSid).Sid -cne $sid -or -not $proc.ExecutablePath.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){throw 'Gateway lifecycle ownership mismatch'}
+  if($proc.SessionId -ne $session -or (Invoke-CimMethod -InputObject $proc -MethodName GetOwnerSid).Sid -cne $sid ){throw 'Gateway lifecycle ownership mismatch'}
   $epoch=([DateTimeOffset]$proc.CreationDate).ToUnixTimeMilliseconds()/1000.0
   if(-not $life.create_time -or [Math]::Abs($epoch-$life.create_time) -ge 2){throw 'Gateway lifecycle incarnation mismatch'}
-  $exeHold=Physical $proc.ExecutablePath
+  $exeHold=Installed-File $pkg[0] $proc.ExecutablePath
+  if(-not $exeHold.path.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){$exeHold.handle.Dispose();throw 'Gateway outside installed payload'}
   try{return @{pid=$proc.ProcessId;birth=(ExactBirth $proc);exe=$proc.ExecutablePath;exe_id=$exeHold.id;packageFullName=$package.full}}finally{$exeHold.handle.Dispose()}
  }
  function VerifyDownload {
@@ -269,9 +287,15 @@ try {
    try {
     $stamp=Get-Content -LiteralPath (Join-Path $install 'app\resources\install-stamp.json') -Raw|ConvertFrom-Json
     $package=@{name=$p.Name;publisher=$p.Publisher;version=$p.Version.ToString();arch=$p.Architecture.ToString();commit=$stamp.commit;build_id=$stamp.channelBuild.buildId;full=$p.PackageFullName;family=$p.PackageFamilyName;install_path=$install;exe=$exe;exe_id=$physical.id}
-    $rows=Main-Processes $exe
+    $logicalExe=Join-Path $p.InstallLocation $desktop.Executable
+    $rows=@(Get-CimInstance Win32_Process|Where-Object{$_.ExecutablePath -and $_.ExecutablePath -iin @($exe,$logicalExe) -and $_.CommandLine -notmatch '(?:^|\s)--type(?:=|\s)'})
     if($rows.Count -gt 1){throw 'Ambiguous installed main process'}
-    if($rows.Count){$row=$rows[0];$owner=Invoke-CimMethod -InputObject $row -MethodName GetOwnerSid;if($owner.Sid -cne $sid -or $row.SessionId -ne $session){throw 'Process belongs to different user/session'};$process=@{pid=$row.ProcessId;birth=(ExactBirth $row);exe=$exe;exe_id=$physical.id}}
+    if($rows.Count){
+     $row=$rows[0];$owner=Invoke-CimMethod -InputObject $row -MethodName GetOwnerSid
+     if($owner.Sid -cne $sid -or $row.SessionId -ne $session){throw 'Process belongs to different user/session'}
+     $processHold=Installed-File $p $row.ExecutablePath
+     try{if($processHold.id -cne $physical.id){throw 'Observed process executable differs from package'};$process=@{pid=$row.ProcessId;birth=(ExactBirth $row);exe=$row.ExecutablePath;exe_id=$processHold.id}}finally{$processHold.handle.Dispose()}
+    }
    }finally{$physical.handle.Dispose()}
   }
   return @{sid=$sid;session_sid=$sessionSid;session=$session;root_id=$held.id;package=$package;process=$process;related=(Related-Packages)}
@@ -339,7 +363,7 @@ try {
    New-Item -ItemType Directory -Path $proof -ErrorAction Stop|Out-Null
    $proofHold=Physical $proof
    try{
-    $uiOutput=& (Join-Path $PSScriptRoot 'windows-bundled-drive-update.ps1') -OldProcessId $before.process.pid -ProofDir $proof -SemantierIsolated -ExpectedSid $sid -ExpectedExecutable $before.package.exe -ExpectedBirth $before.process.birth -ExpectedTargetVersion $target.version *>&1
+    $uiOutput=& (Join-Path $PSScriptRoot 'windows-bundled-drive-update.ps1') -OldProcessId $before.process.pid -ProofDir $proof -SemantierIsolated -ExpectedSid $sid -ExpectedExecutable $before.process.exe -ExpectedBirth $before.process.birth -ExpectedTargetVersion $target.version *>&1
     $uiExit=$LASTEXITCODE
     $logHandle=[IO.File]::Open($log,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
     try{$bytes=[Text.Encoding]::UTF8.GetBytes(($uiOutput|Out-String));$logHandle.Write($bytes,0,$bytes.Length);$logHandle.Flush($true)}finally{$logHandle.Dispose()}
@@ -387,10 +411,15 @@ try {
   }
   ready {
    $state=Observe;if(-not $state.process){throw 'Registered application not running'}
+   $pkg=@(Get-AppxPackage -Name 'Semantier.Agent.Acceptance'|Where-Object{$_.PackageFullName -ceq $state.package.full});if($pkg.Count -ne 1){throw 'Ready package changed'}
    $payload=Join-Path $state.package.install_path 'app\resources\agent-payload\'
+   $logicalPayload=Join-Path $pkg[0].InstallLocation 'app\resources\agent-payload\'
    $deadline=(Get-Date).AddMinutes(3);$healthy=$false
    do{
-    foreach($proc in @(Get-CimInstance Win32_Process|Where-Object{$_.ExecutablePath -and $_.ExecutablePath.StartsWith($payload,[StringComparison]::OrdinalIgnoreCase) -and $_.SessionId -eq $session})){
+    foreach($proc in @(Get-CimInstance Win32_Process|Where-Object{$_.ExecutablePath -and ($_.ExecutablePath.StartsWith($payload,[StringComparison]::OrdinalIgnoreCase) -or $_.ExecutablePath.StartsWith($logicalPayload,[StringComparison]::OrdinalIgnoreCase)) -and $_.SessionId -eq $session})){
+     if((Invoke-CimMethod -InputObject $proc -MethodName GetOwnerSid).Sid -cne $sid){throw 'Backend user changed'}
+     $backendHold=Installed-File $pkg[0] $proc.ExecutablePath
+     try{if(-not $backendHold.path.StartsWith($payload,[StringComparison]::OrdinalIgnoreCase)){throw 'Backend outside installed payload'}}finally{$backendHold.handle.Dispose()}
      foreach($port in @(Get-NetTCPConnection -State Listen -OwningProcess $proc.ProcessId -ErrorAction SilentlyContinue)){
       try{$reply=Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$($port.LocalPort)/api/health" -TimeoutSec 2;if($reply.StatusCode -eq 200){$healthy=$true}}catch{}
      }

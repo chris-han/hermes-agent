@@ -258,6 +258,7 @@ def test_graph_prediction_binds_exact_static_members_then_records_local_incarnat
 
 class NativeQualificationPlatform(Platform):
     def proof_binding(self):return 'fixture-proof-binding'
+    def proof_bindings(self,current):return {current}
     def __init__(self):
         super().__init__();self.request={'purpose':d.NATIVE_QUALIFICATION}
     def call(self,action,**kwargs):
@@ -359,3 +360,55 @@ def test_native_proof_binding_invalidates_changed_execution_inputs(tmp_path,monk
         read=Path.read_bytes
         monkeypatch.setattr(Path,'read_bytes',lambda file:read(file)+(b'changed' if file.name=='native-payload-probe.py' else b''))
     assert p.proof_binding()!=original
+
+
+@pytest.fixture
+def prior_proof_source(tmp_path,monkeypatch):
+    import hashlib,json
+    p=d.Windows.__new__(d.Windows);p.request={'target':{'sha256':'same-target'}}
+    binary=tmp_path/'powershell.exe';binary.write_bytes(b'host');p.powershell=str(binary)
+    monkeypatch.setattr(d.sys,'getwindowsversion',lambda:(10,0,1,2,''),raising=False)
+    current=Path(d.__file__).resolve().parents[2];root=tmp_path/'prior'
+    for name in p.proof_sources(current):
+        file=root/name;file.parent.mkdir(parents=True,exist_ok=True);file.write_bytes((current/name).read_bytes())
+    platform=root/'tests/install/e2e-assets/semantier-registered-platform.ps1'
+    platform.write_text(platform.read_text(encoding='utf-8-sig').replace(' function Observe {',' # prior observation implementation\n function Observe {'),encoding='utf-8')
+    def bind():
+        rows=[{'path':name,'sha256':hashlib.sha256((root/name).read_bytes()).hexdigest()} for name in p.proof_sources(current)]
+        file=root/'source-binding.json';raw=json.dumps({'files':rows}).encode();file.write_bytes(raw)
+        p.proof_source=(file,hashlib.sha256(raw).hexdigest())
+    bind()
+    return p,root,bind
+
+
+def test_prior_proof_source_reuses_only_unchanged_claim_verifiers(prior_proof_source):
+    p,root,_=prior_proof_source
+    original=p.proof_binding(root);current=p.proof_binding()
+    assert current!=original
+    assert p.proof_bindings(current)=={current,original}
+
+
+def test_prior_proof_source_rejects_changed_claim_verifier(prior_proof_source):
+    p,root,bind=prior_proof_source
+    file=root/'tests/install/e2e-assets/native-payload-probe.py'
+    file.write_bytes(file.read_bytes()+b'\n# different verifier\n');bind()
+    assert p.proof_bindings(p.proof_binding())=={p.proof_binding()}
+
+
+@pytest.mark.parametrize('changed',['request','host'])
+def test_prior_proof_source_cannot_rebind_changed_inputs(prior_proof_source,monkeypatch,changed):
+    p,root,_=prior_proof_source;original=p.proof_binding(root)
+    if changed=='request':p.request['target']['sha256']='different-target'
+    else:monkeypatch.setattr(d.sys,'getwindowsversion',lambda:(10,0,2,2,''))
+    assert original not in p.proof_bindings(p.proof_binding())
+
+
+def test_prior_proof_source_refuses_unpinned_manifest(prior_proof_source):
+    p,_,_=prior_proof_source;file,_=p.proof_source;p.proof_source=(file,'0'*64)
+    with pytest.raises(ValueError,match='source binding mismatch'):p.proof_bindings(p.proof_binding())
+
+
+def test_prior_proof_source_refuses_changed_staged_bytes(prior_proof_source):
+    p,root,_=prior_proof_source
+    file=root/'tests/install/semantier_registered_update.py';file.write_bytes(file.read_bytes()+b'\n')
+    with pytest.raises(ValueError,match='source bytes changed'):p.proof_bindings(p.proof_binding())

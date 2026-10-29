@@ -8,7 +8,7 @@ import contextlib
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import subprocess
 import sys
 import stat
@@ -222,24 +222,57 @@ class Transaction:
 
 
 class Windows:
-    def __init__(self, request):
+    def __init__(self, request, proof_source=None):
         self.request = request
+        self.proof_source = proof_source
         import ctypes
         directory = ctypes.create_unicode_buffer(32768)
         length = ctypes.windll.kernel32.GetWindowsDirectoryW(directory, len(directory))
         if not length or length >= len(directory): raise ValueError('Actual Windows directory unavailable')
         self.powershell = str(Path(directory.value)/'System32/WindowsPowerShell/v1.0/powershell.exe')
         if not Path(self.powershell).is_file(): raise ValueError('Host PowerShell unavailable')
-    def proof_binding(self):
-        root=Path(__file__).resolve().parents[2]
-        paths=[Path(__file__), *(Path(__file__).parent/'e2e-assets'/name for name in (
+    def proof_sources(self, root):
+        paths=[root/'tests/install/semantier_registered_update.py', *(root/'tests/install/e2e-assets'/name for name in (
             'semantier-registered-platform.ps1','native-package-deployment.ps1','native-payload-locations.mjs',
             'native-payload-probe.py','windows-bundle-plugin-smoke.ps1','windows-bundle-metadata.ps1','desktop-smoke-windows.ps1')),
             root/'apps/desktop/scripts/native-package-digest.ps1',root/'scripts/releases/semantier_windows.py',
             root/'hermes_cli/release_channels.py']
-        sources={str(path.relative_to(root)):hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
+        return {str(path.relative_to(root)):hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
+
+    def proof_binding(self, source_root=None):
+        root=Path(source_root) if source_root else Path(__file__).resolve().parents[2]
+        sources=self.proof_sources(root)
         host={'windows':tuple(sys.getwindowsversion()),'powershell':hashlib.sha256(Path(self.powershell).read_bytes()).hexdigest()}
         return hashlib.sha256(json.dumps({'request':self.request,'sources':sources,'host':host},sort_keys=True).encode()).hexdigest()
+
+    def proof_verifiers(self, root):
+        # Observation/relaunch fixes do not change completed byte/import/model claims.
+        sources=self.proof_sources(root)
+        sources.pop(str(Path('tests/install/semantier_registered_update.py')))
+        name=Path('tests/install/e2e-assets/semantier-registered-platform.ps1')
+        text=(root/name).read_text(encoding='utf-8-sig')
+        prefix=text[:text.index(' function Artifact(')]
+        start=text.index('  native-proof {')
+        native=text[start:text.index('\n  ready {',start)]
+        sources[str(name)]=hashlib.sha256((prefix+native).encode()).hexdigest()
+        return sources
+
+    def proof_bindings(self, current):
+        if not self.proof_source:return {current}
+        path,expected=self.proof_source
+        with safe_file(path,'r') as stream:raw=stream.read()
+        if path.name!='source-binding.json' or len(raw)>4*1024*1024 or hashlib.sha256(raw.encode()).hexdigest()!=expected:
+            raise ValueError('Pinned prior proof source binding mismatch')
+        manifest=json.loads(raw);root=path.parent
+        for row in manifest['files']:
+            name=row['path'];relative=PurePosixPath(name)
+            if relative.is_absolute() or relative.as_posix()!=name or '..' in relative.parts or ':' in name or '\\' in name:
+                raise ValueError('Prior proof source path refused')
+            if hashlib.sha256((root/name).read_bytes()).hexdigest()!=row['sha256']:
+                raise ValueError('Prior proof source bytes changed')
+        if self.proof_verifiers(root)!=self.proof_verifiers(Path(__file__).resolve().parents[2]):return {current}
+        # Recompute the original opaque binding: host and complete request must still match.
+        return {current,self.proof_binding(root)}
 
     def call(self, action, **facts):
         payload = {**self.request, **facts, 'action': action}
@@ -374,9 +407,9 @@ def run_native_qualification(tx, platform, owner, *, require_existing=False):
         if require_existing:raise ValueError('Existing native registration disappeared; no deployment during resume')
         tx.operation('register',platform.call('artifact',side='target'))
     tx.assert_owned(platform.observe())
-    state=platform.observe();binding=platform.proof_binding()
+    state=platform.observe();binding=platform.proof_binding();bindings=platform.proof_bindings(binding)
     # Reuse only a completed proof with unchanged source/input and OS incarnation.
-    prior=[row for row in tx.events() if row['kind']=='native_qualification' and row.get('binding')==binding
+    prior=[row for row in tx.events() if row['kind']=='native_qualification' and row.get('binding') in bindings
            and all(row['observed'].get(key)==state.get(key) for key in ('sid','session_sid','session','root_id','package','related'))]
     if prior:
         proof=prior[-1]['facts']
@@ -386,7 +419,7 @@ def run_native_qualification(tx, platform, owner, *, require_existing=False):
         tx.record('native_qualification',binding=binding,facts=proof,observed=platform.observe(),scope='local layout/runtime only; not CI or migration')
     if platform.observe()['process'] is None:tx.operation('launch',{})
     ready=platform.call('ready')
-    tx.record('native_qualification_ready',facts=ready,observed=platform.observe(),scope='local layout/runtime only; not CI or migration')
+    tx.record('native_qualification_ready',facts=ready,observed=platform.observe(),proof_binding=prior[-1]['binding'] if prior else binding,execution_binding=binding,proof_reuse='PARTIAL_REUSE' if prior and prior[-1]['binding']!=binding else 'EXACT_REUSE' if prior else 'NEW',scope='local layout/runtime only; not CI or migration')
     print(json.dumps({'scope':'LOCAL_NATIVE_LAYOUT_QUALIFICATION_NOT_CI_OR_MIGRATION','proof':proof,'ready':ready}))
 
 
@@ -419,9 +452,13 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('mode',choices=['preflight','baseline','native-qualify','native-resume','upgrade','reconcile','cleanup'])
     p.add_argument('--request',type=Path,required=True)
+    p.add_argument('--proof-source',type=Path)
+    p.add_argument('--proof-source-sha256')
     a=p.parse_args()
     if sys.platform != 'win32': raise SystemExit('Use native Windows Python in the authorized disposable session')
-    request=json.loads(a.request.read_text(encoding='utf-8-sig')); platform=Windows(request)
+    if bool(a.proof_source)!=bool(a.proof_source_sha256) or (a.proof_source and a.mode!='native-resume'):
+        raise ValueError('Pinned prior proof source is only valid for native-resume')
+    request=json.loads(a.request.read_text(encoding='utf-8-sig')); platform=Windows(request,(a.proof_source,a.proof_source_sha256) if a.proof_source else None)
     owner=platform.observe()  # OS refusal precedes journal/root writes.
     if request.get('target',{}).get('native_graph') is not None:request['native_graph_value']=load_native_target(request)
     if a.mode=='preflight':
