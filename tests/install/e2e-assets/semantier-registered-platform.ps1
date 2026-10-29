@@ -41,7 +41,7 @@ function Physical([string]$path) {
  $cursor=$item
  while($cursor){if(($cursor.Attributes -band [IO.FileAttributes]::ReparsePoint)-ne 0){throw 'Reparse path refused'};if($cursor -is [IO.DirectoryInfo]){$cursor=$cursor.Parent}else{$cursor=$cursor.Directory}}
  $handle=[SemantierNativeFacts]::CreateFile($item.FullName,0,1,[IntPtr]::Zero,3,0x02000000,[IntPtr]::Zero)
- if($handle.IsInvalid){throw 'Cannot hold physical path against replacement'}
+ if($handle.IsInvalid){throw ('Cannot hold physical path against replacement: {0}, Win32={1}' -f $path,[Runtime.InteropServices.Marshal]::GetLastWin32Error())}
  $final=[Text.StringBuilder]::new(32768)
  $length=[SemantierNativeFacts]::GetFinalPathNameByHandle($handle,$final,32768,0)
  $canonical=$final.ToString()
@@ -50,6 +50,35 @@ function Physical([string]$path) {
  $info=New-Object SemantierNativeFacts+Info
  if(-not [SemantierNativeFacts]::GetFileInformationByHandle($handle,[ref]$info)){$handle.Dispose();throw 'Physical identity unavailable'}
  return @{handle=$handle;id=('{0}:{1}:{2}' -f $info.volume,$info.indexHigh,$info.indexLow);path=$item.FullName}
+}
+# Only an OS-registered package root may cross a package-volume redirect.
+# Fixture/artifact/process paths continue through strict Physical unchanged.
+function Registered-Root($package) {
+ $logical=[IO.Path]::GetFullPath($package.InstallLocation).TrimEnd('\')
+ $full=$package.PackageFullName
+ if(-not $full -or [IO.Path]::GetFileName($logical) -cne $full){throw 'Registered package root/name mismatch'}
+ $stores=@(Get-AppxVolume|Where-Object{-not $_.IsOffline}|ForEach-Object{[IO.Path]::GetFullPath($_.PackageStorePath).TrimEnd('\')})
+ $parent=Split-Path -Parent $logical
+ if($parent -notin $stores){throw 'Registered package root outside OS package stores'}
+ $cursor=Get-Item -LiteralPath $parent -Force
+ while($cursor){if($cursor.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'Reparse package-store ancestor refused'};$cursor=$cursor.Parent}
+ $handle=$null;$physical=$null
+ try {
+  $handle=[SemantierNativeFacts]::CreateFile($logical,0,1,[IntPtr]::Zero,3,0x02000000,[IntPtr]::Zero)
+  if($handle.IsInvalid){throw 'Registered package root unavailable'}
+  $final=[Text.StringBuilder]::new(32768)
+  $length=[SemantierNativeFacts]::GetFinalPathNameByHandle($handle,$final,32768,0)
+  if($length -eq 0 -or $length -ge 32768){throw 'Registered package root resolution failed'}
+  $resolved=$final.ToString()
+  if($resolved.StartsWith('\\?\')){$resolved=$resolved.Substring(4)}
+  $matches=@($stores|ForEach-Object{Join-Path $_ $full}|Where-Object{$_ -ieq $resolved})
+  if($matches.Count -ne 1){throw 'Registered package redirect outside exact OS package store'}
+  $physical=Physical $matches[0]
+  $info=New-Object SemantierNativeFacts+Info
+  if(-not [SemantierNativeFacts]::GetFileInformationByHandle($handle,[ref]$info)){throw 'Registered package identity unavailable'}
+  if(('{0}:{1}:{2}' -f $info.volume,$info.indexHigh,$info.indexLow) -cne $physical.id){throw 'Registered package redirect changed'}
+  return $physical.path
+ } finally {if($physical){$physical.handle.Dispose()};if($handle){$handle.Dispose()}}
 }
 $profile=[Environment]::GetFolderPath('UserProfile').TrimEnd('\')
 $root=[IO.Path]::GetFullPath($r.root).TrimEnd('\')
@@ -217,7 +246,7 @@ try {
     $publisher=$parents[0].GetAttribute('Publisher')
     if($publisher -and $publisher -cne 'CN=Semantier Technology, O=Semantier Technology'){throw 'Related package parent publisher mismatch'}
    }
-   $physical=Physical $child.InstallLocation
+   $physical=Physical (Registered-Root $child)
    try{$result+=[ordered]@{name=$child.Name;publisher=$child.Publisher;version=$child.Version.ToString();arch=$child.Architecture.ToString();resource_id=$child.ResourceId;full=$child.PackageFullName;family=$child.PackageFamilyName;install_path=$physical.path;root_id=$physical.id}}finally{$physical.handle.Dispose()}
   }
   return ,@($result|Sort-Object {$_['full']})
@@ -231,11 +260,12 @@ try {
    $manifest=Get-AppxPackageManifest -Package $p.PackageFullName
    $expected=[pscustomobject]@{msixIdentity='Semantier.Agent.Acceptance';publisher='CN=Semantier Technology, O=Semantier Technology';windowsVersion=$p.Version.ToString();applicationId='SemantierAgentAcceptance'}
    $desktop=Read-SmokePackageManifest $manifest 'x64' $expected
-   $exe=Join-Path $p.InstallLocation $desktop.Executable
+   $install=Registered-Root $p
+   $exe=Join-Path $install $desktop.Executable
    $physical=Physical $exe
    try {
-    $stamp=Get-Content -LiteralPath (Join-Path $p.InstallLocation 'app\resources\install-stamp.json') -Raw|ConvertFrom-Json
-    $package=@{name=$p.Name;publisher=$p.Publisher;version=$p.Version.ToString();arch=$p.Architecture.ToString();commit=$stamp.commit;build_id=$stamp.channelBuild.buildId;full=$p.PackageFullName;family=$p.PackageFamilyName;install_path=$p.InstallLocation;exe=$exe;exe_id=$physical.id}
+    $stamp=Get-Content -LiteralPath (Join-Path $install 'app\resources\install-stamp.json') -Raw|ConvertFrom-Json
+    $package=@{name=$p.Name;publisher=$p.Publisher;version=$p.Version.ToString();arch=$p.Architecture.ToString();commit=$stamp.commit;build_id=$stamp.channelBuild.buildId;full=$p.PackageFullName;family=$p.PackageFamilyName;install_path=$install;exe=$exe;exe_id=$physical.id}
     $rows=Main-Processes $exe
     if($rows.Count -gt 1){throw 'Ambiguous installed main process'}
     if($rows.Count){$row=$rows[0];$owner=Invoke-CimMethod -InputObject $row -MethodName GetOwnerSid;if($owner.Sid -cne $sid -or $row.SessionId -ne $session){throw 'Process belongs to different user/session'};$process=@{pid=$row.ProcessId;birth=(ExactBirth $row);exe=$exe;exe_id=$physical.id}}
