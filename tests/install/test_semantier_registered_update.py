@@ -291,3 +291,15 @@ def test_native_graph_binding_uses_original_bom_and_crlf_bytes(tmp_path):
     assert d.load_native_target(request)==graph
     file.write_bytes(raw+b'changed')
     with pytest.raises(ValueError,match='source digest'):d.load_native_target(request)
+
+
+@pytest.mark.parametrize('value', ['https://example.com','http://127.0.0.1:70000','http://user@127.0.0.1:80','http://127.0.0.1:80/path','http://127.0.0.1:80?x=y'])
+def test_native_engineering_origin_refuses_unbound_address(value):
+    with pytest.raises(ValueError,match='origin'):
+        d.validate_native_origin({'purpose':d.NATIVE_QUALIFICATION,'native_origin':value})
+
+
+def test_native_engineering_origin_requires_its_separate_purpose():
+    with pytest.raises(ValueError,match='purpose'):
+        d.validate_native_origin({'native_origin':'http://127.0.0.1:8926'})
+    assert d.validate_native_origin({'purpose':d.NATIVE_QUALIFICATION,'native_origin':'http://127.0.0.1:8926'})=='http://127.0.0.1:8926'

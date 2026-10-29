@@ -235,7 +235,7 @@ class Windows:
         script = Path(__file__).parent/'e2e-assets/semantier-registered-platform.ps1'
         result = subprocess.run([self.powershell,'-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',str(script)],
             input=json.dumps(payload), text=True, capture_output=True, check=False,
-            timeout=1800 if action in ('update','native-proof') else 60 if action == 'download' else 300)
+            timeout=1800 if action in ('update','native-proof') or (action=='register' and self.request.get('native_origin')) else 60 if action == 'download' else 300)
         if result.returncode: raise RuntimeError(result.stderr.strip())
         return json.loads(result.stdout.lstrip('\ufeff'))
     def observe(self):
@@ -247,6 +247,7 @@ class Windows:
         now = self.observe()
         if not owner.get('session_sid') or owner['session_sid'] != owner.get('sid'):
             raise ValueError('Recorded WTS account binding unavailable; preserve transaction')
+        if owner.get('purpose')==NATIVE_QUALIFICATION and owner.get('native_origin')!=self.request.get('native_origin'):raise ValueError('Native origin changed across transaction')
         if any(now[k] != owner[k] for k in ('sid','session','session_sid','root_id')): raise ValueError('OS owner or physical root changed')
     def recovery_check(self, intent):
         if intent['action'] in ('register','update'):
@@ -290,11 +291,27 @@ class Windows:
             and after['package']['family'] == before['package']['family'])
 
 
+def validate_native_origin(request):
+    value=request.get('native_origin')
+    if value is None:return None
+    if request.get('purpose')!=NATIVE_QUALIFICATION:raise ValueError('Native origin requires WD1 purpose')
+    from urllib.parse import urlsplit
+    if not isinstance(value,str):raise ValueError('Invalid native engineering origin')
+    try:
+        parsed=urlsplit(value)
+        port=parsed.port
+        if parsed.scheme!='http' or parsed.hostname!='127.0.0.1' or not port or value!=f'http://127.0.0.1:{port}':
+            raise ValueError('Invalid native engineering origin')
+    except (TypeError,ValueError) as error:raise ValueError('Invalid native engineering origin') from error
+    return value
+
+
 def load_native_target(request):
     # The staging tree preserves these existing owners' paths; no alternate validator.
     root=Path(__file__).resolve().parents[2]
     if str(root) not in sys.path:sys.path.insert(0,str(root))
     from scripts.releases.semantier_windows import validate_native_graph
+    validate_native_origin(request)
     target=request['target'];binding=target['native_graph'];file=Path(binding['path'])
     if file.name!='native-graph.json' or file.parent!=Path(target['path']).parent:
         raise ValueError('Native graph must remain beside the pinned root')
@@ -338,7 +355,7 @@ def run_native_qualification(tx, platform, owner):
     if not tx.events():
         if owner['package'] is not None or owner['process'] is not None or Transaction.related(owner):
             raise ValueError('Existing package/process/related set: refuse native qualification')
-        tx.initialize({**owner,'purpose':NATIVE_QUALIFICATION})
+        tx.initialize({**owner,'purpose':NATIVE_QUALIFICATION,'native_origin':platform.request.get('native_origin')})
     if tx.events()[0]['owner'].get('purpose')!=NATIVE_QUALIFICATION:raise ValueError('Existing transaction has another purpose')
     tx.reconcile()
     if platform.observe()['package'] is None:tx.operation('register',platform.call('artifact',side='target'))

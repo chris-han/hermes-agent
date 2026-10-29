@@ -275,7 +275,13 @@ try {
      foreach($row in $r.native_graph_value.objects){if($row.key -cne $r.native_graph_value.root){$holds+=Physical (Join-Path (Split-Path -Parent $source.path) (($row.key -split '/')[-1]))}}
     }
     $expected=Artifact $side;$before=Observe;if($before.package -or @($before.related).Count){throw 'Existing package/related conflict'}
-    Add-AppxPackage -Path $source.path -ErrorAction Stop
+    if($r.PSObject.Properties['native_origin']){
+     if($side -cne 'target' -or $r.purpose -cne 'wd1-native-layout-qualification'){throw 'Native URI proof requires WD1 target purpose'}
+     $attempt=Join-Path $root ('native-deployment-'+[guid]::NewGuid().ToString('N'))
+     New-Item -ItemType Directory -Path $attempt -ErrorAction Stop|Out-Null
+     . (Join-Path $PSScriptRoot 'native-package-deployment.ps1')
+     Invoke-WD1NativeUri $r.native_graph_value $r.native_origin $attempt
+    }else{Add-AppxPackage -Path $source.path -ErrorAction Stop}
     $result=Observe
    }finally{foreach($hold in $holds){$hold.handle.Dispose()}}
   }
@@ -314,6 +320,15 @@ try {
   native-proof {
    if(!$r.PSObject.Properties['purpose'] -or $r.purpose -cne 'wd1-native-layout-qualification' -or $sid -cne 'S-1-5-21-1928370875-4287869425-2092521300-1011'){throw 'WD1 local qualification context required'}
    $state=Observe;$target=Native-Artifact
+   $uriProof=$null
+   if($r.PSObject.Properties['native_origin']){
+    $proofFiles=@(Get-ChildItem -LiteralPath $root -Directory -Filter 'native-deployment-*'|ForEach-Object{Get-ChildItem -LiteralPath $_.FullName -File -Filter 'native-uri-proof.json'})
+    if($proofFiles.Count -ne 1){throw 'Exactly one completed native URI proof required; preserve attempts'}
+    $uriProof=Get-Content -LiteralPath $proofFiles[0].FullName -Raw|ConvertFrom-Json
+    $expectedUris=@($r.native_graph_value.objects|ForEach-Object{$r.native_origin+'/'+$_.key})
+    $expectedDigests=@($r.native_graph_value.objects|ForEach-Object{$_.nativeDigest})
+    if($uriProof.root -cne $r.native_graph_value.root -or $uriProof.refusal.hresult -cne '80080219' -or $uriProof.positive.status -cne 'SUCCESS' -or ($uriProof.uris -join '|') -cne ($expectedUris -join '|') -or ($uriProof.digests -join '|') -cne ($expectedDigests -join '|')){throw 'Native URI proof differs from pinned target'}
+   }
    if(!$state.package -or $state.package.full -cne $target.full){throw 'Exact registered native package required'}
    $attempt=Join-Path $root ('native-proof-'+[guid]::NewGuid().ToString('N'))
    New-Item -ItemType Directory -Path $attempt -ErrorAction Stop|Out-Null
@@ -328,7 +343,7 @@ try {
    $pkg=@(Get-AppxPackage -Name 'Semantier.Agent.Acceptance'|Where-Object{$_.PackageFullName -ceq $state.package.full})
    if($pkg.Count -ne 1){throw 'Native qualification package changed'}
    Test-BundleNativePayload (Join-Path $state.package.install_path 'app\resources\agent-payload') $pkg[0] $target.commit $target.build_id $attempt
-   $result=@{scope='LOCAL_NATIVE_LAYOUT_RUNTIME_ONLY_NOT_CI_OR_MIGRATION';package=$state.package;related=$state.related;locationProof=(Get-Content -LiteralPath $locations -Raw|ConvertFrom-Json);runtimeProof=(Get-Content -LiteralPath (Join-Path $attempt 'native-payload-runtime.json') -Raw|ConvertFrom-Json);evidence=$attempt}
+   $result=@{scope='LOCAL_NATIVE_LAYOUT_RUNTIME_ONLY_NOT_CI_OR_MIGRATION';nativeUriProof=$uriProof;package=$state.package;related=$state.related;locationProof=(Get-Content -LiteralPath $locations -Raw|ConvertFrom-Json);runtimeProof=(Get-Content -LiteralPath (Join-Path $attempt 'native-payload-runtime.json') -Raw|ConvertFrom-Json);evidence=$attempt}
   }
   ready {
    $state=Observe;if(-not $state.process){throw 'Registered application not running'}
