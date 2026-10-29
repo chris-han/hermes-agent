@@ -229,8 +229,9 @@ try {
    $p=$packages[0]
    if($p.Publisher -cne 'CN=Semantier Technology, O=Semantier Technology' -or $p.Status.ToString() -cne 'Ok' -or $p.SignatureKind.ToString() -cne 'Developer' -or $p.IsDevelopmentMode){throw 'Unexpected registered package'}
    $manifest=Get-AppxPackageManifest -Package $p.PackageFullName
-   $apps=@($manifest.Package.Applications.Application);if($apps.Count -ne 1){throw 'Ambiguous application'}
-   $exe=Join-Path $p.InstallLocation $apps[0].Executable
+   $expected=[pscustomobject]@{msixIdentity='Semantier.Agent.Acceptance';publisher='CN=Semantier Technology, O=Semantier Technology';windowsVersion=$p.Version.ToString();applicationId='SemantierAgentAcceptance'}
+   $desktop=Read-SmokePackageManifest $manifest 'x64' $expected
+   $exe=Join-Path $p.InstallLocation $desktop.Executable
    $physical=Physical $exe
    try {
     $stamp=Get-Content -LiteralPath (Join-Path $p.InstallLocation 'app\resources\install-stamp.json') -Raw|ConvertFrom-Json

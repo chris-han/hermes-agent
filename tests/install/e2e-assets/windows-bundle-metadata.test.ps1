@@ -27,6 +27,12 @@ try {
     $got = Read-BundleSmokeMetadata $file 'arm64' $expected
     if ($got.Version -cne '1.2.3.0' -or $got.Executable -cne 'app\Hermes.exe') { throw 'MSIX metadata lost' }
     Reject { Read-BundleSmokeMetadata $file 'x64' $expected }
+    # Real packages also expose CLI applications. Select the exact desktop ID.
+    $multi=$xml.Replace('</Applications>','<Application Id="HermesCli0" Executable="app\bin\hermes.exe"/><Application Id="HermesCli1" Executable="app\bin\agent.exe"/></Applications>')
+    if((Read-SmokePackageManifest ([xml]$multi) 'arm64' $expected).Executable -cne 'app\Hermes.exe'){throw 'CLI application confused desktop selection'}
+    Reject { Read-SmokePackageManifest ([xml]($multi.Replace('Id="HermesCli0"','Id="Hermes"'))) 'arm64' $expected }
+    Reject { Read-SmokePackageManifest ([xml]($multi.Replace('Id="Hermes"','Id="OtherDesktop"'))) 'arm64' $expected }
+
     $wrong = Archive 'wrong.msix' 'AppxManifest.xml' ($xml.Replace('CN=Fixture', 'CN=Other'))
     Reject { Read-BundleSmokeMetadata $wrong 'arm64' $expected }
     $escape = Archive 'escape.msix' 'AppxManifest.xml' ($xml.Replace('app\Hermes.exe', '..\outside.exe'))
