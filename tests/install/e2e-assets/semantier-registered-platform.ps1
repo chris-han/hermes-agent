@@ -358,9 +358,26 @@ try {
     if($publisher -and $publisher -cne 'CN=Semantier Technology, O=Semantier Technology'){throw 'Related package parent publisher mismatch'}
    }
    $physical=Physical (Registered-Root $child)
-   try{$result+=[ordered]@{name=$child.Name;publisher=$child.Publisher;version=$child.Version.ToString();arch=$child.Architecture.ToString();resource_id=$child.ResourceId;full=$child.PackageFullName;family=$child.PackageFamilyName;install_path=$physical.path;root_id=$physical.id}}finally{$physical.handle.Dispose()}
+   try{$result+=[ordered]@{name=$child.Name;publisher=$child.Publisher;version=$child.Version.ToString();arch=$child.Architecture.ToString();resource_id=$child.ResourceId;full=$child.PackageFullName;family=$child.PackageFamilyName;install_path=$physical.path;logical_install_path=([IO.Path]::GetFullPath($child.InstallLocation).TrimEnd('\'));root_id=$physical.id}}finally{$physical.handle.Dispose()}
   }
   return ,@($result|Sort-Object {$_['full']})
+ }
+ function Package-GraphProcesses($State) {
+  if(-not $State.package){throw 'Observed registered graph required'}
+  $prefixes=@()
+  foreach($entry in (@($State.package)+@($State.related))){
+   if(-not $entry){throw 'Invalid observed graph entry'}
+   foreach($field in @('install_path','logical_install_path')){
+    $value=$entry.$field
+    if($value -isnot [string] -or -not $value -or -not [IO.Path]::IsPathRooted($value)){throw 'Complete observed graph root metadata required'}
+    $prefixes+=([IO.Path]::GetFullPath($value).TrimEnd('\')+'\')
+   }
+  }
+  return @(Get-CimInstance Win32_Process|Where-Object{
+   if(-not $_.ExecutablePath){return $false}
+   $path=[IO.Path]::GetFullPath($_.ExecutablePath)
+   @($prefixes|Where-Object{$path.StartsWith($_,[StringComparison]::OrdinalIgnoreCase)}).Count -gt 0
+  })
  }
  function Has-ReadyLanguageControl([string[]]$Names,[string]$Language) {
   $label=if($Language -ceq 'zh'){([char]0x65b0+[char]0x5efa+[char]0x4f1a+[char]0x8bdd)}elseif($Language -ceq 'en'){'New session'}else{throw 'Unsupported ready language'}
@@ -382,7 +399,7 @@ try {
    $physical=Physical $exe
    try {
     $stamp=Get-Content -LiteralPath (Join-Path $install 'app\resources\install-stamp.json') -Raw|ConvertFrom-Json
-    $package=@{name=$p.Name;publisher=$p.Publisher;version=$p.Version.ToString();arch=$p.Architecture.ToString();commit=$stamp.commit;build_id=$stamp.channelBuild.buildId;full=$p.PackageFullName;family=$p.PackageFamilyName;install_path=$install;exe=$exe;exe_id=$physical.id}
+    $package=@{name=$p.Name;publisher=$p.Publisher;version=$p.Version.ToString();arch=$p.Architecture.ToString();commit=$stamp.commit;build_id=$stamp.channelBuild.buildId;full=$p.PackageFullName;family=$p.PackageFamilyName;install_path=$install;logical_install_path=([IO.Path]::GetFullPath($p.InstallLocation).TrimEnd('\'));exe=$exe;exe_id=$physical.id}
     $logicalExe=Join-Path $p.InstallLocation $desktop.Executable
     $rows=@(Get-CimInstance Win32_Process|Where-Object{$_.ExecutablePath -and $_.ExecutablePath -iin @($exe,$logicalExe) -and $_.CommandLine -notmatch '(?:^|\s)--type(?:=|\s)'})
     if($rows.Count -gt 1){throw 'Ambiguous installed main process'}
@@ -509,7 +526,7 @@ try {
     $old=Get-Process -Id $oldGateway.pid -ErrorAction SilentlyContinue
     if($old -and ([DateTimeOffset]$old.StartTime).ToUniversalTime().ToString('o') -ceq $oldGateway.birth){throw 'Old owned gateway remains after update; preserve it'}
    }
-   $oldPayload=@(Get-CimInstance Win32_Process|Where-Object{$_.ExecutablePath -and $_.ExecutablePath.StartsWith($before.package.install_path+'\',[StringComparison]::OrdinalIgnoreCase)})
+   $oldPayload=@(Package-GraphProcesses $before)
    if($oldPayload.Count){throw 'Old payload processes remain; preserve update state'}
   }
   native-registration-proof {
@@ -631,7 +648,7 @@ try {
      if(-not $gatewayHandle.WaitForExit(60000)){throw 'Owned gateway did not stop'}
     }finally{$gatewayHandle.Dispose()}
    }
-   $remaining=@(Get-CimInstance Win32_Process|Where-Object{$_.ExecutablePath -and $_.ExecutablePath.StartsWith($before.package.install_path+'\',[StringComparison]::OrdinalIgnoreCase)})
+   $remaining=@(Package-GraphProcesses $before)
    if($remaining.Count){throw 'Package processes remain; preserve registration for recovery'}
    $again=Observe;if($again.package.full -cne $before.package.full -or $again.package.exe_id -cne $before.package.exe_id){throw 'Registration changed before cleanup'}
    Remove-AppxPackage -Package $before.package.full -ErrorAction Stop;$result=Observe
