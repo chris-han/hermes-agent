@@ -372,7 +372,8 @@ def prior_proof_source(tmp_path,monkeypatch):
     for name in p.proof_sources(current):
         file=root/name;file.parent.mkdir(parents=True,exist_ok=True);file.write_bytes((current/name).read_bytes())
     platform=root/'tests/install/e2e-assets/semantier-registered-platform.ps1'
-    platform.write_text(platform.read_text(encoding='utf-8-sig').replace(' function Observe {',' # prior observation implementation\n function Observe {'),encoding='utf-8')
+    text=platform.read_text(encoding='utf-8-sig')
+    platform.write_text(text.replace(' function Observe {',' # prior observation implementation\n function Observe {'),encoding='utf-8')
     def bind():
         rows=[{'path':name,'sha256':hashlib.sha256((root/name).read_bytes()).hexdigest()} for name in p.proof_sources(current)]
         file=root/'source-binding.json';raw=json.dumps({'files':rows}).encode();file.write_bytes(raw)
