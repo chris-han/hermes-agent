@@ -91,6 +91,17 @@ function Find-WD1LateDeployment($Events,[DateTimeOffset]$Started,[DateTimeOffset
  return $matches[0]
 }
 
+function Read-WD1DeploymentEvent($Event) {
+ [xml]$xml=$Event.ToXml()
+ $system=$xml.SelectSingleNode('/*[local-name()="Event"]/*[local-name()="System"]')
+ if($system.SelectSingleNode('*[local-name()="Provider"]').GetAttribute('Name') -cne 'Microsoft-Windows-AppXDeployment-Server'){throw 'Unexpected native event provider'}
+ $data=@{}
+ foreach($item in $xml.SelectNodes('/*[local-name()="Event"]/*[local-name()="EventData"]/*[local-name()="Data"]')){
+  $name=$item.GetAttribute('Name');if(!$name -or $data.ContainsKey($name)){throw 'Ambiguous native event data'}
+  $data[$name]=$item.InnerText
+ }
+ return [pscustomobject]@{id=[int]$Event.Id;operation=$data['DeploymentOperation'];sid=$system.SelectSingleNode('*[local-name()="Security"]').GetAttribute('UserID');activity=[string]$Event.ActivityId;time=[DateTimeOffset]::Parse($system.SelectSingleNode('*[local-name()="TimeCreated"]').GetAttribute('SystemTime'));callingProcess=$data['CallingProcess'];uri=$data['PackageSourceUri'];full=$data['PackageFullName'];recordId=$Event.RecordId}
+}
 function Recover-WD1NativeUri($Graph,[string]$Base,[string]$Root,$State,$Target,[string]$Evidence) {
  $context=Get-Variable -Name r -ErrorAction SilentlyContinue
  if(!$context -or $context.Value.purpose -cne 'wd1-native-layout-qualification' -or $context.Value.action -cne 'native-proof' -or [Security.Principal.WindowsIdentity]::GetCurrent().User.Value -cne 'S-1-5-21-1928370875-4287869425-2092521300-1011'){throw 'Actual WD1 proof context required'}
@@ -112,10 +123,7 @@ function Recover-WD1NativeUri($Graph,[string]$Base,[string]$Root,$State,$Target,
  if($candidates.Count -ne 1){throw 'Exactly one bounded native timeout attempt required'}
  $candidate=$candidates[0];$events=@()
  foreach($event in @(Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-AppXDeploymentServer/Operational';Id=@(603,478);StartTime=$candidate.started.AddSeconds(-2).LocalDateTime})){
-  [xml]$xml=$event.ToXml()
-  if([string]$xml.Event.System.Provider.Name -cne 'Microsoft-Windows-AppXDeployment-Server'){throw 'Unexpected native event provider'}
-  $data=@{};foreach($item in $xml.Event.EventData.Data){$data[[string]$item.Name]=[string]$item.'#text'}
-  $events+=[pscustomobject]@{id=[int]$event.Id;operation=$data['DeploymentOperation'];sid=[string]$xml.Event.System.Security.UserID;activity=[string]$event.ActivityId;time=[DateTimeOffset]::Parse([string]$xml.Event.System.TimeCreated.SystemTime);callingProcess=$data['CallingProcess'];uri=$data['PackageSourceUri'];full=$data['PackageFullName'];recordId=$event.RecordId}
+  $events+=Read-WD1DeploymentEvent $event
  }
  $uri=$Base+'/'+$Graph.root
  $success=Find-WD1LateDeployment $events $candidate.started $candidate.ended $State.sid $uri $Target.full
