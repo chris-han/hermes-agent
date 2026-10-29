@@ -352,7 +352,7 @@ try {
    if($oldPayload.Count){throw 'Old payload processes remain; preserve update state'}
   }
   native-proof {
-   if(!$r.PSObject.Properties['purpose'] -or $r.purpose -cne 'wd1-native-layout-qualification' -or $sid -cne 'S-1-5-21-1928370875-4287869425-2092521300-1011'){throw 'WD1 local qualification context required'}
+   if(-not $localWD1){throw 'WD1 local qualification context required'}
    $state=Observe;$target=Native-Artifact
    if(!$state.package -or $state.package.full -cne $target.full){throw 'Exact registered native package required'}
    $attempt=Join-Path $root ('native-proof-'+[guid]::NewGuid().ToString('N'))
