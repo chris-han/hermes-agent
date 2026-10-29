@@ -36,16 +36,21 @@ def test_native_graph_binds_entire_remote_set():
 def test_native_graph_refuses_unbound_or_incomplete_sets(damage):
     from scripts.releases.semantier_windows import validate_native_graph
     graph=native_graph();row=graph['objects'][-1]
-    if damage=='oversize':row['size']=480000001
-    elif damage=='outer_oversize':graph['objects'][0]['size']=480000001
-    elif damage=='missing':graph['objects'].pop()
-    elif damage=='unreachable':graph['objects'][0]['references'].pop()
-    elif damage=='cycle':row['references']=[graph['root']]
-    elif damage in ('publisher','version','arch'):row[damage]='wrong'
-    elif damage=='digest':row['nativeDigest']='b'*64
-    elif damage=='traversal':row['key']=row['key'].replace('runtime.msix','../runtime.msix')
-    elif damage=='duplicate':graph['objects'].append(dict(row))
-    elif damage=='different_build':row['key']=row['key'].replace('a'*32,'d'*32)
+    mutations={
+        'oversize':lambda:row.update(size=480000001),
+        'outer_oversize':lambda:graph['objects'][0].update(size=480000001),
+        'missing':lambda:graph['objects'].pop(),
+        'unreachable':lambda:graph['objects'][0]['references'].pop(),
+        'cycle':lambda:row.update(references=[graph['root']]),
+        'publisher':lambda:row.update(publisher='wrong'),
+        'version':lambda:row.update(version='wrong'),
+        'arch':lambda:row.update(arch='wrong'),
+        'digest':lambda:row.update(nativeDigest='b'*64),
+        'traversal':lambda:row.update(key=row['key'].replace('runtime.msix','../runtime.msix')),
+        'duplicate':lambda:graph['objects'].append(dict(row)),
+        'different_build':lambda:row.update(key=row['key'].replace('a'*32,'d'*32)),
+    }
+    mutations[damage]()
     with pytest.raises(ValueError):validate_native_graph(graph,build_id='a'*32,identity='Semantier.Agent.Acceptance',
         publisher='CN=Semantier Technology, O=Semantier Technology',version='0.0.59.0',arch='x64')
 
@@ -58,7 +63,7 @@ def test_native_graph_cannot_mint_legacy_ci_qualification(tmp_path,monkeypatch):
     (tmp_path/'signed').mkdir()
     records={'result.json':{'result':'PASS','sourceCommit':request['commit']},'channel-request.json':request,
         'signed/receipt.json':{'publisher':'CN=Semantier Technology, O=Semantier Technology','nativeGraph':native_graph()}}
-    for name,value in records.items():(tmp_path/name).write_text(json.dumps(value))
+    for name,value in records.items():(tmp_path/name).write_text(json.dumps(value),encoding='utf-8')
     for key,value in {'GITHUB_ACTIONS':'true','GITHUB_REPOSITORY':'chris-han/hermes-agent','GITHUB_SHA':request['commit']}.items():monkeypatch.setenv(key,value)
     with pytest.raises(ValueError,match='graph-bound installed qualification'):stage(tmp_path,tmp_path,tmp_path,{'en':'test'})
 
@@ -159,9 +164,9 @@ def test_final_graph_rejects_foreign_payload_and_embedded_bundle(tmp_path):
     stamp=json.dumps({'commit':'a'*40,'channelBuild':{'buildId':'b'*32}}).encode()
     files={'app/main.exe':payload,'app/resources/install-stamp.json':stamp}
     plan={'identity':{'Name':'Semantier.Agent.Acceptance','Publisher':'CN=Semantier Technology, O=Semantier Technology','Version':'0.0.59.0','ProcessorArchitecture':'x64'},'payloadInventorySha256':'c'*64,'groups':[{'id':'main'}],'assignment':{p:'main' for p in files},'files':[{'path':p,'size':len(v),'sha256':hashlib.sha256(v).hexdigest()} for p,v in files.items()]}
-    def package(damage=False):
+    def package(damage=False,dependency=False):
         with zipfile.ZipFile(tmp_path/'SemantierAgent-main.msix','w') as z:
-            z.writestr('AppxManifest.xml','<Package><Identity '+identity+' ProcessorArchitecture="x64"/></Package>')
+            z.writestr('AppxManifest.xml','<Package><Identity '+identity+' ProcessorArchitecture="x64"/>'+('<Dependencies><PackageDependency Name="Unexpected.Framework"/></Dependencies>' if dependency else '')+'</Package>')
             z.writestr('AppxSignature.p7x',b'fixture signature; signature policy checked by signer')
             for p,v in files.items():z.writestr(p,b'foreign' if damage and p.endswith('.exe') else v)
     package()
@@ -174,6 +179,9 @@ def test_final_graph_rejects_foreign_payload_and_embedded_bundle(tmp_path):
     assert len(graph['objects'])==2
     package(True)
     with pytest.raises(ValueError,match='payload'):inspect_native_asset_graph(tmp_path,plan,digests,source_commit='a'*40)
+    package()
+    package(dependency=True)
+    with pytest.raises(ValueError):inspect_native_asset_graph(tmp_path,plan,digests,source_commit='a'*40)
     package()
     with zipfile.ZipFile(bundle,'a') as z:z.writestr('SemantierAgent-main.msix',b'embedded')
     with pytest.raises(ValueError,match='external'):inspect_native_asset_graph(tmp_path,plan,digests,source_commit='a'*40)

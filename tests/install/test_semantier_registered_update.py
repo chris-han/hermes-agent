@@ -125,14 +125,14 @@ def test_unlinked_outcome_and_empty_package_intent_refused(tx):
     with pytest.raises(ValueError):t.reconcile()
 
 def test_journal_links_refused_before_write(tmp_path):
-    original=tmp_path/'original';original.write_text('retain')
+    original=tmp_path/'original';original.write_text('retain',encoding='utf-8')
     link=tmp_path/'link';link.symlink_to(original)
     with pytest.raises(ValueError):
         with d.safe_file(link,'a'):pass
     hard=tmp_path/'hard';__import__('os').link(original,hard)
     with pytest.raises(ValueError):
         with d.safe_file(hard,'a'):pass
-    assert original.read_text()=='retain'
+    assert original.read_text(encoding='utf-8-sig')=='retain'
 
 def test_cleanup_interrupted_after_close_can_reconcile_package_removal(tx):
     t,p=tx;p.state['package']={'full':'owned'};p.state['process']={'pid':1,'birth':'a'};seed(t,p);t.fault='before_action'

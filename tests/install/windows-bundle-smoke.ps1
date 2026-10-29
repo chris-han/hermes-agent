@@ -7,6 +7,10 @@ param(
     [string]$Tag = '',
     [string]$ChannelRequest = '',
     [switch]$SemantierAcceptanceHost,
+    [string]$NativeGraph = '',
+    [string]$NativeLayoutPlan = '',
+    [string]$Python = '',
+    [string]$ExpectedSid = '',
     [Parameter(Mandatory=$true)][string]$Work,
     [Parameter(Mandatory=$true)][string]$Out
 )
@@ -15,6 +19,13 @@ Set-StrictMode -Version Latest
 if ((!$SemantierAcceptanceHost -and ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted')) -or $env:OS -cne 'Windows_NT') {
     throw 'Disposable native GitHub-hosted Windows runner required'
 }
+if ($NativeGraph) {
+    $actualSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    if (!$SemantierAcceptanceHost -or $env:GITHUB_ACTIONS -cne 'true' -or !$NativeLayoutPlan -or !$Python -or
+        !$ExpectedSid -or $ExpectedSid -cne $actualSid -or $actualSid -in @('S-1-5-21-1928370875-4287869425-2092521300-1003','S-1-5-21-1928370875-4287869425-2092521300-1011')) {
+        throw 'Native graph smoke requires the separate explicitly bound CI account; normal/baseline contexts excluded'
+    }
+} elseif ($NativeLayoutPlan) { throw 'Native layout requires the complete graph' }
 if ($Commit -cnotmatch '^[a-f0-9]{40}$') { throw 'Expected exact lowercase full commit SHA' }
 if (-not [IO.Path]::IsPathRooted($Artifact) -or -not (Test-Path -LiteralPath $Artifact -PathType Leaf)) { throw 'Absolute artifact path required' }
 $Artifact = (Resolve-Path -LiteralPath $Artifact).Path
@@ -58,7 +69,37 @@ try {
     $signature = Get-AuthenticodeSignature -LiteralPath $Artifact
     if ($signature.Status -ne 'Valid' -or -not $signature.SignerCertificate -or
         $signature.SignerCertificate.Subject -cne $Expected.publisher) { throw 'Artifact signature/publisher invalid' }
-    $inputMetadata = Read-BundleSmokeMetadata $Artifact $Arch $Expected
+    $externalPackage = $null
+    $graph = $null
+    if ($NativeGraph) {
+        $graphHash = (Get-FileHash -LiteralPath $NativeGraph -Algorithm SHA256).Hash.ToLowerInvariant()
+        $graph = Get-Content -LiteralPath $NativeGraph -Raw | ConvertFrom-Json
+        $members = @($graph.objects)
+        $main = @($members | Where-Object { $_.kind -ceq 'main-package' })
+        $bundle = @($members | Where-Object { $_.key -ceq $graph.root })
+        if ($main.Count -ne 1 -or $bundle.Count -ne 1 -or
+            [IO.Path]::GetFileName($Artifact) -cne ($bundle[0].key -split '/')[-1] -or $beforeHash -cne $bundle[0].sha256) { throw 'Native graph root binding mismatch' }
+        . (Join-Path $PSScriptRoot '..\..\apps\desktop\scripts\native-package-digest.ps1')
+        $nativeDigests = [ordered]@{}
+        foreach ($member in $members) {
+            $filename = ($member.key -split '/')[-1]
+            if ($filename -cnotmatch '^SemantierAgent(?:-main|-runtime[0-9]{4})?\.msix(?:bundle)?$') { throw 'Unexpected native member filename' }
+            $file = Join-Path (Split-Path -Parent $Artifact) $filename
+            $signature = Get-AuthenticodeSignature -LiteralPath $file
+            if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -cne $Expected.publisher) { throw 'Native member signature mismatch' }
+            $nativeDigests[$filename] = Get-NativePackageDigest $file
+        }
+        $digestsPath = Join-Path $Out 'native-digests-readback.json'
+        $nativeDigests | ConvertTo-Json | Set-Content -LiteralPath $digestsPath -Encoding utf8
+        $readbackPath = Join-Path $Out 'native-graph-readback.json'
+        & $Python (Join-Path $PSScriptRoot '..\..\scripts\releases\semantier_windows.py') native-graph --directory (Split-Path -Parent $Artifact) --plan $NativeLayoutPlan --digests $digestsPath --commit $Commit --output $readbackPath
+        if ($LASTEXITCODE -ne 0) { throw 'Complete final native graph verification failed' }
+        $readback = Get-Content -LiteralPath $readbackPath -Raw | ConvertFrom-Json
+        if (($readback | ConvertTo-Json -Depth 16 -Compress) -cne ($graph | ConvertTo-Json -Depth 16 -Compress)) { throw 'Final native graph readback differs' }
+        $externalPackage = $main[0]
+        if (@(Get-AppxPackage -PackageTypeFilter Resource -Name $Expected.msixIdentity).Count) { throw 'Existing related resources conflict; preserve them' }
+    }
+    $inputMetadata = Read-BundleSmokeMetadata $Artifact $Arch $Expected $externalPackage
     $inputMetadata | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Out 'artifact-metadata.json')
     $existing = @(if ($SemantierAcceptanceHost) { Get-AppxPackage -Name $Expected.msixIdentity } else { Get-AppxPackage -AllUsers -Name $Expected.msixIdentity })
     if ($existing.Count) { throw 'Package identity already exists; refusing to replace it' }
@@ -96,6 +137,20 @@ try {
         version=$pkg.Version.ToString(); exe=$exe; root=$root; stamp=$stamp } |
         ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $Out 'installed-identity.json')
     if ((Get-FileHash -Algorithm SHA256 -LiteralPath $Artifact).Hash.ToLowerInvariant() -cne $beforeHash) { throw 'Input artifact changed during installation' }
+    if ($graph) {
+        Run-Node @($Metadata,'native-payload','--root',$pkg.InstallLocation,'--plan',$NativeLayoutPlan,'--graph',$NativeGraph,'--out',(Join-Path $Out 'native-payload-folding.json'))
+        $resources = @(Get-AppxPackage -PackageTypeFilter Resource -Name $Expected.msixIdentity)
+        $assets = @($graph.objects | Where-Object { $_.kind -ceq 'asset-package' })
+        if ($resources.Count -ne $assets.Count) { throw 'Installed native resource set incomplete' }
+        $installedMembers = @()
+        foreach ($asset in $assets) {
+            $matches = @($resources | Where-Object { $_.ResourceId -ceq $asset.resourceId -and $_.Version.ToString() -ceq $asset.version -and $_.PackageFamilyName -ceq $pkg.PackageFamilyName -and $_.Publisher -ceq $Expected.publisher -and $_.Status.ToString() -ceq 'Ok' -and $_.Architecture.ToString() -ieq $asset.arch -and $_.SignatureKind.ToString() -ceq 'Developer' -and !$_.IsDevelopmentMode })
+            if ($matches.Count -ne 1) { throw 'Installed native resource identity mismatch' }
+            $child = $matches[0]
+            $installedMembers += @{full=$child.PackageFullName;family=$child.PackageFamilyName;name=$child.Name;publisher=$child.Publisher;version=$child.Version.ToString();arch=$child.Architecture.ToString();resource_id=$child.ResourceId}
+        }
+        @{producedAt=[DateTime]::UtcNow.ToString('o');graphSha256=$graphHash;related=$installedMembers;sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;nativeRemoteDigestEnforcement='NOT_RUN'} | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath (Join-Path $Out 'native-installed-graph.json') -Encoding utf8
+    }
     Push-Location $Work
     try {
         Run-Node @((Join-Path $Assets 'desktop-smoke.ts'), '--exe', $exe, '--root', $root, '--origin', 'bundled',
@@ -103,6 +158,7 @@ try {
     } finally { Pop-Location }
     # Plugins whose Python dependencies PM builds must work inside the package (#135236).
     Test-BundlePluginInstall $root $Out -IsolatedHome:$SemantierAcceptanceHost
+    if ($NativeGraph -and (Get-FileHash -LiteralPath $NativeGraph -Algorithm SHA256).Hash.ToLowerInvariant() -cne $graphHash) { throw 'Native graph changed during qualification' }
 } catch {
     $failed = $true
     $_ | Out-String | Set-Content -LiteralPath (Join-Path $Out 'native-install-error.txt')
@@ -138,6 +194,7 @@ try {
                 }
                 Remove-AppxPackage -Package $pkg.PackageFullName -ErrorAction Stop
                 if (Get-AppxPackage -Name $Expected.msixIdentity) { throw 'Package removal did not complete' }
+                if ($NativeGraph -and @(Get-AppxPackage -PackageTypeFilter Resource -Name $Expected.msixIdentity).Count) { throw 'Related resources remain; preserve them and fail cleanup' }
             }
         }
     } catch {

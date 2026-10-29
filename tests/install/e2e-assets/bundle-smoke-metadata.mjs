@@ -1,5 +1,6 @@
 // Fresh-install admission is separate from the stricter OLD -> NEW update contract.
 import fs from 'node:fs'
+import { createHash } from 'node:crypto'
 import path from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { parseArgs } from 'node:util'
@@ -105,6 +106,62 @@ function verifyMac(app, commit, tag, arch, channelRequest) {
   return { app, exe, root, arch, version, bundleIdentifier: expected.appId, teamIdentifier: signedTeam, stamp }
 }
 
+/** Verify original relative payload bytes at the actual folded installed root.
+ * Generated manifests are checked by native metadata/signature gates instead.
+ * This proves byte/location conservation; native imports and journeys remain separate.
+ */
+export function verifyNativePayload(root, plan, graph) {
+  if (!Array.isArray(plan.files) || !plan.files.length || plan.files.length > 200000 ||
+      !/^[a-f0-9]{64}$/.test(graph.payloadInventorySha256) || plan.payloadInventorySha256 !== graph.payloadInventorySha256) {
+    throw new Error('Native inventory binding missing')
+  }
+  const inventory = plan.files.map(row => ({ path: row.path, sha256: row.sha256, size: row.size }))
+  if (createHash('sha256').update(JSON.stringify(inventory).replace(/[\u007f-\uffff]/g, char => '\\u' + char.charCodeAt(0).toString(16).padStart(4, '0'))).digest('hex') !== graph.payloadInventorySha256) {
+    throw new Error('Native inventory digest mismatch')
+  }
+  const physical = fs.realpathSync(root)
+  const buffer = Buffer.alloc(1024 * 1024)
+  const seen = new Set()
+  const payload = new Set()
+  let filesChecked = 0
+  let bytesChecked = 0
+  for (const row of inventory) {
+    if (typeof row.path !== 'string' || !row.path || row.path.includes('\\') || row.path.includes(':') ||
+        path.posix.normalize(row.path) !== row.path || path.posix.isAbsolute(row.path) ||
+        row.path.split('/').some(part => ['.', '..'].includes(part)) || /[\x00\r\n]/.test(row.path) ||
+        !Number.isSafeInteger(row.size) || row.size < 0 || !/^[a-f0-9]{64}$/.test(row.sha256) || seen.has(row.path.toLowerCase())) {
+      throw new Error('Native payload inventory invalid')
+    }
+    seen.add(row.path.toLowerCase())
+    if (row.path === 'AppxManifest.xml') { continue }
+    payload.add(row.path)
+    const candidate = path.join(physical, ...row.path.split('/'))
+    if (fs.lstatSync(candidate).isSymbolicLink()) { throw new Error('Native payload link refused') }
+    const relative = path.relative(physical, fs.realpathSync(candidate))
+    if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+      throw new Error('Native payload escaped installed root')
+    }
+    const fd = fs.openSync(candidate, 'r')
+    try {
+      const stat = fs.fstatSync(fd)
+      if (!stat.isFile() || stat.size !== row.size) { throw new Error('Native payload size mismatch') }
+      const hash = createHash('sha256')
+      let count
+      while ((count = fs.readSync(fd, buffer)) > 0) { hash.update(buffer.subarray(0, count)) }
+      if (hash.digest('hex') !== row.sha256) { throw new Error('Native payload content mismatch') }
+    } finally { fs.closeSync(fd) }
+    filesChecked++
+    bytesChecked += row.size
+  }
+  if (!plan.assignment || Object.keys(plan.assignment).length !== payload.size ||
+      Object.keys(plan.assignment).some(name => !payload.has(name)) || !filesChecked) {
+    throw new Error('Native payload assignment incomplete')
+  }
+  return { producedAt: new Date().toISOString(), filesChecked, bytesChecked,
+    payloadInventorySha256: graph.payloadInventorySha256,
+    scope: 'all original payload bytes at installed relative paths; usability requires native smoke' }
+}
+
 function prepareDirectories(work, out) {
   const temp = fs.realpathSync(process.env.RUNNER_TEMP)
   const canonical = [work, out].map(dir => {
@@ -132,7 +189,7 @@ function prepareDirectories(work, out) {
 function main() {
   const [command, ...args] = process.argv.slice(2)
   const { values } = parseArgs({ args, options: Object.fromEntries(
-    ['commit', 'tag', 'platform', 'stamp', 'app', 'arch', 'out', 'work', 'channel-request'].map(key => [key, { type: 'string' }])) })
+    ['commit', 'tag', 'platform', 'stamp', 'app', 'arch', 'out', 'work', 'channel-request', 'root', 'plan', 'graph'].map(key => [key, { type: 'string' }])) })
   if (values['channel-request'] !== undefined) {
     // Preserve the raw JSON for the protocol decoder's duplicate-key checks.
     const raw = fs.readFileSync(values['channel-request'], 'utf8')
@@ -144,6 +201,7 @@ function main() {
     identity: () => bundleIdentity(values.commit, values.tag, values.channelRequest),
     stamp: () => verifyBundleStamp(JSON.parse(fs.readFileSync(values.stamp, 'utf8')), values),
     'verify-mac': () => verifyMac(values.app, values.commit, values.tag, values.arch, values.channelRequest),
+    'native-payload': () => verifyNativePayload(values.root, JSON.parse(fs.readFileSync(values.plan, 'utf8').replace(/^\uFEFF/, '')), JSON.parse(fs.readFileSync(values.graph, 'utf8').replace(/^\uFEFF/, ''))),
     prepare: () => prepareDirectories(values.work, values.out),
   }
   if (!commands[command]) throw new Error(`Unknown command: ${command}`)

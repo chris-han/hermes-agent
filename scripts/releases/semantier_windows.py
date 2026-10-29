@@ -37,6 +37,26 @@ def acceptance_request(*,commit,controller,version,source_version,base):
 
 
 
+def _native_object_identity(row,kind,identity,publisher,version,arch,identities):
+    key=row['key']
+    extension='.msixbundle' if kind.endswith('bundle') else '.msix'
+    if not key.endswith(extension):raise ValueError('Native object extension mismatch')
+    name=row.get('identity')
+    if not isinstance(name,str) or not re.fullmatch(r'[A-Za-z0-9.-]{3,50}',name):raise ValueError('Invalid native identity')
+    resource=row.get('resourceId','')
+    if kind=='asset-package':
+        if name!=identity or not isinstance(resource,str) or not re.fullmatch('runtime[0-9]{4}',resource) or row.get('allowExecution') is not True:
+            raise ValueError('Invalid executable asset package binding')
+    elif resource:raise ValueError('Unexpected native resource identity')
+    if (name,kind,resource) in identities:raise ValueError('Ambiguous native package identity')
+    identities.add((name,kind,resource))
+    if kind.startswith('main-') and name!=identity:raise ValueError('Main native identity mismatch')
+    if kind.startswith('optional-') and (name==identity or not name.startswith(identity+'.')):
+        raise ValueError('Related native identity mismatch')
+    if any(row.get(k)!=v for k,v in dict(publisher=publisher,version=version,arch='neutral' if kind.endswith('bundle') or kind=='asset-package' else arch).items()):
+        raise ValueError('Native identity/version/architecture mismatch')
+
+
 def validate_native_graph(value, *, build_id, identity, publisher, version, arch):
     """Producer-side structural gate; never proof of signing or native execution.
 
@@ -62,22 +82,7 @@ def validate_native_graph(value, *, build_id, identity, publisher, version, arch
         kind=row.get('kind')
         if kind not in ('main-package','optional-package','asset-package','main-bundle','optional-bundle'):
             raise ValueError('Invalid native object kind')
-        extension='.msixbundle' if kind.endswith('bundle') else '.msix'
-        if not key.endswith(extension):raise ValueError('Native object extension mismatch')
-        name=row.get('identity')
-        if not isinstance(name,str) or not re.fullmatch(r'[A-Za-z0-9.-]{3,50}',name):raise ValueError('Invalid native identity')
-        resource=row.get('resourceId','')
-        if kind=='asset-package':
-            if name!=identity or not isinstance(resource,str) or not re.fullmatch('runtime[0-9]{4}',resource) or row.get('allowExecution') is not True:
-                raise ValueError('Invalid executable asset package binding')
-        elif resource:raise ValueError('Unexpected native resource identity')
-        if (name,kind,resource) in identities:raise ValueError('Ambiguous native package identity')
-        identities.add((name,kind,resource))
-        if kind.startswith('main-') and name!=identity:raise ValueError('Main native identity mismatch')
-        if kind.startswith('optional-') and (name==identity or not name.startswith(identity+'.')):
-            raise ValueError('Related native identity mismatch')
-        if any(row.get(k)!=v for k,v in dict(publisher=publisher,version=version,arch='neutral' if kind.endswith('bundle') or kind=='asset-package' else arch).items()):
-            raise ValueError('Native identity/version/architecture mismatch')
+        _native_object_identity(row,kind,identity,publisher,version,arch,identities)
         if type(row.get('size')) is not int or not 0<row['size']<=480_000_000:
             raise ValueError('Native object exceeds cacheable cap')
         require_sha256(row.get('sha256'))
@@ -110,18 +115,9 @@ def validate_native_graph(value, *, build_id, identity, publisher, version, arch
 
 
 
-def partition_native_assets(inventory, *, max_bytes=480_000_000, previous=None, main_required=()):
-    """Plan whole-file asset packages; SDK/post-sign sizes remain decisive.
-
-    Native package folding preserves original relative paths. This plan is not
-    qualification and never authorizes deployment/publication. Existing members
-    keep their assignments across A/B; an overflow requires explicit relayout.
-    """
+def _native_payload_files(inventory,max_bytes,reserve):
     from pathlib import PurePosixPath
     from urllib.parse import unquote
-    if type(max_bytes) is not int or not 8_000_000 <= max_bytes <= 480_000_000:
-        raise ValueError('Native package cap outside supported planning bounds')
-    reserve=4_000_000
     capacity=max_bytes-reserve
     footprints={'AppxManifest.xml','AppxBlockMap.xml','AppxSignature.p7x','[Content_Types].xml'}
     files={};folded=set()
@@ -141,6 +137,20 @@ def partition_native_assets(inventory, *, max_bytes=480_000_000, previous=None, 
         if weight>capacity:raise ValueError(f'Indivisible native payload exceeds package cap: {name}')
         files[name]={'path':name,'weight':weight}
     if not files:raise ValueError('Native payload is empty')
+    return files
+
+
+def partition_native_assets(inventory, *, max_bytes=480_000_000, previous=None, main_required=()):
+    """Plan whole-file asset packages; SDK/post-sign sizes remain decisive.
+
+    Native package folding preserves original relative paths. This plan is not
+    qualification and never authorizes deployment/publication. Existing members
+    keep their assignments across A/B; an overflow requires explicit relayout.
+    """
+    if type(max_bytes) is not int or not 8_000_000 <= max_bytes <= 480_000_000:
+        raise ValueError('Native package cap outside supported planning bounds')
+    reserve=4_000_000
+    files=_native_payload_files(inventory,max_bytes,reserve)
     required=set(main_required)|{p for p in files if not p.startswith('app/resources/agent-payload/')}
     if not required<=set(files):raise ValueError('Required main payload absent')
     assignment={};groups={'main':{'id':'main','files':[],'estimatedBytes':reserve}}
@@ -255,6 +265,26 @@ def prepare_native_asset_layout(package, directory, output, *, expected_sha256, 
     return plan
 
 
+def _inspect_native_bundle(file,identity,members):
+    import zipfile
+    import xml.etree.ElementTree as ET
+    name=identity['Name'];publisher=identity['Publisher'];version=identity['Version']
+    with zipfile.ZipFile(file) as z:
+        if any(n.lower().endswith(('.msix','.appx')) for n in z.namelist()):raise ValueError('Native bundle must use external package references')
+        if 'AppxSignature.p7x' not in z.namelist():raise ValueError('Native bundle is unsigned')
+        manifest=ET.fromstring(z.read('AppxMetadata/AppxBundleManifest.xml'));ident=manifest.find('{*}Identity')
+        if ident is None or any(ident.get(k)!=v for k,v in {'Name':name,'Publisher':publisher,'Version':version}.items()):raise ValueError('Native bundle identity discontinuity')
+        if any(node.tag.rsplit('}',1)[-1] not in ('Identity','Packages') for node in manifest):
+            raise ValueError('Native bundle introduces unbound related objects')
+        refs=manifest.findall('{*}Packages/{*}Package')
+        if any(node.tag.rsplit('}',1)[-1]!='TargetDeviceFamily' for ref in refs for node in ref.findall('{*}Dependencies/*')):
+            raise ValueError('Native bundle introduces an unbound package dependency')
+        if len(refs)!=len(members) or {n.get('FileName') for n in refs}!=set(members):raise ValueError('Native bundle graph incomplete')
+        for n in refs:
+            group=members[n.get('FileName')]
+            if n.get('Version')!=version or (group=='main' and (n.get('Type')!='application' or n.get('Architecture')!='x64')) or (group!='main' and (n.get('Type')!='resource' or n.get('ResourceId')!=group or any(r.attrib for r in n.findall('{*}Resources/{*}Resource')))):raise ValueError('Native bundle member mismatch')
+
+
 def inspect_native_asset_graph(directory, plan, digests, *, source_commit):
     """Bind final native objects and full payload; caller verifies Windows signatures."""
     import zipfile
@@ -280,6 +310,8 @@ def inspect_native_asset_graph(directory, plan, digests, *, source_commit):
             names=[unquote(n) for n in z.namelist() if not n.endswith('/')]
             if len(names)!=len(set(names)) or 'AppxSignature.p7x' not in names:raise ValueError('Native package unsigned or ambiguous')
             manifest=ET.fromstring(z.read('AppxManifest.xml'));ident=manifest.find('{*}Identity')
+            if any(node.tag.rsplit('}',1)[-1]!='TargetDeviceFamily' for node in manifest.findall('{*}Dependencies/*')):
+                raise ValueError('Native graph introduces an unbound package dependency')
             if ident is None or any(ident.get(k)!=v for k,v in {'Name':name,'Publisher':publisher,'Version':version}.items()):raise ValueError('Native member identity discontinuity')
             if group=='main':
                 if ident.get('ProcessorArchitecture')!='x64' or ident.get('ResourceId'):raise ValueError('Native main architecture mismatch')
@@ -300,16 +332,7 @@ def inspect_native_asset_graph(directory, plan, digests, *, source_commit):
         objects.append(row)
     if seen!=set(expected_files) or build_id is None:raise ValueError('Native payload incomplete or unstamped')
     filename='SemantierAgent.msixbundle';root=object_row(filename,'main-bundle','neutral')
-    with zipfile.ZipFile(directory/filename) as z:
-        if any(n.lower().endswith(('.msix','.appx')) for n in z.namelist()):raise ValueError('Native bundle must use external package references')
-        if 'AppxSignature.p7x' not in z.namelist():raise ValueError('Native bundle is unsigned')
-        manifest=ET.fromstring(z.read('AppxMetadata/AppxBundleManifest.xml'));ident=manifest.find('{*}Identity')
-        if ident is None or any(ident.get(k)!=v for k,v in {'Name':name,'Publisher':publisher,'Version':version}.items()):raise ValueError('Native bundle identity discontinuity')
-        refs=manifest.findall('{*}Packages/{*}Package')
-        if len(refs)!=len(members) or {n.get('FileName') for n in refs}!=set(members):raise ValueError('Native bundle graph incomplete')
-        for n in refs:
-            group=members[n.get('FileName')]
-            if n.get('Version')!=version or (group=='main' and (n.get('Type')!='application' or n.get('Architecture')!='x64')) or (group!='main' and (n.get('Type')!='resource' or n.get('ResourceId')!=group or any(r.attrib for r in n.findall('{*}Resources/{*}Resource')))):raise ValueError('Native bundle member mismatch')
+    _inspect_native_bundle(directory/filename,identity,members)
     prefix='releases/channel-builds/'+build_id+'/'
     root['references']=[prefix+filename for filename in members]
     objects.insert(0,root)

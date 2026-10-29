@@ -2,7 +2,7 @@
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'windows-bundle-metadata.ps1')
-Add-Type -AssemblyName System.IO.Compression.FileSystem
+Add-Type -AssemblyName System.IO.Compression,System.IO.Compression.FileSystem
 $temp = Join-Path ([IO.Path]::GetTempPath()) ('bundle-metadata-' + [Guid]::NewGuid())
 New-Item -ItemType Directory -Path $temp | Out-Null
 $expected = [pscustomobject]@{ msixIdentity='Fixture.Hermes'; publisher='CN=Fixture'; applicationId='Hermes' }
@@ -49,5 +49,14 @@ try {
     Reject { Read-SmokePackageManifest ([xml]$xml) 'arm64' $channel }
     $channelBundle = Archive 'channel.msixbundle' 'AppxMetadata/AppxBundleManifest.xml' ($bundle.Replace('1.2.3.0', $channel.windowsVersion)) @('x64.msix','arm64.msix')
     if ((Read-BundleSmokeMetadata $channelBundle 'arm64' $channel).Version -cne $channel.windowsVersion) { throw 'Channel bundle version lost' }
-    Write-Output 'PASS: MSIX identity/executable and MSIXBUNDLE native-slice admission'
+    # A flat bundle may use ONLY an explicitly byte-bound external slice.
+    $flat = Archive 'flat.msixbundle' 'AppxMetadata/AppxBundleManifest.xml' ($bundle.Replace('Architecture="x64"', 'Architecture="x86"'))
+    $member = Archive 'arm64.msix' 'AppxManifest.xml' $xml
+    $binding = [pscustomobject]@{key='releases/channel-builds/fixture/arm64.msix';size=(Get-Item $member).Length;sha256=(Get-FileHash $member).Hash.ToLowerInvariant()}
+    Reject { Read-BundleSmokeMetadata $flat 'arm64' $expected }
+    $got = Read-BundleSmokeMetadata $flat 'arm64' $expected $binding
+    if ($got.Executable -cne 'app\Hermes.exe' -or $got.Slice -cne 'arm64.msix') { throw 'External slice metadata lost' }
+    $binding.sha256='0'*64
+    Reject { Read-BundleSmokeMetadata $flat 'arm64' $expected $binding }
+    Write-Output 'PASS: MSIX identity/executable and MSIXBUNDLE embedded/exact-bound external native-slice metadata'
 } finally { Remove-Item -LiteralPath $temp -Recurse -Force }
