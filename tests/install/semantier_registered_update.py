@@ -145,17 +145,34 @@ class Transaction:
     def matches(expected, actual):
         return bool(expected) and isinstance(actual, dict) and all(actual.get(k) == v for k, v in expected.items())
 
+    @staticmethod
+    def related(state):
+        rows = state.get('related', [])
+        if not isinstance(rows, list) or any(not isinstance(row, dict) or not row.get('full') for row in rows):
+            raise ValueError('Related package observation unavailable')
+        if len({row['full'] for row in rows}) != len(rows):
+            raise ValueError('Related package observation ambiguous')
+        return rows
+
+    @classmethod
+    def package_matches(cls, args, state):
+        return (cls.matches({k:v for k,v in args.items() if k != 'related'}, state['package'])
+            and cls.related(args) == cls.related(state))
+
     def expected(self, action, args, before, after):
-        if action == 'register': return self.matches(args, after['package'])
-        if action == 'remove': return after['package'] is None and after['process'] is None
-        if action == 'launch': return after['package'] == before['package'] and after['process'] is not None
-        if action == 'update': return self.platform.successor(args, before, after)
+        if action == 'register': return self.package_matches(args, after)
+        if action == 'remove': return after['package'] is None and after['process'] is None and self.related(after) == []
+        if action == 'launch': return after['package'] == before['package'] and after['process'] is not None and self.related(after) == self.related(before)
+        if action == 'update': return self.package_matches(args, after) and self.platform.successor(args, before, after)
         raise ValueError('Unknown operation')
 
     def assert_owned(self, state, require_process=False):
         rows = self.events()
         packages = [row['observed']['package'] for row in rows if row['kind']=='outcome' and row['action'] in ('register','update') and row['status'] in ('performed','performed_partial')]
         if state['package'] not in packages: raise ValueError('Registration replaced outside transaction')
+        if not any(row['observed']['package'] == state['package'] and self.related(row['observed']) == self.related(state)
+                   for row in rows if row['kind']=='outcome' and row['action'] in ('register','update') and row['status'] in ('performed','performed_partial')):
+            raise ValueError('Related package set replaced outside transaction')
         processes = [row['observed']['process'] for row in rows if row['kind']=='outcome' and row['action'] in ('launch','update') and row['status']=='performed']
         if state['process'] is not None and state['process'] not in processes: raise ValueError('Process incarnation replaced outside transaction')
         if require_process and state['process'] is None: raise ValueError('Owned running process required')
@@ -184,10 +201,10 @@ class Transaction:
         if not intent: return 'settled'
         now = self.platform.observe(); before = intent['before']; action = intent['action']
         if hasattr(self.platform, 'recovery_check'): self.platform.recovery_check(intent)
-        if action == 'update' and self.matches(intent['args'], now['package']) and now['package']['family'] == before['package']['family'] and now['process'] is None:
+        if action == 'update' and self.package_matches(intent['args'], now) and now['package']['family'] == before['package']['family'] and now['process'] is None:
             self.record('outcome', intent_at=intent['at'], action=action, status='performed_partial', observed=now)
             return 'performed_partial'
-        if action == 'remove' and now['package'] == before['package'] and now['process'] is None:
+        if action == 'remove' and now['package'] == before['package'] and now['process'] is None and self.related(now) == self.related(before):
             self.record('outcome', intent_at=intent['at'], action=action, status='not_performed', observed=now)
             return 'not_performed'
         if action == 'launch' and now != before: raise ValueError('Unrecorded launch incarnation: preserve for inspection')
@@ -262,7 +279,7 @@ class Windows:
         return result
 
     def successor(self, args, before, after):
-        return (Transaction.matches(args, after['package']) and after['process'] is not None and before['process'] is not None
+        return (Transaction.package_matches(args, after) and after['process'] is not None and before['process'] is not None
             and after['process']['birth'] > before['process']['birth'] and after['process']['pid'] != before['process']['pid']
             and after['package']['family'] == before['package']['family'])
 
@@ -291,7 +308,7 @@ def run_upgrade(tx, platform):
 
 def run_baseline(tx, platform, owner):
     if not tx.events():
-        if owner['package'] is not None or owner['process'] is not None: raise ValueError('Existing package/process: refuse new transaction')
+        if owner['package'] is not None or owner['process'] is not None or Transaction.related(owner): raise ValueError('Existing package/process/related set: refuse new transaction')
         tx.initialize(owner)
     tx.reconcile()
     if platform.observe()['package'] is None: tx.operation('register',platform.call('artifact',side='baseline'))
@@ -309,6 +326,7 @@ def run_cleanup(tx, platform, request):
     request['owned_processes']=[r['observed']['process'] for r in rows if r['kind']=='outcome' and r['status']=='performed' and r['observed']['process'] is not None]
     request['owned_gateways']=[r['facts']['gateway'] for r in rows if r['kind'] in ('baseline_ready','successor_ready') and r['facts'].get('gateway') is not None]
     current=platform.observe()
+    if current['package'] is None and Transaction.related(current): raise ValueError('Related packages remain without owned main; preserve for reconciliation')
     if current['package'] is not None: tx.operation('remove',{})
     tx.record('cleanup',status='owned_package_removed_data_and_evidence_retained')
 
@@ -323,7 +341,7 @@ def main():
     owner=platform.observe()  # OS refusal precedes journal/root writes.
     if a.mode=='preflight':
         baseline=platform.call('artifact',side='baseline')
-        if owner['package'] is not None: raise ValueError('Conflicting baseline registration')
+        if owner['package'] is not None or Transaction.related(owner): raise ValueError('Conflicting baseline registration or related package set')
         print(json.dumps({'scope':'READ_ONLY','observed':owner,'baseline':baseline})); return
     root=Path(request['root']); journal=root/'registered-update.jsonl'
     with held_windows_root(root, owner['root_id']), exclusive(root/'registered-update.lock'):

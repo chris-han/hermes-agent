@@ -165,6 +165,12 @@ try {
   $signer = if ($request.unsignedReceipt) { Join-Path $PSScriptRoot '..\apps\desktop\scripts\sign-windows-distribution.ps1' } else { Join-Path $work 'apps\desktop\scripts\sign-windows-distribution.ps1' }
   # Child shell gives a reliable native exit code even when the signing script throws.
   $signArgs = @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$signer,'-Msix',$copy,'-Thumbprint',$request.thumbprint,'-SourceCommit',$source,'-SignTool',$signTool,'-SevenZip',$sevenZip,'-Output',(Join-Path $output 'signed'))
+  if (($request.PSObject.Properties.Name -contains 'nativeAssets') -and $request.nativeAssets) {
+    $makeAppx = Join-Path (Split-Path -Parent $signTool) 'makeappx.exe'
+    if (!(Test-Path -LiteralPath $makeAppx -PathType Leaf) -or !$request.python) { throw 'Native asset producer requires SDK MakeAppx and explicit Windows Python' }
+    $signArgs += @('-NativeAssets','-MakeAppx',$makeAppx,'-Python',$request.python)
+    if (($request.PSObject.Properties.Name -contains 'previousNativeLayout') -and $request.previousNativeLayout) { $signArgs += @('-PreviousNativeLayout',$request.previousNativeLayout) }
+  }
   if ($request.timestampUrl) { $signArgs += @('-TimestampUrl',$request.timestampUrl) }
   Native "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" $signArgs
   Json-File ([ordered]@{result='PASS';sourceCommit=$source;controllerCommit=$request.commit;certificateThumbprint=$cert.Thumbprint;trustedTimestamp=[bool]$request.timestampUrl;worktree=$work;unsignedReceipt=(Join-Path $unsigned 'unsigned-build-receipt.json');signedReceipt=(Join-Path $output 'signed\receipt.json');zip=(Join-Path (Join-Path $output 'signed') ((Get-Content -LiteralPath (Join-Path $output 'signed\receipt.json') -Raw | ConvertFrom-Json).archiveName))}) (Join-Path $output 'result.json')

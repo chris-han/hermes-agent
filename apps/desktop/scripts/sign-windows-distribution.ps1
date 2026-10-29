@@ -8,7 +8,10 @@ param(
   [string]$MakeAppx = '', # Retained for existing callers; manifest inspection needs no unpacker.
   [Parameter(Mandatory=$true)][string]$SevenZip,
   [Parameter(Mandatory=$true)][string]$Output,
-  [string]$TimestampUrl = ''
+  [string]$TimestampUrl = '',
+  [switch]$NativeAssets,
+  [string]$Python = '',
+  [string]$PreviousNativeLayout = ''
 )
 $ErrorActionPreference = 'Stop'
 function Run-Native([string]$Tool, [string[]]$Arguments) {
@@ -56,13 +59,53 @@ try {
   } finally { $archive.Dispose() }
   $identity = $manifest.Package.Identity
   if ([string]$identity.Publisher -cne $cert.Subject) { throw "Publisher mismatch: $($identity.Publisher) != $($cert.Subject)" }
-  $signed = Join-Path $dist ([IO.Path]::GetFileName($Msix))
-  Copy-Item -LiteralPath $Msix -Destination $signed
   $signArgs = @('sign','/fd','SHA256','/sha1',$Thumbprint)
   if ($TimestampUrl) { $signArgs += @('/tr',$TimestampUrl,'/td','SHA256') }
-  Run-Native $SignTool ($signArgs + $signed)
-  # This is deliberately before ZIP assembly; do not import certificates on failure.
-  Run-Native $SignTool @('verify','/pa','/v',$signed)
+  $nativeGraph = $null
+  if ($NativeAssets) {
+    if (!$Python -or !$MakeAppx) { throw 'Native assets require explicit Windows Python and SDK MakeAppx' }
+    $producer = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\..\scripts\releases\semantier_windows.py'))
+    $payload = Join-Path $Output 'native-payload'
+    $layout = Join-Path $Output 'native-layout'
+    $packages = Join-Path $Output 'native-unsigned'
+    Run-Native $MakeAppx @('unpack','/p',$Msix,'/d',$payload,'/no')
+    $layoutArgs = @($producer,'native-layout','--package',$Msix,'--directory',$payload,'--output',$layout,'--sha256',$unsignedHash)
+    if ($PreviousNativeLayout) { $layoutArgs += @('--previous',$PreviousNativeLayout) }
+    Run-Native $Python $layoutArgs
+    $plan = Get-Content -LiteralPath (Join-Path $layout 'layout-plan.json') -Raw | ConvertFrom-Json
+    Run-Native $MakeAppx @('build','/f',(Join-Path $layout 'layout.xml'),'/op',$packages,'/pv',([string]$identity.Version),'/bv',([string]$identity.Version))
+    $mapping = @('[Files]')
+    $digests = [ordered]@{}
+    . (Join-Path $PSScriptRoot 'native-package-digest.ps1')
+    foreach ($group in $plan.groups) {
+      $filename = 'SemantierAgent-' + $group.id + '.msix'
+      $member = Join-Path $dist $filename
+      Copy-Item -LiteralPath (Join-Path $packages $filename) -Destination $member
+      Run-Native $SignTool ($signArgs + $member)
+      Run-Native $SignTool @('verify','/pa','/v',$member)
+      if ((Get-Item -LiteralPath $member).Length -gt 480000000) { throw 'Final signed member exceeds native CDN cap' }
+      $digests[$filename] = Get-NativePackageDigest $member
+      $mapping += ('"{0}" "{1}"' -f $member,$filename)
+    }
+    $mappingPath = Join-Path $Output 'native-bundle-map.txt'
+    $mapping | Set-Content -LiteralPath $mappingPath -Encoding utf8
+    # Rebuild AFTER member signing. Every external object must be final before the root.
+    $signed = Join-Path $dist 'SemantierAgent.msixbundle'
+    Run-Native $MakeAppx @('bundle','/f',$mappingPath,'/p',$signed,'/bv',([string]$identity.Version),'/fb','/no')
+    Run-Native $SignTool ($signArgs + $signed)
+    Run-Native $SignTool @('verify','/pa','/v',$signed)
+    if ((Get-Item -LiteralPath $signed).Length -gt 480000000) { throw 'Final signed bundle exceeds native CDN cap' }
+    $digests['SemantierAgent.msixbundle'] = Get-NativePackageDigest $signed
+    $digestPath = Join-Path $Output 'native-digests.json'
+    $digests | ConvertTo-Json | Set-Content -LiteralPath $digestPath -Encoding utf8
+    Run-Native $Python @($producer,'native-graph','--directory',$dist,'--plan',(Join-Path $layout 'layout-plan.json'),'--digests',$digestPath,'--commit',$SourceCommit,'--output',(Join-Path $dist 'native-graph.json'))
+    $nativeGraph = Get-Content -LiteralPath (Join-Path $dist 'native-graph.json') -Raw | ConvertFrom-Json
+  } else {
+    $signed = Join-Path $dist ([IO.Path]::GetFileName($Msix))
+    Copy-Item -LiteralPath $Msix -Destination $signed
+    Run-Native $SignTool ($signArgs + $signed)
+    Run-Native $SignTool @('verify','/pa','/v',$signed)
+  }
   Export-Certificate -Cert $cert -FilePath (Join-Path $dist 'SemantierAgent-signing.cer') | Out-Null
   $readableVersion = ([string]$identity.Version) -replace '\.0$',''
   $archiveName = "SemantierAgent-$readableVersion-win-$($identity.ProcessorArchitecture).zip"
@@ -85,16 +128,18 @@ try {
     $metadata.nativeDigest = Get-NativePackageDigest $signed
     $metadata.nativeDigestAlgorithm = 'IAppxDigestProvider.GetDigest'
   }
+  if ($nativeGraph) { $metadata.nativeGraph = $nativeGraph; $metadata.nativeQualification = 'NOT_RUN' }
   # Recipient entry points are bound to the exact post-signing package and public certificate.
   $installer = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'install-windows-distribution.ps1'))
-  $installer = $installer.Replace('__CERTIFICATE_THUMBPRINT__',$cert.Thumbprint).
+  $graphHash = ''; if ($nativeGraph) { $graphHash = (Get-FileHash -LiteralPath (Join-Path $dist 'native-graph.json') -Algorithm SHA256).Hash.ToLowerInvariant() }
+  $installer = $installer.Replace('__NATIVE_GRAPH_SHA256__',$graphHash).Replace('__CERTIFICATE_THUMBPRINT__',$cert.Thumbprint).
     Replace('__PACKAGE_FILE__',([IO.Path]::GetFileName($signed).Replace("'","''"))).
     Replace('__PACKAGE_SHA256__',$metadata.signedSha256)
   [IO.File]::WriteAllText((Join-Path $dist 'Install.ps1'),$installer,(New-Object Text.UTF8Encoding($true)))
   $batch = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'install-windows-distribution.bat')) -replace '\r?\n',"`r`n"
   [IO.File]::WriteAllText((Join-Path $dist 'Install.bat'),$batch,[Text.Encoding]::ASCII)
   Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'install-windows-distribution.txt') -Destination (Join-Path $dist 'README-Install.txt')
-  $metadata | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $dist 'build-metadata.json') -Encoding utf8
+  $metadata | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath (Join-Path $dist 'build-metadata.json') -Encoding utf8
   Get-ChildItem -LiteralPath $dist -File | Sort-Object Name | ForEach-Object {
     "$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $($_.Name)"
   } | Set-Content -LiteralPath (Join-Path $dist 'SHA256SUMS.txt') -Encoding ascii
@@ -116,7 +161,7 @@ try {
   }
   $zipHash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
   "$zipHash  $([IO.Path]::GetFileName($zip))" | Set-Content -LiteralPath ($zip + '.sha256') -Encoding ascii
-  $metadata | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Output 'receipt.json') -Encoding utf8
+  $metadata | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath (Join-Path $Output 'receipt.json') -Encoding utf8
   Get-Item -LiteralPath $signed,$zip | Select-Object FullName,Length
   Write-Output "ZIP SHA256 $zipHash; trusted timestamp: $([bool]$TimestampUrl)"
 } finally {

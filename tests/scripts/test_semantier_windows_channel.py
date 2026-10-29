@@ -20,7 +20,7 @@ def native_graph():
     common=dict(publisher='CN=Semantier Technology, O=Semantier Technology',version='0.0.59.0',arch='x64',
                 size=1000,sha256='b'*64,nativeDigest=base64.b64encode(b'd'*32).decode())
     return dict(schema=1,transport='windows-package-uri',root=prefix+'main.msixbundle',payloadInventorySha256='c'*64,objects=[
-        dict(common,key=prefix+'main.msixbundle',kind='main-bundle',identity='Semantier.Agent.Acceptance',references=[prefix+'main.msix',prefix+'runtime.msix']),
+        dict({**common,'arch':'neutral'},key=prefix+'main.msixbundle',kind='main-bundle',identity='Semantier.Agent.Acceptance',references=[prefix+'main.msix',prefix+'runtime.msix']),
         dict(common,key=prefix+'main.msix',kind='main-package',identity='Semantier.Agent.Acceptance',references=[]),
         dict(common,key=prefix+'runtime.msix',kind='optional-package',identity='Semantier.Agent.Acceptance.Runtime',references=[])])
 
@@ -71,3 +71,109 @@ def test_native_graph_rejects_same_identity_at_two_remote_keys():
     with pytest.raises(ValueError,match='Ambiguous native package identity'):
         validate_native_graph(graph,build_id='a'*32,identity='Semantier.Agent.Acceptance',
             publisher='CN=Semantier Technology, O=Semantier Technology',version='0.0.59.0',arch='x64')
+
+
+def test_asset_partition_conserves_paths_and_reuses_existing_assignment():
+    from scripts.releases.semantier_windows import partition_native_assets
+    rows=[{'path':'app/main.exe','bytes':1000000,'compressed_bytes':500000},
+          {'path':'app/resources/agent-payload/venv/module.pyd','bytes':25000000,'compressed_bytes':23000000},
+          {'path':'app/resources/agent-payload/model.onnx','bytes':25000000,'compressed_bytes':23000000}]
+    first=partition_native_assets(rows,max_bytes=30000000)
+    assert set(first['assignment'])=={r['path'] for r in rows}
+    assert first['assignment']['app/main.exe']=='main'
+    assert len(first['groups'])==2
+    changed=[*rows,{'path':'app/resources/agent-payload/new.py','bytes':100,'compressed_bytes':100}]
+    second=partition_native_assets(changed,max_bytes=30000000,previous=first['assignment'])
+    assert all(second['assignment'][p]==g for p,g in first['assignment'].items())
+    assert sum(len(g['files']) for g in second['groups'])==len(changed)
+
+
+@pytest.mark.parametrize('path',['../escape','/absolute','app/../escape','app/CON','app/a:stream','app/a\\b'])
+def test_asset_partition_rejects_unsafe_members(path):
+    from scripts.releases.semantier_windows import partition_native_assets
+    with pytest.raises(ValueError):partition_native_assets([{'path':path,'bytes':1,'compressed_bytes':1}])
+
+
+def test_asset_partition_refuses_indivisible_zip_and_case_collision():
+    from scripts.releases.semantier_windows import partition_native_assets
+    rows=[{'path':'app/resources/agent-payload/uv-cache/seed.zip','bytes':516677051,'compressed_bytes':516677051}]
+    with pytest.raises(ValueError,match='seed.zip'):partition_native_assets(rows)
+    rows=[{'path':p,'bytes':1,'compressed_bytes':1} for p in ('app/A','app/a')]
+    with pytest.raises(ValueError,match='collision'):partition_native_assets(rows)
+
+
+def test_asset_layout_uses_native_folding_without_path_relocation(tmp_path):
+    import xml.etree.ElementTree as ET
+    from scripts.releases.semantier_windows import partition_native_assets,write_native_asset_layout
+    rows=[{'path':'app/main.exe','bytes':1,'compressed_bytes':1},
+          {'path':'app/resources/agent-payload/module1.pyd','bytes':15000000,'compressed_bytes':14000000},
+          {'path':'app/resources/agent-payload/module2.pyd','bytes':15000000,'compressed_bytes':14000000}]
+    plan=partition_native_assets(rows,max_bytes=30000000)
+    file=tmp_path/'layout.xml'
+    write_native_asset_layout(file,plan,manifest=r'D:\owned\AppxManifest.xml',source=r'D:\owned')
+    root=ET.fromstring(file.read_bytes());ns={'m':'http://schemas.microsoft.com/appx/makeappx/2017'}
+    family=root.find('m:PackageFamily',ns)
+    assert family.get('FlatBundle')=='true' and family.get('ResourceManager')=='false'
+    assets=family.findall('m:AssetPackage',ns)
+    assert len(assets)==1 and assets[0].get('AllowExecution')=='true'
+    files=root.findall('.//m:File',ns)
+    assert {f.get('DestinationPath').replace('\\','/') for f in files}=={r['path'] for r in rows}
+    assert all(f.get('SourcePath').startswith('D:\\owned\\') for f in files)
+
+
+def test_native_graph_asset_packages_bind_resource_id_and_execution():
+    from scripts.releases.semantier_windows import validate_native_graph
+    graph=native_graph();row=graph['objects'][-1]
+    row.update(kind='asset-package',identity='Semantier.Agent.Acceptance',arch='neutral',resourceId='runtime0001',allowExecution=True)
+    args=dict(build_id='a'*32,identity='Semantier.Agent.Acceptance',publisher='CN=Semantier Technology, O=Semantier Technology',version='0.0.59.0',arch='x64')
+    validate_native_graph(graph,**args)
+    row['allowExecution']=False
+    with pytest.raises(ValueError,match='asset'):validate_native_graph(graph,**args)
+
+
+def test_native_layout_rejects_modified_unpacked_payload(tmp_path):
+    import base64,hashlib,zipfile
+    from scripts.releases.semantier_windows import prepare_native_asset_layout
+    manifest=b'<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"><Identity Name="Semantier.Agent.Acceptance" Publisher="CN=Semantier Technology, O=Semantier Technology" ProcessorArchitecture="x64" Version="0.0.59.0"/><Applications><Application Executable="app/main.exe"/></Applications></Package>'
+    files={'AppxManifest.xml':manifest,'app/main.exe':b'actual payload'}
+    blockmap='<BlockMap HashMethod="http://www.w3.org/2001/04/xmlenc#sha256">'+''.join('<File Name="'+name+'" Size="'+str(len(data))+'"><Block Hash="'+base64.b64encode(hashlib.sha256(data).digest()).decode()+'"/></File>' for name,data in files.items())+'</BlockMap>'
+    package=tmp_path/'input.msix';directory=tmp_path/'unpacked';directory.mkdir()
+    with zipfile.ZipFile(package,'w') as z:
+        for name,data in files.items():
+            z.writestr(name,data);f=directory/name;f.parent.mkdir(parents=True,exist_ok=True);f.write_bytes(data)
+        z.writestr('AppxBlockMap.xml',blockmap)
+    digest=hashlib.sha256(package.read_bytes()).hexdigest()
+    result=prepare_native_asset_layout(package,directory,tmp_path/'valid',expected_sha256=digest)
+    assert result['files'][1]['sha256']==hashlib.sha256(files['app/main.exe']).hexdigest()
+    (directory/'app/main.exe').write_bytes(b'wrong! payload')
+    with pytest.raises(ValueError,match='block mismatch'):
+        prepare_native_asset_layout(package,directory,tmp_path/'invalid',expected_sha256=digest)
+    assert not (tmp_path/'invalid').exists()
+
+
+def test_final_graph_rejects_foreign_payload_and_embedded_bundle(tmp_path):
+    import base64,hashlib,json,zipfile
+    from scripts.releases.semantier_windows import inspect_native_asset_graph
+    payload=b'real runtime'
+    identity='Name="Semantier.Agent.Acceptance" Publisher="CN=Semantier Technology, O=Semantier Technology" Version="0.0.59.0"'
+    stamp=json.dumps({'commit':'a'*40,'channelBuild':{'buildId':'b'*32}}).encode()
+    files={'app/main.exe':payload,'app/resources/install-stamp.json':stamp}
+    plan={'identity':{'Name':'Semantier.Agent.Acceptance','Publisher':'CN=Semantier Technology, O=Semantier Technology','Version':'0.0.59.0','ProcessorArchitecture':'x64'},'payloadInventorySha256':'c'*64,'groups':[{'id':'main'}],'assignment':{p:'main' for p in files},'files':[{'path':p,'size':len(v),'sha256':hashlib.sha256(v).hexdigest()} for p,v in files.items()]}
+    def package(damage=False):
+        with zipfile.ZipFile(tmp_path/'SemantierAgent-main.msix','w') as z:
+            z.writestr('AppxManifest.xml','<Package><Identity '+identity+' ProcessorArchitecture="x64"/></Package>')
+            z.writestr('AppxSignature.p7x',b'fixture signature; signature policy checked by signer')
+            for p,v in files.items():z.writestr(p,b'foreign' if damage and p.endswith('.exe') else v)
+    package()
+    bundle=tmp_path/'SemantierAgent.msixbundle'
+    with zipfile.ZipFile(bundle,'w') as z:
+        z.writestr('AppxMetadata/AppxBundleManifest.xml','<Bundle><Identity '+identity+'/><Packages><Package Type="application" Architecture="x64" Version="0.0.59.0" FileName="SemantierAgent-main.msix"/></Packages></Bundle>')
+        z.writestr('AppxSignature.p7x',b'fixture signature')
+    digests={p.name:base64.b64encode(b'd'*32).decode() for p in tmp_path.iterdir() if p.is_file()}
+    graph=inspect_native_asset_graph(tmp_path,plan,digests,source_commit='a'*40)
+    assert len(graph['objects'])==2
+    package(True)
+    with pytest.raises(ValueError,match='payload'):inspect_native_asset_graph(tmp_path,plan,digests,source_commit='a'*40)
+    package()
+    with zipfile.ZipFile(bundle,'a') as z:z.writestr('SemantierAgent-main.msix',b'embedded')
+    with pytest.raises(ValueError,match='external'):inspect_native_asset_graph(tmp_path,plan,digests,source_commit='a'*40)

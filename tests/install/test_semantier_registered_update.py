@@ -183,3 +183,59 @@ def test_windows_recovery_rejects_missing_recorded_wts_binding():
     owner={k:v for k,v in state.items() if k!='session_sid'}
     with pytest.raises(ValueError,match='WTS'):w.validate(owner)
     w.validate(state)
+
+
+class RelatedPlatform(Platform):
+    def __init__(self):
+        super().__init__();self.state['related']=[]
+    def perform(self,action,args):
+        self.calls.append(action)
+        if action=='register':
+            self.state['package']={k:v for k,v in args.items() if k!='related'}
+            self.state['related']=args.get('related',[])
+        elif action=='remove':self.state['package']=None;self.state['process']=None
+
+
+def test_related_registration_is_part_of_durable_outcome(tmp_path):
+    p=RelatedPlatform();t=d.Transaction(tmp_path/'j',p);t.initialize(p.observe())
+    target={'full':'main','related':[{'full':'runtime_1'}]}
+    t.operation('register',target)
+    assert t.events()[-1]['observed']['related']==target['related']
+    p.state['related']=[{'full':'runtime_2'}]
+    with pytest.raises(ValueError,match='Related'):t.operation('remove',{})
+    assert p.calls==['register']
+
+
+def test_related_resources_surviving_main_removal_are_not_cleanup_success(tmp_path):
+    p=RelatedPlatform();t=d.Transaction(tmp_path/'j',p);t.initialize(p.observe())
+    t.operation('register',{'full':'main','related':[{'full':'runtime_1'}]})
+    with pytest.raises(ValueError,match='outcome'):t.operation('remove',{})
+    with pytest.raises(ValueError,match='Uncertain'):t.reconcile()
+    assert t.pending()['action']=='remove'
+
+
+def test_legacy_registration_cannot_adopt_unexpected_related_package(tmp_path):
+    p=RelatedPlatform();t=d.Transaction(tmp_path/'j',p);t.initialize(p.observe())
+    original=p.perform
+    def perform(action,args):
+        original(action,args)
+        if action=='register':p.state['related']=[{'full':'unqualified'}]
+    p.perform=perform
+    with pytest.raises(ValueError,match='outcome'):t.operation('register',{'full':'legacy'})
+    with pytest.raises(ValueError,match='Uncertain'):t.reconcile()
+
+
+def test_related_registration_crash_reconciles_exact_set_only(tmp_path):
+    p=RelatedPlatform();t=d.Transaction(tmp_path/'j',p);t.initialize(p.observe())
+    t.fault='after_action'
+    with pytest.raises(d.Interrupted):t.operation('register',{'full':'main','related':[{'full':'runtime_1'}]})
+    p.state['related']=[]
+    with pytest.raises(ValueError,match='Uncertain'):t.reconcile()
+    p.state['related']=[{'full':'runtime_1'}]
+    assert t.reconcile()=='performed'
+    assert p.calls==['register']
+
+
+def test_unknown_related_observation_does_not_pass_removal():
+    with pytest.raises(ValueError,match='Related'):
+        d.Transaction.__new__(d.Transaction).expected('remove',{}, {}, {'package':None,'process':None,'related':None})

@@ -130,6 +130,30 @@ try {
   if($records.Count -ne 1 -or $matches.Count -ne 1){throw 'Exact production download custody not established'}
   return @{manifestSha256=$target.manifest_sha256;artifactSha256=$target.sha256;expectedChunkDescriptorSha256=$target.chunk_descriptor_sha256;chunkObservation='NOT_RUN';scope='full package hash/signature and production manifest cache record';file=$matches[0]}
  }
+ function Related-Packages {
+  $result=@()
+  $optional=@(Get-AppxPackage -PackageTypeFilter Optional -Name 'Semantier.Agent.Acceptance.*')
+  $assets=@(Get-AppxPackage -PackageTypeFilter Resource -Name 'Semantier.Agent.Acceptance')
+  foreach($child in @($optional)+@($assets)){
+   if($child.Publisher -cne 'CN=Semantier Technology, O=Semantier Technology' -or $child.Status.ToString() -cne 'Ok' -or $child.SignatureKind.ToString() -cne 'Developer' -or $child.IsDevelopmentMode){throw 'Unexpected related package; preserve it'}
+   $xml=Get-AppxPackageManifest -Package $child.PackageFullName
+   if($child.Name -ceq 'Semantier.Agent.Acceptance'){
+    $ident=$xml.SelectSingleNode('/*[local-name()="Package"]/*[local-name()="Identity"]')
+    $props=$xml.SelectSingleNode('/*[local-name()="Package"]/*[local-name()="Properties"]')
+    $resource=$props.SelectSingleNode('*[local-name()="ResourcePackage"]')
+    $execution=$props.SelectSingleNode('*[local-name()="AllowExecution"]')
+    if($ident.GetAttribute('ResourceId') -cnotmatch '^runtime[0-9]{4}$' -or !$resource -or $resource.InnerText -cne 'true' -or ($execution -and $execution.InnerText -cne 'true')){throw 'Unexpected same-family resource package; preserve it'}
+   }else{
+    $parents=@($xml.SelectNodes('/*[local-name()="Package"]/*[local-name()="Dependencies"]/*[local-name()="MainPackageDependency"]'))
+    if($parents.Count -ne 1 -or $parents[0].GetAttribute('Name') -cne 'Semantier.Agent.Acceptance'){throw 'Related package parent mismatch; preserve it'}
+    $publisher=$parents[0].GetAttribute('Publisher')
+    if($publisher -and $publisher -cne 'CN=Semantier Technology, O=Semantier Technology'){throw 'Related package parent publisher mismatch'}
+   }
+   $physical=Physical $child.InstallLocation
+   try{$result+=[ordered]@{name=$child.Name;publisher=$child.Publisher;version=$child.Version.ToString();arch=$child.Architecture.ToString();full=$child.PackageFullName;family=$child.PackageFamilyName;install_path=$physical.path;root_id=$physical.id}}finally{$physical.handle.Dispose()}
+  }
+  return ,@($result|Sort-Object {$_['full']})
+ }
  function Observe {
   $packages=@(Get-AppxPackage -Name 'Semantier.Agent.Acceptance');if($packages.Count -gt 1){throw 'Ambiguous registration'}
   $package=$null;$process=$null
@@ -148,13 +172,21 @@ try {
     if($rows.Count){$row=$rows[0];$owner=Invoke-CimMethod -InputObject $row -MethodName GetOwnerSid;if($owner.Sid -cne $sid -or $row.SessionId -ne $session){throw 'Process belongs to different user/session'};$process=@{pid=$row.ProcessId;birth=(ExactBirth $row);exe=$exe;exe_id=$physical.id}}
    }finally{$physical.handle.Dispose()}
   }
-  return @{sid=$sid;session_sid=$sessionSid;session=$session;root_id=$held.id;package=$package;process=$process}
+  return @{sid=$sid;session_sid=$sessionSid;session=$session;root_id=$held.id;package=$package;process=$process;related=(Related-Packages)}
  }
  $result=$null
  if($r.action -in @('register','launch','update','remove')){
   if(-not $r.PSObject.Properties['expected_before']){throw 'Durable intent precondition required'}
   $actual=Observe;$expected=$r.expected_before
   if($actual.sid -cne $expected.sid -or $actual.session_sid -cne $expected.session_sid -or $actual.session -ne $expected.session -or $actual.root_id -cne $expected.root_id){throw 'Intent context changed'}
+  $expectedRelated=@()
+  if($expected.PSObject.Properties['related']){$expectedRelated=@($expected.related)}
+  if(@($actual.related).Count -ne $expectedRelated.Count){throw 'Intent related package set changed'}
+  foreach($child in $expectedRelated){
+   $matches=@($actual.related|Where-Object{$_['full'] -ceq $child.full})
+   if($matches.Count -ne 1){throw 'Intent related package identity changed'}
+   foreach($property in $child.PSObject.Properties){if($matches[0][$property.Name] -cne $property.Value){throw 'Intent related package incarnation changed'}}
+  }
   foreach($kind in @('package','process')){
    if(($null -eq $actual[$kind]) -ne ($null -eq $expected.$kind)){throw 'Intent OS state changed'}
    if($actual[$kind]){foreach($property in $expected.$kind.PSObject.Properties){if($actual[$kind][$property.Name] -cne $property.Value){throw 'Intent identity changed'}}}
