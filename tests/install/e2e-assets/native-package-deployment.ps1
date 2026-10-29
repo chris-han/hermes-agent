@@ -30,6 +30,10 @@ function Test-WD1LocalActor([string]$Sid,[string]$AuthorizedSid,[string]$Purpose
  return ($Purpose -ceq 'wd1-native-layout-qualification' -and $Sid -ceq $AuthorizedSid -and $Sid -cin @('S-1-5-21-1928370875-4287869425-2092521300-1011','S-1-5-21-1928370875-4287869425-2092521300-1003'))
 }
 
+function Test-WD1LocalAction([string]$Action) {
+ return $Action -cin @('observe','artifact','register','native-registration-proof','launch','native-proof','ready','conservation','remove')
+}
+
 function Invoke-WD1NativeUri($Graph, [string]$Base, [string]$Evidence) {
  $ErrorActionPreference='Stop'
  $context=Get-Variable -Name r -ErrorAction SilentlyContinue

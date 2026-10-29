@@ -10,6 +10,7 @@ $session=(Get-Process -Id $PID).SessionId
 $localWD1=$false
 if($r.PSObject.Properties['purpose']){$localWD1=Test-WD1LocalActor $sid $r.authorized_sid $r.purpose}
 if ($sid -cne $r.authorized_sid -or (($sid -ceq 'S-1-5-21-1928370875-4287869425-2092521300-1003' -or $who.Name.Split('\')[-1] -ieq 'ChrisH') -and -not $localWD1) -or $session -le 0 -or -not [Environment]::UserInteractive) { throw 'Authorized interactive user required; ChrisH limited to explicit local WD1 purpose' }
+if($localWD1 -and -not (Test-WD1LocalAction $r.action)){throw 'WD1 local purpose cannot authorize production update or unrelated mutation'}
 if ($r.expected_language -cnotin @('en','zh')) { throw 'Expected language must be en or zh' }
 $cpus=@(Get-CimInstance Win32_Processor)
 if(-not $cpus.Count -or @($cpus|Where-Object{$_.Architecture -ne 9}).Count){throw 'Actual native x64 required'}

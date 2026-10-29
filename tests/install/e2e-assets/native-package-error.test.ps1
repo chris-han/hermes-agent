@@ -50,3 +50,11 @@ $baseline='S-1-5-21-1928370875-4287869425-2092521300-1011';$chris='S-1-5-21-1928
 foreach($actor in @($baseline,$chris)){if(-not (Test-WD1LocalActor $actor $actor 'wd1-native-layout-qualification')){throw 'Authorized local actor refused'}}
 if((Test-WD1LocalActor $chris $baseline 'wd1-native-layout-qualification') -or (Test-WD1LocalActor $chris $chris 'ci') -or (Test-WD1LocalActor 'other' 'other' 'wd1-native-layout-qualification')){throw 'Local WD1 actor scope widened'}
 Write-Output 'PASS: explicit local WD1 actor/SID/purpose binding; cross-account, CI and unrelated actors refused'
+
+foreach($action in @('observe','artifact','register','native-registration-proof','launch','native-proof','ready','conservation','remove')){
+ if(-not (Test-WD1LocalAction $action)){throw 'Existing WD1 operation refused'}
+}
+foreach($action in @('update','download','native-reconciled','unknown')){
+ if(Test-WD1LocalAction $action){throw 'WD1 purpose improperly authorized production update or unrelated mutation'}
+}
+Write-Output 'PASS: WD1 operation scope preserves local qualification and refuses production update/apply/ack'

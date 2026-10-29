@@ -478,6 +478,7 @@ def load_native_target(request):
 
 
 def validate_native_update_inputs(request):
+    if request.get('purpose')==NATIVE_QUALIFICATION:raise ValueError('WD1 local qualification does not authorize production update')
     import re
     from hermes_cli.release_channels import public_base
     value=request.get('selected_delivery_base')

@@ -608,3 +608,8 @@ def test_native_upgrade_without_semantic_fixtures_refuses_before_update(tmp_path
     with pytest.raises(ValueError,match='semantic'):d.run_upgrade(t,p)
     assert 'update' not in p.calls
     assert not any(row['kind']=='acceptance' for row in t.events())
+
+
+def test_wd1_purpose_cannot_authorize_production_native_update():
+    with pytest.raises(ValueError,match='does not authorize'):
+        d.validate_native_update_inputs({'purpose':d.NATIVE_QUALIFICATION})
