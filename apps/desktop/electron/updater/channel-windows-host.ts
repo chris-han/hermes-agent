@@ -1,10 +1,18 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import path from 'node:path'
 
+import type { App } from 'electron'
+
+import { AppInstallerStrategy, type AppInstallerStrategyDeps } from './app-installer'
 import { downloadPinnedArtifact } from './artifact'
 import type { ChannelTarget } from './channel'
 import { prepareChannelArtifactCache } from './channel-artifact-cache'
+import { inspectRunningChannelApp } from './channel-native'
 import { type NativeCommandResult, runChannelPowerShell } from './channel-native'
+import { type ChannelBuild, decodeNativePackageGraph } from './channel-protocol'
+import { registerUpdateRelaunch } from './relaunch'
+import { startUpdateRelaunchWaiter } from './relaunch-waiter'
 
 /** Verify downloaded bytes and native metadata before App Installer can stop the backend. */
 export async function verifyPreparedChannelInstaller(
@@ -21,20 +29,28 @@ export async function verifyPreparedChannelInstaller(
 
   const directory: string = pkg.artifact.chunks
     ? await prepareChannelArtifactCache(path.dirname(file), {
-        manifestSha256: target.manifestSha256, artifactSha256: pkg.artifact.sha256,
-        buildId: target.manifest.request.buildId, version: pkg.version, identity: pkg.identity, publisher: pkg.publisher
+        manifestSha256: target.manifestSha256,
+        artifactSha256: pkg.artifact.sha256,
+        buildId: target.manifest.request.buildId,
+        version: pkg.version,
+        identity: pkg.identity,
+        publisher: pkg.publisher
       })
     : await mkdtemp(path.join(path.dirname(file), '.channel-artifact-'))
 
   try {
-    const artifact: string = await downloadPinnedArtifact(directory, {
-      url: target.artifactUrl,
-      chunks: pkg.artifact.chunks,
-      chunkBase: target.manifest.request.publicBase,
-      sha256: pkg.artifact.sha256,
-      size: pkg.artifact.size,
-      format: pkg.artifact.key.endsWith('.msixbundle') ? 'msixbundle' : 'msix'
-    }, fetchArtifact)
+    const artifact: string = await downloadPinnedArtifact(
+      directory,
+      {
+        url: target.artifactUrl,
+        chunks: pkg.artifact.chunks,
+        chunkBase: target.manifest.request.publicBase,
+        sha256: pkg.artifact.sha256,
+        size: pkg.artifact.size,
+        format: pkg.artifact.key.endsWith('.msixbundle') ? 'msixbundle' : 'msix'
+      },
+      fetchArtifact
+    )
 
     await command(
       String.raw`
@@ -86,6 +102,114 @@ try {
       return artifact
     }
   } finally {
-    if (!pkg.artifact.chunks) { await rm(directory, { recursive: true, force: true }) }
+    if (!pkg.artifact.chunks) {
+      await rm(directory, { recursive: true, force: true })
+    }
   }
+}
+
+/** Query the current user's OS package, never infer support from an OS version string. */
+export async function inspectNativePackageUriEligibility(
+  fullName: string,
+  command: (script: string, input: string) => Promise<NativeCommandResult> = runChannelPowerShell
+): Promise<{ supported: boolean; reason: string }> {
+  const result = await command(
+    String.raw`
+$ErrorActionPreference='Stop'
+$p=[Console]::In.ReadToEnd()|ConvertFrom-Json
+Add-Type -AssemblyName System.Runtime.WindowsRuntime
+$null=[Windows.Management.Deployment.PackageManager,Windows.Management.Deployment,ContentType=WindowsRuntime]
+$null=[Windows.Foundation.Metadata.ApiInformation,Windows.Foundation,ContentType=WindowsRuntime]
+$api=[Windows.Foundation.Metadata.ApiInformation]::IsMethodPresent('Windows.Management.Deployment.PackageManager','AddPackageByUriAsync') -and [Windows.Foundation.Metadata.ApiInformation]::IsPropertyPresent('Windows.Management.Deployment.AddPackageOptions','ExpectedDigests')
+if(!$api){@{supported=$false;reason='native-api-unavailable'}|ConvertTo-Json -Compress;exit 0}
+$manager=[Windows.Management.Deployment.PackageManager]::new()
+$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$package=$manager.FindPackageForUser($sid,$p.fullName)
+if(!$package -or $package.Id.FullName -cne $p.fullName){throw 'Current-user package unavailable'}
+$info=$package.GetAppInstallerInfo()
+if($info -and $info.Uri){@{supported=$false;reason='appinstaller-association-migration-unqualified'}|ConvertTo-Json -Compress;exit 0}
+@{supported=$true;reason='native-uri-unassociated-package'}|ConvertTo-Json -Compress
+`,
+    JSON.stringify({ fullName })
+  )
+
+  const value: { supported?: boolean; reason?: string } = JSON.parse(result.stdout)
+
+  if (typeof value.supported !== 'boolean' || !value.reason || !/^[a-z-]+$/.test(value.reason))
+    {throw new Error('Invalid native capability observation')}
+
+  return { supported: value.supported, reason: value.reason }
+}
+
+/** Reuse the packaged handoff while the external waiter owns native deployment. */
+export function createNativeUriAppInstallerStrategy(
+  deps: AppInstallerStrategyDeps,
+  target: ChannelTarget,
+  build: ChannelBuild,
+  context: {
+    app: Pick<App, 'getPath'>
+    resourcesPath: string
+    log: (message: string) => void
+    inspect?: typeof inspectRunningChannelApp
+    eligibility?: typeof inspectNativePackageUriEligibility
+    startWaiter?: typeof startUpdateRelaunchWaiter
+  }
+): AppInstallerStrategy {
+  return new AppInstallerStrategy({
+    ...deps,
+    nativeUri: { version: target.package.version },
+    registerPendingRelaunch: async fromVersion => {
+      // Recheck the current actor's installed package before handing off.
+
+      const installed = await (context.inspect ?? inspectRunningChannelApp)(build)
+
+      if (
+        !installed.packageFullName ||
+        !installed.packageFamilyName ||
+        !installed.applicationId ||
+        !target.package.publisher
+      )
+        {throw new Error('Native package identity unavailable')}
+
+      const eligible = await (context.eligibility ?? inspectNativePackageUriEligibility)(installed.packageFullName)
+
+      if (!eligible.supported) {throw new Error(`Native update unavailable: ${eligible.reason}`)}
+
+      const graph = decodeNativePackageGraph(
+        JSON.stringify(target.nativeGraph),
+        target.manifest.request,
+        target.package
+      )
+
+      const updates = path.join(context.app.getPath('userData'), 'updates')
+      await mkdir(updates, { recursive: true })
+
+      return registerUpdateRelaunch(context.app, fromVersion, {
+        relaunch: () =>
+          (context.startWaiter ?? startUpdateRelaunchWaiter)(
+            installed.identity,
+            context.resourcesPath,
+            context.log,
+            1860,
+            {
+              schema: 1,
+              base: target.manifest.request.publicBase,
+              graph,
+              manifestSha256: target.manifestSha256,
+              publisher: target.package.publisher!,
+              identity: installed.identity,
+              version: target.package.version,
+              currentVersion: installed.nativeVersion,
+              targetBuildId: target.manifest.request.buildId,
+              targetCommit: target.manifest.request.commit,
+              fullName: installed.packageFullName!,
+              familyName: installed.packageFamilyName!,
+              applicationId: installed.applicationId!,
+              executable: installed.executable,
+              journalDirectory: path.join(updates, `native-${target.manifestSha256}-${randomUUID().replaceAll('-', '')}`)
+            }
+          )
+      })
+    }
+  })
 }

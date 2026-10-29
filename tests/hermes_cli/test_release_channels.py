@@ -353,3 +353,65 @@ def test_non_attempt_ref_shapes_are_rejected_as_archive_refs(ref):
     from hermes_cli.release_channels import validate_request, ChannelError
     with pytest.raises(ChannelError, match="(?i)archive ref"):
         validate_request(stable_request(archive_ref=ref), policy="stable-release")
+
+
+def native_manifest_case():
+    from scripts.releases.semantier_windows import acceptance_request
+    request = acceptance_request(commit='b'*40, controller='c'*40, version='0.0.60',
+                                 source_version='1.2.3', base='https://s3.semantier.com')
+    prefix = f"releases/channel-builds/{request['buildId']}/"
+    package = dict(platform='win32', arch='x64', variant='native-msix-assets',
+                   identity=request['identity']['msixAppIdWithOrg'], version=request['windowsVersion'], publisher='CN=Semantier Technology',
+                   artifact=dict(key=prefix+'win32/app.msixbundle', sha256='d'*64, size=3032),
+                   feed=dict(key=prefix+'win32/native-graph.json', channel='stable'),
+                   native=dict(schema=1, api='PackageManager.AddPackageByUriAsync', digestMethod='IAppxDigestProvider.GetDigest',
+                               digestEncoding='base64', graph=dict(key=prefix+'win32/native-graph.json', sha256='e'*64, size=2048)))
+    manifest = dict(schema=2, request=request, packages=[package])
+    native = dict(buildId=request['buildId'], sequence=60, manifestKey=prefix+'build.json', sha256='f'*64)
+    legacy = dict(buildId='a'*32, sequence=59, manifestKey='releases/channel-builds/'+'a'*32+'/build.json', sha256='1'*64)
+    record = dict(schema=1, name=request['channel'], repository=request['repository'], policy='preview', state='active',
+                  revision=1, nextSequence=61, identity=request['identity'], head=legacy, nativeHead=native)
+    return manifest, record
+
+
+def test_native_manifest_is_distinct_from_legacy_and_binds_descriptor():
+    from hermes_cli.release_channels import validate_manifest
+    manifest, record = native_manifest_case()
+    native_record = {**record, 'head':record['nativeHead']}
+    assert validate_manifest(manifest, native_record, manifest['request']['publicBase'], allow_native=True) == manifest
+
+
+@pytest.mark.parametrize('damage', ['legacy-schema', 'digest-method', 'graph-key', 'oversized-root', 'chunks', 'darwin', 'duplicate-platform'])
+def test_native_manifest_refuses_incompatible_or_unbound_inputs(damage):
+    from hermes_cli.release_channels import validate_manifest, ChannelError
+    manifest, record = native_manifest_case()
+    package = manifest['packages'][0]
+    mutations = {
+        'legacy-schema': (manifest, 'schema', 1),
+        'digest-method': (package['native'], 'digestMethod', 'sha256'),
+        'graph-key': (package['native']['graph'], 'key', package['feed']['key']+'.other'),
+        'oversized-root': (package['artifact'], 'size', 480000001),
+        'chunks': (package['artifact'], 'chunks', {}),
+        'darwin': (package, 'platform', 'darwin'),
+        'duplicate-platform': (manifest, 'packages', [package, deepcopy(package)]),
+    }
+    container, key, damaged_value = mutations[damage]
+    container[key] = damaged_value
+    with pytest.raises(ChannelError):
+        validate_manifest(manifest, {**record, 'head':record['nativeHead']}, manifest['request']['publicBase'], allow_native=True)
+
+
+def test_dual_head_keeps_legacy_bridge_and_allocation_bounds():
+    from hermes_cli.release_channels import validate_record, ChannelError
+    _, record = native_manifest_case()
+    assert validate_record(record) == record
+    for damaged in (dict(record, head=None), dict(record, nativeHead={**record['nativeHead'], 'sequence':59}),
+                    dict(record, nextSequence=60), dict(record, policy='source-branch')):
+        with pytest.raises(ChannelError): validate_record(damaged)
+
+
+def test_legacy_reader_or_admission_cannot_accept_native_manifest_implicitly():
+    from hermes_cli.release_channels import validate_manifest, ChannelError
+    manifest, record = native_manifest_case()
+    with pytest.raises(ChannelError, match='explicit'):
+        validate_manifest(manifest, {**record, 'head':record['nativeHead']}, manifest['request']['publicBase'])

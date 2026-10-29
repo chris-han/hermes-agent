@@ -8,6 +8,8 @@ import * as path from 'node:path'
 
 import { wrapHandoffForDetachedConsole } from '../updater-process'
 
+import type { NativePackageGraph } from './channel-protocol'
+
 export const RELAUNCH_WAITER_SCRIPT = 'update-relaunch-waiter.ps1'
 
 /**
@@ -32,6 +34,24 @@ export const POWERSHELL_PATH = path.win32.join(
   'powershell.exe'
 )
 
+export interface NativeUpdateHandoff {
+  schema: 1
+  base: string
+  graph: NativePackageGraph
+  manifestSha256: string
+  publisher: string
+  identity: string
+  version: string
+  currentVersion: string
+  targetBuildId: string
+  targetCommit: string
+  fullName: string
+  familyName: string
+  applicationId: string
+  executable: string
+  journalDirectory: string
+}
+
 export interface RelaunchWaiterOptions {
   /** The quitting app's pid — the waiter waits for this process to exit. */
   processId: number
@@ -42,6 +62,7 @@ export interface RelaunchWaiterOptions {
   /** Absolute path to the waiter script shipped in the app's resources. */
   scriptPath: string
   timeoutSeconds?: number
+  nativeUpdate?: NativeUpdateHandoff
 }
 
 export interface WaiterStaging {
@@ -129,7 +150,10 @@ export function buildRelaunchWaiterArgs(options: RelaunchWaiterOptions, readyFil
     '-ReadyFile',
     readyFile,
     '-TimeoutSeconds',
-    String(options.timeoutSeconds ?? DEFAULT_RELAUNCH_WAITER_TIMEOUT_SECONDS)
+    String(options.timeoutSeconds ?? DEFAULT_RELAUNCH_WAITER_TIMEOUT_SECONDS),
+    ...(options.nativeUpdate
+      ? ['-NativeRequest', path.join(path.dirname(options.scriptPath), 'native-update.json')]
+      : [])
   ]
 }
 
@@ -153,6 +177,16 @@ async function stageRelaunchWaiter(
 
   try {
     await fs.promises.copyFile(options.scriptPath, scriptPath)
+
+    if (options.nativeUpdate) {
+      for (const helper of ['native-package-digest.ps1', 'native-package-update.ps1']) {
+        await fs.promises.copyFile(path.join(path.dirname(options.scriptPath), helper), path.join(stageDir, helper))
+      }
+
+      await fs.promises.writeFile(path.join(stageDir, 'native-update.json'), JSON.stringify(options.nativeUpdate), {
+        flag: 'wx'
+      })
+    }
   } catch (error) {
     log(`[updates] relaunch waiter: cannot copy ${options.scriptPath} to ${scriptPath}: ${errorText(error)}`)
 
@@ -352,7 +386,8 @@ export function startUpdateRelaunchWaiter(
   identityName: string,
   resourcesPath: string,
   log: (message: string) => void,
-  timeoutSeconds?: number
+  timeoutSeconds?: number,
+  nativeUpdate?: NativeUpdateHandoff
 ): Promise<RelaunchWaiterHandle | undefined> {
   return startRelaunchWaiter(
     {
@@ -360,7 +395,8 @@ export function startUpdateRelaunchWaiter(
       processStartTimeMs: Math.round(Date.now() - process.uptime() * 1000),
       identityName,
       scriptPath: relaunchWaiterScript(resourcesPath),
-      timeoutSeconds
+      timeoutSeconds,
+      nativeUpdate
     },
     { log }
   )

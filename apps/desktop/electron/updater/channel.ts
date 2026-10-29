@@ -10,6 +10,8 @@ import {
   channelPublicBase,
   decodeChannelManifest,
   decodeChannelRecord,
+  decodeNativePackageGraph,
+  type NativePackageGraph,
   type ReceiverKind,
   type RetiredChannel,
   sameChannelIdentity,
@@ -23,6 +25,7 @@ export interface ChannelTarget {
   manifestSha256: string
   artifactUrl: string
   feedUrl: string
+  nativeGraph?: NativePackageGraph
 }
 export interface ChannelRetirement {
   source: ChannelBuild
@@ -42,6 +45,8 @@ export interface ChannelResolverDeps {
   /** Locally trusted signing identity, not a value supplied by the feed. */
   signer: string
   fetch?: typeof fetch
+  /** Set only after local host/trust and association or migration eligibility checks. */
+  nativePackageUri?: boolean
 }
 
 function assertVersionFloor(version: string, floor: string): void {
@@ -137,7 +142,15 @@ export class ChannelResolver {
     }
 
     if (record.state === 'active') {
-      return record.head ? { kind: 'active', target: await this.target(record) } : { kind: 'empty', channel: record }
+      return record.head
+        ? {
+            kind: 'active',
+            target: await this.target(
+              record,
+              this.deps.platform === 'win32' && this.deps.arch === 'x64' && this.deps.nativePackageUri === true
+            )
+          }
+        : { kind: 'empty', channel: record }
     }
 
     const retired: RetiredChannel = record
@@ -179,17 +192,27 @@ export class ChannelResolver {
     }
   }
 
-  private async target(channel: ActiveChannel): Promise<ChannelTarget> {
-    if (!channel.head) {
+  private deliveryHead(channel: ActiveChannel, native: boolean): ActiveChannel['head'] {
+    return native && channel.nativeHead ? channel.nativeHead : channel.head
+  }
+
+  private async target(channel: ActiveChannel, native = false): Promise<ChannelTarget> {
+    const head = this.deliveryHead(channel, native)
+
+    if (!head) {
       throw new Error('No destination build published')
     }
 
-    const manifest = decodeChannelManifest(await this.read(channel.head.manifestKey, channel.head.sha256))
+    const manifest = decodeChannelManifest(await this.read(head.manifestKey, head.sha256))
+
+    if (manifest.schema !== (head === channel.nativeHead ? 2 : 1))
+      {throw new Error('Channel manifest schema/head mismatch')}
+
     const request = manifest.request
 
     if (
-      request.buildId !== channel.head.buildId ||
-      request.sequence !== channel.head.sequence ||
+      request.buildId !== head.buildId ||
+      request.sequence !== head.sequence ||
       request.channel !== channel.name ||
       request.repository.toLowerCase() !== channel.repository.toLowerCase() ||
       request.publicBase !== this.base ||
@@ -222,13 +245,37 @@ export class ChannelResolver {
       throw new Error('Channel package signing identity mismatch')
     }
 
+    const nativeGraph = await this.nativeGraph(entry, request)
+
     return {
+      ...(nativeGraph ? { nativeGraph } : {}),
       channel,
       manifest,
       package: entry,
-      manifestSha256: channel.head.sha256,
+      manifestSha256: head.sha256,
       artifactUrl: `${this.base}/${entry.artifact.key}`,
       feedUrl: `${this.base}/${entry.feed.key}`
+    }
+  }
+
+  private async nativeGraph(
+    entry: ChannelPackage,
+    request: ChannelManifest['request']
+  ): Promise<NativePackageGraph | undefined> {
+    if (!entry.native) {return undefined}
+    const body = await this.read(entry.native.graph.key, entry.native.graph.sha256)
+
+    if (Buffer.byteLength(body) !== entry.native.graph.size) {throw new Error('Native graph descriptor size mismatch')}
+
+    return decodeNativePackageGraph(body, request, entry)
+  }
+
+  private assertNativePrefix(entry: ChannelPackage, buildId: string): void {
+    if (
+      entry.native &&
+      (!entry.native.graph.key.startsWith(buildPrefix(buildId)) || !entry.artifact.key.startsWith(buildPrefix(buildId)))
+    ) {
+      throw new Error('Native graph outside immutable build namespace')
     }
   }
 
@@ -247,6 +294,7 @@ export class ChannelResolver {
     }
 
     for (const entry of manifest.packages) {
+      this.assertNativePrefix(entry, request.buildId)
       const expectedIdentity = entry.platform === 'darwin' ? request.identity.appId : request.identity.msixAppIdWithOrg
       const expectedVersion = entry.platform === 'darwin' ? request.version : request.windowsVersion
 
@@ -265,7 +313,7 @@ export class ChannelResolver {
         throw new Error('Invalid native macOS feed descriptor')
       }
 
-      if (entry.platform === 'win32' && !entry.feed.key.endsWith('.appinstaller')) {
+      if (entry.platform === 'win32' && !entry.native && !entry.feed.key.endsWith('.appinstaller')) {
         throw new Error('Invalid native Windows feed descriptor')
       }
     }

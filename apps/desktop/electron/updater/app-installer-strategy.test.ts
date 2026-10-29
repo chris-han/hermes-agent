@@ -220,14 +220,46 @@ it('hands the verified local MSIX to Windows after verification and before quitt
   const { deps, calls } = makeDeps({
     appVersion: '0.0.54.0',
     feedBaseUrl: 'https://s3.semantier.com',
-    feed: { url: 'https://s3.semantier.com/releases/fixed.appinstaller', version: '0.0.55.0',
-      verifyPrepared: async () => 'C:/owned/updates/verified.msix' },
-    installer: { prepare: async () => 'C:/owned/updates/update.appinstaller', open: async file => { opened.push(file);
+    feed: {
+      url: 'https://s3.semantier.com/releases/fixed.appinstaller',
+      version: '0.0.55.0',
+      verifyPrepared: async () => 'C:/owned/updates/verified.msix'
+    },
+    installer: {
+      prepare: async () => 'C:/owned/updates/update.appinstaller',
+      open: async file => {
+        opened.push(file)
 
- return '' } }
+        return ''
+      }
+    }
   })
 
   await new AppInstallerStrategy(deps).apply()
   expect(opened).toEqual(['C:/owned/updates/verified.msix'])
   expect(calls).toEqual(['relaunch-marker', 'teardown', 'quit'])
+})
+
+it('native URI handoff starts the external deployment owner without preparing a complete installer', async () => {
+  const { deps, calls } = makeDeps({ appVersion: '1.0.0.0' })
+  const strategy = new AppInstallerStrategy({ ...deps, nativeUri: { version: '2.0.0.0' } })
+  expect((await strategy.check()).updateAvailable).toBe(true)
+  expect((await strategy.apply()).handedOff).toBe(true)
+  expect(calls).toEqual(['relaunch-marker', 'teardown', 'quit'])
+})
+
+it('native URI handoff refuses a missing deployment owner before backend teardown', async () => {
+  const { deps, calls } = makeDeps({
+    appVersion: '1.0.0.0',
+    registerPendingRelaunch: async () => ({
+      automatic: false,
+      cancel: async () => {
+        calls.push('cancel')
+      }
+    })
+  })
+
+  const strategy = new AppInstallerStrategy({ ...deps, nativeUri: { version: '2.0.0.0' } })
+  await expect(strategy.apply()).rejects.toThrow('Native deployment owner did not become ready')
+  expect(calls).toEqual(['cancel'])
 })

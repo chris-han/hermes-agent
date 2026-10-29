@@ -8,6 +8,7 @@ import path from 'node:path'
 import { test, vi } from 'vitest'
 
 import {
+  type NativeUpdateHandoff,
   POWERSHELL_PATH,
   RELAUNCH_WAITER_LOG_TAIL_BYTES,
   type RelaunchWaiterHandle,
@@ -28,6 +29,7 @@ async function stop(child: ChildProcess | undefined): Promise<void> {
 
 for (const mode of [
   { name: 'ready', ready: true },
+  { name: 'native-ready', ready: true, native: true },
   { name: 'silent', ready: false },
   { name: 'spawn-error', ready: false, missing: true },
   { name: 'early-exit', ready: false, earlyExit: true },
@@ -36,6 +38,13 @@ for (const mode of [
   { name: 'cleanup-error', ready: true, refuseCleanup: true }
 ]) {
   test(`waiter ownership survives its complete lifecycle (${mode.name})`, async (): Promise<void> => {
+    const nativeUpdate: NativeUpdateHandoff | undefined = mode.native ? {
+      schema:1, base:'https://s3.semantier.com', graph:{schema:1, transport:'windows-package-uri', root:'fixture', payloadInventorySha256:'a'.repeat(64), objects:[]},
+      manifestSha256:'b'.repeat(64), publisher:'CN=Fixture', identity:'disposable-waiter-test', version:'2.0.0.0', currentVersion:'1.0.0.0',
+      targetBuildId:'c'.repeat(32), targetCommit:'d'.repeat(40), fullName:'baseline-package', familyName:'baseline-family',
+      applicationId:'Hermes', executable:process.execPath, journalDirectory:'fixture-only-no-native-execution'
+    } : undefined
+
     let child: ChildProcess | undefined
     let originalKill: ChildProcess['kill'] | undefined
     let stage: string = ''
@@ -72,8 +81,18 @@ for (const mode of [
         '-ReadyFile',
         readyFile,
         '-TimeoutSeconds',
-        '900'
+        '900',
+        ...(nativeUpdate ? ['-NativeRequest', path.join(stage, 'native-update.json')] : [])
       ])
+
+      if (nativeUpdate) {
+        assert.deepEqual(JSON.parse(fs.readFileSync(path.join(stage, 'native-update.json'), 'utf8')), nativeUpdate)
+
+        for (const helper of ['native-package-digest.ps1', 'native-package-update.ps1']) {
+          assert.deepEqual(fs.readFileSync(path.join(stage, helper)), fs.readFileSync(path.join(path.dirname(scriptPath), helper)))
+        }
+      }
+
       child = spawn(
         mode.missing ? path.join(stage, 'missing.exe') : process.execPath,
         [
@@ -114,7 +133,8 @@ for (const mode of [
           processId: process.pid,
           processStartTimeMs: 1_000_000,
           identityName: 'disposable-waiter-test',
-          scriptPath
+          scriptPath,
+          nativeUpdate
         },
         {
           spawn: start,

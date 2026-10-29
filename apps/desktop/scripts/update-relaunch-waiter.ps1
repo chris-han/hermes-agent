@@ -5,7 +5,8 @@ param(
   [Parameter(Mandatory = $true)][string]$IdentityName,
   [Parameter(Mandatory = $true)][string]$ReadyFile,
   [int]$TimeoutSeconds = 900,
-  [int]$PollMillis = 500
+  [int]$PollMillis = 500,
+  [string]$NativeRequest
 )
 
 # The parent runs this detached with no stdio, so this file is the only record of why it gave up.
@@ -18,7 +19,7 @@ try { if ((Test-Path -LiteralPath $LogFile) -and (Get-Item -LiteralPath $LogFile
 function Write-WaiterLog([string]$Message) {
   # Tag every physical line: a multi-line error (message, location, details) must survive the parent's attempt filter.
   try {
-    $stamp = Get-Date -Format o
+    $stamp = [DateTimeOffset]::UtcNow.ToString('o')
     $lines = @($Message -split '\r?\n' | Where-Object { $_.Trim() })
     if (-not $lines) { return }
     $text = ($lines | ForEach-Object { '{0} [{1}] pid={2} {3}' -f $stamp, $Attempt, $PID, $_ }) -join "`n"
@@ -34,6 +35,12 @@ try {
   if (-not $package) { Write-WaiterLog "no package named $IdentityName"; exit 2 }
   $appId = (Get-AppxPackageManifest $package).Package.Applications.Application.Id | Select-Object -First 1
   if (-not $appId) { Write-WaiterLog "package $($package.PackageFullName) has no application id"; exit 2 }
+  $nativeContext=$null
+  if($NativeRequest){
+    . (Join-Path $PSScriptRoot 'native-package-update.ps1')
+    $nativeContext=Initialize-NativeUpdate $NativeRequest $ProcessId $ProcessStartTimeMs $package
+    $appId=$nativeContext.request.applicationId
+  }
   $fromVersion = $package.Version
   $familyName = $package.PackageFamilyName
   Set-Content -LiteralPath $ReadyFile -Value "$fromVersion|$familyName|$appId"
@@ -49,11 +56,14 @@ try {
     Start-Sleep -Milliseconds $PollMillis
   }
 
+  if($nativeContext){Invoke-NativePackageUpdate $nativeContext}
   while ((Get-Date) -le $deadline) {
     $current = Get-AppxPackage -Name $IdentityName | Select-Object -First 1
     if ($current -and $current.Version -ne $fromVersion -and $current.PackageFamilyName -eq $familyName) {
+      if($nativeContext -and !(Test-NativeUpdateInstalled $nativeContext $current)){Write-WaiterLog 'native graph registration incomplete';exit 5}
       Write-WaiterLog "package is now $($current.Version); launching"
       Start-Process "shell:AppsFolder\$familyName!$appId"
+      if($nativeContext){Write-NativeUpdateReceipt $nativeContext 'completed.json' @{schema=1;status='TARGET_GRAPH_REGISTERED_ACTIVATION_REQUESTED';producedAt=[DateTime]::UtcNow.ToString('o');manifestSha256=$nativeContext.request.manifestSha256;fullName=$current.PackageFullName}}
       Write-WaiterLog 'launched'
       exit 0
     }
@@ -62,6 +72,9 @@ try {
   Write-WaiterLog "timed out waiting for the package version to change from $fromVersion"
   exit 4
 } catch {
+  if($nativeContext){
+    @{schema=1;status='UNKNOWN';producedAt=[DateTime]::UtcNow.ToString('o');manifestSha256=$nativeContext.request.manifestSha256}|ConvertTo-Json -Compress|Set-Content -LiteralPath (Join-Path $nativeContext.directory 'unresolved.json') -Encoding UTF8
+  }
   Write-WaiterLog ('failed: ' + ($_ | Out-String).Trim())
   exit 1
 } finally {

@@ -36,6 +36,8 @@ export interface AppInstallerStrategyDeps {
   channel: string
   /** Verification must bind descriptor, artifact digest, native identity and signer. */
   feed?: { url: string; version: string; verifyPrepared: (file: string) => Promise<string | void> }
+  /** The detached waiter owns the pinned native URI deployment after parent exit. */
+  nativeUri?: { version: string }
   light: boolean
   /** The App Installer feed base URL; empty when nothing configured it. */
   feedBaseUrl: string
@@ -101,12 +103,12 @@ export class AppInstallerStrategy {
   constructor(private readonly deps: AppInstallerStrategyDeps) {}
 
   async check(): Promise<UpdaterStatusWire> {
-    if (this.deps.feed) {
+    if (this.deps.feed || this.deps.nativeUri) {
       return {
         supported: true,
         mechanism: this.mechanism,
         currentVersion: this.deps.appVersion,
-        updateAvailable: newerWindowsVersion(this.deps.feed.version, this.deps.appVersion),
+        updateAvailable: newerWindowsVersion((this.deps.nativeUri ?? this.deps.feed!).version, this.deps.appVersion),
         fetchedAt: Date.now()
       }
     }
@@ -118,6 +120,43 @@ export class AppInstallerStrategy {
   }
 
   async apply(): Promise<UpdaterApplyResultWire> {
+    if (this.deps.nativeUri) {
+      if (!newerWindowsVersion(this.deps.nativeUri.version, this.deps.appVersion))
+        {return { ok: true, mechanism: this.mechanism }}
+
+      return applyPackagedHandoff(
+        {
+          teardown: this.deps.teardownBundledBackend,
+          restore: this.deps.restoreBundledBackend,
+          emitProgress: this.deps.emitUpdateProgress,
+          relaunch: {
+            register: async () => {
+              const registration = await this.deps.registerPendingRelaunch(this.deps.appVersion)
+
+              if (!registration.automatic) {
+                await registration.cancel()
+                throw new Error('Native deployment owner did not become ready')
+              }
+
+              return registration
+            },
+            onManual: () => {}
+          }
+        },
+        async stop => {
+          await stop()
+          this.deps.emitUpdateProgress({
+            stage: 'restart',
+            message: 'Windows will apply the pinned update and reopen Semantier.',
+            percent: null
+          })
+          this.deps.quit()
+
+          return { ok: true, manual: false, bundled: true, handedOff: true, mechanism: this.mechanism }
+        }
+      )
+    }
+
     const feedBaseUrl = this.deps.feedBaseUrl
     const feed = this.deps.feed
     let sourceUri: string | undefined = feed?.url
