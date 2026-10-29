@@ -117,7 +117,7 @@ class Transaction:
                 pending = None
             elif row.get('kind') == 'uncertain':
                 if not pending or row.get('intent_at') != pending['at']: raise ValueError('Unlinked uncertainty')
-            elif row.get('kind') not in ('baseline_ready','successor_ready','conservation_before','conservation_failed','acceptance','cleanup','native_qualification','native_qualification_ready'): raise ValueError('Unknown journal record')
+            elif row.get('kind') not in ('baseline_ready','successor_ready','conservation_before','conservation_failed','acceptance','cleanup','native_qualification','native_qualification_ready','semantic_before','semantic_preservation'): raise ValueError('Unknown journal record')
         return rows
 
     def record(self, kind, **facts):
@@ -324,6 +324,57 @@ class Windows:
         if proof['status']=='FAILURE':return {'status':'not_performed','proof':proof}
         raise ValueError('Native registration remains UNKNOWN')
 
+    def semantic_owner(self):
+        from types import ModuleType
+        binding=self.request.get('semantic_observer',{})
+        file=Path(binding.get('path',''))
+        with safe_file(file,'r') as stream:source=stream.read()
+        if hashlib.sha256(source.encode()).hexdigest()!=binding.get('sha256'):
+            raise ValueError('Pinned semantic observer changed')
+        module=ModuleType('registered_semantic_observer');module.__file__=str(file)
+        exec(compile(source,str(file),'exec'),module.__dict__)
+        return module
+
+    def capture_semantics(self,prior=None):
+        from uuid import uuid4
+        specs=self.request.get('semantic_databases')
+        if specs is None:
+            if self.request.get('target',{}).get('native_graph') is not None:
+                raise ValueError('Native upgrade requires explicit nonempty semantic SQLite fixtures')
+            return None
+        if not isinstance(specs,list) or not 0<len(specs)<=8:raise ValueError('Bounded semantic database set required')
+        owner=self.semantic_owner();root=owner.unlinked(Path(self.request['root']))
+        selected={}
+        for spec in specs:
+            relative=PurePosixPath(spec['path'])
+            if (not relative.parts or relative.is_absolute() or relative.as_posix()!=spec['path'] or '..' in relative.parts
+                or ':' in spec['path'] or '\\' in spec['path'] or relative.parts[0]!='userdata' or spec['path'] in selected):
+                raise ValueError('Unique owned relative semantic database path required')
+            source=owner.unlinked(root/relative)
+            if source.suffix not in ('.db','.sqlite','.sqlite3') or source.stat().st_size>2*1024**3:
+                raise ValueError('Bounded SQLite source required')
+            tables=spec.get('tables')
+            if not isinstance(tables,dict) or not tables or any(not isinstance(columns,list) or not columns or any(not isinstance(column,str) for column in columns) for columns in tables.values()):
+                raise ValueError('Explicit nonempty semantic table/column contract required')
+            selected[spec['path']]=(source,tables)
+        contracts={name:tables for name,(_,tables) in selected.items()}
+        if prior is not None and (prior['observer_sha256']!=self.request['semantic_observer']['sha256'] or prior['table_contracts']!=contracts or set(prior['databases'])!=set(selected)):
+            raise ValueError('Semantic observer/database scope changed')
+        directory=root/('conservation-'+uuid4().hex);directory.mkdir()
+        snapshots={}
+        for index,(name,(source,tables)) in enumerate(selected.items()):
+            snapshots[name]=owner.backup_database_snapshot(source,directory/(str(index)+'.db'),prior['databases'][name] if prior else None,tables)
+        result={'observer_sha256':self.request['semantic_observer']['sha256'],'table_contracts':contracts,'databases':snapshots,'backup_directory':str(directory)}
+        if len(json.dumps(result).encode())>4*1024*1024:raise ValueError('Semantic evidence exceeds bound; preserve backups')
+        return result
+
+    def verify_semantics(self,before):
+        if before is None:return None
+        after=self.capture_semantics(before);owner=self.semantic_owner()
+        return {'scope':'Explicit SQLite fixture rows/columns only; not full native acceptance',
+                'observer_sha256':before['observer_sha256'],'backup_directory':after['backup_directory'],
+                'databases':{name:owner.verify_database(prior,after['databases'][name]) for name,prior in before['databases'].items()}}
+
     def check(self, action, args, before):
         self.precondition = before
         if action=='update' and self.request.get('target',{}).get('native_graph'):validate_native_update_inputs(self.request)
@@ -515,6 +566,8 @@ def run_upgrade(tx, platform):
     if not any(row['kind']=='baseline_ready' for row in tx.events()): raise ValueError('Baseline readiness evidence required before publication/update')
     before = platform.call('conservation')
     tx.record('conservation_before', facts=before)
+    semantic_before=platform.capture_semantics() if hasattr(platform,'capture_semantics') else None
+    if semantic_before is not None:tx.record('semantic_before',facts=semantic_before)
     target = platform.call('artifact', side='target')
     current = platform.observe()
     if current['package'] is None or current['process'] is None:
@@ -528,6 +581,12 @@ def run_upgrade(tx, platform):
     if before != after:
         tx.record('conservation_failed', facts=after)
         raise ValueError('Conservation mismatch; preserve state')
+    if semantic_before is not None:
+        try:semantic_after=platform.verify_semantics(semantic_before)
+        except Exception:
+            tx.record('conservation_failed',scope='SQLite semantic content; preserve before/after backups')
+            raise
+        tx.record('semantic_preservation',facts=semantic_after)
     tx.record('acceptance', status='registered_readback_and_selected_sentinels_passed',
               native_acceptance='requires complete original matrices', facts=after)
 

@@ -597,3 +597,14 @@ def test_native_registration_journal_does_not_infer_absence(tx,status,registered
     else:
         assert t.reconcile()==expected
         assert t.pending() is None
+
+
+def test_native_upgrade_without_semantic_fixtures_refuses_before_update(tmp_path):
+    from types import MethodType
+    p=UpgradePlatform();p.request={'root':str(tmp_path),'target':{'native_graph':{'sha256':'a'*64}}}
+    p.capture_semantics=MethodType(d.Windows.capture_semantics,p)
+    t=d.Transaction(tmp_path/'j',p);seed(t,p)
+    t.record('baseline_ready',facts={'healthy':True},observed=p.observe())
+    with pytest.raises(ValueError,match='semantic'):d.run_upgrade(t,p)
+    assert 'update' not in p.calls
+    assert not any(row['kind']=='acceptance' for row in t.events())
