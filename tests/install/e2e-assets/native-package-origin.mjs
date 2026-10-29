@@ -39,7 +39,8 @@ export async function startNativePackageOrigin(directory, graph, observe = () =>
   const server = http.createServer(async (req, res) => {
     let bytesRead = 0
     res.on('close', () => observe({ producedAt: new Date().toISOString(), method: req.method, path: req.url,
-      range: req.headers.range ?? null, status: res.statusCode, bytesRead, completed: res.writableFinished,
+      range: req.headers.range ?? null, userAgent: req.headers['user-agent'] ?? null, remoteAddress: req.socket.remoteAddress,
+      status: res.statusCode, bytesRead, completed: res.writableFinished,
       scope: 'origin stream bytes; not network or differential acceptance' }))
     const entry = files.get(req.url)
     if (!entry || !['GET', 'HEAD'].includes(req.method)) { res.writeHead(404).end(); return }
