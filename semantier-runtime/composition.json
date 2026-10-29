@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "parent_commit": "1d02c7821dd06faed734d8396b248c43454dff51",
+  "parent_commit": "b22c81d95c2a9d341e205653dc849e9cf30fb612",
   "files": [
     {
       "path": "MODEL-NOTICE.txt",
@@ -320,7 +320,7 @@
     },
     {
       "path": "src/agents/client_operations/ecs_target.py",
-      "sha256": "382ee9267595827c1857c9edaa9527170e7cc4c14bfa429d23951e9f65808449"
+      "sha256": "8ca5e84cc54f632935ed8a284b0d75109b567c0b50181dad3ab95a9369aaceee"
     },
     {
       "path": "src/agents/client_operations/feedback.py",

@@ -3,12 +3,12 @@
 import base64
 from contextlib import contextmanager
 import json
+import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 import httpx
 from .artifact_io import OperationError, file_facts, safe_file
 from .ecs_protocol import PREFIX, canonical, decode, headers_for, hex_value, sha
-from .ecs_storage import credentials
 from .remote_publication import publish_objects_then_head
 
 
@@ -53,6 +53,10 @@ class ECSTarget:
 
     @classmethod
     def from_spec(cls, spec):
+        if sys.platform != "linux":
+            raise OperationError(503, "ecs_credentials_supported_host_required")
+        from .ecs_storage import credentials
+
         revision, keys = credentials(spec["credential_file"])
         if len(keys) != 1:
             raise OperationError(503, "ecs_coordinator_key_selection_required")
