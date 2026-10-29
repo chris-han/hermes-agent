@@ -1,8 +1,9 @@
 # Read-only SDK digest for ExpectedDigests. Never substitutes a file SHA256.
-function Get-NativePackageDigest([string]$Package) {
+function Initialize-NativePackageInterop {
   if (-not ('Semantier.NativeDigest' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
 namespace Semantier {
@@ -20,7 +21,56 @@ namespace Semantier {
  interface IAppxDigestProvider {
   void GetDigest([MarshalAs(UnmanagedType.LPWStr)] out string digest);
  }
+ [ComImport, Guid("4c522071-01da-5f85-9d52-29952578a301"), InterfaceType(ComInterfaceType.InterfaceIsIInspectable)]
+ interface IUriDigestMap {
+  void Lookup(IntPtr key, [MarshalAs(UnmanagedType.HString)] out string value);
+  void Size(out uint value);
+  void HasKey(IntPtr key, [MarshalAs(UnmanagedType.I1)] out bool found);
+  void GetView(out IntPtr view);
+  void Insert(IntPtr key, [MarshalAs(UnmanagedType.HString)] string value, [MarshalAs(UnmanagedType.I1)] out bool replaced);
+ }
+ [ComImport, Guid("44a9796f-723e-4fdf-a218-033e75b0c084"), InterfaceType(ComInterfaceType.InterfaceIsIInspectable)]
+ interface IUriFactory {
+  // Keep the native pointer: .NET projects a marshalled URI object to System.Uri.
+  void CreateUri([MarshalAs(UnmanagedType.HString)] string uri, out IntPtr key);
+ }
  public static class NativeDigest {
+  [DllImport("combase.dll", PreserveSig=false)]
+  static extern void RoGetActivationFactory([MarshalAs(UnmanagedType.HString)] string name, ref Guid iid, out IUriFactory factory);
+  public static uint SetExpected(object map, string[] uris, string[] digests) {
+   if(uris==null || digests==null || uris.Length==0 || uris.Length>64 || uris.Length!=digests.Length)
+    throw new ArgumentException("Incomplete expected native digest set");
+   var addresses=new string[uris.Length];var unique=new HashSet<string>(StringComparer.Ordinal);
+   for(int i=0;i<uris.Length;i++) {
+    var address=new Uri(uris[i],UriKind.Absolute);
+    if(address.UserInfo!="" || address.Fragment!="" || address.Query!="" ||
+       (address.Scheme!="https" && !(address.Scheme=="http" && address.IsLoopback)))
+     throw new ArgumentException("Expected an immutable HTTPS or loopback fixture URI");
+    addresses[i]=address.AbsoluteUri;
+    if(!unique.Add(addresses[i]))throw new ArgumentException("Duplicate expected native URI");
+    var bytes=Convert.FromBase64String(digests[i]);
+    if(bytes.Length!=32 || Convert.ToBase64String(bytes)!=digests[i])throw new ArgumentException("Invalid native digest");
+   }
+   var typed=(IUriDigestMap)map;uint count;typed.Size(out count);
+   if(count!=0)throw new ArgumentException("Expected native digest map is already bound");
+   IUriFactory factory=null;
+   try {
+    Guid iid=typeof(IUriFactory).GUID;
+    RoGetActivationFactory("Windows.Foundation.Uri",ref iid,out factory);
+    for(int i=0;i<addresses.Length;i++) {
+     IntPtr key=IntPtr.Zero;
+     try {
+      factory.CreateUri(addresses[i],out key);
+      bool replaced;typed.Insert(key,digests[i],out replaced);
+      string actual;typed.Lookup(key,out actual);
+      if(replaced || actual!=digests[i])throw new InvalidOperationException("Expected native digest binding failed");
+     } finally {if(key!=IntPtr.Zero)Marshal.Release(key);}
+    }
+    typed.Size(out count);
+    if(count!=uris.Length)throw new InvalidOperationException("Expected native digest set incomplete");
+    return count;
+   } finally {if(factory!=null)Marshal.FinalReleaseComObject(factory);}
+  }
   [DllImport("shlwapi.dll", CharSet=CharSet.Unicode, PreserveSig=false)]
   static extern void SHCreateStreamOnFileEx(string file, uint mode, uint attributes, bool create, IntPtr template, out IStream stream);
   public static string Read(string file) {
@@ -50,5 +100,15 @@ namespace Semantier {
 }
 '@
   }
+}
+function Get-NativePackageDigest([string]$Package) {
+  Initialize-NativePackageInterop
   return [Semantier.NativeDigest]::Read((Resolve-Path -LiteralPath $Package).Path)
 }
+# IMap<Windows.Foundation.Uri,HSTRING> is not an IDictionary in Windows PS5.1.
+# This binds options only; it never downloads, stages or registers a package.
+function Set-NativeExpectedDigests($Options, [string[]]$Uris, [string[]]$Digests) {
+  Initialize-NativePackageInterop
+  return [Semantier.NativeDigest]::SetExpected($Options.ExpectedDigests,$Uris,$Digests)
+}
+
