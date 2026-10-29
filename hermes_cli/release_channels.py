@@ -352,6 +352,11 @@ def _manifest_schema(value: object, allow_native: bool) -> dict:
     if not isinstance(value, dict) or type(value.get("schema")) is not int or value["schema"] not in (1, 2):
         raise ChannelError("Unsupported manifest schema")
     manifest = value
+    if "receiverCapabilities" in manifest:
+        capabilities=manifest["receiverCapabilities"]
+        if (not isinstance(capabilities,dict) or set(capabilities)!={"windowsPackageUri"}
+                or type(capabilities["windowsPackageUri"]) is not int or capabilities["windowsPackageUri"]!=1):
+            raise ChannelError("Unsupported receiver capability")
     native_manifest = manifest["schema"] == 2
     if native_manifest and not allow_native:
         raise ChannelError("Native manifest requires explicit receiver/admission capability")

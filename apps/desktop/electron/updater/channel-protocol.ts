@@ -98,6 +98,7 @@ export interface ChannelManifest {
   request: ChannelRequest
   packages: ChannelPackage[]
   receiverProtocol?: number
+  receiverCapabilities?: { windowsPackageUri: 1 }
 }
 
 const SHA256 = /^[a-f0-9]{64}$/
@@ -606,6 +607,16 @@ export function decodeChannelManifest(body: string): ChannelManifest {
   }
 
   const manifest: ChannelManifest = { schema, request: request(fields.object('request')), packages }
+
+  if (fields.get('receiverCapabilities') !== undefined) {
+    const capabilities = fields.object('receiverCapabilities')
+
+    if (capabilities.keys().length !== 1 || capabilities.get('windowsPackageUri') !== 1) {
+      throw new Error('Unsupported receiver capability')
+    }
+
+    manifest.receiverCapabilities = {windowsPackageUri:1}
+  }
 
   if (fields.get('receiverProtocol') !== undefined) {
     manifest.receiverProtocol = fields.integer('receiverProtocol')

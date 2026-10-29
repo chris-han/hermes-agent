@@ -247,6 +247,9 @@ export function buildStampPayload(stamp, env = process.env, platform = process.p
     base.displayVersion = channelBuild.version
   }
   if (variant === 'bundled') base.receiverProtocol = 1
+  if (platform === 'win32' && variant === 'bundled' && channelBuild && !channelBuild.receiverCandidate && !commitBuild) {
+    base.receiverCapabilities = { windowsPackageUri: 1 }
+  }
 
   const updateMechanism = {
     '': 'self',

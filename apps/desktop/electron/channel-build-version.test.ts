@@ -258,6 +258,8 @@ test('channel stamps verify the real checkout and retain source version and nati
     assert.equal(built.baseVersion, build.sourceVersion)
     assert.equal(built.tag, null)
     assert.equal(built.receiverProtocol, 1)
+    assert.equal(built.receiverCapabilities, undefined)
+    assert.deepEqual(buildStampPayload(provenance, env, 'win32', payload).receiverCapabilities, { windowsPackageUri:1 })
     assert.deepEqual(built.channelBuild, build)
     assert.ok(Object.isFrozen(built.channelBuild?.identity))
     fs.mkdirSync(path.join(dir, 'out/agent-payload/repo'), { recursive: true })
@@ -298,6 +300,7 @@ test('channel stamps verify the real checkout and retain source version and nati
     )
 
     assert.equal(stable.channelBuild, undefined)
+    assert.equal(buildStampPayload(resolveStamp({env:receiverEnv, repoRoot:dir}), receiverEnv, 'win32', payload).receiverCapabilities, undefined)
     assert.equal(stable.source, 'build')
     assert.equal(stable.tag, receiver.releaseTag)
     assert.equal(stable.displayVersion, receiver.version)

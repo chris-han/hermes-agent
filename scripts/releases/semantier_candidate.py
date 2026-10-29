@@ -73,9 +73,15 @@ def stage(output,native,incoming,notes):
     receipt={'source_commit':request['commit'],'controller_commit':request['controllerCommit'],'build_id':request['buildId'],'repository':'chris-han/hermes-agent','platform':'win32','arch':'x64','identity':signed['packageName'],'publisher':signed['publisher'],'application_id':request['identity']['appNamePascal'],'windows_version':signed['packageVersion'],'sha256':digest,'size':artifact.stat().st_size,'signature_result':'PASS','qualification':'windows-x64-native','workflow_run_id':os.environ['GITHUB_RUN_ID'],'workflow_run_attempt':int(os.environ['GITHUB_RUN_ATTEMPT']),'workflow_result':'native_gates_passed','package_family':family,'notes_sha256':hashlib.sha256(canonical(notes)).hexdigest(),'native_receipt_sha256':sha(native/'installed-identity.json'),'trusted_timestamp':signed['trustedTimestamp']}
     receipt['local_distribution_archive']=archive_fact
     receipt['chunk_descriptor_sha256']=hashlib.sha256(canonical(package['artifact']['chunks'])).hexdigest()
+    capabilities=installed['stamp'].get('receiverCapabilities')
+    if capabilities is not None:
+        if capabilities!={'windowsPackageUri':1} or type(capabilities.get('windowsPackageUri')) is not int:
+            raise ValueError('Unsupported installed native receiver capability')
+        receipt['receiver_capabilities']=capabilities
     secret=os.environ['SEMANTIER_CLIENT_RECEIPT_KEY'].encode()
     if len(secret)<32:raise ValueError('CI-only receipt key required')
     candidate={'release_id':request['buildId'],'manifest':{'schema':1,'request':request,'packages':[package]},'notes':notes,'native_receipt':receipt,'receipt_hmac':hmac.new(secret,canonical(receipt),hashlib.sha256).hexdigest()}
+    if capabilities is not None:candidate['manifest']['receiverCapabilities']=capabilities
     candidates=incoming/'ci-candidates';candidates.mkdir(exist_ok=True)
     destination=candidates/(request['buildId']+'.json')
     with destination.open('x') as stream:json.dump(candidate,stream,indent=2);stream.write('\n')

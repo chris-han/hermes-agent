@@ -415,3 +415,17 @@ def test_legacy_reader_or_admission_cannot_accept_native_manifest_implicitly():
     manifest, record = native_manifest_case()
     with pytest.raises(ChannelError, match='explicit'):
         validate_manifest(manifest, {**record, 'head':record['nativeHead']}, manifest['request']['publicBase'])
+
+
+def test_native_receiver_capability_is_distinct_and_versioned():
+    from hermes_cli.release_channels import validate_manifest, ChannelError
+    manifest, record = native_manifest_case()
+    # A legacy bridge advertises the compiled capability, independently of retirement.
+    manifest['schema']=1
+    package=manifest['packages'][0]
+    package.update(variant='bundled');package.pop('native')
+    manifest['receiverCapabilities']={'windowsPackageUri':1}
+    assert validate_manifest(manifest,{**record,'head':record['nativeHead']},manifest['request']['publicBase'])==manifest
+    for unsupported in ({'windowsPackageUri':True},{'windowsPackageUri':2},{'other':1}):
+        manifest['receiverCapabilities']=unsupported
+        with pytest.raises(ChannelError):validate_manifest(manifest,{**record,'head':record['nativeHead']},manifest['request']['publicBase'])
