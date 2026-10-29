@@ -111,4 +111,3 @@ function Set-NativeExpectedDigests($Options, [string[]]$Uris, [string[]]$Digests
   Initialize-NativePackageInterop
   return [Semantier.NativeDigest]::SetExpected($Options.ExpectedDigests,$Uris,$Digests)
 }
-

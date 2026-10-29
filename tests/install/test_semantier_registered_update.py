@@ -239,3 +239,18 @@ def test_related_registration_crash_reconciles_exact_set_only(tmp_path):
 def test_unknown_related_observation_does_not_pass_removal():
     with pytest.raises(ValueError,match='Related'):
         d.Transaction.__new__(d.Transaction).expected('remove',{}, {}, {'package':None,'process':None,'related':None})
+
+
+def test_graph_prediction_binds_exact_static_members_then_records_local_incarnations(tmp_path):
+    p=RelatedPlatform();t=d.Transaction(tmp_path/'j',p);t.initialize(p.observe())
+    target={'full':'main','related':[{'full':'runtime_1','family':'same_family'}]}
+    original=p.perform
+    def perform(action,args):
+        original(action,args)
+        if action=='register':p.state['related']=[{'full':'runtime_1','family':'same_family','root_id':'actual-volume:file','install_path':'actual installed location'}]
+    p.perform=perform
+    t.operation('register',target)
+    assert t.events()[-1]['observed']['related'][0]['root_id']=='actual-volume:file'
+    p.state['related'][0]['root_id']='replaced:file'
+    with pytest.raises(ValueError,match='Related'):t.operation('remove',{})
+    assert p.calls==['register']

@@ -156,8 +156,11 @@ class Transaction:
 
     @classmethod
     def package_matches(cls, args, state):
+        expected = {row['full']: row for row in cls.related(args)}
+        actual = {row['full']: row for row in cls.related(state)}
         return (cls.matches({k:v for k,v in args.items() if k != 'related'}, state['package'])
-            and cls.related(args) == cls.related(state))
+            and expected.keys() == actual.keys()
+            and all(cls.matches(row, actual[full]) for full, row in expected.items()))
 
     def expected(self, action, args, before, after):
         if action == 'register': return self.package_matches(args, after)
