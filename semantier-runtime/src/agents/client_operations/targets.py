@@ -118,8 +118,8 @@ class DeliveryTargets:
             raise OperationError(409, 'delivery_target_busy')
         if track['paused']:
             raise OperationError(409, 'promotions_paused')
-        already_current = bool(head['record'].get('head') and
-                               head['record']['head']['sha256'] == binding['body']['manifest_sha256'])
+        selected_head=head['record'].get('nativeHead' if binding['body']['manifest']['schema']==2 else 'head')
+        already_current=bool(selected_head and selected_head['sha256']==binding['body']['manifest_sha256'])
         release = {**binding['body'], 'retention_admission': {'release_id': release_id, 'first_admitted_at': binding['first_admitted_at'].isoformat()}}
         capacity = publisher.preflight(release, remote_reservation=remote_reservation) if not already_current else None
         facts = {'target_id': target_id, 'variant_hash': binding['variant_hash'], 'head': head['record'], 'capacity': capacity}

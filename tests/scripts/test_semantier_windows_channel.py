@@ -203,3 +203,16 @@ def test_ci_bridge_selects_only_the_complete_source_bound_graph(tmp_path):
     with pytest.raises(ValueError,match='source'):select_native_candidate(tmp_path,'c'*40)
     (distribution/'runtime.msix').unlink()
     with pytest.raises(ValueError,match='complete'):select_native_candidate(tmp_path,'a'*40)
+
+
+def test_new_native_assignment_keeps_room_for_small_successor_without_relayout():
+    from scripts.releases.semantier_windows import partition_native_assets
+    rows=[{'path':'app/main.exe','bytes':1000,'compressed_bytes':1000}]+[
+        {'path':f'app/resources/agent-payload/source/{index:04d}.bin','bytes':1000000,'compressed_bytes':1000000}
+        for index in range(600)]
+    first=partition_native_assets(rows)
+    assert len(first['groups'])==2
+    assert first['groups'][0]['estimatedBytes']<=472000000
+    successor=[{**row,'bytes':1001000,'compressed_bytes':1001000} if row['path']=='app/main.exe' else row for row in rows]
+    second=partition_native_assets(successor,previous=first['assignment'])
+    assert second['assignment']==first['assignment']

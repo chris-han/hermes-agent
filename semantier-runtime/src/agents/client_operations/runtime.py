@@ -38,11 +38,17 @@ class ClientOperations:
             if target_id not in {'channel1', 'channel2', 'channel3'}:
                 raise ValueError('unsupported delivery target')
             kind = spec['kind']
-            if kind not in {'filesystem', 'r2'} or (kind=='r2') != (target_id=='channel2'):
+            if kind not in {'filesystem', 'r2','ecs'} or (kind=='r2') != (target_id=='channel2') or (kind=='ecs' and target_id!='channel1'):
                 raise ValueError('delivery target owner mismatch')
             if kind=='r2' and spec['public_base'] not in {'https://update2.semantier.com', 'https://s3.semantier.com'}:
                 raise ValueError('R2 qualified publication base required')
             remote = None
+            if kind=='ecs':
+                from .ecs_target import ECSTarget
+                try:remote=ECSTarget.configured(spec,self.store)
+                except (OperationError,ValueError,KeyError,OSError):
+                    errors[target_id]='ecs_storage_qualification_unavailable'
+                    continue
             if kind=='r2':
                 from .r2_target import R2Target
                 try:
@@ -102,6 +108,7 @@ class ClientOperations:
         self._retention_next_check = now + 900
         for target_id, publisher in self.targets.publishers.items():
             if publisher.remote_target:
+                if getattr(publisher.remote_target,'provider',None)=='ecs':continue
                 try:
                     self._maintain_r2_target(target_id, publisher.remote_target)
                 except (OperationError, OSError):
@@ -160,7 +167,8 @@ async def start(app,env=None):
     if env.get('SEMANTIER_CLIENT_OPERATIONS_ENABLED')!='1':return
     service=ClientOperations(env);await asyncio.to_thread(service.check)
     for target_id,publisher in service.targets.publishers.items():
-        failures=(OperationError,OSError)+( (publisher.remote_target.transport.R2RequestError,) if publisher.remote_target else () )
+        remote=publisher.remote_target
+        failures=(OperationError,OSError)+( (remote.transport.R2RequestError,) if remote and getattr(remote,'provider',None)!='ecs' else () )
         try:
             await asyncio.to_thread(publisher.initialize_channel)
         except failures as error:
@@ -183,13 +191,20 @@ async def stop(app):
 
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('command',choices=['migrate','grant','grant-targets']);parser.add_argument('--app-role',default='semantier_app');parser.add_argument('--user-id');parser.add_argument('--capability',action='append',default=[]);parser.add_argument('--legacy-target-id', choices=['channel1','channel2','channel3']);parser.add_argument('--delivery-target',action='append',default=[]);parser.add_argument('--action',action='append',default=[]);args=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('command',choices=['migrate','grant','grant-targets','qualify-channel1']);parser.add_argument('--app-role',default='semantier_app');parser.add_argument('--user-id');parser.add_argument('--capability',action='append',default=[]);parser.add_argument('--legacy-target-id', choices=['channel1','channel2','channel3']);parser.add_argument('--delivery-target',action='append',default=[]);parser.add_argument('--action',action='append',default=[]);parser.add_argument('--spec',type=Path);args=parser.parse_args()
     store=Store(os.environ.get('SEMANTIER_MIGRATION_DATABASE_URL') or os.environ['SEMANTIER_DATABASE_URL'],os.environ.get('SEMANTIER_CLIENT_SCHEMA','semantier_client_operations'))
     if args.command=='migrate':print(json.dumps(store.migrate(args.app_role,legacy_target_id=args.legacy_target_id)))
     else:
         if not args.user_id:parser.error('--user-id required')
         from agents.gateway_identity import get_user_record
         if not get_user_record(args.user_id):parser.error('existing governed user required')
+        if args.command=='qualify-channel1':
+            if not args.spec:parser.error('--spec required')
+            from .ecs_target import ECSTarget
+            from .ecs_qualification import qualify
+            spec=json.loads(args.spec.read_text())
+            print(json.dumps(qualify(store,ECSTarget.from_spec(spec),args.user_id,os.environ['SEMANTIER_CLIENT_CHANNEL'],spec['incoming_root'])))
+            return
         if args.command=='grant-targets':
             store.grant_targets(args.user_id,args.delivery_target,args.action,os.environ['SEMANTIER_CLIENT_CHANNEL'])
         else:

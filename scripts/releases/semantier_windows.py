@@ -68,10 +68,13 @@ def partition_native_assets(inventory, *, max_bytes=480_000_000, previous=None, 
     Native package folding preserves original relative paths. This plan is not
     qualification and never authorizes deployment/publication. Existing members
     keep their assignments across A/B; an overflow requires explicit relayout.
+    New placements leave bounded growth room so a small successor does not force
+    an otherwise unnecessary graph relayout. Final signed sizes remain decisive.
     """
     if type(max_bytes) is not int or not 8_000_000 <= max_bytes <= 480_000_000:
         raise ValueError('Native package cap outside supported planning bounds')
     reserve=4_000_000
+    fill_limit=max_bytes-min(8_000_000,max_bytes//32)
     files=_native_payload_files(inventory,max_bytes,reserve)
     required=set(main_required)|{p for p in files if not p.startswith('app/resources/agent-payload/')}
     if not required<=set(files):raise ValueError('Required main payload absent')
@@ -92,7 +95,7 @@ def partition_native_assets(inventory, *, max_bytes=480_000_000, previous=None, 
             put(name,group)
     for name in sorted(required-set(assignment)):put(name,'main')
     for name in sorted(set(files)-set(assignment),key=lambda p:(-files[p]['weight'],p)):
-        candidates=[g for g,v in groups.items() if v['estimatedBytes']+files[name]['weight']<=max_bytes]
+        candidates=[g for g,v in groups.items() if v['estimatedBytes']+files[name]['weight']<=fill_limit]
         if candidates:
             group=min(candidates,key=lambda g:(max_bytes-groups[g]['estimatedBytes']-files[name]['weight'],g))
         else:
