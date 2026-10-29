@@ -235,7 +235,8 @@ class Windows:
         paths=[Path(__file__), *(Path(__file__).parent/'e2e-assets'/name for name in (
             'semantier-registered-platform.ps1','native-package-deployment.ps1','native-payload-locations.mjs',
             'native-payload-probe.py','windows-bundle-plugin-smoke.ps1','windows-bundle-metadata.ps1','desktop-smoke-windows.ps1')),
-            root/'apps/desktop/scripts/native-package-digest.ps1',root/'scripts/releases/semantier_windows.py']
+            root/'apps/desktop/scripts/native-package-digest.ps1',root/'scripts/releases/semantier_windows.py',
+            root/'hermes_cli/release_channels.py']
         sources={str(path.relative_to(root)):hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
         host={'windows':tuple(sys.getwindowsversion()),'powershell':hashlib.sha256(Path(self.powershell).read_bytes()).hexdigest()}
         return hashlib.sha256(json.dumps({'request':self.request,'sources':sources,'host':host},sort_keys=True).encode()).hexdigest()
