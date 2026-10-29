@@ -6,7 +6,10 @@ if ($env:OS -cne 'Windows_NT') { throw 'Windows required' }
 $who=[Security.Principal.WindowsIdentity]::GetCurrent()
 $sid=$who.User.Value
 $session=(Get-Process -Id $PID).SessionId
-if ($sid -cne $r.authorized_sid -or $sid -ceq 'S-1-5-21-1928370875-4287869425-2092521300-1003' -or $who.Name.Split('\')[-1] -ieq 'ChrisH' -or $session -le 0 -or -not [Environment]::UserInteractive) { throw 'Authorized disposable interactive user required; normal ChrisH refused' }
+. (Join-Path $PSScriptRoot 'native-package-deployment.ps1')
+$localWD1=$false
+if($r.PSObject.Properties['purpose']){$localWD1=Test-WD1LocalActor $sid $r.authorized_sid $r.purpose}
+if ($sid -cne $r.authorized_sid -or (($sid -ceq 'S-1-5-21-1928370875-4287869425-2092521300-1003' -or $who.Name.Split('\')[-1] -ieq 'ChrisH') -and -not $localWD1) -or $session -le 0 -or -not [Environment]::UserInteractive) { throw 'Authorized interactive user required; ChrisH limited to explicit local WD1 purpose' }
 if ($r.expected_language -cnotin @('en','zh')) { throw 'Expected language must be en or zh' }
 $cpus=@(Get-CimInstance Win32_Processor)
 if(-not $cpus.Count -or @($cpus|Where-Object{$_.Architecture -ne 9}).Count){throw 'Actual native x64 required'}
@@ -297,7 +300,7 @@ try {
   download {$result=VerifyDownload}
   register {
    $side=if($r.PSObject.Properties['purpose'] -and $r.purpose -ceq 'wd1-native-layout-qualification'){'target'}else{'baseline'}
-   if($side -ceq 'target' -and $sid -cne 'S-1-5-21-1928370875-4287869425-2092521300-1011'){throw 'WD1 local qualification is bound to SemantierBaseline'}
+   if($side -ceq 'target' -and -not $localWD1){throw 'Explicit authorized WD1 local actor required'}
    $source=$r.$side;$holds=@()
    try{
     $holds+=Physical $source.path

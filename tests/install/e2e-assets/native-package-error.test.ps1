@@ -45,3 +45,8 @@ if($parsed.uri -cne '' -or $parsed.full -cne '' -or $parsed.sid -cne 'fixture-si
 $event.Xml=$event.Xml.Replace('Microsoft-Windows-AppXDeployment-Server','OtherProvider')
 try{$null=Read-WD1DeploymentEvent $event;throw 'Wrong provider accepted'}catch{if($_.Exception.Message -cne 'Unexpected native event provider'){throw}}
 Write-Output 'PASS: strict-mode real XML empty EventData fields and wrong-provider refusal'
+
+$baseline='S-1-5-21-1928370875-4287869425-2092521300-1011';$chris='S-1-5-21-1928370875-4287869425-2092521300-1003'
+foreach($actor in @($baseline,$chris)){if(-not (Test-WD1LocalActor $actor $actor 'wd1-native-layout-qualification')){throw 'Authorized local actor refused'}}
+if((Test-WD1LocalActor $chris $baseline 'wd1-native-layout-qualification') -or (Test-WD1LocalActor $chris $chris 'ci') -or (Test-WD1LocalActor 'other' 'other' 'wd1-native-layout-qualification')){throw 'Local WD1 actor scope widened'}
+Write-Output 'PASS: explicit local WD1 actor/SID/purpose binding; cross-account, CI and unrelated actors refused'

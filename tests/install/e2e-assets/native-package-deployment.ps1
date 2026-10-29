@@ -25,11 +25,16 @@ function Get-WD1DeploymentFailure($Operation, [Type]$OperationType, [Exception]$
  return $details
 }
 
+# Explicit local WD1 actors only; this is not a CI or generic installer allowance.
+function Test-WD1LocalActor([string]$Sid,[string]$AuthorizedSid,[string]$Purpose) {
+ return ($Purpose -ceq 'wd1-native-layout-qualification' -and $Sid -ceq $AuthorizedSid -and $Sid -cin @('S-1-5-21-1928370875-4287869425-2092521300-1011','S-1-5-21-1928370875-4287869425-2092521300-1003'))
+}
+
 function Invoke-WD1NativeUri($Graph, [string]$Base, [string]$Evidence) {
  $ErrorActionPreference='Stop'
  $context=Get-Variable -Name r -ErrorAction SilentlyContinue
  if(!$context -or $context.Value.purpose -cne 'wd1-native-layout-qualification' -or $context.Value.action -cne 'register' -or !$context.Value.PSObject.Properties['expected_before']){throw 'Existing WD1 register intent context required'}
- if([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -cne 'S-1-5-21-1928370875-4287869425-2092521300-1011' -or -not [Environment]::UserInteractive -or (Get-Process -Id $PID).SessionId -le 0){throw 'Actual authorized baseline desktop required'}
+ if(-not (Test-WD1LocalActor ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value) $context.Value.authorized_sid $context.Value.purpose) -or -not [Environment]::UserInteractive -or (Get-Process -Id $PID).SessionId -le 0){throw 'Actual authorized baseline desktop required'}
  if($Base -cnotmatch '^http://127\.0\.0\.1:[1-9][0-9]{0,4}$'){throw 'WD1 requires its exact loopback origin'}
  . (Join-Path $PSScriptRoot '..\..\..\apps\desktop\scripts\native-package-digest.ps1')
  Add-Type -AssemblyName System.Runtime.WindowsRuntime
@@ -104,7 +109,7 @@ function Read-WD1DeploymentEvent($Event) {
 }
 function Recover-WD1NativeUri($Graph,[string]$Base,[string]$Root,$State,$Target,[string]$Evidence) {
  $context=Get-Variable -Name r -ErrorAction SilentlyContinue
- if(!$context -or $context.Value.purpose -cne 'wd1-native-layout-qualification' -or $context.Value.action -cne 'native-proof' -or [Security.Principal.WindowsIdentity]::GetCurrent().User.Value -cne 'S-1-5-21-1928370875-4287869425-2092521300-1011'){throw 'Actual WD1 proof context required'}
+ if(!$context -or $context.Value.purpose -cne 'wd1-native-layout-qualification' -or $context.Value.action -cne 'native-proof' -or -not (Test-WD1LocalActor ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value) $context.Value.authorized_sid $context.Value.purpose)){throw 'Actual WD1 proof context required'}
  if(!$State.package -or $State.package.full -cne $Target.full -or $State.package.commit -cne $Target.commit -or $State.package.build_id -cne $Target.build_id){throw 'Exact registered native target required'}
  $candidates=@()
  foreach($dir in @(Get-ChildItem -LiteralPath $Root -Directory -Filter 'native-deployment-*')){
