@@ -1,5 +1,30 @@
 # Bounded WD1 native URI proof, called only inside the existing register intent.
 # This test adapter never creates CI qualification, publication or update acceptance.
+function Get-WD1DeploymentFailure($Operation, [Type]$OperationType, [Exception]$Failure) {
+ function HResult-Hex([Exception]$Value){return [BitConverter]::ToUInt32([BitConverter]::GetBytes([int]$Value.HResult),0).ToString('X8')}
+ $failureException=$Failure.GetBaseException()
+ $details=@{hresult=(HResult-Hex $failureException);operationHresult=(HResult-Hex $failureException);error=$failureException.Message;errorSource='async-exception';activityId=$null}
+ if($null -eq $Operation){return $details}
+ try{
+  # AsTask reports the generic operation error; GetResults retains deployment details.
+  $deployment=$OperationType.GetMethod('GetResults').Invoke($Operation,@())
+  if($deployment -and $deployment.ExtendedErrorCode -is [Exception]){
+   $extended=$deployment.ExtendedErrorCode.GetBaseException()
+   $details.hresult=HResult-Hex $extended
+   $details.error=$deployment.ErrorText
+   $details.errorSource='deployment-result'
+   $details.activityId=[string]$deployment.ActivityId
+   $details.isRegistered=[bool]$deployment.IsRegistered
+  }
+ }catch{
+  $resultException=$_.Exception.GetBaseException()
+  $details.hresult=HResult-Hex $resultException
+  $details.error=$resultException.Message
+  $details.errorSource='get-results-exception'
+ }
+ return $details
+}
+
 function Invoke-WD1NativeUri($Graph, [string]$Base, [string]$Evidence) {
  $ErrorActionPreference='Stop'
  $context=Get-Variable -Name r -ErrorAction SilentlyContinue
@@ -28,6 +53,7 @@ function Invoke-WD1NativeUri($Graph, [string]$Base, [string]$Evidence) {
   $options=[Windows.Management.Deployment.AddPackageOptions]::new()
   $null=Set-NativeExpectedDigests $options $uris $Expected
   $watch=[Diagnostics.Stopwatch]::StartNew()
+  $operation=$null;$task=$null
   try{
    $operation=$manager.AddPackageByUriAsync([Uri]$uris[$rootIndex],$options)
    $task=$asTask.Invoke($null,@($operation))
@@ -36,8 +62,10 @@ function Invoke-WD1NativeUri($Graph, [string]$Base, [string]$Evidence) {
    if($deployment.ExtendedErrorCode){throw $deployment.ExtendedErrorCode}
    return @{producedAt=[DateTime]::UtcNow.ToString('o');status='SUCCESS';hresult='00000000';elapsedSeconds=$watch.Elapsed.TotalSeconds;activityId=[string]$deployment.ActivityId}
   }catch{
-   $failureException=$_.Exception.GetBaseException()
-   return @{producedAt=[DateTime]::UtcNow.ToString('o');status='FAILURE';hresult=([BitConverter]::ToUInt32([BitConverter]::GetBytes([int]$failureException.HResult),0).ToString('X8'));error=$failureException.Message;elapsedSeconds=$watch.Elapsed.TotalSeconds}
+   $completed=if($task -and $task.IsCompleted){$operation}else{$null}
+   $details=Get-WD1DeploymentFailure $completed $method.ReturnType $_.Exception
+   $details.producedAt=[DateTime]::UtcNow.ToString('o');$details.status='FAILURE';$details.elapsedSeconds=$watch.Elapsed.TotalSeconds
+   return $details
   }finally{$watch.Stop()}
  }
  # Flip one root SDK-digest bit; every URI and every other expected digest stays fixed.
