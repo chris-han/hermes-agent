@@ -73,6 +73,7 @@ function Invoke-WD1NativeUri($Graph, [string]$Base, [string]$Evidence) {
    return $details
   }finally{$watch.Stop()}
  }
+ $null=Write-NativeRegistrationIntent $Evidence 'intent.json' $context.Value.target.native_graph.sha256 $uris[$rootIndex] $uris $digests
  # Flip one root SDK-digest bit; every URI and every other expected digest stays fixed.
  $wrong=[string[]]$digests.Clone();$bytes=[Convert]::FromBase64String($wrong[$rootIndex]);$bytes[0]=$bytes[0] -bxor 1;$wrong[$rootIndex]=[Convert]::ToBase64String($bytes)
  $refusal=Deploy $wrong 2
@@ -81,6 +82,7 @@ function Invoke-WD1NativeUri($Graph, [string]$Base, [string]$Evidence) {
  if($after.package -or @($after.related).Count){throw 'Wrong-digest call changed registration; preserve actual state and pending intent'}
  # SDK26100 winerror.h: APPX_E_DIGEST_MISMATCH 0x80080219. Other failures do not prove binding.
  if($refusal.status -cne 'FAILURE' -or $refusal.hresult -cne '80080219'){throw 'Exact native digest refusal unproved; preserve failure before positive execution'}
+ $null=Write-NativeRegistrationIntent $Evidence 'positive-intent.json' $context.Value.target.native_graph.sha256 $uris[$rootIndex] $uris $digests
  $positive=Deploy ([string[]]$digests) 25
  $positive|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $Evidence 'correct-digest.json') -Encoding utf8
  if($positive.status -cne 'SUCCESS'){throw 'Correct native URI deployment failed; preserve pending intent'}
@@ -183,4 +185,69 @@ function Invoke-CINativeGraphUri($Graph,[string]$GraphPath,[string]$Artifact,[st
   elseif(!$process.HasExited){$process.Kill();if(!$process.WaitForExit(10000)){throw 'Owned CI native origin did not stop'}}
   $process.Dispose()
  }
+}
+
+# Durable SDK registration provenance. This never grants registration authority;
+# the existing platform/register intent supplies the verified actor and graph.
+function Write-NativeRegistrationIntent([string]$Directory,[string]$Name,[string]$GraphSha,[string]$RootUri,[string[]]$Uris,[string[]]$Digests) {
+ if($Name -cnotin @('intent.json','positive-intent.json') -or $GraphSha -cnotmatch '^[a-f0-9]{64}$' -or $RootUri -cnotin $Uris){throw 'Invalid native registration provenance'}
+ $self=Get-Process -Id $PID
+ $value=@{schema=1;producedAt=[DateTime]::UtcNow.ToString('o');sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;session=$self.SessionId;actorPid=$PID;actorBirth=$self.StartTime.ToUniversalTime().ToString('o');graphSha256=$GraphSha;root=$RootUri;uris=$Uris;digests=$Digests}
+ $file=[IO.File]::Open((Join-Path $Directory $Name),[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+ try{$bytes=[Text.Encoding]::UTF8.GetBytes(($value|ConvertTo-Json -Depth 10 -Compress));$file.Write($bytes,0,$bytes.Length);$file.Flush($true)}finally{$file.Dispose()}
+ return $value
+}
+
+function Read-NativeRegistrationOutcome($Spec,$Graph,[string]$Base,[string]$Root,[DateTimeOffset]$IntentAt,[bool]$WD1) {
+ $expectedUris=@($Graph.objects|ForEach-Object{$Base+'/'+$_.key});$expectedDigests=@($Graph.objects|ForEach-Object{[string]$_.nativeDigest})
+ $pattern=if($WD1){'native-deployment-*'}else{'native-baseline-*'};$found=@()
+ foreach($directory in @(Get-ChildItem -LiteralPath $Root -Directory -Filter $pattern)){
+  $hold=Physical $directory.FullName
+  try{
+   $path=Join-Path $directory.FullName 'intent.json';if(!(Test-Path -LiteralPath $path)){continue}
+   $file=Physical $path
+   try{if((Get-Item -LiteralPath $path).Length -gt 4194304){throw 'Native registration record oversized'};$intent=Get-Content -LiteralPath $path -Raw -Encoding UTF8|ConvertFrom-Json}finally{$file.handle.Dispose()}
+   if([DateTimeOffset]::Parse($intent.producedAt) -lt $IntentAt){continue}
+   if($intent.sid -cne $sid -or $intent.session -ne $session -or $intent.graphSha256 -cne $Spec.native_graph.sha256 -or $intent.root -cne ($Base+'/'+$Graph.root) -or ($intent.uris -join '|') -cne ($expectedUris -join '|') -or ($intent.digests -join '|') -cne ($expectedDigests -join '|')){throw 'Native registration intent binding changed'}
+   $resultName=if($WD1){'correct-digest.json'}else{'result.json'};$resultPath=Join-Path $directory.FullName $resultName
+   $result=$null
+   if(Test-Path -LiteralPath $resultPath){
+    $resultHold=Physical $resultPath
+    try{if((Get-Item -LiteralPath $resultPath).Length -gt 4194304){throw 'Native registration result oversized'};$result=Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8|ConvertFrom-Json}finally{$resultHold.handle.Dispose()}
+   }
+   $found+=@{intent=$intent;result=$result;directory=$directory.FullName}
+  }finally{$hold.handle.Dispose()}
+ }
+ if($found.Count -ne 1){throw 'Unique durable native registration attempt required; preserve UNKNOWN'}
+ $candidate=$found[0];$result=$candidate.result
+ if($result -and $result.status -ceq 'SUCCESS'){
+  if(!$WD1 -and (!$result.PSObject.Properties['operationCompleted'] -or !$result.operationCompleted)){throw 'Native completion not established'}
+  return @{status='SUCCESS';operationCompleted=$true;intent=$candidate.intent;sdk=$result;scope='exact native registration only'}
+ }
+ if($result -and $result.PSObject.Properties['operationCompleted'] -and $result.operationCompleted -and $result.status -ceq 'FAILURE'){
+  return @{status='FAILURE';operationCompleted=$true;intent=$candidate.intent;sdk=$result;scope='completed native failure only'}
+ }
+ # A missing/live result cannot be closed from registration absence. For an
+ # ended caller, reuse exact SDK queue/completion correlation for late success.
+ $actor=Get-Process -Id $candidate.intent.actorPid -ErrorAction SilentlyContinue
+ if($actor -and $actor.StartTime.ToUniversalTime().ToString('o') -ceq $candidate.intent.actorBirth){throw 'Native registration caller remains live; preserve UNKNOWN'}
+ $positivePath=Join-Path $candidate.directory 'positive-intent.json';$started=$candidate.intent.producedAt
+ if($WD1){
+  if(!(Test-Path -LiteralPath $positivePath)){throw 'Native positive call not established; preserve UNKNOWN'}
+  $positiveHold=Physical $positivePath
+  try{$positive=Get-Content -LiteralPath $positivePath -Raw -Encoding UTF8|ConvertFrom-Json}finally{$positiveHold.handle.Dispose()}
+  if($positive.graphSha256 -cne $Spec.native_graph.sha256 -or $positive.root -cne $candidate.intent.root -or $positive.sid -cne $sid -or $positive.session -ne $session){throw 'Native positive intent changed'}
+  $started=$positive.producedAt
+ }elseif($result -and $result.PSObject.Properties['startedAt']){$started=$result.startedAt}
+ $uri=[string]$candidate.intent.root
+ if($uri.Contains("'") -or $sid.Contains("'")){throw 'Unsupported URI for scoped native event query'}
+ $stamp=([DateTimeOffset]::Parse($started)).ToUniversalTime().AddSeconds(-2).ToString('o')
+ $xpath="*[System[Security[@UserID='$sid'] and TimeCreated[@SystemTime>='$stamp']]] and (*[System[EventID=603]] or (*[System[EventID=478]] and *[EventData[Data[@Name='PackageSourceUri']='$uri']]))"
+ $events=@()
+ try{$events=@(Get-WinEvent -LogName 'Microsoft-Windows-AppXDeploymentServer/Operational' -FilterXPath $xpath -MaxEvents 513 -ErrorAction Stop)}catch{if($_.FullyQualifiedErrorId -notlike 'NoMatchingEventsFound*'){throw}}
+ if($events.Count -gt 512){throw 'Scoped native event window incomplete; preserve UNKNOWN'}
+ $parsed=@($events|ForEach-Object{Read-WD1DeploymentEvent $_})
+ $timeout=if($result -and $result.PSObject.Properties['producedAt']){[DateTimeOffset]::Parse($result.producedAt)}else{[DateTimeOffset]::Parse($started)}
+ $complete=Find-WD1LateDeployment $parsed ([DateTimeOffset]::Parse($started)) $timeout $sid $uri $r.operation.full
+ return @{status='RECONCILED_OS_SUCCESS';operationCompleted=$true;intent=$candidate.intent;sdk=$result;activityId=$complete.activity;eventRecordId=$complete.recordId;completedAt=$complete.time.ToString('o');scope='late completed native registration only; no relaunch/differential acceptance'}
 }

@@ -208,6 +208,15 @@ class Transaction:
         if not intent: return 'settled'
         now = self.platform.observe(); before = intent['before']; action = intent['action']
         if hasattr(self.platform, 'recovery_check'): self.platform.recovery_check(intent)
+        if action=='register' and hasattr(self.platform,'reconcile_registration'):
+            registration=self.platform.reconcile_registration(intent,now)
+            if registration is not None:
+                status=registration['status']
+                if status=='performed' and not self.expected(action,intent['args'],before,now):raise ValueError('Native registered graph differs')
+                if status=='not_performed' and now!=before:raise ValueError('Native failed registration changed state')
+                if status not in ('performed','not_performed'):raise ValueError('Native registration remains UNKNOWN')
+                self.record('outcome',intent_at=intent['at'],action=action,status=status,observed=now,native_registration_proof=registration['proof'])
+                return status
         if action=='update' and now['process'] is None and hasattr(self.platform,'reconcile_native'):
             native=self.platform.reconcile_native(intent,now)
             if native in ('BASELINE_INTACT_FAILED','NOT_STARTED'):
@@ -285,7 +294,7 @@ class Windows:
         script = Path(__file__).parent/'e2e-assets/semantier-registered-platform.ps1'
         result = subprocess.run([self.powershell,'-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',str(script)],
             input=json.dumps(payload), text=True, capture_output=True, check=False,
-            timeout=2400 if action=='update' and self.request.get('target',{}).get('native_graph') else 1800 if action in ('update','native-proof') or (action=='register' and self.request.get('native_origin')) else 60 if action == 'download' else 300)
+            timeout=2400 if (action=='update' and self.request.get('target',{}).get('native_graph')) or (action=='register' and self.request.get('baseline',{}).get('native_graph')) else 1800 if action in ('update','native-proof') or (action=='register' and self.request.get('native_origin')) else 60 if action == 'download' else 300)
         if result.returncode: raise RuntimeError(result.stderr.strip())
         return json.loads(result.stdout.lstrip('\ufeff'))
     def observe(self):
@@ -303,6 +312,17 @@ class Windows:
         if intent['action'] in ('register','update'):
             side = 'baseline' if intent['action']=='register' and self.request.get('purpose')!=NATIVE_QUALIFICATION else 'target'
             if intent['args'] != self.call('artifact',side=side): raise ValueError('Intent differs from verified artifact')
+
+    def reconcile_registration(self,intent,now):
+        side='target' if self.request.get('purpose')==NATIVE_QUALIFICATION else 'baseline'
+        if self.request.get(side,{}).get('native_graph') is None:return None
+        proof=self.call('native-registration-proof',registration_intent_at=intent['at'],operation=intent['args'])
+        if any(proof['observed'].get(key)!=now.get(key) for key in ('sid','session_sid','session','root_id','package','process','related')):
+            raise ValueError('Native registration observation changed')
+        if proof.get('operationCompleted') is not True:raise ValueError('Native registration remains UNKNOWN')
+        if proof['status'] in ('SUCCESS','RECONCILED_OS_SUCCESS'):return {'status':'performed','proof':proof}
+        if proof['status']=='FAILURE':return {'status':'not_performed','proof':proof}
+        raise ValueError('Native registration remains UNKNOWN')
 
     def check(self, action, args, before):
         self.precondition = before
@@ -379,13 +399,13 @@ def validate_native_origin(request):
     return value
 
 
-def load_native_target(request):
+def load_native_side(request, side):
+    if side not in ('baseline','target'):raise ValueError('Unknown native artifact side')
     # The staging tree preserves these existing owners' paths; no alternate validator.
     root=Path(__file__).resolve().parents[2]
     if str(root) not in sys.path:sys.path.insert(0,str(root))
     from scripts.releases.semantier_windows import validate_native_graph
-    validate_native_origin(request)
-    target=request['target'];binding=target['native_graph'];file=Path(binding['path'])
+    target=request[side];binding=target['native_graph'];file=Path(binding['path'])
     if file.name!='native-graph.json' or file.parent!=Path(target['path']).parent:
         raise ValueError('Native graph must remain beside the pinned root')
     with safe_file(file,'r') as stream:
@@ -399,6 +419,11 @@ def load_native_target(request):
     if row['sha256']!=target['sha256'] or row['key'].rsplit('/',1)[1]!=Path(target['path']).name:
         raise ValueError('Native graph root differs from pinned artifact')
     return graph
+
+
+def load_native_target(request):
+    if request.get('purpose')==NATIVE_QUALIFICATION:validate_native_origin(request)
+    return load_native_side(request,'target')
 
 
 def validate_native_update_inputs(request):
@@ -574,6 +599,11 @@ def main():
     request=json.loads(a.request.read_text(encoding='utf-8-sig')); platform=Windows(request,(a.proof_source,a.proof_source_sha256) if a.proof_source else None)
     owner=platform.observe()  # OS refusal precedes journal/root writes.
     if request.get('target',{}).get('native_graph') is not None:request['native_graph_value']=load_native_target(request)
+    if request.get('baseline',{}).get('native_graph') is not None:request['native_baseline_graph_value']=load_native_side(request,'baseline')
+    if a.mode=='baseline' and request.get('baseline',{}).get('native_graph') is not None:
+        from hermes_cli.release_channels import public_base
+        base=request.get('baseline_delivery_base')
+        if not isinstance(base,str) or public_base(base)!=base:raise ValueError('Pinned native baseline delivery base required')
     if a.mode=='preflight':
         if owner['package'] is not None or Transaction.related(owner): raise ValueError('Conflicting baseline registration or related package set')
         native=request.get('purpose')==NATIVE_QUALIFICATION

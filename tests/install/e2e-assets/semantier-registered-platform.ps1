@@ -101,8 +101,9 @@ try {
   $zip=[IO.Compression.ZipFile]::OpenRead($file)
   try{$entry=$zip.GetEntry('app/resources/install-stamp.json');if(-not $entry){throw 'Install stamp missing'};$reader=[IO.StreamReader]::new($entry.Open());try{return $reader.ReadToEnd()|ConvertFrom-Json}finally{$reader.Dispose()}}finally{$zip.Dispose()}
  }
- function Native-Artifact {
-  $spec=$r.target;$binding=$spec.native_graph;$g=$r.native_graph_value
+ function Native-Artifact([ValidateSet('baseline','target')][string]$Side='target') {
+  $spec=$r.$Side;$binding=$spec.native_graph
+  $g=if($Side -ceq 'baseline'){$r.native_baseline_graph_value}else{$r.native_graph_value}
   $graphHold=Physical $binding.path
   try{
    if((Get-FileHash -LiteralPath $binding.path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $binding.sha256){throw 'Native graph file changed'}
@@ -165,8 +166,9 @@ try {
   return @{name=$mainIdentity.Name;publisher=$mainIdentity.Publisher;version=$mainIdentity.Version;arch='X64';commit=$stamp.commit;build_id=$stamp.channelBuild.buildId;full=$mainIdentity.FullName;family=$mainIdentity.Family;related=@($related|Sort-Object {$_['full']})}
  }
  function Artifact($side){
+  if($side -cnotin @('baseline','target')){throw 'Unknown artifact side'}
   $spec=$r.$side
-  if($side -ceq 'target' -and $spec.PSObject.Properties['native_graph']){return Native-Artifact}
+  if($spec.PSObject.Properties['native_graph']){return Native-Artifact $side}
   $physical=Physical $spec.path
   try {
    $hash=(Get-FileHash -LiteralPath $spec.path -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -444,9 +446,10 @@ try {
    $source=$r.$side;$holds=@()
    try{
     $holds+=Physical $source.path
-    if($side -ceq 'target'){
+    if($source.PSObject.Properties['native_graph']){
      $holds+=Physical $source.native_graph.path
-     foreach($row in $r.native_graph_value.objects){if($row.key -cne $r.native_graph_value.root){$holds+=Physical (Join-Path (Split-Path -Parent $source.path) (($row.key -split '/')[-1]))}}
+     $sourceGraph=if($side -ceq 'baseline'){$r.native_baseline_graph_value}else{$r.native_graph_value}
+     foreach($row in $sourceGraph.objects){if($row.key -cne $sourceGraph.root){$holds+=Physical (Join-Path (Split-Path -Parent $source.path) (($row.key -split '/')[-1]))}}
     }
     $expected=Artifact $side;$before=Observe;if($before.package -or @($before.related).Count){throw 'Existing package/related conflict'}
     if($r.PSObject.Properties['native_origin']){
@@ -455,6 +458,17 @@ try {
      New-Item -ItemType Directory -Path $attempt -ErrorAction Stop|Out-Null
      . (Join-Path $PSScriptRoot 'native-package-deployment.ps1')
      Invoke-WD1NativeUri $r.native_graph_value $r.native_origin $attempt
+    }elseif($source.PSObject.Properties['native_graph']){
+     if($side -cne 'baseline' -or !$r.PSObject.Properties['baseline_delivery_base']){throw 'Pinned native baseline delivery required'}
+     $base=[string]$r.baseline_delivery_base;$uri=[Uri]$base
+     if(!$uri.IsAbsoluteUri -or $uri.UserInfo -or $uri.Query -or $uri.Fragment -or $uri.AbsoluteUri.TrimEnd('/') -cne $base -or ($uri.Scheme -cne 'https' -and -not ($uri.Scheme -ceq 'http' -and $uri.Host -ceq '127.0.0.1'))){throw 'Native baseline origin invalid'}
+     $attempt=Join-Path $root ('native-baseline-'+[guid]::NewGuid().ToString('N'))
+     New-Item -ItemType Directory -Path $attempt -ErrorAction Stop|Out-Null
+     $uris=@($sourceGraph.objects|ForEach-Object{$base+'/'+$_.key});$digests=@($sourceGraph.objects|ForEach-Object{[string]$_.nativeDigest})
+     $null=Write-NativeRegistrationIntent $attempt 'intent.json' $source.native_graph.sha256 ($base+'/'+$sourceGraph.root) $uris $digests
+     $positive=Invoke-BoundNativePackageUri $uris $digests ($base+'/'+$sourceGraph.root) 25
+     $positive|ConvertTo-Json -Depth 8|Set-Content -LiteralPath (Join-Path $attempt 'result.json') -Encoding utf8
+     if($positive.status -cne 'SUCCESS'){throw 'Native baseline outcome requires reconciliation; preserve intent'}
     }else{Add-AppxPackage -Path $source.path -ErrorAction Stop}
     $result=Observe
    }finally{foreach($hold in $holds){$hold.handle.Dispose()}}
@@ -496,6 +510,15 @@ try {
    }
    $oldPayload=@(Get-CimInstance Win32_Process|Where-Object{$_.ExecutablePath -and $_.ExecutablePath.StartsWith($before.package.install_path+'\',[StringComparison]::OrdinalIgnoreCase)})
    if($oldPayload.Count){throw 'Old payload processes remain; preserve update state'}
+  }
+  native-registration-proof {
+   $side=if($localWD1){'target'}else{'baseline'};$spec=$r.$side
+   if(!$spec.PSObject.Properties['native_graph']){throw 'Native registration graph required'}
+   $expected=Artifact $side
+   $graph=if($side -ceq 'baseline'){$r.native_baseline_graph_value}else{$r.native_graph_value}
+   $base=if($localWD1){$r.native_origin}else{$r.baseline_delivery_base}
+   $proof=Read-NativeRegistrationOutcome $spec $graph $base $root ([DateTimeOffset]::Parse($r.registration_intent_at)) ([bool]$localWD1)
+   $proof.observed=Observe;$result=$proof
   }
   native-proof {
    if(-not $localWD1){throw 'WD1 local qualification context required'}

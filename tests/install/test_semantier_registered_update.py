@@ -531,3 +531,69 @@ def test_native_sdk_success_cannot_hide_a_contradictory_failure_receipt():
     proof.update(waiterAlive=False,deploymentIntentPresent=True)
     proof['observed']['process']=None
     with pytest.raises(ValueError):d.verify_native_reconciliation(proof,request,before,proof['observed'],proof['observed']['package'])
+
+
+def native_side_spec(tmp_path,build,version):
+    import base64,json,hashlib
+    prefix='releases/channel-builds/'+build+'/'
+    def row(name,kind,arch,**extra):
+        return dict(key=prefix+name,kind=kind,identity='Semantier.Agent.Acceptance',publisher='CN=Semantier Technology, O=Semantier Technology',version=version,arch=arch,
+            size=1,sha256='a'*64,nativeDigest=base64.b64encode(b'd'*32).decode(),references=[],**extra)
+    main=row('main.msix','main-package','x64');asset=row('asset.msix','asset-package','neutral',resourceId='runtime0001',allowExecution=True)
+    root=row('root.msixbundle','main-bundle','neutral');root['references']=[main['key'],asset['key']]
+    graph=dict(schema=1,transport='windows-package-uri',root=root['key'],payloadInventorySha256='e'*64,objects=[root,main,asset])
+    directory=tmp_path/build;directory.mkdir();path=directory/'native-graph.json';path.write_text(json.dumps(graph))
+    return dict(path=str(directory/'root.msixbundle'),sha256='a'*64,build_id=build,version=version,native_graph=dict(path=str(path),sha256=hashlib.sha256(path.read_bytes()).hexdigest())),graph
+
+
+def test_native_baseline_and_target_graphs_load_independently_without_local_origin(tmp_path):
+    baseline,a=native_side_spec(tmp_path,'a'*32,'0.0.61.0');target,b=native_side_spec(tmp_path,'b'*32,'0.0.62.0')
+    request=dict(baseline=baseline,target=target,selected_delivery_base='https://s3.semantier.com')
+    assert d.load_native_side(request,'baseline')==a
+    assert d.load_native_target(request)==b
+    assert request['baseline']['native_graph']['sha256']!=request['target']['native_graph']['sha256']
+
+
+def test_native_baseline_loader_refuses_changed_digest_and_wd1_still_requires_loopback(tmp_path):
+    baseline,_=native_side_spec(tmp_path,'a'*32,'0.0.61.0')
+    baseline['native_graph']['sha256']='f'*64
+    with pytest.raises(ValueError,match='digest'):d.load_native_side({'baseline':baseline},'baseline')
+    with pytest.raises(ValueError,match='origin'):d.load_native_target({'target':baseline,'purpose':d.NATIVE_QUALIFICATION,'native_origin':'https://s3.semantier.com'})
+
+
+@pytest.mark.parametrize('status,completed,expected',[
+    ('SUCCESS',True,'performed'),('RECONCILED_OS_SUCCESS',True,'performed'),
+    ('FAILURE',True,'not_performed'),('FAILURE',False,None),('UNKNOWN',True,None),
+])
+def test_native_registration_requires_completed_sdk_proof(status,completed,expected):
+    platform=object.__new__(d.Windows)
+    platform.request={'baseline':{'native_graph':{'sha256':'a'*64}}}
+    now={'sid':'test','session_sid':'test','session':2,'root_id':'root','package':None,'process':None,'related':[]}
+    platform.call=lambda action,**kwargs:{'status':status,'operationCompleted':completed,'observed':dict(now)}
+    intent={'at':'2026-10-29T00:00:00Z','args':{'full':'baseline'}}
+    if expected is None:
+        with pytest.raises(ValueError,match='UNKNOWN'):platform.reconcile_registration(intent,now)
+    else:assert platform.reconcile_registration(intent,now)['status']==expected
+
+
+def test_native_registration_recovery_refuses_observation_race():
+    platform=object.__new__(d.Windows);platform.request={'baseline':{'native_graph':{}}}
+    platform.call=lambda action,**kwargs:{'status':'SUCCESS','operationCompleted':True,'observed':{'root_id':'replacement'}}
+    with pytest.raises(ValueError,match='observation changed'):
+        platform.reconcile_registration({'at':'2026-10-29T00:00:00Z','args':{}},{'root_id':'original'})
+
+
+@pytest.mark.parametrize('status,registered,expected',[
+    ('performed',True,'performed'),('not_performed',False,'not_performed'),
+    ('performed',False,None),('not_performed',True,None),('UNKNOWN',False,None),
+])
+def test_native_registration_journal_does_not_infer_absence(tx,status,registered,expected):
+    t,p=tx;seed(t,p);t.fault='after_action' if registered else 'before_action'
+    with pytest.raises(d.Interrupted):t.operation('register',{'full':'owned'})
+    p.reconcile_registration=lambda intent,now:{'status':status,'proof':{'operationCompleted':status!='UNKNOWN'}}
+    if expected is None:
+        with pytest.raises(ValueError):t.reconcile()
+        assert t.pending() is not None
+    else:
+        assert t.reconcile()==expected
+        assert t.pending() is None
