@@ -350,15 +350,18 @@ def run_upgrade(tx, platform):
               native_acceptance='requires complete original matrices', facts=after)
 
 
-def run_native_qualification(tx, platform, owner):
+def run_native_qualification(tx, platform, owner, *, require_existing=False):
     if platform.request.get('purpose')!=NATIVE_QUALIFICATION:raise ValueError('Native qualification purpose required')
+    if require_existing and (owner['package'] is None or not tx.events()):raise ValueError('Existing native registration and transaction required for resume')
     if not tx.events():
         if owner['package'] is not None or owner['process'] is not None or Transaction.related(owner):
             raise ValueError('Existing package/process/related set: refuse native qualification')
         tx.initialize({**owner,'purpose':NATIVE_QUALIFICATION,'native_origin':platform.request.get('native_origin')})
     if tx.events()[0]['owner'].get('purpose')!=NATIVE_QUALIFICATION:raise ValueError('Existing transaction has another purpose')
     tx.reconcile()
-    if platform.observe()['package'] is None:tx.operation('register',platform.call('artifact',side='target'))
+    if platform.observe()['package'] is None:
+        if require_existing:raise ValueError('Existing native registration disappeared; no deployment during resume')
+        tx.operation('register',platform.call('artifact',side='target'))
     tx.assert_owned(platform.observe())
     proof=platform.call('native-proof')
     tx.assert_owned(platform.observe())
@@ -396,7 +399,7 @@ def run_cleanup(tx, platform, request):
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('mode',choices=['preflight','baseline','native-qualify','upgrade','reconcile','cleanup'])
+    p.add_argument('mode',choices=['preflight','baseline','native-qualify','native-resume','upgrade','reconcile','cleanup'])
     p.add_argument('--request',type=Path,required=True)
     a=p.parse_args()
     if sys.platform != 'win32': raise SystemExit('Use native Windows Python in the authorized disposable session')
@@ -409,13 +412,14 @@ def main():
         side='target' if native else 'baseline'
         artifact=platform.call('artifact',side=side)
         print(json.dumps({'scope':'READ_ONLY_NATIVE_LAYOUT' if native else 'READ_ONLY','observed':owner,side:artifact})); return
-    if a.mode=='native-qualify' and 'native_graph_value' not in request:raise ValueError('Native graph qualification inputs required')
+    if a.mode in ('native-qualify','native-resume') and 'native_graph_value' not in request:raise ValueError('Native graph qualification inputs required')
     root=Path(request['root']); journal=root/'registered-update.jsonl'
     with held_windows_root(root, owner['root_id']), exclusive(root/'registered-update.lock'):
         tx=Transaction(journal,platform)
         handlers = {
             'baseline': lambda: run_baseline(tx, platform, owner),
             'native-qualify': lambda: run_native_qualification(tx,platform,owner),
+            'native-resume': lambda: run_native_qualification(tx,platform,owner,require_existing=True),
             'reconcile': lambda: print(tx.reconcile()),
             'upgrade': lambda: run_upgrade(tx, platform),
             'cleanup': lambda: run_cleanup(tx, platform, request),

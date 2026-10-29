@@ -303,3 +303,22 @@ def test_native_engineering_origin_requires_its_separate_purpose():
     with pytest.raises(ValueError,match='purpose'):
         d.validate_native_origin({'native_origin':'http://127.0.0.1:8926'})
     assert d.validate_native_origin({'purpose':d.NATIVE_QUALIFICATION,'native_origin':'http://127.0.0.1:8926'})=='http://127.0.0.1:8926'
+
+
+def test_native_resume_refuses_absent_registration_without_deployment(tmp_path):
+    p=NativeQualificationPlatform();t=d.Transaction(tmp_path/'j',p)
+    with pytest.raises(ValueError,match='Existing native registration'):
+        d.run_native_qualification(t,p,p.observe(),require_existing=True)
+    assert not p.calls and not t.events()
+
+
+def test_native_resume_reconciles_late_registration_without_registering_again(tmp_path):
+    p=NativeQualificationPlatform();t=d.Transaction(tmp_path/'j',p)
+    t.initialize({**p.observe(),'purpose':d.NATIVE_QUALIFICATION})
+    t.fault='after_action'
+    with pytest.raises(d.Interrupted):t.operation('register',{'full':'native'})
+    t.fault=None;p.calls=[]
+    d.run_native_qualification(t,p,p.observe(),require_existing=True)
+    assert 'register' not in p.calls
+    assert t.pending() is None
+    assert any(row['kind']=='outcome' and row['status']=='performed' for row in t.events())

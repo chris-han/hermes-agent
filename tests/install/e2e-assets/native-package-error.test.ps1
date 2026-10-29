@@ -23,3 +23,15 @@ if($result.hresult -cne '80080219' -or $result.errorSource -cne 'get-results-exc
 $result=Get-WD1DeploymentFailure $null ([WD1ResultFixture]) $other
 if($result.hresult -cne '80070002'){throw 'Missing operation failed open'}
 Write-Output 'PASS: typed extended/native GetResults errors retained; unrelated/text-only errors refused; no SDK deployment'
+$begin=[DateTimeOffset]::Parse('2026-10-29T08:58:16.880Z');$timeout=$begin.AddMinutes(12)
+$identity='Semantier.Agent.Acceptance_0.0.59.0_x64__p2m4tf4r6sydm';$uri='http://127.0.0.1:2964/releases/channel-builds/646192f4ac6242dc8cbc739ecb04b32e/SemantierAgent.msixbundle'
+$start=[pscustomobject]@{id=603;operation='1';sid='fixture-sid';activity='fixture-activity';time=$begin;callingProcess='powershell.exe';uri='';full='';recordId=1}
+$finish=[pscustomobject]@{id=478;operation='1';sid='fixture-sid';activity='fixture-activity';time=$timeout.AddMinutes(3);callingProcess='powershell.exe';uri=$uri;full=$identity;recordId=2}
+$match=Find-WD1LateDeployment @($start,$finish) $begin $timeout 'fixture-sid' $uri $identity
+if($match.recordId -ne 2){throw 'Exact late success not selected'}
+foreach($field in @('sid','uri','full','activity')){
+ $copy=$finish.PSObject.Copy();$copy.$field='other'
+ try{$null=Find-WD1LateDeployment @($start,$copy) $begin $timeout 'fixture-sid' $uri $identity;throw 'Unexpected late success'}catch{if($_.Exception.Message -cne 'Exactly one matching late native deployment required'){throw}}
+}
+try{$null=Find-WD1LateDeployment @($start,$finish,$finish) $begin $timeout 'fixture-sid' $uri $identity;throw 'Unexpected ambiguous success'}catch{if($_.Exception.Message -cne 'Exactly one matching late native deployment required'){throw}}
+Write-Output 'PASS: exact late-result correlation; wrong SID/URI/package/activity and ambiguity refused; fixture only'
