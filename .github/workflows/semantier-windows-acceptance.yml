@@ -24,7 +24,7 @@ env:
   ACCEPTANCE_PREVIOUS_NATIVE_LAYOUT: ${{ inputs.previous_native_layout }}
   ACCEPTANCE_WINDOWS_PYTHON: 'D:\repo\qualification-private\windows-profile-c10-20261028-v1\package\app\resources\agent-payload\tools\python-3.14.7+20260901-win32-x64\python.exe'
   ACCEPTANCE_INCOMING_ROOT: ${{ vars.SEMANTIER_ACCEPTANCE_INCOMING_ROOT }}
-  ACCEPTANCE_CONTROLLER_COMMIT: ${{ inputs.controller_commit || 'e8bb2a8ec7095144dbf3692413b572424acd7521' }}
+  ACCEPTANCE_CONTROLLER_COMMIT: ${{ inputs.controller_commit || '782a70233642c60fb138f5d7dc3ad9ddd1f7a0de' }}
 permissions:
   contents: read
 concurrency:
