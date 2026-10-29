@@ -191,9 +191,9 @@ function Test-BundleNativePayload([string]$Root, $Package, [string]$Commit, [str
         Set-Content -LiteralPath (Join-Path $plugin 'plugin.yaml') -Encoding utf8 -Value @('name: msix-native-payload-smoke','version: 1.0.0','description: Installed native graph runtime qualification')
         @{package_root=$Package.InstallLocation;package_full_name=$Package.PackageFullName;commit=$Commit;build_id=$BuildId;output=$proof} |
             ConvertTo-Json | Set-Content -LiteralPath (Join-Path $plugin 'probe.json') -Encoding utf8
-        $home = Join-Path $scratch 'hermes-home'
-        New-Item -ItemType Directory -Path $home | Out-Null
-        $code = Invoke-BasicUserBatch 'native-runtime' @("`"$alias`" plugins doctor `"$plugin`" --ci > native-runtime.log 2>&1") $scratch 15 $home
+        $nativeHome = Join-Path $scratch 'hermes-home'
+        New-Item -ItemType Directory -Path $nativeHome | Out-Null
+        $code = Invoke-BasicUserBatch 'native-runtime' @("`"$alias`" plugins doctor `"$plugin`" --ci > native-runtime.log 2>&1") $scratch 15 $nativeHome
         if (Test-Path -LiteralPath (Join-Path $scratch 'native-runtime.log')) { Copy-Item -LiteralPath (Join-Path $scratch 'native-runtime.log') -Destination (Join-Path $Out 'native-runtime-doctor.log') }
         if ($code -ne 0 -or !(Test-Path -LiteralPath $proof)) { throw 'Installed native runtime/model/Skills qualification failed; inspect native-runtime-doctor.log' }
         $facts = Get-Content -LiteralPath $proof -Raw | ConvertFrom-Json
