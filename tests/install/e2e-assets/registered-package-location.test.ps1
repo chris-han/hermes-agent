@@ -8,7 +8,7 @@ if($errors.Count){throw 'Platform parser failure'}
 $type=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Add-Type' -and $node.Extent.Text.Contains('public static class SemantierNativeFacts')},$true))
 if($type.Count -ne 1){throw 'Native physical API definition missing'}
 Invoke-Expression $type[0].Extent.Text
-foreach($name in @('Physical','Registered-Root','Installed-File')){
+foreach($name in @('Physical','Registered-Root','Installed-File','Has-ReadyLanguageControl')){
  $function=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name},$true))
  if($function.Count -ne 1){throw 'Physical package function missing'}
  Invoke-Expression $function[0].Extent.Text
@@ -41,3 +41,9 @@ $a=Installed-File $package $aliasFile;$b=Physical $physicalFile
 try{if($a.id -cne $b.id -or $a.path -ine $physicalFile){throw 'Registered logical process file differs from physical executable'}}finally{$a.handle.Dispose();$b.handle.Dispose()}
 Reject { Installed-File $package (Join-Path ([IO.Path]::GetTempPath()) 'other.exe') }
 Write-Output 'PASS: logical process executable matches exact physical file ID; unrelated process path refused'
+
+$zh=([char]0x65b0+[char]0x5efa+[char]0x4f1a+[char]0x8bdd)
+foreach($name in @($zh,($zh+' Ctrl N'),($zh+'CtrlN'))){if(-not (Has-ReadyLanguageControl @($name) 'zh')){throw 'Actual Chinese shortcut label refused'}}
+if(-not (Has-ReadyLanguageControl @('New session Ctrl N') 'en')){throw 'English shortcut label refused'}
+if((Has-ReadyLanguageControl @('New session Ctrl N') 'zh') -or (Has-ReadyLanguageControl @(($zh+[char]0x6807+[char]0x7b7e)) 'zh') -or (Has-ReadyLanguageControl @('New session tab') 'en')){throw 'Wrong language/action accepted'}
+Write-Output 'PASS: actual language shortcut labels; wrong language and New session tab refused'

@@ -272,6 +272,12 @@ try {
   }
   return ,@($result|Sort-Object {$_['full']})
  }
+ function Has-ReadyLanguageControl([string[]]$Names,[string]$Language) {
+  $label=if($Language -ceq 'zh'){([char]0x65b0+[char]0x5efa+[char]0x4f1a+[char]0x8bdd)}elseif($Language -ceq 'en'){'New session'}else{throw 'Unsupported ready language'}
+  $accepted=@($label,($label+' Ctrl N'),($label+'CtrlN'))
+  foreach($name in $Names){if($accepted -ccontains $name){return $true}}
+  return $false
+ }
  function Observe {
   $packages=@(Get-AppxPackage -Name 'Semantier.Agent.Acceptance');if($packages.Count -gt 1){throw 'Ambiguous registration'}
   $package=$null;$process=$null
@@ -428,11 +434,18 @@ try {
    if(-not $healthy){throw 'Standalone backend readiness failed'}
    Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
    $condition=[System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ProcessIdProperty,[int]$state.process.pid)
-   $window=[System.Windows.Automation.AutomationElement]::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Children,$condition)
+   $languageReady=$false;$window=$null
+   $buttons=[System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty,[System.Windows.Automation.ControlType]::Button)
+   do{
+    $window=[System.Windows.Automation.AutomationElement]::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Children,$condition)
+    if($window){
+     $names=@($window.FindAll([System.Windows.Automation.TreeScope]::Descendants,$buttons)|ForEach-Object{$_.Current.Name})
+     $languageReady=Has-ReadyLanguageControl $names $r.expected_language
+    }
+    if(-not $languageReady){Start-Sleep -Milliseconds 500}
+   }while(-not $languageReady -and (Get-Date)-lt $deadline)
    if(-not $window){throw 'Registered application window unavailable'}
-   $names=@($window.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)|ForEach-Object{$_.Current.Name})
-   $newSession=if($r.expected_language -ceq 'zh'){([char]0x65b0+[char]0x5efa+[char]0x4f1a+[char]0x8bdd)}else{'New session'}
-   if($names -notcontains $newSession){throw 'Expected production language control unavailable'}
+   if(-not $languageReady){throw 'Expected production language control unavailable'}
    $preference=Get-Content -LiteralPath (Join-Path $root 'userdata\active-profile.json') -Raw|ConvertFrom-Json
    if($preference.profile -cne 'semantier-local' -or $preference.defaultRoute.profile -cne 'semantier-local'){throw 'Unexpected active desktop profile'}
    $profiles=Join-Path $root 'userdata\hermes-home\profiles'
