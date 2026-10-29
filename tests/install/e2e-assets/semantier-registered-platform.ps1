@@ -249,7 +249,7 @@ try {
   if($records.Count -ne 1 -or $matches.Count -ne 1){throw 'Exact production download custody not established'}
   return @{manifestSha256=$target.manifest_sha256;artifactSha256=$target.sha256;expectedChunkDescriptorSha256=$target.chunk_descriptor_sha256;chunkObservation='NOT_RUN';scope='full package hash/signature and production manifest cache record';file=$matches[0]}
  }
- function Read-NativeProductionHandoff {
+ function Read-NativeProductionHandoff([switch]$Reconcile) {
   $target=$r.target
   if($target.manifest_sha256 -cnotmatch '^[a-f0-9]{64}$'){throw 'Qualified native manifest required'}
   $directory=Join-Path $root 'userdata\updates';$directoryHold=Physical $directory
@@ -258,19 +258,51 @@ try {
    foreach($attempt in @(Get-ChildItem -LiteralPath $directory -Directory -Filter ('native-'+$target.manifest_sha256+'-*'))){
     $attemptHold=Physical $attempt.FullName
     try{
-     if(@('intent.json','deployment.json','relaunch-intent.json','completed.json'|Where-Object{!(Test-Path -LiteralPath (Join-Path $attempt.FullName $_))}).Count){continue}
-     $record=@{transport='windows-package-uri'}
-     foreach($binding in @(@('intent','intent.json'),@('deployment','deployment.json'),@('relaunch_intent','relaunch-intent.json'),@('completion','completed.json'))){
+     $required=if($Reconcile){@('intent.json')}else{@('intent.json','deployment.json','relaunch-intent.json','completed.json')}
+     if(@($required|Where-Object{!(Test-Path -LiteralPath (Join-Path $attempt.FullName $_))}).Count){continue}
+     $record=@{transport='windows-package-uri';fileSha256=@{}}
+     foreach($binding in @(@('intent','intent.json'),@('deployment','deployment.json'),@('relaunch_intent','relaunch-intent.json'),@('completion','completed.json'),@('failure','deployment-unresolved.json'),@('deployment_intent','deployment-intent.json'))){
       $path=Join-Path $attempt.FullName $binding[1]
+      if(!(Test-Path -LiteralPath $path)){continue}
       $hold=Physical $path
-      try{if((Get-Item -LiteralPath $path).Length -gt 4194304){throw 'Native handoff record oversized'};$record[$binding[0]]=Get-Content -LiteralPath $path -Raw -Encoding UTF8|ConvertFrom-Json}finally{$hold.handle.Dispose()}
+      try{if((Get-Item -LiteralPath $path).Length -gt 4194304){throw 'Native handoff record oversized'};$record[$binding[0]]=Get-Content -LiteralPath $path -Raw -Encoding UTF8|ConvertFrom-Json;$record.fileSha256[$binding[1]]=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()}finally{$hold.handle.Dispose()}
      }
-     if($record.intent.manifestSha256 -ceq $target.manifest_sha256 -and $record.deployment.status -ceq 'OS_SUCCESS'){$record.observed=Observe;$record.directory=$attempt.FullName;$matches+=$record}
+     if($record.intent.manifestSha256 -cne $target.manifest_sha256){continue}
+     if($r.PSObject.Properties['native_intent_at']){
+      $boundary=[DateTimeOffset]::Parse($r.native_intent_at)
+      if([DateTimeOffset]::Parse($record.intent.producedAt) -lt $boundary){continue}
+     }
+     if(!$Reconcile -and $record.deployment.status -cne 'OS_SUCCESS'){continue}
+     if($Reconcile){
+      $waiter=Get-Process -Id $record.intent.waiterPid -ErrorAction SilentlyContinue
+      $record.waiterAlive=[bool]($waiter -and ([DateTimeOffset]$waiter.StartTime).ToUniversalTime().ToString('o') -ceq ([DateTimeOffset]::Parse($record.intent.waiterBirth)).ToUniversalTime().ToString('o'))
+      $record.deploymentIntentPresent=$record.ContainsKey('deployment_intent')
+     }
+     $record.observed=Observe;$record.directory=$attempt.FullName;$matches+=$record
     }finally{$attemptHold.handle.Dispose()}
    }
   }finally{$directoryHold.handle.Dispose()}
   if($matches.Count -ne 1){throw 'Exactly one complete native production handoff required; preserve ambiguous state'}
   return $matches[0]
+ }
+ function Retire-NativeWaiterStage($intent) {
+  if(!$intent.PSObject.Properties['reconciliationDirectory']){return}
+  $directory=$intent.reconciliationDirectory
+  if(!(Test-Path -LiteralPath $directory)){return}
+  if([IO.Path]::GetDirectoryName($directory).TrimEnd('\') -ine [IO.Path]::GetTempPath().TrimEnd('\') -or ![IO.Path]::GetFileName($directory).StartsWith('hermes-relaunch-')){throw 'Native waiter stage outside owned temp namespace'}
+  $hold=Physical $directory
+  try{
+   $actor=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+   if((Get-Acl -LiteralPath $directory).GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $actor){throw 'Native waiter stage owner mismatch'}
+   $files=@(Get-ChildItem -LiteralPath $directory -Force)
+   $allowed=@('native-package-update.ps1','native-package-digest.ps1','update-relaunch-waiter.ps1','native-update.json','ready.txt')
+   if(@($files|Where-Object{$_.PSIsContainer -or $_.Name -cnotin $allowed -or ($_.Attributes -band [IO.FileAttributes]::ReparsePoint)}).Count){throw 'Unexpected native waiter stage contents; preserve it'}
+   foreach($binding in @(@('native-package-update.ps1',$intent.sourceSha256),@('native-package-digest.ps1',$intent.digestSourceSha256))){
+    if((Get-FileHash -LiteralPath (Join-Path $directory $binding[0]) -Algorithm SHA256).Hash.ToLowerInvariant() -cne $binding[1]){throw 'Native waiter retained source changed; preserve it'}
+   }
+   foreach($file in $files){$opened=Physical $file.FullName;$opened.handle.Dispose();Remove-Item -LiteralPath $file.FullName -Force -ErrorAction Stop}
+  }finally{$hold.handle.Dispose()}
+  [IO.Directory]::Delete($directory,$false)
  }
  function Assert-NativeJobsSettled {
   $directory=Join-Path $root 'userdata\updates'
@@ -295,7 +327,7 @@ try {
       try{
        if((Get-Item -LiteralPath $path).Length -gt 4194304){throw 'Native outcome oversized'}
        $outcome=Get-Content -LiteralPath $path -Raw -Encoding UTF8|ConvertFrom-Json
-       if($outcome.manifestSha256 -ceq $intent.manifestSha256 -and $outcome.status -cin @('TARGET_GRAPH_REGISTERED_PROCESS_LAUNCHED','NOT_STARTED','TARGET_GRAPH_REGISTERED')){$settled=$true}
+       if($outcome.manifestSha256 -ceq $intent.manifestSha256 -and $outcome.status -cin @('TARGET_GRAPH_REGISTERED_PROCESS_LAUNCHED','NOT_STARTED','TARGET_GRAPH_REGISTERED','BASELINE_INTACT_FAILED')){$settled=$true}
       }finally{$receiptHold.handle.Dispose()}
      }
      if(!$settled){throw 'Native deployment UNKNOWN hold; no cleanup'}
@@ -362,7 +394,7 @@ try {
   return @{sid=$sid;session_sid=$sessionSid;session=$session;root_id=$held.id;package=$package;process=$process;related=(Related-Packages)}
  }
  $result=$null
- if($r.action -in @('register','launch','update','remove')){
+ if($r.action -in @('register','launch','update','remove','native-reconciled')){
   if(-not $r.PSObject.Properties['expected_before']){throw 'Durable intent precondition required'}
   $actual=Observe;$expected=$r.expected_before
   if($actual.sid -cne $expected.sid -or $actual.session_sid -cne $expected.session_sid -or $actual.session -ne $expected.session -or $actual.root_id -cne $expected.root_id){throw 'Intent context changed'}
@@ -383,6 +415,29 @@ try {
   observe {$result=Observe}
   artifact {$result=Artifact $r.side}
   download {$result=VerifyDownload}
+  native-reconcile {$result=Read-NativeProductionHandoff -Reconcile}
+  native-reconciled {
+   $proof=Read-NativeProductionHandoff -Reconcile
+   if($proof.directory -cne $r.native_directory -or $proof.waiterAlive -or $r.native_status -cnotin @('NOT_STARTED','BASELINE_INTACT_FAILED','TARGET_GRAPH_REGISTERED')){throw 'Native reconciliation intent/live waiter mismatch'}
+   if($proof.intent.sourceSha256 -cne $r.native_handoff_source_sha256 -or $proof.intent.digestSourceSha256 -cne $r.native_digest_source_sha256){throw 'Native baseline helper binding mismatch'}
+   if($proof.fileSha256.Count -ne @($r.native_proof_hashes.PSObject.Properties).Count){throw 'Native proof set changed'}
+   foreach($item in $r.native_proof_hashes.PSObject.Properties){if($proof.fileSha256[$item.Name] -cne $item.Value){throw 'Native proof bytes changed'}}
+   $hold=Physical $proof.directory
+   try{
+    $path=Join-Path $proof.directory 'reconciled.json'
+    if(Test-Path -LiteralPath $path){
+     $receiptHold=Physical $path
+     try{if((Get-Item -LiteralPath $path).Length -gt 4194304){throw 'Native reconciliation oversized'};$existing=Get-Content -LiteralPath $path -Raw -Encoding UTF8|ConvertFrom-Json}finally{$receiptHold.handle.Dispose()}
+     if($existing.status -cne $r.native_status -or $existing.manifestSha256 -cne $r.target.manifest_sha256){throw 'Conflicting native reconciliation receipt'}
+    }else{
+     $receipt=@{schema=1;status=$r.native_status;manifestSha256=$r.target.manifest_sha256;producedAt=[DateTime]::UtcNow.ToString('o');sourceSha256=$proof.intent.sourceSha256;fileSha256=$proof.fileSha256}
+     $stream=[IO.File]::Open($path,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read)
+     try{$bytes=[Text.Encoding]::UTF8.GetBytes(($receipt|ConvertTo-Json -Depth 12 -Compress));$stream.Write($bytes,0,$bytes.Length);$stream.Flush($true)}finally{$stream.Dispose()}
+    }
+    Retire-NativeWaiterStage $proof.intent
+    $result=@{status=$r.native_status;manifestSha256=$r.target.manifest_sha256}
+   }finally{$hold.handle.Dispose()}
+  }
   register {
    $side=if($r.PSObject.Properties['purpose'] -and $r.purpose -ceq 'wd1-native-layout-qualification'){'target'}else{'baseline'}
    if($side -ceq 'target' -and -not $localWD1){throw 'Explicit authorized WD1 local actor required'}

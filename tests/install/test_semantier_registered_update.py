@@ -417,12 +417,12 @@ def test_prior_proof_source_refuses_changed_staged_bytes(prior_proof_source):
 
 def native_handoff_case():
     request={'authorized_sid':'actor','selected_delivery_base':'https://s3.semantier.com',
-             'native_handoff_source_sha256':'a'*64,'native_graph_value':{'root':'bound','objects':[{'sha256':'b'*64}]},
+             'native_handoff_source_sha256':'a'*64,'native_digest_source_sha256':'9'*64,'native_graph_value':{'root':'bound','objects':[{'sha256':'b'*64}]},
              'target':{'manifest_sha256':'c'*64,'native_graph':{'sha256':'d'*64},'build_id':'e'*32,'commit':'f'*40,'version':'0.0.61.0'}}
     before={'package':{'full':'baseline','version':'0.0.60.0','family':'same-family'},'process':{'pid':1,'birth':'2026-10-29T14:00:00.0000000+00:00'},'session':1}
     process={'pid':2,'birth':'2026-10-29T14:01:03.0000000+00:00','exe':'registered.exe','exe_id':'file-id'}
     intent={'authorizedSid':'actor','session':1,'manifestSha256':'c'*64,'graphSha256':'d'*64,'graph':request['native_graph_value'],
-            'sourceSha256':'a'*64,'base':request['selected_delivery_base'],'targetBuildId':'e'*32,'targetCommit':'f'*40,
+            'sourceSha256':'a'*64,'digestSourceSha256':'9'*64,'base':request['selected_delivery_base'],'targetBuildId':'e'*32,'targetCommit':'f'*40,
             'version':'0.0.61.0','currentVersion':'0.0.60.0','fullName':'baseline','familyName':'same-family'}
     proof={'transport':'windows-package-uri','intent':intent,'deployment':{'status':'OS_SUCCESS','manifestSha256':'c'*64,'activityId':'11111111-1111-1111-1111-111111111111','producedAt':'2026-10-29T14:01:01Z'},
            'relaunch_intent':{'manifestSha256':'c'*64,'producedAt':'2026-10-29T14:01:02Z'},
@@ -437,7 +437,7 @@ def test_native_handoff_binds_real_production_owner_and_successor_incarnation():
 
 
 @pytest.mark.parametrize('part,key,value',[
-    ('intent','sourceSha256','wrong'),('intent','base','https://other.invalid'),('intent','authorizedSid','other'),
+    ('intent','sourceSha256','wrong'),('intent','digestSourceSha256','wrong'),('intent','base','https://other.invalid'),('intent','authorizedSid','other'),
     ('intent','graph',{'root':'different'}),('intent','graphSha256','0'*64),('deployment','status','UNKNOWN'),
     ('completion','pid',3),('completion','birth','2026-10-29T13:00:00Z'),('completion','exeId','other'),
     ('completion','status','TARGET_GRAPH_REGISTERED_ACTIVATION_REQUESTED'),('relaunch_intent','producedAt','2026-10-29T14:01:09Z')])
@@ -452,3 +452,82 @@ def test_readonly_precondition_refusal_does_not_leave_an_action_intent(tx):
     p.check=refuse
     with pytest.raises(ValueError,match='missing native binding'):t.operation('register',{'full':'target'})
     assert t.pending() is None and p.calls==[]
+
+
+@pytest.mark.parametrize('target_registered',[False,True])
+def test_native_reconciliation_requires_dead_waiter_typed_completion_and_exact_os_set(target_registered):
+    request,before,proof=native_handoff_case()
+    proof['waiterAlive']=False;proof['deploymentIntentPresent']=True
+    proof['observed']['process']=None
+    target=dict(proof['observed']['package'])
+    if not target_registered:
+        proof.pop('deployment')
+        proof['failure']={'status':'FAILURE','operationCompleted':True,'hresult':'80080219','manifestSha256':request['target']['manifest_sha256']}
+        proof['observed']['package']=dict(before['package'])
+    now=__import__('copy').deepcopy(proof['observed'])
+    expected='TARGET_GRAPH_REGISTERED' if target_registered else 'BASELINE_INTACT_FAILED'
+    assert d.verify_native_reconciliation(proof,request,before,now,target)==expected
+    proof['waiterAlive']=True
+    with pytest.raises(ValueError):d.verify_native_reconciliation(proof,request,before,now,target)
+    proof['waiterAlive']=False
+    if target_registered:proof['deployment']['status']='UNKNOWN'
+    else:proof['failure']['operationCompleted']=False
+    with pytest.raises(ValueError):d.verify_native_reconciliation(proof,request,before,now,target)
+
+
+def test_native_failed_reconciliation_does_not_release_changed_related_packages():
+    request,before,proof=native_handoff_case();proof['waiterAlive']=False;proof['deploymentIntentPresent']=True;proof.pop('deployment')
+    proof['failure']={'status':'FAILURE','operationCompleted':True,'hresult':'80080219','manifestSha256':request['target']['manifest_sha256']}
+    proof['observed'].update(package=dict(before['package']),process=None,related=[{'full':'unexpected-resource'}])
+    with pytest.raises(ValueError):d.verify_native_reconciliation(proof,request,before,proof['observed'],{})
+
+
+def test_native_reconciliation_releases_only_proven_not_started_attempt():
+    request,before,proof=native_handoff_case();proof.pop('deployment')
+    proof.update(waiterAlive=False,deploymentIntentPresent=False)
+    proof['observed'].update(package=dict(before['package']),process=None)
+    assert d.verify_native_reconciliation(proof,request,before,proof['observed'],{})=='NOT_STARTED'
+    proof['deploymentIntentPresent']=True
+    with pytest.raises(ValueError):d.verify_native_reconciliation(proof,request,before,proof['observed'],{})
+
+
+@pytest.mark.parametrize('target_registered',[False,True])
+def test_transaction_uses_production_windows_reconciliation_and_acknowledges_before_outcome(tx,target_registered):
+    import types
+    from copy import deepcopy
+    t,p=tx;request,original,proof=native_handoff_case()
+    p.state.update(sid='actor',session=1,package=original['package'],process=original['process'])
+    seed(t,p);p.request=request
+    target=deepcopy(proof['observed']['package'])
+    proof.update(waiterAlive=False,deploymentIntentPresent=True,directory='owned-native-attempt',fileSha256={'intent.json':'1'*64})
+    if not target_registered:
+        proof.pop('deployment');proof['failure']={'status':'FAILURE','operationCompleted':True,'hresult':'80080219','manifestSha256':request['target']['manifest_sha256']}
+    def interrupted(action,args):
+        assert action=='update'
+        p.state.update(package=target if target_registered else original['package'],process=None)
+        raise d.Interrupted('external transport interrupted after updater handoff')
+    p.perform=interrupted
+    with pytest.raises(d.Interrupted):t.operation('update',target)
+    proof['observed']=p.observe()
+    calls=[]
+    def transport(action,**kwargs):
+        calls.append((action,kwargs))
+        if action=='native-reconcile':return deepcopy(proof)
+        assert action=='native-reconciled'
+        assert kwargs['expected_before']==p.observe()
+        assert kwargs['native_proof_hashes']==proof['fileSha256']
+        return {'status':kwargs['native_status']}
+    p.call=transport;p.reconcile_native=types.MethodType(d.Windows.reconcile_native,p)
+    assert t.reconcile()==('performed_partial' if target_registered else 'not_performed')
+    assert [row[0] for row in calls]==['native-reconcile','native-reconciled']
+    assert t.pending() is None
+    assert t.reconcile()=='settled' and len(calls)==2
+
+
+def test_native_sdk_success_cannot_hide_a_contradictory_failure_receipt():
+    request,before,proof=native_handoff_case()
+    proof['failure']={'status':'UNKNOWN'}
+    with pytest.raises(ValueError):d.verify_native_handoff(proof,request,before)
+    proof.update(waiterAlive=False,deploymentIntentPresent=True)
+    proof['observed']['process']=None
+    with pytest.raises(ValueError):d.verify_native_reconciliation(proof,request,before,proof['observed'],proof['observed']['package'])

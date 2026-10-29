@@ -1,5 +1,5 @@
 # Deterministic metadata refusal tests; no installation, network, signing or cleanup.
-param([string]$GraphPath)
+param([string]$GraphPath,[string]$PlatformScript)
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'native-package-update.ps1')
 if($GraphPath){$graph=Get-Content -LiteralPath $GraphPath -Raw -Encoding UTF8|ConvertFrom-Json}
@@ -113,3 +113,97 @@ try{
  try{if((Get-NativeUpdateFileId $reopened) -cne $first){throw 'Native held file identity changed'}}finally{$reopened.Dispose()}
  @{scope='READ_ONLY_NATIVE_FACT_ABI';status='PASS';producedAt=[DateTime]::UtcNow.ToString('o')}|ConvertTo-Json -Compress
 }finally{$created.Dispose();[IO.File]::Delete($file)}
+
+# Execute the production waiter's actual finally block against owned temp fixtures.
+$waiterAst=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'update-relaunch-waiter.ps1'),[ref]$tokens,[ref]$errors)
+$finally=@($waiterAst.FindAll({param($node) $node -is [Management.Automation.Language.TryStatementAst] -and $node.Finally -and $node.Finally.Extent.Text.Contains('Remove-Item -LiteralPath $ReadyFile')},$true))
+if($finally.Count -ne 1){throw 'Waiter cleanup block ambiguous'}
+$text=$finally[0].Finally.Extent.Text
+$cleanup=$text.Substring(1,$text.Length-2)
+foreach($mode in @('unknown','completed','legacy')){
+ $stage=Join-Path ([IO.Path]::GetTempPath()) ('hermes-relaunch-unit-'+[guid]::NewGuid().ToString('N'))
+ $journal=Join-Path ([IO.Path]::GetTempPath()) ('native-journal-unit-'+[guid]::NewGuid().ToString('N'))
+ $null=[IO.Directory]::CreateDirectory($stage);$null=[IO.Directory]::CreateDirectory($journal)
+ $ready=Join-Path $stage 'ready.txt';[IO.File]::WriteAllText($ready,'unit fixture')
+ if($mode -ceq 'completed'){[IO.File]::WriteAllText((Join-Path $journal 'completed.json'),'{}')}
+ $context=if($mode -ceq 'legacy'){$null}else{@{directory=$journal}}
+ try{
+  $probe=Join-Path $stage 'cleanup-probe.ps1'
+  [IO.File]::WriteAllText($probe,('param($ReadyFile,$nativeContext)'+[Environment]::NewLine+$cleanup))
+  & $probe $ready $context
+  if((Test-Path -LiteralPath $stage) -ne ($mode -ceq 'unknown')){throw ('Waiter discarded unknown helper source or retained settled stage: '+$mode)}
+  if(Test-Path -LiteralPath $ready){throw 'Transient handshake file retained'}
+ }finally{
+  if(Test-Path -LiteralPath $stage){Remove-Item -LiteralPath $stage -Recurse -Force}
+  Remove-Item -LiteralPath $journal -Recurse -Force
+ }
+}
+@{scope='ACTUAL_WAITER_CLEANUP_BLOCK_DISPOSABLE_FILES';status='PASS';cases=3;producedAt=[DateTime]::UtcNow.ToString('o')}|ConvertTo-Json -Compress
+
+
+# Actual protected-file reader and reconciliation writer; package/process facts substituted.
+if(!$PlatformScript){$PlatformScript=Join-Path $PSScriptRoot '../../../tests/install/e2e-assets/semantier-registered-platform.ps1'}
+$platformAst=[Management.Automation.Language.Parser]::ParseFile($PlatformScript,[ref]$tokens,[ref]$errors)
+if($errors.Count){throw 'Platform source parser failed'}
+$nativeType=@($platformAst.FindAll({param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -ceq 'Add-Type' -and $node.Extent.Text.Contains('public static class SemantierNativeFacts')},$true))
+if($nativeType.Count -ne 1){throw 'Platform native fact declaration ambiguous'}
+& ([scriptblock]::Create($nativeType[0].Extent.Text))
+foreach($name in @('Physical','Read-NativeProductionHandoff','Retire-NativeWaiterStage')){
+ $definitions=@($platformAst.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name},$true))
+ if($definitions.Count -ne 1){throw 'Actual platform function ambiguous'}
+ . ([scriptblock]::Create($definitions[0].Extent.Text))
+}
+$root=Join-Path ([IO.Path]::GetTempPath()) ('native-reader-unit-'+[guid]::NewGuid().ToString('N'))
+$manifest='d'*64;$attempt=Join-Path $root ('userdata/updates/native-'+$manifest+'-unit')
+$null=[IO.Directory]::CreateDirectory($attempt)
+$global:nativeReaderWaiter=$null
+$global:nativeReaderState=@{scope='OS_FACTS_SUBSTITUTED';package=$null;process=$null}
+function Observe {return $global:nativeReaderState}
+function Get-Process {param($Id,$ErrorAction) return $global:nativeReaderWaiter}
+try{
+ $r=[pscustomobject]@{target=@{manifest_sha256=$manifest};native_intent_at='2026-10-29T00:00:00+00:00';native_directory=$attempt;native_status='BASELINE_INTACT_FAILED';native_handoff_source_sha256=('a'*64);native_digest_source_sha256=('b'*64);native_proof_hashes=$null}
+ $intent=@{manifestSha256=$manifest;producedAt='2026-10-29T01:00:00+00:00';waiterPid=123;waiterBirth='1970-01-01T00:00:00.0010000+00:00';sourceSha256=('a'*64);digestSourceSha256=('b'*64)}
+ $retained=Join-Path ([IO.Path]::GetTempPath()) ('hermes-relaunch-unit-'+[guid]::NewGuid().ToString('N'))
+ $null=[IO.Directory]::CreateDirectory($retained)
+ foreach($name in @('native-package-update.ps1','native-package-digest.ps1','update-relaunch-waiter.ps1')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $retained $name)}
+ $intent.reconciliationDirectory=$retained
+ $intent.sourceSha256=(Get-FileHash -LiteralPath (Join-Path $retained 'native-package-update.ps1') -Algorithm SHA256).Hash.ToLowerInvariant()
+ $intent.digestSourceSha256=(Get-FileHash -LiteralPath (Join-Path $retained 'native-package-digest.ps1') -Algorithm SHA256).Hash.ToLowerInvariant()
+ $r.native_handoff_source_sha256=$intent.sourceSha256;$r.native_digest_source_sha256=$intent.digestSourceSha256
+ $intentFile=Join-Path $attempt 'intent.json';$intent|ConvertTo-Json|Set-Content -LiteralPath $intentFile -Encoding UTF8
+ @{status='FAILURE';operationCompleted=$true;hresult='80080219';manifestSha256=$manifest}|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $attempt 'deployment-unresolved.json') -Encoding UTF8
+ [IO.File]::WriteAllText((Join-Path $attempt 'deployment-intent.json'),'{}')
+ $read=Read-NativeProductionHandoff -Reconcile
+ if($read.waiterAlive -or !$read.deploymentIntentPresent -or $read.fileSha256.Count -ne 3 -or $read.failure.hresult -cne '80080219'){throw 'Actual reconciliation reader lost failure/source facts'}
+ $r.native_proof_hashes=($read.fileSha256|ConvertTo-Json|ConvertFrom-Json)
+ $global:nativeReaderWaiter=[pscustomobject]@{StartTime=[DateTimeOffset]::FromUnixTimeMilliseconds(1).UtcDateTime}
+ if(!(Read-NativeProductionHandoff -Reconcile).waiterAlive){throw 'Live waiter not exposed'}
+ $global:nativeReaderWaiter=$null
+ $r.native_intent_at='2026-10-30T00:00:00+00:00'
+ $refused=$false;try{$null=Read-NativeProductionHandoff -Reconcile}catch{$refused=$true}
+ if(!$refused){throw 'Earlier native attempt adopted by new transaction'}
+ $r.native_intent_at='2026-10-29T00:00:00+00:00'
+ $blocks=@($platformAst.FindAll({param($node) $node -is [Management.Automation.Language.StatementBlockAst] -and $node.Parent -is [Management.Automation.Language.SwitchStatementAst] -and $node.Extent.Text.Contains('Native reconciliation intent/live waiter mismatch')},$true))
+ if($blocks.Count -ne 1){throw 'Actual native reconciliation action ambiguous'}
+ $text=$blocks[0].Extent.Text;$write=[scriptblock]::Create($text.Substring(1,$text.Length-2))
+ $original=[IO.File]::ReadAllBytes($intentFile)
+ [IO.File]::AppendAllText($intentFile,' ')
+ $refused=$false;try{& $write}catch{$refused=$true}
+ if(!$refused -or (Test-Path -LiteralPath (Join-Path $attempt 'reconciled.json'))){throw 'Changed native proof was acknowledged'}
+ [IO.File]::WriteAllBytes($intentFile,$original)
+ $unexpected=Join-Path $retained 'user-file.txt';[IO.File]::WriteAllText($unexpected,'preserve this unit fixture')
+ $refused=$false;try{& $write}catch{$refused=$true}
+ if(!$refused -or [IO.File]::ReadAllText($unexpected) -cne 'preserve this unit fixture'){throw 'Unexpected retained stage contents were deleted'}
+ Remove-Item -LiteralPath $unexpected
+ & $write
+ $receipt=Get-Content -LiteralPath (Join-Path $attempt 'reconciled.json') -Raw|ConvertFrom-Json
+ if($receipt.status -cne 'BASELINE_INTACT_FAILED' -or $receipt.manifestSha256 -cne $manifest){throw 'Durable source-bound native reconciliation missing'}
+ if(Test-Path -LiteralPath $retained){throw 'Settled exact native helper stage not retired'}
+ & $write
+ @{scope='ACTUAL_READER_WRITER_FILES_OS_FACTS_SUBSTITUTED';status='PASS';cases=7;producedAt=[DateTime]::UtcNow.ToString('o')}|ConvertTo-Json -Compress
+}finally{
+ Remove-Item Function:Observe,Function:Get-Process
+ Remove-Variable nativeReaderWaiter,nativeReaderState -Scope Global
+ if($retained -and (Test-Path -LiteralPath $retained)){Remove-Item -LiteralPath $retained -Recurse -Force}
+ Remove-Item -LiteralPath $root -Recurse -Force
+}

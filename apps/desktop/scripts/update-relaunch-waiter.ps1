@@ -83,6 +83,9 @@ try {
   Set-Location $env:TEMP
   Remove-Item -LiteralPath $ReadyFile -Force -ErrorAction SilentlyContinue
   if ([IO.Path]::GetFileName($PSScriptRoot).StartsWith('hermes-relaunch-')) {
-    Remove-Item -LiteralPath $PSScriptRoot -Recurse -Force -ErrorAction SilentlyContinue
+    # Keep exact executable recovery sources while native state remains unresolved.
+    if (-not $nativeContext -or (Test-Path -LiteralPath (Join-Path $nativeContext.directory 'completed.json'))) {
+      Remove-Item -LiteralPath $PSScriptRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
   }
 }

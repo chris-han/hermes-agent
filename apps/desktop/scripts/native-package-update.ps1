@@ -75,6 +75,8 @@ public static class SemantierNativeUpdateFacts {
  $request|Add-Member -NotePropertyName waiterPid -NotePropertyValue $PID
  $request|Add-Member -NotePropertyName waiterBirth -NotePropertyValue ([DateTimeOffset]$self.StartTime).ToUniversalTime().ToString('o')
  $request|Add-Member -NotePropertyName sourceSha256 -NotePropertyValue (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'native-package-update.ps1') -Algorithm SHA256).Hash.ToLowerInvariant()
+ $request|Add-Member -NotePropertyName reconciliationDirectory -NotePropertyValue $PSScriptRoot
+ $request|Add-Member -NotePropertyName digestSourceSha256 -NotePropertyValue (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'native-package-digest.ps1') -Algorithm SHA256).Hash.ToLowerInvariant()
  $request|Add-Member -NotePropertyName authorizedSid -NotePropertyValue $sid
  $request|Add-Member -NotePropertyName session -NotePropertyValue $self.SessionId
  $intent=Join-Path $directory 'intent.json'

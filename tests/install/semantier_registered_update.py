@@ -208,6 +208,11 @@ class Transaction:
         if not intent: return 'settled'
         now = self.platform.observe(); before = intent['before']; action = intent['action']
         if hasattr(self.platform, 'recovery_check'): self.platform.recovery_check(intent)
+        if action=='update' and now['process'] is None and hasattr(self.platform,'reconcile_native'):
+            native=self.platform.reconcile_native(intent,now)
+            if native in ('BASELINE_INTACT_FAILED','NOT_STARTED'):
+                self.record('outcome',intent_at=intent['at'],action=action,status='not_performed',observed=now)
+                return 'not_performed'
         if action == 'update' and self.package_matches(intent['args'], now) and now['package']['family'] == before['package']['family'] and now['process'] is None:
             self.record('outcome', intent_at=intent['at'], action=action, status='performed_partial', observed=now)
             return 'performed_partial'
@@ -340,6 +345,14 @@ class Windows:
         if not captured: raise ValueError('Production handoff readback missing; preserve actual update state')
         return result
 
+    def reconcile_native(self, intent, now):
+        if not self.request.get('target',{}).get('native_graph'):return None
+        proof=self.call('native-reconcile',native_intent_at=intent['at'])
+        status=verify_native_reconciliation(proof,self.request,intent['before'],now,intent['args'])
+        self.call('native-reconciled',expected_before=now,native_intent_at=intent['at'],
+                  native_directory=proof['directory'],native_proof_hashes=proof['fileSha256'],native_status=status)
+        return status
+
     def successor(self, args, before, after):
         if self.request.get('target',{}).get('native_graph'):
             proof=self.call('download',expected_before=before)
@@ -394,22 +407,28 @@ def validate_native_update_inputs(request):
     value=request.get('selected_delivery_base')
     if not isinstance(value,str) or public_base(value)!=value:
         raise ValueError('Pinned selected delivery base required')
-    if re.fullmatch('[a-f0-9]{64}',request.get('native_handoff_source_sha256','')) is None:
-        raise ValueError('Qualified baseline handoff helper hash required')
+    if any(re.fullmatch('[a-f0-9]{64}',request.get(key,'')) is None for key in ('native_handoff_source_sha256','native_digest_source_sha256')):
+        raise ValueError('Qualified baseline native helper hashes required')
+
+
+def native_handoff_inputs(request,before):
+    validate_native_update_inputs(request)
+    target=request['target']
+    return {'authorizedSid':request['authorized_sid'],'session':before['session'],
+                  'manifestSha256':target['manifest_sha256'],'graphSha256':target['native_graph']['sha256'],
+                  'sourceSha256':request['native_handoff_source_sha256'],'digestSourceSha256':request['native_digest_source_sha256'],'base':request['selected_delivery_base'],
+                  'targetBuildId':target['build_id'],'targetCommit':target['commit'],'version':target['version'],
+                  'currentVersion':before['package']['version'],'fullName':before['package']['full'],
+                  'familyName':before['package']['family'],'graph':request['native_graph_value']}
 
 
 def verify_native_handoff(proof, request, before):
     """Receipt/OS-incarnation binding only; never differential/cache acceptance."""
     validate_native_update_inputs(request)
     try:
-        target=request['target'];intent=proof['intent'];completion=proof['completion']
-        expected={'authorizedSid':request['authorized_sid'],'session':before['session'],
-                  'manifestSha256':target['manifest_sha256'],'graphSha256':target['native_graph']['sha256'],
-                  'sourceSha256':request['native_handoff_source_sha256'],'base':request['selected_delivery_base'],
-                  'targetBuildId':target['build_id'],'targetCommit':target['commit'],'version':target['version'],
-                  'currentVersion':before['package']['version'],'fullName':before['package']['full'],
-                  'familyName':before['package']['family'],'graph':request['native_graph_value']}
-        if proof['transport']!='windows-package-uri' or not Transaction.matches(expected,intent):
+        intent=proof['intent'];completion=proof['completion']
+        expected=native_handoff_inputs(request,before)
+        if proof.get('failure') or proof['transport']!='windows-package-uri' or not Transaction.matches(expected,intent):
             raise ValueError('Native handoff input binding mismatch')
         verify_native_successor(proof,request,before)
         times=[datetime.fromisoformat(value) for value in
@@ -419,6 +438,34 @@ def verify_native_handoff(proof, request, before):
         return proof
     except (KeyError,TypeError,AttributeError) as error:
         raise ValueError('Native handoff evidence incomplete') from error
+
+
+def verify_native_reconciliation(proof,request,before,now,target):
+    from uuid import UUID
+    import re
+    try:
+        if (proof['transport']!='windows-package-uri' or proof['waiterAlive'] is not False
+            or not Transaction.matches(native_handoff_inputs(request,before),proof['intent'])
+            or proof['observed']!=now or now['process'] is not None
+            or now['sid']!=request['authorized_sid'] or now['session']!=before['session']):
+            raise ValueError('Native reconciliation binding/live waiter mismatch')
+        deployment=proof.get('deployment',{});failure=proof.get('failure',{})
+        if (deployment and failure) or ((deployment or failure) and proof.get('deploymentIntentPresent') is not True):
+            raise ValueError('Contradictory native deployment history')
+        if (deployment.get('status')=='OS_SUCCESS' and deployment.get('manifestSha256')==request['target']['manifest_sha256']
+            and UUID(deployment['activityId']).int and Transaction.package_matches(target,now)):
+            return 'TARGET_GRAPH_REGISTERED'
+        intact=now['package']==before['package'] and Transaction.related(now)==Transaction.related(before)
+        if intact and proof.get('deploymentIntentPresent') is False and not deployment and not proof.get('failure'):
+            return 'NOT_STARTED'
+        failure=proof.get('failure',{})
+        if (intact and failure.get('status')=='FAILURE' and failure.get('operationCompleted') is True
+            and failure.get('manifestSha256')==request['target']['manifest_sha256']
+            and re.fullmatch('[A-F0-9]{8}',failure.get('hresult','')) and failure['hresult']!='00000000'):
+            return 'BASELINE_INTACT_FAILED'
+        raise ValueError('Uncertain native OS state; preserve resources and evidence')
+    except (KeyError,TypeError,AttributeError) as error:
+        raise ValueError('Native reconciliation evidence incomplete') from error
 
 
 def verify_native_successor(proof, request, before):
