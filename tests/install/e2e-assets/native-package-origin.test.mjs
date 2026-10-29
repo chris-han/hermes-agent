@@ -33,5 +33,11 @@ test('only pinned native bytes are served, with actual HTTP range and mutation r
     await fs.writeFile(file, Buffer.alloc(body.length, 120))
     assert.equal((await fetch(url)).status, 409)
     assert.ok(events.some(event => event.status === 206 && event.bytesRead === 4))
+    const base = origin.base
+    await origin.close(); origin = null
+    await fs.writeFile(file, body)
+    origin = await startNativePackageOrigin(dir, { root: key, objects: [row] }, () => {}, Number(new URL(base).port))
+    assert.equal(origin.base, base)
+    assert.equal(await (await fetch(url)).text(), body.toString())
   } finally { await origin?.close(); await fs.rm(dir, { recursive: true, force: true }) }
 })

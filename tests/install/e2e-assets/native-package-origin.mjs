@@ -16,7 +16,8 @@ function byteRange(header, size) {
   return Number.isSafeInteger(start) && Number.isSafeInteger(end) && start >= 0 && start <= end && start < size ? [start, end] : null
 }
 
-export async function startNativePackageOrigin(directory, graph, observe = () => {}) {
+export async function startNativePackageOrigin(directory, graph, observe = () => {}, port = 0) {
+  if (!Number.isInteger(port) || port < 0 || port > 65535) { throw new Error('Invalid loopback origin port') }
   const files = new Map()
   try {
     if (!Array.isArray(graph.objects) || !graph.objects.length || graph.objects.length > 64) { throw new Error('Bounded native object set required') }
@@ -68,7 +69,7 @@ export async function startNativePackageOrigin(directory, graph, observe = () =>
       stream.pipe(res)
     } catch (error) { res.destroy(error) }
   })
-  try { await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve) }) }
+  try { await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve) }) }
   catch (error) { await Promise.all([...files.values()].map(entry => entry.handle.close())); throw error }
   return { base: `http://127.0.0.1:${server.address().port}`, close: async () => {
     await new Promise(resolve => { server.close(resolve); server.closeAllConnections() })
@@ -77,11 +78,11 @@ export async function startNativePackageOrigin(directory, graph, observe = () =>
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const { values } = parseArgs({ options: Object.fromEntries(['directory', 'graph', 'graph-sha256', 'ready', 'log'].map(name => [name, { type: 'string' }])) })
+  const { values } = parseArgs({ options: Object.fromEntries(['directory', 'graph', 'graph-sha256', 'ready', 'log', 'port'].map(name => [name, { type: 'string' }])) })
   const bytes = await fsp.readFile(values.graph)
   if (createHash('sha256').update(bytes).digest('hex') !== values['graph-sha256']) { throw new Error('Graph file digest mismatch') }
   const log = await fsp.open(values.log, 'wx')
-  const origin = await startNativePackageOrigin(values.directory, JSON.parse(bytes.toString('utf8').replace(/^\uFEFF/, '')), row => fs.writeSync(log.fd, JSON.stringify(row) + '\n'))
+  const origin = await startNativePackageOrigin(values.directory, JSON.parse(bytes.toString('utf8').replace(/^\uFEFF/, '')), row => fs.writeSync(log.fd, JSON.stringify(row) + '\n'), values.port ? Number(values.port) : 0)
   await fsp.writeFile(values.ready, JSON.stringify({ producedAt: new Date().toISOString(), base: origin.base,
     pid: process.pid, graphSha256: values['graph-sha256'], scope: 'loopback-only native engineering origin; no release admission' }) + '\n', { flag: 'wx' })
   for (const signal of ['SIGINT', 'SIGTERM']) { process.once(signal, async () => { await origin.close(); await log.close() }) }
