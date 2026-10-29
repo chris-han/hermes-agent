@@ -257,6 +257,7 @@ def test_graph_prediction_binds_exact_static_members_then_records_local_incarnat
 
 
 class NativeQualificationPlatform(Platform):
+    def proof_binding(self):return 'fixture-proof-binding'
     def __init__(self):
         super().__init__();self.request={'purpose':d.NATIVE_QUALIFICATION}
     def call(self,action,**kwargs):
@@ -322,3 +323,39 @@ def test_native_resume_reconciles_late_registration_without_registering_again(tm
     assert 'register' not in p.calls
     assert t.pending() is None
     assert any(row['kind']=='outcome' and row['status']=='performed' for row in t.events())
+
+
+def test_native_resume_reuses_exact_bound_proof_after_launch_failure(tmp_path):
+    p=NativeQualificationPlatform();p.proof_binding=lambda:'binding-v1'
+    t=d.Transaction(tmp_path/'j',p);p.fail='launch'
+    with pytest.raises(RuntimeError):d.run_native_qualification(t,p,p.observe())
+    p.fail=None;p.calls=[]
+    d.run_native_qualification(t,p,p.observe(),require_existing=True)
+    assert 'native-proof' not in p.calls
+    assert 'register' not in p.calls
+    assert p.calls.count('launch')==1
+
+
+def test_native_resume_reverifies_when_proof_binding_changes(tmp_path):
+    p=NativeQualificationPlatform();p.proof_binding=lambda:'binding-v1'
+    t=d.Transaction(tmp_path/'j',p);d.run_native_qualification(t,p,p.observe())
+    p.proof_binding=lambda:'binding-v2';p.calls=[]
+    d.run_native_qualification(t,p,p.observe(),require_existing=True)
+    assert p.calls.count('native-proof')==1
+    assert 'register' not in p.calls and 'launch' not in p.calls
+
+
+@pytest.mark.parametrize('changed',['request','host','powershell','verifier'])
+def test_native_proof_binding_invalidates_changed_execution_inputs(tmp_path,monkeypatch,changed):
+    p=d.Windows.__new__(d.Windows);p.request={'target':{'sha256':'original'}}
+    binary=tmp_path/'powershell.exe';binary.write_bytes(b'original host binary');p.powershell=str(binary)
+    monkeypatch.setattr(d.sys,'getwindowsversion',lambda:(10,0,1,2,''),raising=False)
+    original=p.proof_binding()
+    assert p.proof_binding()==original
+    if changed=='request':p.request['target']['sha256']='changed'
+    elif changed=='host':monkeypatch.setattr(d.sys,'getwindowsversion',lambda:(10,0,2,2,''))
+    elif changed=='powershell':binary.write_bytes(b'changed host binary')
+    else:
+        read=Path.read_bytes
+        monkeypatch.setattr(Path,'read_bytes',lambda file:read(file)+(b'changed' if file.name=='native-payload-probe.py' else b''))
+    assert p.proof_binding()!=original
