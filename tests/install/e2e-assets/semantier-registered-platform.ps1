@@ -31,7 +31,8 @@ function Wts-Text([int]$kind) {
  if(-not [SemantierNativeFacts]::WTSQuerySessionInformation([IntPtr]::Zero,$session,$kind,[ref]$buffer,[ref]$length)){throw 'WTS account unavailable'}
  try{if($length -lt 2){throw 'Empty WTS account'};return [Runtime.InteropServices.Marshal]::PtrToStringUni($buffer)}finally{[SemantierNativeFacts]::WTSFreeMemory($buffer)}
 }
-$wtsUser=Wts-Text 5;$wtsDomain=Wts-Text 6
+# WTS_INFO_CLASS: 6 is WTSWinStationName; domain is 7.
+$wtsUser=Wts-Text 5;$wtsDomain=Wts-Text 7
 if(-not $wtsUser -or -not $wtsDomain){throw 'Signed-in WTS account unavailable'}
 $sessionSid=([Security.Principal.NTAccount]::new($wtsDomain,$wtsUser)).Translate([Security.Principal.SecurityIdentifier]).Value
 if($sessionSid -cne $sid){throw 'Actual signed-in WTS account differs from process account'}
