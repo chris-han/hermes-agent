@@ -245,16 +245,22 @@ def prepare_native_asset_layout(package, directory, output, *, expected_sha256, 
             if file.is_symlink() or not file.resolve().is_relative_to(directory) or not file.is_file():
                 raise ValueError(f'Native payload location mismatch: {name}')
             entry=members.get(name);node=blocks.get(name)
-            if entry is None or node is None or file.stat().st_size!=entry.file_size or int(node.get('Size','-1'))!=entry.file_size or len(node)!=math.ceil(entry.file_size/65536):
+            chunks=[] if node is None else node.findall('{http://schemas.microsoft.com/appx/2010/blockmap}Block')
+            whole=[] if node is None else node.findall('{http://schemas.microsoft.com/appx/2021/blockmap}FileHash')
+            if node is not None and (len(whole)>1 or len(node)!=len(chunks)+len(whole)):
+                raise ValueError(f'Unsupported native input block-map extension: {name}')
+            if entry is None or node is None or file.stat().st_size!=entry.file_size or int(node.get('Size','-1'))!=entry.file_size or len(chunks)!=math.ceil(entry.file_size/65536):
                 raise ValueError(f'Native payload inventory mismatch: {name}')
             digest=hashlib.sha256()
             with file.open('rb') as stream:
-                for block in node:
+                for block in chunks:
                     body=stream.read(65536)
                     if hashlib.sha256(body).digest()!=base64.b64decode(block.get('Hash',''),validate=True):
                         raise ValueError(f'Native input block mismatch: {name}')
                     digest.update(body)
                 if stream.read(1):raise ValueError(f'Native payload size changed: {name}')
+            if whole and digest.digest()!=base64.b64decode(whole[0].get('Hash',''),validate=True):
+                raise ValueError(f'Native input file digest mismatch: {name}')
             files.append(dict(path=name,size=entry.file_size,sha256=digest.hexdigest()))
     plan.update(inputSha256=expected_sha256,identity=dict(identity.attrib),
                 payloadInventorySha256=hashlib.sha256(json.dumps(files,sort_keys=True,separators=(',',':')).encode()).hexdigest(),

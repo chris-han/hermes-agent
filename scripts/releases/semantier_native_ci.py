@@ -6,7 +6,7 @@ ROOT=Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:sys.path.insert(0,str(ROOT))
 
 def native_environment():
-    """Forward existing process-local proxies across WSL without host changes."""
+    """Forward existing proxies and genuine CI flag across WSL without host changes."""
     env=os.environ.copy()
     names=('HTTP_PROXY','HTTPS_PROXY','ALL_PROXY','NO_PROXY','GITHUB_ACTIONS')
     forwarded=[item for item in env.get('WSLENV','').split(':') if item and item.split('/')[0].upper() not in names]
@@ -26,7 +26,7 @@ def select_native_candidate(output,commit):
     output=Path(output)
     read=lambda name:json.loads((output/name).read_text(encoding='utf-8-sig'))
     signed=read('signed/receipt.json');request=read('channel-request.json');result=read('result.json')
-    if any(value.get('sourceCommit',value.get('commit'))!=commit for value in (signed,request,result)) or result.get('result')!='PASS':
+    if signed.get('sourceCommit')!=commit or request.get('commit')!=commit or result.get('sourceCommit')!=commit or result.get('result')!='PASS':
         raise ValueError('Completed exact source required for native smoke')
     directory=output/'signed/distribution'
     files=[p for p in directory.iterdir() if p.suffix.lower() in ('.msix','.msixbundle')]
@@ -74,8 +74,9 @@ function Assert-CISession {
  $user=[SemantierCIWts]::Text($session,5);$domain=[SemantierCIWts]::Text($session,7)
  $sessionSid=([Security.Principal.NTAccount]::new($domain,$user)).Translate([Security.Principal.SecurityIdentifier]).Value
  if($actualSid -cne __EXPECTED_SID__ -or $sessionSid -cne $actualSid -or -not [Environment]::UserInteractive -or $session -le 0 -or [SemantierCIWts]::State($session) -ne 0){throw 'Separate real active CI account required'}
+ return @{producedAt=[DateTime]::UtcNow.ToString('o');sid=$actualSid;session_sid=$sessionSid;session=$session;wts_state=[SemantierCIWts]::State($session);wts_domain=$domain;wts_user=$user;interactive=[Environment]::UserInteractive;os=[Environment]::OSVersion.Version.ToString()}
 }
-Assert-CISession;
+$ciContextBefore=Assert-CISession;
 """.replace('__EXPECTED_SID__',"'"+str(expected_sid).replace("'","''")+"'")
 
 
@@ -94,5 +95,5 @@ if __name__=='__main__':
     if not python.is_relative_to(payload.resolve()) or not python.is_file():
         raise ValueError('Prepared native Python must remain inside the owned payload')
     guard=ci_session_guard(a.expected_sid)
-    command="$ErrorActionPreference='Stop';"+guard+"$env:HERMES_PYTHON="+quote(windows(python))+";$env:PATH='D:\\repo\\hermes-build\\.cache\\desktop-inputs\\tools\\node-26.7.0-win32-x64;'+$env:PATH;$env:RUNNER_TEMP="+quote(a.work)+";New-Item -ItemType Directory -Path $env:RUNNER_TEMP -ErrorAction Stop | Out-Null; & 'D:\\repo\\hermes-build\\tests\\install\\windows-bundle-smoke.ps1' -SemantierAcceptanceHost -Arch x64 -Commit "+quote(a.commit)+" -Artifact "+quote(windows(candidate['artifact']))+" -ChannelRequest "+quote(windows(a.output/'channel-request.json'))+" -Work "+quote(a.work+'\\work')+" -Out "+quote(a.work+'\\out')+" -ExpectedSid "+quote(a.expected_sid)+(" -NativeGraph "+quote(windows(candidate['graph']))+" -NativeLayoutPlan "+quote(windows(candidate['plan']))+" -Python "+quote(windows(python)) if candidate['graph'] else '')+"; if($LASTEXITCODE -ne 0){exit 1};Assert-CISession"
+    command="$ErrorActionPreference='Stop';"+guard+"$env:HERMES_PYTHON="+quote(windows(python))+";$env:PATH='D:\\repo\\hermes-build\\.cache\\desktop-inputs\\tools\\node-26.7.0-win32-x64;'+$env:PATH;$env:RUNNER_TEMP="+quote(a.work)+";if(Test-Path -LiteralPath 'D:\\repo\\hermes-build.distribution.lock'){throw 'Owned Windows builder remains active'};New-Item -ItemType Directory -Path $env:RUNNER_TEMP -ErrorAction Stop | Out-Null;$ciContextBefore|ConvertTo-Json -Compress|Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'ci-context-before.json') -Encoding utf8; & 'D:\\repo\\hermes-build\\tests\\install\\windows-bundle-smoke.ps1' -SemantierAcceptanceHost -Arch x64 -Commit "+quote(a.commit)+" -Artifact "+quote(windows(candidate['artifact']))+" -ChannelRequest "+quote(windows(a.output/'channel-request.json'))+" -Work "+quote(a.work+'\\work')+" -Out "+quote(a.work+'\\out')+" -ExpectedSid "+quote(a.expected_sid)+(" -NativeGraph "+quote(windows(candidate['graph']))+" -NativeLayoutPlan "+quote(windows(candidate['plan']))+" -Python "+quote(windows(python)) if candidate['graph'] else '')+"; if($LASTEXITCODE -ne 0){exit 1};Assert-CISession|ConvertTo-Json -Compress|Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'ci-context-after.json') -Encoding utf8"
     subprocess.run(['/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe','-NoProfile','-NonInteractive','-EncodedCommand',base64.b64encode(command.encode('utf-16le')).decode()],check=True,env=native_environment())

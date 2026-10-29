@@ -65,8 +65,76 @@ try {
  . (Join-Path $PSScriptRoot 'windows-bundle-metadata.ps1')
  . (Join-Path $PSScriptRoot 'desktop-smoke-windows.ps1')
  Add-Type -AssemblyName System.IO.Compression.FileSystem
+ function Read-InstallStamp([string]$file) {
+  $zip=[IO.Compression.ZipFile]::OpenRead($file)
+  try{$entry=$zip.GetEntry('app/resources/install-stamp.json');if(-not $entry){throw 'Install stamp missing'};$reader=[IO.StreamReader]::new($entry.Open());try{return $reader.ReadToEnd()|ConvertFrom-Json}finally{$reader.Dispose()}}finally{$zip.Dispose()}
+ }
+ function Native-Artifact {
+  $spec=$r.target;$binding=$spec.native_graph;$g=$r.native_graph_value
+  $graphHold=Physical $binding.path
+  try{
+   if((Get-FileHash -LiteralPath $binding.path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $binding.sha256){throw 'Native graph file changed'}
+   $readback=Get-Content -LiteralPath $binding.path -Raw|ConvertFrom-Json
+   if(($readback|ConvertTo-Json -Depth 16 -Compress) -cne ($g|ConvertTo-Json -Depth 16 -Compress)){throw 'Native graph differs from validated request'}
+  }finally{$graphHold.handle.Dispose()}
+  . (Join-Path $PSScriptRoot '..\..\..\apps\desktop\scripts\native-package-digest.ps1')
+  $directory=Split-Path -Parent $spec.path;$prefix='releases/channel-builds/'+$spec.build_id+'/'
+  $rows=@($g.objects);$main=@($rows|Where-Object{$_.kind -ceq 'main-package'});$rootRow=@($rows|Where-Object{$_.key -ceq $g.root})
+  if($main.Count -ne 1 -or $rootRow.Count -ne 1 -or $rootRow[0].kind -cne 'main-bundle' -or $rows.Count -lt 3){throw 'Expected complete folded asset bundle'}
+  $related=@();$family=$null;$mainIdentity=$null
+  foreach($row in $rows){
+   $name=$row.key.Substring($prefix.Length)
+   if(-not $row.key.StartsWith($prefix,[StringComparison]::Ordinal) -or $name -match '[\\/]' -or $row.kind -cnotin @('main-bundle','main-package','asset-package')){throw 'Unsupported native object path/role'}
+   $file=Join-Path $directory $name;$hold=Physical $file
+   try{
+    if((Get-Item -LiteralPath $file).Length -ne $row.size -or $row.size -gt 480000000 -or (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant() -cne $row.sha256){throw 'Native object bytes mismatch'}
+    $sig=Get-AuthenticodeSignature -LiteralPath $file
+    if($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -cne 'CN=Semantier Technology, O=Semantier Technology'){throw 'Native object trust/publisher mismatch'}
+    if((Get-NativePackageDigest $file) -cne $row.nativeDigest){throw 'Native object SDK digest mismatch'}
+    if($row.kind -ceq 'main-bundle'){continue}
+    $id=Get-NativePackageIdentity $file
+    if($id.Name -cne 'Semantier.Agent.Acceptance' -or $id.Publisher -cne $row.publisher -or $id.Version -cne $row.version){throw 'Native SDK identity mismatch'}
+    if($family -and $family -cne $id.Family){throw 'Native package family discontinuity'};$family=$id.Family
+    $z=[IO.Compression.ZipFile]::OpenRead($file)
+    try{
+     $xml=Read-SmokeXmlEntry $z 'AppxManifest.xml'
+     if(@($xml.SelectNodes('/*[local-name()="Package"]/*[local-name()="Dependencies"]/*[local-name()!="TargetDeviceFamily"]')).Count){throw 'Unbound native dependency'}
+     if($row.kind -ceq 'asset-package'){
+      $resource=$xml.SelectSingleNode('/*[local-name()="Package"]/*[local-name()="Properties"]/*[local-name()="ResourcePackage"]')
+      $execution=$xml.SelectSingleNode('/*[local-name()="Package"]/*[local-name()="Properties"]/*[local-name()="AllowExecution"]')
+      if($id.Architecture -ne 11 -or $id.ResourceId -cne $row.resourceId -or !$resource -or $resource.InnerText -cne 'true' -or ($execution -and $execution.InnerText -cne 'true')){throw 'Native asset capability mismatch'}
+      $related+=@{name=$id.Name;publisher=$id.Publisher;version=$id.Version;arch='Neutral';resource_id=$id.ResourceId;full=$id.FullName;family=$id.Family}
+     }else{
+      if($id.Architecture -ne 9 -or $id.ResourceId){throw 'Native main architecture/resource mismatch'};$mainIdentity=$id
+     }
+    }finally{$z.Dispose()}
+   }finally{$hold.handle.Dispose()}
+  }
+  $bundle=[IO.Compression.ZipFile]::OpenRead($spec.path)
+  try{
+   if(@($bundle.Entries|Where-Object{$_.FullName -match '\.(msix|appx)$'}).Count){throw 'Expected external native bundle'}
+   $xml=Read-SmokeXmlEntry $bundle 'AppxMetadata/AppxBundleManifest.xml'
+   if(@($xml.SelectNodes('/*[local-name()="Bundle"]/*[local-name()!="Identity" and local-name()!="Packages"]')).Count){throw 'Unbound related native bundle'}
+   $entries=@($xml.SelectNodes('/*[local-name()="Bundle"]/*[local-name()="Packages"]/*[local-name()="Package"]'))
+   if($entries.Count -ne ($rows.Count - 1) -or @($rootRow[0].references).Count -ne $entries.Count){throw 'Incomplete native bundle references'}
+   $seen=@{}
+   foreach($entry in $entries){
+    $key=$prefix+$entry.GetAttribute('FileName');$match=@($rows|Where-Object{$_.key -ceq $key})
+    if($seen.ContainsKey($key) -or $match.Count -ne 1 -or $rootRow[0].references -cnotcontains $key -or $entry.GetAttribute('Version') -cne $spec.version){throw 'Native bundle reference mismatch'};$seen[$key]=$true
+    if($match[0].kind -ceq 'asset-package'){
+     if($entry.GetAttribute('Type') -cne 'resource' -or $entry.GetAttribute('ResourceId') -cne $match[0].resourceId -or @($entry.SelectNodes('*[local-name()="Resources"]/*/@*')).Count){throw 'Required native asset can be omitted'}
+    }elseif($entry.GetAttribute('Type') -cne 'application' -or $entry.GetAttribute('Architecture') -cne 'x64'){throw 'Native main bundle entry mismatch'}
+   }
+  }finally{$bundle.Dispose()}
+  $stamp=Read-InstallStamp (Join-Path $directory (($main[0].key -split '/')[-1]))
+  if($stamp.dirty -or $stamp.source -cne 'channel-build' -or $stamp.channelBuild.semantierScope -cne 'semantier-windows-x64/v1' -or $stamp.commit -cne $spec.commit -or $stamp.channelBuild.buildId -cne $spec.build_id){throw 'Native payload source/build mismatch'}
+  $expected=[pscustomobject]@{msixIdentity='Semantier.Agent.Acceptance';publisher='CN=Semantier Technology, O=Semantier Technology';applicationId=$stamp.channelBuild.identity.appNamePascal;windowsVersion=$spec.version}
+  $null=Read-BundleSmokeMetadata $spec.path 'x64' $expected $main[0]
+  return @{name=$mainIdentity.Name;publisher=$mainIdentity.Publisher;version=$mainIdentity.Version;arch='X64';commit=$stamp.commit;build_id=$stamp.channelBuild.buildId;full=$mainIdentity.FullName;family=$mainIdentity.Family;related=@($related|Sort-Object {$_['full']})}
+ }
  function Artifact($side){
   $spec=$r.$side
+  if($side -ceq 'target' -and $spec.PSObject.Properties['native_graph']){return Native-Artifact}
   $physical=Physical $spec.path
   try {
    $hash=(Get-FileHash -LiteralPath $spec.path -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -150,7 +218,7 @@ try {
     if($publisher -and $publisher -cne 'CN=Semantier Technology, O=Semantier Technology'){throw 'Related package parent publisher mismatch'}
    }
    $physical=Physical $child.InstallLocation
-   try{$result+=[ordered]@{name=$child.Name;publisher=$child.Publisher;version=$child.Version.ToString();arch=$child.Architecture.ToString();full=$child.PackageFullName;family=$child.PackageFamilyName;install_path=$physical.path;root_id=$physical.id}}finally{$physical.handle.Dispose()}
+   try{$result+=[ordered]@{name=$child.Name;publisher=$child.Publisher;version=$child.Version.ToString();arch=$child.Architecture.ToString();resource_id=$child.ResourceId;full=$child.PackageFullName;family=$child.PackageFamilyName;install_path=$physical.path;root_id=$physical.id}}finally{$physical.handle.Dispose()}
   }
   return ,@($result|Sort-Object {$_['full']})
  }
@@ -197,12 +265,19 @@ try {
   artifact {$result=Artifact $r.side}
   download {$result=VerifyDownload}
   register {
-   $sourceHold=Physical $r.baseline.path
+   $side=if($r.PSObject.Properties['purpose'] -and $r.purpose -ceq 'wd1-native-layout-qualification'){'target'}else{'baseline'}
+   if($side -ceq 'target' -and $sid -cne 'S-1-5-21-1928370875-4287869425-2092521300-1011'){throw 'WD1 local qualification is bound to SemantierBaseline'}
+   $source=$r.$side;$holds=@()
    try{
-    $expected=Artifact 'baseline';$before=Observe;if($before.package){throw 'Existing package conflict'}
-    Add-AppxPackage -Path $r.baseline.path -ErrorAction Stop
+    $holds+=Physical $source.path
+    if($side -ceq 'target'){
+     $holds+=Physical $source.native_graph.path
+     foreach($row in $r.native_graph_value.objects){if($row.key -cne $r.native_graph_value.root){$holds+=Physical (Join-Path (Split-Path -Parent $source.path) (($row.key -split '/')[-1]))}}
+    }
+    $expected=Artifact $side;$before=Observe;if($before.package -or @($before.related).Count){throw 'Existing package/related conflict'}
+    Add-AppxPackage -Path $source.path -ErrorAction Stop
     $result=Observe
-   }finally{$sourceHold.handle.Dispose()}
+   }finally{foreach($hold in $holds){$hold.handle.Dispose()}}
   }
   launch {
    $before=Observe;if(-not $before.package -or $before.process){throw 'Launch precondition failed'}
@@ -235,6 +310,25 @@ try {
    if(-not $result.process -or $result.package.version -cne $target.version){throw 'Successor did not automatically relaunch'}
    $oldPayload=@(Get-CimInstance Win32_Process|Where-Object{$_.ExecutablePath -and $_.ExecutablePath.StartsWith($before.package.install_path+'\',[StringComparison]::OrdinalIgnoreCase)})
    if($oldPayload.Count){throw 'Old payload processes remain; preserve update state'}
+  }
+  native-proof {
+   if(!$r.PSObject.Properties['purpose'] -or $r.purpose -cne 'wd1-native-layout-qualification' -or $sid -cne 'S-1-5-21-1928370875-4287869425-2092521300-1011'){throw 'WD1 local qualification context required'}
+   $state=Observe;$target=Native-Artifact
+   if(!$state.package -or $state.package.full -cne $target.full){throw 'Exact registered native package required'}
+   $attempt=Join-Path $root ('native-proof-'+[guid]::NewGuid().ToString('N'))
+   New-Item -ItemType Directory -Path $attempt -ErrorAction Stop|Out-Null
+   $node=$r.native_node;$hold=Physical $node.path
+   try{if((Get-FileHash -LiteralPath $node.path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $node.sha256){throw 'Native Node identity mismatch'}}finally{$hold.handle.Dispose()}
+   $layout=$r.target.native_graph.layout_plan;$hold=Physical $layout.path
+   try{if((Get-FileHash -LiteralPath $layout.path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $layout.sha256){throw 'Native layout identity mismatch'}}finally{$hold.handle.Dispose()}
+   $locations=Join-Path $attempt 'native-payload-locations.json'
+   & $node.path (Join-Path $PSScriptRoot 'native-payload-locations.mjs') --root $state.package.install_path --plan $layout.path --graph $r.target.native_graph.path --out $locations
+   if($LASTEXITCODE -ne 0){throw 'Installed native payload location/conservation failed'}
+   . (Join-Path $PSScriptRoot 'windows-bundle-plugin-smoke.ps1')
+   $pkg=@(Get-AppxPackage -Name 'Semantier.Agent.Acceptance'|Where-Object{$_.PackageFullName -ceq $state.package.full})
+   if($pkg.Count -ne 1){throw 'Native qualification package changed'}
+   Test-BundleNativePayload (Join-Path $state.package.install_path 'app\resources\agent-payload') $pkg[0] $target.commit $target.build_id $attempt
+   $result=@{scope='LOCAL_NATIVE_LAYOUT_RUNTIME_ONLY_NOT_CI_OR_MIGRATION';package=$state.package;related=$state.related;locationProof=(Get-Content -LiteralPath $locations -Raw|ConvertFrom-Json);runtimeProof=(Get-Content -LiteralPath (Join-Path $attempt 'native-payload-runtime.json') -Raw|ConvertFrom-Json);evidence=$attempt}
   }
   ready {
    $state=Observe;if(-not $state.process){throw 'Registered application not running'}

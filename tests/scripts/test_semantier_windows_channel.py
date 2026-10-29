@@ -141,7 +141,7 @@ def test_native_layout_rejects_modified_unpacked_payload(tmp_path):
     from scripts.releases.semantier_windows import prepare_native_asset_layout
     manifest=b'<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"><Identity Name="Semantier.Agent.Acceptance" Publisher="CN=Semantier Technology, O=Semantier Technology" ProcessorArchitecture="x64" Version="0.0.59.0"/><Applications><Application Executable="app/main.exe"/></Applications></Package>'
     files={'AppxManifest.xml':manifest,'app/main.exe':b'actual payload'}
-    blockmap='<BlockMap HashMethod="http://www.w3.org/2001/04/xmlenc#sha256">'+''.join('<File Name="'+name+'" Size="'+str(len(data))+'"><Block Hash="'+base64.b64encode(hashlib.sha256(data).digest()).decode()+'"/></File>' for name,data in files.items())+'</BlockMap>'
+    blockmap='<BlockMap xmlns="http://schemas.microsoft.com/appx/2010/blockmap" xmlns:b4="http://schemas.microsoft.com/appx/2021/blockmap" HashMethod="http://www.w3.org/2001/04/xmlenc#sha256">'+''.join('<File Name="'+name+'" Size="'+str(len(data))+'"><Block Hash="'+base64.b64encode(hashlib.sha256(data).digest()).decode()+'"/><b4:FileHash Hash="'+base64.b64encode(hashlib.sha256(data).digest()).decode()+'"/></File>' for name,data in files.items())+'</BlockMap>'
     package=tmp_path/'input.msix';directory=tmp_path/'unpacked';directory.mkdir()
     with zipfile.ZipFile(package,'w') as z:
         for name,data in files.items():

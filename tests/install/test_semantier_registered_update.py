@@ -254,3 +254,40 @@ def test_graph_prediction_binds_exact_static_members_then_records_local_incarnat
     p.state['related'][0]['root_id']='replaced:file'
     with pytest.raises(ValueError,match='Related'):t.operation('remove',{})
     assert p.calls==['register']
+
+
+class NativeQualificationPlatform(Platform):
+    def __init__(self):
+        super().__init__();self.request={'purpose':d.NATIVE_QUALIFICATION}
+    def call(self,action,**kwargs):
+        self.calls.append(action)
+        return {'artifact':{'full':'native'},'native-proof':{'scope':'local-only'},'ready':{'gateway':None}}[action]
+
+
+def test_native_qualification_does_not_create_a_migration_baseline(tmp_path):
+    p=NativeQualificationPlatform();t=d.Transaction(tmp_path/'j',p)
+    d.run_native_qualification(t,p,p.observe())
+    rows=t.events()
+    assert rows[0]['owner']['purpose']==d.NATIVE_QUALIFICATION
+    assert not any(row['kind']=='baseline_ready' for row in rows)
+    with pytest.raises(ValueError,match='Baseline readiness'):d.run_upgrade(t,p)
+    assert 'update' not in p.calls
+
+
+def test_native_qualification_refuses_to_adopt_a_regular_transaction(tmp_path):
+    p=NativeQualificationPlatform();t=d.Transaction(tmp_path/'j',p);t.initialize(p.observe())
+    with pytest.raises(ValueError,match='purpose'):d.run_native_qualification(t,p,p.observe())
+    assert not p.calls
+
+
+def test_native_graph_binding_uses_original_bom_and_crlf_bytes(tmp_path):
+    import base64,hashlib,json
+    key='releases/channel-builds/'+'a'*32+'/main.msix'
+    graph={'schema':1,'transport':'windows-package-uri','root':key,'payloadInventorySha256':'b'*64,'objects':[
+        {'key':key,'kind':'main-package','identity':'Semantier.Agent.Acceptance','publisher':'CN=Semantier Technology, O=Semantier Technology','version':'0.0.59.0','arch':'x64','size':1,'sha256':'c'*64,'nativeDigest':base64.b64encode(b'd'*32).decode(),'references':[]}]}
+    raw=('\ufeff'+json.dumps(graph,indent=2).replace('\n','\r\n')).encode('utf-8')
+    file=tmp_path/'native-graph.json';file.write_bytes(raw)
+    request={'target':{'path':str(tmp_path/'main.msix'),'sha256':'c'*64,'build_id':'a'*32,'version':'0.0.59.0','native_graph':{'path':str(file),'sha256':hashlib.sha256(raw).hexdigest()}}}
+    assert d.load_native_target(request)==graph
+    file.write_bytes(raw+b'changed')
+    with pytest.raises(ValueError,match='source digest'):d.load_native_target(request)

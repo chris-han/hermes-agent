@@ -156,6 +156,7 @@ try {
         Run-Node @((Join-Path $Assets 'desktop-smoke.ts'), '--exe', $exe, '--root', $root, '--origin', 'bundled',
             '--home', $HomeDir, '--user-data', $UserData, '--out', $Out, '--phase', 'installed', '--expect-commit', $Commit)
     } finally { Pop-Location }
+    if ($NativeGraph) { Test-BundleNativePayload $root $pkg $Commit $stamp.channelBuild.buildId $Out }
     # Plugins whose Python dependencies PM builds must work inside the package (#135236).
     Test-BundlePluginInstall $root $Out -IsolatedHome:$SemantierAcceptanceHost
     if ($NativeGraph -and (Get-FileHash -LiteralPath $NativeGraph -Algorithm SHA256).Hash.ToLowerInvariant() -cne $graphHash) { throw 'Native graph changed during qualification' }

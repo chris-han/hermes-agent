@@ -21,6 +21,31 @@ namespace Semantier {
  interface IAppxDigestProvider {
   void GetDigest([MarshalAs(UnmanagedType.LPWStr)] out string digest);
  }
+ [ComImport, Guid("b5c49650-99bc-481c-9a34-3d53a4106708"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+ interface IAppxPackageReader {
+  void GetBlockMap(out IntPtr value);
+  void GetFootprintFile(uint type,out IntPtr value);
+  void GetPayloadFile([MarshalAs(UnmanagedType.LPWStr)]string name,out IntPtr value);
+  void GetPayloadFiles(out IntPtr value);
+  void GetManifest(out IAppxManifestReader value);
+ }
+ [ComImport, Guid("4e1bd148-55a0-4480-a3d1-15544710637c"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+ interface IAppxManifestReader { void GetPackageId(out IAppxManifestPackageId value); }
+ [ComImport, Guid("283ce2d7-7153-4a91-9649-7a0f7240945f"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+ interface IAppxManifestPackageId {
+  void GetName([MarshalAs(UnmanagedType.LPWStr)]out string value);
+  void GetArchitecture(out uint value);
+  void GetPublisher([MarshalAs(UnmanagedType.LPWStr)]out string value);
+  void GetVersion(out ulong value);
+  void GetResourceId([MarshalAs(UnmanagedType.LPWStr)]out string value);
+  void ComparePublisher([MarshalAs(UnmanagedType.LPWStr)]string value,[MarshalAs(UnmanagedType.Bool)]out bool same);
+  void GetPackageFullName([MarshalAs(UnmanagedType.LPWStr)]out string value);
+  void GetPackageFamilyName([MarshalAs(UnmanagedType.LPWStr)]out string value);
+ }
+ public class NativeIdentity {
+  public string Name,Publisher,Version,ResourceId,FullName,Family;
+  public uint Architecture;
+ }
  [ComImport, Guid("4c522071-01da-5f85-9d52-29952578a301"), InterfaceType(ComInterfaceType.InterfaceIsIInspectable)]
  interface IUriDigestMap {
   void Lookup(IntPtr key, [MarshalAs(UnmanagedType.HString)] out string value);
@@ -73,6 +98,29 @@ namespace Semantier {
   }
   [DllImport("shlwapi.dll", CharSet=CharSet.Unicode, PreserveSig=false)]
   static extern void SHCreateStreamOnFileEx(string file, uint mode, uint attributes, bool create, IntPtr template, out IStream stream);
+  public static NativeIdentity Identity(string file) {
+   IStream stream=null;object factory=null,reader=null;
+   IAppxManifestReader manifest=null;IAppxManifestPackageId id=null;
+   try {
+    SHCreateStreamOnFileEx(file,0x20,0,false,IntPtr.Zero,out stream);
+    factory=Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("5842a140-ff9f-4166-8f5c-62f5b7b0c781")));
+    ((IAppxFactory)factory).CreatePackageReader(stream,out reader);
+    ((IAppxPackageReader)reader).GetManifest(out manifest);manifest.GetPackageId(out id);
+    var result=new NativeIdentity();ulong version;
+    id.GetName(out result.Name);id.GetPublisher(out result.Publisher);id.GetArchitecture(out result.Architecture);
+    id.GetResourceId(out result.ResourceId);id.GetPackageFullName(out result.FullName);id.GetPackageFamilyName(out result.Family);
+    id.GetVersion(out version);
+    result.Version=String.Format(System.Globalization.CultureInfo.InvariantCulture,"{0}.{1}.{2}.{3}",
+      (version>>48)&65535,(version>>32)&65535,(version>>16)&65535,version&65535);
+    return result;
+   } finally {
+    if(id!=null)Marshal.ReleaseComObject(id);
+    if(manifest!=null)Marshal.ReleaseComObject(manifest);
+    if(reader!=null)Marshal.ReleaseComObject(reader);
+    if(factory!=null)Marshal.ReleaseComObject(factory);
+    if(stream!=null)Marshal.ReleaseComObject(stream);
+   }
+  }
   public static string Read(string file) {
    IStream stream=null; object factory=null, reader=null;
    try {
@@ -110,4 +158,9 @@ function Get-NativePackageDigest([string]$Package) {
 function Set-NativeExpectedDigests($Options, [string[]]$Uris, [string[]]$Digests) {
   Initialize-NativePackageInterop
   return [Semantier.NativeDigest]::SetExpected($Options.ExpectedDigests,$Uris,$Digests)
+}
+
+function Get-NativePackageIdentity([string]$Package) {
+  Initialize-NativePackageInterop
+  return [Semantier.NativeDigest]::Identity((Resolve-Path -LiteralPath $Package).Path)
 }

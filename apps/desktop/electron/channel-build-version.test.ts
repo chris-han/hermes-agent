@@ -509,7 +509,7 @@ print(out.read_text(encoding='utf-8'))
 
 
 test('folded native payload proof binds every installed file to the signed graph inventory', async () => {
-  const { verifyNativePayload } = await import('../../../tests/install/e2e-assets/bundle-smoke-metadata.mjs')
+  const { verifyNativePayload } = await import('../../../tests/install/e2e-assets/native-payload-locations.mjs')
   const { createHash } = await import('node:crypto')
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'native-folding-'))
   const file = path.join(root, 'app/resources/agent-payload/中文.pyd')

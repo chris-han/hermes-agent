@@ -16,6 +16,9 @@ import threading
 from datetime import UTC, datetime
 
 
+NATIVE_QUALIFICATION='wd1-native-layout-qualification'
+
+
 class Interrupted(RuntimeError):
     pass
 
@@ -29,10 +32,10 @@ def safe_file(path, mode):
             raise ValueError('Journal/lock link refused')
     except FileNotFoundError:
         before = None
-    flags = os.O_RDWR | getattr(os, 'O_NOFOLLOW', 0)
+    flags = (os.O_RDONLY if mode == 'r' else os.O_RDWR) | getattr(os, 'O_NOFOLLOW', 0)
     if mode == 'a': flags |= os.O_APPEND | os.O_CREAT
     descriptor = os.open(path, flags, 0o600)
-    stream = os.fdopen(descriptor, 'a+' if mode == 'a' else 'r+', encoding='utf-8')
+    stream = os.fdopen(descriptor, 'a+' if mode == 'a' else 'r', encoding='utf-8', newline='')
     try:
         opened = os.fstat(stream.fileno()); current = path.lstat()
         if (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino) or opened.st_nlink != 1 or getattr(current, 'st_file_attributes', 0) & 0x400 or (before and (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino)):
@@ -114,7 +117,7 @@ class Transaction:
                 pending = None
             elif row.get('kind') == 'uncertain':
                 if not pending or row.get('intent_at') != pending['at']: raise ValueError('Unlinked uncertainty')
-            elif row.get('kind') not in ('baseline_ready','successor_ready','conservation_before','conservation_failed','acceptance','cleanup'): raise ValueError('Unknown journal record')
+            elif row.get('kind') not in ('baseline_ready','successor_ready','conservation_before','conservation_failed','acceptance','cleanup','native_qualification','native_qualification_ready'): raise ValueError('Unknown journal record')
         return rows
 
     def record(self, kind, **facts):
@@ -232,7 +235,7 @@ class Windows:
         script = Path(__file__).parent/'e2e-assets/semantier-registered-platform.ps1'
         result = subprocess.run([self.powershell,'-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',str(script)],
             input=json.dumps(payload), text=True, capture_output=True, check=False,
-            timeout=1800 if action == 'update' else 60 if action == 'download' else 300)
+            timeout=1800 if action in ('update','native-proof') else 60 if action == 'download' else 300)
         if result.returncode: raise RuntimeError(result.stderr.strip())
         return json.loads(result.stdout.lstrip('\ufeff'))
     def observe(self):
@@ -247,7 +250,7 @@ class Windows:
         if any(now[k] != owner[k] for k in ('sid','session','session_sid','root_id')): raise ValueError('OS owner or physical root changed')
     def recovery_check(self, intent):
         if intent['action'] in ('register','update'):
-            side = 'baseline' if intent['action']=='register' else 'target'
+            side = 'baseline' if intent['action']=='register' and self.request.get('purpose')!=NATIVE_QUALIFICATION else 'target'
             if intent['args'] != self.call('artifact',side=side): raise ValueError('Intent differs from verified artifact')
 
     def check(self, action, args, before):
@@ -287,6 +290,27 @@ class Windows:
             and after['package']['family'] == before['package']['family'])
 
 
+def load_native_target(request):
+    # The staging tree preserves these existing owners' paths; no alternate validator.
+    root=Path(__file__).resolve().parents[2]
+    if str(root) not in sys.path:sys.path.insert(0,str(root))
+    from scripts.releases.semantier_windows import validate_native_graph
+    target=request['target'];binding=target['native_graph'];file=Path(binding['path'])
+    if file.name!='native-graph.json' or file.parent!=Path(target['path']).parent:
+        raise ValueError('Native graph must remain beside the pinned root')
+    with safe_file(file,'r') as stream:
+        raw=stream.read()
+    if len(raw)>4*1024*1024 or hashlib.sha256(raw.encode('utf-8')).hexdigest()!=binding['sha256']:
+        raise ValueError('Native graph source digest mismatch')
+    graph=json.loads(raw.lstrip('\ufeff'))
+    validate_native_graph(graph,build_id=target['build_id'],identity='Semantier.Agent.Acceptance',
+        publisher='CN=Semantier Technology, O=Semantier Technology',version=target['version'],arch='x64')
+    row=next(row for row in graph['objects'] if row['key']==graph['root'])
+    if row['sha256']!=target['sha256'] or row['key'].rsplit('/',1)[1]!=Path(target['path']).name:
+        raise ValueError('Native graph root differs from pinned artifact')
+    return graph
+
+
 def run_upgrade(tx, platform):
     tx.reconcile()
     if not any(row['kind']=='baseline_ready' for row in tx.events()): raise ValueError('Baseline readiness evidence required before publication/update')
@@ -309,6 +333,25 @@ def run_upgrade(tx, platform):
               native_acceptance='requires complete original matrices', facts=after)
 
 
+def run_native_qualification(tx, platform, owner):
+    if platform.request.get('purpose')!=NATIVE_QUALIFICATION:raise ValueError('Native qualification purpose required')
+    if not tx.events():
+        if owner['package'] is not None or owner['process'] is not None or Transaction.related(owner):
+            raise ValueError('Existing package/process/related set: refuse native qualification')
+        tx.initialize({**owner,'purpose':NATIVE_QUALIFICATION})
+    if tx.events()[0]['owner'].get('purpose')!=NATIVE_QUALIFICATION:raise ValueError('Existing transaction has another purpose')
+    tx.reconcile()
+    if platform.observe()['package'] is None:tx.operation('register',platform.call('artifact',side='target'))
+    tx.assert_owned(platform.observe())
+    proof=platform.call('native-proof')
+    tx.assert_owned(platform.observe())
+    tx.record('native_qualification',facts=proof,observed=platform.observe(),scope='local layout/runtime only; not CI or migration')
+    if platform.observe()['process'] is None:tx.operation('launch',{})
+    ready=platform.call('ready')
+    tx.record('native_qualification_ready',facts=ready,observed=platform.observe(),scope='local layout/runtime only; not CI or migration')
+    print(json.dumps({'scope':'LOCAL_NATIVE_LAYOUT_QUALIFICATION_NOT_CI_OR_MIGRATION','proof':proof,'ready':ready}))
+
+
 def run_baseline(tx, platform, owner):
     if not tx.events():
         if owner['package'] is not None or owner['process'] is not None or Transaction.related(owner): raise ValueError('Existing package/process/related set: refuse new transaction')
@@ -327,7 +370,7 @@ def run_cleanup(tx, platform, request):
     rows=tx.events(); owned=[r['observed']['package'] for r in rows if r['kind']=='outcome' and r['action'] in ('register','update') and r['status'] in ('performed','performed_partial') and r['observed']['package'] is not None]
     request['owned_packages']=owned
     request['owned_processes']=[r['observed']['process'] for r in rows if r['kind']=='outcome' and r['status']=='performed' and r['observed']['process'] is not None]
-    request['owned_gateways']=[r['facts']['gateway'] for r in rows if r['kind'] in ('baseline_ready','successor_ready') and r['facts'].get('gateway') is not None]
+    request['owned_gateways']=[r['facts']['gateway'] for r in rows if r['kind'] in ('baseline_ready','successor_ready','native_qualification_ready') and r['facts'].get('gateway') is not None]
     current=platform.observe()
     if current['package'] is None and Transaction.related(current): raise ValueError('Related packages remain without owned main; preserve for reconciliation')
     if current['package'] is not None: tx.operation('remove',{})
@@ -336,21 +379,26 @@ def run_cleanup(tx, platform, request):
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('mode',choices=['preflight','baseline','upgrade','reconcile','cleanup'])
+    p.add_argument('mode',choices=['preflight','baseline','native-qualify','upgrade','reconcile','cleanup'])
     p.add_argument('--request',type=Path,required=True)
     a=p.parse_args()
     if sys.platform != 'win32': raise SystemExit('Use native Windows Python in the authorized disposable session')
     request=json.loads(a.request.read_text(encoding='utf-8-sig')); platform=Windows(request)
     owner=platform.observe()  # OS refusal precedes journal/root writes.
+    if request.get('target',{}).get('native_graph') is not None:request['native_graph_value']=load_native_target(request)
     if a.mode=='preflight':
-        baseline=platform.call('artifact',side='baseline')
         if owner['package'] is not None or Transaction.related(owner): raise ValueError('Conflicting baseline registration or related package set')
-        print(json.dumps({'scope':'READ_ONLY','observed':owner,'baseline':baseline})); return
+        native=request.get('purpose')==NATIVE_QUALIFICATION
+        side='target' if native else 'baseline'
+        artifact=platform.call('artifact',side=side)
+        print(json.dumps({'scope':'READ_ONLY_NATIVE_LAYOUT' if native else 'READ_ONLY','observed':owner,side:artifact})); return
+    if a.mode=='native-qualify' and 'native_graph_value' not in request:raise ValueError('Native graph qualification inputs required')
     root=Path(request['root']); journal=root/'registered-update.jsonl'
     with held_windows_root(root, owner['root_id']), exclusive(root/'registered-update.lock'):
         tx=Transaction(journal,platform)
         handlers = {
             'baseline': lambda: run_baseline(tx, platform, owner),
+            'native-qualify': lambda: run_native_qualification(tx,platform,owner),
             'reconcile': lambda: print(tx.reconcile()),
             'upgrade': lambda: run_upgrade(tx, platform),
             'cleanup': lambda: run_cleanup(tx, platform, request),
