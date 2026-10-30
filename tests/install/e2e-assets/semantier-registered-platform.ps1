@@ -9,8 +9,10 @@ $session=(Get-Process -Id $PID).SessionId
 . (Join-Path $PSScriptRoot 'native-package-deployment.ps1')
 $localWD1=$false
 if($r.PSObject.Properties['purpose']){$localWD1=Test-WD1LocalActor $sid $r.authorized_sid $r.purpose}
-if ($sid -cne $r.authorized_sid -or (($sid -ceq 'S-1-5-21-1928370875-4287869425-2092521300-1003' -or $who.Name.Split('\')[-1] -ieq 'ChrisH') -and -not $localWD1) -or $session -le 0 -or -not [Environment]::UserInteractive) { throw 'Authorized interactive user required; ChrisH limited to explicit local WD1 purpose' }
+$localRetained=($r.PSObject.Properties['purpose'] -and $r.purpose -ceq 'caddy-chrish-existing-baseline-v2' -and $sid -ceq 'S-1-5-21-1928370875-4287869425-2092521300-1003')
+if ($sid -cne $r.authorized_sid -or (($sid -ceq 'S-1-5-21-1928370875-4287869425-2092521300-1003' -or $who.Name.Split('\')[-1] -ieq 'ChrisH') -and -not ($localWD1 -or $localRetained)) -or $session -le 0 -or -not [Environment]::UserInteractive) { throw 'Authorized interactive user required' }
 if($localWD1 -and -not (Test-WD1LocalAction $r.action)){throw 'WD1 local purpose cannot authorize production update or unrelated mutation'}
+if($localRetained -and $r.action -cnotin @('observe','artifact','verify-existing-baseline','ready')){throw 'Retained-baseline context is read-only until update checks are connected'}
 if ($r.expected_language -cnotin @('en','zh')) { throw 'Expected language must be en or zh' }
 $cpus=@(Get-CimInstance Win32_Processor)
 if(-not $cpus.Count -or @($cpus|Where-Object{$_.Architecture -ne 9}).Count){throw 'Actual native x64 required'}
@@ -434,6 +436,48 @@ try {
  switch($r.action){
   observe {$result=Observe}
   artifact {$result=Artifact $r.side}
+  verify-existing-baseline {
+   if(-not $localRetained){throw 'Retained-baseline context required'}
+   $spec=$r.baseline;$binding=$spec.native_graph;$layout=$binding.layout_plan
+   if($binding.sha256 -cne 'e7f1af5b15ece111e55c15073a56c1675f26e89aa6816606fa707132c9243371' -or
+      $layout.sha256 -cne '34cc7dddd3156b3f72e6bcb7d3a9723f1345ef23c8bab50e711343684bd718e3' -or
+      $spec.commit -cne '165cd2fbb5e48a4834a5b731384a19cf5b864383' -or $spec.version -cne '0.0.62.0' -or
+      $spec.build_id -cne '301a0e02b1bb4a3babf9c209e0fdaacc' -or
+      $r.native_node.sha256 -cne 'e921fe5307e29bf6fd00000dd594356affd3a7b044e52720c7f10decbdc305b9') { throw 'Retained baseline input binding mismatch' }
+   $holds=@()
+   try {
+    foreach($path in @($binding.path,$layout.path,$r.baseline_channel_request,$r.native_node.path)) { $holds+=Physical $path }
+    foreach($row in $r.native_baseline_graph_value.objects){
+     $name=($row.key -split '/')[-1]
+     if($name -cnotmatch '^SemantierAgent(?:-main|-runtime[0-9]{4})?\.msix(?:bundle)?$'){throw 'Unexpected retained graph member'}
+     $holds+=Physical (Join-Path (Split-Path -Parent $spec.path) $name)
+    }
+    if((Get-FileHash -LiteralPath $layout.path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $layout.sha256 -or
+       (Get-FileHash -LiteralPath $r.baseline_channel_request -Algorithm SHA256).Hash.ToLowerInvariant() -cne '51629346e474b09ee9c674b978efb38ce9f2fa40da1e2189300d71dbfdaff1ba' -or
+       (Get-FileHash -LiteralPath $r.native_node.path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $r.native_node.sha256){throw 'Retained baseline input bytes changed'}
+    $expectedArtifact=Native-Artifact 'baseline'
+    $before=Observe
+    if(!$before.package -or $before.package.full -cne $expectedArtifact.full){throw 'Retained baseline registration mismatch'}
+    $packages=@(Get-AppxPackage -Name 'Semantier.Agent.Acceptance')+@(Get-AppxPackage -PackageTypeFilter Resource -Name 'Semantier.Agent.Acceptance')
+    foreach($package in $packages){$holds+=Physical (Registered-Root $package)}
+    $Node=$r.native_node.path;$Metadata=Join-Path $PSScriptRoot 'bundle-smoke-metadata.mjs'
+    function Run-Node([string[]]$Argv) {
+     $key=[Environment]::GetEnvironmentVariable('SEMANTIER_CLIENT_RECEIPT_KEY','Process')
+     try{[Environment]::SetEnvironmentVariable('SEMANTIER_CLIENT_RECEIPT_KEY',$null,'Process');& $Node @Argv;if($LASTEXITCODE -ne 0){throw 'Installed verification Node failed'}}
+     finally{[Environment]::SetEnvironmentVariable('SEMANTIER_CLIENT_RECEIPT_KEY',$key,'Process')}
+    }
+    . (Join-Path $PSScriptRoot 'windows-bundle-installed.ps1')
+    $identityArgs=@('--commit',$spec.commit,'--channel-request',$r.baseline_channel_request)
+    $expected=(Run-Node (@($Metadata,'identity')+$identityArgs))|ConvertFrom-Json
+    $graph=$r.native_baseline_graph_value;$main=@($graph.objects|Where-Object{$_.kind -ceq 'main-package'})
+    if($main.Count -ne 1){throw 'Retained main package ambiguous'}
+    $inputMetadata=Read-BundleSmokeMetadata $spec.path 'x64' $expected $main[0]
+    $verified=Get-BundleInstalledVerification -Arch 'x64' -Expected $expected -InputMetadata $inputMetadata -ChannelRequest $r.baseline_channel_request -IdentityArgs $identityArgs -Metadata $Metadata -Graph $graph -NativeLayoutPlan $layout.path -NativeGraph $binding.path -GraphHash $binding.sha256 -LayoutHash $layout.sha256 -ExpectedSid $sid
+    $after=Observe
+    if(($before|ConvertTo-Json -Depth 16 -Compress) -cne ($after|ConvertTo-Json -Depth 16 -Compress)){throw 'Retained baseline changed during verification'}
+    $result=@{scope='EXACT_INSTALLED_BASELINE';observed=$after;registration=$verified.registration;folding=$verified.folding}
+   } finally { foreach($hold in $holds){$hold.handle.Dispose()} }
+  }
   download {$result=VerifyDownload}
   native-reconcile {$result=Read-NativeProductionHandoff -Reconcile}
   native-reconciled {
@@ -609,7 +653,9 @@ try {
    $actualNames=@(Get-ChildItem -LiteralPath $profiles -Directory|Where-Object{-not $_.Name.StartsWith('.')}|ForEach-Object{$_.Name}|Sort-Object)
    $expectedNames=@($r.expected_profiles|Sort-Object)
    if(($actualNames -join '|') -cne ($expectedNames -join '|') -or $actualNames -contains 'tender-runtime-expert'){throw 'Desktop profile namespace mismatch'}
-   $result=@{healthy=$true;languageControl=$r.expected_language;activeProfile='semantier-local';profiles=$actualNames;gateway=(GatewayIdentity $state.package);themeRendering='retained exact-package evidence only; current rendering NOT_RUN'}
+   $gateway=GatewayIdentity $state.package
+   if($localRetained -and !$gateway){throw 'Retained profile gateway ownership unavailable'}
+   $result=@{healthy=$true;languageControl=$r.expected_language;activeProfile='semantier-local';profiles=$actualNames;gateway=$gateway;themeRendering='retained exact-package evidence only; current rendering NOT_RUN'}
   }
   conservation {
    $result=@{}

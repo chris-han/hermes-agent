@@ -4,6 +4,19 @@ import pytest
 spec=importlib.util.spec_from_file_location('driver',Path(__file__).with_name('semantier_registered_update.py'))
 d=importlib.util.module_from_spec(spec);spec.loader.exec_module(d)
 
+def test_verifier_selects_driver_python_only_for_read_only_child(monkeypatch):
+    calls=[]
+    def run(*args, **kwargs):
+        calls.append(kwargs)
+        return type('Result', (), {'returncode': 0, 'stdout': '{}', 'stderr': ''})()
+    monkeypatch.setattr(d.subprocess, 'run', run)
+    platform=d.Windows.__new__(d.Windows)
+    platform.request={};platform.powershell='powershell'
+    platform.call('verify-existing-baseline')
+    platform.call('observe')
+    assert calls[0]['env']['HERMES_PYTHON'] == d.sys.executable
+    assert calls[1]['env'] is None
+
 class Platform:
     def __init__(self):
         self.state={'sid':'test','session':2,'root_id':'root','package':None,'process':None};self.calls=[];self.fail=None
@@ -120,6 +133,39 @@ def test_conservation_failure_and_success_through_upgrade(tmp_path):
         assert any(r['kind']=='acceptance' for r in t.events()) is (not changed)
         assert 'remove' not in p.calls
 
+
+def test_retained_upgrade_compares_database_semantics_not_sqlite_file_bytes(tmp_path):
+    class RetainedUpgrade(UpgradePlatform):
+        def __init__(self):
+            super().__init__()
+            self.request={'purpose':d.RETAINED_BASELINE,'semantic_databases':[{'path':'userdata/state.db'}]}
+        def call(self,action,**kwargs):
+            if action=='verify-existing-baseline': return {'scope':'EXACT_INSTALLED_BASELINE','observed':self.observe()}
+            if action=='conservation': return {'chats:userdata/state.db':self.state['package']['version'], 'theme:userdata/theme.json':'same'}
+            return super().call(action,**kwargs)
+        def capture_semantics(self): return {'scope':'fixture database backup'}
+        def verify_semantics(self,before): return {'scope':'fixture semantic continuity'}
+    p=RetainedUpgrade();t=d.Transaction(tmp_path/'j',p);owner=p.observe()
+    t.initialize({**owner,'purpose':d.RETAINED_BASELINE})
+    t.record('baseline_adopted',observed=owner,verification={'scope':'fixture'})
+    t.record('baseline_ready',facts={'healthy':True},observed=owner)
+    d.run_upgrade(t,p)
+    assert any(row['kind']=='semantic_preservation' for row in t.events())
+    assert any(row['kind']=='acceptance' for row in t.events())
+
+
+def test_retained_upgrade_refuses_when_consistent_backup_is_unavailable(tmp_path):
+    class MissingBackup(UpgradePlatform):
+        def __init__(self):
+            super().__init__();self.request={'purpose':d.RETAINED_BASELINE}
+        def capture_semantics(self):return None
+    p=MissingBackup();t=d.Transaction(tmp_path/'j',p);owner=p.observe()
+    t.initialize({**owner,'purpose':d.RETAINED_BASELINE})
+    t.record('baseline_adopted',observed=owner,verification={'scope':'fixture'})
+    t.record('baseline_ready',facts={'healthy':True},observed=owner)
+    with pytest.raises(ValueError,match='consistent semantic backups'):d.run_upgrade(t,p)
+    assert 'update' not in p.calls and t.pending() is None
+
 def test_unlinked_outcome_and_empty_package_intent_refused(tx):
     t,p=tx;seed(t,p);t.record('outcome',intent_at='missing',action='register',status='performed',observed=p.observe())
     with pytest.raises(ValueError):t.reconcile()
@@ -165,6 +211,61 @@ def test_settled_process_replacement_cannot_be_cleaned(tx):
     p.state['process']={'pid':1,'birth':'reused'}
     with pytest.raises(ValueError,match='replaced'):t.operation('remove',{})
     assert 'remove' not in p.calls
+
+
+def test_user_retained_trial_never_removes_registration(tmp_path):
+    p=Platform();p.state['package']={'full':'user-retained'}
+    t=d.Transaction(tmp_path/'journal',p)
+    t.initialize({**p.observe(),'purpose':'caddy-chrish-existing-baseline-v2'})
+    with pytest.raises(ValueError,match='retained'):
+        t.operation('remove',{})
+    with pytest.raises(ValueError,match='retained'):
+        d.run_cleanup(t,p,{'purpose':'caddy-chrish-existing-baseline-v2'})
+    assert p.state['package']=={'full':'user-retained'}
+    intent=t.record('intent',action='update',args={'full':'successor'},before=p.observe())
+    p.state['package']={'full':'successor'}
+    t.record('outcome',intent_at=intent['at'],action='update',status='performed',observed=p.observe())
+    with pytest.raises(ValueError,match='retained'):
+        d.run_cleanup(t,p,{})
+    assert p.state['package']=={'full':'successor'}
+    assert p.calls==[]
+
+
+def test_existing_baseline_adoption_checks_actual_observation_before_recording(tmp_path):
+    import copy
+    class AdoptPlatform(Platform):
+        def __init__(self):
+            super().__init__()
+            self.request={'purpose':d.RETAINED_BASELINE}
+            self.state.update(sid=d.RETAINED_SID,session_sid=d.RETAINED_SID,
+                              package={'full':'A62','version':'0.0.62.0'},process={'pid':11,'birth':'a'},related=[])
+            self.calls=[];self.bad=False
+        def call(self,action,**kwargs):
+            self.calls.append(action)
+            if action=='artifact': return {'full':'A62','version':'0.0.62.0','related':[]}
+            if action=='verify-existing-baseline':
+                state=copy.deepcopy(self.state)
+                if self.bad: state['package']['version']='wrong'
+                return {'scope':'EXACT_INSTALLED_BASELINE','observed':state}
+            if action=='ready': return {'healthy':True,'gateway':{'pid':12,'birth':'a'}}
+            raise AssertionError(action)
+    p=AdoptPlatform();t=d.Transaction(tmp_path/'journal',p);p.bad=True
+    wrong_actor=p.observe();wrong_actor['sid']='S-1-5-21-1-2-3-4'
+    with pytest.raises(ValueError,match='actor'):d.run_adopt_baseline(t,p,wrong_actor)
+    assert p.calls==[] and not t.events()
+    with pytest.raises(ValueError):d.run_adopt_baseline(t,p,p.observe())
+    assert not t.events()
+    p.bad=False;p.calls=[];d.run_adopt_baseline(t,p,p.observe())
+    assert p.calls==['artifact','verify-existing-baseline','ready']
+    assert [r['kind'] for r in t.events()]==['owner','baseline_adopted','baseline_ready']
+    t.assert_owned(p.observe(),require_process=True)
+    p.bad=True
+    with pytest.raises(ValueError,match='verification'):
+        t.operation('update',{'full':'successor','version':'0.0.63.0'})
+    assert t.pending() is None
+    assert 'update' not in p.calls
+    with pytest.raises(ValueError,match='retained'):t.operation('remove',{})
+    assert p.state['package']['full']=='A62'
 
 
 @pytest.mark.parametrize('session_sid',[None,'different-signed-in-user'])

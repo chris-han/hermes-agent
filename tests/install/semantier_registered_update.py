@@ -17,6 +17,8 @@ from datetime import UTC, datetime
 
 
 NATIVE_QUALIFICATION='wd1-native-layout-qualification'
+RETAINED_BASELINE='caddy-chrish-existing-baseline-v2'
+RETAINED_SID='S-1-5-21-1928370875-4287869425-2092521300-1003'
 
 
 class Interrupted(RuntimeError):
@@ -117,7 +119,7 @@ class Transaction:
                 pending = None
             elif row.get('kind') == 'uncertain':
                 if not pending or row.get('intent_at') != pending['at']: raise ValueError('Unlinked uncertainty')
-            elif row.get('kind') not in ('baseline_ready','successor_ready','conservation_before','conservation_failed','acceptance','cleanup','native_qualification','native_qualification_ready','semantic_before','semantic_preservation'): raise ValueError('Unknown journal record')
+            elif row.get('kind') not in ('baseline_adopted','baseline_ready','successor_ready','conservation_before','conservation_failed','acceptance','cleanup','native_qualification','native_qualification_ready','semantic_before','semantic_preservation'): raise ValueError('Unknown journal record')
         return rows
 
     def record(self, kind, **facts):
@@ -174,20 +176,28 @@ class Transaction:
 
     def assert_owned(self, state, require_process=False):
         rows = self.events()
-        packages = [row['observed']['package'] for row in rows if row['kind']=='outcome' and row['action'] in ('register','update') and row['status'] in ('performed','performed_partial')]
+        retained = rows[0]['owner'].get('purpose') == RETAINED_BASELINE
+        adopted = [row for row in rows if retained and row['kind']=='baseline_adopted']
+        packages = [row['observed']['package'] for row in rows if row['kind']=='outcome' and row['action'] in ('register','update') and row['status'] in ('performed','performed_partial')] + [row['observed']['package'] for row in adopted]
         if state['package'] not in packages: raise ValueError('Registration replaced outside transaction')
         if not any(row['observed']['package'] == state['package'] and self.related(row['observed']) == self.related(state)
-                   for row in rows if row['kind']=='outcome' and row['action'] in ('register','update') and row['status'] in ('performed','performed_partial')):
+                   for row in rows if (row['kind']=='outcome' and row['action'] in ('register','update') and row['status'] in ('performed','performed_partial')) or row in adopted):
             raise ValueError('Related package set replaced outside transaction')
-        processes = [row['observed']['process'] for row in rows if row['kind']=='outcome' and row['action'] in ('launch','update') and row['status']=='performed']
+        processes = [row['observed']['process'] for row in rows if row['kind']=='outcome' and row['action'] in ('launch','update') and row['status']=='performed'] + [row['observed']['process'] for row in adopted]
         if state['process'] is not None and state['process'] not in processes: raise ValueError('Process incarnation replaced outside transaction')
         if require_process and state['process'] is None: raise ValueError('Owned running process required')
 
     def operation(self, action, args):
         self.validate()
+        if action == 'remove' and self.events()[0]['owner'].get('purpose') == RETAINED_BASELINE:
+            raise ValueError('User-retained installation cannot be removed by this transaction')
         if self.pending(): raise ValueError('Pending intent: reconcile first')
         before = self.platform.observe()
         if action != 'register': self.assert_owned(before, require_process=action=='update')
+        if action == 'update' and self.events()[0]['owner'].get('purpose') == RETAINED_BASELINE:
+            proof = self.platform.call('verify-existing-baseline')
+            if proof.get('scope') != 'EXACT_INSTALLED_BASELINE' or proof.get('observed') != before or self.platform.observe() != before:
+                raise ValueError('Retained baseline verification changed before update')
         self.platform.check(action, args, before) if hasattr(self.platform, 'check') else None
         intent = self.record('intent', action=action, args=args, before=before)
         self.validate()
@@ -292,9 +302,14 @@ class Windows:
     def call(self, action, **facts):
         payload = {**self.request, **facts, 'action': action}
         script = Path(__file__).parent/'e2e-assets/semantier-registered-platform.ps1'
+        # The read-only metadata validator must use this native interpreter,
+        # not a Windows Store alias discovered through PATH. Scope it to this
+        # child so it cannot affect the launched application or update.
+        env = {**os.environ, 'HERMES_PYTHON': sys.executable} if action == 'verify-existing-baseline' else None
         result = subprocess.run([self.powershell,'-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',str(script)],
             input=json.dumps(payload), text=True, capture_output=True, check=False,
-            timeout=2400 if (action=='update' and self.request.get('target',{}).get('native_graph')) or (action=='register' and self.request.get('baseline',{}).get('native_graph')) else 1800 if action in ('update','native-proof') or (action=='register' and self.request.get('native_origin')) else 60 if action == 'download' else 300)
+            env=env,
+            timeout=2400 if (action=='update' and self.request.get('target',{}).get('native_graph')) or (action=='register' and self.request.get('baseline',{}).get('native_graph')) else 1800 if action in ('update','native-proof','verify-existing-baseline') or (action=='register' and self.request.get('native_origin')) else 60 if action == 'download' else 300)
         if result.returncode: raise RuntimeError(result.stderr.strip())
         return json.loads(result.stdout.lstrip('\ufeff'))
     def observe(self):
@@ -568,6 +583,8 @@ def run_upgrade(tx, platform):
     before = platform.call('conservation')
     tx.record('conservation_before', facts=before)
     semantic_before=platform.capture_semantics() if hasattr(platform,'capture_semantics') else None
+    retained = getattr(platform, 'request', {}).get('purpose') == RETAINED_BASELINE
+    if retained and semantic_before is None: raise ValueError('Retained upgrade requires consistent semantic backups')
     if semantic_before is not None:tx.record('semantic_before',facts=semantic_before)
     target = platform.call('artifact', side='target')
     current = platform.observe()
@@ -579,7 +596,13 @@ def run_upgrade(tx, platform):
     ready = platform.call('ready')
     tx.record('successor_ready', facts=ready, observed=platform.observe())
     after = platform.call('conservation')
-    if before != after:
+    comparable_before, comparable_after = before, after
+    if retained:
+        database_paths = {row['path'] for row in platform.request['semantic_databases']}
+        if set(before) != set(after): raise ValueError('Conservation scope changed; preserve state')
+        comparable_before = {k:v for k,v in before.items() if k.partition(':')[2] not in database_paths}
+        comparable_after = {k:v for k,v in after.items() if k.partition(':')[2] not in database_paths}
+    if comparable_before != comparable_after:
         tx.record('conservation_failed', facts=after)
         raise ValueError('Conservation mismatch; preserve state')
     if semantic_before is not None:
@@ -634,7 +657,31 @@ def run_baseline(tx, platform, owner):
     print('Baseline retained; observe/seed conservation files before publication and upgrade')
 
 
+def run_adopt_baseline(tx, platform, owner):
+    if platform.request.get('purpose') != RETAINED_BASELINE or owner.get('sid') != RETAINED_SID or owner.get('session_sid') != RETAINED_SID:
+        raise ValueError('Exact authorized retained baseline actor required')
+    if tx.events(): raise ValueError('Existing transaction: preserve and inspect')
+    if not owner.get('process'): raise ValueError('Existing baseline must already be running')
+    artifact = platform.call('artifact', side='baseline')
+    proof = platform.call('verify-existing-baseline')
+    current = platform.observe()
+    if (proof.get('scope') != 'EXACT_INSTALLED_BASELINE' or proof.get('observed') != owner or
+        current != owner or not Transaction.package_matches(artifact, current) or
+        current['package'].get('version') != '0.0.62.0'):
+        raise ValueError('Existing baseline identity or verification changed')
+    ready = platform.call('ready')
+    if ready.get('healthy') is not True or not ready.get('gateway'):
+        raise ValueError('Retained baseline gateway readiness unavailable')
+    if platform.observe() != owner: raise ValueError('Existing baseline changed during readiness verification')
+    tx.initialize({**owner, 'purpose': RETAINED_BASELINE})
+    tx.record('baseline_adopted', observed=owner, verification=proof)
+    tx.record('baseline_ready', facts=ready, observed=owner)
+
+
 def run_cleanup(tx, platform, request):
+    rows=tx.events()
+    if request.get('purpose') == RETAINED_BASELINE or (rows and rows[0]['owner'].get('purpose') == RETAINED_BASELINE):
+        raise ValueError('User-retained installation cannot be removed by this transaction')
     tx.reconcile()
     rows=tx.events(); owned=[r['observed']['package'] for r in rows if r['kind']=='outcome' and r['action'] in ('register','update') and r['status'] in ('performed','performed_partial') and r['observed']['package'] is not None]
     request['owned_packages']=owned
@@ -648,7 +695,7 @@ def run_cleanup(tx, platform, request):
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('mode',choices=['preflight','baseline','native-qualify','native-resume','upgrade','reconcile','cleanup'])
+    p.add_argument('mode',choices=['preflight','baseline','adopt-baseline','native-qualify','native-resume','upgrade','reconcile','cleanup'])
     p.add_argument('--request',type=Path,required=True)
     p.add_argument('--proof-source',type=Path)
     p.add_argument('--proof-source-sha256')
@@ -671,11 +718,15 @@ def main():
         artifact=platform.call('artifact',side=side)
         print(json.dumps({'scope':'READ_ONLY_NATIVE_LAYOUT' if native else 'READ_ONLY','observed':owner,side:artifact})); return
     if a.mode in ('native-qualify','native-resume') and 'native_graph_value' not in request:raise ValueError('Native graph qualification inputs required')
-    root=Path(request['root']); journal=root/'registered-update.jsonl'
+    root=Path(request['root'])
+    # The existing WD1 journal remains historical and never supplies authority
+    # to the separately authorized retained-installation transaction.
+    journal=root/('retained-update-v2.jsonl' if request.get('purpose')==RETAINED_BASELINE else 'registered-update.jsonl')
     with held_windows_root(root, owner['root_id']), exclusive(root/'registered-update.lock'):
         tx=Transaction(journal,platform)
         handlers = {
             'baseline': lambda: run_baseline(tx, platform, owner),
+            'adopt-baseline': lambda: run_adopt_baseline(tx, platform, owner),
             'native-qualify': lambda: run_native_qualification(tx,platform,owner),
             'native-resume': lambda: run_native_qualification(tx,platform,owner,require_existing=True),
             'reconcile': lambda: print(tx.reconcile()),
