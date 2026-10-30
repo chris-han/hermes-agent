@@ -268,7 +268,7 @@ def test_ci_bridge_selects_only_the_complete_source_bound_graph(tmp_path):
     layout=tmp_path/'signed/native-layout/layout-plan.json';layout.parent.mkdir();layout.write_text('{}',encoding='utf-8')
     assert select_native_candidate(tmp_path,'a'*40)['artifact'].name=='main.msixbundle'
     with pytest.raises(ValueError,match='source'):select_native_candidate(tmp_path,'c'*40)
-    (distribution/'runtime.msix').write_bytes(b'altered bytes')
+    (distribution/'runtime.msix').write_bytes(body[:-1]+b'!')
     with pytest.raises(ValueError,match='object bytes'):select_native_candidate(tmp_path,'a'*40)
     (distribution/'runtime.msix').unlink()
     with pytest.raises(ValueError,match='complete'):select_native_candidate(tmp_path,'a'*40)
