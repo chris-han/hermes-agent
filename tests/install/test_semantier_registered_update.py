@@ -16,6 +16,12 @@ def test_retained_validation_binds_both_observed_data_roots():
         p.observe=lambda: changed
         with pytest.raises(ValueError,match='physical data root changed'):p.validate(owner)
 
+def test_retained_verification_reuse_rejects_altered_evidence(tmp_path):
+    evidence=tmp_path/'evidence.json';evidence.write_text('{"scope":"EXACT_INSTALLED_BASELINE"}')
+    p=d.Windows.__new__(d.Windows)
+    p.request={'purpose':d.RETAINED_BASELINE,'baseline_verification':str(evidence)}
+    with pytest.raises(ValueError,match='evidence changed'):p.call('verify-existing-baseline')
+
 def test_retained_snapshots_use_real_hermes_root_not_fixture(tmp_path, monkeypatch):
     custody=tmp_path/'custody';custody.mkdir()
     home=tmp_path/'actual-home';home.mkdir();(home/'state.db').write_bytes(b'data')

@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 NATIVE_QUALIFICATION='wd1-native-layout-qualification'
 RETAINED_BASELINE='caddy-chrish-existing-baseline-v2'
 RETAINED_SID='S-1-5-21-1928370875-4287869425-2092521300-1003'
+RETAINED_VERIFICATION_SHA256='e3affc158011728cbe43d57a076c05f772a5f1985ea94b5ae807bc301ddf8540'
 
 
 class Interrupted(RuntimeError):
@@ -305,6 +306,24 @@ class Windows:
         return {current,self.proof_binding(root)}
 
     def call(self, action, **facts):
+        if action == 'verify-existing-baseline' and self.request.get('baseline_verification'):
+            if self.request.get('purpose') != RETAINED_BASELINE:
+                raise ValueError('Retained verification requires retained context')
+            with safe_file(Path(self.request['baseline_verification']), 'r') as stream:
+                raw=stream.read()
+            if hashlib.sha256(raw.encode('utf-8')).hexdigest() != RETAINED_VERIFICATION_SHA256:
+                raise ValueError('Retained verification evidence changed')
+            previous=json.loads(raw)
+            if previous.get('scope') != 'EXACT_INSTALLED_BASELINE':
+                raise ValueError('Retained verification scope mismatch')
+            now=self.observe(); prior=previous['observed']
+            if any(now.get(key) != prior.get(key) for key in ('sid','session_sid','session','root_id','package','related')):
+                raise ValueError('Retained installation differs from verified evidence')
+            artifact=self.call('artifact',side='baseline')
+            if not Transaction.package_matches(artifact,now):
+                raise ValueError('Retained signed baseline differs from registration')
+            return {'scope':'EXACT_INSTALLED_BASELINE','observed':now,
+                    'reused_sha256':RETAINED_VERIFICATION_SHA256}
         payload = {**self.request, **facts, 'action': action}
         script = Path(__file__).parent/'e2e-assets/semantier-registered-platform.ps1'
         # The read-only metadata validator must use this native interpreter,
