@@ -4,6 +4,45 @@ import pytest
 spec=importlib.util.spec_from_file_location('driver',Path(__file__).with_name('semantier_registered_update.py'))
 d=importlib.util.module_from_spec(spec);spec.loader.exec_module(d)
 
+def test_retained_validation_binds_both_observed_data_roots():
+    p=d.Windows.__new__(d.Windows)
+    p.request={}
+    owner={'sid':'actor','session_sid':'actor','session':1,'root_id':'custody',
+           'purpose':d.RETAINED_BASELINE,'desktop_root_id':'desktop','hermes_root_id':'home'}
+    p.observe=lambda: dict(owner)
+    p.validate(owner)
+    for key in ('desktop_root_id','hermes_root_id'):
+        changed=dict(owner);changed[key]='replacement'
+        p.observe=lambda: changed
+        with pytest.raises(ValueError,match='physical data root changed'):p.validate(owner)
+
+def test_retained_snapshots_use_real_hermes_root_not_fixture(tmp_path, monkeypatch):
+    custody=tmp_path/'custody';custody.mkdir()
+    home=tmp_path/'actual-home';home.mkdir();(home/'state.db').write_bytes(b'data')
+    calls=[]
+    class Owner:
+        @staticmethod
+        def unlinked(path): return path
+        @staticmethod
+        def backup_database_snapshot(source, destination, prior, tables):
+            calls.append(source)
+            return {'tables':{}}
+    @d.contextlib.contextmanager
+    def hold(path, identity):
+        assert path == home and identity == 'physical-home'
+        yield
+    monkeypatch.setattr(d,'held_windows_root',hold)
+    p=d.Windows.__new__(d.Windows)
+    p.request={'purpose':d.RETAINED_BASELINE,'root':str(custody),'hermes_root':str(home),
+               'semantic_observer':{'sha256':'hash'},
+               'semantic_databases':[{'path':'hermes/state.db','tables':{'sessions':['id']}}]}
+    p.semantic_owner=lambda: Owner()
+    p.observe=lambda: {'hermes_root_id':'physical-home'}
+    p.capture_semantics()
+    assert calls == [home/'state.db']
+    p.request['semantic_databases'][0]['path']='userdata/hermes-home/state.db'
+    with pytest.raises(ValueError,match='relative semantic database path'):p.capture_semantics()
+
 def test_verifier_selects_driver_python_only_for_read_only_child(monkeypatch):
     calls=[]
     def run(*args, **kwargs):
@@ -141,6 +180,7 @@ def test_retained_upgrade_compares_database_semantics_not_sqlite_file_bytes(tmp_
             self.request={'purpose':d.RETAINED_BASELINE,'semantic_databases':[{'path':'userdata/state.db'}]}
         def call(self,action,**kwargs):
             if action=='verify-existing-baseline': return {'scope':'EXACT_INSTALLED_BASELINE','observed':self.observe()}
+            if action=='ready': return {'healthy':True,'gateway':{'pid':12,'birth':'a'}}
             if action=='conservation': return {'chats:userdata/state.db':self.state['package']['version'], 'theme:userdata/theme.json':'same'}
             return super().call(action,**kwargs)
         def capture_semantics(self): return {'scope':'fixture database backup'}
@@ -148,7 +188,7 @@ def test_retained_upgrade_compares_database_semantics_not_sqlite_file_bytes(tmp_
     p=RetainedUpgrade();t=d.Transaction(tmp_path/'j',p);owner=p.observe()
     t.initialize({**owner,'purpose':d.RETAINED_BASELINE})
     t.record('baseline_adopted',observed=owner,verification={'scope':'fixture'})
-    t.record('baseline_ready',facts={'healthy':True},observed=owner)
+    t.record('baseline_ready',facts={'healthy':True,'gateway':{'pid':12,'birth':'a'}},observed=owner)
     d.run_upgrade(t,p)
     assert any(row['kind']=='semantic_preservation' for row in t.events())
     assert any(row['kind']=='acceptance' for row in t.events())
@@ -264,6 +304,12 @@ def test_existing_baseline_adoption_checks_actual_observation_before_recording(t
         t.operation('update',{'full':'successor','version':'0.0.63.0'})
     assert t.pending() is None
     assert 'update' not in p.calls
+    p.bad=False
+    original_call=p.call
+    p.call=lambda action,**kwargs: {'healthy':True,'gateway':{'pid':99,'birth':'replacement'}} if action=='ready' else original_call(action,**kwargs)
+    with pytest.raises(ValueError,match='gateway changed'):
+        t.operation('update',{'full':'successor','version':'0.0.63.0'})
+    assert t.pending() is None and 'update' not in p.calls
     with pytest.raises(ValueError,match='retained'):t.operation('remove',{})
     assert p.state['package']['full']=='A62'
 

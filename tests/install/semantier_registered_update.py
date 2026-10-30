@@ -198,6 +198,11 @@ class Transaction:
             proof = self.platform.call('verify-existing-baseline')
             if proof.get('scope') != 'EXACT_INSTALLED_BASELINE' or proof.get('observed') != before or self.platform.observe() != before:
                 raise ValueError('Retained baseline verification changed before update')
+            ready_rows = [row for row in self.events() if row['kind'] == 'baseline_ready']
+            prior_gateway = ready_rows[-1]['facts'].get('gateway') if ready_rows else None
+            current_ready = self.platform.call('ready')
+            if not prior_gateway or current_ready.get('healthy') is not True or current_ready.get('gateway') != prior_gateway:
+                raise ValueError('Retained gateway changed before update')
         self.platform.check(action, args, before) if hasattr(self.platform, 'check') else None
         intent = self.record('intent', action=action, args=args, before=before)
         self.validate()
@@ -323,6 +328,10 @@ class Windows:
             raise ValueError('Recorded WTS account binding unavailable; preserve transaction')
         if owner.get('purpose')==NATIVE_QUALIFICATION and owner.get('native_origin')!=self.request.get('native_origin'):raise ValueError('Native origin changed across transaction')
         if any(now[k] != owner[k] for k in ('sid','session','session_sid','root_id')): raise ValueError('OS owner or physical root changed')
+        if owner.get('purpose') == RETAINED_BASELINE:
+            for key in ('desktop_root_id', 'hermes_root_id'):
+                if not owner.get(key) or now.get(key) != owner[key]:
+                    raise ValueError('Retained physical data root changed')
     def recovery_check(self, intent):
         if intent['action'] in ('register','update'):
             side = 'baseline' if intent['action']=='register' and self.request.get('purpose')!=NATIVE_QUALIFICATION else 'target'
@@ -359,13 +368,16 @@ class Windows:
             return None
         if not isinstance(specs,list) or not 0<len(specs)<=8:raise ValueError('Bounded semantic database set required')
         owner=self.semantic_owner();root=owner.unlinked(Path(self.request['root']))
+        retained=self.request.get('purpose') == RETAINED_BASELINE
+        observed=self.observe() if retained else None
+        source_root=owner.unlinked(Path(self.request['hermes_root'])) if retained else root
         selected={}
         for spec in specs:
             relative=PurePosixPath(spec['path'])
             if (not relative.parts or relative.is_absolute() or relative.as_posix()!=spec['path'] or '..' in relative.parts
-                or ':' in spec['path'] or '\\' in spec['path'] or relative.parts[0]!='userdata' or spec['path'] in selected):
+                or ':' in spec['path'] or '\\' in spec['path'] or relative.parts[0]!=('hermes' if retained else 'userdata') or len(relative.parts)<2 or spec['path'] in selected):
                 raise ValueError('Unique owned relative semantic database path required')
-            source=owner.unlinked(root/relative)
+            source=owner.unlinked(source_root.joinpath(*relative.parts[1:]) if retained else root/relative)
             if source.suffix not in ('.db','.sqlite','.sqlite3') or source.stat().st_size>2*1024**3:
                 raise ValueError('Bounded SQLite source required')
             tables=spec.get('tables')
@@ -377,8 +389,12 @@ class Windows:
             raise ValueError('Semantic observer/database scope changed')
         directory=root/('conservation-'+uuid4().hex);directory.mkdir()
         snapshots={}
-        for index,(name,(source,tables)) in enumerate(selected.items()):
-            snapshots[name]=owner.backup_database_snapshot(source,directory/(str(index)+'.db'),prior['databases'][name] if prior else None,tables)
+        with contextlib.ExitStack() as holds:
+            if retained: holds.enter_context(held_windows_root(source_root,observed['hermes_root_id']))
+            for index,(name,(source,tables)) in enumerate(selected.items()):
+                snapshots[name]=owner.backup_database_snapshot(source,directory/(str(index)+'.db'),prior['databases'][name] if prior else None,tables)
+            if retained and self.observe()['hermes_root_id'] != observed['hermes_root_id']:
+                raise ValueError('Retained Hermes root changed during backup')
         result={'observer_sha256':self.request['semantic_observer']['sha256'],'table_contracts':contracts,'databases':snapshots,'backup_directory':str(directory)}
         if len(json.dumps(result).encode())>4*1024*1024:raise ValueError('Semantic evidence exceeds bound; preserve backups')
         return result

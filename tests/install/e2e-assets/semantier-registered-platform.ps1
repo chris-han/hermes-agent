@@ -90,7 +90,19 @@ $profile=[Environment]::GetFolderPath('UserProfile').TrimEnd('\')
 $root=[IO.Path]::GetFullPath($r.root).TrimEnd('\')
 if(-not $root.StartsWith($profile+'\semantier-acceptance\',[StringComparison]::OrdinalIgnoreCase)){throw 'Root outside disposable profile'}
 $held=Physical $root
+$desktopHold=$null;$homeHold=$null
 try {
+ if($localRetained){
+  if(-not $r.PSObject.Properties['desktop_root'] -or -not $r.PSObject.Properties['hermes_root']){throw 'Retained desktop and Hermes roots required'}
+  $desktopRoot=[IO.Path]::GetFullPath($r.desktop_root).TrimEnd('\')
+  $hermesRoot=[IO.Path]::GetFullPath($r.hermes_root).TrimEnd('\')
+  $actualDesktop=Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'SemantierAgentAcceptance-semantier-acceptance'
+  $actualHome=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'hermes-semantier-acceptance'
+  if($desktopRoot -ine $actualDesktop -or $hermesRoot -ine $actualHome){throw 'Retained roots differ from actual actor paths'}
+  $desktopHold=Physical $desktopRoot;$homeHold=Physical $hermesRoot
+ } else {
+  $desktopRoot=Join-Path $root 'userdata';$hermesRoot=Join-Path $desktopRoot 'hermes-home'
+ }
  $acl=Get-Acl -LiteralPath $root
  if($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $sid){throw 'Root owner differs from actual user'}
  foreach($ace in $acl.Access){
@@ -217,7 +229,7 @@ try {
   }catch{$physical.handle.Dispose();throw}finally{if($handle){$handle.Dispose()}}
  }
  function GatewayIdentity($package) {
-  $file=Join-Path $root 'userdata\hermes-home\state\gateway.lifecycle.json'
+  $file=Join-Path $hermesRoot 'state\gateway.lifecycle.json'
   if(-not (Test-Path -LiteralPath $file)){return $null}
   $fileHold=Physical $file
   try{$life=Get-Content -LiteralPath $file -Raw|ConvertFrom-Json}finally{$fileHold.handle.Dispose()}
@@ -237,7 +249,7 @@ try {
   if($r.PSObject.Properties['native_graph_value']){return Read-NativeProductionHandoff}
   $target=$r.target
   if($target.manifest_sha256 -cnotmatch '^[a-f0-9]{64}$' -or $target.chunk_descriptor_sha256 -cnotmatch '^[a-f0-9]{64}$'){throw 'Qualified target manifest/chunk identities required'}
-  $directory=Join-Path $root 'userdata';$queue=[Collections.Generic.Queue[string]]::new();$queue.Enqueue($directory);$records=@();$matches=@()
+  $directory=$desktopRoot;$queue=[Collections.Generic.Queue[string]]::new();$queue.Enqueue($directory);$records=@();$matches=@()
   while($queue.Count){
    foreach($entry in @(Get-ChildItem -LiteralPath $queue.Dequeue() -Force)){
     if(($entry.Attributes -band [IO.FileAttributes]::ReparsePoint)-ne 0){throw 'Reparse in updater custody'}
@@ -257,7 +269,7 @@ try {
  function Read-NativeProductionHandoff([switch]$Reconcile) {
   $target=$r.target
   if($target.manifest_sha256 -cnotmatch '^[a-f0-9]{64}$'){throw 'Qualified native manifest required'}
-  $directory=Join-Path $root 'userdata\updates';$directoryHold=Physical $directory
+  $directory=Join-Path $desktopRoot 'updates';$directoryHold=Physical $directory
   $matches=@()
   try{
    foreach($attempt in @(Get-ChildItem -LiteralPath $directory -Directory -Filter ('native-'+$target.manifest_sha256+'-*'))){
@@ -310,7 +322,7 @@ try {
   [IO.Directory]::Delete($directory,$false)
  }
  function Assert-NativeJobsSettled {
-  $directory=Join-Path $root 'userdata\updates'
+  $directory=Join-Path $desktopRoot 'updates'
   if(!(Test-Path -LiteralPath $directory)){return}
   $heldDirectory=Physical $directory
   try{
@@ -408,18 +420,26 @@ try {
     if($rows.Count){
      $row=$rows[0];$owner=Invoke-CimMethod -InputObject $row -MethodName GetOwnerSid
      if($owner.Sid -cne $sid -or $row.SessionId -ne $session){throw 'Process belongs to different user/session'}
+     if($localRetained){
+      $escaped=[regex]::Escape($desktopRoot)
+      $children=@(Get-CimInstance Win32_Process|Where-Object{$_.ParentProcessId -eq $row.ProcessId -and $_.SessionId -eq $session -and $_.CommandLine -match ('--user-data-dir=(?:"'+$escaped+'"|'+$escaped+'(?:\s|$))')})
+      if(-not $children.Count){throw 'Desktop process does not prove the retained data root'}
+     }
      $processHold=Installed-File $p $row.ExecutablePath
      try{if($processHold.id -cne $physical.id){throw 'Observed process executable differs from package'};$process=@{pid=$row.ProcessId;birth=(ExactBirth $row);exe=$row.ExecutablePath;exe_id=$processHold.id}}finally{$processHold.handle.Dispose()}
     }
    }finally{$physical.handle.Dispose()}
   }
-  return @{sid=$sid;session_sid=$sessionSid;session=$session;root_id=$held.id;package=$package;process=$process;related=(Related-Packages)}
+  $observed=@{sid=$sid;session_sid=$sessionSid;session=$session;root_id=$held.id;package=$package;process=$process;related=(Related-Packages)}
+  if($localRetained){$observed.desktop_root_id=$desktopHold.id;$observed.hermes_root_id=$homeHold.id}
+  return $observed
  }
  $result=$null
  if($r.action -in @('register','launch','update','remove','native-reconciled')){
   if(-not $r.PSObject.Properties['expected_before']){throw 'Durable intent precondition required'}
   $actual=Observe;$expected=$r.expected_before
   if($actual.sid -cne $expected.sid -or $actual.session_sid -cne $expected.session_sid -or $actual.session -ne $expected.session -or $actual.root_id -cne $expected.root_id){throw 'Intent context changed'}
+  if($localRetained -and ($actual.desktop_root_id -cne $expected.desktop_root_id -or $actual.hermes_root_id -cne $expected.hermes_root_id)){throw 'Retained physical roots changed'}
   $expectedRelated=@()
   if($expected.PSObject.Properties['related']){$expectedRelated=@($expected.related)}
   if(@($actual.related).Count -ne $expectedRelated.Count){throw 'Intent related package set changed'}
@@ -647,12 +667,14 @@ try {
    }while(-not $languageReady -and (Get-Date)-lt $deadline)
    if(-not $window){throw 'Registered application window unavailable'}
    if(-not $languageReady){throw 'Expected production language control unavailable'}
-   $preference=Get-Content -LiteralPath (Join-Path $root 'userdata\active-profile.json') -Raw|ConvertFrom-Json
+   $preference=Get-Content -LiteralPath (Join-Path $desktopRoot 'active-profile.json') -Raw|ConvertFrom-Json
    if($preference.profile -cne 'semantier-local' -or $preference.defaultRoute.profile -cne 'semantier-local'){throw 'Unexpected active desktop profile'}
-   $profiles=Join-Path $root 'userdata\hermes-home\profiles'
+   $profiles=Join-Path $hermesRoot 'profiles'
    $actualNames=@(Get-ChildItem -LiteralPath $profiles -Directory|Where-Object{-not $_.Name.StartsWith('.')}|ForEach-Object{$_.Name}|Sort-Object)
    $expectedNames=@($r.expected_profiles|Sort-Object)
-   if(($actualNames -join '|') -cne ($expectedNames -join '|') -or $actualNames -contains 'tender-runtime-expert'){throw 'Desktop profile namespace mismatch'}
+   if($localRetained){
+    if($actualNames -cnotcontains 'semantier-local'){throw 'Active retained profile is absent'}
+   }elseif(($actualNames -join '|') -cne ($expectedNames -join '|') -or $actualNames -contains 'tender-runtime-expert'){throw 'Desktop profile namespace mismatch'}
    $gateway=GatewayIdentity $state.package
    if($localRetained -and !$gateway){throw 'Retained profile gateway ownership unavailable'}
    $result=@{healthy=$true;languageControl=$r.expected_language;activeProfile='semantier-local';profiles=$actualNames;gateway=$gateway;themeRendering='retained exact-package evidence only; current rendering NOT_RUN'}
@@ -662,7 +684,15 @@ try {
    foreach($category in @('chats','credentials','providers','memories','skills','language','theme','profiles','legacy_backup')){
     $property=$r.sentinels.PSObject.Properties[$category]
     if(-not $property -or -not @($property.Value).Count){throw 'Missing required conservation category'}
-    foreach($relative in @($property.Value)){Assert-SmokeRelativePath $relative;$file=Join-Path $root $relative;$physical=Physical $file;try{$result[$category+':'+$relative]=(Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()}finally{$physical.handle.Dispose()}}
+    foreach($relative in @($property.Value)){
+     Assert-SmokeRelativePath $relative
+     if($localRetained){
+      if($relative.StartsWith('desktop/')){$file=Join-Path $desktopRoot $relative.Substring(8)}
+      elseif($relative.StartsWith('hermes/')){$file=Join-Path $hermesRoot $relative.Substring(7)}
+      else{throw 'Retained conservation path must name desktop or Hermes root'}
+     }else{$file=Join-Path $root $relative}
+     $physical=Physical $file;try{$result[$category+':'+$relative]=(Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()}finally{$physical.handle.Dispose()}
+    }
    }
   }
   remove {
@@ -702,4 +732,4 @@ try {
   default {throw 'Unknown native operation'}
  }
  $result|ConvertTo-Json -Compress -Depth 20
-}finally{$held.handle.Dispose()}
+}finally{if($homeHold){$homeHold.handle.Dispose()};if($desktopHold){$desktopHold.handle.Dispose()};$held.handle.Dispose()}
