@@ -148,14 +148,24 @@ def preflight(expected_sid, incoming, controller, expected_controller, public_ba
     validate_ci_preflight(checkout, actual_controller, expected_controller, expected_sid, os.environ.get('SEMANTIER_CLIENT_RECEIPT_KEY', ''))
     if not os.environ.get('ACCEPTANCE_WINDOWS_PYTHON'):
         raise ValueError('Windows Python unavailable')
-    # Do not print, export or sign with the key: open only a public/private-key handle.
+    # Verify an ephemeral challenge in memory; never export the key or sign a package.
     cmd = "$ErrorActionPreference='Stop';" + ci_session_guard(expected_sid) + r"""
 $c=Get-Item -LiteralPath 'Cert:\CurrentUser\My\57BF15739B4AA447842EAF388856A01B4E5029FF'
 $now=Get-Date
 $basic=@($c.Extensions|Where-Object {$_.Oid.Value -eq '2.5.29.19'})
 if(!$c.HasPrivateKey -or $c.NotBefore -gt $now -or $c.NotAfter -le $now -or $c.EnhancedKeyUsageList.ObjectId -notcontains '1.3.6.1.5.5.7.3.3' -or $basic.Count -ne 1 -or $basic[0].CertificateAuthority){throw 'CI signer unavailable'}
 $key=[System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($c)
-if(!$key){throw 'CI signer private-key handle unavailable'};$key.Dispose()
+if(!$key){throw 'CI signer private-key handle unavailable'}
+try {
+ $challenge=[byte[]]::new(32);$rng=[System.Security.Cryptography.RandomNumberGenerator]::Create()
+ try {$rng.GetBytes($challenge)} finally {$rng.Dispose()}
+ $signature=$key.SignData($challenge,[System.Security.Cryptography.HashAlgorithmName]::SHA256,[System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
+ if(!$key.VerifyData($challenge,$signature,[System.Security.Cryptography.HashAlgorithmName]::SHA256,[System.Security.Cryptography.RSASignaturePadding]::Pkcs1)){throw 'CI signer challenge verification failed'}
+} finally {$key.Dispose()}
+# Match the native smoke's refusal before the allocator or build runs.
+if(@(Get-AppxPackage -Name 'Semantier.Agent.Acceptance').Count -or
+   @(Get-AppxPackage -PackageTypeFilter Resource -Name 'Semantier.Agent.Acceptance').Count -or
+   @(Get-AppxPackage -PackageTypeFilter Optional -Name 'Semantier.Agent.Acceptance.*').Count){throw 'CI Acceptance package or related resources already registered'}
 if(!(Test-Path -LiteralPath $env:ACCEPTANCE_WINDOWS_PYTHON -PathType Leaf)){throw 'Windows Python unavailable'}
 if(!(Test-Path -LiteralPath 'D:\repo\hermes-build\.cache\desktop-inputs\tools\node-26.7.0-win32-x64\node.exe' -PathType Leaf)){throw 'Windows Node unavailable'}
 $sdk=Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin'
