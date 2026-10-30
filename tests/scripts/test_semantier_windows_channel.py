@@ -254,18 +254,22 @@ def test_final_graph_rejects_foreign_payload_and_embedded_bundle(tmp_path):
 
 
 def test_ci_bridge_selects_only_the_complete_source_bound_graph(tmp_path):
-    import json
+    import hashlib,json
     from scripts.releases.semantier_native_ci import select_native_candidate
     graph=native_graph();distribution=tmp_path/'signed/distribution';distribution.mkdir(parents=True)
     request={'commit':'a'*40,'buildId':'a'*32,'windowsVersion':'0.0.59.0','identity':IDENTITY}
-    signed={'sourceCommit':'a'*40,'publisher':'CN=Semantier Technology, O=Semantier Technology','packageName':IDENTITY['msixAppIdWithOrg'],'packageVersion':'0.0.59.0','signedSha256':'b'*64,'nativeGraph':graph}
+    body=b'selection fixture; not native qualification'
+    for row in graph['objects']:row.update(size=len(body),sha256=hashlib.sha256(body).hexdigest())
+    signed={'sourceCommit':'a'*40,'publisher':'CN=Semantier Technology, O=Semantier Technology','packageName':IDENTITY['msixAppIdWithOrg'],'packageVersion':'0.0.59.0','signedSha256':graph['objects'][0]['sha256'],'nativeGraph':graph}
     for name,value in [('channel-request.json',request),('result.json',{'result':'PASS','sourceCommit':'a'*40}),('signed/receipt.json',signed)]:
         (tmp_path/name).write_text(json.dumps(value),encoding='utf-8')
-    for row in graph['objects']:(distribution/row['key'].rsplit('/',1)[1]).write_bytes(b'selection fixture; not native qualification')
+    for row in graph['objects']:(distribution/row['key'].rsplit('/',1)[1]).write_bytes(body)
     (distribution/'native-graph.json').write_text(json.dumps(graph),encoding='utf-8')
     layout=tmp_path/'signed/native-layout/layout-plan.json';layout.parent.mkdir();layout.write_text('{}',encoding='utf-8')
     assert select_native_candidate(tmp_path,'a'*40)['artifact'].name=='main.msixbundle'
     with pytest.raises(ValueError,match='source'):select_native_candidate(tmp_path,'c'*40)
+    (distribution/'runtime.msix').write_bytes(b'altered bytes')
+    with pytest.raises(ValueError,match='object bytes'):select_native_candidate(tmp_path,'a'*40)
     (distribution/'runtime.msix').unlink()
     with pytest.raises(ValueError,match='complete'):select_native_candidate(tmp_path,'a'*40)
 

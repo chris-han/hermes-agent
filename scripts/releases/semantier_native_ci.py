@@ -38,6 +38,19 @@ def select_native_candidate(output,commit):
     expected={row['key'].rsplit('/',1)[1] for row in graph['objects']}
     if {p.name for p in files}!=expected or any(p.is_symlink() or not p.is_file() for p in files):
         raise ValueError('Native graph candidate must be complete')
+    # Selection must bind every transferred package, not merely filenames and
+    # the bundle's receipt. Native smoke still owns signature and OS checks.
+    for row in graph['objects']:
+        path=directory/row['key'].rsplit('/',1)[1]
+        with path.open('rb') as stream:
+            before=os.fstat(stream.fileno())
+            digest=hashlib.file_digest(stream,'sha256').hexdigest()
+            after=os.fstat(stream.fileno())
+        named=path.stat()
+        identity=lambda s:(s.st_dev,s.st_ino,s.st_size,s.st_mtime_ns)
+        if (identity(before)!=identity(after) or identity(after)!=identity(named)
+                or after.st_size!=row['size'] or digest!=row['sha256']):
+            raise ValueError('Native graph object bytes changed or mismatched')
     root=next(row for row in graph['objects'] if row['key']==graph['root'])
     if root['sha256']!=signed['signedSha256']:raise ValueError('Native root digest differs from signed receipt')
     plan=output/'signed/native-layout/layout-plan.json';graph_file=directory/'native-graph.json'
