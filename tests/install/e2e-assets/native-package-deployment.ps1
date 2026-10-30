@@ -73,6 +73,7 @@ function Invoke-WD1NativeUri($Graph, [string]$Base, [string]$Evidence) {
   }catch{
    $completed=if($task -and $task.IsCompleted){$operation}else{$null}
    $details=Get-WD1DeploymentFailure $completed $method.ReturnType $_.Exception
+   $details.operationCompleted=[bool]($task -and $task.IsCompleted)
    $details.producedAt=[DateTime]::UtcNow.ToString('o');$details.status='FAILURE';$details.elapsedSeconds=$watch.Elapsed.TotalSeconds
    return $details
   }finally{$watch.Stop()}
@@ -228,7 +229,18 @@ function Read-NativeRegistrationOutcome($Spec,$Graph,[string]$Base,[string]$Root
   if(!$WD1 -and (!$result.PSObject.Properties['operationCompleted'] -or !$result.operationCompleted)){throw 'Native completion not established'}
   return @{status='SUCCESS';operationCompleted=$true;intent=$candidate.intent;sdk=$result;scope='exact native registration only'}
  }
- if($result -and $result.PSObject.Properties['operationCompleted'] -and $result.operationCompleted -and $result.status -ceq 'FAILURE'){
+ # Older WD1 callers passed an operation to GetResults only after IsCompleted.
+ # Preserve those typed terminal failures; async/text-only errors and an explicit
+ # incomplete marker must remain UNKNOWN. The durable graph/actor/URI/digests
+ # above still bind the receipt to this one registration attempt.
+ $typedWD1Failure=$false;$activity=[Guid]::Empty
+ if($WD1 -and $result -and $result.status -ceq 'FAILURE' -and !$result.PSObject.Properties['operationCompleted']){
+  $typedWD1Failure=($result.PSObject.Properties['errorSource'] -and $result.errorSource -ceq 'deployment-result' -and
+   $result.PSObject.Properties['isRegistered'] -and $result.isRegistered -is [bool] -and !$result.isRegistered -and
+   $result.PSObject.Properties['hresult'] -and $result.hresult -cmatch '^[0-9A-F]{8}$' -and $result.hresult -cne '00000000' -and
+   $result.PSObject.Properties['activityId'] -and [Guid]::TryParse([string]$result.activityId,[ref]$activity) -and $activity -ne [Guid]::Empty)
+ }
+ if($result -and $result.status -ceq 'FAILURE' -and (($result.PSObject.Properties['operationCompleted'] -and $result.operationCompleted) -or $typedWD1Failure)){
   return @{status='FAILURE';operationCompleted=$true;intent=$candidate.intent;sdk=$result;scope='completed native failure only'}
  }
  # A missing/live result cannot be closed from registration absence. For an

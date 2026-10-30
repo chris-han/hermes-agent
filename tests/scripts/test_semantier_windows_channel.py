@@ -94,6 +94,71 @@ def test_asset_partition_conserves_paths_and_reuses_existing_assignment():
     assert sum(len(g['files']) for g in second['groups'])==len(changed)
 
 
+def test_high_multiplicity_content_avoids_folded_two_version_link_overflow():
+    import hashlib
+    from scripts.releases.semantier_windows import partition_native_assets
+    metadata=[{'path':f'app/resources/agent-payload/venv/pkg{i}.dist-info/INSTALLER',
+               'bytes':2,'compressed_bytes':2,'sha256':hashlib.sha256(b'uv').hexdigest()}
+              for i in range(265)]
+    other='app/resources/agent-payload/ordinary.bin'
+    rows=[{'path':'app/main.exe','bytes':1,'compressed_bytes':1},
+          {'path':other,'bytes':100,'compressed_bytes':100},*metadata]
+    previous={r['path']:'runtime0001' for r in rows};previous['app/main.exe']='main'
+    plan=partition_native_assets(rows,previous=previous)
+    assert all(plan['assignment'][r['path']]=='main' for r in metadata)
+    assert plan['assignment'][other]=='runtime0001'
+    assert set(plan['assignment'])==set(previous)
+    # Installed Windows observed 531 links for this 265-copy folded content.
+    # A second folded version would need 1061; two main-only versions need 531.
+    assert 1+sum(1 if plan['assignment'][r['path']]=='main' else 2 for r in metadata)*2<=1023
+
+
+def test_native_content_that_cannot_fit_two_main_graphs_refuses_before_sdk():
+    import hashlib
+    from scripts.releases.semantier_windows import partition_native_assets
+    rows=[{'path':f'app/resources/agent-payload/duplicate/{i}',
+           'bytes':2,'compressed_bytes':2,'sha256':hashlib.sha256(b'uv').hexdigest()}
+          for i in range(512)]
+    with pytest.raises(ValueError,match='two-version hard-link budget'):
+        partition_native_assets(rows)
+
+
+def test_native_link_policy_does_not_relayout_distinct_same_size_content():
+    import hashlib
+    from scripts.releases.semantier_windows import partition_native_assets
+    rows=[{'path':f'app/resources/agent-payload/metadata/{i}',
+           'bytes':4,'compressed_bytes':4,'sha256':hashlib.sha256(i.to_bytes(4,'little')).hexdigest()}
+          for i in range(265)]
+    previous={r['path']:'runtime0001' for r in rows}
+    assert partition_native_assets(rows,previous=previous)['assignment']==previous
+
+
+def test_real_layout_producer_uses_verified_content_for_link_safe_placement(tmp_path):
+    import base64,hashlib,json,zipfile
+    from scripts.releases.semantier_windows import prepare_native_asset_layout
+    manifest=b'<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"><Identity Name="Semantier.Agent.Acceptance" Publisher="CN=Semantier Technology, O=Semantier Technology" ProcessorArchitecture="x64" Version="0.0.62.0"/><Applications><Application Executable="app/main.exe"/></Applications></Package>'
+    metadata={f'app/resources/agent-payload/venv/pkg{i}.dist-info/INSTALLER':b'uv' for i in range(265)}
+    other='app/resources/agent-payload/ordinary.bin'
+    files={'AppxManifest.xml':manifest,'app/main.exe':b'app',other:b'ordinary',**metadata}
+    blockmap='<BlockMap xmlns="http://schemas.microsoft.com/appx/2010/blockmap" HashMethod="http://www.w3.org/2001/04/xmlenc#sha256">'+''.join(
+        '<File Name="'+name+'" Size="'+str(len(data))+'"><Block Hash="'+base64.b64encode(hashlib.sha256(data).digest()).decode()+'"/></File>'
+        for name,data in files.items())+'</BlockMap>'
+    package=tmp_path/'input.msix';directory=tmp_path/'unpacked';directory.mkdir()
+    with zipfile.ZipFile(package,'w') as archive:
+        for name,data in files.items():
+            archive.writestr(name,data);file=directory/name;file.parent.mkdir(parents=True,exist_ok=True);file.write_bytes(data)
+        archive.writestr('AppxBlockMap.xml',blockmap)
+    previous={name:'runtime0001' for name in files if name!='AppxManifest.xml'};previous['app/main.exe']='main'
+    old=tmp_path/'previous.json';old.write_text(json.dumps({'assignment':previous}))
+    plan=prepare_native_asset_layout(package,directory,tmp_path/'layout',
+        expected_sha256=hashlib.sha256(package.read_bytes()).hexdigest(),previous=old)
+    assert all(plan['assignment'][name]=='main' for name in metadata)
+    assert plan['assignment'][other]=='runtime0001'
+    assert {row['path']:row['sha256'] for row in plan['files']}=={
+        name:hashlib.sha256(data).hexdigest() for name,data in files.items()}
+    assert all((directory/name).read_bytes()==data for name,data in files.items())
+
+
 @pytest.mark.parametrize('path',['../escape','/absolute','app/../escape','app/CON','app/a:stream','app/a\\b'])
 def test_asset_partition_rejects_unsafe_members(path):
     from scripts.releases.semantier_windows import partition_native_assets

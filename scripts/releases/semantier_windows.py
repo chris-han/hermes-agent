@@ -57,7 +57,10 @@ def _native_payload_files(inventory,max_bytes,reserve):
             raise ValueError('Invalid native payload size')
         weight=compressed+300+4*len(name.encode('utf-8'))+((size+65535)//65536)*80
         if weight>capacity:raise ValueError(f'Indivisible native payload exceeds package cap: {name}')
-        files[name]={'path':name,'weight':weight}
+        digest=record.get('sha256')
+        if digest is not None and (not isinstance(digest,str) or not re.fullmatch('[a-f0-9]{64}',digest)):
+            raise ValueError('Invalid native payload content digest')
+        files[name]={'path':name,'weight':weight,'size':size,'sha256':digest}
     if not files:raise ValueError('Native payload is empty')
     return files
 
@@ -67,7 +70,8 @@ def partition_native_assets(inventory, *, max_bytes=480_000_000, previous=None, 
 
     Native package folding preserves original relative paths. This plan is not
     qualification and never authorizes deployment/publication. Existing members
-    keep their assignments across A/B; an overflow requires explicit relayout.
+    keep their assignments across A/B except for required hard-link-safe placement;
+    an overflow requires explicit relayout.
     New placements leave bounded growth room so a small successor does not force
     an otherwise unnecessary graph relayout. Final signed sizes remain decisive.
     """
@@ -78,6 +82,20 @@ def partition_native_assets(inventory, *, max_bytes=480_000_000, previous=None, 
     files=_native_payload_files(inventory,max_bytes,reserve)
     required=set(main_required)|{p for p in files if not p.startswith('app/resources/agent-payload/')}
     if not required<=set(files):raise ValueError('Required main payload absent')
+    # Single-instance storage shares identical nonempty content. Folding adds a
+    # second link per path. Reserve room for both complete A/B graphs plus the
+    # store's source link, without changing a single payload byte.
+    from collections import defaultdict
+    identical=defaultdict(list)
+    for name,row in files.items():
+        if row['size'] and row['sha256']:
+            identical[(row['size'],row['sha256'])].append(name)
+    link_required=set()
+    for names in identical.values():
+        if 2*len(names)+1>1023:
+            raise ValueError(f'Native repeated content exceeds two-version hard-link budget: {names[0]}')
+        if 4*len(names)+1>1023:link_required.update(names)
+    required|=link_required
     assignment={};groups={'main':{'id':'main','files':[],'estimatedBytes':reserve}}
     def put(name,group):
         row=files[name]
@@ -91,6 +109,7 @@ def partition_native_assets(inventory, *, max_bytes=480_000_000, previous=None, 
             if name not in files:continue
             if not isinstance(group,str) or not (group=='main' or re.fullmatch('runtime[0-9]{4}',group)):
                 raise ValueError('Invalid native asset ID')
+            if name in link_required:group='main'
             if name in required and group!='main':raise ValueError('Required main payload moved to asset package')
             put(name,group)
     for name in sorted(required-set(assignment)):put(name,'main')
@@ -106,7 +125,7 @@ def partition_native_assets(inventory, *, max_bytes=480_000_000, previous=None, 
     for group in groups.values():group['files'].sort()
     return {'schema':1,'kind':'windows-folded-assets','maxObjectBytes':max_bytes,
             'assignment':dict(sorted(assignment.items())),'groups':list(groups.values()),
-            'qualification':'NOT_RUN'}
+            'unfoldedDuplicateFiles':sorted(link_required),'qualification':'NOT_RUN'}
 
 
 def write_native_asset_layout(output, plan, *, manifest, source):
@@ -153,7 +172,7 @@ def prepare_native_asset_layout(package, directory, output, *, expected_sha256, 
             raise ValueError('Native input is not the bound Semantier x64 package')
         required={unquote(n.get('Executable').replace(chr(92),'/')) for n in manifest.iter() if n.get('Executable')}
         old=None if previous is None else json.loads(Path(previous).read_text(encoding='utf-8-sig'))['assignment']
-        plan=partition_native_assets(inventory,previous=old,main_required=required)
+        payload=_native_payload_files(inventory,480_000_000,4_000_000)
         blockmap=ET.fromstring(archive.read('AppxBlockMap.xml'))
         if blockmap.get('HashMethod')!='http://www.w3.org/2001/04/xmlenc#sha256':
             raise ValueError('Unsupported native input block-map digest')
@@ -165,7 +184,7 @@ def prepare_native_asset_layout(package, directory, output, *, expected_sha256, 
         members={unquote(f.filename):f for f in archive.infolist() if not f.is_dir()}
         files=[]
         # Include the manifest so the layout cannot point at a changed identity.
-        for name in sorted([*plan['assignment'],'AppxManifest.xml']):
+        for name in sorted([*payload,'AppxManifest.xml']):
             file=directory.joinpath(*name.split('/'))
             if file.is_symlink() or not file.resolve().is_relative_to(directory) or not file.is_file():
                 raise ValueError(f'Native payload location mismatch: {name}')
@@ -187,6 +206,9 @@ def prepare_native_asset_layout(package, directory, output, *, expected_sha256, 
             if whole and digest.digest()!=base64.b64decode(whole[0].get('Hash',''),validate=True):
                 raise ValueError(f'Native input file digest mismatch: {name}')
             files.append(dict(path=name,size=entry.file_size,sha256=digest.hexdigest()))
+        verified={row['path']:row['sha256'] for row in files}
+        inventory=[{**row,'sha256':verified.get(unquote(row['path']))} for row in inventory]
+        plan=partition_native_assets(inventory,previous=old,main_required=required)
     plan.update(inputSha256=expected_sha256,identity=dict(identity.attrib),
                 payloadInventorySha256=hashlib.sha256(json.dumps(files,sort_keys=True,separators=(',',':')).encode()).hexdigest(),
                 files=files)

@@ -36,5 +36,19 @@ try{
  $spec.native_graph.sha256='a'*64
  $refused=$false;try{$null=Read-NativeRegistrationOutcome $spec $graph $base $root ([DateTimeOffset]::UtcNow.AddMinutes(1)) $false}catch{$refused=$true}
  if(!$refused){throw 'Earlier attempt adopted by later intent'}
- @{scope='ACTUAL_NATIVE_REGISTRATION_FILES_NO_SDK_DEPLOYMENT';status='PASS';cases=6;producedAt=[DateTime]::UtcNow.ToString('o')}|ConvertTo-Json -Compress
+ $wd1=Join-Path $root ('native-deployment-'+[guid]::NewGuid().ToString('N'))
+ $null=[IO.Directory]::CreateDirectory($wd1)
+ $null=Write-NativeRegistrationIntent $wd1 'intent.json' $spec.native_graph.sha256 ($base+'/'+$graph.root) @($base+'/'+$graph.root) @('fixture')
+ $legacy=@{status='FAILURE';errorSource='deployment-result';hresult='80070476';activityId='1c15d8c2-6377-0008-3f14-041e7763dd01';isRegistered=$false}
+ $legacyPath=Join-Path $wd1 'correct-digest.json'
+ $legacy|ConvertTo-Json|Set-Content -LiteralPath $legacyPath -Encoding UTF8
+ $proof=Read-NativeRegistrationOutcome $spec $graph $base $root $begin $true
+ if($proof.status -cne 'FAILURE' -or !$proof.operationCompleted){throw 'Typed completed WD1 GetResults failure remained UNKNOWN'}
+ foreach($change in @(@{errorSource='async-exception'},@{operationCompleted=$false},@{activityId='not-an-activity'})){
+  $candidate=$legacy.Clone();foreach($key in $change.Keys){$candidate[$key]=$change[$key]}
+  $candidate|ConvertTo-Json|Set-Content -LiteralPath $legacyPath -Encoding UTF8
+  $refused=$false;try{$null=Read-NativeRegistrationOutcome $spec $graph $base $root $begin $true}catch{$refused=$true}
+  if(!$refused){throw 'Incomplete or unbound WD1 failure incorrectly settled'}
+ }
+ @{scope='ACTUAL_NATIVE_REGISTRATION_FILES_NO_SDK_DEPLOYMENT';status='PASS';cases=10;producedAt=[DateTime]::UtcNow.ToString('o')}|ConvertTo-Json -Compress
 }finally{Remove-Item -LiteralPath $root -Recurse -Force}
