@@ -51,7 +51,7 @@ def test_real_native_stager_and_composed_publisher_bind_complete_final_graph(tmp
     from scripts.releases.semantier_native_candidate import canonical
     graph=native_graph();asset=graph['objects'][-1]
     asset.update(kind='asset-package',identity='Semantier.Agent.Acceptance',arch='neutral',resourceId='runtime0001',allowExecution=True)
-    request=acceptance_request(commit='a'*40,controller='b'*40,version='0.0.59',source_version='0.22.2',base='http://127.0.0.1:8926')
+    request=acceptance_request(commit='a'*40,controller='b'*40,version='0.0.59',source_version='0.22.2',base='https://updates.semantier.com')
     prefix='releases/channel-builds/'+request['buildId']+'/'
     old='releases/channel-builds/'+'a'*32+'/'
     output=tmp_path/'output';native=tmp_path/'native';incoming=tmp_path/'incoming'
@@ -93,6 +93,10 @@ def test_real_native_stager_and_composed_publisher_bind_complete_final_graph(tmp
     from agents.client_operations.publication import Publisher
     from contracts.client_operations import ReleaseCandidate
     owner=Publisher(None,tmp_path/'public',incoming,request['publicBase'],b'x'*32,request['identity'],request['channel'],workflow_verifier=lambda _: {'scope':'external-GitHub-boundary-fixture'})
+    from agents.client_operations.artifact_io import OperationError
+    wrong_owner=Publisher(None,tmp_path/'wrong-public',incoming,'http://127.0.0.1:8926',b'x'*32,request['identity'],request['channel'],workflow_verifier=lambda _: {'scope':'external-GitHub-boundary-fixture'})
+    with pytest.raises(OperationError,match='manifest_contract_mismatch'):
+        wrong_owner.admit(ReleaseCandidate(**candidate),{'principal_id':'ci-fixture'},persist=False)
     admitted=owner.admit(ReleaseCandidate(**candidate),{'principal_id':'ci-fixture'},persist=False)
     assert admitted['qualification']=='verified'
     for row in graph['objects']:assert (tmp_path/'public'/row['key']).read_bytes()==(distribution/Path(row['key']).name).read_bytes()

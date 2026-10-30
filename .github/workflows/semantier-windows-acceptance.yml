@@ -21,6 +21,7 @@ on:
 env:
   ACCEPTANCE_CI_SID: ${{ vars.SEMANTIER_ACCEPTANCE_CI_SID }}
   ACCEPTANCE_PACKAGE_LAYOUT: ${{ inputs.package_layout || 'legacy' }}
+  ACCEPTANCE_PUBLIC_BASE: 'https://updates.semantier.com'
   ACCEPTANCE_PREVIOUS_NATIVE_LAYOUT: ${{ inputs.previous_native_layout }}
   ACCEPTANCE_WINDOWS_PYTHON: 'D:\repo\qualification-private\windows-profile-c10-20261028-v1\package\app\resources\agent-payload\tools\python-3.14.7+20260901-win32-x64\python.exe'
   ACCEPTANCE_INCOMING_ROOT: ${{ vars.SEMANTIER_ACCEPTANCE_INCOMING_ROOT }}
@@ -61,6 +62,13 @@ jobs:
           ci_python="$(uv python find --offline --managed-python 3.14)"
           "$ci_python" -c 'import sys; assert sys.version_info >= (3, 11); print(sys.version)'
           echo "SEMANTIER_CI_PYTHON=$ci_python" >> "$GITHUB_ENV"
+      - name: Verify CI session, signing access and Runtime custody before allocation
+        shell: bash
+        env:
+          SEMANTIER_CLIENT_RECEIPT_KEY: ${{ secrets.SEMANTIER_CLIENT_RECEIPT_KEY }}
+        run: |
+          set -euo pipefail
+          "$SEMANTIER_CI_PYTHON" hermes/scripts/releases/semantier_native_ci.py --preflight --expected-sid "$ACCEPTANCE_CI_SID" --incoming "$ACCEPTANCE_INCOMING_ROOT" --controller "$PWD/controller" --controller-commit "$ACCEPTANCE_CONTROLLER_COMMIT" --public-base "$ACCEPTANCE_PUBLIC_BASE"
       - name: Build and sign with existing non-exportable identity
         shell: bash
         run: |
@@ -81,7 +89,7 @@ jobs:
           elif [[ "$ACCEPTANCE_PACKAGE_LAYOUT" != legacy || -n "$ACCEPTANCE_PREVIOUS_NATIVE_LAYOUT" ]]; then
             exit 1
           fi
-          "$SEMANTIER_CI_PYTHON" controller/scripts/build_hermes_windows.py --source "$PWD/hermes" --output "$output" --thumbprint 57BF15739B4AA447842EAF388856A01B4E5029FF --acceptance-public-base http://127.0.0.1:8926 "${native_args[@]}"
+          "$SEMANTIER_CI_PYTHON" controller/scripts/build_hermes_windows.py --source "$PWD/hermes" --output "$output" --thumbprint 57BF15739B4AA447842EAF388856A01B4E5029FF --acceptance-public-base "$ACCEPTANCE_PUBLIC_BASE" "${native_args[@]}"
       - name: Real native installation and controlled inference-boundary smoke
         shell: bash
         run: |

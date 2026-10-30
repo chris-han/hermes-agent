@@ -1,5 +1,5 @@
 """WSL bridge to the existing real native installation smoke, owned family only."""
-import argparse,base64,json,os,subprocess,sys
+import argparse,base64,hashlib,hmac,json,os,re,subprocess,sys,secrets,stat
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[2]
@@ -80,8 +80,128 @@ $ciContextBefore=Assert-CISession;
 """.replace('__EXPECTED_SID__',"'"+str(expected_sid).replace("'","''")+"'")
 
 
+def validate_ci_preflight(source, controller, expected_controller, expected_sid, receipt_key):
+    if os.environ.get('GITHUB_ACTIONS') != 'true' or os.environ.get('GITHUB_REPOSITORY') != 'chris-han/hermes-agent':
+        raise ValueError('Real CI execution context required')
+    if source != os.environ.get('GITHUB_SHA') or not re.fullmatch(r'[0-9a-f]{40}', source):
+        raise ValueError('Exact source checkout required')
+    if controller != expected_controller or not re.fullmatch(r'[0-9a-f]{40}', controller):
+        raise ValueError('Exact controller checkout required')
+    if not expected_sid.startswith('S-1-5-21-') or expected_sid in ('S-1-5-21-1928370875-4287869425-2092521300-1003','S-1-5-21-1928370875-4287869425-2092521300-1011'):
+        raise ValueError('Separate bound CI account required')
+    if len(receipt_key.encode('utf-8')) < 32:
+        raise ValueError('CI receipt key unavailable')
+
+
+def custody_probe(incoming, runtime_read):
+    """Create, sync, compare from Runtime, then remove only the exact owned probe."""
+    root = Path(incoming)
+    if root.is_symlink() or not root.is_dir():
+        raise ValueError('Incoming root unavailable')
+    name = '.ci-custody-' + secrets.token_hex(16)
+    content = secrets.token_bytes(64)
+    dirfd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    filefd = None
+    inode = None
+    try:
+        filefd = os.open(name, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dirfd)
+        inode = os.fstat(filefd)
+        if os.write(filefd, content) != len(content):
+            raise OSError('Incomplete custody probe write')
+        os.fsync(filefd)
+        os.fsync(dirfd)
+        os.lseek(filefd, 0, os.SEEK_SET)
+        if hashlib.sha256(os.read(filefd, 65)).digest() != hashlib.sha256(content).digest():
+            raise ValueError('Runner readback mismatch')
+        if runtime_read(name) != hashlib.sha256(content).hexdigest():
+            raise ValueError('Runtime readback mismatch')
+    finally:
+        if filefd is not None:
+            os.close(filefd)
+            try:
+                current = os.stat(name, dir_fd=dirfd, follow_symlinks=False)
+                if inode is not None and stat.S_ISREG(current.st_mode) and (current.st_dev, current.st_ino) == (inode.st_dev, inode.st_ino):
+                    os.unlink(name, dir_fd=dirfd)
+                    os.fsync(dirfd)
+            except FileNotFoundError:
+                pass
+        os.close(dirfd)
+
+
+def verify_receipt_key(key, challenge, runtime_mac):
+    expected = hmac.new(key.encode('utf-8'), challenge, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, runtime_mac(challenge)):
+        raise ValueError('CI and Runtime receipt key mismatch')
+
+
+def validate_primary_base(candidate_base, runtime_base):
+    if candidate_base != 'https://updates.semantier.com' or runtime_base != candidate_base:
+        raise ValueError('CI and Runtime publication base mismatch')
+
+
+def preflight(expected_sid, incoming, controller, expected_controller, public_base):
+    checkout = subprocess.check_output(['/usr/bin/git', '-C', str(ROOT), 'rev-parse', 'HEAD'], text=True).strip()
+    actual_controller = subprocess.check_output(['/usr/bin/git', '-C', str(controller), 'rev-parse', 'HEAD'], text=True).strip()
+    for tree in (ROOT, controller):
+        if subprocess.check_output(['/usr/bin/git', '-C', str(tree), 'status', '--porcelain', '--untracked-files=all'], text=True).strip():
+            raise ValueError('CI checkout is not clean')
+    validate_ci_preflight(checkout, actual_controller, expected_controller, expected_sid, os.environ.get('SEMANTIER_CLIENT_RECEIPT_KEY', ''))
+    if not os.environ.get('ACCEPTANCE_WINDOWS_PYTHON'):
+        raise ValueError('Windows Python unavailable')
+    # Do not print, export or sign with the key: open only a public/private-key handle.
+    cmd = "$ErrorActionPreference='Stop';" + ci_session_guard(expected_sid) + r"""
+$c=Get-Item -LiteralPath 'Cert:\CurrentUser\My\57BF15739B4AA447842EAF388856A01B4E5029FF'
+$now=Get-Date
+$basic=@($c.Extensions|Where-Object {$_.Oid.Value -eq '2.5.29.19'})
+if(!$c.HasPrivateKey -or $c.NotBefore -gt $now -or $c.NotAfter -le $now -or $c.EnhancedKeyUsageList.ObjectId -notcontains '1.3.6.1.5.5.7.3.3' -or $basic.Count -ne 1 -or $basic[0].CertificateAuthority){throw 'CI signer unavailable'}
+$key=[System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($c)
+if(!$key){throw 'CI signer private-key handle unavailable'};$key.Dispose()
+if(!(Test-Path -LiteralPath $env:ACCEPTANCE_WINDOWS_PYTHON -PathType Leaf)){throw 'Windows Python unavailable'}
+if(!(Test-Path -LiteralPath 'D:\repo\hermes-build\.cache\desktop-inputs\tools\node-26.7.0-win32-x64\node.exe' -PathType Leaf)){throw 'Windows Node unavailable'}
+$sdk=Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin'
+if(!(Get-ChildItem -Path (Join-Path $sdk '*\x64\signtool.exe') -ErrorAction SilentlyContinue)){throw 'SignTool unavailable'}
+if(!(Get-ChildItem -Path (Join-Path $sdk '*\x64\makeappx.exe') -ErrorAction SilentlyContinue)){throw 'MakeAppx unavailable'}
+Assert-CISession|Out-Null
+"""
+    env = native_environment()
+    env['WSLENV'] += ':ACCEPTANCE_WINDOWS_PYTHON'
+    subprocess.run(['/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe','-NoProfile','-NonInteractive','-EncodedCommand',base64.b64encode(cmd.encode('utf-16le')).decode()], check=True, env=env)
+    expected_root = Path('/home/chris/repo/semantier-runtime/.worktrees/cloudflare-update2-three-sources-v2/.artifacts/update2-publication-v2/qualified-v3/incoming')
+    if Path(incoming).resolve(strict=True) != expected_root.resolve(strict=True):
+        raise ValueError('Unexpected incoming custody root')
+    container = 'semantier-update2-publication-v14-backend'
+    inspect = json.loads(subprocess.check_output(['docker','inspect',container,'--format','{{json .Mounts}}'], text=True))
+    expected_mount = str(expected_root.parents[1])
+    if not any(m.get('Source') == expected_mount and m.get('Destination') == '/fixture' for m in inspect):
+        raise ValueError('Runtime custody mount mismatch')
+    details = subprocess.check_output(['docker','inspect',container,'--format','{{.Id}} {{.Image}} {{.State.Running}}'], text=True).strip().split()
+    if len(details) != 3 or details[1] != 'sha256:3e72e6308b5b67e81cb715c950340447edff623f4b8b035cf8ac0ace903309cb' or details[2] != 'true':
+        raise ValueError('Runtime identity or state mismatch')
+    cid = details[0]
+    if not cid or any(c not in '0123456789abcdef' for c in cid):
+        raise ValueError('Runtime container identity unavailable')
+    def runtime_read(name):
+        result = subprocess.check_output(['docker','exec',cid,'python','-c',
+            'import sys; from pathlib import Path; from agents.client_operations.artifact_io import safe_file,file_facts; p=safe_file(Path("/fixture/qualified-v3/incoming"),sys.argv[1]); size,digest=file_facts(p); assert size==64; print(digest)', name], text=True)
+        return result.strip()
+    runtime_base = subprocess.check_output(['docker','exec',cid,'python','-c',
+        'import os; print(os.environ["SEMANTIER_CLIENT_PUBLIC_BASE"])'], text=True).strip()
+    validate_primary_base(public_base, runtime_base)
+    def runtime_mac(challenge):
+        return subprocess.check_output(['docker','exec',cid,'python','-c',
+            'import os,sys,hmac,hashlib; key=os.environ["SEMANTIER_CLIENT_RECEIPT_KEY"].encode(); print(hmac.new(key,bytes.fromhex(sys.argv[1]),hashlib.sha256).hexdigest())',
+            challenge.hex()], text=True).strip()
+    verify_receipt_key(os.environ['SEMANTIER_CLIENT_RECEIPT_KEY'], secrets.token_bytes(32), runtime_mac)
+    custody_probe(expected_root, runtime_read)
+    print('CI session, signing access, tooling and Runtime custody preflight PASS')
+
+
 if __name__=='__main__':
-    p=argparse.ArgumentParser();p.add_argument('--output',type=Path,required=True);p.add_argument('--work',required=True);p.add_argument('--commit',required=True);p.add_argument('--expected-sid',required=True);a=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('--output',type=Path);p.add_argument('--work');p.add_argument('--commit');p.add_argument('--expected-sid',required=True);p.add_argument('--preflight',action='store_true');p.add_argument('--incoming');p.add_argument('--controller',type=Path);p.add_argument('--controller-commit');p.add_argument('--public-base');a=p.parse_args()
+    if a.preflight:
+        if not a.incoming or not a.controller or not a.controller_commit or not a.public_base: p.error('preflight requires incoming/controller/controller-commit/public-base')
+        preflight(a.expected_sid,a.incoming,a.controller,a.controller_commit,a.public_base);sys.exit(0)
+    if not a.output or not a.work or not a.commit: p.error('native smoke requires output/work/commit')
     # All interpolated paths go through PowerShell literal quoting, never shell evaluation.
     quote=lambda value:"'"+str(value).replace("'","''")+"'"
     windows=lambda path:subprocess.check_output(['wslpath','-w',str(path)],text=True,encoding='utf-8',errors='replace',timeout=30).strip()

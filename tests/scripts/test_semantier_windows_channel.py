@@ -281,3 +281,70 @@ def test_new_native_assignment_keeps_room_for_small_successor_without_relayout()
     successor=[{**row,'bytes':1001000,'compressed_bytes':1001000} if row['path']=='app/main.exe' else row for row in rows]
     second=partition_native_assets(successor,previous=first['assignment'])
     assert second['assignment']==first['assignment']
+
+
+def test_ci_preflight_rejects_checkout_and_secret_mismatch_before_custody(tmp_path, monkeypatch):
+    from scripts.releases.semantier_native_ci import validate_ci_preflight
+    monkeypatch.setenv('GITHUB_ACTIONS', 'true')
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'chris-han/hermes-agent')
+    monkeypatch.setenv('GITHUB_SHA', 'a' * 40)
+    with pytest.raises(ValueError, match='source checkout'):
+        validate_ci_preflight('b' * 40, 'c' * 40, 'c' * 40, 'S-1-5-21-1-2-3-4', 'x' * 32)
+    with pytest.raises(ValueError, match='controller checkout'):
+        validate_ci_preflight('a' * 40, 'b' * 40, 'c' * 40, 'S-1-5-21-1-2-3-4', 'x' * 32)
+    with pytest.raises(ValueError, match='receipt key'):
+        validate_ci_preflight('a' * 40, 'c' * 40, 'c' * 40, 'S-1-5-21-1-2-3-4', 'short')
+    with pytest.raises(ValueError, match='Separate'):
+        validate_ci_preflight('a' * 40, 'c' * 40, 'c' * 40, 'S-1-5-21-1928370875-4287869425-2092521300-1003', 'x' * 32)
+
+
+def test_ci_custody_probe_requires_runtime_readback_and_removes_only_owned_probe(tmp_path):
+    from scripts.releases.semantier_native_ci import custody_probe
+    observed = []
+    before = set(tmp_path.iterdir())
+    def runtime_read(name):
+        observed.append(name)
+        import hashlib
+        return hashlib.sha256((tmp_path / name).read_bytes()).hexdigest()
+    custody_probe(tmp_path, runtime_read)
+    assert len(observed) == 1
+    assert set(tmp_path.iterdir()) == before
+    with pytest.raises(ValueError, match='Runtime readback'):
+        custody_probe(tmp_path, lambda name: b'incorrect')
+    assert set(tmp_path.iterdir()) == before
+
+
+def test_ci_custody_probe_never_removes_a_replaced_file(tmp_path):
+    from scripts.releases.semantier_native_ci import custody_probe
+    replaced = []
+    def replace(name):
+        path = tmp_path / name
+        path.unlink()
+        path.write_bytes(b'other owner')
+        replaced.append(path)
+        return 'wrong'
+    with pytest.raises(ValueError, match='Runtime readback'):
+        custody_probe(tmp_path, replace)
+    assert replaced[0].read_bytes() == b'other owner'
+
+
+def test_ci_receipt_key_preflight_refuses_mismatched_runtime_key():
+    import hashlib
+    import hmac
+    from scripts.releases.semantier_native_ci import verify_receipt_key
+    key = 'x' * 32
+    challenge = b'fixture-challenge'
+    def same(value):
+        return hmac.new(key.encode(), value, hashlib.sha256).hexdigest()
+    verify_receipt_key(key, challenge, same)
+    with pytest.raises(ValueError, match='receipt key mismatch'):
+        verify_receipt_key(key, challenge, lambda value: '0' * 64)
+
+
+def test_ci_primary_publication_base_rejects_loopback_and_runtime_mismatch():
+    from scripts.releases.semantier_native_ci import validate_primary_base
+    validate_primary_base('https://updates.semantier.com', 'https://updates.semantier.com')
+    with pytest.raises(ValueError, match='publication base'):
+        validate_primary_base('http://127.0.0.1:8926', 'https://updates.semantier.com')
+    with pytest.raises(ValueError, match='publication base'):
+        validate_primary_base('https://updates.semantier.com', 'https://other.example')
