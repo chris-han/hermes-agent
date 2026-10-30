@@ -51,6 +51,8 @@ Desktop-owned chrome and agent narration use **Semantier**, with **Semantier Age
 
 **Hermes** remains when it identifies the actual upstream backend/CLI/version, profile/source path, protocol, catalog/theme, Hermes Cloud/Nous service, OAuth authorization identity or upstream legal/provenance notice. App update labels must not relabel a backend update or backend version as a Semantier product release. Keep native package identity/Publisher and existing version sources independent of display branding. No runtime-wide text replacement.
 
+The initial boot wordmark uses the existing DecodeText scramble treatment: **SĒMANTIKÓS → SÉMANTIQUE → SEMANTIER**, once per boot display. Keep each word's first four characters readable, including its own accent spelling. Hold each intermediate word for 1.4 seconds including decoding, then resolve and hold SEMANTIER. Readiness interrupts directly to SEMANTIER before the existing exit; animation never extends startup. Reduced motion shows SEMANTIER immediately. Preserve the existing theme, typography, cursor, recovery and onboarding owners.
+
 ## Information architecture
 
 Windows App Installer channel builds expose one **Update source** selector in Version and Update: Channel 1 · Alibaba Cloud ECS, Channel 2 · Cloudflare, Channel 3 · Local development. This is separate from stable/main release-track controls. Native Electron owns the install-wide persisted source; a source change clears the prior actionable target and rechecks. Retain the existing Select primitive, keyboard behavior, localized copy and compact layout. Display the resolved endpoint or its missing-configuration state; never silently fall back to another provider.
