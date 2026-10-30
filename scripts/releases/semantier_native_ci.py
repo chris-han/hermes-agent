@@ -42,13 +42,14 @@ def select_native_candidate(output,commit):
     # the bundle's receipt. Native smoke still owns signature and OS checks.
     for row in graph['objects']:
         path=directory/row['key'].rsplit('/',1)[1]
-        with path.open('rb') as stream:
+        descriptor=os.open(path,os.O_RDONLY|getattr(os,'O_NOFOLLOW',0))
+        with os.fdopen(descriptor,'rb') as stream:
             before=os.fstat(stream.fileno())
             digest=hashlib.file_digest(stream,'sha256').hexdigest()
             after=os.fstat(stream.fileno())
-        named=path.stat()
+        named=path.lstat()
         identity=lambda s:(s.st_dev,s.st_ino,s.st_size,s.st_mtime_ns)
-        if (identity(before)!=identity(after) or identity(after)!=identity(named)
+        if (not stat.S_ISREG(named.st_mode) or identity(before)!=identity(after) or identity(after)!=identity(named)
                 or after.st_size!=row['size'] or digest!=row['sha256']):
             raise ValueError('Native graph object bytes changed or mismatched')
     root=next(row for row in graph['objects'] if row['key']==graph['root'])
