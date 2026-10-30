@@ -347,11 +347,10 @@ export function decodeChannelRecord(body: string): ChannelRecord {
 
     if (
       state !== 'active' ||
-      !common.head ||
-      native.sequence <= common.head.sequence ||
+      (common.head !== null && native.sequence <= common.head.sequence) ||
       native.sequence >= common.nextSequence
     ) {
-      throw new Error('Native head requires a legacy bridge and newer allocated sequence')
+      throw new Error('Native head has an invalid allocated sequence')
     }
 
     common.nativeHead = native

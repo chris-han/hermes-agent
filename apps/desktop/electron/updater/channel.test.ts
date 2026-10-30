@@ -936,6 +936,11 @@ test('native graph resolution reads only metadata and preserves the legacy head 
   expect(legacy.kind).toBe('active')
 
   if (legacy.kind === 'active') {expect(legacy.target.manifestSha256).toBe(legacyHead.sha256)}
+  f.record.head = null
+  f.objects.set(`/releases/channels/${f.record.name}.json`, JSON.stringify(f.record))
+  await expect(new ChannelResolver({
+    build: f.build, platform: 'darwin', arch: 'arm64', signer: 'ABCDE12345'
+  }).resolve()).rejects.toThrow('Native channel is not supported')
   f.requests.length = 0
 
   const resolver = new ChannelResolver({
@@ -956,6 +961,17 @@ test('native graph resolution reads only metadata and preserves the legacy head 
     '/' + f.record.nativeHead.manifestKey,
     '/' + native.graph.key
   ])
+  await expect(new ChannelResolver({
+    build: f.build, platform: 'win32', arch: 'x64', signer: 'wrong publisher', nativePackageUri: true
+  }).resolve()).rejects.toThrow('signing identity mismatch')
+  const wrongOriginBody = JSON.stringify({ ...manifest, request: { ...next, publicBase: 'https://wrong.example' } })
+  f.record.nativeHead.sha256 = createHash('sha256').update(wrongOriginBody).digest('hex')
+  f.objects.set('/' + f.record.nativeHead.manifestKey, wrongOriginBody)
+  f.objects.set(`/releases/channels/${f.record.name}.json`, JSON.stringify(f.record))
+  await expect(resolver.resolve()).rejects.toThrow('request binding mismatch')
+  f.record.nativeHead.sha256 = createHash('sha256').update(manifestBody).digest('hex')
+  f.objects.set('/' + f.record.nativeHead.manifestKey, manifestBody)
+  f.objects.set(`/releases/channels/${f.record.name}.json`, JSON.stringify(f.record))
   const directory = await mkdtemp(path.join(os.tmpdir(), 'native-channel-handoff-'))
   const calls: string[] = []
 

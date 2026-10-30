@@ -2,8 +2,8 @@ import type { ConnectionState } from '@hermes/shared'
 import { useStore } from '@nanostores/react'
 import { useEffect, useRef, useState } from 'react'
 
+import { SemantierBootMark } from '@/components/semantier-boot-mark'
 import { Button } from '@/components/ui/button'
-import { DecodeText } from '@/components/ui/decode-text'
 import { prefersReducedMotion } from '@/hooks/use-media-query'
 import { useI18n } from '@/i18n'
 import { cn } from '@/lib/utils'
@@ -14,16 +14,12 @@ import { $onboardingDecided } from '@/store/onboarding-presence'
 import { $gatewayState } from '@/store/session'
 import { isMainWindow } from '@/store/windows'
 
-// Decode mechanics live in the shared <DecodeText> primitive
-// (components/ui/decode-text.tsx). "CONN" stays legible via prefix={4}.
-const TEXT = 'CONNECTING'
-
 // Exit choreography (ms): text fades down + out, hold, then the overlay fades.
 const TEXT_OUT_MS = 360
 const POST_TEXT_HOLD_MS = 300
 const OVERLAY_OUT_MS = 520
 // Preview-only: how long to "connect" for, and the pause before replaying.
-const PREVIEW_CONNECT_MS = 2600
+const PREVIEW_CONNECT_MS = 4200
 const PREVIEW_REPLAY_MS = 1100
 
 type Phase = 'live' | 'text-out' | 'overlay-out' | 'gone'
@@ -97,16 +93,12 @@ function ConnectingOverlayView({ decoding, onExit, phase }: ConnectingOverlayVie
       {onExit ? (
         <SlowSetupStart onExit={onExit} />
       ) : (
-        <DecodeText
+        <SemantierBootMark
           active={decoding}
           className={cn(
             'pl-[0.4em] text-primary transition duration-300 ease-out',
             leaving ? 'translate-y-2 opacity-0 saturate-0' : 'translate-y-0 opacity-100 saturate-100'
           )}
-          cursor
-          loop
-          prefix={4}
-          text={TEXT}
         />
       )}
     </div>

@@ -142,13 +142,14 @@ export class ChannelResolver {
     }
 
     if (record.state === 'active') {
-      return record.head
+      const native = this.deps.platform === 'win32' && this.deps.arch === 'x64' && this.deps.nativePackageUri === true
+      if (!record.head && record.nativeHead && !native) {
+        throw new Error('Native channel is not supported by this installation')
+      }
+      return record.head || record.nativeHead
         ? {
             kind: 'active',
-            target: await this.target(
-              record,
-              this.deps.platform === 'win32' && this.deps.arch === 'x64' && this.deps.nativePackageUri === true
-            )
+            target: await this.target(record, native)
           }
         : { kind: 'empty', channel: record }
     }
