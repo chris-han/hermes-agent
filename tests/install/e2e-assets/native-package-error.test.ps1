@@ -58,3 +58,27 @@ foreach($action in @('update','download','native-reconciled','unknown')){
  if(Test-WD1LocalAction $action){throw 'WD1 purpose improperly authorized production update or unrelated mutation'}
 }
 Write-Output 'PASS: WD1 operation scope preserves local qualification and refuses production update/apply/ack'
+
+# The SDK wrapper must durably record an actor-bound intent before its call.
+$ciTmp=Join-Path ([IO.Path]::GetTempPath()) ('semantier-ci-intent-test-'+[Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $ciTmp -ErrorAction Stop|Out-Null
+try {
+ $script:seen=$false
+ function Invoke-BoundNativePackageUri([string[]]$Uris,[string[]]$Digests,[string]$Root,[int]$Minutes) {
+  $files=@(Get-ChildItem -LiteralPath $ciTmp -Filter 'ci-native-intent-*.json')
+  if($files.Count -ne 1){throw 'No durable intent at invocation boundary'}
+  $i=Get-Content -Raw -LiteralPath $files[0].FullName|ConvertFrom-Json
+  if($i.graphSha256 -cne ('a'*64) -or $i.sourceCommit -cne ('b'*40) -or $i.actor.sid -cne 'fixture-sid' -or $i.operation -cne 'positive'){throw 'Incomplete CI intent'}
+  $script:seen=$true
+  return @{status='SUCCESS';hresult='00000000';activityId='11111111-1111-1111-1111-111111111111';operationCompleted=$true}
+ }
+ $v=Invoke-CIDurableNativeUri $ciTmp ('a'*64) ('b'*40) 'positive' @{sid='fixture-sid';session_sid='fixture-sid';session=7;wts_state=0} @('http://127.0.0.1:1/pkg') @('digest') 'http://127.0.0.1:1/pkg' 1
+ if(!$script:seen -or $v.status -cne 'SUCCESS' -or @(Get-ChildItem -LiteralPath $ciTmp -Filter 'ci-native-outcome-*.json').Count -ne 1){throw 'CI native durable transaction not completed'}
+} finally {Remove-Item -LiteralPath $ciTmp -Recurse -Force}
+
+. (Join-Path $PSScriptRoot 'native-ci-cleanup-policy.ps1')
+$held=$false;try {Assert-CINativeCleanupOwnership @{root='native'} 'same-full-name'} catch {$held=$true}
+if(!$held){throw 'Native cleanup incorrectly trusts a matching full name'}
+$held=$false;try {Assert-CINativeCleanupOwnership $null ''} catch {$held=$true}
+if(!$held){throw 'Cleanup incorrectly accepts an uncaptured registration'}
+'PASS: uncertain CI native cleanup and uncaptured identity held; no package mutation'

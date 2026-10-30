@@ -55,6 +55,7 @@ if ($SemantierAcceptanceHost) {
 Run-Node @($Metadata, 'prepare', '--work', $Work, '--out', $Out)
 . (Join-Path $Assets 'windows-bundle-metadata.ps1')
 . (Join-Path $Assets 'windows-bundle-plugin-smoke.ps1')
+. (Join-Path $Assets 'native-ci-cleanup-policy.ps1')
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $HomeDir = Join-Path $Work 'home'
 $UserData = Join-Path $Work 'user-data'
@@ -109,7 +110,7 @@ try {
     $attempted = $true
     if($graph){
         . (Join-Path $Assets 'native-package-deployment.ps1')
-        Invoke-CINativeGraphUri $graph $NativeGraph $Artifact $Node $Out $ExpectedSid $nativeUriState
+        Invoke-CINativeGraphUri $graph $NativeGraph $Artifact $Node $Out $ExpectedSid $nativeUriState $Commit
     }else{Add-AppxPackage -Path $Artifact -ErrorAction Stop}
     $packages = @(Get-AppxPackage -Name $Expected.msixIdentity)
     if ($packages.Count -ne 1) { throw 'Expected exactly one deployed package' }
@@ -178,6 +179,7 @@ try {
         if ($attempted) {
             $remaining = @(Get-AppxPackage -Name $Expected.msixIdentity)
             foreach ($pkg in $remaining) {
+                Assert-CINativeCleanupOwnership $graph $installedFullName
                 if ($pkg.Publisher -cne $Expected.publisher -or $pkg.Version.ToString() -cne $inputMetadata.Version -or
                     ($installedFullName -and $pkg.PackageFullName -cne $installedFullName)) { throw 'Refusing cleanup of an unowned package' }
                 # gateway ensure owns a detached process, so closing Electron is

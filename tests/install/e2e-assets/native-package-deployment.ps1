@@ -144,8 +144,25 @@ function Recover-WD1NativeUri($Graph,[string]$Base,[string]$Root,$State,$Target,
  return $proof
 }
 
+# Create-new, flushed evidence immediately before each CI SDK invocation.
+# An intent without a terminal outcome is unresolved; it does not grant cleanup.
+function Invoke-CIDurableNativeUri([string]$Out,[string]$GraphSha,[string]$SourceCommit,[string]$Operation,$Actor,[string[]]$Uris,[string[]]$Digests,[string]$Root,[int]$Minutes) {
+ if($GraphSha -cnotmatch '^[a-f0-9]{64}$' -or $SourceCommit -cnotmatch '^[a-f0-9]{40}$' -or $Operation -cnotin @('positive','wrong-digest') -or $Root -cnotin $Uris -or $Uris.Count -ne $Digests.Count){throw 'Invalid CI native operation binding'}
+ if(!$Actor.sid -or $Actor.sid -cne $Actor.session_sid -or $Actor.session -le 0 -or $Actor.wts_state -ne 0){throw 'Invalid CI native actor'}
+ $id=[Guid]::NewGuid().ToString('N');$self=Get-Process -Id $PID
+ $intent=@{schema=1;operationId=$id;createdAt=[DateTime]::UtcNow.ToString('o');sourceCommit=$SourceCommit;graphSha256=$GraphSha;operation=$Operation;actor=$Actor;actorPid=$PID;actorBirth=$self.StartTime.ToUniversalTime().ToString('o');root=$Root;uris=$Uris;digests=$Digests}
+ function Write-CIRecord([string]$Name,$Value) {
+  $stream=[IO.File]::Open((Join-Path $Out $Name),[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+  try{$bytes=[Text.Encoding]::UTF8.GetBytes(($Value|ConvertTo-Json -Depth 16 -Compress));$stream.Write($bytes,0,$bytes.Length);$stream.Flush($true)}finally{$stream.Dispose()}
+ }
+ Write-CIRecord ('ci-native-intent-'+$id+'.json') $intent
+ $result=Invoke-BoundNativePackageUri $Uris $Digests $Root $Minutes
+ Write-CIRecord ('ci-native-outcome-'+$id+'.json') @{schema=1;operationId=$id;createdAt=[DateTime]::UtcNow.ToString('o');result=$result}
+ return $result
+}
+
 # CI-only complete-object digest refusal/registration proof. No publication authority.
-function Invoke-CINativeGraphUri($Graph,[string]$GraphPath,[string]$Artifact,[string]$Node,[string]$Out,[string]$ExpectedSid,$State) {
+function Invoke-CINativeGraphUri($Graph,[string]$GraphPath,[string]$Artifact,[string]$Node,[string]$Out,[string]$ExpectedSid,$State,[string]$SourceCommit) {
  if($env:GITHUB_ACTIONS -cne 'true' -or !$ExpectedSid -or $ExpectedSid -cin @('S-1-5-21-1928370875-4287869425-2092521300-1003','S-1-5-21-1928370875-4287869425-2092521300-1011') -or !(Get-Command Assert-CISession -ErrorAction SilentlyContinue)){throw 'Separate genuine CI session required'}
  $context=Assert-CISession
  if($context.sid -cne $ExpectedSid){throw 'CI URI actor mismatch'}
@@ -170,7 +187,7 @@ function Invoke-CINativeGraphUri($Graph,[string]$GraphPath,[string]$Artifact,[st
   foreach($index in 0..($rows.Count-1)){
    $State.unknown=$true
    $expected=[string[]]$digests.Clone();$bytes=[Convert]::FromBase64String($expected[$index]);$bytes[0]=$bytes[0] -bxor 1;$expected[$index]=[Convert]::ToBase64String($bytes)
-   $refusal=Invoke-BoundNativePackageUri $uris $expected ($origin.base+'/'+$Graph.root) 2
+   $refusal=Invoke-CIDurableNativeUri $Out $hash $SourceCommit 'wrong-digest' $context $uris $expected ($origin.base+'/'+$Graph.root) 2
    $refusals+=@{key=$rows[$index].key;result=$refusal}
    @{graphSha256=$hash;refusals=$refusals}|ConvertTo-Json -Depth 12|Set-Content -LiteralPath (Join-Path $Out 'native-uri-refusals.json') -Encoding UTF8
    $present=@(Get-AppxPackage -Name $rows[$index].identity)+@(Get-AppxPackage -PackageTypeFilter Resource -Name $rows[$index].identity)
@@ -179,7 +196,7 @@ function Invoke-CINativeGraphUri($Graph,[string]$GraphPath,[string]$Artifact,[st
    $State.unknown=$false
   }
   $State.unknown=$true
-  $positive=Invoke-BoundNativePackageUri $uris $digests ($origin.base+'/'+$Graph.root) 25
+  $positive=Invoke-CIDurableNativeUri $Out $hash $SourceCommit 'positive' $context $uris $digests ($origin.base+'/'+$Graph.root) 25
   $positive|ConvertTo-Json -Depth 12|Set-Content -LiteralPath (Join-Path $Out 'native-uri-positive.json') -Encoding UTF8
   if($positive.status -cne 'SUCCESS'){throw 'Native URI registration unresolved; preserve CI intent, origin and packages'}
   $State.unknown=$false
