@@ -10,12 +10,26 @@ const root = mkdtempSync(join(tmpdir(), 'semantier-channel-'))
 afterEach(() => rmSync(join(root, 'updates.json'), { force: true }))
 
 const build: ChannelBuild = {
-  buildId: 'a'.repeat(32), channel: 'semantier-acceptance', sequence: 46,
-  repository: 'chris-han/hermes-agent', commit: 'b'.repeat(40), sourceVersion: '1.0.0',
-  version: '0.0.46', windowsVersion: '0.0.46.0', publicBase: 'https://updates.example.test', bundleEnv: {},
-  identity: { token: 'b0fdc2a7e4b08d16', displayName: 'Semantier Agent Acceptance', appId: 'com.semantier.agent.acceptance',
-    appNamePascal: 'SemantierAgentAcceptance', artifactNamePascal: 'SemantierAgent', cliName: 'semantier-agent-acceptance',
-    windowsExecutableName: 'Semantier Agent', msixAppIdWithOrg: 'Semantier.Agent.Acceptance' }
+  buildId: 'a'.repeat(32),
+  channel: 'semantier-acceptance',
+  sequence: 46,
+  repository: 'chris-han/hermes-agent',
+  commit: 'b'.repeat(40),
+  sourceVersion: '1.0.0',
+  version: '0.0.46',
+  windowsVersion: '0.0.46.0',
+  publicBase: 'https://updates.example.test',
+  bundleEnv: {},
+  identity: {
+    token: 'b0fdc2a7e4b08d16',
+    displayName: 'Semantier Agent Acceptance',
+    appId: 'com.semantier.agent.acceptance',
+    appNamePascal: 'SemantierAgentAcceptance',
+    artifactNamePascal: 'SemantierAgent',
+    cliName: 'semantier-agent-acceptance',
+    windowsExecutableName: 'Semantier Agent',
+    msixAppIdWithOrg: 'Semantier.Agent.Acceptance'
+  }
 }
 
 test('selection persists across restart without mutating installed provenance or other preferences', () => {
@@ -40,7 +54,9 @@ test('unrelated packages stay governed by their own channel; invalid persisted c
 })
 test('a configured HTTPS deployment origin is validated without losing package identity', () => {
   const path = join(root, 'updates.json')
-  expect(packagedChannelSelection(build, path, 'https://updates.example.test/new')?.build.publicBase).toBe('https://updates.example.test/new')
+  expect(packagedChannelSelection(build, path, 'https://updates.example.test/new')?.build.publicBase).toBe(
+    'https://updates.example.test/new'
+  )
   expect(() => packagedChannelSelection(build, path, 'http://remote.example.test')).toThrow()
 })
 

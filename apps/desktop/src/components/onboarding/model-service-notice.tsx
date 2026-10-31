@@ -23,13 +23,25 @@ export function ModelServiceNotice(props: ModelServiceNoticeProps) {
   const captured = onboarding.readinessScope
   const current = captureOnboardingScope(props.profile)
 
-  if (!readiness || readiness.ready || boot.running || boot.error || !captured
-    || JSON.stringify(current) !== JSON.stringify(captured)) { return null }
+  if (
+    !readiness ||
+    readiness.ready ||
+    boot.running ||
+    boot.error ||
+    !captured ||
+    JSON.stringify(current) !== JSON.stringify(captured)
+  ) {
+    return null
+  }
 
   return <ServiceRecovery {...props} readiness={readiness} scope={captured} />
 }
 
-function ServiceRecovery({ readiness, scope, requestGateway }: ModelServiceNoticeProps & {
+function ServiceRecovery({
+  readiness,
+  scope,
+  requestGateway
+}: ModelServiceNoticeProps & {
   readiness: RuntimeReadinessResult
   scope: OnboardingScope
 }) {
@@ -37,8 +49,9 @@ function ServiceRecovery({ readiness, scope, requestGateway }: ModelServiceNotic
   const copy = modelServiceCopy[locale] ?? modelServiceCopy.en
   const navigate = useNavigate()
 
-  const state = readiness.modelService?.state
-    ?? (readiness.source === 'fallback' || readiness.checksDisagree ? 'unavailable' : 'setup')
+  const state =
+    readiness.modelService?.state ??
+    (readiness.source === 'fallback' || readiness.checksDisagree ? 'unavailable' : 'setup')
 
   const setup = state === 'setup' || state === 'reauth'
   const portal = readiness.modelService?.portalUrl
@@ -48,24 +61,42 @@ function ServiceRecovery({ readiness, scope, requestGateway }: ModelServiceNotic
     navigate('/settings?tab=providers&pview=custom-endpoints')
   }
 
-  const retry = () => void refreshOnboarding({ requestGateway, scope },
-    () => JSON.stringify(captureOnboardingScope(scope.profile)) === JSON.stringify(scope))
+  const retry = () =>
+    void refreshOnboarding(
+      { requestGateway, scope },
+      () => JSON.stringify(captureOnboardingScope(scope.profile)) === JSON.stringify(scope)
+    )
 
-  return <section className="flex flex-wrap items-center justify-between gap-2 py-2 text-xs text-(--ui-text-secondary)">
-    <div className="min-w-0 flex-1">
-      <p aria-live="polite" role="status">{copy[state]}</p>
-      {(readiness.modelService?.detail || readiness.reason) && <details>
-        <summary>{copy.details}</summary>
-        <p className="break-words">{readiness.modelService?.detail || readiness.reason}</p>
-      </details>}
-    </div>
-    <div className="flex flex-wrap gap-2">
-      <Button onClick={() => setup
-        ? startManualProviderOAuth('semantier-cloud', scope)
-        : portal ? void openExternalLink(portal) : retry()} size="sm">
-        {setup ? copy.signIn : portal ? copy[state] : copy.retry}
-      </Button>
-      <Button onClick={openCustom} size="sm" variant="text">{copy.custom}</Button>
-    </div>
-  </section>
+  return (
+    <section className="flex flex-wrap items-center justify-between gap-2 py-2 text-xs text-(--ui-text-secondary)">
+      <div className="min-w-0 flex-1">
+        <p aria-live="polite" role="status">
+          {copy[state]}
+        </p>
+        {(readiness.modelService?.detail || readiness.reason) && (
+          <details>
+            <summary>{copy.details}</summary>
+            <p className="break-words">{readiness.modelService?.detail || readiness.reason}</p>
+          </details>
+        )}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Button
+          onClick={() =>
+            setup
+              ? startManualProviderOAuth('semantier-cloud', scope)
+              : portal
+                ? void openExternalLink(portal)
+                : retry()
+          }
+          size="sm"
+        >
+          {setup ? copy.signIn : portal ? copy[state] : copy.retry}
+        </Button>
+        <Button onClick={openCustom} size="sm" variant="text">
+          {copy.custom}
+        </Button>
+      </div>
+    </section>
+  )
 }

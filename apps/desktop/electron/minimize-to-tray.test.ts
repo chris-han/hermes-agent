@@ -451,10 +451,18 @@ test('persistence, disabling, failed tray creation, and handoff never strand hid
   expect(native.app.quit).not.toHaveBeenCalled()
 })
 
-const closeRequest = (win: Window) => native.ipc.get('hermes:minimize-to-tray:close-request')!({ sender: win.webContents, senderFrame: win.webContents.mainFrame })
+const closeRequest = (win: Window) =>
+  native.ipc.get('hermes:minimize-to-tray:close-request')!({
+    sender: win.webContents,
+    senderFrame: win.webContents.mainFrame
+  })
 
 const answerClose = (win: Window, action: string, id = closeRequest(win)?.id) =>
-  native.ipc.get('hermes:minimize-to-tray:close-answer')!({ sender: win.webContents, senderFrame: win.webContents.mainFrame }, id, action)
+  native.ipc.get('hermes:minimize-to-tray:close-answer')!(
+    { sender: win.webContents, senderFrame: win.webContents.mainFrame },
+    id,
+    action
+  )
 
 test('Windows close uses a scoped renderer choice, coalesces close clicks and cancels without mutation', async () => {
   setPlatform('win32')
@@ -472,13 +480,21 @@ test('Windows close uses a scoped renderer choice, coalesces close clicks and ca
     expect(await answerClose(peer, 'quit', request.id)).toEqual({ ok: false, reason: 'invalid-request' })
     expect(await answerClose(main, 'quit', 'old-request')).toEqual({ ok: false, reason: 'invalid-request' })
     expect(await answerClose(main, 'unknown')).toEqual({ ok: false, reason: 'invalid-request' })
-    expect(await native.ipc.get('hermes:minimize-to-tray:close-answer')!({ sender: main.webContents, senderFrame: {} }, request.id, 'quit')).toEqual({ ok: false, reason: 'invalid-request' })
+    expect(
+      await native.ipc.get('hermes:minimize-to-tray:close-answer')!(
+        { sender: main.webContents, senderFrame: {} },
+        request.id,
+        'quit'
+      )
+    ).toEqual({ ok: false, reason: 'invalid-request' })
     expect(await answerClose(main, 'cancel')).toEqual({ ok: true })
     expect(closeRequest(main)).toBeNull()
     expect(main.visible).toBe(true)
     expect(native.app.quit).not.toHaveBeenCalled()
     expect(native.confirmClose).not.toHaveBeenCalled()
-  } finally { restorePlatform() }
+  } finally {
+    restorePlatform()
+  }
 })
 
 test('Windows renderer background/quit choices retain lifecycle ownership and surface tray failure', async () => {
@@ -504,5 +520,7 @@ test('Windows renderer background/quit choices retain lifecycle ownership and su
     expect(await answerClose(main, 'quit')).toEqual({ ok: true })
     expect(native.app.quit).toHaveBeenCalledOnce()
     expect(native.confirmClose).not.toHaveBeenCalled()
-  } finally { restorePlatform() }
+  } finally {
+    restorePlatform()
+  }
 })

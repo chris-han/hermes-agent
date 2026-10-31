@@ -17,20 +17,30 @@ test('startup commits resolved local scope before returning, but preserves saved
     explicitProfile: null,
     isLocalConnection: () => false,
     isRemote: () => false,
-    resolve: async () => { events.push('resolve');
+    resolve: async () => {
+      events.push('resolve')
 
- return { profile: 'semantier-local', recovered: true } },
-    remember: (profile: string) => { events.push(`remember:${profile}`) },
-    setDefault: (route: { profile: string }) => { events.push(`default:${route.profile}`) },
+      return { profile: 'semantier-local', recovered: true }
+    },
+    remember: (profile: string) => {
+      events.push(`remember:${profile}`)
+    },
+    setDefault: (route: { profile: string }) => {
+      events.push(`default:${route.profile}`)
+    },
     log: () => {}
   }
 
   await prepareDesktopStartupProfile(deps)
   assert.deepEqual(events, ['resolve', 'remember:semantier-local', 'default:semantier-local'])
   events.length = 0
-  await prepareDesktopStartupProfile({ ...deps, preference: {
-    profile: 'remote-work', defaultRoute: { connectionId: 'remote', profile: 'remote-work' }
-  } })
+  await prepareDesktopStartupProfile({
+    ...deps,
+    preference: {
+      profile: 'remote-work',
+      defaultRoute: { connectionId: 'remote', profile: 'remote-work' }
+    }
+  })
   assert.deepEqual(events, [])
 })
 
@@ -44,7 +54,9 @@ test('startup refuses unreadable preferences instead of overwriting them with a 
     assert.equal(readFileSync(file, 'utf8'), '{broken')
     writeFileSync(file, JSON.stringify({ profile: 'work', defaultRoute: { connectionId: null, profile: 'work' } }))
     assert.equal(createDesktopProfilePreferences(file).readStartup().defaultRoute?.profile, 'work')
-  } finally { rmSync(root, { recursive: true, force: true }) }
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })
 
 const sourceRoot = path.resolve('../..')
@@ -59,13 +71,19 @@ test.skipIf(!python)('native bridge resolves the real Python profile owner witho
     assert.equal(first.profile, 'semantier-local')
     const protectedStore = path.join(root, 'profiles', first.profile, '.cloud-device.bin')
     writeFileSync(protectedStore, 'opaque retained credential')
-    const repeated = await Promise.all(Array.from({ length: 3 }, () => resolveDesktopStartupProfile(backend, root, null, false)))
+    const repeated = await Promise.all(
+      Array.from({ length: 3 }, () => resolveDesktopStartupProfile(backend, root, null, false))
+    )
     assert.ok(repeated.every(result => result.profile === first.profile))
     assert.equal(readFileSync(protectedStore, 'utf8'), 'opaque retained credential')
-    await assert.rejects(resolveDesktopStartupProfile(backend, root, 'deliberately-missing', true), /Local profile unavailable/)
-  } finally { rmSync(root, { recursive: true, force: true }) }
+    await assert.rejects(
+      resolveDesktopStartupProfile(backend, root, 'deliberately-missing', true),
+      /Local profile unavailable/
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })
-
 
 test.skipIf(!python)('real legacy owner retirement repairs remembered and default routes together', async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'desktop-internal-retirement-'))
@@ -77,20 +95,38 @@ test.skipIf(!python)('real legacy owner retirement repairs remembered and defaul
     mkdirSync(legacy, { recursive: true })
     writeFileSync(path.join(legacy, 'config.yaml'), 'display:\n  language: en\n')
     writeFileSync(path.join(legacy, '.env'), 'fixture-secret-retained')
-    writeFileSync(file, JSON.stringify({ profile: 'tender-runtime-expert', defaultRoute: { connectionId: null, profile: 'tender-runtime-expert' } }))
+    writeFileSync(
+      file,
+      JSON.stringify({
+        profile: 'tender-runtime-expert',
+        defaultRoute: { connectionId: null, profile: 'tender-runtime-expert' }
+      })
+    )
     const preferences = createDesktopProfilePreferences(file)
     await prepareDesktopStartupProfile({
-      preference: preferences.readStartup(), explicitProfile: null,
-      isLocalConnection: () => true, isRemote: () => false,
+      preference: preferences.readStartup(),
+      explicitProfile: null,
+      isLocalConnection: () => true,
+      isRemote: () => false,
       resolve: (profile, explicit) => resolveDesktopStartupProfile(backend, root, profile, explicit),
-      remember: name => { preferences.remember(name) },
-      setDefault: route => { preferences.setDefault(route) }, log: () => {}
+      remember: name => {
+        preferences.remember(name)
+      },
+      setDefault: route => {
+        preferences.setDefault(route)
+      },
+      log: () => {}
     })
     assert.equal(preferences.readStartup().profile, 'semantier-local')
     assert.equal(preferences.readStartup().defaultRoute?.profile, 'semantier-local')
     assert.equal(existsSync(legacy), false)
     const batches = readdirSync(path.join(root, '.desktop-retired-profiles'))
     assert.equal(batches.length, 1)
-    assert.equal(readFileSync(path.join(root, '.desktop-retired-profiles', batches[0], 'tender-runtime-expert', '.env'), 'utf8'), 'fixture-secret-retained')
-  } finally { rmSync(root, { recursive: true, force: true }) }
+    assert.equal(
+      readFileSync(path.join(root, '.desktop-retired-profiles', batches[0], 'tender-runtime-expert', '.env'), 'utf8'),
+      'fixture-secret-retained'
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })

@@ -359,14 +359,15 @@ export function UpdateStatusCard({
         )}
         <div className="min-w-0">
           <p className="font-medium">{view.line}</p>
-          {view.error && (status?.retirement ? (
-            <p className="mt-1 text-xs text-muted-foreground">{view.error}</p>
-          ) : (
-            <details className="mt-1 text-xs text-muted-foreground">
-              <summary className="cursor-pointer">{t.notifications.details}</summary>
-              <p className="mt-1 whitespace-pre-wrap break-words">{view.error}</p>
-            </details>
-          ))}
+          {view.error &&
+            (status?.retirement ? (
+              <p className="mt-1 text-xs text-muted-foreground">{view.error}</p>
+            ) : (
+              <details className="mt-1 text-xs text-muted-foreground">
+                <summary className="cursor-pointer">{t.notifications.details}</summary>
+                <p className="mt-1 whitespace-pre-wrap break-words">{view.error}</p>
+              </details>
+            ))}
           {view.tone !== 'unsupported' && (
             <p className="mt-1 text-xs text-muted-foreground">
               {u.lastChecked(relativeTime(status?.fetchedAt, u))}
@@ -410,7 +411,13 @@ export function UpdateStatusCard({
   )
 }
 
-function UpdateCheckButton({ applying, checking, onChecked, target, u }: {
+function UpdateCheckButton({
+  applying,
+  checking,
+  onChecked,
+  target,
+  u
+}: {
   applying: boolean
   checking: boolean
   onChecked: (checked: boolean) => void

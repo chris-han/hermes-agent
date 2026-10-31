@@ -788,14 +788,18 @@ test('active-work review precedes the attempt journal and native installation; c
     resolver: new ChannelResolver({ build: f.build, platform: 'darwin', arch: 'arm64', signer: 'ABCDE12345' }),
     build: f.build,
     mechanism: 'electron-updater',
-    reviewApplyTarget: () => reviewed ? null : { ok: false, error: 'active-work-review' },
-    onApplyTarget: async () => { effects.push('journal') },
+    reviewApplyTarget: () => (reviewed ? null : { ok: false, error: 'active-work-review' }),
+    onApplyTarget: async () => {
+      effects.push('journal')
+    },
     nativeFactory: () => ({
       mechanism: 'electron-updater',
       check: async () => ({ supported: true, updateAvailable: true }),
-      apply: async () => { effects.push('install');
+      apply: async () => {
+        effects.push('install')
 
- return { ok: true } }
+        return { ok: true }
+      }
     })
   })
 
@@ -813,11 +817,21 @@ test('a selected different stream delegates version ordering to native instead o
   let checked = 0
 
   const strategy = new ChannelStrategy({
-    build, installedChannel: 'another-stream', mechanism: 'electron-updater',
+    build,
+    installedChannel: 'another-stream',
+    mechanism: 'electron-updater',
     resolver: new ChannelResolver({ build, platform: 'darwin', arch: 'arm64', signer: 'ABCDE12345' }),
-    nativeFactory: () => ({ mechanism: 'electron-updater', check: async () => { checked++;
+    nativeFactory: () => ({
+      mechanism: 'electron-updater',
+      check: async () => {
+        checked++
 
- return { supported: true, updateAvailable: false } }, apply: async () => { throw new Error('Must not install an older target') } })
+        return { supported: true, updateAvailable: false }
+      },
+      apply: async () => {
+        throw new Error('Must not install an older target')
+      }
+    })
   })
 
   expect(await strategy.check()).toMatchObject({ updateAvailable: false })

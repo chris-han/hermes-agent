@@ -12,9 +12,14 @@ export interface ModelServiceStatus {
 export function cloudServiceStatus(result: BillingResult<BillingBackendState>): ModelServiceStatus {
   if (!result.ok) {
     return {
-      state: result.refusal.kind === 'provider_not_configured' ? 'setup'
-        : result.refusal.kind === 'unauthenticated' ? 'reauth'
-        : ['insufficient_scope', 'membership_revoked'].includes(result.refusal.kind) ? 'denied' : 'unavailable',
+      state:
+        result.refusal.kind === 'provider_not_configured'
+          ? 'setup'
+          : result.refusal.kind === 'unauthenticated'
+            ? 'reauth'
+            : ['insufficient_scope', 'membership_revoked'].includes(result.refusal.kind)
+              ? 'denied'
+              : 'unavailable',
       detail: result.refusal.message
     }
   }
@@ -36,23 +41,37 @@ export function cloudServiceStatus(result: BillingResult<BillingBackendState>): 
   const projection = state.account_provisioning
 
   const portalUrl = state.capabilities.can_open_portal
-    ? semantierPortalTask(state.portal.url, state.organization.id, state.billing_account_id, 'plans') ?? undefined
+    ? (semantierPortalTask(state.portal.url, state.organization.id, state.billing_account_id, 'plans') ?? undefined)
     : undefined
 
-  if (projection.inference_ready) { return { state: 'ready' } }
+  if (projection.inference_ready) {
+    return { state: 'ready' }
+  }
 
-  if (projection.local_status !== 'READY') { return { state: 'denied' } }
+  if (projection.local_status !== 'READY') {
+    return { state: 'denied' }
+  }
 
-  if (projection.reason === 'PREPARING') { return { state: 'preparing' } }
+  if (projection.reason === 'PREPARING') {
+    return { state: 'preparing' }
+  }
 
-  if (available === null) { return { state: 'unavailable' } }
+  if (available === null) {
+    return { state: 'unavailable' }
+  }
 
-  if (!state.subscription) { return { state: 'plan', portalUrl } }
+  if (!state.subscription) {
+    return { state: 'plan', portalUrl }
+  }
 
-  if (state.subscription.status === 'expired') { return { state: 'expired', portalUrl } }
+  if (state.subscription.status === 'expired') {
+    return { state: 'expired', portalUrl }
+  }
 
   // Exact decimal zero comparison; never round balances or derive spend permission here.
-  if (/^-?0+(?:\.0+)?$/.test(available.amount)) { return { state: 'credit', portalUrl } }
+  if (/^-?0+(?:\.0+)?$/.test(available.amount)) {
+    return { state: 'credit', portalUrl }
+  }
 
   return { state: 'unavailable' }
 }

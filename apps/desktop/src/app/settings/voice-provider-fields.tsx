@@ -81,7 +81,10 @@ export function VoiceProviderFields({
 
   // eslint-disable-next-line no-restricted-syntax -- one-shot config seed flag, not an atom mirror
   useEffect(() => {
-    if (loadedConfig && (!seeded.current || (baseline && config && Object.keys(diffConfig(baseline, config)).length === 0))) {
+    if (
+      loadedConfig &&
+      (!seeded.current || (baseline && config && Object.keys(diffConfig(baseline, config)).length === 0))
+    ) {
       seeded.current = true
       setBaseline(loadedConfig)
       setConfig(loadedConfig)

@@ -122,7 +122,9 @@ export function UpdatesOverlay() {
     void install()
   }
 
-  if (workReview) { return <UpdateWorkReviewDialog key={workReview.token} review={workReview} /> }
+  if (workReview) {
+    return <UpdateWorkReviewDialog key={workReview.token} review={workReview} />
+  }
 
   return (
     <Dialog onOpenChange={handleClose} open={open}>

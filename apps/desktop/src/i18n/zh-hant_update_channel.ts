@@ -1,7 +1,7 @@
 export const zhHantUpdateChannel = {
-  production: "正式版",
-  development: "開發版",
-  packagedDescription: "正式版跟隨已發佈版本，開發版包含測試組建。切換只檢查更新，安裝仍由你決定。",
+  production: '正式版',
+  development: '開發版',
+  packagedDescription: '正式版跟隨已發佈版本，開發版包含測試組建。切換只檢查更新，安裝仍由你決定。',
   title: '更新頻道',
   description: '穩定版只安裝已發布的版本。每個提交會隨 main 分支的變更持續更新。',
   stable: '穩定版發布',

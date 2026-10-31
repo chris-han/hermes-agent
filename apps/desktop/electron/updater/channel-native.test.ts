@@ -21,19 +21,34 @@ test('registered package identity survives a volume junction without admitting e
     await symlink(physical, alias, 'junction')
 
     const registered = {
-      identity: 'Acceptance', signer: 'retained-publisher', appPath: alias, nativeVersion: '0.0.39.0',
-      executable, packageFullName: 'Acceptance_0.0.39.0', packageFamilyName: 'Acceptance_family',
-      removalRoots: [alias], applications: [{ id: 'Desktop', executable: path.join(alias, 'desktop.exe') }]
+      identity: 'Acceptance',
+      signer: 'retained-publisher',
+      appPath: alias,
+      nativeVersion: '0.0.39.0',
+      executable,
+      packageFullName: 'Acceptance_0.0.39.0',
+      packageFamilyName: 'Acceptance_family',
+      removalRoots: [alias],
+      applications: [{ id: 'Desktop', executable: path.join(alias, 'desktop.exe') }]
     }
 
     const resolved = await resolveRegisteredChannelApp(registered, executable)
     expect(resolved.appPath).toBe(physical)
     expect(resolved.applicationId).toBe('Desktop')
     await expect(resolveRegisteredChannelApp(registered, outside)).rejects.toThrow('outside registered package')
-    await expect(resolveRegisteredChannelApp({ ...registered, applications: [] }, executable)).rejects.toThrow('not the registered application')
-    await expect(resolveRegisteredChannelApp({ ...registered, applications: [...registered.applications, ...registered.applications] }, executable)).rejects.toThrow('not the registered application')
+    await expect(resolveRegisteredChannelApp({ ...registered, applications: [] }, executable)).rejects.toThrow(
+      'not the registered application'
+    )
+    await expect(
+      resolveRegisteredChannelApp(
+        { ...registered, applications: [...registered.applications, ...registered.applications] },
+        executable
+      )
+    ).rejects.toThrow('not the registered application')
     await symlink(outside, path.join(physical, 'escaped.exe'))
-    await expect(resolveRegisteredChannelApp(registered, path.join(physical, 'escaped.exe'))).rejects.toThrow('outside registered package')
+    await expect(resolveRegisteredChannelApp(registered, path.join(physical, 'escaped.exe'))).rejects.toThrow(
+      'outside registered package'
+    )
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
@@ -62,9 +77,11 @@ test('download verification binds native bytes to the manifest size and digest b
   }
 })
 
-
 test('native failure exposes a bounded exit reason without command paths or stderr payload', async (): Promise<void> => {
-  const failure = await runChannelCommand(process.execPath, ['-e', 'process.stderr.write("secret-canary C:/Users/Private/token"); process.exit(7)']).catch((error: Error) => error)
+  const failure = await runChannelCommand(process.execPath, [
+    '-e',
+    'process.stderr.write("secret-canary C:/Users/Private/token"); process.exit(7)'
+  ]).catch((error: Error) => error)
   expect(failure).toBeInstanceOf(Error)
   expect((failure as Error).message).toBe('Native channel operation failed (exit code 7)')
   expect((failure as Error).message).not.toContain('secret-canary')

@@ -164,8 +164,13 @@ function ConfigSettingsInner({
 
   // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
   useEffect(() => {
-    if (loadedConfig && (!configSeeded.current ||
-      (config && configBaselineRef.current && Object.keys(diffConfig(configBaselineRef.current, config)).length === 0))) {
+    if (
+      loadedConfig &&
+      (!configSeeded.current ||
+        (config &&
+          configBaselineRef.current &&
+          Object.keys(diffConfig(configBaselineRef.current, config)).length === 0))
+    ) {
       configSeeded.current = true
       configBaselineRef.current = loadedConfig
       savedDiscoverySignatureRef.current = repoDiscoveryPolicySignature(repoDiscoveryPolicyFromConfig(loadedConfig))

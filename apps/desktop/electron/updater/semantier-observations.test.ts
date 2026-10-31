@@ -21,11 +21,21 @@ it('feedback IPC requires an application viewer before any journal operation', (
   const trusted = {} as IpcMainInvokeEvent
   let handler: (event: IpcMainInvokeEvent, command: string, value?: unknown) => unknown = () => null
   registerSemantierFeedbackIpc(
-    { handle: (_name, callback) => { handler = callback } } as Pick<IpcMain, 'handle'>,
+    {
+      handle: (_name, callback) => {
+        handler = callback
+      }
+    } as Pick<IpcMain, 'handle'>,
     owner,
-    event => { if (event !== trusted) { throw new Error('Application main frame required') } }
+    event => {
+      if (event !== trusted) {
+        throw new Error('Application main frame required')
+      }
+    }
   )
-  expect(() => handler({} as IpcMainInvokeEvent, 'consent', { enabled: true, profile: 'semantier-local' })).toThrow('main frame')
+  expect(() => handler({} as IpcMainInvokeEvent, 'consent', { enabled: true, profile: 'semantier-local' })).toThrow(
+    'main frame'
+  )
   expect(owner.status().enabled).toBe(false)
   expect(() => handler(trusted, 'consent', { enabled: true, profile: '../other' })).toThrow('Original local profile')
   expect(handler(trusted, 'consent', { enabled: true, profile: 'semantier-local' })).toMatchObject({ enabled: true })
@@ -80,10 +90,13 @@ it('a corrupt optional observation journal cannot prevent startup or update', as
 
 it('malformed persisted events fail closed instead of throwing during update', async () => {
   const fs = await import('node:fs')
-  const dir = mkdtempSync(path.join(os.tmpdir(),'semantier-invalid-event-'))
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'semantier-invalid-event-'))
   roots.push(dir)
-  fs.writeFileSync(path.join(dir,'semantier-update-observations.json'),JSON.stringify({enabled:true,profile:'semantier-local',queue:[null],pending:null,dropped:0}))
+  fs.writeFileSync(
+    path.join(dir, 'semantier-update-observations.json'),
+    JSON.stringify({ enabled: true, profile: 'semantier-local', queue: [null], pending: null, dropped: 0 })
+  )
   const owner = new SemantierObservations(dir)
-  expect(owner.status()).toMatchObject({enabled:false,storageUnavailable:true})
+  expect(owner.status()).toMatchObject({ enabled: false, storageUnavailable: true })
   expect(owner.drain('semantier-local')).toEqual([])
 })

@@ -141,9 +141,11 @@ const callBilling = async <T>(
   timeoutMs?: number
 ): Promise<BillingResult<T>> => {
   try {
-    return normalizeRpcResult(await (signal || timeoutMs
-      ? requestGateway<T>(method, params, timeoutMs, signal)
-      : requestGateway<T>(method, params)))
+    return normalizeRpcResult(
+      await (signal || timeoutMs
+        ? requestGateway<T>(method, params, timeoutMs, signal)
+        : requestGateway<T>(method, params))
+    )
   } catch (error) {
     return { ok: false, refusal: normalizeThrown(error) }
   }
@@ -161,12 +163,22 @@ export const createBillingApi = (requestGateway: BillingRequestGateway): Billing
   chargeStatus: chargeId =>
     callBilling<BillingChargeStatusResponse>(requestGateway, 'billing.charge_status', { charge_id: chargeId }),
   fetchBillingState: async signal => {
-    const result = await callBilling<BillingBackendState>(requestGateway, 'billing.state',
-      { schema_version: 'semantier.billing.v2' }, signal, 1200)
+    const result = await callBilling<BillingBackendState>(
+      requestGateway,
+      'billing.state',
+      { schema_version: 'semantier.billing.v2' },
+      signal,
+      1200
+    )
 
     // Only an identified older Semantier runtime negotiates down; never route to Nous.
     return !result.ok && result.refusal.backend === 'semantier' && result.refusal.kind === 'unsupported_version'
-      ? callBilling<BillingBackendState>(requestGateway, 'billing.state', { schema_version: 'semantier.billing.v1' }, signal)
+      ? callBilling<BillingBackendState>(
+          requestGateway,
+          'billing.state',
+          { schema_version: 'semantier.billing.v1' },
+          signal
+        )
       : result
   },
   fetchSubscriptionState: () =>

@@ -48,7 +48,11 @@ async function alreadyVerified(file: string, artifact: PinnedArtifact): Promise<
 }
 
 /** Caller owns private storage and its lifetime. Redirects cannot change authority. */
-export async function downloadPinnedArtifact(directory: string, artifact: PinnedArtifact, fetchArtifact: typeof fetch = fetch): Promise<string> {
+export async function downloadPinnedArtifact(
+  directory: string,
+  artifact: PinnedArtifact,
+  fetchArtifact: typeof fetch = fetch
+): Promise<string> {
   const file: string = path.join(directory, `destination.${artifact.format}`)
 
   if (await alreadyVerified(file, artifact)) {
@@ -69,8 +73,8 @@ export async function downloadPinnedArtifact(directory: string, artifact: Pinned
   let size = 0
   let lastError: unknown
 
-  const retryable = (error: unknown): boolean => !signal.aborted &&
-    (error instanceof TypeError || (error instanceof Error && error.message.startsWith('net::ERR_')))
+  const retryable = (error: unknown): boolean =>
+    !signal.aborted && (error instanceof TypeError || (error instanceof Error && error.message.startsWith('net::ERR_')))
 
   // Retry only interrupted transport, within the original overall time limit.
   // Partial bytes never become an artifact until the complete digest verifies.
@@ -79,11 +83,14 @@ export async function downloadPinnedArtifact(directory: string, artifact: Pinned
 
     try {
       response = await fetchArtifact(artifact.url, {
-        redirect: 'error', signal,
+        redirect: 'error',
+        signal,
         headers: size ? { Range: `bytes=${size}-` } : undefined
       })
     } catch (error) {
-      if (!retryable(error)) { throw error }
+      if (!retryable(error)) {
+        throw error
+      }
       lastError = error
 
       continue
@@ -95,7 +102,10 @@ export async function downloadPinnedArtifact(directory: string, artifact: Pinned
 
     const resumed = size > 0 && response.status === 206
 
-    if (response.status !== 200 && (!resumed || response.headers.get('Content-Range') !== `bytes ${size}-${artifact.size - 1}/${artifact.size}`)) {
+    if (
+      response.status !== 200 &&
+      (!resumed || response.headers.get('Content-Range') !== `bytes ${size}-${artifact.size - 1}/${artifact.size}`)
+    ) {
       await response.body.cancel()
       throw new Error('Pinned artifact resume range mismatch')
     }
@@ -121,19 +131,26 @@ export async function downloadPinnedArtifact(directory: string, artifact: Pinned
       for (;;) {
         let chunk: ReadableStreamReadResult<Uint8Array>
 
-        try { chunk = await reader.read() }
-        catch (error) {
-          if (!retryable(error)) { throw error }
+        try {
+          chunk = await reader.read()
+        } catch (error) {
+          if (!retryable(error)) {
+            throw error
+          }
           lastError = error
           interrupted = true
 
           break
         }
 
-        if (chunk.done) { break }
+        if (chunk.done) {
+          break
+        }
         size += chunk.value.byteLength
 
-        if (size > artifact.size) { throw new Error('Pinned artifact download exceeds pinned size') }
+        if (size > artifact.size) {
+          throw new Error('Pinned artifact download exceeds pinned size')
+        }
         await handle.writeFile(chunk.value)
       }
 
@@ -145,7 +162,9 @@ export async function downloadPinnedArtifact(directory: string, artifact: Pinned
 
     if (interrupted && size < artifact.size) {
       // A response may fail before delivering its first byte.
-      if (!size) { await unlink(temporary) }
+      if (!size) {
+        await unlink(temporary)
+      }
 
       continue
     }
@@ -160,7 +179,11 @@ export async function downloadPinnedArtifact(directory: string, artifact: Pinned
 }
 
 /** Chunk state is scoped to the complete digest; verified chunks survive retries. */
-async function downloadChunkedArtifact(directory: string, artifact: PinnedArtifact, fetchArtifact: typeof fetch): Promise<string> {
+async function downloadChunkedArtifact(
+  directory: string,
+  artifact: PinnedArtifact,
+  fetchArtifact: typeof fetch
+): Promise<string> {
   const descriptor = decodeArtifactChunks(artifact.chunks, artifact)
   const base = channelPublicBase(artifact.chunkBase ?? '')
 
@@ -177,32 +200,51 @@ async function downloadChunkedArtifact(directory: string, artifact: PinnedArtifa
       try {
         const info = await lstat(folder)
 
-        if (!info.isDirectory() || info.isSymbolicLink()) { throw new Error('Artifact chunk storage type mismatch') }
+        if (!info.isDirectory() || info.isSymbolicLink()) {
+          throw new Error('Artifact chunk storage type mismatch')
+        }
       } catch (error) {
-        if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') { throw error }
+        if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') {
+          throw error
+        }
         await mkdir(folder, { mode: 0o700 })
       }
     }
 
-    parts.push(await downloadPinnedArtifact(storage, {
-      url: `${base}/${chunk.key}`, sha256: chunk.sha256, size: chunk.size, format: artifact.format
-    }, fetchArtifact))
+    parts.push(
+      await downloadPinnedArtifact(
+        storage,
+        {
+          url: `${base}/${chunk.key}`,
+          sha256: chunk.sha256,
+          size: chunk.size,
+          format: artifact.format
+        },
+        fetchArtifact
+      )
+    )
   }
 
   const file = path.join(directory, `destination.${artifact.format}`)
   const temporary = `${file}.partial`
   await unlink(temporary).catch((error: NodeJS.ErrnoException): void => {
-    if (error.code !== 'ENOENT') { throw error }
+    if (error.code !== 'ENOENT') {
+      throw error
+    }
   })
   const output = await open(temporary, 'wx', 0o600)
 
   try {
     for (const part of parts) {
-      for await (const body of createReadStream(part)) { await output.writeFile(body) }
+      for await (const body of createReadStream(part)) {
+        await output.writeFile(body)
+      }
     }
 
     await output.sync()
-  } finally { await output.close() }
+  } finally {
+    await output.close()
+  }
 
   await verifyPinnedArtifact(temporary, artifact)
   await rename(temporary, file)

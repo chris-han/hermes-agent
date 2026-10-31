@@ -44,7 +44,12 @@ describe('createBillingApi', () => {
     const response = await result.current.fetchBillingState()
 
     expect(response).toEqual({ data: state, ok: true })
-    expect(requestGatewayMock).toHaveBeenCalledWith('billing.state', { schema_version: 'semantier.billing.v2' }, 1200, undefined)
+    expect(requestGatewayMock).toHaveBeenCalledWith(
+      'billing.state',
+      { schema_version: 'semantier.billing.v2' },
+      1200,
+      undefined
+    )
   })
 
   it('normalizes object-shaped refusal envelopes', async () => {
@@ -220,16 +225,26 @@ it('negotiates Semantier v1 and retains currency-safe state without Nous coercio
   requestGatewayMock.mockResolvedValueOnce(state)
   const result = await createBillingApi(requestGatewayMock).fetchBillingState()
   expect(result).toEqual({ ok: true, data: state })
-  expect(requestGatewayMock).toHaveBeenLastCalledWith('billing.state', { schema_version: 'semantier.billing.v2' }, 1200, undefined)
+  expect(requestGatewayMock).toHaveBeenLastCalledWith(
+    'billing.state',
+    { schema_version: 'semantier.billing.v2' },
+    1200,
+    undefined
+  )
 })
 
 it('negotiates down only for an explicitly unsupported Semantier v2 runtime', async () => {
-  const request = vi.fn().mockResolvedValueOnce({ ok: false, backend: 'semantier', error: 'unsupported_version' })
+  const request = vi
+    .fn()
+    .mockResolvedValueOnce({ ok: false, backend: 'semantier', error: 'unsupported_version' })
     .mockResolvedValueOnce({ ok: true, backend: 'semantier', schema_version: 'semantier.billing.v1' })
 
   const api = createBillingApi(request)
   expect((await api.fetchBillingState()).ok).toBe(true)
-  expect(request.mock.calls.map(call => call[1].schema_version)).toEqual(['semantier.billing.v2', 'semantier.billing.v1'])
+  expect(request.mock.calls.map(call => call[1].schema_version)).toEqual([
+    'semantier.billing.v2',
+    'semantier.billing.v1'
+  ])
   request.mockReset().mockResolvedValue({ ok: false, backend: 'semantier', error: 'billing_unavailable' })
   await api.fetchBillingState()
   expect(request).toHaveBeenCalledTimes(1)
