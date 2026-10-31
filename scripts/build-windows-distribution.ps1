@@ -22,6 +22,25 @@ if ($output -eq $work -or $output.StartsWith($work + '\',[StringComparison]::Ord
     $work.StartsWith($output + '\',[StringComparison]::OrdinalIgnoreCase) -or
     $output -eq $repo -or $output.StartsWith($repo + '\',[StringComparison]::OrdinalIgnoreCase)) { throw 'Output must be outside both checkouts' }
 if ($request.commit -notmatch '^[0-9a-f]{40}$') { throw 'Exact complete source commit required' }
+if (($request.PSObject.Properties.Name -contains 'localGitOnly') -and $request.localGitOnly) {
+  if ($repo -ine 'D:\repo\hermes-build' -or $work -ine $repo) { throw 'Native Git is restricted to the owned local build checkout' }
+  $disk = Get-CimInstance Win32_LogicalDisk | Where-Object { $_.DeviceID -ceq 'D:' }
+  if (@($disk).Count -ne 1 -or $disk.DriveType -ne 3) { throw 'Native Git checkout must be on a fixed local volume' }
+  foreach ($path in @('D:\','D:\repo',$work,(Join-Path $work '.git'),(Join-Path $work '.git\config'),(Join-Path $work '.git\objects'),(Join-Path $work '.git\refs'))) {
+    $item = Get-Item -LiteralPath $path -Force -ErrorAction Stop
+    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Native Git path has a reparse point' }
+  }
+  if (!(Test-Path -LiteralPath (Join-Path $work '.git') -PathType Container) -or
+      (Test-Path -LiteralPath (Join-Path $work '.git\objects\info\alternates')) -or
+      (Test-Path -LiteralPath (Join-Path $work '.git\commondir'))) { throw 'Native Git repository redirects are not allowed' }
+  $gitConfig = Get-Content -LiteralPath (Join-Path $work '.git\config') -Raw
+  if ($gitConfig -match '(?im)^\s*\[include(?:if)?\b' -or $gitConfig -match '(?im)^\s*worktree\s*=') { throw 'Native Git config redirects are not allowed' }
+  foreach ($name in @('GIT_DIR','GIT_WORK_TREE','GIT_COMMON_DIR','GIT_INDEX_FILE','GIT_OBJECT_DIRECTORY','GIT_ALTERNATE_OBJECT_DIRECTORIES','GIT_CONFIG','GIT_CONFIG_GLOBAL','GIT_CONFIG_SYSTEM','GIT_CONFIG_COUNT')) {
+    if ([Environment]::GetEnvironmentVariable($name,'Process')) { throw 'Native Git environment redirects are not allowed' }
+  }
+  $env:GIT_CONFIG_NOSYSTEM = '1'
+  $env:GIT_CONFIG_GLOBAL = 'NUL'
+}
 if (Test-Path -LiteralPath $output) { throw 'Output already exists; choose a fresh directory' }
 $lockPath = $work + '.distribution.lock'
 $lock = $null
@@ -69,6 +88,10 @@ try {
       $basic.Count -ne 1 -or $basic[0].CertificateAuthority) { throw 'Valid end-entity code-signing certificate and private key required' }
   $sdk = @(Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | ForEach-Object FullName)
   $signTool = Find-Tool $request.signTool ($sdk + @((Join-Path $repo '.build\desktop-job\packager\winCodeSign\x64\signtool.exe'))) 'SignTool'
+  if (($request.PSObject.Properties.Name -contains 'nativeAssets') -and $request.nativeAssets) {
+    $makeAppx = Join-Path (Split-Path -Parent $signTool) 'makeappx.exe'
+    if (!(Test-Path -LiteralPath $makeAppx -PathType Leaf) -or !$request.python -or !(Test-Path -LiteralPath $request.python -PathType Leaf)) { throw 'Native asset producer requires SDK MakeAppx beside selected SignTool and an existing Windows Python before version allocation' }
+  }
   $sevenZip = Find-Tool $request.sevenZip @("$env:ProgramFiles\7-Zip\7z.exe", (Join-Path $repo '.build\desktop-job\packager\sevenZip\bin\7za.exe')) '7-Zip'
   $source = $request.commit
   if (!$request.unsignedReceipt) {

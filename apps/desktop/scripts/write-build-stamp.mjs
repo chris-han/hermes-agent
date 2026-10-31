@@ -57,7 +57,8 @@ export function fromLocalGit(repoRoot = REPO_ROOT, execFn = tryExec) {
   // tracked-but-modified files because those mean the .exe content
   // differs from the commit being pinned.
   const status = execFn(["git", "status", "--porcelain", "-uno"], { cwd: repoRoot })
-  const dirty = status !== null && status.length > 0
+  if (status === null) return null
+  const dirty = status.length > 0
   return {
     commit: sha,
     branch: branch === "HEAD" ? null : branch, // detached HEAD -> null

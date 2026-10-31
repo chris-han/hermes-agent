@@ -103,9 +103,9 @@ function Get-ClaimAttempt([string]$Version) {
 Set-Location $Repo
 $py = Find-Python
 
-if (git status --porcelain --untracked-files=all) {
+if (@(Git-Lines status --porcelain --untracked-files=all).Count) {
   [Console]::Error.WriteLine('build-bundle: the checkout has uncommitted changes. Commit them (the build packages HEAD) or stash them.')
-  git status --short --untracked-files=all
+  Git-Lines status --short --untracked-files=all
   exit 1
 }
 $sha = @(Git-Lines rev-parse HEAD)[0]

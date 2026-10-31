@@ -38,6 +38,11 @@ test('fromLocalGit reads HEAD + branch + dirty status', () => {
   assert.ok(calls.includes('git rev-parse HEAD'))
 })
 
+test('fromLocalGit cannot claim a clean source when Git status fails', () => {
+  const execFn = (argv) => argv.join(' ') === 'git rev-parse HEAD' ? 'b'.repeat(40) : null
+  assert.equal(fromLocalGit('/repo', execFn), null)
+})
+
 test('fromFallback uses the all-zero placeholder commit', () => {
   assert.deepEqual(fromFallback(), {
     commit: FALLBACK_COMMIT,
