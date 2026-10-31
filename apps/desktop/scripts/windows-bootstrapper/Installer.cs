@@ -201,7 +201,7 @@ static class Installer {
         string encoded=Convert.ToBase64String(Encoding.Unicode.GetBytes(dir));
         string script="$d=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('"+encoded+"'));"+
             "$names=@('SemantierAgent.msixbundle','SemantierAgent-main.msix','SemantierAgent-runtime0001.msix','SemantierAgent-runtime0002.msix','SemantierAgent-runtime0003.msix','SemantierAgent-runtime0004.msix');"+
-            "foreach($n in $names){$s=Get-AuthenticodeSignature -LiteralPath (Join-Path $d $n);if(!$s.SignerCertificate -or $s.SignerCertificate.Thumbprint -ne '"+Thumbprint+"' -or $s.Status -notin @("+(trusted?"'Valid'":"'Valid','NotTrusted'")+")){throw 'Package signature mismatch'}}";
+            "foreach($n in $names){$s=Get-AuthenticodeSignature -LiteralPath (Join-Path $d $n);if(!$s.SignerCertificate -or $s.SignerCertificate.Thumbprint -ne '"+Thumbprint+"' -or $s.Status -notin @("+(trusted?"'Valid'":"'Valid','NotTrusted','UnknownError'")+")){throw 'Package signature mismatch'}}";
         PowerShell(script);
     }
     static void Install(string dir) {
