@@ -1,7 +1,14 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
-import { $updateApply, $updateChecking, $updateDeliverySource, $updateSourceChecking, $updateSourceLoading, $updateStatus } from '@/store/updates'
+import {
+  $updateApply,
+  $updateChecking,
+  $updateDeliverySource,
+  $updateSourceChecking,
+  $updateSourceLoading,
+  $updateStatus
+} from '@/store/updates'
 
 import type { DeliverySourceStatus } from '../../../electron/updater/delivery-source'
 
@@ -18,15 +25,31 @@ const selection = {
   ]
 }
 
-beforeEach(() => { Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: vi.fn() }) })
-afterEach(() => { cleanup(); $updateDeliverySource.set(null); $updateSourceLoading.set(true); $updateSourceChecking.set(false); $updateChecking.set(false); vi.restoreAllMocks() })
+beforeEach(() => {
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: vi.fn() })
+})
+afterEach(() => {
+  cleanup()
+  $updateDeliverySource.set(null)
+  $updateSourceLoading.set(true)
+  $updateSourceChecking.set(false)
+  $updateChecking.set(false)
+  vi.restoreAllMocks()
+})
 test('three choices use the native saved source and discard the previous actionable target', async () => {
   let complete!: (result: unknown) => void
-  const save = vi.fn(() => new Promise(resolve => { complete = resolve }))
-  window.hermesDesktop = { updates: {
-    getDeliverySources: async () => selection,
-    setDeliverySource: save
-  } } as never
+  const save = vi.fn(
+    () =>
+      new Promise(resolve => {
+        complete = resolve
+      })
+  )
+  window.hermesDesktop = {
+    updates: {
+      getDeliverySources: async () => selection,
+      setDeliverySource: save
+    }
+  } as never
   $updateStatus.set({ supported: true, updateAvailable: true, releaseId: 'old' })
   $updateChecking.set(false)
   $updateApply.set({ ...$updateApply.get(), applying: false })
@@ -46,10 +69,14 @@ test('three choices use the native saved source and discard the previous actiona
   expect($updateStatus.get()?.updateAvailable).toBe(false)
 })
 test('failed save exposes retry and restores persisted selection without an old install action', async () => {
-  window.hermesDesktop = { updates: {
-    getDeliverySources: async () => selection,
-    setDeliverySource: async () => { throw new Error('disk') }
-  } } as never
+  window.hermesDesktop = {
+    updates: {
+      getDeliverySources: async () => selection,
+      setDeliverySource: async () => {
+        throw new Error('disk')
+      }
+    }
+  } as never
   $updateStatus.set({ supported: true, updateAvailable: true })
   $updateChecking.set(false)
   render(<UpdateDeliverySourceRow />)
@@ -61,12 +88,17 @@ test('failed save exposes retry and restores persisted selection without an old 
 })
 
 test('saved-source check failure keeps the new selection and distinguishes it from save failure', async () => {
-  window.hermesDesktop = { updates: {
-    getDeliverySources: async () => selection,
-    setDeliverySource: async () => ({ saved: true, check_status: 'failed',
-      selection: { ...selection, selected: 'channel2', checkStatus: 'failed' },
-      status: { supported: true, error: 'check-failed' } })
-  } } as never
+  window.hermesDesktop = {
+    updates: {
+      getDeliverySources: async () => selection,
+      setDeliverySource: async () => ({
+        saved: true,
+        check_status: 'failed',
+        selection: { ...selection, selected: 'channel2', checkStatus: 'failed' },
+        status: { supported: true, error: 'check-failed' }
+      })
+    }
+  } as never
   $updateStatus.set(null)
   render(<UpdateDeliverySourceRow />)
   fireEvent.keyDown(await screen.findByRole('combobox'), { key: 'ArrowDown' })
@@ -79,23 +111,34 @@ test('saved-source check failure keeps the new selection and distinguishes it fr
 test('late results from a previous source cannot restore its actionable target', async () => {
   let changed!: (value: DeliverySourceStatus) => void
   let complete!: (value: unknown) => void
-  window.hermesDesktop = { updates: {
-    getDeliverySources: async () => selection,
-    onDeliverySourceChanged: (callback: (value: DeliverySourceStatus) => void) => { changed = callback;
+  window.hermesDesktop = {
+    updates: {
+      getDeliverySources: async () => selection,
+      onDeliverySourceChanged: (callback: (value: DeliverySourceStatus) => void) => {
+        changed = callback
 
- return () => {} },
-    setDeliverySource: () => new Promise(resolve => { complete = resolve })
-  } } as never
+        return () => {}
+      },
+      setDeliverySource: () =>
+        new Promise(resolve => {
+          complete = resolve
+        })
+    }
+  } as never
   $updateChecking.set(false)
   render(<UpdateDeliverySourceRow />)
   fireEvent.keyDown(await screen.findByRole('combobox'), { key: 'ArrowDown' })
   fireEvent.click(await screen.findByRole('option', { name: 'Channel 2 · Cloudflare' }))
   changed({ ...selection, selected: 'channel3' })
-  complete({ saved: true, check_status: 'completed', selection: { ...selection, selected: 'channel2' }, status: { supported: true, updateAvailable: true, releaseId: 'obsolete' } })
+  complete({
+    saved: true,
+    check_status: 'completed',
+    selection: { ...selection, selected: 'channel2' },
+    status: { supported: true, updateAvailable: true, releaseId: 'obsolete' }
+  })
   await waitFor(() => expect(screen.getByRole('combobox').textContent).toContain('Channel 3'))
   expect($updateStatus.get()).toBeNull()
 })
-
 
 test('an installation without source selection finishes loading without a perpetual placeholder', async () => {
   window.hermesDesktop = { updates: { getDeliverySources: async () => null } } as never

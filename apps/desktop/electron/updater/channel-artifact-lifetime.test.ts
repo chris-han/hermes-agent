@@ -124,7 +124,10 @@ test('ordinary Windows preparation owns temporary bytes while a resumable downlo
     chunkTarget.package.artifact.key = `releases/channel-builds/${buildId}/app.msixbundle`
     chunkTarget.artifactUrl = `${chunkTarget.manifest.request.publicBase}/${chunkTarget.package.artifact.key}`
     chunkTarget.package.artifact.chunks = {
-      schema: 1, buildId, artifact: facts, chunkSize: 134217728,
+      schema: 1,
+      buildId,
+      artifact: facts,
+      chunkSize: 134217728,
       chunks: [{ key: `releases/channel-builds/${buildId}/chunks/${facts.sha256}/000000.part`, offset: 0, ...facts }]
     }
     let chunkReads = 0
@@ -138,13 +141,22 @@ test('ordinary Windows preparation owns temporary bytes while a resumable downlo
     const local = await verifyPreparedChannelInstaller(file, chunkTarget, command, chunkFetch)
     expect(local).toMatch(/destination\.msixbundle$/)
 
-    if (typeof local !== 'string') { throw new Error('Expected verified local package') }
+    if (typeof local !== 'string') {
+      throw new Error('Expected verified local package')
+    }
     expect(await readFile(local)).toEqual(bytes)
     expect(await verifyPreparedChannelInstaller(file, chunkTarget, command, chunkFetch)).toBe(local)
     expect(chunkReads).toBe(1)
-    await expect(verifyPreparedChannelInstaller(file, chunkTarget, async (): Promise<never> => {
-      throw new Error('native signature refused')
-    }, chunkFetch)).rejects.toThrow('signature refused')
+    await expect(
+      verifyPreparedChannelInstaller(
+        file,
+        chunkTarget,
+        async (): Promise<never> => {
+          throw new Error('native signature refused')
+        },
+        chunkFetch
+      )
+    ).rejects.toThrow('signature refused')
 
     const durable: string = path.join(directory, 'durable-download')
     await mkdir(durable, { mode: 0o700 })
@@ -168,48 +180,66 @@ test('ordinary Windows preparation owns temporary bytes while a resumable downlo
   }
 })
 
-test.each(['resume', 'restart', 'wrong-range', 'corrupt'])('interrupted transfer handles %s without weakening the pinned digest', async mode => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), 'hermes-artifact-resume-'))
-  directories.push(directory)
-  const bytes = Buffer.from('0123456789abcdef')
-  let requests = 0
+test.each(['resume', 'restart', 'wrong-range', 'corrupt'])(
+  'interrupted transfer handles %s without weakening the pinned digest',
+  async mode => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'hermes-artifact-resume-'))
+    directories.push(directory)
+    const bytes = Buffer.from('0123456789abcdef')
+    let requests = 0
 
-  const fetchArtifact: typeof fetch = async (_input, init) => {
-    requests++
-    expect(init?.redirect).toBe('error')
+    const fetchArtifact: typeof fetch = async (_input, init) => {
+      requests++
+      expect(init?.redirect).toBe('error')
 
-    if (requests === 1) {
-      let delivered = false
+      if (requests === 1) {
+        let delivered = false
 
-      return new Response(new ReadableStream({
-        pull(controller) {
-          if (delivered) { controller.error(new TypeError('connection reset'));
+        return new Response(
+          new ReadableStream({
+            pull(controller) {
+              if (delivered) {
+                controller.error(new TypeError('connection reset'))
 
- return }
+                return
+              }
 
-          delivered = true
-          controller.enqueue(bytes.subarray(0, 4))
-        }
-      }))
+              delivered = true
+              controller.enqueue(bytes.subarray(0, 4))
+            }
+          })
+        )
+      }
+
+      expect(new Headers(init?.headers).get('Range')).toBe('bytes=4-')
+
+      return mode === 'restart'
+        ? new Response(bytes)
+        : new Response(mode === 'corrupt' ? Buffer.alloc(12) : bytes.subarray(4), {
+            status: 206,
+            headers: { 'Content-Range': `bytes ${mode === 'wrong-range' ? 5 : 4}-15/16` }
+          })
     }
 
-    expect(new Headers(init?.headers).get('Range')).toBe('bytes=4-')
+    const artifact = {
+      url: 'https://updates.example.test/artifact.msix',
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+      size: bytes.length,
+      format: 'msix' as const
+    }
+    const download = downloadPinnedArtifact(directory, artifact, fetchArtifact)
 
-    return mode === 'restart'
-      ? new Response(bytes)
-      : new Response(mode === 'corrupt' ? Buffer.alloc(12) : bytes.subarray(4), { status: 206, headers: { 'Content-Range': `bytes ${mode === 'wrong-range' ? 5 : 4}-15/16` } })
+    if (mode === 'wrong-range') {
+      await expect(download).rejects.toThrow('range')
+    } else if (mode === 'corrupt') {
+      await expect(download).rejects.toThrow('digest')
+    } else {
+      expect(await readFile(await download)).toEqual(bytes)
+    }
+
+    expect(requests).toBe(2)
   }
-
-  const artifact = { url: 'https://updates.example.test/artifact.msix', sha256: createHash('sha256').update(bytes).digest('hex'), size: bytes.length, format: 'msix' as const }
-  const download = downloadPinnedArtifact(directory, artifact, fetchArtifact)
-
-  if (mode === 'wrong-range') { await expect(download).rejects.toThrow('range') }
-  else if (mode === 'corrupt') { await expect(download).rejects.toThrow('digest') }
-  else { expect(await readFile(await download)).toEqual(bytes) }
-
-  expect(requests).toBe(2)
-})
-
+)
 
 test('network recovery remains bounded when every request fails', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'hermes-artifact-bounded-'))
@@ -223,7 +253,13 @@ test('network recovery remains bounded when every request fails', async () => {
     throw new TypeError('network unavailable')
   }
 
-  await expect(downloadPinnedArtifact(directory, { url: 'https://updates.example.test/file.msix', sha256: 'a'.repeat(64), size: 16, format: 'msix' }, unavailable)).rejects.toThrow('network unavailable')
+  await expect(
+    downloadPinnedArtifact(
+      directory,
+      { url: 'https://updates.example.test/file.msix', sha256: 'a'.repeat(64), size: 16, format: 'msix' },
+      unavailable
+    )
+  ).rejects.toThrow('network unavailable')
   expect(requests).toBe(4)
   expect(signals.size).toBe(1)
 })

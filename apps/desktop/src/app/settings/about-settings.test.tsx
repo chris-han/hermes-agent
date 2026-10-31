@@ -119,8 +119,18 @@ describe('AboutSettings', (): void => {
   })
 
   it('keeps packaged channels selectable when offline and never installs on selection', async () => {
-    $updateStatus.set({ supported: true, mechanism: 'app-installer', releaseChannel: 'development', error: 'check-failed' })
-    vi.mocked(setUpdateChannel).mockResolvedValueOnce({ supported: true, mechanism: 'app-installer', releaseChannel: 'production', reason: 'no-build-published' })
+    $updateStatus.set({
+      supported: true,
+      mechanism: 'app-installer',
+      releaseChannel: 'development',
+      error: 'check-failed'
+    })
+    vi.mocked(setUpdateChannel).mockResolvedValueOnce({
+      supported: true,
+      mechanism: 'app-installer',
+      releaseChannel: 'production',
+      reason: 'no-build-published'
+    })
     render(<AboutSettings />)
     expect(screen.getByRole('button', { name: 'Development' }).getAttribute('aria-pressed')).toBe('true')
     fireEvent.click(screen.getByRole('button', { name: 'Production' }))

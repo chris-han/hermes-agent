@@ -37,7 +37,9 @@ export function broadcastDeliverySourceCheck(
     const selection = { ...sources.status(), checkStatus }
 
     for (const win of windows) {
-      if (!win.isDestroyed()) { win.webContents.send('hermes:updates:delivery:changed', selection) }
+      if (!win.isDestroyed()) {
+        win.webContents.send('hermes:updates:delivery:changed', selection)
+      }
     }
   } catch {
     log('[updates] Delivery-source status could not be broadcast')
@@ -57,9 +59,13 @@ export function registerDeliverySourceIpc(ipc: Pick<IpcMain, 'handle'>, deps: De
   ipc.handle('hermes:updates:delivery:set', async (event, source: unknown) => {
     deps.assertViewer(event)
 
-    if (!deps.eligible()) { throw new Error('This installation cannot select an update delivery source') }
+    if (!deps.eligible()) {
+      throw new Error('This installation cannot select an update delivery source')
+    }
 
-    if (transitioning || deps.busy()) { throw new Error('An update is already in progress.') }
+    if (transitioning || deps.busy()) {
+      throw new Error('An update is already in progress.')
+    }
     transitioning = true
 
     try {
@@ -70,7 +76,9 @@ export function registerDeliverySourceIpc(ipc: Pick<IpcMain, 'handle'>, deps: De
       deps.sources.select(source)
 
       const savedSelection = (checkStatus: DeliverySourceStatus['checkStatus']): DeliverySourceStatus => ({
-        selected: source as DeliverySourceId, options, checkStatus
+        selected: source as DeliverySourceId,
+        options,
+        checkStatus
       })
 
       deps.changed(savedSelection('checking'))

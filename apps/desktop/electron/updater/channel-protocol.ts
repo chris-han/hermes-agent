@@ -445,9 +445,14 @@ export function decodeArtifactChunks(value: unknown, artifact: { size: number; s
   const chunkSize = fields.integer('chunkSize')
   const entries = fields.get('chunks')
 
-  if (chunkSize !== 134217728 || artifact.size >= 10_000_000_000 ||
-    bound.integer('size') !== artifact.size || bound.text('sha256', SHA256) !== artifact.sha256 ||
-    !Array.isArray(entries) || entries.length !== Math.ceil(artifact.size / chunkSize)) {
+  if (
+    chunkSize !== 134217728 ||
+    artifact.size >= 10_000_000_000 ||
+    bound.integer('size') !== artifact.size ||
+    bound.text('sha256', SHA256) !== artifact.sha256 ||
+    !Array.isArray(entries) ||
+    entries.length !== Math.ceil(artifact.size / chunkSize)
+  ) {
     throw new Error('Invalid artifact chunk coverage or identity')
   }
 
@@ -499,7 +504,14 @@ function packageEntry(value: unknown): ChannelPackage {
       key: channelKey(artifact.text('key')),
       sha256: artifact.text('sha256', SHA256),
       size: artifact.integer('size'),
-      ...(artifact.get('chunks') === undefined ? {} : { chunks: decodeArtifactChunks(artifact.get('chunks'), { size: artifact.integer('size'), sha256: artifact.text('sha256', SHA256) }) })
+      ...(artifact.get('chunks') === undefined
+        ? {}
+        : {
+            chunks: decodeArtifactChunks(artifact.get('chunks'), {
+              size: artifact.integer('size'),
+              sha256: artifact.text('sha256', SHA256)
+            })
+          })
     },
     publisher: fields.optional('publisher'),
     teamId: fields.optional('teamId', /^[A-Z0-9]{10}$/),
@@ -532,14 +544,26 @@ export function decodeChannelManifest(body: string): ChannelManifest {
   if (fields.get('notes') !== undefined) {
     const notes = fields.object('notes')
 
-    if (notes.keys().length > 9) {throw new Error('Too many release note languages')}
-    manifest.notes = Object.fromEntries(notes.keys().map(key => {
-      const value = notes.get(key)
+    if (notes.keys().length > 9) {
+      throw new Error('Too many release note languages')
+    }
+    manifest.notes = Object.fromEntries(
+      notes.keys().map(key => {
+        const value = notes.get(key)
 
-      if (!/^[a-z]{2}(?:-[a-z]+)?$/.test(key) || typeof value !== 'string' || !value.length || value.length > 16000 || [...value].some(char => char.charCodeAt(0) < 32 && !['\n', '\r', '\t'].includes(char))) {throw new Error('Invalid localized release notes')}
+        if (
+          !/^[a-z]{2}(?:-[a-z]+)?$/.test(key) ||
+          typeof value !== 'string' ||
+          !value.length ||
+          value.length > 16000 ||
+          [...value].some(char => char.charCodeAt(0) < 32 && !['\n', '\r', '\t'].includes(char))
+        ) {
+          throw new Error('Invalid localized release notes')
+        }
 
-      return [key, value]
-    }))
+        return [key, value]
+      })
+    )
   }
 
   return manifest

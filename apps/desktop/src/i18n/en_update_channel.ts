@@ -1,9 +1,10 @@
 import type { UpdateChannelCopy } from './types_update_channel'
 
 export const enUpdateChannel: UpdateChannelCopy = {
-  production: "Production",
-  development: "Development",
-  packagedDescription: "Production follows published releases. Development includes test builds. Switching only checks for updates; installation stays your choice.",
+  production: 'Production',
+  development: 'Development',
+  packagedDescription:
+    'Production follows published releases. Development includes test builds. Switching only checks for updates; installation stays your choice.',
   title: 'Update channel',
   description: 'Stable installs published releases only. Every commit follows the main branch as changes land.',
   stable: 'Stable releases',

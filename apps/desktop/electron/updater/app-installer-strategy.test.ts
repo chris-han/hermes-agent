@@ -220,11 +220,19 @@ it('hands the verified local MSIX to Windows after verification and before quitt
   const { deps, calls } = makeDeps({
     appVersion: '0.0.54.0',
     feedBaseUrl: 'https://s3.semantier.com',
-    feed: { url: 'https://s3.semantier.com/releases/fixed.appinstaller', version: '0.0.55.0',
-      verifyPrepared: async () => 'C:/owned/updates/verified.msix' },
-    installer: { prepare: async () => 'C:/owned/updates/update.appinstaller', open: async file => { opened.push(file);
+    feed: {
+      url: 'https://s3.semantier.com/releases/fixed.appinstaller',
+      version: '0.0.55.0',
+      verifyPrepared: async () => 'C:/owned/updates/verified.msix'
+    },
+    installer: {
+      prepare: async () => 'C:/owned/updates/update.appinstaller',
+      open: async file => {
+        opened.push(file)
 
- return '' } }
+        return ''
+      }
+    }
   })
 
   await new AppInstallerStrategy(deps).apply()

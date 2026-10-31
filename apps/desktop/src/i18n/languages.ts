@@ -258,12 +258,16 @@ export function osPreferredLocale(tag: string | null | undefined): Locale | null
 }
 
 /** An explicit choice must win even when it differs from the OS language. */
-export function resolveInitialLocale(saved: string | null | undefined, osLocale: string | null | undefined, platform?: string): Locale {
+export function resolveInitialLocale(
+  saved: string | null | undefined,
+  osLocale: string | null | undefined,
+  platform?: string
+): Locale {
   if (isSupportedLocaleValue(saved)) {
     return normalizeLocale(saved)
   }
 
-  return platform === 'win32' ? 'zh' : osPreferredLocale(osLocale) ?? DEFAULT_LOCALE
+  return platform === 'win32' ? 'zh' : (osPreferredLocale(osLocale) ?? DEFAULT_LOCALE)
 }
 
 /** The `display.language` value for a picker choice — the bundled option's

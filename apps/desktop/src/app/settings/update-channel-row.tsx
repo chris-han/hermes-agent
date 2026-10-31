@@ -45,7 +45,8 @@ export function UpdateChannelRow(): ReactElement | null {
 
     // Main → stable can land on an older commit than the one running now.
     if (
-      !packaged && next === 'stable' &&
+      !packaged &&
+      next === 'stable' &&
       !(await confirm({
         title: a.stableConfirmTitle,
         description: a.stableConfirmBody,
@@ -75,13 +76,17 @@ export function UpdateChannelRow(): ReactElement | null {
         <SegmentedControl
           disabled={checking || applying || pending !== null}
           onChange={id => void change(id)}
-          options={packaged ? [
-            { id: 'production', label: a.production },
-            { id: 'development', label: a.development }
-          ] : [
-            { id: 'stable', label: a.stable },
-            { id: 'main', label: a.main }
-          ]}
+          options={
+            packaged
+              ? [
+                  { id: 'production', label: a.production },
+                  { id: 'development', label: a.development }
+                ]
+              : [
+                  { id: 'stable', label: a.stable },
+                  { id: 'main', label: a.main }
+                ]
+          }
           value={channel}
         />
       }

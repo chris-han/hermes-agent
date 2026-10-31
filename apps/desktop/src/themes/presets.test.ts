@@ -65,16 +65,19 @@ describe('theme typography Latin Extended fallback (#61392)', () => {
 })
 
 describe('Semantier desktop action accent', () => {
-  it.each(['colors', 'darkColors'] as const)('%s uses yellow with readable action ink and focus, preserving neutral chrome', mode => {
-    const c = nousTheme[mode]!
-    expect(c.primary).toBe('#e8c92d')
-    expect(c.primaryForeground).toBe('#1a2028')
-    expect(contrastRatio(c.primary, c.primaryForeground)).toBeGreaterThanOrEqual(4.5)
-    expect(contrastRatio(c.midground!, c.sidebarBackground!)).toBeGreaterThanOrEqual(4.5)
-    expect(contrastRatio(c.ring, c.background)).toBeGreaterThanOrEqual(3)
+  it.each(['colors', 'darkColors'] as const)(
+    '%s uses yellow with readable action ink and focus, preserving neutral chrome',
+    mode => {
+      const c = nousTheme[mode]!
+      expect(c.primary).toBe('#e8c92d')
+      expect(c.primaryForeground).toBe('#1a2028')
+      expect(contrastRatio(c.primary, c.primaryForeground)).toBeGreaterThanOrEqual(4.5)
+      expect(contrastRatio(c.midground!, c.sidebarBackground!)).toBeGreaterThanOrEqual(4.5)
+      expect(contrastRatio(c.ring, c.background)).toBeGreaterThanOrEqual(3)
 
-    for (const key of ['background', 'foreground', 'card', 'border', 'sidebarBackground', 'destructive'] as const) {
-      expect(c[key]).toBe(THEME_PRESET_PALETTES.nous[mode]![key])
+      for (const key of ['background', 'foreground', 'card', 'border', 'sidebarBackground', 'destructive'] as const) {
+        expect(c[key]).toBe(THEME_PRESET_PALETTES.nous[mode]![key])
+      }
     }
-  })
+  )
 })

@@ -66,14 +66,17 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
   },
   claimAmbientCue: key => ipcRenderer.invoke('hermes:ambient:claim', key),
   semantierFeedback: {
-    onOpen: callback => { const listener = () => callback(); ipcRenderer.on('semantier:feedback:open', listener);
+    onOpen: callback => {
+      const listener = () => callback()
+      ipcRenderer.on('semantier:feedback:open', listener)
 
- return () => ipcRenderer.removeListener('semantier:feedback:open', listener) },
+      return () => ipcRenderer.removeListener('semantier:feedback:open', listener)
+    },
     status: () => ipcRenderer.invoke('semantier:feedback', 'status', {}),
-    journeyConsent: enabled => ipcRenderer.invoke('semantier:feedback', 'journey-consent', {enabled}),
-    consent: (enabled, profile) => ipcRenderer.invoke('semantier:feedback', 'consent', {enabled, profile}),
-    drain: profile => ipcRenderer.invoke('semantier:feedback', 'drain', {profile}),
-    ack: (profile, ids) => ipcRenderer.invoke('semantier:feedback', 'ack', {profile, ids})
+    journeyConsent: enabled => ipcRenderer.invoke('semantier:feedback', 'journey-consent', { enabled }),
+    consent: (enabled, profile) => ipcRenderer.invoke('semantier:feedback', 'consent', { enabled, profile }),
+    drain: profile => ipcRenderer.invoke('semantier:feedback', 'drain', { profile }),
+    ack: (profile, ids) => ipcRenderer.invoke('semantier:feedback', 'ack', { profile, ids })
   },
   windowControls: {
     custom: customWindowControlsEnabled(),
@@ -686,6 +689,7 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     onDeliverySourceChanged: callback => {
       const listener = (_event, selection) => callback(selection)
       ipcRenderer.on('hermes:updates:delivery:changed', listener)
+
       return () => ipcRenderer.removeListener('hermes:updates:delivery:changed', listener)
     },
     onProgress: callback => {

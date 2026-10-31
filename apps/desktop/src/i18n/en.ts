@@ -3909,7 +3909,7 @@ export const en: Translations = {
     releaseNotes: 'Release notes',
     onLatest: "You're on the latest version.",
     installing: 'An update is currently installing.',
-    noPublishedRelease: "No release is available on this channel yet.",
+    noPublishedRelease: 'No release is available on this channel yet.',
     cantReach: "We couldn't check for updates.",
     tapCheck: 'Tap "Check now" to look for updates.',
     updateReady: count => `A new update is ready (${count} change${count === 1 ? '' : 's'} included).`,

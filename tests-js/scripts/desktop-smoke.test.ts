@@ -190,15 +190,18 @@ test.runIf(process.platform === 'linux')('canonical gateway lifecycle binds the 
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'smoke-gateway-'))
   const started = Date.now() / 1000
   const child = spawn(process.execPath, ['-e', 'const s=require("node:net").createServer();s.listen(0,"127.0.0.1",()=>console.log(s.address().port))'], { stdio: ['ignore', 'pipe', 'pipe'] })
+
   try {
     const port = await new Promise<number>(resolve => child.stdout.once('data', data => resolve(Number(data.toString().trim()))))
     fs.mkdirSync(path.join(home, 'state'))
     const file = path.join(home, 'state', 'gateway.lifecycle.json')
     const record = { phase: 'running', pid: child.pid, create_time: started }
+
     for (const invalid of [{ ...record, phase: 'stopped' }, { ...record, create_time: started - 3600 }, { ...record, create_time: null }, { ...record, pid: process.pid }]) {
       fs.writeFileSync(file, JSON.stringify(invalid))
       expect(() => localBackendProcess(port, child.pid!, home)).toThrow('found 0')
     }
+
     fs.writeFileSync(file, JSON.stringify(record))
     const backend = localBackendProcess(port, child.pid!, home)
     expect(backend.ownership).toBe('gateway-lifecycle')

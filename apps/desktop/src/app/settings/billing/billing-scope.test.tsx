@@ -21,35 +21,46 @@ afterEach(() => {
   $activeGatewayRoute.set(initialProfile)
 })
 
-it.each(['connection', 'profile'])('discards an old in-flight account when the %s changes on the same socket', async lane => {
-  let finishOld!: (value: unknown) => void
-  const old = new Promise(resolve => { finishOld = resolve })
-  const fixture = Object.values(billingDevFixtures)[0]
-  const api = createSimulatedBillingApi(fixture)
-  api.fetchBillingState = vi.fn().mockReturnValueOnce(old).mockResolvedValueOnce({ ok: true, data: { org_name: 'new-org' } })
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+it.each(['connection', 'profile'])(
+  'discards an old in-flight account when the %s changes on the same socket',
+  async lane => {
+    let finishOld!: (value: unknown) => void
+    const old = new Promise(resolve => {
+      finishOld = resolve
+    })
+    const fixture = Object.values(billingDevFixtures)[0]
+    const api = createSimulatedBillingApi(fixture)
+    api.fetchBillingState = vi
+      .fn()
+      .mockReturnValueOnce(old)
+      .mockResolvedValueOnce({ ok: true, data: { org_name: 'new-org' } })
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
 
-  const wrapper = ({ children }: { children: ReactNode }) => (
-    <QueryClientProvider client={client}>
-      <BillingApiProvider value={api}>{children}</BillingApiProvider>
-    </QueryClientProvider>
-  )
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={client}>
+        <BillingApiProvider value={api}>{children}</BillingApiProvider>
+      </QueryClientProvider>
+    )
 
-  act(() => {
-    $connection.set({ connectionId: 'old' } as HermesConnection)
-    $activeGatewayRoute.set('profile-a')
-  })
-  const { result } = renderHook(() => useBillingState(), { wrapper })
-  await waitFor(() => expect(api.fetchBillingState).toHaveBeenCalledTimes(1))
-  act(() => {
-    if (lane === 'profile') {$activeGatewayRoute.set('profile-b')}
-    else {$connection.set({ connectionId: 'new' } as HermesConnection)}
-  })
-  await waitFor(() => expect(result.current.data).toEqual({ ok: true, data: { org_name: 'new-org' } }))
-  await act(async () => finishOld({ ok: true, data: { org_name: 'old-org' } }))
-  expect(result.current.data).toEqual({ ok: true, data: { org_name: 'new-org' } })
-  client.clear()
-})
+    act(() => {
+      $connection.set({ connectionId: 'old' } as HermesConnection)
+      $activeGatewayRoute.set('profile-a')
+    })
+    const { result } = renderHook(() => useBillingState(), { wrapper })
+    await waitFor(() => expect(api.fetchBillingState).toHaveBeenCalledTimes(1))
+    act(() => {
+      if (lane === 'profile') {
+        $activeGatewayRoute.set('profile-b')
+      } else {
+        $connection.set({ connectionId: 'new' } as HermesConnection)
+      }
+    })
+    await waitFor(() => expect(result.current.data).toEqual({ ok: true, data: { org_name: 'new-org' } }))
+    await act(async () => finishOld({ ok: true, data: { org_name: 'old-org' } }))
+    expect(result.current.data).toEqual({ ok: true, data: { org_name: 'new-org' } })
+    client.clear()
+  }
+)
 
 it('refreshes on native window return without replacing the current connection', async () => {
   const fixture = Object.values(billingDevFixtures)[0]
@@ -58,7 +69,9 @@ it('refreshes on native window return without replacing the current connection',
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
 
   const wrapper = ({ children }: { children: ReactNode }) => (
-    <QueryClientProvider client={client}><BillingApiProvider value={api}>{children}</BillingApiProvider></QueryClientProvider>
+    <QueryClientProvider client={client}>
+      <BillingApiProvider value={api}>{children}</BillingApiProvider>
+    </QueryClientProvider>
   )
 
   const connection = $connection.get()

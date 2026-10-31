@@ -22,16 +22,30 @@ const { $desktopBoot } = await import('@/store/boot')
 const { ModelServiceNotice } = await import('./model-service-notice')
 
 function show(state: 'plan' | 'unavailable' | 'reauth', profile = 'work') {
-  $desktopOnboarding.set({ ...$desktopOnboarding.get(), readiness: {
-    ready: false, source: 'runtime', modelService: { state }
-  } as never, readinessScope: { connectionId: null, profile } })
+  $desktopOnboarding.set({
+    ...$desktopOnboarding.get(),
+    readiness: {
+      ready: false,
+      source: 'runtime',
+      modelService: { state }
+    } as never,
+    readinessScope: { connectionId: null, profile }
+  })
 
-  return render(<MemoryRouter><I18nProvider configClient={null} initialLocale="en">
-    <ModelServiceNotice profile="work" requestGateway={vi.fn()} />
-  </I18nProvider></MemoryRouter>)
+  return render(
+    <MemoryRouter>
+      <I18nProvider configClient={null} initialLocale="en">
+        <ModelServiceNotice profile="work" requestGateway={vi.fn()} />
+      </I18nProvider>
+    </MemoryRouter>
+  )
 }
 
-afterEach(() => { cleanup(); vi.clearAllMocks(); $desktopBoot.set({ ...$desktopBoot.get(), running: false }) })
+afterEach(() => {
+  cleanup()
+  vi.clearAllMocks()
+  $desktopBoot.set({ ...$desktopBoot.get(), running: false })
+})
 
 test('background readiness is quiet and a failed transport offers explicit retry, not sign-in', () => {
   show('unavailable')

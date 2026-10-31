@@ -21,20 +21,28 @@ export async function verifyPreparedChannelInstaller(
 
   const directory: string = pkg.artifact.chunks
     ? await prepareChannelArtifactCache(path.dirname(file), {
-        manifestSha256: target.manifestSha256, artifactSha256: pkg.artifact.sha256,
-        buildId: target.manifest.request.buildId, version: pkg.version, identity: pkg.identity, publisher: pkg.publisher
+        manifestSha256: target.manifestSha256,
+        artifactSha256: pkg.artifact.sha256,
+        buildId: target.manifest.request.buildId,
+        version: pkg.version,
+        identity: pkg.identity,
+        publisher: pkg.publisher
       })
     : await mkdtemp(path.join(path.dirname(file), '.channel-artifact-'))
 
   try {
-    const artifact: string = await downloadPinnedArtifact(directory, {
-      url: target.artifactUrl,
-      chunks: pkg.artifact.chunks,
-      chunkBase: target.manifest.request.publicBase,
-      sha256: pkg.artifact.sha256,
-      size: pkg.artifact.size,
-      format: pkg.artifact.key.endsWith('.msixbundle') ? 'msixbundle' : 'msix'
-    }, fetchArtifact)
+    const artifact: string = await downloadPinnedArtifact(
+      directory,
+      {
+        url: target.artifactUrl,
+        chunks: pkg.artifact.chunks,
+        chunkBase: target.manifest.request.publicBase,
+        sha256: pkg.artifact.sha256,
+        size: pkg.artifact.size,
+        format: pkg.artifact.key.endsWith('.msixbundle') ? 'msixbundle' : 'msix'
+      },
+      fetchArtifact
+    )
 
     await command(
       String.raw`
@@ -86,6 +94,8 @@ try {
       return artifact
     }
   } finally {
-    if (!pkg.artifact.chunks) { await rm(directory, { recursive: true, force: true }) }
+    if (!pkg.artifact.chunks) {
+      await rm(directory, { recursive: true, force: true })
+    }
   }
 }

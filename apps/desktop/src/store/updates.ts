@@ -65,12 +65,16 @@ let deliverySourceGeneration = 0
 let deliverySourceSelected: string | undefined
 
 export function ingestDeliverySource(value: DeliverySourceStatus, changed = false): void {
-  if (changed && value.selected !== deliverySourceSelected) { deliverySourceGeneration += 1 }
+  if (changed && value.selected !== deliverySourceSelected) {
+    deliverySourceGeneration += 1
+  }
   deliverySourceSelected = value.selected
   $updateDeliverySource.set(value)
   $updateSourceChecking.set(value.checkStatus === 'checking')
 
-  if (changed) { $updateStatus.set(null) }
+  if (changed) {
+    $updateStatus.set(null)
+  }
 }
 
 export const $updateOverlayOpen = atom<boolean>(false)
@@ -628,10 +632,14 @@ export async function checkUpdates({ force = false }: UpdateCheckOptions = {}): 
   try {
     const status = await bridge.check({ force })
 
-    if (sourceGeneration !== deliverySourceGeneration) { return $updateStatus.get() }
+    if (sourceGeneration !== deliverySourceGeneration) {
+      return $updateStatus.get()
+    }
     const selected = $updateDeliverySource.get()
 
-    if (selected) { ingestDeliverySource({ ...selected, checkStatus: status.error ? 'failed' : 'completed' }) }
+    if (selected) {
+      ingestDeliverySource({ ...selected, checkStatus: status.error ? 'failed' : 'completed' })
+    }
     $updateStatus.set(status)
 
     if (status.retirement) {
@@ -643,7 +651,9 @@ export async function checkUpdates({ force = false }: UpdateCheckOptions = {}): 
 
     return status
   } catch (error) {
-    if (sourceGeneration !== deliverySourceGeneration) { return $updateStatus.get() }
+    if (sourceGeneration !== deliverySourceGeneration) {
+      return $updateStatus.get()
+    }
     const previous = $updateStatus.get()
 
     const fallback: DesktopUpdateStatus = {
@@ -1384,7 +1394,10 @@ export function startUpdatePoller(): void {
   }
 
   pollerStarted = true
-  deliverySourceUnsub = bridge.onDeliverySourceChanged?.(value => { ingestDeliverySource(value, true) }) ?? null
+  deliverySourceUnsub =
+    bridge.onDeliverySourceChanged?.(value => {
+      ingestDeliverySource(value, true)
+    }) ?? null
   runPassiveChecks()
   void refreshDesktopVersion()
   bridge.onProgress(ingestProgress)

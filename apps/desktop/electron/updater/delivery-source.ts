@@ -16,7 +16,9 @@ const cloudflare = 'https://s3.semantier.com'
 const cloudflareOrigins = [cloudflare, 'https://update2.semantier.com']
 
 function sourceId(value: unknown): DeliverySourceId {
-  if (!ids.includes(value as DeliverySourceId)) {throw new Error('Invalid update delivery source')}
+  if (!ids.includes(value as DeliverySourceId)) {
+    throw new Error('Invalid update delivery source')
+  }
 
   return value as DeliverySourceId
 }
@@ -27,24 +29,39 @@ function local(base: string): boolean {
 
 /** Install-wide preference: changing a chat profile must not change the app update owner. */
 export class DeliverySources {
-  constructor(private readonly file: string, private readonly config: string, private readonly stampedBase: string) {}
+  constructor(
+    private readonly file: string,
+    private readonly config: string,
+    private readonly stampedBase: string
+  ) {}
 
   private selected(): DeliverySourceId {
     if (existsSync(this.file)) {
       return sourceId(JSON.parse(readFileSync(this.file, 'utf8')).source)
     }
 
-    return cloudflareOrigins.includes(this.stampedBase) ? 'channel2' : this.stampedBase && local(this.stampedBase) ? 'channel3' : 'channel1'
+    return cloudflareOrigins.includes(this.stampedBase)
+      ? 'channel2'
+      : this.stampedBase && local(this.stampedBase)
+        ? 'channel3'
+        : 'channel1'
   }
 
   private endpoints(): Record<DeliverySourceId, string> {
     const config: unknown = existsSync(this.config) ? load(readFileSync(this.config, 'utf8')) : null
 
-    const updates = config && typeof config === 'object' && 'updates' in config && config.updates && typeof config.updates === 'object'
-      ? config.updates as Record<string, unknown> : {}
+    const updates =
+      config &&
+      typeof config === 'object' &&
+      'updates' in config &&
+      config.updates &&
+      typeof config.updates === 'object'
+        ? (config.updates as Record<string, unknown>)
+        : {}
 
     const configured = typeof updates.desktop_feed_base_url === 'string' ? updates.desktop_feed_base_url.trim() : ''
-    const dev = typeof updates.desktop_local_feed_base_url === 'string' ? updates.desktop_local_feed_base_url.trim() : ''
+    const dev =
+      typeof updates.desktop_local_feed_base_url === 'string' ? updates.desktop_local_feed_base_url.trim() : ''
     const primary = configured || this.stampedBase
 
     return {
@@ -64,7 +81,9 @@ export class DeliverySources {
     const selected = this.selected()
     const base = this.endpoints()[selected]
 
-    if (!base) {throw new Error('Update source endpoint is not configured: ' + selected)}
+    if (!base) {
+      throw new Error('Update source endpoint is not configured: ' + selected)
+    }
     channelPublicBase(base)
 
     if (selected === 'channel3' ? !local(base) : new URL(base).protocol !== 'https:') {

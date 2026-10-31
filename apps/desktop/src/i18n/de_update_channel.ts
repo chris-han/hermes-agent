@@ -1,7 +1,8 @@
 export const deUpdateChannel = {
-  production: "Produktion",
-  development: "Entwicklung",
-  packagedDescription: "Produktion verwendet veröffentlichte Versionen. Entwicklung enthält Testversionen. Der Wechsel prüft nur auf Updates; die Installation bleibt Ihre Entscheidung.",
+  production: 'Produktion',
+  development: 'Entwicklung',
+  packagedDescription:
+    'Produktion verwendet veröffentlichte Versionen. Entwicklung enthält Testversionen. Der Wechsel prüft nur auf Updates; die Installation bleibt Ihre Entscheidung.',
   title: 'Update-Kanal',
   description:
     'Stabil installiert nur veröffentlichte Releases. Jeder Commit folgt dem main-Branch, sobald Änderungen eintreffen.',
