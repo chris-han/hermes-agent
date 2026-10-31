@@ -12,6 +12,7 @@ export function registerSemantierFeedbackIpc(
     assertViewer(event)
 
     if (command === 'status') { return observations.status() }
+    if (command === 'journey-consent' && typeof value?.enabled === 'boolean') {observations.journeyConsent(value.enabled);return observations.status()}
     const profile = value?.profile
 
     if (typeof profile !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(profile)) {

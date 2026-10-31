@@ -1,5 +1,7 @@
 /** Semantier feedback copy; partial locales use the existing English fallback. */
 export const feedbackEnglish = {
+  journeyObservationConsent: 'Share app launch observations with Semantier',
+  journeyObservationLimit: 'Optional. Includes an installation identifier and launch time; excludes conversations, documents and passwords.',
   reportSignInAgain: 'Sign in again to send this report. Your preview is retained.',
   reportPermissionDenied: 'This account cannot upload diagnostics. Your preview is retained.',
   reportTooLarge: 'The report is too large. Remove the update excerpt or shorten the description.',
@@ -58,6 +60,8 @@ export const feedbackEnglish = {
 }
 export type FeedbackCopy = typeof feedbackEnglish
 export const feedbackChinese: FeedbackCopy = {
+  journeyObservationConsent: '向 Semantier 分享应用启动观测',
+  journeyObservationLimit: '可选。仅包含安装标识和启动时间，不包含对话、文档或密码。',
   reportSignInAgain: '请重新登录后发送报告；当前预览已保留。',
   reportPermissionDenied: '此账户无权上传诊断；当前预览已保留。',
   reportTooLarge: '报告内容过大，请移除更新错误摘要或缩短问题描述。',

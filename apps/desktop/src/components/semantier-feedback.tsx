@@ -184,6 +184,8 @@ export function SemantierFeedbackSettings() {
   const enabled = authorization.state?.enabled ?? false
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [journeyEnabled,setJourneyEnabled] = useState(false)
+  useEffect(() => {let live=true;void window.hermesDesktop.semantierFeedback?.status().then(value=>{if(live)setJourneyEnabled(value.journeyEnabled===true)}).catch(()=>undefined);return()=>{live=false}},[])
 
   async function consent() {
     if (!route?.profile || (route.connectionId && route.connectionId !== LOCAL_CONNECTION_ID)) {
@@ -214,6 +216,11 @@ export function SemantierFeedbackSettings() {
     <section className="mt-4 grid gap-3">
       <h3>{copy.semantierDiagnosticsPrivacy}</h3>
       <p>{copy.optionalUpdateResultReportingToSemantierCloud}</p>
+      <label className="flex items-start gap-2">
+        <input type="checkbox" checked={journeyEnabled} disabled={!window.hermesDesktop.semantierFeedback?.journeyConsent}
+          onChange={event=>{const enabled=event.target.checked;void window.hermesDesktop.semantierFeedback?.journeyConsent?.(enabled).then(value=>setJourneyEnabled(value.journeyEnabled)).catch(()=>setError(copy.reportingCouldNotChangeSignInOr))}} />
+        <span>{copy.journeyObservationConsent}<small className="block">{copy.journeyObservationLimit}</small></span>
+      </label>
       <p>
         {copy.reporting}: {enabled ? copy.on : copy.off}
       </p>
