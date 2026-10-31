@@ -23,6 +23,8 @@ def upload_file(
     url: str, path: str, size: int, creds: dict[str, str],
     content_type: str | None, headers: dict[str, str], part_size: int,
     *, on_created: Callable[[str], None] | None = None,
+    expected_parts: dict[int, str] | None = None,
+    before_complete: Callable[[], None] | None = None,
 ) -> None:
     from . import r2
 
@@ -45,6 +47,8 @@ def upload_file(
         digest = hashlib.sha256()
         for chunk in _file_range(path, offset, length):
             digest.update(chunk)
+        if expected_parts is not None and digest.hexdigest() != expected_parts.get(number):
+            raise ValueError("Multipart source changed after verification")
         part_url = url + "?" + r2.canonical_query({
             "partNumber": str(number), "uploadId": upload_id,
         })
@@ -73,6 +77,8 @@ def upload_file(
             ET.SubElement(part, "ETag").text = etag
         body = ET.tostring(document, encoding="utf-8")
         conditions = {key: value for key, value in headers.items() if key.lower().startswith("if-")}
+        if before_complete is not None:
+            before_complete()
         try:
             response = r2.signed_request(
                 "POST", upload_url, creds=creds, now=r2.amz_timestamp(),
