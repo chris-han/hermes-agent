@@ -40,6 +40,7 @@ function validObservation(value: unknown): value is Observation {
 }
 
 interface Journal {
+  journeyEnabled?: boolean
   enabled: boolean
   profile: string | null
   queue: Observation[]
@@ -123,8 +124,13 @@ export class SemantierObservations {
 
     this.save()
   }
+  journeyConsent(enabled: boolean) {
+    this.state.journeyEnabled = enabled
+    this.save()
+  }
   status() {
     return {
+      journeyEnabled: this.state.journeyEnabled === true,
       storageUnavailable: this.storageUnavailable,
       enabled: this.state.enabled,
       profile: this.state.profile,

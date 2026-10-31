@@ -110,7 +110,8 @@ declare global {
       // over hermes:window-control; Electron/OS chrome owns them elsewhere.
       semantierFeedback?: {
         onOpen?(callback: () => void): () => void
-        status(): Promise<{enabled:boolean;profile:string|null;queued:number;dropped:number}>
+        status(): Promise<{enabled:boolean;profile:string|null;queued:number;dropped:number;journeyEnabled?:boolean}>
+        journeyConsent?(enabled:boolean): Promise<{journeyEnabled:boolean}>
         consent(enabled:boolean,profile:string): Promise<{enabled:boolean;profile:string|null;queued:number;dropped:number}>
         drain(profile:string): Promise<Observation[]>
         ack(profile:string,ids:string[]): Promise<unknown>

@@ -15,6 +15,8 @@ import {
 } from './local-gateway'
 import { closeGatewayTicketBridges, createGatewayTicketResolver } from './local-gateway-python'
 import { registerSemantierFeedbackIpc } from './updater/semantier-feedback-ipc'
+import { JourneyObservations } from './journey-observations'
+let journeyObservations: JourneyObservations | null = null
 import { SemantierObservations } from './updater/semantier-observations'
 const localGatewayDials = createLocalGatewayDials()
 configurePythonGatewayTicketClient(
@@ -14065,6 +14067,10 @@ function createWindow() {
   })
 
   const createdMainWindow = mainWindow
+  createdMainWindow.webContents.on('did-fail-load', (_event, code, _description, _url, isMainFrame) => {
+    if(isMainFrame && code !== -3) void journeyObservations?.rendererState(true)
+  })
+  createdMainWindow.webContents.on('did-finish-load', () => { void journeyObservations?.rendererState(false) })
   registerChatWindow(createdMainWindow)
   const defaultRoute = desktopProfilePreferences.getDefault()
 
@@ -18361,6 +18367,8 @@ app.on('open-url', (event, url) => {
 })
 
 app.whenReady().then(async () => {
+  journeyObservations = new JourneyObservations(app.getPath('userData'), process.env.SEMANTIER_CLOUD_PUBLIC_ORIGIN ?? '', () => semantierObservations.status().journeyEnabled, (input, init) => electronNet.fetch(input, init))
+  void journeyObservations.firstOpen()
   // Post-update relaunch detection (App Installer arm): when the previous
   // version wrote the one-shot pending-relaunch marker before quitting into
   // an OS package swap, consume it here — the renderer toasts "Hermes

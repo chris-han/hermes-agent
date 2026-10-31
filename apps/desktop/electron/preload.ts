@@ -70,6 +70,7 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
 
  return () => ipcRenderer.removeListener('semantier:feedback:open', listener) },
     status: () => ipcRenderer.invoke('semantier:feedback', 'status', {}),
+    journeyConsent: enabled => ipcRenderer.invoke('semantier:feedback', 'journey-consent', {enabled}),
     consent: (enabled, profile) => ipcRenderer.invoke('semantier:feedback', 'consent', {enabled, profile}),
     drain: profile => ipcRenderer.invoke('semantier:feedback', 'drain', {profile}),
     ack: (profile, ids) => ipcRenderer.invoke('semantier:feedback', 'ack', {profile, ids})
