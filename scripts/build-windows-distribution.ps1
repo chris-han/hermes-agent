@@ -45,6 +45,7 @@ if (Test-Path -LiteralPath $output) { throw 'Output already exists; choose a fre
 $lockPath = $work + '.distribution.lock'
 $lock = $null
 $transcript = $false
+$completed = $false
 $totalClock = [Diagnostics.Stopwatch]::StartNew()
 function Git-Value([string]$Directory, [string[]]$Arguments) {
   $value = & git -C $Directory @Arguments
@@ -138,6 +139,7 @@ try {
     if ($request.preflight) {
       Json-File ([ordered]@{result='PREFLIGHT_PASS';sourceCommit=$source;certificateThumbprint=$cert.Thumbprint;certificateSubject=$cert.Subject;certificateNotBefore=$cert.NotBefore.ToUniversalTime().ToString('o');certificateNotAfter=$cert.NotAfter.ToUniversalTime().ToString('o');signTool=$signTool;sevenZip=$sevenZip;repository=$repo;standalone=$standalone;worktree=$work}) (Join-Path $output 'preflight.json')
       Write-Host 'Preflight passed. No build, signing, installation or trust change.'
+      $completed = $true
       exit 0
     }
     $counter = Join-Path (Split-Path $work -Parent) 'semantier-agent-build-version.json'
@@ -198,13 +200,14 @@ try {
   Native "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" $signArgs
   Json-File ([ordered]@{result='PASS';sourceCommit=$source;controllerCommit=$request.commit;certificateThumbprint=$cert.Thumbprint;trustedTimestamp=[bool]$request.timestampUrl;worktree=$work;unsignedReceipt=(Join-Path $unsigned 'unsigned-build-receipt.json');signedReceipt=(Join-Path $output 'signed\receipt.json');zip=(Join-Path (Join-Path $output 'signed') ((Get-Content -LiteralPath (Join-Path $output 'signed\receipt.json') -Raw | ConvertFrom-Json).archiveName))}) (Join-Path $output 'result.json')
   Write-Host "Distribution complete: $output"
+  $completed = $true
 } catch {
   if ($transcript) { Json-File ([ordered]@{result='FAIL';producedAt=[DateTime]::UtcNow.ToString('o');error=$_.Exception.Message}) (Join-Path $output 'failure.json') }
   throw
 } finally {
   $totalClock.Stop()
   if ($transcript) {
-    Json-File ([ordered]@{producedAt=[DateTime]::UtcNow.ToString('o');elapsedSeconds=$totalClock.Elapsed.TotalSeconds;sourceCommit=$request.commit;passed=(Test-Path -LiteralPath (Join-Path $output 'result.json'))}) (Join-Path $output 'controller-total.json')
+    Json-File ([ordered]@{producedAt=[DateTime]::UtcNow.ToString('o');elapsedSeconds=$totalClock.Elapsed.TotalSeconds;sourceCommit=$request.commit;passed=$completed}) (Join-Path $output 'controller-total.json')
     Stop-Transcript | Out-Null
   }
   if ($lock) { $lock.Dispose(); Remove-Item -LiteralPath $lockPath }
