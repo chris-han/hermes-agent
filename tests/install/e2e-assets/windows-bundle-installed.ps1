@@ -122,3 +122,31 @@ function Get-BundleInstalledVerification {
  }
  return @{package=$pkg;identity=$identity;folding=$folding;registration=$registration}
 }
+
+# The caller validates signed inputs and tool custody before entering this read-only
+# phase. Keep the actual registered directories open until its caller finishes.
+function Get-CIBoundInstalledVerification {
+ param([string]$Arch,$Expected,$InputMetadata,[string]$ChannelRequest,
+  [string[]]$IdentityArgs,[string]$Metadata,[string]$Tag,$Graph,
+  [string]$NativeLayoutPlan='', [string]$NativeGraph='',
+  [string]$GraphHash='', [string]$LayoutHash='', [string]$ExpectedSid='')
+ if(!$Graph -or !$ExpectedSid -or [Security.Principal.WindowsIdentity]::GetCurrent().User.Value -cne $ExpectedSid){throw 'Native verification actor mismatch'}
+ if(@($Graph.objects|Where-Object{$_.kind -cnotin @('main-bundle','main-package','asset-package')}).Count){throw 'Native package applicability not established for this graph'}
+ $roots=@()
+ try {
+  $packages=@(Get-AppxPackage -Name $Expected.msixIdentity)+@(Get-AppxPackage -PackageTypeFilter Resource -Name $Expected.msixIdentity)
+  foreach($package in $packages){$roots+=@(@{full=$package.PackageFullName;root=(Registered-Root $package -Retain)})}
+  $verified=Get-BundleInstalledVerification -Arch $Arch -Expected $Expected -InputMetadata $InputMetadata -ChannelRequest $ChannelRequest -IdentityArgs $IdentityArgs -Metadata $Metadata -Tag $Tag -Graph $Graph -NativeLayoutPlan $NativeLayoutPlan -NativeGraph $NativeGraph -GraphHash $GraphHash -LayoutHash $LayoutHash -ExpectedSid $ExpectedSid
+  $current=@(Get-AppxPackage -Name $Expected.msixIdentity)+@(Get-AppxPackage -PackageTypeFilter Resource -Name $Expected.msixIdentity)
+  if($current.Count -ne $roots.Count){throw 'Registered package root set changed during verification'}
+  foreach($held in $roots){
+   $matches=@($current|Where-Object{$_.PackageFullName -ceq $held.full})
+   if($matches.Count -ne 1){throw 'Registered package root identity changed during verification'}
+   $fresh=Registered-Root $matches[0] -Retain
+   try {if($fresh.id -cne $held.root.id){throw 'Registered physical root changed during verification'}}
+   finally {$fresh.handle.Dispose()}
+  }
+  $verified.registration.physicalRoots=@($roots|ForEach-Object{@{full=$_.full;id=$_.root.id}})
+  return @{verification=$verified;roots=$roots}
+ } catch {foreach($held in $roots){$held.root.handle.Dispose()};throw}
+}

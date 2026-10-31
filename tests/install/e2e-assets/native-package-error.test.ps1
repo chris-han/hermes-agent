@@ -72,13 +72,113 @@ try {
   $script:seen=$true
   return @{status='SUCCESS';hresult='00000000';activityId='11111111-1111-1111-1111-111111111111';operationCompleted=$true}
  }
- $v=Invoke-CIDurableNativeUri $ciTmp ('a'*64) ('b'*40) 'positive' @{sid='fixture-sid';session_sid='fixture-sid';session=7;wts_state=0} @('http://127.0.0.1:1/pkg') @('digest') 'http://127.0.0.1:1/pkg' 1
+ $v=Invoke-CIDurableNativeUri $ciTmp ('a'*64) ('b'*40) 'positive' @{sid='fixture-sid';session_sid='fixture-sid';session=(Get-Process -Id $PID).SessionId;wts_state=0} @('http://127.0.0.1:1/pkg') @('digest') 'http://127.0.0.1:1/pkg' 1
  if(!$script:seen -or $v.status -cne 'SUCCESS' -or @(Get-ChildItem -LiteralPath $ciTmp -Filter 'ci-native-outcome-*.json').Count -ne 1){throw 'CI native durable transaction not completed'}
+ $outcome=Get-Content -Raw -LiteralPath (Join-Path $ciTmp ('ci-native-outcome-'+$v.operationId+'.json'))|ConvertFrom-Json
+ if($v.operationId -cnotmatch '^[a-f0-9]{32}$' -or $outcome.operationId -cne $v.operationId -or $outcome.result.operationId -cne $v.operationId){throw 'Returned SDK result is not bound to its durable operation'}
+ 'PASS: simulated SDK result retains its durable operation identity'
 } finally {Remove-Item -LiteralPath $ciTmp -Recurse -Force}
 
+. (Join-Path $PSScriptRoot 'windows-physical-path.ps1')
 . (Join-Path $PSScriptRoot 'native-ci-cleanup-policy.ps1')
 $held=$false;try {Assert-CINativeCleanupOwnership @{root='native'} 'same-full-name'} catch {$held=$true}
 if(!$held){throw 'Native cleanup incorrectly trusts a matching full name'}
 $held=$false;try {Assert-CINativeCleanupOwnership $null ''} catch {$held=$true}
 if(!$held){throw 'Cleanup incorrectly accepts an uncaptured registration'}
 'PASS: uncertain CI native cleanup and uncaptured identity held; no package mutation'
+
+# Simulate PID reuse after the original process handle is opened. Stop must act
+# on the validated handle, never look the PID up again.
+$script:gatewayOriginal=[pscustomobject]@{Created=1234.5;Image='C:\owned\gateway.exe';Stopped=$false;Closed=$false}
+$script:gatewayOriginal|Add-Member ScriptMethod Stop {$this.Stopped=$true}
+$script:gatewayOriginal|Add-Member ScriptMethod Dispose {$this.Closed=$true}
+$script:gatewayReplacement=[pscustomobject]@{Created=1235.5;Image='C:\other\gateway.exe';Stopped=$false}
+$script:gatewayCurrent=$script:gatewayOriginal
+function Open-CIOwnedGateway([int]$ProcessId) {$opened=$script:gatewayCurrent;$script:gatewayCurrent=$script:gatewayReplacement;return $opened}
+Stop-CIOwnedGateway @{pid=100;create_time=1234.5} 'C:\owned\'
+if(!$script:gatewayOriginal.Stopped -or !$script:gatewayOriginal.Closed -or $script:gatewayReplacement.Stopped){throw 'PID replacement reached unowned process'}
+$script:gatewayCurrent=$script:gatewayReplacement;$script:gatewayReplacement|Add-Member ScriptMethod Dispose {}
+$refused=$false;try{Stop-CIOwnedGateway @{pid=100;create_time=1234.5} 'C:\owned\'}catch{$refused=$true}
+if(!$refused -or $script:gatewayReplacement.Stopped){throw 'Mismatched gateway incarnation accepted'}
+function Open-CIOwnedGateway([int]$ProcessId) {throw [ComponentModel.Win32Exception]::new($ProcessId)}
+Stop-CIOwnedGateway @{pid=87;create_time=1234.5} 'C:\owned\'
+$refused=$false;try{Stop-CIOwnedGateway @{pid=5;create_time=1234.5} 'C:\owned\'}catch{$refused=$true}
+if(!$refused){throw 'Gateway access-denied failure accepted as absence'}
+'PASS: simulated PID replacement stops only validated held gateway handle; no process terminated'
+
+# Simulated same-process SDK success and package APIs; never a native deployment.
+$fixtureGraph=Join-Path ([IO.Path]::GetTempPath()) ('semantier-ci-graph-'+[Guid]::NewGuid().ToString('N')+'.json')
+$fixtureOut=Join-Path ([IO.Path]::GetTempPath()) ('semantier-ci-records-'+[Guid]::NewGuid().ToString('N'))
+try {
+ New-Item -ItemType Directory -Path $fixtureOut -ErrorAction Stop|Out-Null
+ $fixtureSid='S-1-5-21-1-2-3-4';$fixtureSource='b'*40
+ $prefix='releases/channel-builds/'+('a'*32)+'/'
+ $fixtureGraphObject=@{root=($prefix+'main.msixbundle');objects=@(@{kind='main-bundle';key=($prefix+'main.msixbundle');nativeDigest='digest-bundle'},@{kind='main-package';key=($prefix+'main.msix');nativeDigest='digest-main';identity='fixture-name';publisher='CN=Fixture';version='1.2.3.4';arch='x64'},@{kind='asset-package';key=($prefix+'resource.msix');nativeDigest='digest-resource';resourceId='runtime0001';arch='neutral'})}
+ [IO.File]::WriteAllText($fixtureGraph,($fixtureGraphObject|ConvertTo-Json -Depth 32 -Compress))
+ $fixtureGraphObject=Get-Content -Raw -LiteralPath $fixtureGraph|ConvertFrom-Json
+ $fixtureHash=(Get-FileHash -LiteralPath $fixtureGraph -Algorithm SHA256).Hash.ToLowerInvariant()
+ $fixtureUris=@($fixtureGraphObject.objects|ForEach-Object{'http://127.0.0.1:1777/'+$_.key});$fixtureDigests=@($fixtureGraphObject.objects|ForEach-Object{$_.nativeDigest})
+ $self=Get-Process -Id $PID
+ $fixtureSession=$self.SessionId;$fixtureActor=@{sid=$fixtureSid;session_sid=$fixtureSid;session=$fixtureSession;wts_state=0}
+ function Invoke-BoundNativePackageUri([string[]]$Uris,[string[]]$Digests,[string]$Root,[int]$Minutes) {return @{status='SUCCESS';hresult='00000000';operationCompleted=$true;activityId='11111111-1111-1111-1111-111111111111'}}
+ $rootUri='http://127.0.0.1:1777/'+$fixtureGraphObject.root
+ $produced=Invoke-CIDurableNativeUri $fixtureOut $fixtureHash $fixtureSource 'positive' $fixtureActor $fixtureUris $fixtureDigests $rootUri 1
+ $operationId=$produced.operationId
+ $state=@{unknown=$false;nativeSuccess=@{actorSid=$fixtureSid;session=$fixtureSession;graphSha256=$fixtureHash;sourceCommit=$fixtureSource;root=$fixtureGraphObject.root;rootUri=$rootUri;uris=$fixtureUris;digests=$fixtureDigests;operationId=$operationId;result=$produced}}
+ $intentPath=Join-Path $fixtureOut ('ci-native-intent-'+$operationId+'.json');$outcomePath=Join-Path $fixtureOut ('ci-native-outcome-'+$operationId+'.json')
+ $intentText=[IO.File]::ReadAllText($intentPath);$outcomeText=[IO.File]::ReadAllText($outcomePath);$intent=$intentText|ConvertFrom-Json
+ $package=[pscustomobject]@{PackageFullName='fixture-main';Name='fixture-name';PackageFamilyName='fixture-family';Publisher='CN=Fixture';Version=[version]'1.2.3.4';Architecture='x64';Status='Ok'}
+ $resource=[pscustomobject]@{PackageFullName='fixture-resource';ResourceId='runtime0001';Publisher='CN=Fixture';Version=[version]'1.2.3.4';PackageFamilyName='fixture-family';Architecture='neutral';Status='Ok';SignatureKind='Developer';IsDevelopmentMode=$false}
+ $verified=@{identity=@{packageFullName='fixture-main'};registration=@{graphSha256=$fixtureHash;sid=$fixtureSid;related=@(@{full='fixture-resource';resource_id='runtime0001'});physicalRoots=@(@{full='fixture-main';id='id-fixture-main'},@{full='fixture-resource';id='id-fixture-resource'})}}
+ $held=@(@{full='fixture-main';root=@{id='id-fixture-main';handle=[pscustomobject]@{IsClosed=$false;IsInvalid=$false}}},@{full='fixture-resource';root=@{id='id-fixture-resource';handle=[pscustomobject]@{IsClosed=$false;IsInvalid=$false}}})
+ function Assert-CISession { return @{sid=$fixtureSid;session_sid=$fixtureSid;session=$fixtureSession;wts_state=0;interactive=$true} }
+ $script:changedPhysical=$false
+ function Registered-Root {param($Package,[switch]$Retain) $id='id-'+$Package.PackageFullName;if($script:changedPhysical){$id='changed'};return @{id=$id;handle=[IO.MemoryStream]::new()}}
+ $script:observedMain=$package;$script:observedResources=@($resource);$script:observedOptional=@()
+ function Get-AppxPackage { param($PackageTypeFilter,$Name) if($PackageTypeFilter -ceq 'Resource'){return $script:observedResources};if($PackageTypeFilter -ceq 'Optional'){return $script:observedOptional};return @($script:observedMain) }
+ Assert-CINativeCleanupOwnership $fixtureGraphObject 'fixture-main' $state $verified $package $fixtureSid $fixtureGraph $fixtureSource $held $fixtureOut
+ foreach($damage in @('unknown','activity','operation','actor','graph','graph-object','package','resources','fresh-main','resource-arch','optional','physical','intent','outcome','missing-outcome','root-uri','uris','digests')){
+  $copy=@{unknown=$state.unknown;nativeSuccess=$state.nativeSuccess.Clone()};$v=$verified;$p=$package;$g=$fixtureGraphObject
+  $script:observedMain=$package;$script:observedResources=@($resource);$script:observedOptional=@();$script:changedPhysical=$false
+  [IO.File]::WriteAllText($intentPath,$intentText);[IO.File]::WriteAllText($outcomePath,$outcomeText)
+  switch($damage){
+   'unknown' {$copy.unknown=$true}
+   'activity' {$copy.nativeSuccess.result=@{status='SUCCESS';hresult='00000000';operationCompleted=$true;activityId=''}}
+   'operation' {$copy.nativeSuccess.operationId='d'*32}
+   'actor' {$copy.nativeSuccess.actorSid='other'}
+   'graph' {$copy.nativeSuccess.graphSha256='0'*64}
+   'graph-object' {$g=($fixtureGraphObject|ConvertTo-Json -Depth 32 -Compress|ConvertFrom-Json);$g.objects[2].resourceId='changed'}
+   'package' {$p=[pscustomobject]@{PackageFullName='other'}}
+   'resources' {$v=@{registration=@{graphSha256=$fixtureHash;sid=$fixtureSid;related=@()}}}
+   'fresh-main' {$script:observedMain=$package.PSObject.Copy();$script:observedMain.PackageFullName='other'}
+   'resource-arch' {$changed=$resource.PSObject.Copy();$changed.Architecture='x64';$script:observedResources=@($changed)}
+   'optional' {$script:observedOptional=@([pscustomobject]@{PackageFullName='unowned'})}
+   'physical' {$script:changedPhysical=$true}
+   'intent' {$changed=$intentText|ConvertFrom-Json;$changed.actorPid=1;[IO.File]::WriteAllText($intentPath,($changed|ConvertTo-Json -Depth 32 -Compress))}
+   'outcome' {$changed=@{schema=1;operationId=$operationId;result=@{operationId=$operationId;status='FAILURE';hresult='80000000';operationCompleted=$true;activityId='11111111-1111-1111-1111-111111111111'}};[IO.File]::WriteAllText($outcomePath,($changed|ConvertTo-Json -Depth 32 -Compress))}
+   'missing-outcome' {Remove-Item -LiteralPath $outcomePath -Force}
+   'root-uri' {$copy.nativeSuccess.rootUri='http://127.0.0.1:1778/'+$fixtureGraphObject.root}
+   'uris' {$changed=$intentText|ConvertFrom-Json;$changed.uris=@('http://127.0.0.1:1778/unrelated');[IO.File]::WriteAllText($intentPath,($changed|ConvertTo-Json -Depth 32 -Compress))}
+   'digests' {$changed=$intentText|ConvertFrom-Json;$changed.digests=@('wrong');[IO.File]::WriteAllText($intentPath,($changed|ConvertTo-Json -Depth 32 -Compress))}
+  }
+  $refused=$false;try{Assert-CINativeCleanupOwnership $g 'fixture-main' $copy $v $p $fixtureSid $fixtureGraph $fixtureSource $held $fixtureOut}catch{$refused=$true}
+  if(!$refused){throw "CI cleanup accepted changed $damage"}
+ }
+ 'PASS: simulated SDK-bound owned cleanup accepted; unknown and changed evidence refused; no package mutation'
+ [IO.File]::WriteAllText($intentPath,$intentText);[IO.File]::WriteAllText($outcomePath,$outcomeText)
+ $script:observedMain=$package;$script:observedResources=@($resource);$script:observedOptional=@();$script:changedPhysical=$false
+ function New-FixtureRootHandle {$h=[pscustomobject]@{IsClosed=$false;IsInvalid=$false};$h|Add-Member ScriptMethod Dispose {$this.IsClosed=$true};return $h}
+ function Registered-Root {param($Package,[switch]$Retain) return @{id=('id-'+$Package.PackageFullName);handle=(New-FixtureRootHandle)}}
+ function Assert-BundleWinRTReady {param($Package,$ExpectedSid) return $true}
+ $held=@(@{full='fixture-main';root=@{id='id-fixture-main';handle=(New-FixtureRootHandle)}},@{full='fixture-resource';root=@{id='id-fixture-resource';handle=(New-FixtureRootHandle)}})
+ $script:removed=@()
+ function Remove-AppxPackage {param($Package,$ErrorAction) $script:removed+=@($Package);$script:observedMain=$null;$script:observedResources=@()}
+ function Get-AppxPackage {param($PackageTypeFilter,$Name) if($PackageTypeFilter -ceq 'Resource'){return $script:observedResources};if($PackageTypeFilter -ceq 'Optional'){return $script:observedOptional};if($null -ne $script:observedMain){return $script:observedMain}}
+ $state.unknown=$true;$refused=$false
+ try{Invoke-CINativeOwnedRemoval $fixtureGraphObject 'fixture-main' $state $verified $package $fixtureSid $fixtureGraph $fixtureSource ([ref]$held) $fixtureOut}catch{$refused=$true}
+ if(!$refused -or $script:removed.Count -ne 0){throw 'Unresolved simulated operation reached removal'}
+ $state.unknown=$false
+ Invoke-CINativeOwnedRemoval $fixtureGraphObject 'fixture-main' $state $verified $package $fixtureSid $fixtureGraph $fixtureSource ([ref]$held) $fixtureOut
+ if($script:removed.Count -ne 1 -or $script:removed[0] -cne 'fixture-main' -or $held.Count -ne 0){throw 'Owned simulated removal did not complete exactly once'}
+ 'PASS: production cleanup seam removes only proven fixture package; unresolved operation refuses; Windows package APIs simulated'
+} finally {Remove-Item -LiteralPath $fixtureGraph -Force;Remove-Item -LiteralPath $fixtureOut -Recurse -Force}

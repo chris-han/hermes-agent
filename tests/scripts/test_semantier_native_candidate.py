@@ -40,7 +40,7 @@ def test_native_ci_proof_refuses_incomplete_or_unbound_evidence(damage):
     with pytest.raises(ValueError):verify_uri_proof(proof,graph,'b'*64,sid)
 
 
-@pytest.mark.parametrize('corrupt_object',[False,True])
+@pytest.mark.parametrize('corrupt_object',[False,True,'symlink'])
 def test_real_native_stager_and_composed_publisher_bind_complete_final_graph(tmp_path,monkeypatch,corrupt_object):
     """Only signing/Windows/GitHub results are fixtures; use real local wiring."""
     import hashlib,hmac,json
@@ -54,7 +54,7 @@ def test_real_native_stager_and_composed_publisher_bind_complete_final_graph(tmp
     request=acceptance_request(commit='a'*40,controller='b'*40,version='0.0.59',source_version='0.22.2',base='https://updates.semantier.com')
     prefix='releases/channel-builds/'+request['buildId']+'/'
     old='releases/channel-builds/'+'a'*32+'/'
-    output=tmp_path/'output';native=tmp_path/'native';incoming=tmp_path/'incoming'
+    output=tmp_path/'output';native=tmp_path/'native';incoming=tmp_path/'incoming';target_incoming=tmp_path/'incoming_r2';target_incoming.mkdir()
     distribution=output/'signed/distribution';distribution.mkdir(parents=True);native.mkdir()
     for row in graph['objects']:
         row['key']=row['key'].replace(old,prefix);row['references']=[key.replace(old,prefix) for key in row['references']]
@@ -70,7 +70,7 @@ def test_real_native_stager_and_composed_publisher_bind_complete_final_graph(tmp
     publisher=graph['objects'][0]['publisher'];full='Semantier.Agent.Acceptance_0.0.59.0_x64__fixture'
     signed=dict(signing='PASS',verification='PASS: signing boundary fixture',sourceCommit=request['commit'],nativeGraph=graph,
         signedSha256=graph['objects'][0]['sha256'],packageName='Semantier.Agent.Acceptance',packageVersion=request['windowsVersion'],publisher=publisher,trustedTimestamp=False)
-    records={output/'result.json':dict(result='PASS',sourceCommit=request['commit']),output/'channel-request.json':request,
+    records={output/'result.json':dict(result='PASS',sourceCommit=request['commit'],controllerCommit=request['controllerCommit']),output/'channel-request.json':request,
         output/'signed/receipt.json':signed,native/'artifact.json':dict(sha256=signed['signedSha256']),
         native/'installed-identity.json':dict(version=request['windowsVersion'],architecture='X64',publisher=publisher,packageFullName=full,stamp=dict(commit=request['commit'],channelBuild=request)),
         native/'native-install-exit.json':dict(exitCode=0),native/'native-uri-proof.json':proof,
@@ -78,16 +78,43 @@ def test_real_native_stager_and_composed_publisher_bind_complete_final_graph(tmp
         native/'native-payload-runtime.json':dict(sourceCommit=request['commit'],buildId=request['buildId'],packageFullName=full,polarsSum=6,nativeModules=['fixture'],sensevoice=dict(modelLoaded=True,silenceDecodeCompleted=True),skills=dict(filesRead=58),producedAt='2026-10-29T15:00:30+00:00'),
         native/'native-payload-folding.json':dict(payloadInventorySha256=graph['payloadInventorySha256'],filesChecked=1,bytesChecked=17)}
     for path,value in records.items():path.write_text(json.dumps(value))
-    for key,value in dict(GITHUB_ACTIONS='true',GITHUB_REPOSITORY='chris-han/hermes-agent',GITHUB_SHA=request['commit'],GITHUB_RUN_ID='external-boundary-fixture',GITHUB_RUN_ATTEMPT='1',ACCEPTANCE_CI_SID=sid,SEMANTIER_CLIENT_RECEIPT_KEY='x'*32).items():monkeypatch.setenv(key,value)
-    if corrupt_object:
+    for key,value in dict(GITHUB_ACTIONS='true',GITHUB_REPOSITORY='chris-han/hermes-agent',GITHUB_SHA=request['commit'],GITHUB_RUN_ID='external-boundary-fixture',GITHUB_RUN_ATTEMPT='1',ACCEPTANCE_CI_SID=sid,SEMANTIER_CLIENT_RECEIPT_KEY='x'*32,ACCEPTANCE_CONTROLLER_COMMIT=request['controllerCommit']).items():monkeypatch.setenv(key,value)
+    import scripts.releases.semantier_native_ci as ci
+    monkeypatch.setattr(ci,'CI_INCOMING_ROOT',incoming)
+    monkeypatch.setattr(ci,'verify_runtime_identity',lambda _cid:None)
+    monkeypatch.setattr(ci,'verify_cloudflare_custody',lambda _cid,_root:None)
+    original_check=ci.subprocess.check_output
+    def fake_runtime(argv,**kwargs):
+        if argv[:2]==['docker','inspect']:return 'f'*64+' '+ci.CI_RUNTIME_IMAGE+' true\n'
+        return original_check(argv,**kwargs)
+    monkeypatch.setattr(ci.subprocess,'check_output',fake_runtime)
+    monkeypatch.setenv('ACCEPTANCE_CONTROLLER_COMMIT','c'*40)
+    with pytest.raises(ValueError,match='Exact completed controller required'):
+        stage(output,native,incoming,{'en':'Fixture, not native acceptance'},target_incoming)
+    assert not (incoming/'ci-candidates').exists()
+    monkeypatch.setenv('ACCEPTANCE_CONTROLLER_COMMIT',request['controllerCommit'])
+    if corrupt_object is True:
         (distribution/Path(asset['key']).name).write_bytes(b'corrupt final object')
-        with pytest.raises(Exception,match='artifact_integrity_mismatch'):stage(output,native,incoming,{'en':'Fixture, not native acceptance'})
+        with pytest.raises(Exception,match='artifact_integrity_mismatch'):stage(output,native,incoming,{'en':'Fixture, not native acceptance'},target_incoming)
         assert not (incoming/'ci-candidates').exists()
         return
-    result=stage(output,native,incoming,{'en':'Fixture, not native acceptance'})
+    if corrupt_object=='symlink':
+        outside=tmp_path/'outside';outside.mkdir();(target_incoming/'releases').symlink_to(outside,target_is_directory=True)
+        with pytest.raises(OSError):stage(output,native,incoming,{'en':'Fixture, not native acceptance'},target_incoming)
+        assert not list(outside.iterdir()) and not (incoming/'ci-candidates').exists()
+        return
+    result=stage(output,native,incoming,{'en':'Fixture, not native acceptance'},target_incoming)
     candidate=json.loads(Path(result['candidate_path']).read_text())
+    binding=json.loads(Path(result['target_binding_path']).read_text())
+    assert binding['delivery_target_id']=='channel2' and binding['candidate']['native_receipt']==candidate['native_receipt']
+    assert binding['candidate']['manifest']['request']['publicBase']=='https://update2.semantier.com'
+    assert binding['descriptor_receipt']['descriptor_sha256']==graph_sha
+    assert hmac.compare_digest(binding['descriptor_receipt_hmac'],hmac.new(b'x'*32,canonical(binding['descriptor_receipt']),hashlib.sha256).hexdigest())
+    for row in graph['objects']:assert (target_incoming/row['key']).read_bytes()==(distribution/Path(row['key']).name).read_bytes()
+    assert (target_incoming/binding['candidate']['manifest']['packages'][0]['feed']['key']).read_bytes()==graph_file.read_bytes()
     assert candidate['manifest']['schema']==2 and 'distributionArchive' not in candidate['manifest']['packages'][0]
     receipt=candidate['native_receipt']
+    assert receipt['controller_commit']==request['controllerCommit']!=receipt['source_commit']
     assert receipt['runtime_parent_commit']==json.loads(Path('semantier-runtime/composition.json').read_text())['parent_commit']
     assert hmac.compare_digest(candidate['receipt_hmac'],hmac.new(b'x'*32,canonical(receipt),hashlib.sha256).hexdigest())
     from agents.client_operations.publication import Publisher

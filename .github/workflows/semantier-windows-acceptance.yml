@@ -1,7 +1,5 @@
 name: Semantier Windows acceptance
 on:
-  push:
-    branches: [staging/client-release-feedback-mvl-v1]
   workflow_dispatch:
     inputs:
       controller_commit:
@@ -25,7 +23,7 @@ env:
   ACCEPTANCE_PREVIOUS_NATIVE_LAYOUT: ${{ inputs.previous_native_layout }}
   ACCEPTANCE_WINDOWS_PYTHON: 'D:\repo\qualification-private\windows-profile-c10-20261028-v1\package\app\resources\agent-payload\tools\python-3.14.7+20260901-win32-x64\python.exe'
   ACCEPTANCE_INCOMING_ROOT: ${{ vars.SEMANTIER_ACCEPTANCE_INCOMING_ROOT }}
-  ACCEPTANCE_CONTROLLER_COMMIT: ${{ inputs.controller_commit || '782a70233642c60fb138f5d7dc3ad9ddd1f7a0de' }}
+  ACCEPTANCE_CONTROLLER_COMMIT: ${{ inputs.controller_commit }}
 permissions:
   contents: read
 concurrency:
@@ -62,45 +60,10 @@ jobs:
           ci_python="$(uv python find --offline --managed-python 3.14)"
           "$ci_python" -c 'import sys; assert sys.version_info >= (3, 11); print(sys.version)'
           echo "SEMANTIER_CI_PYTHON=$ci_python" >> "$GITHUB_ENV"
-      - name: Verify CI session, signing access and Runtime custody before allocation
+      - name: Run owned CI qualification
         shell: bash
         env:
           SEMANTIER_CLIENT_RECEIPT_KEY: ${{ secrets.SEMANTIER_CLIENT_RECEIPT_KEY }}
         run: |
           set -euo pipefail
-          "$SEMANTIER_CI_PYTHON" hermes/scripts/releases/semantier_native_ci.py --preflight --expected-sid "$ACCEPTANCE_CI_SID" --incoming "$ACCEPTANCE_INCOMING_ROOT" --controller "$PWD/controller" --controller-commit "$ACCEPTANCE_CONTROLLER_COMMIT" --public-base "$ACCEPTANCE_PUBLIC_BASE"
-      - name: Build and sign with existing non-exportable identity
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "$ACCEPTANCE_CI_SID" =~ ^S-1-5-21-[0-9-]+$ ]]
-          test -n "$ACCEPTANCE_INCOMING_ROOT"
-          test -d "$ACCEPTANCE_INCOMING_ROOT"
-          test -w "$ACCEPTANCE_INCOMING_ROOT"
-          test ! -L "$ACCEPTANCE_INCOMING_ROOT"
-          output="D:\\repo\\deliverables\\SemantierAgent-client-feedback-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          echo "ACCEPTANCE_OUTPUT=$(wslpath -u "$output")" >> "$GITHUB_ENV"
-          native_args=()
-          if [[ "$ACCEPTANCE_PACKAGE_LAYOUT" == native-assets ]]; then
-            native_args+=(--native-assets --python "$ACCEPTANCE_WINDOWS_PYTHON")
-            if [[ -n "$ACCEPTANCE_PREVIOUS_NATIVE_LAYOUT" ]]; then
-              native_args+=(--previous-native-layout "$ACCEPTANCE_PREVIOUS_NATIVE_LAYOUT")
-            fi
-          elif [[ "$ACCEPTANCE_PACKAGE_LAYOUT" != legacy || -n "$ACCEPTANCE_PREVIOUS_NATIVE_LAYOUT" ]]; then
-            exit 1
-          fi
-          "$SEMANTIER_CI_PYTHON" controller/scripts/build_hermes_windows.py --source "$PWD/hermes" --output "$output" --thumbprint 57BF15739B4AA447842EAF388856A01B4E5029FF --acceptance-public-base "$ACCEPTANCE_PUBLIC_BASE" "${native_args[@]}"
-      - name: Real native installation and controlled inference-boundary smoke
-        shell: bash
-        run: |
-          set -euo pipefail
-          root="D:\\repo\\qualification-private\\client-feedback-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          echo "ACCEPTANCE_NATIVE=$(wslpath -u "$root")/out" >> "$GITHUB_ENV"
-          "$SEMANTIER_CI_PYTHON" hermes/scripts/releases/semantier_native_ci.py --output "$ACCEPTANCE_OUTPUT" --work "$root" --commit "$GITHUB_SHA" --expected-sid "$ACCEPTANCE_CI_SID"
-      - name: Stage receipt-bound candidate; never promote
-        shell: bash
-        env:
-          SEMANTIER_CLIENT_RECEIPT_KEY: ${{ secrets.SEMANTIER_CLIENT_RECEIPT_KEY }}
-        run: |
-          set -euo pipefail
-          "$SEMANTIER_CI_PYTHON" hermes/scripts/releases/semantier_candidate.py --output "$ACCEPTANCE_OUTPUT" --native "$ACCEPTANCE_NATIVE" --incoming "$ACCEPTANCE_INCOMING_ROOT" --notes hermes/scripts/releases/semantier-acceptance-notes.json
+          "$SEMANTIER_CI_PYTHON" hermes/scripts/releases/semantier_native_ci.py --orchestrate --expected-sid "$ACCEPTANCE_CI_SID" --incoming "$ACCEPTANCE_INCOMING_ROOT" --controller "$PWD/controller" --controller-commit "$ACCEPTANCE_CONTROLLER_COMMIT" --public-base "$ACCEPTANCE_PUBLIC_BASE"

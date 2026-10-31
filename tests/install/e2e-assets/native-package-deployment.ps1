@@ -114,6 +114,93 @@ function Read-WD1DeploymentEvent($Event) {
  }
  return [pscustomobject]@{id=[int]$Event.Id;operation=$data['DeploymentOperation'];sid=$system.SelectSingleNode('*[local-name()="Security"]').GetAttribute('UserID');activity=[string]$Event.ActivityId;time=[DateTimeOffset]::Parse($system.SelectSingleNode('*[local-name()="TimeCreated"]').GetAttribute('SystemTime'));callingProcess=$data['CallingProcess'];uri=$data['PackageSourceUri'];full=$data['PackageFullName'];recordId=$Event.RecordId}
 }
+
+function Read-CIStatusFields($Status) {
+ $fields=@{}
+ foreach($name in @('DeploymentInProgress','Servicing','IsPartiallyStaged','VerifyIsOK','DataOffline','DependencyIssue','Disabled','LicenseIssue','Modified','NeedsRemediation','NotAvailable','PackageOffline','Tampered')){
+  $member=if($name -ceq 'VerifyIsOK'){$Status.PSObject.Methods[$name]}else{$Status.PSObject.Properties[$name]}
+  if(!$member){$fields[$name]=@{state='UNAVAILABLE';available=$false;value=$null;error=$null};continue}
+  try {
+   $value=if($name -ceq 'VerifyIsOK'){$Status.VerifyIsOK()}else{$Status.$name}
+   if($value -isnot [bool]){throw 'Status result is not boolean'}
+   $fields[$name]=@{state='VALUE';available=$true;value=$value;error=$null}
+  } catch { $fields[$name]=@{state='QUERY_ERROR';available=$false;value=$null;error=$_.Exception.GetType().FullName} }
+ }
+ return $fields
+}
+
+# A fresh current-user WinRT snapshot; missing properties remain unavailable.
+function Get-CIWinRTPackageStatus([string]$Sid,[string]$FullName) {
+ $start=[DateTime]::UtcNow.ToString('o')
+ $result=@{startedAt=$start;endedAt=$null;querySid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;session=(Get-Process -Id $PID).SessionId;requestedFullName=$FullName;presence='QUERY_ERROR';status=@{};identity=$null;installedLocation=@{state='UNAVAILABLE';path=$null};error=$null}
+ try {
+  if($result.querySid -cne $Sid){throw 'Current-user package query SID mismatch'}
+  $null=[Windows.Management.Deployment.PackageManager,Windows.Management.Deployment,ContentType=WindowsRuntime]
+  $manager=[Windows.Management.Deployment.PackageManager]::new()
+  $package=$manager.FindPackageForUser($Sid,$FullName)
+  if(!$package){$result.presence='NOT_FOUND';return $result}
+  $id=$package.Id;$v=$id.Version
+  $result.identity=@{full=$id.FullName;family=$id.FamilyName;name=$id.Name;publisher=$id.Publisher;version=('{0}.{1}.{2}.{3}' -f $v.Major,$v.Minor,$v.Build,$v.Revision);architecture=$id.Architecture.ToString();resourceId=$id.ResourceId}
+  if($id.FullName -cne $FullName){throw 'WinRT package full name mismatch'}
+  try {
+   $location=$package.InstalledLocation.Path
+   if(!$location -or -not [IO.Path]::IsPathRooted($location)){throw 'Installed location unavailable'}
+   $result.installedLocation=@{state='VALUE';path=$location}
+  } catch { $result.installedLocation=@{state='QUERY_ERROR';path=$null;error=$_.Exception.GetType().FullName} }
+  # Microsoft requires reacquiring Package.Status to get current data.
+  $status=$package.Status
+  $result.status=Read-CIStatusFields $status
+  $result.presence='PRESENT';return $result
+ } catch { $result.error=$_.Exception.GetType().FullName;return $result }
+ finally { $result.endedAt=[DateTime]::UtcNow.ToString('o') }
+}
+
+# Read-only CI observations. These facts alone never authorize package mutation
+# or turn an incomplete journal into a completed operation.
+function Get-CINativeObservation($Intent) {
+ $observationStart=[DateTime]::UtcNow.ToString('o')
+ if($Intent.actor.sid -cnotmatch '^S-1-5-21-[0-9-]+$' -or $Intent.root -cnotmatch '^http://127\.0\.0\.1:[0-9]+/' -or $Intent.root.Contains("'")){throw 'Invalid CI observation scope'}
+ $started=[DateTimeOffset]::Parse([string]$Intent.createdAt).ToUniversalTime()
+ $birth=[DateTimeOffset]::Parse([string]$Intent.actorBirth).ToUniversalTime()
+ $processState='unknown';$processIdentity='unavailable';$processFacts=$null
+ try {
+  $process=Get-Process -Id ([int]$Intent.actorPid) -ErrorAction Stop
+  $observedBirth=([DateTimeOffset]$process.StartTime).ToUniversalTime()
+  $processState=if($observedBirth -eq $birth){'same-incarnation'}else{'different-incarnation'}
+ } catch [Microsoft.PowerShell.Commands.ProcessCommandException] { $processState='absent' }
+ catch { $processState='unknown';$processIdentity='QUERY_ERROR';$processFacts=@{error=$_.Exception.GetType().FullName} }
+ if($processState -ceq 'same-incarnation'){
+  try {
+   $native=Get-CimInstance Win32_Process -Filter "ProcessId=$([int]$Intent.actorPid)" -ErrorAction Stop
+   if(!$native){throw 'Process identity disappeared during observation'}
+   $owner=Invoke-CimMethod -InputObject $native -MethodName GetOwnerSid -ErrorAction Stop
+   if($owner.ReturnValue -ne 0 -or !$owner.Sid -or !$native.ExecutablePath){throw 'Process owner or executable unavailable'}
+   $again=Get-Process -Id ([int]$Intent.actorPid) -ErrorAction Stop
+   if(([DateTimeOffset]$again.StartTime).ToUniversalTime() -ne $birth){throw 'Process incarnation changed during observation'}
+   $expectedExecutable=if($Intent -is [Collections.IDictionary]){$Intent['actorExecutable']}elseif($Intent.PSObject.Properties['actorExecutable']){$Intent.actorExecutable}else{$null}
+   $processFacts=@{sid=[string]$owner.Sid;session=[int]$native.SessionId;executable=[string]$native.ExecutablePath}
+   if($expectedExecutable -and $Intent.actor.session){
+    $processIdentity=if($processFacts.sid -ceq $Intent.actor.sid -and $processFacts.session -eq $Intent.actor.session -and $processFacts.executable -ieq $expectedExecutable){'verified'}else{'mismatch'}
+   }
+  } catch { $processState='unknown';$processIdentity='QUERY_ERROR';$processFacts=@{error=$_.Exception.GetType().FullName} }
+ }
+ $packages=@(Get-AppxPackage -Name 'Semantier.Agent.Acceptance') + @(Get-AppxPackage -PackageTypeFilter Resource -Name 'Semantier.Agent.Acceptance') + @(Get-AppxPackage -PackageTypeFilter Optional -Name 'Semantier.Agent.Acceptance.*')
+ $packageFacts=@($packages|ForEach-Object{@{full=$_.PackageFullName;family=$_.PackageFamilyName;publisher=$_.Publisher;version=$_.Version.ToString();resourceId=$_.ResourceId;status=$_.Status.ToString();winrt=(Get-CIWinRTPackageStatus $Intent.actor.sid $_.PackageFullName)}})
+ $requested=if($Intent -is [Collections.IDictionary]){$Intent['observationExpectedFullNames']}elseif($Intent.PSObject.Properties['observationExpectedFullNames']){$Intent.observationExpectedFullNames}else{@()}
+ $expectedFacts=@($requested|ForEach-Object{Get-CIWinRTPackageStatus $Intent.actor.sid ([string]$_)})
+ $stamp=$started.AddSeconds(-2).ToString('o');$sid=[string]$Intent.actor.sid;$uri=[string]$Intent.root
+ $xpath="*[System[Security[@UserID='$sid'] and TimeCreated[@SystemTime>='$stamp']]] and (*[System[EventID=603]] or (*[System[EventID=478]] and *[EventData[Data[@Name='PackageSourceUri']='$uri']]))"
+ $raw=@();$events=@();$eventQuery=@{state='AVAILABLE';coverage='NOT_ESTABLISHED';error=$null}
+ try{
+  $raw=@(Get-WinEvent -LogName 'Microsoft-Windows-AppXDeploymentServer/Operational' -FilterXPath $xpath -MaxEvents 513 -ErrorAction Stop)
+  if($raw.Count -gt 512){$eventQuery.state='TRUNCATED'}else{$events=@($raw|ForEach-Object{Read-WD1DeploymentEvent $_})}
+ }catch{
+  $events=@()
+  if($_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*'){$eventQuery.state='NO_MATCH'}
+  else{$eventQuery.state='QUERY_ERROR';$eventQuery.error=$_.Exception.GetType().FullName}
+ }
+ return @{startedAt=$observationStart;observedAt=[DateTime]::UtcNow.ToString('o');process=$processState;processIdentity=$processIdentity;processFacts=$processFacts;packages=$packageFacts;expectedPackages=$expectedFacts;eventQuery=$eventQuery;events=$events;scope='read-only CI observation; expected names are query inputs, not graph authority'}
+}
 function Recover-WD1NativeUri($Graph,[string]$Base,[string]$Root,$State,$Target,[string]$Evidence) {
  $context=Get-Variable -Name r -ErrorAction SilentlyContinue
  if(!$context -or $context.Value.purpose -cne 'wd1-native-layout-qualification' -or $context.Value.action -cne 'native-proof' -or -not (Test-WD1LocalActor ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value) $context.Value.authorized_sid $context.Value.purpose)){throw 'Actual WD1 proof context required'}
@@ -150,13 +237,15 @@ function Invoke-CIDurableNativeUri([string]$Out,[string]$GraphSha,[string]$Sourc
  if($GraphSha -cnotmatch '^[a-f0-9]{64}$' -or $SourceCommit -cnotmatch '^[a-f0-9]{40}$' -or $Operation -cnotin @('positive','wrong-digest') -or $Root -cnotin $Uris -or $Uris.Count -ne $Digests.Count){throw 'Invalid CI native operation binding'}
  if(!$Actor.sid -or $Actor.sid -cne $Actor.session_sid -or $Actor.session -le 0 -or $Actor.wts_state -ne 0){throw 'Invalid CI native actor'}
  $id=[Guid]::NewGuid().ToString('N');$self=Get-Process -Id $PID
- $intent=@{schema=1;operationId=$id;createdAt=[DateTime]::UtcNow.ToString('o');sourceCommit=$SourceCommit;graphSha256=$GraphSha;operation=$Operation;actor=$Actor;actorPid=$PID;actorBirth=$self.StartTime.ToUniversalTime().ToString('o');root=$Root;uris=$Uris;digests=$Digests}
+ if(!$self.Path -or -not [IO.Path]::IsPathRooted($self.Path) -or $self.SessionId -ne $Actor.session){throw 'CI native process identity unavailable'}
+ $intent=@{schema=1;operationId=$id;createdAt=[DateTime]::UtcNow.ToString('o');sourceCommit=$SourceCommit;graphSha256=$GraphSha;operation=$Operation;actor=$Actor;actorPid=$PID;actorBirth=$self.StartTime.ToUniversalTime().ToString('o');actorExecutable=$self.Path;root=$Root;uris=$Uris;digests=$Digests}
  function Write-CIRecord([string]$Name,$Value) {
   $stream=[IO.File]::Open((Join-Path $Out $Name),[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
   try{$bytes=[Text.Encoding]::UTF8.GetBytes(($Value|ConvertTo-Json -Depth 16 -Compress));$stream.Write($bytes,0,$bytes.Length);$stream.Flush($true)}finally{$stream.Dispose()}
  }
  Write-CIRecord ('ci-native-intent-'+$id+'.json') $intent
  $result=Invoke-BoundNativePackageUri $Uris $Digests $Root $Minutes
+ $result.operationId=$id
  Write-CIRecord ('ci-native-outcome-'+$id+'.json') @{schema=1;operationId=$id;createdAt=[DateTime]::UtcNow.ToString('o');result=$result}
  return $result
 }
@@ -198,9 +287,13 @@ function Invoke-CINativeGraphUri($Graph,[string]$GraphPath,[string]$Artifact,[st
   $State.unknown=$true
   $positive=Invoke-CIDurableNativeUri $Out $hash $SourceCommit 'positive' $context $uris $digests ($origin.base+'/'+$Graph.root) 25
   $positive|ConvertTo-Json -Depth 12|Set-Content -LiteralPath (Join-Path $Out 'native-uri-positive.json') -Encoding UTF8
-  if($positive.status -cne 'SUCCESS'){throw 'Native URI registration unresolved; preserve CI intent, origin and packages'}
-  $State.unknown=$false
+  $activity=[Guid]::Empty
+  if($positive.status -cne 'SUCCESS' -or $positive.hresult -cne '00000000' -or $positive.operationCompleted -ne $true -or
+     -not [Guid]::TryParse([string]$positive.activityId,[ref]$activity) -or $activity -eq [Guid]::Empty){throw 'Native URI registration unresolved; preserve CI intent, origin and packages'}
   $after=Assert-CISession
+  if($after.sid -cne $context.sid -or $after.session_sid -cne $context.sid -or $after.session -ne $context.session -or $after.wts_state -ne 0){throw 'CI session changed during native registration'}
+  $State.nativeSuccess=@{actorSid=$context.sid;session=$context.session;graphSha256=$hash;sourceCommit=$SourceCommit;root=$Graph.root;rootUri=($origin.base+'/'+$Graph.root);uris=@($uris);digests=@($digests);operationId=$positive.operationId;result=$positive}
+  $State.unknown=$false
   @{scope='CI_NATIVE_URI_GRAPH_ONLY_NOT_DIFFERENTIAL_OR_CACHE';producedAt=[DateTime]::UtcNow.ToString('o');graphSha256=$hash;sourceBuildId=($Graph.root -split '/')[2];contextBefore=$context;contextAfter=$after;uris=$uris;digests=$digests;refusals=$refusals;positive=$positive;nativeRemoteDigestEnforcement='PASS'}|ConvertTo-Json -Depth 16|Set-Content -LiteralPath (Join-Path $Out 'native-uri-proof.json') -Encoding UTF8
  }finally{
   if($State.unknown){$State|ConvertTo-Json -Depth 8|Set-Content -LiteralPath (Join-Path $Out 'native-uri-unknown.json') -Encoding UTF8}

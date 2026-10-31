@@ -5,7 +5,11 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
+import stat
+import subprocess
 import sys
+from copy import deepcopy
 from datetime import UTC,datetime
 from uuid import UUID
 
@@ -72,7 +76,7 @@ def verify_installed(native,request,graph,graph_sha):
     return installed,folding,family
 
 
-def stage_native_graph(output,native,incoming,notes,request,signed):
+def stage_native_graph(output,native,incoming,notes,request,signed,target_incoming):
     if os.environ.get('GITHUB_ACTIONS')!='true' or os.environ.get('GITHUB_REPOSITORY')!='chris-han/hermes-agent' or os.environ.get('GITHUB_SHA')!=request['commit']:
         raise ValueError('Real governed CI context required')
     if signed.get('signing')!='PASS' or not signed.get('verification','').startswith('PASS:') or signed.get('sourceCommit')!=request['commit']:
@@ -84,6 +88,7 @@ def stage_native_graph(output,native,incoming,notes,request,signed):
     graph=signed['nativeGraph'];file=output/'signed/distribution/native-graph.json';graph_sha=sha(file)
     root=next(row for row in graph['objects'] if row['key']==graph['root'])
     descriptor={'key':graph['root'].rsplit('/',1)[0]+'/native-graph.json','size':file.stat().st_size,'sha256':graph_sha}
+    if descriptor['size']>1024*1024:raise ValueError('Cloudflare descriptor exceeds target admission limit')
     package={'platform':'win32','arch':'x64','variant':'native-msix-assets','identity':request['identity']['msixAppIdWithOrg'],
              'publisher':signed['publisher'],'version':request['windowsVersion'],
              'artifact':{key:root[key] for key in ('key','size','sha256')},'feed':{'key':descriptor['key'],'channel':'stable'},
@@ -122,8 +127,81 @@ def stage_native_graph(output,native,incoming,notes,request,signed):
     if len(secret)<32:raise ValueError('CI-only receipt key required')
     candidate={'release_id':request['buildId'],'manifest':{'schema':2,'request':request,'packages':[package]},'notes':notes,
                'native_receipt':receipt,'receipt_hmac':hmac.new(secret,canonical(receipt),hashlib.sha256).hexdigest()}
+    # Revalidate the actual target owner immediately before transfer. The root
+    # descriptor anchors all writes; each directory is opened without following
+    # symlinks. Backend admission independently rereads every resulting object.
+    from scripts.releases import semantier_native_ci as ci
+    target_incoming=Path(target_incoming)
+    expected_target=ci.CI_INCOMING_ROOT.parent/'incoming_r2'
+    if target_incoming != expected_target or target_incoming.is_symlink() or not target_incoming.is_dir() or os.path.samefile(incoming,target_incoming):
+        raise ValueError('Unexpected Cloudflare incoming custody')
+    targetfd=os.open(target_incoming,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+    held=os.fstat(targetfd)
+    def same_root():
+        named=target_incoming.lstat()
+        if not stat.S_ISDIR(named.st_mode) or (held.st_dev,held.st_ino)!=(named.st_dev,named.st_ino):
+            raise ValueError('Cloudflare incoming physical identity changed')
+    def runtime_id():
+        parts=subprocess.check_output(['docker','inspect',ci.CI_RUNTIME_CONTAINER,'--format','{{.Id}} {{.Image}} {{.State.Running}}'],text=True).strip().split()
+        if len(parts)!=3 or not re.fullmatch('[a-f0-9]{64}',parts[0]) or parts[1]!=ci.CI_RUNTIME_IMAGE or parts[2]!='true':raise ValueError('Cloudflare Runtime identity unavailable')
+        return parts[0]
+    def copy_object(source,row):
+        parts=row['key'].split('/')
+        if not parts or any(not p or p in ('.','..') or '\\' in p for p in parts):raise ValueError('Unsafe target object key')
+        parent=targetfd; opened=[]; temp=None;temp_identity=None
+        try:
+            for part in parts[:-1]:
+                try:os.mkdir(part,0o777,dir_fd=parent)
+                except FileExistsError:pass
+                child=os.open(part,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=parent)
+                opened.append((parent,part,child));parent=child
+            temp='.ci-copy-'+secrets.token_hex(16)
+            sourcefd=os.open(source,os.O_RDONLY|os.O_NOFOLLOW)
+            with os.fdopen(sourcefd,'rb') as src:
+                if not stat.S_ISREG(os.fstat(src.fileno()).st_mode):raise ValueError('Invalid target source object')
+                outfd=os.open(temp,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600,dir_fd=parent)
+                tempstat=os.fstat(outfd);temp_identity=(tempstat.st_dev,tempstat.st_ino)
+                with os.fdopen(outfd,'wb') as out:
+                    digest=hashlib.sha256();size=0
+                    while chunk:=src.read(8*1024*1024):out.write(chunk);digest.update(chunk);size+=len(chunk)
+                    out.flush();os.fsync(out.fileno())
+            if size!=row['size'] or digest.hexdigest()!=row['sha256']:raise ValueError('Target source object mismatch')
+            current=os.stat(temp,dir_fd=parent,follow_symlinks=False)
+            if not stat.S_ISREG(current.st_mode) or (current.st_dev,current.st_ino)!=temp_identity:raise ValueError('Target temporary object changed')
+            linked=True
+            try:os.link(temp,parts[-1],src_dir_fd=parent,dst_dir_fd=parent,follow_symlinks=False)
+            except FileExistsError:linked=False
+            existing=os.open(parts[-1],os.O_RDONLY|os.O_NOFOLLOW,dir_fd=parent)
+            with os.fdopen(existing,'rb') as stream:
+                st=os.fstat(stream.fileno())
+                if not stat.S_ISREG(st.st_mode) or (linked and (st.st_dev,st.st_ino)!=temp_identity) or st.st_size!=size or hashlib.file_digest(stream,'sha256').hexdigest()!=row['sha256']:raise ValueError('Target immutable object conflict')
+            os.fsync(parent)
+            for ancestor,name,child in opened:
+                named=os.stat(name,dir_fd=ancestor,follow_symlinks=False);actual=os.fstat(child)
+                if not stat.S_ISDIR(named.st_mode) or (named.st_dev,named.st_ino)!=(actual.st_dev,actual.st_ino):raise ValueError('Target directory identity changed')
+        finally:
+            if temp and temp_identity:
+                try:
+                    current=os.stat(temp,dir_fd=parent,follow_symlinks=False)
+                    if (current.st_dev,current.st_ino)==temp_identity:os.unlink(temp,dir_fd=parent);os.fsync(parent)
+                except FileNotFoundError:pass
+            for _,_,fd in reversed(opened):os.close(fd)
+    try:
+        same_root();cid=runtime_id();ci.verify_runtime_identity(cid);ci.verify_cloudflare_custody(cid,incoming);same_root()
+        for row in [*graph['objects'],descriptor]:copy_object(file.parent/row['key'].rsplit('/',1)[1],row)
+        same_root()
+        if runtime_id()!=cid:raise ValueError('Cloudflare Runtime changed during transfer')
+        ci.verify_runtime_identity(cid)
+    finally:os.close(targetfd)
+    variant=deepcopy(candidate);variant['manifest']['request']['publicBase']='https://update2.semantier.com'
+    target_receipt={**receipt,'delivery_target_id':'channel2','public_base':'https://update2.semantier.com',
+                    'manifest_sha256':hashlib.sha256(canonical({**variant['manifest'],'notes':notes})).hexdigest(),'descriptor_sha256':graph_sha}
+    binding={'delivery_target_id':'channel2','candidate':variant,'descriptor_receipt':target_receipt,
+             'descriptor_receipt_hmac':hmac.new(secret,canonical(target_receipt),hashlib.sha256).hexdigest()}
+    binding_path=output/'channel2-target-binding.json'
+    with binding_path.open('x',encoding='utf-8') as stream:json.dump(binding,stream,indent=2);stream.write('\n')
     directory=incoming/'ci-candidates';directory.mkdir(exist_ok=True)
     destination=directory/(request['buildId']+'.json')
     with destination.open('x',encoding='utf-8') as stream:json.dump(candidate,stream,indent=2);stream.write('\n')
     return {'build_id':request['buildId'],'source_commit':request['commit'],'candidate_path':str(destination),'sha256':root['sha256'],
-            'state':'staged_awaiting_completed_github_run_and_explicit_promotion'}
+            'target_binding_path':str(binding_path),'state':'staged_awaiting_completed_github_run_and_explicit_promotion'}

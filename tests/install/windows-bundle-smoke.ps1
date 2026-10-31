@@ -1,6 +1,21 @@
 # Real deployment of receipt-verified bytes. Default requires disposable CI; the
 # explicit Semantier switch permits only the separately owned acceptance family.
 param(
+    [string]$Artifact,
+    [ValidateSet('x64','arm64')][string]$Arch,
+    [string]$Commit,
+    [string]$Tag = '',
+    [string]$ChannelRequest = '',
+    [switch]$SemantierAcceptanceHost,
+    [string]$NativeGraph = '',
+    [string]$NativeLayoutPlan = '',
+    [string]$Python = '',
+    [string]$ExpectedSid = '',
+    [string]$Work,
+    [string]$Out
+)
+function Invoke-CIPrivateBundleSmoke {
+param(
     [Parameter(Mandatory=$true)][string]$Artifact,
     [Parameter(Mandatory=$true)][ValidateSet('x64','arm64')][string]$Arch,
     [Parameter(Mandatory=$true)][string]$Commit,
@@ -38,8 +53,12 @@ $Assets = Join-Path $PSScriptRoot 'e2e-assets'
 $Node = (Get-Command node.exe -ErrorAction Stop).Source
 $Metadata = Join-Path $Assets 'bundle-smoke-metadata.mjs'
 function Run-Node([string[]]$Argv) {
-    & $Node @Argv
-    if ($LASTEXITCODE -ne 0) { throw "Node exited $LASTEXITCODE ($($Argv[0]))" }
+    $receiptKey = [Environment]::GetEnvironmentVariable('SEMANTIER_CLIENT_RECEIPT_KEY','Process')
+    try {
+        [Environment]::SetEnvironmentVariable('SEMANTIER_CLIENT_RECEIPT_KEY',$null,'Process')
+        & $Node @Argv
+        if ($LASTEXITCODE -ne 0) { throw "Node exited $LASTEXITCODE ($($Argv[0]))" }
+    } finally { [Environment]::SetEnvironmentVariable('SEMANTIER_CLIENT_RECEIPT_KEY',$receiptKey,'Process') }
 }
 $nodeArch = Run-Node @('-p', 'process.arch')
 if ($nodeArch -cne $Arch) { throw 'Driver Node must also use the native architecture' }
@@ -54,6 +73,8 @@ if ($SemantierAcceptanceHost) {
 }
 Run-Node @($Metadata, 'prepare', '--work', $Work, '--out', $Out)
 . (Join-Path $Assets 'windows-bundle-metadata.ps1')
+. (Join-Path $Assets 'windows-bundle-installed.ps1')
+. (Join-Path $Assets 'windows-physical-path.ps1')
 . (Join-Path $Assets 'windows-bundle-plugin-smoke.ps1')
 . (Join-Path $Assets 'native-ci-cleanup-policy.ps1')
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -64,7 +85,10 @@ Start-Transcript -Path (Join-Path $Out 'native-install.log') | Out-Null
 $attempted = $false
 $installedFullName = $null
 $nativeUriState=@{unknown=$false}
+$physicalRoots=@()
+$verified=$null
 $failed = $false
+$layoutHash = ''; $graphHash = ''
 try {
     $beforeHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $Artifact).Hash.ToLowerInvariant()
     @{ path=$Artifact; sha256=$beforeHash } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Out 'artifact.json')
@@ -112,60 +136,27 @@ try {
         . (Join-Path $Assets 'native-package-deployment.ps1')
         Invoke-CINativeGraphUri $graph $NativeGraph $Artifact $Node $Out $ExpectedSid $nativeUriState $Commit
     }else{Add-AppxPackage -Path $Artifact -ErrorAction Stop}
-    $packages = @(Get-AppxPackage -Name $Expected.msixIdentity)
-    if ($packages.Count -ne 1) { throw 'Expected exactly one deployed package' }
-    $pkg = $packages[0]
-    $installedFullName = $pkg.PackageFullName
-    if ($pkg.Publisher -cne $Expected.publisher -or $pkg.Architecture.ToString() -ine $Arch -or
-        $pkg.Version.ToString() -cne $inputMetadata.Version -or $pkg.Status.ToString() -cne 'Ok') {
-        throw 'Deployed package identity/version/native architecture/status mismatch'
-    }
-    $manifest = Get-AppxPackageManifest -Package $pkg.PackageFullName
-    $installed = Read-SmokePackageManifest $manifest $Arch $Expected
-    if ($installed.Version -cne $inputMetadata.Version) { throw 'Installed manifest version mismatch' }
-    if ($inputMetadata.Executable -and $installed.Executable -cne $inputMetadata.Executable) { throw 'Installed executable differs from input manifest' }
-    $exe = [IO.Path]::GetFullPath((Join-Path $pkg.InstallLocation $installed.Executable))
-    if (-not $exe.StartsWith($pkg.InstallLocation.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase) -or
-        -not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'Installed manifest executable is absent or outside package' }
-    $resources = Join-Path (Split-Path -Parent $exe) 'resources'
-    $root = Join-Path $resources 'agent-payload'
-    if (-not (Test-Path -LiteralPath $root -PathType Container)) { throw 'Installed agent-payload missing' }
-    $stampPath = Join-Path $resources 'install-stamp.json'
-    $stamp = Get-Content -Raw -LiteralPath $stampPath | ConvertFrom-Json
-    $displayVersion = (Run-Node (@($Metadata, 'stamp', '--platform', 'win32', '--stamp', $stampPath) + $identityArgs)) | ConvertFrom-Json
-    if ($ChannelRequest) {
-        if ($pkg.Version.ToString() -cne $displayVersion) { throw 'Package version disagrees with channel request' }
-    } elseif (-not $Tag) {
-        if ($pkg.Version.ToString() -cne ($displayVersion + '.0')) { throw 'Commit package must use stamped semver with zero revision' }
-    }
-    # A tagged package carries the release-time native quad (msix-shared.mjs nativeQuad), not its semver.
-    # Stable admission checks that quad against the claim epoch; here it must only match the input manifest (above).
-    @{ packageFullName=$pkg.PackageFullName; publisher=$pkg.Publisher; architecture=$pkg.Architecture.ToString();
-        version=$pkg.Version.ToString(); exe=$exe; root=$root; stamp=$stamp } |
-        ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $Out 'installed-identity.json')
+    $capturedPackages = @(Get-AppxPackage -Name $Expected.msixIdentity)
+    if ($capturedPackages.Count -ne 1) { throw 'Expected exactly one deployed package' }
+    $installedFullName = $capturedPackages[0].PackageFullName
     if ((Get-FileHash -Algorithm SHA256 -LiteralPath $Artifact).Hash.ToLowerInvariant() -cne $beforeHash) { throw 'Input artifact changed during installation' }
-    if ($graph) {
-        Run-Node @($Metadata,'native-payload','--root',$pkg.InstallLocation,'--plan',$NativeLayoutPlan,'--graph',$NativeGraph,'--out',(Join-Path $Out 'native-payload-folding.json'))
-        $resources = @(Get-AppxPackage -PackageTypeFilter Resource -Name $Expected.msixIdentity)
-        $assets = @($graph.objects | Where-Object { $_.kind -ceq 'asset-package' })
-        if ($resources.Count -ne $assets.Count) { throw 'Installed native resource set incomplete' }
-        $installedMembers = @()
-        foreach ($asset in $assets) {
-            $matches = @($resources | Where-Object { $_.ResourceId -ceq $asset.resourceId -and $_.Version.ToString() -ceq $asset.version -and $_.PackageFamilyName -ceq $pkg.PackageFamilyName -and $_.Publisher -ceq $Expected.publisher -and $_.Status.ToString() -ceq 'Ok' -and $_.Architecture.ToString() -ieq $asset.arch -and $_.SignatureKind.ToString() -ceq 'Developer' -and !$_.IsDevelopmentMode })
-            if ($matches.Count -ne 1) { throw 'Installed native resource identity mismatch' }
-            $child = $matches[0]
-            $installedMembers += @{full=$child.PackageFullName;family=$child.PackageFamilyName;name=$child.Name;publisher=$child.Publisher;version=$child.Version.ToString();arch=$child.Architecture.ToString();resource_id=$child.ResourceId}
-        }
-        @{producedAt=[DateTime]::UtcNow.ToString('o');graphSha256=$graphHash;layoutPlanSha256=$layoutHash;related=$installedMembers;sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;nativeRemoteDigestEnforcement='PASS'} | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath (Join-Path $Out 'native-installed-graph.json') -Encoding utf8
+    if($graph){
+        $bound=Get-CIBoundInstalledVerification -Arch $Arch -Expected $Expected -InputMetadata $inputMetadata -ChannelRequest $ChannelRequest -IdentityArgs $identityArgs -Metadata $Metadata -Tag $Tag -Graph $graph -NativeLayoutPlan $NativeLayoutPlan -NativeGraph $NativeGraph -GraphHash $graphHash -LayoutHash $layoutHash -ExpectedSid $ExpectedSid
+        $physicalRoots=$bound.roots; $verified=$bound.verification
+    }else{
+        $verified=Get-BundleInstalledVerification -Arch $Arch -Expected $Expected -InputMetadata $inputMetadata -ChannelRequest $ChannelRequest -IdentityArgs $identityArgs -Metadata $Metadata -Tag $Tag
     }
-    Push-Location $Work
-    try {
-        Run-Node @((Join-Path $Assets 'desktop-smoke.ts'), '--exe', $exe, '--root', $root, '--origin', 'bundled',
-            '--home', $HomeDir, '--user-data', $UserData, '--out', $Out, '--phase', 'installed', '--expect-commit', $Commit)
-    } finally { Pop-Location }
-    if ($NativeGraph) { Test-BundleNativePayload $root $pkg $Commit $stamp.channelBuild.buildId $Out }
-    # Plugins whose Python dependencies PM builds must work inside the package (#135236).
-    Test-BundlePluginInstall $root $Out -IsolatedHome:$SemantierAcceptanceHost
+    $pkg = $verified.package
+    if ($pkg.PackageFullName -cne $installedFullName) { throw 'Installed package changed during verification' }
+    if ((Get-FileHash -Algorithm SHA256 -LiteralPath $Artifact).Hash.ToLowerInvariant() -cne $beforeHash) { throw 'Input artifact changed during installed verification' }
+    $exe = $verified.identity.exe; $root = $verified.identity.root; $stamp = $verified.identity.stamp
+    $verified.identity | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $Out 'installed-identity.json')
+    if ($graph) {
+        $verified.folding | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $Out 'native-payload-folding.json') -Encoding utf8
+        $verified.registration.nativeRemoteDigestEnforcement = 'PASS'
+        $verified.registration | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath (Join-Path $Out 'native-installed-graph.json') -Encoding utf8
+    }
+    Invoke-BundleInstalledQualification -Assets $Assets -Work $Work -Exe $exe -Root $root -HomeDir $HomeDir -UserData $UserData -Out $Out -Commit $Commit -NativeGraph $NativeGraph -Package $pkg -Stamp $stamp -IsolatedHome:$SemantierAcceptanceHost
     if ($NativeGraph -and ((Get-FileHash -LiteralPath $NativeGraph -Algorithm SHA256).Hash.ToLowerInvariant() -cne $graphHash -or (Get-FileHash -LiteralPath $NativeLayoutPlan -Algorithm SHA256).Hash.ToLowerInvariant() -cne $layoutHash)) { throw 'Native graph or layout changed during qualification' }
 } catch {
     $failed = $true
@@ -179,7 +170,9 @@ try {
         if ($attempted) {
             $remaining = @(Get-AppxPackage -Name $Expected.msixIdentity)
             foreach ($pkg in $remaining) {
-                Assert-CINativeCleanupOwnership $graph $installedFullName
+                if($graph){
+                    Assert-CINativeCleanupOwnership $graph $installedFullName $nativeUriState $verified $pkg $ExpectedSid $NativeGraph $Commit $physicalRoots $Out
+                }else{Assert-CINativeCleanupOwnership $null $installedFullName}
                 if ($pkg.Publisher -cne $Expected.publisher -or $pkg.Version.ToString() -cne $inputMetadata.Version -or
                     ($installedFullName -and $pkg.PackageFullName -cne $installedFullName)) { throw 'Refusing cleanup of an unowned package' }
                 # gateway ensure owns a detached process, so closing Electron is
@@ -190,21 +183,15 @@ try {
                     if (-not (Test-Path -LiteralPath $lifecycle)) { continue }
                     $record = Get-Content -Raw -LiteralPath $lifecycle | ConvertFrom-Json
                     if ($record.phase -ne 'running') { continue }
-                    $owner = Get-CimInstance Win32_Process -Filter "ProcessId=$([int]$record.pid)"
-                    if (-not $owner) { continue }
-                    $created = ([DateTimeOffset]$owner.CreationDate).ToUnixTimeMilliseconds() / 1000.0
                     $payloadPrefix = (Join-Path $pkg.InstallLocation 'app\resources\agent-payload').TrimEnd('\') + '\'
-                    if (-not $record.create_time -or [Math]::Abs($created - $record.create_time) -ge 2 -or
-                        -not $owner.ExecutablePath.StartsWith($payloadPrefix, [StringComparison]::OrdinalIgnoreCase)) {
-                        throw 'Refusing cleanup of an unproven gateway incarnation'
-                    }
-                    Stop-Process -Id $owner.ProcessId -ErrorAction Stop
-                    Wait-Process -Id $owner.ProcessId -Timeout 60 -ErrorAction SilentlyContinue
-                    if (Get-CimInstance Win32_Process -Filter "ProcessId=$($owner.ProcessId)") { throw 'Owned gateway did not stop' }
+                    Stop-CIOwnedGateway $record $payloadPrefix
                 }
-                Remove-AppxPackage -Package $pkg.PackageFullName -ErrorAction Stop
-                if (Get-AppxPackage -Name $Expected.msixIdentity) { throw 'Package removal did not complete' }
-                if ($NativeGraph -and @(Get-AppxPackage -PackageTypeFilter Resource -Name $Expected.msixIdentity).Count) { throw 'Related resources remain; preserve them and fail cleanup' }
+                if($graph){
+                    Invoke-CINativeOwnedRemoval $graph $installedFullName $nativeUriState $verified $pkg $ExpectedSid $NativeGraph $Commit ([ref]$physicalRoots) $Out
+                } else {
+                    Remove-AppxPackage -Package $installedFullName -ErrorAction Stop
+                    if (Get-AppxPackage -Name $Expected.msixIdentity) { throw 'Package removal did not complete' }
+                }
             }
         }
     } catch {
@@ -212,8 +199,14 @@ try {
         $_ | Out-String | Set-Content -LiteralPath (Join-Path $Out 'native-cleanup-error.txt')
         Write-Error $_ -ErrorAction Continue
     } finally {
+        foreach($heldRoot in $physicalRoots){$heldRoot.root.handle.Dispose()}
         @{ exitCode=[int]$failed } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Out 'native-install-exit.json')
         Stop-Transcript | Out-Null
     }
 }
-if ($failed) { exit 1 }
+if ($failed) { throw 'Bundle smoke failed; see native-install-exit.json' }
+}
+if ($MyInvocation.InvocationName -ne '.') {
+    if ($NativeGraph) { throw 'Native graph smoke requires coordinator-owned private dispatch' }
+    Invoke-CIPrivateBundleSmoke @PSBoundParameters
+}

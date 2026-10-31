@@ -63,7 +63,7 @@ def test_staging_survives_unavailable_kernel_fast_copy(tmp_path, monkeypatch, va
     archive.with_suffix('.zip.sha256').write_text(archive_digest+'  candidate.zip\n')
     publisher = 'CN=Semantier Technology, O=Semantier Technology'
     records = {
-        output/'result.json': {'result': 'PASS', 'sourceCommit': request['commit']},
+        output/'result.json': {'result': 'PASS', 'sourceCommit': request['commit'], 'controllerCommit': request['controllerCommit']},
         output/'channel-request.json': request,
         output/'signed/receipt.json': {'signing': 'PASS', 'verification': 'PASS: fixture',
             'packageName': 'Semantier.Agent.Acceptance', 'publisher': publisher,
@@ -80,7 +80,8 @@ def test_staging_survives_unavailable_kernel_fast_copy(tmp_path, monkeypatch, va
         path.write_text(json.dumps(value))
     for key, value in {'GITHUB_ACTIONS': 'true', 'GITHUB_REPOSITORY': 'chris-han/hermes-agent',
                        'GITHUB_SHA': request['commit'], 'GITHUB_RUN_ID': 'fixture',
-                       'GITHUB_RUN_ATTEMPT': '1', 'SEMANTIER_CLIENT_RECEIPT_KEY': 'x'*32}.items():
+                       'GITHUB_RUN_ATTEMPT': '1', 'SEMANTIER_CLIENT_RECEIPT_KEY': 'x'*32,
+                       'ACCEPTANCE_CONTROLLER_COMMIT': request['controllerCommit']}.items():
         monkeypatch.setenv(key, value)
 
     def unavailable(*args, **kwargs):
@@ -119,3 +120,40 @@ def test_staging_survives_unavailable_kernel_fast_copy(tmp_path, monkeypatch, va
     assert hashlib.sha256(archive.read_bytes()).hexdigest() == archive_digest
     with pytest.raises(ValueError, match='Fresh immutable'):
         stage(output, native, incoming, {'en': 'must not overwrite'})
+def test_target_binding_submission_uses_verified_runtime_and_ci_capability(tmp_path,monkeypatch):
+    import json,subprocess
+    import scripts.releases.semantier_candidate as candidate
+    import scripts.releases.semantier_native_ci as ci
+    monkeypatch.setattr(candidate,'CI_DELIVERABLE_ROOT',tmp_path)
+    release=tmp_path/'SemantierAgent-client-feedback-ci-123-2';release.mkdir()
+    path=release/'channel2-target-binding.json'
+    binding={'delivery_target_id':'channel2','candidate':{'release_id':'a'*32,'manifest':{'request':{'publicBase':'https://update2.semantier.com','channel':'semantier-acceptance'}},'notes':{'en':'fixture'},'native_receipt':{'scope':'simulated'}},'descriptor_receipt':{'workflow_run_id':'123','workflow_run_attempt':2}}
+    path.write_text(json.dumps(binding))
+    monkeypatch.setenv('SEMANTIER_CLIENT_CI_CAPABILITY','fixture-capability')
+    cid='f'*64
+    def inspect(argv,**kwargs):
+        if argv[-1]=='{{.Id}} {{.Image}} {{.State.Running}}':return cid+' '+ci.CI_RUNTIME_IMAGE+' true\n'
+        return json.dumps([{'Source':str(ci.CI_INCOMING_ROOT.parents[1]),'Destination':'/fixture'}])
+    monkeypatch.setattr(candidate.subprocess,'check_output',inspect)
+    checks=[]
+    monkeypatch.setattr(ci,'verify_runtime_identity',lambda value:checks.append(('identity',value)))
+    monkeypatch.setattr(ci,'verify_cloudflare_custody',lambda value,root:checks.append(('custody',value)))
+    def post(argv,**kwargs):
+        assert 'fixture-capability' not in repr(argv)
+        compile(argv[-1],'<runtime-admission>','exec')
+        data=json.loads(kwargs['input']);assert data['token']=='fixture-capability' and data['binding']==binding
+        import hashlib
+        variant=hashlib.sha256(candidate.canonical({'target_id':'channel2','manifest':{**binding['candidate']['manifest'],'notes':binding['candidate']['notes']},'descriptor_receipt':binding['descriptor_receipt'],'native_receipt':binding['candidate']['native_receipt']})).hexdigest()
+        body={'authorized_scope':{'channel':'semantier-acceptance','platform':'win32','arch':'x64'},'binding':{'release_id':'a'*32,'target_id':'channel2','variant_hash':variant}}
+        return subprocess.CompletedProcess(argv,0,json.dumps({'status':200,'body':body}),'')
+    monkeypatch.setattr(candidate.subprocess,'run',post)
+    result=candidate.admit_target_binding(path)
+    assert result['state']=='target_binding_admitted_not_published' and len(checks)==2
+    def timeout(argv,**kwargs):raise subprocess.TimeoutExpired(argv,1)
+    monkeypatch.setattr(candidate.subprocess,'run',timeout)
+    with pytest.raises(RuntimeError,match='UNKNOWN; reconcile before retry'):candidate.admit_target_binding(path)
+    for response in ('not-json','[]','{"status":200,"body":{}}'):
+        monkeypatch.setattr(candidate.subprocess,'run',lambda argv,**kwargs:subprocess.CompletedProcess(argv,0,response,''))
+        with pytest.raises(RuntimeError,match='UNKNOWN; reconcile before retry'):candidate.admit_target_binding(path)
+    binding['descriptor_receipt']['workflow_run_id']='999';path.write_text(json.dumps(binding))
+    with pytest.raises(ValueError,match='Cloudflare target binding required'):candidate.admit_target_binding(path)
