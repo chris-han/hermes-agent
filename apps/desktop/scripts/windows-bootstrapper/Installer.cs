@@ -19,8 +19,8 @@ using Microsoft.Win32.SafeHandles;
 [assembly: AssemblyTitle("Semantier Agent 0.0.64 Installer")]
 [assembly: AssemblyProduct("Semantier Agent Installer")]
 [assembly: AssemblyCompany("Semantier Technology")]
-[assembly: AssemblyVersion("1.0.0.0")]
-[assembly: AssemblyFileVersion("1.0.0.0")]
+[assembly: AssemblyVersion("1.1.0.0")]
+[assembly: AssemblyFileVersion("1.1.0.0")]
 
 // Independent, version-specific bootstrapper. It never modifies the release ZIP.
 static class Installer {
@@ -125,7 +125,7 @@ static class Installer {
         try {
             files=HoldAndVerify(dir); VerifySignatures(dir,false);
             using(var cert=Certificate()) {
-                if(MessageBox.Show("Trust the verified Semantier Technology certificate " + Thumbprint + " in Local Machine Trusted People?", "Confirm publisher trust",MessageBoxButtons.YesNo,MessageBoxIcon.Information)!=DialogResult.Yes) throw new OperationCanceledException("Certificate trust cancelled.");
+                if(MessageBox.Show(InstallerText.Choose("Trust the verified Semantier Technology publisher certificate on this device?","是否在此设备上信任已验证的 Semantier Technology 发布者证书？") + "\n\n" + Thumbprint + "\nLocalMachine / TrustedPeople", InstallerText.Choose("Confirm publisher trust","确认发布者信任"),MessageBoxButtons.YesNo,MessageBoxIcon.Information)!=DialogResult.Yes) throw new OperationCanceledException("Certificate trust cancelled.");
                 using(var store=new X509Store(StoreName.TrustedPeople,StoreLocation.LocalMachine)) {store.Open(OpenFlags.ReadWrite);if(!Trusted(cert))store.Add(cert);}
                 if(!Trusted(cert))throw new InvalidOperationException("Certificate trust was not confirmed.");
                 VerifySignatures(dir,true);
@@ -220,7 +220,7 @@ static class Installer {
             report("Verifying package and certificate…"); ExtractAndHold(zip,dir,held); VerifySignatures(dir,false);
             using(var cert=Certificate()) {
                 if(!Trusted(cert)) {
-                    var consent=MessageBox.Show("Windows will ask for administrator permission to trust this exact Semantier Technology certificate in Local Machine Trusted People. Continue?", "Publisher certificate",MessageBoxButtons.YesNo,MessageBoxIcon.Information);
+                    var consent=MessageBox.Show(InstallerText.Choose("Windows will request administrator permission to trust the verified Semantier Technology publisher certificate. The application will be installed for your current Windows account. Continue?","Windows 将请求管理员权限，以信任已验证的 Semantier Technology 发布者证书。应用仍将安装到您当前的 Windows 账户。是否继续？"), InstallerText.Choose("Publisher certificate","发布者证书"),MessageBoxButtons.YesNo,MessageBoxIcon.Information);
                     if(consent!=DialogResult.Yes) throw new OperationCanceledException("Certificate consent cancelled.");
                     report("Waiting for Windows administrator consent…");
                     // The administrator may be a different account and unable
@@ -232,7 +232,7 @@ static class Installer {
                     using(var source=File.OpenRead(Assembly.GetExecutingAssembly().Location)) {source.CopyTo(target);target.Flush(true);}
                     var helperHold=Seal(target,held);
                     string helperHash=Hash(helperHold);using(var source=File.OpenRead(Assembly.GetExecutingAssembly().Location))if(Hash(source)!=helperHash)throw new InvalidOperationException("Trust helper changed.");
-                    var info=new ProcessStartInfo(helper,"--trust "+id) {UseShellExecute=true,Verb="runas"};
+                    var info=new ProcessStartInfo(helper,"--trust "+id+" --language "+InstallerText.Language) {UseShellExecute=true,Verb="runas"};
                     using(var child=Process.Start(info)) { if(child==null) throw new InvalidOperationException("Elevation was not started."); child.WaitForExit(); if(child.ExitCode!=0 || !Trusted(cert)) throw new InvalidOperationException("Certificate trust was not completed."); }
                 }
             }
@@ -275,25 +275,20 @@ static class Installer {
         try {
             var executableDirectories=HoldDirectories(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location));
             try {using(var self=new FileStream(Assembly.GetExecutingAssembly().Location,FileMode.Open,FileAccess.Read,FileShare.Read)) {
-                if(args.Length==2 && args[0]=="--trust") {Trust(args[1]); return 0;}
+                if(args.Length==4 && args[0]=="--trust" && args[2]=="--language") {InstallerText.SetLanguage(args[3]); Trust(args[1]); return 0;}
                 #if TESTING
-                if(args.Length==1 && args[0]=="--self-test") {SelfTest();return 0;}
+                if(args.Length==1 && args[0]=="--self-test") {SelfTest(); InstallerWindow.SelfTest(); return 0;}
+                if(args.Length==4 && args[0]=="--preview") {InstallerWindow.Preview(args[1],args[2],args[3]); return 0;}
                 #endif
                 if(args.Length!=0) throw new InvalidOperationException("Unexpected command line.");
-                using(var form=new Form {Text="Install Semantier Agent",Width=560,Height=220,StartPosition=FormStartPosition.CenterScreen}) {
-                    var label=new Label {Left=24,Top=28,Width=490,Height=80,Text="Ready to download and install Semantier Agent 0.0.64.0 for this Windows user."};
-                    var button=new Button {Left=24,Top=115,Width=150,Height=36,Text="Install"};form.Controls.Add(label);form.Controls.Add(button);
-                    bool busy=false;form.FormClosing+=(sender,eventArgs)=>{if(busy){eventArgs.Cancel=true;label.Text="Installation is still running. Please wait for its result.";}};
-                    button.Click+=async (sender,eventArgs)=>{button.Enabled=false;busy=true; try {await Task.Run(()=>Execute(message=>form.BeginInvoke((Action)(()=>label.Text=message))));} catch(Exception error){label.Text="Installation stopped: "+error.Message;button.Enabled=true;} finally {busy=false;}};
-                    Application.Run(form);
-                }
+                using(var form=new InstallerWindow(Execute)) Application.Run(form);
             }} finally {foreach(var h in executableDirectories)h.Dispose();}
             return 0;
         } catch(Exception error) {
             #if TESTING
             if(args.Length==1 && args[0]=="--self-test") {Console.Error.WriteLine(error);return 1;}
             #endif
-            MessageBox.Show(error.Message,"Semantier Agent",MessageBoxButtons.OK,MessageBoxIcon.Error);return 1;
+            MessageBox.Show(InstallerText.Error(error) + "\n\n" + InstallerText.Choose("Technical details: ","技术详情：") + error.Message,InstallerText.Choose("Semantier setup","Semantier 安装程序"),MessageBoxButtons.OK,MessageBoxIcon.Error);return 1;
         }
     }
 }
