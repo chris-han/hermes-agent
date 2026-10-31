@@ -604,6 +604,8 @@ def put_object(
     *,
     multipart_part_size: int = 64 * 1024 * 1024,
     on_multipart_created: Callable[[str], None] | None = None,
+    expected_sha256: str | None = None,
+    before_multipart_complete: Callable[[], None] | None = None,
 ) -> None:
     """Stream file paths, using multipart for large artifacts, or send bytes.
 
@@ -614,7 +616,24 @@ def put_object(
     if is_path:
         payload = os.fspath(payload)
         size = os.path.getsize(payload)
-        body_hash = file_sha256(payload)
+        if size > multipart_part_size and not 5 * 1024 * 1024 <= multipart_part_size <= 5 * 1024**3:
+            raise ValueError('Invalid multipart part size')
+        expected_parts = None
+        if expected_sha256 is not None:
+            full=hashlib.sha256(); expected_parts={}; count=0
+            with open(payload,'rb') as source:
+                while count<size:
+                    part=hashlib.sha256(); remaining=min(multipart_part_size,size-count)
+                    while remaining:
+                        data=source.read(min(1024*1024,remaining))
+                        if not data:raise ValueError('Upload source truncated during verification')
+                        full.update(data);part.update(data);count+=len(data);remaining-=len(data)
+                    expected_parts[len(expected_parts)+1]=part.hexdigest()
+                if source.read(1):raise ValueError('Upload source grew during verification')
+            body_hash=full.hexdigest()
+            if body_hash!=expected_sha256:raise ValueError('Upload source SHA-256 mismatch')
+        else:
+            body_hash = file_sha256(payload)
 
         def body_iter_factory() -> Iterable[bytes]:
             return stream_file(payload)
@@ -640,7 +659,8 @@ def put_object(
                 from .r2_multipart import upload_file
 
                 upload_file(url, cast(str, payload), size, creds, content_type, extra, multipart_part_size,
-                            on_created=on_multipart_created)
+                            on_created=on_multipart_created, expected_parts=expected_parts,
+                            before_complete=before_multipart_complete)
                 break
             response = (
                 fetcher(method="PUT", url=url, body_hash=body_hash, body=body,

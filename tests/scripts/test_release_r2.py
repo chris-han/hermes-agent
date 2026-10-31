@@ -867,3 +867,51 @@ def test_uncommitted_multipart_owner_cannot_upload_parts(r2_server, tmp_path):
     assert not r2_server.multipart.parts
     assert r2_server.multipart.aborted == 1
     assert key not in r2_server.store
+
+
+def test_pinned_multipart_refuses_changed_source_before_public_completion(r2_server,tmp_path):
+    path=tmp_path/'artifact.zip';payload=b'a'*(5*1024*1024+1);path.write_bytes(payload)
+    digest=hashlib.sha256(payload).hexdigest();creds,base,bucket=r2.credentials();key='releases/channel-builds/'+'a'*32+'/artifact.zip'
+    def replace(_upload):path.write_bytes(b'b'*len(payload))
+    with pytest.raises(ValueError,match='Multipart source changed'):
+        r2.put_object(creds,base,bucket,key,str(path),NOW,'application/zip',{'If-None-Match':'*'},
+                      multipart_part_size=5*1024*1024,expected_sha256=digest,on_multipart_created=replace)
+    assert r2_server.multipart.completed==0 and key not in r2_server.store
+    assert r2_server.multipart.aborted==1
+
+
+def test_pinned_multipart_rechecks_authorization_before_completion(r2_server,tmp_path):
+    path=tmp_path/'artifact.zip';payload=b'a'*(5*1024*1024+1);path.write_bytes(payload)
+    digest=hashlib.sha256(payload).hexdigest();creds,base,bucket=r2.credentials();key='releases/channel-builds/'+'b'*32+'/artifact.zip'
+    def revoke():raise ValueError('authorization withdrawn')
+    with pytest.raises(ValueError,match='authorization withdrawn'):
+        r2.put_object(creds,base,bucket,key,str(path),NOW,'application/zip',{'If-None-Match':'*'},
+                      multipart_part_size=5*1024*1024,expected_sha256=digest,before_multipart_complete=revoke)
+    assert r2_server.multipart.completed==0 and key not in r2_server.store
+    assert r2_server.multipart.aborted==1
+
+
+def test_pinned_multipart_body_mutation_is_rejected_by_content_hash(tmp_path,monkeypatch):
+    """R2 boundary fixture enforces the signed per-part payload digest."""
+    path=tmp_path/'artifact.zip';payload=b'a'*(5*1024*1024+1);path.write_bytes(payload)
+    digest=hashlib.sha256(payload).hexdigest();events=[];changed=threading.Event()
+    class Reply:
+        def __init__(self,body=b''):self.body=body
+        def text(self):return self.body.decode()
+        def header(self,name):return 'fixture-etag' if name.lower()=='etag' else None
+    def request(method,url,**kwargs):
+        if method=='POST' and 'uploads=' in url:return Reply(b'<InitiateMultipartUploadResult><UploadId>fixture</UploadId></InitiateMultipartUploadResult>')
+        if method=='PUT':
+            if not changed.is_set():changed.set();path.write_bytes(b'b'*len(payload))
+            transmitted=b''.join(kwargs['body_iter_factory']())
+            if hashlib.sha256(transmitted).hexdigest()!=kwargs['body_hash']:raise ValueError('provider rejected signed content digest')
+            return Reply()
+        if method=='DELETE':events.append('abort');return Reply()
+        if method=='POST':events.append('complete');return Reply(b'<CompleteMultipartUploadResult/>')
+        raise AssertionError(method)
+    monkeypatch.setattr(r2,'signed_request',request)
+    monkeypatch.setattr(r2.R2Scope,'configured',lambda:SimpleNamespace(object_url=lambda base,bucket,key:base+'/'+bucket+'/'+key))
+    with pytest.raises((ValueError,OSError)):
+        r2.put_object({'access_key_id':'a','secret_key':'b'},'https://fixture.invalid','bucket','releases/channel-builds/'+'c'*32+'/artifact.zip',str(path),NOW,'application/zip',
+                      multipart_part_size=5*1024*1024,expected_sha256=digest)
+    assert changed.is_set() and 'complete' not in events and 'abort' in events
