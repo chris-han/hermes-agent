@@ -44,3 +44,11 @@ It emits an unsigned semantier-setup.exe into a new task-owned output directory;
 use the existing SignTool/certificate owner to sign and verify that separate EXE.
 Keep TESTING out of the release. Existing .64 ZIP and graph remain pinned.
 
+
+## Bootstrapper 1.1.1
+
+Drain redirected PowerShell stdout and stderr concurrently. Progress records can fill
+stderr even after deployment succeeds; sequential reads leave setup waiting forever.
+The Windows self-test exercises a child emitting more than a pipe buffer on stderr,
+checks stdout completion, and preserves nonzero-exit diagnostics. Application 0.0.64
+and its immutable package graph remain unchanged.

@@ -19,8 +19,8 @@ using Microsoft.Win32.SafeHandles;
 [assembly: AssemblyTitle("Semantier Agent 0.0.64 Installer")]
 [assembly: AssemblyProduct("Semantier Agent Installer")]
 [assembly: AssemblyCompany("Semantier Technology")]
-[assembly: AssemblyVersion("1.1.0.0")]
-[assembly: AssemblyFileVersion("1.1.0.0")]
+[assembly: AssemblyVersion("1.1.1.0")]
+[assembly: AssemblyFileVersion("1.1.1.0")]
 
 // Independent, version-specific bootstrapper. It never modifies the release ZIP.
 static class Installer {
@@ -138,7 +138,12 @@ static class Installer {
             UseShellExecute=false, CreateNoWindow=true, RedirectStandardOutput=true, RedirectStandardError=true
         };
         using(var process=Process.Start(p)) {
-            string output=process.StandardOutput.ReadToEnd(); string error=process.StandardError.ReadToEnd(); process.WaitForExit();
+            // PowerShell progress also uses stderr; drain both pipes before waiting.
+            var outputRead=process.StandardOutput.ReadToEndAsync();
+            var errorRead=process.StandardError.ReadToEndAsync();
+            process.WaitForExit();
+            string output=outputRead.GetAwaiter().GetResult();
+            string error=errorRead.GetAwaiter().GetResult();
             if(process.ExitCode!=0) throw new InvalidOperationException("Windows package operation failed: "+error);
             return output.Trim();
         }
@@ -247,6 +252,14 @@ static class Installer {
     }
     #if TESTING
     static void SelfTest() {
+        // More than a pipe buffer on stderr must not prevent stdout completion.
+        var noisyChild=System.Threading.Tasks.Task.Run(()=>PowerShell("[Console]::Error.Write(('x' * 262144)); Write-Output 'streams-drained'"));
+        if(!noisyChild.Wait(15000) || noisyChild.Result!="streams-drained")
+            throw new InvalidOperationException("PowerShell output streams deadlocked or lost stdout.");
+        bool childFailure=false;
+        try { PowerShell("[Console]::Error.Write(('x' * 262144)); throw 'expected-stream-test-error'"); }
+        catch(InvalidOperationException error) { childFailure=error.Message.Contains("expected-stream-test-error"); }
+        if(!childFailure)throw new InvalidOperationException("PowerShell failure diagnostics were lost.");
         using(var cert=Certificate()) if(cert.HasPrivateKey) throw new InvalidOperationException("Unexpected private key.");
         string dir=Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location),"fixture-"+Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);var locks=HoldDirectories(dir);string path=Path.Combine(dir,"data"),backup=Path.Combine(dir,"original");
