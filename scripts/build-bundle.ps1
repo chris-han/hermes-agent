@@ -70,6 +70,8 @@ function Find-Python {
   Fail 'needs Python 3.11+ on PATH (or pass -Python).'
 }
 
+if ($env:SEMANTIER_WSL_GIT_DISTRO) { . (Join-Path $PSScriptRoot 'wsl-linux-git.ps1') }
+
 function Git-Lines {
   $lines = & git @args
   if ($LASTEXITCODE) { Fail "git $($args -join ' ') failed" }
