@@ -127,16 +127,18 @@ async def _mutate_session(authority, actor, ref, params, *, commit_lock=None):
         # would refuse a session whose receipt the client already saw as terminal.
         if operation == 'delete':
             store = getattr(authority.runner, 'session_store', None)
-            from hermes_cli.semantier_cloud import cloud_enabled
+            from hermes_state_backend import session_store_key
             routing = store._routing_db if store is not None else None
-            if cloud_enabled():
-                from hermes_state_backend import session_store_key
+            try:
                 same_store = routing is not None and session_store_key(routing) == session_store_key(authority.db)
-            else:
-                # Native SQLite retirement retains the original upstream same-store guard.
-                same_store = routing is not None and routing.db_path == authority.db.db_path
+            except (AttributeError, OSError, TypeError, ValueError):
+                raise RuntimeStoreError('runtime_coordination_required') from None
             if store is not None and not same_store:
-                raise RuntimeStoreError('runtime_coordination_required')
+                coordinate = getattr(store, 'can_coordinate_retirement', None)
+                if not callable(coordinate) or coordinate(authority) is not True:
+                    raise RuntimeStoreError('runtime_coordination_required')
+                # The existing guard requests a durable publication fence in the delete transaction.
+                return True
         if operation in {'rewind', 'reset'} and not callable(getattr(authority.runner, '_evict_cached_agent', None)):
             raise RuntimeStoreError('runtime_coordination_required')
 
@@ -260,7 +262,7 @@ def retire_live_sessions(authority, session_ids):
     and their cached agents. Shared by canonical delete and the owner-run bulk prune."""
     store = getattr(authority.runner, 'session_store', None)
     if store is not None:
-        store.retire_runtime_sessions(session_ids)
+        store.retire_runtime_sessions(session_ids, session_db=authority.db)
     from gateway.session_policy import release_launch_secrets
     release_launch_secrets(authority, session_ids)
     for sid in session_ids:

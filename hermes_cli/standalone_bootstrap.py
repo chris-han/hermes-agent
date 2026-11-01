@@ -15,7 +15,7 @@ _LEGACY_STOCK = {'provider.py': 'aa35695018a23ac9402c8fe18f0b4be2c0dc7b8dd42b814
 
 
 def bootstrap_standalone_runtime() -> None:
-    from hermes_cli.semantier_cloud import cloud_enabled
+    from hermes_cli.semantier_runtime import cloud_enabled
     cloud_enabled()  # Validate selection before any bootstrap IO; login/sync are separate.
     from pm.features import runtime_distribution_extras
     if runtime_distribution_extras() is None:

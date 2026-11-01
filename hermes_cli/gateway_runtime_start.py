@@ -52,9 +52,9 @@ def spawn_unmanaged_gateway(profile_home: Path, *, deadline: float, idle_exit: b
             raise RuntimeStartError("windows_interpreter_unavailable")
         env.update(overlay)
         env[_WINDOWS_GATEWAY_BREAKAWAY_ENV] = "1"
-    from hermes_cli.semantier_cloud import cloud_enabled
+    from hermes_cli.semantier_runtime import cloud_enabled
     env.update(HERMES_HOME=str(home), HERMES_GATEWAY_DETACHED="1", PYTHONIOENCODING="utf-8",
-               SEMANTIER_CLOUD=str(int(cloud_enabled())))
+               SEMANTIER_RUNTIME=str(int(cloud_enabled())))
     # Profile selection is the explicit home, not the invoking client's display
     # name. Launch-only approval/context/config flags ride the launching session's frozen
     # policy, not the shared daemon or every later session.

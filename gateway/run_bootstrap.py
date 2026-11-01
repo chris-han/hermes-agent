@@ -1,10 +1,10 @@
 """Process startup phases; diagnostics remain in the gateway facade."""
 from __future__ import annotations
 
-from hermes_cli.semantier_cloud import cloud_enabled
+from hermes_cli.semantier_runtime import cloud_enabled
 
 # Capture once before serving profiles; a running owner never changes composition.
-_SEMANTIER_CLOUD = int(cloud_enabled())
+_SEMANTIER_RUNTIME = int(cloud_enabled())
 
 import logging
 import threading
@@ -260,13 +260,13 @@ async def _start_gateway_start_control_socket(runner):
         )
         from gateway.run_plugin_rewire import reload_plugins_verb
         descriptor = runner.session_runtime_descriptor
-        descriptor["semantier_cloud"] = _SEMANTIER_CLOUD
+        descriptor["semantier_runtime"] = _SEMANTIER_RUNTIME
 
         def _identify_runtime():
             payload = build_identify_payload()
             payload.update({key: descriptor[key] for key in (
                 "instance_id", "runtime_protocol", "authority_epoch", "state", "api_origin",
-                "served_profiles", "parked_profiles", "capabilities", "semantier_cloud") if key in descriptor})
+                "served_profiles", "parked_profiles", "capabilities", "semantier_runtime") if key in descriptor})
             if getattr(runner, '_draining', False):
                 payload.update(state='draining', capabilities=[])
             if payload.get('state') == 'draining' and descriptor.get('drain_reason'):
