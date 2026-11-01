@@ -73,7 +73,6 @@ from agents.workspace_session_logs import (
     delete_workspace_session_log,
     derive_workspace_session_transport_metadata,
     get_workspace_session_detail,
-    get_workspace_session_log_payload,
     get_workspace_session_messages,
     list_workspace_session_trajectory,
     list_workspace_sessions,

@@ -204,7 +204,6 @@ class Publisher:
         record = {**previous,'revision':previous['revision']+1,
                   'nextSequence':max(previous['nextSequence'],build['sequence']+1)}
         if release['manifest']['schema']==2:
-            self.require_native_bridge(previous)
             record['nativeHead']=head
         else:
             record['head']=head
@@ -212,19 +211,6 @@ class Publisher:
         try:validate_record(record)
         except ValueError as error:raise OperationError(422,'channel_contract_mismatch') from error
         return record
-
-    def require_native_bridge(self, record):
-        from hermes_cli.release_channels import decode_json,validate_manifest
-        head=record.get('head')
-        if not head:raise OperationError(422,'native_bridge_required')
-        path=safe_file(self.root,head['manifestKey'])
-        try:
-            if path.stat().st_size>4*1024*1024:raise ValueError('bridge metadata oversized')
-            body=path.read_bytes()
-            if hashlib.sha256(body).hexdigest()!=head['sha256']:raise ValueError('bridge bytes differ')
-            manifest=validate_manifest(decode_json(body),record,self.base)
-            if manifest.get('receiverCapabilities')!={'windowsPackageUri':1}:raise ValueError('bridge receiver not capable')
-        except (OSError,ValueError) as error:raise OperationError(422,'native_bridge_required') from error
 
     def publish_variant(self, release, operation_id, *, remote_reservation=None, authorize):
         """Publish one reserved target; actual head readback precedes DB projection.

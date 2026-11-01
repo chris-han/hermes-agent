@@ -1,0 +1,55 @@
+{
+  "version": "collection-definition-v1",
+  "stages": {
+    "landing": [
+      "page_entered",
+      "section_viewed",
+      "scenario_selected",
+      "case_opened",
+      "trial_cta_clicked",
+      "download_clicked"
+    ],
+    "invitation": [
+      "invitation_application_submitted",
+      "invitation_status_changed"
+    ],
+    "identity": [
+      "registration_started",
+      "registration_completed",
+      "registration_failed",
+      "login_completed",
+      "identity_linked"
+    ],
+    "workspace": [
+      "client_ready",
+      "client_failed",
+      "client_resumed",
+      "download_clicked"
+    ],
+    "windows": [
+      "app_first_open",
+      "client_ready",
+      "client_failed",
+      "client_resumed"
+    ],
+    "commerce": [
+      "offer_viewed",
+      "checkout_started",
+      "order_created",
+      "payment_status_changed"
+    ],
+    "entitlement": [
+      "trial_access_status_changed",
+      "entitlement_status_changed",
+      "paid_entitlement_consumed"
+    ],
+    "task": [
+      "task_started",
+      "task_status_changed",
+      "task_completed",
+      "result_viewed",
+      "feedback_submitted",
+      "action_recorded"
+    ]
+  }
+}

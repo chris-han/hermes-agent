@@ -1,0 +1,351 @@
+{
+  "version": "metric-definition-v2",
+  "cohort_days": 30,
+  "exclusions": [
+    "operations_admin",
+    "test_account",
+    "demo_account"
+  ],
+  "analyses": [
+    {
+      "id": "acquisition",
+      "label": {
+        "en": "Positioning and expression",
+        "zh": "定位与表达"
+      },
+      "unit": "anonymous_journey",
+      "edges": [
+        {
+          "id": "landing_intent",
+          "start": "page_entered",
+          "end": "download_clicked",
+          "label": {
+            "en": "Visit → Windows download intent",
+            "zh": "访问 → Windows 下载意向"
+          },
+          "unit": "anonymous_journey",
+          "days": 7,
+          "requires": [
+            "landing"
+          ]
+        },
+        {
+          "id": "workspace_intent",
+          "start": "page_entered",
+          "end": "workspace_registration_clicked",
+          "label": {
+            "en": "Visit → Workspace registration intent",
+            "zh": "访问 → Workspace 注册意向"
+          },
+          "unit": "anonymous_journey",
+          "days": 7,
+          "requires": [
+            "landing"
+          ]
+        },
+        {
+          "id": "start_navigation",
+          "start": "page_entered",
+          "end": "start_now_clicked",
+          "label": {
+            "en": "Visit → Start now navigation",
+            "zh": "访问 → 开始试用导航"
+          },
+          "unit": "anonymous_journey",
+          "days": 7,
+          "requires": [
+            "landing"
+          ]
+        },
+        {
+          "id": "start_exposure",
+          "start": "start_now_clicked",
+          "end": "start_section_viewed",
+          "label": {
+            "en": "Start navigation → observed start section",
+            "zh": "开始导航 → 开始区有效曝光"
+          },
+          "unit": "anonymous_journey",
+          "days": 7,
+          "requires": [
+            "landing"
+          ]
+        },
+        {
+          "id": "download_resolution",
+          "start": "download_clicked",
+          "end": "download_resolution_completed",
+          "label": {
+            "en": "Download attempt → catalog revalidated",
+            "zh": "下载尝试 → 清单重新验证"
+          },
+          "unit": "download_attempt",
+          "days": 7,
+          "requires": [
+            "landing"
+          ]
+        },
+        {
+          "id": "download_initiation",
+          "start": "download_clicked",
+          "end": "download_initiated",
+          "label": {
+            "en": "Download attempt → browser initiated",
+            "zh": "下载尝试 → 浏览器发起"
+          },
+          "unit": "download_attempt",
+          "days": 7,
+          "requires": [
+            "landing"
+          ]
+        },
+        {
+          "id": "linked_first_open",
+          "start": "download_initiated",
+          "end": "app_first_open",
+          "label": {
+            "en": "Download journey → independently linked first open",
+            "zh": "下载旅程 → 独立关联的首次启动"
+          },
+          "unit": "anonymous_journey",
+          "days": 7,
+          "requires": [
+            "landing",
+            "windows"
+          ]
+        }
+      ],
+      "flow_version": "direct_download_v1",
+      "evidence_limits": {
+        "download_initiated": "Browser instruction only; receipt, installation and first open require independent evidence.",
+        "first_open": "Only server-linked journeys; unlinked installations remain unavailable to this conversion."
+      }
+    },
+    {
+      "id": "activation",
+      "label": {
+        "en": "Delivery and activation",
+        "zh": "交付与激活"
+      },
+      "unit": "verified_account",
+      "eligible": "approved_invitation",
+      "edges": [
+        {
+          "id": "registration_ready",
+          "start": "registration_completed",
+          "end": "client_ready",
+          "days": 7,
+          "label": {
+            "en": "Registration → ready",
+            "zh": "注册 → 端就绪"
+          },
+          "requires": [
+            "identity",
+            "workspace",
+            "windows"
+          ]
+        },
+        {
+          "id": "first_delivery",
+          "start": "trial_access_status_changed",
+          "start_status": "active",
+          "end": "task_completed",
+          "days": 7,
+          "label": {
+            "en": "Invited or paid access → real delivery",
+            "zh": "邀请试用或付费权益 → 真实交付"
+          },
+          "requires": [
+            "entitlement",
+            "task"
+          ],
+          "start_alternatives": [
+            "entitlement_status_changed"
+          ]
+        },
+        {
+          "id": "task_start",
+          "start": "trial_access_status_changed",
+          "end": "task_started",
+          "days": 7,
+          "label": {
+            "en": "Invited or paid access → task started",
+            "zh": "邀请试用或付费权益 → 任务开始"
+          },
+          "requires": [
+            "entitlement",
+            "task"
+          ],
+          "start_status": "active",
+          "start_alternatives": [
+            "entitlement_status_changed"
+          ]
+        },
+        {
+          "id": "execution_delivery",
+          "start": "task_started",
+          "end": "task_completed",
+          "days": 7,
+          "label": {
+            "en": "Task started → completed delivery",
+            "zh": "任务开始 → 完成交付"
+          },
+          "requires": [
+            "task"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "value",
+      "label": {
+        "en": "Continued value and payment",
+        "zh": "持续价值与付费"
+      },
+      "unit": "verified_account",
+      "edges": [
+        {
+          "id": "delivery_view",
+          "start": "task_completed",
+          "end": "result_viewed",
+          "days": 30,
+          "label": {
+            "en": "Delivery → result viewed",
+            "zh": "真实交付 → 查看结果"
+          },
+          "requires": [
+            "task",
+            "workspace",
+            "windows"
+          ]
+        },
+        {
+          "id": "reuse",
+          "start": "task_completed",
+          "end": "independent_task_completed",
+          "days": 30,
+          "label": {
+            "en": "First delivery → independent reuse",
+            "zh": "首项交付 → 独立复用"
+          },
+          "requires": [
+            "task"
+          ]
+        },
+        {
+          "id": "purchase",
+          "start": "offer_viewed",
+          "end": "payment_status_changed",
+          "end_status": "succeeded",
+          "days": 30,
+          "label": {
+            "en": "Eligible offer → payment",
+            "zh": "可购买报价 → 支付成功"
+          },
+          "requires": [
+            "commerce"
+          ]
+        },
+        {
+          "id": "paid_access",
+          "start": "payment_status_changed",
+          "start_status": "succeeded",
+          "end": "entitlement_status_changed",
+          "end_status": "active",
+          "days": 30,
+          "label": {
+            "en": "Payment → active entitlement",
+            "zh": "支付 → 权益生效"
+          },
+          "requires": [
+            "commerce",
+            "entitlement"
+          ]
+        },
+        {
+          "id": "delivery_feedback",
+          "start": "task_completed",
+          "end": "feedback_submitted",
+          "days": 30,
+          "label": {
+            "en": "Delivery → self-reported feedback",
+            "zh": "交付 → 自报反馈"
+          },
+          "requires": [
+            "task"
+          ]
+        },
+        {
+          "id": "delivery_action",
+          "start": "task_completed",
+          "end": "action_recorded",
+          "days": 30,
+          "label": {
+            "en": "Delivery → self-reported action",
+            "zh": "交付 → 自报行动"
+          },
+          "requires": [
+            "task"
+          ]
+        },
+        {
+          "id": "checkout",
+          "start": "offer_viewed",
+          "end": "checkout_started",
+          "days": 30,
+          "label": {
+            "en": "Eligible offer → checkout",
+            "zh": "可购买报价 → 结算开始"
+          },
+          "requires": [
+            "commerce"
+          ]
+        },
+        {
+          "id": "order_payment",
+          "start": "order_created",
+          "end": "payment_status_changed",
+          "days": 30,
+          "label": {
+            "en": "Order → payment succeeded",
+            "zh": "订单 → 支付成功"
+          },
+          "requires": [
+            "commerce"
+          ],
+          "end_status": "succeeded"
+        },
+        {
+          "id": "paid_use",
+          "start": "entitlement_status_changed",
+          "end": "paid_entitlement_consumed",
+          "days": 30,
+          "label": {
+            "en": "Active paid entitlement → actual credit debit",
+            "zh": "付费权益生效 → 实际积分扣减"
+          },
+          "requires": [
+            "entitlement"
+          ],
+          "start_status": "active"
+        }
+      ]
+    }
+  ],
+  "dimensions": [
+    "branch",
+    "registration_origin",
+    "purchase_origin",
+    "first_touch_surface",
+    "current_surface",
+    "source",
+    "role",
+    "scenario",
+    "has_current_task",
+    "page_version",
+    "flow_version",
+    "cta_location",
+    "release_version"
+  ],
+  "flow_version": "direct_download_v1"
+}

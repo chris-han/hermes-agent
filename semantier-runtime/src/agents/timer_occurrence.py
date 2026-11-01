@@ -389,3 +389,15 @@ class TimerOccurrenceStore:
                 """
             ).fetchall()
             return [self._row_to_occurrence(row) for row in rows]
+
+
+    def core_due(self, *, now: str, limit: int = 32, workflow_type="meeting_negotiation"):
+        """Bounded owned PG scan; aware instants, never legacy timer adoption."""
+        from contracts.meeting_delivery import instant
+        now = instant(now).isoformat()
+        if not hosted.enabled():
+            raise RuntimeError("core timer provider requires PostgreSQL")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("bounded timer batch required")
+        with self._connect() as c:
+            return [dict(r) for r in c.execute("SELECT * FROM semantier_timer_occurrences WHERE workflow_type=%s AND state='SCHEDULED' AND provider_ref='core-one-shot:v1:'||timer_id AND core_binding_json IS NOT NULL AND scheduled_at::timestamptz<=%s::timestamptz ORDER BY scheduled_at::timestamptz,timer_id LIMIT %s", (workflow_type,now,limit)).fetchall()]

@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 import uuid
 
-from gateway.execution_boundary import DiskIOBoundaryGuard, ExecutionBoundary
+from agents.core_file_scope import CoreFileScope, file_guard
 
 
 ALLOWED_DOCUMENT_EXTENSIONS = frozenset({".pdf", ".docx", ".xlsx", ".md", ".txt"})
@@ -71,7 +71,7 @@ def _write_unique_file(
     uploads_dir: Path,
     filename: str,
     content: bytes,
-    guard: DiskIOBoundaryGuard | None = None,
+    guard: object | None = None,
 ) -> Path:
     requested = uploads_dir / filename
     stem = requested.stem
@@ -112,7 +112,7 @@ def save_workspace_upload(
     content: bytes,
     content_type: str = "",
     allowed_extensions: frozenset[str] = ALLOWED_DOCUMENT_EXTENSIONS,
-    boundary: ExecutionBoundary | None = None,
+    boundary: CoreFileScope | None = None,
 ) -> WorkspaceUploadResult:
     safe_filename = sanitize_upload_filename(
         filename,
@@ -123,7 +123,7 @@ def save_workspace_upload(
 
     safe_session_id = sanitize_upload_session_id(session_id)
     uploads_dir = Path(workspace_root) / "sessions" / safe_session_id / "uploads"
-    guard = DiskIOBoundaryGuard(boundary) if boundary is not None else None
+    guard = file_guard(boundary) if boundary is not None else None
     if guard is not None:
         resolved = guard.resolve_write_path(uploads_dir, purpose="document_import")
         if resolved != uploads_dir or resolved != boundary.paths.uploads_root:
@@ -143,7 +143,7 @@ def save_workspace_upload(
 
 
 def _read_workspace_upload(
-    *, boundary: ExecutionBoundary, upload_ref: str, upload_hash: str | None,
+    *, boundary: CoreFileScope, upload_ref: str, upload_hash: str | None,
     max_bytes: int, allowed_extensions: frozenset[str],
 ) -> bytes:
     """Read only an immediate file in the authorized session upload root."""
@@ -161,7 +161,7 @@ def _read_workspace_upload(
         raise WorkspaceUploadError(
             "upload unavailable", code="NOT_FOUND", status_code=404
         )
-    path = DiskIOBoundaryGuard(boundary).resolve_read_path(
+    path = file_guard(boundary).resolve_read_path(
         candidate, purpose="document_input"
     )
     if path != candidate or path.parent != uploads:
@@ -187,7 +187,7 @@ def _read_workspace_upload(
 
 
 def read_temporal_workspace_upload(
-    *, boundary: ExecutionBoundary, upload_ref: str, upload_hash: str
+    *, boundary: CoreFileScope, upload_ref: str, upload_hash: str
 ) -> bytes:
     if not isinstance(upload_hash, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", upload_hash):
         raise WorkspaceUploadError("upload unavailable", code="NOT_FOUND", status_code=404)
@@ -196,7 +196,7 @@ def read_temporal_workspace_upload(
 
 
 def read_document_workspace_upload(
-    *, boundary: ExecutionBoundary, upload_ref: str, upload_hash: str, max_bytes: int
+    *, boundary: CoreFileScope, upload_ref: str, upload_hash: str, max_bytes: int
 ) -> bytes:
     if not isinstance(upload_hash, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", upload_hash):
         raise WorkspaceUploadError("upload unavailable", code="NOT_FOUND", status_code=404)
@@ -204,12 +204,12 @@ def read_document_workspace_upload(
                                   max_bytes=max_bytes, allowed_extensions=ALLOWED_DOCUMENT_EXTENSIONS)
 
 
-def list_document_workspace_uploads(*, boundary: ExecutionBoundary, max_bytes: int, offset: int = 0, limit: int = 50) -> dict:
+def list_document_workspace_uploads(*, boundary: CoreFileScope, max_bytes: int, offset: int = 0, limit: int = 50) -> dict:
     """Discover upload identities; importing still rechecks the returned byte hash."""
     root, uploads = boundary.paths.hermes_home, boundary.paths.uploads_root
     if root is None or uploads is None or offset < 0 or not 1 <= limit <= 100:
         raise ValueError("INVALID_UPLOAD_SCOPE")
-    path = DiskIOBoundaryGuard(boundary).resolve_read_path(uploads, purpose="document_input")
+    path = file_guard(boundary).resolve_read_path(uploads, purpose="document_input")
     if path != uploads:
         raise ValueError("INVALID_UPLOAD_SCOPE")
     files = sorted((item for item in path.iterdir() if item.suffix.lower() in ALLOWED_DOCUMENT_EXTENSIONS), key=lambda item: item.name) if path.exists() else []

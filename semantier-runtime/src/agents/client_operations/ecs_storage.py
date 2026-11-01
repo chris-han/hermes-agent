@@ -419,7 +419,7 @@ class Storage:
             )
             volume = os.fstatvfs(self.public.fd)
             result["free_bytes"] = volume.f_bavail * volume.f_frsize
-            if op.get("intent") and op["intent"]["kind"] == "release":
+            if op.get("intent") and op["intent"]["kind"] in ("release", "manual"):
                 current = self.public.read(self._head_key(op), MAX_HEAD)
                 result["observed_head_sha256"] = (
                     sha(current) if current is not None else None
@@ -659,6 +659,8 @@ class Storage:
         op.update(state="AUTHORIZED", intent=intent, intent_hash=digest)
 
     def _head_key(self, op):
+        if op.get("intent", {}).get("kind") == "manual":
+            return "releases/manual/catalog.json"
         return "releases/channels/" + op["track"] + ".json"
 
     def _reconcile_head(self, op):
@@ -686,7 +688,10 @@ class Storage:
                 self._write("op-" + op["operation_id"], op)
                 fail(503, "ecs_committed_head_changed")
             return
-        if op["state"] != "AUTHORIZED" or op["intent"]["kind"] != "release":
+        if op["state"] != "AUTHORIZED" or op["intent"]["kind"] not in (
+            "release",
+            "manual",
+        ):
             fail(409, "ecs_head_state_invalid")
         for row in op["intent"]["objects"]:
             facts = self.public.facts(row["key"])
@@ -733,6 +738,11 @@ class Storage:
             op["state"] in ("RESERVED", "AUTHORIZED")
             and body["outcome"] == "aborted"
             and not any(item[0] == op["operation_id"] for item in self.active_writers)
+            and not any(
+                stage.get("state") == "LINKING"
+                for stages in op.get("stages", {}).values()
+                for stage in stages
+            )
         ):
             op["state"] = "RELEASED"
             op["terminal_outcome"] = body["outcome"]
@@ -847,6 +857,9 @@ class Storage:
                         fail(409, "ecs_cleanup_head_unknown")
                     if release in str(head):
                         fail(409, "ecs_cleanup_head_referenced")
+            manual = self.public.read("releases/manual/catalog.json", MAX_HEAD)
+            if manual is not None and release in manual_catalog_entries(manual):
+                fail(409, "ecs_cleanup_manual_referenced")
             self.public.unlink(row["key"], expected)
             op.setdefault("cleaned", {})[str(ordinal)] = True
             self._write("op-" + op["operation_id"], op)
@@ -920,6 +933,115 @@ def unpack_head(value):
     return raw
 
 
+def manual_catalog_entries(raw):
+    """Validate the bounded Channel1 manual catalog, returning build-bound entries."""
+    from urllib.parse import urlsplit
+
+    data = decode(raw, maximum=MAX_HEAD)
+    fields(data, ("schema", "releases"))
+    if (
+        data["schema"] != 1
+        or type(data["schema"]) is not int
+        or type(data["releases"]) is not list
+        or len(data["releases"]) > 3
+    ):
+        fail(422, "ecs_manual_catalog_invalid")
+    entries, versions = {}, []
+    for row in data["releases"]:
+        fields(
+            row,
+            (
+                "version",
+                "track",
+                "identity",
+                "provenance",
+                "publishedAt",
+                "installer",
+                "zip",
+            ),
+        )
+        if (
+            row["track"] != "acceptance"
+            or row["identity"] != "Semantier.Agent.Acceptance"
+            or row["provenance"] != "local-signed"
+            or not isinstance(row["version"], str)
+            or len(row["version"]) > 23
+            or not re.fullmatch(
+                r"(?:0|[1-9][0-9]*)(?:\.(?:0|[1-9][0-9]*)){3}", row["version"]
+            )
+        ):
+            fail(422, "ecs_manual_catalog_invalid")
+        version = tuple(map(int, row["version"].split(".")))
+        if any(part > 65535 for part in version):
+            fail(422, "ecs_manual_catalog_invalid")
+        try:
+            when = datetime.fromisoformat(row["publishedAt"].replace("Z", "+00:00"))
+            if when.utcoffset() is None or when.utcoffset().total_seconds() != 0:
+                raise ValueError("UTC required")
+        except (ValueError, TypeError, AttributeError):
+            fail(422, "ecs_manual_catalog_invalid")
+        build = None
+        for label, ext in (("installer", "exe"), ("zip", "zip")):
+            artifact = row[label]
+            fields(artifact, ("url", "size", "sha256"))
+            integer(artifact["size"], maximum=MAX_OBJECT_BYTES, minimum=1)
+            hex_value(artifact["sha256"], 64)
+            if not isinstance(artifact["url"], str):
+                fail(422, "ecs_manual_catalog_invalid")
+            try:
+                url = urlsplit(artifact["url"])
+            except ValueError:
+                fail(422, "ecs_manual_catalog_invalid")
+            match = re.fullmatch(
+                r"/releases/channel-builds/([a-f0-9]{32})/[A-Za-z0-9_.-]+\." + ext,
+                url.path,
+            )
+            if (
+                url.scheme != "https"
+                or url.netloc != "channel1.semantier.com"
+                or url.query
+                or url.fragment
+                or not match
+                or (build is not None and build != match[1])
+            ):
+                fail(422, "ecs_manual_catalog_invalid")
+            build = match[1]
+        if build in entries or version in versions:
+            fail(422, "ecs_manual_catalog_invalid")
+        entries[build] = row
+        versions.append(version)
+    if versions != sorted(versions, reverse=True):
+        fail(422, "ecs_manual_catalog_invalid")
+    return entries
+
+
+def validate_manual_intent(intent):
+    """A manual catalog may append one immutable build and never rewrite history."""
+    if intent["track"] != "semantier-acceptance":
+        fail(422, "ecs_manual_track_invalid")
+    previous = unpack_head(intent["expected_head"])
+    current = manual_catalog_entries(previous) if previous is not None else {}
+    intended = manual_catalog_entries(unpack_head(intent["intended_head"]))
+    build = intent["release_id"]
+    if (
+        build in current
+        or set(intended) != set(current) | {build}
+        or any(intended[key] != row for key, row in current.items())
+    ):
+        fail(422, "ecs_manual_history_changed")
+    artifacts = intended[build]
+    expected = {}
+    for label in ("installer", "zip"):
+        item = artifacts[label]
+        expected[item["url"].split("channel1.semantier.com/", 1)[1]] = (
+            item["size"],
+            item["sha256"],
+        )
+    actual = {item["key"]: (item["size"], item["sha256"]) for item in intent["objects"]}
+    if len(intent["objects"]) != 2 or actual != expected:
+        fail(422, "ecs_manual_object_binding_invalid")
+
+
 def validate_intent(intent, op, config_hash):
     if type(intent.get("version")) is not int or intent["version"] != 1:
         fail(400, "ecs_version_invalid")
@@ -952,7 +1074,7 @@ def validate_intent(intent, op, config_hash):
         ).items()
     ):
         fail(422, "ecs_intent_binding_invalid")
-    if intent["kind"] not in ("release", "probe", "cleanup"):
+    if intent["kind"] not in ("release", "manual", "probe", "cleanup"):
         fail(422, "ecs_intent_kind_invalid")
     if (
         type(intent["objects"]) is not list
@@ -974,7 +1096,7 @@ def validate_intent(intent, op, config_hash):
             fail(422, "ecs_duplicate_object")
         keys.add(row["key"])
         total += row["size"]
-        if intent["kind"] == "release":
+        if intent["kind"] in ("release", "manual"):
             hex_value(intent["release_id"])
             hex_value(intent["variant_hash"], 64)
             if not row["key"].startswith(
@@ -993,10 +1115,12 @@ def validate_intent(intent, op, config_hash):
     integer(intent["allocation_bytes"], maximum=128 * MAX_OBJECT_BYTES, minimum=0)
     if intent["allocation_bytes"] < total:
         fail(422, "ecs_allocation_incomplete")
-    if intent["kind"] == "release":
+    if intent["kind"] in ("release", "manual"):
         if not intent["objects"] or unpack_head(intent["intended_head"]) is None:
             fail(422, "ecs_release_head_required")
         unpack_head(intent["expected_head"])
+        if intent["kind"] == "manual":
+            validate_manual_intent(intent)
     elif intent["expected_head"] is not None or intent["intended_head"] is not None:
         fail(422, "ecs_probe_cannot_change_head")
     if intent["kind"] != "cleanup" and intent["cleanup"]:

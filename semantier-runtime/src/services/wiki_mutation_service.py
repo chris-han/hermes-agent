@@ -1,10 +1,8 @@
 """Authenticated documentary wiki mutations; no generic filesystem permission."""
 import hashlib
-import importlib.util
 import json
 from pathlib import Path
 import re
-import sys
 from urllib.parse import quote
 
 from agents.gateway_identity import get_user_record, get_user_organization_context
@@ -18,7 +16,7 @@ PROFILE_TOOLS = ('read_file', 'search_files', 'wiki_read', 'wiki_mutate', 'wiki_
 def current_entitlement(user_id, workspace_id, capability="context.read"):
     user = get_user_record(user_id)
     org = get_user_organization_context(user_id)
-    if not user or user.get('workspace_id') != workspace_id or not org or not org.get('organization_id'):
+    if not user or user.get('workspace_id') != workspace_id or not org or not org.get('organization_id') or org.get('membership_status') != 'active':
         raise PermissionError('active governed workspace membership required')
     grant = {"capability": capability, "decision": "allow", "scope": {
         "organization_id": org["organization_id"], "workspace_id": workspace_id}}
@@ -35,14 +33,8 @@ def validated_wiki_root(workspace):
 
 
 def governance_module():
-    name = '_semantier_documentary_wiki_governance'
-    if name not in sys.modules:
-        path=Path(__file__).resolve().parents[2]/'hermes-agent/skills/research/llm-wiki/wiki_governance.py'
-        spec=importlib.util.spec_from_file_location(name,path)
-        module=importlib.util.module_from_spec(spec)
-        sys.modules[name]=module
-        spec.loader.exec_module(module)
-    return sys.modules[name]
+    from services import documentary_wiki_governance
+    return documentary_wiki_governance
 
 
 def digest(data):
@@ -51,8 +43,11 @@ def digest(data):
 
 class WikiMutationService:
     def __init__(self, boundary):
-        if boundary is None or boundary.audit_metadata.get('wiki_task_profile') != 'documentary-wiki.v1':
-            raise PermissionError('authenticated server-owned wiki profile required')
+        from agents.core_file_scope import CoreFileScope
+        if not isinstance(boundary, CoreFileScope):
+            raise PermissionError('authenticated core file scope required')
+        boundary.validate()
+        self.scope = boundary
         self.workspace=boundary.workspace_id; self.actor=boundary.user_id; self.session=boundary.session_id
         self.org,self.grant=current_entitlement(self.actor,self.workspace)
         self.store=WikiMutationStore()
@@ -60,9 +55,12 @@ class WikiMutationService:
         if self.store.binding(self.workspace,local) != self.actor:
             raise PermissionError('wiki task binding required')
         self.root=validated_wiki_root(self.workspace)
+        if self.root != boundary.context.workspace_root / "wiki":
+            raise PermissionError("wiki root binding mismatch")
         self._safe_root()
 
     def _safe_root(self):
+        self.scope.validate()
         # No symlink anywhere in the active wiki: assurance recursively opens
         # documents, contracts and sidecars, not only the mutated path.
         current=self.root

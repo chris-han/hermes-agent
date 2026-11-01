@@ -43,7 +43,6 @@ from agents.workspace_uploads import (
     save_workspace_upload,
 )
 from agents.workspace_session_logs import (
-    get_workspace_session_log_payload,
     list_workspace_sessions,
 )
 from agents.auth_session import (
@@ -103,15 +102,13 @@ def _boundary_header_payload(
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return base64.urlsafe_b64encode(raw).decode("ascii")
 
-SUPPORTED_GATEWAYS = ("weixin", "feishu", "web_api")
+SUPPORTED_GATEWAYS = ("weixin", "web_api")
 
 GATEWAY_PLATFORM_MAP = {
     "weixin": "weixin",
-    "feishu": "feishu",
     "web_api": "api_server",
 }
 MESSAGING_DOCS_URL = {
-    "feishu": "https://hermes-agent.nousresearch.com/docs/user-guide/messaging/feishu",
     "weixin": "https://hermes-agent.nousresearch.com/docs/user-guide/messaging/weixin",
 }
 WEIXIN_RECONNECT_CONTRACT_VERSION = "weixin-reconnect.v1"
@@ -578,44 +575,8 @@ def _ensure_weixin_workspace_pairing_approved(
     )
 
 
-def _ensure_feishu_workspace_pairing_approved(
-    *,
-    hermes_home: str,
-    user_id: str,
-    feishu_open_id: str,
-    user_name: str = "",
-) -> None:
-    normalized_user_id = str(user_id or "").strip()
-    normalized_open_id = str(feishu_open_id or "").strip()
-    if not normalized_user_id or not normalized_open_id:
-        return
-    config = get_feishu_bot_config_for_user(normalized_user_id)
-    if not isinstance(config, dict):
-        return
-    app_id = str(config.get("app_id") or "").strip()
-    app_secret = str(config.get("app_secret") or "").strip()
-    if not app_id or not app_secret:
-        return
-    _ensure_gateway_pairing_approved(
-        hermes_home=hermes_home,
-        platform="feishu",
-        external_user_id=normalized_open_id,
-        user_name=user_name or normalized_open_id,
-    )
 
 
-def _revoke_feishu_workspace_pairing(
-    *,
-    hermes_home: str,
-    feishu_open_id: str,
-) -> None:
-    normalized_open_id = str(feishu_open_id or "").strip()
-    if not normalized_open_id:
-        return
-    for store in _iter_gateway_pairing_stores(hermes_home=hermes_home):
-        revoke = getattr(store, "revoke", None)
-        if callable(revoke):
-            revoke("feishu", normalized_open_id)
 
 
 def _issue_auth_response(
@@ -684,12 +645,27 @@ def _weixin_auth_response(
     request: Request | None = None,
     state: str | None = None,
 ) -> JSONResponse:
-    return _issue_auth_response(
+    response = _issue_auth_response(
         user,
         auth_provider="weixin",
         request=request,
         state=state,
     )
+    from agents.auth_db import is_postgresql
+    if request is not None and is_postgresql():
+        try:
+            from agents.webapi.journey_routes import issue_journey_cookie, link_authenticated_journey
+            from agents.operations_store import capture_fact
+            from agents.operations_journey import fingerprint
+            issue_journey_cookie(response, request)
+            link_authenticated_journey(request, user)
+            capture_fact(name='login_completed',user_id=user['user_id'],producer='identity',
+                         receipt_ref='weixin-login:'+fingerprint(state or browser_session_nonce()),
+                         properties={'auth_provider':'weixin','origin_basis':'verified_provider_callback'})
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning('Weixin login observation unavailable')
+    return response
 
 
 def _read_workspace_weixin_account(ctx: RequestContext) -> dict[str, Any] | None:
@@ -1048,171 +1024,21 @@ async def _persist_weixin_auth_artifact(
     raise RuntimeError(f"failed to persist Weixin auth artifact: {last_exc}") from last_exc
 
 
-def _read_feishu_bot_config(ctx: RequestContext) -> dict[str, Any] | None:
-    user = auth_context_payload(ctx).get("user") or {}
-    workspace_id = str(user.get("workspace_id") or "").strip()
-    if not workspace_id:
-        return None
-    payload = read_workspace_feishu_bot_config(workspace_id)
-    return payload if isinstance(payload, dict) else None
 
 
-def _feishu_chat_type_from_session_key(session_key: Any) -> str:
-    parts = str(session_key or "").split(":")
-    if len(parts) >= 7 and parts[0] == "agent" and parts[2] == "workspace":
-        offset = 4
-    elif len(parts) >= 5 and parts[0] == "agent":
-        offset = 2
-    else:
-        return ""
-    if len(parts) > offset + 2 and parts[offset] == "feishu":
-        value = str(parts[offset + 1] or "").strip().lower()
-        return value if value in {"dm", "group", "forum", "thread"} else ""
-    return ""
 
 
-def _platform_value(value: Any) -> str:
-    return str(getattr(value, "value", value) or "").strip().lower()
 
 
-def _timestamp_value(value: Any) -> float:
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, datetime):
-        parsed = value
-    else:
-        text = str(value or "").strip()
-        if not text:
-            return 0.0
-        try:
-            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-        except ValueError:
-            try:
-                return float(text)
-            except ValueError:
-                return 0.0
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.timestamp()
 
 
-def _iter_feishu_runner_session_entries() -> list[Any]:
-    try:
-        from agents.hermes_embedded_gateway import get_embedded_hermes_gateway_service
-
-        service = get_embedded_hermes_gateway_service()
-        runtime = getattr(service, "_shared_runtime", None)
-        runner = getattr(runtime, "runner", None) if runtime is not None else None
-        session_store = getattr(runner, "session_store", None) if runner is not None else None
-        if session_store is None:
-            return []
-        ensure_loaded = getattr(session_store, "_ensure_loaded", None)
-        if callable(ensure_loaded):
-            ensure_loaded()
-        entries = getattr(session_store, "_entries", {})
-        if isinstance(entries, dict):
-            return list(entries.values())
-    except Exception:
-        return []
-    return []
 
 
-def _list_feishu_live_channels(ctx: RequestContext) -> list[dict[str, Any]]:
-    channels: dict[tuple[str, str], dict[str, Any]] = {}
-
-    def remember(candidate: dict[str, Any]) -> None:
-        chat_id = str(candidate.get("chat_id") or "").strip()
-        if not chat_id:
-            return
-        thread_id = str(candidate.get("thread_id") or "").strip()
-        key = (chat_id, thread_id)
-        candidate["chat_id"] = chat_id
-        candidate["thread_id"] = thread_id
-        candidate["last_active"] = _timestamp_value(candidate.get("last_active"))
-        current = channels.get(key)
-        if current is None or float(candidate.get("last_active") or 0) > float(
-            current.get("last_active") or 0
-        ):
-            channels[key] = candidate
-
-    try:
-        rows = list_workspace_sessions(ctx.hermes_home)
-    except Exception:
-        rows = []
-    for row in rows:
-        if _platform_value(row.get("platform")) != "feishu":
-            continue
-        workspace_owner_id = str(row.get("workspace_owner_id") or "").strip()
-        if workspace_owner_id and workspace_owner_id != ctx.workspace_id:
-            continue
-        chat_id = str(row.get("chat_id") or "").strip()
-        if not chat_id:
-            continue
-        chat_type = _feishu_chat_type_from_session_key(row.get("session_key"))
-        if not chat_type:
-            try:
-                payload = get_workspace_session_log_payload(
-                    ctx.hermes_home,
-                    str(row.get("session_id") or ""),
-                )
-            except Exception:
-                payload = None
-            if isinstance(payload, dict):
-                chat_type = _feishu_chat_type_from_session_key(
-                    payload.get("session_key")
-                )
-        remember(
-            {
-                "chat_id": chat_id,
-                "thread_id": str(row.get("thread_id") or "").strip(),
-                "chat_type": chat_type,
-                "name": str(row.get("display_name") or row.get("title") or chat_id),
-                "last_active": row.get("last_active"),
-                "session_id": str(row.get("session_id") or ""),
-            }
-        )
-
-    for entry in _iter_feishu_runner_session_entries():
-        source = getattr(entry, "origin", None)
-        if (
-            source is None
-            or _platform_value(getattr(source, "platform", None)) != "feishu"
-        ):
-            continue
-        workspace_owner_id = str(
-            getattr(source, "workspace_owner_id", "") or ""
-        ).strip()
-        if workspace_owner_id and workspace_owner_id != ctx.workspace_id:
-            continue
-        chat_id = str(getattr(source, "chat_id", "") or "").strip()
-        if not chat_id:
-            continue
-        remember(
-            {
-                "chat_id": chat_id,
-                "thread_id": str(getattr(source, "thread_id", "") or "").strip(),
-                "chat_type": str(getattr(source, "chat_type", "") or "").strip(),
-                "name": str(
-                    getattr(source, "chat_name", None)
-                    or getattr(entry, "display_name", None)
-                    or chat_id
-                ),
-                "last_active": getattr(entry, "updated_at", None),
-                "session_id": str(getattr(entry, "session_id", "") or ""),
-            }
-        )
-
-    return sorted(
-        channels.values(),
-        key=lambda item: float(item.get("last_active") or 0),
-        reverse=True,
-    )
 
 
 def _messaging_platforms_payload(ctx: RequestContext) -> dict[str, Any]:
     user = auth_context_payload(ctx).get("user") or {}
     weixin_account = _read_workspace_weixin_account(ctx)
-    feishu_account = _read_feishu_bot_config(ctx)
     weixin_config: dict[str, Any] = {}
     weixin_configured = False
     weixin_updated_at: str | None = None
@@ -1238,62 +1064,10 @@ def _messaging_platforms_payload(ctx: RequestContext) -> dict[str, Any]:
             "home_channel": _normalize_weixin_home_channel(weixin_account.get("home_channel")),
         }
 
-    feishu_configured = bool(feishu_account) or bool(str(user.get("feishu_open_id") or "").strip())
-    feishu_config: dict[str, Any] = {}
-    feishu_updated_at: str | None = None
-    if isinstance(feishu_account, dict):
-        feishu_updated_at = (
-            str(
-                feishu_account.get("saved_at")
-                or feishu_account.get("updated_at")
-                or ""
-            ).strip()
-            or None
-        )
-        feishu_config = {
-            "app_id": str(feishu_account.get("app_id") or ""),
-            "app_secret": str(feishu_account.get("app_secret") or ""),
-            "connection_mode": str(feishu_account.get("connection_mode") or "websocket"),
-            "domain": str(feishu_account.get("domain") or "feishu"),
-            "bot_open_id": str(feishu_account.get("bot_open_id") or ""),
-            "bot_name": str(feishu_account.get("bot_name") or ""),
-            "home_channel": str(feishu_account.get("home_channel") or ""),
-            "live_channels": _list_feishu_live_channels(ctx),
-            "scope": "organization",
-            "manager_user_id": str(feishu_account.get("manager_user_id") or ""),
-            "feishu_open_id": str(user.get("feishu_open_id") or "").strip(),
-        }
-    elif feishu_configured:
-        feishu_config = {
-            "feishu_open_id": str(user.get("feishu_open_id") or "").strip(),
-            "connection_mode": "websocket",
-            "domain": "feishu",
-            "home_channel": "",
-            "live_channels": _list_feishu_live_channels(ctx),
-            "scope": "organization",
-        }
-
     return {
         "owner_id": ctx.user_id,
         "workspace_slug": ctx.workspace_slug,
         "platforms": [
-            {
-                "platform": "feishu",
-                "configured": feishu_configured,
-                "docs_url": MESSAGING_DOCS_URL["feishu"],
-                "updated_at": feishu_updated_at,
-                "validated_at": (
-                    str(feishu_account.get("validated_at") or "").strip()
-                    if isinstance(feishu_account, dict)
-                    else None
-                ),
-                "last_error": (
-                    str(feishu_account.get("last_error") or "").strip()
-                    if isinstance(feishu_account, dict)
-                    else None
-                ),
-                "config": feishu_config,
-            },
             {
                 "platform": "weixin",
                 "configured": weixin_configured,
@@ -1464,61 +1238,3 @@ def _compat_hermes_home_bound(target_home: Path, *, session_id: str | None = Non
                     os.environ.pop(key, None)
                 else:
                     os.environ[key] = value
-
-
-async def _restart_embedded_gateway_for_feishu_account(
-    feishu_account: dict[str, Any],
-) -> dict[str, Any]:
-    app_id = str(feishu_account.get("app_id") or "").strip()
-    app_secret = str(feishu_account.get("app_secret") or "").strip()
-    if not app_id or not app_secret:
-        return {
-            "ok": False,
-            "error": "feishu app_id and app_secret are required",
-        }
-
-    domain = str(feishu_account.get("domain") or "feishu").strip()
-    connection_mode = str(feishu_account.get("connection_mode") or "websocket").strip()
-
-    os.environ["FEISHU_APP_ID"] = app_id
-    os.environ["FEISHU_APP_SECRET"] = app_secret
-    if domain:
-        os.environ["FEISHU_DOMAIN"] = domain
-    if connection_mode:
-        os.environ["FEISHU_CONNECTION_MODE"] = connection_mode
-    owner_user_id = str(
-        feishu_account.get("owner_user_id")
-        or feishu_account.get("manager_user_id")
-        or ""
-    ).strip()
-    if owner_user_id:
-        try:
-            get_user_record = __getattr_from_gateway_identity("get_user_record")
-            user = get_user_record(owner_user_id)
-        except Exception:
-            user = None
-        if isinstance(user, dict):
-            feishu_open_id = str(user.get("feishu_open_id") or "").strip()
-            if feishu_open_id:
-                existing_allowed = {
-                    item.strip()
-                    for item in os.environ.get("FEISHU_ALLOWED_USERS", "").split(",")
-                    if item.strip()
-                }
-                existing_allowed.add(feishu_open_id)
-                os.environ["FEISHU_ALLOWED_USERS"] = ",".join(sorted(existing_allowed))
-
-    try:
-        from agents.hermes_embedded_gateway import get_embedded_hermes_gateway_service
-
-        service = get_embedded_hermes_gateway_service()
-        await service.shutdown()
-        await service.ensure_started()
-        return {
-            "ok": True,
-        }
-    except Exception as exc:
-        return {
-            "ok": False,
-            "error": f"embedded gateway restart failed: {exc}",
-        }

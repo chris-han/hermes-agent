@@ -121,8 +121,9 @@ from semantier.knowledge_feature_packs.semantica_grounding_assistant import (
 )
 from semantier.knowledge_feature_packs.semantica_adapter import SEMANTICA_COMMIT
 from semantier.knowledge_feature_packs.relationship_extraction import (
-    RELATION_EXTRACTION_SCHEMA,
+    RELATION_PROPOSAL_SCHEMA,
     build_relationship_extraction_input,
+    ground_relationship_proposal,
 )
 from semantier.semantica_context_graph.artifact_repository import (
     ArtifactConflict,
@@ -189,7 +190,7 @@ def _few_shot_relationship_proposer(
     def propose(elements: list[dict[str, object]]) -> dict[str, object]:
         llm = _current_agent_structured_llm(hermes_home)
         prompt = load_repo_prompt(
-            "contextgraph/semantica_relationship_extraction_v1.md",
+            "contextgraph/semantica_relationship_extraction_v2.md",
             allowed_namespace="contextgraph",
         )
         input_text = build_relationship_extraction_input(
@@ -200,11 +201,11 @@ def _few_shot_relationship_proposer(
             result = asyncio.run(llm.generate_structured(
                 instructions=prompt.text,
                 input_text=input_text,
-                json_schema=RELATION_EXTRACTION_SCHEMA,
-                schema_name="semantier_semantic_relationship_extraction_v1",
+                json_schema=RELATION_PROPOSAL_SCHEMA,
+                schema_name="semantier_semantic_relationship_extraction_v2",
                 purpose="contextgraph_ai_extract",
             ))
-            return result.parsed
+            return ground_relationship_proposal(result.parsed, elements)
 
         with ThreadPoolExecutor(max_workers=1, thread_name_prefix="semantic-extraction") as pool:
             return pool.submit(run).result()

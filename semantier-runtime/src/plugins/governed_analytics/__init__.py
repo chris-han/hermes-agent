@@ -1852,13 +1852,11 @@ def _governed_report_export_handler(args: dict, **_kw: Any) -> str:
     artifact_path = artifacts_dir / f"{stem}-{digest[:12]}.md"
     artifact_path.write_text(content, encoding="utf-8")
     relative_path = artifact_path.relative_to(artifacts_dir).as_posix()
-    encoded_relative_path = quote(relative_path, safe="")
-    raw_url = (
-        f"/sessions/{quote(session_id, safe='')}/artifacts/"
-        f"{'/'.join(quote(part, safe='') for part in relative_path.split('/'))}/raw"
-    )
-    display_path = f"/sessions/{session_id}/artifacts/{relative_path}"
-    inspector_href = f"#artifact={encoded_relative_path}"
+    workspace_path = artifact_path.relative_to(hermes_home).as_posix()
+    encoded_path = quote(workspace_path, safe="")
+    raw_url = f"/api/files?action=download&path={encoded_path}&expectedSha256={digest}"
+    display_path = workspace_path
+    file_href = f"/files?path={encoded_path}&sha256={digest}"
 
     descriptor = {
         "artifact_id": f"report:{digest[:16]}",
@@ -1867,6 +1865,7 @@ def _governed_report_export_handler(args: dict, **_kw: Any) -> str:
         "filename": artifact_path.name,
         "path": str(artifact_path),
         "relative_path": relative_path,
+        "workspace_path": workspace_path,
         "raw_url": raw_url,
         "sha256": digest,
         "size_bytes": artifact_path.stat().st_size,
@@ -1913,12 +1912,8 @@ def _governed_report_export_handler(args: dict, **_kw: Any) -> str:
         {
             "artifact": descriptor,
             "display_path": display_path,
-            "inspector_href": inspector_href,
-            "user_message_guidance": (
-                "Show one saved-location line: markdown-link the visible file path "
-                f"{display_path} to {inspector_href}. Do not print a separate "
-                "Inspector link or raw URL line."
-            ),
+            "file_href": file_href,
+            "user_message_guidance": (Path(__file__).resolve().parents[2] / "prompts/agents/GOVERNED_REPORT_LINK.md").read_text(encoding="utf-8").format(display_path=display_path,file_href=file_href).strip(),
             "run_payload": str(run_path),
             "lifecycle_event": lifecycle_events[-1],
         },

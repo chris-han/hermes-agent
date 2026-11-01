@@ -6,7 +6,6 @@ import json
 import logging
 import os
 import sys
-import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -163,139 +162,6 @@ def _patch_gateway_runner_governed_context(gateway_runner_cls: type[Any]) -> Non
     gateway_runner_cls._semantier_governed_context_patched = True
 
 
-def _patch_gateway_runner_feishu_ingress(gateway_runner_cls: type[Any]) -> None:
-    """Keep governed identity binding outside independently versioned Hermes adapters."""
-    if getattr(gateway_runner_cls, "_semantier_feishu_ingress_patched", False):
-        return
-    wire = getattr(gateway_runner_cls, "_wire_adapter_handlers", None)
-    authorize = getattr(gateway_runner_cls, "_is_user_authorized", None)
-    commands = getattr(gateway_runner_cls, "_hm_dispatch_idle_commands", None)
-    if not callable(wire) or not callable(authorize):
-        return
-
-    def _wire(self, adapter, **kwargs):
-        wire(self, adapter, **kwargs)
-        if _platform_name(getattr(adapter, "platform", None)) != "feishu":
-            return
-        if getattr(adapter, "_semantier_feishu_ingress_bound", False):
-            return
-        admit = adapter._admit
-
-        def _admit(sender, message):
-            reason = admit(sender, message)
-            if reason != "dm_policy_rejected":
-                return reason
-            from agents.feishu_ingress_identity import (
-                FeishuIngressOwnerResolutionError,
-                resolve_feishu_ingress_owner,
-            )
-            sender_id = getattr(sender, "sender_id", None)
-            try:
-                resolve_feishu_ingress_owner(
-                    open_id=getattr(sender_id, "open_id", None),
-                    union_id=getattr(sender_id, "union_id", None),
-                    chat_id=getattr(message, "chat_id", None),
-                    platform_session_key=getattr(message, "message_id", None),
-                )
-            except FeishuIngressOwnerResolutionError:
-                return reason
-            return None
-
-        adapter._admit = _admit
-        receive = getattr(adapter, "_handle_message_event_data", None)
-        if callable(receive):
-            async def _receive(data):
-                raw = getattr(data, "event", None)
-                message = getattr(raw, "message", None)
-                sender = getattr(raw, "sender", None)
-                try:
-                    text = json.loads(getattr(message, "content", "") or "{}").get("text", "")
-                except (TypeError, ValueError, AttributeError):
-                    text = ""
-                if not (isinstance(text, str) and text.startswith("/link ")
-                        and getattr(message, "message_type", None) == "text"
-                        and getattr(message, "chat_type", None) == "p2p"
-                        and getattr(sender, "sender_type", None) == "user"):
-                    return await receive(data)
-                message_id = getattr(message, "message_id", None)
-                if not message_id or await adapter._is_duplicate(message_id):
-                    return
-                from agents.gateway_identity import consume_feishu_message_link
-
-                identity = getattr(sender, "sender_id", None)
-                try:
-                    consume_feishu_message_link(
-                        state=text.removeprefix("/link ").strip(), app_id=adapter._app_id,
-                        open_id=getattr(identity, "open_id", ""),
-                        union_id=getattr(identity, "union_id", None),
-                    )
-                except ValueError as exc:
-                    reply = str(exc)
-                except KeyError:
-                    reply = "Link code is invalid, expired or already used. Generate a new code in Semantier Settings. / 验证码无效、过期或已使用，请在 Semantier 设置中重新生成。"
-                else:
-                    reply = "Feishu account linked. Send hi to start. / 飞书账号已绑定，发送 hi 即可开始。"
-                await adapter.send(message.chat_id, reply)
-
-            adapter._handle_message_event_data = _receive
-
-        def _bound(handle):
-            async def _handle(event):
-                from agents.feishu_ingress_identity import (
-                    FeishuIngressOwnerResolutionError,
-                    stamp_feishu_ingress_owner,
-                )
-                try:
-                    stamp_feishu_ingress_owner(event)
-                except FeishuIngressOwnerResolutionError as exc:
-                    logger.warning("Feishu ingress rejected: %s", exc)
-                    return
-                await handle(event)
-            return _handle
-
-        # Bind before text batching pins RoutingIdentity/session keys. Keep the
-        # handle guard too: reaction/card events can bypass normal dispatch.
-        adapter._dispatch_inbound_event = _bound(adapter._dispatch_inbound_event)
-        adapter.handle_message = _bound(adapter.handle_message)
-        adapter._semantier_feishu_ingress_bound = True
-
-    def _authorize(self, source, **kwargs):
-        if _platform_name(getattr(source, "platform", None)) == "feishu":
-            from agents.feishu_ingress_identity import (
-                FeishuIngressOwnerResolutionError,
-                resolve_feishu_ingress_owner,
-            )
-            try:
-                owner = resolve_feishu_ingress_owner(
-                    open_id=getattr(source, "user_id", None),
-                    union_id=getattr(source, "user_id_alt", None),
-                    chat_id=getattr(source, "chat_id", None),
-                )
-            except FeishuIngressOwnerResolutionError:
-                return False
-            return owner.owner_workspace_id == getattr(source, "workspace_owner_id", None)
-        return authorize(self, source, **kwargs)
-
-    gateway_runner_cls._wire_adapter_handlers = _wire
-    gateway_runner_cls._is_user_authorized = _authorize
-    if callable(commands):
-        async def _commands(self, event, source, session_key):
-            if _platform_name(getattr(source, "platform", None)) != "feishu":
-                return await commands(self, event, source, session_key)
-            # Hermes now scans skill commands in an executor before preparing
-            # the model turn. That executor needs the same governed session
-            # context, even for ordinary text that falls through to the model.
-            from gateway.session import build_session_context
-
-            entry = await self.async_session_store.get_or_create_session(source)
-            tokens = self._set_session_env(build_session_context(source, self.config, entry))
-            try:
-                return await commands(self, event, source, session_key)
-            finally:
-                self._clear_session_env(tokens)
-
-        gateway_runner_cls._hm_dispatch_idle_commands = _commands
-    gateway_runner_cls._semantier_feishu_ingress_patched = True
 
 
 def _patch_gateway_runner_weixin_authorization(gateway_runner_cls: type[Any]) -> None:
@@ -405,8 +271,6 @@ class AdapterRegistryEntry:
 class _RunnerRuntime:
     runner: Any
     watch_task: asyncio.Task[None] | None
-    cron_stop: threading.Event | None
-    cron_thread: threading.Thread | None
     runtime_key: str | None = None
 
 
@@ -570,20 +434,26 @@ class EmbeddedHermesGatewayService:
             _ensure_repo_local_runtime()
             from agents.auth_pairing_postgres import install_hosted_channel_storage
             install_hosted_channel_storage()
-            _hydrate_saved_feishu_gateway_env()
 
             from agents.hermes_boundary_provider import SemantierExecutionBoundaryProvider
             from gateway.config import Platform, load_gateway_config
             from gateway.execution_boundary import replace_execution_boundary_provider
-            from gateway.run import GatewayRunner, _start_cron_ticker
+            from gateway.run import GatewayRunner
+            from agents.hermes_business_adapter import register_core_work_receipt_tool
+
+            register_core_work_receipt_tool()
 
             replace_execution_boundary_provider(SemantierExecutionBoundaryProvider())
             _refresh_gateway_runtime_home()
             _patch_gateway_runner_governed_context(GatewayRunner)
             _patch_gateway_runner_weixin_authorization(GatewayRunner)
-            _patch_gateway_runner_feishu_ingress(GatewayRunner)
 
             config = load_gateway_config()
+            # Feishu ingress belongs exclusively to the signed core webhook.
+            # Remove native registration even when stale operator env/config exists.
+            feishu_platform = getattr(Platform, 'FEISHU', None)
+            if feishu_platform is not None:
+                config.platforms.pop(feishu_platform, None)
             api_server_config = config.platforms.get(Platform.API_SERVER)
             if api_server_config is not None:
                 api_server_config.enabled = False
@@ -594,7 +464,6 @@ class EmbeddedHermesGatewayService:
 
             self._shared_runtime = await self._start_runner_runtime(
                 GatewayRunner=GatewayRunner,
-                start_cron_ticker=_start_cron_ticker,
                 config=config,
                 runtime_key=None,
             )
@@ -855,12 +724,10 @@ class EmbeddedHermesGatewayService:
         self,
         *,
         GatewayRunner: type[Any],
-        start_cron_ticker: Callable[..., Any],
         config: Any,
         runtime_key: str | None,
         hermes_home: str | None = None,
     ) -> _RunnerRuntime:
-        loop = asyncio.get_running_loop()
         shared_home = str(_shared_runtime_root())
         with _temporary_platform_hermes_home(shared_home):
             runner = GatewayRunner(config)
@@ -874,32 +741,9 @@ class EmbeddedHermesGatewayService:
         if not success:
             raise RuntimeError("failed to start embedded Hermes gateway")
 
-        from agents.cron_home_provider import semantier_cron_homes
-        from agents.cron_storage_provider import SemantierCronStorageProvider
-
-        def cron_profile_homes():
-            homes = [Path(hermes_home)] if hermes_home else semantier_cron_homes()
-            profiles = {}
-            for home in homes:
-                resolved = Path(home).expanduser().resolve()
-                scope = SemantierCronStorageProvider._scope(resolved)
-                profiles[scope.removeprefix("workspace:")] = resolved
-            return sorted(profiles.items())
-
-        cron_stop = threading.Event()
-        cron_thread = threading.Thread(
-            target=start_cron_ticker,
-            args=(cron_stop,),
-            kwargs={"adapters": runner.adapters, "loop": loop, "profile_homes": cron_profile_homes},
-            daemon=True,
-            name="semantier-embedded-cron" if runtime_key is None else f"semantier-embedded-cron-{runtime_key}",
-        )
-        cron_thread.start()
         runtime = _RunnerRuntime(
             runner=runner,
             watch_task=None,
-            cron_stop=cron_stop,
-            cron_thread=cron_thread,
             runtime_key=runtime_key,
         )
         self._bind_delivery_router(runner)
@@ -939,10 +783,6 @@ class EmbeddedHermesGatewayService:
             await runtime.runner.stop()
             await runtime.runner.wait_for_shutdown()
         finally:
-            if runtime.cron_stop is not None:
-                runtime.cron_stop.set()
-            if runtime.cron_thread is not None:
-                await asyncio.to_thread(runtime.cron_thread.join, 5)
             if runtime.watch_task is not None and not runtime.watch_task.done():
                 runtime.watch_task.cancel()
                 try:
@@ -1086,89 +926,8 @@ def _weixin_account_rank(candidate: tuple[Path, dict]) -> tuple[int, str, str]:
     return active_score, updated_at, account_id
 
 
-def _feishu_config_rank(config: dict[str, Any]) -> tuple[int, str, str]:
-    app_id = str(config.get("app_id") or "").strip()
-    app_secret = str(config.get("app_secret") or "").strip()
-    valid_score = 1 if app_id and app_secret else 0
-    updated_at = str(
-        config.get("updated_at")
-        or config.get("validated_at")
-        or config.get("saved_at")
-        or ""
-    )
-    owner_user_id = str(
-        config.get("owner_user_id") or config.get("manager_user_id") or ""
-    )
-    return valid_score, updated_at, owner_user_id
 
 
-def _hydrate_saved_feishu_gateway_env() -> None:
-    try:
-        from agents.auth_db import list_feishu_bot_configs, load_users
-
-        configs = [
-            dict(config)
-            for config in list_feishu_bot_configs()
-            if isinstance(config, dict)
-        ]
-    except Exception:
-        return
-
-    candidates = [
-        config
-        for config in configs
-        if str(config.get("app_id") or "").strip()
-        and str(config.get("app_secret") or "").strip()
-    ]
-    if not candidates:
-        return
-
-    env_app_id = str(os.environ.get("FEISHU_APP_ID") or "").strip()
-    env_app_secret = str(os.environ.get("FEISHU_APP_SECRET") or "").strip()
-    selected = None
-    if env_app_id and env_app_secret:
-        for config in candidates:
-            if (
-                str(config.get("app_id") or "").strip() == env_app_id
-                and str(config.get("app_secret") or "").strip() == env_app_secret
-            ):
-                selected = config
-                break
-    if selected is None:
-        selected = max(candidates, key=_feishu_config_rank)
-
-    os.environ["FEISHU_APP_ID"] = str(selected.get("app_id") or "").strip()
-    os.environ["FEISHU_APP_SECRET"] = str(selected.get("app_secret") or "").strip()
-    for env_key, config_key, default in (
-        ("FEISHU_DOMAIN", "domain", "feishu"),
-        ("FEISHU_CONNECTION_MODE", "connection_mode", "websocket"),
-        ("FEISHU_HOME_CHANNEL", "home_channel", ""),
-    ):
-        value_text = str(selected.get(config_key) or default).strip()
-        if value_text:
-            os.environ[env_key] = value_text
-
-    owner_user_id = str(
-        selected.get("owner_user_id") or selected.get("manager_user_id") or ""
-    ).strip()
-    if not owner_user_id:
-        return
-    try:
-        user = load_users().get(owner_user_id)
-    except Exception:
-        user = None
-    if not isinstance(user, dict):
-        return
-    feishu_open_id = str(user.get("feishu_open_id") or "").strip()
-    if not feishu_open_id:
-        return
-    allowed = {
-        item.strip()
-        for item in os.environ.get("FEISHU_ALLOWED_USERS", "").split(",")
-        if item.strip()
-    }
-    allowed.add(feishu_open_id)
-    os.environ["FEISHU_ALLOWED_USERS"] = ",".join(sorted(allowed))
 
 
 def _hydrate_saved_weixin_gateway_env(runtime_root: Path) -> None:

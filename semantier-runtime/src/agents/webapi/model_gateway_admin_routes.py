@@ -94,3 +94,116 @@ async def model_gateway_admin_model_cost_map(request: Request):
     service=gateway(request); await actor_for(request,service,'provider_credentials:manage',browser_only=True)
     data=await service.proxy.operation('GET','/public/litellm_model_cost_map',params={'catalog_only':'true'})
     return {name:row for name,row in data.items() if isinstance(row,dict) and row.get('litellm_provider') in {'azure','bedrock','volcengine','dashscope'}}
+
+
+# Price source custody and native consumption are separate from customer tariffs.
+import httpx
+import re
+from functools import wraps
+from contracts.billing import BillingError
+from fastapi import HTTPException
+
+
+def pricing_errors(handler):
+    @wraps(handler)
+    async def invoke(*args, **kwargs):
+        try:
+            return await handler(*args, **kwargs)
+        except BillingError as exc:
+            raise HTTPException(404 if exc.code=='not_found' else 409, exc.code) from None
+        except (ValueError, TypeError) as exc:
+            reason=str(exc) if re.fullmatch('[A-Z_]{1,80}',str(exc)) else 'price source or projection validation failed'
+            raise HTTPException(422, reason) from None
+        except httpx.HTTPError:
+            raise HTTPException(503, 'native pricing service unavailable') from None
+    return invoke
+async def pricing_actor(request, *, operator=False):
+    from agents.model_gateway.pricing import PricingAdmin
+    service=gateway(request)
+    actor=await actor_for(request,service,'billing:manage',browser_only=True)
+    admin=PricingAdmin(service)
+    if operator:await admin.require_operator(actor)
+    return admin,actor
+
+
+@router.get('/pricing/providers')
+@pricing_errors
+async def pricing_providers(request: Request):
+    admin,actor=await pricing_actor(request)
+    return await admin.providers(actor)
+
+
+@router.post('/pricing/collections')
+@pricing_errors
+async def pricing_collect(request: Request):
+    admin,actor=await pricing_actor(request)
+    return await admin.collect(actor,await request.json())
+
+
+@router.get('/pricing/collections')
+@pricing_errors
+async def pricing_collections(request: Request):
+    admin,actor=await pricing_actor(request)
+    limit=int(request.query_params.get('limit','50')); offset=int(request.query_params.get('offset','0'))
+    provider=request.query_params.get('provider_id'); source=request.query_params.get('source_ref')
+    return {'data':await admin.store.runs(actor.organization_id,limit=limit,offset=offset,provider_id=provider,source_ref=source),'capabilities':await admin.capabilities(actor),'limit':limit,'offset':offset}
+
+
+@router.get('/pricing/collections/{run_id}')
+@pricing_errors
+async def pricing_collection(run_id: str,request: Request):
+    admin,actor=await pricing_actor(request)
+    return await admin.store.run(actor.organization_id,run_id)
+
+
+@router.get('/pricing/catalogs/{version_id}')
+@pricing_errors
+async def pricing_catalog(version_id: str,request: Request):
+    admin,actor=await pricing_actor(request)
+    return await admin.store.snapshot(actor.organization_id,version_id)
+
+
+@router.post('/pricing/sync')
+@pricing_errors
+async def pricing_sync(request: Request):
+    admin,actor=await pricing_actor(request,operator=True)
+    return await admin.sync(actor,await request.json())
+
+
+@router.get('/pricing/source')
+@pricing_errors
+async def pricing_source(request: Request):
+    admin,actor=await pricing_actor(request)
+    return await admin.source(actor,provider_id=request.query_params.get('provider_id'),source_ref=request.query_params.get('source_ref'))
+
+
+@router.get('/pricing/reload-status')
+@pricing_errors
+async def pricing_reload_status(request: Request):
+    admin,actor=await pricing_actor(request,operator=True)
+    return await admin.service.proxy.operation('GET','/schedule/model_cost_map_reload/status')
+
+
+@router.post('/pricing/reload')
+@pricing_errors
+async def pricing_reload(request: Request):
+    admin,actor=await pricing_actor(request,operator=True)
+    return await admin.reload(actor)
+
+
+@router.post('/pricing/reload-schedule')
+@pricing_errors
+async def pricing_schedule(request: Request):
+    from fastapi import HTTPException
+    admin,actor=await pricing_actor(request,operator=True)
+    body=await request.json()
+    if not isinstance(body,dict) or set(body)!={'hours'} or type(body['hours']) is not int or not 1<=body['hours']<=168:
+        raise HTTPException(422,'hours must be an integer in1..168')
+    return await admin.service.proxy.operation('POST','/schedule/model_cost_map_reload',params={'hours':body['hours']})
+
+
+@router.delete('/pricing/reload-schedule')
+@pricing_errors
+async def pricing_cancel_schedule(request: Request):
+    admin,actor=await pricing_actor(request,operator=True)
+    return await admin.service.proxy.operation('DELETE','/schedule/model_cost_map_reload')

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 from typing import Any, Callable
 
@@ -54,6 +55,62 @@ RELATION_EXTRACTION_SCHEMA: dict[str, Any] = {
         },
     },
 }
+
+
+# Model proposals identify source text; persisted mentions retain the strict
+# offset contract below. Keep the legacy generation schema intact for replay.
+RELATION_PROPOSAL_SCHEMA = deepcopy(RELATION_EXTRACTION_SCHEMA)
+_proposal_mention = RELATION_PROPOSAL_SCHEMA["properties"]["mentions"]["items"]
+for _offset in ("start_offset", "end_offset"):
+    _proposal_mention["properties"].pop(_offset)
+    _proposal_mention["required"].remove(_offset)
+_proposal_mention["properties"]["source_quote"] = {"type": "string", "minLength": 1}
+_proposal_mention["required"].append("source_quote")
+
+
+def ground_relationship_proposal(
+    payload: Any, elements: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    """Compute exact offsets from an unambiguous quote inside its bound block.
+
+    No first-match, nearest-offset, cross-block or whitespace-normalization
+    fallback is allowed. Source and quote ambiguity remain explicit failures.
+    """
+    if not isinstance(payload, dict) or not isinstance(payload.get("mentions"), list):
+        raise ValueError("relationship proposal requires a mentions array")
+    by_anchor = {}
+    for element in elements:
+        anchor = str(element["anchor"]["anchor_id"])
+        if anchor in by_anchor:
+            raise ValueError("canonical source anchor must be unique")
+        by_anchor[anchor] = str(element.get("text") or "")
+
+    grounded = []
+    for mention in payload["mentions"]:
+        if not isinstance(mention, dict):
+            raise ValueError("mention must be an object")
+        anchor = str(mention.get("element_anchor_id") or "")
+        text, quote = mention.get("text"), mention.get("source_quote")
+        if anchor not in by_anchor or not isinstance(text, str) or not text or not isinstance(quote, str) or not quote:
+            raise ValueError("mention requires source text and a bound source quote")
+        source = by_anchor[anchor]
+        quote_start = source.find(quote)
+        if quote_start < 0 or source.find(quote, quote_start + 1) >= 0:
+            raise ValueError("source quote must identify one exact occurrence in its block")
+        text_start = quote.find(text)
+        if text_start < 0 or quote.find(text, text_start + 1) >= 0:
+            raise ValueError("mention must identify one exact occurrence inside its source quote")
+        start = quote_start + text_start
+        grounded.append({
+            **{key: mention.get(key) for key in (
+                "mention_id", "element_anchor_id", "text", "semantic_type", "confidence"
+            )},
+            "start_offset": start,
+            "end_offset": start + len(text),
+        })
+    return validate_relationship_output(
+        {"mentions": grounded, "relations": payload.get("relations")}, elements
+    )
 
 
 def build_relationship_extraction_input(

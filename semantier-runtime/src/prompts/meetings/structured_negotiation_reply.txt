@@ -1,0 +1,2 @@
+Reply to this message with JSON using the exact correlation and round below. For a time proposal, replace the example timestamps with timezone-aware ISO-8601 instants. For a vote, use yes or no.
+{example}

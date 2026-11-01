@@ -11,7 +11,7 @@ from pathlib import Path
 import re
 import shutil
 
-from pm.filesystem import lock_fd, long_root
+from storage.filesystem_primitives import lock_fd, long_root
 
 
 @contextmanager

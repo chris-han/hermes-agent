@@ -348,6 +348,18 @@ def request_context_from_request(request: Request) -> RequestContext:
             hermes_home=_WORKSPACES_ROOT / "public",
             auth_invalid_reason=None,
         )
+    return _context_from_identity_payload(payload, check_session=True)
+
+
+def background_identity_context(*, user_id, workspace_id, workspace_slug, organization_id):
+    """Resolve a persisted, server-issued work binding through current identity owners."""
+    ctx = _context_from_identity_payload(AuthSessionMetadata(user_id, workspace_id, workspace_slug), check_session=False)
+    if not ctx.authenticated or ctx.organization_id != organization_id:
+        raise PermissionError('background work identity unavailable or changed')
+    return ctx
+
+
+def _context_from_identity_payload(payload, *, check_session):
     user_name: str | None = None
     login_name: str | None = None
     auth_provider: str | None = None
@@ -468,7 +480,7 @@ def request_context_from_request(request: Request) -> RequestContext:
         can_invite_members = bool(org_context.get("can_invite_members"))
         can_change_settings = bool(org_context.get("can_change_settings"))
 
-        if auth_provider == "weixin" and _is_weixin_runtime_session_expired(
+        if check_session and auth_provider == "weixin" and _is_weixin_runtime_session_expired(
             payload.user_id,
             session_issued_at=payload.issued_at,
         ):
@@ -564,6 +576,9 @@ def auth_context_payload(ctx: RequestContext) -> dict[str, Any]:
             "currentHermesHome": None,
         }
 
+    from agents.operations_admin import is_operations_admin
+    current_user = _gateway_identity_module().get_user_record(ctx.user_id)
+    can_access_operations = is_operations_admin(current_user)
     user_payload = {
         "user_id": ctx.user_id,
         "workspace_id": ctx.workspace_id,
@@ -595,6 +610,7 @@ def auth_context_payload(ctx: RequestContext) -> dict[str, Any]:
 
     return {
         "authenticated": True,
+        "can_access_operations": can_access_operations,
         "feishu_oauth_enabled": False,
         "password_login_enabled": password_login_enabled,
         "workspace_slug": ctx.workspace_slug,

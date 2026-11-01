@@ -6,7 +6,7 @@ from fastapi import APIRouter,HTTPException,Request,Query
 from typing import Literal
 from fastapi.routing import APIRoute
 from pydantic import ValidationError
-from contracts.client_operations import ReleaseCandidate,Promotion,ChannelControl,EventBatch,Diagnostic,Classification,Identifier,Strict,PublicationIntent,PublicationRetry,TargetBindingAdmission
+from contracts.client_operations import ReleaseCandidate,Promotion,ChannelControl,EventBatch,Diagnostic,Classification,Identifier,Strict,PublicationIntent,PublicationRetry,TargetBindingAdmission,ManualStage
 from agents.client_operations.artifact_io import OperationError
 from agents.webapi.deps import require_authenticated_context
 from agents.model_gateway.auth import csrf
@@ -108,6 +108,16 @@ async def ingest(request:Request):
         if error.status<500:owner.publisher.record_rejection(candidate,error.code,principal['principal_id'])
         raise
     return envelope(owner,{'release':admitted})
+
+
+@router.post('/manual-downloads/stage')
+async def stage_manual_download(request:Request):
+    import asyncio
+    owner,ctx,permissions=browser(request,'release_manage')
+    owner.targets.require(ctx.user_id,['channel2'],'publish')
+    await body(request,ManualStage,1024)
+    result=await asyncio.to_thread(owner.stage_manual_064,ctx.user_id)
+    return envelope(owner,{'manual_download':result},permissions)
 
 
 @router.get('/channels/{channel}')

@@ -12,7 +12,8 @@ _PROMPTS = Path(__file__).resolve().parents[1]/'prompts/agents'
 
 def bind_wiki_task(ctx, session_id, skill):
     if skill not in ('llm-wiki','research/llm-wiki'): return False
-    if not ctx.authenticated: raise PermissionError('authenticated wiki task required')
+    from agents.core_file_scope import CoreFileScope
+    CoreFileScope.issue(ctx, session_id)
     current_entitlement(ctx.user_id,ctx.workspace_id)
     WikiMutationStore().bind(ctx.workspace_id,workspace_session_segment(ctx.workspace_id,session_id),ctx.user_id)
     return True
@@ -33,17 +34,27 @@ def wiki_profile_actor(workspace, session):
     return WikiMutationStore().binding(workspace,workspace_session_segment(workspace,session))
 
 
+def dispatch(scope, name, args, **kwargs):
+    """Typed core dispatch. Native registry and ambient native context are edge-owned."""
+    service = WikiMutationService(scope)
+    if name == 'wiki_read':
+        result = service.read(args.get('path'))
+    elif name == 'wiki_mutate':
+        result = service.mutate(args, tool_call_id=kwargs.get('tool_call_id'))
+    elif name == 'wiki_reconcile':
+        result = service.reconcile(args.get('operation_id'))
+    else:
+        raise ValueError('unknown wiki operation')
+    return json.dumps(result, ensure_ascii=False)
+
+
 def _dispatch(name, args, **kwargs):
-    from gateway.execution_boundary import current_execution_boundary
-    service=WikiMutationService(current_execution_boundary())
-    if name=='wiki_read': result=service.read(args.get('path'))
-    elif name=='wiki_mutate': result=service.mutate(args,tool_call_id=kwargs.get('tool_call_id'))
-    else: result=service.reconcile(args.get('operation_id'))
-    return json.dumps(result,ensure_ascii=False)
+    # Compatibility entrypoint only; selected core callers pass scope to dispatch.
+    from agents.hermes_business_adapter import dispatch_native
+    return dispatch_native(name, args, **kwargs)
 
 
 def register_wiki_tools():
-    from tools.registry import registry
-    for schema in json.loads((_PROMPTS/'wiki_task_tools.json').read_text()):
-        name=schema['name']
-        registry.register(name=name,toolset='file',schema=schema,handler=lambda args,_name=name,**kw:_dispatch(_name,args,**kw))
+    # Kept for incumbent callers; registration itself is integration-owned.
+    from agents.hermes_business_adapter import register_wiki_tools as register
+    return register()

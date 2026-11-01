@@ -378,7 +378,10 @@ def provision_personal_signup(user, *, insert_user=True):
     financial history and passwords are never replaced by login repair.
     """
     from agents.gateway_identity import _resolve_current_membership
-    from agents.model_gateway.account_sync_store import seed_personal_sync
+    if os.environ.get("SEMANTIER_RUNTIME_MODE") == "tasks":
+        from agents.model_gateway.account_sync_store import seed_personal_access as seed_personal_sync
+    else:
+        from agents.model_gateway.account_sync_store import seed_personal_sync
     uid=user['user_id']; org='personal-'+uid
     billing=os.environ.get('SEMANTIER_MODEL_GATEWAY_BILLING_SCHEMA','semantier_billing')
     with write_transaction(), connection() as c:
@@ -433,7 +436,10 @@ def provision_personal_signup(user, *, insert_user=True):
             VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING''',(uid,org,aid,'semantier-user-'+uid,'semantier-team-'+org,'semantier-key-'+uid))
         seed_personal_sync(c,user_id=uid,organization_id=org,account_id=aid,
                            currency='CNY',funding='SEMANTIER_CREDITS',billing_schema=billing)
-        from agents.workspace_storage_provisioning import allocate_signup_storage
+        if os.environ.get("SEMANTIER_RUNTIME_MODE") == "tasks":
+            from agents.task_bootstrap import allocate_signup_storage
+        else:
+            from agents.workspace_storage_provisioning import allocate_signup_storage
         allocate_signup_storage(c,user)
     return user
 
@@ -522,3 +528,15 @@ def save_weixin_context_token(account_id,user_id,context_token):
 def delete_weixin_context_token(account_id,user_id):
     with connection() as c:
         c.execute('DELETE FROM semantier_identity.weixin_context_tokens WHERE account_id=%s AND user_id=%s',(account_id,user_id))
+
+
+def merge_workspace_config(workspace_id, updates):
+    """Patch owned config sections atomically without replacing other owners."""
+    if not workspace_id.strip() or not isinstance(updates, dict):
+        raise ValueError('Workspace configuration patch required')
+    with connection() as c:
+        row = c.execute("""INSERT INTO semantier_identity.workspace_configs(workspace_id,config_json,updated_at)
+            VALUES(%s,%s,now()) ON CONFLICT(workspace_id) DO UPDATE SET
+            config_json=(semantier_identity.workspace_configs.config_json::jsonb || excluded.config_json::jsonb)::text,
+            updated_at=now() RETURNING config_json""", (workspace_id.strip(), _json(updates))).fetchone()
+        return json.loads(row['config_json'])

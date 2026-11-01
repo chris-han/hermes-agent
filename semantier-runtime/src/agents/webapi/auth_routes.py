@@ -38,18 +38,15 @@ from agents.webapi.deps import (
     require_route_authorization as _require_route_authorization,
 )
 from agents.webapi.gateway_channel_service import (
-    _restart_embedded_gateway_for_feishu_account,
     _adapter_key,
     _cookie_browser_session_hash,
     _default_weixin_home_channel,
-    _ensure_feishu_workspace_pairing_approved,
     _ensure_shared_runtime_auth_db_env,
     _ensure_weixin_workspace_pairing_approved,
     _hash_token,
     _persist_gateway_reconnect_artifact,
     _persist_weixin_auth_artifact,
     _remove_workspace_weixin_account_files,
-    _revoke_feishu_workspace_pairing,
     _runtime_timestamp,
     _sync_weixin_home_channel_env,
     _temporary_embedded_gateway_enabled,
@@ -167,6 +164,7 @@ async def auth_logout():
     response = JSONResponse({"ok": True})
     response.delete_cookie(VT_SESSION_COOKIE, path="/")
     response.delete_cookie(VT_BROWSER_SESSION_COOKIE, path="/")
+    response.delete_cookie("semantier_journey", path="/")
     return response
 
 
@@ -229,17 +227,10 @@ async def auth_feishu_link_delete(request: Request):
     if not ctx.authenticated:
         raise HTTPException(status_code=401, detail="Authentication required")
 
-    previous_open_id = str(ctx.feishu_open_id or "").strip()
     try:
         user = unlink_feishu_open_id(user_id=ctx.user_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="User not found") from exc
-
-    if previous_open_id:
-        _revoke_feishu_workspace_pairing(
-            hermes_home=str(ctx.hermes_home),
-            feishu_open_id=previous_open_id,
-        )
 
     return {
         "ok": True,
@@ -339,114 +330,9 @@ async def auth_profile_complete(request: Request):
     }
 
 
-@router.post("/auth/password/register")
-async def auth_password_register(request: Request):
-    _enforce_rate_limit("auth_public", request=request)
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    if not isinstance(body, dict):
-        body = {}
-    login = body.get("login")
-    password = body.get("password")
-    confirmation = body.get("password_confirm")
-    if not isinstance(login, str) or not isinstance(password, str):
-        raise HTTPException(status_code=400, detail="Login name and password required")
-    if password != confirmation:
-        raise HTTPException(status_code=400, detail="Password confirmation does not match")
-    try:
-        user = await asyncio.to_thread(register_password_user, login_name=login, password=password)
-    except ValueError as exc:
-        raise HTTPException(status_code=409 if str(exc) == "login name already in use" else 400, detail=str(exc)) from exc
-    return await asyncio.to_thread(_password_session_response,user,request)
-
-
-@router.post("/auth/password/login")
-async def auth_password_login(request: Request):
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-
-    login_name = None
-    password = None
-    if isinstance(body, dict):
-        raw_login_name = body.get("login") or body.get("login_name")
-        raw_password = body.get("password")
-        login_name = raw_login_name if isinstance(raw_login_name, str) else None
-        password = raw_password if isinstance(raw_password, str) else None
-    if not password or not password.strip():
-        raise HTTPException(status_code=400, detail="password required")
-
-    login_subject = login_name.strip().lower() if isinstance(login_name, str) and login_name.strip() else ""
-    _enforce_rate_limit(
-        "auth_public",
-        request=request,
-        subject=(f"login:{login_subject}" if login_subject else None),
-    )
-
-    # Password hashing is CPU work; keep concurrent classroom requests responsive.
-    user = await asyncio.to_thread(
-        authenticate_password_user,
-        login_name=login_name,
-        password=password.strip(),
-    )
-    if user is None:
-        raise HTTPException(status_code=401, detail="Invalid password login")
-
-    from agents.auth_db import is_postgresql
-    if is_postgresql():
-        user=await asyncio.to_thread(repair_personal_billing_account,user_id=user['user_id'])
-    return await asyncio.to_thread(_password_session_response,user,request)
-
-
-def _password_session_response(user: dict[str, Any], request: Request) -> JSONResponse:
-    readiness=account_provisioning_for_user(user_id=user['user_id'],workspace_id=user['workspace_id'])
-    response = JSONResponse(
-        {
-            **({'account_provisioning':readiness} if readiness is not None else {}),
-            "ok": True,
-            "authenticated": True,
-            "workspace_slug": user["workspace_slug"],
-            "profile_completed": bool(user.get("profile_completed_at")),
-            "user": {
-                "user_id": user["user_id"],
-                "name": user.get("name") or user["workspace_slug"],
-                "workspace_slug": user["workspace_slug"],
-                "password_login_name": user.get("password_login_name"),
-                "auth_provider": user.get("auth_provider"),
-                "weixin_user_id": user.get("weixin_user_id"),
-                "profile_completed": bool(user.get("profile_completed_at")),
-            },
-        }
-    )
-    browser_nonce = request.cookies.get(VT_BROWSER_SESSION_COOKIE) or browser_session_nonce()
-    token = create_vt_session_token(
-        user_id=str(user["user_id"]),
-        workspace_id=str(user["workspace_id"]),
-        workspace_slug=str(user["workspace_slug"]),
-        issued_at=session_issue_time(),
-        browser_session_nonce_hash=browser_session_nonce_hash(browser_nonce),
-        user_agent_hash=request_user_agent_hash(request),
-    )
-    response.set_cookie(
-        VT_BROWSER_SESSION_COOKIE,
-        browser_nonce,
-        httponly=True,
-        samesite="lax",
-        path="/",
-        max_age=session_cookie_max_age(),
-    )
-    response.set_cookie(
-        VT_SESSION_COOKIE,
-        token,
-        httponly=True,
-        samesite="lax",
-        path="/",
-        max_age=session_cookie_max_age(),
-    )
-    return response
+from agents.webapi.password_routes import (router as password_router,
+    auth_password_register, auth_password_login, _password_session_response)
+router.include_router(password_router)
 
 
 @router.post("/auth/dev-login")

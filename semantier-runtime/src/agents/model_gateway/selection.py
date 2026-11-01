@@ -206,3 +206,48 @@ async def patch_configuration(ctx, body):
                 for key,value in before_env.items():save_env_value_secure(key,value)
                 raise
     return await asyncio.to_thread(persist)
+
+
+def task_provider_configuration(ctx, body=None):
+    """Expose only the already-qualified task route; never rewrite general model schemas."""
+    import json
+    from datetime import datetime,timezone
+    from agents.auth_db_postgres import connection
+    from agents.task_service import validate_task_model
+    from agents import gateway_identity
+    current=gateway_identity.get_user_organization_context(ctx.user_id)
+    if (not current or (gateway_identity.get_user_record(ctx.user_id) or {}).get('workspace_id')!=ctx.workspace_id or current.get('organization_id')!=ctx.organization_id
+            or current.get('membership_status')!='active'):
+        raise HTTPException(403,'Current workspace membership required')
+    if body is not None:
+        if current.get('member_role') not in ('owner','admin'):
+            raise HTTPException(403,'Workspace administrator required')
+        if (not isinstance(body,dict) or set(body)!={'expected_revision','route'}
+                or type(body['expected_revision']) is not int):
+            raise ValueError('expected_revision and existing task route required')
+        validate_task_model(body['route'])
+    with connection() as c:
+        if body is not None:
+            c.execute("INSERT INTO semantier_identity.workspace_configs(workspace_id,config_json,updated_at) VALUES(%s,'{}',now()) ON CONFLICT(workspace_id) DO NOTHING",(ctx.workspace_id,))
+        # Existing row lock serializes task configuration against concurrent core config writes.
+        row=c.execute('SELECT config_json FROM semantier_identity.workspace_configs WHERE workspace_id=%s FOR UPDATE',(ctx.workspace_id,)).fetchone()
+        config=json.loads(row['config_json']) if row else {}
+        revision=config.get('task_model_revision',0)
+        if body is not None:
+            if revision!=body['expected_revision']:raise HTTPException(409,'Configuration changed; refresh before saving')
+            if not row:raise HTTPException(409,'Workspace configuration unavailable; refresh')
+            config['task_model']=body['route'];config['task_model_revision']=revision+1
+            c.execute('UPDATE semantier_identity.workspace_configs SET config_json=%s,updated_at=%s WHERE workspace_id=%s',
+                (json.dumps(config),datetime.now(timezone.utc),ctx.workspace_id))
+            revision+=1
+    route=config.get('task_model')
+    # Unknown or invalid configuration is not silently adopted or discovered.
+    valid=True
+    try:validate_task_model(route)
+    except ValueError:valid=False
+    return {'source':'core_workspace_configuration','revision':revision,
+        'route':route if valid else None,'configured':valid,'availability':'UNVERIFIED',
+        'verified_execution':False,'discovery':'NOT_REQUESTED',
+        'execution_contract':'keyless_loopback_task_route',
+        'provider_label':'Custom' if valid else 'Unavailable',
+        'cloud_provider_label':'Semantier Cloud Provider'}

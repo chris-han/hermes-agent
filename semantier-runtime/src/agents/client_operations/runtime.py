@@ -40,7 +40,7 @@ class ClientOperations:
             kind = spec['kind']
             if kind not in {'filesystem', 'r2','ecs'} or (kind=='r2') != (target_id=='channel2') or (kind=='ecs' and target_id!='channel1'):
                 raise ValueError('delivery target owner mismatch')
-            if kind=='r2' and spec['public_base'] != 'https://s3.semantier.com':
+            if kind=='r2' and spec['public_base'] not in {'https://update2.semantier.com', 'https://s3.semantier.com'}:
                 raise ValueError('R2 qualified publication base required')
             remote = None
             if kind=='ecs':
@@ -78,6 +78,45 @@ class ClientOperations:
             if c.execute('SELECT max(version) AS v FROM schema_version').fetchone()['v']!=3:
                 raise ValueError('client operations explicit migration required')
             c.execute('SELECT 1 FROM grants LIMIT 0')
+
+    def stage_manual_064(self,actor):
+        """Existing operation journal owns manual ZIP staging before R2 lock."""
+        from .r2_target import MANUAL_064
+        from contracts.client_operations import digest
+        target=self.targets.owner('channel2');remote=target.remote_target
+        if not remote or not remote.control_target or target.base!='https://update2.semantier.com':
+            raise OperationError(503,'manual_target_unavailable')
+        authorize=lambda:self.publications.authorize(actor,['channel2'])
+        authorize()
+        with self.store.connection() as claim:
+            acquired=claim.execute('SELECT pg_try_advisory_xact_lock(hashtext(%s)) AS acquired',
+                                   (self.store.schema+':manual:channel2',)).fetchone()['acquired']
+            if not acquired:raise OperationError(409,'manual_publication_busy')
+            with self.store.connection() as c:
+                pending=c.execute("SELECT operation_id,body FROM operations WHERE channel=%s AND status='manual_pending' ORDER BY created_at LIMIT 2",(self.channel,)).fetchall()
+            if len(pending)>1:raise OperationError(503,'manual_journal_requires_recovery')
+            binding=[remote.base,remote.bucket,remote.control_target.bucket]
+            for row in pending:
+                previous=row['body']
+                if previous.get('remote')!=binding or previous.get('release_id')!=MANUAL_064['build']:
+                    raise OperationError(503,'manual_target_binding_changed')
+                remote.recover_owned_lock(previous['remote_lock'],previous['owner_instance'],current_instance=self.publications.instance)
+                with self.store.connection() as c:
+                    c.execute("UPDATE operations SET status='manual_recovered',updated_at=now() WHERE operation_id=%s",(row['operation_id'],))
+            operation_id=uuid4().hex
+            identity={**self.publications.instance,'kind':'manual_download','release_id':MANUAL_064['build'],
+                      'operation_id':operation_id,'actor':str(actor)}
+            reservation={'owner':identity,'id':uuid4().hex}
+            record={'release_id':MANUAL_064['build'],'remote':binding,'owner_instance':identity,'remote_lock':reservation}
+            with self.store.connection() as c:
+                c.execute("INSERT INTO operations(operation_id,user_id,channel,idempotency_key,request_hash,body,status) VALUES(%s,%s,%s,%s,%s,%s::jsonb,'manual_pending')",
+                          (operation_id,actor,self.channel,operation_id,digest(record),json.dumps(record)))
+                self.store.audit(c,actor,'manual_zip_requested',MANUAL_064['build'],{'operation_id':operation_id})
+            result=remote.stage_manual_064(target.incoming,identity,reservation,authorize)
+            with self.store.connection() as c:
+                c.execute("UPDATE operations SET status='manual_staged',body=body || %s::jsonb,updated_at=now() WHERE operation_id=%s",(json.dumps({'result':result}),operation_id))
+                self.store.audit(c,actor,'manual_zip_staged',MANUAL_064['build'],result)
+            return {**result,'operation_id':operation_id}
 
     def maintain(self):
         self.maintain_retention()
@@ -191,19 +230,31 @@ async def stop(app):
 
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('command',choices=['migrate','grant','grant-targets','qualify-channel1']);parser.add_argument('--app-role',default='semantier_app');parser.add_argument('--user-id');parser.add_argument('--capability',action='append',default=[]);parser.add_argument('--legacy-target-id', choices=['channel1','channel2','channel3']);parser.add_argument('--delivery-target',action='append',default=[]);parser.add_argument('--action',action='append',default=[]);parser.add_argument('--spec',type=Path);args=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('command',choices=['migrate','grant','grant-targets','qualify-channel1','reconcile-channel1-probe','publish-channel1-manual','stage-channel1-manual']);parser.add_argument('--app-role',default='semantier_app');parser.add_argument('--user-id');parser.add_argument('--capability',action='append',default=[]);parser.add_argument('--legacy-target-id', choices=['channel1','channel2','channel3']);parser.add_argument('--delivery-target',action='append',default=[]);parser.add_argument('--action',action='append',default=[]);parser.add_argument('--spec',type=Path);parser.add_argument('--operation-id');args=parser.parse_args()
     store=Store(os.environ.get('SEMANTIER_MIGRATION_DATABASE_URL') or os.environ['SEMANTIER_DATABASE_URL'],os.environ.get('SEMANTIER_CLIENT_SCHEMA','semantier_client_operations'))
     if args.command=='migrate':print(json.dumps(store.migrate(args.app_role,legacy_target_id=args.legacy_target_id)))
     else:
         if not args.user_id:parser.error('--user-id required')
         from agents.gateway_identity import get_user_record
         if not get_user_record(args.user_id):parser.error('existing governed user required')
-        if args.command=='qualify-channel1':
+        if args.command in {'qualify-channel1','reconcile-channel1-probe','publish-channel1-manual','stage-channel1-manual'}:
             if not args.spec:parser.error('--spec required')
             from .ecs_target import ECSTarget
-            from .ecs_qualification import qualify
+            from .ecs_qualification import qualify, reconcile_aborted_probe
             spec=json.loads(args.spec.read_text())
-            print(json.dumps(qualify(store,ECSTarget.from_spec(spec),args.user_id,os.environ['SEMANTIER_CLIENT_CHANNEL'],spec['incoming_root'])))
+            if args.command in {'publish-channel1-manual','stage-channel1-manual'}:
+                from .ecs_manual_admission import publish_channel1_073
+                target=ECSTarget.configured(spec,store)
+                if args.command=='stage-channel1-manual':
+                    result=publish_channel1_073(store,target,args.user_id,os.environ['SEMANTIER_CLIENT_CHANNEL'],spec['incoming_root'],stage_only=True)
+                else:
+                    result=publish_channel1_073(store,target,args.user_id,os.environ['SEMANTIER_CLIENT_CHANNEL'],spec['incoming_root'])
+            elif args.command=='reconcile-channel1-probe':
+                if not args.operation_id:parser.error('--operation-id required')
+                result=reconcile_aborted_probe(store,ECSTarget.from_spec(spec),args.user_id,os.environ['SEMANTIER_CLIENT_CHANNEL'],args.operation_id)
+            else:
+                result=qualify(store,ECSTarget.from_spec(spec),args.user_id,os.environ['SEMANTIER_CLIENT_CHANNEL'],spec['incoming_root'])
+            print(json.dumps(result))
             return
         if args.command=='grant-targets':
             store.grant_targets(args.user_id,args.delivery_target,args.action,os.environ['SEMANTIER_CLIENT_CHANNEL'])

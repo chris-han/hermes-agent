@@ -1,21 +1,27 @@
 """Existing operations journal owns channel1 inert storage qualification."""
 
 import json
+import re
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 import httpx
 from .artifact_io import OperationError, immutable_write, safe_file
-from .ecs_protocol import canonical, sha
+from .ecs_protocol import canonical, hex_value, sha
+
+
+def _authorize(store, actor, track):
+    if not {"release_read", "release_manage"} <= store.permissions(
+        actor, track
+    ) or not {"read", "publish"} <= store.target_permissions(actor, track).get(
+        "channel1", set()
+    ):
+        raise OperationError(403, "explicit_platform_grant_required")
 
 
 def qualify(store, remote, actor, track, incoming_root):
     def authorize():
-        if not {"release_read", "release_manage"} <= store.permissions(
-            actor, track
-        ) or not {"read", "publish"} <= store.target_permissions(actor, track).get(
-            "channel1", set()
-        ):
-            raise OperationError(403, "explicit_platform_grant_required")
+        _authorize(store, actor, track)
 
     authorize()
     binding = dict(
@@ -25,6 +31,8 @@ def qualify(store, remote, actor, track, incoming_root):
         incarnation=remote.key.incarnation,
         auth_revision=remote.auth_revision,
     )
+    if remote.private_tls_ca_sha256 is not None:
+        binding["private_tls_ca_sha256"] = remote.private_tls_ca_sha256
 
     def persist(operation, body, status):
         with store.connection() as c:
@@ -196,3 +204,95 @@ def qualify(store, remote, actor, track, incoming_root):
     )
     persist(cleanup_id, cleanup_body, "channel1_storage_qualified")
     return dict(qualification_operation=cleanup_id, **binding)
+
+
+def reconcile_aborted_probe(store, remote, actor, track, operation):
+    """Record a narrowly proven legacy abort without deleting its staging evidence."""
+    hex_value(operation)
+    _authorize(store, actor, track)
+    with store.connection() as connection:
+        row = connection.execute(
+            "SELECT status,body FROM operations WHERE operation_id=%s AND user_id=%s AND channel=%s",
+            (operation, actor, track),
+        ).fetchone()
+    if not row or row["status"] != "ecs_probe_pending":
+        raise OperationError(409, "ecs_probe_reconciliation_not_pending")
+    body = row["body"]
+    expected_binding = {
+        "endpoint": remote.endpoint, "config_hash": remote.config_hash,
+        "public_base": remote.base, "incarnation": remote.key.incarnation,
+        "auth_revision": remote.auth_revision,
+        "private_tls_ca_sha256": remote.private_tls_ca_sha256,
+    }
+    if any(body.get(k) != value for k, value in expected_binding.items()):
+        raise OperationError(409, "ecs_probe_reconciliation_binding_changed")
+    try:
+        lock = body["remote_lock"]
+        remote.check_binding(lock)
+        intent = lock["intent"]
+        raw = ("channel1 inert storage proof " + operation).encode()
+        key = "releases/probes/channel1/" + operation + "/probe.bin"
+        expected_object = {"key": key, "size": len(raw), "sha256": sha(raw)}
+        if (lock["operation_id"] != operation or lock["acquire"]["track"] != track
+                or intent["kind"] != "probe" or intent["operation_id"] != operation
+                or intent["objects"] != [expected_object]
+                or intent["expected_head"] is not None or intent["intended_head"] is not None):
+            raise ValueError('probe intent changed')
+        status = remote.status(lock)
+        result = status["result"]
+        stages = result["stages"]
+        if (status["state"] != "RELEASED" or result["terminal_outcome"] != "aborted"
+                or result["active_operation"] is not None or result["objects"]
+                or status["generation"] != lock["generation"]
+                or status["incarnation"] != lock["incarnation"]
+                or result["reservation_hash"] != lock["reservation_hash"]
+                or status["intent_hash"] != sha(canonical(intent)) or result["intent"] != intent
+                or set(stages) != {"0"} or len(stages["0"]) != 1):
+            raise ValueError('remote outcome is not an isolated abort')
+        stage = stages["0"][0]
+        facts = stage["facts"]
+        if (stage["state"] != "LINKING"
+                or re.fullmatch(r"upload-" + operation + r"-[a-f0-9]{32}", stage["key"]) is None
+                or facts["type"] != "regular" or facts["size"] != len(raw)
+                or facts["sha256"] != sha(raw) or facts["device"] <= 0 or facts["inode"] <= 0):
+            raise ValueError('staging evidence changed')
+    except (KeyError, TypeError, ValueError) as error:
+        raise OperationError(409, "ecs_probe_reconciliation_uncertain") from error
+    physical = remote.request(
+        "GET", "operations/" + operation + "/objects/0",
+        metadata=canonical(remote.fence(lock)),
+    )
+    if physical["state"] != "RELEASED" or physical["result"] is not None:
+        raise OperationError(409, "ecs_probe_reconciliation_object_present")
+    try:
+        with httpx.Client(timeout=httpx.Timeout(30, connect=5), trust_env=False,
+                          follow_redirects=False) as client:
+            health = client.get(remote.base + '/healthz', headers={'Cache-Control': 'no-cache'})
+            public = client.get(remote.base + '/' + key, headers={'Cache-Control': 'no-cache'})
+        if health.status_code != 200 or public.status_code != 404:
+            raise OperationError(409, "ecs_probe_reconciliation_public_not_absent")
+    except httpx.HTTPError as error:
+        raise OperationError(503, "ecs_public_read_unavailable") from error
+    reconciliation = {
+        "kind": "legacy_aborted_probe_no_public_object",
+        "observed_at": datetime.now(UTC).isoformat(),
+        "public_status": 404,
+        "physical_object": "absent",
+        "remote_terminal_outcome": "aborted",
+        "staging_cleanup": "not_attempted",
+        "stage_facts": facts,
+    }
+    with store.connection() as connection:
+        current = connection.execute(
+            "SELECT status,body FROM operations WHERE operation_id=%s AND user_id=%s AND channel=%s FOR UPDATE",
+            (operation, actor, track),
+        ).fetchone()
+        if not current or current["status"] != "ecs_probe_pending" or current["body"] != body:
+            raise OperationError(409, "ecs_probe_reconciliation_changed")
+        _authorize(store, actor, track)
+        connection.execute(
+            "UPDATE operations SET status='ecs_probe_aborted_reconciled',body=%s::jsonb,updated_at=now() WHERE operation_id=%s",
+            (json.dumps({**body, "reconciliation": reconciliation}), operation),
+        )
+        store.audit(connection, actor, "ecs_probe_aborted_reconciled", operation, reconciliation)
+    return {"operation_id": operation, "status": "ecs_probe_aborted_reconciled"}

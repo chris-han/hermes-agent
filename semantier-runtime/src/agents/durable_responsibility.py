@@ -681,6 +681,8 @@ class DurableResponsibilityStore:
         accepted_event_cursor: str | None = None,
         pending_effect_refs: tuple[str, ...] | list[str] = (),
         now: str | None = None,
+        transaction_hook=None,
+        require_unexpired: bool = False,
     ) -> ResponsibilityRecord:
         if lifecycle_state not in _LIFECYCLE_STATES - {RUNNING}:
             raise ValueError("invalid lifecycle_state")
@@ -694,6 +696,8 @@ class DurableResponsibilityStore:
                     hosted.sql_query("SELECT * FROM semantier_responsibilities WHERE responsibility_id=?", 'SELECT * FROM semantier_responsibilities WHERE responsibility_id=%s'),
                     (claim.responsibility_id,),
                 ).fetchone()
+                if require_unexpired and (not current["lease_expires_at"] or _parse_utc(str(current["lease_expires_at"])) <= datetime.now(timezone.utc)):
+                    raise StaleResponsibilityClaim("responsibility lease expired")
                 next_version = int(current["checkpoint_version"]) + 1
                 prior_hash = str(current["checkpoint_hash"])
                 payload = {
@@ -778,6 +782,8 @@ class DurableResponsibilityStore:
                     },
                     produced_at,
                 )
+                if transaction_hook is not None:
+                    transaction_hook(conn)
                 conn.execute("COMMIT")
             except Exception:
                 conn.execute("ROLLBACK")
@@ -1373,6 +1379,7 @@ class DurableResponsibilityStore:
         now: str | None = None,
         expected_lifecycle_state: str | None = None,
         expected_checkpoint_version: int | None = None,
+        cancel_active_claim: bool = False,
     ) -> ResponsibilityRecord:
         """Terminalize owner-completed work without granting a stale worker authority."""
         if not reason.strip():
@@ -1409,7 +1416,7 @@ class DurableResponsibilityStore:
                     return record
                 if str(current["lifecycle_state"]) == RUNNING:
                     expiry = current["lease_expires_at"]
-                    if expiry and _parse_utc(str(expiry)) > produced_dt:
+                    if expiry and _parse_utc(str(expiry)) > produced_dt and not cancel_active_claim:
                         raise DurableResponsibilityError(
                             "active responsibility claim must finish or expire before owner terminalization"
                         )

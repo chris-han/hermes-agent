@@ -96,6 +96,9 @@ async def readiness(request: Request):
         pass
     async with await service.store._connection() as c:
         installed = await (await c.execute("SELECT intent_ref,status,installed_generation FROM semantier_gateway.device_connections WHERE token_id=%s", (actor.token_id,))).fetchone()
+    if installed and installed['status']=='installed':
+        from agents.operations_store import capture_fact
+        await asyncio.to_thread(capture_fact,name='client_ready',user_id=actor.user_id,producer='windows',receipt_ref=installed['intent_ref']+':'+str(installed['installed_generation']),surface='windows',properties={'reason_code':'authenticated_device_readiness'})
     return result({'contract_version':CONTRACT, 'account_id':actor.account_id, 'currency':actor.currency,
         'payment_entitlement_allowance':commercial, 'account_provisioning':provisioning,
         'catalog':catalog, 'device':installed,

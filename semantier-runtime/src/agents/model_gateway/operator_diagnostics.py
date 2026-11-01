@@ -256,12 +256,21 @@ class OperatorDiagnosticsMiddleware:
         token = _attempt.set(capture)
         if scope["path"] != "/health/test_connection":
             body["metadata"] = {"semantier_attempt_id":attempt_id,"semantier_invocation_id":invocation}
+        from agents.model_gateway.tool_stream_diagnostics import trace_for
+        tool_trace = trace_for(attempt_id, 'forwarded')
+        trace_status = None
         async def traced_send(message):
+            nonlocal trace_status
             if message["type"] == "http.response.start":
+                trace_status = message.get("status")
                 message = {**message,"headers":[*message.get("headers",[]),
                     (b"x-semantier-invocation-id",invocation.encode()),
                     (b"x-semantier-diagnostic-account",p.account_id.encode())]}
             await send(message)
+            if message['type'] == 'http.response.body':
+                tool_trace.feed(message.get('body', b''))
+                if not message.get('more_body', False):
+                    tool_trace.finish('exhausted', status=trace_status)
         # Native auth caches parsed JSON on the shared ASGI scope. Once the
         # admitted body changes, invalidate that cache so the endpoint parses
         # the prepared wire (including output bounds and server metadata).
@@ -274,7 +283,11 @@ class OperatorDiagnosticsMiddleware:
         ] + [(b"content-length", str(len(payload)).encode())]
         try:
             await self.app(prepared_scope,replay(payload),traced_send)
+        except BaseException as exc:
+            tool_trace.finish('exception', status=trace_status, error_type=type(exc).__name__)
+            raise
         finally:
+            tool_trace.finish('closed_or_cancelled', status=trace_status)
             _attempt.reset(token)
             if not capture.sends:
                 await self.store.fail_before_send(p.organization_id,invocation)

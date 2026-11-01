@@ -113,3 +113,75 @@ LEARNING_TRACE_ARTIFACT_MODELS = {
     'learning_trace_observation.v1': LearningTraceObservationV1,
     'routing_feedback_observation.v1': RoutingFeedbackObservationV1,
 }
+
+class LearningTraceObservationV2(_ContentAddressed):
+    """Public-source observation; no fabricated native database or producer identity."""
+    ARTIFACT_KIND = 'learning_trace_observation'
+    schema_version: Literal['learning_trace_observation.v2'] = 'learning_trace_observation.v2'
+    organization_id: str = Field(min_length=1)
+    workspace_id: str = Field(min_length=1)
+    owner_ref: str = Field(min_length=1)
+    run_id: str = Field(min_length=1)
+    session_id: str = Field(min_length=1)
+    profile_id: str = Field(min_length=1)
+    source_kind: Literal['public_hook', 'public_export', 'process_result', 'core_receipt']
+    source_version: str = Field(min_length=1)
+    source_locator: str = Field(min_length=1, max_length=500)
+    source_event_id: str | None = None
+    source_incarnation: str | None = None
+    sequence: int = Field(ge=0)
+    event_kind: Literal['tool', 'response', 'request', 'lifecycle', 'coverage', 'package', 'assessment']
+    stage: Literal['REQUESTED', 'TOOL_REPORTED', 'EFFECT_CONFIRMED', 'OBSERVED'] = 'OBSERVED'
+    raw_source_base64: str
+    raw_source_hash: str = Field(pattern=r'^sha256:[0-9a-f]{64}$')
+    payload: dict
+    gaps: tuple[str, ...] = ()
+    source_occurred_at: datetime | None = None
+    captured_at: datetime
+    producer_trust: Literal['public_unverified'] = 'public_unverified'
+
+    @model_validator(mode='after')
+    def exact_source(self):
+        import base64
+        import hashlib
+        if self.stage == "EFFECT_CONFIRMED" and self.source_kind != "core_receipt":
+            raise ValueError("EFFECT_CONFIRMATION_REQUIRES_DOMAIN_RECEIPT")
+        raw = base64.b64decode(self.raw_source_base64, validate=True)
+        if base64.b64encode(raw).decode('ascii') != self.raw_source_base64:
+            raise ValueError('NONCANONICAL_PUBLIC_SOURCE')
+        if self.raw_source_hash != 'sha256:' + hashlib.sha256(raw).hexdigest():
+            raise ValueError('PUBLIC_SOURCE_HASH_MISMATCH')
+        return self
+
+
+class DelegationBasisV1(_Contract):
+    """Frozen explicit evaluation constraints, never a runtime grant."""
+    schema_version: Literal['authorization_monitor_basis.v1'] = 'authorization_monitor_basis.v1'
+    task_id: str = Field(min_length=1)
+    instruction_hash: str = Field(pattern=r'^sha256:[0-9a-f]{64}$')
+    allowed_operations: tuple[str, ...]
+    allowed_objects: tuple[str, ...]
+    allowed_recipients: tuple[str, ...] | None = None
+    valid_from: datetime | None = None
+    valid_until: datetime | None = None
+    stop_after_sequence: int | None = Field(default=None, ge=0)
+
+
+class AuthorizationMonitorAssessmentV1(_Contract):
+    schema_version: Literal['authorization_monitor_assessment.v1'] = 'authorization_monitor_assessment.v1'
+    evaluator_version: Literal['explicit-delegation.v1'] = 'explicit-delegation.v1'
+    basis_hash: str
+    snapshot_hash: str
+    surface: str = Field(min_length=1)
+    completion: Literal['PASS', 'FAIL', 'UNKNOWN']
+    authorization_status: Literal['WITHIN_SCOPE', 'OUT_OF_SCOPE', 'UNKNOWN']
+    coverage: Literal['COMPLETE_FOR_DECLARED_SURFACE', 'PARTIAL', 'MISSING']
+    actions: tuple[dict, ...]
+    violations: tuple[dict, ...]
+    gaps: tuple[str, ...]
+    recorded_at: datetime
+    authoritative: Literal[False] = False
+    learning_gain: Literal['NOT_MEASURED'] = 'NOT_MEASURED'
+
+
+LEARNING_TRACE_ARTIFACT_MODELS['learning_trace_observation.v2'] = LearningTraceObservationV2

@@ -77,6 +77,120 @@ class LearningTraceEvidenceService:
         self.store.put(row)
         return row
 
+
+    @classmethod
+    def public_scope(cls, context):
+        """Current core identity, independent of any host or observation claim."""
+        scope = cls.scope(context)
+        from contracts.knowledge_classification import RuntimeContextDTO
+        from services.runtime_context_transition_service import RuntimeAuthorityResolver
+        actor = RuntimeContextDTO(organization_id=context.organization_id,
+            workspace_id=context.workspace_id, actor_id=context.user_id,
+            actor_role="TENANT_MEMBER", capabilities=())
+        RuntimeAuthorityResolver.require_current_actor(actor_context=actor)
+        _, organization = RuntimeAuthorityResolver._current_identity_context(actor)
+        if organization["membership_status"] != "active":
+            raise PermissionError("FORBIDDEN_TRACE_MEMBERSHIP")
+        return scope
+
+    def public_observations(self, *, context, session_id):
+        from contracts.learning_trace_evidence import LearningTraceObservationV2
+        scope = self.public_scope(context)
+        if not session_id.startswith(context.workspace_id + ":"):
+            raise PermissionError("FORBIDDEN_TRACE_SESSION")
+        pins = self.store.list_learning_trace_pins(**scope, owner_ref=context.user_id,
+            session_id=session_id, limit=self.MAX_SNAPSHOT_OBSERVATIONS + 1,
+            schema_version="learning_trace_observation.v2")
+        if len(pins) > self.MAX_SNAPSHOT_OBSERVATIONS:
+            raise ValueError("TRACE_SCOPE_LIMIT_EXCEEDED")
+        return [self.store.get(**scope, artifact_ref=p.artifact_ref,
+                contract_type=LearningTraceObservationV2) for p in pins]
+
+    def record_public(self, *, context, raw_source, **values):
+        import base64
+        import hashlib
+        from contracts.learning_trace_evidence import LearningTraceObservationV2
+        scope = self.public_scope(context)
+        if not isinstance(raw_source, bytes):
+            raise TypeError("exact source bytes required")
+        if len(raw_source) > self.MAX_PAYLOAD_BYTES:
+            raise ValueError("TRACE_PAYLOAD_LIMIT_EXCEEDED")
+        self._safe_payload(values["payload"])
+        if len(json.dumps(values["payload"], ensure_ascii=False).encode()) > self.MAX_PAYLOAD_BYTES:
+            raise ValueError("TRACE_PAYLOAD_LIMIT_EXCEEDED")
+        try:
+            decoded = json.loads(raw_source)
+        except (ValueError, UnicodeDecodeError):
+            decoded = None
+        if decoded is not None:
+            self._safe_payload(decoded)
+        prior = self.public_observations(context=context, session_id=values["session_id"])
+        row = LearningTraceObservationV2.create(**scope, owner_ref=context.user_id,
+            raw_source_base64=base64.b64encode(raw_source).decode("ascii"),
+            raw_source_hash="sha256:" + hashlib.sha256(raw_source).hexdigest(), **values)
+        comparable = {"artifact_ref", "artifact_hash", "captured_at"}
+        for old in prior:
+            if old.model_dump(exclude=comparable) == row.model_dump(exclude=comparable):
+                return old
+        if len(prior) >= self.MAX_SNAPSHOT_OBSERVATIONS:
+            raise ValueError("TRACE_SCOPE_LIMIT_EXCEEDED")
+        self.store.put(row)
+        return row
+
+    def public_snapshot(self, *, context, session_id):
+        rows = [r for r in self.public_observations(context=context, session_id=session_id)
+                if r.event_kind != "assessment"]
+        rows.sort(key=lambda r: (r.run_id, r.sequence, r.artifact_ref))
+        groups = {}
+        for row in rows:
+            groups.setdefault((row.run_id, row.source_kind, row.sequence), set()).add(row.raw_source_hash)
+        conflicts = [list(key) for key, hashes in groups.items() if len(hashes) > 1]
+        gaps = sorted({g for row in rows for g in row.gaps})
+        pins = [r.pin().model_dump(mode="json") for r in rows]
+        return {"schema_version": "learning_public_trace_snapshot.v1",
+            "snapshot_hash": "sha256:" + content_hash(pins), "observations": [r.model_dump(mode="json") for r in rows],
+            "observation_count": len(rows), "conflicts": conflicts, "gaps": gaps,
+            "history_coverage": "not_established", "producer_provenance": "public_unverified",
+            "unresolved_occurrences": sum(not (r.source_event_id and r.source_incarnation) for r in rows)}
+
+    def assess_public(self, *, context, basis, session_id, run_id, profile_id,
+                      completion, coverage, surface, recorded_at):
+        from services.authorization_monitor_service import AuthorizationMonitorService
+        snapshot = self.public_snapshot(context=context, session_id=session_id)
+        actions = []
+        unmapped = False
+        conflicting_captures = {tuple(key) for key in snapshot["conflicts"]}
+        for row in snapshot["observations"]:
+            if row["run_id"] != run_id:
+                continue
+            if (row["run_id"], row["source_kind"], row["sequence"]) in conflicting_captures:
+                continue
+            action = row["payload"].get("action")
+            if row["event_kind"] == "tool" and not isinstance(action, dict):
+                unmapped = True
+            if isinstance(action, dict):
+                event_ref = row["artifact_ref"]
+                if row["source_incarnation"] and row["source_event_id"]:
+                    event_ref = "public-event:" + content_hash([row["run_id"], row["profile_id"], row["source_kind"], row["source_version"], row["source_incarnation"], row["source_event_id"]])
+                actions.append({**action, "event_ref": event_ref, "stage": row["stage"]})
+        gaps = tuple(snapshot["gaps"]) + (("conflicting_capture_identity",) if snapshot["conflicts"] else ())
+        if unmapped:gaps += ("unmapped_public_tool_action",)
+        if not actions:gaps += ("no_proven_action_surface",)
+        result = AuthorizationMonitorService().assess(basis=basis, actions=actions,
+            completion=completion, coverage=coverage, surface=surface, recorded_at=recorded_at, gaps=gaps)
+        payload = {"basis": basis.model_dump(mode="json"), "assessment": result.model_dump(mode="json"),
+                   "trace_snapshot_hash": snapshot["snapshot_hash"],
+                   "observation_pins": [{"artifact_kind": "learning_trace_observation",
+                       "artifact_ref": r["artifact_ref"], "artifact_hash": r["artifact_hash"]}
+                       for r in snapshot["observations"] if r["run_id"] == run_id]}
+        raw = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()
+        receipt = self.record_public(context=context, raw_source=raw, run_id=run_id,
+            session_id=session_id, profile_id=profile_id, source_kind="core_receipt",
+            source_version=result.evaluator_version, source_locator="monitor:" + result.snapshot_hash,
+            event_kind="assessment", sequence=max((r["sequence"] for r in snapshot["observations"]), default=0)+1,
+            payload=payload, captured_at=recorded_at)
+        return result, receipt
+
     def routing_feedback(self, *, context, session_id):
         from contracts.learning_trace_evidence import RoutingFeedbackObservationV1
         scope = self.scope(context)

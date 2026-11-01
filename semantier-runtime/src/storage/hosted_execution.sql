@@ -280,3 +280,60 @@ CREATE TABLE IF NOT EXISTS semantier_coordination_receipts (
 
 CREATE INDEX IF NOT EXISTS idx_semantier_coordination_receipts_context
             ON semantier_coordination_receipts(coordination_id, sequence);
+
+-- Bounded new-case meeting clarification ownership. No native sessions or credentials.
+CREATE TABLE IF NOT EXISTS meeting_core_admissions (
+    monitor_id TEXT NOT NULL,
+    event_revision_id TEXT NOT NULL,
+    request_hash TEXT NOT NULL,
+    PRIMARY KEY(monitor_id,event_revision_id)
+);
+CREATE TABLE IF NOT EXISTS meeting_board_annotations (
+    negotiation_id TEXT NOT NULL,
+    entry_kind TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    entry_version INTEGER NOT NULL,
+    author_id TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(negotiation_id,entry_kind,request_id),
+    UNIQUE(negotiation_id,entry_kind,entry_version)
+);
+CREATE TABLE IF NOT EXISTS meeting_core_delivery_bindings (
+    negotiation_id TEXT PRIMARY KEY,
+    association_json TEXT NOT NULL,
+    association_hash TEXT NOT NULL,
+    protocol_version INTEGER NOT NULL DEFAULT 0,
+    revoked_at TEXT
+);
+CREATE TABLE IF NOT EXISTS meeting_core_clarifications (
+    obligation_id TEXT PRIMARY KEY,
+    negotiation_id TEXT NOT NULL REFERENCES meeting_core_delivery_bindings(negotiation_id),
+    initiating_event TEXT NOT NULL,
+    round_number INTEGER NOT NULL,
+    payload_json TEXT NOT NULL,
+    effect_id TEXT NOT NULL UNIQUE REFERENCES semantier_effect_outbox(effect_id),
+    state TEXT NOT NULL CHECK(state IN ('WAIT_PENDING','WAITING','APPLIED','CANCELLED')),
+    domain_version INTEGER NOT NULL,
+    wait_version INTEGER,
+    send_lease_until TEXT,
+    response_event TEXT,
+    UNIQUE(negotiation_id,round_number)
+);
+
+-- Opt-in only: historical clarifications retain NULL policy and are not adopted.
+ALTER TABLE meeting_core_clarifications ADD COLUMN IF NOT EXISTS retry_policy TEXT;
+ALTER TABLE meeting_core_clarifications ADD COLUMN IF NOT EXISTS retry_attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE meeting_core_clarifications ADD COLUMN IF NOT EXISTS retry_due_at TEXT;
+ALTER TABLE meeting_core_clarifications ADD COLUMN IF NOT EXISTS retry_reason TEXT;
+
+-- Explicit new core-provider occurrences only; no adoption of existing cron timers.
+ALTER TABLE semantier_timer_occurrences ADD COLUMN IF NOT EXISTS core_binding_json TEXT;
+ALTER TABLE semantier_timer_occurrences ADD COLUMN IF NOT EXISTS core_binding_hash TEXT;
+ALTER TABLE semantier_timer_occurrences ADD COLUMN IF NOT EXISTS responsibility_id TEXT;
+ALTER TABLE semantier_timer_occurrences ADD COLUMN IF NOT EXISTS wait_id TEXT;
+ALTER TABLE semantier_timer_occurrences ADD COLUMN IF NOT EXISTS expected_checkpoint_version INTEGER;
+ALTER TABLE semantier_timer_occurrences ADD COLUMN IF NOT EXISTS continuation_state TEXT;
+ALTER TABLE semantier_timer_occurrences ADD COLUMN IF NOT EXISTS wake_id TEXT;
+ALTER TABLE semantier_timer_occurrences ADD COLUMN IF NOT EXISTS wake_outcome TEXT;
+CREATE INDEX IF NOT EXISTS idx_core_timer_due ON semantier_timer_occurrences (state,scheduled_at,timer_id) WHERE core_binding_json IS NOT NULL;

@@ -43,7 +43,9 @@ class SemantierCronStorageProvider:
         scope = self._scope(home)
         run_at = cron_store.utc_now_iso()
         cron_store.save_output(scope, job_id, output, run_at=run_at)
-        return f"sqlite:semantier_cron_outputs/{scope}/{job_id}/{run_at}"
+        from storage.hosted_postgres import enabled
+        backend = "postgresql" if enabled() else "sqlite"
+        return f"{backend}:semantier_cron_outputs/{scope}/{job_id}/{run_at}"
 
     def list_outputs(self, home: Path, job_id: str) -> list[dict[str, Any]]:
         return cron_store.list_outputs(self._scope(home), job_id, limit=100)

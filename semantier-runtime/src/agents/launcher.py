@@ -18,7 +18,6 @@ import yaml
 
 from agents.bootstrap_repair import record_clean_eos_shutdown
 from agents.runtime_memory_boundary import sanitize_user_memory_profile
-from agents.hermes_bundled_skill_adapter import forbidden_global_external_skill_roots
 
 _ANALYTICS_PLUGIN_NAME = "governed_analytics"
 _DATA_ENGINEERING_PLUGIN_NAME = "governed_data_engineering"
@@ -1059,6 +1058,7 @@ def _ensure_repo_local_runtime_config(
             config = loaded
 
     changed = False
+    from agents.hermes_bundled_skill_adapter import forbidden_global_external_skill_roots
     forbidden_skill_external_dirs = forbidden_global_external_skill_roots(runtime_root)
 
     plugins_cfg = config.get("plugins")
@@ -1615,6 +1615,8 @@ def run_webapi_cli(argv: Sequence[str] | None = None, *, program_name: str = "se
 
 
 def run_runtime_cli(argv: Sequence[str] | None = None, *, program_name: str = "semantier") -> int:
+    from agents.cloud_mode import require_managed_runtime
+    require_managed_runtime()
     _assert_runtime_checkout_coherence()
     parser = argparse.ArgumentParser(prog=program_name)
     parser.add_argument("--host", default=os.getenv("SEMANTIER_RUNTIME_HOST", "0.0.0.0"))
@@ -1688,7 +1690,9 @@ def run_runtime_cli(argv: Sequence[str] | None = None, *, program_name: str = "s
 def run_hermes_cli(argv: Sequence[str] | None = None, *, program_name: str = "semantier") -> int:
     """Full hermes CLI exposed as the ``semantier`` command.
 
-    Routing rules (in order):
+    ``semantier public`` uses the pinned external public CLI.
+
+    Embedded routing rules (in order):
     1. No args or first arg is a gateway sub-command (``run``, ``setup``) and
        the call came via ``semantier-gateway`` → route to ``hermes gateway``.
     2. First arg is ``gateway`` → route to ``hermes gateway <rest>``.
@@ -1702,6 +1706,12 @@ def run_hermes_cli(argv: Sequence[str] | None = None, *, program_name: str = "se
         semantier skills list
     """
     raw_args = list(argv if argv is not None else sys.argv[1:])
+
+    # Public execution owns an external process/profile; it must not initialize
+    # the embedded runtime or import the customized host.
+    if raw_args and raw_args[0] == "public":
+        from agents.hermes_upstream import main as public_main
+        return public_main(raw_args[1:])
 
     _assert_runtime_checkout_coherence()
     _ensure_repo_local_runtime()
@@ -1726,11 +1736,9 @@ def run_hermes_cli(argv: Sequence[str] | None = None, *, program_name: str = "se
         try:
             os.environ.setdefault("SEMANTIER_AUTH_DB_PATH", ".semantier-home/auth.db")
             from agents.hermes_embedded_gateway import (
-                _hydrate_saved_feishu_gateway_env,
                 _hydrate_saved_weixin_gateway_env,
             )
 
-            _hydrate_saved_feishu_gateway_env()
             _hydrate_saved_weixin_gateway_env(_repo_runtime_root())
         except Exception:
             pass

@@ -22,6 +22,90 @@ LOCK_KEY = "_control/publication.lock"
 RETENTION_KEY = "_control/retention.json"
 BUILD = re.compile(r"^releases/channel-builds/([a-f0-9]{32})/")
 
+# Exact local release verified by the Windows producer and independent
+# SignTool checks. This is manual-download provenance, not CI qualification.
+MANUAL_064 = {
+    'build': '3d722e4ff1c44b48b908d1ebb606453a', 'version': '0.0.64.0',
+    'source': '1bf40293e79e33057a2f23b3274ed57dd7a6b0cb',
+    'controller': 'f12684540216d8af65fc6a4d1aefeb5752cf74b1',
+    'producer_sha256': '723b68ea6b443e4abab48acff8705cf18f7874aee056926e017d1fdbb4e39ad0',
+    'receipt_sha256': 'bef65bc1d100262c14564d2d12137f957ad41935e5092d0e99c9c7920837d56c',
+    'graph_sha256': 'cfbf8c7582ecd2818f0c094acbc3177364bb61c74b1c0185ab0585e5eb3ca6d5',
+    'zip_sha256': 'b970fd1b60fd181d8ae29d3eb88f48d217279ef3b55f2c454525683ea3d81e9e',
+    'zip_size': 2261279211,
+    'installer_sha256': 'edb2398304df68d69e40d6a1751566a94dbf245da10d4930713b4604504cec37',
+    'installer_size': 476664, 'installer_source': '2bd9882204c9466ce353a298b3b4c0f5a1308d97',
+    'installer_filename': 'SemantierAgent-0.0.64-Setup-1.1.1.exe',
+    'previous_installer': {
+        'url': 'https://update2.semantier.com/releases/channel-builds/3d722e4ff1c44b48b908d1ebb606453a/SemantierAgent-0.0.64-Setup-1.1.0.exe',
+        'size': 476664, 'sha256': 'e7e3e61b387d2d454204c71a2029ef84158d4afdaa06bff911ad3c23826d8b92',
+    },
+}
+
+
+def validate_manual_064(incoming):
+    """Validate the exact previously signed local artifact, never a CI claim."""
+    from .artifact_io import safe_file
+    from zipfile import ZipFile
+    base='manual-local/'+MANUAL_064['build']+'/'
+    paths={name:safe_file(incoming,base+name) for name in ('result.json','receipt.json','native-graph.json','release.zip','installer.exe')}
+    for name,field in (('result.json','producer_sha256'),('receipt.json','receipt_sha256'),('native-graph.json','graph_sha256'),('release.zip','zip_sha256'),('installer.exe','installer_sha256')):
+        path=paths[name]
+        if not path.is_file() or path.is_symlink():raise OperationError(422,'manual_artifact_missing')
+        with path.open('rb') as stream:digest=hashlib.file_digest(stream,'sha256').hexdigest()
+        if digest!=MANUAL_064[field]:raise OperationError(422,'manual_artifact_hash_mismatch')
+    if paths['release.zip'].stat().st_size!=MANUAL_064['zip_size']:raise OperationError(422,'manual_artifact_size_mismatch')
+    if paths['installer.exe'].stat().st_size!=MANUAL_064['installer_size']:raise OperationError(422,'manual_artifact_size_mismatch')
+    producer=json.loads(paths['result.json'].read_text(encoding='utf-8-sig'))
+    receipt=json.loads(paths['receipt.json'].read_text(encoding='utf-8-sig'))
+    if (producer.get('result')!='PASS' or producer.get('sourceCommit')!=MANUAL_064['source'] or
+        producer.get('controllerCommit')!=MANUAL_064['controller'] or receipt.get('sourceCommit')!=MANUAL_064['source'] or
+        receipt.get('packageVersion')!=MANUAL_064['version'] or receipt.get('packageName')!='Semantier.Agent.Acceptance' or
+        receipt.get('publisher')!='CN=Semantier Technology, O=Semantier Technology' or receipt.get('signing')!='PASS' or
+        not receipt.get('verification','').startswith('PASS:') or receipt.get('trustedTimestamp') is not False):
+        raise OperationError(422,'manual_producer_mismatch')
+    with ZipFile(paths['release.zip']) as archive:
+        if len(archive.namelist())!=len(set(archive.namelist())) or hashlib.sha256(archive.read('native-graph.json')).hexdigest()!=MANUAL_064['graph_sha256']:
+            raise OperationError(422,'manual_archive_graph_mismatch')
+        cert_bytes=archive.read('SemantierAgent-signing.cer')
+        if hashlib.sha256(cert_bytes).hexdigest()!='10a6b55e9a03bbc0dceb8d899c1776bf1fbad963c82050c16534da4983c9661d':
+            raise OperationError(422,'manual_certificate_mismatch')
+        from cryptography import x509
+        from datetime import timezone
+        cert=x509.load_der_x509_certificate(cert_bytes);now=datetime.now(timezone.utc)
+        if not (cert.not_valid_before_utc <= now < cert.not_valid_after_utc):raise OperationError(422,'manual_certificate_expired')
+    return paths
+
+
+def validate_manual_catalog(raw,objects):
+    """Catalog entries protect their exact immutable objects from retention."""
+    from urllib.parse import urlsplit
+    try:
+        data=json.loads(raw)
+        if set(data)!={'schema','releases'} or data['schema']!=1 or not isinstance(data['releases'],list) or len(data['releases'])>3:raise ValueError('schema')
+        builds=set();versions=[]
+        for row in data['releases']:
+            if set(row)!={'version','track','identity','provenance','publishedAt','installer','zip'} or row['track']!='acceptance' or row['identity']!='Semantier.Agent.Acceptance' or row['provenance'] not in ('local-signed','ci-qualified'):
+                raise ValueError('identity')
+            if not re.fullmatch(r'(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)',row['version']):raise ValueError('version')
+            stamp=datetime.fromisoformat(row['publishedAt'].replace('Z','+00:00'))
+            if stamp.utcoffset() is None or stamp.utcoffset().total_seconds()!=0:raise ValueError('date')
+            row_build=None
+            for name,extension in (('installer','.exe'),('zip','.zip')):
+                item=row[name]
+                if set(item)!={'url','size','sha256'} or type(item['size']) is not int or item['size']<=0 or not re.fullmatch('[a-f0-9]{64}',item['sha256']):raise ValueError('artifact')
+                url=urlsplit(item['url']);key=url.path.lstrip('/')
+                match=re.fullmatch(r'releases/channel-builds/([a-f0-9]{32})/[A-Za-z0-9_.-]+',key)
+                if url.scheme!='https' or url.netloc!='update2.semantier.com' or url.query or url.fragment or not match or not key.endswith(extension) or objects.get(key)!=item['size']:raise ValueError('object')
+                if row_build is not None and row_build!=match[1]:raise ValueError('build')
+                row_build=match[1]
+            if row_build in builds:raise ValueError('duplicate')
+            builds.add(row_build);versions.append(tuple(map(int,row['version'].split('.'))))
+        if versions!=sorted(versions,reverse=True) or len(versions)!=len(set(versions)):raise ValueError('order')
+        return data,builds
+    except (ValueError,TypeError,KeyError,AttributeError,json.JSONDecodeError) as error:
+        raise OperationError(503,'manual_catalog_unresolved') from error
+
 
 def capacity_plan(objects, manifests, protected, incoming_size=0, incoming_build=None, *, admission_order=None):
     """Conservative allocation includes duplicate/retry uploads and all unknown objects."""
@@ -100,6 +184,88 @@ class R2Target:
 
     def url(self, key):
         return self.transport.R2Scope.configured().object_url(self.base, self.bucket, key)
+
+    def stage_manual_064(self, incoming, owner, reservation, authorize):
+        """Publish pinned local artifacts, then expose their catalog entry last."""
+        sources = validate_manual_064(incoming)
+        build = MANUAL_064['build']
+        prefix = 'releases/channel-builds/' + build + '/'
+        artifacts = {
+            'zip': (prefix + 'SemantierAgent-0.0.64-win-x64.zip', sources['release.zip'], MANUAL_064['zip_size'], MANUAL_064['zip_sha256']),
+            'installer': (prefix + MANUAL_064.get('installer_filename', 'SemantierAgent-0.0.64-Setup.exe'), sources['installer.exe'], MANUAL_064['installer_size'], MANUAL_064['installer_sha256']),
+        }
+        if owner.get('kind') != 'manual_download' or owner.get('release_id') != build or reservation.get('owner') != owner:
+            raise OperationError(409, 'manual_reservation_invalid')
+        authorize()
+        with self.locked(owner=owner, reservation=reservation) as held:
+            objects, manifests, heads = self.inventory()
+            projection = self.retention()
+            catalog_key = 'releases/manual/catalog.json'
+            raw, etag = self.read(catalog_key)
+            catalog = validate_manual_catalog(raw, objects)[0] if raw is not None else {'schema': 1, 'releases': []}
+            for key, _, size, _ in artifacts.values():
+                if key in objects and objects[key] != size:
+                    raise OperationError(409, 'manual_remote_conflict')
+            # Three multipart attempts can coexist if an abort is unconfirmed.
+            needed = sum((3 if name == 'zip' else 1) * size for name, (key, _, size, _) in artifacts.items() if key not in objects) + CONTROL_ALLOCATION_BYTES
+            delete, projected = capacity_plan(objects, manifests, heads | set(projection['inflight']), needed, build, admission_order=projection['admissions'])
+            if delete:
+                raise OperationError(409, 'manual_capacity_requires_owned_cleanup')
+            projection['inflight'] = sorted(set(projection['inflight']) | {build})
+            authorize(); self.request('PUT', RETENTION_KEY, canonical(projection))
+            for name, (key, path, size, digest) in artifacts.items():
+                authorize(); self.verify_reservation(held)
+                if key not in objects:
+                    def before_complete():
+                        authorize(); self.verify_reservation(held)
+                    options = {'expected_sha256': digest}
+                    if name == 'zip':
+                        options.update(on_multipart_created=lambda upload_id: self.journal_upload(held, key, upload_id), before_multipart_complete=before_complete)
+                    self.transport.put_object(self.creds, self.base, self.bucket, key, str(path), self.transport.amz_timestamp(), self.transport.content_type_for(key), {'If-None-Match': '*'}, **options)
+                self.verify_reservation(held)
+                self.transport.verify_remote_artifact(self.url(key), self.creds, self.transport.amz_timestamp(), size, digest, algorithm='sha256', encoding='hex')
+                objects[key] = size
+            item = {'version': MANUAL_064['version'], 'track': 'acceptance', 'identity': 'Semantier.Agent.Acceptance', 'provenance': 'local-signed',
+                    'publishedAt': datetime.now(__import__('datetime').timezone.utc).isoformat().replace('+00:00','Z')}
+            for name, (key, _, size, digest) in artifacts.items():
+                item[name] = {'url': 'https://update2.semantier.com/' + key, 'size': size, 'sha256': digest}
+            prior = next((r for r in catalog['releases'] if r['version'] == item['version']), None)
+            changed = prior is None
+            if prior:
+                same_release = {k:v for k,v in prior.items() if k not in {'publishedAt', 'installer'}} == {k:v for k,v in item.items() if k not in {'publishedAt', 'installer'}}
+                if not same_release:
+                    raise OperationError(409, 'manual_catalog_conflict')
+                if prior['installer'] != item['installer']:
+                    # Only the reviewed predecessor may advance to this pinned revision.
+                    # Its original immutable object and the application ZIP stay unchanged.
+                    if prior['installer'] != MANUAL_064.get('previous_installer'):
+                        raise OperationError(409, 'manual_catalog_conflict')
+                    item['publishedAt'] = prior['publishedAt']
+                    catalog['releases'][catalog['releases'].index(prior)] = item
+                    changed = True
+                else:
+                    item = prior
+            else:
+                if len(catalog['releases']) >= MAX_RELEASES:
+                    raise OperationError(409, 'manual_catalog_full')
+                catalog['releases'].append(item)
+            if changed:
+                catalog['releases'].sort(key=lambda r: tuple(map(int, r['version'].split('.'))), reverse=True)
+                body = canonical(catalog)
+                validate_manual_catalog(body, objects)
+                authorize(); self.verify_reservation(held)
+                self.request('PUT', catalog_key, body, {**({'If-Match': etag} if etag else {'If-None-Match': '*'}), 'Content-Type': 'application/json', 'Cache-Control': 'no-store'})
+                saved, _ = self.read(catalog_key)
+                if saved != body:
+                    raise OperationError(503, 'manual_catalog_readback_failed')
+            projection['admissions'].setdefault(build, {'release_id': build, 'first_admitted_at': item['publishedAt']})
+            projection['inflight'] = [value for value in projection['inflight'] if value != build]
+            authorize(); self.verify_reservation(held); self.request('PUT', RETENTION_KEY, canonical(projection))
+            return {'release_id': build, 'version': MANUAL_064['version'], 'state': 'manual_catalog_published',
+                    'provenance': 'local-signed', 'source_commit': MANUAL_064['source'], 'controller_commit': MANUAL_064['controller'],
+                    'graph_sha256': MANUAL_064['graph_sha256'], 'installer_source_commit': MANUAL_064['installer_source'],
+                    'installer_sha256': MANUAL_064['installer_sha256'], 'installer_size': MANUAL_064['installer_size'],
+                    'size': MANUAL_064['zip_size'], 'sha256': MANUAL_064['zip_sha256'], 'projected_bytes': projected}
 
     def request(self, method, key, body=None, headers=None, query=""):
         if self.control_target and key.startswith('_control/'):
@@ -314,6 +480,10 @@ class R2Target:
                 for field in ('head','nativeHead','destinationHead','lastHead'):
                     if record.get(field):heads.add(record[field]['buildId'])
         self.verify_native_inventory(objects,manifests)
+        if 'releases/manual/catalog.json' in objects:
+            raw,_=self.read('releases/manual/catalog.json')
+            _,manual_builds=validate_manual_catalog(raw,objects)
+            heads.update(manual_builds)
         return objects, manifests, heads
 
     def verify_native_inventory(self, objects, manifests):

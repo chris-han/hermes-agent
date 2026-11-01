@@ -64,7 +64,21 @@ async def accounts(request:Request):
 async def quotes(request:Request):
     b=await body(request,{'account_id','product_id'})
     c,a,aid=await scoped(request,b['account_id'],manage=True)
-    return await run(c.quote(a.organization_id,aid,b['product_id']))
+    # The default is this browser checkout. A Windows origin requires the
+    # server's current, account-bound device intent; a surface header is ignored.
+    surface='workspace'
+    intent=request.query_params.get('intent_ref')
+    if intent:
+        service=gateway(request)
+        from agents.model_gateway.device_connections import DeviceConnections
+        ring=getattr(getattr(service,'account_sync_store',None),'keyring',None)
+        device=await DeviceConnections(service.store,ring).browser(intent,a)
+        if device['data'].get('account_id')!=aid or device['status'] not in {'pending','approved','claimed','installed'}:
+            raise HTTPException(403,'Current account-bound device intent required')
+        surface='windows'
+    from agents.operations_commerce import commerce_actor
+    with commerce_actor(a.user_id,surface):
+        return await run(c.quote(a.organization_id,aid,b['product_id']))
 
 @router.post('/orders')
 async def create_order(request:Request):

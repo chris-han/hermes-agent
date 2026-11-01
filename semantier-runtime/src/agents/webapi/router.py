@@ -68,7 +68,13 @@ from agents.webapi.workflow_learning_routes import router as workflow_learning_r
 from agents.webapi.workshop_classroom_routes import router as workshop_classroom_router
 
 
-router = APIRouter(tags=["webapi-gateway"])
+from fastapi import Depends
+from agents.webapi.operations_admin_routes import reserve_operations_login
+router = APIRouter(tags=["webapi-gateway"], dependencies=[Depends(reserve_operations_login)])
+from agents.webapi.operations_admin_routes import router as operations_admin_router
+router.include_router(operations_admin_router)
+from agents.webapi.journey_routes import router as journey_router
+router.include_router(journey_router)
 from agents.webapi.client_operations_routes import router as client_operations_router
 router.include_router(client_operations_router)
 
@@ -79,6 +85,15 @@ from agents.webapi.billing_commerce_routes import router as billing_commerce_rou
 from agents.webapi.cloud_device_routes import router as cloud_device_router
 router.include_router(cloud_device_router)
 router.include_router(model_gateway_router)
+from agents.webapi.core_provider_routes import router as core_provider_router
+from agents.webapi.deps import require_route_authorization
+from agents.route_policy import RouteAuthorizationClass
+
+def core_configuration_context(request):
+    return require_route_authorization(request,authorization_class=RouteAuthorizationClass.TENANT_MEMBER,
+        route_hint=f'{request.method} {request.url.path}')
+
+router.include_router(core_provider_router(context=core_configuration_context))
 router.include_router(model_gateway_admin_router)
 router.include_router(billing_router)
 router.include_router(billing_commerce_router)
@@ -136,3 +151,6 @@ include_plugin_webapi_routers(router)
 router.include_router(embedded_proxy_router)
 
 __all__ = ["router"]
+
+from agents.webapi.model_gateway_ui import router as model_gateway_ui_router
+router.include_router(model_gateway_ui_router)

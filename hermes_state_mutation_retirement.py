@@ -218,6 +218,20 @@ def retire_routes(conn, session_ids):
                          (row['scope'], row['session_key']))
 
 
+def set_routing_pending(conn, session_ids, pending):
+    """Retain the native delete fence until launch routing publication is durable."""
+    for sid in session_ids:
+        key = RETIRED_PREFIX + sid
+        row = conn.execute(_storage_statement(sqlite='SELECT value FROM state_meta WHERE key=?',
+            postgresql='SELECT value FROM state_meta WHERE key=%s', connection=conn), (key,)).fetchone()
+        if row is None:
+            raise RuntimeStoreError('runtime_coordination_required')
+        value = json.loads(row[0])
+        value['routing_pending'] = pending
+        conn.execute(_storage_statement(sqlite='UPDATE state_meta SET value=? WHERE key=?',
+            postgresql='UPDATE state_meta SET value=%s WHERE key=%s', connection=conn), (json.dumps(value), key))
+
+
 RETRY_HORIZON_S = 7 * 86400  # exact-retry horizon: a retry within it gets the byte-exact settled reply
 _EXPIRED = "json_valid(value) AND json_extract(value, '$.retired_at') < ?"
 
@@ -239,4 +253,5 @@ def prune_retired_tombstones(conn, older_than=RETRY_HORIZON_S):
         conn.execute(_storage_statement(sqlite='DELETE FROM state_meta WHERE key IN (?,?,?)', postgresql='DELETE FROM state_meta WHERE key IN (%s,%s,%s)', connection=conn), (key, RESULT_PREFIX + row['admission_id'],
                      identity_key(row['principal_id'], row['target_session_id'], row['request_id'])))
     for prefix in prefixes[1:]:
-        conn.execute(f'DELETE FROM state_meta WHERE key GLOB ? AND {_EXPIRED}', (prefix + '*', cutoff))
+        pending = " AND COALESCE(json_extract(value, '$.routing_pending'), 0)=0" if prefix == RETIRED_PREFIX else ""
+        conn.execute(f'DELETE FROM state_meta WHERE key GLOB ? AND {_EXPIRED}{pending}', (prefix + '*', cutoff))

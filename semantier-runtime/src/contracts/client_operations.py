@@ -42,6 +42,11 @@ class Strict(BaseModel):
         return value
 
 
+class ManualStage(Strict):
+    """Stage the owner-pinned local 0.0.64 ZIP; no caller-supplied paths."""
+    pass
+
+
 class UpdateEvent(Strict):
     schema_version: Literal['1.0.0']
     event_id: Identifier

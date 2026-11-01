@@ -41,7 +41,7 @@ def _exact_money(method):
     return invoke
 
 
-BILLING_SCHEMA_VERSION = 10
+BILLING_SCHEMA_VERSION = 12
 
 
 class BillingStore:
@@ -289,6 +289,9 @@ class BillingStore:
             release=g['reserved']-debit
             await conn.execute('UPDATE credit_grants SET held=held-%s,remaining=remaining-%s WHERE grant_id=%s',(g['reserved'],g['reserved'] if g['expired'] else debit,g['grant_id']))
             if g['expired']: await self._expire_posting(conn,g,release,':release:'+i['invocation_id'])
+            if debit>0:
+                from agents.operations_commerce import capture_consumption
+                await capture_consumption(conn,i,g,debit)
 
     async def append_raw_observation(self,attempt_id,event_id,provider,raw_usage,provenance,physical_send_count,completion_state):
         if isinstance(physical_send_count,bool) or not isinstance(physical_send_count,int) or physical_send_count<0:
@@ -393,6 +396,11 @@ class BillingStore:
         if row is None:
             raise BillingError('supplier_catalog_unavailable')
         return SupplierCatalog.from_dict(row['payload'])
+
+    async def get_fx(self, quote_id):
+        async with self.connection() as conn:
+            row=await self._one(conn,'SELECT payload FROM fx_quotes WHERE quote_id=%s',(quote_id,))
+            return FxQuote(**row['payload'])
 
     async def put_fx(self,quote:FxQuote):
         payload=quote.__dict__

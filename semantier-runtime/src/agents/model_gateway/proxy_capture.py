@@ -4,11 +4,14 @@ from __future__ import annotations
 from contextvars import ContextVar
 from dataclasses import dataclass
 import hashlib
+import ipaddress
 import json
+import os
 import zlib
 from urllib.parse import urlsplit
 
 import httpx
+from agents.model_gateway.tool_stream_diagnostics import trace_for
 
 
 @dataclass
@@ -122,10 +125,13 @@ class ReceiptStream(httpx.AsyncByteStream):
         self.content_encoding = content_encoding.strip().lower()
         self.blocks, self.size, self.overflow, self.recorded = [], 0, False, False
         self.digest = hashlib.sha256()
+        self.tool_trace = trace_for(attempt.attempt_id, 'provider', content_encoding=self.content_encoding)
 
     async def _record(self, exhausted):
         if self.recorded:
             return
+        self.tool_trace.finish('exhausted' if exhausted else 'closed_or_cancelled',
+                               status=self.status, request_id=self.request_id)
         usage, complete = None, False
         response_model = None
         decoded_digest = None
@@ -192,6 +198,7 @@ class ReceiptStream(httpx.AsyncByteStream):
         exhausted = False
         try:
             async for block in self.original:
+                self.tool_trace.feed(block)
                 self.digest.update(block)
                 self.size += len(block)
                 if self.size <= MAX_WIRE_BYTES:
@@ -201,6 +208,10 @@ class ReceiptStream(httpx.AsyncByteStream):
                     self.blocks.clear()
                 yield block
             exhausted = True
+        except BaseException as exc:
+            self.tool_trace.finish('exception', status=self.status, request_id=self.request_id,
+                                   error_type=type(exc).__name__)
+            raise
         finally:
             await self._record(exhausted)
 
@@ -211,17 +222,40 @@ class ReceiptStream(httpx.AsyncByteStream):
             await self._record(False)
 
 
+def _internal_read_origin(value):
+    if value is None or value == '':
+        return None
+    if not isinstance(value, str) or value != value.strip():
+        raise ValueError('literal loopback HTTP origin required')
+    try:
+        parsed = urlsplit(value)
+        valid = (parsed.scheme == 'http' and parsed.hostname is not None
+            and ipaddress.ip_address(parsed.hostname).is_loopback and parsed.port is not None
+            and parsed.username is None and parsed.password is None
+            and parsed.path in ('', '/') and not parsed.query and not parsed.fragment)
+    except ValueError:
+        valid = False
+    if not valid:
+        raise ValueError('literal loopback HTTP origin required')
+    return str(httpx.URL(value).copy_with(path='/', query=None, fragment=None)).rstrip('/')
+
+
 class CaptureTransport(httpx.AsyncBaseTransport):
-    def __init__(self, store, origins, *, transport=None):
+    def __init__(self, store, origins, *, control_origin=None, transport=None):
         from agents.model_gateway.tls_failure_capture import TlsFailureTransport
         self.store = store
         self.origins = dict(origins)
+        self.control_origin = _internal_read_origin(control_origin)
+        if self.control_origin in self.origins:
+            raise ValueError('internal read and model origins must be distinct')
         self.native = transport or TlsFailureTransport(correlation=_attempt.get)
 
     async def handle_async_request(self, request):
         origin = str(request.url.copy_with(path='/', query=None, fragment=None)).rstrip('/')
         provider = self.origins.get(origin)
         attempt = _attempt.get()
+        if attempt is None and self.control_origin == origin and request.method == 'GET' and not request.url.query:
+            return await self.native.handle_async_request(request)
         if not provider or attempt is None or attempt.provider != provider:
             raise RuntimeError('model egress requires admitted attempt and matching allowed origin')
         if attempt.sends:
@@ -279,11 +313,26 @@ class AdmittedAttemptMiddleware:
         admission = await self.store.capture_admission(attempt_id,invocation_id)
         token = _attempt.set(AttemptCapture(attempt_id,invocation_id=invocation_id,provider=admission['provider'],physical_binding=admission['attribution'].get('physical_binding')))
         iterator = iter(messages)
+        trace = trace_for(attempt_id, 'forwarded')
+        status = None
+        async def traced_send(message):
+            nonlocal status
+            if message['type'] == 'http.response.start':
+                status = message.get('status')
+            await send(message)
+            if message['type'] == 'http.response.body':
+                trace.feed(message.get('body', b''))
+                if not message.get('more_body', False):
+                    trace.finish('exhausted', status=status)
         async def replay():
             return next(iterator, None) or await receive()
         try:
-            await self.app(scope, replay, send)
+            await self.app(scope, replay, traced_send)
+        except BaseException as exc:
+            trace.finish('exception', status=status, error_type=type(exc).__name__)
+            raise
         finally:
+            trace.finish('closed_or_cancelled', status=status)
             _attempt.reset(token)
 
 
@@ -295,9 +344,10 @@ def install_native_capture(store, origins):
         parsed = urlsplit(origin)
         if parsed.scheme not in ('http', 'https') or not parsed.hostname or parsed.path not in ('', '/'):
             raise ValueError('exact model origin required')
-    litellm.aclient_session = httpx.AsyncClient(transport=CaptureTransport(store, origins),
+    control_origin = _internal_read_origin(os.environ.get('SEMANTIER_INTERNAL_READ_ORIGIN'))
+    litellm.aclient_session = httpx.AsyncClient(transport=CaptureTransport(store, origins, control_origin=control_origin),
                                                trust_env=False, timeout=10.0)
-    configure_semantier_async_transport(lambda: CaptureTransport(store, origins))
+    configure_semantier_async_transport(lambda: CaptureTransport(store, origins, control_origin=control_origin))
     handler = AsyncHTTPHandler(timeout=httpx.Timeout(10.0))
     for key in ('async_httpx_clienttimeout_' + str(httpx.Timeout(10.0)) + 'bedrock',
                 'async_httpx_clientbedrock'):

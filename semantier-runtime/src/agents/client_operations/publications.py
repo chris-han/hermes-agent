@@ -204,7 +204,8 @@ class Publications:
                     replacement=changes.get('owner_instance',{}).get('ecs',{})
                     if (replacement.get('auth_revision',0)<=binding.get('auth_revision',0)
                         or replacement.get('incarnation')==binding.get('incarnation')
-                        or replacement.get('endpoint')!=binding.get('endpoint') or replacement.get('config_hash')!=binding.get('config_hash')):
+                        or replacement.get('endpoint')!=binding.get('endpoint') or replacement.get('config_hash')!=binding.get('config_hash')
+                        or replacement.get('private_tls_ca_sha256')!=binding.get('private_tls_ca_sha256')):
                         raise OperationError(409,'ecs_coordinator_replacement_requires_fresh_key')
             if all(current[key] == value for key, value in changes.items()):
                 return

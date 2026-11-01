@@ -295,16 +295,20 @@ def mutate_runtime_session(db, *, epoch: int, principal_id: str, session_id: str
             raise RuntimeStoreError('revision_conflict')
         if expected_generation is not None and (session is None or session['runtime_generation'] != expected_generation):
             raise RuntimeStoreError('stale_generation')
+        routing_retirement_pending = False
         if _live_guard is not None:
             from hermes_state_mutation_guards import delete_targets
             targets = delete_targets(conn, session_id) if operation == 'delete' else [session_id]
-            _live_guard(targets)
+            routing_retirement_pending = _live_guard(targets) is True
         if _authorize_write is not None:
             _authorize_write(conn)
         if _prepare_only:
             from hermes_state_mutation_prepared import local_snapshot
             return {'snapshot': local_snapshot(db, conn, session_id)}
         affected, projection = apply_action(db, conn, session_id, operation, payload, prepared=_prepared)
+        if operation == 'delete' and routing_retirement_pending:
+            from hermes_state_mutation_retirement import set_routing_pending
+            set_routing_pending(conn, projection['deleted_ids'], True)
         execute_many(conn,_storage_statement(sqlite='UPDATE sessions SET runtime_revision=runtime_revision+1 WHERE id=?', postgresql='UPDATE sessions SET runtime_revision=runtime_revision+1 WHERE id=%s', connection=conn),
                          [(target,) for target in affected])
         updated = conn.execute(_storage_statement(sqlite='SELECT * FROM sessions WHERE id=?', postgresql='SELECT * FROM sessions WHERE id=%s', connection=conn), (session_id,)).fetchone()

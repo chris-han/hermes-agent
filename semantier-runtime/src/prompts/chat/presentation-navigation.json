@@ -8,7 +8,7 @@
     "task"
   ],
   [
-    "/dashboard?view=kanban",
+    "/dashboard?view=core",
     [
       "kanban",
       "看板"

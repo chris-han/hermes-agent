@@ -4728,12 +4728,14 @@ class OntologyBuildStore:
         return tuple(ArtifactPinV1(artifact_kind='routing_feedback_observation', artifact_ref=ref, artifact_hash=digest)
                      for ref, digest in rows)
 
-    def list_learning_trace_pins(self, *, organization_id, workspace_id, owner_ref, session_id, limit):
+    def list_learning_trace_pins(self, *, organization_id, workspace_id, owner_ref, session_id, limit, schema_version='learning_trace_observation.v1'):
         """Bound the selected observation scope before decoding any payloads."""
+        if schema_version not in ('learning_trace_observation.v1', 'learning_trace_observation.v2'):
+            raise ValueError('UNSUPPORTED_TRACE_SCHEMA')
         rows = self._connection.execute(sql_query(
-            "SELECT artifact_ref, artifact_hash FROM ontology_build_artifacts WHERE organization_id=? AND workspace_id=? AND schema_version='learning_trace_observation.v1' AND json_extract(payload_json,'$.owner_ref')=? AND json_extract(payload_json,'$.session_id')=? ORDER BY artifact_ref LIMIT ?",
-            "SELECT artifact_ref, artifact_hash FROM ontology_build_artifacts WHERE organization_id=%s AND workspace_id=%s AND schema_version='learning_trace_observation.v1' AND payload_json::jsonb->>'owner_ref'=%s AND payload_json::jsonb->>'session_id'=%s ORDER BY artifact_ref LIMIT %s"),
-            (organization_id, workspace_id, owner_ref, session_id, limit)).fetchall()
+            "SELECT artifact_ref, artifact_hash FROM ontology_build_artifacts WHERE organization_id=? AND workspace_id=? AND schema_version=? AND json_extract(payload_json,'$.owner_ref')=? AND json_extract(payload_json,'$.session_id')=? ORDER BY artifact_ref LIMIT ?",
+            "SELECT artifact_ref, artifact_hash FROM ontology_build_artifacts WHERE organization_id=%s AND workspace_id=%s AND schema_version=%s AND payload_json::jsonb->>'owner_ref'=%s AND payload_json::jsonb->>'session_id'=%s ORDER BY artifact_ref LIMIT %s"),
+            (organization_id, workspace_id, schema_version, owner_ref, session_id, limit)).fetchall()
         return tuple(ArtifactPinV1(artifact_kind='learning_trace_observation',artifact_ref=ref,artifact_hash=digest) for ref,digest in rows)
 
     def get_raw(

@@ -54,19 +54,6 @@ async def cloud_provider_model_info(request: Request, model: str):
     return await service.catalog(actor,model,account_id=request.query_params.get('account_id'))
 
 
-@router.get('/api/model/options')
-async def cloud_model_options(request: Request, refresh: bool = False):
-    from agents.webapi.deps import require_authenticated_context
-    from runtime_paths import bind_workspace_env
-    from starlette.concurrency import run_in_threadpool
-    ctx=require_authenticated_context(request)
-    def options():
-        from hermes_cli.inventory import build_model_options_payload,load_picker_context
-        with bind_workspace_env(ctx.hermes_home):
-            return build_model_options_payload(load_picker_context(),refresh=refresh)
-    return await run_in_threadpool(options)
-
-
 @router.patch('/api/config')
 async def hosted_configuration_patch(request: Request):
     from agents.webapi.deps import require_route_authorization
@@ -227,3 +214,21 @@ async def model_gateway_reexecute(invocation_id: str, request: Request):
     try: command=json.loads(wire)
     except ValueError as exc: raise HTTPException(400,'JSON required') from exc
     return await service.reexecute(actor,invocation_id,command,request.headers.get('idempotency-key'))
+
+
+@router.get('/api/internal/model-gateway/pricing/cost-map',include_in_schema=False)
+async def pricing_internal_cost_map(request: Request):
+    import hmac
+    from fastapi.responses import Response
+    from billing.supplier_pricing_store import SupplierPricingStore
+    from billing.supplier_pricing_projection import canonical
+    service=gateway(request)
+    expected=getattr(service,'pricing_service_token','')
+    supplied=request.headers.get('authorization','')
+    if not expected or not hmac.compare_digest(supplied,'Bearer '+expected):
+        raise HTTPException(401,'private pricing service identity required')
+    active=await SupplierPricingStore(service.billing).active()
+    if not active:raise HTTPException(503,'no selected price projection')
+    projection=active['payload']
+    return Response(canonical(projection['map']),media_type='application/json',
+        headers={'ETag':'"'+projection['sha256']+'"','Cache-Control':'no-store'})

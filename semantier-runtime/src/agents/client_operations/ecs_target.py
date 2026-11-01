@@ -3,6 +3,9 @@
 import base64
 from contextlib import contextmanager
 import json
+import os
+import ssl
+import stat
 import sys
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -23,6 +26,9 @@ class ECSTarget:
         key,
         auth_revision,
         qualification_operation,
+        *,
+        private_tls_ca_file=None,
+        private_tls_ca_sha256=None,
     ):
         for value in (endpoint, public_base):
             url = urlsplit(value)
@@ -49,7 +55,34 @@ class ECSTarget:
             auth_revision,
             hex_value(qualification_operation),
         )
+        if (private_tls_ca_file is None) != (private_tls_ca_sha256 is None):
+            raise ValueError("private TLS certificate and digest must be supplied together")
+        self.private_tls_ca_file = None
+        self.private_tls_ca_sha256 = None
+        if private_tls_ca_file is not None:
+            path = Path(private_tls_ca_file)
+            if not path.is_absolute() or urlsplit(self.endpoint).scheme != "https":
+                raise ValueError("private TLS certificate requires an absolute path and HTTPS")
+            self.private_tls_ca_file = path
+            self.private_tls_ca_sha256 = hex_value(private_tls_ca_sha256, 64)
+            self._private_tls_context()
         self.guard = lambda: None
+
+    def _private_tls_context(self):
+        if self.private_tls_ca_file is None:
+            return True
+        try:
+            descriptor = os.open(self.private_tls_ca_file, os.O_RDONLY | os.O_NOFOLLOW)
+            with os.fdopen(descriptor, "rb") as stream:
+                info = os.fstat(stream.fileno())
+                if not stat.S_ISREG(info.st_mode) or not 1 <= info.st_size <= 65536:
+                    raise ValueError("invalid private TLS certificate file")
+                raw = stream.read(65537)
+            if sha(raw) != self.private_tls_ca_sha256:
+                raise ValueError("private TLS certificate digest changed")
+            return ssl.create_default_context(cadata=raw.decode("ascii"))
+        except (OSError, UnicodeError, ssl.SSLError, ValueError) as error:
+            raise OperationError(503, "ecs_private_tls_ca_binding_changed") from error
 
     @classmethod
     def from_spec(cls, spec):
@@ -67,6 +100,8 @@ class ECSTarget:
             next(iter(keys.values())),
             revision,
             spec.get("qualification_operation", "0" * 32),
+            private_tls_ca_file=spec.get("private_tls_ca_file"),
+            private_tls_ca_sha256=spec.get("private_tls_ca_sha256"),
         )
 
     @classmethod
@@ -82,7 +117,8 @@ class ECSTarget:
             config_hash=target.config_hash,
             public_base=target.base,
         )
-        if not row or any(row["body"].get(k) != v for k, v in expected.items()):
+        if (not row or any(row["body"].get(k) != v for k, v in expected.items())
+                or row["body"].get("private_tls_ca_sha256") != target.private_tls_ca_sha256):
             raise OperationError(503, "ecs_storage_qualification_missing")
         return target
 
@@ -120,6 +156,7 @@ class ECSTarget:
                 timeout=httpx.Timeout(30, connect=5),
                 trust_env=False,
                 follow_redirects=False,
+                verify=self._private_tls_context(),
             ) as client:
                 with client.stream(
                     method,
@@ -159,9 +196,10 @@ class ECSTarget:
     def read(self, key):
         # Public reads carry no private credential. Paths are metadata only.
         safe_file(Path("/"), key)
-        if not key.startswith(
-            ("releases/channels/", "releases/channel-builds/")
-        ) or not key.endswith(".json"):
+        if key != "releases/manual/catalog.json" and (
+            not key.startswith(("releases/channels/", "releases/channel-builds/"))
+            or not key.endswith(".json")
+        ):
             raise OperationError(422, "ecs_public_metadata_scope")
         self.guard()
         try:
@@ -204,7 +242,7 @@ class ECSTarget:
                 {**body, "target_id": "channel1", "principal": self.key.principal}
             )
         )
-        return dict(
+        reservation = dict(
             provider="ecs",
             endpoint=self.endpoint,
             config_hash=self.config_hash,
@@ -217,9 +255,12 @@ class ECSTarget:
             intent=None,
             owner=owner,
         )
+        if self.private_tls_ca_sha256 is not None:
+            reservation["private_tls_ca_sha256"] = self.private_tls_ca_sha256
+        return reservation
 
     def identity(self, owner):
-        return {
+        identity = {
             **owner,
             "ecs": dict(
                 endpoint=self.endpoint,
@@ -228,6 +269,9 @@ class ECSTarget:
                 auth_revision=self.auth_revision,
             ),
         }
+        if self.private_tls_ca_sha256 is not None:
+            identity["ecs"]["private_tls_ca_sha256"] = self.private_tls_ca_sha256
+        return identity
 
     def fence(self, lock):
         body = {
@@ -246,24 +290,25 @@ class ECSTarget:
         return body
 
     def check_binding(self, lock):
-        if (lock.get("endpoint"), lock.get("config_hash")) != (
+        if (lock.get("endpoint"), lock.get("config_hash"), lock.get("private_tls_ca_sha256")) != (
             self.endpoint,
             self.config_hash,
+            self.private_tls_ca_sha256,
         ):
             raise OperationError(503, "ecs_captured_endpoint_changed")
 
     @contextmanager
-    def locked(self, *, owner, reservation, persist, guard):
+    def locked(self, *, owner, reservation, persist, guard, hold_authorized=False):
         previous_guard = self.guard
         self.guard = guard
         try:
-            with self._locked(owner=owner, reservation=reservation, persist=persist):
+            with self._locked(owner=owner, reservation=reservation, persist=persist, hold_authorized=hold_authorized):
                 yield reservation
         finally:
             self.guard = previous_guard
 
     @contextmanager
-    def _locked(self, *, owner, reservation, persist):
+    def _locked(self, *, owner, reservation, persist, hold_authorized=False):
         self.check_binding(reservation)
         if reservation["generation"] is None:
             result = self.request(
@@ -285,7 +330,7 @@ class ECSTarget:
                     "operations/" + reservation["operation_id"] + "/release",
                     {**self.fence(reservation), "outcome": "confirmed"},
                 )
-            elif status["state"] in ("RESERVED", "AUTHORIZED"):
+            elif status["state"] in ("RESERVED", "AUTHORIZED") and not (hold_authorized and status["state"] == "AUTHORIZED"):
                 # Failure after an upload cannot have crossed head intent while
                 # persisted state remains AUTHORIZED. COMMITTING is always held.
                 self.request(
@@ -382,6 +427,186 @@ class ECSTarget:
         )
         persist(lock)
         return lock
+
+    def manual_intent(self, root, lock, catalog):
+        """Bind already-verified, locally signed artifacts; callers own eligibility."""
+        from .ecs_storage import (
+            manual_catalog_entries,
+            unpack_head,
+            validate_manual_intent,
+        )
+
+        intended = manual_catalog_entries(catalog)
+        if lock.get("intent"):
+            expected = lock["intent"]["expected_head"]
+            previous = unpack_head(expected)
+        else:
+            previous, _ = self.read("releases/manual/catalog.json")
+            expected = (
+                None
+                if previous is None
+                else dict(
+                    body=base64.b64encode(previous).decode(), sha256=sha(previous)
+                )
+            )
+        old = manual_catalog_entries(previous) if previous is not None else {}
+        added = set(intended) - set(old)
+        if len(added) != 1:
+            raise OperationError(422, "ecs_manual_candidate_invalid")
+        build = next(iter(added))
+        row = intended[build]
+        files = self.manual_files(root, build, row)
+        objects = []
+        for key, path in sorted(files.items()):
+            size, digest = file_facts(path)
+            objects.append(dict(key=key, size=size, sha256=digest))
+        intent = dict(
+            version=1,
+            target_id="channel1",
+            config_hash=self.config_hash,
+            operation_id=lock["operation_id"],
+            track=lock["acquire"]["track"],
+            kind="manual",
+            release_id=build,
+            variant_hash=sha(canonical(row)),
+            expected_head=expected,
+            intended_head=dict(
+                body=base64.b64encode(catalog).decode(), sha256=sha(catalog)
+            ),
+            objects=objects,
+            cleanup=[],
+            allocation_bytes=sum(item["size"] for item in objects),
+        )
+        validate_manual_intent(intent)
+        return intent
+
+    def manual_files(self, root, build, row):
+        """Use the existing contained incoming custody, never a caller-supplied path."""
+        hex_value(build)
+        prefix = "manual-local/" + build + "/"
+        return {
+            row["installer"]["url"].split("channel1.semantier.com/", 1)[1]: safe_file(
+                root, prefix + "installer.exe"
+            ),
+            row["zip"]["url"].split("channel1.semantier.com/", 1)[1]: safe_file(
+                root, prefix + "release.zip"
+            ),
+        }
+
+    def publish_manual(self, root, lock, *, authorize, stage_only=False):
+        """Publish a caller-journaled manual intent; no CI or native-head authority."""
+        from .ecs_storage import manual_catalog_entries, unpack_head
+
+        if not lock.get("intent") or lock["intent"].get("kind") != "manual":
+            raise OperationError(409, "ecs_manual_intent_missing")
+        intent = lock["intent"]
+        catalog = unpack_head(intent["intended_head"])
+        if self.manual_intent(root, lock, catalog) != intent:
+            raise OperationError(409, "ecs_durable_intent_changed")
+        status = self.status(lock)
+        terminal = status["state"] == "RELEASED"
+        if terminal:
+            if status["result"]["terminal_outcome"] != "confirmed" or (
+                status["generation"],
+                status["incarnation"],
+                status["result"]["reservation_hash"],
+                status["intent_hash"],
+            ) != (
+                lock["generation"],
+                lock["incarnation"],
+                lock["reservation_hash"],
+                sha(canonical(intent)),
+            ):
+                raise OperationError(409, "ecs_terminal_binding_changed")
+        else:
+            status = self.verify_reservation(lock)
+        route = "operations/" + lock["operation_id"]
+        fence = self.fence(lock)
+        if status["state"] == "RESERVED":
+            authorize()
+            self.request(
+                "POST",
+                route + "/authorize",
+                {
+                    **{k: v for k, v in fence.items() if k != "intent_hash"},
+                    "intent": intent,
+                },
+            )
+            status = self.status(lock)
+        actual, _ = self.read("releases/manual/catalog.json")
+        recovering = actual == catalog
+        if terminal and not recovering:
+            raise OperationError(503, "ecs_terminal_head_changed")
+        if actual not in (unpack_head(intent["expected_head"]), catalog):
+            raise OperationError(409, "ecs_head_conflict")
+        if stage_only and (recovering or status["state"] != "AUTHORIZED"):
+            raise OperationError(409, "ecs_manual_stage_state_invalid")
+        if status["state"] == "COMMITTING":
+            authorize()
+            self.request("POST", route + "/head", fence)
+            status = self.status(lock)
+        row = manual_catalog_entries(catalog)[intent["release_id"]]
+        files = self.manual_files(root, intent["release_id"], row)
+        ordinals = {item["key"]: index for index, item in enumerate(intent["objects"])}
+
+        def upload(key, path):
+            authorize()
+            self.request(
+                "PUT",
+                route + "/objects/" + str(ordinals[key]),
+                metadata=canonical(fence),
+                path=path,
+                commit_guard=authorize,
+            )
+
+        def verify(key, path, *, allow_missing=False):
+            result = self.request(
+                "GET",
+                route + "/objects/" + str(ordinals[key]),
+                metadata=canonical(fence),
+            )["result"]
+            if not result and allow_missing:
+                return False
+            if not result or (result["size"], result["sha256"]) != file_facts(path):
+                raise OperationError(422, "ecs_remote_object_integrity")
+            return True
+
+        if stage_only:
+            for key, path in files.items():
+                self.verify_reservation(lock)
+                if not verify(key, path, allow_missing=True):
+                    upload(key, path)
+                verify(key, path)
+            return {"state": "manual_objects_staged", "release_id": intent["release_id"],
+                    "provenance": "local-signed"}
+
+        def upload_if_missing(key, path):
+            if not verify(key, path, allow_missing=True):
+                upload(key, path)
+
+        publish_objects_then_head(
+            files,
+            recovering=recovering,
+            assert_reservation=lambda: self.verify_reservation(lock),
+            upload=upload_if_missing,
+            verify=verify,
+            authorize=authorize,
+            commit_head=lambda: self.request("POST", route + "/head", fence),
+            read_head=lambda: self.read("releases/manual/catalog.json")[0],
+            intended_bytes=catalog,
+            readback_error="ecs_head_readback_unknown",
+        )
+        if status["state"] not in ("COMPLETE", "RELEASED"):
+            self.request(
+                "POST",
+                route + "/complete",
+                {**fence, "observed_head_sha256": sha(catalog)},
+            )
+        return {
+            "state": "manual_catalog_published",
+            "release_id": intent["release_id"],
+            "provenance": "local-signed",
+        }
 
     def files(self, release, root):
         from .package_graph import package_objects

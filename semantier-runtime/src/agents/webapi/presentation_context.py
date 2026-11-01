@@ -1,11 +1,13 @@
-"""Authenticated presentation hints and bounded native-source retrieval, no authority."""
+"""Authenticated presentation hints and bounded owner retrieval, no authority."""
 import json
+import os
 import re
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlsplit
+from psycopg import OperationalError
 
-from agents.webapi.job_service import _kanban_connection, _kanban_task_dict, _list_workspace_cron_jobs
 from agents.coordination_association import CoordinationAssociationStore
+from services.core_work_service import CoreWorkService
 
 _ASSETS = Path(__file__).resolve().parents[2] / "prompts" / "chat"
 
@@ -38,25 +40,32 @@ def resolve_presentation_context(ctx, message, raw):
             "state": state, "href": href, "selected": selected == key or selected == identifier,
             "matched": matched})
 
-    # Each native owner scopes data to the authenticated workspace. No host scan.
+    # Each owner scopes data to the authenticated workspace. No host scan.
     for kind in ("task", "job", "execution"):
         try:
+            if kind in ('task','job') and (os.environ.get('SEMANTIER_RUNTIME_MODE')!='tasks' or os.environ.get('SEMANTIER_STORAGE_BACKEND')!='postgresql'):
+                raise RuntimeError('Core work read context is unavailable')
             if kind == "task":
-                with _kanban_connection(ctx) as (db, conn):
-                    for task in db.list_tasks(conn, include_archived=False):
-                        item = _kanban_task_dict(task)
-                        add(kind, item["id"], item.get("title"), item.get("status"),
-                            "/dashboard?" + urlencode({"view": "kanban", "source": "task", "work": "task:" + str(item["id"])}))
+                for item in CoreWorkService().list(ctx, limit=100, cursor='')['items']:
+                    add(kind, item['id'], item.get('title'), item.get('status'),
+                        '/dashboard?' + urlencode({'view':'core', 'work':'task:'+str(item['id'])}))
             elif kind == "job":
-                for job in _list_workspace_cron_jobs(ctx, include_disabled=True):
-                    add(kind, job["id"], job.get("name"), job.get("enabled"),
-                        "/dashboard?" + urlencode({"view": "kanban", "source": "job", "work": "job:" + str(job["id"])}))
+                from services.core_scheduled_work_service import CoreScheduledWorkService
+                from services.core_work_execution_service import ManagedWorkExecutionService
+                for job in CoreScheduledWorkService(ManagedWorkExecutionService()).list(ctx)['items']:
+                    add(kind, job['id'], job.get('title'), job.get('status'),
+                        '/dashboard?' + urlencode({'view':'calendar','source':'job','work':'job:'+str(job['id'])}))
             else:
-                for execution in CoordinationAssociationStore(ctx.hermes_home / "state.db").list_contexts(ctx.workspace_id):
+                if os.environ.get('SEMANTIER_RUNTIME_MODE') == 'tasks':
+                    from agents import job_store
+                    db_path = job_store._db_path()
+                else:
+                    db_path = ctx.hermes_home / 'state.db'
+                for execution in CoordinationAssociationStore(db_path).list_contexts(ctx.workspace_id):
                     add(kind, execution.coordination_id, execution.goal_ref, None,
                         "/orchestrator?" + urlencode({"execution": execution.coordination_id}))
             availability[kind] = "AVAILABLE"
-        except (OSError, RuntimeError, ValueError):
+        except (OSError, RuntimeError, ValueError, ImportError, OperationalError):
             availability[kind] = "UNAVAILABLE"
     candidates.sort(key=lambda item: (
         explicit is not None and item["source"] != explicit,

@@ -24,7 +24,6 @@ from agents.webapi import system_skill_service as _system_skill_service
 from agents.webapi.router import router
 from agents.workspace_session_logs import (
     get_workspace_session_detail,
-    get_workspace_session_log_payload,
     get_workspace_session_messages,
     resolve_workspace_session_id,
 )
@@ -84,11 +83,6 @@ COMPATIBILITY_EXPORT_METADATA: dict[str, dict[str, str]] = {
         "reason": "messaging reconnect tests suppress artifact writes",
         "removal_condition": "messaging tests patch agents.webapi.gateway_channel_routes",
     },
-    "_restart_embedded_gateway_for_feishu_account": {
-        "owner": "agents.webapi.gateway_channel_service",
-        "reason": "Feishu route tests replace gateway restart side effects",
-        "removal_condition": "Feishu tests patch route/service owners directly",
-    },
     "_ensure_weixin_workspace_pairing_approved": {
         "owner": "agents.webapi.gateway_channel_service",
         "reason": "pairing tests exercise the helper through the stable gateway module",
@@ -122,11 +116,6 @@ COMPATIBILITY_EXPORT_METADATA: dict[str, dict[str, str]] = {
     "_list_workspace_cron_jobs": {
         "owner": "agents.webapi.job_service",
         "reason": "meeting coordinator tests replace cron persistence reads",
-        "removal_condition": "meeting coordinator tests patch agents.webapi.job_service",
-    },
-    "_create_workspace_cron_job": {
-        "owner": "agents.webapi.job_service",
-        "reason": "meeting coordinator tests replace cron persistence writes",
         "removal_condition": "meeting coordinator tests patch agents.webapi.job_service",
     },
     "_temporary_hermes_home": {
@@ -169,11 +158,6 @@ COMPATIBILITY_EXPORT_METADATA: dict[str, dict[str, str]] = {
         "reason": "session hydration tests replace workspace message reads",
         "removal_condition": "session tests patch agents.workspace_session_logs or session route owners",
     },
-    "get_workspace_session_log_payload": {
-        "owner": "agents.workspace_session_logs",
-        "reason": "session log tests replace workspace log reads",
-        "removal_condition": "session tests patch agents.workspace_session_logs or session route owners",
-    },
     "resolve_workspace_session_id": {
         "owner": "agents.workspace_session_logs",
         "reason": "session resolver tests keep legacy alias fallback reachable",
@@ -198,11 +182,6 @@ COMPATIBILITY_EXPORT_METADATA: dict[str, dict[str, str]] = {
         "owner": "agents.webapi.deps",
         "reason": "multitenant control tests exercise rate-limit scoping directly",
         "removal_condition": "tests import agents.webapi.deps directly",
-    },
-    "_update_workspace_cron_job": {
-        "owner": "agents.webapi.job_service",
-        "reason": "meeting coordinator tests replace cron persistence updates",
-        "removal_condition": "meeting coordinator tests patch agents.webapi.job_service",
     },
     "list_organization_members": {
         "owner": "agents.webapi.organization_service",
@@ -255,11 +234,6 @@ _EXPORT_OWNERS: dict[str, list[types.ModuleType]] = {
         _gateway_channel_routes,
     ],
     "_persist_gateway_reconnect_artifact": [_gateway_channel_service, _gateway_channel_routes],
-    "_restart_embedded_gateway_for_feishu_account": [
-        _gateway_channel_service,
-        _gateway_channel_routes,
-        _auth_routes,
-    ],
     "_ensure_weixin_workspace_pairing_approved": [_gateway_channel_service],
     "_restart_embedded_gateway_for_weixin_account": [_gateway_channel_service],
     "_workspace_id_from_hermes_home_path": [
@@ -271,7 +245,6 @@ _EXPORT_OWNERS: dict[str, list[types.ModuleType]] = {
     "_repo_local_marketplace_root": [_system_skill_service, _system_skill_routes],
     "list_plugins_inventory": [_inventory_service, _system_skill_service, _system_skill_routes],
     "_list_workspace_cron_jobs": [_job_service],
-    "_create_workspace_cron_job": [_job_service],
     "_temporary_hermes_home": [_job_service],
     "_create_session_record": [_session_routes],
     "_update_session_record": [_session_routes],
@@ -280,13 +253,11 @@ _EXPORT_OWNERS: dict[str, list[types.ModuleType]] = {
     "_resolve_or_create_workspace_runtime_session_id": [_session_routes],
     "get_workspace_session_detail": [_session_routes],
     "get_workspace_session_messages": [_session_routes],
-    "get_workspace_session_log_payload": [_session_routes],
     "resolve_workspace_session_id": [_session_routes],
     "_RATE_LIMIT_STATE_LOCK": [_deps],
     "_RATE_LIMIT_STATE": [_deps],
     "_RATE_LIMITS": [_deps],
     "_enforce_rate_limit": [_deps],
-    "_update_workspace_cron_job": [_job_service],
     "list_organization_members": [_organization_service],
     "list_organization_events": [_organization_service],
     "get_organization_materialization_policy": [_organization_service],

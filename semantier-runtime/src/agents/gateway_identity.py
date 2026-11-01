@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 import hashlib
 import os
 import re
@@ -72,6 +73,8 @@ def _auth_root() -> Path:
 
 
 def _env_workspace_root_path(workspace_id: str) -> Path | None:
+    if os.environ.get("SEMANTIER_WORKSPACES_ROOT", "").strip():
+        return workspace_root_path(workspace_id)
     raw_local_state_dir = os.environ.get("SEMANTIER_LOCAL_STATE_DIR")
     if not raw_local_state_dir:
         return None
@@ -96,6 +99,10 @@ def resolve_workspace_paths(workspace_id: str) -> tuple[Path, Path]:
 
 def ensure_workspace_paths(workspace_id: str) -> tuple[Path, Path]:
     workspace_root, runtime_home = resolve_workspace_paths(workspace_id)
+    if os.environ.get("SEMANTIER_RUNTIME_MODE") == "tasks":
+        for path in (workspace_root / "tasks", runtime_home):
+            path.mkdir(parents=True, exist_ok=True)
+        return workspace_root, runtime_home
     sessions_root = workspace_root / "sessions"
 
     from agents.launcher import bootstrap_workspace_runtime_home
@@ -378,6 +385,8 @@ def _normalize_t6_materialization_policy(
 
 
 def _load_seeded_organization_profiles() -> tuple[dict[str, Any], ...]:
+    if os.environ.get("SEMANTIER_RUNTIME_MODE") == "tasks":
+        return ()  # Fresh task composition does not import historical demo organizations.
     repo_root = Path(__file__).resolve().parents[2]
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
@@ -1754,6 +1763,11 @@ def account_provisioning_for_user(*, user_id: str, organization_id=None, workspa
     """Bounded read-only readiness; no materialization or synchronization wake-up."""
     if not is_postgresql():return None
     from agents.auth_db_postgres import connection
+    if os.environ.get('SEMANTIER_RUNTIME_MODE') == 'tasks':
+        with connection() as c:
+            row=c.execute('SELECT workspace_root FROM semantier_identity.workspace_runtime_bindings WHERE user_id=%s AND workspace_id=%s',(user_id,workspace_id)).fetchone()
+        return {'local_status':'READY' if row else 'REPAIR_REQUIRED','inference_ready':False,
+                'reason':'TASK_MODEL_CONFIGURATION_REQUIRED','composition':'independent_tasks'}
     from agents.model_gateway.account_sync_store import account_provisioning
     user=get_user_record(user_id)
     if not isinstance(user,dict):
@@ -1834,6 +1848,8 @@ def authenticate_password_user(
             return None
 
     for user in candidates:
+        if user.get("disabled") or user.get("status", "active") != "active":
+            continue
         password_hash = str(user.get("password_hash") or "").strip()
         if password_hash and verify_local_password_hash(password_hash, password):
             return user
@@ -2131,6 +2147,14 @@ def upsert_weixin_owner(
         if is_postgresql() and binding_user is None:
             from agents.auth_db_postgres import provision_personal_signup
             provision_personal_signup(user, insert_user=False)
+            try:
+                from agents.operations_store import capture_fact
+                capture_fact(name='registration_completed',user_id=user['user_id'],producer='identity',
+                             receipt_ref=user['user_id'],occurred_at=user['created_at'],
+                             properties={'auth_provider':'weixin','registration_origin':'unknown','origin_basis':'verified_provider_identity'})
+            except Exception:
+                import logging
+                logging.getLogger(__name__).warning('Weixin registration observation unavailable')
         return user
 
 
@@ -2586,3 +2610,10 @@ def delete_workspace_feishu_bot_config(workspace_id: str) -> None:
         if owner_user_id is not None:
             delete_feishu_bot_config_for_user(owner_user_id)
     _delete_legacy_workspace_feishu_bot_config(normalized_workspace_id)
+
+
+@contextmanager
+def channel_identity_transaction():
+    """Keep the existing process-lock/PG-lock order for channel state custody."""
+    with _WRITE_LOCK, identity_write_transaction():
+        yield

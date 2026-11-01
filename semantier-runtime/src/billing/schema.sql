@@ -213,3 +213,49 @@ BEGIN
  THEN RAISE EXCEPTION 'immutable commerce payment attempt'; END IF;
  RETURN NEW;
 END $$;
+
+-- v11 source acquisition is metadata custody, never settlement or customer tariffs.
+CREATE TABLE IF NOT EXISTS supplier_pricing_runs (
+ organization_id text NOT NULL,run_id text NOT NULL,idempotency_key text NOT NULL,
+ request_hash text NOT NULL,partition text NOT NULL,state text NOT NULL,
+ snapshot_version text,reason text,created_at timestamptz NOT NULL DEFAULT now(),
+ updated_at timestamptz NOT NULL DEFAULT now(),lease_until timestamptz NOT NULL,
+ PRIMARY KEY(organization_id,run_id),UNIQUE(organization_id,idempotency_key),
+ CHECK(state IN ('COLLECTING','COLLECTED','PARTIAL','FAILED','INTERRUPTED'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS supplier_pricing_one_capture ON supplier_pricing_runs(organization_id,partition) WHERE state='COLLECTING';
+CREATE TABLE IF NOT EXISTS supplier_pricing_operators (
+ user_id text PRIMARY KEY,enabled boolean NOT NULL DEFAULT true,provenance text NOT NULL,
+ granted_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS supplier_pricing_active (
+ singleton boolean PRIMARY KEY DEFAULT true CHECK(singleton),organization_id text NOT NULL,
+ projection_version text NOT NULL,previous_version text,effective_revision text,
+ state text NOT NULL,updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS supplier_pricing_projections (
+ organization_id text NOT NULL,version_id text NOT NULL,run_id text NOT NULL,
+ payload jsonb NOT NULL,created_at timestamptz NOT NULL DEFAULT now(),
+ PRIMARY KEY(organization_id,version_id),
+ FOREIGN KEY(organization_id,run_id) REFERENCES supplier_pricing_runs
+);
+CREATE OR REPLACE FUNCTION freeze_supplier_pricing_run() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF TG_OP='DELETE' OR OLD.state<>'COLLECTING' OR
+ (to_jsonb(NEW)-'state'-'snapshot_version'-'reason'-'updated_at') IS DISTINCT FROM
+ (to_jsonb(OLD)-'state'-'snapshot_version'-'reason'-'updated_at')
+ THEN RAISE EXCEPTION 'immutable terminal supplier pricing run'; END IF;
+ RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS immutable ON supplier_pricing_runs;
+CREATE TRIGGER immutable BEFORE UPDATE OR DELETE ON supplier_pricing_runs FOR EACH ROW EXECUTE FUNCTION freeze_supplier_pricing_run();
+DROP TRIGGER IF EXISTS immutable ON supplier_pricing_projections;
+CREATE TRIGGER immutable BEFORE UPDATE OR DELETE ON supplier_pricing_projections FOR EACH ROW EXECUTE FUNCTION reject_financial_mutation();
+INSERT INTO schema_version(version) VALUES (11) ON CONFLICT DO NOTHING;
+
+-- v12 binds new source runs to explicit provider and source identities.
+ALTER TABLE supplier_pricing_runs ADD COLUMN IF NOT EXISTS provider_id text NOT NULL DEFAULT 'alibaba';
+ALTER TABLE supplier_pricing_runs ADD COLUMN IF NOT EXISTS source_ref text NOT NULL DEFAULT 'alibaba-model-studio-cn-beijing';
+DROP INDEX IF EXISTS supplier_pricing_one_capture;
+CREATE UNIQUE INDEX IF NOT EXISTS supplier_pricing_one_capture ON supplier_pricing_runs(organization_id,provider_id,source_ref,partition) WHERE state='COLLECTING';
+INSERT INTO schema_version(version) VALUES (12) ON CONFLICT DO NOTHING;

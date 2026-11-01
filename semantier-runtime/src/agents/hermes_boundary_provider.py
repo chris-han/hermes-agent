@@ -56,6 +56,10 @@ def durable_request_metadata(identity: object, original_message: str, supplied_h
 
 
 class SemantierExecutionBoundaryProvider:
+    def __init__(self):
+        from agents.cloud_mode import require_cloud_control
+        require_cloud_control()
+
     def resolve(self, request: ExecutionBoundaryRequest) -> ExecutionBoundary | None:
         payload: dict[str, str] = {}
         if _trusted_internal(request):
@@ -90,16 +94,6 @@ class SemantierExecutionBoundaryProvider:
             return None
 
         user_id = str(payload.get("user_id") or request.user_id or "").strip() or None
-        if (request.source == "gateway_runner"
-                and request.metadata.get("platform") == "feishu"):
-            from agents.feishu_ingress_identity import resolve_feishu_ingress_owner
-            owner = resolve_feishu_ingress_owner(open_id=user_id,
-                chat_id=request.metadata.get("chat_id"),
-                platform_session_key=request.metadata.get("session_key"))
-            if owner.owner_workspace_id != workspace_id:
-                raise PermissionError("FEISHU_BOUNDARY_OWNER_MISMATCH")
-            user_id = owner.owner_user_id
-
         session_id = str(payload.get("session_id") or request.session_id or "").strip()
         if not session_id:
             raise ValueError("session_id required for Semantier execution boundary")

@@ -13,7 +13,6 @@ dependencies = [
 	"httpx>=0.27",
 	"jsonschema>=4.23",
 	"uvicorn>=0.35",
-	"hermes-agent[feishu]",
 	# Hermes intentionally omits application dependencies below its managed
 	# Python 3.14 to keep old updaters lean. Semantier also hosts its source
 	# APIs on Python 3.12; declare that boundary's tested runtime requirements.
@@ -52,6 +51,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+legacy-hermes = ["hermes-agent[feishu]"]
+task-runtime = ["psycopg[binary]==3.3.3", "PyJWT[crypto]==2.13.0", "websockets==15.0.1"]
 payments = ["wechatpayv3==2.0.4", "python-alipay-sdk==3.4.0"]
 model-gateway = ["psycopg[binary]==3.3.3", "cryptography==50.0.1"]
 dev = ["pytest>=9", "pytest-asyncio==1.3.0", "httpx>=0.27", "aiohttp>=3.9", "jsonschema>=4.23"]
@@ -80,6 +81,7 @@ source-text-query = [
 hermes-agent = { path = "hermes-agent", editable = true }
 
 [tool.hatch.build.targets.wheel]
+only-include = ["src"]
 sources = {"src" = ""}
 
 [project.scripts]
@@ -99,3 +101,6 @@ dev = [
     "pytest>=9.0.3",
     "ruff==0.15.10",
 ]
+
+[tool.hatch.build.targets.wheel.force-include]
+"semantier-skills/plugins/feishu_meeting_coordinator" = "feishu_meeting_coordinator"

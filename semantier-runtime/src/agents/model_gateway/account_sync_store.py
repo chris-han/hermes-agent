@@ -67,6 +67,12 @@ def _seed_values(c,*,user_id,organization_id,account_id,currency,funding,billing
     if retained!=dict(billing_schema=billing_schema,funding=funding):raise ValueError('Account authority scope conflict')
 
 
+def seed_personal_access(c, *, user_id, organization_id, account_id, currency='CNY', funding='SEMANTIER_CREDITS', billing_schema='semantier_billing'):
+    """Core account access without any native credential projection."""
+    _seed_values(c,user_id=user_id,organization_id=organization_id,account_id=account_id,currency=currency,funding=funding,billing_schema=billing_schema)
+    c.execute("INSERT INTO semantier_gateway.account_access(organization_id,account_id,currency,user_id,role,status) VALUES(%s,%s,%s,%s,'owner','ACTIVE') ON CONFLICT DO NOTHING",(organization_id,account_id,currency,user_id))
+
+
 def seed_personal_sync(c,*,user_id,organization_id,account_id,currency='CNY',funding='SEMANTIER_CREDITS',billing_schema='semantier_billing'):
     """Idempotent insertion only; authenticated repair never reactivates old access."""
     target,namespace=target_configuration()

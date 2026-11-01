@@ -217,17 +217,12 @@ class _WorkbenchOwners:
 
 
 def _temporal_upload_boundary(*, ctx: RequestContext, session_ref: str):
-    from agents.webapi.session_routes import _session_execution_boundary
-
-    segment = workspace_session_segment(str(ctx.workspace_id), session_ref)
-    root = ctx.workspace_root.resolve()
-    uploads = root / "sessions" / segment / "uploads"
-    if uploads.resolve() != uploads:
-        raise RuntimeContextError("FORBIDDEN_SCOPE")
-    boundary = _session_execution_boundary(ctx, session_id=session_ref)
-    if boundary is None or boundary.paths.uploads_root != uploads:
-        raise RuntimeContextError("FORBIDDEN_SCOPE")
-    return boundary, segment
+    from agents.core_file_scope import CoreFileScope
+    try:
+        scope = CoreFileScope.issue(ctx, session_ref)
+        return scope, workspace_session_segment(str(ctx.workspace_id), session_ref)
+    except (ValueError, PermissionError) as exc:
+        raise RuntimeContextError("FORBIDDEN_SCOPE") from exc
 
 
 def _workbench_owner_context(

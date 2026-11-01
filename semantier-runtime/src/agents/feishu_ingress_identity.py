@@ -28,25 +28,6 @@ class FeishuIngressOwnerContext:
     platform_session_key: str | None = None
 
 
-def stamp_feishu_ingress_owner(event: Any) -> None:
-    """Bind transport-authenticated Feishu aliases before Hermes derives session keys."""
-    source = event.source
-    raw_event = getattr(getattr(event, "raw_message", None), "event", None)
-    sender_id = getattr(getattr(raw_event, "sender", None), "sender_id", None)
-    open_id = str(getattr(sender_id, "open_id", "") or "").strip()
-    union_id = str(getattr(sender_id, "union_id", "") or "").strip()
-    if not open_id:
-        candidate = str(getattr(source, "user_id", "") or "")
-        open_id = candidate if candidate.startswith("ou_") else ""
-    union_id = union_id or str(getattr(source, "user_id_alt", "") or "")
-    owner = resolve_feishu_ingress_owner(
-        open_id=open_id or None,
-        union_id=union_id or None,
-        chat_id=getattr(source, "chat_id", None),
-        platform_session_key=getattr(event, "message_id", None),
-    )
-    source.workspace_owner_id = owner.owner_workspace_id
-    source.user_id = open_id or owner.open_id or source.user_id
 
 
 def resolve_feishu_ingress_owner(

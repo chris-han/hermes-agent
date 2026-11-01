@@ -27,7 +27,6 @@ from agents.webapi.deps import (
 from agents.webapi.gateway_channel_service import (
     get_active_weixin_correlation_for_user,
     _persist_gateway_reconnect_artifact,
-    _restart_embedded_gateway_for_feishu_account,
     GATEWAY_PLATFORM_MAP,
     SUPPORTED_GATEWAYS,
     WEIXIN_RECONNECT_CONTRACT_VERSION,
@@ -35,7 +34,6 @@ from agents.webapi.gateway_channel_service import (
     _adapter_key,
     _cookie_browser_session_hash,
     _default_weixin_home_channel,
-    _ensure_feishu_workspace_pairing_approved,
     _ensure_weixin_workspace_pairing_approved,
     _hash_token,
     _iter_gateway_pairing_stores,
@@ -43,16 +41,12 @@ from agents.webapi.gateway_channel_service import (
     _iter_weixin_pairing_stores,
     _messaging_platforms_payload,
     _normalize_weixin_home_channel,
-    _read_feishu_bot_config,
     _read_workspace_weixin_account,
     _request_context_from_session_metadata,
     _resolve_governed_weixin_account,
     _runtime_timestamp,
     _sync_weixin_home_channel_env,
     _temporary_embedded_gateway_enabled,
-    delete_workspace_feishu_bot_config,
-    link_feishu_open_id,
-    save_workspace_feishu_bot_config,
 )
 
 router = APIRouter(tags=["webapi-gateway"])
@@ -350,71 +344,6 @@ async def messaging_weixin_pairing_approve_self(request: Request):
     }
 
 
-@router.post("/messaging/feishu/pairing/approve-self")
-async def messaging_feishu_pairing_approve_self(request: Request):
-    ctx = _require_authenticated_context(request)
-    linked_feishu_open_id = str(getattr(ctx, "feishu_open_id", "") or "").strip()
-
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    if not isinstance(body, dict):
-        body = {}
-    code = str(body.get("code") or "").strip().upper()
-    if not code:
-        raise HTTPException(status_code=400, detail="code required")
-
-    matched_store = None
-    pending = None
-    for store in _iter_gateway_pairing_stores(
-        hermes_home=str(ctx.hermes_home),
-        ctx=ctx,
-    ):
-        resolver = getattr(store, "find_pending_by_code", None)
-        pending = resolver("feishu", code) if callable(resolver) else _find_pending_pairing_by_code(store, "feishu", code)
-        if pending is not None:
-            matched_store = store
-            break
-
-    if pending is None or matched_store is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Pairing code not found or expired",
-        )
-    pending_user_id = str(pending.get("user_id") or "").strip()
-    if not pending_user_id:
-        raise HTTPException(
-            status_code=409,
-            detail="Pairing code has no Feishu user binding",
-        )
-    if linked_feishu_open_id and pending_user_id != linked_feishu_open_id:
-        raise HTTPException(
-            status_code=403,
-            detail="This pairing code belongs to a different Feishu user",
-        )
-    if not linked_feishu_open_id:
-        try:
-            link_feishu_open_id(user_id=ctx.user_id, open_id=pending_user_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail="Authenticated user not found") from exc
-
-    approved = matched_store.approve_code("feishu", code)
-    if not approved:
-        raise HTTPException(
-            status_code=409,
-            detail="Pairing code not found or expired",
-        )
-
-    return {
-        "ok": True,
-        "platform": "feishu",
-        "approved_user_id": pending_user_id,
-        "code": code,
-        "message": "Feishu pairing approved. Your next Feishu message will be authorized.",
-    }
 
 
 @router.post("/messaging/{platform}/validate")
@@ -423,7 +352,7 @@ async def messaging_platform_validate(platform: str, request: Request):
     if not ctx.authenticated:
         raise HTTPException(status_code=401, detail="Authentication required")
     normalized = platform.strip().lower()
-    if normalized not in {"feishu", "weixin"}:
+    if normalized != "weixin":
         raise HTTPException(status_code=404, detail="Messaging platform not found")
     if normalized == "weixin":
         return {
@@ -435,45 +364,13 @@ async def messaging_platform_validate(platform: str, request: Request):
                 "auth_provider": ctx.auth_provider,
             },
         }
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    if not isinstance(body, dict):
-        body = {}
-    config = body.get("config") if isinstance(body.get("config"), dict) else body
-    app_id = str(config.get("app_id") or "").strip()
-    app_secret = str(config.get("app_secret") or "").strip()
-    domain = str(config.get("domain") or "feishu").strip() or "feishu"
-    if not app_id or not app_secret:
-        raise HTTPException(status_code=400, detail="app_id and app_secret are required")
-
-    from plugins.platforms.feishu.adapter import probe_bot
-
-    bot_info = probe_bot(app_id, app_secret, domain)
-    return {
-        "platform": "feishu",
-        "valid": bot_info is not None,
-        "summary": (
-            "Feishu bot credentials validated successfully."
-            if bot_info is not None
-            else "Feishu bot credentials could not be validated."
-        ),
-        "details": {
-            "domain": domain,
-            "bot_name": bot_info.get("bot_name") if bot_info else None,
-            "bot_open_id": bot_info.get("bot_open_id") if bot_info else None,
-        },
-    }
-
-
 @router.put("/messaging/{platform}")
 async def messaging_platform_save(platform: str, request: Request):
     ctx = request_context_from_request(request)
     if not ctx.authenticated:
         raise HTTPException(status_code=401, detail="Authentication required")
     normalized = platform.strip().lower()
-    if normalized not in {"feishu", "weixin"}:
+    if normalized != "weixin":
         raise HTTPException(status_code=404, detail="Messaging platform not found")
     try:
         body = await request.json()
@@ -501,121 +398,3 @@ async def messaging_platform_save(platform: str, request: Request):
                 "home_channel": updated["home_channel"],
             },
         }
-    existing_feishu = _read_feishu_bot_config(ctx)
-    if not isinstance(existing_feishu, dict):
-        existing_feishu = {}
-    raw_app_id = str(config.get("app_id") or "").strip()
-    raw_app_secret = str(config.get("app_secret") or "").strip()
-    existing_app_id = str(existing_feishu.get("app_id") or "").strip()
-    existing_app_secret = str(existing_feishu.get("app_secret") or "").strip()
-    app_id = raw_app_id or existing_app_id
-    app_secret = raw_app_secret or existing_app_secret
-    domain = (
-        str(config.get("domain") or existing_feishu.get("domain") or "feishu").strip()
-        or "feishu"
-    )
-    connection_mode = str(
-        config.get("connection_mode")
-        or existing_feishu.get("connection_mode")
-        or "websocket"
-    ).strip() or "websocket"
-    home_channel = str(
-        config.get("home_channel")
-        if "home_channel" in config
-        else existing_feishu.get("home_channel") or ""
-    ).strip()
-    if raw_app_id and raw_app_id != existing_app_id and not raw_app_secret:
-        raise HTTPException(
-            status_code=400,
-            detail="app_secret is required when changing app_id",
-        )
-    if not app_id or not app_secret:
-        raise HTTPException(status_code=400, detail="app_id and app_secret are required")
-
-    from plugins.platforms.feishu.adapter import probe_bot
-
-    should_probe = (
-        bool(raw_app_secret)
-        or (bool(raw_app_id) and raw_app_id != existing_app_id)
-        or domain != str(existing_feishu.get("domain") or "feishu")
-    )
-    bot_info = probe_bot(app_id, app_secret, domain) if should_probe else None
-    validated_at = (
-        time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        if should_probe
-        else str(existing_feishu.get("validated_at") or "").strip() or None
-    )
-    user = auth_context_payload(ctx).get("user") or {}
-    workspace_id = str(user.get("workspace_id") or "").strip()
-    saved = save_workspace_feishu_bot_config(
-        workspace_id,
-        app_id=app_id,
-        app_secret=app_secret,
-        domain=domain,
-        connection_mode=connection_mode,
-        bot_open_id=(
-            str(bot_info.get("bot_open_id") or "")
-            if bot_info
-            else str(existing_feishu.get("bot_open_id") or "") or None
-        ),
-        bot_name=(
-            str(bot_info.get("bot_name") or "")
-            if bot_info
-            else str(existing_feishu.get("bot_name") or "") or None
-        ),
-        home_channel=home_channel,
-        validated_at=validated_at,
-        last_error=(
-            None
-            if not should_probe or bot_info is not None
-            else "validation_failed"
-        ),
-        manager_user_id=ctx.user_id,
-    )
-    feishu_open_id = str(user.get("feishu_open_id") or "").strip()
-    if feishu_open_id:
-        _ensure_feishu_workspace_pairing_approved(
-            hermes_home=str(ctx.hermes_home),
-            user_id=ctx.user_id,
-            feishu_open_id=feishu_open_id,
-            user_name=str(user.get("name") or feishu_open_id),
-        )
-    
-    gateway_applied = False
-    try:
-        restart_result = await _restart_embedded_gateway_for_feishu_account(saved)
-        gateway_applied = bool(restart_result.get("ok"))
-    except Exception as exc:
-        import logging
-        logging.warning("feishu: failed to start bot after config save: %s", exc)
-    
-    payload = _messaging_platforms_payload(ctx)
-    for item in payload["platforms"]:
-        if item.get("platform") == "feishu":
-            item["gateway_applied"] = gateway_applied
-            return item
-    return {
-        "platform": "feishu",
-        "configured": True,
-        "config": saved,
-        "gateway_applied": gateway_applied,
-    }
-
-
-@router.delete("/messaging/{platform}")
-async def messaging_platform_delete(platform: str, request: Request):
-    ctx = request_context_from_request(request)
-    if not ctx.authenticated:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    normalized = platform.strip().lower()
-    if normalized not in {"feishu", "weixin"}:
-        raise HTTPException(status_code=404, detail="Messaging platform not found")
-    if normalized == "feishu":
-        user = auth_context_payload(ctx).get("user") or {}
-        workspace_id = str(user.get("workspace_id") or "").strip()
-        delete_workspace_feishu_bot_config(workspace_id)
-        return {"ok": True}
-    raise HTTPException(
-        status_code=501,
-        detail="Messaging configuration deletion is not implemented in this gateway yet",
-    )

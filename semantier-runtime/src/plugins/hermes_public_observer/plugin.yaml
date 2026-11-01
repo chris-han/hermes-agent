@@ -1,0 +1,3 @@
+name: semantier-public-observer
+version: 0.1.0
+description: Optional public execution observations; no authorization enforcement.

@@ -36,6 +36,7 @@ class GatewayEndpoint:
     # A gateway that outlived ``hermes update`` keeps serving old code, so an attaching client
     # compares this with its own checkout and restarts the owner instead of re-attaching it.
     code_sha: str | None = None
+    semantier_runtime: int = 0
 
 
 @dataclass(frozen=True)
@@ -56,6 +57,11 @@ def _canonical_home(home: str | Path) -> str:
 def _endpoint(payload: dict, home: Path, control_home: Path | None = None) -> GatewayDiscovery:
     if type(payload.get("runtime_protocol")) is not int or payload["runtime_protocol"] != 1:
         return GatewayDiscovery("incompatible", reason_code="runtime_protocol")
+    from hermes_cli.semantier_runtime import cloud_enabled
+    mode = payload.get("semantier_runtime", 0)
+    if type(mode) is not int or mode not in (0, 1) or mode != int(cloud_enabled()):
+        return GatewayDiscovery("incompatible", reason_code="semantier_runtime_mismatch",
+                                detail="Restart the gateway owner with the selected SEMANTIER_RUNTIME mode.")
     profiles = payload.get("served_profiles")
     if not isinstance(profiles, list):
         return GatewayDiscovery("inaccessible", reason_code="profile_mismatch")
@@ -102,6 +108,7 @@ def _endpoint(payload: dict, home: Path, control_home: Path | None = None) -> Ga
         supervisor=supervisor, capabilities=frozenset(capabilities),
         control_home=str(control_home) if control_home is not None else None,
         code_sha=code_sha if isinstance(code_sha := payload.get("code_sha"), str) and code_sha else None,
+        semantier_runtime=mode,
     ))
 
 

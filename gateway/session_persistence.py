@@ -41,15 +41,95 @@ def _is_live_system_guard(exc: BaseException) -> bool:
 class SessionPersistenceMixin:
     """SessionStore storage plumbing: SessionDB handle resolution and routing-index load/save."""
 
-    def retire_runtime_sessions(self, session_ids):
-        """Publish committed retirement; durable fences reject delayed saves."""
+    def can_coordinate_retirement(self, authority):
+        """Require the live runner's registered, exclusively owned stores."""
+        if postgres_enabled() or not getattr(self.config, 'multiplex_profiles', False):
+            return False
+        from gateway.runtime_ownership import process_ownership
+        from hermes_state_backend import session_store_home, session_store_key
+        runner = getattr(authority, 'runner', None)
+        registry = getattr(runner, 'session_authorities', None)
+        if (getattr(runner, 'session_store', None) is not self or registry is None
+                or getattr(authority, 'retired', False) or getattr(authority, 'retiring', False)):
+            return False
+        try:
+            home = session_store_home(authority.db)
+            routing = self._routing_db
+            launch = registry.launch
+            # Do not infer ownership from a matching pathname: the runtime must
+            # already have lent this exact handle to the registered authority.
+            with self._db_handles_lock:
+                owns_handle = any(handle is authority.db for handle in self._db_handles.values())
+            return (routing is not None and registry.for_home(home) is authority
+                    and session_store_home(authority.db) == Path(authority.profile_id).resolve()
+                    and owns_handle
+                    and getattr(authority.db, '_shared_registry_owned', False) is True
+                    and getattr(routing, '_shared_registry_owned', False) is True
+                    and process_ownership.owns(home)
+                    and process_ownership.owns(session_store_home(routing))
+                    and getattr(launch, 'runner', None) is runner
+                    and launch.db is routing
+                    and session_store_key(launch.db) == session_store_key(routing))
+        except (AttributeError, KeyError, TypeError, ValueError, OSError):
+            return False
+
+    @staticmethod
+    def _same_retirement_store(left, right):
+        if left is None or right is None:
+            return False
+        from hermes_state_backend import session_store_key
+        return session_store_key(left) == session_store_key(right)
+
+    def _ack_route_retirement(self, session_db, session_ids):
+        from hermes_state_mutation_retirement import entry_session_id, set_routing_pending
+        from hermes_state_runtime import RuntimeStoreError
+        routing = self._routing_db
+        if routing is None:
+            raise RuntimeStoreError('runtime_coordination_required')
+        targets = set(session_ids)
+        for key, raw in routing.load_gateway_routing_entries(scope=self._routing_scope()).items():
+            if entry_session_id(raw) in targets:
+                owner = self._db_for_key(key)
+                if owner is None or self._same_retirement_store(owner, session_db):
+                    raise RuntimeStoreError('runtime_coordination_required')
+        # The legacy mirror is imported on startup even when the routing DB is
+        # healthy. A successful DB write does not prove that mirror was saved.
+        if not postgres_enabled():
+            try:
+                with (self.sessions_dir / 'sessions.json').open(encoding='utf-8-sig') as stream:
+                    mirror = json.load(stream)
+            except FileNotFoundError:
+                mirror = {}
+            except (OSError, ValueError, TypeError):
+                raise RuntimeStoreError('runtime_coordination_required') from None
+            if not isinstance(mirror, dict):
+                raise RuntimeStoreError('runtime_coordination_required')
+            for key, entry in mirror.items():
+                if isinstance(entry, dict) and entry.get('session_id') in targets:
+                    owner = self._db_for_key(key)
+                    if owner is None or self._same_retirement_store(owner, session_db):
+                        raise RuntimeStoreError('runtime_coordination_required')
+        session_db._execute_write(lambda conn: set_routing_pending(conn, targets, False))
+
+    def retire_runtime_sessions(self, session_ids, *, session_db=None):
+        """Publish committed retirement, preserving other profiles with colliding IDs."""
         with self._lock:
+            self._ensure_loaded_locked()
             targets = set(session_ids)
             for key, entry in list(self._entries.items()):
-                if entry.session_id in targets:
+                if entry.session_id in targets and (session_db is None or
+                        self._same_retirement_store(self._db_for_key(key), session_db)):
                     del self._entries[key]
             for sid in targets:
-                self._session_owner_hints.pop(sid, None)
+                hint = self._session_owner_hints.get(sid)
+                hint_owner = self._db_for_key(hint) if hint and session_db is not None else None
+                if hint and (session_db is None or
+                             (hint_owner is not None and self._same_retirement_store(hint_owner, session_db))):
+                    self._session_owner_hints.pop(sid, None)
+            data, generation = self._snapshot_routing_locked()
+        self._persist_routing_data(data, generation)
+        if session_db is not None:
+            self._ack_route_retirement(session_db, targets)
 
     def _open_session_db_for_active_scope(self, db_path: Optional[Path] = None):
         """SessionDB for the active profile scope. ``db_path`` pins the store; otherwise
@@ -348,6 +428,7 @@ class SessionPersistenceMixin:
         if not self._entries:
             return
         stale_keys: list = []
+        retired_owners = []
         recovered_keys = 0
         try:
             for key, entry in self._entries.items():
@@ -355,6 +436,11 @@ class SessionPersistenceMixin:
                 # secondary-profile session gets pruned on the root copy.
                 db = self._db_for_key(key)
                 if db is None:
+                    continue
+                from hermes_state_mutation_retirement import retired_session
+                if retired_session(db, entry.session_id):
+                    stale_keys.append(key)
+                    retired_owners.append((db, entry.session_id))
                     continue
                 row = db.get_session(entry.session_id)
                 if row is None or row.get("end_reason") is None:
@@ -372,6 +458,12 @@ class SessionPersistenceMixin:
             del self._entries[key]
         if stale_keys or recovered_keys:
             self._save()
+        for db, sid in retired_owners:
+            # A failed root write leaves the durable pending fence for the next recovery.
+            try:
+                self._ack_route_retirement(db, [sid])
+            except Exception as exc:
+                logger.warning('gateway.session: routing retirement remains pending: %s', exc)
 
     def _stale_entry_verdict(self, key: str, entry, row):
         """For a routing entry whose row has ended: ``"prune"``, a replacement entry (repoint), or

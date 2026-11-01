@@ -95,9 +95,13 @@ class CommerceService:
             a=await self.billing._account(c,org,aid,'CNY')
             if a['funding']!='SEMANTIER_CREDITS': raise ValueError('account ineligible')
             snapshot=product|{'version':VERSION,'environment':self.payment_environment,'merchant_id':self.merchant_id}
+            from agents.operations_commerce import attribution
+            if attribution():snapshot['operations_attribution']=attribution()
             if self.channels:
                 snapshot['channel_bindings']={name:{'merchant_id':a.merchant_id,'app_id':a.app_id,'environment':a.environment} for name,a in self.channels.items()}
             q=await self.billing._one(c,'INSERT INTO commerce_quotes(quote_id,organization_id,account_id,product,expires_at) VALUES(%s,%s,%s,%s,%s) RETURNING *',(uuid4().hex,org,aid,Jsonb(snapshot),expiry))
+            from agents.operations_commerce import capture
+            await capture(c,q,'offer_viewed',status='eligible')
             return _wire(q)|snapshot
 
     def wire_order(self,row):
@@ -118,6 +122,9 @@ class CommerceService:
             overlap=await self.billing._one(c,'SELECT order_id FROM commerce_subscriptions WHERE organization_id=%s AND account_id=%s AND ends_at>now()',(org,aid),required=False)
             if overlap and q['product']['months']: raise ValueError('active subscription; renewal unavailable until expiry')
             row=await self.billing._one(c,'INSERT INTO commerce_orders(order_id,organization_id,account_id,quote_id,idempotency_key,product) VALUES(%s,%s,%s,%s,%s,%s) RETURNING *',(uuid4().hex,org,aid,quote_id,key,Jsonb(q['product'])))
+            from agents.operations_commerce import capture
+            await capture(c,row,'checkout_started')
+            await capture(c,row,'order_created',status='pending')
             return self.wire_order(row)
 
     async def get_order(self,org,aid,oid):
@@ -162,6 +169,8 @@ class CommerceService:
             if old and old['status']=='SUCCEEDED': raise ValueError('payment confirming; refresh status')
             row=await self.billing._one(c,"INSERT INTO commerce_payment_attempts(attempt_id,order_id,method,status,expires_at) VALUES(%s,%s,%s,'AWAITING_PAYMENT',%s) RETURNING *",
                 (uuid4().hex,oid,method,datetime.now(timezone.utc)+timedelta(minutes=10)))
+            from agents.operations_commerce import capture
+            await capture(c,o,'payment_status_changed',status='pending',receipt_ref=row['attempt_id'])
             return _wire(row)
 
     async def resolve_payment(self,org,aid,oid,attempt_id,outcome):
@@ -182,6 +191,9 @@ class CommerceService:
                 raise ValueError('payment attempt already resolved')
             else:
                 await c.execute('UPDATE commerce_payment_attempts SET status=%s WHERE attempt_id=%s',(statuses[outcome],attempt_id))
+                if outcome!='success':
+                    from agents.operations_commerce import capture
+                    await capture(c,order,'payment_status_changed',status='cancelled' if outcome=='cancel' else 'failed',receipt_ref=attempt_id)
         if expired: raise ValueError('payment attempt expired; start a new attempt')
         if outcome=='success':
             # A crash here is recoverable by retrying this exact succeeded attempt.
@@ -228,6 +240,9 @@ class CommerceService:
             if o['status']=='PENDING_PAYMENT':
                 await c.execute("UPDATE commerce_orders SET status='PAID_PENDING_FULFILLMENT' WHERE order_id=%s",(o['order_id'],))
                 await c.execute('INSERT INTO commerce_fulfillment(order_id) VALUES(%s) ON CONFLICT DO NOTHING',(o['order_id'],))
+                from agents.operations_commerce import capture
+                await capture(c,o,'payment_status_changed',status='succeeded',receipt_ref=event['event_id'])
+                await capture(c,o,'entitlement_status_changed',status='pending')
 
     def channel(self,method):
         self.enabled()
@@ -354,6 +369,8 @@ class CommerceService:
             await c.execute("UPDATE commerce_orders SET status='ACTIVE' WHERE order_id=%s",(oid,))
             await c.execute('UPDATE commerce_fulfillment SET fulfilled_at=now() WHERE order_id=%s',(oid,))
             await self.billing._enqueue_account_sync(c,org,aid,'CNY','payment_fulfillment')
+            from agents.operations_commerce import capture
+            await capture(c,o,'entitlement_status_changed',status='active')
 
     async def recover(self):
         self.enabled()

@@ -1,0 +1,325 @@
+{
+  "version": "metric-definition-v1",
+  "cohort_days": 30,
+  "exclusions": [
+    "operations_admin",
+    "test_account",
+    "demo_account"
+  ],
+  "analyses": [
+    {
+      "id": "acquisition",
+      "label": {
+        "en": "Positioning and expression",
+        "zh": "定位与表达"
+      },
+      "unit": "anonymous_journey",
+      "edges": [
+        {
+          "id": "landing_intent",
+          "start": "page_entered",
+          "end": "trial_cta_clicked",
+          "days": 7,
+          "label": {
+            "en": "Visit → invitation intent",
+            "zh": "访问 → 申请意向"
+          },
+          "requires": [
+            "landing"
+          ]
+        },
+        {
+          "id": "invitation_submit",
+          "start": "trial_cta_clicked",
+          "end": "invitation_application_submitted",
+          "days": 7,
+          "label": {
+            "en": "Intent → application",
+            "zh": "申请意向 → 提交申请"
+          },
+          "requires": [
+            "landing",
+            "invitation"
+          ]
+        },
+        {
+          "id": "reading_intent",
+          "start": "section_viewed",
+          "end": "trial_cta_clicked",
+          "days": 7,
+          "label": {
+            "en": "Observed reading → intent (optional path)",
+            "zh": "有效阅读 → 意向（可选路径）"
+          },
+          "requires": [
+            "landing"
+          ]
+        },
+        {
+          "id": "case_intent",
+          "start": "case_opened",
+          "end": "trial_cta_clicked",
+          "days": 7,
+          "label": {
+            "en": "Case exploration → intent (optional path)",
+            "zh": "案例探索 → 意向（可选路径）"
+          },
+          "requires": [
+            "landing"
+          ]
+        },
+        {
+          "id": "invitation_decision",
+          "start": "invitation_application_submitted",
+          "end": "invitation_status_changed",
+          "days": 7,
+          "label": {
+            "en": "Application → approved invitation",
+            "zh": "申请 → 邀请获批"
+          },
+          "requires": [
+            "invitation"
+          ],
+          "end_status": "approved"
+        },
+        {
+          "id": "invitation_claim",
+          "start": "invitation_status_changed",
+          "end": "registration_completed",
+          "days": 7,
+          "label": {
+            "en": "Approved invitation → registration",
+            "zh": "邀请获批 → 注册"
+          },
+          "requires": [
+            "invitation",
+            "identity"
+          ],
+          "start_status": "approved"
+        }
+      ]
+    },
+    {
+      "id": "activation",
+      "label": {
+        "en": "Delivery and activation",
+        "zh": "交付与激活"
+      },
+      "unit": "verified_account",
+      "eligible": "approved_invitation",
+      "edges": [
+        {
+          "id": "registration_ready",
+          "start": "registration_completed",
+          "end": "client_ready",
+          "days": 7,
+          "label": {
+            "en": "Registration → ready",
+            "zh": "注册 → 端就绪"
+          },
+          "requires": [
+            "identity",
+            "workspace",
+            "windows"
+          ]
+        },
+        {
+          "id": "first_delivery",
+          "start": "trial_access_status_changed",
+          "start_status": "active",
+          "end": "task_completed",
+          "days": 7,
+          "label": {
+            "en": "Invited or paid access → real delivery",
+            "zh": "邀请试用或付费权益 → 真实交付"
+          },
+          "requires": [
+            "entitlement",
+            "task"
+          ],
+          "start_alternatives": [
+            "entitlement_status_changed"
+          ]
+        },
+        {
+          "id": "task_start",
+          "start": "trial_access_status_changed",
+          "end": "task_started",
+          "days": 7,
+          "label": {
+            "en": "Invited or paid access → task started",
+            "zh": "邀请试用或付费权益 → 任务开始"
+          },
+          "requires": [
+            "entitlement",
+            "task"
+          ],
+          "start_status": "active",
+          "start_alternatives": [
+            "entitlement_status_changed"
+          ]
+        },
+        {
+          "id": "execution_delivery",
+          "start": "task_started",
+          "end": "task_completed",
+          "days": 7,
+          "label": {
+            "en": "Task started → completed delivery",
+            "zh": "任务开始 → 完成交付"
+          },
+          "requires": [
+            "task"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "value",
+      "label": {
+        "en": "Continued value and payment",
+        "zh": "持续价值与付费"
+      },
+      "unit": "verified_account",
+      "edges": [
+        {
+          "id": "delivery_view",
+          "start": "task_completed",
+          "end": "result_viewed",
+          "days": 30,
+          "label": {
+            "en": "Delivery → result viewed",
+            "zh": "真实交付 → 查看结果"
+          },
+          "requires": [
+            "task",
+            "workspace",
+            "windows"
+          ]
+        },
+        {
+          "id": "reuse",
+          "start": "task_completed",
+          "end": "independent_task_completed",
+          "days": 30,
+          "label": {
+            "en": "First delivery → independent reuse",
+            "zh": "首项交付 → 独立复用"
+          },
+          "requires": [
+            "task"
+          ]
+        },
+        {
+          "id": "purchase",
+          "start": "offer_viewed",
+          "end": "payment_status_changed",
+          "end_status": "succeeded",
+          "days": 30,
+          "label": {
+            "en": "Eligible offer → payment",
+            "zh": "可购买报价 → 支付成功"
+          },
+          "requires": [
+            "commerce"
+          ]
+        },
+        {
+          "id": "paid_access",
+          "start": "payment_status_changed",
+          "start_status": "succeeded",
+          "end": "entitlement_status_changed",
+          "end_status": "active",
+          "days": 30,
+          "label": {
+            "en": "Payment → active entitlement",
+            "zh": "支付 → 权益生效"
+          },
+          "requires": [
+            "commerce",
+            "entitlement"
+          ]
+        },
+        {
+          "id": "delivery_feedback",
+          "start": "task_completed",
+          "end": "feedback_submitted",
+          "days": 30,
+          "label": {
+            "en": "Delivery → self-reported feedback",
+            "zh": "交付 → 自报反馈"
+          },
+          "requires": [
+            "task"
+          ]
+        },
+        {
+          "id": "delivery_action",
+          "start": "task_completed",
+          "end": "action_recorded",
+          "days": 30,
+          "label": {
+            "en": "Delivery → self-reported action",
+            "zh": "交付 → 自报行动"
+          },
+          "requires": [
+            "task"
+          ]
+        },
+        {
+          "id": "checkout",
+          "start": "offer_viewed",
+          "end": "checkout_started",
+          "days": 30,
+          "label": {
+            "en": "Eligible offer → checkout",
+            "zh": "可购买报价 → 结算开始"
+          },
+          "requires": [
+            "commerce"
+          ]
+        },
+        {
+          "id": "order_payment",
+          "start": "order_created",
+          "end": "payment_status_changed",
+          "days": 30,
+          "label": {
+            "en": "Order → payment succeeded",
+            "zh": "订单 → 支付成功"
+          },
+          "requires": [
+            "commerce"
+          ],
+          "end_status": "succeeded"
+        },
+        {
+          "id": "paid_use",
+          "start": "entitlement_status_changed",
+          "end": "paid_entitlement_consumed",
+          "days": 30,
+          "label": {
+            "en": "Active paid entitlement → actual credit debit",
+            "zh": "付费权益生效 → 实际积分扣减"
+          },
+          "requires": [
+            "entitlement"
+          ],
+          "start_status": "active"
+        }
+      ]
+    }
+  ],
+  "dimensions": [
+    "branch",
+    "registration_origin",
+    "purchase_origin",
+    "first_touch_surface",
+    "current_surface",
+    "source",
+    "role",
+    "scenario",
+    "has_current_task",
+    "page_version"
+  ]
+}

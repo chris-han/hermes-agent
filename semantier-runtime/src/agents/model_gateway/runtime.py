@@ -7,10 +7,20 @@ from __future__ import annotations
 import argparse
 import asyncio
 from dataclasses import dataclass
+import hmac
 import os
 import re
 from typing import Mapping
 from agents.tenant_secret_policy import resolve_secret
+
+
+def resolve_pricing_service_identity(env: Mapping[str, str], native_key: str) -> str | None:
+    reference = env.get('SEMANTIER_PRICING_SERVICE_SECRET_REF', 'SEMANTIER_PRICING_SERVICE_TOKEN')
+    secret = resolve_secret(reference, workspace_env=None, platform_env=env, auth_cache=None)
+    value = secret.value if secret else None
+    if value and native_key and hmac.compare_digest(value, native_key):
+        raise ValueError('private delivery identity must be distinct from native management identity')
+    return value
 
 
 @dataclass(frozen=True)
@@ -126,6 +136,19 @@ async def start_gateway(app, *, env=None, start_worker=True):
         await sync_store.require_ready()
     proxy=ProxyClient(config.proxy_url,config.proxy_key) if config.proxy_url and config.proxy_key else None
     service=GatewayService(store=store,billing=billing,proxy=proxy,enabled=True,account_sync_store=sync_store)
+    # Pricing metadata is not inference. Explicit server source configuration
+    # and the existing service secret never become browser-controlled values.
+    service.pricing_api_base=platform_env.get('SEMANTIER_ALIBABA_PRICING_API_BASE')
+    pricing_key_ref=platform_env.get('SEMANTIER_ALIBABA_PRICING_SECRET_REF','DASHSCOPE_API_KEY')
+    if not re.fullmatch('[A-Z][A-Z0-9_]*',pricing_key_ref):
+        raise ValueError('invalid pricing source secret reference')
+    pricing_secret=resolve_secret(pricing_key_ref,workspace_env=None,platform_env=platform_env,auth_cache=None)
+    service.pricing_api_key=pricing_secret.value if pricing_secret else None
+    service.pricing_reference_fx_enabled=platform_env.get('SEMANTIER_PRICING_REFERENCE_FX_ENABLED','1')=='1'
+    service.pricing_require_reference_fx=platform_env.get('SEMANTIER_PRICING_REQUIRE_REFERENCE_FX')=='1'
+    service.pricing_cost_map_url=platform_env.get('SEMANTIER_PRICING_COST_MAP_URL')
+    service.pricing_runtime_identity_enabled=True
+    service.pricing_service_token=resolve_pricing_service_identity(platform_env,config.proxy_key)
     app.state.model_gateway=service
     if sync_store is not None and start_worker:
         from agents.model_gateway.account_sync import AccountSyncWorker

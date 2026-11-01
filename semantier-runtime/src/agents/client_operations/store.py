@@ -47,28 +47,37 @@ class Store:
                 c.execute(sql.SQL('REVOKE UPDATE,DELETE,TRUNCATE ON {}.release_delivery_variants FROM {}').format(schema,role))
         return {'schema':self.schema,'version':3}
 
-    def grant(self,user_id,capabilities,channel):
-        if not set(capabilities)<=GRANTS:raise ValueError('unsupported capability')
+    def grant(self,user_id,capabilities,channel,*,additive=False):
+        if not set(capabilities)<=GRANTS:
+            raise ValueError('unsupported capability')
         with self.connection() as c:
-            c.execute('DELETE FROM grants WHERE user_id=%s AND channel=%s',(user_id,channel))
-            for capability in capabilities:c.execute('INSERT INTO grants VALUES(%s,%s,%s)',(user_id,capability,channel))
-            self.audit(c,'migration-owner','grant',user_id,{'capabilities':sorted(capabilities),'channel':channel})
+            if not additive:
+                c.execute('DELETE FROM grants WHERE user_id=%s AND channel=%s',(user_id,channel))
+            for capability in capabilities:
+                c.execute('INSERT INTO grants VALUES(%s,%s,%s)'+(' ON CONFLICT DO NOTHING' if additive else ''),(user_id,capability,channel))
+            body={'capabilities':sorted(capabilities),'channel':channel}
+            if additive:
+                body['additive']=True
+            self.audit(c,'migration-owner','grant',user_id,body)
 
     def permissions(self,user_id,channel):
         with self.connection() as c:
             return {r['capability'] for r in c.execute('SELECT capability FROM grants WHERE user_id=%s AND channel=%s',(user_id,channel))}
 
-    def grant_targets(self, principal_id, target_ids, actions, channel):
+    def grant_targets(self, principal_id, target_ids, actions, channel, *, additive=False):
         from contracts.client_operations import DELIVERY_ACTIONS, DELIVERY_TARGET_IDS
         if not set(target_ids) <= set(DELIVERY_TARGET_IDS) or not set(actions) <= DELIVERY_ACTIONS:
             raise ValueError('unsupported delivery target grant')
         with self.connection() as c:
-            c.execute('DELETE FROM delivery_grants WHERE principal_id=%s AND channel=%s', (principal_id, channel))
+            if not additive:
+                c.execute('DELETE FROM delivery_grants WHERE principal_id=%s AND channel=%s', (principal_id, channel))
             for target_id in sorted(set(target_ids)):
                 for action in sorted(set(actions)):
-                    c.execute('INSERT INTO delivery_grants VALUES(%s,%s,%s,%s)', (principal_id, channel, target_id, action))
-            self.audit(c, 'migration-owner', 'delivery_grant', principal_id,
-                       {'channel': channel, 'target_ids': sorted(set(target_ids)), 'actions': sorted(set(actions))})
+                    c.execute('INSERT INTO delivery_grants VALUES(%s,%s,%s,%s)'+(' ON CONFLICT DO NOTHING' if additive else ''), (principal_id, channel, target_id, action))
+            body={'channel': channel, 'target_ids': sorted(set(target_ids)), 'actions': sorted(set(actions))}
+            if additive:
+                body['additive']=True
+            self.audit(c, 'migration-owner', 'delivery_grant', principal_id, body)
 
     def target_permissions(self, principal_id, channel):
         with self.connection() as c:

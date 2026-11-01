@@ -270,6 +270,17 @@ class AtomicEffectOutbox:
                     "for DISPATCHING/EFFECT_UNKNOWN"
                 )
 
+    @staticmethod
+    def claim_dispatch_in_transaction(conn, *, effect_id: str, attempt_id: str) -> bool:
+        """Claim under a caller-owned transaction for coupled lease bookkeeping."""
+        if not attempt_id.strip():
+            raise ValueError("attempt_id is required")
+        cur = conn.execute(hosted.sql_query(
+            "UPDATE semantier_effect_outbox SET state='DISPATCHING',dispatch_attempt_id=?,receipt_ref=NULL,failure_detail=NULL WHERE effect_id=? AND state='READY'",
+            "UPDATE semantier_effect_outbox SET state='DISPATCHING',dispatch_attempt_id=%s,receipt_ref=NULL,failure_detail=NULL WHERE effect_id=%s AND state='READY'",
+        ), (attempt_id, effect_id))
+        return cur.rowcount == 1
+
     def claim_dispatch(self, *, effect_id: str, attempt_id: str) -> bool:
         if not attempt_id.strip():
             raise ValueError("attempt_id is required")
@@ -316,6 +327,24 @@ class AtomicEffectOutbox:
                 raise InvalidEffectTransition(
                     "completion requires the matching DISPATCHING attempt"
                 )
+
+    @staticmethod
+    def mark_failed_safe_in_transaction(conn, *, effect_id: str, attempt_id: str, failure_detail: str) -> bool:
+        """Fence a known-safe failure in a caller-owned atomic handoff."""
+        cur = conn.execute(hosted.sql_query(
+            "UPDATE semantier_effect_outbox SET state='FAILED_SAFE',failure_detail=? WHERE effect_id=? AND state='DISPATCHING' AND dispatch_attempt_id=?",
+            "UPDATE semantier_effect_outbox SET state='FAILED_SAFE',failure_detail=%s WHERE effect_id=%s AND state='DISPATCHING' AND dispatch_attempt_id=%s",
+        ), (failure_detail, effect_id, attempt_id))
+        return cur.rowcount == 1
+
+    @staticmethod
+    def retry_failed_safe_in_transaction(conn, *, effect_id: str) -> bool:
+        """Move only an explicitly safe effect back to READY in the caller transaction."""
+        cur = conn.execute(hosted.sql_query(
+            "UPDATE semantier_effect_outbox SET state='READY',dispatch_attempt_id=NULL,receipt_ref=NULL,failure_detail=NULL WHERE effect_id=? AND state='FAILED_SAFE'",
+            "UPDATE semantier_effect_outbox SET state='READY',dispatch_attempt_id=NULL,receipt_ref=NULL,failure_detail=NULL WHERE effect_id=%s AND state='FAILED_SAFE'",
+        ), (effect_id,))
+        return cur.rowcount == 1
 
     def mark_failed_safe(
         self, *, effect_id: str, attempt_id: str, failure_detail: str

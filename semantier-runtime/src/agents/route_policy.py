@@ -98,15 +98,30 @@ ROUTE_POLICY_MAP: dict[tuple[str, str], RoutePolicy] = {
     ('POST', '/api/billing/prices'): RoutePolicy.AUTHENTICATED,
 
     ('GET', '/api/model-gateway/invocations/{invocation_id}/evidence'): RoutePolicy.AUTHENTICATED,
+    ('GET', '/api/admin/operations'): RoutePolicy.AUTHENTICATED,
     ('GET', '/api/admin/model-gateway/provider-fields'): RoutePolicy.AUTHENTICATED,
     ('GET', '/api/admin/model-gateway/model-cost-map'): RoutePolicy.AUTHENTICATED,
+    ('GET', '/api/admin/model-gateway/pricing/providers'): RoutePolicy.AUTHENTICATED,
+    ('POST', '/api/admin/model-gateway/pricing/collections'): RoutePolicy.AUTHENTICATED,
+    ('GET', '/api/admin/model-gateway/pricing/collections'): RoutePolicy.AUTHENTICATED,
+    ('GET', '/api/admin/model-gateway/pricing/collections/{run_id}'): RoutePolicy.AUTHENTICATED,
+    ('GET', '/api/admin/model-gateway/pricing/catalogs/{version_id}'): RoutePolicy.AUTHENTICATED,
+    ('POST', '/api/admin/model-gateway/pricing/sync'): RoutePolicy.AUTHENTICATED,
+    ('GET', '/api/admin/model-gateway/pricing/source'): RoutePolicy.AUTHENTICATED,
+    ('GET', '/api/admin/model-gateway/pricing/reload-status'): RoutePolicy.AUTHENTICATED,
+    ('POST', '/api/admin/model-gateway/pricing/reload'): RoutePolicy.AUTHENTICATED,
+    ('POST', '/api/admin/model-gateway/pricing/reload-schedule'): RoutePolicy.AUTHENTICATED,
+    ('DELETE', '/api/admin/model-gateway/pricing/reload-schedule'): RoutePolicy.AUTHENTICATED,
+    ('GET', '/api/internal/model-gateway/pricing/cost-map'): RoutePolicy.PUBLIC,
+    ('GET', '/ui/{asset:path}'): RoutePolicy.AUTHENTICATED,
+    ('GET', '/litellm-asset-prefix/{asset:path}'): RoutePolicy.PUBLIC,  # Mandatory private service bearer in handler.
+
 
     ('GET', '/api/admin/model-gateway/context'): RoutePolicy.AUTHENTICATED,
     ('POST', '/api/admin/model-gateway/models/{model_id}/update'): RoutePolicy.AUTHENTICATED,
     ('POST', '/api/admin/model-gateway/models/{model_id}/block'): RoutePolicy.AUTHENTICATED,
     ('POST', '/api/admin/model-gateway/models/{model_id}/unblock'): RoutePolicy.AUTHENTICATED,
 
-    ('GET', '/api/model/options'): RoutePolicy.AUTHENTICATED,
     ('POST', '/api/model/set'): RoutePolicy.AUTHENTICATED,
     ('PATCH', '/api/config'): RoutePolicy.AUTHENTICATED,
     ('GET', '/api/cloud-provider/catalog'): RoutePolicy.AUTHENTICATED,
@@ -192,7 +207,6 @@ ROUTE_POLICY_MAP: dict[tuple[str, str], RoutePolicy] = {
     ): RoutePolicy.PUBLIC,  # session-aware, payload distinguishes
     ("POST", "/auth/password/register"): RoutePolicy.PUBLIC,
     ("DELETE", "/auth/feishu/link"): RoutePolicy.AUTHENTICATED,
-    ("POST", "/messaging/feishu/pairing/approve-self"): RoutePolicy.AUTHENTICATED,
     # --- authenticated tenant surfaces ---
     ("POST", "/upload"): RoutePolicy.AUTHENTICATED,
     ("GET", "/api/contextgraph/runtime"): RoutePolicy.AUTHENTICATED,
@@ -311,43 +325,16 @@ ROUTE_POLICY_MAP: dict[tuple[str, str], RoutePolicy] = {
     ("PATCH", "/sessions"): RoutePolicy.AUTHENTICATED,
     ("DELETE", "/sessions"): RoutePolicy.AUTHENTICATED,
     ("POST", "/sessions/{session_key:path}/branches"): RoutePolicy.AUTHENTICATED,
-    ("GET", "/sessions/{session_key:path}/trajectory"): RoutePolicy.AUTHENTICATED,
-    ("GET", "/sessions/{session_key}/trajectory"): RoutePolicy.AUTHENTICATED,
-    (
-        "GET",
-        "/sessions/{session_key:path}/artifacts/{artifact_path:path}/raw",
-    ): RoutePolicy.AUTHENTICATED,
-    (
-        "GET",
-        "/sessions/{session_key}/artifacts/{artifact_path:path}/raw",
-    ): RoutePolicy.AUTHENTICATED,
     ("*", "/api/sessions"): RoutePolicy.AUTHENTICATED,
     ("GET", "/api/sessions/search"): RoutePolicy.AUTHENTICATED,
     ("*", "/api/sessions/{session_id}"): RoutePolicy.AUTHENTICATED,
-    ("GET", "/api/sessions/{session_id:path}/activity"): RoutePolicy.AUTHENTICATED,
-    ("GET", "/api/sessions/{session_id}/lineage"): RoutePolicy.AUTHENTICATED,
-    ("GET", "/api/sessions/{session_id}/activity"): RoutePolicy.AUTHENTICATED,
-    ("GET", "/api/sessions/{session_id:path}/log"): RoutePolicy.AUTHENTICATED,
-    ("GET", "/api/sessions/{session_id}/log"): RoutePolicy.AUTHENTICATED,
     ("GET", "/api/sessions/{session_id}/latest-descendant"): RoutePolicy.AUTHENTICATED,
     ("GET", "/api/sessions/{session_id}/memory-snapshot"): RoutePolicy.AUTHENTICATED,
-    ("GET", "/api/sessions/{session_id:path}/effective-context"): RoutePolicy.AUTHENTICATED,
-    ("GET", "/api/sessions/{session_id}/effective-context"): RoutePolicy.AUTHENTICATED,
     ("GET", "/api/sessions/{session_id}/messages"): RoutePolicy.AUTHENTICATED,
     ("POST", "/api/sessions/{session_id}/chat"): RoutePolicy.AUTHENTICATED,
     ("POST", "/api/sessions/{session_id}/chat/stream"): RoutePolicy.AUTHENTICATED,
     ("POST", "/api/sessions/send"): RoutePolicy.AUTHENTICATED,
     ("GET", "/api/memory/read"): RoutePolicy.AUTHENTICATED,
-    ("*", "/api/jobs"): RoutePolicy.AUTHENTICATED,
-    ("*", "/api/jobs/{job_id}"): RoutePolicy.AUTHENTICATED,
-    ("GET", "/api/jobs/{job_id}/{action}"): RoutePolicy.AUTHENTICATED,
-    ("POST", "/api/jobs/{job_id}/{action}"): RoutePolicy.AUTHENTICATED,
-    ("GET", "/api/plugins/kanban/board"): RoutePolicy.AUTHENTICATED,
-    ("POST", "/api/plugins/kanban/tasks"): RoutePolicy.AUTHENTICATED,
-    ("GET", "/api/plugins/kanban/tasks/{task_id}"): RoutePolicy.AUTHENTICATED,
-    ("PATCH", "/api/plugins/kanban/tasks/{task_id}"): RoutePolicy.AUTHENTICATED,
-    ("DELETE", "/api/plugins/kanban/tasks/{task_id}"): RoutePolicy.AUTHENTICATED,
-    ("GET", "/api/plugins/kanban/assignees"): RoutePolicy.AUTHENTICATED,
     ('POST', '/api/business-answers/receivables/runs'): RoutePolicy.AUTHENTICATED,
     ('GET', '/api/business-answers/receivables/runs/{run_ref}'): RoutePolicy.AUTHENTICATED,
     ('GET', '/api/business-answers/receivables/answers/{answer_ref}'): RoutePolicy.AUTHENTICATED,
@@ -809,13 +796,25 @@ ROUTE_AUTHZ_CLASS_MAP: dict[tuple[str, str], RouteAuthorizationClass] = {
     ('GET', '/api/model-gateway/invocations/{invocation_id}/evidence'): RouteAuthorizationClass.TENANT_MEMBER,
     ('GET', '/api/admin/model-gateway/provider-fields'): RouteAuthorizationClass.TENANT_MEMBER,
     ('GET', '/api/admin/model-gateway/model-cost-map'): RouteAuthorizationClass.TENANT_MEMBER,
+    ('GET', '/api/admin/model-gateway/pricing/providers'): RouteAuthorizationClass.TENANT_MEMBER,
+    ('POST', '/api/admin/model-gateway/pricing/collections'): RouteAuthorizationClass.TENANT_MEMBER,  # Handler adds current Billing/platform grants.
+    ('GET', '/ui/{asset:path}'): RouteAuthorizationClass.TENANT_MEMBER,
+    ('GET', '/api/admin/model-gateway/pricing/collections'): RouteAuthorizationClass.TENANT_MEMBER,  # Handler adds current Billing/platform grants.
+    ('GET', '/api/admin/model-gateway/pricing/collections/{run_id}'): RouteAuthorizationClass.TENANT_MEMBER,  # Handler adds current Billing/platform grants.
+    ('GET', '/api/admin/model-gateway/pricing/catalogs/{version_id}'): RouteAuthorizationClass.TENANT_MEMBER,  # Handler adds current Billing/platform grants.
+    ('POST', '/api/admin/model-gateway/pricing/sync'): RouteAuthorizationClass.TENANT_MEMBER,  # Handler adds current Billing/platform grants.
+    ('GET', '/api/admin/model-gateway/pricing/source'): RouteAuthorizationClass.TENANT_MEMBER,  # Handler adds current Billing/platform grants.
+    ('GET', '/api/admin/model-gateway/pricing/reload-status'): RouteAuthorizationClass.TENANT_MEMBER,  # Handler adds current Billing/platform grants.
+    ('POST', '/api/admin/model-gateway/pricing/reload'): RouteAuthorizationClass.TENANT_MEMBER,  # Handler adds current Billing/platform grants.
+    ('POST', '/api/admin/model-gateway/pricing/reload-schedule'): RouteAuthorizationClass.TENANT_MEMBER,  # Handler adds current Billing/platform grants.
+    ('DELETE', '/api/admin/model-gateway/pricing/reload-schedule'): RouteAuthorizationClass.TENANT_MEMBER,  # Handler adds current Billing/platform grants.
+
 
     ('GET', '/api/admin/model-gateway/context'): RouteAuthorizationClass.TENANT_MEMBER,
     ('POST', '/api/admin/model-gateway/models/{model_id}/update'): RouteAuthorizationClass.TENANT_MEMBER,
     ('POST', '/api/admin/model-gateway/models/{model_id}/block'): RouteAuthorizationClass.TENANT_MEMBER,
     ('POST', '/api/admin/model-gateway/models/{model_id}/unblock'): RouteAuthorizationClass.TENANT_MEMBER,
 
-    ('GET', '/api/model/options'): RouteAuthorizationClass.TENANT_MEMBER,
     ('POST', '/api/model/set'): RouteAuthorizationClass.TENANT_MEMBER,
     ('PATCH', '/api/config'): RouteAuthorizationClass.TENANT_MEMBER,
     ('GET', '/api/cloud-provider/catalog'): RouteAuthorizationClass.TENANT_MEMBER,
@@ -1508,7 +1507,6 @@ FORWARDED_UPSTREAM_ALLOWLIST: frozenset[str] = frozenset(
         "/api/config",
         "/api/config/defaults",
         "/api/config/schema",
-        "/api/model/info",
         # Memory browser endpoints still owned by embedded Hermes.
         # /api/memory/read is Semantier-native because curated short paths must
         # resolve through the authenticated workspace boundary before disk IO.

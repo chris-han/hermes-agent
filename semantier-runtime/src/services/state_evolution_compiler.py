@@ -10,7 +10,7 @@ from contracts.state_evolution import evolution_hash
 _MEETING_OPERATIONS = {
     'observe_meeting_event': ('observe', 'scenario_input'),
     'ensure_negotiation_case': ('compute', 'initialize_negotiation'),
-    'ensure_kanban_task': ('effect', 'scenario_input'),
+    'ensure_core_responsibility': ('effect', 'scenario_input'),
     'ensure_followup_timer': ('effect', 'scenario_input'),
     'poll_rsvp': ('observe', 'scenario_input'),
     'collect_candidate_slots': ('compute', 'receive_feishu'),
@@ -26,8 +26,8 @@ _MEETING_OPERATIONS = {
 }
 _MEETING_CONTROLLERS = {
     'event_to_case': ('observe_meeting_event', 'ensure_negotiation_case', 'normal', None),
-    'case_to_task': ('ensure_negotiation_case', 'ensure_kanban_task', 'normal', None),
-    'task_to_timer': ('ensure_kanban_task', 'ensure_followup_timer', 'normal', None),
+    'case_to_task': ('ensure_negotiation_case', 'ensure_core_responsibility', 'normal', None),
+    'task_to_timer': ('ensure_core_responsibility', 'ensure_followup_timer', 'normal', None),
     'timer_to_poll': ('ensure_followup_timer', 'poll_rsvp', 'normal', None),
     'poll_to_slots': ('poll_rsvp', 'collect_candidate_slots', 'normal', None),
     'slots_to_votes': ('collect_candidate_slots', 'collect_votes', 'normal', None),
@@ -45,7 +45,7 @@ _MEETING_CONTROLLERS = {
     'cancel_to_terminal': ('cancel_meeting', 'terminal', 'normal', None),
 }
 _ALLOWED_REFS = {
-    'ensure_kanban_task': {'effect_contract_ref':'feishu.meeting.kanban.ensure'},
+    'ensure_core_responsibility': {'effect_contract_ref':'semantier.meeting.responsibility.ensure'},
     'ensure_followup_timer': {'effect_contract_ref':'feishu.meeting.followup.ensure'},
     'evaluate_terminal_authority': {'decision_ref':'feishu.meeting.terminal_authority'},
     'requester_decision': {'authority_ref':'feishu.meeting.requester'},

@@ -94,6 +94,8 @@ class EmbeddedHermesAPIService:
             from agents.wiki_task_runtime import register_wiki_tools
 
             register_wiki_tools()
+            from agents.hermes_business_adapter import register_core_work_receipt_tool
+            register_core_work_receipt_tool()
             replace_execution_boundary_provider(SemantierExecutionBoundaryProvider())
             port = _reserve_loopback_port()
             api_key = f"sk-semantier-{secrets.token_hex(16)}"
