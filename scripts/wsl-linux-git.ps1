@@ -40,7 +40,9 @@ function git {
     $cwd=ConvertTo-SemantierWslPath (Get-Location).ProviderPath
     $command=@('-d',$env:SEMANTIER_WSL_GIT_DISTRO,'--exec','/usr/bin/env','-u','GIT_DIR','-u','GIT_WORK_TREE','-u','GIT_COMMON_DIR','-u','GIT_INDEX_FILE','-u','GIT_OBJECT_DIRECTORY','-u','GIT_ALTERNATE_OBJECT_DIRECTORIES','-u','GIT_CONFIG','-u','GIT_CONFIG_SYSTEM','-u','GIT_CONFIG_PARAMETERS','-u','GIT_CONFIG_COUNT','-u','GIT_NAMESPACE','GIT_CONFIG_NOSYSTEM=1','GIT_CONFIG_GLOBAL=/dev/null','/usr/bin/git','-C',$cwd) + $converted
     $operation=if($converted.Count -ge 3 -and $converted[0] -eq '-C'){$converted[2]}elseif($converted.Count){$converted[0]}else{''}
-    if($operation -in @('status','rev-parse')) { Invoke-SemantierWslRead $command }
+    $operationIndex=if($converted.Count -ge 3 -and $converted[0] -eq '-C'){2}else{0}
+    $bundleVerify=$operation -eq 'bundle' -and $converted.Count -gt ($operationIndex+1) -and $converted[$operationIndex+1] -eq 'verify'
+    if($operation -in @('status','rev-parse') -or $bundleVerify) { Invoke-SemantierWslRead $command }
     else { & $script:SemantierWslExe @command }
     $global:LASTEXITCODE=$LASTEXITCODE
 }

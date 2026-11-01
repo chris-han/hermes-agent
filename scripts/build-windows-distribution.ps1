@@ -145,10 +145,14 @@ try {
     $bundle = Join-Path $output 'source.bundle'
     Copy-Item -LiteralPath $request.bundle -Destination $bundle
     Native 'git' @('-C',$repo,'bundle','verify',$bundle)
-    Native 'git' @('-C',$repo,'fetch','--no-write-fetch-head',$bundle,$request.bundleRef)
+    $preseed = ($request.PSObject.Properties.Name -contains 'preseedOwnedWorktree') -and $request.preseedOwnedWorktree
+    if ($preseed -and (!$reuseCache -or !$existing -or $standalone -or $work -ine 'D:\repo\hermes-channel1-build')) { throw 'Invalid preseeded worktree binding' }
+    if (!$preseed) { Native 'git' @('-C',$repo,'fetch','--no-write-fetch-head',$bundle,$request.bundleRef) }
     $transferred = [string](Git-Value $repo @('rev-parse',($request.commit + '^{commit}')))
     if ($transferred -cne $request.commit) { throw 'Transferred commit identity mismatch' }
-    if ($existing -or $standalone) {
+    if ($preseed) {
+      if ([string](Git-Value $work @('rev-parse','HEAD')) -cne $source) { throw 'Preseeded build HEAD mismatch' }
+    } elseif ($existing -or $standalone) {
       Native 'git' @('-C',$work,'checkout','--detach',$source)
     } else {
       Native 'git' @('-C',$repo,'worktree','add','--detach',$work,$source)
