@@ -55,14 +55,16 @@ and its immutable package graph remain unchanged.
 
 ## Channel1 descriptor build
 
-`Build.ps1 -OutputDirectory <fresh-directory> -Channel1Descriptor <verified-json>`
+`Build.ps1 -OutputDirectory <fresh-directory> -Channel1Descriptor <verified-json> -Channel1Zip <verified-zip>`
 compiles the separately named `semantier-setup-channel1.exe` as Setup 1.2.0.0.
 The descriptor binds the exact `channel1.semantier.com` HTTPS origin, immutable
 ZIP path, ZIP length and SHA-256, app version/identity, public certificate hash
 and thumbprint, graph hash and each required package member hash. Provide those
-values from the actual signed application receipt and verify the complete ZIP,
-graph and members before creating the descriptor; the script does not prove
-those external artifacts merely by parsing the descriptor. It validates the
+values from the actual signed application receipt. The script holds the local ZIP
+open without write/delete sharing, verifies its full length and SHA-256, checks
+each pinned member and graph inventory/identity/version against the descriptor,
+and checks the certificate thumbprint. Signature verification and provenance
+remain separate owner gates. It also validates the
 bound origin, field types, member names, hash syntax, version range and embedded
 certificate, then compiles and runs the same self-tests and bilingual previews.
 The generated C# contains no secret. The result remains unsigned until the
