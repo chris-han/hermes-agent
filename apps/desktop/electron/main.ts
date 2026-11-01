@@ -18365,7 +18365,7 @@ app.on('open-url', (event, url) => {
 })
 
 app.whenReady().then(async () => {
-  journeyObservations = new JourneyObservations(app.getPath('userData'), process.env.SEMANTIER_CLOUD_PUBLIC_ORIGIN ?? '', () => semantierObservations.status().journeyEnabled, (input, init) => electronNet.fetch(input, init))
+  journeyObservations = new JourneyObservations(app.getPath('userData'), process.env.SEMANTIER_CLOUD_PUBLIC_ORIGIN ?? '', () => semantierObservations.status().journeyEnabled, (input, init) => electronNet.fetch(input, init), app.getVersion())
   void journeyObservations.firstOpen()
   // Post-update relaunch detection (App Installer arm): when the previous
   // version wrote the one-shot pending-relaunch marker before quitting into

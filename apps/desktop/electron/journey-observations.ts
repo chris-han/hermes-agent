@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 
-type LaunchRecord = { installation_id:string; event_id:string; occurred_at:string; acknowledged:boolean }
+type LaunchRecord = { installation_id:string; event_id:string; occurred_at:string; acknowledged:boolean; client_version?:string }
 export class JourneyObservations {
   private record:LaunchRecord|null=null
   private file:string
@@ -13,7 +13,7 @@ export class JourneyObservations {
   private queuedStates=0
   private unavailable=false
   private originAvailable=false
-  constructor(private dir:string, private origin:string, private enabled:()=>boolean, private send:typeof fetch=fetch) {
+  constructor(private dir:string, private origin:string, private enabled:()=>boolean, private send:typeof fetch=fetch, private clientVersion?:string) {
     this.file=path.join(dir,'semantier-journey-first-open.json')
     try {
       const url=new URL(origin)
@@ -25,9 +25,15 @@ export class JourneyObservations {
         if (info.isSymbolicLink() || info.size>2048) throw Error('Invalid optional observation')
         const value=JSON.parse(fs.readFileSync(this.file,'utf8'))
         if (!/^[a-f0-9-]{36}$/.test(value.installation_id) || !/^[a-f0-9-]{36}$/.test(value.event_id) || !Number.isFinite(Date.parse(value.occurred_at)) || typeof value.acknowledged!=='boolean') throw Error('Invalid optional observation')
+        if (value.client_version !== undefined && (typeof value.client_version !== 'string' || !/^[A-Za-z0-9.:-]{1,128}$/.test(value.client_version))) throw Error('Invalid optional observation version')
         this.record=value
       }
     } catch {this.unavailable=true}
+  }
+  private newRecord():LaunchRecord {
+    const record:LaunchRecord={installation_id:randomUUID(),event_id:randomUUID(),occurred_at:new Date().toISOString(),acknowledged:false}
+    if (this.clientVersion && /^[A-Za-z0-9.:-]{1,128}$/.test(this.clientVersion)) record.client_version=this.clientVersion
+    return record
   }
   private save() {
     const temporary=this.file+'.'+randomUUID()+'.tmp'
@@ -42,7 +48,7 @@ export class JourneyObservations {
   firstOpen():Promise<void> {
     if (this.running) return this.running
     if (!this.record && !this.unavailable) {
-      try {this.record={installation_id:randomUUID(),event_id:randomUUID(),occurred_at:new Date().toISOString(),acknowledged:false};this.save()}
+      try {this.record=this.newRecord();this.save()}
       catch {this.unavailable=true}
     }
     this.running=this.deliver().finally(()=>{this.running=null})
@@ -67,13 +73,13 @@ export class JourneyObservations {
   private async deliver() {
     if (!this.enabled() || !this.originAvailable || this.unavailable || this.record?.acknowledged) return
     try {
-      if (!this.record) {this.record={installation_id:randomUUID(),event_id:randomUUID(),occurred_at:new Date().toISOString(),acknowledged:false};this.save()}
+      if (!this.record) {this.record=this.newRecord();this.save()}
       // One retained observation, at most three attempts per launch. No disk secret or customer content.
       for (let attempt=0;attempt<3 && this.enabled();attempt++) {
         try {
           const session=await this.send(this.origin+'/api/journey/session',{method:'POST',credentials:'include',signal:AbortSignal.timeout(3000)})
           if (!session.ok) continue
-          const r=await this.send(this.origin+'/api/journey/observations/windows',{method:'POST',credentials:'include',headers:{'content-type':'application/json'},body:JSON.stringify({event_id:this.record.event_id,event_name:'app_first_open',occurred_at:this.record.occurred_at,installation_id:this.record.installation_id,producer_version:'electron-journey-v1',properties:{}}),signal:AbortSignal.timeout(3000)})
+          const r=await this.send(this.origin+'/api/journey/observations/windows',{method:'POST',credentials:'include',headers:{'content-type':'application/json'},body:JSON.stringify({event_id:this.record.event_id,event_name:'app_first_open',occurred_at:this.record.occurred_at,installation_id:this.record.installation_id,producer_version:'electron-journey-v1',properties:this.record.client_version ? {client_version:this.record.client_version} : {}}),signal:AbortSignal.timeout(3000)})
           if (r.ok) {this.record.acknowledged=true;this.save();break}
           if (r.status>=400 && r.status<500) break
         } catch {/* bounded, optional collection failure */}
