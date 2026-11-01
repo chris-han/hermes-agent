@@ -38,8 +38,9 @@ def snapshot(repo: Path, ref: str, destination: Path, exclude: tuple[str, ...] =
     with tempfile.TemporaryDirectory(prefix="hermes-archive-") as temp:
         archive = Path(temp) / "source.tar"
         pathspecs = [f":(exclude){name}" for name in exclude]
+        from scripts.bundles.git_command import git_command
         subprocess.run(
-            ["git", "archive", "--format=tar", "--output", str(archive), ref, "--", *pathspecs],
+            git_command(repo, "archive", "--format=tar", "--output", str(archive), ref, "--", *pathspecs),
             cwd=repo, check=True)
         if destination.exists():
             from pm.filesystem import remove_tree
