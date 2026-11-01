@@ -4,6 +4,8 @@ import asyncio
 import json
 import logging
 import os
+import time
+from uuid import uuid4
 from pathlib import Path
 from .store import Store
 from .publication import Publisher
@@ -36,11 +38,17 @@ class ClientOperations:
             if target_id not in {'channel1', 'channel2', 'channel3'}:
                 raise ValueError('unsupported delivery target')
             kind = spec['kind']
-            if kind not in {'filesystem', 'r2'} or (kind=='r2') != (target_id=='channel2'):
+            if kind not in {'filesystem', 'r2','ecs'} or (kind=='r2') != (target_id=='channel2') or (kind=='ecs' and target_id!='channel1'):
                 raise ValueError('delivery target owner mismatch')
             if kind=='r2' and spec['public_base'] != 'https://s3.semantier.com':
                 raise ValueError('R2 qualified publication base required')
             remote = None
+            if kind=='ecs':
+                from .ecs_target import ECSTarget
+                try:remote=ECSTarget.configured(spec,self.store)
+                except (OperationError,ValueError,KeyError,OSError):
+                    errors[target_id]='ecs_storage_qualification_unavailable'
+                    continue
             if kind=='r2':
                 from .r2_target import R2Target
                 try:
@@ -55,6 +63,7 @@ class ClientOperations:
         self.targets = DeliveryTargets(self.store, self.environment, publishers, self.channel,
             errors=errors, legacy_target_id=primary_id, origins={key: spec['public_base'] for key,spec in specs.items()})
         self.publications = Publications(self.targets)
+        self._retention_next_check = 0.0
         self.feedback=Feedback(self.store,self.channel)
         self.logs=Path(env['SEMANTIER_CLIENT_LOG_ROOT'])
         from .authorization import FeedbackAuthorizations
@@ -71,6 +80,7 @@ class ClientOperations:
             c.execute('SELECT 1 FROM grants LIMIT 0')
 
     def maintain(self):
+        self.maintain_retention()
         from .distribution import ingest_logs
         from .ci import reconcile_candidates
         try:
@@ -91,6 +101,65 @@ class ClientOperations:
         ingest_logs(self.store,self.logs)
         self.store.retain()
 
+    def maintain_retention(self):
+        now = time.monotonic()
+        if now < self._retention_next_check:
+            return
+        self._retention_next_check = now + 900
+        for target_id, publisher in self.targets.publishers.items():
+            if publisher.remote_target:
+                if getattr(publisher.remote_target,'provider',None)=='ecs':continue
+                try:
+                    self._maintain_r2_target(target_id, publisher.remote_target)
+                except (OperationError, OSError):
+                    logging.getLogger(__name__).exception('R2 retention backstop held; independent owners remain available')
+
+    def _maintain_r2_target(self, target_id, remote):
+        """Existing operation journal owns intent before any remote lock write."""
+        if remote.control_target is None:
+            raise OperationError(503, 'delivery_private_control_credentials_unavailable')
+        actor = 'system:release-retention'
+        with self.store.connection() as claim:
+            acquired = claim.execute('SELECT pg_try_advisory_xact_lock(hashtext(%s)) AS acquired',
+                                     (self.store.schema+':retention:'+target_id,)).fetchone()['acquired']
+            if not acquired:
+                return
+            with self.store.connection() as c:
+                pending = c.execute("SELECT operation_id,body FROM operations WHERE user_id=%s AND channel=%s "
+                                    "AND status='retention_pending' AND body->>'target_id'=%s ORDER BY created_at LIMIT 2",
+                                    (actor, self.channel, target_id)).fetchall()
+            if len(pending) > 1:
+                raise OperationError(503, 'retention_journal_requires_recovery')
+            for row in pending:
+                body = row['body']
+                if body.get('remote') != [remote.base, remote.bucket, remote.control_target.bucket]:
+                    raise OperationError(503, 'retention_target_binding_changed')
+                remote.recover_owned_lock(body['remote_lock'], body['owner_instance'],
+                                          current_instance=self.publications.instance)
+                with self.store.connection() as c:
+                    c.execute("UPDATE operations SET status='retention_recovered',updated_at=now() WHERE operation_id=%s",
+                              (row['operation_id'],))
+            operation_id = uuid4().hex
+            identity = {**self.publications.instance, 'kind': 'retention-maintenance', 'operation_id': operation_id}
+            reservation = {'owner': identity, 'id': uuid4().hex}
+            body = {'target_id': target_id, 'remote': [remote.base, remote.bucket, remote.control_target.bucket],
+                    'owner_instance': identity, 'remote_lock': reservation}
+            from contracts.client_operations import digest
+            with self.store.connection() as c:
+                c.execute("INSERT INTO operations(operation_id,user_id,channel,idempotency_key,request_hash,body,status) "
+                          "VALUES(%s,%s,%s,%s,%s,%s::jsonb,'retention_pending')",
+                          (operation_id, actor, self.channel, operation_id, digest(body), json.dumps(body)))
+            try:
+                result = remote.maintain_retention(identity, reservation=reservation)
+            except (OperationError, OSError) as error:
+                with self.store.connection() as c:
+                    c.execute("UPDATE operations SET body=body || %s::jsonb,updated_at=now() WHERE operation_id=%s",
+                              (json.dumps({'error_code': error.code if isinstance(error, OperationError) else 'retention_transport_uncertain'}), operation_id))
+                raise
+            with self.store.connection() as c:
+                c.execute("UPDATE operations SET status='retention_succeeded',body=body || %s::jsonb,updated_at=now() "
+                          "WHERE operation_id=%s", (json.dumps({'result': result}), operation_id))
+
 
 async def start(app,env=None):
     env=os.environ if env is None else env
@@ -98,7 +167,8 @@ async def start(app,env=None):
     if env.get('SEMANTIER_CLIENT_OPERATIONS_ENABLED')!='1':return
     service=ClientOperations(env);await asyncio.to_thread(service.check)
     for target_id,publisher in service.targets.publishers.items():
-        failures=(OperationError,OSError)+( (publisher.remote_target.transport.R2RequestError,) if publisher.remote_target else () )
+        remote=publisher.remote_target
+        failures=(OperationError,OSError)+( (remote.transport.R2RequestError,) if remote and getattr(remote,'provider',None)!='ecs' else () )
         try:
             await asyncio.to_thread(publisher.initialize_channel)
         except failures as error:
@@ -121,13 +191,20 @@ async def stop(app):
 
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('command',choices=['migrate','grant','grant-targets']);parser.add_argument('--app-role',default='semantier_app');parser.add_argument('--user-id');parser.add_argument('--capability',action='append',default=[]);parser.add_argument('--legacy-target-id', choices=['channel1','channel2','channel3']);parser.add_argument('--delivery-target',action='append',default=[]);parser.add_argument('--action',action='append',default=[]);args=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('command',choices=['migrate','grant','grant-targets','qualify-channel1']);parser.add_argument('--app-role',default='semantier_app');parser.add_argument('--user-id');parser.add_argument('--capability',action='append',default=[]);parser.add_argument('--legacy-target-id', choices=['channel1','channel2','channel3']);parser.add_argument('--delivery-target',action='append',default=[]);parser.add_argument('--action',action='append',default=[]);parser.add_argument('--spec',type=Path);args=parser.parse_args()
     store=Store(os.environ.get('SEMANTIER_MIGRATION_DATABASE_URL') or os.environ['SEMANTIER_DATABASE_URL'],os.environ.get('SEMANTIER_CLIENT_SCHEMA','semantier_client_operations'))
     if args.command=='migrate':print(json.dumps(store.migrate(args.app_role,legacy_target_id=args.legacy_target_id)))
     else:
         if not args.user_id:parser.error('--user-id required')
         from agents.gateway_identity import get_user_record
         if not get_user_record(args.user_id):parser.error('existing governed user required')
+        if args.command=='qualify-channel1':
+            if not args.spec:parser.error('--spec required')
+            from .ecs_target import ECSTarget
+            from .ecs_qualification import qualify
+            spec=json.loads(args.spec.read_text())
+            print(json.dumps(qualify(store,ECSTarget.from_spec(spec),args.user_id,os.environ['SEMANTIER_CLIENT_CHANNEL'],spec['incoming_root'])))
+            return
         if args.command=='grant-targets':
             store.grant_targets(args.user_id,args.delivery_target,args.action,os.environ['SEMANTIER_CLIENT_CHANNEL'])
         else:

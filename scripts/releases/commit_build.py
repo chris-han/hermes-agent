@@ -20,6 +20,9 @@ def require_commit(value: str) -> str:
 
 
 def output(argv: list[str], repo: Path | None = None) -> str:
+    if argv[0] == "git" and os.name == "nt" and os.environ.get("SEMANTIER_WSL_GIT_DISTRO"):
+        from scripts.bundles.git_command import git_command
+        argv = git_command(repo or Path.cwd(), *argv[1:])
     return subprocess.check_output(argv, cwd=repo, text=True, encoding="utf-8", timeout=60).strip()
 
 

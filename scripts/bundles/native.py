@@ -86,7 +86,7 @@ def stage_uv_cache(source: Path, destination: Path) -> None:
 
 
 
-def compact_uv_cache(cache: Path) -> None:
+def compact_uv_cache(cache: Path, *, max_archive_bytes: int = 400_000_000) -> None:
     """Collapse a staged cache's Windows filesystem entries, keeping every wheel.
 
     Only the owned staging copy is replaced. Verify the completed archive before
@@ -95,34 +95,70 @@ def compact_uv_cache(cache: Path) -> None:
     import zipfile
     from pm.filesystem import is_junction, remove_tree
 
+    import hashlib
+    import json
+
+    if max_archive_bytes < 100:
+        raise ValueError("archive cap too small")
     archive = cache / "seed.zip"
     temporary = cache / ".seed.zip.tmp"
-    if archive.exists() or temporary.exists():
+    if (archive.exists() or temporary.exists() or (cache / "seed-manifest.json").exists()
+            or any(cache.glob("seed-*.zip"))):
         raise ValueError("cache archive already exists")
-    try:
-        with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_DEFLATED,
-                             compresslevel=6, strict_timestamps=False) as output:
-            for directory, dirs, files in os.walk(cache):
-                for name in sorted(dirs + files):
-                    entry = Path(directory) / name
-                    if entry == temporary:
-                        continue
-                    if entry.is_symlink() or is_junction(entry):
-                        raise ValueError(f"linked staged cache entry: {entry}")
+    entries = []
+    for directory, dirs, files in os.walk(cache):
+        dirs.sort()
+        for name in sorted(dirs + files):
+            entry = Path(directory) / name
+            if entry.is_symlink() or is_junction(entry):
+                raise ValueError(f"linked staged cache entry: {entry}")
+            entries.append(entry)
+    # Partition whole members, never arbitrary ZIP byte slices. Conservative
+    # uncompressed accounting includes DEFLATE/ZIP headers; actual output is
+    # checked too. Keep the historical seed.zip representation for small seeds.
+    groups = [[]]
+    used = 64
+    for entry in entries:
+        relative = entry.relative_to(cache).as_posix()
+        size = entry.stat().st_size if entry.is_file() else 0
+        cost = size + size // 1000 + 256 + 4 * len(relative.encode("utf-8"))
+        if cost + 64 > max_archive_bytes:
+            raise ValueError(f"cache member exceeds archive cap: {relative}")
+        if used + cost > max_archive_bytes:
+            groups.append([])
+            used = 64
+        groups[-1].append(entry)
+        used += cost
+    with tempfile.TemporaryDirectory(prefix=".seed-parts-", dir=cache.parent) as staging:
+        stage = Path(staging)
+        rows = []
+        for index, group in enumerate(groups):
+            name = "seed.zip" if len(groups) == 1 else f"seed-{index:04d}.zip"
+            target = stage / name
+            with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED,
+                                 compresslevel=6, strict_timestamps=False) as output:
+                for entry in group:
                     output.write(entry, entry.relative_to(cache).as_posix())
-        with zipfile.ZipFile(temporary) as output:
-            bad = output.testzip()
-            if bad:
-                raise ValueError(f"cache archive integrity failed: {bad}")
-        temporary.replace(archive)
+            if target.stat().st_size > max_archive_bytes:
+                raise ValueError(f"cache archive exceeds cap: {name}")
+            with zipfile.ZipFile(target) as output:
+                if output.testzip():
+                    raise ValueError("cache archive integrity failed")
+            with target.open("rb") as stream:
+                digest = hashlib.file_digest(stream, "sha256").hexdigest()
+            rows.append(dict(name=name, size=target.stat().st_size, sha256=digest))
+        if len(groups) > 1:
+            (stage / "seed-manifest.json").write_text(
+                json.dumps(dict(schema=1, archives=rows), sort_keys=True) + "\n", encoding="utf-8")
+        published = {p.name for p in stage.iterdir()}
+        for source in stage.iterdir():
+            source.replace(cache / source.name)
         for entry in cache.iterdir():
-            if entry != archive:
+            if entry.name not in published:
                 if entry.is_dir():
                     remove_tree(entry)
                 else:
                     entry.unlink()
-    finally:
-        temporary.unlink(missing_ok=True)
 
 
 def verify_offline_cache(root: Path, python: Path, env: dict) -> None:
@@ -318,8 +354,9 @@ def _prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
     repo_dir = out / "hermes-agent"
     from scripts.bundles.payload import INERT_SNAPSHOT_DIRS, snapshot
     print(f"staging repo snapshot ({ref})…", flush=True)
+    from scripts.bundles.git_command import git_command
     revision = subprocess.check_output(
-        ["git", "rev-parse", "--verify", f"{ref}^{{commit}}"], cwd=source,
+        git_command(source, "rev-parse", "--verify", f"{ref}^{{commit}}"), cwd=source,
         text=True, encoding="utf-8").strip()
     with measure(log_root, "runtime.snapshot"):
         snapshot(source, revision, repo_dir, exclude=INERT_SNAPSHOT_DIRS)

@@ -93,6 +93,7 @@ export interface InstallStamp {
   /** Complete channel inputs, absent on legacy releases and one-off builds. */
   channelBuild?: Readonly<ChannelBuildRequest>
   /** Cross-application receiver shipped in this artifact, absent on older builds. */
+  receiverCapabilities?: { windowsPackageUri: 1 }
   receiverProtocol?: 1
   /** Pinned release tag; null for channel builds, one-offs and bootstrap. */
   tag: string | null

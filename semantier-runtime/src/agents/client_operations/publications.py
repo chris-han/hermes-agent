@@ -196,6 +196,16 @@ class Publications:
             current = c.execute('SELECT * FROM publication_targets WHERE operation_id=%s FOR UPDATE', (operation_id,)).fetchone()
             if not current:
                 raise OperationError(404, 'publication_target_unavailable')
+            owner=self.targets.publishers.get(current['target_id'])
+            remote=owner.remote_target if owner else None
+            if getattr(remote,'provider',None)=='ecs' and current['owner_instance']:
+                prior=current['owner_instance'];binding=prior.get('ecs',{})
+                if prior.get('instance')!=self.instance['instance']:
+                    replacement=changes.get('owner_instance',{}).get('ecs',{})
+                    if (replacement.get('auth_revision',0)<=binding.get('auth_revision',0)
+                        or replacement.get('incarnation')==binding.get('incarnation')
+                        or replacement.get('endpoint')!=binding.get('endpoint') or replacement.get('config_hash')!=binding.get('config_hash')):
+                        raise OperationError(409,'ecs_coordinator_replacement_requires_fresh_key')
             if all(current[key] == value for key, value in changes.items()):
                 return
             parent = c.execute(sql.SQL('UPDATE publication_targets SET {},updated_at=now() WHERE operation_id=%s RETURNING publication_id').format(
@@ -229,6 +239,22 @@ class Publications:
     def _acquire(self, parent, row, stack, status):
         owner = self.targets.owner(row['target_id'])
         lock_owner = {**self.instance, 'publication_id': parent['publication_id'], 'operation_id': row['operation_id'], 'release_id': parent['release_id']}
+        remote=owner.remote_target
+        if getattr(remote,'provider',None)=='ecs':
+            lock_owner=remote.identity(lock_owner)
+            lock=row['remote_lock'] or remote.reservation(lock_owner,self.channel)
+            lock['variant_hash']=row['variant_hash']
+            def persist(value):
+                self._target(row['operation_id'],remote_lock=value,owner_instance=lock_owner)
+            self._target(row['operation_id'],status=status,stage='acquiring_lock',reserved=True,remote_lock=lock,owner_instance=lock_owner)
+            if row['remote_lock']:
+                remote.recover_reservation(lock,row['owner_instance'],persist=persist)
+            def guard():
+                with self.store.connection() as c:
+                    current=c.execute('SELECT owner_instance FROM publication_targets WHERE operation_id=%s',(row['operation_id'],)).fetchone()
+                if not current or current['owner_instance']!=lock_owner:raise OperationError(409,'ecs_coordinator_fenced')
+            stack.enter_context(remote.locked(owner=lock_owner,reservation=lock,persist=persist,guard=guard))
+            return lock
         lock = {'owner': lock_owner, 'id': uuid4().hex}
         self._target(row['operation_id'], status=status, stage='acquiring_lock', reserved=True,
                      remote_lock=lock, owner_instance=lock_owner)
@@ -255,6 +281,18 @@ class Publications:
             self._target(row['operation_id'], previous_head=preview['head']['record'], intended_head=intended,
                          capacity=preview['capacity'])
             previews[row['target_id']] = preview
+        # All selected previews passed. Persist complete ECS intent before any
+        # endpoint authorization or public object write is possible.
+        for row in children:
+            owner=self.targets.owner(row['target_id']);remote=owner.remote_target
+            if getattr(remote,'provider',None)=='ecs':
+                lock=remote_locks[row['target_id']];preview=previews[row['target_id']]
+                if preview['readiness']=='already_current':continue
+                intended=owner.intended_record(preview['binding']['body'],preview['head']['record'])
+                intent=remote.publication_intent(preview['binding']['body'],owner.root,preview['head']['record'],intended,lock,preview['capacity'])
+                if lock.get('intent') and lock['intent']!=intent:raise OperationError(409,'ecs_durable_intent_changed')
+                lock['intent']=intent
+                self._target(row['operation_id'],remote_lock=lock)
         return previews, remote_locks
 
     @contextmanager
@@ -274,6 +312,11 @@ class Publications:
             for row in latest.values():
                 owner = self.targets.publishers.get(row['target_id'])
                 if not owner or not owner.remote_target:
+                    continue
+                if getattr(owner.remote_target,'provider',None)=='ecs':
+                    try:unresolved=owner.remote_target.unresolved(row['remote_lock'])
+                    except (OperationError,OSError):unresolved=bool(row['remote_lock'])
+                    self._target(row['operation_id'],reserved=unresolved,maintenance_status='failed' if unresolved else 'none')
                     continue
                 try:
                     raw, _ = owner.remote_target.read(LOCK_KEY)
@@ -300,6 +343,7 @@ class Publications:
                 return self._maintenance(parent, list(latest.values()))
             for row in children:
                 if row['status'] in {'queued', 'preflighting'} and row['remote_lock']:
+                    if getattr(self.targets.owner(row['target_id']).remote_target,'provider',None)=='ecs':continue
                     try:
                         self.targets.owner(row['target_id']).remote_target.recover_owned_lock(row['remote_lock'], row['owner_instance'], current_instance=self.instance)
                         self._target(row['operation_id'], remote_lock=None, owner_instance=None)
@@ -355,6 +399,10 @@ class Publications:
                     continue
             try:
                 self.authorize(parent['user_id'], [row['target_id']])
+                if getattr(owner.remote_target,'provider',None)=='ecs':
+                    with self._locks(parent['publication_id']) as stack:
+                        self._acquire(parent,row,stack,row['status'])
+                    continue
                 owner.remote_target.recover_owned_lock(row['remote_lock'], row['owner_instance'], current_instance=self.instance)
                 with self._locks(parent['publication_id']) as stack:
                     if row['status'] in CONFIRMED:
@@ -372,7 +420,7 @@ class Publications:
                 continue
             owner = self.targets.owner(row['target_id'])
             try:
-                if owner.remote_target:
+                if owner.remote_target and getattr(owner.remote_target,'provider',None)!='ecs':
                     owner.remote_target.recover_owned_lock(row['remote_lock'], row['owner_instance'], current_instance=self.instance)
                 binding = self.targets.binding(parent['release_id'], row['target_id'], row['variant_hash'])
                 with self._locks(parent['publication_id']) as stack:
@@ -383,6 +431,9 @@ class Publications:
                                  actual_revision=result['revision'], readback_digest=result['readback_digest'],
                                  maintenance_status='failed' if result.get('maintenance_status')=='failed' else 'pending' if owner.remote_target else 'none', error_code=None)
             except (OperationError, OSError) as error:
+                if isinstance(error,OperationError) and error.code=='ecs_aborted_before_head':
+                    self._target(row['operation_id'],status='failed',stage='reconciled',reserved=False,error_code=error.code)
+                    continue
                 self._target(row['operation_id'], status='uncertain', stage='reconciling', reserved=True,
                              error_code=error.code if isinstance(error, OperationError) else 'publication_outcome_unknown')
         self._summarize(parent['publication_id'])
@@ -460,7 +511,7 @@ class Publications:
             try:
                 self.run(row['publication_id'])
             except OperationError as error:
-                if error.status!=503:
+                if error.status!=503 and error.code not in {'ecs_coordinator_fenced','ecs_coordinator_replacement_requires_fresh_key'}:
                     raise
                 # Keep unavailable provider outcomes/reservations unchanged;
                 # independent batches can still make progress.

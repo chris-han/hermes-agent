@@ -218,6 +218,11 @@ def validate_record(value: object, *, name: str | None = None, repository: str |
     head = _head(record.get("head"))
     if head is not None and head["sequence"] >= record["nextSequence"]:
         raise ChannelError("Channel head exceeds allocation high-water")
+    native_head = _head(record.get("nativeHead"))
+    if native_head is not None:
+        if (record["state"] != "active" or record["policy"] == "source-branch" or head is None
+                or not head["sequence"] < native_head["sequence"] < record["nextSequence"]):
+            raise ChannelError("Native head requires a legacy bridge and newer allocated sequence")
     if record["policy"] == "source-branch":
         delivery = record.get("delivery")
         if record.get("identity") is not None or head is not None or not isinstance(delivery, dict) or delivery.get("kind") != "source-branch":
@@ -343,10 +348,26 @@ class ChannelReader:
         return ChannelResolution(requested, record, manifest)
 
 
-def validate_manifest(value: object, record: dict, base_url: str) -> dict:
-    manifest = _schema(value)
+def _manifest_schema(value: object, allow_native: bool) -> dict:
+    if not isinstance(value, dict) or type(value.get("schema")) is not int or value["schema"] not in (1, 2):
+        raise ChannelError("Unsupported manifest schema")
+    manifest = value
+    if "receiverCapabilities" in manifest:
+        capabilities=manifest["receiverCapabilities"]
+        if (not isinstance(capabilities,dict) or set(capabilities)!={"windowsPackageUri"}
+                or type(capabilities["windowsPackageUri"]) is not int or capabilities["windowsPackageUri"]!=1):
+            raise ChannelError("Unsupported receiver capability")
+    native_manifest = manifest["schema"] == 2
+    if native_manifest and not allow_native:
+        raise ChannelError("Native manifest requires explicit receiver/admission capability")
     if "receiverProtocol" in manifest:
         _integer(manifest["receiverProtocol"], "receiver protocol", maximum=2**53 - 1)
+    return manifest
+
+
+def validate_manifest(value: object, record: dict, base_url: str, *, allow_native: bool = False) -> dict:
+    manifest = _manifest_schema(value, allow_native)
+    native_manifest = manifest["schema"] == 2
     request = validate_request(manifest.get("request"), repository=record["repository"],
                                base_url=base_url, policy=record["policy"])
     if request["identity"] != record["identity"]:
@@ -364,16 +385,18 @@ def validate_manifest(value: object, record: dict, base_url: str) -> dict:
         # The archive prefix is the attempt ref when the request names one; a
         # bare releaseTag fallback never holds attempt artifacts (fail closed).
         prefixes.append(f"releases/tag/{request.get('archiveRef') or request['releaseTag']}/")
+    if native_manifest and len(packages) != 1:
+        raise ChannelError("Native manifest requires one Windows x64 target")
     seen = set()
     for package in packages:
         if not isinstance(package, dict):
             raise ChannelError("Invalid native package")
         target = tuple(package.get(field) for field in ("platform", "arch", "variant"))
-        if target[0] not in ("darwin", "win32") or target[1] not in ("arm64", "x64") or target[2] != "bundled":
+        if target[0] not in ("darwin", "win32") or target[1] not in ("arm64", "x64") or target[2] != ("native-msix-assets" if native_manifest else "bundled"):
             raise ChannelError("Unsupported channel package target")
-        if target in seen:
+        if target[:2] in seen:
             raise ChannelError("Duplicate package target")
-        seen.add(target)
+        seen.add(target[:2])
         artifact = package.get("artifact")
         if not isinstance(artifact, dict):
             raise ChannelError("Invalid package artifact")
@@ -398,4 +421,105 @@ def validate_manifest(value: object, record: dict, base_url: str) -> dict:
         feed_key = artifact_key(feed.get("key"))
         if not any(feed_key.startswith(prefix) for prefix in prefixes):
             raise ChannelError("Native metadata outside admitted build namespace")
+        if native_manifest:
+            _validate_native_package(package, request)
+        elif "native" in package:
+            raise ChannelError("Native package requires manifest schema2")
     return manifest
+
+
+def _validate_native_package(package: dict, request: dict) -> None:
+    if package.get("platform") != "win32" or package.get("arch") != "x64":
+        raise ChannelError("Native asset receiver requires Windows x64")
+    native = _schema(package.get("native"))
+    if (native.get("api") != "PackageManager.AddPackageByUriAsync"
+            or native.get("digestMethod") != "IAppxDigestProvider.GetDigest"
+            or native.get("digestEncoding") != "base64"):
+        raise ChannelError("Unsupported native API/digest contract")
+    graph = native.get("graph")
+    if not isinstance(graph, dict):
+        raise ChannelError("Missing native graph descriptor")
+    key = artifact_key(graph.get("key"))
+    if key != package["feed"]["key"] or not key.startswith(build_prefix(request["buildId"])) or not key.endswith("/native-graph.json"):
+        raise ChannelError("Native graph descriptor binding mismatch")
+    require_sha256(graph.get("sha256"))
+    _integer(graph.get("size"), "graph descriptor size", maximum=MAX_METADATA)
+    _integer(package["artifact"].get("size"), "native root size", maximum=480_000_000)
+    if "chunks" in package["artifact"] or not package["artifact"]["key"].startswith(build_prefix(request["buildId"])):
+        raise ChannelError("Native root cannot use legacy chunks or another build")
+
+
+def _native_object_identity(row,kind,identity,publisher,version,arch,identities):
+    key=row['key']
+    extension='.msixbundle' if kind.endswith('bundle') else '.msix'
+    if not key.endswith(extension):raise ChannelError('Native object extension mismatch')
+    name=row.get('identity')
+    if not isinstance(name,str) or not re.fullmatch(r'[A-Za-z0-9.-]{3,50}',name):raise ChannelError('Invalid native identity')
+    resource=row.get('resourceId','')
+    if kind=='asset-package':
+        if name!=identity or not isinstance(resource,str) or not re.fullmatch('runtime[0-9]{4}',resource) or row.get('allowExecution') is not True:
+            raise ChannelError('Invalid executable asset package binding')
+    elif resource:raise ChannelError('Unexpected native resource identity')
+    if (name,kind,resource) in identities:raise ChannelError('Ambiguous native package identity')
+    identities.add((name,kind,resource))
+    if kind.startswith('main-') and name!=identity:raise ChannelError('Main native identity mismatch')
+    if kind.startswith('optional-') and (name==identity or not name.startswith(identity+'.')):
+        raise ChannelError('Related native identity mismatch')
+    if any(row.get(k)!=v for k,v in dict(publisher=publisher,version=version,arch='neutral' if kind.endswith('bundle') or kind=='asset-package' else arch).items()):
+        raise ChannelError('Native identity/version/architecture mismatch')
+
+
+def validate_native_graph(value, *, build_id, identity, publisher, version, arch):
+    """Producer-side structural gate; never proof of signing or native execution.
+
+    Remote URIs are derived from qualified base + immutable keys, never supplied
+    independently. Every referenced outer/inner object has its own bytes/digest
+    binding. Keep this gate separate from admission until real layout proof.
+    """
+    import base64
+    if not isinstance(value, dict) or type(value.get('schema')) is not int or value['schema'] != 1 or value.get('transport') != 'windows-package-uri':
+        raise ChannelError('Unsupported native graph')
+    require_sha256(value.get('payloadInventorySha256'))
+    prefix=build_prefix(build_id)
+    objects=value.get('objects')
+    if not isinstance(objects,list) or not objects or len(objects)>64:
+        raise ChannelError('Invalid native object set')
+    rows={}
+    identities=set()
+    for row in objects:
+        if not isinstance(row,dict):raise ChannelError('Invalid native object')
+        key=artifact_key(row.get('key'))
+        if not key.startswith(prefix) or key in rows:raise ChannelError('Native object build/uniqueness mismatch')
+        kind=row.get('kind')
+        if kind not in ('main-package','optional-package','asset-package','main-bundle','optional-bundle'):
+            raise ChannelError('Invalid native object kind')
+        _native_object_identity(row,kind,identity,publisher,version,arch,identities)
+        if type(row.get('size')) is not int or not 0<row['size']<=480_000_000:
+            raise ChannelError('Native object exceeds cacheable cap')
+        require_sha256(row.get('sha256'))
+        digest=row.get('nativeDigest')
+        try:
+            decoded=base64.b64decode(digest,validate=True)
+            if len(decoded)!=32 or base64.b64encode(decoded).decode()!=digest:raise ChannelError('Invalid native digest')
+        except (ValueError,TypeError) as exc:raise ChannelError('Invalid native digest') from exc
+        refs=row.get('references')
+        if not isinstance(refs,list) or any(not isinstance(k,str) for k in refs) or len(set(refs))!=len(refs):
+            raise ChannelError('Invalid native references')
+        if kind.endswith('package') and refs:raise ChannelError('Package cannot introduce unbound dependencies')
+        rows[key]=row
+    root=value.get('root')
+    if not isinstance(root,str) or root not in rows or rows[root]['kind'] not in ('main-package','main-bundle'):
+        raise ChannelError('Invalid native graph root')
+    if sum(r['kind']=='main-package' for r in objects)!=1 or sum(r['kind']=='main-bundle' for r in objects)>1:
+        raise ChannelError('Ambiguous native main package')
+    seen=set(); active=set()
+    def visit(key):
+        if key not in rows:raise ChannelError('Missing native object')
+        if key in active:raise ChannelError('Native graph cycle')
+        if key in seen:return
+        active.add(key)
+        for reference in rows[key]['references']:visit(reference)
+        active.remove(key);seen.add(key)
+    visit(root)
+    if seen!=set(rows):raise ChannelError('Unreachable native graph object')
+    return value

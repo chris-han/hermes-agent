@@ -258,6 +258,8 @@ test('channel stamps verify the real checkout and retain source version and nati
     assert.equal(built.baseVersion, build.sourceVersion)
     assert.equal(built.tag, null)
     assert.equal(built.receiverProtocol, 1)
+    assert.equal(built.receiverCapabilities, undefined)
+    assert.deepEqual(buildStampPayload(provenance, env, 'win32', payload).receiverCapabilities, { windowsPackageUri:1 })
     assert.deepEqual(built.channelBuild, build)
     assert.ok(Object.isFrozen(built.channelBuild?.identity))
     fs.mkdirSync(path.join(dir, 'out/agent-payload/repo'), { recursive: true })
@@ -298,6 +300,7 @@ test('channel stamps verify the real checkout and retain source version and nati
     )
 
     assert.equal(stable.channelBuild, undefined)
+    assert.equal(buildStampPayload(resolveStamp({env:receiverEnv, repoRoot:dir}), receiverEnv, 'win32', payload).receiverCapabilities, undefined)
     assert.equal(stable.source, 'build')
     assert.equal(stable.tag, receiver.releaseTag)
     assert.equal(stable.displayVersion, receiver.version)
@@ -506,3 +509,29 @@ print(out.read_text(encoding='utf-8'))
     fs.rmSync(root, { recursive: true, force: true })
   }
 }, 20_000)
+
+
+test('folded native payload proof binds every installed file to the signed graph inventory', async () => {
+  const { verifyNativePayload } = await import('../../../tests/install/e2e-assets/native-payload-locations.mjs')
+  const { createHash } = await import('node:crypto')
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'native-folding-'))
+  const file = path.join(root, 'app/resources/agent-payload/中文.pyd')
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  fs.writeFileSync(file, 'actual installed bytes')
+  const files = [{ path: 'app/resources/agent-payload/中文.pyd', sha256: createHash('sha256').update(fs.readFileSync(file)).digest('hex'), size: fs.statSync(file).size }]
+  const digest = createHash('sha256').update(JSON.stringify(files).replace('中文', '\\u4e2d\\u6587')).digest('hex')
+  const plan = { files, assignment: { [files[0].path]: 'runtime0001' }, payloadInventorySha256: digest }
+  const graph = { payloadInventorySha256: digest }
+
+  try {
+    assert.equal(verifyNativePayload(root, plan, graph).filesChecked, 1)
+    fs.writeFileSync(file, 'wrong installed bytes!')
+    assert.throws(() => verifyNativePayload(root, plan, graph), /payload/)
+    assert.throws(() => verifyNativePayload(root, { ...plan, files: [] }, graph), /inventory/)
+    fs.unlinkSync(file)
+    const outside = path.join(root, 'outside.pyd')
+    fs.writeFileSync(outside, 'actual installed bytes')
+    fs.symlinkSync(outside, file)
+    assert.throws(() => verifyNativePayload(root, plan, graph), /payload/)
+  } finally { fs.rmSync(root, { recursive: true, force: true }) }
+})

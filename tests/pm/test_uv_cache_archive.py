@@ -176,3 +176,67 @@ def test_legacy_payload_marker_cannot_suppress_corrected_archive(seed):
     packages.uv_cache_dir()
     assert (machine / 'archive-v0/bucket/module.py').read_bytes() == b'COMPLETE = True\n'
     assert '+archive:' in (machine / '.seeded').read_text()
+
+
+def test_bounded_seed_archives_preserve_complete_offline_cache(seed):
+    import json
+    cache, machine = seed
+    for n in range(4):
+        (cache / f'wheel-{n}').write_bytes(bytes(range(256)) * 4)
+    native.compact_uv_cache(cache, max_archive_bytes=1500)
+    manifest = json.loads((cache / 'seed-manifest.json').read_text())
+    assert len(manifest['archives']) > 1
+    assert all((cache / row['name']).stat().st_size <= 1500 for row in manifest['archives'])
+    packages.uv_cache_dir()
+    for n in range(4):
+        assert (machine / f'wheel-{n}').read_bytes() == bytes(range(256)) * 4
+    assert (machine / 'archive-v0/bucket/module.py').read_bytes() == b'COMPLETE = True\n'
+    assert not (machine / 'seed-manifest.json').exists()
+    assert not list(machine.glob('seed-*.zip'))
+
+
+def test_missing_seed_segment_refuses_completion(seed):
+    import json
+    from pm.package import InstallError
+    cache, machine = seed
+    for n in range(3):
+        (cache / f'wheel-{n}').write_bytes(bytes(range(256)) * 4)
+    native.compact_uv_cache(cache, max_archive_bytes=1500)
+    manifest = json.loads((cache / 'seed-manifest.json').read_text())
+    (cache / manifest['archives'][-1]['name']).unlink()
+    with pytest.raises(InstallError, match='cache'):
+        packages.uv_cache_dir()
+    assert not (machine / '.seeded').exists()
+
+
+def test_indivisible_seed_member_preserves_loose_cache(seed):
+    cache, _ = seed
+    (cache / 'large').write_bytes(bytes(range(256)) * 4)
+    with pytest.raises(ValueError, match='exceeds'):
+        native.compact_uv_cache(cache, max_archive_bytes=200)
+    assert (cache / 'large').exists()
+    assert not (cache / 'seed-manifest.json').exists()
+
+
+@pytest.mark.parametrize('damage', ['digest', 'name', 'extra', 'schema'])
+def test_damaged_archive_set_refuses_before_seed(seed, damage):
+    import json
+    from pm.package import InstallError
+    cache, machine = seed
+    for n in range(2):
+        (cache / f'wheel-{n}').write_bytes(bytes(range(256)) * 4)
+    native.compact_uv_cache(cache, max_archive_bytes=1500)
+    file = cache / 'seed-manifest.json'
+    data = json.loads(file.read_text())
+    if damage == 'digest':
+        data['archives'][0]['sha256'] = '0' * 64
+    elif damage == 'name':
+        data['archives'][0]['name'] = '../escape.zip'
+    elif damage == 'schema':
+        data['schema'] = 2
+    else:
+        (cache / 'seed-9999.zip').write_bytes(b'unlisted')
+    file.write_text(json.dumps(data))
+    with pytest.raises(InstallError, match='cache'):
+        packages.uv_cache_dir()
+    assert not machine.exists()

@@ -434,7 +434,7 @@ import {
 import { wireOauthSessionResponse } from './oauth-session-response'
 import { listWindowsProcesses, reapPackageRootedProcesses } from './package-process-reap'
 import { createParentStartMarkerResolver } from './parent-process-identity'
-import { bundledPayload, installIdForRoot, type PayloadInfo, payloadPythonPath } from './payload-backend'
+import { bundledPayload, installIdForRoot, type PayloadInfo, payloadPythonPath, requireBundledPayload } from './payload-backend'
 import { petOverlayClickThrough, shouldPopInOnOverlayClosed } from './pet-overlay'
 import { placePetOverlay, registerPetOverlayIpc } from './pet-overlay-ipc'
 import {
@@ -638,7 +638,7 @@ import { ChannelResolver, type ChannelTarget } from './updater/channel'
 import { markChannelArtifactHandoff, retireInstalledChannelArtifacts } from './updater/channel-artifact-cache'
 import { inspectRunningChannelApp } from './updater/channel-native'
 import { ChannelStrategy } from './updater/channel-strategy'
-import { verifyPreparedChannelInstaller } from './updater/channel-windows-host'
+import { createNativeUriAppInstallerStrategy, inspectNativePackageUriEligibility, verifyPreparedChannelInstaller } from './updater/channel-windows-host'
 import { type CheckoutStrategy, createCheckoutStrategy } from './updater/checkout'
 import { readSourceUpdate, sourceChannelName, type SourceUpdate } from './updater/checkout-source'
 import { DeliverySources } from './updater/delivery-source'
@@ -3620,6 +3620,12 @@ async function createPackagedUpdateStrategy(): Promise<UpdaterStrategy | null> {
       throw new Error('Channel updates require a supported packaged application')
     }
 
+    const nativeEligibility = process.platform === 'win32' && installed.packageFullName
+      ? await inspectNativePackageUriEligibility(installed.packageFullName).catch(() => ({supported:false, reason:'native-capability-query-unavailable'}))
+      : {supported:false, reason:'not-windows-package'}
+
+    if (!nativeEligibility.supported && process.platform === 'win32') {rememberLog(`[updates] native URI eligibility: ${nativeEligibility.reason}`)}
+
     return new ChannelStrategy({
       build,
       installedChannel: installedBuild.channel,
@@ -3629,7 +3635,8 @@ async function createPackagedUpdateStrategy(): Promise<UpdaterStrategy | null> {
         build,
         platform: process.platform,
         arch: process.arch,
-        signer: installed.signer
+        signer: installed.signer,
+        nativePackageUri:nativeEligibility.supported
       }),
       reviewApplyTarget: target => {
         const review = updateWorkGuard.review(
@@ -3675,7 +3682,7 @@ function createNativePackagedStrategy(
   }
 
   if (mechanism === 'app-installer') {
-    const payload: PayloadInfo = requireBundledPayload(mechanism)
+    const payload: PayloadInfo = requireBundledPayload(mechanism, process.resourcesPath)
 
     const deps: ConstructorParameters<typeof AppInstallerStrategy>[0] = {
       python: payload.storePython,
@@ -3720,6 +3727,10 @@ function createNativePackagedStrategy(
         })
     }
 
+    if (target?.nativeGraph && INSTALL_STAMP?.channelBuild) {
+      return createNativeUriAppInstallerStrategy(deps, target, INSTALL_STAMP.channelBuild, {app, resourcesPath:process.resourcesPath, log:rememberLog})
+    }
+
     return target
       ? createChannelAppInstallerStrategy(deps, target, async (file, selected) => {
           const verified = await verifyPreparedChannelInstaller(file, selected, undefined, fetchDesktopUpdate)
@@ -3731,7 +3742,7 @@ function createNativePackagedStrategy(
   }
 
   if (mechanism === 'microsoft-store') {
-    const payload: PayloadInfo = requireBundledPayload(mechanism)
+    const payload: PayloadInfo = requireBundledPayload(mechanism, process.resourcesPath)
 
     return createStoreStrategy({
       python: payload.storePython,
@@ -3760,20 +3771,7 @@ function createNativePackagedStrategy(
   return new ExternalStrategy(INSTALL_STAMP)
 }
 
-/**
- * The bundled Python payload for a strategy whose update check runs inside
- * it. A stamp that names such a mechanism without a payload is a broken
- * install; say so instead of failing on `payload.storePython`.
- */
-function requireBundledPayload(mechanism: UpdaterStrategy['mechanism']): PayloadInfo {
-  const payload: PayloadInfo | null = bundledPayload(process.resourcesPath)
 
-  if (!payload) {
-    throw new Error(`${mechanism} updates require the bundled application payload, which this install has none of`)
-  }
-
-  return payload
-}
 
 /**
  * The checkout updater strategy (windows-handoff / posix-handoff). The flow

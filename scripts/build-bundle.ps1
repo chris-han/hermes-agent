@@ -40,7 +40,8 @@ param(
   [string]$Remote = 'origin',
   [string]$ChannelRequest = '',
   [string]$AcceptancePublicBase = '',
-  [string]$ControllerCommit = ''
+  [string]$ControllerCommit = '',
+  [string]$Cache = ''
 )
 
 # 'Stop' turns the native stderr progress lines of the build into terminating errors on Windows PowerShell 5.
@@ -69,6 +70,8 @@ function Find-Python {
   }
   Fail 'needs Python 3.11+ on PATH (or pass -Python).'
 }
+
+if ($env:SEMANTIER_WSL_GIT_DISTRO) { . (Join-Path $PSScriptRoot 'wsl-linux-git.ps1') }
 
 function Git-Lines {
   $lines = & git @args
@@ -103,9 +106,9 @@ function Get-ClaimAttempt([string]$Version) {
 Set-Location $Repo
 $py = Find-Python
 
-if (git status --porcelain --untracked-files=all) {
+if (@(Git-Lines status --porcelain --untracked-files=all).Count) {
   [Console]::Error.WriteLine('build-bundle: the checkout has uncommitted changes. Commit them (the build packages HEAD) or stash them.')
-  git status --short --untracked-files=all
+  Git-Lines status --short --untracked-files=all
   exit 1
 }
 $sha = @(Git-Lines rev-parse HEAD)[0]
@@ -158,7 +161,8 @@ try {
   } else {
     Write-Host "build-bundle: building $sha (sideload)"
     if ($ChannelRequest) {
-      & $py scripts/bundles/desktop.py --channel-request $ChannelRequest --variant bundled --clean
+      $cacheArgs = if ($Cache) { @('--cache',$Cache) } else { @() }
+      & $py scripts/bundles/desktop.py --channel-request $ChannelRequest --variant bundled --clean @cacheArgs
     } else {
       & $py scripts/bundles/desktop.py --commit $sha --variant bundled --clean
     }

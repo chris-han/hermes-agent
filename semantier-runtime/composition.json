@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "parent_commit": "808ec583792b7a95bead1cb398a733c920f299b4",
+  "parent_commit": "b22c81d95c2a9d341e205653dc849e9cf30fb612",
   "files": [
     {
       "path": "MODEL-NOTICE.txt",
@@ -292,31 +292,63 @@
     },
     {
       "path": "src/agents/client_operations/ci.py",
-      "sha256": "b646831bcfa708e7a35ae073a329bb0ee4c86a6b5bf802512f16253499085e26"
+      "sha256": "f898c72e90435cb1e38153e29c86f5fbc0f20e24051ebe1fa4a71619b2587979"
     },
     {
       "path": "src/agents/client_operations/distribution.py",
       "sha256": "2c97a0092f224c3d02b01637a724b406444ef08d8cee3f387b592005bfa32f7d"
     },
     {
+      "path": "src/agents/client_operations/ecs_endpoint.py",
+      "sha256": "dcc8cef9c629a70a34a7d9d91b43e4983f435ebfd96e0dc2e1268297e63613c0"
+    },
+    {
+      "path": "src/agents/client_operations/ecs_filesystem.py",
+      "sha256": "cbe9ddd0fb84bf8d07bfc5e9887d66f69befb5da39a02f1ae253c165827436ef"
+    },
+    {
+      "path": "src/agents/client_operations/ecs_protocol.py",
+      "sha256": "89a24fd885b54b4f5ada5e315c6b8639d7f520aa581c1af237e58dfc732de245"
+    },
+    {
+      "path": "src/agents/client_operations/ecs_qualification.py",
+      "sha256": "b1a2ab504366b8fd88ddfaf58d012a95225164314c9effa4a8cabe0d598b1380"
+    },
+    {
+      "path": "src/agents/client_operations/ecs_storage.py",
+      "sha256": "24f380db1d06ccc5f40cc810a43e6930f45cd6fb8acfc3e4dcbde7432a2c71d9"
+    },
+    {
+      "path": "src/agents/client_operations/ecs_target.py",
+      "sha256": "8ca5e84cc54f632935ed8a284b0d75109b567c0b50181dad3ab95a9369aaceee"
+    },
+    {
       "path": "src/agents/client_operations/feedback.py",
       "sha256": "7d97edf23e287b85afd5fa1c2ddd1b868d3b0e374e17255e0d23d671f3b55ca7"
     },
     {
+      "path": "src/agents/client_operations/package_graph.py",
+      "sha256": "e457992d59aba0665d3d9d16d0cec8cdc0875e7973ff951f2a62eeb4ac40167e"
+    },
+    {
       "path": "src/agents/client_operations/publication.py",
-      "sha256": "0cb11a9213683fc62eb5e077a5211ca4d5888cded9e745ed85765c771ea3b64b"
+      "sha256": "a09dc6a3d91187a656067c961b6e547419fe3c9a89792259cb4702488421a198"
     },
     {
       "path": "src/agents/client_operations/publications.py",
-      "sha256": "871378724778f94043c0fa1fb9cfc3ce5933472b3671f83b39a3385ad44e9409"
+      "sha256": "028d70de3d30593d5b158d32d0695073a8eda7ad94b1c6419994a59a7660a1d8"
     },
     {
       "path": "src/agents/client_operations/r2_target.py",
-      "sha256": "f65522b8902fad30924220893a83b68b17e5d8cf8cf8c0f0c1f1a4a3f6eacef2"
+      "sha256": "737c0f28ab3c0bdd891cf9cf9ca280b8daebf5eba163ea61a0b04e6175e909e2"
+    },
+    {
+      "path": "src/agents/client_operations/remote_publication.py",
+      "sha256": "96d9cb5351c8ba6414d11329bf754eaf7801dfc368729be930617ab214e71c71"
     },
     {
       "path": "src/agents/client_operations/runtime.py",
-      "sha256": "c0807cd626273c903510f9f4a29d4d69ae323dc5ecba885f590ea94698a4b495"
+      "sha256": "7909b6a43f546bf0ad6af70165512b4527ec22034ba7b126c50828d99ac263c4"
     },
     {
       "path": "src/agents/client_operations/schema.sql",
@@ -328,7 +360,7 @@
     },
     {
       "path": "src/agents/client_operations/targets.py",
-      "sha256": "92e384fd02516eecbd39d54c1b542970c06ec270c21a0d9fb3929d961c97db53"
+      "sha256": "8c5f51af617793e995aa8b0149f872bc2e22307fe61fbaa63e219b19ed71501e"
     },
     {
       "path": "src/agents/company_dataset_imports.py",
@@ -716,7 +748,7 @@
     },
     {
       "path": "src/agents/webapi/client_operations_routes.py",
-      "sha256": "f18818381fa2992fde203c32cf320f92dfdb7bc9759f024c7e1f56876b232c98"
+      "sha256": "5c8f8ad669ec7e9bed45e13680b6ca920eeba7255dab1ee28b8e98fd70de86d4"
     },
     {
       "path": "src/agents/webapi/cloud_device_routes.py",

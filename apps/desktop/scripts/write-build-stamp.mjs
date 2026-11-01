@@ -26,8 +26,20 @@ const REPO_ROOT = resolve(DESKTOP_ROOT, "..", "..")
 const OUT_DIR = join(DESKTOP_ROOT, "build")
 const OUT_FILE = join(OUT_DIR, "install-stamp.json")
 
+export function linuxGitInvocation(distro, cwd, args) {
+  if (!/^[A-Za-z0-9_.-]{1,64}$/.test(distro) || !cwd.startsWith('/')) throw new Error('Invalid Linux Git binding')
+  return { executable: 'wsl.exe', arguments: ['-d', distro, '--exec', '/usr/bin/env', '-u', 'GIT_DIR', '-u', 'GIT_WORK_TREE', '-u', 'GIT_COMMON_DIR', '-u', 'GIT_INDEX_FILE', '-u', 'GIT_OBJECT_DIRECTORY', '-u', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', '-u', 'GIT_CONFIG', '-u', 'GIT_CONFIG_SYSTEM', '-u', 'GIT_CONFIG_PARAMETERS', '-u', 'GIT_CONFIG_COUNT', '-u', 'GIT_NAMESPACE', 'GIT_CONFIG_NOSYSTEM=1', 'GIT_CONFIG_GLOBAL=/dev/null', '/usr/bin/git', '-C', cwd, ...args] }
+}
+
 function tryExec(argv, opts) {
   try {
+    const distro = process.env.SEMANTIER_WSL_GIT_DISTRO
+    if (process.platform === 'win32' && distro && argv[0] === 'git') {
+      if (!/^[A-Za-z0-9_.-]{1,64}$/.test(distro)) return null
+      const cwd = execFileSync('wsl.exe', ['-d', distro, '--exec', '/usr/bin/wslpath', '-u', opts.cwd], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 30000 }).trim()
+      const command = linuxGitInvocation(distro, cwd, argv.slice(1))
+      return execFileSync(command.executable, command.arguments, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], ...opts, timeout: 600000 }).trim()
+    }
     return execFileSync(argv[0], argv.slice(1), { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5000, ...opts }).trim()
   } catch {
     return null
@@ -57,7 +69,8 @@ export function fromLocalGit(repoRoot = REPO_ROOT, execFn = tryExec) {
   // tracked-but-modified files because those mean the .exe content
   // differs from the commit being pinned.
   const status = execFn(["git", "status", "--porcelain", "-uno"], { cwd: repoRoot })
-  const dirty = status !== null && status.length > 0
+  if (status === null) return null
+  const dirty = status.length > 0
   return {
     commit: sha,
     branch: branch === "HEAD" ? null : branch, // detached HEAD -> null
@@ -247,6 +260,9 @@ export function buildStampPayload(stamp, env = process.env, platform = process.p
     base.displayVersion = channelBuild.version
   }
   if (variant === 'bundled') base.receiverProtocol = 1
+  if (platform === 'win32' && variant === 'bundled' && channelBuild && !channelBuild.receiverCandidate && !commitBuild) {
+    base.receiverCapabilities = { windowsPackageUri: 1 }
+  }
 
   const updateMechanism = {
     '': 'self',

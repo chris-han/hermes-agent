@@ -62,3 +62,33 @@ def seed_archive(archive: Path, destination: Path) -> None:
                     Path(temporary).unlink(missing_ok=True)
     except (zipfile.BadZipFile, ValueError, NotImplementedError, RuntimeError, EOFError) as exc:
         raise InstallError('uv-cache', f'invalid packaged cache archive: {exc}') from exc
+
+
+def seed_archives(cache: Path) -> list[Path]:
+    """Validate a bounded archive set before exposing any member to seeding."""
+    import hashlib
+    import json
+    import re
+    manifest = cache / "seed-manifest.json"
+    if not manifest.exists():
+        return [cache / "seed.zip"] if (cache / "seed.zip").is_file() else []
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        if data.get("schema") != 1 or not isinstance(data.get("archives"), list) or not data["archives"]:
+            raise ValueError("invalid archive set")
+        paths = []
+        for index, row in enumerate(data["archives"]):
+            if not isinstance(row, dict) or row.get("name") != f"seed-{index:04d}.zip" or not re.fullmatch(r"[0-9a-f]{64}", row.get("sha256", "")):
+                raise ValueError("invalid archive identity")
+            file = cache / row["name"]
+            if file.is_symlink() or not file.is_file() or file.stat().st_size != row["size"]:
+                raise ValueError("missing or changed archive")
+            with file.open("rb") as stream:
+                if hashlib.file_digest(stream, "sha256").hexdigest() != row["sha256"]:
+                    raise ValueError("archive digest mismatch")
+            paths.append(file)
+        if (cache / "seed.zip").exists() or set(cache.glob("seed-*.zip")) != set(paths):
+            raise ValueError("unexpected archive in set")
+        return paths
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise InstallError("uv-cache", f"invalid packaged cache archive set: {exc}") from exc

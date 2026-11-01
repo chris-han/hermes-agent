@@ -1,5 +1,8 @@
 import { createHash } from 'node:crypto'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
+import os from 'node:os'
+import path from 'node:path'
 
 import { afterEach, expect, test } from 'vitest'
 
@@ -9,6 +12,7 @@ import { ChannelResolver } from './channel'
 import type { ChannelBuild, ChannelManifest, ChannelRecord, RetiredChannel } from './channel-protocol'
 import { decodeChannelManifest, decodeChannelRecord, sameChannelIdentity } from './channel-protocol'
 import { ChannelStrategy } from './channel-strategy'
+import { createNativeUriAppInstallerStrategy } from './channel-windows-host'
 
 const servers: Server[] = []
 afterEach(async (): Promise<void> => {
@@ -788,14 +792,18 @@ test('active-work review precedes the attempt journal and native installation; c
     resolver: new ChannelResolver({ build: f.build, platform: 'darwin', arch: 'arm64', signer: 'ABCDE12345' }),
     build: f.build,
     mechanism: 'electron-updater',
-    reviewApplyTarget: () => reviewed ? null : { ok: false, error: 'active-work-review' },
-    onApplyTarget: async () => { effects.push('journal') },
+    reviewApplyTarget: () => (reviewed ? null : { ok: false, error: 'active-work-review' }),
+    onApplyTarget: async () => {
+      effects.push('journal')
+    },
     nativeFactory: () => ({
       mechanism: 'electron-updater',
       check: async () => ({ supported: true, updateAvailable: true }),
-      apply: async () => { effects.push('install');
+      apply: async () => {
+        effects.push('install')
 
- return { ok: true } }
+        return { ok: true }
+      }
     })
   })
 
@@ -813,15 +821,244 @@ test('a selected different stream delegates version ordering to native instead o
   let checked = 0
 
   const strategy = new ChannelStrategy({
-    build, installedChannel: 'another-stream', mechanism: 'electron-updater',
+    build,
+    installedChannel: 'another-stream',
+    mechanism: 'electron-updater',
     resolver: new ChannelResolver({ build, platform: 'darwin', arch: 'arm64', signer: 'ABCDE12345' }),
-    nativeFactory: () => ({ mechanism: 'electron-updater', check: async () => { checked++;
+    nativeFactory: () => ({
+      mechanism: 'electron-updater',
+      check: async () => {
+        checked++
 
- return { supported: true, updateAvailable: false } }, apply: async () => { throw new Error('Must not install an older target') } })
+        return { supported: true, updateAvailable: false }
+      },
+      apply: async () => {
+        throw new Error('Must not install an older target')
+      }
+    })
   })
 
   expect(await strategy.check()).toMatchObject({ updateAvailable: false })
   expect(checked).toBe(1)
   // No available target is an existing successful no-op; native apply must not run.
   expect(await strategy.apply()).toMatchObject({ ok: true })
+})
+
+test('native graph resolution reads only metadata and preserves the legacy head for ineligible clients', async () => {
+  const f = await fixture()
+  const legacyHead = structuredClone(f.record.head!)
+
+  const next = {
+    ...f.manifest.request,
+    buildId: 'e'.repeat(32),
+    sequence: 3,
+    version: '0.0.3',
+    windowsVersion: '0.0.3.0'
+  }
+
+  const prefix = `releases/channel-builds/${next.buildId}/win32/`
+
+  const nativeObject = (key: string, kind: string, arch: string, references: string[] = []) => ({
+    key: prefix + key,
+    kind,
+    arch,
+    identity: f.build.identity.msixAppIdWithOrg,
+    publisher: 'CN=Nous Research',
+    version: next.windowsVersion,
+    size: 3000,
+    sha256: 'd'.repeat(64),
+    nativeDigest: Buffer.alloc(32, 1).toString('base64'),
+    references
+  })
+
+  const graph = {
+    schema: 1,
+    transport: 'windows-package-uri',
+    root: prefix + 'app.msixbundle',
+    payloadInventorySha256: 'f'.repeat(64),
+    objects: [
+      nativeObject('app.msixbundle', 'main-bundle', 'neutral', [prefix + 'main.msix']),
+      nativeObject('main.msix', 'main-package', 'x64')
+    ]
+  }
+
+  const body = JSON.stringify(graph)
+
+  const native = {
+    schema: 1,
+    api: 'PackageManager.AddPackageByUriAsync',
+    digestMethod: 'IAppxDigestProvider.GetDigest',
+    digestEncoding: 'base64',
+    graph: {
+      key: prefix + 'native-graph.json',
+      sha256: createHash('sha256').update(body).digest('hex'),
+      size: Buffer.byteLength(body)
+    }
+  }
+
+  const manifest = {
+    schema: 2,
+    request: next,
+    packages: [
+      {
+        platform: 'win32',
+        arch: 'x64',
+        variant: 'native-msix-assets',
+        identity: f.build.identity.msixAppIdWithOrg,
+        publisher: 'CN=Nous Research',
+        version: next.windowsVersion,
+        artifact: { key: graph.root, sha256: 'd'.repeat(64), size: 3000 },
+        feed: { key: native.graph.key, channel: 'stable' },
+        native
+      }
+    ]
+  }
+
+  const manifestBody = JSON.stringify(manifest)
+  f.record.nativeHead = {
+    buildId: next.buildId,
+    sequence: next.sequence,
+    manifestKey: `releases/channel-builds/${next.buildId}/build.json`,
+    sha256: createHash('sha256').update(manifestBody).digest('hex')
+  }
+  f.record.nextSequence = 4
+  f.objects.set('/' + f.record.nativeHead.manifestKey, manifestBody)
+  f.objects.set('/' + native.graph.key, body)
+  f.objects.set(`/releases/channels/${f.record.name}.json`, JSON.stringify(f.record))
+
+  const legacy = await new ChannelResolver({
+    build: f.build,
+    platform: 'darwin',
+    arch: 'arm64',
+    signer: 'ABCDE12345'
+  }).resolve()
+
+  expect(legacy.kind).toBe('active')
+
+  if (legacy.kind === 'active') {expect(legacy.target.manifestSha256).toBe(legacyHead.sha256)}
+  f.record.head = null
+  f.objects.set(`/releases/channels/${f.record.name}.json`, JSON.stringify(f.record))
+  await expect(new ChannelResolver({
+    build: f.build, platform: 'darwin', arch: 'arm64', signer: 'ABCDE12345'
+  }).resolve()).rejects.toThrow('Native channel is not supported')
+  f.requests.length = 0
+
+  const resolver = new ChannelResolver({
+    build: f.build,
+    platform: 'win32',
+    arch: 'x64',
+    signer: 'CN=Nous Research',
+    nativePackageUri: true
+  })
+
+  const result = await resolver.resolve()
+  expect(result.kind).toBe('active')
+
+  if (result.kind !== 'active') {throw new Error('Expected native candidate')}
+  expect(result.target.nativeGraph).toEqual(graph)
+  expect(f.requests).toEqual([
+    `/releases/channels/${f.record.name}.json`,
+    '/' + f.record.nativeHead.manifestKey,
+    '/' + native.graph.key
+  ])
+  await expect(new ChannelResolver({
+    build: f.build, platform: 'win32', arch: 'x64', signer: 'wrong publisher', nativePackageUri: true
+  }).resolve()).rejects.toThrow('signing identity mismatch')
+  const wrongOriginBody = JSON.stringify({ ...manifest, request: { ...next, publicBase: 'https://wrong.example' } })
+  f.record.nativeHead.sha256 = createHash('sha256').update(wrongOriginBody).digest('hex')
+  f.objects.set('/' + f.record.nativeHead.manifestKey, wrongOriginBody)
+  f.objects.set(`/releases/channels/${f.record.name}.json`, JSON.stringify(f.record))
+  await expect(resolver.resolve()).rejects.toThrow('request binding mismatch')
+  f.record.nativeHead.sha256 = createHash('sha256').update(manifestBody).digest('hex')
+  f.objects.set('/' + f.record.nativeHead.manifestKey, manifestBody)
+  f.objects.set(`/releases/channels/${f.record.name}.json`, JSON.stringify(f.record))
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'native-channel-handoff-'))
+  const calls: string[] = []
+
+  const unavailable = async (): Promise<never> => {
+    throw new Error('Legacy package preparation must not run')
+  }
+
+  try {
+    const strategy = new ChannelStrategy({
+      build: f.build,
+      mechanism: 'app-installer',
+      resolver,
+      nativeFactory: target =>
+        createNativeUriAppInstallerStrategy(
+          {
+            python: 'unused',
+            module: 'unused',
+            run: unavailable,
+            channel: f.build.channel,
+            light: false,
+            feedBaseUrl: f.build.publicBase,
+            appVersion: '0.0.1.0',
+            installer: { prepare: unavailable, open: unavailable },
+            teardownBundledBackend: () => {
+              calls.push('teardown')
+            },
+            restoreBundledBackend: async () => {
+              calls.push('restore')
+            },
+            emitUpdateProgress: () => {},
+            quit: () => {
+              calls.push('quit')
+            },
+            registerPendingRelaunch: unavailable
+          },
+          target,
+          f.build,
+          {
+            app: { getPath: () => directory },
+            resourcesPath: directory,
+            log: () => {},
+            inspect: async () => ({
+              identity: target.package.identity,
+              signer: target.package.publisher!,
+              nativeVersion: '0.0.1.0',
+              appPath: directory,
+              executable: path.join(directory, 'app.exe'),
+              applicationId: 'SemantierAgent',
+              packageFullName: 'baseline-package',
+              packageFamilyName: 'baseline-family',
+              removalRoots: []
+            }),
+            eligibility: async () => ({ supported: true, reason: 'native-uri-unassociated-package' }),
+            startWaiter: async (identity, _resources, _log, timeout, handoff) => {
+              expect(identity).toBe(target.package.identity)
+              expect(timeout).toBe(1860)
+              expect(handoff?.graph).toEqual(graph)
+              expect(handoff?.manifestSha256).toBe(target.manifestSha256)
+              expect(handoff?.targetCommit).toBe(next.commit)
+              expect(handoff?.base).toBe(f.build.publicBase)
+              calls.push('native-owner-ready')
+
+              return {
+                cancel: async () => {
+                  calls.push('cancel')
+                }
+              }
+            }
+          }
+        )
+    })
+
+    expect((await strategy.check()).updateAvailable).toBe(true)
+    expect((await strategy.apply()).handedOff).toBe(true)
+    expect(calls).toEqual(['native-owner-ready', 'teardown', 'quit'])
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+
+  graph.objects[0].references[0] = prefix + 'missing.msix'
+  const damaged = JSON.stringify(graph)
+  native.graph.sha256 = createHash('sha256').update(damaged).digest('hex')
+  native.graph.size = Buffer.byteLength(damaged)
+  const damagedManifest = JSON.stringify(manifest)
+  f.record.nativeHead.sha256 = createHash('sha256').update(damagedManifest).digest('hex')
+  f.objects.set('/' + native.graph.key, damaged)
+  f.objects.set('/' + f.record.nativeHead.manifestKey, damagedManifest)
+  f.objects.set(`/releases/channels/${f.record.name}.json`, JSON.stringify(f.record))
+  await expect(resolver.resolve()).rejects.toThrow('Missing native object')
 })

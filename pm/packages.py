@@ -354,13 +354,10 @@ def uv_cache_dir() -> Path:
     payload_cache = long_root(store_root().parent / "uv-cache")
     if payload_cache.is_dir():
         seed += "+payload"
-        archive = payload_cache / "seed.zip"
-        if archive.is_file():
-            # The same dependency lock can ship a corrected offline seed.
-            # Bind completion to actual archive bytes, including upgrades from
-            # historical loose seeds; otherwise a prior incomplete cache wins.
+        from pm.uv_cache_seed import seed_archives
+        archives = seed_archives(payload_cache)
+        for archive in archives:
             import hashlib
-
             with archive.open("rb") as stream:
                 seed += "+archive:" + hashlib.file_digest(stream, "sha256").hexdigest()
     try:
@@ -378,12 +375,11 @@ def uv_cache_dir() -> Path:
             if payload_cache.is_dir():
                 seeded = long_root(machine_cache)
                 seeded.mkdir(parents=True, exist_ok=True)
-                archive = payload_cache / "seed.zip"
-                if archive.is_file():
-                    from pm.uv_cache_seed import seed_archive
+                from pm.uv_cache_seed import seed_archive
+                for archive in archives:
                     seed_archive(archive, seeded)
                 for entry in payload_cache.iterdir():
-                    if entry.name in {".seeded", "seed.zip"}:
+                    if entry.name in {".seeded", "seed.zip", "seed-manifest.json"} or entry in archives:
                         continue
                     dest = seeded / entry.name
                     # Merge into whatever an earlier failed or killed seed left: skipping

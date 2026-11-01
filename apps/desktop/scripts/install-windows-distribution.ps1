@@ -15,6 +15,20 @@ function Invoke-SemantierInstall([switch]$TrustCertificate, [switch]$StrictPacka
   $expectedThumbprint = '__CERTIFICATE_THUMBPRINT__'
   $package = Join-Path $PSScriptRoot '__PACKAGE_FILE__'
   $expectedHash = '__PACKAGE_SHA256__'
+  $graphHash = '__NATIVE_GRAPH_SHA256__'
+  if ($graphHash) {
+    $graphPath = Join-Path $PSScriptRoot 'native-graph.json'
+    if ((Get-FileHash -LiteralPath $graphPath -Algorithm SHA256).Hash -ine $graphHash) { throw 'Native graph checksum mismatch' }
+    $graph = Get-Content -LiteralPath $graphPath -Raw | ConvertFrom-Json
+    foreach ($member in $graph.objects) {
+      $name = ($member.key -split '/')[-1]
+      if ($name -notmatch '^SemantierAgent(?:-main|-runtime[0-9]{4})?\.msix(?:bundle)?$') { throw 'Unexpected native graph member' }
+      $path = Join-Path $PSScriptRoot $name
+      if ((Get-Item -LiteralPath $path).Length -ne $member.size -or (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ine $member.sha256) { throw 'Native graph member checksum mismatch' }
+      $memberSignature = Get-AuthenticodeSignature -LiteralPath $path
+      if (!$memberSignature.SignerCertificate -or $memberSignature.SignerCertificate.Thumbprint -ne $expectedThumbprint -or $memberSignature.Status -notin @('Valid','NotTrusted','UnknownError')) { throw 'Native graph signature mismatch' }
+    }
+  }
   $certificate = Join-Path $PSScriptRoot 'SemantierAgent-signing.cer'
   $cert = Get-PfxCertificate -FilePath $certificate
   if ($cert.Thumbprint -ne $expectedThumbprint) { throw 'The certificate does not match this release.' }

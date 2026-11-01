@@ -1,15 +1,29 @@
 name: Semantier Windows acceptance
 on:
-  push:
-    branches: [staging/client-release-feedback-mvl-v1]
   workflow_dispatch:
     inputs:
       controller_commit:
         description: Reviewed exact semantier-runtime controller commit
         required: true
         type: string
+      package_layout:
+        description: Native asset graph remains subject to graph and remote-digest qualification
+        required: true
+        default: legacy
+        type: choice
+        options: [legacy, native-assets]
+      previous_native_layout:
+        description: Retained qualified native A layout-plan.json Windows path for stable B assignment
+        required: false
+        type: string
 env:
-  ACCEPTANCE_CONTROLLER_COMMIT: ${{ inputs.controller_commit || 'e8bb2a8ec7095144dbf3692413b572424acd7521' }}
+  ACCEPTANCE_CI_SID: ${{ vars.SEMANTIER_ACCEPTANCE_CI_SID }}
+  ACCEPTANCE_PACKAGE_LAYOUT: ${{ inputs.package_layout || 'legacy' }}
+  ACCEPTANCE_PUBLIC_BASE: 'https://updates.semantier.com'
+  ACCEPTANCE_PREVIOUS_NATIVE_LAYOUT: ${{ inputs.previous_native_layout }}
+  ACCEPTANCE_WINDOWS_PYTHON: 'D:\repo\qualification-private\windows-profile-c10-20261028-v1\package\app\resources\agent-payload\tools\python-3.14.7+20260901-win32-x64\python.exe'
+  ACCEPTANCE_INCOMING_ROOT: ${{ vars.SEMANTIER_ACCEPTANCE_INCOMING_ROOT }}
+  ACCEPTANCE_CONTROLLER_COMMIT: ${{ inputs.controller_commit }}
 permissions:
   contents: read
 concurrency:
@@ -46,24 +60,10 @@ jobs:
           ci_python="$(uv python find --offline --managed-python 3.14)"
           "$ci_python" -c 'import sys; assert sys.version_info >= (3, 11); print(sys.version)'
           echo "SEMANTIER_CI_PYTHON=$ci_python" >> "$GITHUB_ENV"
-      - name: Build and sign with existing non-exportable identity
-        shell: bash
-        run: |
-          set -euo pipefail
-          output="D:\\repo\\deliverables\\SemantierAgent-client-feedback-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          echo "ACCEPTANCE_OUTPUT=$(wslpath -u "$output")" >> "$GITHUB_ENV"
-          "$SEMANTIER_CI_PYTHON" controller/scripts/build_hermes_windows.py --source "$PWD/hermes" --output "$output" --thumbprint 57BF15739B4AA447842EAF388856A01B4E5029FF --acceptance-public-base http://127.0.0.1:8926
-      - name: Real native installation and controlled inference-boundary smoke
-        shell: bash
-        run: |
-          set -euo pipefail
-          root="D:\\repo\\qualification-private\\client-feedback-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          echo "ACCEPTANCE_NATIVE=$(wslpath -u "$root")/out" >> "$GITHUB_ENV"
-          "$SEMANTIER_CI_PYTHON" hermes/scripts/releases/semantier_native_ci.py --output "$ACCEPTANCE_OUTPUT" --work "$root" --commit "$GITHUB_SHA"
-      - name: Stage receipt-bound candidate; never promote
+      - name: Run owned CI qualification
         shell: bash
         env:
           SEMANTIER_CLIENT_RECEIPT_KEY: ${{ secrets.SEMANTIER_CLIENT_RECEIPT_KEY }}
         run: |
           set -euo pipefail
-          "$SEMANTIER_CI_PYTHON" hermes/scripts/releases/semantier_candidate.py --output "$ACCEPTANCE_OUTPUT" --native "$ACCEPTANCE_NATIVE" --incoming /tmp/semantier-client-release-feedback-v1/incoming --notes hermes/scripts/releases/semantier-acceptance-notes.json
+          "$SEMANTIER_CI_PYTHON" hermes/scripts/releases/semantier_native_ci.py --orchestrate --expected-sid "$ACCEPTANCE_CI_SID" --incoming "$ACCEPTANCE_INCOMING_ROOT" --controller "$PWD/controller" --controller-commit "$ACCEPTANCE_CONTROLLER_COMMIT" --public-base "$ACCEPTANCE_PUBLIC_BASE"

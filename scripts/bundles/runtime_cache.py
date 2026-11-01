@@ -41,7 +41,8 @@ def measure(root: Path | None, stage: str):
 
 def runtime_key(source: Path, revision: str, toolchain: str, target: str) -> str:
     from scripts.bundles.payload import INERT_SNAPSHOT_DIRS
-    tree = subprocess.check_output(['git', 'ls-tree', '-r', '-z', revision], cwd=source)
+    from scripts.bundles.git_command import git_command
+    tree = subprocess.check_output(git_command(source, 'ls-tree', '-r', '-z', revision), cwd=source)
     selected = []
     for row in tree.split(b'\0'):
         if not row:
@@ -61,7 +62,8 @@ DEPENDENCY_COMPONENTS = frozenset({'tools', 'venv', 'pm-runtime', 'uv-cache', 'e
 
 def dependency_key(source: Path, revision: str, toolchain: str, target: str) -> str:
     """Install inputs, independently of the application's Python source commit."""
-    tree = subprocess.check_output(['git', 'ls-tree', '-r', '-z', revision], cwd=source)
+    from scripts.bundles.git_command import git_command
+    tree = subprocess.check_output(git_command(source, 'ls-tree', '-r', '-z', revision), cwd=source)
     recipes = {'pyproject.toml', 'uv.lock', 'setup.py', 'setup.cfg', 'MANIFEST.in', 'scripts/bundles/native.py',
                'scripts/bundles/native_prepared.py', 'scripts/bundles/runtime_cache.py', 'scripts/bundles/bytecode.py',
                'scripts/build/inputs.py', 'scripts/bundles/payload.py'}

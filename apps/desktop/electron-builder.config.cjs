@@ -243,7 +243,7 @@ module.exports = {
     // The updaters' relaunch waiter is PowerShell run outside the package. The
     // sealed payload's snapshot omits scripts/, so it ships as a resource
     // (RELAUNCH_WAITER_SCRIPT in electron/updater/relaunch-waiter.ts).
-    extraResources: [{ from: 'scripts/update-relaunch-waiter.ps1', to: 'update-relaunch-waiter.ps1' }],
+    extraResources: ['update-relaunch-waiter.ps1', 'native-package-digest.ps1', 'native-package-update.ps1'].map(name => ({ from: `scripts/${name}`, to: name })),
     ...windowsSigning()
   },
   msix: {

@@ -104,6 +104,17 @@ function Invoke-BasicUserBatch([string]$Name, [string[]]$Lines, [string]$Directo
     $batch = Join-Path $Directory "$Name.cmd"
     $homeOverride = if ($SmokeHome) { @('set "HERMES_HOME=' + $SmokeHome + '"') } else { @() }
     Set-Content -LiteralPath $batch -Encoding ASCII -Value (@('@echo off') + (Get-UserEnvironmentReset) + $homeOverride + $Lines)
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+    if (!$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        # An already standard/filtered token needs no privileged token assignment.
+        $process = Start-Process -FilePath $env:ComSpec -ArgumentList @('/d','/c',('"{0}"' -f $batch)) -WorkingDirectory $Directory -NoNewWindow -PassThru
+        try {
+            $null=$process.Handle
+            if (!$process.WaitForExit($TimeoutMinutes * 60000)) { $process.Kill(); throw 'Owned basic-user batch timed out; inspect surviving package processes' }
+            return $process.ExitCode
+        } finally { $process.Dispose() }
+    }
     return [HermesBasicUser]::Run("cmd.exe /d /c `"$batch`"", $Directory, [uint32]($TimeoutMinutes * 60000))
 }
 
@@ -162,4 +173,31 @@ function Test-BundlePluginInstall([string]$Root, [string]$Out, [switch]$Isolated
     } finally {
         Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue
     }
+}
+
+# No added dependencies: Plugin Doctor uses the package's actual core environment,
+# blocks network, and exercises the shipped native modules/model/Skills in place.
+function Test-BundleNativePayload([string]$Root, $Package, [string]$Commit, [string]$BuildId, [string]$Out) {
+    $manifest = Get-Content -Raw -LiteralPath (Join-Path $Root 'manifest.json') | ConvertFrom-Json
+    $alias = Join-Path $env:LOCALAPPDATA ('Microsoft\WindowsApps\' + (Split-Path -Leaf $manifest.runtime.commands.hermes))
+    $scratch = Join-Path $env:LOCALAPPDATA ('semantier-native-runtime-smoke-' + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $scratch -ErrorAction Stop | Out-Null
+    $proof = Join-Path $Out 'native-payload-runtime.json'
+    if (Test-Path -LiteralPath $proof) { throw 'Existing native payload proof must be preserved' }
+    try {
+        $plugin = Join-Path $scratch 'msix-native-payload-smoke'
+        New-Item -ItemType Directory -Path $plugin | Out-Null
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'native-payload-probe.py') -Destination (Join-Path $plugin '__init__.py')
+        Set-Content -LiteralPath (Join-Path $plugin 'plugin.yaml') -Encoding utf8 -Value @('name: msix-native-payload-smoke','version: 1.0.0','description: Installed native graph runtime qualification')
+        @{package_root=$Package.InstallLocation;package_full_name=$Package.PackageFullName;commit=$Commit;build_id=$BuildId;output=$proof} |
+            ConvertTo-Json | Set-Content -LiteralPath (Join-Path $plugin 'probe.json') -Encoding utf8
+        $nativeHome = Join-Path $scratch 'hermes-home'
+        New-Item -ItemType Directory -Path $nativeHome | Out-Null
+        $code = Invoke-BasicUserBatch 'native-runtime' @("`"$alias`" plugins doctor `"$plugin`" --ci > native-runtime.log 2>&1") $scratch 15 $nativeHome
+        if (Test-Path -LiteralPath (Join-Path $scratch 'native-runtime.log')) { Copy-Item -LiteralPath (Join-Path $scratch 'native-runtime.log') -Destination (Join-Path $Out 'native-runtime-doctor.log') }
+        if ($code -ne 0 -or !(Test-Path -LiteralPath $proof)) { throw 'Installed native runtime/model/Skills qualification failed; inspect native-runtime-doctor.log' }
+        $facts = Get-Content -LiteralPath $proof -Raw | ConvertFrom-Json
+        if ($facts.packageFullName -cne $Package.PackageFullName -or $facts.sourceCommit -cne $Commit -or $facts.buildId -cne $BuildId -or
+            !$facts.sensevoice.modelLoaded -or !$facts.sensevoice.silenceDecodeCompleted -or $facts.skills.filesRead -lt 1) { throw 'Native runtime proof identity or behavior mismatch' }
+    } finally { Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue }
 }

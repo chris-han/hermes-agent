@@ -1,5 +1,6 @@
 // Fresh-install admission is separate from the stricter OLD -> NEW update contract.
 import fs from 'node:fs'
+import { verifyNativePayload } from './native-payload-locations.mjs'
 import path from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { parseArgs } from 'node:util'
@@ -132,7 +133,7 @@ function prepareDirectories(work, out) {
 function main() {
   const [command, ...args] = process.argv.slice(2)
   const { values } = parseArgs({ args, options: Object.fromEntries(
-    ['commit', 'tag', 'platform', 'stamp', 'app', 'arch', 'out', 'work', 'channel-request'].map(key => [key, { type: 'string' }])) })
+    ['commit', 'tag', 'platform', 'stamp', 'app', 'arch', 'out', 'work', 'channel-request', 'root', 'plan', 'graph'].map(key => [key, { type: 'string' }])) })
   if (values['channel-request'] !== undefined) {
     // Preserve the raw JSON for the protocol decoder's duplicate-key checks.
     const raw = fs.readFileSync(values['channel-request'], 'utf8')
@@ -144,6 +145,7 @@ function main() {
     identity: () => bundleIdentity(values.commit, values.tag, values.channelRequest),
     stamp: () => verifyBundleStamp(JSON.parse(fs.readFileSync(values.stamp, 'utf8')), values),
     'verify-mac': () => verifyMac(values.app, values.commit, values.tag, values.arch, values.channelRequest),
+    'native-payload': () => verifyNativePayload(values.root, JSON.parse(fs.readFileSync(values.plan, 'utf8').replace(/^\uFEFF/, '')), JSON.parse(fs.readFileSync(values.graph, 'utf8').replace(/^\uFEFF/, ''))),
     prepare: () => prepareDirectories(values.work, values.out),
   }
   if (!commands[command]) throw new Error(`Unknown command: ${command}`)

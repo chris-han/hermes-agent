@@ -51,6 +51,7 @@ interface ChannelRecordBase {
   nextSequence: number
   identity: ChannelIdentity
   head: ChannelHead | null
+  nativeHead?: ChannelHead
 }
 export interface ActiveChannel extends ChannelRecordBase {
   state: 'active'
@@ -76,20 +77,28 @@ export interface ArtifactChunks {
 export interface ChannelPackage {
   platform: 'darwin' | 'win32'
   arch: 'x64' | 'arm64'
-  variant: 'bundled'
+  variant: 'bundled' | 'native-msix-assets'
   version: string
   identity: string
   artifact: { key: string; sha256: string; size: number; chunks?: ArtifactChunks }
+  native?: {
+    schema: 1
+    api: 'PackageManager.AddPackageByUriAsync'
+    digestMethod: 'IAppxDigestProvider.GetDigest'
+    digestEncoding: 'base64'
+    graph: { key: string; sha256: string; size: number }
+  }
   publisher?: string
   teamId?: string
   feed: { key: string; channel: string }
 }
 export interface ChannelManifest {
   notes?: Record<string, string>
-  schema: 1
+  schema: 1 | 2
   request: ChannelRequest
   packages: ChannelPackage[]
   receiverProtocol?: number
+  receiverCapabilities?: { windowsPackageUri: 1 }
 }
 
 const SHA256 = /^[a-f0-9]{64}$/
@@ -333,6 +342,20 @@ export function decodeChannelRecord(body: string): ChannelRecord {
 
   const state = fields.text('state')
 
+  if (fields.get('nativeHead') !== undefined && fields.get('nativeHead') !== null) {
+    const native = requiredHead(fields.get('nativeHead'))
+
+    if (
+      state !== 'active' ||
+      (common.head !== null && native.sequence <= common.head.sequence) ||
+      native.sequence >= common.nextSequence
+    ) {
+      throw new Error('Native head has an invalid allocated sequence')
+    }
+
+    common.nativeHead = native
+  }
+
   if (state === 'active') {
     return { ...common, state }
   }
@@ -445,9 +468,14 @@ export function decodeArtifactChunks(value: unknown, artifact: { size: number; s
   const chunkSize = fields.integer('chunkSize')
   const entries = fields.get('chunks')
 
-  if (chunkSize !== 134217728 || artifact.size >= 10_000_000_000 ||
-    bound.integer('size') !== artifact.size || bound.text('sha256', SHA256) !== artifact.sha256 ||
-    !Array.isArray(entries) || entries.length !== Math.ceil(artifact.size / chunkSize)) {
+  if (
+    chunkSize !== 134217728 ||
+    artifact.size >= 10_000_000_000 ||
+    bound.integer('size') !== artifact.size ||
+    bound.text('sha256', SHA256) !== artifact.sha256 ||
+    !Array.isArray(entries) ||
+    entries.length !== Math.ceil(artifact.size / chunkSize)
+  ) {
     throw new Error('Invalid artifact chunk coverage or identity')
   }
 
@@ -473,7 +501,7 @@ export function decodeArtifactChunks(value: unknown, artifact: { size: number; s
   return { schema: 1, buildId, artifact: { size: artifact.size, sha256: artifact.sha256 }, chunkSize, chunks }
 }
 
-function packageEntry(value: unknown): ChannelPackage {
+function packageEntry(value: unknown, schema: 1 | 2): ChannelPackage {
   const fields = new Fields(value)
   const platform = fields.text('platform')
   const arch = fields.text('arch')
@@ -481,7 +509,7 @@ function packageEntry(value: unknown): ChannelPackage {
   if (
     (platform !== 'darwin' && platform !== 'win32') ||
     (arch !== 'x64' && arch !== 'arm64') ||
-    fields.get('variant') !== 'bundled'
+    fields.get('variant') !== (schema === 2 ? 'native-msix-assets' : 'bundled')
   ) {
     throw new Error('Unsupported channel package')
   }
@@ -489,41 +517,105 @@ function packageEntry(value: unknown): ChannelPackage {
   const artifact = fields.object('artifact')
   const feed = fields.object('feed')
 
-  return {
+  const result: ChannelPackage = {
     platform,
     arch,
-    variant: 'bundled',
+    variant: schema === 2 ? 'native-msix-assets' : 'bundled',
     version: fields.text('version', platform === 'darwin' ? VERSION : /^\d+\.\d+\.\d+\.\d+$/),
     identity: fields.text('identity'),
     artifact: {
       key: channelKey(artifact.text('key')),
       sha256: artifact.text('sha256', SHA256),
       size: artifact.integer('size'),
-      ...(artifact.get('chunks') === undefined ? {} : { chunks: decodeArtifactChunks(artifact.get('chunks'), { size: artifact.integer('size'), sha256: artifact.text('sha256', SHA256) }) })
+      ...(artifact.get('chunks') === undefined
+        ? {}
+        : {
+            chunks: decodeArtifactChunks(artifact.get('chunks'), {
+              size: artifact.integer('size'),
+              sha256: artifact.text('sha256', SHA256)
+            })
+          })
     },
     publisher: fields.optional('publisher'),
     teamId: fields.optional('teamId', /^[A-Z0-9]{10}$/),
     feed: { key: channelKey(feed.text('key')), channel: feed.text('channel', /^[a-z][a-z0-9-]{0,31}$/) }
   }
+
+  if (schema === 2) {
+    bindNativePackage(fields, result)
+  } else if (fields.get('native') !== undefined) {throw new Error('Native package requires manifest schema2')}
+
+  return result
+}
+
+function bindNativePackage(fields: Fields, result: ChannelPackage): void {
+  const native = fields.object('native')
+  native.schema()
+  const graph = native.object('graph')
+
+  if (
+    result.platform !== 'win32' ||
+    result.arch !== 'x64' ||
+    !result.publisher ||
+    result.artifact.chunks ||
+    result.artifact.size > 480_000_000 ||
+    native.get('api') !== 'PackageManager.AddPackageByUriAsync' ||
+    native.get('digestMethod') !== 'IAppxDigestProvider.GetDigest' ||
+    native.get('digestEncoding') !== 'base64'
+  )
+    {throw new Error('Unsupported native API/package contract')}
+
+  result.native = {
+    schema: 1,
+    api: 'PackageManager.AddPackageByUriAsync',
+    digestMethod: 'IAppxDigestProvider.GetDigest',
+    digestEncoding: 'base64',
+    graph: {
+      key: channelKey(graph.text('key')),
+      sha256: graph.text('sha256', SHA256),
+      size: graph.integer('size', 4 * 1024 * 1024)
+    }
+  }
+
+  if (
+    result.native.graph.key !== result.feed.key ||
+    !result.feed.key.endsWith('/native-graph.json') ||
+    result.feed.channel !== 'stable'
+  ) {
+    throw new Error('Native graph descriptor binding mismatch')
+  }
 }
 
 export function decodeChannelManifest(body: string): ChannelManifest {
   const fields = new Fields(parseChannelJson(body))
-  fields.schema()
+  const schema = fields.get('schema')
+
+  if (schema !== 1 && schema !== 2) {throw new Error('Unsupported manifest schema')}
   const entries: unknown = fields.get('packages')
 
   if (!Array.isArray(entries) || !entries.length || entries.length > 4) {
     throw new Error('Invalid channel packages')
   }
 
-  const packages: ChannelPackage[] = entries.map(packageEntry)
+  if (schema === 2 && entries.length !== 1) {throw new Error('Native manifest requires one Windows x64 target')}
+  const packages: ChannelPackage[] = entries.map((entry: unknown) => packageEntry(entry, schema))
   const keys = new Set(packages.map((entry: ChannelPackage): string => `${entry.platform}/${entry.arch}`))
 
   if (keys.size !== packages.length) {
     throw new Error('Duplicate channel package')
   }
 
-  const manifest: ChannelManifest = { schema: 1, request: request(fields.object('request')), packages }
+  const manifest: ChannelManifest = { schema, request: request(fields.object('request')), packages }
+
+  if (fields.get('receiverCapabilities') !== undefined) {
+    const capabilities = fields.object('receiverCapabilities')
+
+    if (capabilities.keys().length !== 1 || capabilities.get('windowsPackageUri') !== 1) {
+      throw new Error('Unsupported receiver capability')
+    }
+
+    manifest.receiverCapabilities = {windowsPackageUri:1}
+  }
 
   if (fields.get('receiverProtocol') !== undefined) {
     manifest.receiverProtocol = fields.integer('receiverProtocol')
@@ -532,15 +624,221 @@ export function decodeChannelManifest(body: string): ChannelManifest {
   if (fields.get('notes') !== undefined) {
     const notes = fields.object('notes')
 
-    if (notes.keys().length > 9) {throw new Error('Too many release note languages')}
-    manifest.notes = Object.fromEntries(notes.keys().map(key => {
-      const value = notes.get(key)
+    if (notes.keys().length > 9) {
+      throw new Error('Too many release note languages')
+    }
 
-      if (!/^[a-z]{2}(?:-[a-z]+)?$/.test(key) || typeof value !== 'string' || !value.length || value.length > 16000 || [...value].some(char => char.charCodeAt(0) < 32 && !['\n', '\r', '\t'].includes(char))) {throw new Error('Invalid localized release notes')}
+    manifest.notes = Object.fromEntries(
+      notes.keys().map(key => {
+        const value = notes.get(key)
 
-      return [key, value]
-    }))
+        if (
+          !/^[a-z]{2}(?:-[a-z]+)?$/.test(key) ||
+          typeof value !== 'string' ||
+          !value.length ||
+          value.length > 16000 ||
+          [...value].some(char => char.charCodeAt(0) < 32 && !['\n', '\r', '\t'].includes(char))
+        ) {
+          throw new Error('Invalid localized release notes')
+        }
+
+        return [key, value]
+      })
+    )
   }
 
   return manifest
+}
+
+export interface NativePackageObject {
+  key: string
+  kind: 'main-package' | 'main-bundle' | 'asset-package' | 'optional-package' | 'optional-bundle'
+  identity: string
+  publisher: string
+  version: string
+  arch: string
+  size: number
+  sha256: string
+  nativeDigest: string
+  references: string[]
+  resourceId?: string
+  allowExecution?: true
+}
+export interface NativePackageGraph {
+  schema: 1
+  transport: 'windows-package-uri'
+  root: string
+  payloadInventorySha256: string
+  objects: NativePackageObject[]
+}
+
+/** Validate metadata only. Native signing and installed-runtime proof are separate gates. */
+export function decodeNativePackageGraph(body: string, build: ChannelRequest, pkg: ChannelPackage): NativePackageGraph {
+  const fields = new Fields(parseChannelJson(body))
+  fields.schema()
+  const entries = fields.get('objects')
+
+  if (
+    fields.get('transport') !== 'windows-package-uri' ||
+    !Array.isArray(entries) ||
+    !entries.length ||
+    entries.length > 64 ||
+    !pkg.native
+  ) {
+    throw new Error('Unsupported native graph')
+  }
+
+  const prefix = buildPrefix(build.buildId)
+  const rows = new Map<string, NativePackageObject>()
+  const identities = new Set<string>()
+
+  const objects = entries.map((entry: unknown): NativePackageObject => {
+    const object = nativePackageObject(entry, pkg, prefix)
+    const identityKey = `${object.identity}/${object.kind}/${object.resourceId ?? ''}`
+
+    if (rows.has(object.key) || identities.has(identityKey)) {throw new Error('Ambiguous native package identity/key')}
+    rows.set(object.key, object)
+    identities.add(identityKey)
+
+    return object
+  })
+
+  const root = fields.text('root')
+  const main = rows.get(root)
+
+  if (
+    !main ||
+    !['main-package', 'main-bundle'].includes(main.kind) ||
+    objects.filter(row => row.kind === 'main-package').length !== 1 ||
+    objects.filter(row => row.kind === 'main-bundle').length > 1 ||
+    root !== pkg.artifact.key ||
+    main.size !== pkg.artifact.size ||
+    main.sha256 !== pkg.artifact.sha256
+  ) {
+    throw new Error('Invalid native graph root')
+  }
+
+  if (
+    main.kind !== 'main-bundle' ||
+    objects.some(row => row.kind !== 'main-bundle' && row.kind !== 'main-package' && row.kind !== 'asset-package') ||
+    main.references.length !== objects.length - 1
+  )
+    {throw new Error('Unsupported native asset layout')}
+
+  const seen = new Set<string>(),
+    active = new Set<string>()
+
+  const visit = (key: string): void => {
+    const row = rows.get(key)
+
+    if (!row) {throw new Error('Missing native object')}
+
+    if (active.has(key)) {throw new Error('Native graph cycle')}
+
+    if (seen.has(key)) {return}
+    active.add(key)
+    row.references.forEach(visit)
+    active.delete(key)
+    seen.add(key)
+  }
+
+  visit(root)
+
+  if (seen.size !== rows.size) {throw new Error('Unreachable native graph object')}
+
+  return {
+    schema: 1,
+    transport: 'windows-package-uri',
+    root,
+    payloadInventorySha256: fields.text('payloadInventorySha256', SHA256),
+    objects
+  }
+}
+
+function nativePackageObject(entry: unknown, pkg: ChannelPackage, prefix: string): NativePackageObject {
+  const row = new Fields(entry)
+  const kind = row.text('kind')
+
+  if (
+    kind !== 'main-package' &&
+    kind !== 'main-bundle' &&
+    kind !== 'asset-package' &&
+    kind !== 'optional-package' &&
+    kind !== 'optional-bundle'
+  ) {
+    throw new Error('Invalid native object kind')
+  }
+
+  const key = channelKey(row.text('key'))
+  const identity = row.text('identity', /^[A-Za-z0-9.-]{3,50}$/)
+  const resourceId = row.optional('resourceId') ?? ''
+  const publisher = row.text('publisher')
+  const version = row.text('version')
+  const arch = row.text('arch')
+  const nativeDigest = row.text('nativeDigest', /^[A-Za-z0-9+/]{43}=$/)
+  const refs = nativeReferences(row, kind)
+
+  if (
+    !key.startsWith(prefix) ||
+    !key.endsWith(kind.endsWith('bundle') ? '.msixbundle' : '.msix') ||
+    publisher !== pkg.publisher ||
+    version !== pkg.version ||
+    arch !== (kind.endsWith('bundle') || kind === 'asset-package' ? 'neutral' : pkg.arch) ||
+    Buffer.from(nativeDigest, 'base64').toString('base64') !== nativeDigest
+  )
+    {throw new Error('Native object binding mismatch')}
+
+  validateNativeObjectIdentity(kind, identity, resourceId, row, pkg)
+
+  const object: NativePackageObject = {
+    key,
+    kind,
+    identity,
+    publisher,
+    version,
+    arch,
+    nativeDigest,
+    size: row.integer('size', 480_000_000),
+    sha256: row.text('sha256', SHA256),
+    references: refs as string[]
+  }
+
+  if (kind === 'asset-package') {
+    object.resourceId = resourceId
+    object.allowExecution = true
+  }
+
+  return object
+}
+
+function validateNativeObjectIdentity(
+  kind: string,
+  identity: string,
+  resourceId: string,
+  row: Fields,
+  pkg: ChannelPackage
+): void {
+  if (
+    (kind.startsWith('main-') && identity !== pkg.identity) ||
+    (kind.startsWith('optional-') && (identity === pkg.identity || !identity.startsWith(pkg.identity + '.'))) ||
+    (kind === 'asset-package'
+      ? identity !== pkg.identity || !/^runtime[0-9]{4}$/.test(resourceId) || row.get('allowExecution') !== true
+      : Boolean(resourceId))
+  ) {
+    throw new Error('Native object identity/resource mismatch')
+  }
+}
+
+function nativeReferences(row: Fields, kind: string): string[] {
+  const refs = row.get('references')
+
+  if (
+    !Array.isArray(refs) ||
+    refs.some((ref: unknown): boolean => typeof ref !== 'string') ||
+    new Set(refs).size !== refs.length ||
+    (kind.endsWith('package') && refs.length > 0)
+  )
+    {throw new Error('Invalid native references')}
+
+  return refs as string[]
 }

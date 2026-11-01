@@ -22,7 +22,8 @@ from scripts.releases.versioning import parse_attempt_ref
 
 
 def git(source: Path, *args: str) -> str:
-    return subprocess.check_output(["git", *args], cwd=source, text=True, encoding="utf-8").rstrip("\r\n")
+    from scripts.bundles.git_command import git_command
+    return subprocess.check_output(git_command(source, *args), cwd=source, text=True, encoding="utf-8").rstrip("\r\n")
 
 
 def require_source(source: Path, commit: str) -> None:

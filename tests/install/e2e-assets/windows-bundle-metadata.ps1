@@ -47,7 +47,7 @@ function Read-SmokePackageManifest([xml]$Xml, [string]$Arch, $Expected) {
     return [pscustomobject]@{ Version=$version; Architecture=$Arch; Executable=$exe; Slice=$null }
 }
 
-function Read-BundleSmokeMetadata([string]$Artifact, [string]$Arch, $Expected) {
+function Read-BundleSmokeMetadata([string]$Artifact, [string]$Arch, $Expected, $ExternalPackage = $null) {
     $zip = [IO.Compression.ZipFile]::OpenRead($Artifact)
     try {
         switch ([IO.Path]::GetExtension($Artifact).ToLowerInvariant()) {
@@ -64,7 +64,24 @@ function Read-BundleSmokeMetadata([string]$Artifact, [string]$Arch, $Expected) {
                 if ($slices.Count -ne 1) { throw 'Expected exactly one native application slice (no emulation fallback)' }
                 $slice = $slices[0].GetAttribute('FileName')
                 Assert-SmokeRelativePath $slice
-                if (@($zip.Entries | Where-Object { $_.FullName -ceq $slice }).Count -ne 1) { throw 'Native package bytes missing or ambiguous' }
+                $embedded = @($zip.Entries | Where-Object { $_.FullName -ceq $slice }).Count
+                if ($embedded -eq 0 -and $ExternalPackage) {
+                    # Only a caller's exact graph member may supply an external slice.
+                    # This reads metadata, not graph admission or signature qualification.
+                    if ($slice -match '[\\/]' -or !$ExternalPackage.key.EndsWith('/'+$slice,[StringComparison]::Ordinal) -or
+                        $ExternalPackage.sha256 -cnotmatch '^[a-f0-9]{64}$' -or $ExternalPackage.size -le 0 -or $ExternalPackage.size -gt 480000000) { throw 'External native slice binding invalid' }
+                    $external = Join-Path (Split-Path -Parent $Artifact) $slice
+                    $item = Get-Item -LiteralPath $external -ErrorAction Stop
+                    if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+                        $item.Length -ne $ExternalPackage.size -or (Get-FileHash -LiteralPath $external -Algorithm SHA256).Hash.ToLowerInvariant() -cne $ExternalPackage.sha256) { throw 'External native slice bytes mismatch' }
+                    $memberZip = [IO.Compression.ZipFile]::OpenRead($external)
+                    try { $metadata = Read-SmokePackageManifest (Read-SmokeXmlEntry $memberZip 'AppxManifest.xml') $Arch $Expected }
+                    finally { $memberZip.Dispose() }
+                    if ($metadata.Version -cne $version -or $slices[0].GetAttribute('Version') -cne $version) { throw 'External native slice version mismatch' }
+                    $metadata.Slice = $slice
+                    return $metadata
+                }
+                if ($embedded -ne 1 -or $ExternalPackage) { throw 'Native package bytes missing or ambiguous' }
                 if ($slices[0].GetAttribute('Version') -cne $version) { throw 'Native slice and bundle version mismatch' }
                 return [pscustomobject]@{ Version=$version; Architecture=$Arch; Executable=$null; Slice=$slice }
             }

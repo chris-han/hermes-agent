@@ -11,7 +11,7 @@ try {
   Set-Content -LiteralPath $package -Value 'fixture bytes' -Encoding ascii
   $baselinePackageHash = (Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash
   $hash = $baselinePackageHash
-  $text = [IO.File]::ReadAllText($source).Replace('__CERTIFICATE_THUMBPRINT__',$cert.Thumbprint).Replace('__PACKAGE_FILE__','test package.msix').Replace('__PACKAGE_SHA256__',$hash)
+  $text = [IO.File]::ReadAllText($source).Replace('__NATIVE_GRAPH_SHA256__','').Replace('__CERTIFICATE_THUMBPRINT__',$cert.Thumbprint).Replace('__PACKAGE_FILE__','test package.msix').Replace('__PACKAGE_SHA256__',$hash)
   $installer = Join-Path $root 'Install.ps1'
   [IO.File]::WriteAllText($installer,$text)
   . $installer
@@ -94,5 +94,19 @@ try {
   if (!$strictRefused -or $script:installs -or $script:elevations -or $script:imports) {
     throw 'Strict package check did not block tamper before trust/install'
   }
-  Write-Output 'PASS: existing trust, trust-only elevation, correct install user, missing chain repair, AppX peer-trust policy, native signature error refusal, UAC cancellation, signer mismatch, invalid signature, tamper refusal, strict preflight tamper refusal'
+  Set-Content -LiteralPath $package -Value 'fixture bytes' -Encoding ascii
+  # Graph member damage must refuse before trust elevation or native deployment.
+  $asset = Join-Path $root 'SemantierAgent-runtime0001.msix'
+  [IO.File]::WriteAllText($asset,'asset bytes')
+  $graphPath = Join-Path $root 'native-graph.json'
+  @{objects=@(@{key='releases/channel-builds/fixture/SemantierAgent-runtime0001.msix';size=(Get-Item $asset).Length;sha256=(Get-FileHash $asset).Hash})} | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $graphPath -Encoding utf8
+  $graphHash = (Get-FileHash $graphPath).Hash
+  $graphText = [IO.File]::ReadAllText($source).Replace('__NATIVE_GRAPH_SHA256__',$graphHash).Replace('__CERTIFICATE_THUMBPRINT__',$cert.Thumbprint).Replace('__PACKAGE_FILE__','test package.msix').Replace('__PACKAGE_SHA256__',$hash)
+  [IO.File]::WriteAllText($installer,$graphText)
+  . $installer
+  Add-Content -LiteralPath $asset -Value 'foreign bytes'
+  Reset-Case; Assert-Refused
+  if ($script:elevations -or $script:imports) { throw 'Damaged native member was trusted' }
+  Write-Output 'PASS: existing trust, trust-only elevation, correct install user, missing chain repair, AppX peer-trust policy, native signature error refusal, UAC cancellation, signer mismatch, invalid signature, tamper refusal, native graph member refusal'
+
 } finally { Remove-Item -LiteralPath $root -Recurse -Force }
