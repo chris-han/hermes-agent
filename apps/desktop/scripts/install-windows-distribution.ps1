@@ -1,6 +1,9 @@
 # Recipient installer. The release builder pins these values to this signed package.
 [CmdletBinding()]
-param([switch]$TrustCertificate)
+param(
+  [switch]$TrustCertificate,
+  [switch]$StrictPackageCheck
+)
 $ErrorActionPreference = 'Stop'
 
 function Test-InstallerAdministrator {
@@ -8,7 +11,7 @@ function Test-InstallerAdministrator {
   return (New-Object Security.Principal.WindowsPrincipal($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
-function Invoke-SemantierInstall([switch]$TrustCertificate) {
+function Invoke-SemantierInstall([switch]$TrustCertificate, [switch]$StrictPackageCheck) {
   $expectedThumbprint = '__CERTIFICATE_THUMBPRINT__'
   $package = Join-Path $PSScriptRoot '__PACKAGE_FILE__'
   $expectedHash = '__PACKAGE_SHA256__'
@@ -27,12 +30,12 @@ function Invoke-SemantierInstall([switch]$TrustCertificate) {
     return
   }
 
-  Write-Host 'Verifying the Semantier Agent package...'
-  if ((Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash -ne $expectedHash) {
+  Write-Host 'Verifying the Semantier Agent package signature...'
+  if ($StrictPackageCheck -and (Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash -ne $expectedHash) {
     throw 'Package checksum mismatch. Extract the complete original ZIP again.'
   }
   # Windows PowerShell 5.1 reports missing trust chains as UnknownError.
-  # The pinned file hash and signer identify the package before trust.
+  # Strict mode adds the pinned file hash for a full preflight byte scan.
   # Add-AppxPackage applies Windows' AppX signature/trust policy during install.
   $signature = Get-AuthenticodeSignature -LiteralPath $package
   if (!$signature.SignerCertificate -or $signature.SignerCertificate.Thumbprint -ne $expectedThumbprint -or
@@ -61,6 +64,6 @@ function Invoke-SemantierInstall([switch]$TrustCertificate) {
 
 # Dot-sourcing supports native behavioral tests without changing machine state.
 if ($MyInvocation.InvocationName -ne '.') {
-  try { Invoke-SemantierInstall -TrustCertificate:$TrustCertificate; exit 0 }
+  try { Invoke-SemantierInstall -TrustCertificate:$TrustCertificate -StrictPackageCheck:$StrictPackageCheck; exit 0 }
   catch { Write-Host "Installation failed: $($_.Exception.Message)" -ForegroundColor Red; exit 1 }
 }

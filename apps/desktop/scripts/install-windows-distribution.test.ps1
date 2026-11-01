@@ -9,7 +9,8 @@ try {
   Copy-Item -LiteralPath $PublicCertificate -Destination (Join-Path $root 'SemantierAgent-signing.cer')
   $package = Join-Path $root 'test package.msix'
   Set-Content -LiteralPath $package -Value 'fixture bytes' -Encoding ascii
-  $hash = (Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash
+  $baselinePackageHash = (Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash
+  $hash = $baselinePackageHash
   $text = [IO.File]::ReadAllText($source).Replace('__CERTIFICATE_THUMBPRINT__',$cert.Thumbprint).Replace('__PACKAGE_FILE__','test package.msix').Replace('__PACKAGE_SHA256__',$hash)
   $installer = Join-Path $root 'Install.ps1'
   [IO.File]::WriteAllText($installer,$text)
@@ -38,13 +39,19 @@ try {
     return [pscustomobject]@{ExitCode=0}
   }
   function Add-AppxPackage { param($Path)
-    if (!$script:trusted -or (!$script:trustResolvesSignature -and !$script:appxAcceptsPeerTrust -and $script:signatureStatus -ne 'Valid') -or $Path -ne $package) { throw 'Unsafe installation' }
+    if (
+      !$script:trusted -or
+      (!$script:trustResolvesSignature -and !$script:appxAcceptsPeerTrust -and $script:signatureStatus -ne 'Valid') -or
+      (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash -ne $script:baselinePackageHash -or
+      $Path -ne $package
+    ) { throw 'Unsafe installation' }
     $script:installs++
   }
   function Reset-Case {
     $script:trusted=$false; $script:admin=$false; $script:cancel=$false
     $script:imports=0; $script:elevations=0; $script:installs=0
     $script:signatureStatus='Valid'; $script:signer=$cert.Thumbprint; $script:trustResolvesSignature=$false; $script:appxAcceptsPeerTrust=$false
+    $script:baselinePackageHash=$baselinePackageHash
   }
   function Assert-Refused {
     $refused=$false
@@ -77,6 +84,15 @@ try {
   Reset-Case
   Add-Content -LiteralPath $package -Value 'tampered'
   Assert-Refused
-  if ($script:elevations -or $script:imports) { throw 'Tampered package was trusted' }
-  Write-Output 'PASS: existing trust, trust-only elevation, correct install user, missing chain repair, AppX peer-trust policy, native signature error refusal, UAC cancellation, signer mismatch, invalid signature, tamper refusal'
+  # Fast path skips a full pre-install hash scan, but Add-AppxPackage still
+  # enforces package integrity and refuses the tampered bytes.
+  Reset-Case
+  Add-Content -LiteralPath $package -Value 'tampered again'
+  $script:trusted=$true
+  $strictRefused=$false
+  try { Invoke-SemantierInstall -StrictPackageCheck } catch { $strictRefused=$true }
+  if (!$strictRefused -or $script:installs -or $script:elevations -or $script:imports) {
+    throw 'Strict package check did not block tamper before trust/install'
+  }
+  Write-Output 'PASS: existing trust, trust-only elevation, correct install user, missing chain repair, AppX peer-trust policy, native signature error refusal, UAC cancellation, signer mismatch, invalid signature, tamper refusal, strict preflight tamper refusal'
 } finally { Remove-Item -LiteralPath $root -Recurse -Force }

@@ -13,7 +13,7 @@ const selection = {
   selected: 'channel1' as const,
   options: [
     { id: 'channel1' as const, publicBase: 'https://ecs.example.com' },
-    { id: 'channel2' as const, publicBase: 'https://update2.semantier.com' },
+    { id: 'channel2' as const, publicBase: 'https://s3.semantier.com' },
     { id: 'channel3' as const, publicBase: 'http://127.0.0.1:18780' }
   ]
 }
@@ -42,7 +42,7 @@ test('three choices use the native saved source and discard the previous actiona
   expect(trigger.hasAttribute('disabled')).toBe(true)
   complete({ selection: { ...selection, selected: 'channel2' }, status: { supported: true, updateAvailable: false } })
   await waitFor(() => expect(trigger.textContent).toContain('Channel 2'))
-  expect(screen.getByText('https://update2.semantier.com')).toBeTruthy()
+  expect(screen.getByText('https://s3.semantier.com')).toBeTruthy()
   expect($updateStatus.get()?.updateAvailable).toBe(false)
 })
 test('failed save exposes retry and restores persisted selection without an old install action', async () => {

@@ -22,8 +22,8 @@ try {
  await selector.click();
  assert.equal(await page.getByRole('option').count(),3);
  await page.getByRole('option',{name:'Channel 2 · Cloudflare'}).click();
- await page.getByText('https://update2.semantier.com',{exact:true}).waitFor();
- await page.reload();await page.getByText('https://update2.semantier.com',{exact:true}).waitFor();
+ await page.getByText('https://s3.semantier.com',{exact:true}).waitFor();
+ await page.reload();await page.getByText('https://s3.semantier.com',{exact:true}).waitFor();
  for(const [width,theme] of [[1100,'light'],[420,'dark']]) {
   await page.setViewportSize({width,height:800});
   await page.evaluate(theme=>document.documentElement.classList.toggle('dark',theme==='dark'),theme);

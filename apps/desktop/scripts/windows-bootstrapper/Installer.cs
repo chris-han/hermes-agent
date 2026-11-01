@@ -44,7 +44,7 @@ static class Installer {
     const string Identity = Channel1Pins.Identity;
     static readonly Version Version = new Version(Channel1Pins.AppVersion);
     #else
-    const string Origin = "https://update2.semantier.com";
+    const string Origin = "https://s3.semantier.com";
     const string ZipUrl = Origin + "/releases/channel-builds/3d722e4ff1c44b48b908d1ebb606453a/SemantierAgent-0.0.64-win-x64.zip";
     const string ZipHash = "b970fd1b60fd181d8ae29d3eb88f48d217279ef3b55f2c454525683ea3d81e9e";
     const long ZipSize = 2261279211L;

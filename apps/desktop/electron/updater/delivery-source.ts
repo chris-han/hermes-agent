@@ -13,7 +13,7 @@ export interface DeliverySourceStatus {
 }
 const ids: DeliverySourceId[] = ['channel1', 'channel2', 'channel3']
 const cloudflare = 'https://s3.semantier.com'
-const cloudflareOrigins = [cloudflare, 'https://update2.semantier.com']
+const cloudflareOrigins = [cloudflare]
 
 function sourceId(value: unknown): DeliverySourceId {
   if (!ids.includes(value as DeliverySourceId)) {throw new Error('Invalid update delivery source')}

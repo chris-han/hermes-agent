@@ -48,11 +48,11 @@ test('reset discards old target and is refused during apply and after handoff', 
 })
 
 
-test('legacy Cloudflare stamp retains source selection while resolving the new public origin', () => {
+test('cloudflare stamp retains source selection while resolving the public origin', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'update-source-migration-'))
 
   try {
-    const source = new DeliverySources(path.join(root, 'source.json'), path.join(root, 'config.yaml'), 'https://update2.semantier.com')
+    const source = new DeliverySources(path.join(root, 'source.json'), path.join(root, 'config.yaml'), 'https://s3.semantier.com')
     expect(source.status().selected).toBe('channel2')
     expect(source.base()).toBe('https://s3.semantier.com')
     expect(source.status().options.find(row => row.id === 'channel1')?.publicBase).toBe('')

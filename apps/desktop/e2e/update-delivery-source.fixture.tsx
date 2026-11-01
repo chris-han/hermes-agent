@@ -9,7 +9,7 @@ let selected = (localStorage.getItem('fixture-update-source') ?? 'channel1') as 
 
 const options = [
   { id: 'channel1' as const, publicBase: 'https://ecs.example.com' },
-  { id: 'channel2' as const, publicBase: 'https://update2.semantier.com' },
+  { id: 'channel2' as const, publicBase: 'https://s3.semantier.com' },
   { id: 'channel3' as const, publicBase: 'http://127.0.0.1:8926' }
 ]
 

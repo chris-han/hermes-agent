@@ -38,7 +38,7 @@ class ClientOperations:
             kind = spec['kind']
             if kind not in {'filesystem', 'r2'} or (kind=='r2') != (target_id=='channel2'):
                 raise ValueError('delivery target owner mismatch')
-            if kind=='r2' and spec['public_base'] not in {'https://update2.semantier.com', 'https://s3.semantier.com'}:
+            if kind=='r2' and spec['public_base'] != 'https://s3.semantier.com':
                 raise ValueError('R2 qualified publication base required')
             remote = None
             if kind=='r2':

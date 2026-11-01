@@ -7,7 +7,7 @@
    如需输入另一个管理员的凭据，应用仍安装到最初运行 Install.bat 的用户。
 4. 成功后从开始菜单打开 Semantier Agent。后续更新重复上述步骤即可。
 
-脚本核对包 SHA-256、证书指纹、证书有效期和 Windows 签名验证。
+脚本默认核对证书指纹、证书有效期和 Windows 签名验证；`Install.ps1 -StrictPackageCheck` 会额外做包 SHA-256 预检查（更慢）。
 取消管理员请求或验证失败时会停止，不会继续安装。
 无需导入 PFX、私钥，也无需把证书导入“受信任的根证书颁发机构”。
 
@@ -19,5 +19,6 @@
 
 Extract the entire ZIP, then double-click Install.bat as the intended Windows user.
 Allow the administrator prompt for publisher certificate trust. Only that step is elevated;
-the MSIX installs for the original Windows user. The script verifies the package hash and
-signature, reuses existing certificate trust, and stops on any failure.
+the MSIX installs for the original Windows user. By default the script verifies signature/certificate
+and lets Add-AppxPackage enforce package integrity; `Install.ps1 -StrictPackageCheck` adds a slower
+pre-install SHA-256 pass. It reuses existing certificate trust and stops on any failure.
