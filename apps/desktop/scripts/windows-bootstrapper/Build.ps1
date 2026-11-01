@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$OutputDirectory,[string]$Channel1Descriptor)
+param([Parameter(Mandatory=$true)][string]$OutputDirectory,[string]$Channel1Descriptor,[string]$Channel1Zip)
 $ErrorActionPreference='Stop'
 if(Test-Path -LiteralPath $OutputDirectory){throw 'Use a fresh task-owned output directory.'}
 New-Item -ItemType Directory -Path $OutputDirectory | Out-Null
@@ -27,6 +27,47 @@ if($Channel1Descriptor){
     if($names['native-graph.json'] -cne $d.graph_sha256 -or $names['SemantierAgent-signing.cer'] -cne $d.cert_sha256){throw 'Descriptor member binding mismatch.'}
     $actualCert=(Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $OutputDirectory 'SemantierAgent-signing.cer')).Hash.ToLowerInvariant()
     if($actualCert -cne $d.cert_sha256){throw 'Embedded certificate mismatch.'}
+    $cert=New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 (Join-Path $OutputDirectory 'SemantierAgent-signing.cer')
+    try {if($cert.Thumbprint -cne $d.thumbprint){throw 'Descriptor thumbprint mismatch.'}} finally {$cert.Dispose()}
+    if(!$Channel1Zip){throw 'Channel1 ZIP required.'}
+    $zipItem=Get-Item -LiteralPath $Channel1Zip
+    if($zipItem.PSIsContainer -or ($zipItem.Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'Channel1 ZIP must be a regular file.'}
+    Add-Type -AssemblyName System.IO.Compression
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zipStream=[IO.File]::Open($zipItem.FullName,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
+    try {
+        if($zipStream.Length -ne $d.zip_size){throw 'Channel1 ZIP size mismatch.'}
+        $sha=[Security.Cryptography.SHA256]::Create()
+        try {$actualZip=[BitConverter]::ToString($sha.ComputeHash($zipStream)).Replace('-','').ToLowerInvariant()} finally {$sha.Dispose()}
+        if($actualZip -cne $d.zip_sha256){throw 'Channel1 ZIP hash mismatch.'}
+        $zipStream.Position=0
+        $zip=New-Object IO.Compression.ZipArchive($zipStream,[IO.Compression.ZipArchiveMode]::Read,$true)
+        try {
+            foreach($name in $names.Keys){
+                $found=@($zip.Entries | Where-Object {$_.FullName -ceq $name})
+                if($found.Count -ne 1){throw 'Channel1 ZIP member missing or duplicated.'}
+                $inputStream=$found[0].Open();$sha=[Security.Cryptography.SHA256]::Create()
+                try {$actual=[BitConverter]::ToString($sha.ComputeHash($inputStream)).Replace('-','').ToLowerInvariant()} finally {$sha.Dispose();$inputStream.Dispose()}
+                if($actual -cne $names[$name]){throw 'Channel1 ZIP member hash mismatch.'}
+            }
+            $entry=@($zip.Entries | Where-Object {$_.FullName -ceq 'native-graph.json'})[0]
+            if($entry.Length -gt 2097152){throw 'Channel1 graph too large.'}
+            $reader=New-Object IO.StreamReader($entry.Open(),[Text.Encoding]::UTF8)
+            try {$graph=$reader.ReadToEnd() | ConvertFrom-Json} finally {$reader.Dispose()}
+            $prefix=$d.zip_path.Substring(1,$d.zip_path.LastIndexOf('/'))
+            if($graph.schema -ne 1 -or $graph.transport -cne 'windows-package-uri' -or $graph.root -cne ($prefix+'SemantierAgent.msixbundle') -or @($graph.objects).Count -ne ($names.Count-2)){throw 'Channel1 graph inventory mismatch.'}
+            $seen=@{}
+            foreach($object in @($graph.objects)){
+                if($object.key -isnot [string] -or $object.sha256 -isnot [string] -or $object.version -cne $d.app_version){throw 'Channel1 graph object invalid.'}
+                if(!$object.key.StartsWith($prefix,[StringComparison]::Ordinal)){throw 'Channel1 graph release mismatch.'}
+                $name=$object.key.Substring($prefix.Length)
+                if(!$names.ContainsKey($name) -or $seen.ContainsKey($name) -or $names[$name] -cne $object.sha256){throw 'Channel1 graph member mismatch.'}
+                if(($name -ceq 'SemantierAgent-main.msix' -and $object.kind -cne 'main-package') -or ($name -ceq 'SemantierAgent.msixbundle' -and $object.kind -cne 'main-bundle') -or ($name -cmatch '^SemantierAgent-runtime[0-9]{4}\.msix$' -and $object.kind -cne 'asset-package')){throw 'Channel1 graph package kind mismatch.'}
+                if($object.identity -cne $d.identity -or $object.publisher -cne 'CN=Semantier Technology, O=Semantier Technology'){throw 'Channel1 graph identity mismatch.'}
+                $seen[$name]=$true
+            }
+        } finally {$zip.Dispose()}
+    } finally {$zipStream.Dispose()}
     $channel1Source=Join-Path $OutputDirectory 'Channel1Pins.cs'
     $content=@(
       'using System;','using System.Collections.Generic;','static class Channel1Pins {',
