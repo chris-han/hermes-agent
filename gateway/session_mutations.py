@@ -127,9 +127,15 @@ async def _mutate_session(authority, actor, ref, params, *, commit_lock=None):
         # would refuse a session whose receipt the client already saw as terminal.
         if operation == 'delete':
             store = getattr(authority.runner, 'session_store', None)
-            from hermes_state_backend import session_store_key
-            if store is not None and (store._routing_db is None
-                    or session_store_key(store._routing_db) != session_store_key(authority.db)):
+            from hermes_cli.semantier_cloud import cloud_enabled
+            routing = store._routing_db if store is not None else None
+            if cloud_enabled():
+                from hermes_state_backend import session_store_key
+                same_store = routing is not None and session_store_key(routing) == session_store_key(authority.db)
+            else:
+                # Native SQLite retirement retains the original upstream same-store guard.
+                same_store = routing is not None and routing.db_path == authority.db.db_path
+            if store is not None and not same_store:
                 raise RuntimeStoreError('runtime_coordination_required')
         if operation in {'rewind', 'reset'} and not callable(getattr(authority.runner, '_evict_cached_agent', None)):
             raise RuntimeStoreError('runtime_coordination_required')
