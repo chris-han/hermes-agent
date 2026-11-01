@@ -27,6 +27,7 @@ if ($output -eq $work -or $output.StartsWith($work + '\',[StringComparison]::Ord
     $work.StartsWith($output + '\',[StringComparison]::OrdinalIgnoreCase) -or
     $output -eq $repo -or $output.StartsWith($repo + '\',[StringComparison]::OrdinalIgnoreCase)) { throw 'Output must be outside both checkouts' }
 if ($request.commit -notmatch '^[0-9a-f]{40}$') { throw 'Exact complete source commit required' }
+if (($request.PSObject.Properties.Name -notcontains 'controllerCommit') -or $request.controllerCommit -cnotmatch '^[0-9a-f]{40}$') { throw 'Exact complete parent controller commit required' }
 if (Test-Path -LiteralPath $output) { throw 'Output already exists; choose a fresh directory' }
 $lockPath = $work + '.distribution.lock'
 $lock = $null
@@ -136,7 +137,7 @@ try {
     if ($request.python) { $arguments += @('-Python',$request.python) }
     if (($request.PSObject.Properties.Name -contains 'acceptancePublicBase') -and $request.acceptancePublicBase) {
       $channelRequest = Join-Path $output 'channel-request.json'
-      $arguments += @('-ChannelRequest',$channelRequest,'-AcceptancePublicBase',$request.acceptancePublicBase,'-ControllerCommit',$request.commit)
+      $arguments += @('-ChannelRequest',$channelRequest,'-AcceptancePublicBase',$request.acceptancePublicBase,'-ControllerCommit',$request.controllerCommit)
     }
 
     # This controller holds the workspace lock until every native build child exits.
@@ -176,7 +177,7 @@ try {
   $signArgs = @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$signer,'-Msix',$copy,'-Thumbprint',$request.thumbprint,'-SourceCommit',$source,'-SignTool',$signTool,'-SevenZip',$sevenZip,'-Output',(Join-Path $output 'signed'))
   if ($request.timestampUrl) { $signArgs += @('-TimestampUrl',$request.timestampUrl) }
   Native "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" $signArgs
-  Json-File ([ordered]@{result='PASS';sourceCommit=$source;controllerCommit=$request.commit;certificateThumbprint=$cert.Thumbprint;trustedTimestamp=[bool]$request.timestampUrl;worktree=$work;unsignedReceipt=(Join-Path $unsigned 'unsigned-build-receipt.json');signedReceipt=(Join-Path $output 'signed\receipt.json');zip=(Join-Path (Join-Path $output 'signed') ((Get-Content -LiteralPath (Join-Path $output 'signed\receipt.json') -Raw | ConvertFrom-Json).archiveName))}) (Join-Path $output 'result.json')
+  Json-File ([ordered]@{result='PASS';sourceCommit=$source;controllerCommit=$request.controllerCommit;certificateThumbprint=$cert.Thumbprint;trustedTimestamp=[bool]$request.timestampUrl;worktree=$work;unsignedReceipt=(Join-Path $unsigned 'unsigned-build-receipt.json');signedReceipt=(Join-Path $output 'signed\receipt.json');zip=(Join-Path (Join-Path $output 'signed') ((Get-Content -LiteralPath (Join-Path $output 'signed\receipt.json') -Raw | ConvertFrom-Json).archiveName))}) (Join-Path $output 'result.json')
   Write-Host "Distribution complete: $output"
 } catch {
   if ($transcript) { Json-File ([ordered]@{result='FAIL';producedAt=[DateTime]::UtcNow.ToString('o');error=$_.Exception.Message}) (Join-Path $output 'failure.json') }
