@@ -4,7 +4,7 @@ $script:SemantierWslExe=Join-Path $env:SystemRoot 'System32\wsl.exe'
 if (!(Test-Path -LiteralPath $script:SemantierWslExe -PathType Leaf)) { throw 'WSL executable unavailable.' }
 function ConvertTo-SemantierWslPath([string]$Path) {
     $result=@(& $script:SemantierWslExe -d $env:SEMANTIER_WSL_GIT_DISTRO --exec /usr/bin/wslpath -u $Path)
-    if($LASTEXITCODE -ne 0 -or $result.Count -ne 1 -or !$result[0].StartsWith('/')){throw 'WSL path conversion failed.'}
+    if($LASTEXITCODE -ne 0 -or $result.Count -ne 1 -or !$result[0].StartsWith('/')){throw "WSL path conversion failed (exit $LASTEXITCODE, output lines $($result.Count), path $Path)."}
     return [string]$result[0]
 }
 function ConvertFrom-SemantierWslPath([string]$Path) {
