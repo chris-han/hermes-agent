@@ -50,3 +50,18 @@ it('keeps the version unknown for a previously journaled observation',async()=>{
  await new JourneyObservations(dir,'http://127.0.0.1:8899',()=>true,send,'0.0.66').firstOpen()
  expect(JSON.parse(send.mock.calls[1][1].body).properties).toEqual({})
 })
+it('does not deliver after consent is withdrawn during session setup',async()=>{
+ let allowed=true
+ const send=vi.fn().mockImplementation(async()=>{allowed=false;return Response.json({status:'accepted'})})
+ const owner=new JourneyObservations(root(),'http://127.0.0.1:8899',()=>allowed,send,'0.0.65')
+ await owner.firstOpen()
+ expect(send.mock.calls.filter(([,init])=>init.body)).toHaveLength(0)
+})
+it('does not emit renderer state after consent is withdrawn during session setup',async()=>{
+ let allowed=true
+ const send=vi.fn().mockImplementation(async()=>Response.json({status:'accepted'}))
+ const owner=new JourneyObservations(root(),'http://127.0.0.1:8899',()=>allowed,send,'0.0.65')
+ await owner.firstOpen();send.mockClear();send.mockImplementation(async()=>{allowed=false;return Response.json({status:'accepted'})})
+ await owner.rendererState(true)
+ expect(send.mock.calls.filter(([,init])=>init.body)).toHaveLength(0)
+})
