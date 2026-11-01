@@ -63,7 +63,7 @@ export class JourneyObservations {
       if(!this.enabled() || !this.originAvailable || this.unavailable || !this.record || (!failed&&!this.failed))return
       try {
         const session=await this.send(this.origin+'/api/journey/session',{method:'POST',credentials:'include',signal:AbortSignal.timeout(3000)})
-        if(!session.ok)return
+        if(!session.ok || !this.enabled())return
         const response=await this.send(this.origin+'/api/journey/observations/windows',{method:'POST',credentials:'include',headers:{'content-type':'application/json'},body:JSON.stringify({event_id:randomUUID(),event_name:failed?'client_failed':'client_resumed',occurred_at,installation_id:this.record.installation_id,producer_version:'electron-journey-v1',properties:{reason_code:failed?'renderer_load_failed':'renderer_load_recovered'}}),signal:AbortSignal.timeout(3000)})
         if(response.ok)this.failed=failed
       } catch {/* Optional telemetry cannot block renderer recovery. */}
@@ -79,6 +79,7 @@ export class JourneyObservations {
         try {
           const session=await this.send(this.origin+'/api/journey/session',{method:'POST',credentials:'include',signal:AbortSignal.timeout(3000)})
           if (!session.ok) continue
+          if (!this.enabled()) break
           const r=await this.send(this.origin+'/api/journey/observations/windows',{method:'POST',credentials:'include',headers:{'content-type':'application/json'},body:JSON.stringify({event_id:this.record.event_id,event_name:'app_first_open',occurred_at:this.record.occurred_at,installation_id:this.record.installation_id,producer_version:'electron-journey-v1',properties:this.record.client_version ? {client_version:this.record.client_version} : {}}),signal:AbortSignal.timeout(3000)})
           if (r.ok) {this.record.acknowledged=true;this.save();break}
           if (r.status>=400 && r.status<500) break
