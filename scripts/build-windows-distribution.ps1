@@ -9,6 +9,11 @@ param([Parameter(Mandatory=$true)][string]$Config)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $request = Get-Content -LiteralPath $Config -Raw | ConvertFrom-Json
+$env:SEMANTIER_WSL_GIT_DISTRO=$null
+if (($request.PSObject.Properties.Name -contains 'wslLinuxGitDistro') -and $request.wslLinuxGitDistro) {
+  $env:SEMANTIER_WSL_GIT_DISTRO=[string]$request.wslLinuxGitDistro
+  . (Join-Path $PSScriptRoot 'wsl-linux-git.ps1')
+}
 $repo = [IO.Path]::GetFullPath($request.repository).TrimEnd('\')
 $work = [IO.Path]::GetFullPath($request.worktree).TrimEnd('\')
 $output = [IO.Path]::GetFullPath($request.output).TrimEnd('\')
@@ -31,6 +36,10 @@ function Git-Value([string]$Directory, [string[]]$Arguments) {
   $value = & git -C $Directory @Arguments
   if ($LASTEXITCODE -ne 0) { throw "git failed ($LASTEXITCODE): $($Arguments -join ' ')" }
   return $value
+}
+function Git-NativePath([string]$Path) {
+  if ($env:SEMANTIER_WSL_GIT_DISTRO) { return ConvertFrom-SemantierWslPath $Path }
+  return $Path
 }
 function Native([string]$Tool, [string[]]$Arguments) {
   $saved = $ErrorActionPreference
@@ -82,7 +91,7 @@ try {
     if ($standalone -and !$existing) {
       Native 'git' @('init',$work)
     }
-    $common = [IO.Path]::GetFullPath([string](Git-Value $repo @('rev-parse','--path-format=absolute','--git-common-dir')))
+    $common = [IO.Path]::GetFullPath((Git-NativePath ([string](Git-Value $repo @('rev-parse','--path-format=absolute','--git-common-dir')))))
     if (!$standalone) {
       $originalHead = [string](Git-Value $repo @('rev-parse','HEAD'))
       $originalStatus = @(Git-Value $repo @('status','--porcelain','--untracked-files=all'))
@@ -90,8 +99,8 @@ try {
     if ($existing) {
       $owner = Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json
       if ($owner.repository -cne $repo -or $owner.commonDirectory -cne $common -or $owner.kind -cne 'hermes-windows-distribution-v1') { throw 'Worktree ownership mismatch' }
-      if ([IO.Path]::GetFullPath([string](Git-Value $work @('rev-parse','--show-toplevel'))) -ine $work -or
-          [IO.Path]::GetFullPath([string](Git-Value $work @('rev-parse','--path-format=absolute','--git-common-dir'))) -ine $common) { throw 'Worktree registration mismatch' }
+      if ([IO.Path]::GetFullPath((Git-NativePath ([string](Git-Value $work @('rev-parse','--show-toplevel'))))) -ine $work -or
+          [IO.Path]::GetFullPath((Git-NativePath ([string](Git-Value $work @('rev-parse','--path-format=absolute','--git-common-dir'))))) -ine $common) { throw 'Worktree registration mismatch' }
       if (@(Git-Value $work @('status','--porcelain','--untracked-files=all')).Count) { throw 'Build worktree is dirty; preserve it and resolve changes or choose a fresh path' }
       if (@(Git-Value $work @('branch','--show-current')).Count) { throw 'Owned build worktree must remain detached' }
     }

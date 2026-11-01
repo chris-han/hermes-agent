@@ -139,3 +139,12 @@ test('commit builds retain exact provenance without entering an update channel',
   }
 })
 
+
+test('Windows WSL build stamp routes Git to the explicitly selected Linux Git executable', async () => {
+  const { linuxGitInvocation } = await import('./write-build-stamp.mjs')
+  assert.deepEqual(linuxGitInvocation('Ubuntu-22.04', '/mnt/d/repo/hermes-build', ['status', '--porcelain', '-uno']), {
+    executable: 'wsl.exe',
+    arguments: ['-d', 'Ubuntu-22.04', '--exec', '/usr/bin/env', '-u', 'GIT_DIR', '-u', 'GIT_WORK_TREE', '-u', 'GIT_COMMON_DIR', '-u', 'GIT_INDEX_FILE', '-u', 'GIT_OBJECT_DIRECTORY', '-u', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', '-u', 'GIT_CONFIG', '-u', 'GIT_CONFIG_SYSTEM', '-u', 'GIT_CONFIG_PARAMETERS', '-u', 'GIT_CONFIG_COUNT', '-u', 'GIT_NAMESPACE', 'GIT_CONFIG_NOSYSTEM=1', 'GIT_CONFIG_GLOBAL=/dev/null', '/usr/bin/git', '-C', '/mnt/d/repo/hermes-build', 'status', '--porcelain', '-uno']
+  })
+  assert.throws(() => linuxGitInvocation('bad distro;cmd', '/mnt/d/repo', ['status']))
+})
