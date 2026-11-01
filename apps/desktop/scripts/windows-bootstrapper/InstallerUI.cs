@@ -27,7 +27,7 @@ static class InstallerText {
             return Choose("Installation cancelled. No further installation steps were performed.","安装已取消，未继续执行后续安装步骤。");
         if(error is WebException) return Choose("Download failed. Check your connection and try again.","下载失败，请检查网络连接后重试。");
         if(error.Message.StartsWith("A newer Semantier")) return Choose("A newer version is already installed. It will be kept.","已安装较新版本，将保留现有版本。");
-        if(error.Message.Contains("already installed for this user")) return Choose("Semantier Agent 0.0.64.0 is already installed for this account.","当前账户已安装 Semantier Agent 0.0.64.0。");
+        if(error.Message.Contains("already installed for this user")) return Choose("Semantier Agent " + Installer.AppVersionString + " is already installed for this account.","当前账户已安装 Semantier Agent " + Installer.AppVersionString + "。");
         if(error.Message.Contains("mismatch") || error.Message.Contains("Unsafe") || error.Message.Contains("changed"))
             return Choose("Verification failed. The installation has stopped. Download a fresh installer from semantier.com.","校验失败，安装已停止。请从 semantier.com 重新下载安装程序。");
         if(error.Message.StartsWith("Certificate") || error.Message.StartsWith("Elevation"))
@@ -88,7 +88,7 @@ sealed class InstallerWindow : Form {
         }
         var brand=new FlowLayoutPanel { FlowDirection=FlowDirection.TopDown,Dock=DockStyle.Fill,WrapContents=false,Margin=Padding.Empty };
         var wordmark=TextLabel("semantier",23F,FontStyle.Bold,Ink); wordmark.Margin=Padding.Empty;
-        var edition=TextLabel(InstallerText.Choose("Windows · 0.0.64.0 · Acceptance","Windows · 0.0.64.0 · 验收版"),9F,FontStyle.Regular,Muted);
+        var edition=TextLabel(InstallerText.Choose("Windows · " + Installer.AppVersionString + " · Acceptance","Windows · " + Installer.AppVersionString + " · 验收版"),9F,FontStyle.Regular,Muted);
         edition.Margin=new Padding(0,3,0,0); brand.Controls.Add(wordmark);brand.Controls.Add(edition);
         header.Controls.Add(logo,0,0);header.Controls.Add(brand,1,0);root.Controls.Add(header,0,0);
         headline=TextLabel(InstallerText.Choose("Install Semantier Agent","安装 Semantier Agent"),18F,FontStyle.Bold,Ink);
@@ -147,7 +147,7 @@ sealed class InstallerWindow : Form {
             headline.Text=InstallerText.Choose("Installing Semantier Agent","正在安装 Semantier Agent");
             status.Text=InstallerText.Choose("Registering the application for your Windows account…","正在为您当前的 Windows 账户注册应用…");
             progress.Style=ProgressBarStyle.Marquee;stages.Text=InstallerText.Choose("Download complete → Verified → Install","下载完成 → 校验完成 → 安装");
-        } else if(message.StartsWith("Semantier Agent 0.0.64.0 installed.") || message.StartsWith("Installation stopped.")) {
+        } else if(message.StartsWith("Semantier Agent " + Installer.AppVersionString + " installed.") || message.StartsWith("Installation stopped.")) {
             cleanupMessage=message;
         }
     }
@@ -168,7 +168,7 @@ sealed class InstallerWindow : Form {
     }
     void Finish() {
         complete=true;headline.Text=InstallerText.Choose("Installation complete","安装完成");
-        status.Text=InstallerText.Choose("Semantier Agent 0.0.64.0 is ready. Open it from the Windows Start menu.","Semantier Agent 0.0.64.0 已就绪，可从 Windows 开始菜单打开。");
+        status.Text=InstallerText.Choose("Semantier Agent " + Installer.AppVersionString + " is ready. Open it from the Windows Start menu.","Semantier Agent " + Installer.AppVersionString + " 已就绪，可从 Windows 开始菜单打开。");
         progress.Style=ProgressBarStyle.Continuous;progress.Value=100;
         stages.Text=InstallerText.Choose("Downloaded → Verified → Installed","下载完成 → 校验完成 → 安装完成");
         primary.Text=InstallerText.Choose("Close","关闭");

@@ -16,14 +16,34 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using Microsoft.Win32.SafeHandles;
 
+#if CHANNEL1
+[assembly: AssemblyTitle("Semantier Agent Channel 1 Installer")]
+[assembly: AssemblyProduct("Semantier Agent Installer")]
+[assembly: AssemblyCompany("Semantier Technology")]
+[assembly: AssemblyVersion("1.2.0.0")]
+[assembly: AssemblyFileVersion("1.2.0.0")]
+#else
 [assembly: AssemblyTitle("Semantier Agent 0.0.64 Installer")]
 [assembly: AssemblyProduct("Semantier Agent Installer")]
 [assembly: AssemblyCompany("Semantier Technology")]
 [assembly: AssemblyVersion("1.1.1.0")]
 [assembly: AssemblyFileVersion("1.1.1.0")]
 
+#endif
+
 // Independent, version-specific bootstrapper. It never modifies the release ZIP.
 static class Installer {
+    #if CHANNEL1
+    const string Origin = Channel1Pins.Origin;
+    const string ZipUrl = Channel1Pins.ZipUrl;
+    const string ZipHash = Channel1Pins.ZipHash;
+    const long ZipSize = Channel1Pins.ZipSize;
+    const string CertHash = Channel1Pins.CertHash;
+    const string Thumbprint = Channel1Pins.Thumbprint;
+    const string GraphHash = Channel1Pins.GraphHash;
+    const string Identity = Channel1Pins.Identity;
+    static readonly Version Version = new Version(Channel1Pins.AppVersion);
+    #else
     const string Origin = "https://update2.semantier.com";
     const string ZipUrl = Origin + "/releases/channel-builds/3d722e4ff1c44b48b908d1ebb606453a/SemantierAgent-0.0.64-win-x64.zip";
     const string ZipHash = "b970fd1b60fd181d8ae29d3eb88f48d217279ef3b55f2c454525683ea3d81e9e";
@@ -33,6 +53,8 @@ static class Installer {
     const string GraphHash = "cfbf8c7582ecd2818f0c094acbc3177364bb61c74b1c0185ab0585e5eb3ca6d5";
     const string Identity = "Semantier.Agent.Acceptance";
     static readonly Version Version = new Version(0,0,64,0);
+    #endif
+    internal static string AppVersionString { get { return Version.ToString(); } }
     [StructLayout(LayoutKind.Sequential)] struct FileInformation { public uint Attributes; public System.Runtime.InteropServices.ComTypes.FILETIME Created,Accessed,Written; public uint Volume,SizeHigh,SizeLow,Links,IndexHigh,IndexLow; }
     [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern SafeFileHandle CreateFile(string path,uint access,uint share,IntPtr security,uint creation,uint flags,IntPtr template);
     [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetFileInformationByHandle(SafeFileHandle handle,out FileInformation info);
@@ -71,6 +93,9 @@ static class Installer {
             return handles;
         } catch {foreach(var h in handles)h.Dispose();throw;}
     }
+    #if CHANNEL1
+    static readonly Dictionary<string,string> Expected = Channel1Pins.Expected;
+    #else
     static readonly Dictionary<string,string> Expected = new Dictionary<string,string>(StringComparer.Ordinal) {
         {"native-graph.json",GraphHash}, {"SemantierAgent-signing.cer",CertHash},
         {"SemantierAgent.msixbundle","8fc4d74671d3ffeaf63d7c7a6fbb424e9ba6c14cd31522e7fe09e206e9748604"},
@@ -80,6 +105,7 @@ static class Installer {
         {"SemantierAgent-runtime0001.msix","543383d3914c3819178ba718861fd736bbb26908c736240b54b34b75f42dc74a"},
         {"SemantierAgent-runtime0002.msix","acb5bed5a17e01c4a444ade2e3c97243ab01523a3fcebbbe708d198b05723181"},
     };
+    #endif
     static string Hex(byte[] data) { return BitConverter.ToString(data).Replace("-", "").ToLowerInvariant(); }
     static string Hash(Stream s) { using(var h=SHA256.Create()) return Hex(h.ComputeHash(s)); }
     static byte[] EmbeddedCertificate() {
@@ -154,7 +180,7 @@ static class Installer {
         foreach(string item in found.Split(',')) {
             var current=new Version(item.Trim());
             if(current>Version) throw new InvalidOperationException("A newer Semantier Agent is already installed. Downgrade is not performed.");
-            if(current==Version) throw new InvalidOperationException("Semantier Agent 0.0.64.0 is already installed for this user.");
+            if(current==Version) throw new InvalidOperationException("Semantier Agent " + Version + " is already installed for this user.");
         }
     }
     static FileStream CreateOwned(string path,List<FileStream> held) {
@@ -212,7 +238,7 @@ static class Installer {
     static void Install(string dir) {
         string encoded=Convert.ToBase64String(Encoding.Unicode.GetBytes(Path.Combine(dir,"SemantierAgent.msixbundle")));
         PowerShell("$p=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('"+encoded+"')); Add-AppxPackage -Path $p");
-        string installed=PowerShell("@(Get-AppxPackage -Name '"+Identity+"' | Where-Object {$_.Version.ToString() -eq '0.0.64.0'}).Count");
+        string installed=PowerShell("@(Get-AppxPackage -Name '"+Identity+"' | Where-Object {$_.Version.ToString() -eq '"+Version+"'}).Count");
         if(installed!="1") throw new InvalidOperationException("Windows did not report the expected installed version.");
     }
     static void Execute(Action<string> report) {
@@ -247,7 +273,7 @@ static class Installer {
             foreach(var h in held) {try {var file=h;string name=file.Name;if(!DeleteHeld(name,file.SafeFileHandle,false,()=>file.Dispose()))cleaned=false;}catch{cleaned=false;h.Dispose();}}
             if(dir!=null && directories.Count>0) {var last=directories[directories.Count-1];try{if(!DeleteHeld(dir,last,true,()=>last.Dispose()))cleaned=false;}catch{cleaned=false;last.Dispose();}}
             foreach(var h in directories)h.Dispose();
-            if(dir!=null)report((installed?"Semantier Agent 0.0.64.0 installed. ":"Installation stopped. ")+(cleaned?"Temporary files removed.":"Temporary files may remain in " + dir));
+            if(dir!=null)report((installed?"Semantier Agent "+Version+" installed. ":"Installation stopped. ")+(cleaned?"Temporary files removed.":"Temporary files may remain in " + dir));
         }
     }
     #if TESTING
