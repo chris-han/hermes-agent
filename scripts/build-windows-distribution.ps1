@@ -21,6 +21,10 @@ foreach ($path in @($repo,$work,$output)) {
   if ($path -notmatch '^[A-Za-z]:\\' -or $path.Length -le 3) { throw 'Use Windows-native drive paths, not WSL/UNC roots' }
 }
 $standalone = $repo -ieq $work
+$reuseCache = ($request.PSObject.Properties.Name -contains 'reuseOwnedWindowsCache') -and $request.reuseOwnedWindowsCache
+if ($reuseCache -and (!$env:SEMANTIER_WSL_GIT_DISTRO -or $standalone -or $repo -ine 'D:\repo\hermes-build')) {
+  throw 'Shared cache requires Linux Git, the owned repository and a separate build worktree'
+}
 if (!$standalone -and ($repo.StartsWith($work + '\',[StringComparison]::OrdinalIgnoreCase) -or
     $work.StartsWith($repo + '\',[StringComparison]::OrdinalIgnoreCase))) { throw 'Separate repository and worktree paths must not be nested' }
 if ($output -eq $work -or $output.StartsWith($work + '\',[StringComparison]::OrdinalIgnoreCase) -or
@@ -28,18 +32,19 @@ if ($output -eq $work -or $output.StartsWith($work + '\',[StringComparison]::Ord
     $output -eq $repo -or $output.StartsWith($repo + '\',[StringComparison]::OrdinalIgnoreCase)) { throw 'Output must be outside both checkouts' }
 if ($request.commit -notmatch '^[0-9a-f]{40}$') { throw 'Exact complete source commit required' }
 if (($request.PSObject.Properties.Name -notcontains 'controllerCommit') -or $request.controllerCommit -cnotmatch '^[0-9a-f]{40}$') { throw 'Exact complete parent controller commit required' }
-if (($request.PSObject.Properties.Name -contains 'localGitOnly') -and $request.localGitOnly) {
-  if ($repo -ine 'D:\repo\hermes-build' -or $work -ine $repo) { throw 'Native Git is restricted to the owned local build checkout' }
+$localGitOnly = ($request.PSObject.Properties.Name -contains 'localGitOnly') -and $request.localGitOnly
+if ($localGitOnly -or $reuseCache) {
+  if ($repo -ine 'D:\repo\hermes-build' -or ($localGitOnly -and $work -ine $repo)) { throw 'Native Git is restricted to the owned local build checkout' }
   $disk = Get-CimInstance Win32_LogicalDisk | Where-Object { $_.DeviceID -ceq 'D:' }
   if (@($disk).Count -ne 1 -or $disk.DriveType -ne 3) { throw 'Native Git checkout must be on a fixed local volume' }
-  foreach ($path in @('D:\','D:\repo',$work,(Join-Path $work '.git'),(Join-Path $work '.git\config'),(Join-Path $work '.git\objects'),(Join-Path $work '.git\refs'))) {
+  foreach ($path in @('D:\','D:\repo',$repo,(Join-Path $repo '.git'),(Join-Path $repo '.git\config'),(Join-Path $repo '.git\objects'),(Join-Path $repo '.git\refs'))) {
     $item = Get-Item -LiteralPath $path -Force -ErrorAction Stop
     if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Native Git path has a reparse point' }
   }
-  if (!(Test-Path -LiteralPath (Join-Path $work '.git') -PathType Container) -or
-      (Test-Path -LiteralPath (Join-Path $work '.git\objects\info\alternates')) -or
-      (Test-Path -LiteralPath (Join-Path $work '.git\commondir'))) { throw 'Native Git repository redirects are not allowed' }
-  $gitConfig = Get-Content -LiteralPath (Join-Path $work '.git\config') -Raw
+  if (!(Test-Path -LiteralPath (Join-Path $repo '.git') -PathType Container) -or
+      (Test-Path -LiteralPath (Join-Path $repo '.git\objects\info\alternates')) -or
+      (Test-Path -LiteralPath (Join-Path $repo '.git\commondir'))) { throw 'Native Git repository redirects are not allowed' }
+  $gitConfig = Get-Content -LiteralPath (Join-Path $repo '.git\config') -Raw
   if ($gitConfig -match '(?im)^\s*\[include(?:if)?\b' -or $gitConfig -match '(?im)^\s*worktree\s*=') { throw 'Native Git config redirects are not allowed' }
   foreach ($name in @('GIT_DIR','GIT_WORK_TREE','GIT_COMMON_DIR','GIT_INDEX_FILE','GIT_OBJECT_DIRECTORY','GIT_ALTERNATE_OBJECT_DIRECTORIES','GIT_CONFIG','GIT_CONFIG_GLOBAL','GIT_CONFIG_SYSTEM','GIT_CONFIG_COUNT')) {
     if ([Environment]::GetEnvironmentVariable($name,'Process')) { throw 'Native Git environment redirects are not allowed' }
@@ -50,6 +55,7 @@ if (($request.PSObject.Properties.Name -contains 'localGitOnly') -and $request.l
 if (Test-Path -LiteralPath $output) { throw 'Output already exists; choose a fresh directory' }
 $lockPath = $work + '.distribution.lock'
 $lock = $null
+$cacheLock = $null
 $transcript = $false
 $completed = $false
 $totalClock = [Diagnostics.Stopwatch]::StartNew()
@@ -87,6 +93,13 @@ function Find-Tool([string]$Explicit, [string[]]$Candidates, [string]$Name) {
   throw "$Name unavailable; pass its explicit Windows path"
 }
 try {
+  if ($reuseCache) {
+    $cacheLock = [IO.File]::Open(($repo+'.distribution.lock'),[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+    foreach ($cachePath in @((Join-Path $repo '.cache'),(Join-Path $repo '.cache\desktop-inputs'))) {
+      $cacheItem = Get-Item -LiteralPath $cachePath -Force -ErrorAction Stop
+      if (!$cacheItem.PSIsContainer -or ($cacheItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Owned shared build cache is unavailable or redirected' }
+    }
+  }
   $lock = [IO.File]::Open($lockPath,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
   New-Item -ItemType Directory -Path $output | Out-Null
   Start-Transcript -LiteralPath (Join-Path $output 'release.log') | Out-Null
@@ -159,6 +172,10 @@ try {
       Json-File ([ordered]@{kind='semantier-windows-build-version-v1';version=$semantierVersion;sourceCommit=$source;reservedAt=[DateTime]::UtcNow.ToString('o');explicitRetry=$true;counterUnchanged=$true}) (Join-Path $output 'build-version.json')
     } else { Copy-Item -LiteralPath $counter -Destination (Join-Path $output 'build-version.json') }
     $arguments = @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',(Join-Path $work 'scripts\build-bundle.ps1'))
+    $serialCache = if ($reuseCache) { Join-Path $repo '.cache\desktop-inputs' } else { Join-Path $work '.cache\desktop-inputs' }
+    if ($reuseCache) {
+      $arguments += @('-Cache',$serialCache)
+    }
     if ($request.python) { $arguments += @('-Python',$request.python) }
     if (($request.PSObject.Properties.Name -contains 'acceptancePublicBase') -and $request.acceptancePublicBase) {
       $channelRequest = Join-Path $output 'channel-request.json'
@@ -171,7 +188,7 @@ try {
     $priorSerialCache = [Environment]::GetEnvironmentVariable('HERMES_DESKTOP_SERIAL_CACHE','Process')
     try {
       $env:SEMANTIER_DESKTOP_VERSION = $semantierVersion
-      $env:HERMES_DESKTOP_SERIAL_CACHE = Join-Path $work '.cache\desktop-inputs'
+      $env:HERMES_DESKTOP_SERIAL_CACHE = $serialCache
       Native "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" $arguments
     } finally {
       [Environment]::SetEnvironmentVariable('SEMANTIER_DESKTOP_VERSION',$priorSemantierVersion,'Process')
@@ -221,4 +238,5 @@ try {
     Stop-Transcript | Out-Null
   }
   if ($lock) { $lock.Dispose(); Remove-Item -LiteralPath $lockPath }
+  if ($cacheLock) { $cacheLock.Dispose(); Remove-Item -LiteralPath ($repo+'.distribution.lock') }
 }

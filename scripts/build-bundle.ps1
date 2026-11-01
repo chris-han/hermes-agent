@@ -40,7 +40,8 @@ param(
   [string]$Remote = 'origin',
   [string]$ChannelRequest = '',
   [string]$AcceptancePublicBase = '',
-  [string]$ControllerCommit = ''
+  [string]$ControllerCommit = '',
+  [string]$Cache = ''
 )
 
 # 'Stop' turns the native stderr progress lines of the build into terminating errors on Windows PowerShell 5.
@@ -160,7 +161,8 @@ try {
   } else {
     Write-Host "build-bundle: building $sha (sideload)"
     if ($ChannelRequest) {
-      & $py scripts/bundles/desktop.py --channel-request $ChannelRequest --variant bundled --clean
+      $cacheArgs = if ($Cache) { @('--cache',$Cache) } else { @() }
+      & $py scripts/bundles/desktop.py --channel-request $ChannelRequest --variant bundled --clean @cacheArgs
     } else {
       & $py scripts/bundles/desktop.py --commit $sha --variant bundled --clean
     }
