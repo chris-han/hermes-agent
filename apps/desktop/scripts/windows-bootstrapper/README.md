@@ -52,3 +52,20 @@ stderr even after deployment succeeds; sequential reads leave setup waiting fore
 The Windows self-test exercises a child emitting more than a pipe buffer on stderr,
 checks stdout completion, and preserves nonzero-exit diagnostics. Application 0.0.64
 and its immutable package graph remain unchanged.
+
+## Channel1 descriptor build
+
+`Build.ps1 -OutputDirectory <fresh-directory> -Channel1Descriptor <verified-json>`
+compiles the separately named `semantier-setup-channel1.exe` as Setup 1.2.0.0.
+The descriptor binds the exact `channel1.semantier.com` HTTPS origin, immutable
+ZIP path, ZIP length and SHA-256, app version/identity, public certificate hash
+and thumbprint, graph hash and each required package member hash. Provide those
+values from the actual signed application receipt and verify the complete ZIP,
+graph and members before creating the descriptor; the script does not prove
+those external artifacts merely by parsing the descriptor. It validates the
+bound origin, field types, member names, hash syntax, version range and embedded
+certificate, then compiles and runs the same self-tests and bilingual previews.
+The generated C# contains no secret. The result remains unsigned until the
+existing signing owner signs and verifies it. Omitting the descriptor retains the
+existing default Setup target and its established pins; neither mode publishes,
+installs, changes trust, or admits a native-update head.
