@@ -14,7 +14,7 @@ def test_branded_full_banner_uses_windows_product_version(monkeypatch):
     monkeypatch.setenv("SEMANTIER_CLI_BRAND", "1")
     monkeypatch.setenv("SEMANTIER_CLI_VERSION", "0.0.77")
     output = StringIO()
-    console = Console(file=output, width=140, color_system=None)
+    console = Console(file=output, width=140, color_system="truecolor", force_terminal=True, no_color=False)
 
     with (
         patch.object(banner.shutil, "get_terminal_size", return_value=SimpleNamespace(columns=140)),
@@ -35,6 +35,10 @@ def test_branded_full_banner_uses_windows_product_version(monkeypatch):
     assert "Nous Research" not in rendered
     assert "Hermes Agent" not in rendered
     assert "██" in rendered
+    # Semantier's canonical Asimov Action Yellow, not Hermes gold/bronze.
+    assert "38;2;232;201;45" in rendered
+    assert "38;2;255;215;0" not in rendered
+    assert "38;2;205;127;50" not in rendered
 
 
 def test_branded_compact_banner_even_in_fast_startup(monkeypatch):
@@ -46,6 +50,7 @@ def test_branded_compact_banner_even_in_fast_startup(monkeypatch):
     assert "SEMANTIER" in rendered
     assert "Semantier Agent v0.0.77" in rendered
     assert "NOUS HERMES" not in rendered
+    assert "#e8c92d" in rendered
     assert "Nous Research" not in rendered
 
 

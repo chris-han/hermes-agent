@@ -70,36 +70,19 @@ def _skin_color(key: str, fallback: str) -> str:
 from hermes_cli import __release_date__ as RELEASE_DATE
 from hermes_cli.version_info import get_version_info
 
-HERMES_AGENT_LOGO = """[bold #FFD700]██╗  ██╗███████╗██████╗ ███╗   ███╗███████╗███████╗       █████╗  ██████╗ ███████╗███╗   ██╗████████╗[/]
-[bold #FFD700]██║  ██║██╔════╝██╔══██╗████╗ ████║██╔════╝██╔════╝      ██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝[/]
-[#FFBF00]███████║█████╗  ██████╔╝██╔████╔██║█████╗  ███████╗█████╗███████║██║  ███╗█████╗  ██╔██╗ ██║   ██║[/]
-[#FFBF00]██╔══██║██╔══╝  ██╔══██╗██║╚██╔╝██║██╔══╝  ╚════██║╚════╝██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║[/]
-[#CD7F32]██║  ██║███████╗██║  ██║██║ ╚═╝ ██║███████╗███████║      ██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║[/]
-[#CD7F32]╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝╚══════╝      ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝[/]"""
-
-HERMES_CADUCEUS = """[#CD7F32]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⡀⠀⣀⣀⠀⢀⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#CD7F32]⠀⠀⠀⠀⠀⠀⢀⣠⣴⣾⣿⣿⣇⠸⣿⣿⠇⣸⣿⣿⣷⣦⣄⡀⠀⠀⠀⠀⠀⠀[/]
-[#FFBF00]⠀⢀⣠⣴⣶⠿⠋⣩⡿⣿⡿⠻⣿⡇⢠⡄⢸⣿⠟⢿⣿⢿⣍⠙⠿⣶⣦⣄⡀⠀[/]
-[#FFBF00]⠀⠀⠉⠉⠁⠶⠟⠋⠀⠉⠀⢀⣈⣁⡈⢁⣈⣁⡀⠀⠉⠀⠙⠻⠶⠈⠉⠉⠀⠀[/]
-[#FFD700]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣴⣿⡿⠛⢁⡈⠛⢿⣿⣦⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#FFD700]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠿⣿⣦⣤⣈⠁⢠⣴⣿⠿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#FFBF00]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠉⠻⢿⣿⣦⡉⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#FFBF00]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⢷⣦⣈⠛⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#CD7F32]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣴⠦⠈⠙⠿⣦⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#CD7F32]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠸⣿⣤⡈⠁⢤⣿⠇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#B8860B]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠛⠷⠄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#B8860B]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⠑⢶⣄⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#B8860B]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⠁⢰⡆⠈⡿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#B8860B]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠳⠈⣡⠞⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#B8860B]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]"""
-
 # The Semantier Windows terminal host selects its own presentation without
 # altering the default upstream Hermes CLI.
-SEMANTIER_LOGO = """[bold #FFD700]█████ █████ ██   ██  ███  ██  ██ ██████ █████ █████ ████ [/]
-[bold #FFD700]██    ██    ███ ███ ██ ██ ███ ██   ██     ██  ██    ██ ██[/]
-[#FFBF00]████  ████  ██ █ ██ █████ ██ ███   ██     ██  ████  ████ [/]
-[#FFBF00]   ██ ██    ██   ██ ██ ██ ██  ██   ██     ██  ██    ██ ██[/]
-[#CD7F32]█████ █████ ██   ██ ██ ██ ██  ██   ██   █████ █████ ██ ██[/]"""
+# CLI-only token adapter: same authored values as
+# apps/desktop/src/themes/presets.ts (Semantier native Asimov dark theme).
+# Do not alter the upstream Hermes default skin.
+SEMANTIER_ACTION_YELLOW = "#e8c92d"
+SEMANTIER_TEXT = "#ffffff"
+SEMANTIER_MUTED = "#c2c7ce"
+SEMANTIER_LOGO = f"""[bold {SEMANTIER_ACTION_YELLOW}]█████ █████ ██   ██  ███  ██  ██ ██████ █████ █████ ████ [/]
+[bold {SEMANTIER_ACTION_YELLOW}]██    ██    ███ ███ ██ ██ ███ ██   ██     ██  ██    ██ ██[/]
+[{SEMANTIER_ACTION_YELLOW}]████  ████  ██ █ ██ █████ ██ ███   ██     ██  ████  ████ [/]
+[{SEMANTIER_ACTION_YELLOW}]   ██ ██    ██   ██ ██ ██ ██  ██   ██     ██  ██    ██ ██[/]
+[{SEMANTIER_ACTION_YELLOW}]█████ █████ ██   ██ ██ ██ ██  ██   ██   █████ █████ ██ ██[/]"""
 
 
 def semantier_cli_brand_active() -> bool:
@@ -708,13 +691,16 @@ def build_welcome_banner(
         availability = compute_toolset_availability(enabled_toolsets)
     _enabled_ts = {str(t) for t in enabled_toolsets}
     # Resolve skin colors once for the entire banner
-    accent = _skin_color("banner_accent", "#FFBF00")
-    dim = _skin_color("banner_dim", "#B8860B")
-    text = _skin_color("banner_text", "#FFF8DC")
+    if semantier_cli_brand_active():
+        accent, dim, text = SEMANTIER_ACTION_YELLOW, SEMANTIER_MUTED, SEMANTIER_TEXT
+    else:
+        accent = _skin_color("banner_accent", "#FFBF00")
+        dim = _skin_color("banner_dim", "#B8860B")
+        text = _skin_color("banner_text", "#FFF8DC")
     # Use skin's custom caduceus art if provided
     _bskin = _quiet(_active_skin)
-    left_lines = ["", ("" if semantier_cli_brand_active() else
-                       (getattr(_bskin, "banner_hero", None) or HERMES_CADUCEUS)), ""]
+    left_lines = ["", "" if semantier_cli_brand_active() else
+                  (getattr(_bskin, "banner_hero", None) or ""), ""]
     left_lines += _banner_left_lines(model, cwd, session_id, context_length, provider, accent=accent, dim=dim,
                                      context_pinned=context_pinned)
     right_lines = _banner_tool_lines(
@@ -771,12 +757,18 @@ def build_welcome_banner(
     release_info = None if semantier_cli_brand_active() else get_latest_release_tag()
     if release_info:
         version_label = f"[link={release_info[1]}]{version_label}[/link]"
+    title_color = (SEMANTIER_ACTION_YELLOW if semantier_cli_brand_active()
+                   else _skin_color("banner_title", "#FFD700"))
+    border_color = (SEMANTIER_ACTION_YELLOW if semantier_cli_brand_active()
+                    else _skin_color("banner_border", "#CD7F32"))
     outer_panel = Panel(
-        layout_table, title=f"[bold {_skin_color('banner_title', '#FFD700')}]{version_label}[/]",
-        border_style=_skin_color("banner_border", "#CD7F32"), padding=(0, 2))
+        layout_table, title=f"[bold {title_color}]{version_label}[/]",
+        border_style=border_color, padding=(0, 2))
     console.print()
     if shutil.get_terminal_size().columns >= 95:
-        console.print(SEMANTIER_LOGO if semantier_cli_brand_active() else
-                      (getattr(_bskin, "banner_logo", None) or HERMES_AGENT_LOGO))
-        console.print()
+        logo = (SEMANTIER_LOGO if semantier_cli_brand_active() else
+                (getattr(_bskin, "banner_logo", None) or ""))
+        if logo:
+            console.print(logo)
+            console.print()
     console.print(outer_panel)

@@ -18,7 +18,10 @@ import time
 from contextlib import contextmanager, suppress
 from agent.i18n import t
 from agent.think_scrubber import THINK_TAG_NAMES
-from hermes_cli.banner import format_banner_version_label, semantier_cli_brand_active
+from hermes_cli.banner import (
+    SEMANTIER_ACTION_YELLOW, SEMANTIER_MUTED,
+    format_banner_version_label, semantier_cli_brand_active,
+)
 from rich.console import Console
 from rich.text import Text as _RichText
 from typing import Any
@@ -912,9 +915,13 @@ def _build_compact_banner() -> str:
     def _color(key, default):
         return _skin.get_color(key, default) if _skin else default
 
-    border_color = _color("banner_border", "#FFD700")
-    title_color = _color("banner_title", "#FFBF00")
-    dim_color = _color("banner_dim", "#B8860B")
+    if semantier_cli_brand_active():
+        border_color = title_color = SEMANTIER_ACTION_YELLOW
+        dim_color = SEMANTIER_MUTED
+    else:
+        border_color = _color("banner_border", "#FFD700")
+        title_color = _color("banner_title", "#FFBF00")
+        dim_color = _color("banner_dim", "#B8860B")
 
     if semantier_cli_brand_active():
         tiny_line = "SEMANTIER"
