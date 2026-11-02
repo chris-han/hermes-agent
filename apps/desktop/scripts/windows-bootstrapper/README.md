@@ -71,3 +71,7 @@ The generated C# contains no secret. The result remains unsigned until the
 existing signing owner signs and verifies it. Omitting the descriptor retains the
 existing default Setup target and its established pins; neither mode publishes,
 installs, changes trust, or admits a native-update head.
+
+## Channel 2 0.0.77 manual setup
+
+`Build.ps1 -OutputDirectory <fresh-directory> -Channel2Zip <reviewed-zip> -Channel2Bundle <reviewed-sparse-bundle>` produces a separately named, unsigned Channel 2 setup and runs the existing bilingual previews and self-tests. The exact pinned ZIP and independently signed sparse bundle are required; the bundle references the original, signed 0.0.77 MSIX and permits upgrade of an existing MSIX-bundle installation. The setup verifies the ZIP and package and embeds the signed bundle; it does not manufacture a native package graph or alter the application bytes. Sign and verify the setup separately through the existing certificate owner. Publishing and actual installation require the separate owner gates.

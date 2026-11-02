@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$OutputDirectory,[string]$Channel1Descriptor,[string]$Channel1Zip)
+param([Parameter(Mandatory=$true)][string]$OutputDirectory,[string]$Channel1Descriptor,[string]$Channel1Zip,[string]$Channel2Zip,[string]$Channel2Bundle)
 $ErrorActionPreference='Stop'
 if(Test-Path -LiteralPath $OutputDirectory){throw 'Use a fresh task-owned output directory.'}
 New-Item -ItemType Directory -Path $OutputDirectory | Out-Null
@@ -9,6 +9,19 @@ foreach($name in @('Installer.cs','InstallerUI.cs','SemantierAgent-signing.cer',
 Copy-Item -LiteralPath (Join-Path $assets 'icon.png') -Destination (Join-Path $OutputDirectory 'icon.png')
 Copy-Item -LiteralPath (Join-Path $assets 'icon.ico') -Destination (Join-Path $OutputDirectory 'icon.ico')
 $channel1Source=$null
+$channel2=!!$Channel2Zip
+if($channel2){
+    if($Channel1Descriptor){throw 'Channel 1 and Channel 2 cannot be combined.'}
+    $item=Get-Item -LiteralPath $Channel2Zip
+    if($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $item.Length -ne 2264240015){throw 'Channel2 ZIP mismatch.'}
+    if((Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash -cne '59AD5F557BABC3905835F239C502EA44AD5AA43207603FFFF8CBCB757998C229'){throw 'Channel2 ZIP mismatch.'}
+    if(!$Channel2Bundle){throw 'Channel2 sparse bundle required.'}
+    $bundle=Get-Item -LiteralPath $Channel2Bundle
+    if($bundle.PSIsContainer -or ($bundle.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $bundle.Length -ne 2984 -or (Get-FileHash -LiteralPath $bundle.FullName -Algorithm SHA256).Hash -cne '2AD23B092EF7E17FC7517922AB22198902D73FA7A2C52978EF910CAF07B33DB0'){throw 'Channel2 bundle mismatch.'}
+    $sig=Get-AuthenticodeSignature -LiteralPath $bundle.FullName
+    if($sig.Status -ne 'Valid' -or !$sig.SignerCertificate -or $sig.SignerCertificate.Thumbprint -cne '57BF15739B4AA447842EAF388856A01B4E5029FF'){throw 'Channel2 bundle signature mismatch.'}
+    Copy-Item -LiteralPath $bundle.FullName -Destination (Join-Path $OutputDirectory 'channel2.msixbundle')
+}
 if($Channel1Descriptor){
     $d=Get-Content -LiteralPath $Channel1Descriptor -Raw | ConvertFrom-Json
     foreach($field in @('origin','zip_path','zip_sha256','cert_sha256','graph_sha256','thumbprint','identity','app_version')){if($d.$field -isnot [string]){throw 'Invalid Channel1 descriptor type.'}}
@@ -88,7 +101,8 @@ $csc=Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 Push-Location $OutputDirectory
 try {
     $common=@('/nologo','/codepage:65001','/optimize+','/r:System.Windows.Forms.dll','/r:System.Drawing.dll','/r:System.IO.Compression.dll','/r:System.IO.Compression.FileSystem.dll','/win32icon:icon.ico','/win32manifest:bootstrapper.manifest','/resource:SemantierAgent-signing.cer,SemantierAgent-signing.cer','/resource:icon.png,Semantier.logo.png','/resource:icon.ico,Semantier.icon.ico','Installer.cs','InstallerUI.cs')
-    $defines=if($channel1Source){'/define:TESTING,CHANNEL1'}else{'/define:TESTING'}
+    $defines=if($channel1Source){'/define:TESTING,CHANNEL1'}elseif($channel2){'/define:TESTING,CHANNEL2'}else{'/define:TESTING'}
+    if($channel2){$common+= '/resource:channel2.msixbundle,Semantier.channel2.msixbundle'}
     if($channel1Source){$common+= 'Channel1Pins.cs'}
     & $csc /target:exe $defines /out:SemantierSetup.Tests.exe @common
     if($LASTEXITCODE -ne 0){throw 'Test compilation failed.'}
@@ -100,9 +114,9 @@ try {
             if($LASTEXITCODE -ne 0){throw "Preview failed: $language/$state"}
         }
     }
-    $releaseName=if($channel1Source){'semantier-setup-channel1.exe'}else{'semantier-setup.exe'}
+    $releaseName=if($channel1Source){'semantier-setup-channel1.exe'}elseif($channel2){'semantier-setup-channel2.exe'}else{'semantier-setup.exe'}
     $releaseDefine=@()
-    if($channel1Source){$releaseDefine+='/define:CHANNEL1'}
+    if($channel1Source){$releaseDefine+='/define:CHANNEL1'}elseif($channel2){$releaseDefine+='/define:CHANNEL2'}
     & $csc /target:winexe @releaseDefine ('/out:'+$releaseName) @common
     if($LASTEXITCODE -ne 0){throw 'Release compilation failed.'}
     Write-Output "BUILD_AND_UI_TESTS_PASS $OutputDirectory"

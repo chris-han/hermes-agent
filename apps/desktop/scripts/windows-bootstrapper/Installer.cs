@@ -22,6 +22,12 @@ using Microsoft.Win32.SafeHandles;
 [assembly: AssemblyCompany("Semantier Technology")]
 [assembly: AssemblyVersion("1.2.0.0")]
 [assembly: AssemblyFileVersion("1.2.0.0")]
+#elif CHANNEL2
+[assembly: AssemblyTitle("Semantier Agent 0.0.77 Channel 2 Installer")]
+[assembly: AssemblyProduct("Semantier Agent Installer")]
+[assembly: AssemblyCompany("Semantier Technology")]
+[assembly: AssemblyVersion("1.3.0.0")]
+[assembly: AssemblyFileVersion("1.3.0.0")]
 #else
 [assembly: AssemblyTitle("Semantier Agent 0.0.64 Installer")]
 [assembly: AssemblyProduct("Semantier Agent Installer")]
@@ -43,6 +49,16 @@ static class Installer {
     const string GraphHash = Channel1Pins.GraphHash;
     const string Identity = Channel1Pins.Identity;
     static readonly Version Version = new Version(Channel1Pins.AppVersion);
+    #elif CHANNEL2
+    const string Origin = "https://s3.semantier.com";
+    const string ZipUrl = Origin + "/releases/channel-builds/9e1ca1e9fad44d35ac9b13a2f09747e5/SemantierAgent-0.0.77-win-x64.zip";
+    const string ZipHash = "59ad5f557babc3905835f239c502ea44ad5aa43207603ffff8cbcb757998c229";
+    const long ZipSize = 2264240015L;
+    const string CertHash = "10a6b55e9a03bbc0dceb8d899c1776bf1fbad963c82050c16534da4983c9661d";
+    const string Thumbprint = "57BF15739B4AA447842EAF388856A01B4E5029FF";
+    const string BundleHash = "2ad23b092ef7e17fc7517922ab22198902d73fa7a2c52978ef910caf07b33db0";
+    const string Identity = "Semantier.Agent.Acceptance";
+    static readonly Version Version = new Version(0,0,77,0);
     #else
     const string Origin = "https://s3.semantier.com";
     const string ZipUrl = Origin + "/releases/channel-builds/3d722e4ff1c44b48b908d1ebb606453a/SemantierAgent-0.0.64-win-x64.zip";
@@ -95,6 +111,11 @@ static class Installer {
     }
     #if CHANNEL1
     static readonly Dictionary<string,string> Expected = Channel1Pins.Expected;
+    #elif CHANNEL2
+    static readonly Dictionary<string,string> Expected = new Dictionary<string,string>(StringComparer.Ordinal) {
+        {"SemantierAgent-signing.cer",CertHash},
+        {"SemantierAgent-0.0.77-win-x64.msix","3c0fd642db1b35fa637c356cdd01871e057efcdd54e0b9b94646985d8e7c14a4"},
+    };
     #else
     static readonly Dictionary<string,string> Expected = new Dictionary<string,string>(StringComparer.Ordinal) {
         {"native-graph.json",GraphHash}, {"SemantierAgent-signing.cer",CertHash},
@@ -143,6 +164,10 @@ static class Installer {
                 var file=new FileStream(Path.Combine(dir,item.Key),FileMode.Open,FileAccess.Read,FileShare.Read);held.Add(file);
                 if(Hash(file)!=item.Value) throw new InvalidOperationException("Release member mismatch: "+item.Key);
             }
+            #if CHANNEL2
+            var bundle=new FileStream(Path.Combine(dir,"SemantierAgent.msixbundle"),FileMode.Open,FileAccess.Read,FileShare.Read);held.Add(bundle);
+            if(Hash(bundle)!=BundleHash) throw new InvalidOperationException("Bundle mismatch.");
+            #endif
             return held;
         } catch {foreach(var h in held)h.Dispose();throw;}
     }
@@ -231,7 +256,11 @@ static class Installer {
     static void VerifySignatures(string dir,bool trusted) {
         string encoded=Convert.ToBase64String(Encoding.Unicode.GetBytes(dir));
         string script="$d=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('"+encoded+"'));"+
+            #if CHANNEL2
+            "$names=@('SemantierAgent.msixbundle','SemantierAgent-0.0.77-win-x64.msix');"+
+            #else
             "$names=@('SemantierAgent.msixbundle','SemantierAgent-main.msix','SemantierAgent-runtime0001.msix','SemantierAgent-runtime0002.msix','SemantierAgent-runtime0003.msix','SemantierAgent-runtime0004.msix');"+
+            #endif
             "foreach($n in $names){$s=Get-AuthenticodeSignature -LiteralPath (Join-Path $d $n);if(!$s.SignerCertificate -or $s.SignerCertificate.Thumbprint -ne '"+Thumbprint+"' -or $s.Status -notin @("+(trusted?"'Valid'":"'Valid','NotTrusted','UnknownError'")+")){throw 'Package signature mismatch'}}";
         PowerShell(script);
     }
@@ -248,7 +277,16 @@ static class Installer {
             dir=PrivateDirectory(id);directories.AddRange(HoldDirectories(dir));
             string archive=Path.Combine(dir,"release.zip"); report("Downloading signed release…"); var zip=Download(archive,report,held);
             if(zip.Length!=ZipSize || Hash(zip)!=ZipHash) throw new InvalidOperationException("Download SHA-256 mismatch.");zip.Position=0;
-            report("Verifying package and certificate…"); ExtractAndHold(zip,dir,held); VerifySignatures(dir,false);
+            report("Verifying package and certificate…"); ExtractAndHold(zip,dir,held);
+            #if CHANNEL2
+            using(var embedded=Assembly.GetExecutingAssembly().GetManifestResourceStream("Semantier.channel2.msixbundle")) {
+                if(embedded==null) throw new InvalidOperationException("Missing signed bundle.");
+                var output=CreateOwned(Path.Combine(dir,"SemantierAgent.msixbundle"),held);
+                embedded.CopyTo(output);output.Flush(true);var sealedBundle=Seal(output,held);
+                if(Hash(sealedBundle)!=BundleHash) throw new InvalidOperationException("Bundle hash mismatch.");
+            }
+            #endif
+            VerifySignatures(dir,false);
             using(var cert=Certificate()) {
                 if(!Trusted(cert)) {
                     var consent=MessageBox.Show(InstallerText.Choose("Windows will request administrator permission to trust the verified Semantier Technology publisher certificate. The application will be installed for your current Windows account. Continue?","Windows 将请求管理员权限，以信任已验证的 Semantier Technology 发布者证书。应用仍将安装到您当前的 Windows 账户。是否继续？"), InstallerText.Choose("Publisher certificate","发布者证书"),MessageBoxButtons.YesNo,MessageBoxIcon.Information);
@@ -301,7 +339,7 @@ static class Installer {
             held.Clear();var extracting=CreateOwned(path,held);extracting.WriteByte(2);extracting.Flush(true);var sealedFile=Seal(extracting,held);
             if(held.Count!=1 || !DeleteHeld(path,sealedFile.SafeFileHandle,false,()=>sealedFile.Dispose()) || File.Exists(path))throw new InvalidOperationException("Extracted file cleanup failed.");
             held.Clear();string brokenPath=Path.Combine(dir,"broken.zip");var broken=CreateOwned(brokenPath,held);
-            using(var z=new ZipArchive(broken,ZipArchiveMode.Create,true))using(var w=new StreamWriter(z.CreateEntry("native-graph.json").Open()))w.Write("incorrect graph");
+            using(var z=new ZipArchive(broken,ZipArchiveMode.Create,true))using(var w=new StreamWriter(z.CreateEntry(Expected.Keys.First()).Open()))w.Write("incorrect member");
             broken.Flush(true);broken=Seal(broken,held);broken.Position=0;bool refused=false;
             try{ExtractAndHold(broken,dir,held);}catch(InvalidOperationException){refused=true;}
             if(!refused || held.Count!=2)throw new InvalidOperationException("Corrupt extraction was not tracked.");
