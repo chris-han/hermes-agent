@@ -25,8 +25,10 @@ sealed class FixtureHandler : HttpMessageHandler {
 }
 sealed class ResumeHandler : HttpMessageHandler {
     public bool CorruptRange;
+    public bool FailHttp3;
     public int Calls;
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancel) {
+        if (FailHttp3 && request.Version.Major == 3) throw new HttpRequestException("QUIC unavailable");
         Calls++;
         var second = Calls > 1;
         if (second && request.Headers.Range?.ToString() != "bytes=3-") throw new Exception("Missing resume range");
@@ -90,6 +92,23 @@ sealed class InterruptOnce : DelegatingHandler {
 }
 static class Probe {
     static int Main(string[] args) {
+        if (args.Length == 1 && args[0] == "--live-full") {
+            var file = new Uri("https://download.semantier.cn/releases/channel-builds/c9f283eb8526414e86bf6462246f1c44/semantier-setup-ch1.exe");
+            var path = Path.Combine(Path.GetTempPath(), "semantier-h3-full-" + Guid.NewGuid().ToString("N"));
+            try {
+                var handler = new InterruptOnce();
+                using (var client = new HttpClient(handler))
+                using (var output = new FileStream(path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None)) {
+                    client.Timeout = TimeSpan.FromMinutes(30);
+                    BootstrapperTransport.Download(client, file, output, 162448848, _ => {});
+                    output.Position = 0;
+                    var hash = Convert.ToHexString(SHA256.HashData(output)).ToLowerInvariant();
+                    if (!handler.Resumed || handler.Calls != 2 || hash != "32e254cd2080e3d2b16dcfaeb6705364df529cdaa649349ad627090bccef2a54") throw new Exception("Full installer hash or resume mismatch");
+                    Console.WriteLine("LIVE_FULL_HTTP3_DOWNLOAD_OK " + output.Length + " " + hash);
+                }
+            } finally { if (File.Exists(path)) File.Delete(path); }
+            return 0;
+        }
         if (args.Length == 1 && args[0] == "--live-resume") {
             var file = new Uri("https://download.semantier.cn/releases/channel-builds/20bceda1fd864ca7a9b9dd67fa4879c3/semantier-setup-channel1.exe");
             var interrupted = new InterruptOnce();
@@ -155,6 +174,11 @@ static class Probe {
             bool rejected = false;
             try { BootstrapperTransport.Download(client, origin, output, 6, _ => {}); } catch (InvalidOperationException) { rejected = true; }
             if (!rejected || output.Length != 3) throw new Exception("Incorrect range accepted");
+        }
+        var tcpResume = new ResumeHandler { FailHttp3 = true };
+        using (var client = new HttpClient(tcpResume)) using (var output = new MemoryStream()) {
+            BootstrapperTransport.Download(client, origin, output, 6, _ => {});
+            if (tcpResume.Calls != 2 || Convert.ToHexString(output.ToArray()) != "010203040506") throw new Exception("TCP resume failed");
         }
         var empty = new EmptyHandler();
         using (var client = new HttpClient(empty)) using (var output = new MemoryStream()) {
