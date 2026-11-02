@@ -12,7 +12,7 @@ export interface DeliverySourceStatus {
   options: { id: DeliverySourceId; publicBase: string }[]
 }
 const ids: DeliverySourceId[] = ['channel1', 'channel2', 'channel3']
-const channel1 = 'https://update.semantier.cn'
+const channel1 = 'https://download.semantier.cn'
 const cloudflare = 'https://s3.semantier.com'
 const cloudflareOrigins = [cloudflare]
 
