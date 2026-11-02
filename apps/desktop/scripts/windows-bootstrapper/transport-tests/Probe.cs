@@ -6,13 +6,19 @@ using System.Threading.Tasks;
 
 sealed class FixtureHandler : HttpMessageHandler {
     public bool FailHttp3;
+    public bool StallHttp3;
     public int Calls;
     public Uri LastUri;
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancel) {
         Calls++;
         LastUri = request.RequestUri;
         if (request.Version.Major == 3 && FailHttp3) throw new HttpRequestException("QUIC unavailable");
+        if (request.Version.Major == 3 && StallHttp3) return WaitForCancellation(cancel);
         return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Version = request.Version, RequestMessage = request });
+    }
+    static async Task<HttpResponseMessage> WaitForCancellation(CancellationToken cancel) {
+        await Task.Delay(Timeout.Infinite, cancel);
+        throw new Exception("Expected cancellation");
     }
 }
 static class Probe {
@@ -45,6 +51,10 @@ static class Probe {
         var missing = new FixtureHandler();
         using (var client = new HttpClient(missing)) using (var r = BootstrapperTransport.Send(client, origin, () => throw new InvalidOperationException("DNS unavailable"))) {
             if (r.Version.Major != 2 || missing.Calls != 1 || missing.LastUri != origin) throw new Exception("DNS fallback failed");
+        }
+        var stalled = new FixtureHandler { StallHttp3 = true };
+        using (var client = new HttpClient(stalled)) using (var r = BootstrapperTransport.Send(client, origin, () => 443, TimeSpan.FromMilliseconds(50))) {
+            if (r.Version.Major != 2 || stalled.Calls != 2 || stalled.LastUri != origin) throw new Exception("QUIC timeout fallback failed");
         }
         Console.WriteLine("TRANSPORT_POLICY_TEST_PASS");
         return 0;
