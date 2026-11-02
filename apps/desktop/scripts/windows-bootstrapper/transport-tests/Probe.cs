@@ -90,8 +90,32 @@ sealed class InterruptOnce : DelegatingHandler {
         return response;
     }
 }
+sealed class TraceProtocols : DelegatingHandler {
+    public int H3Attempts;
+    public Version ResponseVersion;
+    public TraceProtocols() : base(new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false }) { }
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancel) {
+        if (request.Version.Major == 3) H3Attempts++;
+        var response = await base.SendAsync(request, cancel);
+        ResponseVersion = response.Version;
+        return response;
+    }
+}
 static class Probe {
     static int Main(string[] args) {
+        if (args.Length == 1 && args[0] == "--r2-fallback") {
+            var file = new Uri("https://download.semantier.com/releases/channel-builds/ff1b532faa134d4382cbfe121be631f0/SemantierAgent.msixbundle");
+            var trace = new TraceProtocols();
+            using (var client = new HttpClient(trace)) using (var output = new MemoryStream()) {
+                client.Timeout = TimeSpan.FromSeconds(45);
+                BootstrapperTransport.Download(client, file, output, 3034, _ => {});
+                var hash = Convert.ToHexString(SHA256.HashData(output.ToArray())).ToLowerInvariant();
+                if (trace.H3Attempts < 1 || trace.ResponseVersion == null || trace.ResponseVersion.Major > 2 ||
+                    hash != "e14a23ae6a14c24d7757663107e2e9d148fefadf6d45bccf4fbfa8772e48579a") throw new Exception("R2 fallback verification failed");
+                Console.WriteLine("R2_REAL_FALLBACK_OK version=" + trace.ResponseVersion + " bytes=" + output.Length + " sha256=" + hash);
+            }
+            return 0;
+        }
         if (args.Length == 1 && args[0] == "--live-full") {
             var file = new Uri("https://download.semantier.cn/releases/channel-builds/c9f283eb8526414e86bf6462246f1c44/semantier-setup-ch1.exe");
             var path = Path.Combine(Path.GetTempPath(), "semantier-h3-full-" + Guid.NewGuid().ToString("N"));
