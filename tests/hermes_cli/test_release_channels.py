@@ -401,11 +401,13 @@ def test_native_manifest_refuses_incompatible_or_unbound_inputs(damage):
         validate_manifest(manifest, {**record, 'head':record['nativeHead']}, manifest['request']['publicBase'], allow_native=True)
 
 
-def test_dual_head_keeps_legacy_bridge_and_allocation_bounds():
+def test_native_head_supports_empty_channel_and_enforces_allocation_bounds():
     from hermes_cli.release_channels import validate_record, ChannelError
     _, record = native_manifest_case()
     assert validate_record(record) == record
-    for damaged in (dict(record, head=None), dict(record, nativeHead={**record['nativeHead'], 'sequence':59}),
+    native_only = dict(record, head=None)
+    assert validate_record(native_only) == native_only
+    for damaged in (dict(record, nativeHead={**record['nativeHead'], 'sequence':59}),
                     dict(record, nextSequence=60), dict(record, policy='source-branch')):
         with pytest.raises(ChannelError): validate_record(damaged)
 

@@ -220,9 +220,10 @@ def validate_record(value: object, *, name: str | None = None, repository: str |
         raise ChannelError("Channel head exceeds allocation high-water")
     native_head = _head(record.get("nativeHead"))
     if native_head is not None:
-        if (record["state"] != "active" or record["policy"] == "source-branch" or head is None
-                or not head["sequence"] < native_head["sequence"] < record["nextSequence"]):
-            raise ChannelError("Native head requires a legacy bridge and newer allocated sequence")
+        if (record["state"] != "active" or record["policy"] == "source-branch"
+                or native_head["sequence"] >= record["nextSequence"]
+                or (head is not None and head["sequence"] >= native_head["sequence"])):
+            raise ChannelError("Native head must have a valid allocated sequence")
     if record["policy"] == "source-branch":
         delivery = record.get("delivery")
         if record.get("identity") is not None or head is not None or not isinstance(delivery, dict) or delivery.get("kind") != "source-branch":
