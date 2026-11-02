@@ -50,15 +50,6 @@ def test_promotion_commits_active_and_archive_in_one_conditional_write():
     commit_slot(Store(), 'releases/channels/test.json', 'etag', head('b',2))
 
 
-def test_retirement_preserves_build_referenced_by_another_channel():
-    from scripts.releases.simple_native_slots import may_retire
-    displaced=head('a',1)
-    assert not may_retire(displaced['buildId'], [{'nativeHead':head('a',1)}], [], set())
-    assert not may_retire(displaced['buildId'], [], [displaced['buildId']], set())
-    assert not may_retire(displaced['buildId'], [], [], {displaced['buildId']})
-    assert may_retire(displaced['buildId'], [{'nativeHead':head('b',2)}], [], set())
-
-
 def test_lock_does_not_release_a_replaced_owner():
     import json
     from scripts.releases.simple_native_slots import publication_lock
@@ -133,12 +124,6 @@ def test_head_changes_only_after_every_immutable_object_is_verified():
     result=publish_prepared(Driver(), manifest, {'b':'b','a':'a'})
     assert calls == ['validate','capacity','upload:a','upload:b','manifest','commit']
     assert result['buildId']=='b'*32
-
-
-def test_cleanup_waits_when_reference_inventory_is_incomplete():
-    from scripts.releases.simple_native_slots import may_retire
-    with pytest.raises(ValueError, match='incomplete'):
-        may_retire('a'*32, None, [], set())
 
 
 def test_cleanup_keeps_shared_archive_and_clears_only_pending_marker():
@@ -218,3 +203,23 @@ def test_inflight_release_blocks_new_upload_without_database(monkeypatch):
     class Store: pass
     with pytest.raises(RuntimeError,match='in.flight'):
         R2Driver(Store(),'https://example.test',Control()).ensure_no_uploads()
+
+
+def test_release_notes_follow_updater_contract():
+    from scripts.releases.simple_native_slots import validate_notes
+    assert validate_notes({'en':'Hello\nworld','zh-cn':'更新'})['en']=='Hello\nworld'
+    for value in ({'EN':'bad'}, {'en':''}, {'en':'bad\x00text'}, {'en':'x'*16001}, {'en':'😀'*9000}, {'en':1}):
+        with pytest.raises(ValueError): validate_notes(value)
+
+
+def test_legacy_head_requires_explicit_retirement():
+    from scripts.releases.simple_native_slots import advance
+    record={'head':head('a',1),'nativeHead':head('b',2),'revision':1,'nextSequence':3}
+    with pytest.raises(ValueError,match='legacy'):
+        advance(record,head('c',3))
+
+
+def test_duplicate_graph_metadata_is_rejected():
+    from scripts.releases.simple_native_slots import native_manifest
+    with pytest.raises(ValueError,match='Invalid channel JSON'):
+        native_manifest({'identity':{'msixAppIdWithOrg':'x'}},{},b'{"schema":1,"schema":1}')

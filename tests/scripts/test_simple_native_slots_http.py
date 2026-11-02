@@ -188,10 +188,13 @@ def test_command_publishes_with_storage_only(tmp_path, monkeypatch, capsys):
         monkeypatch.setattr(script,'prepare',lambda *_:(manifest,graph,files));monkeypatch.setattr(r2,'credentials',lambda:(creds,base,'public'))
         monkeypatch.setenv('CLOUDFLARE_R2_PUBLIC_URL',base+'/public');monkeypatch.setenv('CLOUDFLARE_R2_CONTROL_BUCKET','private')
         monkeypatch.setenv('CLOUDFLARE_R2_CONTROL_ACCESS_KEY_ID','fixture');monkeypatch.setenv('CLOUDFLARE_R2_CONTROL_SECRET_ACCESS_KEY','fixture')
-        script.main(['--output',str(tmp_path),'--thumbprint','A'*40])
+        notes=tmp_path/'notes.json';notes.write_text(json.dumps({'en':'Synthetic notes'}))
+        args=['--output',str(tmp_path),'--thumbprint','A'*40,'--notes',str(notes)]
+        script.main(args)
         result=json.loads(capsys.readouterr().out.splitlines()[-1]);assert result['active']['buildId']==request['buildId']
+        published=json.loads(objects['public/'+result['active']['manifestKey']]);assert published['notes']=={'en':'Synthetic notes'}
         prior=dict(objects)
-        script.main(['--output',str(tmp_path),'--thumbprint','A'*40])
+        script.main(args)
         second=json.loads(capsys.readouterr().out.splitlines()[-1])
         assert second==result and objects==prior
 
@@ -223,3 +226,16 @@ def test_command_rejects_mismatched_storage_origin_before_mutation(tmp_path,monk
         with pytest.raises(ValueError,match='origin'):
             script.main(['--output',str(tmp_path),'--thumbprint','A'*40])
         assert objects=={}
+
+
+def test_corrupt_local_artifact_is_not_uploaded(tmp_path,monkeypatch):
+    monkeypatch.delenv('R2_DISPOSABLE_RUN',raising=False)
+    with storage() as (base,objects):
+        creds={'access_key_id':'fixture','secret_key':'fixture'};scope=R2Scope()
+        store=R2ChannelStore(creds,base,'public',scope=scope);control=ControlStore(r2,creds,base,'private',scope=scope)
+        path=tmp_path/'file';path.write_bytes(b'wrong')
+        with publication_lock(control) as token:
+            driver=R2Driver(store,base+'/public',control,token)
+            with pytest.raises(ValueError,match='SHA-256'):
+                driver.upload('releases/channel-builds/'+'a'*32+'/file.msix',{'path':path,'size':5,'sha256':'a'*64})
+        assert not any('channel-builds' in key for key in objects)

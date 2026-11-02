@@ -5,6 +5,8 @@ from copy import deepcopy
 def advance(record, new_head):
     """Return a new record; callers must commit it with the observed ETag."""
     from hermes_cli.release_channels import _head
+    if record.get('head') is not None:
+        raise ValueError('legacy channel head requires separate retirement')
     old = _head(record.get('nativeHead'))
     _head(new_head)
     archive = _head(record.get('nativeArchive'))
@@ -39,25 +41,6 @@ def commit_slot(store, key, expected_etag, new_head):
     if result != record:
         store.put(key, canonical_json(result), expected_etag)
     return result
-
-
-def may_retire(build_id, channel_records, manual_builds, inflight_builds):
-    """Keep any build still referenced by an independent reader or upload."""
-    import re
-    if not re.fullmatch(r'[a-f0-9]{32}', build_id):
-        raise ValueError('invalid build identity')
-    if not isinstance(channel_records, list) or not isinstance(manual_builds, (list, set)) or not isinstance(inflight_builds, (list, set)):
-        raise ValueError('incomplete reference inventory')
-    if build_id in manual_builds or build_id in inflight_builds:
-        return False
-    for record in channel_records:
-        if not isinstance(record, dict):
-            raise ValueError('invalid channel record')
-        for field in ('head', 'nativeHead', 'nativeArchive', 'destinationHead', 'lastHead'):
-            reference = record.get(field)
-            if reference is not None and reference.get('buildId') == build_id:
-                return False
-    return True
 
 
 def publication_lock(store):
@@ -137,9 +120,8 @@ class ControlStore:
 def native_manifest(request, signed, graph_bytes):
     """Build updater-compatible metadata from the signed native graph."""
     import hashlib
-    import json
-    from hermes_cli.release_channels import validate_native_graph
-    graph = json.loads(graph_bytes)
+    from hermes_cli.release_channels import decode_json, validate_native_graph
+    graph = decode_json(graph_bytes)
     identity = request['identity']['msixAppIdWithOrg']
     if (signed.get('signing') != 'PASS' or not signed.get('verification', '').startswith('PASS:')
             or signed.get('sourceCommit') != request['commit']
@@ -166,15 +148,15 @@ def native_manifest(request, signed, graph_bytes):
 def prepare(output, expected_thumbprint, verify_signatures):
     """Inspect the locally signed graph; no network or R2 changes."""
     import hashlib
-    import json
     import stat
     from pathlib import Path
+    from hermes_cli.release_channels import decode_json
     output = Path(output)
     def read(relative):
         path = output / relative
         if path.is_symlink() or path.stat().st_size > 4 * 1024 * 1024:
             raise ValueError('invalid metadata file')
-        return json.loads(path.read_text(encoding='utf-8-sig'))
+        return decode_json(path.read_bytes())
     request = read('channel-request.json')
     signed = read('signed/receipt.json')
     result = read('result.json')
@@ -273,6 +255,8 @@ class R2Driver:
         self.public_base = public_base.rstrip('/')
         self.control = control
         self.lock_body = lock_body
+        self.retired_builds = []
+        self.retained_shared = []
 
     def verify_lock(self):
         current = self.control.get('_control/publication.lock') if self.control else None
@@ -300,21 +284,22 @@ class R2Driver:
         current = record.get('nativeHead')
         if current:
             old = self.store.get(current['manifestKey'])
-            import hashlib, json
+            import hashlib
+            from hermes_cli.release_channels import decode_json
             if old is None or hashlib.sha256(old[0]).hexdigest() != current['sha256']:
                 raise ValueError('current manifest unavailable or changed')
-            if compare(request['version'], json.loads(old[0])['request']['version']) <= 0:
+            if compare(request['version'], decode_json(old[0])['request']['version']) <= 0:
                 raise ValueError('release version must increase')
         advance(record, {'buildId': request['buildId'], 'sequence': request['sequence'],
                          'manifestKey': 'releases/channel-builds/'+request['buildId']+'/build.json',
                          'sha256': '0'*64})
 
     def ensure_no_uploads(self):
-        import json
         import xml.etree.ElementTree as ET
+        from hermes_cli.release_channels import decode_json
         retained = self.control.get('_control/retention.json') if self.control else None
         if retained is not None:
-            state = json.loads(retained[0])
+            state = decode_json(retained[0])
             if not isinstance(state, dict) or not isinstance(state.get('inflight'), list):
                 raise ValueError('invalid retained upload state')
             if state['inflight']:
@@ -372,15 +357,17 @@ class R2Driver:
     def can_retire(self, channel, build_id):
         import json
         import re
+        from hermes_cli.release_channels import decode_json
         if not re.fullmatch(r'[a-f0-9]{32}', build_id):
             raise ValueError('invalid build identity')
         self.verify_lock()
         retained = self.control.get('_control/retention.json')
         if retained is not None:
-            data = json.loads(retained[0])
+            data = decode_json(retained[0])
             if not isinstance(data, dict) or not isinstance(data.get('inflight'), list):
                 raise ValueError('invalid retained upload state')
             if build_id in data['inflight']:
+                self.retained_shared.append(build_id)
                 return False
         self.ensure_no_uploads()
         for key in self.store.keys('releases/'):
@@ -393,10 +380,11 @@ class R2Driver:
                 raise RuntimeError('release reference changed during inspection')
             body = value[0]
             if key == 'releases/channels/'+channel+'.json':
-                record = json.loads(body)
+                record = decode_json(body)
                 record.pop('nativeRetirePending', None)
                 body = json.dumps(record).encode()
             if build_id.encode() in body:
+                self.retained_shared.append(build_id)
                 return False
         return True
 
@@ -428,6 +416,7 @@ class R2Driver:
                     continue
                 raise
             raise RuntimeError('retired object remains visible')
+        self.retired_builds.append(build_id)
 
     def finish_cleanup(self, channel, etag, build_id):
         from hermes_cli.release_channels import canonical_json, channel_key, decode_json
@@ -450,7 +439,7 @@ class R2Driver:
         import json
         import re
         from copy import deepcopy
-        from hermes_cli.release_channels import validate_manifest
+        from hermes_cli.release_channels import decode_json, validate_manifest
         record, _ = self.read_channel(channel)
         archive = record.get('nativeArchive')
         if archive is None:
@@ -464,7 +453,7 @@ class R2Driver:
             raw = self.store.get(key)
             if raw is None:
                 raise RuntimeError('release manifest changed during inventory')
-            manifest = json.loads(raw[0])
+            manifest = decode_json(raw[0])
             request = manifest.get('request', {})
             if request.get('channel') != channel:
                 continue
@@ -529,6 +518,18 @@ foreach($file in $files){
     subprocess.run([powershell, '-NoProfile', '-NonInteractive', '-EncodedCommand', command], check=True, env=env)
 
 
+def validate_notes(notes):
+    import re
+    if not isinstance(notes, dict) or len(notes) > 9:
+        raise ValueError('invalid release notes')
+    for language, text in notes.items():
+        if (not isinstance(language, str) or not re.fullmatch(r'[a-z]{2}(?:-[a-z]+)?', language)
+                or not isinstance(text, str) or not text or len(text.encode('utf-16-le')) // 2 > 16000
+                or any(ord(char) < 32 and char not in '\n\r\t' for char in text)):
+            raise ValueError('invalid release notes')
+    return notes
+
+
 def verify_public(base, channel, expected_head):
     """Require the updater-facing channel and manifest to match the commit."""
     from hermes_cli.release_channels import ChannelReader, channel_key, decode_json, validate_record
@@ -541,7 +542,18 @@ def verify_public(base, channel, expected_head):
     record = validate_record(decode_json(reader.read_bytes(channel_key(channel))), name=channel)
     if record.get('nativeHead') != expected_head:
         raise RuntimeError('public channel head has not converged')
-    reader.read_bytes(expected_head['manifestKey'], expected_head['sha256'])
+    manifest = decode_json(reader.read_bytes(expected_head['manifestKey'], expected_head['sha256']))
+    request = manifest['request']
+    if request['buildId'] != expected_head['buildId'] or request['sequence'] != expected_head['sequence']:
+        raise RuntimeError('public manifest identity does not match the channel head')
+    package = manifest['packages'][0]
+    descriptor = package['native']['graph']
+    graph_bytes = reader.read_bytes(descriptor['key'], descriptor['sha256'])
+    if len(graph_bytes) != descriptor['size']:
+        raise RuntimeError('public native graph size mismatch')
+    from hermes_cli.release_channels import validate_native_graph
+    validate_native_graph(decode_json(graph_bytes), build_id=request['buildId'], identity=package['identity'],
+                          publisher=package['publisher'], version=package['version'], arch=package['arch'])
     return record
 
 
@@ -558,13 +570,20 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description='Publish one signed native release directly to R2')
     parser.add_argument('--output', type=Path, help='completed signed Windows build directory')
     parser.add_argument('--thumbprint', help='expected uppercase code-signing certificate thumbprint')
+    parser.add_argument('--notes', type=Path, help='optional JSON map of localized release notes')
     parser.add_argument('--resume-cleanup', metavar='CHANNEL', help='resume a pending archive retirement')
     args = parser.parse_args(argv)
-    if bool(args.resume_cleanup) == bool(args.output) or (args.output and not args.thumbprint):
+    if (bool(args.resume_cleanup) == bool(args.output) or (args.output and not args.thumbprint)
+            or (args.resume_cleanup and (args.thumbprint or args.notes))):
         parser.error('provide --output and --thumbprint, or --resume-cleanup CHANNEL')
     manifest = files = None
     if args.output:
         manifest, _, files = prepare(args.output, args.thumbprint, verify_windows_signatures)
+        if args.notes:
+            if args.notes.is_symlink() or args.notes.stat().st_size > 160_000:
+                raise ValueError('invalid release notes file')
+            from hermes_cli.release_channels import decode_json
+            manifest['notes'] = validate_notes(decode_json(args.notes.read_bytes()))
     creds, base, bucket = r2.credentials()
     scope = R2Scope.configured()
     configured_public = os.environ.get('CLOUDFLARE_R2_PUBLIC_URL', '').rstrip('/')
@@ -600,7 +619,8 @@ def main(argv=None):
     if manifest:
         verify_public(manifest['request']['publicBase'], channel, result['nativeHead'])
     print(json.dumps({'channel': channel, 'revision': result['revision'],
-                      'active': result.get('nativeHead'), 'archive': result.get('nativeArchive')}))
+                      'active': result.get('nativeHead'), 'archive': result.get('nativeArchive'),
+                      'retired': driver.retired_builds, 'retained_shared': driver.retained_shared}))
 
 
 if __name__ == '__main__':
