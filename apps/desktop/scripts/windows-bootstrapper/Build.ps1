@@ -25,7 +25,7 @@ if($channel2){
 if($Channel1Descriptor){
     $d=Get-Content -LiteralPath $Channel1Descriptor -Raw | ConvertFrom-Json
     foreach($field in @('origin','zip_path','zip_sha256','cert_sha256','graph_sha256','thumbprint','identity','app_version')){if($d.$field -isnot [string]){throw 'Invalid Channel1 descriptor type.'}}
-    if($d.origin -cne 'https://channel1.semantier.com' -or $d.zip_path -cnotmatch '^/releases/channel-builds/[a-f0-9]{32}/[A-Za-z0-9_.-]+\.zip$' -or $d.zip_sha256 -cnotmatch '^[a-f0-9]{64}$' -or $d.cert_sha256 -cnotmatch '^[a-f0-9]{64}$' -or $d.graph_sha256 -cnotmatch '^[a-f0-9]{64}$' -or $d.thumbprint -cnotmatch '^[A-F0-9]{40}$' -or $d.identity -cne 'Semantier.Agent.Acceptance' -or $d.app_version -cnotmatch '^(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*)){3}$' -or ($d.zip_size -isnot [long] -and $d.zip_size -isnot [int]) -or $d.zip_size -le 0){throw 'Invalid Channel1 descriptor.'}
+    if($d.origin -cne 'https://update.semantier.cn' -or $d.zip_path -cnotmatch '^/releases/channel-builds/[a-f0-9]{32}/[A-Za-z0-9_.-]+\.zip$' -or $d.zip_sha256 -cnotmatch '^[a-f0-9]{64}$' -or $d.cert_sha256 -cnotmatch '^[a-f0-9]{64}$' -or $d.graph_sha256 -cnotmatch '^[a-f0-9]{64}$' -or $d.thumbprint -cnotmatch '^[A-F0-9]{40}$' -or $d.identity -cne 'Semantier.Agent.Acceptance' -or $d.app_version -cnotmatch '^(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*)){3}$' -or ($d.zip_size -isnot [long] -and $d.zip_size -isnot [int]) -or $d.zip_size -le 0){throw 'Invalid Channel1 descriptor.'}
     foreach($part in $d.app_version.Split('.')){if([long]$part -gt 65535){throw 'Invalid application version.'}}
     $members=@($d.members)
     if($members.Count -lt 4 -or $members.Count -gt 32){throw 'Invalid member count.'}
