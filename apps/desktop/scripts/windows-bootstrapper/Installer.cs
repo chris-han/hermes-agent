@@ -266,7 +266,17 @@ static class Installer {
     }
     static void Install(string dir) {
         string encoded=Convert.ToBase64String(Encoding.Unicode.GetBytes(Path.Combine(dir,"SemantierAgent.msixbundle")));
+        #if CHANNEL2
+        PowerShell("$p=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('"+encoded+"'));"+
+            "$installed=@(Get-AppxPackage -Name '"+Identity+"' | Where-Object {!$_.IsBundle});"+
+            "if($installed.Count -gt 1){throw 'Ambiguous installed package';}"+
+            "if($installed.Count -eq 1){$path=$installed[0].InstallLocation;"+
+            "$volumes=@(Get-AppxVolume | Where-Object {!$_.IsOffline -and $path.StartsWith($_.PackageStorePath+'\\',[StringComparison]::OrdinalIgnoreCase)});"+
+            "if($volumes.Count -ne 1){throw 'Installed package volume unavailable';}"+
+            "Add-AppxPackage -Path $p -Volume $volumes[0]}else{Add-AppxPackage -Path $p}");
+        #else
         PowerShell("$p=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('"+encoded+"')); Add-AppxPackage -Path $p");
+        #endif
         string installed=PowerShell("@(Get-AppxPackage -Name '"+Identity+"' | Where-Object {$_.Version.ToString() -eq '"+Version+"'}).Count");
         if(installed!="1") throw new InvalidOperationException("Windows did not report the expected installed version.");
     }
