@@ -48,6 +48,15 @@ def snapshot(repo: Path, ref: str, destination: Path, exclude: tuple[str, ...] =
         destination.mkdir(parents=True)
         with tarfile.open(archive) as source:
             source.extractall(destination, filter="data")
+        if "ui-tui" in exclude:
+            # The built TUI invokes these Python helpers at runtime. Keep them
+            # from the same frozen revision, without shipping the source tree.
+            helpers = ("ui-tui/scripts/gateway_bootstrap.py", "ui-tui/scripts/clipboard_image.py")
+            subprocess.run(
+                git_command(repo, "archive", "--format=tar", "--output", str(archive), ref, "--", *helpers),
+                cwd=repo, check=True)
+            with tarfile.open(archive) as source:
+                source.extractall(destination, filter="data")
 
 
 def _payload_file(root: Path, relative: str) -> Path:

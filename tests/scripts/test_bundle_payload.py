@@ -68,3 +68,29 @@ def test_both_launchers_keep_active_home_and_call_declared_function(tmp_path, ta
                             env={**os.environ, "HERMES_HOME": str(tmp_path / "custom/profiles/memory")}, capture_output=True, text=True, check=False)
     assert result.returncode == 7, result.stderr
     assert json.loads(result.stdout) == [str(tmp_path / "custom/profiles/memory"), ["two words", "$(nope)", ""]]
+
+
+def test_sealed_snapshot_keeps_tui_runtime_helpers_from_requested_revision(tmp_path):
+    from scripts.bundles.payload import INERT_SNAPSHOT_DIRS
+
+    repo = tmp_path / 'repo'
+    repo.mkdir()
+    subprocess.run(['/usr/bin/git', 'init', '-q', str(repo)], check=True)
+    for name, content in {
+        'ui-tui/scripts/gateway_bootstrap.py': 'bootstrap from revision\n',
+        'ui-tui/scripts/clipboard_image.py': 'clipboard from revision\n',
+        'ui-tui/src/dev.ts': 'development source\n',
+        'agent.py': 'runtime\n',
+    }.items():
+        path = repo / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding='utf-8')
+    subprocess.run(['/usr/bin/git', '-C', str(repo), 'add', '.'], check=True)
+    subprocess.run(['/usr/bin/git', '-C', str(repo), '-c', 'user.name=Fixture',
+                    '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'fixture'], check=True)
+    (repo / 'ui-tui/scripts/gateway_bootstrap.py').write_text('uncommitted\n', encoding='utf-8')
+    out = tmp_path / 'sealed'
+    snapshot(repo, 'HEAD', out, exclude=INERT_SNAPSHOT_DIRS)
+    assert (out / 'ui-tui/scripts/gateway_bootstrap.py').read_text() == 'bootstrap from revision\n'
+    assert (out / 'ui-tui/scripts/clipboard_image.py').read_text() == 'clipboard from revision\n'
+    assert not (out / 'ui-tui/src/dev.ts').exists()
