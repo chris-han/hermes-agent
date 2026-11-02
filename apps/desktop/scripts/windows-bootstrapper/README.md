@@ -57,7 +57,7 @@ and its immutable package graph remain unchanged.
 
 `Build.ps1 -OutputDirectory <fresh-directory> -Channel1Descriptor <verified-json> -Channel1Zip <verified-zip>`
 compiles the separately named `semantier-setup-channel1.exe` as Setup 1.2.0.0.
-The descriptor binds the exact `channel1.semantier.com` HTTPS origin, immutable
+The descriptor binds the exact `update.semantier.cn` HTTPS origin, immutable
 ZIP path, ZIP length and SHA-256, app version/identity, public certificate hash
 and thumbprint, graph hash and each required package member hash. Provide those
 values from the actual signed application receipt. The script holds the local ZIP

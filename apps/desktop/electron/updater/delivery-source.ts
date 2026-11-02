@@ -12,6 +12,7 @@ export interface DeliverySourceStatus {
   options: { id: DeliverySourceId; publicBase: string }[]
 }
 const ids: DeliverySourceId[] = ['channel1', 'channel2', 'channel3']
+const channel1 = 'https://update.semantier.cn'
 const cloudflare = 'https://s3.semantier.com'
 const cloudflareOrigins = [cloudflare]
 
@@ -43,12 +44,10 @@ export class DeliverySources {
     const updates = config && typeof config === 'object' && 'updates' in config && config.updates && typeof config.updates === 'object'
       ? config.updates as Record<string, unknown> : {}
 
-    const configured = typeof updates.desktop_feed_base_url === 'string' ? updates.desktop_feed_base_url.trim() : ''
     const dev = typeof updates.desktop_local_feed_base_url === 'string' ? updates.desktop_local_feed_base_url.trim() : ''
-    const primary = configured || this.stampedBase
 
     return {
-      channel1: primary && !cloudflareOrigins.includes(primary) && !local(primary) ? primary : '',
+      channel1,
       channel2: cloudflare,
       channel3: dev || (this.stampedBase && local(this.stampedBase) ? this.stampedBase : '')
     }
