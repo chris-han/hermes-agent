@@ -182,9 +182,10 @@ try {
   }
 }
 
-Write-Host "build-bundle: done. Unsigned packages in $Repo\apps\desktop\release:"
+$packageOutput = if ($env:SEMANTIER_DESKTOP_BUILD_OUTPUT) { $env:SEMANTIER_DESKTOP_BUILD_OUTPUT } else { Join-Path $Repo 'apps\desktop\release' }
+Write-Host "build-bundle: done. Unsigned packages in ${packageOutput}:"
 if ($Store) {
   Write-Host "build-bundle: claim timestamp for combining architectures: HERMES_RELEASE_EPOCH=$claimEpoch (version v$version)"
 }
-Get-ChildItem (Join-Path $Repo 'apps\desktop\release') -Filter '*.msix*' |
+Get-ChildItem -LiteralPath $packageOutput -Filter '*.msix*' |
   ForEach-Object { '  {0}  {1:N0} MB' -f $_.Name, ($_.Length / 1MB) }
