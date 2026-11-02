@@ -70,6 +70,15 @@ static class Installer {
     const string Identity = "Semantier.Agent.Acceptance";
     static readonly Version Version = new Version(0,0,64,0);
     #endif
+    static string ExecutablePath {
+        get {
+            #if CHANNEL1
+            return Environment.ProcessPath;
+            #else
+            return Assembly.GetExecutingAssembly().Location;
+            #endif
+        }
+    }
     internal static string AppVersionString { get { return Version.ToString(); } }
     [StructLayout(LayoutKind.Sequential)] struct FileInformation { public uint Attributes; public System.Runtime.InteropServices.ComTypes.FILETIME Created,Accessed,Written; public uint Volume,SizeHigh,SizeLow,Links,IndexHigh,IndexLow; }
     [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern SafeFileHandle CreateFile(string path,uint access,uint share,IntPtr security,uint creation,uint flags,IntPtr template);
@@ -219,6 +228,27 @@ static class Installer {
         var strict=new FileStream(tracker.Name,FileMode.Open,FileAccess.Read,FileShare.Read);held.Add(strict);
         tracker.Dispose();held.Remove(tracker);return strict;
     }
+    #if CHANNEL1
+    static FileStream Download(string destination, Action<string> report,List<FileStream> held) {
+        var uri=new UriBuilder(ZipUrl){Port=Http3Dns.Port()}.Uri;
+        using(var handler=new System.Net.Http.SocketsHttpHandler{AllowAutoRedirect=false,UseProxy=false})
+        using(var client=new System.Net.Http.HttpClient(handler))
+        using(var request=new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get,uri)) {
+            client.Timeout=TimeSpan.FromHours(4);
+            request.Version=new System.Version(3,0); request.VersionPolicy=System.Net.Http.HttpVersionPolicy.RequestVersionExact;
+            using(var response=client.SendAsync(request,System.Net.Http.HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult()) {
+                if(response.StatusCode!=HttpStatusCode.OK || response.Version.Major!=3 || response.Content.Headers.ContentLength!=ZipSize) throw new InvalidOperationException("Unexpected download response.");
+                var target=CreateOwned(destination,held);
+                using(var source=response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()) {
+                    var bytes=new byte[1024*1024]; long total=0; int n,previous=-1;
+                    while((n=source.Read(bytes,0,bytes.Length))>0) {target.Write(bytes,0,n);total+=n;if(total>ZipSize)throw new InvalidOperationException("Download exceeds expected size.");int percent=(int)(total*100/ZipSize);if(percent!=previous){report("Downloading "+percent+"%");previous=percent;}}
+                    if(total!=ZipSize)throw new InvalidOperationException("Download incomplete.");target.Flush(true);
+                }
+                return Seal(target,held);
+            }
+        }
+    }
+    #else
     static FileStream Download(string destination, Action<string> report,List<FileStream> held) {
         ServicePointManager.SecurityProtocol=SecurityProtocolType.Tls12;
         var request=(HttpWebRequest)WebRequest.Create(ZipUrl); request.AllowAutoRedirect=false; request.Timeout=60000; request.ReadWriteTimeout=120000;
@@ -233,12 +263,19 @@ static class Installer {
             return Seal(target,held);
         }
     }
+    #endif
     static string PrivateDirectory(string id) {
         var sid=WindowsIdentity.GetCurrent().User;
         var security=new DirectorySecurity(); security.SetOwner(sid); security.SetAccessRuleProtection(true,false);
         security.AddAccessRule(new FileSystemAccessRule(sid,FileSystemRights.FullControl,InheritanceFlags.ContainerInherit|InheritanceFlags.ObjectInherit,PropagationFlags.None,AccessControlType.Allow));
         security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid,null),FileSystemRights.ReadAndExecute,InheritanceFlags.ContainerInherit|InheritanceFlags.ObjectInherit,PropagationFlags.None,AccessControlType.Allow));
-        string p=TaskPath(id); if(Directory.Exists(p))throw new InvalidOperationException("Task directory already exists.");Directory.CreateDirectory(p,security); return p;
+        string p=TaskPath(id); if(Directory.Exists(p))throw new InvalidOperationException("Task directory already exists.");
+        #if CHANNEL1
+        new DirectoryInfo(p).Create(security);
+        #else
+        Directory.CreateDirectory(p,security);
+        #endif
+        return p;
     }
     static void ExtractAndHold(FileStream archive,string dir,List<FileStream> held) {
         var seen=new HashSet<string>(StringComparer.Ordinal);
@@ -308,9 +345,9 @@ static class Installer {
                     // its exact bytes and path through elevation.
                     string helper=Path.Combine(dir,"SemantierTrust.exe");
                     var target=CreateOwned(helper,held);
-                    using(var source=File.OpenRead(Assembly.GetExecutingAssembly().Location)) {source.CopyTo(target);target.Flush(true);}
+                    using(var source=File.OpenRead(ExecutablePath)) {source.CopyTo(target);target.Flush(true);}
                     var helperHold=Seal(target,held);
-                    string helperHash=Hash(helperHold);using(var source=File.OpenRead(Assembly.GetExecutingAssembly().Location))if(Hash(source)!=helperHash)throw new InvalidOperationException("Trust helper changed.");
+                    string helperHash=Hash(helperHold);using(var source=File.OpenRead(ExecutablePath))if(Hash(source)!=helperHash)throw new InvalidOperationException("Trust helper changed.");
                     var info=new ProcessStartInfo(helper,"--trust "+id+" --language "+InstallerText.Language) {UseShellExecute=true,Verb="runas"};
                     using(var child=Process.Start(info)) { if(child==null) throw new InvalidOperationException("Elevation was not started."); child.WaitForExit(); if(child.ExitCode!=0 || !Trusted(cert)) throw new InvalidOperationException("Certificate trust was not completed."); }
                 }
@@ -326,6 +363,9 @@ static class Installer {
     }
     #if TESTING
     static void SelfTest() {
+        #if CHANNEL1
+        Http3Dns.SelfTest();
+        #endif
         // More than a pipe buffer on stderr must not prevent stdout completion.
         var noisyChild=System.Threading.Tasks.Task.Run(()=>PowerShell("[Console]::Error.Write(('x' * 262144)); Write-Output 'streams-drained'"));
         if(!noisyChild.Wait(15000) || noisyChild.Result!="streams-drained")
@@ -335,7 +375,7 @@ static class Installer {
         catch(InvalidOperationException error) { childFailure=error.Message.Contains("expected-stream-test-error"); }
         if(!childFailure)throw new InvalidOperationException("PowerShell failure diagnostics were lost.");
         using(var cert=Certificate()) if(cert.HasPrivateKey) throw new InvalidOperationException("Unexpected private key.");
-        string dir=Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location),"fixture-"+Guid.NewGuid().ToString("N"));
+        string dir=Path.Combine(Path.GetDirectoryName(ExecutablePath),"fixture-"+Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);var locks=HoldDirectories(dir);string path=Path.Combine(dir,"data"),backup=Path.Combine(dir,"original");
         try {
             File.WriteAllText(path,"original");var original=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.Read);
@@ -360,8 +400,8 @@ static class Installer {
     [STAThread] static int Main(string[] args) {
         Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
         try {
-            var executableDirectories=HoldDirectories(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location));
-            try {using(var self=new FileStream(Assembly.GetExecutingAssembly().Location,FileMode.Open,FileAccess.Read,FileShare.Read)) {
+            var executableDirectories=HoldDirectories(Path.GetDirectoryName(ExecutablePath));
+            try {using(var self=new FileStream(ExecutablePath,FileMode.Open,FileAccess.Read,FileShare.Read)) {
                 if(args.Length==4 && args[0]=="--trust" && args[2]=="--language") {InstallerText.SetLanguage(args[3]); Trust(args[1]); return 0;}
                 #if TESTING
                 if(args.Length==1 && args[0]=="--self-test") {SelfTest(); InstallerWindow.SelfTest(); return 0;}

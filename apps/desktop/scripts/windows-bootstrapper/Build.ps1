@@ -3,7 +3,7 @@ $ErrorActionPreference='Stop'
 if(Test-Path -LiteralPath $OutputDirectory){throw 'Use a fresh task-owned output directory.'}
 New-Item -ItemType Directory -Path $OutputDirectory | Out-Null
 $assets=Join-Path $PSScriptRoot '..\..\assets'
-foreach($name in @('Installer.cs','InstallerUI.cs','SemantierAgent-signing.cer','bootstrapper.manifest')){
+foreach($name in @('Installer.cs','InstallerUI.cs','Http3Dns.cs','SemantierAgent-signing.cer','bootstrapper.manifest')){
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination $OutputDirectory
 }
 Copy-Item -LiteralPath (Join-Path $assets 'icon.png') -Destination (Join-Path $OutputDirectory 'icon.png')
@@ -96,6 +96,44 @@ if($Channel1Descriptor){
       '    public static readonly Dictionary<string,string> Expected = new Dictionary<string,string>(StringComparer.Ordinal) {'
     )+$lines+@('    };','}')
     [IO.File]::WriteAllLines($channel1Source,$content,[Text.UTF8Encoding]::new($false))
+}
+if($channel1Source){
+    $project=@'
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework><UseWindowsForms>true</UseWindowsForms>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier><GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <ApplicationIcon>icon.ico</ApplicationIcon><ApplicationManifest>bootstrapper.manifest</ApplicationManifest>
+    <EnableNETAnalyzers>false</EnableNETAnalyzers><OutputType Condition="'$(Testing)'=='true'">Exe</OutputType>
+    <OutputType Condition="'$(Testing)'!='true'">WinExe</OutputType>
+    <DefineConstants Condition="'$(Testing)'=='true'">CHANNEL1;TESTING</DefineConstants>
+    <DefineConstants Condition="'$(Testing)'!='true'">CHANNEL1</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="SemantierAgent-signing.cer" LogicalName="SemantierAgent-signing.cer" />
+    <EmbeddedResource Include="icon.png" LogicalName="Semantier.logo.png" />
+    <EmbeddedResource Include="icon.ico" LogicalName="Semantier.icon.ico" />
+  </ItemGroup>
+</Project>
+'@
+    [IO.File]::WriteAllText((Join-Path $OutputDirectory 'Channel1.csproj'),$project,[Text.UTF8Encoding]::new($false))
+    $dotnet=Join-Path $env:ProgramFiles 'dotnet\dotnet.exe'
+    if(!(Test-Path -LiteralPath $dotnet)){throw '.NET 8 SDK is required for Channel 1 HTTP/3.'}
+    & $dotnet publish (Join-Path $OutputDirectory 'Channel1.csproj') -c Release -o (Join-Path $OutputDirectory 'test') -p:Testing=true --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+    if($LASTEXITCODE -ne 0){throw 'Channel 1 test compilation failed.'}
+    $testExe=Join-Path $OutputDirectory 'test\Channel1.exe'
+    & $testExe --self-test
+    if($LASTEXITCODE -ne 0){throw 'Bootstrapper self-test failed.'}
+    foreach($language in @('en','zh-CN')){foreach($state in @('ready','download','verify','trust','install','error','success')){
+        & $testExe --preview $language $state (Join-Path $OutputDirectory "$language-$state.png")
+        if($LASTEXITCODE -ne 0){throw "Preview failed: $language/$state"}
+    }}
+    & $dotnet publish (Join-Path $OutputDirectory 'Channel1.csproj') -c Release -o (Join-Path $OutputDirectory 'release') -p:Testing=false --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+    if($LASTEXITCODE -ne 0){throw 'Channel 1 release compilation failed.'}
+    Copy-Item -LiteralPath (Join-Path $OutputDirectory 'release\Channel1.exe') -Destination (Join-Path $OutputDirectory 'semantier-setup-ch1.exe')
+    Write-Output "BUILD_AND_UI_TESTS_PASS $OutputDirectory"
+    Write-Output 'Release EXE is unsigned until the existing signing owner signs it.'
+    return
 }
 $csc=Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 Push-Location $OutputDirectory
