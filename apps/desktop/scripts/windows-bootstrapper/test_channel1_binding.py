@@ -79,7 +79,7 @@ class Channel1BindingTest(unittest.TestCase):
         result = self.build(*self.fixture())
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('BUILD_AND_UI_TESTS_PASS', result.stdout)
-        self.assertTrue((self.root / 'output' / 'semantier-setup-channel1.exe').is_file())
+        self.assertTrue((self.root / 'output' / 'semantier-setup-ch1.exe').is_file())
 
     def test_old_channel_origin_is_refused(self):
         descriptor, archive = self.fixture()
@@ -98,7 +98,7 @@ class Channel1BindingTest(unittest.TestCase):
         result = self.build(descriptor, archive)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('Channel1 ZIP hash mismatch', result.stderr)
-        self.assertFalse((self.root / 'output' / 'semantier-setup-channel1.exe').exists())
+        self.assertFalse((self.root / 'output' / 'semantier-setup-ch1.exe').exists())
 
     def test_graph_version_and_package_kind_must_match(self):
         for kwargs, message in [({'graph_version': '0.0.66.0'}, 'Channel1 graph object invalid'),

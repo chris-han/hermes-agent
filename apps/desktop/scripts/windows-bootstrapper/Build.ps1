@@ -114,7 +114,7 @@ try {
             if($LASTEXITCODE -ne 0){throw "Preview failed: $language/$state"}
         }
     }
-    $releaseName=if($channel1Source){'semantier-setup-channel1.exe'}elseif($channel2){'semantier-setup-channel2.exe'}else{'semantier-setup.exe'}
+    $releaseName=if($channel1Source){'semantier-setup-ch1.exe'}elseif($channel2){'semantier-setup-channel2.exe'}else{'semantier-setup.exe'}
     $releaseDefine=@()
     if($channel1Source){$releaseDefine+='/define:CHANNEL1'}elseif($channel2){$releaseDefine+='/define:CHANNEL2'}
     & $csc /target:winexe @releaseDefine ('/out:'+$releaseName) @common
