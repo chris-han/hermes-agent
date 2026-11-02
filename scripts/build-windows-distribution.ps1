@@ -9,6 +9,28 @@ param([Parameter(Mandatory=$true)][string]$Config)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $request = Get-Content -LiteralPath $Config -Raw | ConvertFrom-Json
+# This controller can be invoked directly; enforce the owned layout here too,
+# before it creates a checkout, lock, transcript or build output.
+$sourceRoot = 'D:\repo\hermes-build'
+$workRoot = 'D:\repo\deliverables\work'
+if ($request.repository -ine $sourceRoot -or $request.worktree -ine $sourceRoot) { throw 'Windows layout requires D:\repo\hermes-build' }
+$rawOutput = [string]$request.output
+if ($rawOutput -notmatch '^[A-Za-z]:\\[^\\]+(\\[^\\]+)*$' -or
+    $rawOutput -match '(^|\\)\.\.?($|\\)' -or $rawOutput.Substring(2).Contains(':')) { throw 'Windows layout output path is invalid' }
+$candidateOutput = [IO.Path]::GetFullPath($rawOutput).TrimEnd('\')
+if (!$candidateOutput.StartsWith($workRoot+'\',[StringComparison]::OrdinalIgnoreCase)) { throw 'Windows layout output must be in the work root' }
+$outputLeaf = $candidateOutput.Substring($workRoot.Length+1)
+if ($outputLeaf -notmatch '^[A-Za-z0-9_-][A-Za-z0-9._-]*$' -or $outputLeaf.Contains('\') -or $outputLeaf.EndsWith('.') -or
+    $outputLeaf -match '^(?i:con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)') { throw 'Windows layout output must be an unambiguous direct child' }
+foreach ($path in @('D:\repo',$sourceRoot,'D:\repo\deliverables',$workRoot,'D:\repo\deliverables\cache')) {
+  if (Test-Path -LiteralPath $path) {
+    $item = Get-Item -LiteralPath $path -Force
+    if (!$item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Windows layout root is not an ordinary directory' }
+  }
+}
+if ((Get-Content -LiteralPath $PSCommandPath -TotalCount 1) -cne '# SEMANTIER_WINDOWS_LAYOUT_V2') {
+  throw 'Windows layout migration is incomplete in this controller'
+}
 $env:SEMANTIER_WSL_GIT_DISTRO=$null
 if (($request.PSObject.Properties.Name -contains 'wslLinuxGitDistro') -and $request.wslLinuxGitDistro) {
   $env:SEMANTIER_WSL_GIT_DISTRO=[string]$request.wslLinuxGitDistro
