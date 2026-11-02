@@ -288,7 +288,10 @@ def clean_outputs(request: BuildRequest) -> None:
             and Path(serial).resolve() == request.cache.resolve()
             and Path(str(request.source) + ".distribution.lock").is_file()
             and payload.is_dir() and retained_runtime(payload, request.source))
-    stale = [request.source / "apps/desktop" / name for name in ("dist", "release")]
+    stale = [request.source / "apps/desktop/dist"]
+    # A redirected build does not own a pre-existing legacy release directory.
+    if not os.environ.get("SEMANTIER_DESKTOP_BUILD_OUTPUT"):
+        stale.append(request.source / "apps/desktop/release")
     if keep:
         print(f"desktop build: retaining owned runtime candidate {payload}; admission follows", flush=True)
         for child in build.iterdir():

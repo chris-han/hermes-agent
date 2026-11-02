@@ -357,3 +357,16 @@ def test_completed_dependencies_survive_interrupted_desktop_build_without_archiv
     monkeypatch.setattr(native, '_prepare_native', warm)
     native.prepare_native(out=out, ref='b' * 40, source=tmp_path, cache=tmp_path / 'wheels',
                           runtime_cache=(entry, 'key'), dependency_identity='deps')
+
+
+def test_clean_with_redirect_preserves_unowned_legacy_release_directory(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from scripts.bundles.desktop_prepare import clean_outputs
+    source = tmp_path / 'source'
+    legacy = source / 'apps/desktop/release'
+    legacy.mkdir(parents=True)
+    (legacy / 'keep.txt').write_text('not owned by redirected build')
+    request = SimpleNamespace(source=source, work=tmp_path / 'work', cache=tmp_path / 'cache', target='win32-x64')
+    monkeypatch.setenv('SEMANTIER_DESKTOP_BUILD_OUTPUT', str(tmp_path / 'new-output'))
+    clean_outputs(request)
+    assert (legacy / 'keep.txt').read_text() == 'not owned by redirected build'

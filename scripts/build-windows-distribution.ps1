@@ -176,10 +176,10 @@ try {
       Json-File ([ordered]@{kind='semantier-windows-build-version-v1';version=$semantierVersion;sourceCommit=$source;reservedAt=[DateTime]::UtcNow.ToString('o');explicitRetry=$true;counterUnchanged=$true}) (Join-Path $output 'build-version.json')
     } else { Copy-Item -LiteralPath $counter -Destination (Join-Path $output 'build-version.json') }
     $arguments = @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',(Join-Path $work 'scripts\build-bundle.ps1'))
-    $serialCache = if ($reuseCache) { Join-Path $repo '.cache\desktop-inputs' } else { Join-Path $work '.cache\desktop-inputs' }
-    if ($reuseCache) {
-      $arguments += @('-Cache',$serialCache)
-    }
+    $serialCache = 'D:\repo\deliverables\cache\desktop-inputs'
+    $buildWork = Join-Path $output 'desktop-job'
+    $packageOutput = Join-Path $output 'electron-output'
+    $arguments += @('-Cache',$serialCache,'-Work',$buildWork)
     if ($request.python) { $arguments += @('-Python',$request.python) }
     if (($request.PSObject.Properties.Name -contains 'acceptancePublicBase') -and $request.acceptancePublicBase) {
       $channelRequest = Join-Path $output 'channel-request.json'
@@ -190,17 +190,20 @@ try {
     # Only this serial context may share downloads with incomplete compiler identity.
     $priorSemantierVersion = [Environment]::GetEnvironmentVariable('SEMANTIER_DESKTOP_VERSION','Process')
     $priorSerialCache = [Environment]::GetEnvironmentVariable('HERMES_DESKTOP_SERIAL_CACHE','Process')
+    $priorPackageOutput = [Environment]::GetEnvironmentVariable('SEMANTIER_DESKTOP_BUILD_OUTPUT','Process')
     try {
       $env:SEMANTIER_DESKTOP_VERSION = $semantierVersion
       $env:HERMES_DESKTOP_SERIAL_CACHE = $serialCache
+      $env:SEMANTIER_DESKTOP_BUILD_OUTPUT = $packageOutput
       Native "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" $arguments
     } finally {
       [Environment]::SetEnvironmentVariable('SEMANTIER_DESKTOP_VERSION',$priorSemantierVersion,'Process')
       [Environment]::SetEnvironmentVariable('HERMES_DESKTOP_SERIAL_CACHE',$priorSerialCache,'Process')
+      [Environment]::SetEnvironmentVariable('SEMANTIER_DESKTOP_BUILD_OUTPUT',$priorPackageOutput,'Process')
     }
     if ([string](Git-Value $work @('rev-parse','HEAD')) -cne $source -or
         @(Git-Value $work @('status','--porcelain','--untracked-files=all')).Count) { throw 'Build source changed during build' }
-    $packages = @(Get-ChildItem -LiteralPath (Join-Path $work 'apps\desktop\release') -Filter '*.msix' -File)
+    $packages = @(Get-ChildItem -LiteralPath $packageOutput -Filter '*.msix' -File)
     if ($packages.Count -ne 1) { throw "Expected exactly one MSIX, found $($packages.Count)" }
     $msix = $packages[0].FullName
     $receipt = [ordered]@{producedAt=[DateTime]::UtcNow.ToString('o');sourceCommit=$source;buildResult='PASS';buildExitCode=0;originalBuildArtifact=$msix;unsignedSha256=(Hash $msix);sizeBytes=$packages[0].Length}

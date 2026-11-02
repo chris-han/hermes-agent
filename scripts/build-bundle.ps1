@@ -41,7 +41,8 @@ param(
   [string]$ChannelRequest = '',
   [string]$AcceptancePublicBase = '',
   [string]$ControllerCommit = '',
-  [string]$Cache = ''
+  [string]$Cache = '',
+  [string]$Work = ''
 )
 
 # 'Stop' turns the native stderr progress lines of the build into terminating errors on Windows PowerShell 5.
@@ -152,19 +153,22 @@ try {
     $env:HERMES_DESKTOP_VARIANT = 'bundled'
     Write-Host "build-bundle: building $sha as Store v$version (local claim $claim)"
     # Prepare as bundled, then package as store from that preparation, as CI does.
-    $work = Join-Path $Repo '.build\desktop-job'
+    $work = if ($Work) { $Work } else { Join-Path $Repo '.build\desktop-job' }
+    $cachePath = if ($Cache) { $Cache } else { Join-Path $Repo '.cache\desktop-inputs' }
     & $py scripts/bundles/desktop.py --tag "v$version" --release-commit $sha --variant bundled --prepare-only `
-      --work $work --cache (Join-Path $Repo '.cache\desktop-inputs') --clean
+      --work $work --cache $cachePath --clean
     if ($LASTEXITCODE) { Fail "preparation failed (exit $LASTEXITCODE)" }
     & $py scripts/bundles/desktop.py --prepared (Join-Path $work 'prepared.json') --variant store
     if ($LASTEXITCODE) { Fail "Store packaging failed (exit $LASTEXITCODE)" }
   } else {
     Write-Host "build-bundle: building $sha (sideload)"
+    $pathArgs = @()
+    if ($Cache) { $pathArgs += @('--cache',$Cache) }
+    if ($Work) { $pathArgs += @('--work',$Work) }
     if ($ChannelRequest) {
-      $cacheArgs = if ($Cache) { @('--cache',$Cache) } else { @() }
-      & $py scripts/bundles/desktop.py --channel-request $ChannelRequest --variant bundled --clean @cacheArgs
+      & $py scripts/bundles/desktop.py --channel-request $ChannelRequest --variant bundled --clean @pathArgs
     } else {
-      & $py scripts/bundles/desktop.py --commit $sha --variant bundled --clean
+      & $py scripts/bundles/desktop.py --commit $sha --variant bundled --clean @pathArgs
     }
     if ($LASTEXITCODE) { Fail "build failed (exit $LASTEXITCODE)" }
   }

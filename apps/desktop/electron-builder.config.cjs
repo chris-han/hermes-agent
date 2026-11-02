@@ -109,7 +109,7 @@ module.exports = {
     desktopName: appId
   },
   directories: {
-    output: 'release'
+    output: process.env.SEMANTIER_DESKTOP_BUILD_OUTPUT || 'release'
   },
   files: ['dist/**', 'assets/**', 'public/**', 'package.json'],
   beforeBuild: channelRequest ? async () => {
