@@ -48,8 +48,58 @@ sealed class EmptyHandler : HttpMessageHandler {
         return Task.FromResult(response);
     }
 }
+sealed class LimitedStream : Stream {
+    readonly Stream source;
+    long remaining;
+    public LimitedStream(Stream source, long limit) { this.source = source; remaining = limit; }
+    public override bool CanRead => true;
+    public override bool CanSeek => false;
+    public override bool CanWrite => false;
+    public override long Length => throw new NotSupportedException();
+    public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+    public override int Read(byte[] buffer, int offset, int count) {
+        if (remaining == 0) return 0;
+        var n = source.Read(buffer, offset, (int)Math.Min(count, remaining));
+        remaining -= n;
+        return n;
+    }
+    protected override void Dispose(bool disposing) { if (disposing) source.Dispose(); base.Dispose(disposing); }
+    public override void Flush() => throw new NotSupportedException();
+    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+    public override void SetLength(long value) => throw new NotSupportedException();
+    public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+}
+sealed class InterruptOnce : DelegatingHandler {
+    public int Calls;
+    public bool Resumed;
+    public InterruptOnce() : base(new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false }) { }
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancel) {
+        Calls++;
+        if (Calls > 1) Resumed = request.Headers.Range?.ToString() == "bytes=1024-";
+        var response = await base.SendAsync(request, cancel);
+        if (response.Version.Major != 3) throw new Exception("Expected live HTTP/3 for both requests");
+        if (Calls == 1) {
+            if (response.StatusCode != HttpStatusCode.OK) throw new Exception("Expected live HTTP/3");
+            var length = response.Content.Headers.ContentLength;
+            var original = response.Content;
+            response.Content = new StreamContent(new LimitedStream(await original.ReadAsStreamAsync(), 1024));
+            response.Content.Headers.ContentLength = length;
+        }
+        return response;
+    }
+}
 static class Probe {
     static int Main(string[] args) {
+        if (args.Length == 1 && args[0] == "--live-resume") {
+            var file = new Uri("https://download.semantier.cn/releases/channel-builds/20bceda1fd864ca7a9b9dd67fa4879c3/semantier-setup-channel1.exe");
+            var interrupted = new InterruptOnce();
+            using (var client = new HttpClient(interrupted)) using (var output = new MemoryStream()) {
+                BootstrapperTransport.Download(client, file, output, 476664, _ => {});
+                if (!interrupted.Resumed || interrupted.Calls != 2 || Convert.ToHexString(SHA256.HashData(output.ToArray())).ToLowerInvariant() != "7168c79a77c760161bb2bfbca953207d6bb83808102412e1886d5811acdfea38") throw new Exception("Live interrupted resume mismatch");
+                Console.WriteLine("LIVE_INTERRUPTED_RESUME_HTTP3_OK " + output.Length);
+            }
+            return 0;
+        }
         if (args.Length == 1 && args[0] == "--live") {
             var endpoint = new Uri("https://download.semantier.cn/healthz");
             using (var handler = new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false })
