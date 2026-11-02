@@ -233,16 +233,12 @@ static class Installer {
         using(var handler=new System.Net.Http.SocketsHttpHandler{AllowAutoRedirect=false,UseProxy=false})
         using(var client=new System.Net.Http.HttpClient(handler)) {
             client.Timeout=TimeSpan.FromHours(4);
-            using(var response=BootstrapperTransport.Send(client,new Uri(ZipUrl))) {
-                if(response.StatusCode!=HttpStatusCode.OK || response.Version.Major<1 || response.Version.Major>3 || response.Content.Headers.ContentLength!=ZipSize) throw new InvalidOperationException("Unexpected download response.");
-                var target=CreateOwned(destination,held);
-                using(var source=response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()) {
-                    var bytes=new byte[1024*1024]; long total=0; int n,previous=-1;
-                    while((n=source.Read(bytes,0,bytes.Length))>0) {target.Write(bytes,0,n);total+=n;if(total>ZipSize)throw new InvalidOperationException("Download exceeds expected size.");int percent=(int)(total*100/ZipSize);if(percent!=previous){report("Downloading "+percent+"%");previous=percent;}}
-                    if(total!=ZipSize)throw new InvalidOperationException("Download incomplete.");target.Flush(true);
-                }
-                return Seal(target,held);
-            }
+            var target=CreateOwned(destination,held); int previous=-1;
+            BootstrapperTransport.Download(client,new Uri(ZipUrl),target,ZipSize,total=>{
+                int percent=(int)(total*100/ZipSize);if(percent!=previous){report("Downloading "+percent+"%");previous=percent;}
+            });
+            target.Flush(true);
+            return Seal(target,held);
         }
     }
     #else
