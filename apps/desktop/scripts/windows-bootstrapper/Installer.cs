@@ -236,7 +236,11 @@ static class Installer {
             var target=CreateOwned(destination,held); int previous=-1;
             BootstrapperTransport.Download(client,new Uri(ZipUrl),target,ZipSize,total=>{
                 int percent=(int)(total*100/ZipSize);if(percent!=previous){report("Downloading "+percent+"%");previous=percent;}
+#if CHANNEL2
+            }, preferHttp3:false); // Temporary until direct R2 QUIC is qualified.
+#else
             });
+#endif
             target.Flush(true);
             return Seal(target,held);
         }

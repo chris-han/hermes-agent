@@ -8,9 +8,10 @@ using System.Threading;
 // Prefer QUIC on the normal HTTPS port. A network failure falls back to the
 // same HTTPS origin over TCP; neither path follows redirects.
 static class BootstrapperTransport {
-    internal static HttpResponseMessage Send(HttpClient client, Uri origin, TimeSpan? quicTimeout = null, long offset = 0) {
+    internal static HttpResponseMessage Send(HttpClient client, Uri origin, TimeSpan? quicTimeout = null, long offset = 0, bool preferHttp3 = true) {
         if (origin.Scheme != Uri.UriSchemeHttps || origin.Port != 443) throw new InvalidOperationException("HTTPS port 443 required.");
         if (offset < 0) throw new InvalidOperationException("Invalid range offset.");
+        if (!preferHttp3) return Tcp(client, origin, offset);
         using (var deadline = new CancellationTokenSource(quicTimeout ?? TimeSpan.FromSeconds(15))) try {
             using (var request = new HttpRequestMessage(HttpMethod.Get, origin)) {
                 if (offset > 0) request.Headers.Range = new RangeHeaderValue(offset, null);
@@ -34,13 +35,13 @@ static class BootstrapperTransport {
         }
     }
 
-    internal static void Download(HttpClient client, Uri origin, Stream output, long size, Action<long> progress) {
+    internal static void Download(HttpClient client, Uri origin, Stream output, long size, Action<long> progress, bool preferHttp3 = true) {
         if (size <= 0 || !output.CanWrite || output.Position != 0) throw new InvalidOperationException("Invalid download target.");
         long total = 0;
         var bytes = new byte[1024 * 1024];
         for (int attempt = 0; attempt < 5 && total < size; attempt++) {
             HttpResponseMessage response;
-            try { response = Send(client, origin, offset: total); }
+            try { response = Send(client, origin, offset: total, preferHttp3: preferHttp3); }
             catch (HttpRequestException) { if (attempt == 4) throw; continue; }
             using (response) {
                 var range = response.Content.Headers.ContentRange;
