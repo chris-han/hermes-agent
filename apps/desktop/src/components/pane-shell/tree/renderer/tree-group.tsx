@@ -315,12 +315,6 @@ export function TreeGroup({
   const active = paneFor(activeId)
   const isEmpty = shown.length === 0
   const sidebarGroup = !node.panes.some(id => id === 'workspace' || paneChrome(paneFor(id)).placement === 'main')
-  // The left sessions rail combines branding, tabs, and the collapse control
-  // in the native titlebar band. Other zones keep their measured placement.
-  const integratedSessionsHeader =
-    isWindowsPlatform() && leftSideOpen && topEdge && railSide === 'left' && !narrow && !node.minimized && shown.includes('sessions')
-  const tabsBelowControls = topEdge && !integratedSessionsHeader && (sidebarGroup || measuredBelowControls)
-  const tabsInTitlebar = topEdge && !tabsBelowControls
   const pageHeader = paneChrome(active).headerContent
 
   // What the strip's "+" makes. The pane you are LOOKING AT answers first (a
@@ -419,6 +413,15 @@ export function TreeGroup({
   const headerVisible =
     !isEmpty && !verticalCollapse && (Boolean(node.minimized) || stripVisible || Boolean(pageHeader))
 
+  // Only suppress the ordinary titlebar control when the compact strip really
+  // renders its replacement; hidden strips and page headers need the fallback.
+  const integratedSessionsHeader =
+    isWindowsPlatform() && leftSideOpen && topEdge && railSide === 'left' && sidebarGroup && !narrow && !node.minimized &&
+    shown.includes('sessions') && headerVisible && !pageHeader
+
+  const tabsBelowControls = topEdge && !integratedSessionsHeader && (sidebarGroup || measuredBelowControls)
+  const tabsInTitlebar = topEdge && !tabsBelowControls
+
   // Keep the activated tab — and, on the last one, the trailing "+" — inside
   // the strip's scroll window. Opening a tab past the right edge otherwise
   // left both the new tab and the button that made it out of view.
@@ -493,8 +496,8 @@ export function TreeGroup({
   return (
     <div
       className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-(--ui-editor-surface-background)"
-      data-tree-group={node.id}
       data-compact-sessions-header={integratedSessionsHeader || undefined}
+      data-tree-group={node.id}
       data-window-top={topEdge || undefined}
       // Advertises the visible tab strip so panes can drop their own
       // self-naming labels (see [data-pane-self-label] in styles.css).
@@ -535,6 +538,7 @@ export function TreeGroup({
               // Strip line faces the content the zone collapsed away from.
               railSide === 'right' ? PANE_TAB_STRIP_LINE_LEFT : PANE_TAB_STRIP_LINE_RIGHT
             )}
+            data-collapsed-sessions-rail={isWindowsPlatform() && railSide === 'left' && shown.includes('sessions') || undefined}
             onClick={() => restoreTreePane(activeId)}
             title={t.zones.restore}
           >
@@ -582,7 +586,11 @@ export function TreeGroup({
             <div aria-hidden="true" className="shrink-0" style={{ width: integratedSessionsHeader ? 0 : 'var(--panel-titlebar-left, 100%)' }} />
           )}
           {integratedSessionsHeader && (
-            <div className="flex shrink-0 items-center pl-1 [-webkit-app-region:no-drag]">
+            <div
+              className="flex shrink-0 items-center pl-1 pt-1 [-webkit-app-region:drag]"
+              data-window-drag-handle=""
+              style={{ width: TITLEBAR_DRAG_HANDLE_WIDTH }}
+            >
               <OrganizationBrand compact markOnly />
             </div>
           )}
@@ -652,6 +660,16 @@ export function TreeGroup({
                   const title = tabText(paneId)
                   const isSelected = tabSelection?.groupId === node.id && tabSelection.ids.has(paneId)
 
+                  const onTap = () => {
+                    clearTabSelection()
+
+                    if (node.minimized) {
+                      restoreTreePane(paneId)
+                    }
+
+                    activateTreePane(node.id, paneId)
+                  }
+
                   const tab = (
                     <PaneTab
                       active={isActive}
@@ -659,6 +677,12 @@ export function TreeGroup({
                       data-tree-tab={paneId}
                       key={paneId}
                       onClose={closeable ? () => closeTab(paneId) : undefined}
+                      onKeyDown={integratedSessionsHeader ? event => {
+                        if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+                          event.preventDefault()
+                          onTap()
+                        }
+                      } : undefined}
                       onPointerDown={e => {
                         // Chrome's tab-selection grammar, ahead of activate/drag:
                         // Shift-click ranges from the anchor, ⌥-click (Ctrl-click
@@ -687,16 +711,6 @@ export function TreeGroup({
                         // double-click a minimize/restore/hide lottery. A plain
                         // click also collapses any multi-tab selection back to the
                         // one tab (Chrome semantics).
-                        const onTap = () => {
-                          clearTabSelection()
-
-                          if (node.minimized) {
-                            restoreTreePane(paneId)
-                          }
-
-                          activateTreePane(node.id, paneId)
-                        }
-
                         // Claim the press so the STRIP's own pane-drag handler
                         // (parent onPointerDown) can't also fire. startPaneDrag
                         // does this internally; the session drag (shared with
@@ -742,6 +756,7 @@ export function TreeGroup({
                       role="tab"
                       selected={isSelected}
                       style={{ cursor: 'grab' }}
+                      tabIndex={integratedSessionsHeader ? 0 : undefined}
                     >
                       {chrome.tabLead ? (
                         <span className="ml-2 -mr-1 flex shrink-0 items-center">
@@ -790,7 +805,7 @@ export function TreeGroup({
               (#112964). Keep one fixed handle OUTSIDE the list. When the tabs
               drop below the controls the band above them is free — the handle
               stays flexible and the whole row moves the window. */}
-          {topEdge && (
+          {topEdge && !integratedSessionsHeader && (
             <div
               aria-hidden="true"
               className={cn(

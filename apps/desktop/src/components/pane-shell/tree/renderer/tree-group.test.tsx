@@ -9,7 +9,7 @@ import { $tabStripDefault, setTabStripDefault } from '@/store/tabstrip-prefs'
 import { stubMenuDomApis, stubResizeObserver } from '@/test/jsdom'
 
 import type { GroupNode } from '../model'
-import { $treeDragging, NEW_SESSION_DRAG, SESSION_TILE_DRAG } from '../store'
+import { $layoutTree, $narrowViewport, $treeDragging, NEW_SESSION_DRAG, SESSION_TILE_DRAG } from '../store'
 
 import { TreeGroup } from './tree-group'
 
@@ -77,6 +77,7 @@ describe('TreeGroup', () => {
         title: id === 'sessions' ? '会话' : '机器人'
       })
     )
+
     disposePane = () => disposers.forEach(dispose => dispose())
 
     render(
@@ -97,7 +98,122 @@ describe('TreeGroup', () => {
     expect(header.querySelectorAll('[data-tree-tab]')).toHaveLength(2)
     expect(header.querySelector('[aria-label="Hide sidebar"]')).not.toBeNull()
     expect(header.querySelector('[data-zone-tabstrip]')).not.toBeNull()
-    expect(header.querySelector('[data-window-drag-handle]')).not.toBeNull()
+    const dragHandle = header.querySelector<HTMLElement>('[data-window-drag-handle]')!
+    expect(dragHandle.contains(header.querySelector('[data-organization-brand]'))).toBe(true)
+    expect(dragHandle.style.width).toBe('48px')
+    expect(dragHandle.compareDocumentPosition(header.querySelector('[aria-label="Hide sidebar"]')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    const bots = header.querySelector<HTMLElement>('[data-tree-tab="bots"]')!
+    expect(bots.tabIndex).toBe(0)
+    const previousTree = $layoutTree.get()
+
+    try {
+      act(() => $layoutTree.set({ active: 'sessions', id: 'sessions-zone', panes: ['sessions', 'bots'], type: 'group' }))
+      fireEvent.keyDown(bots, { key: 'Enter' })
+      expect(($layoutTree.get() as GroupNode).active).toBe('bots')
+    } finally {
+      act(() => $layoutTree.set(previousTree))
+    }
+  })
+
+  it('keeps the regular titlebar control when the sessions tab strip is hidden', () => {
+    vi.spyOn(window.navigator, 'platform', 'get').mockReturnValue('Win32')
+    vi.stubGlobal('CSS', { escape: (value: string) => value })
+    stubResizeObserver()
+    disposePane = registry.register({
+      area: 'panes', data: { placement: 'left', hideOnly: true }, id: 'sessions',
+      render: () => <div>sessions content</div>, title: 'Sessions'
+    })
+
+    render(
+      <TreeGroup
+        node={{ active: 'sessions', id: 'sessions-zone', panes: ['sessions'], tabStrip: 'never', type: 'group' }}
+        parentAxis="row"
+        railSide="left"
+        topEdge
+      />
+    )
+
+    expect(container!.querySelector('[data-compact-sessions-header]')).toBeNull()
+  })
+
+  it('does not treat a group containing the main workspace as a sidebar', () => {
+    vi.spyOn(window.navigator, 'platform', 'get').mockReturnValue('Win32')
+    vi.stubGlobal('CSS', { escape: (value: string) => value })
+    stubResizeObserver()
+
+    const disposers = ['sessions', 'workspace'].map(id => registry.register({
+      area: 'panes',
+      data: { placement: id === 'workspace' ? 'main' : 'left' },
+      id,
+      render: () => <div>{id} content</div>,
+      title: id
+    }))
+
+    disposePane = () => disposers.forEach(dispose => dispose())
+    render(
+      <TreeGroup
+        node={{ active: 'sessions', id: 'mixed-zone', panes: ['sessions', 'workspace'], tabStrip: 'always', type: 'group' }}
+        parentAxis="row"
+        railSide="left"
+        topEdge
+      />
+    )
+
+    expect(container!.querySelector('[data-compact-sessions-header]')).toBeNull()
+  })
+
+  it('keeps the regular titlebar control when a pane supplies its own header', () => {
+    vi.spyOn(window.navigator, 'platform', 'get').mockReturnValue('Win32')
+    vi.stubGlobal('CSS', { escape: (value: string) => value })
+    stubResizeObserver()
+    disposePane = registry.register({
+      area: 'panes',
+      data: { placement: 'left', hideOnly: true, headerContent: () => <button type="button">Pane header</button> },
+      id: 'sessions',
+      render: () => <div>sessions content</div>,
+      title: 'Sessions'
+    })
+
+    render(
+      <TreeGroup
+        node={{ active: 'sessions', id: 'sessions-zone', panes: ['sessions'], tabStrip: 'always', type: 'group' }}
+        parentAxis="row"
+        railSide="left"
+        topEdge
+      />
+    )
+
+    expect(screen.getByRole('button', { name: 'Pane header' })).toBeTruthy()
+    expect(container!.querySelector('[data-compact-sessions-header]')).toBeNull()
+  })
+
+  it.each([
+    { platform: 'Linux x86_64', narrow: false },
+    { platform: 'Win32', narrow: true }
+  ])('keeps ordinary chrome for $platform when narrow=$narrow', ({ platform, narrow }) => {
+    vi.spyOn(window.navigator, 'platform', 'get').mockReturnValue(platform)
+    vi.stubGlobal('CSS', { escape: (value: string) => value })
+    stubResizeObserver()
+    disposePane = registry.register({
+      area: 'panes', data: { placement: 'left', hideOnly: true }, id: 'sessions',
+      render: () => <div>sessions content</div>, title: 'Sessions'
+    })
+    const previous = $narrowViewport.get()
+
+    try {
+      act(() => $narrowViewport.set(narrow))
+      render(
+        <TreeGroup
+          node={{ active: 'sessions', id: 'sessions-zone', panes: ['sessions'], tabStrip: 'always', type: 'group' }}
+          parentAxis="row"
+          railSide="left"
+          topEdge
+        />
+      )
+      expect(container!.querySelector('[data-compact-sessions-header]')).toBeNull()
+    } finally {
+      act(() => $narrowViewport.set(previous))
+    }
   })
 
   // Titlebar geometry (#112964): tabs sharing the native titlebar band are all
