@@ -1062,3 +1062,11 @@ test('native graph resolution reads only metadata and preserves the legacy head 
   f.objects.set(`/releases/channels/${f.record.name}.json`, JSON.stringify(f.record))
   await expect(resolver.resolve()).rejects.toThrow('Missing native object')
 })
+
+test('channel decoder ignores storage-only native archive bookkeeping', async () => {
+  const f = await fixture()
+  const record = { ...f.record, nativeArchive: { buildId: 'a'.repeat(32), sequence: 1,
+    manifestKey: `releases/channel-builds/${'a'.repeat(32)}/build.json`, sha256: 'a'.repeat(64) },
+    nativeRetirePending: null }
+  expect(decodeChannelRecord(JSON.stringify(record))).toEqual(decodeChannelRecord(JSON.stringify(f.record)))
+})
