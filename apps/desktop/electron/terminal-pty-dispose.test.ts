@@ -7,9 +7,10 @@ import { test, vi } from 'vitest'
 // a fake that captures its onData/onExit listeners.
 const handles = vi.hoisted(() => ({ map: new Map<string, (...args: never[]) => unknown>() }))
 const spawnMock = vi.hoisted(() => ({ fn: vi.fn() }))
+const appName = vi.hoisted(() => ({ value: 'Hermes' }))
 
 vi.mock('electron', () => ({
-  app: { getPath: () => '/tmp', getVersion: () => '0.0.0-test' },
+  app: { getPath: () => '/tmp', getVersion: () => '0.0.77', getName: () => appName.value },
   ipcMain: {
     handle: (channel: string, listener: (...args: never[]) => unknown) => {
       handles.map.set(channel, listener)
@@ -92,6 +93,25 @@ function fireExit(fake: FakePty, event: { exitCode: number | null; signal: strin
 
   fake.listeners.exit(event)
 }
+
+test('the Windows product sets Semantier CLI branding only inside a Semantier terminal', async () => {
+  appName.value = 'Semantier Agent 0.0.77'
+  try {
+    await startSession()
+    const branded = spawnMock.fn.mock.lastCall?.[2]?.env
+    assert.equal(branded?.TERM_PROGRAM, 'Semantier')
+    assert.equal(branded?.SEMANTIER_CLI_BRAND, '1')
+    assert.equal(branded?.SEMANTIER_CLI_VERSION, '0.0.77')
+  } finally {
+    appName.value = 'Hermes'
+  }
+
+  await startSession()
+  const upstream = spawnMock.fn.mock.lastCall?.[2]?.env
+  assert.equal(upstream?.TERM_PROGRAM, 'Hermes')
+  assert.equal(upstream?.SEMANTIER_CLI_BRAND, undefined)
+  assert.equal(upstream?.SEMANTIER_CLI_VERSION, undefined)
+})
 
 test('an exited shell releases its PTY handle without waiting for tab dispose', async () => {
   const { fake, sender, session } = await startSession()

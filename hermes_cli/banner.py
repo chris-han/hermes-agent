@@ -93,6 +93,19 @@ HERMES_CADUCEUS = """[#CD7F32]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⡀⠀⣀⣀�
 [#B8860B]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠳⠈⣡⠞⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
 [#B8860B]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]"""
 
+# The Semantier Windows terminal host selects its own presentation without
+# altering the default upstream Hermes CLI.
+SEMANTIER_LOGO = """[bold #FFD700]█████ █████ ██   ██  ███  ██  ██ ██████ █████ █████ ████ [/]
+[bold #FFD700]██    ██    ███ ███ ██ ██ ███ ██   ██     ██  ██    ██ ██[/]
+[#FFBF00]████  ████  ██ █ ██ █████ ██ ███   ██     ██  ████  ████ [/]
+[#FFBF00]   ██ ██    ██   ██ ██ ██ ██  ██   ██     ██  ██    ██ ██[/]
+[#CD7F32]█████ █████ ██   ██ ██ ██ ██  ██   ██   █████ █████ ██ ██[/]"""
+
+
+def semantier_cli_brand_active() -> bool:
+    return os.getenv("SEMANTIER_CLI_BRAND") == "1"
+
+
 # === Skills scanning ===
 
 # Per-process caches: ``None`` until computed, then a 1-tuple ``(value,)`` so a computed ``None``
@@ -204,6 +217,9 @@ def get_latest_release_tag(repo_dir: Optional[Path] = None) -> Optional[tuple]:
 
 def format_banner_version_label() -> str:
     """Return the version label shown in the startup banner title."""
+    if semantier_cli_brand_active():
+        version = os.getenv("SEMANTIER_CLI_VERSION") or get_version_info().derived_version
+        return f"Semantier Agent v{version}"
     from hermes_cli.config import get_project_root
     from hermes_cli.steward import read_install_stamp
     from hermes_cli.update_channel import is_canary_tag
@@ -605,7 +621,7 @@ def _banner_left_lines(model: str, cwd: str, session_id, context_length, provide
     lines = []
     pin = " (pinned)" if context_pinned else ""
     ctx_str = _dim_sep(f"{_format_context_length(context_length)} context{pin}") if context_length else ""
-    nous_str = _dim_sep("Nous Research")
+    nous_str = _dim_sep("司序科技" if semantier_cli_brand_active() else "Nous Research")
     if (provider or "").strip().lower() == "moa":
         # MoA virtual provider: ``model`` is a preset name; show it with its aggregator.
         agg_label = _quiet(lambda: _moa_aggregator_label(model), "")
@@ -697,7 +713,8 @@ def build_welcome_banner(
     text = _skin_color("banner_text", "#FFF8DC")
     # Use skin's custom caduceus art if provided
     _bskin = _quiet(_active_skin)
-    left_lines = ["", getattr(_bskin, "banner_hero", None) or HERMES_CADUCEUS, ""]
+    left_lines = ["", ("" if semantier_cli_brand_active() else
+                       (getattr(_bskin, "banner_hero", None) or HERMES_CADUCEUS)), ""]
     left_lines += _banner_left_lines(model, cwd, session_id, context_length, provider, accent=accent, dim=dim,
                                      context_pinned=context_pinned)
     right_lines = _banner_tool_lines(
@@ -751,7 +768,7 @@ def build_welcome_banner(
     layout_table.add_column("right", justify="left")
     layout_table.add_row("\n".join(left_lines), "\n".join(right_lines))
     version_label = format_banner_version_label()
-    release_info = get_latest_release_tag()
+    release_info = None if semantier_cli_brand_active() else get_latest_release_tag()
     if release_info:
         version_label = f"[link={release_info[1]}]{version_label}[/link]"
     outer_panel = Panel(
@@ -759,6 +776,7 @@ def build_welcome_banner(
         border_style=_skin_color("banner_border", "#CD7F32"), padding=(0, 2))
     console.print()
     if shutil.get_terminal_size().columns >= 95:
-        console.print(getattr(_bskin, "banner_logo", None) or HERMES_AGENT_LOGO)
+        console.print(SEMANTIER_LOGO if semantier_cli_brand_active() else
+                      (getattr(_bskin, "banner_logo", None) or HERMES_AGENT_LOGO))
         console.print()
     console.print(outer_panel)

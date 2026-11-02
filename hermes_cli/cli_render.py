@@ -18,7 +18,7 @@ import time
 from contextlib import contextmanager, suppress
 from agent.i18n import t
 from agent.think_scrubber import THINK_TAG_NAMES
-from hermes_cli.banner import format_banner_version_label
+from hermes_cli.banner import format_banner_version_label, semantier_cli_brand_active
 from rich.console import Console
 from rich.text import Text as _RichText
 from typing import Any
@@ -916,13 +916,15 @@ def _build_compact_banner() -> str:
     title_color = _color("banner_title", "#FFBF00")
     dim_color = _color("banner_dim", "#B8860B")
 
-    if (getattr(_skin, "name", "default") if _skin else "default") == "default":
+    if semantier_cli_brand_active():
+        tiny_line = "SEMANTIER"
+    elif (getattr(_skin, "name", "default") if _skin else "default") == "default":
         tiny_line = "☤ NOUS HERMES"
     else:
         tiny_line = _skin.get_branding("agent_name", "Hermes Agent") if _skin else "Hermes Agent"
     line1 = t("cli.render.banner_tagline", name=tiny_line)
 
-    if os.environ.get("HERMES_FAST_STARTUP_BANNER") == "1":
+    if os.environ.get("HERMES_FAST_STARTUP_BANNER") == "1" and not semantier_cli_brand_active():
         from hermes_cli import __release_date__ as _release_date
         from hermes_cli.version_info import get_version_info
 
@@ -932,7 +934,8 @@ def _build_compact_banner() -> str:
 
     w = min(shutil.get_terminal_size().columns - 2, 88)
     if w < 30:
-        return f"\n[{title_color}]{tiny_line}[/] [dim {dim_color}]- Nous Research[/]\n"
+        company = "司序科技" if semantier_cli_brand_active() else "Nous Research"
+        return f"\n[{title_color}]{tiny_line}[/] [dim {dim_color}]- {company}[/]\n"
 
     inner = w - 2  # inside the box border
     bar = "═" * w

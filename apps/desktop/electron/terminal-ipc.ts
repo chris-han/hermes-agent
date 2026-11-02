@@ -177,8 +177,17 @@ export function registerTerminalIpc({
     env.COLORTERM = 'truecolor'
     env.LC_CTYPE = terminalLcCtype(env)
     env.TERM = 'xterm-256color'
-    env.TERM_PROGRAM = 'Hermes'
+    // Use the signed desktop product identity to scope the CLI presentation.
+    const semantierDesktop = /^Semantier Agent(?:\s|$)/.test(app.getName())
+    env.TERM_PROGRAM = semantierDesktop ? 'Semantier' : 'Hermes'
     env.TERM_PROGRAM_VERSION = app.getVersion()
+    if (semantierDesktop) {
+      env.SEMANTIER_CLI_BRAND = '1'
+      env.SEMANTIER_CLI_VERSION = app.getVersion()
+    } else {
+      delete env.SEMANTIER_CLI_BRAND
+      delete env.SEMANTIER_CLI_VERSION
+    }
 
     // Let a hermes/--tui launched in this pane know it's embedded in the desktop
     // GUI (build_environment_hints surfaces this). Distinct from HERMES_DESKTOP,
