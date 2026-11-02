@@ -56,7 +56,7 @@ class Channel1BindingTest(unittest.TestCase):
             for name, content in members.items():
                 output.writestr(name, content)
         raw = archive.read_bytes()
-        descriptor = {'origin': 'https://update.semantier.cn',
+        descriptor = {'origin': 'https://download.semantier.cn:8444',
                       'zip_path': '/' + prefix + 'fixture.zip',
                       'zip_sha256': digest(raw), 'zip_size': len(raw),
                       'cert_sha256': digest(cert), 'graph_sha256': digest(members['native-graph.json']),
