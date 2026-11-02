@@ -81,6 +81,15 @@ class Channel1BindingTest(unittest.TestCase):
         self.assertIn('BUILD_AND_UI_TESTS_PASS', result.stdout)
         self.assertTrue((self.root / 'output' / 'semantier-setup-channel1.exe').is_file())
 
+    def test_old_channel_origin_is_refused(self):
+        descriptor, archive = self.fixture()
+        obj = json.loads(descriptor.read_text())
+        obj['origin'] = 'https://channel1.semantier.com'
+        descriptor.write_text(json.dumps(obj))
+        result = self.build(descriptor, archive)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Invalid Channel1 descriptor', result.stderr)
+
     def test_same_size_tampering_is_refused_before_compile(self):
         descriptor, archive = self.fixture()
         raw = bytearray(archive.read_bytes())
