@@ -14,6 +14,8 @@ import { type CSSProperties, Fragment, type ReactNode, type RefObject, useEffect
 
 import { ShellMenuItems } from '@/app/context-menu/shell-menu-items'
 import { TITLEBAR_DRAG_HANDLE_WIDTH, TITLEBAR_HEIGHT } from '@/app/shell/titlebar'
+import { TitlebarIcon } from '@/app/shell/titlebar-icon'
+import { OrganizationBrand } from '@/components/organization-brand'
 import { ActionsContextMenu, type MenuKit, renderActionItem } from '@/components/ui/actions-menu'
 import { Codicon } from '@/components/ui/codicon'
 import { DecodeText } from '@/components/ui/decode-text'
@@ -30,8 +32,11 @@ import {
 import { ContribBoundary, ContribRender } from '@/contrib/react/boundary'
 import { useContributions } from '@/contrib/react/use-contributions'
 import { useI18n } from '@/i18n'
+import { triggerHaptic } from '@/lib/haptics'
 import { useKeybindHint } from '@/lib/keybinds/use-keybind-hint'
+import { isWindowsPlatform } from '@/lib/platform'
 import { cn } from '@/lib/utils'
+import { $leftSideOpen, toggleLeftSide } from '@/store/layout'
 import { closeAllOpenSessionTiles, setZoneParkedTiles } from '@/store/session-states'
 
 import { $layoutEditMode, $layoutEditRevealsHidden } from '../../edit-mode'
@@ -278,6 +283,7 @@ export function TreeGroup({
 
   const hiddenPanes = useStore($hiddenTreePanes)
   const narrow = useStore($narrowViewport)
+  const leftSideOpen = useStore($leftSideOpen)
   const workspaceMode = useStore($workspaceMode)
   const workspaceOwnerKey = useStore($workspaceOwnerKey)
   const newSessionTabAction = useStore($newSessionTabAction)
@@ -309,7 +315,11 @@ export function TreeGroup({
   const active = paneFor(activeId)
   const isEmpty = shown.length === 0
   const sidebarGroup = !node.panes.some(id => id === 'workspace' || paneChrome(paneFor(id)).placement === 'main')
-  const tabsBelowControls = topEdge && (sidebarGroup || measuredBelowControls)
+  // The left sessions rail combines branding, tabs, and the collapse control
+  // in the native titlebar band. Other zones keep their measured placement.
+  const integratedSessionsHeader =
+    isWindowsPlatform() && leftSideOpen && topEdge && railSide === 'left' && !narrow && !node.minimized && shown.includes('sessions')
+  const tabsBelowControls = topEdge && !integratedSessionsHeader && (sidebarGroup || measuredBelowControls)
   const tabsInTitlebar = topEdge && !tabsBelowControls
   const pageHeader = paneChrome(active).headerContent
 
@@ -484,6 +494,7 @@ export function TreeGroup({
     <div
       className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-(--ui-editor-surface-background)"
       data-tree-group={node.id}
+      data-compact-sessions-header={integratedSessionsHeader || undefined}
       data-window-top={topEdge || undefined}
       // Advertises the visible tab strip so panes can drop their own
       // self-naming labels (see [data-pane-self-label] in styles.css).
@@ -568,7 +579,12 @@ export function TreeGroup({
           style={topEdge ? { height: TITLEBAR_HEIGHT + (tabsBelowControls && headerVisible ? 28 : 0) } : undefined}
         >
           {topEdge && (
-            <div aria-hidden="true" className="shrink-0" style={{ width: 'var(--panel-titlebar-left, 100%)' }} />
+            <div aria-hidden="true" className="shrink-0" style={{ width: integratedSessionsHeader ? 0 : 'var(--panel-titlebar-left, 100%)' }} />
+          )}
+          {integratedSessionsHeader && (
+            <div className="flex shrink-0 items-center pl-1 [-webkit-app-region:no-drag]">
+              <OrganizationBrand compact markOnly />
+            </div>
           )}
           {pageHeader && headerVisible ? (
             <div
@@ -604,7 +620,17 @@ export function TreeGroup({
                 titlebar={tabsInTitlebar}
                 trailing={
                   <>
-                    {minimizable && (
+                    {integratedSessionsHeader && (
+                      <PaneStripGlyph
+                        icon={<TitlebarIcon name="layout-sidebar-left" />}
+                        label={t.titlebar.hideSidebar}
+                        onSelect={() => {
+                          triggerHaptic('tap')
+                          toggleLeftSide()
+                        }}
+                      />
+                    )}
+                    {minimizable && !integratedSessionsHeader && (
                       <button
                         aria-label={node.minimized ? t.zones.restore : minimizeLabel}
                         className="mx-1 grid size-5 shrink-0 place-items-center self-center [-webkit-app-region:no-drag] rounded-md text-(--ui-text-tertiary) opacity-0 transition-opacity hover:bg-(--ui-control-hover-background) hover:text-foreground focus-visible:opacity-100 group-hover/pane-header:opacity-100"

@@ -16,17 +16,19 @@ export function SemantierAttribution() {
 export function OrganizationBrand({
   draft,
   compact = false,
+  markOnly = false,
   attribution = false
 }: {
   draft?: DesktopBranding
   compact?: boolean
+  markOnly?: boolean
   attribution?: boolean
   showDefault?: boolean
 }) {
   const { locale } = useI18n()
   const saved = useStore($desktopBranding)
   const value = draft ?? saved
-  const name = desktopBrandingName(value, locale)
+  const name = markOnly ? '' : desktopBrandingName(value, locale)
 
   return (
     <div
@@ -36,17 +38,19 @@ export function OrganizationBrand({
       <div className={cn('flex min-w-0 gap-3', compact ? 'items-center' : 'flex-col items-center')}>
         <img
           alt=""
-          className={cn('shrink-0 object-contain', compact ? 'size-7' : 'size-14')}
+          className={cn('shrink-0 object-contain', markOnly ? 'size-8' : compact ? 'size-7' : 'size-14')}
           src={value.logo ?? semantierLogo}
         />
-        <span
-          className={cn(
-            'min-w-0 break-words [overflow-wrap:anywhere]',
-            compact ? 'text-sm font-medium' : 'text-xl font-semibold'
-          )}
-        >
-          {name}
-        </span>
+        {!markOnly && (
+          <span
+            className={cn(
+              'min-w-0 break-words [overflow-wrap:anywhere]',
+              compact ? 'text-sm font-medium' : 'text-xl font-semibold'
+            )}
+          >
+            {name}
+          </span>
+        )}
       </div>
       {attribution && <SemantierAttribution />}
     </div>

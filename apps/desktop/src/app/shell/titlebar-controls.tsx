@@ -176,6 +176,7 @@ export function TitlebarControls({ leftTools = [], tools = [], onOpenSettings }:
     icon: <TitlebarIcon name="layout-sidebar-left" />,
     id: 'sidebar',
     label: `${leftLabel}${panesFlipped ? '' : unreadHint}`,
+    tour: 'sidebar-toggle',
     onSelect: () => {
       triggerHaptic('tap')
       leftEdge.toggle()

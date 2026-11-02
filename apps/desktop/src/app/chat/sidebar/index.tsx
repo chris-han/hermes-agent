@@ -1577,7 +1577,7 @@ export function ChatSidebar({
       <SidebarContent className="gap-0 overflow-hidden bg-transparent px-2.5">
         <SidebarGroup className="shrink-0 p-0 pb-2 pt-[calc(var(--titlebar-height)+0.375rem)]">
           <SidebarGroupContent>
-            <div className="px-2 pb-2">
+            <div className="px-2 pb-2" data-sidebar-organization-brand="">
               <OrganizationBrand compact />
             </div>
             <SidebarMenu className="gap-px">

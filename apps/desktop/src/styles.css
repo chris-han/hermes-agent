@@ -12,6 +12,17 @@
 @import '@fontsource/noto-sans-sc/600.css';
 @import '@fontsource/noto-sans-sc/700.css';
 
+/* Integrated left-rail chrome replaces the standalone titlebar toggle and
+   body branding only while its compact header is present. */
+body:has([data-compact-sessions-header]) [data-titlebar-cluster='left'] [data-tour='sidebar-toggle'],
+[data-compact-sessions-header] [data-sidebar-organization-brand] {
+  display: none;
+}
+
+[data-compact-sessions-header] [data-tour='sessions-sidebar'] [data-slot='sidebar-group'] {
+  padding-top: 0.375rem;
+}
+
 /* Titlebar clusters: 24×24 hit targets, 13.9px glyphs. codicon.css is
    unlayered (`font: 16px/1`); Tailwind utilities in @layer lose that fight. */
 .titlebar-icon-button .codicon[class*='codicon-'] {

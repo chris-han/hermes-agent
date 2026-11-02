@@ -63,6 +63,43 @@ afterEach(() => {
 })
 
 describe('TreeGroup', () => {
+  it('places the Windows left sessions/Bots tabs, brand mark and sidebar toggle in one titlebar row', () => {
+    vi.spyOn(window.navigator, 'platform', 'get').mockReturnValue('Win32')
+    vi.stubGlobal('CSS', { escape: (value: string) => value })
+    stubResizeObserver()
+
+    const disposers = ['sessions', 'bots'].map(id =>
+      registry.register({
+        area: 'panes',
+        data: { placement: 'left', hideOnly: true },
+        id,
+        render: () => <div>{id} content</div>,
+        title: id === 'sessions' ? '会话' : '机器人'
+      })
+    )
+    disposePane = () => disposers.forEach(dispose => dispose())
+
+    render(
+      <TreeGroup
+        node={{ active: 'sessions', id: 'sessions-zone', panes: ['sessions', 'bots'], type: 'group' }}
+        parentAxis="row"
+        railSide="left"
+        topEdge
+      />
+    )
+
+    const zone = container!.querySelector<HTMLElement>('[data-compact-sessions-header]')!
+    expect(zone).not.toBeNull()
+    const header = zone.querySelector<HTMLElement>('[data-panel-header]')!
+    expect(header.style.height).toBe('34px')
+    expect(header.querySelector('[data-organization-brand] img')).not.toBeNull()
+    expect(header.querySelector('[data-organization-brand]')?.textContent).toBe('')
+    expect(header.querySelectorAll('[data-tree-tab]')).toHaveLength(2)
+    expect(header.querySelector('[aria-label="Hide sidebar"]')).not.toBeNull()
+    expect(header.querySelector('[data-zone-tabstrip]')).not.toBeNull()
+    expect(header.querySelector('[data-window-drag-handle]')).not.toBeNull()
+  })
+
   // Titlebar geometry (#112964): tabs sharing the native titlebar band are all
   // `no-drag`, so once the list overflows they can cover every draggable pixel.
   // A window must keep a drag target that no tab can occupy — a fixed-width
