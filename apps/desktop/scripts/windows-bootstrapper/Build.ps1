@@ -3,7 +3,7 @@ $ErrorActionPreference='Stop'
 if(Test-Path -LiteralPath $OutputDirectory){throw 'Use a fresh task-owned output directory.'}
 New-Item -ItemType Directory -Path $OutputDirectory | Out-Null
 $assets=Join-Path $PSScriptRoot '..\..\assets'
-foreach($name in @('Installer.cs','InstallerUI.cs','Http3Dns.cs','SemantierAgent-signing.cer','bootstrapper.manifest')){
+foreach($name in @('Installer.cs','InstallerUI.cs','Http3Dns.cs','BootstrapperTransport.cs','SemantierAgent-signing.cer','bootstrapper.manifest')){
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination $OutputDirectory
 }
 Copy-Item -LiteralPath (Join-Path $assets 'icon.png') -Destination (Join-Path $OutputDirectory 'icon.png')

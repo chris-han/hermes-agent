@@ -230,14 +230,11 @@ static class Installer {
     }
     #if CHANNEL1
     static FileStream Download(string destination, Action<string> report,List<FileStream> held) {
-        var uri=new UriBuilder(ZipUrl){Port=Http3Dns.Port()}.Uri;
         using(var handler=new System.Net.Http.SocketsHttpHandler{AllowAutoRedirect=false,UseProxy=false})
-        using(var client=new System.Net.Http.HttpClient(handler))
-        using(var request=new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get,uri)) {
+        using(var client=new System.Net.Http.HttpClient(handler)) {
             client.Timeout=TimeSpan.FromHours(4);
-            request.Version=new System.Version(3,0); request.VersionPolicy=System.Net.Http.HttpVersionPolicy.RequestVersionExact;
-            using(var response=client.SendAsync(request,System.Net.Http.HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult()) {
-                if(response.StatusCode!=HttpStatusCode.OK || response.Version.Major!=3 || response.Content.Headers.ContentLength!=ZipSize) throw new InvalidOperationException("Unexpected download response.");
+            using(var response=BootstrapperTransport.Send(client,new Uri(ZipUrl),Http3Dns.Port)) {
+                if(response.StatusCode!=HttpStatusCode.OK || response.Version.Major<1 || response.Version.Major>3 || response.Content.Headers.ContentLength!=ZipSize) throw new InvalidOperationException("Unexpected download response.");
                 var target=CreateOwned(destination,held);
                 using(var source=response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()) {
                     var bytes=new byte[1024*1024]; long total=0; int n,previous=-1;
