@@ -737,3 +737,25 @@ def test_stable_receipts_bind_the_attempt_ref_while_metadata_binds_the_payload_t
     stage(attempt)
     with pytest.raises(ChannelError, match="identity mismatch"):
         channel_releases.read_native_receipts(tmp_path, attempt, commit, legs, payload_tag=payload)
+
+
+def test_derived_views_use_conditional_real_transport_and_no_store():
+    from hermes_cli.release_channels import decode_json
+    from scripts.releases.simple_native_slots import reconcile_slot_views, validate_slot_view
+    native_head = {'buildId': 'a' * 32, 'sequence': 1,
+                   'manifestKey': 'releases/channel-builds/' + 'a' * 32 + '/build.json',
+                   'sha256': 'b' * 64}
+    record = {'nativeHead': native_head, 'nativeArchive': None, 'revision': 1}
+    with object_server() as (url, objects, headers, requests, faults):
+        store = publisher(url).store
+        reconcile_slot_views(store, 'stable', record)
+        active = decode_json(objects['active/manifest.json'])
+        assert validate_slot_view(active, 'stable', record, 'active') == native_head
+        assert headers['active/manifest.json']['Cache-Control'] == 'no-store'
+        assert headers['archive/manifest.json']['Cache-Control'] == 'no-store'
+        assert headers['active/manifest.json']['If-None-Match'] == '*'
+        updated = {**record, 'revision': 2, 'nativeArchive': native_head}
+        reconcile_slot_views(store, 'stable', updated)
+        assert 'If-Match' in headers['active/manifest.json']
+        with pytest.raises(ValueError, match='stale'):
+            validate_slot_view(active, 'stable', updated, 'active')
