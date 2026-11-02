@@ -42,6 +42,51 @@ def test_rollback_requires_two_distinct_settled_slots(record):
     with pytest.raises(ValueError): rollback(record)
 
 
+def test_rollback_cas_recovers_lost_reply_without_swapping_twice():
+    import json
+    from scripts.releases.simple_native_slots import commit_rollback
+    initial={'nativeHead':head('b',2),'nativeArchive':head('a',1),'revision':3,'nextSequence':3}
+    class Store:
+        def __init__(self): self.record=initial; self.etag='old'; self.writes=0
+        def get(self, key): return json.dumps(self.record).encode(), self.etag
+        def put(self, key, body, etag):
+            assert etag==self.etag
+            self.record=json.loads(body); self.etag='new'; self.writes+=1
+            raise OSError('lost response')
+    store=Store()
+    with pytest.raises(OSError, match='lost response'):
+        commit_rollback(store,'channel.json',initial,'old')
+    result=commit_rollback(store,'channel.json',initial,'old')
+    assert result['nativeHead']==head('a',1) and result['nativeArchive']==head('b',2)
+    assert store.writes==1
+
+
+def test_rollback_cas_refuses_concurrent_record_change():
+    import json
+    from scripts.releases.simple_native_slots import commit_rollback
+    initial={'nativeHead':head('b',2),'nativeArchive':head('a',1),'revision':3,'nextSequence':3}
+    changed={**initial,'revision':4}
+    class Store:
+        def get(self,key):return json.dumps(changed).encode(),'other'
+        def put(self,*args):pytest.fail('concurrent record must not be overwritten')
+    with pytest.raises(ValueError, match='channel changed'):
+        commit_rollback(Store(),'channel.json',initial,'old')
+
+
+def test_rollback_cas_requires_exact_readback():
+    import json
+    from scripts.releases.simple_native_slots import commit_rollback
+    initial={'nativeHead':head('b',2),'nativeArchive':head('a',1),'revision':3,'nextSequence':3}
+    class Store:
+        def __init__(self):self.first=True
+        def get(self,key):
+            if self.first:return json.dumps(initial).encode(),'old'
+            return json.dumps({**initial,'revision':5}).encode(),'changed'
+        def put(self,key,body,etag):self.first=False
+    with pytest.raises(RuntimeError, match='readback'):
+        commit_rollback(Store(),'channel.json',initial,'old')
+
+
 def test_same_head_is_idempotent():
     record={'nativeHead':head('a',1),'nativeArchive':None,'revision':3,'nextSequence':2}
     assert advance(record,head('a',1))==record

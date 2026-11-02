@@ -63,6 +63,29 @@ def commit_slot(store, key, expected_etag, new_head):
     return result
 
 
+def commit_rollback(store, key, expected_record, expected_etag):
+    """CAS a previously verified swap; an exact completed swap is replay-safe.
+
+    The caller must hold the publication lock and verify both retained release
+    objects before calling this primitive. It does not verify Windows downgrade.
+    """
+    from hermes_cli.release_channels import canonical_json, decode_json
+    desired = rollback(expected_record)
+    found = store.get(key)
+    if found is None:
+        raise ValueError('channel changed since verification')
+    actual = decode_json(found[0])
+    if actual == desired:
+        return actual
+    if actual != expected_record or found[1] != expected_etag:
+        raise ValueError('channel changed since verification')
+    store.put(key, canonical_json(desired), expected_etag)
+    confirmed = store.get(key)
+    if confirmed is None or decode_json(confirmed[0]) != desired:
+        raise RuntimeError('rollback readback failed')
+    return desired
+
+
 def publication_lock(store):
     """Share the existing storage lock; never clear another publisher's lock."""
     from contextlib import contextmanager
