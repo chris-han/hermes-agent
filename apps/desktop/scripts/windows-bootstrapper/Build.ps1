@@ -97,7 +97,8 @@ if($Channel1Descriptor){
     )+$lines+@('    };','}')
     [IO.File]::WriteAllLines($channel1Source,$content,[Text.UTF8Encoding]::new($false))
 }
-if($channel1Source){
+if($channel1Source -or $channel2){
+    $channelDefine=if($channel2){'CHANNEL2'}else{'CHANNEL1'}
     $project=@'
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
@@ -106,31 +107,34 @@ if($channel1Source){
     <ApplicationIcon>icon.ico</ApplicationIcon><ApplicationManifest>bootstrapper.manifest</ApplicationManifest>
     <EnableNETAnalyzers>false</EnableNETAnalyzers><OutputType Condition="'$(Testing)'=='true'">Exe</OutputType>
     <OutputType Condition="'$(Testing)'!='true'">WinExe</OutputType>
-    <DefineConstants Condition="'$(Testing)'=='true'">CHANNEL1;TESTING</DefineConstants>
-    <DefineConstants Condition="'$(Testing)'!='true'">CHANNEL1</DefineConstants>
+    <DefineConstants Condition="'$(Testing)'=='true'">__CHANNEL__;TESTING</DefineConstants>
+    <DefineConstants Condition="'$(Testing)'!='true'">__CHANNEL__</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
     <EmbeddedResource Include="SemantierAgent-signing.cer" LogicalName="SemantierAgent-signing.cer" />
     <EmbeddedResource Include="icon.png" LogicalName="Semantier.logo.png" />
     <EmbeddedResource Include="icon.ico" LogicalName="Semantier.icon.ico" />
+    <EmbeddedResource Include="channel2.msixbundle" LogicalName="Semantier.channel2.msixbundle" Condition="'__CHANNEL__'=='CHANNEL2'" />
   </ItemGroup>
 </Project>
 '@
-    [IO.File]::WriteAllText((Join-Path $OutputDirectory 'Channel1.csproj'),$project,[Text.UTF8Encoding]::new($false))
+    $project=$project.Replace('__CHANNEL__',$channelDefine)
+    [IO.File]::WriteAllText((Join-Path $OutputDirectory 'Bootstrapper.csproj'),$project,[Text.UTF8Encoding]::new($false))
     $dotnet=Join-Path $env:ProgramFiles 'dotnet\dotnet.exe'
-    if(!(Test-Path -LiteralPath $dotnet)){throw '.NET 8 SDK is required for Channel 1 HTTP/3.'}
-    & $dotnet publish (Join-Path $OutputDirectory 'Channel1.csproj') -c Release -o (Join-Path $OutputDirectory 'test') -p:Testing=true --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
-    if($LASTEXITCODE -ne 0){throw 'Channel 1 test compilation failed.'}
-    $testExe=Join-Path $OutputDirectory 'test\Channel1.exe'
+    if(!(Test-Path -LiteralPath $dotnet)){throw '.NET 8 SDK is required for HTTP/3.'}
+    & $dotnet publish (Join-Path $OutputDirectory 'Bootstrapper.csproj') -c Release -o (Join-Path $OutputDirectory 'test') -p:Testing=true --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+    if($LASTEXITCODE -ne 0){throw 'Bootstrapper test compilation failed.'}
+    $testExe=Join-Path $OutputDirectory 'test\Bootstrapper.exe'
     & $testExe --self-test
     if($LASTEXITCODE -ne 0){throw 'Bootstrapper self-test failed.'}
     foreach($language in @('en','zh-CN')){foreach($state in @('ready','download','verify','trust','install','error','success')){
         & $testExe --preview $language $state (Join-Path $OutputDirectory "$language-$state.png")
         if($LASTEXITCODE -ne 0){throw "Preview failed: $language/$state"}
     }}
-    & $dotnet publish (Join-Path $OutputDirectory 'Channel1.csproj') -c Release -o (Join-Path $OutputDirectory 'release') -p:Testing=false --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
-    if($LASTEXITCODE -ne 0){throw 'Channel 1 release compilation failed.'}
-    Copy-Item -LiteralPath (Join-Path $OutputDirectory 'release\Channel1.exe') -Destination (Join-Path $OutputDirectory 'semantier-setup-ch1.exe')
+    & $dotnet publish (Join-Path $OutputDirectory 'Bootstrapper.csproj') -c Release -o (Join-Path $OutputDirectory 'release') -p:Testing=false --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+    if($LASTEXITCODE -ne 0){throw 'Bootstrapper release compilation failed.'}
+    $releaseName=if($channel2){'semantier-setup-ch2.exe'}else{'semantier-setup-ch1.exe'}
+    Copy-Item -LiteralPath (Join-Path $OutputDirectory 'release\Bootstrapper.exe') -Destination (Join-Path $OutputDirectory $releaseName)
     Write-Output "BUILD_AND_UI_TESTS_PASS $OutputDirectory"
     Write-Output 'Release EXE is unsigned until the existing signing owner signs it.'
     return

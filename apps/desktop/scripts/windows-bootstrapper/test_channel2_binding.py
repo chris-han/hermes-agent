@@ -7,7 +7,7 @@ import unittest
 
 HERE = Path(__file__).resolve().parent
 POWERSHELL = Path('/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe')
-ROOT = Path('/mnt/d/repo/deliverables')
+ROOT = Path('/mnt/d/repo/deliverables/work')
 AVAILABLE = POWERSHELL.is_file() and ROOT.is_dir() and shutil.which('wslpath')
 
 def win(path):
@@ -26,7 +26,7 @@ class Channel2BindingTest(unittest.TestCase):
                 capture_output=True, text=True, timeout=120, check=False)
             self.assertNotEqual(result.returncode, 0, result.stdout)
             self.assertIn('Channel2 ZIP mismatch', result.stderr)
-            self.assertFalse((root / 'output' / 'semantier-setup-channel2.exe').exists())
+            self.assertFalse((root / 'output' / 'semantier-setup-ch2.exe').exists())
 
 if __name__ == '__main__':
     unittest.main()

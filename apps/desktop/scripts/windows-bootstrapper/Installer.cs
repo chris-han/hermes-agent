@@ -50,7 +50,7 @@ static class Installer {
     const string Identity = Channel1Pins.Identity;
     static readonly Version Version = new Version(Channel1Pins.AppVersion);
     #elif CHANNEL2
-    const string Origin = "https://s3.semantier.com";
+    const string Origin = "https://download.semantier.com";
     const string ZipUrl = Origin + "/releases/channel-builds/9e1ca1e9fad44d35ac9b13a2f09747e5/SemantierAgent-0.0.77-win-x64.zip";
     const string ZipHash = "59ad5f557babc3905835f239c502ea44ad5aa43207603ffff8cbcb757998c229";
     const long ZipSize = 2264240015L;
@@ -228,7 +228,7 @@ static class Installer {
         var strict=new FileStream(tracker.Name,FileMode.Open,FileAccess.Read,FileShare.Read);held.Add(strict);
         tracker.Dispose();held.Remove(tracker);return strict;
     }
-    #if CHANNEL1
+    #if CHANNEL1 || CHANNEL2
     static FileStream Download(string destination, Action<string> report,List<FileStream> held) {
         using(var handler=new System.Net.Http.SocketsHttpHandler{AllowAutoRedirect=false,UseProxy=false})
         using(var client=new System.Net.Http.HttpClient(handler)) {
@@ -263,7 +263,7 @@ static class Installer {
         security.AddAccessRule(new FileSystemAccessRule(sid,FileSystemRights.FullControl,InheritanceFlags.ContainerInherit|InheritanceFlags.ObjectInherit,PropagationFlags.None,AccessControlType.Allow));
         security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid,null),FileSystemRights.ReadAndExecute,InheritanceFlags.ContainerInherit|InheritanceFlags.ObjectInherit,PropagationFlags.None,AccessControlType.Allow));
         string p=TaskPath(id); if(Directory.Exists(p))throw new InvalidOperationException("Task directory already exists.");
-        #if CHANNEL1
+        #if CHANNEL1 || CHANNEL2
         new DirectoryInfo(p).Create(security);
         #else
         Directory.CreateDirectory(p,security);

@@ -14,7 +14,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 HERE = Path(__file__).resolve().parent
 POWERSHELL = Path('/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe')
-WINDOWS_TMP_ROOT = Path('/mnt/d/repo/deliverables')
+WINDOWS_TMP_ROOT = Path('/mnt/d/repo/deliverables/work')
 AVAILABLE = POWERSHELL.is_file() and WINDOWS_TMP_ROOT.is_dir() and shutil.which('wslpath')
 
 
