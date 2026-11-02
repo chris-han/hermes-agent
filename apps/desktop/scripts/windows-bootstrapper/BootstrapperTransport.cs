@@ -2,16 +2,13 @@ using System;
 using System.Net.Http;
 using System.Threading;
 
-// Prefer QUIC. A network failure or missing HTTPS service record falls back to
-// the same HTTPS origin on its normal TCP port; neither path follows redirects.
+// Prefer QUIC on the normal HTTPS port. A network failure falls back to the
+// same HTTPS origin over TCP; neither path follows redirects.
 static class BootstrapperTransport {
-    internal static HttpResponseMessage Send(HttpClient client, Uri origin, Func<int> http3Port, TimeSpan? quicTimeout = null) {
-        int port;
-        try { port = http3Port(); }
-        catch (InvalidOperationException) { return Tcp(client, origin); }
-        var h3Uri = new UriBuilder(origin) { Port = port }.Uri;
+    internal static HttpResponseMessage Send(HttpClient client, Uri origin, TimeSpan? quicTimeout = null) {
+        if (origin.Scheme != Uri.UriSchemeHttps || origin.Port != 443) throw new InvalidOperationException("HTTPS port 443 required.");
         using (var deadline = new CancellationTokenSource(quicTimeout ?? TimeSpan.FromSeconds(15))) try {
-            using (var request = new HttpRequestMessage(HttpMethod.Get, h3Uri)) {
+            using (var request = new HttpRequestMessage(HttpMethod.Get, origin)) {
                 request.Version = new Version(3, 0);
                 request.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
                 return client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token).GetAwaiter().GetResult();

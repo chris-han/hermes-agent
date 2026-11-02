@@ -233,7 +233,7 @@ static class Installer {
         using(var handler=new System.Net.Http.SocketsHttpHandler{AllowAutoRedirect=false,UseProxy=false})
         using(var client=new System.Net.Http.HttpClient(handler)) {
             client.Timeout=TimeSpan.FromHours(4);
-            using(var response=BootstrapperTransport.Send(client,new Uri(ZipUrl),Http3Dns.Port)) {
+            using(var response=BootstrapperTransport.Send(client,new Uri(ZipUrl))) {
                 if(response.StatusCode!=HttpStatusCode.OK || response.Version.Major<1 || response.Version.Major>3 || response.Content.Headers.ContentLength!=ZipSize) throw new InvalidOperationException("Unexpected download response.");
                 var target=CreateOwned(destination,held);
                 using(var source=response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()) {
@@ -361,7 +361,6 @@ static class Installer {
     #if TESTING
     static void SelfTest() {
         #if CHANNEL1
-        Http3Dns.SelfTest();
         #endif
         // More than a pipe buffer on stderr must not prevent stdout completion.
         var noisyChild=System.Threading.Tasks.Task.Run(()=>PowerShell("[Console]::Error.Write(('x' * 262144)); Write-Output 'streams-drained'"));
