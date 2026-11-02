@@ -20,6 +20,28 @@ def test_stale_or_unallocated_sequence_refused():
     with pytest.raises(ValueError): advance({'nativeHead':head('a',1),'revision':1,'nextSequence':2},head('b',3))
 
 
+def test_rollback_swaps_existing_slots_and_keeps_allocation_high_water():
+    from scripts.releases.simple_native_slots import rollback
+    record={'nativeHead':head('b',2),'nativeArchive':head('a',1),'revision':3,'nextSequence':3}
+    swapped=rollback(record)
+    assert swapped['nativeHead']==head('a',1) and swapped['nativeArchive']==head('b',2)
+    assert swapped['revision']==4 and swapped['nextSequence']==3 and record['nativeHead']==head('b',2)
+    promoted=advance(swapped,head('c',3))
+    assert promoted['nativeHead']==head('c',3) and promoted['nativeArchive']==head('a',1)
+    assert promoted['nativeRetirePending']==head('b',2)
+    with pytest.raises(ValueError): advance(swapped,head('d',2))
+
+
+@pytest.mark.parametrize('record', [
+    {'nativeHead':head('a',1),'revision':1,'nextSequence':2},
+    {'nativeHead':head('b',2),'nativeArchive':head('a',1),'nativeRetirePending':head('c',3),'revision':1,'nextSequence':4},
+    {'nativeHead':head('a',1),'nativeArchive':head('a',1),'revision':1,'nextSequence':2},
+])
+def test_rollback_requires_two_distinct_settled_slots(record):
+    from scripts.releases.simple_native_slots import rollback
+    with pytest.raises(ValueError): rollback(record)
+
+
 def test_same_head_is_idempotent():
     record={'nativeHead':head('a',1),'nativeArchive':None,'revision':3,'nextSequence':2}
     assert advance(record,head('a',1))==record

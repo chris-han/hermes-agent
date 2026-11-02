@@ -10,15 +10,18 @@ def advance(record, new_head):
     old = _head(record.get('nativeHead'))
     _head(new_head)
     archive = _head(record.get('nativeArchive'))
-    if archive is not None and (old is None or archive['sequence'] >= old['sequence']):
-        raise ValueError('invalid native archive ordering')
+    if archive is not None and (old is None or archive['buildId'] == old['buildId']
+                                or archive['sequence'] == old['sequence']
+                                or archive['sequence'] >= record['nextSequence']):
+        raise ValueError('invalid native archive')
     if old == new_head:
         return deepcopy(record)
     if record.get('nativeRetirePending') is not None:
         raise ValueError('previous archive cleanup pending')
     if (type(new_head.get('sequence')) is not int
             or new_head['sequence'] > record['nextSequence']
-            or (old is not None and new_head['sequence'] <= old['sequence'])):
+            or (old is not None and new_head['sequence'] <= old['sequence'])
+            or (archive is not None and new_head['sequence'] <= archive['sequence'])):
         raise ValueError('native release sequence is stale or unallocated')
     result = deepcopy(record)
     result['nativeRetirePending'] = deepcopy(record.get('nativeArchive'))
@@ -27,6 +30,23 @@ def advance(record, new_head):
     result['revision'] += 1
     if new_head['sequence'] == record['nextSequence']:
         result['nextSequence'] += 1
+    return result
+
+
+def rollback(record):
+    """Calculate a slot swap; publication and object verification remain separate."""
+    from hermes_cli.release_channels import _head
+    if record.get('head') is not None or record.get('nativeRetirePending') is not None:
+        raise ValueError('channel has unresolved legacy or retention state')
+    active = _head(record.get('nativeHead'))
+    archive = _head(record.get('nativeArchive'))
+    if (active is None or archive is None or active['buildId'] == archive['buildId']
+            or active['sequence'] == archive['sequence']
+            or active['sequence'] >= record['nextSequence'] or archive['sequence'] >= record['nextSequence']):
+        raise ValueError('rollback requires two distinct allocated slots')
+    result = deepcopy(record)
+    result['nativeHead'], result['nativeArchive'] = deepcopy(archive), deepcopy(active)
+    result['revision'] += 1
     return result
 
 
