@@ -334,3 +334,39 @@ def test_r2_store_accepts_only_the_two_public_slot_metadata_keys():
     assert R2ChannelStore.metadata_key('releases/channels/stable.json') == 'releases/channels/stable.json'
     with pytest.raises(ValueError): R2ChannelStore.metadata_key('active/other.json')
     with pytest.raises(ValueError): R2ChannelStore.metadata_key('active/../archive/manifest.json')
+
+
+def test_driver_reconciles_views_only_with_lock_and_current_channel_record():
+    from hermes_cli.release_channels import canonical_json, decode_json
+    from scripts.releases.simple_native_slots import R2Driver
+    record={'nativeHead':head('a',1),'nativeArchive':None,'revision':1,'nextSequence':2}
+    class Store:
+        def __init__(self): self.values={}; self.writes=0
+        def get(self,key): return self.values.get(key)
+        def put(self,key,body,etag=None):
+            old=self.values.get(key)
+            assert (old is None and etag is None) or (old is not None and old[1]==etag)
+            self.writes+=1; self.values[key]=(body,str(self.writes))
+    store=Store()
+    driver=R2Driver(store,'https://download.example')
+    driver.verify_lock=lambda: None
+    driver.read_channel=lambda channel: (record,'etag')
+    driver.reconcile_views('stable')
+    assert decode_json(store.values['active/manifest.json'][0])['head']==record['nativeHead']
+    with pytest.raises(ValueError, match='different channel'):
+        driver.reconcile_views('preview')
+    driver.verify_lock=lambda: (_ for _ in ()).throw(RuntimeError('lock lost'))
+    with pytest.raises(RuntimeError,match='lock lost'): driver.reconcile_views('stable')
+
+
+def test_driver_refuses_view_write_after_channel_record_changes():
+    from scripts.releases.simple_native_slots import R2Driver
+    record={'nativeHead':head('a',1),'nativeArchive':None,'revision':1,'nextSequence':2}
+    class Store:
+        def get(self,key): return None
+        def put(self,*args): pytest.fail('changed channel must not be written')
+    driver=R2Driver(Store(),'https://download.example')
+    driver.verify_lock=lambda: None
+    reads=iter([(record,'old'),({**record,'revision':2},'new')])
+    driver.read_channel=lambda channel: next(reads)
+    with pytest.raises(ValueError,match='channel changed'): driver.reconcile_views('stable')

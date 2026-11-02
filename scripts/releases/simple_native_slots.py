@@ -350,6 +350,32 @@ class R2Driver:
         record = validate_record(decode_json(value[0]), name=channel)
         return record, value[1]
 
+    def reconcile_views(self, channel):
+        """Rebuild root views only while the same channel record and lock are held."""
+        from hermes_cli.release_channels import decode_json
+        self.verify_lock()
+        record, etag = self.read_channel(channel)
+        for key in ('active/manifest.json', 'archive/manifest.json'):
+            current = self.store.get(key)
+            if current is not None and decode_json(current[0]).get('channel') != channel:
+                raise ValueError('slot view belongs to a different channel')
+        driver = self
+        class FencedStore:
+            def get(self, key):
+                return driver.store.get(key)
+            def put(self, key, body, expected_etag=None):
+                driver.verify_lock()
+                current_record, current_etag = driver.read_channel(channel)
+                if current_etag != etag or current_record != record:
+                    raise ValueError('channel changed during view reconciliation')
+                driver.store.put(key, body, expected_etag)
+        reconcile_slot_views(FencedStore(), channel, record)
+        self.verify_lock()
+        confirmed, confirmed_etag = self.read_channel(channel)
+        if confirmed_etag != etag or confirmed != record:
+            raise ValueError('channel changed during view reconciliation')
+        return record
+
     def validate(self, record, manifest):
         from copy import deepcopy
         from hermes_cli.release_channels import validate_manifest
