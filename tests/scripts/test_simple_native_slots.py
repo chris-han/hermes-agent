@@ -290,3 +290,47 @@ def test_duplicate_graph_metadata_is_rejected():
     from scripts.releases.simple_native_slots import native_manifest
     with pytest.raises(ValueError,match='Invalid channel JSON'):
         native_manifest({'identity':{'msixAppIdWithOrg':'x'}},{},b'{"schema":1,"schema":1}')
+
+
+def test_derived_views_are_bound_to_record_and_reconcile_after_partial_write():
+    from hermes_cli.release_channels import canonical_json, decode_json
+    from scripts.releases.simple_native_slots import reconcile_slot_views, validate_slot_view
+    record={'name':'stable','nativeHead':head('b',2),'nativeArchive':head('a',1),'revision':3,'nextSequence':3}
+    class Store:
+        def __init__(self): self.objects={}; self.interrupt=True
+        def get(self,key): return self.objects.get(key)
+        def put(self,key,body,etag=None):
+            old=self.objects.get(key)
+            assert (old is None and etag is None) or (old is not None and old[1]==etag)
+            if key=='archive/manifest.json' and self.interrupt:
+                self.interrupt=False
+                raise OSError('interrupted')
+            self.objects[key]=(body, str(len(self.objects)+1))
+    store=Store()
+    with pytest.raises(OSError): reconcile_slot_views(store,'stable',record)
+    reconcile_slot_views(store,'stable',record)
+    active=decode_json(store.get('active/manifest.json')[0])
+    archive=decode_json(store.get('archive/manifest.json')[0])
+    assert validate_slot_view(active,'stable',record,'active') == record['nativeHead']
+    assert validate_slot_view(archive,'stable',record,'archive') == record['nativeArchive']
+    changed={**record,'revision':4,'nativeHead':record['nativeArchive'],'nativeArchive':record['nativeHead']}
+    with pytest.raises(ValueError, match='stale'): validate_slot_view(active,'stable',changed,'active')
+    reconcile_slot_views(store,'stable',changed)
+    assert validate_slot_view(decode_json(store.get('active/manifest.json')[0]),'stable',changed,'active')==changed['nativeHead']
+
+
+def test_derived_empty_archive_is_explicit_and_wrong_channel_is_rejected():
+    from scripts.releases.simple_native_slots import slot_view, validate_slot_view
+    record={'nativeHead':head('a',1),'nativeArchive':None,'revision':1,'nextSequence':2}
+    view=slot_view('stable',record,'archive')
+    assert validate_slot_view(view,'stable',record,'archive') is None
+    with pytest.raises(ValueError, match='stale'): validate_slot_view(view,'other',record,'archive')
+
+
+def test_r2_store_accepts_only_the_two_public_slot_metadata_keys():
+    from scripts.releases.channels import R2ChannelStore
+    assert R2ChannelStore.metadata_key('active/manifest.json') == 'active/manifest.json'
+    assert R2ChannelStore.metadata_key('archive/manifest.json') == 'archive/manifest.json'
+    assert R2ChannelStore.metadata_key('releases/channels/stable.json') == 'releases/channels/stable.json'
+    with pytest.raises(ValueError): R2ChannelStore.metadata_key('active/other.json')
+    with pytest.raises(ValueError): R2ChannelStore.metadata_key('active/../archive/manifest.json')

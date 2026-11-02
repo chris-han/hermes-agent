@@ -86,6 +86,42 @@ def commit_rollback(store, key, expected_record, expected_etag):
     return desired
 
 
+def slot_view(channel, record, slot):
+    """Describe a slot; the channel record remains the only authority."""
+    from hermes_cli.release_channels import _head, channel_key
+    if slot not in ('active', 'archive') or type(record.get('revision')) is not int:
+        raise ValueError('invalid slot or channel revision')
+    return {'schema': 1, 'channel': channel, 'channelKey': channel_key(channel),
+            'revision': record['revision'], 'slot': slot,
+            'head': deepcopy(_head(record.get('nativeHead' if slot == 'active' else 'nativeArchive')))}
+
+
+def validate_slot_view(view, channel, record, slot):
+    """Reject a view unless it exactly matches a freshly fetched channel record."""
+    expected = slot_view(channel, record, slot)
+    if view != expected:
+        raise ValueError('stale or invalid slot view')
+    return deepcopy(expected['head'])
+
+
+def reconcile_slot_views(store, channel, record):
+    """Repair derived views with CAS. Caller must hold and verify the publication lock.
+
+    Each view is advisory until a reader validates it against a fresh record.
+    Retry the entire operation after interruption while holding the lock.
+    """
+    from hermes_cli.release_channels import canonical_json
+    for slot in ('active', 'archive'):
+        key = slot + '/manifest.json'
+        body = canonical_json(slot_view(channel, record, slot))
+        current = store.get(key)
+        if current is None or current[0] != body:
+            store.put(key, body, None if current is None else current[1])
+        confirmed = store.get(key)
+        if confirmed is None or confirmed[0] != body:
+            raise RuntimeError('slot view readback failed')
+
+
 def publication_lock(store):
     """Share the existing storage lock; never clear another publisher's lock."""
     from contextlib import contextmanager

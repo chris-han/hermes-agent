@@ -32,8 +32,14 @@ class R2ChannelStore:
         self.creds, self.base, self.bucket = creds, base.rstrip("/"), bucket
         self.scope = R2Scope.configured() if scope is None else scope
 
+    @staticmethod
+    def metadata_key(key: str) -> str:
+        if key in ("active/manifest.json", "archive/manifest.json"):
+            return key
+        return artifact_key(key)
+
     def get(self, key: str) -> tuple[bytes, str] | None:
-        url = self.scope.object_url(self.base, self.bucket, artifact_key(key))
+        url = self.scope.object_url(self.base, self.bucket, self.metadata_key(key))
         try:
             response = r2.signed_request("GET", url, creds=self.creds, now=r2.amz_timestamp())
         except r2.R2RequestError as exc:
@@ -49,7 +55,7 @@ class R2ChannelStore:
         return body, etag
 
     def put(self, key: str, body: bytes, etag: str | None = None) -> None:
-        url = self.scope.object_url(self.base, self.bucket, artifact_key(key))
+        url = self.scope.object_url(self.base, self.bucket, self.metadata_key(key))
         condition = {"If-Match": etag} if etag is not None else {"If-None-Match": "*"}
         condition["Cache-Control"] = r2.cache_control_for(key) or "no-store"
         try:
