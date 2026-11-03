@@ -277,8 +277,14 @@ def reusable_wheel_cache(cache: Path, env: Mapping[str, str], *, toolchain: str 
     source-cache layout is inspected read-only; other layouts stay private.
     """
     cache = cache.resolve()
+    from pm.filesystem import is_junction, is_reparse_point
+
+    source = env.get("HERMES_PYTHON_SRC_ROOT")
+    locks = [Path(str(cache.parents[1]) + ".distribution.lock")]
+    if source:
+        locks.append(Path(str(Path(source).resolve()) + ".distribution.lock"))
     if (env.get("HERMES_DESKTOP_SERIAL_CACHE") != str(cache)
-            or not Path(str(cache.parents[1]) + ".distribution.lock").is_file()):
+            or not any(lock.is_file() and not lock.is_symlink() and not is_junction(lock) and not is_reparse_point(lock) for lock in locks)):
         return None
     if toolchain is not None and not re.fullmatch(r"[a-f0-9]{32}", toolchain):
         raise ValueError("observed Python toolchain key required")

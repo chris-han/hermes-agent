@@ -348,6 +348,23 @@ source = { registry = "https://pypi.org/simple" }
     assert len(calls) == 2
 
 
+def test_external_wheel_cache_uses_the_checkout_distribution_lock(tmp_path, monkeypatch):
+    from scripts.bundles import desktop_toolchain
+    import pm
+
+    source = tmp_path / 'hermes-build'
+    cache = tmp_path / 'deliverables/cache/desktop-inputs'
+    source.mkdir()
+    (source / 'uv.lock').write_text('version = 1\npackage = []\n')
+    cache.mkdir(parents=True)
+    env = {'HERMES_DESKTOP_SERIAL_CACHE': str(cache.resolve()), 'HERMES_PYTHON_SRC_ROOT': str(source)}
+    monkeypatch.setattr(desktop_toolchain, '_wheel_cache_target', lambda: 'test-target')
+    monkeypatch.setattr(pm, 'prune_cache', lambda *args, **kwargs: None)
+    assert desktop_toolchain.reusable_wheel_cache(cache, env) is None
+    Path(str(source) + '.distribution.lock').touch()
+    assert desktop_toolchain.reusable_wheel_cache(cache, env) == cache / 'python/runtime/prebuilt-test-target'
+
+
 def test_guarded_wheel_cache_never_ignores_failed_invalidation(tmp_path, monkeypatch):
     from scripts.bundles import desktop_toolchain
 
