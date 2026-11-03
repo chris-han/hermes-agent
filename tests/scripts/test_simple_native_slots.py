@@ -373,3 +373,83 @@ def test_driver_refuses_view_write_after_channel_record_changes():
     reads=iter([(record,'old'),({**record,'revision':2},'new')])
     driver.read_channel=lambda channel: next(reads)
     with pytest.raises(ValueError,match='channel changed'): driver.reconcile_views('stable')
+
+
+def test_manual_projection_binds_active_build_and_preserves_reusable_setup():
+    import hashlib,json
+    from scripts.releases.simple_native_slots import project_manual_catalog
+    build='b'*32; old='a'*32; origin='https://download.semantier.com'
+    root=f'releases/channel-builds/{build}/app.msixbundle';native={'key':root,'size':7,'sha256':'d'*64}
+    manifest=json.dumps({'schema':2,'request':{'buildId':build,'sequence':2,'channel':'semantier-acceptance',
+              'windowsVersion':'0.0.80.0','identity':{'msixAppIdWithOrg':'Semantier.Agent.Acceptance'}},
+              'packages':[{'identity':'Semantier.Agent.Acceptance','publisher':'CN=Semantier Technology, O=Semantier Technology','version':'0.0.80.0','artifact':native}],
+              'installation':{'schema':1,'root':root,'objects':[native]}}).encode()
+    active={'buildId':build,'sequence':2,'manifestKey':f'releases/channel-builds/{build}/build.json','sha256':hashlib.sha256(manifest).hexdigest()}
+    def artifact(b,name): return {'url':f'{origin}/releases/channel-builds/{b}/{name}','size':7,'sha256':'c'*64}
+    installer=artifact(old,'semantier-setup-ch2.exe'); archive=artifact(build,'SemantierAgent.zip')
+    prior={'version':'0.0.79.0','track':'acceptance','identity':'Semantier.Agent.Acceptance','provenance':'local-signed',
+           'publishedAt':'2026-11-02T00:00:00Z','installer':installer,'zip':artifact(old,'SemantierAgent.zip')}
+    raw=json.dumps({'schema':1,'releases':[prior]}).encode()
+    result=project_manual_catalog(raw,active,manifest,origin,installer,archive,'2026-11-03T00:00:00Z')
+    data=json.loads(result);assert data['releases'][0]['nativeBuildId']==build
+    assert data['releases'][0]['installer']==installer and prior in data['releases']
+    with pytest.raises(ValueError,match='head'):
+        project_manual_catalog(raw,{**active,'sha256':'f'*64},manifest,origin,installer,archive,'2026-11-03T00:00:00Z')
+    with pytest.raises(ValueError,match='setup'):
+        project_manual_catalog(raw,active,manifest,origin,artifact('d'*32,'semantier-setup-ch2.exe'),archive,'2026-11-03T00:00:00Z')
+
+
+def test_manual_projection_is_fenced_by_channel_head_and_lock(monkeypatch):
+    from scripts.releases import simple_native_slots as slots
+    class Store:
+        def __init__(self): self.body=b'old'; self.writes=[]
+        def get(self,key): return (self.body,'catalog-etag') if key=='releases/manual/catalog.json' else (b'manifest','manifest-etag')
+        def put(self,key,body,etag): self.writes.append((key,body,etag));self.body=body
+    store=Store();driver=slots.R2Driver(store,'https://download.semantier.com')
+    head={'buildId':'b'*32,'sequence':2,'manifestKey':'releases/channel-builds/'+'b'*32+'/build.json','sha256':'c'*64}
+    record={'nativeHead':head,'revision':4}; reads=[];verified=[];locks=[]
+    monkeypatch.setattr(driver,'verify_lock',lambda:locks.append(True))
+    monkeypatch.setattr(driver,'read_channel',lambda channel:(reads.append(channel) or record,'head-etag'))
+    monkeypatch.setattr(driver,'verify_manual_object',lambda row:verified.append(row))
+    monkeypatch.setattr(slots,'project_manual_catalog',lambda *args:b'new')
+    rows=[{'url':'setup'}, {'url':'zip'}]
+    assert driver.reconcile_manual_catalog('semantier-acceptance',head,b'manifest',*rows,'2026-11-03T00:00:00Z')==b'new'
+    assert verified==rows and len(reads)>=3 and len(locks)>=2
+    assert store.writes==[('releases/manual/catalog.json',b'new','catalog-etag')]
+    store.writes.clear();states=iter([(record,'head-etag'),({**record,'revision':5},'changed')])
+    monkeypatch.setattr(driver,'read_channel',lambda channel:next(states))
+    with pytest.raises(ValueError,match='changed'):
+        driver.reconcile_manual_catalog('semantier-acceptance',head,b'manifest',*rows,'2026-11-03T00:00:00Z')
+    assert store.writes==[]
+
+
+def test_manual_artifacts_bind_signed_setup_and_zip_to_native_graph(tmp_path):
+    import hashlib,json,zipfile
+    from pathlib import Path
+    from scripts.releases.simple_native_slots import prepare_manual_artifacts
+    build='a'*32;prefix=f'releases/channel-builds/{build}/';dist=tmp_path/'signed/distribution';dist.mkdir(parents=True)
+    obj=dist/'SemantierAgent.msixbundle';obj.write_bytes(b'signed bundle fixture')
+    row={'key':prefix+obj.name,'size':obj.stat().st_size,'sha256':hashlib.sha256(obj.read_bytes()).hexdigest()}
+    graph={'root':row['key'],'objects':[row]};graph_bytes=json.dumps(graph).encode();(dist/'native-graph.json').write_bytes(graph_bytes)
+    cert=Path('apps/desktop/scripts/windows-bootstrapper/SemantierAgent-signing.cer').read_bytes()
+    archive=tmp_path/'signed'/'release.zip'
+    with zipfile.ZipFile(archive,'w') as z:
+        z.writestr(obj.name,obj.read_bytes());z.writestr('native-graph.json',graph_bytes);z.writestr('SemantierAgent-signing.cer',cert)
+    archive_sha=hashlib.sha256(archive.read_bytes()).hexdigest();(archive.parent/(archive.name+'.sha256')).write_text(archive_sha+'  '+archive.name+'\n')
+    (tmp_path/'signed/receipt.json').write_text(json.dumps({'archiveName':archive.name}))
+    exe=tmp_path/'semantier-setup-ch2.exe';exe.write_bytes(b'fixture setup')
+    receipt={'channel':'channel2','sourceCommit':'b'*40,'sourceTree':'c'*40,'sha256':hashlib.sha256(exe.read_bytes()).hexdigest(),
+             'size':exe.stat().st_size,'certificateThumbprint':'A'*40,'signing':'PASS'}
+    receipt_file=tmp_path/'setup-receipt.json';receipt_file.write_text(json.dumps(receipt));verified=[]
+    manifest={'request':{'buildId':build,'publicBase':'https://download.semantier.com'}}
+    files,setup,zip_row=prepare_manual_artifacts(tmp_path,manifest,graph,exe,receipt_file,'A'*40,lambda paths,thumb:verified.append((paths,thumb)),verify_source=lambda commit,tree:None)
+    assert setup['url'].endswith(prefix+exe.name) and zip_row['url'].endswith(prefix+archive.name)
+    assert len(files)==2 and verified==[([exe],'A'*40)]
+    with zipfile.ZipFile(archive,'w') as z:
+        z.writestr(obj.name,b'X'*row['size']);z.writestr('native-graph.json',graph_bytes);z.writestr('SemantierAgent-signing.cer',cert)
+    (archive.parent/(archive.name+'.sha256')).write_text(hashlib.sha256(archive.read_bytes()).hexdigest()+'  '+archive.name+'\n')
+    with pytest.raises(ValueError,match='archive package digest mismatch'):
+        prepare_manual_artifacts(tmp_path,manifest,graph,exe,receipt_file,'A'*40,lambda *_:None,verify_source=lambda *_:None)
+    exe.write_bytes(b'fixture tamper')
+    with pytest.raises(ValueError,match='setup'):
+        prepare_manual_artifacts(tmp_path,manifest,graph,exe,receipt_file,'A'*40,lambda *_:pytest.fail('signature check reached'),verify_source=lambda *_:None)

@@ -239,3 +239,38 @@ def test_corrupt_local_artifact_is_not_uploaded(tmp_path,monkeypatch):
             with pytest.raises(ValueError,match='SHA-256'):
                 driver.upload('releases/channel-builds/'+'a'*32+'/file.msix',{'path':path,'size':5,'sha256':'a'*64})
         assert not any('channel-builds' in key for key in objects)
+
+
+def test_manual_projection_uses_real_fenced_store_and_verified_objects(monkeypatch):
+    monkeypatch.delenv('R2_DISPOSABLE_RUN',raising=False)
+    with storage() as (base,objects):
+        from hermes_cli.release_channels import canonical_json
+        creds={'access_key_id':'fixture','secret_key':'fixture'};scope=R2Scope()
+        store=R2ChannelStore(creds,base,'public',scope=scope);control=ControlStore(r2,creds,base,'private',scope=scope)
+        request=acceptance_request(commit='d'*40,controller='e'*40,version='0.0.80',source_version='0.0.0',base='https://download.semantier.com')
+        graph=native_graph();old='a'*32;build=request['buildId'];prefix=f'releases/channel-builds/{build}/'
+        graph['root']=graph['root'].replace(old,build)
+        for row in graph['objects']:
+            row['key']=row['key'].replace(old,build);row['references']=[x.replace(old,build) for x in row['references']];row['version']=request['windowsVersion']
+        signed={'signing':'PASS','verification':'PASS: synthetic','sourceCommit':request['commit'],
+                'packageName':IDENTITY['msixAppIdWithOrg'],'packageVersion':request['windowsVersion'],
+                'publisher':'CN=Semantier Technology, O=Semantier Technology','nativeGraph':graph,'signedSha256':graph['objects'][0]['sha256']}
+        manifest,_=native_manifest(request,signed,canonical_json(graph));body=canonical_json(manifest)
+        head={'buildId':build,'sequence':request['sequence'],'manifestKey':prefix+'build.json','sha256':hashlib.sha256(body).hexdigest()}
+        channel={'schema':1,'name':'semantier-acceptance','repository':'chris-han/hermes-agent','policy':'stable-release','state':'active',
+                 'revision':1,'nextSequence':request['sequence']+1,'identity':IDENTITY,'head':None,'nativeHead':head}
+        objects['public/releases/channels/semantier-acceptance.json']=canonical_json(channel)
+        objects['public/'+head['manifestKey']]=body
+        def artifact(name,payload):
+            key=prefix+name;objects['public/'+key]=payload
+            return {'url':'https://download.semantier.com/'+key,'size':len(payload),'sha256':hashlib.sha256(payload).hexdigest()}
+        setup=artifact('semantier-setup-ch2.exe',b'signed setup fixture');archive=artifact('release.zip',b'archive fixture')
+        with publication_lock(control) as token:
+            driver=R2Driver(store,'https://download.semantier.com',control,token)
+            projected=driver.reconcile_manual_catalog('semantier-acceptance',head,body,setup,archive,'2026-11-03T00:00:00Z')
+            assert json.loads(projected)['releases'][0]['nativeBuildId']==build
+            assert objects['public/releases/manual/catalog.json']==projected
+            original=projected;objects['public/'+prefix+'release.zip']=b'changed'
+            with pytest.raises(ValueError,match='checksum'):
+                driver.reconcile_manual_catalog('semantier-acceptance',head,body,setup,archive,'2026-11-03T00:00:00Z')
+            assert objects['public/releases/manual/catalog.json']==original
