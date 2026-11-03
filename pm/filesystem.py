@@ -19,6 +19,14 @@ import time
 _LOCK_POLL_SECONDS = 0.05
 
 
+def is_reparse_point(path: Path) -> bool:
+    """Inspect the entry itself, including a dangling Windows reparse point."""
+    try:
+        return bool(getattr(path.lstat(), 'st_file_attributes', 0) & 0x400)
+    except FileNotFoundError:
+        return False
+
+
 def is_junction(path: Path) -> bool:
     """Keep junctions opaque even before Python 3.12's Path.is_junction exists.
 
