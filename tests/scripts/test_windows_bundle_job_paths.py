@@ -126,3 +126,29 @@ Write-Host 'PRESEED_BINDING_PASS'
                              base64.b64encode(command.encode('utf-16le')).decode()], capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
     assert 'PRESEED_BINDING_PASS' in result.stdout
+
+
+@pytest.mark.skipif(not HOST.exists(), reason='requires Windows host PowerShell')
+def test_external_readiness_is_checked_before_version_reservation():
+    script = Path(__file__).resolve().parents[2] / 'scripts/build-windows-distribution.ps1'
+    source = script.read_text(encoding='utf-8')
+    block = source[source.index('    # Check external-output readiness'):source.index('    $counter = ', source.index('    # Check external-output readiness'))]
+    command = r'''
+$ErrorActionPreference='Stop'
+$request=[pscustomobject]@{python='fixture-python.exe'};$work='D:\repo\hermes-build'
+$script:called=$false
+function Native($tool,$arguments) {
+ $script:called=$true
+ if ($tool -cne 'fixture-python.exe' -or $arguments[0] -cne '-B' -or $arguments[1] -cne '-c' -or $arguments[-1] -cne $work -or
+     !$arguments[2].Contains('require_external_output_readiness(True)')) { throw 'invalid readiness invocation' }
+ throw 'fixture external guard refusal'
+}
+$failed=$false
+try { BLOCK } catch { if ($_.Exception.Message -notmatch 'fixture external guard refusal') { throw };$failed=$true }
+if (!$failed -or !$script:called) { throw 'external guard was not enforced' }
+Write-Host 'PREALLOCATION_READINESS_PASS'
+'''.replace('BLOCK', block)
+    result = subprocess.run([str(HOST), '-NoProfile', '-NonInteractive', '-EncodedCommand',
+                             base64.b64encode(command.encode('utf-16le')).decode()], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'PREALLOCATION_READINESS_PASS' in result.stdout

@@ -194,6 +194,17 @@ try {
       $completed = $true
       exit 0
     }
+    # Check external-output readiness before reserving a numeric release version.
+    $pythonForReadiness = $request.python
+    if (!$pythonForReadiness) {
+      foreach ($candidate in @(Get-Command python,python3 -CommandType Application -All -ErrorAction SilentlyContinue)) {
+        if ($candidate.Source -like '*\WindowsApps\*') { continue }
+        & $candidate.Source -c 'import sys; sys.exit(sys.version_info < (3, 11))' 2>$null
+        if ($LASTEXITCODE -eq 0) { $pythonForReadiness = $candidate.Source; break }
+      }
+    }
+    if (!$pythonForReadiness) { throw 'Python 3.11+ required for external-output readiness' }
+    Native $pythonForReadiness @('-B','-c','import sys; sys.version_info >= (3,11) or sys.exit("Python 3.11+ required"); sys.path.insert(0,sys.argv[1]); from scripts.bundles.desktop_inputs import require_external_output_readiness; require_external_output_readiness(True)',$work)
     $counter = Join-Path (Split-Path $work -Parent) 'semantier-agent-build-version.json'
     $retryVersion = if ($request.PSObject.Properties.Name -contains 'retryVersion') { [string]$request.retryVersion } else { '' }
     $expectedVersion = if ($request.PSObject.Properties.Name -contains 'expectedNextVersion') { [string]$request.expectedNextVersion } else { '' }
