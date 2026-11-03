@@ -345,3 +345,17 @@ test('cosmetic workspace version and UI changes preserve a verified dependency i
   manifest.scripts.postinstall+='; node -e "process.exit(0)"';json(file,manifest)
   expect(()=>prepareNodeDependencies({...options,install:false})).toThrow(/disabled/)
 },30000)
+
+test('desktop cache diagnostics follow the selected external cache', async () => {
+  const { cacheDiagnostic } = await import('../scripts/build/node-deps.mjs')
+  const root = mkdtempSync(join(tmpdir(), 'node-diagnostic-'))
+  roots.push(root)
+  const source = join(root, 'source')
+  const cache = join(root, 'cache')
+  mkdirSync(source)
+  cacheDiagnostic(source, 'node-deps', { result: 'fixture' }, { HERMES_DESKTOP_SERIAL_CACHE: cache })
+  expect(JSON.parse(readFileSync(join(cache, 'diagnostics/node-deps.jsonl'), 'utf8')).result).toBe('fixture')
+  expect(existsSync(join(source, '.cache'))).toBe(false)
+  expect(() => cacheDiagnostic(source, 'node-deps', {}, { HERMES_DESKTOP_SERIAL_CACHE: 'relative' }))
+    .toThrow(/must be absolute/)
+})

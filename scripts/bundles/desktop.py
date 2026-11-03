@@ -7,7 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -55,6 +55,20 @@ def flavored_assets(icons: Path, assets: Path):
             path.write_bytes(data)
 
 
+def stage_external_assets(source: Path, rendered: Path, destination: Path) -> None:
+    """Copy source assets and overlay generated icons into a fresh job directory."""
+    from pm.filesystem import is_junction
+    if destination.exists() or destination.is_symlink() or is_junction(destination):
+        raise ValueError("external asset output already exists")
+    for root in (source, rendered):
+        if root.is_symlink() or is_junction(root) or not root.is_dir():
+            raise ValueError("asset input is missing or redirected")
+        if any(path.is_symlink() or is_junction(path) for path in root.rglob("*")):
+            raise ValueError("asset input contains a redirected path")
+    shutil.copytree(source, destination)
+    shutil.copytree(rendered, destination, dirs_exist_ok=True)
+
+
 def release_version(_repo: Path, tag: str) -> str:
     from scripts.termux.deb_version import channel_for_tag
 
@@ -79,8 +93,9 @@ def build(repo: Path, tag: str | None, variant: str, builder_args: list[str],
 
 def build_prepared(path: Path, builder_args: list[str], variant: str | None = None) -> None:
     from scripts.bundles.desktop_prepare import PreparedDesktop
-    from scripts.bundles.desktop_inputs import build_lock
+    from scripts.bundles.desktop_inputs import build_lock, require_external_output_readiness
     prepared = PreparedDesktop.load(path)
+    require_external_output_readiness(prepared.request.external_outputs)
     with build_lock(prepared.request.source):
         _build_prepared(prepared, builder_args, variant)
 
@@ -111,7 +126,9 @@ def _build_prepared(prepared, builder_args: list[str], variant: str | None) -> N
     run([node, "scripts/build/node-deps.mjs", "--source", str(repo), "--reuse", "--no-install",
          "--native-toolchain", prepared.native_toolchain,
          *[arg for name in request.workspaces() for arg in ("--workspace", name)]], cwd=repo, env=env)
-    products = repo / "apps/desktop/build/products"
+    build_dir = request.desktop_build_dir
+    products = build_dir / "products"
+    dist_dir = build_dir / "dist" if request.external_outputs else desktop / "dist"
     icons = products / "icons"
     run([str(prepared.icon_python), "-I", str(repo / "scripts/generate_icons.py"),
          "--source", str(repo), "--out", str(icons)], cwd=repo, env=env)
@@ -130,11 +147,15 @@ def _build_prepared(prepared, builder_args: list[str], variant: str | None) -> N
     # electron-builder holds it, and the final check proves it was handed back.
     # Stamp before the render lands: the stamp's git check would call the
     # checkout dirty while the flavored icons sit over committed files.
-    run([node, "scripts/write-build-stamp.mjs"], cwd=desktop, env=env)
-    with flavored_assets(icons / "apps/desktop/assets", desktop / "assets"):
+    stamp_args = ["--output-dir", str(build_dir)] if request.external_outputs else []
+    run([node, "scripts/write-build-stamp.mjs", *stamp_args], cwd=desktop, env=env)
+    if request.external_outputs:
+        stage_external_assets(desktop / "assets", icons / "apps/desktop/assets", build_dir / "assets")
+    assets_context = nullcontext() if request.external_outputs else flavored_assets(icons / "apps/desktop/assets", desktop / "assets")
+    with assets_context:
         run([node, "scripts/build/desktop.mjs", "--source", str(repo), "--icons", str(icons),
-             "--stamp", str(desktop / "build/install-stamp.json"), "--native-deps", str(prepared.native),
-             "--out", str(desktop / "dist")], cwd=repo, env=env)
+             "--stamp", str(build_dir / "install-stamp.json"), "--native-deps", str(prepared.native),
+             "--out", str(dist_dir)], cwd=repo, env=env)
         version_args = []
         if sys.platform == "win32" and request.channel_request is None and request.tag is not None:
             script = "const m=require('./scripts/msix-shared.mjs');console.log(m.nativeQuad(process.argv[1], Number(process.env.HERMES_RELEASE_EPOCH)))"
@@ -158,6 +179,7 @@ def main() -> None:
     parser.add_argument("--repo", type=Path, default=ROOT)
     parser.add_argument("--work", type=Path)
     parser.add_argument("--cache", type=Path)
+    parser.add_argument("--external-outputs", action="store_true", help="Place Desktop build products inside the preparation job")
     parser.add_argument("--prepare-only", action="store_true")
     parser.add_argument("--clean", action="store_true",
                         help="Remove this checkout's previous build outputs, under the checkout lock, before preparing")
@@ -166,9 +188,11 @@ def main() -> None:
     args = parser.parse_args()
     builder_args = [v for v in args.builder_args if v != "--"]
     try:
+        from scripts.bundles.desktop_inputs import require_external_output_readiness
+        require_external_output_readiness(args.external_outputs)
         if args.prepared:
             if (args.tag or args.commit_build or args.release_commit or args.channel_request
-                    or args.prepare_only or args.work or args.cache or args.clean):
+                    or args.prepare_only or args.work or args.cache or args.clean or args.external_outputs):
                 parser.error("--prepared supplies the complete build request")
             build_prepared(args.prepared, builder_args, args.variant)
         else:
@@ -181,7 +205,7 @@ def main() -> None:
                                           bundle_env=decode(os.environ.get("HERMES_BUNDLE_ENV_JSON", "")),
                                           channel_request=json.loads(args.channel_request.read_text(encoding="utf-8-sig"))
                                           if args.channel_request else None,
-                                          release_commit=args.release_commit)
+                                          release_commit=args.release_commit, external_outputs=args.external_outputs)
             if args.prepare_only and builder_args:
                 parser.error("builder arguments belong to the build phase")
             result = prepare(request, clean=args.clean)

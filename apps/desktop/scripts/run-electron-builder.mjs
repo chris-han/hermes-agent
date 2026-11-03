@@ -74,7 +74,7 @@ export function validatePreparedBuilderArgs(args, inputs) {
 function toolsetArguments(inputs) {
   const require = createRequire(path.join(source, 'apps/desktop/package.json'))
   const config = require(path.join(app, 'electron-builder.config.cjs'))
-  const tools = path.join(app, config.directories?.buildResources || 'build', 'prepared-packaging-tools')
+  const tools = path.join(path.resolve(app, config.directories?.buildResources || 'build'), 'prepared-packaging-tools')
   fs.mkdirSync(tools, { recursive: true })
   return Object.entries(inputs.toolsets).map(([name, directory]) => {
     const destination = path.join(tools, name)

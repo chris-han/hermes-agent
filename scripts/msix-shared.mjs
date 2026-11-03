@@ -209,11 +209,12 @@ export function nativeManifestTemplate(template, version) {
  * Bake the admitted quad into the already staged nonstable template instead.
  * @param {string} desktopDir
  * @param {import('../apps/desktop/electron/install-stamp.js').ChannelBuildRequest} request
+ * @param {string} [buildDir]
  */
-export function stageChannelManifest(desktopDir, request) {
-  const file = path.join(desktopDir, 'build/msix-manifest.xml')
+export function stageChannelManifest(desktopDir, request, buildDir = path.join(desktopDir, 'build')) {
+  const file = path.join(buildDir, 'msix-manifest.xml')
   const template = fs.readFileSync(path.join(desktopDir, 'assets/msix-manifest.xml'), 'utf8')
-  const payload = JSON.parse(fs.readFileSync(path.join(desktopDir, 'build/agent-payload/manifest.json'), 'utf8'))
+  const payload = JSON.parse(fs.readFileSync(path.join(buildDir, 'agent-payload/manifest.json'), 'utf8'))
   const { appExecutionAliasApplications } = require(path.join(desktopDir, 'scripts/before-build.mjs'))
   const applications = appExecutionAliasApplications(payload.launchers, request.identity)
   if (template.split('${version}').length !== 2) throw new Error('Channel MSIX template must have one version macro')
@@ -221,7 +222,7 @@ export function stageChannelManifest(desktopDir, request) {
     .replace('</Applications>', `${applications}\n  </Applications>`), 'utf8')
   // The legacy hook emits one multi-alias extension when artifact/app names agree.
   // Channels always use separate applications for distinct CLI entrypoints.
-  const extensions = path.join(desktopDir, 'build/msix-extensions.xml')
+  const extensions = path.join(buildDir, 'msix-extensions.xml')
   const xml = fs.readFileSync(extensions, 'utf8')
   fs.writeFileSync(extensions, xml.replace(/<uap5:Extension\b[^>]*Category="windows\.appExecutionAlias"[^>]*>[\s\S]*?<\/uap5:Extension>/g, ''), 'utf8')
 }

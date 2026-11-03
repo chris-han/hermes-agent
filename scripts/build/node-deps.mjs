@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto'
 import { appendFileSync, mkdirSync, existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { delimiter, dirname, join, resolve } from 'node:path'
+import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { parseArgs } from 'node:util'
 
@@ -22,8 +22,10 @@ export function dependencyContents(bytes, lock = false, cosmeticVersion = true) 
   return JSON.stringify({...cosmetic(value), packages})
 }
 
-export function cacheDiagnostic(source, scope, record) {
-  const directory = join(source, '.cache/desktop-inputs/diagnostics')
+export function cacheDiagnostic(source, scope, record, env = process.env) {
+  const selected = env.HERMES_DESKTOP_SERIAL_CACHE
+  if (selected && !isAbsolute(selected)) throw new Error('Desktop cache path must be absolute')
+  const directory = join(selected || join(source, '.cache/desktop-inputs'), 'diagnostics')
   mkdirSync(directory, {recursive:true})
   appendFileSync(join(directory, scope + '.jsonl'), JSON.stringify({producedAt:new Date().toISOString(),...record}) + '\n')
 }
@@ -169,7 +171,7 @@ export function prepareNodeDependencies({ source, workspaces, env = process.env,
   try {reason=completedInstallReason({source,receipt,hiddenLock,key,nativeKey})} catch {reason='unreadable-install-receipt'}
   cacheDiagnostic(source,'node-deps',{result:reuse && !reason ? 'hit':'miss',reason:reason || (reuse ? 'verified':'reuse-disabled'),key,
     node:process.versions.node,abi:process.versions.modules,npm:npmVersion,platform:process.platform,arch:process.arch,
-    workspaces:selected,nativeToolchain:nativeToolchain === undefined ? null:createHash('sha256').update(nativeKey).digest('hex')})
+    workspaces:selected,nativeToolchain:nativeToolchain === undefined ? null:createHash('sha256').update(nativeKey).digest('hex')}, env)
   if (reuse && !reason) {
     console.log(`node-deps: reusing completed install (${selected.join(', ')})`)
     return { source, workspaces: selected }

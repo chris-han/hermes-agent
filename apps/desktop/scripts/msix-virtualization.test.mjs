@@ -1,7 +1,7 @@
 // Hermes shares %LOCALAPPDATA% and HKCU state with the unpackaged CLI/gateway,
 // so every MSIX the repo produces must opt out of write virtualisation and the
 // builder must request the restricted capability that permits it.
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import { createRequire } from 'node:module'
 import os from 'node:os'
@@ -76,4 +76,79 @@ test('store, release, canary and channel MSIX manifests keep write virtualisatio
 test('the builder config requests unvirtualizedResources for MSIX packages', () => {
   const config = require('../electron-builder.config.cjs')
   expect(config.msix.capabilities).toContain('unvirtualizedResources')
+})
+
+test('MSIX manifest staging accepts an external owned build directory', () => {
+  const app = taggedApp('v0.27.1')
+  const external = fs.mkdtempSync(path.join(os.tmpdir(), 'msix-owned-build-'))
+  roots.push(external)
+  const result = stageStoreManifest(app, 'v0.27.1', external)
+  expect(result).toBe(path.join(external, 'store-msix-manifest.xml'))
+  expect(virtualization(fs.readFileSync(result, 'utf8'))).toEqual({ fileSystem: 'disabled', registry: 'disabled' })
+  expect(fs.existsSync(path.join(app, 'build'))).toBe(false)
+  const release = stageReleaseManifest(app, 'v0.27.1', external)
+  expect(release).toBe(path.join(external, 'msix-manifest.xml'))
+  expect(virtualization(fs.readFileSync(release, 'utf8'))).toEqual({ fileSystem: 'disabled', registry: 'disabled' })
+  expect(fs.existsSync(path.join(app, 'build'))).toBe(false)
+})
+
+test('channel MSIX manifest and extensions stay in the selected build directory', () => {
+  const app = channelApp()
+  const external = fs.mkdtempSync(path.join(os.tmpdir(), 'msix-channel-build-'))
+  roots.push(external)
+  fs.cpSync(path.join(app, 'build'), external, { recursive: true })
+  fs.rmSync(path.join(app, 'build'), { recursive: true })
+  stageChannelManifest(app, {
+    windowsVersion: '0.0.7.0', identity: { appNamePascal: 'HermesChannelab12', displayName: 'Hermes preview' }
+  }, external)
+  expect(virtualization(fs.readFileSync(path.join(external, 'msix-manifest.xml'), 'utf8')))
+    .toEqual({ fileSystem: 'disabled', registry: 'disabled' })
+  expect(fs.existsSync(path.join(app, 'build'))).toBe(false)
+})
+
+
+test('before-build writes MSIX assets and extensions to the selected job directory', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'msix-external-hook-'))
+  roots.push(root)
+  const app = path.join(root, 'apps/desktop')
+  const scripts = path.join(app, 'scripts')
+  const external = path.join(root, 'job/build')
+  fs.mkdirSync(scripts, { recursive: true })
+  fs.mkdirSync(path.join(root, 'scripts'), { recursive: true })
+  fs.cpSync(path.join(desktop, 'assets'), path.join(app, 'assets'), { recursive: true })
+  fs.copyFileSync(path.join(desktop, 'product-identity.cjs'), path.join(app, 'product-identity.cjs'))
+  fs.copyFileSync(path.join(desktop, 'scripts/before-build.mjs'), path.join(scripts, 'before-build.mjs'))
+  for (const file of ['msix-shared.mjs', 'release-content-types.json']) {
+    fs.copyFileSync(path.resolve(desktop, '../../scripts', file), path.join(root, 'scripts', file))
+  }
+  fs.cpSync(path.join(app, 'assets'), path.join(external, 'assets'), { recursive: true })
+  fs.mkdirSync(path.join(external, 'agent-payload'), { recursive: true })
+  fs.writeFileSync(path.join(external, 'agent-payload/manifest.json'), JSON.stringify({ launchers: ['hermes'] }))
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(HERMES_|SEMANTIER_|GITHUB_)/.test(key)))
+  Object.assign(env, { HERMES_DESKTOP_VARIANT: 'bundled', HERMES_DESKTOP_BUILD_DIR: external })
+  const run = spawnSync(process.execPath, ['--input-type=module', '-e',
+    `import { pathToFileURL } from 'node:url'; const m = await import(pathToFileURL(process.argv[1])); await m.default()` ,
+    path.join(scripts, 'before-build.mjs')], { env, encoding: 'utf8' })
+  expect(run.status, run.stderr).toBe(0)
+  expect(fs.existsSync(path.join(external, 'appx/Square44x44Logo.png'))).toBe(true)
+  expect(fs.readFileSync(path.join(external, 'msix-extensions.xml'), 'utf8')).toContain('hermes.exe')
+  expect(fs.existsSync(path.join(app, 'build'))).toBe(false)
+})
+
+test('builder configuration consumes the selected external build directory', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'msix-external-config-'))
+  roots.push(root)
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(HERMES_|SEMANTIER_|GITHUB_)/.test(key)))
+  Object.assign(env, { HERMES_DESKTOP_VARIANT: 'bundled', HERMES_DESKTOP_BUILD_DIR: root })
+  const code = `const c=require(process.argv[1]);console.log(JSON.stringify({resources:c.directories.buildResources,extra:c.extraResources,extensions:c.msix.customExtensionsPath,files:c.files,icon:c.icon}))`
+  const run = spawnSync(process.execPath, ['-e', code, path.join(desktop, 'electron-builder.config.cjs')], { env, encoding: 'utf8' })
+  expect(run.status, run.stderr).toBe(0)
+  const actual = JSON.parse(run.stdout)
+  expect(actual.resources).toBe(root)
+  expect(actual.icon).toBe(path.join(root, 'assets/icon'))
+  expect(actual.files).toContainEqual({ from: path.join(root, 'assets'), to: 'assets', filter: ['**/*'] })
+  expect(actual.extra.map(item => item.from)).toContain(path.join(root, 'agent-payload'))
+  expect(actual.extra.map(item => item.from)).toContain(path.join(root, 'install-stamp.json'))
+  expect(actual.extensions).toBe(path.join(root, 'msix-extensions.xml'))
+  expect(actual.files).toContainEqual({ from: path.join(root, 'dist'), to: 'dist', filter: ['**/*'] })
 })

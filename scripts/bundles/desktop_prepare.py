@@ -102,11 +102,17 @@ class BuildRequest:
     bundle_env: dict[str, str | None]
     channel_request: dict | None = None
     release_epoch: int | None = None
+    external_outputs: bool = False
+
+    @property
+    def desktop_build_dir(self) -> Path:
+        return self.work / "desktop-build" if self.external_outputs else self.source / "apps/desktop/build"
 
     @classmethod
     def create(cls, source: Path, *, tag: str | None, commit: str | None, variant: str,
                work: Path, cache: Path, bundle_env: dict[str, str | None],
-               channel_request: dict | None = None, release_commit: str | None = None) -> BuildRequest:
+               channel_request: dict | None = None, release_commit: str | None = None,
+               external_outputs: bool = False) -> BuildRequest:
         from pm.store import current_target
         from scripts.bundles.desktop import release_version
         from scripts.releases.bundle_env import validate
@@ -134,6 +140,10 @@ class BuildRequest:
             raise ValueError("Bundle environment defaults require a commit build")
         source, work, cache = source.resolve(), work.resolve(), cache.resolve()
         require_output_roots(source)
+        if not isinstance(external_outputs, bool):
+            raise ValueError("external output selection must be boolean")
+        if external_outputs and work.is_relative_to(source):
+            raise ValueError("external build work must be outside source")
         if work == cache or work.is_relative_to(cache) or cache.is_relative_to(work):
             raise ValueError("preparation work and cache must be separate directories")
         for destination in (work, cache):
@@ -176,10 +186,13 @@ class BuildRequest:
                 raise ValueError("channel sourceVersion differs from checkout project version")
             version = channel_request["version"]
         return cls(source, work, cache, commit, tag, version, variant, current_target(), bundle_env,
-                   channel_request, release_epoch)
+                   channel_request, release_epoch, external_outputs)
 
     def data(self) -> dict:
-        return {**asdict(self), "source": str(self.source), "work": str(self.work), "cache": str(self.cache)}
+        data = {**asdict(self), "source": str(self.source), "work": str(self.work), "cache": str(self.cache)}
+        if not self.external_outputs:
+            data.pop("external_outputs")  # Preserve historical preparation identities.
+        return data
 
     @classmethod
     def from_data(cls, data: dict) -> BuildRequest:
@@ -188,6 +201,12 @@ class BuildRequest:
         return request
 
     def validate_channel(self) -> None:
+        if not isinstance(self.external_outputs, bool):
+            raise ValueError("external output selection must be boolean")
+        if self.external_outputs and (not self.work.is_absolute()
+                                      or self.work.resolve().is_relative_to(self.source.resolve())
+                                      or self.source.resolve().is_relative_to(self.work.resolve())):
+            raise ValueError("external build work must not overlap source")
         if self.channel_request is None:
             return
         channel = validate_channel_request(self.channel_request)
@@ -281,6 +300,14 @@ def clean_outputs(request: BuildRequest) -> None:
     from pm.filesystem import is_junction
     from scripts.bundles.runtime_cache import retained_runtime, retention_path, dependencies_path
     require_output_roots(request.source)
+    if request.external_outputs:
+        owner = request.work / ".desktop-preparation"
+        if (request.work.is_symlink() or is_junction(request.work) or owner.is_symlink()
+                or is_junction(owner)):
+            raise ValueError("external build work ownership must not be redirected")
+        if owner.is_file() and owner.read_text(encoding="utf-8-sig") == str(request.source):
+            remove_tree(request.work)
+        return
     build = request.source / "apps/desktop/build"
     payload = build / "agent-payload"
     serial = os.environ.get("HERMES_DESKTOP_SERIAL_CACHE")
@@ -317,8 +344,9 @@ def clean_outputs(request: BuildRequest) -> None:
 
 
 def prepare(request: BuildRequest, *, clean: bool = False) -> Path:
-    from scripts.bundles.desktop_inputs import build_lock
+    from scripts.bundles.desktop_inputs import build_lock, require_external_output_readiness
 
+    require_external_output_readiness(request.external_outputs)
     request.validate_channel()
     if request.channel_request is not None and not request.target.startswith(("darwin-", "win32-")):
         raise ValueError("channel builds require a supported native macOS or Windows target")
@@ -332,19 +360,27 @@ def prepare(request: BuildRequest, *, clean: bool = False) -> Path:
 
 
 def _prepare(request: BuildRequest) -> Path:
+    from scripts.bundles.desktop_inputs import require_external_output_readiness
+    require_external_output_readiness(request.external_outputs)
     from scripts.bundles.desktop_toolchain import run_preparation
     from pm.lock import _write
     from hermes_cli.runtime_state import _lock
 
     require_source(request.source, request.commit)
     owner = request.work / ".desktop-preparation"
+    lock_path = request.work / ".lock"
+    if request.external_outputs:
+        from pm.filesystem import is_junction
+        for path in (request.work, owner, lock_path):
+            if path.is_symlink() or is_junction(path):
+                raise ValueError("external preparation ownership is redirected")
     if request.work.exists():
         if not owner.is_file() or owner.read_text(encoding="utf-8-sig") != str(request.source):
             raise ValueError(f"preparation work directory is not owned by this checkout: {request.work}")
     else:
         request.work.mkdir(parents=True)
         owner.write_text(str(request.source), encoding="utf-8")
-    with (request.work / ".lock").open("a+b") as lock:
+    with lock_path.open("a+b") as lock:
         if not _lock(lock.fileno(), wait=False):
             raise ValueError("another desktop preparation is using this work directory")
         result = request.work / "prepared.json"
@@ -362,6 +398,8 @@ def _prepare(request: BuildRequest) -> Path:
 
 
 def prepare_in_worker(request: BuildRequest) -> Path:
+    from scripts.bundles.desktop_inputs import require_external_output_readiness
+    require_external_output_readiness(getattr(request, "external_outputs", False))
     from scripts.bundles.desktop import run
     from scripts.bundles.desktop_toolchain import prepare_tools
     from scripts.build.icon_environment import prepare_icon_environment
@@ -411,7 +449,7 @@ def prepare_in_worker(request: BuildRequest) -> Path:
                 dependency_identity = dependency_key(request.source, request.commit, observed.name, request.target)
             else:
                 diagnostic(request.cache, result="disabled", reason="incomplete-python-toolchain", missing=state["missing"])
-        payload = prepare_native(out=request.source / "apps/desktop/build/agent-payload", ref=request.commit,
+        payload = prepare_native(out=request.desktop_build_dir / "agent-payload", ref=request.commit,
                                  source=request.source, cache=Path(env["UV_CACHE_DIR"]),
                                  tools=request.cache / "tools", env=env, runtime_cache=runtime_cache,
                                  dependency_identity=dependency_identity)
@@ -419,7 +457,7 @@ def prepare_in_worker(request: BuildRequest) -> Path:
         from pm.environments import venv_python
         # The admitted bundled environment already owns Pillow/resvg. Reuse it
         # rather than creating another Python environment for every icon render.
-        icon_python = venv_python(request.source / "apps/desktop/build/agent-payload/venv")
+        icon_python = venv_python(request.desktop_build_dir / "agent-payload/venv")
     else:
         icon_environment = request.work / "icon-environment"
         if icon_environment.exists():

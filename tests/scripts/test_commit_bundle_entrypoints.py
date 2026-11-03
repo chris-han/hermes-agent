@@ -109,3 +109,102 @@ def test_termux_commit_args_reach_prerequisite_checks_without_mutation(tmp_path)
         assert result.returncode == 1, result.stdout + result.stderr
         assert "usage:" not in result.stderr
         assert not out.exists()
+
+
+def test_external_job_driver_routes_prepared_products_outside_checkout(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from scripts.bundles import desktop_inputs, desktop_prepare, native
+
+    source = tmp_path / 'source'
+    build = tmp_path / 'job' / 'desktop-build'
+    request = SimpleNamespace(source=source, target='linux-x64', release_epoch=None, version='1.2.3',
+                              tag=None, channel_request=None, external_outputs=True, desktop_build_dir=build,
+                              workspaces=list, commit='a' * 40)
+    prepared = SimpleNamespace(request=request, validate=lambda: None, node=Path('/node'),
+                               icon_python=Path('/python'), native=tmp_path / 'native',
+                               packager=tmp_path / 'packager', payload=tmp_path / 'payload', native_toolchain='fixture')
+    monkeypatch.setattr(desktop_inputs, 'validate_builder_identity', lambda *args: None)
+    monkeypatch.setattr(desktop_inputs, 'select_variant', lambda *args: 'bundled')
+    monkeypatch.setattr(desktop_inputs, 'build_environment', lambda *args: {'HERMES_DESKTOP_BUILD_DIR': str(build)})
+    monkeypatch.setattr(desktop_prepare, 'require_source', lambda *args: None)
+    monkeypatch.setattr(native, 'finish_native', lambda *args: False)
+    monkeypatch.setattr(desktop, 'flavored_assets', lambda *args: pytest.fail('checkout assets must not be changed'))
+    assets = []
+    monkeypatch.setattr(desktop, 'stage_external_assets', lambda *args: assets.append(args))
+    calls = []
+    monkeypatch.setattr(desktop, 'run', lambda argv, **kwargs: calls.append((argv, kwargs)))
+    desktop._build_prepared(prepared, [], None)
+    stamp = next(args for args, _ in calls if any(str(arg).endswith('write-build-stamp.mjs') for arg in args))
+    renderer = next(args for args, _ in calls if any(str(arg).endswith('scripts/build/desktop.mjs') for arg in args))
+    assert assets == [(source / 'apps/desktop/assets', build / 'products/icons/apps/desktop/assets', build / 'assets')]
+    assert stamp[stamp.index('--output-dir') + 1] == str(build)
+    assert renderer[renderer.index('--stamp') + 1] == str(build / 'install-stamp.json')
+    assert renderer[renderer.index('--out') + 1] == str(build / 'dist')
+
+
+def test_external_assets_overlay_preserves_checkout_and_refuses_existing_output(tmp_path):
+    source = tmp_path / 'source-assets'
+    rendered = tmp_path / 'rendered-assets'
+    output = tmp_path / 'job-assets'
+    source.mkdir()
+    rendered.mkdir()
+    (source / 'icon.ico').write_text('source')
+    (source / 'manifest.xml').write_text('template')
+    (rendered / 'icon.ico').write_text('rendered')
+    desktop.stage_external_assets(source, rendered, output)
+    assert (output / 'icon.ico').read_text() == 'rendered'
+    assert (output / 'manifest.xml').read_text() == 'template'
+    assert (source / 'icon.ico').read_text() == 'source'
+    with pytest.raises(ValueError, match='already exists'):
+        desktop.stage_external_assets(source, rendered, output)
+    (rendered / 'link').symlink_to(source / 'manifest.xml')
+    with pytest.raises(ValueError, match='redirected'):
+        desktop.stage_external_assets(source, rendered, tmp_path / 'other-output')
+    assert not (tmp_path / 'other-output').exists()
+
+
+def test_external_job_cli_binds_mode_and_forwards_packager_output(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from scripts.bundles import desktop_prepare
+
+    seen = {}
+    def create(source, **kwargs):
+        seen.update(kwargs)
+        return SimpleNamespace()
+    monkeypatch.setattr(desktop_prepare.BuildRequest, 'create', create)
+    monkeypatch.setattr(desktop_prepare, 'prepare', lambda request, clean=False: tmp_path / 'prepared.json')
+    monkeypatch.setattr(desktop, 'build_prepared', lambda path, args: seen.update(builder_args=args))
+    monkeypatch.setattr(sys, 'argv', ['desktop.py', '--repo', str(tmp_path / 'source'), '--commit', 'a' * 40,
+                                     '--work', str(tmp_path / 'job'), '--cache', str(tmp_path / 'cache'),
+                                     '--external-outputs', '--', f'-c.directories.output={tmp_path / "release"}'])
+    desktop.main()
+    assert seen['external_outputs'] is True
+    assert seen['work'] == tmp_path / 'job'
+    assert seen['builder_args'] == [f'-c.directories.output={tmp_path / "release"}']
+
+
+def test_windows_external_job_refuses_before_preparation_until_layout_complete(tmp_path, monkeypatch, capsys):
+    from scripts.bundles import desktop_prepare
+
+    monkeypatch.setattr(sys, 'platform', 'win32')
+    monkeypatch.setattr(desktop_prepare.BuildRequest, 'create', lambda *args, **kwargs: pytest.fail('preparation must not start'))
+    monkeypatch.setattr(sys, 'argv', ['desktop.py', '--repo', str(tmp_path / 'source'), '--commit', 'a' * 40,
+                                     '--work', str(tmp_path / 'job'), '--cache', str(tmp_path / 'cache'),
+                                     '--external-outputs'])
+    with pytest.raises(SystemExit) as error:
+        desktop.main()
+    assert error.value.code == 1
+    assert 'external Windows build path migration is incomplete' in capsys.readouterr().err
+    assert not (tmp_path / 'job').exists()
+
+
+def test_windows_prepared_external_job_refuses_before_lock(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from scripts.bundles import desktop_inputs, desktop_prepare
+
+    monkeypatch.setattr(sys, 'platform', 'win32')
+    request = SimpleNamespace(external_outputs=True, source=tmp_path / 'source')
+    monkeypatch.setattr(desktop_prepare.PreparedDesktop, 'load', lambda path: SimpleNamespace(request=request))
+    monkeypatch.setattr(desktop_inputs, 'build_lock', lambda *args: pytest.fail('source lock must not be touched'))
+    with pytest.raises(ValueError, match='external Windows build path migration is incomplete'):
+        desktop.build_prepared(tmp_path / 'prepared.json', [])

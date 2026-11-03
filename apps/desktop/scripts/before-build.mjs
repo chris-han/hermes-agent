@@ -28,20 +28,24 @@ const {
 } = require('../product-identity.cjs')
 
 export default async function beforeBuild() {
-  stageMsixAssets()
-  writeMsixExtensions()
-  if (store) stageStoreManifest(path.join(import.meta.dirname, '..'), process.env.HERMES_PAYLOAD_TAG)
+  const desktop = path.join(import.meta.dirname, '..')
+  const selected = process.env.HERMES_DESKTOP_BUILD_DIR
+  if (selected && !path.isAbsolute(selected)) throw new Error('Desktop build directory must be absolute')
+  const buildDir = selected || path.join(desktop, 'build')
+  stageMsixAssets(buildDir)
+  writeMsixExtensions(buildDir)
+  if (store) stageStoreManifest(desktop, process.env.HERMES_PAYLOAD_TAG, buildDir)
   else if (process.env.HERMES_PAYLOAD_TAG) {
-    stageReleaseManifest(path.join(import.meta.dirname, '..'), process.env.HERMES_PAYLOAD_TAG)
+    stageReleaseManifest(desktop, process.env.HERMES_PAYLOAD_TAG, buildDir)
   }
 
   return false
 }
 
-function stageMsixAssets() {
+function stageMsixAssets(buildDir) {
   const desktop = path.join(import.meta.dirname, '..')
-  const sourceDir = path.join(desktop, 'assets', 'appx')
-  const stageDir = path.join(desktop, 'build', 'appx')
+  const sourceDir = path.join(process.env.HERMES_DESKTOP_BUILD_DIR ? buildDir : desktop, 'assets', 'appx')
+  const stageDir = path.join(buildDir, 'appx')
   // Every generated logo goes in: the qualified siblings (*.scale-N,
   // *.targetsize-N_altform-*) are what make Windows draw an exact bitmap per
   // taskbar/Start slot instead of upscaling the 44px base, and app-builder-lib
@@ -59,17 +63,17 @@ function stageMsixAssets() {
   }
 }
 
-export function stageStoreManifest(desktop, tag) {
+export function stageStoreManifest(desktop, tag, buildDir = path.join(desktop, 'build')) {
   const template = fs.readFileSync(path.join(desktop, 'assets/msix-manifest.xml'), 'utf8')
   const { version } = appIdentity(desktop, tag)
-  const output = path.join(desktop, 'build/store-msix-manifest.xml')
+  const output = path.join(buildDir, 'store-msix-manifest.xml')
   fs.mkdirSync(path.dirname(output), { recursive: true })
   fs.writeFileSync(output, storeManifestTemplate(template, version), 'utf8')
   return output
 }
 
-export function stageReleaseManifest(desktop, tag) {
-  const generated = path.join(desktop, 'build/msix-manifest.xml')
+export function stageReleaseManifest(desktop, tag, buildDir = path.join(desktop, 'build')) {
+  const generated = path.join(buildDir, 'msix-manifest.xml')
   const { identity, version } = appIdentity(desktop, tag)
   const source = identity.appNamePascal === identity.artifactNamePascal || !fs.existsSync(generated)
     ? path.join(desktop, 'assets/msix-manifest.xml')
@@ -80,11 +84,10 @@ export function stageReleaseManifest(desktop, tag) {
   return generated
 }
 
-function writeMsixExtensions() {
+function writeMsixExtensions(buildDir) {
   const desktop = path.join(import.meta.dirname, '..')
-  const output = path.join('build', 'msix-extensions.xml')
-  const file = path.join(desktop, output)
-  const manifest = path.join(desktop, 'build', 'agent-payload', 'manifest.json')
+  const file = path.join(buildDir, 'msix-extensions.xml')
+  const manifest = path.join(buildDir, 'agent-payload', 'manifest.json')
   const launchers = ['bundled', 'store'].includes(process.env.HERMES_DESKTOP_VARIANT || '')
     ? JSON.parse(fs.readFileSync(manifest, 'utf8')).launchers : []
   if (!Array.isArray(launchers)) throw new Error('Bundled payload has no declared launchers')
@@ -93,8 +96,8 @@ function writeMsixExtensions() {
   if (nonstable) {
     const template = fs.readFileSync(path.join(desktop, 'assets/msix-manifest.xml'), 'utf8')
     const applications = appExecutionAliasApplications(launchers, { appNamePascal, displayName })
-    fs.mkdirSync(path.join(desktop, 'build'), { recursive: true })
-    fs.writeFileSync(path.join(desktop, 'build/msix-manifest.xml'),
+    fs.mkdirSync(buildDir, { recursive: true })
+    fs.writeFileSync(path.join(buildDir, 'msix-manifest.xml'),
       template.replace('</Applications>', `${applications}\n  </Applications>`))
   }
   // The uap3:AppExtension fragment that registers the app as a Windows

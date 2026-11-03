@@ -14,12 +14,12 @@ import { fileURLToPath } from 'node:url'
  * development, and a dev server would grow it one entry per save with no build to prune it.
  *
  * @param {any} plugin the babel plugin whose `transform.handler` is memoized
- * @param {{ command: string, cacheRoot: string, base: string, toolchain: string[], env?: Record<string, string | undefined> }} options
+ * @param {{ command: string, cacheRoot: string, base: string, toolchain: string[], enabled?: boolean, env?: Record<string, string | undefined> }} options
  *   `toolchain` lists the files that pin everything the pass runs (the lockfile, the config
  *   holding the preset); `base` makes cache keys independent of the checkout location.
  */
-export function withCompilerCache(plugin, { command, cacheRoot, base, toolchain, env = process.env }) {
-  if (command !== 'build') return plugin
+export function withCompilerCache(plugin, { command, cacheRoot, base, toolchain, enabled = true, env = process.env }) {
+  if (command !== 'build' || !enabled) return plugin
 
   // The toolchain files, this module, and NODE_ENV (which selects the compiler's dev mode)
   // are together the whole identity of the pass.

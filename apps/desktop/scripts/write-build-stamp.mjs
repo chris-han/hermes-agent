@@ -12,6 +12,7 @@ import productIdentity from "../product-identity.cjs"
 import { channelBuildRequest } from "../../../scripts/msix-shared.mjs"
 import { validateBundleEnvironment } from "./bundle-env.mjs"
 import { execFileSync } from "child_process"
+import { parseArgs } from "node:util"
 
 import { isMain } from "./utils.mjs"
 
@@ -24,7 +25,6 @@ export const FALLBACK_BRANCH = "main"
 const DESKTOP_ROOT = resolve(import.meta.dirname, "..")
 const REPO_ROOT = resolve(DESKTOP_ROOT, "..", "..")
 const OUT_DIR = join(DESKTOP_ROOT, "build")
-const OUT_FILE = join(OUT_DIR, "install-stamp.json")
 
 export function linuxGitInvocation(distro, cwd, args) {
   if (!/^[A-Za-z0-9_.-]{1,64}$/.test(distro) || !cwd.startsWith('/')) throw new Error('Invalid Linux Git binding')
@@ -166,6 +166,8 @@ export function writeDesktopStamp(outDir, built) {
 }
 
 function main() {
+  const { values } = parseArgs({ options: { 'output-dir': { type: 'string' } } })
+  const outputDir = values['output-dir'] ? resolve(values['output-dir']) : OUT_DIR
   const stamp = resolveStamp()
   if (!stamp || !stamp.commit) {
     // Should not happen — fromFallback() always provides a commit.
@@ -202,13 +204,13 @@ function main() {
 
   const bundled = ['bundled', 'store'].includes(process.env.HERMES_DESKTOP_VARIANT)
   const payload = bundled
-    ? stageDesktopLaunchers(join(OUT_DIR, 'agent-payload'))
+    ? stageDesktopLaunchers(join(outputDir, 'agent-payload'))
     : null
   const built = buildStampPayload(stamp, process.env, process.platform, payload)
-  writeDesktopStamp(OUT_DIR, built)
+  writeDesktopStamp(outputDir, built)
   console.log(
     "[write-build-stamp] wrote " +
-      relative(REPO_ROOT, OUT_FILE) +
+      relative(REPO_ROOT, join(outputDir, 'install-stamp.json')) +
       " -> " +
       stamp.commit.slice(0, 12) +
       (stamp.branch ? " (" + stamp.branch + ")" : "") +

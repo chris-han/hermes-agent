@@ -260,8 +260,8 @@ def test_windows_repair_copies_product_package_without_server_tree(tmp_path):
     assert not (output / 'semantier-runtime').exists()
 
 
-def test_offline_repair_installs_product_without_server_source(tmp_path):
-    """Exercise a locked PM snapshot, not the full Windows product repair."""
+def test_offline_repair_installs_product_without_server_source(tmp_path, monkeypatch):
+    """Exercise a seeded locked PM snapshot, not the full Windows product repair."""
     import os
     import shutil
     import subprocess
@@ -286,7 +286,23 @@ def test_offline_repair_installs_product_without_server_source(tmp_path):
     assert uv is not None
     seed_cache = os.environ.get('SEMANTIER_PRODUCT_SEED_CACHE')
     assert seed_cache and Path(seed_cache).is_dir(), 'set SEMANTIER_PRODUCT_SEED_CACHE to the populated owned uv cache'
-    env = {**os.environ, 'UV_OFFLINE': '1', 'UV_CACHE_DIR': seed_cache}
+    # Windows packages a compact seed and PM expands it into a separate writable
+    # profile cache before uv repairs the locked product environment.
+    from pm import packages, paths
+    from scripts.bundles.native import compact_uv_cache
+    payload = tmp_path / 'payload'
+    packaged_cache = payload / 'uv-cache'
+    shutil.copytree(seed_cache, packaged_cache, symlinks=False)
+    compact_uv_cache(packaged_cache)
+    store = payload / 'tools'
+    store.mkdir()
+    monkeypatch.setattr(paths, 'store_root', lambda: store)
+    monkeypatch.setattr(paths, 'repo_root', lambda: output)
+    monkeypatch.setattr('hermes_constants.get_default_hermes_root', lambda: tmp_path / 'profile')
+    writable_cache = packages.uv_cache_dir()
+    assert (writable_cache / '.seeded').is_file()
+    assert (packaged_cache / 'seed.zip').is_file()
+    env = {**os.environ, 'UV_OFFLINE': '1', 'UV_CACHE_DIR': str(writable_cache)}
     sync = subprocess.run([uv, 'sync', '--offline', '--frozen', '--no-dev', '--python', sys.executable],
                           cwd=output, env=env, capture_output=True, text=True, timeout=60, check=False)
     assert sync.returncode == 0, sync.stderr

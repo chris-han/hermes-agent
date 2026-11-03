@@ -92,3 +92,14 @@ test('closing a build keeps only the entries and generation it used; watch build
     assert.equal(fs.existsSync(path.join(t.root, 'never')), false)
   } finally { t.cleanup() }
 })
+
+test('an external-output build can disable the checkout-local compiler cache', async () => {
+  const t = setup()
+  try {
+    const plain = t.cached({ enabled: false })
+    await plain.transform.handler('<App/>', path.join(t.root, 'src/App.tsx'))
+    assert.equal(t.calls.length, 1)
+    assert.equal(plain.closeBundle, undefined)
+    assert.equal(fs.existsSync(path.join(t.root, 'cache')), false)
+  } finally { t.cleanup() }
+})

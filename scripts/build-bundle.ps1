@@ -42,7 +42,9 @@ param(
   [string]$AcceptancePublicBase = '',
   [string]$ControllerCommit = '',
   [string]$Cache = '',
-  [string]$Work = ''
+  [string]$Work = '',
+  [string]$PackageOutput = '',
+  [switch]$ExternalOutputs
 )
 
 # 'Stop' turns the native stderr progress lines of the build into terminating errors on Windows PowerShell 5.
@@ -153,22 +155,26 @@ try {
     $env:HERMES_DESKTOP_VARIANT = 'bundled'
     Write-Host "build-bundle: building $sha as Store v$version (local claim $claim)"
     # Prepare as bundled, then package as store from that preparation, as CI does.
-    $work = if ($Work) { $Work } else { Join-Path $Repo '.build\desktop-job' }
-    $cachePath = if ($Cache) { $Cache } else { Join-Path $Repo '.cache\desktop-inputs' }
+    $storeWork = if ($Work) { $Work } else { Join-Path $Repo '.build\desktop-job' }
+    $storeCache = if ($Cache) { $Cache } else { Join-Path $Repo '.cache\desktop-inputs' }
+    $externalArgs = if ($ExternalOutputs) { @('--external-outputs') } else { @() }
     & $py scripts/bundles/desktop.py --tag "v$version" --release-commit $sha --variant bundled --prepare-only `
-      --work $work --cache $cachePath --clean
+      --work $storeWork --cache $storeCache --clean @externalArgs
     if ($LASTEXITCODE) { Fail "preparation failed (exit $LASTEXITCODE)" }
-    & $py scripts/bundles/desktop.py --prepared (Join-Path $work 'prepared.json') --variant store
+    $builderArgs = if ($PackageOutput) { @('--', ('-c.directories.output=' + $PackageOutput)) } else { @() }
+    & $py scripts/bundles/desktop.py --prepared (Join-Path $storeWork 'prepared.json') --variant store @builderArgs
     if ($LASTEXITCODE) { Fail "Store packaging failed (exit $LASTEXITCODE)" }
   } else {
     Write-Host "build-bundle: building $sha (sideload)"
     $pathArgs = @()
-    if ($Cache) { $pathArgs += @('--cache',$Cache) }
     if ($Work) { $pathArgs += @('--work',$Work) }
+    if ($Cache) { $pathArgs += @('--cache',$Cache) }
+    if ($ExternalOutputs) { $pathArgs += @('--external-outputs') }
+    $builderArgs = if ($PackageOutput) { @('--', ('-c.directories.output=' + $PackageOutput)) } else { @() }
     if ($ChannelRequest) {
-      & $py scripts/bundles/desktop.py --channel-request $ChannelRequest --variant bundled --clean @pathArgs
+      & $py scripts/bundles/desktop.py --channel-request $ChannelRequest --variant bundled --clean @pathArgs @builderArgs
     } else {
-      & $py scripts/bundles/desktop.py --commit $sha --variant bundled --clean @pathArgs
+      & $py scripts/bundles/desktop.py --commit $sha --variant bundled --clean @pathArgs @builderArgs
     }
     if ($LASTEXITCODE) { Fail "build failed (exit $LASTEXITCODE)" }
   }
@@ -182,10 +188,10 @@ try {
   }
 }
 
-$packageOutput = if ($env:SEMANTIER_DESKTOP_BUILD_OUTPUT) { $env:SEMANTIER_DESKTOP_BUILD_OUTPUT } else { Join-Path $Repo 'apps\desktop\release' }
-Write-Host "build-bundle: done. Unsigned packages in ${packageOutput}:"
+$packageDir = if ($PackageOutput) { $PackageOutput } elseif ($env:SEMANTIER_DESKTOP_BUILD_OUTPUT) { $env:SEMANTIER_DESKTOP_BUILD_OUTPUT } else { Join-Path $Repo 'apps\desktop\release' }
+Write-Host "build-bundle: done. Unsigned packages in ${packageDir}:"
 if ($Store) {
   Write-Host "build-bundle: claim timestamp for combining architectures: HERMES_RELEASE_EPOCH=$claimEpoch (version v$version)"
 }
-Get-ChildItem -LiteralPath $packageOutput -Filter '*.msix*' |
+Get-ChildItem -LiteralPath $packageDir -Filter '*.msix*' |
   ForEach-Object { '  {0}  {1:N0} MB' -f $_.Name, ($_.Length / 1MB) }

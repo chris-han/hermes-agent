@@ -5,11 +5,18 @@ from collections.abc import Mapping
 from contextlib import contextmanager
 import json
 import re
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from scripts.bundles.desktop_prepare import BuildRequest, PreparedDesktop
+
+
+def require_external_output_readiness(selected: bool) -> None:
+    """Fail closed until the Windows job no longer writes source-owned outputs."""
+    if selected and sys.platform == "win32":
+        raise ValueError("external Windows build path migration is incomplete")
 
 
 @contextmanager
@@ -48,6 +55,9 @@ def identity_environment(request: BuildRequest, variant: str, inherited: Mapping
     if request.channel_request is not None and variant != "bundled":
         raise ValueError("channel builds currently support only the bundled variant")
     env = dict(inherited)
+    env.pop("HERMES_DESKTOP_BUILD_DIR", None)
+    if request.external_outputs:
+        env["HERMES_DESKTOP_BUILD_DIR"] = str(request.desktop_build_dir)
     env.update(CI="true", PYTHONUTF8="1", GITHUB_SHA=request.commit,
                HERMES_DESKTOP_VARIANT=variant,
                HERMES_PAYLOAD_VERSION=request.version,

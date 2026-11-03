@@ -9,6 +9,13 @@ import { defineConfig } from 'vite'
  *  ~750 are React-bearing. */
 function compilerPreset() {
   const preset = reactCompilerPreset()
+
+  // Babel's independent resolver anchors plugin names to the source file,
+  // so external dependency builds must pass the resolved compiler explicitly.
+  if (process.env.HERMES_DESKTOP_BUILD_DIR) {
+    preset.preset = () => ({ plugins: [[requireFromApp.resolve('babel-plugin-react-compiler'), {}]] })
+  }
+
   preset.rolldown.filter.code = /\/>|<\/|from\s*['"][^'"]*react/
 
   return preset
@@ -16,10 +23,12 @@ function compilerPreset() {
 
 /** The production renderer build memoizes this pass on disk (scripts/compiler-cache.mjs); the
  *  lockfile and this config (the preset and its filter) pin the toolchain it keys on. The
- *  cache lives under node_modules: ignored, and outside every freshness hash. */
+ *  cache lives under node_modules: ignored, and outside every freshness hash.
+ *  External-output builds skip it to avoid writing into the source checkout. */
 async function cachedCompilerPass(command: string) {
   return withCompilerCache(await babel({ presets: [compilerPreset()] }), {
     command,
+    enabled: !process.env.HERMES_DESKTOP_BUILD_DIR,
     cacheRoot: path.join(__dirname, 'node_modules/.cache/hermes-react-compiler'),
     base: __dirname,
     toolchain: [path.resolve(__dirname, '../../package-lock.json'), fileURLToPath(import.meta.url)]
@@ -89,8 +98,10 @@ const debugEntry = (command: string, env: Record<string, string>) =>
 // bundled emojibase-data package at a stable local path instead — middleware
 // in dev, emitted assets in the build. Only the files a locale actually needs.
 const emojibaseDir =
-  real(path.resolve(__dirname, 'node_modules/emojibase-data')) ??
-  real(path.resolve(__dirname, '../../node_modules/emojibase-data'))
+  process.env.HERMES_DESKTOP_BUILD_DIR
+    ? real(path.dirname(requireFromApp.resolve('emojibase-data/package.json')))
+    : real(path.resolve(__dirname, 'node_modules/emojibase-data')) ??
+      real(path.resolve(__dirname, '../../node_modules/emojibase-data'))
 
 const EMOJIBASE_PATH = /^[a-z-]+\/(data|messages|shortcodes\/emojibase)\.json$/
 

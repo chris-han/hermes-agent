@@ -5,11 +5,19 @@ import path from 'node:path'
 import { afterEach, test } from 'vitest'
 import * as prepared from './prepared-packaging.mjs'
 import { validatePreparedBuilderArgs } from './run-electron-builder.mjs'
+import { packagingResourcesDir } from './prepare-packaging-tools.mjs'
 import { spawnSync } from 'node:child_process'
 
 /** @type {string[]} */
 const roots = []
 afterEach(() => roots.splice(0).forEach(root => fs.rmSync(root, { recursive: true, force: true })))
+
+test('packaging tool resources respect an absolute job directory and the relative default', () => {
+  const source = path.resolve('/source/checkout')
+  const external = path.resolve('/deliverables/work/job/desktop-build')
+  assert.equal(packagingResourcesDir(source, { directories: { buildResources: external } }), external)
+  assert.equal(packagingResourcesDir(source, {}), path.join(source, 'apps/desktop/build'))
+})
 
 /** @returns {{ source: string, out: string, electron: string, sevenZip: string, icons: string }} */
 function fixture() {

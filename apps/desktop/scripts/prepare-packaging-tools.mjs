@@ -35,6 +35,11 @@ export function packagingTargetArch(target) {
   throw new Error(`Packaging preparation requires a same-OS x64/arm64 target, got ${target}`)
 }
 
+/** @param {string} source @param {import('app-builder-lib').Configuration} config @returns {string} */
+export function packagingResourcesDir(source, config) {
+  return path.resolve(source, 'apps/desktop', config.directories?.buildResources || 'build')
+}
+
 /** @param {string} from @param {string} to @returns {string} */
 function copyTool(from, to) {
   fs.rmSync(to, { recursive: true, force: true })
@@ -84,7 +89,7 @@ async function acquirePackagingTools({ source, out, cache, target, formats, buil
   const [electronGet, sevenZip, icons] = await Promise.all([
     load('util/electronGet.js'), load('toolsets/7zip.js'), load('toolsets/icons.js'),
   ])
-  const resourcesDir = path.join(source, 'apps/desktop', config.directories?.buildResources || 'build')
+  const resourcesDir = packagingResourcesDir(source, config)
   const [archive, archiveTool, iconTools] = await Promise.all([
     electronGet.downloadElectronArtifactZip({ version: config.electronVersion, platformName: process.platform, arch: packagingTargetArch(target),
       artifactName: 'electron', cacheDir: path.join(cache, 'electron') }),

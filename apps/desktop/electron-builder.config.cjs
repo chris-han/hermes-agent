@@ -37,6 +37,10 @@ const {
 /** @type {NonNullable<typeof storeMsix> | undefined} */
 const storeMsixWhenStore = storeMsix
 const releaseBuild = Boolean(process.env.HERMES_PAYLOAD_TAG)
+const selectedBuildDir = process.env.HERMES_DESKTOP_BUILD_DIR || ''
+if (selectedBuildDir && !path.isAbsolute(selectedBuildDir)) throw new Error('Desktop build directory must be absolute')
+/** @param {string} name */
+const buildPath = name => selectedBuildDir ? path.join(selectedBuildDir, name) : `build/${name}`
 
 /**
  * The store MSIX packaging identity. Callers must only invoke this when
@@ -85,7 +89,7 @@ module.exports = {
   // so it can't collide with the out-of-store MSIX of the same tag/arch, and
   // the release pipeline can keep the two apart.
   artifactName: `${store ? 'Store-' : ''}${process.env.SEMANTIER_DESKTOP_VERSION ? 'SemantierAgent' : artifactNamePascal}-\${version}-\${os}-\${arch}.\${ext}`,
-  icon: 'assets/icon',
+  icon: selectedBuildDir ? buildPath('assets/icon') : 'assets/icon',
   // The electron-updater feed. CI builds set CLOUDFLARE_R2_PUBLIC_URL (the R2
   // public bucket / custom domain) and publish there — the feed yml, blockmaps
   // and installers all live in the same flat R2 bucket, and electron-updater
@@ -109,12 +113,16 @@ module.exports = {
     desktopName: appId
   },
   directories: {
-    output: process.env.SEMANTIER_DESKTOP_BUILD_OUTPUT || 'release'
+    output: process.env.SEMANTIER_DESKTOP_BUILD_OUTPUT || 'release',
+    ...(selectedBuildDir ? { buildResources: selectedBuildDir } : {})
   },
-  files: ['dist/**', 'assets/**', 'public/**', 'package.json'],
+  files: selectedBuildDir
+    ? [{ from: path.join(selectedBuildDir, 'dist'), to: 'dist', filter: ['**/*'] },
+        { from: path.join(selectedBuildDir, 'assets'), to: 'assets', filter: ['**/*'] }, 'public/**', 'package.json']
+    : ['dist/**', 'assets/**', 'public/**', 'package.json'],
   beforeBuild: channelRequest ? async () => {
     await require(path.join(__dirname, 'scripts/before-build.mjs')).default()
-    stageChannelManifest(__dirname, channelRequest)
+    stageChannelManifest(__dirname, channelRequest, selectedBuildDir || path.join(__dirname, 'build'))
     return false
   } : 'scripts/before-build.mjs',
   beforePack: 'scripts/before-pack.mjs',
@@ -126,11 +134,11 @@ module.exports = {
   ...(process.platform === 'darwin' ? { afterSign: 'scripts/notarize.mjs' } : {}),
   extraResources: [
     {
-      from: 'build/install-stamp.json',
+      from: buildPath('install-stamp.json'),
       to: 'install-stamp.json'
     },
     ...(['bundled', 'store'].includes(process.env.HERMES_DESKTOP_VARIANT || '')
-      ? [{ from: 'build/agent-payload', to: 'agent-payload',
+      ? [{ from: buildPath('agent-payload'), to: 'agent-payload',
           // python-docx reads templates/default.docx at runtime. Its separate
           // unpacked template source is inert, but MSIX treats _rels/*.rels as
           // package relationships and rejects those nested payload names.
@@ -139,7 +147,7 @@ module.exports = {
           } : {}) }]
       : []),
     {
-      from: 'assets/icon.ico',
+      from: selectedBuildDir ? buildPath('assets/icon.ico') : 'assets/icon.ico',
       to: 'icon.ico'
     }
   ],
@@ -274,10 +282,10 @@ module.exports = {
     // Static path: the file itself is written by scripts/before-build.mjs at
     // build time (see the comment on the hook) — never at config require
     // time, so typecheck/test imports don't touch the filesystem.
-    customExtensionsPath: 'build/msix-extensions.xml',
-    customManifestPath: store ? 'build/store-msix-manifest.xml'
+    customExtensionsPath: buildPath('msix-extensions.xml'),
+    customManifestPath: store ? buildPath('store-msix-manifest.xml')
       : releaseBuild || channelRequest || appNamePascal !== artifactNamePascal
-        ? 'build/msix-manifest.xml' : 'assets/msix-manifest.xml',
+        ? buildPath('msix-manifest.xml') : 'assets/msix-manifest.xml',
     // Hermes state is deliberately shared with unpackaged CLI/gateway
     // processes. Pair the manifest's disabled virtualization properties with
     // the restricted capability that permits unvirtualized AppData/HKCU writes.

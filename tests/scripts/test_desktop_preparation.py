@@ -299,14 +299,17 @@ def test_clean_run_cannot_delete_the_outputs_of_a_build_that_holds_the_lock(tmp_
     assert running.read_text(encoding="utf-8") == "output of the build that holds the lock"
 
 
-def test_guarded_bundle_reuses_payload_python_for_icons(tmp_path, monkeypatch):
+@pytest.mark.parametrize('external', [False, True])
+def test_guarded_bundle_reuses_payload_python_for_icons(tmp_path, monkeypatch, external):
     from types import SimpleNamespace
     from scripts.bundles import desktop_prepare as module, desktop, desktop_toolchain, desktop_inputs, native
     from scripts.build import icon_environment
     from pm.environments import venv_python
     source, commit = _project(tmp_path)
+    build_dir = tmp_path / 'work/desktop-build' if external else source / 'apps/desktop/build'
     request = SimpleNamespace(source=source, commit=commit, work=tmp_path / 'work', cache=tmp_path / 'cache',
-                              variant='bundled', target='win32-x64', workspaces=lambda: [], validate_channel=lambda: None)
+                              desktop_build_dir=build_dir, variant='bundled', target='win32-x64',
+                              workspaces=list, validate_channel=lambda: None)
     request.work.mkdir()
     monkeypatch.setattr(desktop_toolchain, 'prepare_tools', lambda *args: (Path(sys.executable), Path(sys.executable), {'HERMES_DESKTOP_NATIVE_TOOLCHAIN': 'fixture', 'UV_CACHE_DIR': str(request.cache)}))
     def observed(cache, env, diagnostic):
@@ -315,7 +318,10 @@ def test_guarded_bundle_reuses_payload_python_for_icons(tmp_path, monkeypatch):
     monkeypatch.setattr(desktop_toolchain, 'native_cache_path', observed)
     monkeypatch.setattr(desktop, 'run', lambda *args, **kwargs: None)
     monkeypatch.setattr(desktop_inputs, 'identity_environment', lambda request, variant, env: env)
-    monkeypatch.setattr(native, 'prepare_native', lambda **kwargs: source / 'apps/desktop/build/agent-payload.prepared.json')
+    def prepare_native(**kwargs):
+        assert kwargs['out'] == build_dir / 'agent-payload'
+        return build_dir / 'agent-payload.prepared.json'
+    monkeypatch.setattr(native, 'prepare_native', prepare_native)
     def forbidden(*args):
         raise AssertionError('bundled icons must not install a second Python environment')
     monkeypatch.setattr(icon_environment, 'prepare_icon_environment', forbidden)
@@ -325,4 +331,80 @@ def test_guarded_bundle_reuses_payload_python_for_icons(tmp_path, monkeypatch):
         return SimpleNamespace(write=lambda path: path.write_text('{}'))
     monkeypatch.setattr(module.PreparedDesktop, 'record', classmethod(record))
     module.prepare_in_worker(request)
-    assert captured['icon_python'] == venv_python(source / 'apps/desktop/build/agent-payload/venv')
+    assert captured['icon_python'] == venv_python(build_dir / 'agent-payload/venv')
+
+
+def test_external_desktop_outputs_are_bound_to_the_preparation_request(tmp_path):
+    from scripts.bundles.desktop_prepare import BuildRequest
+
+    source, commit = _project(tmp_path)
+    work, cache = tmp_path / 'job', tmp_path / 'cache'
+    request = BuildRequest.create(source, tag=None, commit=commit, variant='bundled', work=work,
+                                  cache=cache, bundle_env={}, external_outputs=True)
+    assert request.desktop_build_dir == work / 'desktop-build'
+    restored = BuildRequest.from_data(request.data())
+    assert restored.desktop_build_dir == request.desktop_build_dir
+    assert restored.identity_digest() == request.identity_digest()
+    from scripts.bundles.desktop_inputs import identity_environment
+    env = identity_environment(request, 'bundled', {})
+    assert env['HERMES_DESKTOP_BUILD_DIR'] == str(request.desktop_build_dir)
+    ordinary = BuildRequest.create(source, tag=None, commit=commit, variant='bundled', work=work,
+                                   cache=cache, bundle_env={})
+    assert ordinary.desktop_build_dir == source / 'apps/desktop/build'
+    assert ordinary.identity_digest() != request.identity_digest()
+    tampered = request.data()
+    tampered['work'] = str(tmp_path)
+    with pytest.raises(ValueError, match='external.*source'):
+        BuildRequest.from_data(tampered)
+    assert 'HERMES_DESKTOP_BUILD_DIR' not in identity_environment(ordinary, 'bundled',
+                                                                   {'HERMES_DESKTOP_BUILD_DIR': '/foreign'})
+    with pytest.raises(ValueError, match='external.*source'):
+        BuildRequest.create(source, tag=None, commit=commit, variant='bundled', work=source / '.build/job',
+                            cache=cache, bundle_env={}, external_outputs=True)
+
+
+def test_external_clean_never_deletes_checkout_products(tmp_path):
+    from scripts.bundles.desktop_prepare import BuildRequest, clean_outputs
+
+    source, commit = _project(tmp_path)
+    work, cache = tmp_path / 'job', tmp_path / 'cache'
+    request = BuildRequest.create(source, tag=None, commit=commit, variant='bundled', work=work,
+                                  cache=cache, bundle_env={}, external_outputs=True)
+    source_build = source / 'apps/desktop/build'
+    source_build.mkdir(parents=True)
+    protected = source_build / 'unrelated.txt'
+    protected.write_text('keep')
+    work.mkdir()
+    (work / '.desktop-preparation').write_text(str(source))
+    (work / 'old-job.txt').write_text('owned')
+    clean_outputs(request)
+    assert protected.read_text() == 'keep'
+    assert not work.exists()
+
+
+def test_external_preparation_rejects_redirected_owner_without_starting_worker(tmp_path, monkeypatch):
+    from scripts.bundles import desktop_prepare, desktop_toolchain
+
+    source, commit = _project(tmp_path)
+    work, cache = tmp_path / 'job', tmp_path / 'cache'
+    request = desktop_prepare.BuildRequest.create(source, tag=None, commit=commit, variant='bundled',
+                                                  work=work, cache=cache, bundle_env={}, external_outputs=True)
+    work.mkdir()
+    foreign = tmp_path / 'foreign-owner'
+    foreign.write_text(str(source))
+    (work / '.desktop-preparation').symlink_to(foreign)
+    monkeypatch.setattr(desktop_toolchain, 'run_preparation', lambda *args: pytest.fail('worker must not start'))
+    with pytest.raises(ValueError, match='redirected'):
+        desktop_prepare._prepare(request)
+
+
+def test_windows_external_prepare_refuses_before_source_or_lock(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from scripts.bundles import desktop_prepare
+
+    monkeypatch.setattr(sys, 'platform', 'win32')
+    monkeypatch.setattr(desktop_prepare, 'require_source', lambda *args: pytest.fail('source must not be touched'))
+    request = SimpleNamespace(external_outputs=True, source=tmp_path / 'source')
+    with pytest.raises(ValueError, match='external Windows build path migration is incomplete'):
+        desktop_prepare.prepare(request)
+    assert not request.source.exists()
