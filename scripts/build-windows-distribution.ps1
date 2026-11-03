@@ -168,11 +168,14 @@ try {
     Copy-Item -LiteralPath $request.bundle -Destination $bundle
     Native 'git' @('-C',$repo,'bundle','verify',$bundle)
     $preseed = ($request.PSObject.Properties.Name -contains 'preseedOwnedWorktree') -and $request.preseedOwnedWorktree
+    $preseedCheckout = ($request.PSObject.Properties.Name -contains 'preseedOwnedCheckout') -and $request.preseedOwnedCheckout
     if ($preseed -and (!$reuseCache -or !$existing -or $standalone -or $work -ine 'D:\repo\hermes-channel1-build')) { throw 'Invalid preseeded worktree binding' }
-    if (!$preseed) { Native 'git' @('-C',$repo,'fetch','--no-write-fetch-head',$bundle,$request.bundleRef) }
+    if ($preseedCheckout -and (!$standalone -or !$existing -or !$env:SEMANTIER_WSL_GIT_DISTRO -or $preseed)) { throw 'Invalid preseeded checkout binding' }
+    if ($preseedCheckout -and [string](Git-Value $repo @('bundle','list-heads',$bundle)) -cne ($source+' '+$request.bundleRef)) { throw 'Preseeded source bundle binding mismatch' }
+    if (!$preseed -and !$preseedCheckout) { Native 'git' @('-C',$repo,'fetch','--no-write-fetch-head',$bundle,$request.bundleRef) }
     $transferred = [string](Git-Value $repo @('rev-parse',($request.commit + '^{commit}')))
     if ($transferred -cne $request.commit) { throw 'Transferred commit identity mismatch' }
-    if ($preseed) {
+    if ($preseed -or $preseedCheckout) {
       if ([string](Git-Value $work @('rev-parse','HEAD')) -cne $source) { throw 'Preseeded build HEAD mismatch' }
     } elseif ($existing -or $standalone) {
       Native 'git' @('-C',$work,'checkout','--detach',$source)

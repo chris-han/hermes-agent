@@ -89,3 +89,40 @@ try {
                              base64.b64encode(command.encode('utf-16le')).decode()], capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
     assert 'INCOMPLETE_BUILD_REFUSED' in result.stdout
+
+
+@pytest.mark.skipif(not HOST.exists(), reason='requires Windows host PowerShell')
+def test_preseeded_checkout_binding_does_not_fetch_or_checkout():
+    script = Path(__file__).resolve().parents[2] / 'scripts/build-windows-distribution.ps1'
+    source = script.read_text(encoding='utf-8')
+    block = source[source.index('    $preseed = '):source.index('    if (!$existing) {', source.index('    $preseed = '))]
+    command = r'''
+$ErrorActionPreference='Stop'
+$source='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+$repo='D:\repo\hermes-build';$work=$repo;$bundle='fixture.bundle'
+$standalone=$true;$existing=$true;$reuseCache=$false
+$env:SEMANTIER_WSL_GIT_DISTRO='Fixture'
+$request=[pscustomobject]@{commit=$source;bundleRef='refs/local-windows-build/fixture';preseedOwnedCheckout=$true}
+$script:actualHead=$source;$script:actualBundle=$source+' '+$request.bundleRef;$script:nativeCalls=0
+function Git-Value($directory,$arguments) {
+ if ($arguments[0] -eq 'bundle') { return $script:actualBundle }
+ if ($arguments[1] -eq 'HEAD') { return $script:actualHead }
+ return $source
+}
+function Native($tool,$arguments) { $script:nativeCalls++; throw 'unexpected source mutation' }
+function Check([bool]$shouldPass) {
+ $failed=$false
+ try { BLOCK } catch { $failed=$true }
+ if ($failed -eq $shouldPass) { throw 'unexpected admission result' }
+}
+Check $true
+if ($script:nativeCalls -ne 0) { throw 'preseed ran a mutation' }
+$script:actualHead='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';Check $false
+$script:actualHead=$source;$script:actualBundle='conflicting bundle';Check $false
+$script:actualBundle=$source+' '+$request.bundleRef;$env:SEMANTIER_WSL_GIT_DISTRO=$null;Check $false
+Write-Host 'PRESEED_BINDING_PASS'
+'''.replace('BLOCK', block)
+    result = subprocess.run([str(HOST), '-NoProfile', '-NonInteractive', '-EncodedCommand',
+                             base64.b64encode(command.encode('utf-16le')).decode()], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'PRESEED_BINDING_PASS' in result.stdout
