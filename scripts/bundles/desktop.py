@@ -96,7 +96,7 @@ def build_prepared(path: Path, builder_args: list[str], variant: str | None = No
     from scripts.bundles.desktop_inputs import build_lock, require_external_output_readiness
     prepared = PreparedDesktop.load(path)
     require_external_output_readiness(prepared.request.external_outputs)
-    with build_lock(prepared.request.source):
+    with build_lock(prepared.request.source, external_cache=prepared.request.cache if prepared.request.external_outputs else None):
         _build_prepared(prepared, builder_args, variant)
 
 

@@ -280,6 +280,47 @@ def test_checkout_lock_excludes_a_second_build_process(tmp_path):
     assert released.stdout.strip() == "acquired"
 
 
+def test_external_jobs_hold_checkout_and_shared_cache_locks(tmp_path):
+    from scripts.bundles.desktop_inputs import build_lock
+
+    source, _ = _project(tmp_path)
+    other = tmp_path / 'other-source'
+    other.mkdir()
+    cache = tmp_path / 'shared-cache'
+    project = Path(__file__).resolve().parents[2]
+    probe = (
+        "import sys; from pathlib import Path; sys.path.insert(0,sys.argv[1]); "
+        "from scripts.bundles.desktop_inputs import build_lock; "
+        "cache=None if sys.argv[3]=='-' else Path(sys.argv[3]); "
+        "lock=build_lock(Path(sys.argv[2]), external_cache=cache); "
+        "lock.__enter__(); print('acquired'); lock.__exit__(None,None,None)"
+    )
+    def run(selected, selected_cache):
+        return subprocess.run([sys.executable, '-I', '-c', probe, str(project), str(selected), str(selected_cache)],
+                              capture_output=True, text=True, timeout=30, check=False)
+
+    with build_lock(source, external_cache=cache):
+        assert run(source, '-').returncode != 0
+        assert run(other, cache).returncode != 0
+    assert run(other, cache).returncode == 0
+    redirected = tmp_path / 'redirected-cache'
+    redirected.symlink_to(cache, target_is_directory=True)
+    with pytest.raises(ValueError, match='redirected'):
+        with build_lock(source, external_cache=redirected):
+            pass
+    (cache / '.desktop-build.lock').unlink()
+    sentinel = tmp_path / 'preserve-me'
+    sentinel.write_text('untouched')
+    (cache / '.desktop-build.lock').symlink_to(sentinel)
+    with pytest.raises(ValueError, match='redirected'):
+        with build_lock(source, external_cache=cache):
+            pass
+    assert sentinel.read_text() == 'untouched'
+    with pytest.raises(ValueError, match='outside source'):
+        with build_lock(source, external_cache=source / '.cache'):
+            pass
+
+
 def test_flavored_icon_staging_hands_the_admitted_checkout_back(tmp_path):
     from scripts.bundles.desktop import flavored_assets
     from scripts.bundles.desktop_prepare import require_source

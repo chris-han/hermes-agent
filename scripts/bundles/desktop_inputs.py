@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -20,16 +21,34 @@ def require_external_output_readiness(selected: bool) -> None:
 
 
 @contextmanager
-def build_lock(source: Path):
+def build_lock(source: Path, *, external_cache: Path | None = None):
     from hermes_cli.runtime_state import _lock
+    from pm.filesystem import is_junction, is_reparse_point
 
+    if external_cache is not None:
+        if (not external_cache.is_absolute() or external_cache.resolve().is_relative_to(source.resolve())
+                or source.resolve().is_relative_to(external_cache.resolve())):
+            raise ValueError("external build lock cache must be outside source")
+        for path in (external_cache, *external_cache.parents):
+            if path.is_symlink() or is_junction(path) or is_reparse_point(path):
+                raise ValueError("external build lock cache is redirected")
     directory = source / ".build"
     if directory.is_symlink():
         raise ValueError("desktop build scratch must not be a symlink")
     directory.mkdir(exist_ok=True)
-    with (directory / ".desktop-build.lock").open("a+b") as lock:
-        if not _lock(lock.fileno(), wait=False):
+    with ExitStack() as locks:
+        checkout_lock = locks.enter_context((directory / ".desktop-build.lock").open("a+b"))
+        if not _lock(checkout_lock.fileno(), wait=False):
             raise ValueError("another desktop build or preparation is using this source checkout")
+        if external_cache is not None:
+            external_cache.mkdir(parents=True, exist_ok=True)
+            lock_path = external_cache / ".desktop-build.lock"
+            if lock_path.is_symlink() or is_junction(lock_path) or is_reparse_point(lock_path):
+                raise ValueError("external build lock is redirected")
+            fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+            cache_lock = locks.enter_context(os.fdopen(fd, 'a+b'))
+            if not _lock(cache_lock.fileno(), wait=False):
+                raise ValueError("another desktop build or preparation is using this shared cache")
         yield
 
 

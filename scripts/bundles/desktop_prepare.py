@@ -399,7 +399,7 @@ def prepare(request: BuildRequest, *, clean: bool = False) -> Path:
     if request.channel_request is not None and not request.target.startswith(("darwin-", "win32-")):
         raise ValueError("channel builds require a supported native macOS or Windows target")
     require_source(request.source, request.commit)
-    with build_lock(request.source):
+    with build_lock(request.source, external_cache=request.cache if request.external_outputs else None):
         if clean:
             from scripts.bundles.runtime_cache import measure
             with measure(request.cache, "outputs.clean"):
