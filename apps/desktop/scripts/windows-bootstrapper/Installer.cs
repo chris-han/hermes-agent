@@ -215,7 +215,7 @@ static class Installer {
                 Directory.CreateDirectory(TaskBase()); directories=HoldDirectories(TaskBase());
                 dir=PrivateDirectory(id);directories.AddRange(HoldDirectories(dir));
                 foreach(var item in release.Objects) DownloadObject(client,item,dir,report,held);
-                report("Verifying signed packages…"); VerifySignatures(dir); VerifyPackageIdentities(dir);
+                report("Verifying signed packages…"); VerifySignatures(dir); PackageIdentity.Verify(release,dir);
                 CheckInstalled(); report("Installing for the current Windows user…"); Install(dir); installed=true;
             }
         } finally {
@@ -224,20 +224,6 @@ static class Installer {
             if(dir!=null && directories.Count>0) {var last=directories[directories.Count-1];try{if(!DeleteHeld(dir,last,true,()=>last.Dispose()))cleaned=false;}catch{cleaned=false;last.Dispose();}}
             foreach(var h in directories)h.Dispose();
             if(dir!=null)report((installed?"Semantier Agent "+Version+" installed. ":"Installation stopped. ")+(cleaned?"Temporary files removed.":"Temporary files may remain in " + dir));
-        }
-    }
-    static void VerifyPackageIdentities(string dir) {
-        foreach(var item in release.Objects) {
-            using(var archive=ZipFile.OpenRead(Path.Combine(dir,Path.GetFileName(item.Key)))) {
-                string manifest=item.Key.EndsWith(".msixbundle",StringComparison.Ordinal) ? "AppxMetadata/AppxBundleManifest.xml" : "AppxManifest.xml";
-                var entries=archive.Entries.Where(x=>x.FullName==manifest).ToArray();
-                if(entries.Length!=1 || entries[0].Length>4*1024*1024) throw new InvalidOperationException("Package identity manifest mismatch.");
-                using(var input=entries[0].Open()) using(var reader=System.Xml.XmlReader.Create(input,new System.Xml.XmlReaderSettings{DtdProcessing=System.Xml.DtdProcessing.Prohibit,XmlResolver=null,MaxCharactersInDocument=4*1024*1024})) {
-                    var document=System.Xml.Linq.XDocument.Load(reader); var identity=document.Root?.Elements().SingleOrDefault(x=>x.Name.LocalName=="Identity");
-                    string name=(string)identity?.Attribute("Name"), publisher=(string)identity?.Attribute("Publisher"), version=(string)identity?.Attribute("Version");
-                    if((name!=Identity && !(name?.StartsWith(Identity+".",StringComparison.Ordinal)??false)) || publisher!="CN=Semantier Technology, O=Semantier Technology" || version!=Version.ToString()) throw new InvalidOperationException("Package identity mismatch.");
-                }
-            }
         }
     }
     #if TESTING
