@@ -60,6 +60,94 @@ def storage():
     finally: server.shutdown();server.server_close();thread.join()
 
 
+@pytest.mark.parametrize('failure',['none','reuse-setup','stale-head','object-conflict','head-drift'])
+def test_native_and_manual_publication_resume_after_lost_catalog_response(tmp_path,monkeypatch,failure):
+    from scripts.releases.simple_native_slots import publish_with_manual
+    monkeypatch.delenv('R2_DISPOSABLE_RUN',raising=False)
+    with storage() as (base,objects):
+        creds={'access_key_id':'fixture','secret_key':'fixture'};scope=R2Scope()
+        store=R2ChannelStore(creds,base,'public',scope=scope);control=ControlStore(r2,creds,base,'private',scope=scope)
+        origin='https://download.semantier.com'
+        request=acceptance_request(commit='d'*40,controller='e'*40,version='0.0.59',source_version='0.0.0',base=origin)
+        graph=native_graph();build=request['buildId'];graph['root']=graph['root'].replace('a'*32,build);files={}
+        for row in graph['objects']:
+            row['key']=row['key'].replace('a'*32,build);row['references']=[r.replace('a'*32,build) for r in row['references']]
+            content=('fixture '+row['key']).encode();row['size']=len(content);row['sha256']=hashlib.sha256(content).hexdigest()
+            path=tmp_path/row['key'].rsplit('/',1)[1];path.write_bytes(content);files[row['key']]={'path':path,'size':len(content),'sha256':row['sha256']}
+        signed={'signing':'PASS','verification':'PASS: synthetic','sourceCommit':request['commit'],'packageName':IDENTITY['msixAppIdWithOrg'],
+                'packageVersion':request['windowsVersion'],'publisher':'CN=Semantier Technology, O=Semantier Technology',
+                'nativeGraph':graph,'signedSha256':graph['objects'][0]['sha256']}
+        graph_bytes=json.dumps(graph).encode();manifest,_=native_manifest(request,signed,graph_bytes)
+        graph_key=manifest['packages'][0]['native']['graph']['key'];path=tmp_path/'graph.json';path.write_bytes(graph_bytes)
+        files[graph_key]={'path':path,'size':len(graph_bytes),'sha256':hashlib.sha256(graph_bytes).hexdigest()}
+        prefix='releases/channel-builds/'+build+'/';manual={};descriptors=[]
+        for name in ('semantier-setup-ch2.exe','release.zip'):
+            path=tmp_path/name;path.write_bytes(('fixture '+name).encode());content=path.read_bytes();key=prefix+name
+            manual[key]={'path':path,'size':len(content),'sha256':hashlib.sha256(content).hexdigest()}
+            descriptors.append({'url':origin+'/'+key,'size':len(content),'sha256':hashlib.sha256(content).hexdigest()})
+        channel={'schema':1,'name':'semantier-acceptance','repository':'chris-han/hermes-agent','policy':'stable-release',
+                 'state':'active','revision':1,'nextSequence':request['sequence'],'identity':IDENTITY,'head':None}
+        channel_key='public/releases/channels/semantier-acceptance.json';objects[channel_key]=json.dumps(channel).encode()
+        if failure=='reuse-setup':
+            old='f'*32;old_prefix='releases/channel-builds/'+old+'/'
+            new_key=prefix+'semantier-setup-ch2.exe';old_key=old_prefix+'semantier-setup-ch2.exe'
+            manual[old_key]=manual.pop(new_key);descriptors[0]['url']=origin+'/'+old_key
+            objects['public/'+old_key]=(tmp_path/'semantier-setup-ch2.exe').read_bytes()
+            old_zip=b'protected previous archive';old_zip_key=old_prefix+'old.zip';objects['public/'+old_zip_key]=old_zip
+            old_row={'version':'0.0.58.0','track':'acceptance','identity':'Semantier.Agent.Acceptance','provenance':'local-signed',
+                'publishedAt':'2026-11-02T00:00:00Z','installer':descriptors[0],
+                'zip':{'url':origin+'/'+old_zip_key,'size':len(old_zip),'sha256':hashlib.sha256(old_zip).hexdigest()}}
+            objects['public/releases/manual/catalog.json']=json.dumps({'schema':1,'releases':[old_row]}).encode()
+        if failure=='object-conflict':objects['public/'+prefix+'semantier-setup-ch2.exe']=b'protected conflicting bytes'
+        real_signed=r2.signed_request;drifted=[]
+        def drift_on_head(method,url,**kwargs):
+            try:return real_signed(method,url,**kwargs)
+            finally:
+                if failure=='head-drift' and method=='HEAD' and '/channel-builds/' in url and not drifted:
+                    drifted.append(True);objects[channel_key]=json.dumps({**channel,'revision':2}).encode()
+        monkeypatch.setattr(r2,'signed_request',drift_on_head)
+        original_put=store.put;lost=[]
+        def lose_catalog(key,*args,**kwargs):
+            result=original_put(key,*args,**kwargs)
+            if key=='releases/manual/catalog.json' and not lost:
+                lost.append(True);raise OSError('lost catalog response')
+            return result
+        monkeypatch.setattr(store,'put',lose_catalog)
+        with publication_lock(control) as token:
+            driver=R2Driver(store,origin,control,token)
+            if failure not in ('none','reuse-setup'):
+                stale={'buildId':'a'*32,'sequence':1,'manifestKey':'releases/channel-builds/'+'a'*32+'/build.json','sha256':'b'*64}
+                with pytest.raises(ValueError):
+                    publish_with_manual(driver,manifest,files,manual,*descriptors,'2026-11-03T00:00:00Z',expected_head=stale if failure=='stale-head' else None)
+                assert json.loads(objects[channel_key]).get('nativeHead') is None
+                assert 'public/releases/manual/catalog.json' not in objects
+                if failure=='object-conflict':assert objects['public/'+prefix+'semantier-setup-ch2.exe']==b'protected conflicting bytes'
+                return
+            with pytest.raises(OSError,match='lost catalog'):
+                publish_with_manual(driver,manifest,files,manual,*descriptors,'2026-11-03T00:00:00Z',expected_head=None)
+        committed=json.loads(objects[channel_key]);assert committed['nativeHead']['buildId']==build
+        with publication_lock(control) as token:
+            driver=R2Driver(store,origin,control,token)
+            result=publish_with_manual(driver,manifest,files,manual,*descriptors,'2026-11-03T00:00:00Z',expected_head=None)
+        catalog=json.loads(objects['public/releases/manual/catalog.json'])
+        assert result['nativeHead']==committed['nativeHead'] and catalog['releases'][0]['nativeBuildId']==build
+        assert catalog['releases'][0]['installer']==descriptors[0]
+        from scripts.releases import simple_native_slots as script
+        from hermes_cli.release_channels import ChannelReader
+        monkeypatch.setattr(r2,'credentials',lambda:(creds,base,'public'))
+        monkeypatch.setenv('CLOUDFLARE_R2_PUBLIC_URL',origin);monkeypatch.setenv('CLOUDFLARE_R2_CONTROL_BUCKET','private')
+        monkeypatch.setenv('CLOUDFLARE_R2_CONTROL_ACCESS_KEY_ID','fixture');monkeypatch.setenv('CLOUDFLARE_R2_CONTROL_SECRET_ACCESS_KEY','fixture')
+        monkeypatch.setattr(script,'prepare',lambda *_:(manifest,graph,files))
+        monkeypatch.setattr(script,'add_installation_proof',lambda *_:None)
+        monkeypatch.setattr(script,'prepare_manual_artifacts',lambda *args,**kwargs:(manual,*descriptors))
+        monkeypatch.setattr(script,'verify_public',lambda *args:committed)
+        monkeypatch.setattr(ChannelReader,'read_bytes',lambda self,key,*args:objects['public/'+key])
+        before=dict(objects)
+        script.main(['--output',str(tmp_path),'--thumbprint','A'*40,'--setup-exe',str(tmp_path/'semantier-setup-ch2.exe'),
+            '--setup-receipt',str(tmp_path/'fixture-receipt.json'),'--manual-published-at','2026-11-03T00:00:00Z','--expect-empty-head'])
+        assert objects==before
+
+
 @pytest.mark.parametrize('failure', ['none','head','signature','local-digest','remote-digest','immutable-conflict'])
 def test_legacy_projection_uses_existing_writer_lock_and_head(tmp_path,monkeypatch,failure):
     monkeypatch.delenv('R2_DISPOSABLE_RUN',raising=False)

@@ -487,6 +487,36 @@ def publish_prepared(driver, manifest, files):
     return driver.commit(request['channel'], etag, head)
 
 
+def publish_with_manual(driver, manifest, files, manual_files, installer, archive, published_at, *, expected_head):
+    """Stage both verified manual artifacts before promoting one native head."""
+    import hashlib
+    from hermes_cli.release_channels import canonical_json
+    request=manifest['request'];channel=request['channel'];body=canonical_json(manifest)
+    candidate={'buildId':request['buildId'],'sequence':request['sequence'],
+               'manifestKey':'releases/channel-builds/'+request['buildId']+'/build.json',
+               'sha256':hashlib.sha256(body).hexdigest()}
+    driver.verify_lock();record,etag=driver.read_channel(channel);active=record.get('nativeHead')
+    already=active==candidate
+    if not already and (active!=expected_head or record.get('nativeRetirePending') is not None):
+        raise ValueError('native head changed or cleanup pending')
+    if already:
+        published=driver.store.get(candidate['manifestKey'])
+        if published is None or published[0]!=body:raise ValueError('published build differs from local candidate')
+    else:
+        driver.validate(record,manifest)
+    if set(files)&set(manual_files):raise ValueError('manual and native objects overlap')
+    combined={**files,**manual_files};driver.ensure_capacity(manifest,combined)
+    prior=driver.store.get('releases/manual/catalog.json')
+    project_manual_catalog(None if prior is None else prior[0],candidate,body,driver.public_base,installer,archive,published_at)
+    driver.stage_manual_artifacts(channel,record,etag,candidate,manual_files,installer,archive)
+    driver.verify_lock();latest,latest_etag=driver.read_channel(channel)
+    if latest!=record or latest_etag!=etag:raise ValueError('native head changed while staging manual artifacts')
+    result=record if already else publish_prepared(driver,manifest,files)
+    if result.get('nativeHead')!=candidate:raise ValueError('native promotion did not select candidate')
+    driver.reconcile_manual_catalog(channel,candidate,body,installer,archive,published_at)
+    return result
+
+
 
 def project_manual_catalog(raw, head, manifest_bytes, origin, installer, archive, published_at):
     """Derive a manual compatibility row from an exact native head.
@@ -809,6 +839,33 @@ class R2Driver:
         url=self.store.scope.object_url(self.store.base,self.store.bucket,key)
         r2.verify_remote_artifact(url,self.store.creds,r2.amz_timestamp(),descriptor['size'],descriptor['sha256'],algorithm='sha256',encoding='hex')
 
+    def stage_manual_artifacts(self, channel, record, etag, candidate, files, installer, archive):
+        """Create absent same-build manual bytes; never overwrite or recreate reused setup."""
+        from urllib.parse import urlsplit
+        from scripts.releases import r2
+        entries={urlsplit(row['url']).path.lstrip('/'):row for row in (installer,archive)}
+        if len(entries)!=2 or set(entries)!=set(files):raise ValueError('manual artifact binding mismatch')
+        for key,row in sorted(entries.items()):
+            local=files[key]
+            if local['size']!=row['size'] or local['sha256']!=row['sha256']:
+                raise ValueError('manual artifact facts mismatch')
+            self.verify_lock();current,current_etag=self.read_channel(channel)
+            if current!=record or current_etag!=etag:raise ValueError('native head changed while staging manual artifacts')
+            url=self.store.scope.object_url(self.store.base,self.store.bucket,key)
+            try:
+                r2.signed_request('HEAD',url,creds=self.store.creds,now=r2.amz_timestamp(),tries=1)
+                present=True
+            except r2.R2RequestError as error:
+                if error.status!=404:raise
+                present=False
+            self.verify_lock();current,current_etag=self.read_channel(channel)
+            if current!=record or current_etag!=etag:raise ValueError('native head changed while staging manual artifacts')
+            if not present:
+                if not key.startswith('releases/channel-builds/'+candidate['buildId']+'/'):
+                    raise ValueError('reused setup bytes are unavailable')
+                self.upload(key,local)
+            self.verify_manual_object(row)
+
     def reconcile_manual_catalog(self, channel, expected_head, manifest_bytes, installer, archive, published_at):
         """Conditionally publish a projection while the native head is fenced."""
         self.verify_lock()
@@ -1101,12 +1158,21 @@ def main(argv=None):
     parser.add_argument('--legacy-directory', type=Path, help='retained signed native objects under deliverables work or release')
     parser.add_argument('--expected-build', help='exact active build ID for the legacy projection')
     parser.add_argument('--expected-manifest-sha256', help='exact active manifest SHA-256 for the legacy projection')
+    parser.add_argument('--setup-exe', type=Path, help='signed reusable Channel 2 setup EXE')
+    parser.add_argument('--setup-receipt', type=Path, help='source-bound setup signing receipt')
+    parser.add_argument('--setup-key', help='previously catalog-protected reusable setup key')
+    parser.add_argument('--manual-published-at', help='stable UTC catalog timestamp for retry')
+    parser.add_argument('--expected-head', type=Path, help='exact currently active native head JSON')
+    parser.add_argument('--expect-empty-head', action='store_true', help='require no currently active native head')
     args = parser.parse_args(argv)
     legacy=args.project_legacy_channel
+    manual=bool(args.setup_exe or args.setup_receipt or args.setup_key or args.manual_published_at or args.expected_head or args.expect_empty_head)
     if (sum(bool(v) for v in (args.resume_cleanup,args.output,legacy))!=1
             or (args.output and (not args.thumbprint or args.legacy_directory or args.expected_build or args.expected_manifest_sha256))
-            or (args.resume_cleanup and (args.thumbprint or args.notes or args.legacy_directory or args.expected_build or args.expected_manifest_sha256))
-            or (legacy and (not args.thumbprint or not args.legacy_directory or not args.expected_build or not args.expected_manifest_sha256 or args.notes))):
+            or (args.resume_cleanup and (args.thumbprint or args.notes or args.legacy_directory or args.expected_build or args.expected_manifest_sha256 or manual))
+            or (legacy and (not args.thumbprint or not args.legacy_directory or not args.expected_build or not args.expected_manifest_sha256 or args.notes or manual))
+            or (manual and (not args.output or not args.setup_exe or not args.setup_receipt or not args.manual_published_at
+                            or bool(args.expected_head)==bool(args.expect_empty_head)))):
         parser.error('provide one publish, cleanup, or explicitly pinned legacy projection operation')
     if legacy:
         import re
@@ -1116,14 +1182,28 @@ def main(argv=None):
         roots=[Path('/mnt/d/repo/deliverables/work').resolve(strict=True),Path('/mnt/d/repo/deliverables/release').resolve(strict=True)]
         if not any(directory.is_relative_to(root) for root in roots):
             parser.error('legacy signed objects must be under the Windows deliverables work or release root')
-    manifest = files = None
+    manifest = files = manual_files = None
     if args.output:
-        manifest, _, files = prepare(args.output, args.thumbprint, verify_windows_signatures)
+        manifest, graph, files = prepare(args.output, args.thumbprint, verify_windows_signatures)
         if args.notes:
             if args.notes.is_symlink() or args.notes.stat().st_size > 160_000:
                 raise ValueError('invalid release notes file')
             from hermes_cli.release_channels import decode_json
             manifest['notes'] = validate_notes(decode_json(args.notes.read_bytes()))
+        if manifest['request']['publicBase']=='https://download.semantier.com' and not manual:
+            raise ValueError('Channel 2 publication requires its reusable setup and catalog projection')
+        if manual:
+            if manifest['request']['publicBase']!='https://download.semantier.com':
+                raise ValueError('manual publication requires Channel 2 origin')
+            from hermes_cli.release_channels import _head,decode_json
+            if args.expected_head:
+                if args.expected_head.is_symlink() or args.expected_head.stat().st_size>65536:
+                    raise ValueError('invalid expected native head file')
+                expected_head=_head(decode_json(args.expected_head.read_bytes()))
+                if expected_head is None:raise ValueError('expected native head missing')
+            else:expected_head=None
+            manual_files,installer,archive=prepare_manual_artifacts(args.output,manifest,graph,args.setup_exe,
+                args.setup_receipt,args.thumbprint,verify_windows_signatures,setup_key=args.setup_key)
         add_installation_proof(manifest, lambda payload: sign_windows_installation_proof(payload, args.thumbprint))
     creds, base, bucket = r2.credentials()
     scope = R2Scope.configured()
@@ -1142,11 +1222,17 @@ def main(argv=None):
                            base, control_bucket, scope=scope)
     store = R2ChannelStore(creds, base, bucket, scope=scope)
     channel = args.resume_cleanup or legacy or manifest['request']['channel']
-    projection_key=projection_body=None
+    projection_key=projection_body=catalog_body=None
     with publication_lock(control) as token:
         driver = R2Driver(store, manifest['request']['publicBase'] if manifest else (configured_public if legacy else ''), control, token)
-        if not legacy:cleanup_pending(driver, channel)
-        if manifest:
+        if not legacy and not manual:cleanup_pending(driver, channel)
+        if manual:
+            result=publish_with_manual(driver,manifest,files,manual_files,installer,archive,args.manual_published_at,expected_head=expected_head)
+            result=cleanup_pending(driver,channel)
+            stored=store.get('releases/manual/catalog.json')
+            if stored is None:raise RuntimeError('manual catalog missing after publication')
+            catalog_body=stored[0]
+        elif manifest:
             current, _ = driver.read_channel(channel)
             active = current.get('nativeHead')
             if active and active['buildId'] == manifest['request']['buildId']:
@@ -1168,6 +1254,19 @@ def main(argv=None):
             result, _ = driver.read_channel(channel)
     if manifest:
         verify_public(manifest['request']['publicBase'], channel, result['nativeHead'])
+    if manual:
+        import hashlib
+        from hermes_cli.release_channels import ChannelReader
+        reader=ChannelReader(configured_public);opener=reader.opener
+        def catalog_open(request,timeout):
+            request.add_header('User-Agent','SemantierPublisher/1.0')
+            return opener(request,timeout=timeout)
+        reader.opener=catalog_open
+        public_catalog=reader.read_bytes('releases/manual/catalog.json',hashlib.sha256(catalog_body).hexdigest())
+        if public_catalog!=catalog_body or project_manual_catalog(public_catalog,result['nativeHead'],canonical_json(manifest),
+                configured_public,installer,archive,args.manual_published_at)!=catalog_body:
+            raise RuntimeError('public manual catalog does not agree with active head')
+        verify_public(configured_public,channel,result['nativeHead'])
     if legacy:
         import hashlib
         from hermes_cli.release_channels import ChannelReader

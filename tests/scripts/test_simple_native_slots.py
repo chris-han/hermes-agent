@@ -192,6 +192,14 @@ def test_installation_proof_binds_release_origin_and_exact_closure():
         add_installation_proof(manifest,lambda _: b'signature')
 
 
+def test_new_channel2_origin_cannot_publish_without_setup_catalog(monkeypatch,tmp_path):
+    from scripts.releases import simple_native_slots as slots
+    monkeypatch.setattr(slots,'prepare',lambda *_:({'request':{'publicBase':'https://download.semantier.com'}},{},{}))
+    monkeypatch.setattr(slots,'sign_windows_installation_proof',lambda *_:pytest.fail('unqualified signing reached'))
+    with pytest.raises(ValueError,match='setup and catalog'):
+        slots.main(['--output',str(tmp_path),'--thumbprint','A'*40])
+
+
 def test_legacy_projection_binds_active_manifest_graph_and_channel():
     import base64
     import hashlib
