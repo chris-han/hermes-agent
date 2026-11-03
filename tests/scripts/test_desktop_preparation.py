@@ -75,6 +75,21 @@ def test_native_version_capture_uses_admitted_build_environment(tmp_path, monkey
     assert capture([sys.executable, "-c", script], tmp_path, env) == env["HERMES_RELEASE_EPOCH"]
 
 
+def test_external_preparation_rejects_source_build_inputs(tmp_path):
+    from dataclasses import replace
+    from scripts.bundles.desktop_prepare import BuildRequest, require_owned
+
+    source, commit = _project(tmp_path)
+    request = BuildRequest.create(source, tag=None, commit=commit, variant="light",
+                                  work=tmp_path / "work", cache=tmp_path / "cache", bundle_env={})
+    source_build = source / "apps/desktop/build/input"
+    require_owned(request, [source_build])
+    external = replace(request, external_outputs=True)
+    require_owned(external, [external.work / "input", external.cache / "input"])
+    with pytest.raises(ValueError, match="outside owned roots"):
+        require_owned(external, [source_build])
+
+
 def test_stable_build_rejects_a_claim_tag_for_another_version(tmp_path, monkeypatch):
     from scripts.bundles.desktop_prepare import BuildRequest
 

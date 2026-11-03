@@ -78,8 +78,9 @@ def require_node_root(request: BuildRequest, root: Path | None) -> None:
 
 def require_owned(request: BuildRequest, paths: list[Path]) -> None:
     require_output_roots(request.source)
-    roots = (request.work.resolve(), request.cache.resolve(),
-             (request.source / "apps/desktop/build").resolve())
+    roots = (request.work.resolve(), request.cache.resolve())
+    if not request.external_outputs:
+        roots += ((request.source / "apps/desktop/build").resolve(),)
     for path in paths:
         if not path.is_absolute() or not any(path.resolve().is_relative_to(root) for root in roots):
             raise ValueError(f"preparation input is outside owned roots: {path}")
