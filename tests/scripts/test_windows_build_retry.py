@@ -38,3 +38,34 @@ try {
                              base64.b64encode(command.encode('utf-16le')).decode()], capture_output=True, text=True)
     assert result.returncode == 0, result.stdout + result.stderr
     assert 'RETRY_PASS' in result.stdout
+
+
+@pytest.mark.skipif(not HOST.exists(), reason='requires Windows host PowerShell')
+def test_expected_next_version_is_checked_under_allocator_lock():
+    script = Path(__file__).resolve().parents[2] / 'scripts/next-windows-build-version.ps1'
+    native = subprocess.check_output(['wslpath', '-w', str(script)], text=True).strip().replace("'", "''")
+    command = r'''
+$ErrorActionPreference='Stop'
+$root=Join-Path $env:TEMP ('semantier-version-expect-'+[guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory $root | Out-Null
+try {
+ $script='SCRIPT';$state=Join-Path $root 'version.json';$source='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+ $v=& $script -State $state -SourceCommit $source -ExpectedNextVersion '0.0.1'
+ if($v -cne '0.0.1'){throw 'Expected first version differs'}
+ $before=[IO.File]::ReadAllBytes($state)
+ $failed=$false;try{& $script -State $state -SourceCommit $source -ExpectedNextVersion '0.0.3' | Out-Null}catch{$failed=$true}
+ if(!$failed -or [Convert]::ToBase64String([IO.File]::ReadAllBytes($state)) -cne [Convert]::ToBase64String($before)){throw 'Mismatch changed allocator'}
+ [IO.File]::WriteAllText(($state+'.lock'),'another owner')
+ $failed=$false;try{& $script -State $state -SourceCommit $source -ExpectedNextVersion '0.0.2' | Out-Null}catch{$failed=$true}
+ if(!$failed -or [IO.File]::ReadAllText(($state+'.lock')) -cne 'another owner' -or [Convert]::ToBase64String([IO.File]::ReadAllBytes($state)) -cne [Convert]::ToBase64String($before)){throw 'Occupied allocator lock changed'}
+ Remove-Item -LiteralPath ($state+'.lock')
+ $v=& $script -State $state -SourceCommit $source -ExpectedNextVersion '0.0.2'
+ if($v -cne '0.0.2'){throw 'Expected increment differs'}
+ if(Test-Path ($state+'.lock')){throw 'Leaked lock'}
+ Write-Host 'EXPECTED_VERSION_PASS'
+} finally {Remove-Item -LiteralPath $root -Recurse -Force}
+'''.replace('SCRIPT', native)
+    result = subprocess.run([str(HOST), '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand',
+                             base64.b64encode(command.encode('utf-16le')).decode()], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'EXPECTED_VERSION_PASS' in result.stdout

@@ -1,8 +1,9 @@
 # Reserve one numeric Semantier version per full local build attempt.
 [CmdletBinding()]
-param([Parameter(Mandatory=$true)][string]$State, [Parameter(Mandatory=$true)][string]$SourceCommit, [string]$RetryVersion = '')
+param([Parameter(Mandatory=$true)][string]$State, [Parameter(Mandatory=$true)][string]$SourceCommit, [string]$RetryVersion = '', [string]$ExpectedNextVersion = '')
 $ErrorActionPreference = 'Stop'
 if ($SourceCommit -notmatch '^[0-9a-f]{40}$') { throw 'Exact source commit required' }
+if ($ExpectedNextVersion -and ($RetryVersion -or $ExpectedNextVersion -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$')) { throw 'Expected next version requires a numeric version and no retry' }
 $State = [IO.Path]::GetFullPath($State)
 [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($State)) | Out-Null
 $lock = $null
@@ -27,6 +28,7 @@ try {
   for ($i=2; $i -gt 0; $i--) { if ($parts[$i] -gt 65535) { $parts[$i]=0; $parts[$i-1]++ } }
   if ($parts[0] -gt 65535) { throw 'Windows version space exhausted' }
   $next = $parts -join '.'
+  if ($ExpectedNextVersion -and $next -cne $ExpectedNextVersion) { throw 'Next version differs from the frozen expected version; counter left unchanged' }
   $record = [ordered]@{kind='semantier-windows-build-version-v1';version=$next;sourceCommit=$SourceCommit;reservedAt=[DateTime]::UtcNow.ToString('o')}
   $record | ConvertTo-Json | Set-Content -LiteralPath $temp -Encoding utf8
   Move-Item -LiteralPath $temp -Destination $State -Force

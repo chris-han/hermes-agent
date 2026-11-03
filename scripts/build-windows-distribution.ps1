@@ -193,7 +193,8 @@ try {
     }
     $counter = Join-Path (Split-Path $work -Parent) 'semantier-agent-build-version.json'
     $retryVersion = if ($request.PSObject.Properties.Name -contains 'retryVersion') { [string]$request.retryVersion } else { '' }
-    $semantierVersion = & (Join-Path $work 'scripts\next-windows-build-version.ps1') -State $counter -SourceCommit $source -RetryVersion $retryVersion
+    $expectedVersion = if ($request.PSObject.Properties.Name -contains 'expectedNextVersion') { [string]$request.expectedNextVersion } else { '' }
+    $semantierVersion = & (Join-Path $work 'scripts\next-windows-build-version.ps1') -State $counter -SourceCommit $source -RetryVersion $retryVersion -ExpectedNextVersion $expectedVersion
     if ($retryVersion) {
       Json-File ([ordered]@{kind='semantier-windows-build-version-v1';version=$semantierVersion;sourceCommit=$source;reservedAt=[DateTime]::UtcNow.ToString('o');explicitRetry=$true;counterUnchanged=$true}) (Join-Path $output 'build-version.json')
     } else { Copy-Item -LiteralPath $counter -Destination (Join-Path $output 'build-version.json') }
@@ -201,7 +202,7 @@ try {
     $serialCache = 'D:\repo\deliverables\cache\desktop-inputs'
     $buildWork = Join-Path $output 'desktop-job'
     $packageOutput = Join-Path $output 'electron-output'
-    $arguments += @('-Cache',$serialCache,'-Work',$buildWork)
+    $arguments += @('-Cache',$serialCache,'-Work',$buildWork,'-PackageOutput',$packageOutput,'-ExternalOutputs')
     if ($request.python) { $arguments += @('-Python',$request.python) }
     if (($request.PSObject.Properties.Name -contains 'acceptancePublicBase') -and $request.acceptancePublicBase) {
       $channelRequest = Join-Path $output 'channel-request.json'
