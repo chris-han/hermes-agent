@@ -72,7 +72,7 @@ class DynamicBootstrapperTest(unittest.TestCase):
                 return sign_windows_installation_proof(payload, '57BF15739B4AA447842EAF388856A01B4E5029FF')
 
         signed = Path(os.environ['SEMANTIER_SIGNED_SETUP_DIR'])
-        receipt = {'kind': 'synthetic-active-selection-on-signed-candidates-v1', 'cases': []}
+        receipt = {'kind': 'synthetic-active-selection-on-signed-candidates-v2', 'cases': []}
         with tempfile.TemporaryDirectory(prefix='signed-active-fixture-', dir=ROOT) as tmp:
             work = Path(tmp)
             for channel, origin in (('channel1', 'https://download.semantier.cn'),
@@ -82,19 +82,52 @@ class DynamicBootstrapperTest(unittest.TestCase):
                 exe_hash = hashlib.sha256(exe.read_bytes()).hexdigest()
                 a, ma = fixture('a'*32, '0.0.79.0', key=ExistingSigner(), origin=origin)
                 b, mb = fixture('b'*32, '0.0.80.0', key=ExistingSigner(), origin=origin)
+                files = [work/'before.json', work/'manifest.json', work/'after.json']
+                def inspect(before, manifest, after):
+                    for path, content in zip(files, (before, manifest, after)):
+                        path.write_bytes(content)
+                    return subprocess.run([str(exe), '--inspect-metadata', *(win(path) for path in files)],
+                                          capture_output=True, text=True, timeout=30)
                 for label, record, manifest, version in (('active-79', a, ma, '0.0.79.0'),
                                                           ('active-80', b, mb, '0.0.80.0'),
                                                           ('rollback-79', a, ma, '0.0.79.0')):
-                    files = [work/'before.json', work/'manifest.json', work/'after.json']
-                    for path, content in zip(files, (record, manifest, record)):
-                        path.write_bytes(content)
-                    result = subprocess.run([str(exe), '--inspect-metadata', *(win(path) for path in files)],
-                                            capture_output=True, text=True, timeout=30)
+                    result = inspect(record, manifest, record)
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertIn(version, result.stdout)
                     receipt['cases'].append({'channel': channel, 'case': label, 'version': version,
                                              'exeSha256': exe_hash, 'headSha256': hashlib.sha256(record).hexdigest(),
                                              'manifestSha256': hashlib.sha256(manifest).hexdigest()})
+                bad_digest = json.loads(a)
+                bad_digest['nativeHead']['sha256'] = '0'*64
+                bad_digest = json.dumps(bad_digest, separators=(',', ':')).encode()
+                altered = json.loads(ma)
+                altered['installationProof']['signature'] = base64.b64encode(bytes(256)).decode()
+                altered = json.dumps(altered, separators=(',', ':')).encode()
+                altered_head = json.loads(a)
+                altered_head['nativeHead']['sha256'] = hashlib.sha256(altered).hexdigest()
+                altered_head = json.dumps(altered_head, separators=(',', ':')).encode()
+                foreign = 'https://download.semantier.com' if channel == 'channel1' else 'https://download.semantier.cn'
+                foreign_head, foreign_manifest = fixture('a'*32, '0.0.79.0', key=ExistingSigner(), origin=foreign)
+                wrong_head, wrong_manifest = fixture('a'*32, '0.0.79.0', key=ExistingSigner(), origin=origin, publisher='CN=Other')
+                mixed_head, mixed_manifest = fixture('a'*32, '0.0.79.0', key=ExistingSigner(), origin=origin, object_build='b'*32)
+                absent = json.loads(a)
+                del absent['nativeHead']
+                absent = json.dumps(absent, separators=(',', ':')).encode()
+                for label, before, manifest, after in (
+                    ('invalid-digest', bad_digest, ma, bad_digest),
+                    ('invalid-signature', altered_head, altered, altered_head),
+                    ('wrong-origin', foreign_head, foreign_manifest, foreign_head),
+                    ('wrong-publisher', wrong_head, wrong_manifest, wrong_head),
+                    ('mixed-release', mixed_head, mixed_manifest, mixed_head),
+                    ('conflicting-head', a, ma, b),
+                    ('missing-active', absent, ma, absent),
+                ):
+                    result = inspect(before, manifest, after)
+                    self.assertNotEqual(result.returncode, 0, label)
+                    receipt['cases'].append({'channel': channel, 'case': label, 'result': 'REFUSED',
+                                             'exeSha256': exe_hash, 'headSha256': hashlib.sha256(before).hexdigest(),
+                                             'manifestSha256': hashlib.sha256(manifest).hexdigest(),
+                                             'afterSha256': hashlib.sha256(after).hexdigest()})
                 self.assertEqual(hashlib.sha256(exe.read_bytes()).hexdigest(), exe_hash)
         print('SIGNED_ACTIVE_FIXTURE_RECEIPT=' + json.dumps(receipt, sort_keys=True))
 
