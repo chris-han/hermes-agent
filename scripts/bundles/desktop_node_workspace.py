@@ -52,7 +52,16 @@ def stage_node_workspace(source: Path, commit: str, destination: Path) -> None:
     source = source.resolve(strict=True)
     parent = destination.parent.resolve(strict=True)
     destination = parent / destination.name
-    if source == destination or source in destination.parents or destination in source.parents:
+    checkout_job = False
+    if source in destination.parents and destination.name == 'node-workspace':
+        from scripts.bundles.desktop_inputs import owned_windows_checkout_cache, validate_windows_external_layout
+        cache = source / '.cache' / 'desktop-inputs'
+        if owned_windows_checkout_cache(source, cache):
+            validate_windows_external_layout(str(source), str(parent), str(cache))
+            owner = parent / '.desktop-preparation'
+            checkout_job = (owner.is_file() and not owner.is_symlink() and not is_reparse_point(owner)
+                            and owner.read_text(encoding='utf-8-sig') == str(source))
+    if source == destination or (source in destination.parents and not checkout_job) or destination in source.parents:
         raise ValueError('Node staging destination must not overlap source')
     def read_json(name: str) -> dict:
         if not _safe_name(name):

@@ -18,11 +18,13 @@ $rawOutput = [string]$request.output
 if ($rawOutput -notmatch '^[A-Za-z]:\\[^\\]+(\\[^\\]+)*$' -or
     $rawOutput -match '(^|\\)\.\.?($|\\)' -or $rawOutput.Substring(2).Contains(':')) { throw 'Windows layout output path is invalid' }
 $candidateOutput = [IO.Path]::GetFullPath($rawOutput).TrimEnd('\')
+$channel1WorkRoot = 'D:\repo\hermes-build\.cache\channel1-release\work'
+if ($candidateOutput.StartsWith($channel1WorkRoot+'\',[StringComparison]::OrdinalIgnoreCase)) { $workRoot = $channel1WorkRoot }
 if (!$candidateOutput.StartsWith($workRoot+'\',[StringComparison]::OrdinalIgnoreCase)) { throw 'Windows layout output must be in the work root' }
 $outputLeaf = $candidateOutput.Substring($workRoot.Length+1)
 if ($outputLeaf -notmatch '^[A-Za-z0-9_-][A-Za-z0-9._-]*$' -or $outputLeaf.Contains('\') -or $outputLeaf.EndsWith('.') -or
     $outputLeaf -match '^(?i:con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)') { throw 'Windows layout output must be an unambiguous direct child' }
-foreach ($path in @('D:\repo',$sourceRoot,'D:\repo\deliverables',$workRoot,'D:\repo\deliverables\cache')) {
+foreach ($path in @('D:\repo',$sourceRoot,'D:\repo\deliverables',$workRoot,'D:\repo\deliverables\cache',(Join-Path $sourceRoot '.cache'),(Join-Path $sourceRoot '.cache\channel1-release'))) {
   if (Test-Path -LiteralPath $path) {
     $item = Get-Item -LiteralPath $path -Force
     if (!$item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Windows layout root is not an ordinary directory' }
@@ -52,9 +54,9 @@ if ($reuseCache -and (!$env:SEMANTIER_WSL_GIT_DISTRO -or $standalone -or $repo -
 }
 if (!$standalone -and ($repo.StartsWith($work + '\',[StringComparison]::OrdinalIgnoreCase) -or
     $work.StartsWith($repo + '\',[StringComparison]::OrdinalIgnoreCase))) { throw 'Separate repository and worktree paths must not be nested' }
-if ($output -eq $work -or $output.StartsWith($work + '\',[StringComparison]::OrdinalIgnoreCase) -or
+if ($output -eq $work -or ($output.StartsWith($work + '\',[StringComparison]::OrdinalIgnoreCase) -and $workRoot -ine $channel1WorkRoot) -or
     $work.StartsWith($output + '\',[StringComparison]::OrdinalIgnoreCase) -or
-    $output -eq $repo -or $output.StartsWith($repo + '\',[StringComparison]::OrdinalIgnoreCase)) { throw 'Output must be outside both checkouts' }
+    $output -eq $repo -or ($output.StartsWith($repo + '\',[StringComparison]::OrdinalIgnoreCase) -and $workRoot -ine $channel1WorkRoot)) { throw 'Output must use an owned build location' }
 if ($request.commit -notmatch '^[0-9a-f]{40}$') { throw 'Exact complete source commit required' }
 if (($request.PSObject.Properties.Name -notcontains 'controllerCommit') -or $request.controllerCommit -cnotmatch '^[0-9a-f]{40}$') { throw 'Exact complete parent controller commit required' }
 $localGitOnly = ($request.PSObject.Properties.Name -contains 'localGitOnly') -and $request.localGitOnly
@@ -207,7 +209,7 @@ try {
       }
     }
     if (!$pythonForReadiness) { throw 'Python 3.11+ required for external-output readiness' }
-    $serialCache = 'D:\repo\deliverables\cache\desktop-inputs'
+    $serialCache = if ($workRoot -ieq $channel1WorkRoot) { 'D:\repo\hermes-build\.cache\desktop-inputs' } else { 'D:\repo\deliverables\cache\desktop-inputs' }
     $buildWork = Join-Path $output 'desktop-job'
     Native $pythonForReadiness @('-B','-c','import sys; sys.version_info >= (3,11) or sys.exit(1); sys.path.insert(0,sys.argv[1]); from scripts.bundles.desktop_inputs import require_external_output_readiness as r; r(True,sys.argv[1],sys.argv[2],sys.argv[3])',$work,$buildWork,$serialCache)
     $counter = Join-Path (Split-Path $work -Parent) 'semantier-agent-build-version.json'

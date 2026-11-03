@@ -26,17 +26,26 @@ def validate_windows_external_layout(source: str, work: str, cache: str) -> None
         return ntpath.normcase(ntpath.normpath(value))
 
     source, work, cache = map(canonical, (source, work, cache))
-    prefix = ntpath.normcase(r'D:\repo\deliverables\work') + '\\'
-    if (source != ntpath.normcase(r'D:\repo\hermes-build')
-            or cache != ntpath.normcase(r'D:\repo\deliverables\cache\desktop-inputs')
-            or not work.startswith(prefix)):
+    layouts = ((r'D:\repo\deliverables\work', r'D:\repo\deliverables\cache\desktop-inputs'),
+               (r'D:\repo\hermes-build\.cache\channel1-release\work', r'D:\repo\hermes-build\.cache\desktop-inputs'))
+    prefixes = [ntpath.normcase(root) + '\\' for root, expected in layouts
+                if cache == ntpath.normcase(expected) and work.startswith(ntpath.normcase(root) + '\\')]
+    if source != ntpath.normcase(r'D:\repo\hermes-build') or len(prefixes) != 1:
         raise ValueError('invalid Windows external build layout')
+    prefix = prefixes[0]
     parts = work[len(prefix):].split('\\')
     if (len(parts) != 2 or parts[1] != 'desktop-job'
             or not re.fullmatch(r'[a-z0-9_-][a-z0-9._-]*', parts[0])
             or parts[0].endswith('.')
             or re.match(r'^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)', parts[0])):
         raise ValueError('invalid Windows external build layout')
+
+
+def owned_windows_checkout_cache(source: Path, cache: Path) -> bool:
+    """Only the checkout's ignored, specifically owned cache may be nested."""
+    import ntpath
+    return (sys.platform == 'win32' and ntpath.normcase(str(source)) == ntpath.normcase(r'D:\repo\hermes-build')
+            and ntpath.normcase(str(cache)) == ntpath.normcase(r'D:\repo\hermes-build\.cache\desktop-inputs'))
 
 
 def require_external_output_readiness(selected: bool, source=None, work=None, cache=None) -> None:
@@ -64,7 +73,7 @@ def build_lock(source: Path, *, external_cache: Path | None = None):
     from pm.filesystem import is_junction, is_reparse_point
 
     if external_cache is not None:
-        if (not external_cache.is_absolute() or external_cache.resolve().is_relative_to(source.resolve())
+        if (not external_cache.is_absolute() or (external_cache.resolve().is_relative_to(source.resolve()) and not owned_windows_checkout_cache(source.resolve(), external_cache.resolve()))
                 or source.resolve().is_relative_to(external_cache.resolve())):
             raise ValueError("external build lock cache must be outside source")
         for path in (external_cache, *external_cache.parents):

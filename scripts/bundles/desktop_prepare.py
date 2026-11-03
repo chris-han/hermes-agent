@@ -188,11 +188,15 @@ class BuildRequest:
             raise ValueError("external output selection must be boolean")
         if external_outputs:
             require_external_paths_unredirected(source, work, cache)
+        from scripts.bundles.desktop_inputs import owned_windows_checkout_cache, validate_windows_external_layout
+        checkout_layout = external_outputs and owned_windows_checkout_cache(source, cache)
+        if checkout_layout:
+            validate_windows_external_layout(str(source), str(work), str(cache))
         source, work, cache = source.resolve(), work.resolve(), cache.resolve()
         require_output_roots(source)
-        if external_outputs and work.is_relative_to(source):
+        if external_outputs and work.is_relative_to(source) and not checkout_layout:
             raise ValueError("external build work must be outside source")
-        if external_outputs and cache.is_relative_to(source):
+        if external_outputs and cache.is_relative_to(source) and not checkout_layout:
             raise ValueError("external build cache must be outside source")
         if work == cache or work.is_relative_to(cache) or cache.is_relative_to(work):
             raise ValueError("preparation work and cache must be separate directories")
@@ -255,12 +259,16 @@ class BuildRequest:
             raise ValueError("external output selection must be boolean")
         if self.external_outputs:
             require_external_paths_unredirected(self.source, self.work, self.cache)
+        from scripts.bundles.desktop_inputs import owned_windows_checkout_cache, validate_windows_external_layout
+        checkout_layout = self.external_outputs and owned_windows_checkout_cache(self.source, self.cache)
+        if checkout_layout:
+            validate_windows_external_layout(str(self.source), str(self.work), str(self.cache))
         if self.external_outputs and (not self.work.is_absolute()
-                                      or self.work.resolve().is_relative_to(self.source.resolve())
+                                      or (self.work.resolve().is_relative_to(self.source.resolve()) and not checkout_layout)
                                       or self.source.resolve().is_relative_to(self.work.resolve())):
             raise ValueError("external build work must not overlap source")
         if self.external_outputs and (not self.cache.is_absolute()
-                                      or self.cache.resolve().is_relative_to(self.source.resolve())
+                                      or (self.cache.resolve().is_relative_to(self.source.resolve()) and not checkout_layout)
                                       or self.source.resolve().is_relative_to(self.cache.resolve())
                                       or self.cache.resolve().is_relative_to(self.work.resolve())
                                       or self.work.resolve().is_relative_to(self.cache.resolve())):

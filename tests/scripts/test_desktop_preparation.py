@@ -586,3 +586,15 @@ def test_windows_external_prepare_refuses_before_source_or_lock(tmp_path, monkey
     with pytest.raises(ValueError, match='invalid Windows external build layout'):
         desktop_prepare.prepare(request)
     assert not request.source.exists()
+
+
+def test_windows_external_layout_accepts_owned_channel1_cache_and_work_only():
+    from scripts.bundles.desktop_inputs import validate_windows_external_layout
+    source = r'D:\repo\hermes-build'
+    cache = r'D:\repo\hermes-build\.cache\desktop-inputs'
+    work = r'D:\repo\hermes-build\.cache\channel1-release\work\job-1\desktop-job'
+    validate_windows_external_layout(source, work, cache)
+    for invalid in (r'D:\repo\hermes-build\apps\desktop\build\job-1\desktop-job',
+                    r'D:\repo\hermes-build\.cache\channel1-release\work\..\other\desktop-job'):
+        with pytest.raises(ValueError):
+            validate_windows_external_layout(source, invalid, cache)
