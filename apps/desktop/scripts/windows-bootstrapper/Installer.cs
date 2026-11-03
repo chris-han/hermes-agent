@@ -40,7 +40,7 @@ static class Installer {
     static ActiveRelease release;
     static Version Version { get { if(release==null) throw new InvalidOperationException("Active release not resolved."); return release.Version; } }
     static string ExecutablePath { get { return Environment.ProcessPath; } }
-    internal static string AppVersionString { get { return release==null ? "current" : release.Version.ToString(); } }
+    internal static string AppVersionString { get { return release==null ? InstallerText.Choose("current", "当前版本") : release.Version.ToString(); } }
     [StructLayout(LayoutKind.Sequential)] struct FileInformation { public uint Attributes; public System.Runtime.InteropServices.ComTypes.FILETIME Created,Accessed,Written; public uint Volume,SizeHigh,SizeLow,Links,IndexHigh,IndexLow; }
     [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern SafeFileHandle CreateFile(string path,uint access,uint share,IntPtr security,uint creation,uint flags,IntPtr template);
     [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetFileInformationByHandle(SafeFileHandle handle,out FileInformation info);
@@ -161,7 +161,7 @@ static class Installer {
     static FileStream DownloadObject(System.Net.Http.HttpClient client,ActiveRelease.Object item,string dir,Action<string> report,List<FileStream> held) {
         string name=Path.GetFileName(item.Key); var target=CreateOwned(Path.Combine(dir,name),held); int previous=-1;
         BootstrapperTransport.Download(client,new Uri(Origin+"/"+item.Key),target,item.Size,total=>{
-            int percent=(int)(total*100/item.Size); if(percent!=previous){report("Downloading "+name+" "+percent+"%");previous=percent;}
+            int percent=(int)(total*100/item.Size); if(percent!=previous){report("Downloading "+percent+"%");previous=percent;}
         },preferHttp3:PreferHttp3);
         target.Flush(true); var file=Seal(target,held);
         if(file.Length!=item.Size || Hash(file)!=item.Sha256) throw new InvalidOperationException("Package SHA-256 mismatch.");
@@ -179,13 +179,6 @@ static class Installer {
         Directory.CreateDirectory(p,security);
         #endif
         return p;
-    }
-    static void VerifySignatures(string dir) {
-        string encoded=Convert.ToBase64String(Encoding.Unicode.GetBytes(dir));
-        string names=string.Join(",",release.Objects.Select(x=>"'"+Path.GetFileName(x.Key)+"'"));
-        PowerShell("$d=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('"+encoded+"'));"+
-            "$names=@("+names+");foreach($n in $names){$s=Get-AuthenticodeSignature -LiteralPath (Join-Path $d $n);"+
-            "if(!$s.SignerCertificate -or $s.SignerCertificate.Thumbprint -ne '"+Thumbprint+"' -or $s.Status -ne 'Valid'){throw 'Package signature mismatch'}}");
     }
     static void Install(string dir) {
         string encoded=Convert.ToBase64String(Encoding.Unicode.GetBytes(Path.Combine(dir,Path.GetFileName(release.Root))));
@@ -215,7 +208,7 @@ static class Installer {
                 Directory.CreateDirectory(TaskBase()); directories=HoldDirectories(TaskBase());
                 dir=PrivateDirectory(id);directories.AddRange(HoldDirectories(dir));
                 foreach(var item in release.Objects) DownloadObject(client,item,dir,report,held);
-                report("Verifying signed packages…"); VerifySignatures(dir); PackageIdentity.Verify(release,dir);
+                report("Verifying package and certificate…"); PackageSignature.Verify(dir,release.Objects); PackageIdentity.Verify(release,dir);
                 CheckInstalled(); report("Installing for the current Windows user…"); Install(dir); installed=true;
             }
         } finally {

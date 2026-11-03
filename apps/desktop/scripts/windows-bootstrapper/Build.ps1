@@ -11,7 +11,7 @@ foreach($cachePath in @('D:\repo\deliverables\cache\dotnet','D:\repo\deliverable
     while($check) {if($check.Exists -and ($check.Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'Redirected cache path refused.'};$check=$check.Parent}
 }
 New-Item -ItemType Directory -Path $output | Out-Null
-foreach($name in @('Installer.cs','InstallerUI.cs','ActiveRelease.cs','PackageIdentity.cs','BootstrapperTransport.cs','SemantierAgent-signing.cer','bootstrapper.manifest')) {
+foreach($name in @('Installer.cs','InstallerUI.cs','ActiveRelease.cs','PackageIdentity.cs','PackageSignature.cs','BootstrapperTransport.cs','SemantierAgent-signing.cer','bootstrapper.manifest')) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination $output
 }
 $assets=Join-Path $PSScriptRoot '..\..\assets'
