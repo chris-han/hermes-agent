@@ -15,6 +15,7 @@ import unittest
 HERE = Path(__file__).resolve().parent
 PS = Path('/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe')
 ROOT = Path('/mnt/d/repo/deliverables/work')
+CHANNEL1_ROOT = Path('/mnt/d/repo/hermes-build/.cache/channel1-release/work')
 AVAILABLE = PS.is_file() and ROOT.is_dir() and Path('/usr/bin/wslpath').is_file()
 
 def win(path):
@@ -132,13 +133,17 @@ class DynamicBootstrapperTest(unittest.TestCase):
         print('SIGNED_ACTIVE_FIXTURE_RECEIPT=' + json.dumps(receipt, sort_keys=True))
 
     def test_build_refuses_output_outside_owned_work_root(self):
-        result=subprocess.run([str(PS),'-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',win(HERE/'Build.ps1'),
-            '-Channel','channel1','-OutputDirectory',r'C:\semantier-0080-invalid-output'],capture_output=True,text=True,timeout=30)
-        self.assertNotEqual(result.returncode,0)
-        self.assertIn('fresh task-owned directory',result.stderr)
+        for channel, output in (('channel1', r'C:\semantier-0080-invalid-output'),
+                                ('channel1', r'D:\repo\deliverables\work\wrong-channel'),
+                                ('channel2', r'D:\repo\hermes-build\.cache\channel1-release\work\wrong-channel')):
+            result=subprocess.run([str(PS),'-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',win(HERE/'Build.ps1'),
+                '-Channel',channel,'-OutputDirectory',output],capture_output=True,text=True,timeout=30)
+            self.assertNotEqual(result.returncode,0)
+            self.assertIn('fresh task-owned directory',result.stderr)
 
     def test_existing_distribution_lock_is_not_removed_or_bypassed(self):
-        with tempfile.TemporaryDirectory(prefix='setup-lock-0080-',dir=ROOT) as tmp:
+        CHANNEL1_ROOT.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix='setup-lock-0080-',dir=CHANNEL1_ROOT) as tmp:
             script=win(HERE/'Build.ps1').replace("'","''");out=win(Path(tmp)/'output').replace("'","''")
             command=r"""
 $ErrorActionPreference='Stop'
@@ -161,7 +166,8 @@ try {
         from cryptography.hazmat.primitives import hashes, serialization
         from cryptography.hazmat.primitives.asymmetric import rsa
         from cryptography.x509.oid import NameOID
-        with tempfile.TemporaryDirectory(prefix='dynamic-setup-0080-',dir=ROOT) as tmp:
+        CHANNEL1_ROOT.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix='dynamic-setup-0080-',dir=CHANNEL1_ROOT) as tmp, tempfile.TemporaryDirectory(prefix='dynamic-setup-0080-',dir=ROOT) as tmp2:
             base=Path(tmp)
             key=rsa.generate_private_key(public_exponent=65537,key_size=2048)
             name=x509.Name([x509.NameAttribute(NameOID.COMMON_NAME,'Disposable installer fixture')])
@@ -185,7 +191,7 @@ try {
             path.write_text(content.replace(old.lower(),hashlib.sha256(der).hexdigest()).replace(old_thumb,hashlib.sha1(der).hexdigest().upper()))
             for channel in ('channel1','channel2'):
                 origin='https://download.semantier.cn' if channel=='channel1' else 'https://download.semantier.com'
-                output=base/channel
+                output=(base if channel == 'channel1' else Path(tmp2))/channel
                 build=subprocess.run([str(PS),'-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',win(source/'Build.ps1'),
                     '-Channel',channel,'-OutputDirectory',win(output)],capture_output=True,text=True,timeout=300)
                 self.assertEqual(build.returncode,0,build.stdout+build.stderr)

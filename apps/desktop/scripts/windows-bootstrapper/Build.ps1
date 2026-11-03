@@ -1,12 +1,14 @@
 param([Parameter(Mandatory=$true)][ValidateSet('channel1','channel2')][string]$Channel,
       [Parameter(Mandatory=$true)][string]$OutputDirectory)
 $ErrorActionPreference='Stop'
-$workRoot=[IO.Path]::GetFullPath('D:\repo\deliverables\work').TrimEnd('\')+'\'
+$jobRoot=if($Channel -eq 'channel1'){'D:\repo\hermes-build\.cache\channel1-release\work'}else{'D:\repo\deliverables\work'}
+$cacheRoot=if($Channel -eq 'channel1'){'D:\repo\hermes-build\.cache\desktop-inputs'}else{'D:\repo\deliverables\cache'}
+$workRoot=[IO.Path]::GetFullPath($jobRoot).TrimEnd('\')+'\'
 $output=[IO.Path]::GetFullPath($OutputDirectory)
-if(!$output.StartsWith($workRoot,[StringComparison]::OrdinalIgnoreCase) -or (Test-Path -LiteralPath $output)) {throw 'Use a fresh task-owned directory under D:\repo\deliverables\work.'}
+if(!$output.StartsWith($workRoot,[StringComparison]::OrdinalIgnoreCase) -or (Test-Path -LiteralPath $output)) {throw 'Use a fresh task-owned directory under the channel work root.'}
 $check=[IO.DirectoryInfo]::new($output).Parent
 while($check) {if($check.Exists -and ($check.Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'Redirected output path refused.'};$check=$check.Parent}
-foreach($cachePath in @('D:\repo\deliverables\cache\dotnet','D:\repo\deliverables\cache\nuget')) {
+foreach($cachePath in @((Join-Path $cacheRoot 'dotnet'),(Join-Path $cacheRoot 'nuget'))) {
     $check=[IO.DirectoryInfo]::new($cachePath)
     while($check) {if($check.Exists -and ($check.Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'Redirected cache path refused.'};$check=$check.Parent}
 }
@@ -46,8 +48,8 @@ $project=$project.Replace('__CHANNEL__',$Channel.ToUpperInvariant())
 $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'
 $env:DOTNET_GENERATE_ASPNET_CERTIFICATE='false'
 $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'
-$env:DOTNET_CLI_HOME='D:\repo\deliverables\cache\dotnet'
-$env:NUGET_PACKAGES='D:\repo\deliverables\cache\nuget'
+$env:DOTNET_CLI_HOME=Join-Path $cacheRoot 'dotnet'
+$env:NUGET_PACKAGES=Join-Path $cacheRoot 'nuget'
 $dotnet=Join-Path $env:ProgramFiles 'dotnet\dotnet.exe'
 if(!(Test-Path -LiteralPath $dotnet)){throw '.NET 8 SDK is required.'}
 & $dotnet publish (Join-Path $output 'Bootstrapper.csproj') -c Release -o (Join-Path $output 'test') -p:Testing=true --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
