@@ -13,9 +13,9 @@ HERE=Path(__file__).resolve().parent
 ROOT=Path('/mnt/d/repo/deliverables/work')
 DOTNET=Path('/mnt/c/Program Files/dotnet/dotnet.exe')
 
-def win(path): return subprocess.check_output(['wslpath','-w',str(path)],text=True).strip()
+def win(path): return subprocess.check_output(['/usr/bin/wslpath','-w',str(path)],text=True).strip()
 
-@pytest.mark.skipif(not DOTNET.is_file() or not ROOT.is_dir() or not shutil.which('wslpath'),reason='requires Windows dotnet')
+@pytest.mark.skipif(not DOTNET.is_file() or not ROOT.is_dir() or not Path('/usr/bin/wslpath').is_file(),reason='requires Windows dotnet')
 def test_bundle_closure_rejects_missing_or_wrong_version():
     with tempfile.TemporaryDirectory(prefix='package-identity-0080-',dir=ROOT) as tmp:
         root=Path(tmp); project=root/'project';data=root/'data';project.mkdir();data.mkdir()

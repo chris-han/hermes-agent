@@ -14,10 +14,10 @@ import unittest
 HERE = Path(__file__).resolve().parent
 PS = Path('/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe')
 ROOT = Path('/mnt/d/repo/deliverables/work')
-AVAILABLE = PS.is_file() and ROOT.is_dir() and shutil.which('wslpath')
+AVAILABLE = PS.is_file() and ROOT.is_dir() and Path('/usr/bin/wslpath').is_file()
 
 def win(path):
-    return subprocess.check_output(['wslpath', '-w', str(path)], text=True).strip()
+    return subprocess.check_output(['/usr/bin/wslpath', '-w', str(path)], text=True).strip()
 
 def fixture(build, version, *, key, origin, publisher='CN=Semantier Technology, O=Semantier Technology', object_build=None):
     from cryptography.hazmat.primitives import hashes

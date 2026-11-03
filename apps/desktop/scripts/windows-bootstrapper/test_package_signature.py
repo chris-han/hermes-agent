@@ -11,9 +11,9 @@ ROOT=Path('/mnt/d/repo/deliverables/work')
 DOTNET=Path('/mnt/c/Program Files/dotnet/dotnet.exe')
 RETAINED=Path('/mnt/d/repo/deliverables/SemantierAgent-terminal-0078-v1/signed/distribution')
 
-def win(path):return subprocess.check_output(['wslpath','-w',str(path)],text=True).strip()
+def win(path):return subprocess.check_output(['/usr/bin/wslpath','-w',str(path)],text=True).strip()
 
-@pytest.mark.skipif(not DOTNET.is_file() or not (RETAINED/'SemantierAgent.msixbundle').is_file() or not ROOT.is_dir() or not shutil.which('wslpath'),reason='requires Windows and retained signed 0.0.78 bundle')
+@pytest.mark.skipif(not DOTNET.is_file() or not (RETAINED/'SemantierAgent.msixbundle').is_file() or not ROOT.is_dir() or not Path('/usr/bin/wslpath').is_file(),reason='requires Windows and retained signed 0.0.78 bundle')
 def test_pinned_signer_passes_and_corrupted_or_wrong_publisher_fails():
     with tempfile.TemporaryDirectory(prefix='package-signature-0080-',dir=ROOT) as tmp:
         project=Path(tmp)
@@ -24,7 +24,7 @@ def test_pinned_signer_passes_and_corrupted_or_wrong_publisher_fails():
         assert result.returncode==0,result.stdout+result.stderr
         assert 'SIGNATURE_CORRUPTION_REFUSED' in result.stdout
 
-@pytest.mark.skipif(not DOTNET.is_file() or not (RETAINED/'SemantierAgent.msixbundle').is_file() or not shutil.which('wslpath'),reason='requires Windows and retained signed bundle')
+@pytest.mark.skipif(not DOTNET.is_file() or not (RETAINED/'SemantierAgent.msixbundle').is_file() or not Path('/usr/bin/wslpath').is_file(),reason='requires Windows and retained signed bundle')
 def test_publisher_checks_signed_bytes_with_file_held():
     from scripts.releases.simple_native_slots import verify_windows_signatures
     path=RETAINED/'SemantierAgent.msixbundle';thumb='57BF15739B4AA447842EAF388856A01B4E5029FF'
