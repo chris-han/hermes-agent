@@ -20,6 +20,25 @@ def test_dangling_reparse_entry_is_not_treated_as_missing():
     assert is_reparse_point(Reparse()) and not is_reparse_point(Missing())
 
 
+def test_external_node_environment_discards_inherited_loader_options(tmp_path,monkeypatch):
+    from types import SimpleNamespace
+    from scripts.bundles.desktop_inputs import external_node_environment
+    source=tmp_path/'source';hook=source/'scripts/build/external-node-resolver.mjs';hook.parent.mkdir(parents=True);hook.write_text('// fixture')
+    work=tmp_path/'work';root=work/'node-workspace';root.mkdir(parents=True)
+    request=SimpleNamespace(source=source,work=work,cache=tmp_path/'cache',external_outputs=True)
+    env=external_node_environment(request,root,{'NODE_OPTIONS':'--require=/tmp/foreign.cjs','Node_Options':'--inspect'})
+    assert env['NODE_OPTIONS']=='--import='+hook.as_uri()
+    assert 'Node_Options' not in env
+    from scripts.bundles import desktop,desktop_node_workspace,desktop_prepare
+    (work/'.desktop-preparation').write_text(str(source))
+    root.rmdir();calls=[]
+    request.commit='a'*40;request.workspaces=lambda:['apps/app']
+    monkeypatch.setattr(desktop_node_workspace,'stage_node_workspace',lambda source,commit,destination:destination.mkdir())
+    monkeypatch.setattr(desktop,'run',lambda *args,**kwargs:calls.append(kwargs['env']))
+    desktop_prepare.prepare_external_node_dependencies(request,Path('/fixture/node'),'fixture',{'Node_Options':'--require=/tmp/foreign.cjs'})
+    assert all(key.upper()!='NODE_OPTIONS' for key in calls[0])
+
+
 def _git(repo, *args):
     return subprocess.check_output(['/usr/bin/git', '-C', str(repo), *args], text=True).strip()
 
@@ -112,3 +131,54 @@ def test_staged_workspace_installs_and_resolves_offline(tmp_path):
                             env=env, check=True, capture_output=True, text=True)
     assert result.stdout.strip() == 'pinned'
     assert not (repo / 'node_modules').exists()
+
+
+def test_preparation_installs_committed_workspace_with_real_node_driver(tmp_path):
+    from types import SimpleNamespace
+    from scripts.bundles.desktop_prepare import prepare_external_node_dependencies
+
+    node = os.environ.get('SEMANTIER_TEST_NODE') or shutil.which('node')
+    if not node:
+        pytest.skip('Node is required for the offline npm fixture')
+    repo, _ = _fixture(tmp_path)
+    driver = Path(__file__).resolve().parents[2] / 'scripts/build/node-deps.mjs'
+    env = {**os.environ, 'npm_config_offline': 'true', 'npm_config_cache': str(tmp_path / 'cache/npm')}
+    subprocess.run([node, str(driver), '--npm', 'install', '--package-lock-only', '--ignore-scripts',
+                    '--no-audit', '--no-fund', '--offline'], cwd=repo, env=env, check=True, capture_output=True)
+    hook = repo / 'scripts/build/external-node-resolver.mjs'
+    hook.parent.mkdir(parents=True)
+    shutil.copyfile(Path(__file__).resolve().parents[2] / 'scripts/build/external-node-resolver.mjs', hook)
+    _git(repo, 'add', 'package-lock.json', 'scripts')
+    _git(repo, '-c', 'user.name=fixture', '-c', 'user.email=fixture@invalid', 'commit', '-qm', 'lock')
+    work = tmp_path / 'job'
+    work.mkdir()
+    (work / '.desktop-preparation').write_text(str(repo))
+    request = SimpleNamespace(source=repo, commit=_git(repo, 'rev-parse', 'HEAD'), work=work,
+                              cache=tmp_path / 'cache', external_outputs=True,
+                              workspaces=lambda: ['apps/app'])
+    root = prepare_external_node_dependencies(request, Path(node), 'fixture', env)
+    assert root == work / 'node-workspace'
+    assert (root / 'node_modules/.hermes-node-deps').is_file()
+    assert not (repo / 'node_modules').exists()
+    code = 'const {createRequire}=require("module");console.log(createRequire(process.argv[1])("shared"))'
+    result = subprocess.run([node, '-e', code, str(root / 'apps/app/package.json')],
+                            cwd=root, env=env, check=True, capture_output=True, text=True)
+    assert result.stdout.strip() == 'pinned'
+    from scripts.bundles.desktop_inputs import external_node_environment
+    source_module = repo / 'apps/app/entry.cjs'
+    source_module.write_text('console.log(require("shared"))')
+    poisoned = repo / 'node_modules/shared'
+    poisoned.mkdir(parents=True)
+    (poisoned / 'index.js').write_text('module.exports = "foreign"')
+    bound = external_node_environment(request, root, env)
+    result = subprocess.run([node, str(source_module)], cwd=repo, env=bound,
+                            check=True, capture_output=True, text=True)
+    assert result.stdout.strip() == 'pinned'
+    subprocess.run([node, str(driver), '--source', str(root), '--reuse', '--no-install',
+                    '--native-toolchain', 'fixture', '--workspace', 'apps/app'],
+                   cwd=repo, env=bound, check=True, capture_output=True, text=True)
+    sentinel = root / 'preserve-me'
+    sentinel.write_text('owned input')
+    with pytest.raises(ValueError, match='already exists'):
+        prepare_external_node_dependencies(request, Path(node), 'fixture', env)
+    assert sentinel.read_text() == 'owned input'

@@ -42,6 +42,40 @@ def fingerprint(path: Path) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def require_node_root(request: BuildRequest, root: Path | None) -> None:
+    """Keep npm workspace links inside the job before hashing or consuming it."""
+    from pm.filesystem import is_junction, is_reparse_point
+
+    if not request.external_outputs:
+        if root is not None:
+            raise ValueError("ordinary preparation cannot select an external Node root")
+        return
+    if root is None or root != request.work / "node-workspace":
+        raise ValueError("external preparation requires its job-owned Node root")
+    for parent in (root, *root.parents):
+        if parent.is_symlink() or is_junction(parent) or is_reparse_point(parent):
+            raise ValueError("external Node root ownership is redirected")
+    if not root.is_dir():
+        raise ValueError("external Node root is missing")
+    canonical = root.resolve(strict=True)
+    def walk_error(exc: OSError) -> None:
+        raise ValueError("external Node root cannot be inspected") from exc
+
+    for directory, dirs, files in os.walk(root, followlinks=False, onerror=walk_error):
+        for name in (*dirs, *files):
+            entry = Path(directory) / name
+            linked = entry.is_symlink() or is_junction(entry)
+            if getattr(entry.lstat(), 'st_file_attributes', 0) & 0x400 and not linked:
+                raise ValueError("external Node root contains an unsupported reparse point")
+            if linked:
+                try:
+                    target = entry.resolve(strict=True)
+                except OSError as exc:
+                    raise ValueError("external Node root contains a broken link") from exc
+                if not target.is_relative_to(canonical):
+                    raise ValueError("external Node root contains a link outside the job")
+
+
 def require_owned(request: BuildRequest, paths: list[Path]) -> None:
     require_output_roots(request.source)
     roots = (request.work.resolve(), request.cache.resolve(),
@@ -233,26 +267,34 @@ class PreparedDesktop:
     digests: dict[str, str]
     native_toolchain: str
     request_digest: str | None = None
+    node_root: Path | None = None
 
     @classmethod
     def record(cls, request: BuildRequest, *, python: Path, node: Path, icon_python: Path,
-               native: Path, packager: Path, payload: Path | None, native_toolchain: str) -> PreparedDesktop:
+               native: Path, packager: Path, payload: Path | None, native_toolchain: str,
+               node_root: Path | None = None) -> PreparedDesktop:
+        require_node_root(request, node_root)
         files = [python, node, icon_python.parent.parent, native, packager]
+        if node_root is not None:
+            files.append(node_root)
         if payload is not None:
             files.append(payload)
         require_owned(request, files)
         files.extend(selected_tool_inputs(request))
         return cls(request, python, node, icon_python, native, packager, payload,
-                   {str(path): fingerprint(path) for path in files}, native_toolchain, request.identity_digest())
+                   {str(path): fingerprint(path) for path in files}, native_toolchain, request.identity_digest(), node_root)
 
     def write(self, path: Path) -> None:
         from pm.lock import _write
-        _write(path, {"schema": 1, "request": self.request.data(),
+        data = {"schema": 1, "request": self.request.data(),
                       **{name: str(value) if value is not None else None for name, value in (
                           ("python", self.python), ("node", self.node), ("icon_python", self.icon_python),
                           ("native", self.native), ("packager", self.packager), ("payload", self.payload))},
                       "digests": self.digests, "native_toolchain": self.native_toolchain,
-                      "request_digest": self.request_digest})
+                      "request_digest": self.request_digest}
+        if self.node_root is not None:
+            data["node_root"] = str(self.node_root)
+        _write(path, data)
 
     @classmethod
     def load(cls, path: Path) -> PreparedDesktop:
@@ -264,6 +306,8 @@ class PreparedDesktop:
             for name in ("python", "node", "icon_python", "native", "packager", "payload"):
                 if data[name] is not None:
                     data[name] = Path(data[name])
+            if data.get("node_root") is not None:
+                data["node_root"] = Path(data["node_root"])
             return cls(request=request, **data)
         except (OSError, ValueError, KeyError, TypeError) as exc:
             raise ValueError(f"desktop preparation is missing or invalid: {path}; run preparation again") from exc
@@ -277,6 +321,9 @@ class PreparedDesktop:
         if self.request.target != current_target():
             raise ValueError("preparation target differs from this host")
         paths = [self.python, self.node, self.icon_python.parent.parent, self.native, self.packager]
+        require_node_root(self.request, self.node_root)
+        if self.node_root is not None:
+            paths.append(self.node_root)
         paths.extend(selected_tool_inputs(self.request))
         if self.payload is not None:
             paths.append(self.payload)
@@ -397,6 +444,26 @@ def _prepare(request: BuildRequest) -> Path:
         return result
 
 
+def prepare_external_node_dependencies(request: BuildRequest, node: Path, native_toolchain: str,
+                                       inherited: dict[str, str]) -> Path:
+    """Install the committed workspace inputs into a fresh, owned job directory."""
+    from scripts.bundles.desktop import run
+    from scripts.bundles.desktop_node_workspace import stage_node_workspace
+
+    owner = request.work / ".desktop-preparation"
+    if not request.external_outputs or not owner.is_file() or owner.is_symlink() or owner.read_text(encoding="utf-8-sig") != str(request.source):
+        raise ValueError("external Node preparation requires an owned job")
+    root = request.work / "node-workspace"
+    stage_node_workspace(request.source, request.commit, root)
+    env = {key: value for key, value in inherited.items() if key.upper() != "NODE_OPTIONS"}
+    env["HERMES_DESKTOP_SERIAL_CACHE"] = str(request.cache)
+    run([str(node), str(ROOT / "scripts/build/node-deps.mjs"), "--source", str(root), "--reuse",
+         "--native-toolchain", native_toolchain,
+         *[arg for name in request.workspaces() for arg in ("--workspace", name)]], cwd=root, env=env)
+    require_node_root(request, root)
+    return root
+
+
 def prepare_in_worker(request: BuildRequest) -> Path:
     from scripts.bundles.desktop_inputs import require_external_output_readiness
     require_external_output_readiness(getattr(request, "external_outputs", False))
@@ -414,9 +481,15 @@ def prepare_in_worker(request: BuildRequest) -> Path:
         python, node, env = prepare_tools(request.source, request.work, request.cache, os.environ)
     env = identity_environment(request, request.variant, env)
     native_toolchain = env["HERMES_DESKTOP_NATIVE_TOOLCHAIN"]
-    run([str(node), "scripts/build/node-deps.mjs", "--source", str(request.source), "--reuse",
-         "--native-toolchain", native_toolchain,
-         *[arg for name in request.workspaces() for arg in ("--workspace", name)]], cwd=request.source, env=env)
+    node_root = None
+    if getattr(request, "external_outputs", False):
+        from scripts.bundles.desktop_inputs import external_node_environment
+        node_root = prepare_external_node_dependencies(request, node, native_toolchain, env)
+        env = external_node_environment(request, node_root, env)
+    else:
+        run([str(node), "scripts/build/node-deps.mjs", "--source", str(request.source), "--reuse",
+             "--native-toolchain", native_toolchain,
+             *[arg for name in request.workspaces() for arg in ("--workspace", name)]], cwd=request.source, env=env)
     native = request.cache / "native/node" / native_toolchain
     run([str(node), "apps/desktop/scripts/stage-native-deps.mjs", "--source", str(request.source),
          "--out", str(native), "--native-toolchain", native_toolchain], cwd=request.source, env=env)
@@ -468,7 +541,7 @@ def prepare_in_worker(request: BuildRequest) -> Path:
     require_source(request.source, request.commit)
     prepared = PreparedDesktop.record(request, python=python, node=node, icon_python=icon_python,
                                       native=native, packager=packager / "prepared.json", payload=payload,
-                                      native_toolchain=native_toolchain)
+                                      native_toolchain=native_toolchain, node_root=node_root)
     result = request.work / "prepared.json"
     prepared.write(result)
     return result

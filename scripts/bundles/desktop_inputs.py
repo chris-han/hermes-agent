@@ -46,7 +46,28 @@ def build_environment(prepared: PreparedDesktop, variant: str, inherited: Mappin
         raise ValueError("prepared Python/Node paths do not match selected tools; prepare again")
     env = selection.environment(env)
     env["HERMES_PYTHON"] = str(prepared.python)
-    return identity_environment(request, variant, env)
+    env = identity_environment(request, variant, env)
+    if request.external_outputs:
+        env = external_node_environment(request, prepared.node_root, env)
+    return env
+
+
+def external_node_environment(request: BuildRequest, root: Path, inherited: Mapping[str, str]) -> dict[str, str]:
+    """Bind the job's inspected dependency tree to every Node child process."""
+    from scripts.bundles.desktop_prepare import require_node_root
+
+    require_node_root(request, root)
+    hook = request.source / "scripts/build/external-node-resolver.mjs"
+    if not hook.is_file() or hook.is_symlink():
+        raise ValueError("external Node resolver is missing or redirected")
+    # Do not let an inherited loader inject code into a source-bound build.
+    env = {key: value for key, value in inherited.items() if key.upper() != "NODE_OPTIONS"}
+    env["NODE_OPTIONS"] = "--import=" + hook.as_uri()
+    env["HERMES_DESKTOP_NODE_ROOT"] = str(root)
+    env["HERMES_NODE_SOURCE_ROOT"] = str(request.source)
+    env["HERMES_NODE_DEPENDENCY_ROOT"] = str(root)
+    env["HERMES_DESKTOP_SERIAL_CACHE"] = str(request.cache)
+    return env
 
 
 def identity_environment(request: BuildRequest, variant: str, inherited: Mapping[str, str]) -> dict[str, str]:

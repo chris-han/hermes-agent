@@ -137,6 +137,37 @@ def test_prepared_input_roundtrip_rejects_mutation_and_foreign_source(tmp_path):
     assert restored.request.commit == commit
     assert restored.request.version == "1.2.3"
     assert "environment" not in json.loads(path.read_text())
+    from dataclasses import replace
+    external_request = replace(request, external_outputs=True)
+    node_root = work / 'node-workspace'
+    node_root.mkdir()
+    (node_root / 'package-lock.json').write_text('pinned')
+    external = PreparedDesktop.record(external_request, python=executable, node=node, icon_python=icons,
+                                      native=native, packager=packager, payload=None,
+                                      native_toolchain='fixture-toolchain', node_root=node_root)
+    external_path = work / 'external-prepared.json'
+    external.write(external_path)
+    external = PreparedDesktop.load(external_path)
+    external.validate()
+    (node_root / 'package-lock.json').write_text('changed')
+    with pytest.raises(ValueError, match='changed|stale'):
+        external.validate()
+    (node_root / 'package-lock.json').write_text('pinned')
+    if os.name != 'nt':
+        from scripts.bundles.desktop_prepare import require_node_root
+        inside = node_root / 'inside'
+        inside.mkdir()
+        link = node_root / 'workspace-link'
+        link.symlink_to(inside, target_is_directory=True)
+        require_node_root(external_request, node_root)
+        link.unlink()
+        link.symlink_to(source, target_is_directory=True)
+        with pytest.raises(ValueError, match='outside the job'):
+            require_node_root(external_request, node_root)
+        link.unlink()
+    with pytest.raises(ValueError, match='Node.*root'):
+        PreparedDesktop.record(external_request, python=executable, node=node, icon_python=icons,
+                               native=native, packager=packager, payload=None, native_toolchain='fixture-toolchain')
     icon_library.unlink()
     with pytest.raises(ValueError, match="changed|stale|missing"):
         restored.validate()

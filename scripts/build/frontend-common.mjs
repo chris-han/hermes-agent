@@ -10,13 +10,25 @@ export const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)
 // Look only in the prepared workspace, not a parent checkout's dependency tree.
 // Package symlinks themselves are valid inputs (including Nix store references).
 export function workspaceTool(source, workspace, name) {
-  for (const root of [path.join(source, workspace), source]) {
+  const selected = process.env.HERMES_DESKTOP_BUILD_DIR && process.env.HERMES_DESKTOP_NODE_ROOT
+  let base = source
+  if (selected) {
+    if (!path.isAbsolute(selected)) throw new Error('External Desktop dependency root must be absolute')
+    base = realpathSync(selected)
+    const sourceRoot = realpathSync(source)
+    if (contains(sourceRoot, base) || contains(base, sourceRoot)) throw new Error('External Desktop dependencies must not overlap source')
+  }
+  for (const root of [path.join(base, workspace), base]) {
     const manifest = path.join(root, 'node_modules', name, 'package.json')
     if (existsSync(manifest)) {
-      return createRequire(path.join(root, 'package.json')).resolve(name)
+      const entry = createRequire(path.join(root, 'package.json')).resolve(name)
+      if (selected && (!contains(base, realpathSync(manifest)) || !contains(base, realpathSync(entry)))) {
+        throw new Error(`Prepared ${name} dependency escaped the selected root`)
+      }
+      return entry
     }
   }
-  throw new Error(`Missing prepared ${name} dependency in ${workspace} or ${source}/node_modules`)
+  throw new Error(`Missing prepared ${name} dependency in ${workspace} or ${base}/node_modules`)
 }
 
 function canonical(file) {

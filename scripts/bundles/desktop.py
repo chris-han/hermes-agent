@@ -123,7 +123,8 @@ def _build_prepared(prepared, builder_args: list[str], variant: str | None) -> N
                     *targets, f"-c.extraMetadata.version={app_version}"]
     run([node, "scripts/run-electron-builder.mjs", "--validate-only", *package_args, *builder_args],
         cwd=desktop, env=env)
-    run([node, "scripts/build/node-deps.mjs", "--source", str(repo), "--reuse", "--no-install",
+    dependency_root = prepared.node_root if request.external_outputs else repo
+    run([node, "scripts/build/node-deps.mjs", "--source", str(dependency_root), "--reuse", "--no-install",
          "--native-toolchain", prepared.native_toolchain,
          *[arg for name in request.workspaces() for arg in ("--workspace", name)]], cwd=repo, env=env)
     build_dir = request.desktop_build_dir
