@@ -135,15 +135,7 @@ static class Installer {
         var strict=new FileStream(tracker.Name,FileMode.Open,FileAccess.Read,FileShare.Read);held.Add(strict);
         tracker.Dispose();held.Remove(tracker);return strict;
     }
-    static bool PreferHttp3 {
-        get {
-#if CHANNEL2
-            return false;
-#else
-            return true;
-#endif
-        }
-    }
+    static bool PreferHttp3 => true;
     static byte[] ReadMetadata(System.Net.Http.HttpClient client, Uri uri) {
         using(var response=BootstrapperTransport.Send(client,uri,preferHttp3:PreferHttp3)) {
             if(response.StatusCode!=HttpStatusCode.OK || response.RequestMessage?.RequestUri!=uri ||
@@ -221,6 +213,7 @@ static class Installer {
     }
     #if TESTING
     static void SelfTest() {
+        if(!PreferHttp3) throw new InvalidOperationException("Both channels must attempt HTTP/3 before TCP fallback.");
         #if CHANNEL1
         #endif
         // More than a pipe buffer on stderr must not prevent stdout completion.

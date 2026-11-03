@@ -17,8 +17,8 @@ report the pinned publisher as valid, and checks package identity, version and
 bundle-member closure before calling Windows package deployment. It refuses a
 newer installed version and does not modify certificate stores. A missing or
 untrusted publisher certificate therefore fails clearly rather than changing OS
-trust. Channel 1 attempts HTTP/3 then TCP; Channel 2 currently uses TCP while
-its direct R2 HTTP/3 qualification is open. Transport success alone is not an
+trust. Both channels attempt HTTP/3 and fall back to HTTPS over TCP when it
+is unavailable. Transport success alone is not an
 installed-update or HTTP/3 qualification.
 
 `--inspect-metadata <before> <manifest> <after>` is a read-only test entry that

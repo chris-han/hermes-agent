@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 
 sealed class FixtureHandler : HttpMessageHandler {
     public bool FailHttp3;
+    public bool UnsupportedHttp3;
     public bool StallHttp3;
     public int Calls;
     public Uri LastUri;
@@ -15,6 +16,7 @@ sealed class FixtureHandler : HttpMessageHandler {
         Calls++;
         LastUri = request.RequestUri;
         if (request.Version.Major == 3 && FailHttp3) throw new HttpRequestException("QUIC unavailable");
+        if (request.Version.Major == 3 && UnsupportedHttp3) throw new PlatformNotSupportedException("QUIC unsupported");
         if (request.Version.Major == 3 && StallHttp3) return WaitForCancellation(cancel);
         return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Version = request.Version, RequestMessage = request });
     }
@@ -194,6 +196,10 @@ static class Probe {
             if (r.Version.Major != 2 || down.Calls != 2 || down.LastUri != origin) throw new Exception("TCP fallback failed");
         }
         var tcpOnly = new FixtureHandler { FailHttp3 = true };
+        var unsupported = new FixtureHandler { UnsupportedHttp3 = true };
+        using (var client = new HttpClient(unsupported)) using (var r = BootstrapperTransport.Send(client, origin)) {
+            if (r.Version.Major != 2 || unsupported.Calls != 2 || unsupported.LastUri != origin) throw new Exception("Unsupported QUIC fallback failed");
+        }
         using (var client = new HttpClient(tcpOnly)) using (var r = BootstrapperTransport.Send(client, origin, preferHttp3: false)) {
             if (r.Version.Major != 2 || tcpOnly.Calls != 1 || tcpOnly.LastUri != origin) throw new Exception("TCP-only policy failed");
         }

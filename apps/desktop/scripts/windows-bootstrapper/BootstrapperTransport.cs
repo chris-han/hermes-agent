@@ -21,6 +21,8 @@ static class BootstrapperTransport {
             }
         } catch (HttpRequestException) {
             return Tcp(client, origin, offset);
+        } catch (PlatformNotSupportedException) {
+            return Tcp(client, origin, offset);
         } catch (OperationCanceledException) when (deadline.IsCancellationRequested) {
             return Tcp(client, origin, offset);
         }
