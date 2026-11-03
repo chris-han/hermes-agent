@@ -2,6 +2,7 @@
 
 Fixtures contain no installable packages; this does not qualify signature or installation.
 """
+import base64
 import hashlib
 import json
 from pathlib import Path
@@ -39,6 +40,24 @@ class DynamicBootstrapperTest(unittest.TestCase):
             '-Channel','channel1','-OutputDirectory',r'C:\semantier-0080-invalid-output'],capture_output=True,text=True,timeout=30)
         self.assertNotEqual(result.returncode,0)
         self.assertIn('fresh task-owned directory',result.stderr)
+
+    def test_existing_distribution_lock_is_not_removed_or_bypassed(self):
+        with tempfile.TemporaryDirectory(prefix='setup-lock-0080-',dir=ROOT) as tmp:
+            script=win(HERE/'Build.ps1').replace("'","''");out=win(Path(tmp)/'output').replace("'","''")
+            command=r"""
+$ErrorActionPreference='Stop'
+$path='D:\repo\hermes-build.distribution.lock'
+$hold=[IO.FileStream]::new($path,[IO.FileMode]::CreateNew,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None,4096,[IO.FileOptions]::DeleteOnClose)
+try {
+ $failed=$false
+ try { & 'SCRIPT' -Channel channel1 -OutputDirectory 'OUTPUT' } catch { $failed=$true }
+ if(!$failed -or !(Test-Path -LiteralPath $path) -or (Test-Path -LiteralPath 'OUTPUT')) { throw 'lock was bypassed or removed' }
+ 'LOCK_PRESERVED'
+} finally { $hold.Dispose() }
+""".replace('SCRIPT',script).replace('OUTPUT',out)
+            result=subprocess.run([str(PS),'-NoProfile','-NonInteractive','-EncodedCommand',base64.b64encode(command.encode('utf-16le')).decode()],capture_output=True,text=True,timeout=30)
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            self.assertIn('LOCK_PRESERVED',result.stdout)
 
     def test_same_compiled_channel_binaries_follow_active_and_reject_invalid_metadata(self):
         with tempfile.TemporaryDirectory(prefix='dynamic-setup-0080-',dir=ROOT) as tmp:

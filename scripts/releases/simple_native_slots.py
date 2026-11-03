@@ -197,7 +197,7 @@ class ControlStore:
 
 
 def native_manifest(request, signed, graph_bytes):
-    """Build updater-compatible metadata from the signed native graph."""
+    """Build metadata from a graph whose package objects were signed."""
     import hashlib
     from hermes_cli.release_channels import decode_json, validate_native_graph
     graph = decode_json(graph_bytes)
@@ -221,8 +221,8 @@ def native_manifest(request, signed, graph_bytes):
         'feed': {'key': graph_key, 'channel': 'stable'},
         'native': {'schema': 1, 'api': 'PackageManager.AddPackageByUriAsync',
                    'digestMethod': 'IAppxDigestProvider.GetDigest', 'digestEncoding': 'base64', 'graph': descriptor}}
-    # Immutable install closure is derived from the already validated signed
-    # graph. It introduces no second active pointer or independent authority.
+    # This projection is head-bound but is not itself cryptographically signed.
+    # Do not treat it as the signed install-closure release requirement.
     installation = {'schema': 1, 'root': graph['root'],
                     'objects': [{k: row[k] for k in ('key', 'size', 'sha256')}
                                 for row in graph['objects']]}
@@ -231,7 +231,7 @@ def native_manifest(request, signed, graph_bytes):
 
 
 def prepare(output, expected_thumbprint, verify_signatures):
-    """Inspect the locally signed graph; no network or R2 changes."""
+    """Inspect local graph and signed packages; no network or R2 changes."""
     import hashlib
     import stat
     from pathlib import Path

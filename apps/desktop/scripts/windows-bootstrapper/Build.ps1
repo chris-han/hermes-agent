@@ -10,6 +10,10 @@ foreach($cachePath in @('D:\repo\deliverables\cache\dotnet','D:\repo\deliverable
     $check=[IO.DirectoryInfo]::new($cachePath)
     while($check) {if($check.Exists -and ($check.Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'Redirected cache path refused.'};$check=$check.Parent}
 }
+# Coordinate with the existing native distribution controller. DeleteOnClose
+# removes only this handle's newly created lock, without a path-based cleanup race.
+$lock=[IO.FileStream]::new('D:\repo\hermes-build.distribution.lock',[IO.FileMode]::CreateNew,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None,4096,[IO.FileOptions]::DeleteOnClose)
+try {
 New-Item -ItemType Directory -Path $output | Out-Null
 foreach($name in @('Installer.cs','InstallerUI.cs','ActiveRelease.cs','PackageIdentity.cs','PackageSignature.cs','BootstrapperTransport.cs','SemantierAgent-signing.cer','bootstrapper.manifest')) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination $output
@@ -57,3 +61,5 @@ $name=if($Channel -eq 'channel1'){'semantier-setup-ch1.exe'}else{'semantier-setu
 Copy-Item -LiteralPath (Join-Path $output 'release\Bootstrapper.exe') -Destination (Join-Path $output $name)
 Write-Output "BUILD_AND_UI_TESTS_PASS $output"
 Write-Output 'Release EXE is unsigned until the existing signing owner signs it.'
+
+} finally { $lock.Dispose() }
