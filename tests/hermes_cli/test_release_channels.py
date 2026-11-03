@@ -381,6 +381,15 @@ def test_native_manifest_is_distinct_from_legacy_and_binds_descriptor():
     assert validate_manifest(manifest, native_record, manifest['request']['publicBase'], allow_native=True) == manifest
 
 
+def test_native_manifest_accepts_backward_compatible_installation_projection():
+    from hermes_cli.release_channels import validate_manifest
+    manifest, record = native_manifest_case()
+    artifact = manifest['packages'][0]['artifact']
+    manifest['installation'] = {'schema': 1, 'root': artifact['key'], 'objects': [dict(artifact)]}
+    assert validate_manifest(manifest, {**record, 'head': record['nativeHead']},
+                             manifest['request']['publicBase'], allow_native=True) == manifest
+
+
 @pytest.mark.parametrize('damage', ['legacy-schema', 'digest-method', 'graph-key', 'oversized-root', 'chunks', 'darwin', 'duplicate-platform'])
 def test_native_manifest_refuses_incompatible_or_unbound_inputs(damage):
     from hermes_cli.release_channels import validate_manifest, ChannelError
