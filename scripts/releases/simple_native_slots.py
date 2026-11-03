@@ -1048,6 +1048,72 @@ def cleanup_pending(driver, channel):
     return driver.finish_cleanup(channel, etag, build_id)
 
 
+def purge_explicit_versions(driver, channel, expected_head, expected_catalog_sha256, build_ids):
+    """Retire explicitly authorized versions, including the current native head.
+
+    The caller holds the shared publication lock.  The empty catalog is a
+    fail-closed compatibility view; nativeRetirePending journals the head.
+    """
+    import hashlib
+    import re
+    from copy import deepcopy
+    from hermes_cli.release_channels import canonical_json, channel_key, decode_json
+    ids = set(build_ids)
+    if (not ids or len(ids) != len(build_ids) or any(not re.fullmatch('[a-f0-9]{32}', x) for x in ids)
+            or not re.fullmatch('[a-f0-9]{64}', expected_catalog_sha256)
+            or expected_head['buildId'] not in ids):
+        raise ValueError('invalid explicit retirement inventory')
+    driver.verify_lock()
+    driver.ensure_no_uploads()
+    record, etag = driver.read_channel(channel)
+    pending_retry = record.get('nativeHead') is None and record.get('nativeRetirePending') == expected_head
+    if (record.get('head') is not None or record.get('nativeArchive') is not None
+            or not (pending_retry or (record.get('nativeHead') == expected_head and record.get('nativeRetirePending') is None))):
+        raise ValueError('channel is not the expected settled head')
+    key = 'releases/manual/catalog.json'
+    catalog = driver.store.get(key)
+    empty_catalog = canonical_json({'schema': 1, 'releases': []})
+    if catalog is None or (catalog[0] != empty_catalog and hashlib.sha256(catalog[0]).hexdigest() != expected_catalog_sha256):
+        raise ValueError('catalog changed since retirement inventory')
+    parsed = decode_json(catalog[0])
+    if set(parsed) != {'schema', 'releases'} or parsed['schema'] != 1 or not isinstance(parsed['releases'], list):
+        raise ValueError('invalid manual catalog')
+    # Every other release reference remains protected, including other channels.
+    own_prefixes = tuple('releases/channel-builds/'+x+'/' for x in ids)
+    for name in driver.store.keys('releases/'):
+        if name in (channel_key(channel), key) or name.startswith(own_prefixes) or not name.endswith(('.json', '.appinstaller')):
+            continue
+        data = driver.store.get(name)
+        if data is None or any(x.encode() in data[0] for x in ids):
+            raise ValueError('old version has an external or changing reference')
+    for row in parsed['releases']:
+        for field in ('installer', 'zip'):
+            url = row.get(field, {}).get('url', '')
+            if not any('/releases/channel-builds/'+x+'/' in url for x in ids):
+                raise ValueError('catalog contains an unrelated release')
+    # Eliminate catalog references before deleting the versions they name.
+    driver.verify_lock()
+    if catalog[0] != empty_catalog:
+        driver.store.put(key, empty_catalog, catalog[1])
+    for build in sorted(ids - {expected_head['buildId']}):
+        if not driver.can_retire(channel, build):
+            raise RuntimeError('old version remains referenced')
+        driver.delete_build(build)
+    driver.verify_lock()
+    current, current_etag = driver.read_channel(channel)
+    if current != record or current_etag != etag:
+        raise ValueError('channel changed during retirement')
+    if not pending_retry:
+        pending = deepcopy(record)
+        pending['nativeHead'] = None
+        pending['nativeRetirePending'] = deepcopy(expected_head)
+        pending['revision'] += 1
+        driver.store.put(channel_key(channel), canonical_json(pending), etag)
+    if not driver.can_retire(channel, expected_head['buildId']):
+        raise RuntimeError('previous active version remains referenced')
+    return cleanup_pending(driver, channel)
+
+
 def verify_windows_signatures(files, thumbprint, expected=None):
     """Use the Windows SDK signer verifier without forwarding R2 credentials."""
     import base64
@@ -1164,13 +1230,20 @@ def main(argv=None):
     parser.add_argument('--manual-published-at', help='stable UTC catalog timestamp for retry')
     parser.add_argument('--expected-head', type=Path, help='exact currently active native head JSON')
     parser.add_argument('--expect-empty-head', action='store_true', help='require no currently active native head')
+    parser.add_argument('--purge-explicit-channel', help='explicitly authorized cleanup-only channel')
+    parser.add_argument('--purge-head', type=Path, help='exact active head JSON for cleanup')
+    parser.add_argument('--purge-catalog-sha256', help='SHA-256 of the catalog inventoried before cleanup')
+    parser.add_argument('--purge-build', action='append', help='exact build ID authorized for deletion; repeat for each')
     args = parser.parse_args(argv)
     legacy=args.project_legacy_channel
+    purge=args.purge_explicit_channel
     manual=bool(args.setup_exe or args.setup_receipt or args.setup_key or args.manual_published_at or args.expected_head or args.expect_empty_head)
-    if (sum(bool(v) for v in (args.resume_cleanup,args.output,legacy))!=1
+    if (sum(bool(v) for v in (args.resume_cleanup,args.output,legacy,purge))!=1
             or (args.output and (not args.thumbprint or args.legacy_directory or args.expected_build or args.expected_manifest_sha256))
             or (args.resume_cleanup and (args.thumbprint or args.notes or args.legacy_directory or args.expected_build or args.expected_manifest_sha256 or manual))
             or (legacy and (not args.thumbprint or not args.legacy_directory or not args.expected_build or not args.expected_manifest_sha256 or args.notes or manual))
+            or (purge and (not args.purge_head or not args.purge_catalog_sha256 or not args.purge_build or args.thumbprint or args.notes or manual))
+            or (not purge and (args.purge_head or args.purge_catalog_sha256 or args.purge_build))
             or (manual and (not args.output or not args.setup_exe or not args.setup_receipt or not args.manual_published_at
                             or bool(args.expected_head)==bool(args.expect_empty_head)))):
         parser.error('provide one publish, cleanup, or explicitly pinned legacy projection operation')
@@ -1221,6 +1294,18 @@ def main(argv=None):
     control = ControlStore(r2, {'access_key_id': os.environ[required[1]], 'secret_key': os.environ[required[2]]},
                            base, control_bucket, scope=scope)
     store = R2ChannelStore(creds, base, bucket, scope=scope)
+    if purge:
+        from hermes_cli.release_channels import _head, decode_json
+        if args.purge_head.is_symlink() or args.purge_head.stat().st_size > 65536:
+            raise ValueError('invalid expected purge head file')
+        expected = _head(decode_json(args.purge_head.read_bytes()))
+        if expected is None or configured_public != 'https://download.semantier.com':
+            raise ValueError('explicit purge requires a pinned Channel 2 head and origin')
+        with publication_lock(control) as token:
+            driver = R2Driver(store, configured_public, control, token)
+            result = purge_explicit_versions(driver, purge, expected, args.purge_catalog_sha256, args.purge_build)
+        print(json.dumps({'channel': purge, 'record': result, 'retiredBuilds': driver.retired_builds}))
+        return
     channel = args.resume_cleanup or legacy or manifest['request']['channel']
     projection_key=projection_body=catalog_body=None
     with publication_lock(control) as token:

@@ -433,3 +433,71 @@ def test_manual_projection_uses_real_fenced_store_and_verified_objects(monkeypat
             with pytest.raises(ValueError,match='checksum'):
                 driver.reconcile_manual_catalog('semantier-acceptance',head,body,setup,archive,'2026-11-03T00:00:00Z')
             assert objects['public/releases/manual/catalog.json']==original
+
+@pytest.mark.parametrize('external_reference', [False, True])
+def test_explicit_version_purge_preserves_unrelated_references(monkeypatch, external_reference):
+    from scripts.releases.simple_native_slots import purge_explicit_versions
+    from hermes_cli.release_channels import canonical_json
+    monkeypatch.delenv('R2_DISPOSABLE_RUN', raising=False)
+    with storage() as (base, objects):
+        creds={'access_key_id':'fixture','secret_key':'fixture'};scope=R2Scope()
+        store=R2ChannelStore(creds,base,'public',scope=scope)
+        control=ControlStore(r2,creds,base,'private',scope=scope)
+        old='a'*32; active='b'*32
+        head={'buildId':active,'sequence':79,'manifestKey':'releases/channel-builds/'+active+'/build.json','sha256':'c'*64}
+        record={'schema':1,'name':'semantier-acceptance','repository':'chris-han/hermes-agent','policy':'stable-release',
+                'state':'active','revision':3,'nextSequence':80,'identity':IDENTITY,'head':None,'nativeHead':head}
+        channel_key='public/releases/channels/semantier-acceptance.json'
+        objects[channel_key]=canonical_json(record)
+        url='https://download.semantier.com/releases/channel-builds/'+old+'/old.exe'
+        catalog=canonical_json({'schema':1,'releases':[{'installer':{'url':url},'zip':{'url':url}}]})
+        objects['public/releases/manual/catalog.json']=catalog
+        for build in (old,active):objects['public/releases/channel-builds/'+build+'/build.json']=b'{}'
+        if external_reference:objects['public/releases/channels/other.json']=active.encode()
+        with publication_lock(control) as token:
+            driver=R2Driver(store,'https://download.semantier.com',control,token)
+            if external_reference:
+                with pytest.raises(ValueError,match='external'):
+                    purge_explicit_versions(driver,'semantier-acceptance',head,hashlib.sha256(catalog).hexdigest(),[old,active])
+                assert objects[channel_key]==canonical_json(record)
+                assert objects['public/releases/manual/catalog.json']==catalog
+            else:
+                result=purge_explicit_versions(driver,'semantier-acceptance',head,hashlib.sha256(catalog).hexdigest(),[old,active])
+                assert result['nativeHead'] is None and result['nextSequence']==80
+                assert all('channel-builds' not in key for key in objects)
+                assert json.loads(objects['public/releases/manual/catalog.json'])['releases']==[]
+
+@pytest.mark.parametrize('phase', ['catalog', 'pending'])
+def test_explicit_version_purge_resumes_after_lost_write(monkeypatch, phase):
+    from scripts.releases.simple_native_slots import purge_explicit_versions
+    from hermes_cli.release_channels import canonical_json, decode_json
+    monkeypatch.delenv('R2_DISPOSABLE_RUN', raising=False)
+    with storage() as (base, objects):
+        creds={'access_key_id':'fixture','secret_key':'fixture'};scope=R2Scope()
+        store=R2ChannelStore(creds,base,'public',scope=scope)
+        control=ControlStore(r2,creds,base,'private',scope=scope)
+        old='a'*32;active='b'*32
+        head={'buildId':active,'sequence':79,'manifestKey':'releases/channel-builds/'+active+'/build.json','sha256':'c'*64}
+        record={'schema':1,'name':'semantier-acceptance','repository':'chris-han/hermes-agent','policy':'stable-release',
+                'state':'active','revision':3,'nextSequence':80,'identity':IDENTITY,'head':None,'nativeHead':head}
+        channel_key='public/releases/channels/semantier-acceptance.json';objects[channel_key]=canonical_json(record)
+        url='https://download.semantier.com/releases/channel-builds/'+old+'/old.exe'
+        catalog=canonical_json({'schema':1,'releases':[{'installer':{'url':url},'zip':{'url':url}}]})
+        objects['public/releases/manual/catalog.json']=catalog
+        for build in (old,active):objects['public/releases/channel-builds/'+build+'/build.json']=b'{}'
+        original=store.put;failed=[]
+        def lost(key,body,etag=None):
+            original(key,body,etag)
+            if not failed and ((phase=='catalog' and key.endswith('/catalog.json')) or
+                    (phase=='pending' and key.endswith('/semantier-acceptance.json') and decode_json(body).get('nativeRetirePending'))):
+                failed.append(True);raise OSError('lost response')
+        monkeypatch.setattr(store,'put',lost)
+        with publication_lock(control) as token:
+            driver=R2Driver(store,'https://download.semantier.com',control,token)
+            with pytest.raises(OSError,match='lost response'):
+                purge_explicit_versions(driver,'semantier-acceptance',head,hashlib.sha256(catalog).hexdigest(),[old,active])
+        with publication_lock(control) as token:
+            driver=R2Driver(store,'https://download.semantier.com',control,token)
+            result=purge_explicit_versions(driver,'semantier-acceptance',head,hashlib.sha256(catalog).hexdigest(),[old,active])
+            assert result['nativeHead'] is None and result['nextSequence']==80
+            assert all('channel-builds' not in key for key in objects)
