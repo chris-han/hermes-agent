@@ -899,6 +899,8 @@ test('native graph resolution reads only metadata and preserves the legacy head 
   const manifest = {
     schema: 2,
     request: next,
+    // Compatibility projection is ignored by existing native updater decoders.
+    installation: { schema: 1, root: graph.root, objects: graph.objects.map(({ key, size, sha256 }) => ({ key, size, sha256 })) },
     packages: [
       {
         platform: 'win32',
