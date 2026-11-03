@@ -139,5 +139,7 @@ export default async function beforePack(context) {
   const app = context.packager.projectDir
   const source = path.resolve(app, '../..')
   const nativeDeps = process.env.HERMES_PREPARED_NATIVE_DEPS || path.join(app, 'build/native-deps')
-  copyNativeInputs({ source, nativeDeps, out: path.join(app, 'dist/node_modules'), platform, arch })
+  const external = process.env.HERMES_DESKTOP_BUILD_DIR
+  if (external && !path.isAbsolute(external)) throw new Error('Desktop build directory must be absolute')
+  copyNativeInputs({ source, nativeDeps, out: path.join(external || app, 'dist/node_modules'), platform, arch })
 }

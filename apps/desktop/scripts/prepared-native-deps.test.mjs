@@ -16,6 +16,36 @@ test('beforePack refuses absent native preparation rather than staging from npm'
   }
 })
 
+test('beforePack uses the external product directory without touching checkout dist', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'external-native-hook-'))
+  const previous = { build: process.env.HERMES_DESKTOP_BUILD_DIR, native: process.env.HERMES_PREPARED_NATIVE_DEPS }
+  try {
+    const source = path.join(root, 'source')
+    const app = path.join(source, 'apps/desktop')
+    const nativeDeps = path.join(root, 'native-input')
+    const build = path.join(root, 'job')
+    fs.mkdirSync(path.join(nativeDeps, 'node-pty'), { recursive: true })
+    fs.mkdirSync(path.join(app, 'dist/node_modules'), { recursive: true })
+    fs.mkdirSync(build)
+    fs.cpSync(path.join(import.meta.dirname, '../electron/native'), path.join(app, 'electron/native'), { recursive: true })
+    fs.writeFileSync(path.join(source, 'package-lock.json'), '{}')
+    fs.writeFileSync(path.join(app, 'package.json'), '{}')
+    fs.writeFileSync(path.join(nativeDeps, 'node-pty/package.json'), '{}')
+    fs.writeFileSync(path.join(app, 'dist/node_modules/preserve'), 'other owner')
+    native.recordNativeInputs({ source, out: nativeDeps, platform: 'linux', arch: 'x64' })
+    process.env.HERMES_DESKTOP_BUILD_DIR = build
+    process.env.HERMES_PREPARED_NATIVE_DEPS = nativeDeps
+    await beforePack({ appOutDir: '', electronPlatformName: 'linux', arch: 1, packager: { projectDir: app } })
+    assert.equal(fs.readFileSync(path.join(app, 'dist/node_modules/preserve'), 'utf8'), 'other owner')
+    assert.equal(fs.readFileSync(path.join(build, 'dist/node_modules/node-pty/package.json'), 'utf8'), '{}')
+  } finally {
+    for (const [name, value] of [['HERMES_DESKTOP_BUILD_DIR', previous.build], ['HERMES_PREPARED_NATIVE_DEPS', previous.native]]) {
+      if (value === undefined) delete process.env[name]; else process.env[name] = value
+    }
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('native consumption copies admitted modules and helpers, rejecting changed sources, targets or bytes', async () => {
   const source = fs.mkdtempSync(path.join(os.tmpdir(), 'prepared-native-'))
   try {
