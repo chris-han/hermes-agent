@@ -94,16 +94,26 @@ test('desktop compiler loads external Vite config through the prepared dependenc
   rmSync(join(input.source, 'apps/desktop/node_modules'))
   put(join(input.source, 'apps/desktop/vite.config.mjs'),
     'import "@rolldown/plugin-babel"; export default { base: "./", build: { minify: false } }')
+  put(join(input.source, 'apps/desktop/node_modules/yaml/package.json'), '{"name":"yaml","main":"index.js"}')
+  put(join(input.source, 'apps/desktop/node_modules/yaml/index.js'), 'exports.parse = () => "foreign-checkout-marker"')
+  put(join(input.source, 'apps/desktop/electron/main.ts'),
+    'import { parse } from "yaml"; console.log(parse("item: prepared"), __HERMES_INSTALL_STAMP__, __HERMES_PRODUCT_IDENTITY__)')
   const deps = dirname(realpathSync(join(repo, 'node_modules')))
   const hook = pathToFileURL(join(repo, 'scripts/build/external-node-resolver.mjs')).href
   const command = [join(repo, 'scripts/build/desktop.mjs'), ...Object.entries(input).flatMap(([key, value]) =>
     [`--${key === 'nativeDeps' ? 'native-deps' : key}`, value])]
-  execFileSync(process.execPath, command, { cwd: tmpdir(), stdio: 'pipe', env: {
+  const options = { cwd: tmpdir(), stdio: 'pipe', env: {
     ...process.env, NODE_OPTIONS: `--import=${hook}`, HERMES_DESKTOP_BUILD_DIR: join(input.source, 'job'),
     HERMES_DESKTOP_NODE_ROOT: deps, HERMES_NODE_SOURCE_ROOT: input.source, HERMES_NODE_DEPENDENCY_ROOT: deps,
-  } })
+  } }
+  execFileSync(process.execPath, command, options)
   expect(existsSync(join(input.out, 'electron-main.mjs'))).toBe(true)
+  expect(readFileSync(join(input.out, 'electron-main.mjs'), 'utf8')).not.toContain('foreign-checkout-marker')
   expect(existsSync(join(input.out, 'index.html'))).toBe(true)
+  put(join(input.source, 'apps/desktop/node_modules/fixture-unprepared-package/package.json'), '{"name":"fixture-unprepared-package","main":"index.js"}')
+  put(join(input.source, 'apps/desktop/node_modules/fixture-unprepared-package/index.js'), 'module.exports = "foreign"')
+  put(join(input.source, 'apps/desktop/electron/main.ts'), 'import "fixture-unprepared-package"')
+  expect(() => execFileSync(process.execPath, command, options)).toThrow()
 }, 60000)
 
 test('desktop compiler consumes explicit immutable inputs, replaces variants, and preserves the last product on failure', async () => {

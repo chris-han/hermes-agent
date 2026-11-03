@@ -1,13 +1,45 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, readFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs'
+import { isBuiltin } from 'node:module'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { parseArgs } from 'node:util'
 import { isMain, workspaceTool } from '../../../scripts/build/frontend-common.mjs'
 import { environmentDefaultsBanner } from './bundle-env.mjs'
 
 const repoRoot = resolve(import.meta.dirname, '../../..')
+
+function externalDependencies(source, root) {
+  const sourceRoot = realpathSync(source)
+  const deps = realpathSync(root)
+  const within = (parent, child) => {
+    const rel = relative(parent, child)
+    return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))
+  }
+  const externals = ['electron', 'node-pty', 'get-windows', 'fs']
+  return {
+    name: 'prepared-electron-dependencies',
+    setup(build) {
+      build.onResolve({ filter: /^[^./]/ }, async args => {
+        if (args.pluginData?.preparedResolution || isBuiltin(args.path) ||
+            externals.some(name => args.path === name || args.path.startsWith(`${name}/`))) return
+        const importer = args.importer && realpathSync(args.importer)
+        if (!importer || (!within(sourceRoot, importer) && !within(deps, importer))) return
+        let anchor = within(deps, importer) ? args.resolveDir : join(deps, relative(sourceRoot, dirname(importer)))
+        while (!existsSync(anchor) && anchor !== deps) anchor = dirname(anchor)
+        const result = await build.resolve(args.path, {
+          resolveDir: anchor, kind: args.kind, pluginData: { preparedResolution: true },
+        })
+        if (result.errors.length || result.external) return result
+        if (!result.path || !within(deps, realpathSync(result.path))) {
+          return { errors: [{ text: `Electron dependency escaped the prepared tree: ${args.path}` }] }
+        }
+        return result
+      })
+    },
+  }
+}
 
 // Evaluate the one identity module in a fresh process. Its CJS cache and the
 // caller's environment must not carry a previous variant into this artifact.
@@ -62,6 +94,9 @@ export async function bundleElectronMain({ source, out, stamp, dev = false }) {
     external: ['electron', 'node-pty', 'get-windows', 'fs'],
     define,
     logLevel: 'info',
+  }
+  if (process.env.HERMES_DESKTOP_BUILD_DIR && process.env.HERMES_DESKTOP_NODE_ROOT) {
+    common.plugins = [externalDependencies(source, process.env.HERMES_DESKTOP_NODE_ROOT)]
   }
   await build({
     ...common,
