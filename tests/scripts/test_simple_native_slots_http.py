@@ -501,3 +501,27 @@ def test_explicit_version_purge_resumes_after_lost_write(monkeypatch, phase):
             result=purge_explicit_versions(driver,'semantier-acceptance',head,hashlib.sha256(catalog).hexdigest(),[old,active])
             assert result['nativeHead'] is None and result['nextSequence']==80
             assert all('channel-builds' not in key for key in objects)
+
+@pytest.mark.parametrize('changed,referenced', [(False,False),(True,False),(False,True)])
+def test_explicit_canary_purge_checks_hashes_and_external_references(monkeypatch, changed, referenced):
+    from scripts.releases.simple_native_slots import purge_explicit_canary
+    monkeypatch.delenv('R2_DISPOSABLE_RUN', raising=False)
+    with storage() as (base,objects):
+        creds={'access_key_id':'fixture','secret_key':'fixture'};scope=R2Scope()
+        store=R2ChannelStore(creds,base,'public',scope=scope)
+        control=ControlStore(r2,creds,base,'private',scope=scope)
+        keys=('releases/win32/canary/canary.appinstaller','releases/win32/canary/SemantierAgent.msixbundle')
+        bodies=(b'canary metadata',b'canary bundle')
+        expected={k:hashlib.sha256(v).hexdigest() for k,v in zip(keys,bodies)}
+        for key,body in zip(keys,bodies):objects['public/'+key]=body
+        if changed:objects['public/'+keys[1]]=b'new bundle'
+        if referenced:objects['public/releases/channels/other.json']=keys[1].encode()
+        with publication_lock(control) as token:
+            driver=R2Driver(store,'https://download.semantier.com',control,token)
+            if changed or referenced:
+                with pytest.raises(ValueError):purge_explicit_canary(driver,expected)
+                assert all('public/'+k in objects for k in keys)
+            else:
+                purge_explicit_canary(driver,expected)
+                assert all('public/'+k not in objects for k in keys)
+                purge_explicit_canary(driver,expected)

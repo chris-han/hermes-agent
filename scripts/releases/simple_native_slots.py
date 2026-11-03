@@ -1114,6 +1114,39 @@ def purge_explicit_versions(driver, channel, expected_head, expected_catalog_sha
     return cleanup_pending(driver, channel)
 
 
+def purge_explicit_canary(driver, expected):
+    """Remove a pinned obsolete canary only after checking other references."""
+    import hashlib
+    import re
+    from scripts.releases import r2
+    keys = ('releases/win32/canary/canary.appinstaller',
+            'releases/win32/canary/SemantierAgent.msixbundle')
+    if set(expected) != set(keys) or any(not re.fullmatch('[a-f0-9]{64}', x) for x in expected.values()):
+        raise ValueError('invalid canary inventory')
+    driver.verify_lock()
+    driver.ensure_no_uploads()
+    objects = {key: driver.store.get(key) for key in keys}
+    for key, obj in objects.items():
+        if obj is not None and hashlib.sha256(obj[0]).hexdigest() != expected[key]:
+            raise ValueError('canary object changed since inventory')
+    for key in driver.store.keys('releases/'):
+        if key in keys or not key.endswith(('.json', '.appinstaller')):
+            continue
+        obj = driver.store.get(key)
+        if obj is None or any(name.encode() in obj[0] for name in keys):
+            raise ValueError('canary has an external or changing reference')
+    for key in keys:
+        obj = objects[key]
+        if obj is None:
+            continue
+        driver.verify_lock()
+        url = driver.store.scope.object_url(driver.store.base, driver.store.bucket, key)
+        r2.signed_request('DELETE', url, creds=driver.store.creds, now=r2.amz_timestamp(),
+                          extra_headers={'If-Match': obj[1]}, tries=1)
+        if driver.store.get(key) is not None:
+            raise RuntimeError('retired canary object remains visible')
+
+
 def verify_windows_signatures(files, thumbprint, expected=None):
     """Use the Windows SDK signer verifier without forwarding R2 credentials."""
     import base64
@@ -1234,16 +1267,21 @@ def main(argv=None):
     parser.add_argument('--purge-head', type=Path, help='exact active head JSON for cleanup')
     parser.add_argument('--purge-catalog-sha256', help='SHA-256 of the catalog inventoried before cleanup')
     parser.add_argument('--purge-build', action='append', help='exact build ID authorized for deletion; repeat for each')
+    parser.add_argument('--purge-canary', action='store_true', help='delete the explicitly inventoried obsolete canary')
+    parser.add_argument('--purge-canary-installer-sha256', help='exact appinstaller SHA-256')
+    parser.add_argument('--purge-canary-bundle-sha256', help='exact bundle SHA-256')
     args = parser.parse_args(argv)
     legacy=args.project_legacy_channel
     purge=args.purge_explicit_channel
     manual=bool(args.setup_exe or args.setup_receipt or args.setup_key or args.manual_published_at or args.expected_head or args.expect_empty_head)
-    if (sum(bool(v) for v in (args.resume_cleanup,args.output,legacy,purge))!=1
+    if (sum(bool(v) for v in (args.resume_cleanup,args.output,legacy,purge,args.purge_canary))!=1
             or (args.output and (not args.thumbprint or args.legacy_directory or args.expected_build or args.expected_manifest_sha256))
             or (args.resume_cleanup and (args.thumbprint or args.notes or args.legacy_directory or args.expected_build or args.expected_manifest_sha256 or manual))
             or (legacy and (not args.thumbprint or not args.legacy_directory or not args.expected_build or not args.expected_manifest_sha256 or args.notes or manual))
             or (purge and (not args.purge_head or not args.purge_catalog_sha256 or not args.purge_build or args.thumbprint or args.notes or manual))
             or (not purge and (args.purge_head or args.purge_catalog_sha256 or args.purge_build))
+            or (args.purge_canary and (not args.purge_canary_installer_sha256 or not args.purge_canary_bundle_sha256 or args.thumbprint or args.notes or manual))
+            or (not args.purge_canary and (args.purge_canary_installer_sha256 or args.purge_canary_bundle_sha256))
             or (manual and (not args.output or not args.setup_exe or not args.setup_receipt or not args.manual_published_at
                             or bool(args.expected_head)==bool(args.expect_empty_head)))):
         parser.error('provide one publish, cleanup, or explicitly pinned legacy projection operation')
@@ -1294,6 +1332,15 @@ def main(argv=None):
     control = ControlStore(r2, {'access_key_id': os.environ[required[1]], 'secret_key': os.environ[required[2]]},
                            base, control_bucket, scope=scope)
     store = R2ChannelStore(creds, base, bucket, scope=scope)
+    if args.purge_canary:
+        if configured_public != 'https://download.semantier.com':
+            raise ValueError('explicit purge requires the Channel 2 origin')
+        expected = {'releases/win32/canary/canary.appinstaller': args.purge_canary_installer_sha256,
+                    'releases/win32/canary/SemantierAgent.msixbundle': args.purge_canary_bundle_sha256}
+        with publication_lock(control) as token:
+            purge_explicit_canary(R2Driver(store, configured_public, control, token), expected)
+        print(json.dumps({'retiredCanary': sorted(expected)}))
+        return
     if purge:
         from hermes_cli.release_channels import _head, decode_json
         if args.purge_head.is_symlink() or args.purge_head.stat().st_size > 65536:
