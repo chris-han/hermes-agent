@@ -192,6 +192,47 @@ def test_installation_proof_binds_release_origin_and_exact_closure():
         add_installation_proof(manifest,lambda _: b'signature')
 
 
+def test_windows_installation_signer_with_disposable_certificate(monkeypatch):
+    import base64
+    from datetime import datetime, timedelta, timezone
+    import hashlib
+    from pathlib import Path
+    import subprocess
+    import tempfile
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import padding, rsa
+    from cryptography.hazmat.primitives.serialization import pkcs12
+    from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
+    from scripts.releases.simple_native_slots import sign_windows_installation_proof
+    powershell=Path('/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe')
+    work=Path('/mnt/d/repo/deliverables/work')
+    if not powershell.is_file() or not work.is_dir(): pytest.skip('Windows signing fixture unavailable')
+    key=rsa.generate_private_key(public_exponent=65537,key_size=2048)
+    subject=x509.Name([x509.NameAttribute(NameOID.COMMON_NAME,'Disposable signing fixture')])
+    now=datetime.now(timezone.utc)
+    cert=(x509.CertificateBuilder().subject_name(subject).issuer_name(subject).public_key(key.public_key())
+          .serial_number(x509.random_serial_number()).not_valid_before(now-timedelta(minutes=1))
+          .not_valid_after(now+timedelta(days=1))
+          .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.CODE_SIGNING]),critical=False).sign(key,hashes.SHA256()))
+    original_run=subprocess.run
+    with tempfile.TemporaryDirectory(prefix='proof-signing-0080-',dir=work) as tmp:
+        pfx=Path(tmp)/'fixture.pfx'
+        pfx.write_bytes(pkcs12.serialize_key_and_certificates(b'fixture',key,cert,None,serialization.BestAvailableEncryption(b'fixture-only')))
+        windows_path=subprocess.check_output(['wslpath','-w',str(pfx)],text=True).strip().replace("'","''")
+        def run_fixture(command,**kwargs):
+            script=base64.b64decode(command[-1]).decode('utf-16le')
+            old="$cert=Get-Item -LiteralPath 'Cert:\\CurrentUser\\My\\57BF15739B4AA447842EAF388856A01B4E5029FF'"
+            replacement="$cert=[Security.Cryptography.X509Certificates.X509Certificate2]::new('"+windows_path+"','fixture-only',[Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet)"
+            assert old in script
+            script=script.replace(old,replacement).replace('10A6B55E9A03BBC0DCEB8D899C1776BF1FBAD963C82050C16534DA4983C9661D',hashlib.sha256(cert.public_bytes(serialization.Encoding.DER)).hexdigest().upper())
+            return original_run([*command[:-1],base64.b64encode(script.encode('utf-16le')).decode()],**kwargs)
+        monkeypatch.setattr(subprocess,'run',run_fixture)
+        payload=b'disposable installation proof fixture'
+        signature=sign_windows_installation_proof(payload,'57BF15739B4AA447842EAF388856A01B4E5029FF')
+        key.public_key().verify(signature,payload,padding.PKCS1v15(),hashes.SHA256())
+
+
 def test_failed_upload_never_changes_channel_head():
     from scripts.releases.simple_native_slots import publish_prepared
     class Driver:
