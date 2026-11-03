@@ -2,7 +2,7 @@ param([Parameter(Mandatory=$true)][ValidateSet('channel1','channel2')][string]$C
       [Parameter(Mandatory=$true)][string]$OutputDirectory)
 $ErrorActionPreference='Stop'
 $jobRoot=if($Channel -eq 'channel1'){'D:\repo\hermes-build\.cache\channel1-release\work'}else{'D:\repo\deliverables\work'}
-$cacheRoot=if($Channel -eq 'channel1'){'D:\repo\hermes-build\.cache\desktop-inputs'}else{'D:\repo\deliverables\cache'}
+$cacheRoot=if($Channel -eq 'channel1'){'D:\repo\hermes-build\.cache\channel1-release\setup-cache'}else{'D:\repo\deliverables\cache'}
 $workRoot=[IO.Path]::GetFullPath($jobRoot).TrimEnd('\')+'\'
 $output=[IO.Path]::GetFullPath($OutputDirectory)
 if(!$output.StartsWith($workRoot,[StringComparison]::OrdinalIgnoreCase) -or (Test-Path -LiteralPath $output)) {throw 'Use a fresh task-owned directory under the channel work root.'}
