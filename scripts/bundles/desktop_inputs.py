@@ -14,10 +14,48 @@ if TYPE_CHECKING:
     from scripts.bundles.desktop_prepare import BuildRequest, PreparedDesktop
 
 
-def require_external_output_readiness(selected: bool) -> None:
-    """Fail closed until the Windows job no longer writes source-owned outputs."""
-    if selected and sys.platform == "win32":
-        raise ValueError("external Windows build path migration is incomplete")
+def validate_windows_external_layout(source: str, work: str, cache: str) -> None:
+    """Validate the controller's exact source, cache and job-local work paths."""
+    import ntpath
+
+    def canonical(value: str) -> str:
+        if not isinstance(value, str) or not re.fullmatch(r'[A-Za-z]:\\[^\\/]+(?:\\[^\\/]+)*', value):
+            raise ValueError('invalid Windows external build layout')
+        if any(part in ('.', '..') or ':' in part for part in value[3:].split('\\')):
+            raise ValueError('invalid Windows external build layout')
+        return ntpath.normcase(ntpath.normpath(value))
+
+    source, work, cache = map(canonical, (source, work, cache))
+    prefix = ntpath.normcase(r'D:\repo\deliverables\work') + '\\'
+    if (source != ntpath.normcase(r'D:\repo\hermes-build')
+            or cache != ntpath.normcase(r'D:\repo\deliverables\cache\desktop-inputs')
+            or not work.startswith(prefix)):
+        raise ValueError('invalid Windows external build layout')
+    parts = work[len(prefix):].split('\\')
+    if (len(parts) != 2 or parts[1] != 'desktop-job'
+            or not re.fullmatch(r'[a-z0-9_-][a-z0-9._-]*', parts[0])
+            or parts[0].endswith('.')
+            or re.match(r'^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)', parts[0])):
+        raise ValueError('invalid Windows external build layout')
+
+
+def require_external_output_readiness(selected: bool, source=None, work=None, cache=None) -> None:
+    """Admit Windows external jobs only at the controller's guarded paths."""
+    if not selected or sys.platform != "win32":
+        return
+    from pm.filesystem import is_junction, is_reparse_point
+    from scripts.bundles.desktop_prepare import require_external_paths_unredirected
+
+    if source is None or work is None or cache is None:
+        raise ValueError("invalid Windows external build layout")
+    validate_windows_external_layout(str(source), str(work), str(cache))
+    source, work, cache = map(Path, (source, work, cache))
+    require_external_paths_unredirected(source, work, cache)
+    checkout_lock = source / '.build' / '.desktop-build.lock'
+    distribution_lock = Path(str(source) + '.distribution.lock')
+    for lock in (checkout_lock, distribution_lock):
+        if lock.is_symlink() or is_junction(lock) or is_reparse_point(lock) or not lock.is_file():
+            raise ValueError("Windows external build requires existing checkout and distribution locks")
 
 
 @contextmanager

@@ -95,7 +95,8 @@ def build_prepared(path: Path, builder_args: list[str], variant: str | None = No
     from scripts.bundles.desktop_prepare import PreparedDesktop
     from scripts.bundles.desktop_inputs import build_lock, require_external_output_readiness
     prepared = PreparedDesktop.load(path)
-    require_external_output_readiness(prepared.request.external_outputs)
+    require_external_output_readiness(prepared.request.external_outputs, prepared.request.source,
+                                      prepared.request.work, prepared.request.cache)
     with build_lock(prepared.request.source, external_cache=prepared.request.cache if prepared.request.external_outputs else None):
         _build_prepared(prepared, builder_args, variant)
 
@@ -192,7 +193,7 @@ def main() -> None:
     builder_args = [v for v in args.builder_args if v != "--"]
     try:
         from scripts.bundles.desktop_inputs import require_external_output_readiness
-        require_external_output_readiness(args.external_outputs)
+        require_external_output_readiness(args.external_outputs, args.repo, args.work, args.cache)
         if args.prepared:
             if (args.tag or args.commit_build or args.release_commit or args.channel_request
                     or args.prepare_only or args.work or args.cache or args.clean or args.external_outputs):

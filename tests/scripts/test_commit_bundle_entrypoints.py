@@ -184,7 +184,7 @@ def test_external_job_cli_binds_mode_and_forwards_packager_output(tmp_path, monk
     assert seen['builder_args'] == [f'-c.directories.output={tmp_path / "release"}']
 
 
-def test_windows_external_job_refuses_before_preparation_until_layout_complete(tmp_path, monkeypatch, capsys):
+def test_windows_external_job_refuses_invalid_layout_before_preparation(tmp_path, monkeypatch, capsys):
     from scripts.bundles import desktop_prepare
 
     monkeypatch.setattr(sys, 'platform', 'win32')
@@ -195,7 +195,7 @@ def test_windows_external_job_refuses_before_preparation_until_layout_complete(t
     with pytest.raises(SystemExit) as error:
         desktop.main()
     assert error.value.code == 1
-    assert 'external Windows build path migration is incomplete' in capsys.readouterr().err
+    assert 'invalid Windows external build layout' in capsys.readouterr().err
     assert not (tmp_path / 'job').exists()
 
 
@@ -204,8 +204,8 @@ def test_windows_prepared_external_job_refuses_before_lock(tmp_path, monkeypatch
     from scripts.bundles import desktop_inputs, desktop_prepare
 
     monkeypatch.setattr(sys, 'platform', 'win32')
-    request = SimpleNamespace(external_outputs=True, source=tmp_path / 'source')
+    request = SimpleNamespace(external_outputs=True, source=tmp_path / 'source', work=tmp_path / 'work', cache=tmp_path / 'cache')
     monkeypatch.setattr(desktop_prepare.PreparedDesktop, 'load', lambda path: SimpleNamespace(request=request))
     monkeypatch.setattr(desktop_inputs, 'build_lock', lambda *args: pytest.fail('source lock must not be touched'))
-    with pytest.raises(ValueError, match='external Windows build path migration is incomplete'):
+    with pytest.raises(ValueError, match='invalid Windows external build layout'):
         desktop.build_prepared(tmp_path / 'prepared.json', [])

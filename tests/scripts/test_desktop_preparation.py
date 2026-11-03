@@ -558,13 +558,31 @@ def test_external_preparation_rejects_redirected_owner_without_starting_worker(t
         desktop_prepare._prepare(request)
 
 
+def test_windows_external_layout_accepts_only_owned_source_cache_and_job():
+    from scripts.bundles.desktop_inputs import validate_windows_external_layout
+
+    source = r'D:\repo\hermes-build'
+    cache = r'D:\repo\deliverables\cache\desktop-inputs'
+    work = r'D:\repo\deliverables\work\fixture-1\desktop-job'
+    validate_windows_external_layout(source, work, cache)
+    for bad_source, bad_work, bad_cache in [
+        (r'D:\repo\other', work, cache),
+        (source, r'D:\repo\deliverables\work\fixture-1\nested\desktop-job', cache),
+        (source, r'D:\repo\deliverables\work\..\cache\desktop-job', cache),
+        (source, r'D:\repo\deliverables\work\CON\desktop-job', cache),
+        (source, work, r'D:\repo\deliverables\cache\other'),
+    ]:
+        with pytest.raises(ValueError, match='Windows external build layout'):
+            validate_windows_external_layout(bad_source, bad_work, bad_cache)
+
+
 def test_windows_external_prepare_refuses_before_source_or_lock(tmp_path, monkeypatch):
     from types import SimpleNamespace
     from scripts.bundles import desktop_prepare
 
     monkeypatch.setattr(sys, 'platform', 'win32')
     monkeypatch.setattr(desktop_prepare, 'require_source', lambda *args: pytest.fail('source must not be touched'))
-    request = SimpleNamespace(external_outputs=True, source=tmp_path / 'source')
-    with pytest.raises(ValueError, match='external Windows build path migration is incomplete'):
+    request = SimpleNamespace(external_outputs=True, source=tmp_path / 'source', work=tmp_path / 'work', cache=tmp_path / 'cache')
+    with pytest.raises(ValueError, match='invalid Windows external build layout'):
         desktop_prepare.prepare(request)
     assert not request.source.exists()

@@ -417,7 +417,7 @@ def clean_outputs(request: BuildRequest) -> None:
 def prepare(request: BuildRequest, *, clean: bool = False) -> Path:
     from scripts.bundles.desktop_inputs import build_lock, require_external_output_readiness
 
-    require_external_output_readiness(request.external_outputs)
+    require_external_output_readiness(request.external_outputs, request.source, request.work, request.cache)
     request.validate_channel()
     if request.channel_request is not None and not request.target.startswith(("darwin-", "win32-")):
         raise ValueError("channel builds require a supported native macOS or Windows target")
@@ -432,7 +432,7 @@ def prepare(request: BuildRequest, *, clean: bool = False) -> Path:
 
 def _prepare(request: BuildRequest) -> Path:
     from scripts.bundles.desktop_inputs import require_external_output_readiness
-    require_external_output_readiness(request.external_outputs)
+    require_external_output_readiness(request.external_outputs, request.source, request.work, request.cache)
     from scripts.bundles.desktop_toolchain import run_preparation
     from pm.lock import _write
     from hermes_cli.runtime_state import _lock
@@ -490,7 +490,7 @@ def prepare_external_node_dependencies(request: BuildRequest, node: Path, native
 
 def prepare_in_worker(request: BuildRequest) -> Path:
     from scripts.bundles.desktop_inputs import require_external_output_readiness
-    require_external_output_readiness(getattr(request, "external_outputs", False))
+    require_external_output_readiness(getattr(request, "external_outputs", False), request.source, request.work, request.cache)
     from scripts.bundles.desktop import run
     from scripts.bundles.desktop_toolchain import prepare_tools
     from scripts.build.icon_environment import prepare_icon_environment

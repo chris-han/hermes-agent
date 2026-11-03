@@ -64,7 +64,7 @@ try {
 
 @pytest.mark.skipif(not HOST.exists(), reason='requires Windows host PowerShell')
 @pytest.mark.parametrize('mode', ['build', 'preflight', 'repack'])
-def test_incomplete_external_build_fails_before_writing_job(mode):
+def test_unseeded_external_build_fails_before_writing_job(mode):
     script = Path(__file__).resolve().parents[2] / 'scripts/build-windows-distribution.ps1'
     native = subprocess.check_output(['wslpath', '-w', str(script)], text=True).strip().replace("'", "''")
     command = r'''
@@ -73,14 +73,14 @@ $root=Join-Path $env:TEMP ('bundle-incomplete-'+[guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory $root | Out-Null
 try {
  $output=Join-Path 'D:\repo\deliverables\work' ('test-not-created-'+[guid]::NewGuid().ToString('N'))
- # An invalid commit safely proves the migration guard runs before later controller work,
+ # An invalid commit safely proves the checkout guard runs before later controller work,
  # including creation of the legacy checkout-adjacent distribution lock.
  $request=@{repository='D:\repo\hermes-build';worktree='D:\repo\hermes-build';output=$output;cacheRoot='D:\repo\deliverables\cache\desktop-inputs';commit='invalid';controllerCommit=('b'*40);unsignedReceipt='';preflight=$false}
  if ('MODE' -eq 'preflight') { $request.preflight=$true }
- if ('MODE' -eq 'repack') { $request.unsignedReceipt='fixture-receipt' }
+ if ('MODE' -eq 'repack') { $request.unsignedReceipt='fixture-receipt';$request.commit='invalid' }
  $config=Join-Path $root 'request.json';$request | ConvertTo-Json | Set-Content -LiteralPath $config
  $failed=$false
- try { & 'SCRIPT' -Config $config } catch { if ($_.Exception.Message -notmatch 'path migration is incomplete|Windows layout migration is incomplete') { throw }; $failed=$true }
+ try { & 'SCRIPT' -Config $config } catch { if ($_.Exception.Message -notmatch 'Windows layout requires the clean Linux-Git-preseeded checkout|Exact complete source commit required') { throw }; $failed=$true }
  if (!$failed -or (Test-Path -LiteralPath $output)) { throw 'Incomplete build was accepted or wrote a job' }
  Write-Host 'INCOMPLETE_BUILD_REFUSED'
 } finally {Remove-Item -LiteralPath $root -Recurse -Force}
@@ -135,12 +135,12 @@ def test_external_readiness_is_checked_before_version_reservation():
     block = source[source.index('    # Check external-output readiness'):source.index('    $counter = ', source.index('    # Check external-output readiness'))]
     command = r'''
 $ErrorActionPreference='Stop'
-$request=[pscustomobject]@{python='fixture-python.exe'};$work='D:\repo\hermes-build'
+$request=[pscustomobject]@{python='fixture-python.exe'};$work='D:\repo\hermes-build';$output='D:\repo\deliverables\work\fixture'
 $script:called=$false
 function Native($tool,$arguments) {
  $script:called=$true
- if ($tool -cne 'fixture-python.exe' -or $arguments[0] -cne '-B' -or $arguments[1] -cne '-c' -or $arguments[-1] -cne $work -or
-     !$arguments[2].Contains('require_external_output_readiness(True)')) { throw 'invalid readiness invocation' }
+ if ($tool -cne 'fixture-python.exe' -or $arguments[0] -cne '-B' -or $arguments[1] -cne '-c' -or $arguments[3] -cne $work -or
+     $arguments[4] -cne ($output+'\desktop-job') -or !$arguments[2].Contains('r(True,sys.argv[1],sys.argv[2],sys.argv[3])')) { throw 'invalid readiness invocation' }
  throw 'fixture external guard refusal'
 }
 $failed=$false

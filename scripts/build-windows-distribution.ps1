@@ -28,8 +28,11 @@ foreach ($path in @('D:\repo',$sourceRoot,'D:\repo\deliverables',$workRoot,'D:\r
     if (!$item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Windows layout root is not an ordinary directory' }
   }
 }
-if ((Get-Content -LiteralPath $PSCommandPath -TotalCount 1) -cne '# SEMANTIER_WINDOWS_LAYOUT_V2') {
-  throw 'Windows layout migration is incomplete in this controller'
+if (!(($request.PSObject.Properties.Name -contains 'unsignedReceipt') -and $request.unsignedReceipt)) {
+  if (!(($request.PSObject.Properties.Name -contains 'preseedOwnedCheckout') -and $request.preseedOwnedCheckout) -or
+      !(($request.PSObject.Properties.Name -contains 'wslLinuxGitDistro') -and $request.wslLinuxGitDistro)) {
+    throw 'Windows layout requires the clean Linux-Git-preseeded checkout'
+  }
 }
 $env:SEMANTIER_WSL_GIT_DISTRO=$null
 if (($request.PSObject.Properties.Name -contains 'wslLinuxGitDistro') -and $request.wslLinuxGitDistro) {
@@ -204,7 +207,9 @@ try {
       }
     }
     if (!$pythonForReadiness) { throw 'Python 3.11+ required for external-output readiness' }
-    Native $pythonForReadiness @('-B','-c','import sys; sys.version_info >= (3,11) or sys.exit("Python 3.11+ required"); sys.path.insert(0,sys.argv[1]); from scripts.bundles.desktop_inputs import require_external_output_readiness; require_external_output_readiness(True)',$work)
+    $serialCache = 'D:\repo\deliverables\cache\desktop-inputs'
+    $buildWork = Join-Path $output 'desktop-job'
+    Native $pythonForReadiness @('-B','-c','import sys; sys.version_info >= (3,11) or sys.exit(1); sys.path.insert(0,sys.argv[1]); from scripts.bundles.desktop_inputs import require_external_output_readiness as r; r(True,sys.argv[1],sys.argv[2],sys.argv[3])',$work,$buildWork,$serialCache)
     $counter = Join-Path (Split-Path $work -Parent) 'semantier-agent-build-version.json'
     $retryVersion = if ($request.PSObject.Properties.Name -contains 'retryVersion') { [string]$request.retryVersion } else { '' }
     $expectedVersion = if ($request.PSObject.Properties.Name -contains 'expectedNextVersion') { [string]$request.expectedNextVersion } else { '' }
@@ -213,8 +218,6 @@ try {
       Json-File ([ordered]@{kind='semantier-windows-build-version-v1';version=$semantierVersion;sourceCommit=$source;reservedAt=[DateTime]::UtcNow.ToString('o');explicitRetry=$true;counterUnchanged=$true}) (Join-Path $output 'build-version.json')
     } else { Copy-Item -LiteralPath $counter -Destination (Join-Path $output 'build-version.json') }
     $arguments = @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',(Join-Path $work 'scripts\build-bundle.ps1'))
-    $serialCache = 'D:\repo\deliverables\cache\desktop-inputs'
-    $buildWork = Join-Path $output 'desktop-job'
     $packageOutput = Join-Path $output 'electron-output'
     $arguments += @('-Cache',$serialCache,'-Work',$buildWork,'-PackageOutput',$packageOutput,'-ExternalOutputs')
     if ($request.python) { $arguments += @('-Python',$request.python) }
