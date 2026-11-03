@@ -79,7 +79,7 @@ export async function buildDesktop({ source, out, icons, stamp, nativeDeps, type
     const { build } = await import(pathToFileURL(workspaceTool(source, app, 'vite')).href)
     await build({
       root: join(source, app),
-      configLoader: 'runner',
+      configLoader: process.env.HERMES_DESKTOP_BUILD_DIR && process.env.HERMES_DESKTOP_NODE_ROOT ? 'native' : 'runner',
       publicDir,
       cacheDir: join(scratch, 'vite-cache'),
       build: { outDir: product, emptyOutDir: true },

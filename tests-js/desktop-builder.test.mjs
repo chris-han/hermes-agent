@@ -1,8 +1,8 @@
 import { execFileSync } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { afterEach, expect, test } from 'vitest'
 import { stageGetWindows, stageNodePtyInto } from '../apps/desktop/scripts/stage-native-deps.mjs'
 
@@ -88,6 +88,23 @@ function files(root, dir = root) {
     return entry.isFile() ? [[path.slice(root.length), readFileSync(path).toString('base64')]] : []
   })
 }
+
+test('desktop compiler loads external Vite config through the prepared dependency tree', () => {
+  const input = fixture()
+  rmSync(join(input.source, 'apps/desktop/node_modules'))
+  put(join(input.source, 'apps/desktop/vite.config.mjs'),
+    'import "@rolldown/plugin-babel"; export default { base: "./", build: { minify: false } }')
+  const deps = dirname(realpathSync(join(repo, 'node_modules')))
+  const hook = pathToFileURL(join(repo, 'scripts/build/external-node-resolver.mjs')).href
+  const command = [join(repo, 'scripts/build/desktop.mjs'), ...Object.entries(input).flatMap(([key, value]) =>
+    [`--${key === 'nativeDeps' ? 'native-deps' : key}`, value])]
+  execFileSync(process.execPath, command, { cwd: tmpdir(), stdio: 'pipe', env: {
+    ...process.env, NODE_OPTIONS: `--import=${hook}`, HERMES_DESKTOP_BUILD_DIR: join(input.source, 'job'),
+    HERMES_DESKTOP_NODE_ROOT: deps, HERMES_NODE_SOURCE_ROOT: input.source, HERMES_NODE_DEPENDENCY_ROOT: deps,
+  } })
+  expect(existsSync(join(input.out, 'electron-main.mjs'))).toBe(true)
+  expect(existsSync(join(input.out, 'index.html'))).toBe(true)
+}, 60000)
 
 test('desktop compiler consumes explicit immutable inputs, replaces variants, and preserves the last product on failure', async () => {
   const { buildDesktop } = await import('../scripts/build/desktop.mjs')
