@@ -513,7 +513,8 @@ def test_manual_projection_is_fenced_by_channel_head_and_lock(monkeypatch):
     assert store.writes==[]
 
 
-def test_manual_artifacts_bind_signed_setup_and_zip_to_native_graph(tmp_path):
+@pytest.mark.parametrize('channel,origin,name',[('channel1','https://download.semantier.cn','semantier-setup-ch1.exe'),('channel2','https://download.semantier.com','semantier-setup-ch2.exe')])
+def test_manual_artifacts_bind_signed_setup_and_zip_to_native_graph(tmp_path,channel,origin,name):
     import hashlib,json,zipfile
     from pathlib import Path
     from scripts.releases.simple_native_slots import prepare_manual_artifacts
@@ -527,14 +528,18 @@ def test_manual_artifacts_bind_signed_setup_and_zip_to_native_graph(tmp_path):
         z.writestr(obj.name,obj.read_bytes());z.writestr('native-graph.json',graph_bytes);z.writestr('SemantierAgent-signing.cer',cert)
     archive_sha=hashlib.sha256(archive.read_bytes()).hexdigest();(archive.parent/(archive.name+'.sha256')).write_text(archive_sha+'  '+archive.name+'\n')
     (tmp_path/'signed/receipt.json').write_text(json.dumps({'archiveName':archive.name}))
-    exe=tmp_path/'semantier-setup-ch2.exe';exe.write_bytes(b'fixture setup')
-    receipt={'channel':'channel2','sourceCommit':'b'*40,'sourceTree':'c'*40,'sha256':hashlib.sha256(exe.read_bytes()).hexdigest(),
+    exe=tmp_path/name;exe.write_bytes(b'fixture setup')
+    receipt={'channel':channel,'sourceCommit':'b'*40,'sourceTree':'c'*40,'sha256':hashlib.sha256(exe.read_bytes()).hexdigest(),
              'size':exe.stat().st_size,'certificateThumbprint':'A'*40,'signing':'PASS'}
     receipt_file=tmp_path/'setup-receipt.json';receipt_file.write_text(json.dumps(receipt));verified=[]
-    manifest={'request':{'buildId':build,'publicBase':'https://download.semantier.com'}}
+    manifest={'request':{'buildId':build,'publicBase':origin}}
     files,setup,zip_row=prepare_manual_artifacts(tmp_path,manifest,graph,exe,receipt_file,'A'*40,lambda paths,thumb,facts:verified.append((paths,thumb)),verify_source=lambda commit,tree:None)
     assert setup['url'].endswith(prefix+exe.name) and zip_row['url'].endswith(prefix+archive.name)
     assert len(files)==2 and verified==[([exe],'A'*40)]
+    wrong={**receipt,'channel':'channel2' if channel=='channel1' else 'channel1'};receipt_file.write_text(json.dumps(wrong))
+    with pytest.raises(ValueError,match='setup receipt'):
+        prepare_manual_artifacts(tmp_path,manifest,graph,exe,receipt_file,'A'*40,lambda *_:pytest.fail('wrong channel reached signature'),verify_source=lambda *_:None)
+    receipt_file.write_text(json.dumps(receipt))
     with zipfile.ZipFile(archive,'w') as z:
         z.writestr(obj.name,b'X'*row['size']);z.writestr('native-graph.json',graph_bytes);z.writestr('SemantierAgent-signing.cer',cert)
     (archive.parent/(archive.name+'.sha256')).write_text(hashlib.sha256(archive.read_bytes()).hexdigest()+'  '+archive.name+'\n')

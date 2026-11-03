@@ -417,11 +417,14 @@ def prepare_manual_artifacts(output, manifest, graph, setup_path, setup_receipt_
         if path.stat().st_size>4*1024*1024:raise ValueError('invalid manual metadata')
         return decode_json(path.read_bytes())
     request=manifest['request'];prefix=build_prefix(request['buildId']);origin=request['publicBase']
-    if origin!='https://download.semantier.com' or setup_path.name!='semantier-setup-ch2.exe':
+    channels={'https://download.semantier.cn':('channel1','semantier-setup-ch1.exe'),
+              'https://download.semantier.com':('channel2','semantier-setup-ch2.exe')}
+    selected=channels.get(origin)
+    if selected is None or setup_path.name!=selected[1]:
         raise ValueError('invalid setup channel')
     setup=metadata(setup_receipt_path)
     actual=digest(setup_path);size=setup_path.stat().st_size
-    if (setup.get('channel')!='channel2' or setup.get('signing')!='PASS' or setup.get('certificateThumbprint')!=expected_thumbprint
+    if (setup.get('channel')!=selected[0] or setup.get('signing')!='PASS' or setup.get('certificateThumbprint')!=expected_thumbprint
             or not re.fullmatch('[a-f0-9]{40}',str(setup.get('sourceCommit',''))) or not re.fullmatch('[a-f0-9]{40}',str(setup.get('sourceTree','')))
             or type(setup.get('size')) is not int or size!=setup['size'] or actual!=setup.get('sha256')):
         raise ValueError('setup receipt mismatch')
@@ -458,7 +461,7 @@ def prepare_manual_artifacts(output, manifest, graph, setup_path, setup_receipt_
                 raise ValueError('archive certificate mismatch')
         except KeyError as error:raise ValueError('archive metadata missing') from error
     selected_key=setup_key or prefix+setup_path.name
-    if not re.fullmatch(r'releases/channel-builds/[a-f0-9]{32}/semantier-setup-ch2\.exe',selected_key):raise ValueError('invalid setup key')
+    if not re.fullmatch(r'releases/channel-builds/[a-f0-9]{32}/'+re.escape(selected[1]),selected_key):raise ValueError('invalid setup key')
     zip_key=prefix+archive_name
     files={selected_key:{'path':setup_path,'size':size,'sha256':actual},
            zip_key:{'path':archive,'size':archive.stat().st_size,'sha256':archive_hash}}
