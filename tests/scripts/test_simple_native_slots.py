@@ -160,6 +160,9 @@ def test_native_manifest_rejects_changed_signed_graph():
              'nativeGraph':graph,'signedSha256':'b'*64}
     manifest,_=native_manifest(request,receipt,json.dumps(graph).encode())
     assert manifest['packages'][0]['native']['graph']['key'].endswith('/native-graph.json')
+    install=manifest['installation']
+    assert install['schema']==1 and install['root']==graph['root']
+    assert install['objects']==[{key: row[key] for key in ('key','size','sha256')} for row in graph['objects']]
     receipt['signedSha256']='e'*64
     with pytest.raises(ValueError,match='root differs'):
         native_manifest(request,receipt,json.dumps(graph).encode())

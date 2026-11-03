@@ -221,7 +221,13 @@ def native_manifest(request, signed, graph_bytes):
         'feed': {'key': graph_key, 'channel': 'stable'},
         'native': {'schema': 1, 'api': 'PackageManager.AddPackageByUriAsync',
                    'digestMethod': 'IAppxDigestProvider.GetDigest', 'digestEncoding': 'base64', 'graph': descriptor}}
-    return {'schema': 2, 'request': request, 'packages': [package]}, graph
+    # Immutable install closure is derived from the already validated signed
+    # graph. It introduces no second active pointer or independent authority.
+    installation = {'schema': 1, 'root': graph['root'],
+                    'objects': [{k: row[k] for k in ('key', 'size', 'sha256')}
+                                for row in graph['objects']]}
+    return {'schema': 2, 'request': request, 'packages': [package],
+            'installation': installation}, graph
 
 
 def prepare(output, expected_thumbprint, verify_signatures):
