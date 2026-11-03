@@ -1,6 +1,6 @@
 import babel from '@rolldown/plugin-babel'
 import react, { reactCompilerPreset } from '@vitejs/plugin-react'
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 
 /** React Compiler preset scoped to modules that can actually contain
  *  components/hooks (JSX syntax or a react-ish import). The preset's default
@@ -13,7 +13,7 @@ function compilerPreset() {
   // Babel's independent resolver anchors plugin names to the source file,
   // so external dependency builds must pass the resolved compiler explicitly.
   if (process.env.HERMES_DESKTOP_BUILD_DIR) {
-    preset.preset = () => ({ plugins: [[requireFromApp.resolve('babel-plugin-react-compiler'), {}]] })
+    preset.preset = () => ({ plugins: [[resolveAppPackage('babel-plugin-react-compiler'), {}]] })
   }
 
   preset.rolldown.filter.code = /\/>|<\/|from\s*['"][^'"]*react/
@@ -79,8 +79,102 @@ const fsAllow = [
 // the versions declared here — npm nests a copy under the workspace exactly
 // when the hoisted one differs, so the pair can only ever match.
 const requireFromApp = createRequire(path.join(__dirname, 'vite.config.ts'))
-const reactDir = path.dirname(requireFromApp.resolve('react/package.json'))
-const reactDomDir = path.dirname(requireFromApp.resolve('react-dom/package.json'))
+
+// The external tree is selected only by the controlled build job. Node's
+// resolution hooks do not cover Vite's resolver or Tailwind's CSS resolver.
+const sourceRoot = path.resolve(__dirname, '../..')
+const selectedNodeRoot = process.env.HERMES_DESKTOP_BUILD_DIR && process.env.HERMES_DESKTOP_NODE_ROOT
+
+const externalNodeRoot = (() => {
+  if (!selectedNodeRoot) {return null}
+
+  if (!path.isAbsolute(selectedNodeRoot)) {throw new Error('External Desktop dependency root must be absolute')}
+  const deps = fs.realpathSync(selectedNodeRoot)
+  const source = fs.realpathSync(sourceRoot)
+
+  const contains = (parent: string, child: string) => {
+    const relative = path.relative(parent, child)
+
+    return !relative || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))
+  }
+
+  if (contains(source, deps) || contains(deps, source)) {throw new Error('External Desktop dependencies must not overlap source')}
+
+  return deps
+})()
+
+function resolveAppPackage(name: string): string {
+  const resolved = requireFromApp.resolve(name)
+
+  if (externalNodeRoot) {
+    const relative = path.relative(externalNodeRoot, fs.realpathSync(resolved))
+
+    if (!relative || relative.startsWith(`..${path.sep}`) || relative === '..' || path.isAbsolute(relative)) {
+      throw new Error(`Desktop package is outside selected dependency root: ${name}`)
+    }
+  }
+
+  return resolved
+}
+
+const reactDir = path.dirname(resolveAppPackage('react/package.json'))
+const reactDomDir = path.dirname(resolveAppPackage('react-dom/package.json'))
+
+const externalCssAliases: Record<string, string> = externalNodeRoot ? {
+  tailwindcss: path.dirname(resolveAppPackage('tailwindcss/package.json')),
+  'tw-shimmer': resolveAppPackage('tw-shimmer'),
+  katex: path.dirname(resolveAppPackage('katex/package.json')),
+  '@tailwindcss/typography': resolveAppPackage('@tailwindcss/typography'),
+  '@vscode/codicons': path.dirname(resolveAppPackage('@vscode/codicons/package.json')),
+  '@fontsource/manrope': path.dirname(resolveAppPackage('@fontsource/manrope/package.json')),
+  '@fontsource/noto-sans-sc': path.dirname(resolveAppPackage('@fontsource/noto-sans-sc/package.json'))
+} : {}
+
+function externalNodeResolver(): Plugin | null {
+  if (!externalNodeRoot) {return null}
+  const deps = externalNodeRoot
+
+  return {
+    name: 'hermes:external-node-dependencies',
+    enforce: 'pre',
+    async resolveId(id, importer, options) {
+      if (!importer || id.startsWith('.') || id.startsWith('/') || id.includes(':') ||
+          id.startsWith('@/') || id.startsWith('@hermes/')) {return null}
+
+      const relative = path.relative(sourceRoot, importer.split('?')[0])
+
+      if (!relative || relative.startsWith(`..${path.sep}`) || relative === '..' || path.isAbsolute(relative)) {return null}
+
+      const resolved = await this.resolve(id, path.join(deps, relative), { ...options, skipSelf: true })
+
+      if (resolved && !resolved.external && path.isAbsolute(resolved.id.split('?')[0])) {
+        const target = fs.realpathSync(resolved.id.split('?')[0])
+        const within = path.relative(deps, target)
+
+        if (!within || within.startsWith(`..${path.sep}`) || within === '..' || path.isAbsolute(within)) {
+          throw new Error(`Desktop import is outside selected dependency root: ${id}`)
+        }
+      }
+
+      return resolved
+    },
+    transform(code, id) {
+      const file = path.normalize(id.split('?')[0])
+      const styles = path.normalize(path.join(__dirname, 'src/styles.css'))
+
+      if ((process.platform === 'win32' ? file.toLowerCase() : file) !==
+          (process.platform === 'win32' ? styles.toLowerCase() : styles)) {return null}
+
+      const old = '../../../node_modules/@nous-research/ui/dist/fonts/Collapse-Bold.woff2'
+
+      if (!code.includes(old)) {return null}
+      const font = resolveAppPackage('@nous-research/ui/fonts/Collapse-Bold.woff2')
+      const relative = path.relative(path.dirname(file), font).split(path.sep).join('/')
+
+      return code.replace(old, relative.startsWith('.') ? relative : `./${relative}`)
+    }
+  }
+}
 
 // The dev-only render/state churn counters (src/debug) must be imported
 // STATICALLY above react-dom — react-dom captures the devtools hook at module
@@ -99,7 +193,7 @@ const debugEntry = (command: string, env: Record<string, string>) =>
 // in dev, emitted assets in the build. Only the files a locale actually needs.
 const emojibaseDir =
   process.env.HERMES_DESKTOP_BUILD_DIR
-    ? real(path.dirname(requireFromApp.resolve('emojibase-data/package.json')))
+    ? real(path.dirname(resolveAppPackage('emojibase-data/package.json')))
     : real(path.resolve(__dirname, 'node_modules/emojibase-data')) ??
       real(path.resolve(__dirname, '../../node_modules/emojibase-data'))
 
@@ -145,7 +239,7 @@ const emojibaseAssets = () => ({
 
 export default defineConfig(({ command }) => ({
   base: './',
-  plugins: [react(), cachedCompilerPass(command), tailwindcss(), emojibaseAssets()],
+  plugins: [externalNodeResolver(), react(), cachedCompilerPass(command), tailwindcss(), emojibaseAssets()],
   css: {
     // Pin an explicit (empty) PostCSS config. Tailwind is handled entirely by
     // `@tailwindcss/vite`, so the renderer needs no PostCSS plugins — and
@@ -243,6 +337,7 @@ export default defineConfig(({ command }) => ({
   },
   resolve: {
     alias: {
+      ...externalCssAliases,
       '@/debug/dev-only': debugEntry(command, process.env as Record<string, string>),
       '@': path.resolve(__dirname, './src'),
       '@hermes/plugin-sdk': path.resolve(__dirname, './src/sdk/index.ts'),
@@ -256,11 +351,11 @@ export default defineConfig(({ command }) => ({
       // alias matching is exact, and the id reaches it with the `?raw` query
       // still attached in dev but stripped in some build paths.
       'driver.js/dist/driver.js.iife.js?raw': `${path.join(
-        path.dirname(requireFromApp.resolve('driver.js')),
+        path.dirname(resolveAppPackage('driver.js')),
         'driver.js.iife.js'
       )}?raw`,
       'driver.js/dist/driver.js.iife.js': path.join(
-        path.dirname(requireFromApp.resolve('driver.js')),
+        path.dirname(resolveAppPackage('driver.js')),
         'driver.js.iife.js'
       ),
       react: reactDir,

@@ -56,6 +56,11 @@ def identity_environment(request: BuildRequest, variant: str, inherited: Mapping
         raise ValueError("channel builds currently support only the bundled variant")
     env = dict(inherited)
     env.pop("HERMES_DESKTOP_BUILD_DIR", None)
+    # The external Node tree is not yet bound to the preparation identity.
+    # Never let an inherited value choose the build's dependencies.
+    env.pop("HERMES_DESKTOP_NODE_ROOT", None)
+    env.pop("HERMES_NODE_SOURCE_ROOT", None)
+    env.pop("HERMES_NODE_DEPENDENCY_ROOT", None)
     if request.external_outputs:
         env["HERMES_DESKTOP_BUILD_DIR"] = str(request.desktop_build_dir)
     env.update(CI="true", PYTHONUTF8="1", GITHUB_SHA=request.commit,

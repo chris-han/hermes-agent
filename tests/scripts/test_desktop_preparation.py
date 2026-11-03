@@ -346,8 +346,13 @@ def test_external_desktop_outputs_are_bound_to_the_preparation_request(tmp_path)
     assert restored.desktop_build_dir == request.desktop_build_dir
     assert restored.identity_digest() == request.identity_digest()
     from scripts.bundles.desktop_inputs import identity_environment
-    env = identity_environment(request, 'bundled', {})
+    env = identity_environment(request, 'bundled', {'HERMES_DESKTOP_NODE_ROOT': '/foreign',
+                                                     'HERMES_NODE_SOURCE_ROOT': '/foreign',
+                                                     'HERMES_NODE_DEPENDENCY_ROOT': '/foreign'})
     assert env['HERMES_DESKTOP_BUILD_DIR'] == str(request.desktop_build_dir)
+    assert 'HERMES_DESKTOP_NODE_ROOT' not in env
+    assert 'HERMES_NODE_SOURCE_ROOT' not in env
+    assert 'HERMES_NODE_DEPENDENCY_ROOT' not in env
     ordinary = BuildRequest.create(source, tag=None, commit=commit, variant='bundled', work=work,
                                    cache=cache, bundle_env={})
     assert ordinary.desktop_build_dir == source / 'apps/desktop/build'
