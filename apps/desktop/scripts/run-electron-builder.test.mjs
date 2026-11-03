@@ -59,6 +59,17 @@ test('source multiarch prepares isolated native and packaging inputs before each
   assert.equal(runElectronBuilder(['--mac', '--x64', '--arm64'], { spawn: () => ({ status: 7 }) }), 7)
 })
 
+test('external packaging refuses the source-writing convenience path', () => {
+  const previous = process.env.HERMES_DESKTOP_BUILD_DIR
+  process.env.HERMES_DESKTOP_BUILD_DIR = path.join(os.tmpdir(), 'external-job')
+  try {
+    assert.throws(() => runElectronBuilder(['--dir'], { spawn: () => { throw new Error('must not launch') } }), /requires.*prepared/i)
+  } finally {
+    if (previous === undefined) delete process.env.HERMES_DESKTOP_BUILD_DIR
+    else process.env.HERMES_DESKTOP_BUILD_DIR = previous
+  }
+})
+
 test('strict builder refuses absent inputs before loading electron-builder', () => {
   const result = spawnSync(process.execPath, [path.join(import.meta.dirname, 'run-electron-builder.mjs'),
     '--prepared', path.join(import.meta.dirname, 'missing-prepared.json'), '--native-deps', 'missing', '--dir'], { encoding: 'utf8' })

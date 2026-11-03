@@ -137,7 +137,10 @@ export function runElectronBuilder(args, { spawn = spawnSync } = {}) {
   const manifest = takeOption(args, '--prepared')
   const nativeDeps = takeOption(args, '--native-deps')
   if (validateOnly && !manifest) throw preparationRequired('--validate-only requires --prepared')
-  if (!manifest) return runSourceBuilds(args, nativeDeps, spawn)
+  if (!manifest) {
+    if (process.env.HERMES_DESKTOP_BUILD_DIR) throw preparationRequired('External packaging requires prepared inputs')
+    return runSourceBuilds(args, nativeDeps, spawn)
+  }
   const platform = selectedPlatform(args)
   const arch = args.find(arg => architectures.includes(arg))?.slice(2) || process.arch
   const inputs = readPackagingInputs(manifest, source, `${platform}-${arch}`)
