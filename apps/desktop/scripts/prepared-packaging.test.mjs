@@ -5,7 +5,7 @@ import path from 'node:path'
 import { afterEach, test } from 'vitest'
 import * as prepared from './prepared-packaging.mjs'
 import { validatePreparedBuilderArgs } from './run-electron-builder.mjs'
-import { packagingResourcesDir } from './prepare-packaging-tools.mjs'
+import { packagingResourcesDir, pinnedPackageRoot } from './prepare-packaging-tools.mjs'
 import { spawnSync } from 'node:child_process'
 
 /** @type {string[]} */
@@ -17,6 +17,32 @@ test('packaging tool resources respect an absolute job directory and the relativ
   const external = path.resolve('/deliverables/work/job/desktop-build')
   assert.equal(packagingResourcesDir(source, { directories: { buildResources: external } }), external)
   assert.equal(packagingResourcesDir(source, {}), path.join(source, 'apps/desktop/build'))
+})
+
+test('packaging supplier resolves and checks the lock-pinned external dependency tree', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'external-packager-'))
+  roots.push(root)
+  const source = path.join(root, 'source')
+  const external = path.join(root, 'job', 'node-workspace')
+  for (const dir of [source, external]) {
+    fs.mkdirSync(path.join(dir, 'apps/desktop'), { recursive: true })
+    fs.writeFileSync(path.join(dir, 'apps/desktop/package.json'), '{}')
+    fs.mkdirSync(path.join(dir, 'node_modules/app-builder-lib'), { recursive: true })
+    fs.writeFileSync(path.join(dir, 'node_modules/app-builder-lib/index.js'), 'module.exports = {}')
+  }
+  fs.writeFileSync(path.join(source, 'package-lock.json'), JSON.stringify({ packages: { 'node_modules/app-builder-lib': { version: '1.0.0' } } }))
+  fs.writeFileSync(path.join(source, 'node_modules/app-builder-lib/package.json'), JSON.stringify({ name: 'app-builder-lib', version: '9.0.0' }))
+  fs.writeFileSync(path.join(external, 'node_modules/app-builder-lib/package.json'), JSON.stringify({ name: 'app-builder-lib', version: '1.0.0' }))
+  const previous = process.env.HERMES_DESKTOP_NODE_ROOT
+  process.env.HERMES_DESKTOP_NODE_ROOT = external
+  try {
+    assert.equal(pinnedPackageRoot(source, 'app-builder-lib'), path.join(external, 'node_modules/app-builder-lib'))
+    fs.writeFileSync(path.join(external, 'node_modules/app-builder-lib/package.json'), JSON.stringify({ name: 'app-builder-lib', version: '2.0.0' }))
+    assert.throws(() => pinnedPackageRoot(source, 'app-builder-lib'), /lock-pinned/)
+  } finally {
+    if (previous === undefined) delete process.env.HERMES_DESKTOP_NODE_ROOT
+    else process.env.HERMES_DESKTOP_NODE_ROOT = previous
+  }
 })
 
 /** @returns {{ source: string, out: string, electron: string, sevenZip: string, icons: string }} */

@@ -11,7 +11,16 @@ import { prepareDmgbuild } from './prepare-dmgbuild.mjs'
 
 /** @param {string} source @param {string} name @returns {string} */
 export function pinnedPackageRoot(source, name) {
-  const require = createRequire(path.join(source, 'apps/desktop/package.json'))
+  source = fs.realpathSync(source)
+  const selected = process.env.HERMES_DESKTOP_NODE_ROOT
+  if (selected && !path.isAbsolute(selected)) throw new Error('External packaging dependency root must be absolute')
+  const root = selected ? fs.realpathSync(selected) : source
+  const contains = (/** @type {string} */ parent, /** @type {string} */ child) => {
+    const relative = path.relative(parent, child)
+    return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+  }
+  if (selected && (contains(source, root) || contains(root, source))) throw new Error('External packaging dependencies overlap source')
+  const require = createRequire(path.join(root, 'apps/desktop/package.json'))
   const entry = require.resolve(name)
   let directory = path.dirname(entry)
   while (!fs.existsSync(path.join(directory, 'package.json'))) {
@@ -19,9 +28,11 @@ export function pinnedPackageRoot(source, name) {
     if (parent === directory) throw new Error(`Cannot locate installed ${name}`)
     directory = parent
   }
+  directory = fs.realpathSync(directory)
+  if (!contains(root, directory)) throw new Error('Packaging dependency escaped the selected root')
   const installed = JSON.parse(fs.readFileSync(path.join(directory, 'package.json'), 'utf8'))
   const lock = JSON.parse(fs.readFileSync(path.join(source, 'package-lock.json'), 'utf8'))
-  const key = path.relative(source, directory).split(path.sep).join('/')
+  const key = path.relative(root, directory).split(path.sep).join('/')
   if (!lock.packages?.[key] || lock.packages[key].version !== installed.version || installed.name !== name) {
     throw new Error(`Installed ${name} is not the source's lock-pinned package; prepare Node dependencies first`)
   }
