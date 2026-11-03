@@ -478,6 +478,21 @@ def test_external_desktop_outputs_are_bound_to_the_preparation_request(tmp_path)
                                    cache=cache, bundle_env={})
     assert ordinary.desktop_build_dir == source / 'apps/desktop/build'
     assert ordinary.identity_digest() != request.identity_digest()
+    with pytest.raises(ValueError, match='external.*cache'):
+        BuildRequest.create(source, tag=None, commit=commit, variant='bundled', work=work,
+                            cache=source / '.cache', bundle_env={}, external_outputs=True)
+    tampered_cache = request.data()
+    tampered_cache['cache'] = str(source / '.cache')
+    with pytest.raises(ValueError, match='external.*cache'):
+        BuildRequest.from_data(tampered_cache)
+    redirected = tmp_path / 'cache-alias'
+    redirected.symlink_to(cache, target_is_directory=True)
+    with pytest.raises(ValueError, match='external.*redirected'):
+        BuildRequest.create(source, tag=None, commit=commit, variant='bundled', work=work,
+                            cache=redirected, bundle_env={}, external_outputs=True)
+    tampered_cache['cache'] = str(work / 'cache')
+    with pytest.raises(ValueError, match='external.*cache'):
+        BuildRequest.from_data(tampered_cache)
     tampered = request.data()
     tampered['work'] = str(tmp_path)
     with pytest.raises(ValueError, match='external.*source'):

@@ -86,6 +86,17 @@ def require_owned(request: BuildRequest, paths: list[Path]) -> None:
             raise ValueError(f"preparation input is outside owned roots: {path}")
 
 
+def require_external_paths_unredirected(*paths: Path) -> None:
+    from pm.filesystem import is_junction, is_reparse_point
+
+    for location in paths:
+        if not location.is_absolute():
+            raise ValueError("external build paths must be absolute")
+        for part in (location, *location.parents):
+            if part.is_symlink() or is_junction(part) or is_reparse_point(part):
+                raise ValueError("external build path is redirected")
+
+
 def require_output_roots(source: Path) -> None:
     from pm.filesystem import is_junction
 
@@ -173,12 +184,16 @@ class BuildRequest:
         bundle_env = validate(bundle_env)
         if bundle_env and tag:
             raise ValueError("Bundle environment defaults require a commit build")
-        source, work, cache = source.resolve(), work.resolve(), cache.resolve()
-        require_output_roots(source)
         if not isinstance(external_outputs, bool):
             raise ValueError("external output selection must be boolean")
+        if external_outputs:
+            require_external_paths_unredirected(source, work, cache)
+        source, work, cache = source.resolve(), work.resolve(), cache.resolve()
+        require_output_roots(source)
         if external_outputs and work.is_relative_to(source):
             raise ValueError("external build work must be outside source")
+        if external_outputs and cache.is_relative_to(source):
+            raise ValueError("external build cache must be outside source")
         if work == cache or work.is_relative_to(cache) or cache.is_relative_to(work):
             raise ValueError("preparation work and cache must be separate directories")
         for destination in (work, cache):
@@ -238,10 +253,18 @@ class BuildRequest:
     def validate_channel(self) -> None:
         if not isinstance(self.external_outputs, bool):
             raise ValueError("external output selection must be boolean")
+        if self.external_outputs:
+            require_external_paths_unredirected(self.source, self.work, self.cache)
         if self.external_outputs and (not self.work.is_absolute()
                                       or self.work.resolve().is_relative_to(self.source.resolve())
                                       or self.source.resolve().is_relative_to(self.work.resolve())):
             raise ValueError("external build work must not overlap source")
+        if self.external_outputs and (not self.cache.is_absolute()
+                                      or self.cache.resolve().is_relative_to(self.source.resolve())
+                                      or self.source.resolve().is_relative_to(self.cache.resolve())
+                                      or self.cache.resolve().is_relative_to(self.work.resolve())
+                                      or self.work.resolve().is_relative_to(self.cache.resolve())):
+            raise ValueError("external build cache must not overlap source or work")
         if self.channel_request is None:
             return
         channel = validate_channel_request(self.channel_request)
