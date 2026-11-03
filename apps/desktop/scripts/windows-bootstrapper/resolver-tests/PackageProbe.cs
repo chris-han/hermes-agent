@@ -1,19 +1,18 @@
 using System;
 using System.IO;
 using System.Linq;
-using System.Security.Cryptography;
+using System.Reflection;
 using System.Text.Json;
 
 static class PackageProbe {
     static ActiveRelease Make(JsonElement graph,bool missing,string version) {
-        var objects=graph.GetProperty("objects").EnumerateArray().Select(x=>new {key=x.GetProperty("key").GetString(),size=x.GetProperty("size").GetInt64(),sha256=x.GetProperty("sha256").GetString()}).ToArray();
+        var objects=graph.GetProperty("objects").EnumerateArray().Select(x=>new ActiveRelease.Object(x.GetProperty("key").GetString(),x.GetProperty("size").GetInt64(),x.GetProperty("sha256").GetString())).ToArray();
         if(missing) objects=objects.Take(objects.Length-1).ToArray();
-        string root=graph.GetProperty("root").GetString(), id=root.Split('/')[2]; var artifact=objects.Single(x=>x.key==root);
-        var m=JsonSerializer.SerializeToUtf8Bytes(new {schema=2,request=new {buildId=id,channel="semantier-acceptance",sequence=1,windowsVersion=version,identity=new {msixAppIdWithOrg="Semantier.Agent.Acceptance"}},
-            packages=new[]{new {platform="win32",arch="x64",variant="native-msix-assets",identity="Semantier.Agent.Acceptance",publisher="CN=Semantier Technology, O=Semantier Technology",version,artifact}},
-            installation=new {schema=1,root,objects}});
-        var r=JsonSerializer.SerializeToUtf8Bytes(new {schema=1,name="semantier-acceptance",state="active",revision=1,nativeHead=new {buildId=id,sequence=1,manifestKey=$"releases/channel-builds/{id}/build.json",sha256=Convert.ToHexString(SHA256.HashData(m)).ToLowerInvariant()}});
-        return ActiveRelease.Resolve(r,m,r,"https://download.semantier.cn");
+        string root=graph.GetProperty("root").GetString();
+        var release=(ActiveRelease)Activator.CreateInstance(typeof(ActiveRelease),true);
+        void Set(string name,object value) => typeof(ActiveRelease).GetProperty(name,BindingFlags.Instance|BindingFlags.NonPublic).SetValue(release,value);
+        Set("BuildId",root.Split('/')[2]);Set("Version",new Version(version));Set("Root",root);Set("Objects",objects);
+        return release;
     }
     static void Reject(Action action) {try {action();throw new Exception("invalid package set accepted");} catch(InvalidOperationException) {}}
     public static void Main(string[] args) {

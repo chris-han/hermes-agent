@@ -255,7 +255,9 @@ static class Installer {
         if(args.Length==4 && args[0]=="--inspect-metadata") {
             try {
                 byte[] Read(string path) { var info=new FileInfo(path); if(!info.Exists || info.Length<=0 || info.Length>4*1024*1024) throw new InvalidOperationException("Invalid fixture size."); return File.ReadAllBytes(path); }
-                var snapshot=ActiveRelease.Resolve(Read(args[1]),Read(args[2]),Read(args[3]),Origin);
+                int reads=0;
+                var snapshot=ActiveRelease.Fetch(_=>Read(args[++reads]),Origin);
+                if(reads!=3) throw new InvalidOperationException("Invalid fixture read sequence.");
                 Console.WriteLine(snapshot.BuildId+" "+snapshot.Version); return 0;
             } catch(Exception e) { Console.Error.WriteLine(e.Message); return 1; }
         }

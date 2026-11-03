@@ -168,6 +168,30 @@ def test_native_manifest_rejects_changed_signed_graph():
         native_manifest(request,receipt,json.dumps(graph).encode())
 
 
+def test_installation_proof_binds_release_origin_and_exact_closure():
+    import base64
+    import json
+    from scripts.releases.simple_native_slots import add_installation_proof
+    manifest={'request':{'buildId':'a'*32,'channel':'semantier-acceptance','sequence':7,
+              'publicBase':'https://download.semantier.com','windowsVersion':'0.0.80.0',
+              'identity':{'msixAppIdWithOrg':'Semantier.Agent.Acceptance'}},
+              'packages':[{'publisher':'CN=Semantier Technology, O=Semantier Technology'}],
+              'installation':{'schema':1,'root':'root','objects':[{'key':'root','size':10,'sha256':'b'*64}]}}
+    observed=[]
+    proof=add_installation_proof(manifest,lambda data: observed.append(data) or b'fixture signature')
+    signed=json.loads(observed[0])
+    assert signed == {'schema':1,'buildId':'a'*32,'channel':'semantier-acceptance','sequence':7,
+                      'origin':'https://download.semantier.com','version':'0.0.80.0',
+                      'identity':'Semantier.Agent.Acceptance','publisher':manifest['packages'][0]['publisher'],
+                      'installation':manifest['installation']}
+    assert base64.b64decode(proof['payload'],validate=True)==observed[0]
+    assert base64.b64decode(proof['signature'],validate=True)==b'fixture signature'
+    assert manifest['installationProof']==proof
+    manifest['request']['publicBase']='https://evil.example'
+    with pytest.raises(ValueError,match='origin'):
+        add_installation_proof(manifest,lambda _: b'signature')
+
+
 def test_failed_upload_never_changes_channel_head():
     from scripts.releases.simple_native_slots import publish_prepared
     class Driver:

@@ -230,6 +230,74 @@ def native_manifest(request, signed, graph_bytes):
             'installation': installation}, graph
 
 
+def add_installation_proof(manifest, sign):
+    """Bind the install closure to one origin and release with the publisher key."""
+    import base64
+    from hermes_cli.release_channels import canonical_json
+    request = manifest['request']
+    origin = request['publicBase']
+    if origin not in ('https://download.semantier.cn', 'https://download.semantier.com'):
+        raise ValueError('invalid installation origin')
+    if len(manifest['packages']) != 1 or 'installationProof' in manifest:
+        raise ValueError('invalid installation proof input')
+    payload = canonical_json({'schema': 1, 'buildId': request['buildId'],
+        'channel': request['channel'], 'sequence': request['sequence'], 'origin': origin,
+        'version': request['windowsVersion'], 'identity': request['identity']['msixAppIdWithOrg'],
+        'publisher': manifest['packages'][0]['publisher'], 'installation': manifest['installation']})
+    signature = sign(payload)
+    if not isinstance(signature, bytes) or not signature or len(signature) > 4096:
+        raise ValueError('invalid installation proof signature')
+    proof = {'schema': 1, 'algorithm': 'rsa-pkcs1-sha256',
+             'payload': base64.b64encode(payload).decode('ascii'),
+             'signature': base64.b64encode(signature).decode('ascii')}
+    manifest['installationProof'] = proof
+    return proof
+
+
+def sign_windows_installation_proof(payload, thumbprint):
+    """Sign locally with the existing certificate; never change certificate stores."""
+    import base64
+    import os
+    import subprocess
+    if thumbprint != '57BF15739B4AA447842EAF388856A01B4E5029FF':
+        raise ValueError('unexpected publisher certificate')
+    if not isinstance(payload, bytes) or not payload or len(payload) > 4 * 1024 * 1024:
+        raise ValueError('invalid installation proof payload')
+    powershell = '/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe'
+    if not os.path.isfile(powershell):
+        raise RuntimeError('Windows signing host unavailable')
+    script = r'''
+$ErrorActionPreference='Stop'
+$cert=Get-Item -LiteralPath 'Cert:\CurrentUser\My\57BF15739B4AA447842EAF388856A01B4E5029FF'
+if (!$cert.HasPrivateKey -or $cert.NotBefore -gt (Get-Date) -or $cert.NotAfter -le (Get-Date) -or
+    $cert.EnhancedKeyUsageList.ObjectId -notcontains '1.3.6.1.5.5.7.3.3') {throw 'Invalid signing certificate'}
+$sha=[Security.Cryptography.SHA256]::Create()
+try {$digest=([BitConverter]::ToString($sha.ComputeHash($cert.RawData))).Replace('-','')}
+finally {$sha.Dispose()}
+if ($digest -cne '10A6B55E9A03BBC0DCEB8D899C1776BF1FBAD963C82050C16534DA4983C9661D') {throw 'Publisher certificate mismatch'}
+$data=[Convert]::FromBase64String([Console]::In.ReadToEnd())
+$private=[Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($cert)
+$public=[Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPublicKey($cert)
+if (!$private -or !$public) {throw 'Publisher RSA key unavailable'}
+try {
+  $signature=$private.SignData($data,[Security.Cryptography.HashAlgorithmName]::SHA256,[Security.Cryptography.RSASignaturePadding]::Pkcs1)
+  if (!$public.VerifyData($data,$signature,[Security.Cryptography.HashAlgorithmName]::SHA256,[Security.Cryptography.RSASignaturePadding]::Pkcs1)) {throw 'Signature verification failed'}
+  [Console]::Out.Write([Convert]::ToBase64String($signature))
+} finally {$private.Dispose();$public.Dispose()}
+'''
+    env = os.environ.copy()
+    removed = {name for name in env if name.startswith('CLOUDFLARE_R2_') or name == 'SEMANTIER_CLIENT_RECEIPT_KEY'}
+    for name in removed:
+        env.pop(name, None)
+    env['WSLENV'] = ':'.join(item for item in env.get('WSLENV', '').split(':')
+                             if item and item.split('/')[0].upper() not in {name.upper() for name in removed})
+    result = subprocess.run([powershell, '-NoProfile', '-NonInteractive', '-EncodedCommand',
+                             base64.b64encode(script.encode('utf-16le')).decode()],
+                            input=base64.b64encode(payload), stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, check=True, env=env)
+    return base64.b64decode(result.stdout, validate=True)
+
+
 def prepare(output, expected_thumbprint, verify_signatures):
     """Inspect local graph and signed packages; no network or R2 changes."""
     import hashlib
@@ -922,6 +990,7 @@ def main(argv=None):
                 raise ValueError('invalid release notes file')
             from hermes_cli.release_channels import decode_json
             manifest['notes'] = validate_notes(decode_json(args.notes.read_bytes()))
+        add_installation_proof(manifest, lambda payload: sign_windows_installation_proof(payload, args.thumbprint))
     creds, base, bucket = r2.credentials()
     scope = R2Scope.configured()
     configured_public = os.environ.get('CLOUDFLARE_R2_PUBLIC_URL', '').rstrip('/')

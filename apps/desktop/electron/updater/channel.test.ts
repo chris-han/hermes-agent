@@ -901,6 +901,7 @@ test('native graph resolution reads only metadata and preserves the legacy head 
     request: next,
     // Compatibility projection is ignored by existing native updater decoders.
     installation: { schema: 1, root: graph.root, objects: graph.objects.map(({ key, size, sha256 }) => ({ key, size, sha256 })) },
+    installationProof: { schema: 1, algorithm: 'rsa-pkcs1-sha256', payload: 'fixture', signature: 'fixture' },
     packages: [
       {
         platform: 'win32',
