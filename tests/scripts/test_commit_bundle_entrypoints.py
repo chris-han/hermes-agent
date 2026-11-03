@@ -122,7 +122,8 @@ def test_external_job_driver_routes_prepared_products_outside_checkout(tmp_path,
                               workspaces=list, commit='a' * 40)
     prepared = SimpleNamespace(request=request, validate=lambda: None, node=Path('/node'),
                                icon_python=Path('/python'), native=tmp_path / 'native',
-                               packager=tmp_path / 'packager', payload=tmp_path / 'payload', native_toolchain='fixture')
+                               packager=tmp_path / 'packager', payload=tmp_path / 'payload', native_toolchain='fixture',
+                               node_root=tmp_path / 'node-root')
     monkeypatch.setattr(desktop_inputs, 'validate_builder_identity', lambda *args: None)
     monkeypatch.setattr(desktop_inputs, 'select_variant', lambda *args: 'bundled')
     monkeypatch.setattr(desktop_inputs, 'build_environment', lambda *args: {'HERMES_DESKTOP_BUILD_DIR': str(build)})

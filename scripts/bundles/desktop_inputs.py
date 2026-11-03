@@ -147,6 +147,24 @@ def validate_builder_identity(request: BuildRequest, args: list[str]) -> None:
         raise ValueError("channel package versions come only from the admitted request")
 
 
+def validate_external_package_output(request: BuildRequest, args: list[str], inherited: Mapping[str, str]) -> None:
+    if not request.external_outputs or not request.target.startswith("win32-"):
+        return
+    from pm.filesystem import is_junction, is_reparse_point
+
+    outputs = [arg.split("=", 1)[1] for arg in args
+               if re.match(r"(?:-c|--config)\.directories\.output=", arg)]
+    expected = request.work.parent / "electron-output"
+    if len(outputs) != 1 or Path(outputs[0]) != expected or (
+        inherited.get("SEMANTIER_DESKTOP_BUILD_OUTPUT")
+        and Path(inherited["SEMANTIER_DESKTOP_BUILD_OUTPUT"]) != expected
+    ):
+        raise ValueError("external Windows package output must be the job-local electron-output")
+    if any(path.is_symlink() or is_junction(path) or is_reparse_point(path)
+           for path in (expected, *expected.parents)):
+        raise ValueError("external Windows package output is redirected")
+
+
 def packaging_environment(build: Mapping[str, str], inherited: Mapping[str, str],
                           target: str) -> dict[str, str]:
     env = dict(build)

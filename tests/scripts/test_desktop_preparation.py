@@ -504,6 +504,25 @@ def test_external_desktop_outputs_are_bound_to_the_preparation_request(tmp_path)
                             cache=cache, bundle_env={}, external_outputs=True)
 
 
+def test_external_windows_package_output_is_job_local(tmp_path):
+    from scripts.bundles.desktop_inputs import validate_external_package_output
+    from types import SimpleNamespace
+
+    job = tmp_path / 'job'
+    job.mkdir()
+    request = SimpleNamespace(external_outputs=True, target='win32-x64', work=job / 'desktop-job')
+    output = job / 'electron-output'
+    option = f'-c.directories.output={output}'
+    validate_external_package_output(request, [option], {'SEMANTIER_DESKTOP_BUILD_OUTPUT': str(output)})
+    for args, env in [([], {}), ([f'-c.directories.output={tmp_path / "foreign"}'], {}),
+                      ([option, option], {}), ([option], {'SEMANTIER_DESKTOP_BUILD_OUTPUT': str(tmp_path)})]:
+        with pytest.raises(ValueError, match='package output'):
+            validate_external_package_output(request, args, env)
+    output.symlink_to(tmp_path, target_is_directory=True)
+    with pytest.raises(ValueError, match='package output'):
+        validate_external_package_output(request, [option], {})
+
+
 def test_external_clean_never_deletes_checkout_products(tmp_path):
     from scripts.bundles.desktop_prepare import BuildRequest, clean_outputs
 

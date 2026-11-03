@@ -102,11 +102,13 @@ def build_prepared(path: Path, builder_args: list[str], variant: str | None = No
 
 def _build_prepared(prepared, builder_args: list[str], variant: str | None) -> None:
     prepared.validate()
-    from scripts.bundles.desktop_inputs import build_environment, packaging_environment, select_variant, validate_builder_identity
+    from scripts.bundles.desktop_inputs import (build_environment, packaging_environment, select_variant,
+                                                validate_builder_identity, validate_external_package_output)
     from scripts.bundles.native import finish_native
 
     request = prepared.request
     validate_builder_identity(request, builder_args)
+    validate_external_package_output(request, builder_args, os.environ)
     if request.channel_request is not None and not request.target.startswith(("darwin-", "win32-")):
         raise ValueError("channel builds require a supported native macOS or Windows target")
     variant = select_variant(prepared, variant)
