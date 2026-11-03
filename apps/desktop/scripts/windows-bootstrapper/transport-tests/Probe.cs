@@ -41,6 +41,14 @@ sealed class ResumeHandler : HttpMessageHandler {
         return Task.FromResult(response);
     }
 }
+sealed class RedirectHandler : HttpMessageHandler {
+    public int Calls;
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancel) {
+        Calls++;
+        var response=new HttpResponseMessage(HttpStatusCode.Redirect) { Version=request.Version, RequestMessage=request, Content=new ByteArrayContent(new byte[6]) };
+        response.Headers.Location=new Uri("https://attacker.example/file"); return Task.FromResult(response);
+    }
+}
 sealed class EmptyHandler : HttpMessageHandler {
     public int Calls;
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancel) {
@@ -213,6 +221,12 @@ static class Probe {
         using (var client = new HttpClient(tcpResume)) using (var output = new MemoryStream()) {
             BootstrapperTransport.Download(client, origin, output, 6, _ => {});
             if (tcpResume.Calls != 2 || Convert.ToHexString(output.ToArray()) != "010203040506") throw new Exception("TCP resume failed");
+        }
+        var redirect = new RedirectHandler();
+        using (var client = new HttpClient(redirect)) using (var output = new MemoryStream()) {
+            bool rejected = false;
+            try { BootstrapperTransport.Download(client, origin, output, 6, _ => {}); } catch (InvalidOperationException) { rejected = true; }
+            if (!rejected || redirect.Calls != 1 || output.Length != 0) throw new Exception("Redirect was accepted");
         }
         var empty = new EmptyHandler();
         using (var client = new HttpClient(empty)) using (var output = new MemoryStream()) {
