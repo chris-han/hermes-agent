@@ -62,7 +62,8 @@ def test_same_shared_fixture_is_consumed_without_client_extensions():
     contract = _contract()
     UpdateEvent, FeedbackAuthorization = contract.UpdateEvent, contract.FeedbackAuthorization
     from pydantic import ValidationError
-    path=Path(__file__).resolve().parents[2]/'semantier-runtime/src/contracts/client-operations-v1.fixture.json'
+    from importlib.resources import files
+    path=files('semantier_product').joinpath('client-operations-v1.fixture.json')
     fixture=json.loads(path.read_text())
     assert hashlib.sha256(path.with_name('client-operations-v1.schema.json').read_bytes()).hexdigest()==fixture['schema_sha256']
     for collection,model in [('update_events',UpdateEvent),('feedback_authorizations',FeedbackAuthorization)]:
@@ -70,6 +71,30 @@ def test_same_shared_fixture_is_consumed_without_client_extensions():
             if vector['expected']=='accepted':model.model_validate(vector['input'])
             else:
                 with pytest.raises(ValidationError):model.model_validate(vector['input'])
+
+
+def test_feedback_refuses_contract_not_matching_product_receipt(tmp_path, monkeypatch):
+    import shutil
+    import pm.paths
+    from hermes_cli.client_feedback import _contract
+
+    source = Path(__file__).resolve().parents[2] / 'semantier-product'
+    product = tmp_path / 'semantier-product'
+    shutil.copytree(source, product)
+    receipt_path = product / 'source-receipt.json'
+    receipt = json.loads(receipt_path.read_text())
+    row = next(item for item in receipt['files'] if item['path'] == 'semantier_product/client_operations.py')
+    changed = product / row['path']
+    changed.write_bytes(changed.read_bytes() + b'\n# changed fixture\n')
+    row['sha256'] = hashlib.sha256(changed.read_bytes()).hexdigest()
+    receipt_path.write_text(json.dumps(receipt))
+    monkeypatch.setattr(pm.paths, 'repo_root', lambda: tmp_path)
+    _contract.cache_clear()
+    try:
+        with pytest.raises(ValueError, match='installed product'):
+            _contract()
+    finally:
+        _contract.cache_clear()
 
 
 @pytest.mark.parametrize('status',[401,403,413,422,429,503])

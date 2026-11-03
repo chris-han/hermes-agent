@@ -817,6 +817,32 @@ def test_verify_probe_failure_reports_reason(tmp_path):
     assert "--version" in reason
 
 
+def test_windows_git_verification_does_not_execute_binary(monkeypatch, tmp_path):
+    from pm.install import _entry_verified
+    from pm.packages import Git
+    from pm.store import Store, tree_digest
+    import pm.packages
+
+    entry = tmp_path / 'entry'
+    binary = entry / 'cmd/git.exe'
+    binary.parent.mkdir(parents=True)
+    def pe(machine):
+        return (b'MZ' + b'\0' * 58 + (0x80).to_bytes(4, 'little') + b'\0' * 64
+                + b'PE\0\0' + machine.to_bytes(2, 'little') + b'\0' * 64)
+    binary.write_bytes(pe(0x8664))
+    monkeypatch.setattr(pm.packages, 'current_target', lambda: 'win32-x64')
+    monkeypatch.setattr(pm.packages.subprocess, 'run', lambda *a, **k: pytest.fail('Git was executed'))
+    assert Git().verify(entry, 'win32-x64') == ''
+    fact = {'entry': 'entry', 'digest': tree_digest(entry)}
+    assert _entry_verified(Git(), fact, Store(tmp_path), 'win32-x64')
+    binary.write_bytes(pe(0x8664) + b'changed')
+    assert not _entry_verified(Git(), fact, Store(tmp_path), 'win32-x64')
+    binary.write_bytes(pe(0xAA64))
+    assert 'not a win32-x64 binary' in Git().verify(entry, 'win32-x64')
+    binary.unlink()
+    assert 'missing' in Git().verify(entry, 'win32-x64')
+
+
 def test_probe_args_override_used_by_verify(tmp_path):
     """A binary that rejects `--version` (ffmpeg's BtbN autobuild does) can
     override the probe argv; verify() must honor the override everywhere

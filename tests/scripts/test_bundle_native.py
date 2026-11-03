@@ -90,6 +90,9 @@ def test_bundle_stages_git_tree_and_runs_native_children_before_manifest(tmp_pat
     for name in RESOURCE_ENV:
         (repo / name).mkdir()
         (repo / name / "asset").write_text("required", encoding="utf-8")
+    (repo / "ui-tui/scripts").mkdir(parents=True)
+    for name in ("gateway_bootstrap.py", "clipboard_image.py"):
+        shutil.copy2(source / "ui-tui/scripts" / name, repo / "ui-tui/scripts" / name)
     (repo / "entry.py").write_text("import bundle_probe\ndef main(): print(bundle_probe.__version__); return 7\n", encoding="utf-8")
     uv = shutil.which("uv")
     assert uv, "native bundle test requires uv"

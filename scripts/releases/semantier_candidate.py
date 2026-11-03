@@ -119,11 +119,9 @@ def stage(output,native,incoming,notes,target_incoming=None):
     if digest!=signed['signedSha256'] or digest!=artifact_meta['sha256']:raise ValueError('Artifact bytes mismatch')
     # Reuse the artifact-pinned parent publisher's chunk contract, never a
     # second CI-only splitter. Verify its composed source before consuming it.
-    from scripts.bundles.parent_composition import verify
-    composition = ROOT/'semantier-runtime'
-    verify(composition)
-    sys.path.insert(0, str(composition/'src'))
-    from agents.client_operations.chunks import prepare_chunks
+    from scripts.bundles.parent_composition import verify_product_modules
+    verify_product_modules(ROOT/'semantier-product', ('__init__', 'artifact_io', 'chunks'))
+    from semantier_product.chunks import prepare_chunks
     prefix='releases/channel-builds/'+request['buildId']+'/'
     key=prefix+artifact.name;feed_key=prefix+'win32/stable.appinstaller'
     target=incoming/key;target.parent.mkdir(parents=True,exist_ok=True)

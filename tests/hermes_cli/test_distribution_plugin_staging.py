@@ -15,15 +15,19 @@ def test_staged_product_backend_is_discovered_without_user_activation(monkeypatc
     from scripts.bundles.native import stage_distribution_assets
     import pm.features
     repo = tmp_path / 'repo'
-    parent = repo / 'semantier-runtime'
-    source = Path(__file__).resolve().parents[2] / 'semantier-runtime/src/plugins/sensevoice_stt'
-    target = parent / 'src/plugins/sensevoice_stt'
-    shutil.copytree(source, target)
-    files = [{'path': str(p.relative_to(parent)), 'sha256': hashlib.sha256(p.read_bytes()).hexdigest()}
-             for p in target.iterdir() if p.is_file()]
-    (parent / 'composition.json').write_text(json.dumps({'files': files, 'models': []}))
+    product = repo / 'semantier-product'
+    original = Path(__file__).resolve().parents[2] / 'semantier-product'
+    shutil.copytree(original, product)
+    source = product / 'semantier_product/sensevoice_stt'
     monkeypatch.setattr(pm.features, 'distribution_extras', lambda *a, **kw: ['sensevoice'])
-    stage_distribution_assets(repo, tmp_path / 'cache')
+    from pm.downloader import Download
+    class AssetTransferStopped(Exception):
+        pass
+    def stop_before_transfer(self):
+        raise AssetTransferStopped()
+    monkeypatch.setattr(Download, 'run', stop_before_transfer)
+    with pytest.raises(AssetTransferStopped):
+        stage_distribution_assets(repo, tmp_path / 'cache')
     assert (repo / 'plugins/sensevoice_stt/provider.py').read_bytes() == (source / 'provider.py').read_bytes()
     home = tmp_path / 'home'; home.mkdir()
     config = 'stt:\n  provider: sensevoice\nplugins:\n  enabled: []\n'
@@ -41,11 +45,34 @@ assert (provider is None) == (os.environ['EXPECT_DISABLED'] == '1')
 if provider is not None:
     assert manager._plugins['sensevoice_stt'].manifest.source == 'bundled'
 '''
-    result = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True,
+    result = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True, check=False,
         env={**os.environ, 'HERMES_HOME': str(home), 'HERMES_BUNDLED_PLUGINS': str(repo / 'plugins'),
              'EXPECT_DISABLED': str(int(disabled))})
     assert result.returncode == 0, result.stdout + result.stderr
     assert (home / 'config.yaml').read_text() == config
+
+
+@pytest.mark.parametrize('mutation', ['missing', 'duplicate', 'hash', 'url'])
+def test_staging_refuses_unbound_model_manifest_before_download(monkeypatch, tmp_path, mutation):
+    import pm.features
+    from scripts.bundles.native import stage_distribution_assets
+    repo = tmp_path / 'repo'
+    product = repo / 'semantier-product'
+    shutil.copytree(Path(__file__).resolve().parents[2] / 'semantier-product', product)
+    receipt_path = product / 'source-receipt.json'
+    receipt = json.loads(receipt_path.read_text())
+    if mutation == 'missing':
+        receipt['models'] = []
+    elif mutation == 'duplicate':
+        receipt['models'][1] = receipt['models'][0].copy()
+    elif mutation == 'hash':
+        receipt['models'][0]['sha256'] = '0' * 64
+    else:
+        receipt['models'][0]['url'] = 'https://example.invalid/model'
+    receipt_path.write_text(json.dumps(receipt))
+    monkeypatch.setattr(pm.features, 'distribution_extras', lambda *a, **kw: ['sensevoice'])
+    with pytest.raises(ValueError, match='required model assets'):
+        stage_distribution_assets(repo, tmp_path / 'cache')
 
 
 def test_ordinary_distribution_does_not_stage_product_plugin(monkeypatch, tmp_path):

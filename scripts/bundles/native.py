@@ -177,23 +177,40 @@ def verify_offline_cache(root: Path, python: Path, env: dict) -> None:
 
 def stage_distribution_assets(repo: Path, cache: Path) -> None:
     """Verify the parent composition and stage its product backend and pinned CPU model."""
+    import ast
     import hashlib
     import json
     from pm.features import distribution_extras
     from pm.downloader import Download, Source
     if distribution_extras(repo, target=current_target()) is None:
         return
-    parent = repo / "semantier-runtime"
-    from scripts.bundles.parent_composition import verify
-    manifest = verify(parent)
+    product = repo / "semantier-product"
+    from scripts.bundles.parent_composition import verify_product
+    manifest = verify_product(product)
+    provider = product / 'semantier_product/sensevoice_stt/provider.py'
+    tree = ast.parse(provider.read_bytes())
+    assets = next(ast.literal_eval(node.value) for node in tree.body
+                  if isinstance(node, ast.Assign) and any(
+                      isinstance(target, ast.Name) and target.id == 'ASSETS' for target in node.targets))
+    models = manifest.get('models')
+    if (not isinstance(models, list) or len(models) != len(assets)
+            or {entry.get('name') for entry in models if isinstance(entry, dict)} != set(assets)
+            or any(not isinstance(entry, dict) or (entry.get('bytes'), entry.get('sha256')) != assets.get(entry.get('name'))
+                   for entry in models)):
+        raise ValueError('required model assets do not match provider pins')
+    url_prefix = ('https://huggingface.co/csukuangfj/'
+                  'sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/'
+                  '2365baeacb507f821a0c8120fcee3d484dba7a07/')
+    if any(entry.get('url') != url_prefix + entry['name'] for entry in models):
+        raise ValueError('required model assets have an unpinned source')
     # Product-owned implementation stays in the parent composition. Only the
     # staged distribution exposes it through Hermes' bundled backend owner;
     # copying into user plugins would require a separate user activation.
-    plugin = parent / "src/plugins/sensevoice_stt"
+    plugin = product / "semantier_product/sensevoice_stt"
     destination_plugin = repo / "plugins/sensevoice_stt"
     destination_plugin.mkdir(parents=True)  # refuse an unexpected collision
     for name in ("__init__.py", "provider.py", "plugin.yaml"):
-        relative = str((plugin / name).relative_to(parent)).replace("\\", "/")
+        relative = str((plugin / name).relative_to(product)).replace("\\", "/")
         if not any(entry["path"] == relative for entry in manifest["files"]):
             raise ValueError("unbound product plugin input: " + relative)
         shutil.copyfile(plugin / name, destination_plugin / name)
@@ -205,7 +222,7 @@ def stage_distribution_assets(repo: Path, cache: Path) -> None:
             raise ValueError("unselected model asset in Windows CPU composition")
         sources.append(Source(entry["url"], model_cache / entry["name"], entry["sha256"]))
     Download(sources, partials_dir=model_cache / ".partials").run()
-    destination = parent / "assets/sensevoice"
+    destination = product / "assets/sensevoice"
     destination.mkdir(parents=True)
     for entry in manifest["models"]:
         path = model_cache / entry["name"]

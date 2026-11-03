@@ -45,3 +45,22 @@ def test_declared_core_build_backend_requirements_are_not_pruned(tmp_path):
         assert (cache / f'archive-v0/{name}').is_dir()
         assert (cache / f'wheels-v6/pypi/{name}').is_dir()
     assert not (cache / 'archive-v0/unrelated').exists()
+
+
+def test_product_build_backend_and_cached_dependencies_survive_pruning(tmp_path):
+    repo = tmp_path / 'repo'
+    (repo / 'semantier-product').mkdir(parents=True)
+    (repo / 'uv.lock').write_text('[[package]]\nname="core-runtime"\n')
+    (repo / 'pyproject.toml').write_text('[build-system]\nrequires=["setuptools"]\n')
+    (repo / 'semantier-product/pyproject.toml').write_text('[build-system]\nrequires=["hatchling==1.32.3"]\n')
+    cache = tmp_path / 'cache'
+    for name in ['setuptools', 'hatchling', 'trove_classifiers', 'unrelated']:
+        dist = cache / f'archive-v0/{name}/{name}-1.0.dist-info'
+        dist.mkdir(parents=True)
+        (dist / 'METADATA').write_text('Requires-Dist: trove-classifiers\n' if name == 'hatchling' else '')
+        (cache / f'wheels-v6/pypi/{name}').mkdir(parents=True)
+    prune_uv_cache_to_lock(cache, repo, selected_packages={'core-runtime'})
+    for name in ['setuptools', 'hatchling', 'trove_classifiers']:
+        assert (cache / f'archive-v0/{name}').is_dir()
+        assert (cache / f'wheels-v6/pypi/{name}').is_dir()
+    assert not (cache / 'archive-v0/unrelated').exists()

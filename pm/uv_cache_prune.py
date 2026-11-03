@@ -26,20 +26,43 @@ def lock_package_names(source_repo: Path) -> set[str]:
 
 
 def _build_package_names(source_repo: Path) -> set[str]:
-    """Core editable rebuilds also need the declared PEP 517 backend tools."""
+    """Editable rebuilds need both core and bundled product build tools."""
     import tomllib
 
-    manifest = source_repo / "pyproject.toml"
-    if not manifest.is_file():
-        return set()
-    document = tomllib.loads(manifest.read_text(encoding="utf-8-sig"))
     names = set()
-    for requirement in document.get("build-system", {}).get("requires", []):
-        match = re.match(r"\s*([A-Za-z0-9][A-Za-z0-9._-]*)", requirement)
-        if match is None:
-            raise ValueError(f"invalid build requirement: {requirement!r}")
-        names.add(_name_key(match.group(1)))
+    for manifest in (source_repo / "pyproject.toml", source_repo / "semantier-product/pyproject.toml"):
+        if not manifest.is_file():
+            continue
+        document = tomllib.loads(manifest.read_text(encoding="utf-8-sig"))
+        for requirement in document.get("build-system", {}).get("requires", []):
+            match = re.match(r"\s*([A-Za-z0-9][A-Za-z0-9._-]*)", requirement)
+            if match is None:
+                raise ValueError(f"invalid build requirement: {requirement!r}")
+            names.add(_name_key(match.group(1)))
     return names
+
+
+def _build_dependency_names(cache: Path, roots: set[str]) -> set[str]:
+    """Keep cached backend dependencies needed by an offline editable rebuild."""
+    from email.parser import Parser
+
+    metadata = {}
+    for path in (cache / "archive-v0").glob("*/*.dist-info/METADATA"):
+        name = re.match(r"([A-Za-z0-9_.]+?)-\d[^-]*\.dist-info", path.parent.name)
+        if name:
+            metadata.setdefault(_name_key(name.group(1)), []).append(path)
+    keep, pending = set(roots), list(roots)
+    while pending:
+        for path in metadata.get(pending.pop(), []):
+            message = Parser().parsestr(path.read_text(encoding="utf-8", errors="replace"), headersonly=True)
+            for requirement in message.get_all("Requires-Dist", []):
+                match = re.match(r"\s*([A-Za-z0-9][A-Za-z0-9._-]*)", requirement)
+                if match:
+                    name = _name_key(match.group(1))
+                    if name not in keep:
+                        keep.add(name)
+                        pending.append(name)
+    return keep
 
 
 def prune_uv_cache_to_lock(cache: Path, source_repo: Path, *, selected_packages: set[str] | None = None) -> int:
@@ -50,7 +73,7 @@ def prune_uv_cache_to_lock(cache: Path, source_repo: Path, *, selected_packages:
     entry count for the build log.
     """
     runtime = lock_package_names(source_repo) if selected_packages is None else {_name_key(n) for n in selected_packages}
-    keep = runtime | _build_package_names(source_repo)
+    keep = runtime | _build_dependency_names(cache, _build_package_names(source_repo))
     dist_info = re.compile(r"([A-Za-z0-9_.]+?)-\d[^-]*\.dist-info")
 
     def dist_name(bucket: Path) -> str | None:

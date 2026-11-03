@@ -1,0 +1,88 @@
+{
+  "files": [
+    {
+      "path": "pyproject.toml",
+      "sha256": "64ba5972a0ee21a621bc39ed40b9b9a51ea9e7e6d4589251731b2d2fc9f3d1bb"
+    },
+    {
+      "path": "semantier_product/__init__.py",
+      "sha256": "d6acf139bf58ed0a49c0fdf78d5b1461dc802e6b347ce454f1464d9361d59516"
+    },
+    {
+      "path": "semantier_product/artifact_io.py",
+      "sha256": "7e868d06c6d001662d256778e72ea3f07eae3b826f170e362c2dd7c0b6430065"
+    },
+    {
+      "path": "semantier_product/chunks.py",
+      "sha256": "f4da53dd7a41f6f71bae7e61468c5e9cb0d8e514a407d9108dd40564f01e2673"
+    },
+    {
+      "path": "semantier_product/client_operations.py",
+      "sha256": "1810b9048decc4871b342e38e940f34202daf309c6145dda92992e2c5b6a4cec"
+    },
+    {
+      "path": "semantier_product/package_graph.py",
+      "sha256": "e457992d59aba0665d3d9d16d0cec8cdc0875e7973ff951f2a62eeb4ac40167e"
+    },
+    {
+      "path": "semantier_product/client-operations-v1.fixture.json",
+      "sha256": "cefc13c521133da5905fdbfe347daf8042f020de38c2e797af943feb2d924c37"
+    },
+    {
+      "path": "semantier_product/client-operations-v1.schema.json",
+      "sha256": "224c6a912955f651c130a1d7c1c90a5f47e065e58aab47ddfa1814677ccdd7e8"
+    },
+    {
+      "path": "semantier_product/sensevoice_stt/__init__.py",
+      "sha256": "0660b2640450eedfc4b92eef718b352550ffcea8eae541a540ae1e43be0d1b19"
+    },
+    {
+      "path": "semantier_product/sensevoice_stt/provider.py",
+      "sha256": "67117c66aa91fb504b5b5b1aa92afa92b5ae72115aa0a3cba80212c24ed59c41"
+    },
+    {
+      "path": "semantier_product/sensevoice_stt/plugin.yaml",
+      "sha256": "30d4401ab77ea0a327de930e74845edd4e1959cd11a35644b584c6a8c6848cbb"
+    },
+    {
+      "path": "semantier_product/sensevoice_stt/README.md",
+      "sha256": "28beb3be46aedeec58130faba044937788f6ec6bcd17c5cf8550661d7fcebeaf"
+    },
+    {
+      "path": "semantier_product/sensevoice_stt/requirements.txt",
+      "sha256": "393b307853f7c7f8a6e23c278bd5c9ac40220c624f475456ff0531521cf6b519"
+    },
+    {
+      "path": "licenses/FunASR-MODEL-LICENSE.txt",
+      "sha256": "7dba975a2069691db4992b0592d70828b330d2f8a30a71450f4e152a554e84f8"
+    },
+    {
+      "path": "licenses/export-LICENSE.txt",
+      "sha256": "221c6df10b0931a5629adad671ea48fb7747e034c414b6d2bfa275bc3dd4ea17"
+    },
+    {
+      "path": "licenses/SenseVoice-model-card.md",
+      "sha256": "6add90487ea3d685b6604ad0932b565fc5cf7e9daaf8aebc674de49da4560958"
+    },
+    {
+      "path": "licenses/license-provenance.json",
+      "sha256": "5a0c70a0549524013fba14e5bfa226f81891a81c8772bd404b57316d783393cf"
+    }
+  ],
+  "models": [
+    {
+      "bytes": 239233841,
+      "name": "model.int8.onnx",
+      "sha256": "c71f0ce00bec95b07744e116345e33d8cbbe08cef896382cf907bf4b51a2cd51",
+      "url": "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/2365baeacb507f821a0c8120fcee3d484dba7a07/model.int8.onnx"
+    },
+    {
+      "bytes": 315894,
+      "name": "tokens.txt",
+      "sha256": "f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc",
+      "url": "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/2365baeacb507f821a0c8120fcee3d484dba7a07/tokens.txt"
+    }
+  ],
+  "schema": 1,
+  "source_commit": "63529e13a0f5f29eba9ab884ff4114a152e3e15d"
+}

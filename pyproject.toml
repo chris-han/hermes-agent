@@ -218,6 +218,7 @@ dependencies = [
 [project.optional-dependencies]
 # Parent-owned runtime closure; frozen in this product lock, no Hermes cycle.
 semantier-windows = [
+  "semantier-native-product==0.1.0",
   "Markdown==3.10.2; python_version < '3.14'",
   "PyJWT[crypto]==2.13.0; python_version < '3.14'",
   "aiohttp>=3.9",
@@ -893,3 +894,6 @@ extras = [
   "wecom",
   "youtube"
 ]
+
+[tool.uv.sources]
+semantier-native-product = { path = "semantier-product", editable = false }

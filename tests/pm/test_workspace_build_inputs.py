@@ -242,6 +242,63 @@ def test_plugin_can_move_compatible_transitive_but_not_exact_requirement(tmp_pat
     assert (baseline / "uv.lock").read_bytes() == first_lock
 
 
+def test_windows_repair_copies_product_package_without_server_tree(tmp_path):
+    from pm import workspace
+    core = tmp_path / 'core'
+    product = core / 'semantier-product'
+    product.mkdir(parents=True)
+    (core / 'pyproject.toml').write_text('[project]\nname="fixture"\nversion="0.0.1"\n[tool.hermes.windows-cpu-distribution]\n[tool.setuptools.packages.find]\ninclude=["agent"]\n')
+    (product / 'pyproject.toml').write_text('[project]\nname="fixture-product"\nversion="0.0.1"\n')
+    (product / 'source-receipt.json').write_text('{}')
+    legacy = core / 'semantier-runtime'
+    legacy.mkdir()
+    (legacy / 'old-server.py').write_text('raise AssertionError("unexpected copied server")')
+    output = tmp_path / 'workspace'
+    output.mkdir()
+    workspace._copy_core_inputs(core, output)
+    assert (output / 'semantier-product' / 'source-receipt.json').read_text() == '{}'
+    assert not (output / 'semantier-runtime').exists()
+
+
+def test_offline_repair_installs_product_without_server_source(tmp_path):
+    """Exercise a locked PM snapshot, not the full Windows product repair."""
+    import os
+    import shutil
+    import subprocess
+    import sys
+    from pm import workspace
+
+    core = tmp_path / 'core'
+    core.mkdir()
+    source_product = Path(__file__).resolve().parents[2] / 'semantier-product'
+    shutil.copytree(source_product, core / 'semantier-product')
+    (core / 'pyproject.toml').write_text(
+        '[project]\nname="repair-fixture"\nversion="0.0.1"\nrequires-python=">=3.14,<3.15"\n'
+        'dependencies=["semantier-native-product==0.1.0"]\n'
+        '[tool.uv]\npackage=false\nenvironments=["sys_platform == \'linux\' and platform_machine == \'x86_64\'"]\n'
+        '[tool.uv.sources]\nsemantier-native-product={path="semantier-product",editable=false}\n'
+        '[tool.hermes.windows-cpu-distribution]\n'
+        '[tool.setuptools.packages.find]\ninclude=["agent"]\n')
+    output = tmp_path / 'workspace'
+    workspace._generate_pyproject([], output, source=core)
+    shutil.copyfile(Path(__file__).parent / 'fixtures/product-repair-uv.lock', output / 'uv.lock')
+    uv = shutil.which('uv')
+    assert uv is not None
+    seed_cache = os.environ.get('SEMANTIER_PRODUCT_SEED_CACHE')
+    assert seed_cache and Path(seed_cache).is_dir(), 'set SEMANTIER_PRODUCT_SEED_CACHE to the populated owned uv cache'
+    env = {**os.environ, 'UV_OFFLINE': '1', 'UV_CACHE_DIR': seed_cache}
+    sync = subprocess.run([uv, 'sync', '--offline', '--frozen', '--no-dev', '--python', sys.executable],
+                          cwd=output, env=env, capture_output=True, text=True, timeout=60, check=False)
+    assert sync.returncode == 0, sync.stderr
+    python = output / ('.venv/Scripts/python.exe' if os.name == 'nt' else '.venv/bin/python')
+    subprocess.run([str(python), '-I', '-c',
+        'from semantier_product import artifact_io,chunks,client_operations; '
+        'assert chunks.OperationError is artifact_io.OperationError; '
+        'assert client_operations.CONTRACT_VERSION == "1.2.0"'],
+        cwd=tmp_path, env=env, check=True, capture_output=True, text=True, timeout=30)
+    assert not (output / 'semantier-runtime').exists()
+
+
 def test_member_uv_lock_travels_with_its_member(tmp_path):
     """pm/runtime.py::_inputs reads <workspace>/pm/uv.lock; the snapshot must carry it."""
     core = tmp_path / "core"

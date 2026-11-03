@@ -36,6 +36,40 @@ def test_parent_snapshot_hash_and_path_are_verified_without_source_rewrites(tmp_
     with pytest.raises(ValueError,match='integrity'):verify(tmp_path)
 
 
+def test_product_snapshot_checks_pinned_receipt_and_exact_bytes(tmp_path):
+    import json
+    import shutil
+    from scripts.bundles.parent_composition import verify_product
+    source = Path(__file__).resolve().parents[2] / 'semantier-product'
+    product = tmp_path / 'semantier-product'
+    shutil.copytree(source, product)
+    receipt = verify_product(product)
+    assert len(receipt['source_commit']) == 40
+    path = product / receipt['files'][0]['path']
+    path.write_bytes(path.read_bytes() + b'changed')
+    with pytest.raises(ValueError, match='integrity'):
+        verify_product(product)
+
+
+def test_product_consumer_refuses_different_installed_helper(tmp_path):
+    import hashlib
+    import json
+    import shutil
+    from scripts.bundles.parent_composition import verify_product_modules
+    source = Path(__file__).resolve().parents[2] / 'semantier-product'
+    product = tmp_path / 'product'
+    shutil.copytree(source, product)
+    receipt_path = product / 'source-receipt.json'
+    receipt = json.loads(receipt_path.read_text())
+    row = next(item for item in receipt['files'] if item['path'] == 'semantier_product/chunks.py')
+    path = product / row['path']
+    path.write_bytes(path.read_bytes() + b'\n# different candidate\n')
+    row['sha256'] = hashlib.sha256(path.read_bytes()).hexdigest()
+    receipt_path.write_text(json.dumps(receipt))
+    with pytest.raises(ValueError, match='installed product'):
+        verify_product_modules(product, ('chunks',))
+
+
 @pytest.mark.parametrize('valid_archive', [True, False])
 @pytest.mark.parametrize('with_capability', [False, True])
 def test_staging_survives_unavailable_kernel_fast_copy(tmp_path, monkeypatch, valid_archive, with_capability):

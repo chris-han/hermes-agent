@@ -38,7 +38,7 @@ def register(_context):
     modules={module.__name__:installed(module.__file__) for module in (numpy,polars,sherpa_onnx,soundfile)}
     total=polars.DataFrame({'value':[1,2,3]}).select(polars.col('value').sum()).item()
     if total!=6:raise ValueError('Installed Polars computation failed')
-    provider=repo/'semantier-runtime/src/plugins/sensevoice_stt/provider.py'
+    provider=repo/'semantier-product/semantier_product/sensevoice_stt/provider.py'
     installed(provider)
     loader=importlib.util.spec_from_file_location('native_sensevoice_probe',provider)
     module=importlib.util.module_from_spec(loader);loader.loader.exec_module(module)

@@ -129,6 +129,20 @@ def test_git_unpack_requires_a_windows_host(tmp_path, monkeypatch):
     assert not calls, "the guard must refuse before any execution"
 
 
+def test_git_unpack_refuses_self_extractor_for_wsl_git_build(tmp_path, monkeypatch):
+    import pm.packages
+    from pm.package import InstallError
+    from pm.packages import Git
+
+    monkeypatch.setattr(pm.packages, '_HOST_IS_WINDOWS', True)
+    monkeypatch.setenv('SEMANTIER_WSL_GIT_DISTRO', 'fixture')
+    calls = []
+    _fake_run(monkeypatch, calls=calls)
+    with pytest.raises(InstallError, match='verified Git'):
+        Git().unpack(_portable_git(tmp_path), tmp_path / 'out', 'win32-x64')
+    assert not calls
+
+
 def test_target_uses_shared_native_arch(monkeypatch):
     from hermes_platform.host import facts
     from pm import store

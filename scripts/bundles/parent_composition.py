@@ -22,10 +22,15 @@ def verify(parent: Path):
     return manifest
 
 
+from hermes_cli.product_composition import verify_product, verify_product_modules
+
+
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('parent', type=Path)
+    parser.add_argument('--product', action='store_true')
     args = parser.parse_args()
-    result = verify(args.parent)
-    print(json.dumps({'parent_commit': result['parent_commit'], 'verified_files': len(result['files'])}))
+    result = verify_product(args.parent) if args.product else verify(args.parent)
+    source = result['source_commit'] if args.product else result['parent_commit']
+    print(json.dumps({'parent_commit': source, 'verified_files': len(result['files'])}))

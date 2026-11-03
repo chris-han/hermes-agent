@@ -6,7 +6,6 @@ The reporting capability remains DPAPI-protected and is never returned locally.
 from datetime import datetime,timedelta,timezone, UTC
 import json
 from functools import cache
-import importlib.util
 import os
 from uuid import uuid4
 from hermes_constants import get_hermes_home
@@ -19,15 +18,12 @@ MAX_BYTES=1024*1024
 
 @cache
 def _contract():
-    """Load the exact shared contract shipped with this Hermes composition."""
+    """Use the product-owned contract shared with Semantier Runtime."""
+    from hermes_cli.product_composition import verify_product_modules
     from pm.paths import repo_root
-    path = repo_root() / 'semantier-runtime/src/contracts/client_operations.py'
-    spec = importlib.util.spec_from_file_location('semantier_client_operations_contract', path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError('Shipped Semantier feedback contract is unavailable')
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    verify_product_modules(repo_root() / 'semantier-product', ('__init__', 'client_operations'))
+    from semantier_product import client_operations
+    return client_operations
 
 
 def _path():

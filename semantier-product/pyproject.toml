@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling==1.32.3"]
+build-backend = "hatchling.build"
+
+[project]
+name = "semantier-native-product"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["pydantic==2.13.4"]
+
+[tool.uv]
+# The receipt pins every staged product input; a new receipt must rebuild the wheel.
+cache-keys = [{file = "pyproject.toml"}, {file = "source-receipt.json"}]
+
+[tool.hatch.build.targets.wheel]
+packages = ["semantier_product"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"licenses" = "semantier_product/licenses"
+"source-receipt.json" = "semantier_product/source-receipt.json"

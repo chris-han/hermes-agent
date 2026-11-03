@@ -704,6 +704,9 @@ class Git(BinaryPackage):
 
     name = "git"
     optional = True
+    # PM binds the archive SHA-256 and extracted tree digest; do not execute Git
+    # just to obtain a version string during package preparation or staging.
+    probe_version = False
     binary_rel = {"win32": "cmd/git.exe"}
     flatten = False
     gaps = {
@@ -740,6 +743,9 @@ class Git(BinaryPackage):
                 "only runs on Windows",
                 "stage win32 git on a Windows host; POSIX hosts use the system git",
             )
+        if os.environ.get("SEMANTIER_WSL_GIT_DISTRO"):
+            raise InstallError(self.name, "WSL builds require a verified Git staging source",
+                               "preseed the tool store from checksum-verified Git bytes")
         shutil.rmtree(staged, ignore_errors=True)
         staged.mkdir(parents=True)
         # Execute a scratch copy, never the cached fetch-<sha> bytes: an executed

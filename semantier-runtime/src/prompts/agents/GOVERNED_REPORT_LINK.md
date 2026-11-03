@@ -1,1 +1,0 @@
-Show one saved-location line: markdown-link the workspace-relative file path {display_path} to {file_href}. The link opens the exact report bytes through scoped Files and its pinned SHA256. Do not claim this report was produced by a core execution unless its authoritative result explicitly records that association.

@@ -30,7 +30,7 @@ def bootstrap_standalone_runtime() -> None:
     owner = get_default_hermes_root().resolve()
     if home != owner and home.parent != owner / "profiles":
         raise ValueError("active home is outside the standalone profile owner")
-    source = repo_root() / "semantier-runtime/src/plugins/sensevoice_stt"
+    source = repo_root() / "semantier-product/semantier_product/sensevoice_stt"
     names = tuple(_LEGACY_STOCK)
     if not all((source / name).is_file() for name in names):
         raise RuntimeError("packaged SenseVoice plugin source is missing")

@@ -1,1 +1,0 @@
-Are you available for the original meeting time, {start} to {end} ({timezone})? Please reply with your availability.

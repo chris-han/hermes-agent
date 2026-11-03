@@ -111,6 +111,16 @@ def test_actual_workflow_orders_reconciliation_and_protected_phases(tmp_path, mo
         assert not {'build','native','stage'}.intersection(events)
 
 
+def test_preflight_rejects_unavailable_product_before_external_work(tmp_path, monkeypatch):
+    import scripts.releases.semantier_native_ci as ci
+    def reject(*args, **kwargs):
+        raise ValueError('installed product unavailable')
+    monkeypatch.setattr(ci, 'verify_product_modules', reject)
+    monkeypatch.setattr(ci.subprocess, 'check_output', lambda *a, **k: pytest.fail('external work started'))
+    with pytest.raises(ValueError, match='installed product unavailable'):
+        ci.preflight('owned', str(tmp_path), tmp_path, 'a' * 40, 'https://example.invalid')
+
+
 def test_build_child_cannot_forward_receipt_key_but_staging_can_use_it(tmp_path, monkeypatch):
     import json
     monkeypatch.setenv('SEMANTIER_CLIENT_RECEIPT_KEY', 'fixture-secret')

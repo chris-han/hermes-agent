@@ -2502,6 +2502,7 @@ semantier-windows = [
     { name = "pyyaml" },
     { name = "rdflib" },
     { name = "scipy" },
+    { name = "semantier-native-product" },
     { name = "sherpa-onnx" },
     { name = "sherpa-onnx-core" },
     { name = "soundfile" },
@@ -2786,6 +2787,7 @@ requires-dist = [
     { name = "ruamel-yaml", marker = "python_full_version >= '3.14'", specifier = "==0.18.16" },
     { name = "ruamel-yaml", marker = "python_full_version < '3.14' and extra == 'semantier-windows'", specifier = "==0.18.16" },
     { name = "scipy", marker = "extra == 'semantier-windows'", specifier = ">=1.13.1" },
+    { name = "semantier-native-product", marker = "extra == 'semantier-windows'", directory = "semantier-product" },
     { name = "sentencepiece", marker = "extra == 'wake'", specifier = "==0.2.2" },
     { name = "sentencepiece", marker = "extra == 'wake-sherpa'", specifier = "==0.2.2" },
     { name = "sherpa-onnx", marker = "extra == 'semantier-windows'", specifier = "==1.13.8" },
@@ -6325,6 +6327,17 @@ sdist = { url = "https://files.pythonhosted.org/packages/8b/57/85cac3a8e32370e88
 wheels = [
     { url = "https://files.pythonhosted.org/packages/be/60/eef9acce946177f92c9aabf432224d87ab908bafafac516a36ab924199f3/segments-2.4.0-py2.py3-none-any.whl", hash = "sha256:4021dc67f201cc03c864c74c618bdb163b1af629da3040babbaa37d8813f3db0", size = 16321, upload-time = "2026-03-07T10:01:27.885Z" },
 ]
+
+[[package]]
+name = "semantier-native-product"
+version = "0.1.0"
+source = { directory = "semantier-product" }
+dependencies = [
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pydantic", specifier = "==2.13.4" }]
 
 [[package]]
 name = "sentencepiece"

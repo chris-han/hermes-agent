@@ -4,6 +4,7 @@ from contextlib import contextmanager, nullcontext
 from pathlib import Path
 import select
 import time
+from hermes_cli.product_composition import verify_product_modules
 
 ROOT=Path(__file__).resolve().parents[2]
 CI_INCOMING_ROOT=Path('/home/chris/repo/semantier-runtime/.worktrees/cloudflare-update2-three-sources-v2/.artifacts/update2-publication-v2/qualified-v3/incoming')
@@ -409,6 +410,10 @@ def verify_runtime_identity(cid):
 
 
 def preflight(expected_sid, incoming, controller, expected_controller, public_base):
+    # The later staging child uses this same interpreter.  Refuse before any
+    # Windows/build work if its installed product helpers are absent or stale.
+    verify_product_modules(ROOT / 'semantier-product',
+                           ('__init__', 'artifact_io', 'chunks', 'client_operations', 'package_graph'))
     checkout = subprocess.check_output(['/usr/bin/git', '-C', str(ROOT), 'rev-parse', 'HEAD'], text=True).strip()
     actual_controller = subprocess.check_output(['/usr/bin/git', '-C', str(controller), 'rev-parse', 'HEAD'], text=True).strip()
     for tree in (ROOT, controller):

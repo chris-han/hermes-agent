@@ -81,10 +81,11 @@ def stage_native_graph(output,native,incoming,notes,request,signed,target_incomi
         raise ValueError('Real governed CI context required')
     if signed.get('signing')!='PASS' or not signed.get('verification','').startswith('PASS:') or signed.get('sourceCommit')!=request['commit']:
         raise ValueError('Final signed source proof required')
-    from scripts.bundles.parent_composition import verify
-    composition=ROOT/'semantier-runtime';composition_info=verify(composition);sys.path.insert(0,str(composition/'src'))
-    from agents.client_operations.package_graph import decode_package_graph
-    from agents.client_operations.artifact_io import immutable_copy
+    from scripts.bundles.parent_composition import verify_product_modules
+    composition=ROOT/'semantier-product';composition_info=verify_product_modules(
+        composition, ('__init__', 'artifact_io', 'chunks', 'package_graph'))
+    from semantier_product.package_graph import decode_package_graph
+    from semantier_product.artifact_io import immutable_copy
     graph=signed['nativeGraph'];file=output/'signed/distribution/native-graph.json';graph_sha=sha(file)
     root=next(row for row in graph['objects'] if row['key']==graph['root'])
     descriptor={'key':graph['root'].rsplit('/',1)[0]+'/native-graph.json','size':file.stat().st_size,'sha256':graph_sha}
@@ -107,7 +108,7 @@ def stage_native_graph(output,native,incoming,notes,request,signed,target_incomi
     for row in [*graph['objects'],descriptor]:
         source=file.parent/row['key'].rsplit('/',1)[1]
         immutable_copy(source,incoming/row['key'],row)
-    receipt={'produced_at':datetime.now(UTC).isoformat(),'qualification_contract':'windows-native-uri-graph/v1',
+    receipt={'produced_at':datetime.now(UTC).isoformat(),'qualification_contract':'windows-native-uri-graph/v2',
              'native_qualified_at':read(native/'native-uri-proof.json')['producedAt'],
              'native_payload_verified_at':read(native/'native-payload-runtime.json')['producedAt'],
              'source_commit':request['commit'],'controller_commit':request['controllerCommit'],'build_id':request['buildId'],
@@ -116,7 +117,7 @@ def stage_native_graph(output,native,incoming,notes,request,signed,target_incomi
              'signature_result':'PASS','qualification':'windows-x64-native-uri-graph','workflow_run_id':os.environ['GITHUB_RUN_ID'],
              'workflow_run_attempt':int(os.environ['GITHUB_RUN_ATTEMPT']),'workflow_result':'native_gates_passed','package_family':family,
              'notes_sha256':hashlib.sha256(canonical(notes)).hexdigest(),'trusted_timestamp':signed['trustedTimestamp'],
-             'runtime_parent_commit':composition_info['parent_commit'],'runtime_composition_sha256':sha(composition/'composition.json'),
+             'product_source_commit':composition_info['source_commit'],'product_composition_sha256':sha(composition/'source-receipt.json'),
              'native_graph_sha256':graph_sha,'native_objects_sha256':hashlib.sha256(canonical(graph['objects'])).hexdigest(),
              'native_remote_digest_enforcement':'PASS','installed_graph_result':'PASS','payload_result':'PASS'}
     for name in ('installed-identity.json','native-uri-proof.json','native-installed-graph.json','native-payload-runtime.json','native-payload-folding.json'):

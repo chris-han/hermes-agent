@@ -2,12 +2,11 @@ pre-commit:
   jobs:
     - name: lint python
       glob: "*.py" # glob filter
-      exclude: 'semantier-runtime/**' # Generated parent-owned snapshot; preserve exact bytes.
       run: ruff check --config ./ruff.pre-commit.toml {staged_files}
 
-    - name: verify parent composition
-      glob: 'semantier-runtime/**'
-      run: python3 scripts/bundles/parent_composition.py semantier-runtime
+    - name: verify product composition
+      glob: 'semantier-product/**'
+      run: python3 -m scripts.bundles.parent_composition --product semantier-product
 
     - name: lint web
       root: web/
