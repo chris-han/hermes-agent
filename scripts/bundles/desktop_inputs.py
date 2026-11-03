@@ -35,12 +35,17 @@ def build_lock(source: Path, *, external_cache: Path | None = None):
     directory = source / ".build"
     if directory.is_symlink() or is_junction(directory) or is_reparse_point(directory):
         raise ValueError("desktop build scratch is redirected")
-    directory.mkdir(exist_ok=True)
+    existing_only = external_cache is not None and sys.platform == 'win32'
+    if existing_only:
+        if not directory.is_dir() or not (directory / '.desktop-build.lock').is_file():
+            raise ValueError("external Windows build requires an existing checkout mutex")
+    else:
+        directory.mkdir(exist_ok=True)
     with ExitStack() as locks:
         lock_path = directory / ".desktop-build.lock"
         if lock_path.is_symlink() or is_junction(lock_path) or is_reparse_point(lock_path):
             raise ValueError("desktop checkout lock is redirected")
-        fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+        fd = os.open(lock_path, os.O_RDWR | (0 if existing_only else os.O_CREAT) | getattr(os, 'O_NOFOLLOW', 0), 0o600)
         checkout_lock = locks.enter_context(os.fdopen(fd, 'a+b'))
         if not _lock(checkout_lock.fileno(), wait=False):
             raise ValueError("another desktop build or preparation is using this source checkout")

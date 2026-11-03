@@ -336,6 +336,25 @@ def test_checkout_lock_refuses_redirected_lock_file(tmp_path):
     assert sentinel.read_text() == 'unchanged'
 
 
+def test_external_windows_lock_requires_existing_checkout_mutex(tmp_path, monkeypatch):
+    from scripts.bundles import desktop_inputs
+
+    source, _ = _project(tmp_path)
+    cache = tmp_path / 'cache'
+    monkeypatch.setattr(desktop_inputs.sys, 'platform', 'win32')
+    with pytest.raises(ValueError, match='existing checkout'):
+        with desktop_inputs.build_lock(source, external_cache=cache):
+            pass
+    assert not (source / '.build').exists()
+    directory = source / '.build'
+    directory.mkdir()
+    mutex = directory / '.desktop-build.lock'
+    mutex.write_text('preserve')
+    with desktop_inputs.build_lock(source, external_cache=cache):
+        assert mutex.read_text() == 'preserve'
+    assert mutex.read_text() == 'preserve'
+
+
 def test_flavored_icon_staging_hands_the_admitted_checkout_back(tmp_path):
     from scripts.bundles.desktop import flavored_assets
     from scripts.bundles.desktop_prepare import require_source
