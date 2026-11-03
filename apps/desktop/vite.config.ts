@@ -121,6 +121,8 @@ const reactDir = path.dirname(resolveAppPackage('react/package.json'))
 const reactDomDir = path.dirname(resolveAppPackage('react-dom/package.json'))
 
 const externalCssAliases: Record<string, string> = externalNodeRoot ? {
+  'react-router': path.dirname(resolveAppPackage('react-router/package.json')),
+  '@tanstack/react-query': path.dirname(resolveAppPackage('@tanstack/react-query/package.json')),
   tailwindcss: path.dirname(resolveAppPackage('tailwindcss/package.json')),
   'tw-shimmer': resolveAppPackage('tw-shimmer'),
   katex: path.dirname(resolveAppPackage('katex/package.json')),
@@ -138,16 +140,22 @@ function externalNodeResolver(): Plugin | null {
     name: 'hermes:external-node-dependencies',
     enforce: 'pre',
     async resolveId(id, importer, options) {
-      if (!importer || id.startsWith('.') || id.startsWith('/') || id.includes(':') ||
-          id.startsWith('@/') || id.startsWith('@hermes/')) {return null}
+      if (!importer || id.startsWith('\0') || id.startsWith('.') || id.startsWith('/') || id.includes(':') ||
+          id === 'vite/modulepreload-polyfill' || id.startsWith('@/') || id.startsWith('@hermes/')) {return null}
 
       const relative = path.relative(sourceRoot, importer.split('?')[0])
 
       if (!relative || relative.startsWith(`..${path.sep}`) || relative === '..' || path.isAbsolute(relative)) {return null}
 
-      const resolved = await this.resolve(id, path.join(deps, relative), { ...options, skipSelf: true })
+      let anchor = path.join(deps, path.dirname(relative))
 
-      if (resolved && !resolved.external && path.isAbsolute(resolved.id.split('?')[0])) {
+      while (!fs.existsSync(anchor) && anchor !== deps) {anchor = path.dirname(anchor)}
+
+      const resolved = await this.resolve(id, path.join(anchor, 'package.json'), { ...options, skipSelf: true })
+
+      if (!resolved) {throw new Error(`Desktop import is unavailable in selected dependency root: ${id}`)}
+
+      if (!resolved.external && path.isAbsolute(resolved.id.split('?')[0])) {
         const target = fs.realpathSync(resolved.id.split('?')[0])
         const within = path.relative(deps, target)
 
@@ -363,7 +371,7 @@ export default defineConfig(({ command }) => ({
       'react/jsx-dev-runtime': path.join(reactDir, 'jsx-dev-runtime.js'),
       'react/jsx-runtime': path.join(reactDir, 'jsx-runtime.js')
     },
-    dedupe: ['react', 'react-dom', 'react-router', '@tanstack/react-query']
+    dedupe: externalNodeRoot ? [] : ['react', 'react-dom', 'react-router', '@tanstack/react-query']
   },
   server: {
     host: '127.0.0.1',

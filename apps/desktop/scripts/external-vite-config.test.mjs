@@ -18,8 +18,14 @@ test('external dependency resolution keeps the compiler and offline emoji assets
       fs.copyFileSync(path.join(source, relative), path.join(fixture, relative))
     }
     fs.writeFileSync(path.join(app, 'index.html'), '<script type="module" src="/entry.js"></script>')
+    fs.mkdirSync(path.join(fixture, 'node_modules/nanostores'), { recursive: true })
+    fs.writeFileSync(path.join(fixture, 'node_modules/nanostores/package.json'), '{"name":"nanostores","type":"module","exports":"./index.js"}')
+    fs.writeFileSync(path.join(fixture, 'node_modules/nanostores/index.js'), 'export const atom=()=>({get:()=>"foreign-checkout-marker"})')
+    fs.mkdirSync(path.join(fixture, 'node_modules/@tanstack/react-query'), { recursive: true })
+    fs.writeFileSync(path.join(fixture, 'node_modules/@tanstack/react-query/package.json'), '{"name":"@tanstack/react-query","type":"module","exports":"./index.js"}')
+    fs.writeFileSync(path.join(fixture, 'node_modules/@tanstack/react-query/index.js'), 'export const QueryClient="foreign-checkout-marker"')
     fs.mkdirSync(path.join(app, 'src'))
-    fs.writeFileSync(path.join(app, 'entry.js'), 'import React from "react";import {atom} from "nanostores";import "./src/styles.css";console.log(React.version,atom(1).get())')
+    fs.writeFileSync(path.join(app, 'entry.js'), 'import React from "react";import {atom} from "nanostores";import {QueryClient} from "@tanstack/react-query";import "./src/styles.css";console.log(React.version,atom(1).get(),QueryClient)')
     fs.writeFileSync(path.join(app, 'src/styles.css'), "@import 'tailwindcss';\n@import 'tw-shimmer';\n@font-face{font-family:fixture;src:url('../../../node_modules/@nous-research/ui/dist/fonts/Collapse-Bold.woff2')}\n.fixture{font-family:fixture}\n")
     fs.writeFileSync(path.join(app, 'build.mjs'), 'import {build} from "vite";await build({root:process.cwd(),configLoader:"native",build:{outDir:process.env.PROBE_OUT,emptyOutDir:true}})')
     const hook = pathToFileURL(path.join(source, 'scripts/build/external-node-resolver.mjs')).href
@@ -35,6 +41,8 @@ test('external dependency resolution keeps the compiler and offline emoji assets
       assert.ok(fs.statSync(path.join(output, 'emojibase/en', name)).size > 0)
     }
     assert.ok(fs.readdirSync(path.join(output, 'assets')).some(name => name.startsWith('Collapse-Bold') && name.endsWith('.woff2')))
+    const scripts = fs.readdirSync(path.join(output, 'assets')).filter(name => name.endsWith('.js'))
+    assert.ok(scripts.every(name => !fs.readFileSync(path.join(output, 'assets', name), 'utf8').includes('foreign-checkout-marker')))
     const overlap = spawnSync(process.execPath, ['--import', hook, path.join(app, 'build.mjs')], {
       cwd: app, encoding: 'utf8', timeout: 45000,
       env: { ...process.env, HERMES_NODE_SOURCE_ROOT: fixture, HERMES_NODE_DEPENDENCY_ROOT: deps, PROBE_OUT: path.join(root, 'refused'),
