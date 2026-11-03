@@ -5,6 +5,7 @@ Fixtures contain no installable packages; this does not qualify signature or ins
 import base64
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -62,6 +63,41 @@ def legacy_fixture(build,version,*,key,origin):
 
 @unittest.skipUnless(AVAILABLE, 'Requires Windows build host')
 class DynamicBootstrapperTest(unittest.TestCase):
+    @unittest.skipUnless(os.environ.get('SEMANTIER_SIGNED_SETUP_DIR'), 'Requires explicit signed setup candidate directory')
+    def test_signed_candidates_follow_simulated_active_and_rollback(self):
+        from scripts.releases.simple_native_slots import sign_windows_installation_proof
+
+        class ExistingSigner:
+            def sign(self, payload, *_args):
+                return sign_windows_installation_proof(payload, '57BF15739B4AA447842EAF388856A01B4E5029FF')
+
+        signed = Path(os.environ['SEMANTIER_SIGNED_SETUP_DIR'])
+        receipt = {'kind': 'synthetic-active-selection-on-signed-candidates-v1', 'cases': []}
+        with tempfile.TemporaryDirectory(prefix='signed-active-fixture-', dir=ROOT) as tmp:
+            work = Path(tmp)
+            for channel, origin in (('channel1', 'https://download.semantier.cn'),
+                                    ('channel2', 'https://download.semantier.com')):
+                exe = signed / channel / ('semantier-setup-ch1.exe' if channel == 'channel1' else 'semantier-setup-ch2.exe')
+                self.assertTrue(exe.is_file())
+                exe_hash = hashlib.sha256(exe.read_bytes()).hexdigest()
+                a, ma = fixture('a'*32, '0.0.79.0', key=ExistingSigner(), origin=origin)
+                b, mb = fixture('b'*32, '0.0.80.0', key=ExistingSigner(), origin=origin)
+                for label, record, manifest, version in (('active-79', a, ma, '0.0.79.0'),
+                                                          ('active-80', b, mb, '0.0.80.0'),
+                                                          ('rollback-79', a, ma, '0.0.79.0')):
+                    files = [work/'before.json', work/'manifest.json', work/'after.json']
+                    for path, content in zip(files, (record, manifest, record)):
+                        path.write_bytes(content)
+                    result = subprocess.run([str(exe), '--inspect-metadata', *(win(path) for path in files)],
+                                            capture_output=True, text=True, timeout=30)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn(version, result.stdout)
+                    receipt['cases'].append({'channel': channel, 'case': label, 'version': version,
+                                             'exeSha256': exe_hash, 'headSha256': hashlib.sha256(record).hexdigest(),
+                                             'manifestSha256': hashlib.sha256(manifest).hexdigest()})
+                self.assertEqual(hashlib.sha256(exe.read_bytes()).hexdigest(), exe_hash)
+        print('SIGNED_ACTIVE_FIXTURE_RECEIPT=' + json.dumps(receipt, sort_keys=True))
+
     def test_build_refuses_output_outside_owned_work_root(self):
         result=subprocess.run([str(PS),'-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',win(HERE/'Build.ps1'),
             '-Channel','channel1','-OutputDirectory',r'C:\semantier-0080-invalid-output'],capture_output=True,text=True,timeout=30)
