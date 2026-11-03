@@ -60,6 +60,74 @@ def storage():
     finally: server.shutdown();server.server_close();thread.join()
 
 
+@pytest.mark.parametrize('failure', ['none','head','signature','local-digest','remote-digest','immutable-conflict'])
+def test_legacy_projection_uses_existing_writer_lock_and_head(tmp_path,monkeypatch,failure):
+    monkeypatch.delenv('R2_DISPOSABLE_RUN',raising=False)
+    with storage() as (base,objects):
+        creds={'access_key_id':'fixture','secret_key':'fixture'};scope=R2Scope()
+        store=R2ChannelStore(creds,base,'public',scope=scope);control=ControlStore(r2,creds,base,'private',scope=scope)
+        request=acceptance_request(commit='d'*40,controller='e'*40,version='0.0.59',source_version='0.0.0',base=base+'/public')
+        graph=native_graph();original='a'*32;build=request['buildId'];graph['root']=graph['root'].replace(original,build)
+        for row in graph['objects']:
+            row['key']=row['key'].replace(original,build);row['references']=[r.replace(original,build) for r in row['references']]
+            payload=(row['key']+' fixture').encode();row['size']=len(payload);row['sha256']=hashlib.sha256(payload).hexdigest()
+            (tmp_path/row['key'].rsplit('/',1)[1]).write_bytes(payload);objects['public/'+row['key']]=payload
+        signed={'signing':'PASS','verification':'PASS: fixture','sourceCommit':request['commit'],'packageName':IDENTITY['msixAppIdWithOrg'],
+                'packageVersion':request['windowsVersion'],'publisher':'CN=Semantier Technology, O=Semantier Technology',
+                'nativeGraph':graph,'signedSha256':graph['objects'][0]['sha256']}
+        graph_bytes=json.dumps(graph,separators=(',',':')).encode();manifest,_=native_manifest(request,signed,graph_bytes);del manifest['installation']
+        raw=json.dumps(manifest,separators=(',',':')).encode();prefix='releases/channel-builds/'+build+'/'
+        head={'buildId':build,'sequence':request['sequence'],'manifestKey':prefix+'build.json','sha256':hashlib.sha256(raw).hexdigest()}
+        record={'schema':1,'name':'semantier-acceptance','repository':'chris-han/hermes-agent','policy':'stable-release',
+                'state':'active','revision':1,'nextSequence':head['sequence']+1,'identity':IDENTITY,'head':None,'nativeHead':head}
+        channel_key='public/releases/channels/semantier-acceptance.json';objects[channel_key]=json.dumps(record).encode()
+        objects['public/'+head['manifestKey']]=raw;objects['public/'+prefix+'native-graph.json']=graph_bytes
+        projection_key='public/'+prefix+'installation.json'
+        if failure=='local-digest': (tmp_path/graph['objects'][-1]['key'].rsplit('/',1)[1]).write_bytes(b'bad')
+        if failure=='remote-digest': objects['public/'+graph['objects'][-1]['key']]=b'bad'
+        if failure=='immutable-conflict':objects[projection_key]=b'protected existing bytes'
+        checked=[]
+        def sign(_):
+            if failure=='head':
+                altered={**record,'revision':2};objects[channel_key]=json.dumps(altered).encode()
+            return b'fixture-signature'
+        def verify(paths,thumb,expected):
+            checked.append((paths,thumb,expected))
+            if failure=='signature':raise ValueError('signature rejected')
+        with publication_lock(control) as token:
+            driver=R2Driver(store,'https://download.semantier.com',control,token)
+            action=lambda: driver.publish_legacy_projection('semantier-acceptance',head,tmp_path,'A'*40,verify,sign)
+            if failure!='none':
+                with pytest.raises(ValueError):action()
+                if failure=='immutable-conflict':assert objects[projection_key]==b'protected existing bytes'
+                else:assert projection_key not in objects
+            else:
+                key,body=action();assert key==prefix+'installation.json' and objects['public/'+key]==body
+                assert objects[channel_key]==json.dumps(record).encode()
+        if failure!='local-digest':assert len(checked)==1 and len(checked[0][0])==len(graph['objects'])
+        if failure=='none':
+            import shutil
+            import tempfile
+            from pathlib import Path
+            from hermes_cli.release_channels import ChannelReader
+            from scripts.releases import simple_native_slots as script
+            monkeypatch.setattr(r2,'credentials',lambda:(creds,base,'public'))
+            monkeypatch.setenv('CLOUDFLARE_R2_PUBLIC_URL','https://download.semantier.com')
+            monkeypatch.setenv('CLOUDFLARE_R2_CONTROL_BUCKET','private')
+            monkeypatch.setenv('CLOUDFLARE_R2_CONTROL_ACCESS_KEY_ID','fixture');monkeypatch.setenv('CLOUDFLARE_R2_CONTROL_SECRET_ACCESS_KEY','fixture')
+            monkeypatch.setattr(script,'verify_windows_signatures',verify)
+            monkeypatch.setattr(script,'sign_windows_installation_proof',lambda *_:b'fixture-signature')
+            monkeypatch.setattr(script,'verify_public',lambda *args:record)
+            monkeypatch.setattr(ChannelReader,'read_bytes',lambda self,key,*args:objects['public/'+key])
+            work=Path('/mnt/d/repo/deliverables/work')
+            if work.is_dir():
+                with tempfile.TemporaryDirectory(prefix='legacy-publisher-test-',dir=work) as directory:
+                    for row in graph['objects']:shutil.copy2(tmp_path/row['key'].rsplit('/',1)[1],Path(directory))
+                    script.main(['--project-legacy-channel','semantier-acceptance','--legacy-directory',directory,
+                        '--thumbprint','A'*40,'--expected-build',build,'--expected-manifest-sha256',head['sha256']])
+                assert objects['public/'+prefix+'installation.json']==body
+
+
 @pytest.mark.parametrize("bootstrap", [False, True])
 def test_three_releases_leave_two_and_preserve_other_channel(tmp_path, monkeypatch, bootstrap):
     monkeypatch.delenv('R2_DISPOSABLE_RUN',raising=False)
@@ -186,11 +254,14 @@ def test_command_publishes_with_storage_only(tmp_path, monkeypatch, capsys):
                  'state':'active','revision':1,'nextSequence':1,'identity':IDENTITY,'head':None}
         objects['public/releases/channels/semantier-acceptance.json']=json.dumps(channel).encode()
         monkeypatch.setattr(script,'prepare',lambda *_:(manifest,graph,files));monkeypatch.setattr(r2,'credentials',lambda:(creds,base,'public'))
+        proof_calls=[]
+        monkeypatch.setattr(script,'add_installation_proof',lambda candidate,sign:proof_calls.append(candidate['request']['buildId']))
         monkeypatch.setenv('CLOUDFLARE_R2_PUBLIC_URL',base+'/public');monkeypatch.setenv('CLOUDFLARE_R2_CONTROL_BUCKET','private')
         monkeypatch.setenv('CLOUDFLARE_R2_CONTROL_ACCESS_KEY_ID','fixture');monkeypatch.setenv('CLOUDFLARE_R2_CONTROL_SECRET_ACCESS_KEY','fixture')
         notes=tmp_path/'notes.json';notes.write_text(json.dumps({'en':'Synthetic notes'}))
         args=['--output',str(tmp_path),'--thumbprint','A'*40,'--notes',str(notes)]
         script.main(args)
+        assert proof_calls==[request['buildId']]
         result=json.loads(capsys.readouterr().out.splitlines()[-1]);assert result['active']['buildId']==request['buildId']
         published=json.loads(objects['public/'+result['active']['manifestKey']]);assert published['notes']=={'en':'Synthetic notes'}
         prior=dict(objects)

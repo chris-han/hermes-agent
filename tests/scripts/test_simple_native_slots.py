@@ -192,6 +192,31 @@ def test_installation_proof_binds_release_origin_and_exact_closure():
         add_installation_proof(manifest,lambda _: b'signature')
 
 
+def test_legacy_projection_binds_active_manifest_graph_and_channel():
+    import base64
+    import hashlib
+    import json
+    from test_semantier_windows_channel import native_graph
+    from scripts.releases.simple_native_slots import legacy_installation_projection
+    graph=native_graph();graph_bytes=json.dumps(graph,separators=(',',':')).encode();root=graph['objects'][0]
+    request={'buildId':'a'*32,'channel':'semantier-acceptance','sequence':79,'windowsVersion':'0.0.59.0',
+        'publicBase':'https://s3.semantier.com','identity':{'msixAppIdWithOrg':'Semantier.Agent.Acceptance'}}
+    descriptor={'key':root['key'].rsplit('/',1)[0]+'/native-graph.json','sha256':hashlib.sha256(graph_bytes).hexdigest(),'size':len(graph_bytes)}
+    package={'platform':'win32','arch':'x64','variant':'native-msix-assets','publisher':root['publisher'],'identity':root['identity'],'version':root['version'],
+        'artifact':{k:root[k] for k in ('key','size','sha256')},'native':{'graph':descriptor}}
+    raw=json.dumps({'schema':2,'request':request,'packages':[package]},separators=(',',':')).encode()
+    head={'buildId':'a'*32,'sequence':79,'manifestKey':'releases/channel-builds/'+'a'*32+'/build.json','sha256':hashlib.sha256(raw).hexdigest()}
+    verified=[]
+    result=legacy_installation_projection(raw,graph_bytes,head,'https://download.semantier.com',lambda g:verified.append(g),lambda _:b'signature')
+    payload=json.loads(base64.b64decode(result['installationProof']['payload']))
+    assert verified==[graph] and payload['manifestSha256']==head['sha256']
+    assert payload['origin']=='https://download.semantier.com' and payload['installation']==result['installation']
+    for bad_head in ({**head,'sha256':'0'*64},{**head,'sequence':78}):
+        with pytest.raises(ValueError): legacy_installation_projection(raw,graph_bytes,bad_head,'https://download.semantier.com',lambda _:pytest.fail('invalid graph reached verifier'),lambda _:b'sig')
+    with pytest.raises(ValueError): legacy_installation_projection(raw,graph_bytes+b' ',head,'https://download.semantier.com',lambda _:pytest.fail('invalid graph reached verifier'),lambda _:b'sig')
+    with pytest.raises(RuntimeError): legacy_installation_projection(raw,graph_bytes,head,'https://download.semantier.com',lambda _:(_ for _ in ()).throw(RuntimeError('signature rejected')),lambda _:pytest.fail('unsigned objects reached signer'))
+
+
 def test_windows_installation_signer_with_disposable_certificate(monkeypatch):
     import base64
     from datetime import datetime, timedelta, timezone
@@ -322,7 +347,7 @@ def test_prepare_verifies_signed_graph_and_rejects_changed_artifact(tmp_path):
             'signedSha256':graph['objects'][0]['sha256'],'certificateThumbprint':'A'*40}
     (tmp_path/'channel-request.json').write_text(json.dumps(request));(tmp_path/'result.json').write_text(json.dumps({'result':'PASS','sourceCommit':'d'*40}))
     (tmp_path/'signed/receipt.json').write_text(json.dumps(signed));(dist/'native-graph.json').write_text(json.dumps(graph))
-    calls=[];_manifest,_,files=prepare(tmp_path,'A'*40,lambda paths,thumb: calls.append((paths,thumb)))
+    calls=[];_manifest,_,files=prepare(tmp_path,'A'*40,lambda paths,thumb,facts: calls.append((paths,thumb,facts)))
     assert len(files)==len(graph['objects'])+1 and calls[0][1]=='A'*40
     target=dist/graph['objects'][0]['key'].rsplit('/',1)[1]
     target.write_bytes(b'X'*graph['objects'][0]['size'])
@@ -507,7 +532,7 @@ def test_manual_artifacts_bind_signed_setup_and_zip_to_native_graph(tmp_path):
              'size':exe.stat().st_size,'certificateThumbprint':'A'*40,'signing':'PASS'}
     receipt_file=tmp_path/'setup-receipt.json';receipt_file.write_text(json.dumps(receipt));verified=[]
     manifest={'request':{'buildId':build,'publicBase':'https://download.semantier.com'}}
-    files,setup,zip_row=prepare_manual_artifacts(tmp_path,manifest,graph,exe,receipt_file,'A'*40,lambda paths,thumb:verified.append((paths,thumb)),verify_source=lambda commit,tree:None)
+    files,setup,zip_row=prepare_manual_artifacts(tmp_path,manifest,graph,exe,receipt_file,'A'*40,lambda paths,thumb,facts:verified.append((paths,thumb)),verify_source=lambda commit,tree:None)
     assert setup['url'].endswith(prefix+exe.name) and zip_row['url'].endswith(prefix+archive.name)
     assert len(files)==2 and verified==[([exe],'A'*40)]
     with zipfile.ZipFile(archive,'w') as z:

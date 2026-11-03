@@ -37,6 +37,29 @@ def fixture(build, version, *, key, origin, publisher='CN=Semantier Technology, 
             'sequence':1,'manifestKey':f'releases/channel-builds/{build}/build.json','sha256':hashlib.sha256(raw).hexdigest()}}
     return json.dumps(record,separators=(',',':')).encode(),raw
 
+def legacy_fixture(build,version,*,key,origin):
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import padding
+    from scripts.releases.simple_native_slots import legacy_installation_projection
+    prefix=f'releases/channel-builds/{build}/';root=prefix+'SemantierAgent.msixbundle';main=prefix+'SemantierAgent.msix'
+    publisher='CN=Semantier Technology, O=Semantier Technology';identity='Semantier.Agent.Acceptance'
+    common={'publisher':publisher,'version':version,'size':10,'sha256':'b'*64,'nativeDigest':base64.b64encode(b'd'*32).decode()}
+    graph={'schema':1,'transport':'windows-package-uri','payloadInventorySha256':'c'*64,'root':root,'objects':[
+        {**common,'key':root,'kind':'main-bundle','identity':identity,'arch':'neutral','references':[main]},
+        {**common,'key':main,'kind':'main-package','identity':identity,'arch':'x64','references':[]}]}
+    graph_bytes=json.dumps(graph,separators=(',',':')).encode()
+    descriptor={'key':prefix+'native-graph.json','size':len(graph_bytes),'sha256':hashlib.sha256(graph_bytes).hexdigest()}
+    manifest={'schema':2,'request':{'buildId':build,'channel':'semantier-acceptance','sequence':1,'windowsVersion':version,
+        'publicBase':'https://s3.semantier.com','identity':{'msixAppIdWithOrg':identity}},
+        'packages':[{'platform':'win32','arch':'x64','variant':'native-msix-assets','identity':identity,'publisher':publisher,
+            'version':version,'artifact':{'key':root,'size':10,'sha256':'b'*64},'native':{'graph':descriptor}}]}
+    raw=json.dumps(manifest,separators=(',',':')).encode()
+    head={'buildId':build,'sequence':1,'manifestKey':prefix+'build.json','sha256':hashlib.sha256(raw).hexdigest()}
+    record={'schema':1,'name':'semantier-acceptance','state':'active','revision':1,'nativeHead':head}
+    projection=legacy_installation_projection(raw,graph_bytes,head,origin,lambda _:None,
+        lambda payload:key.sign(payload,padding.PKCS1v15(),hashes.SHA256()))
+    return json.dumps(record,separators=(',',':')).encode(),raw,json.dumps(projection,separators=(',',':')).encode()
+
 @unittest.skipUnless(AVAILABLE, 'Requires Windows build host')
 class DynamicBootstrapperTest(unittest.TestCase):
     def test_build_refuses_output_outside_owned_work_root(self):
@@ -99,15 +122,34 @@ try {
                 self.assertEqual(build.returncode,0,build.stdout+build.stderr)
                 exe=output/('semantier-setup-ch1.exe' if channel=='channel1' else 'semantier-setup-ch2.exe')
                 self.assertTrue(exe.is_file())
-                def inspect(before,manifest,after):
-                    files=[base/'before.json',base/'manifest.json',base/'after.json']
-                    for path,data in zip(files,(before,manifest,after)): path.write_bytes(data)
+                def inspect(before,manifest,after,projection=None):
+                    contents=[before,manifest]+([projection] if projection is not None else [])+[after]
+                    files=[base/f'input-{i}.json' for i in range(len(contents))]
+                    for path,data in zip(files,contents): path.write_bytes(data)
                     return subprocess.run([str(exe),'--inspect-metadata',*(win(path) for path in files)],capture_output=True,text=True,timeout=30)
                 a,ma=fixture('a'*32,'0.0.79.0',key=key,origin=origin); b,mb=fixture('b'*32,'0.0.80.0',key=key,origin=origin)
                 for record,manifest,expected in ((a,ma,'0.0.79.0'),(b,mb,'0.0.80.0'),(a,ma,'0.0.79.0')):
                     selected=inspect(record,manifest,record)
                     self.assertEqual(selected.returncode,0,selected.stderr)
                     self.assertIn(expected,selected.stdout)
+                old,old_manifest,old_projection=legacy_fixture('c'*32,'0.0.79.0',key=key,origin=origin)
+                for record,manifest,extra,expected in ((old,old_manifest,old_projection,'0.0.79.0'),(b,mb,None,'0.0.80.0'),(old,old_manifest,old_projection,'0.0.79.0')):
+                    selected=inspect(record,manifest,record,extra)
+                    self.assertEqual(selected.returncode,0,selected.stderr)
+                    self.assertIn(expected,selected.stdout)
+                self.assertNotEqual(inspect(old,old_manifest,old).returncode,0)
+                self.assertNotEqual(inspect(old,old_manifest,b,old_projection).returncode,0)
+                foreign_origin='https://download.semantier.cn' if channel=='channel2' else 'https://download.semantier.com'
+                _,_,foreign_projection=legacy_fixture('c'*32,'0.0.79.0',key=key,origin=foreign_origin)
+                self.assertNotEqual(inspect(old,old_manifest,old,foreign_projection).returncode,0)
+                broken=json.loads(old_projection);broken['installation']['objects'][0]['sha256']='0'*64
+                self.assertNotEqual(inspect(old,old_manifest,old,json.dumps(broken).encode()).returncode,0)
+                broken=json.loads(old_projection);broken['installationProof']['signature']=base64.b64encode(bytes(256)).decode()
+                self.assertNotEqual(inspect(old,old_manifest,old,json.dumps(broken).encode()).returncode,0)
+                altered=json.loads(old_manifest);altered['request']['publicBase']='https://other.example'
+                altered=json.dumps(altered,separators=(',',':')).encode();changed=json.loads(old);changed['nativeHead']['sha256']=hashlib.sha256(altered).hexdigest()
+                changed=json.dumps(changed,separators=(',',':')).encode()
+                self.assertNotEqual(inspect(changed,altered,changed,old_projection).returncode,0)
                 self.assertNotEqual(inspect(a,ma,b).returncode,0)
                 self.assertNotEqual(inspect(a,mb,a).returncode,0)
                 bad,wrong=fixture('a'*32,'0.0.79.0',key=key,origin=origin,publisher='CN=Other')

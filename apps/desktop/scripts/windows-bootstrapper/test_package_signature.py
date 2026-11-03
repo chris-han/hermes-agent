@@ -23,3 +23,14 @@ def test_pinned_signer_passes_and_corrupted_or_wrong_publisher_fails():
             capture_output=True,text=True,timeout=120,env={**os.environ,'DOTNET_GENERATE_ASPNET_CERTIFICATE':'false','DOTNET_CLI_TELEMETRY_OPTOUT':'1'})
         assert result.returncode==0,result.stdout+result.stderr
         assert 'SIGNATURE_CORRUPTION_REFUSED' in result.stdout
+
+@pytest.mark.skipif(not DOTNET.is_file() or not (RETAINED/'SemantierAgent.msixbundle').is_file() or not shutil.which('wslpath'),reason='requires Windows and retained signed bundle')
+def test_publisher_checks_signed_bytes_with_file_held():
+    from scripts.releases.simple_native_slots import verify_windows_signatures
+    path=RETAINED/'SemantierAgent.msixbundle';thumb='57BF15739B4AA447842EAF388856A01B4E5029FF'
+    expected={'size':path.stat().st_size,'sha256':'b3c97b2e00ba3945c0807521871d702e15d6d210894fd22f494228fe2b5b80d1'}
+    verify_windows_signatures([path],thumb)
+    verify_windows_signatures([path],thumb,[expected])
+    verify_windows_signatures([path,path],thumb,[expected,expected])
+    with pytest.raises(subprocess.CalledProcessError):
+        verify_windows_signatures([path],thumb,[{**expected,'sha256':'0'*64}])

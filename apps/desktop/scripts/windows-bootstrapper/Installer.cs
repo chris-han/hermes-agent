@@ -252,12 +252,12 @@ static class Installer {
     [STAThread] static int Main(string[] args) {
         // Read-only fixture inspection exercises this exact compiled resolver; it
         // never downloads, installs, changes trust, or accepts an origin override.
-        if(args.Length==4 && args[0]=="--inspect-metadata") {
+        if((args.Length==4 || args.Length==5) && args[0]=="--inspect-metadata") {
             try {
                 byte[] Read(string path) { var info=new FileInfo(path); if(!info.Exists || info.Length<=0 || info.Length>4*1024*1024) throw new InvalidOperationException("Invalid fixture size."); return File.ReadAllBytes(path); }
                 int reads=0;
                 var snapshot=ActiveRelease.Fetch(_=>Read(args[++reads]),Origin);
-                if(reads!=3) throw new InvalidOperationException("Invalid fixture read sequence.");
+                if(reads!=args.Length-1) throw new InvalidOperationException("Invalid fixture read sequence.");
                 Console.WriteLine(snapshot.BuildId+" "+snapshot.Version); return 0;
             } catch(Exception e) { Console.Error.WriteLine(e.Message); return 1; }
         }

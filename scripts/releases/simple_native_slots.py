@@ -230,28 +230,73 @@ def native_manifest(request, signed, graph_bytes):
             'installation': installation}, graph
 
 
-def add_installation_proof(manifest, sign):
-    """Bind the install closure to one origin and release with the publisher key."""
+def _sign_installation_payload(value, sign):
     import base64
     from hermes_cli.release_channels import canonical_json
+    payload = canonical_json(value)
+    signature = sign(payload)
+    if not isinstance(signature, bytes) or not signature or len(signature) > 4096:
+        raise ValueError('invalid installation proof signature')
+    return {'schema': 1, 'algorithm': 'rsa-pkcs1-sha256',
+            'payload': base64.b64encode(payload).decode('ascii'),
+            'signature': base64.b64encode(signature).decode('ascii')}
+
+
+def add_installation_proof(manifest, sign):
+    """Bind the install closure to one origin and release with the publisher key."""
     request = manifest['request']
     origin = request['publicBase']
     if origin not in ('https://download.semantier.cn', 'https://download.semantier.com'):
         raise ValueError('invalid installation origin')
     if len(manifest['packages']) != 1 or 'installationProof' in manifest:
         raise ValueError('invalid installation proof input')
-    payload = canonical_json({'schema': 1, 'buildId': request['buildId'],
+    proof = _sign_installation_payload({'schema': 1, 'buildId': request['buildId'],
         'channel': request['channel'], 'sequence': request['sequence'], 'origin': origin,
         'version': request['windowsVersion'], 'identity': request['identity']['msixAppIdWithOrg'],
-        'publisher': manifest['packages'][0]['publisher'], 'installation': manifest['installation']})
-    signature = sign(payload)
-    if not isinstance(signature, bytes) or not signature or len(signature) > 4096:
-        raise ValueError('invalid installation proof signature')
-    proof = {'schema': 1, 'algorithm': 'rsa-pkcs1-sha256',
-             'payload': base64.b64encode(payload).decode('ascii'),
-             'signature': base64.b64encode(signature).decode('ascii')}
+        'publisher': manifest['packages'][0]['publisher'], 'installation': manifest['installation']}, sign)
     manifest['installationProof'] = proof
     return proof
+
+
+def legacy_installation_projection(manifest_bytes, graph_bytes, head, origin, verify_objects, sign):
+    """Create a signed closure for an unchanged, head-bound older manifest.
+
+    The caller must verify the exact object bytes and signatures and publish the
+    returned immutable object through the existing fenced channel writer.
+    """
+    import hashlib
+    from hermes_cli.release_channels import _head, decode_json, validate_native_graph
+    _head(head)
+    if origin not in ('https://download.semantier.cn','https://download.semantier.com'):
+        raise ValueError('invalid installation origin')
+    if len(manifest_bytes)>4*1024*1024 or len(graph_bytes)>4*1024*1024 or hashlib.sha256(manifest_bytes).hexdigest()!=head['sha256']:
+        raise ValueError('legacy manifest does not match active head')
+    manifest=decode_json(manifest_bytes);request=manifest['request'];packages=manifest['packages']
+    if (manifest.get('schema')!=2 or 'installation' in manifest or 'installationProof' in manifest
+            or request.get('buildId')!=head['buildId'] or request.get('sequence')!=head['sequence']
+            or request.get('channel')!='semantier-acceptance' or len(packages)!=1):
+        raise ValueError('invalid legacy installation metadata')
+    package=packages[0];identity=request['identity']['msixAppIdWithOrg'];version=request['windowsVersion']
+    publisher='CN=Semantier Technology, O=Semantier Technology'
+    if (identity!='Semantier.Agent.Acceptance' or package.get('publisher')!=publisher
+            or package.get('identity')!=identity or package.get('version')!=version
+            or (package.get('platform'),package.get('arch'),package.get('variant'))!=('win32','x64','native-msix-assets')):
+        raise ValueError('legacy package identity mismatch')
+    descriptor=package['native']['graph'];prefix='releases/channel-builds/'+head['buildId']+'/'
+    if (descriptor.get('key')!=prefix+'native-graph.json' or descriptor.get('size')!=len(graph_bytes)
+            or descriptor.get('sha256')!=hashlib.sha256(graph_bytes).hexdigest()):
+        raise ValueError('legacy native graph mismatch')
+    graph=decode_json(graph_bytes)
+    validate_native_graph(graph,build_id=head['buildId'],identity=identity,publisher=publisher,version=version,arch='x64')
+    root=next(row for row in graph['objects'] if row['key']==graph['root'])
+    if package['artifact']!={k:root[k] for k in ('key','size','sha256')}:
+        raise ValueError('legacy native root mismatch')
+    verify_objects(graph)
+    install={'schema':1,'root':graph['root'],'objects':[{k:row[k] for k in ('key','size','sha256')} for row in graph['objects']]}
+    proof=_sign_installation_payload({'schema':1,'buildId':head['buildId'],'channel':request['channel'],
+        'sequence':head['sequence'],'origin':origin,'version':version,'identity':identity,'publisher':publisher,
+        'manifestSha256':head['sha256'],'installation':install},sign)
+    return {'schema':1,'installation':install,'installationProof':proof}
 
 
 def sign_windows_installation_proof(payload, thumbprint):
@@ -332,7 +377,8 @@ def prepare(output, expected_thumbprint, verify_signatures):
         files[row['key']] = {'path': path, 'size': row['size'], 'sha256': row['sha256']}
     if signed.get('certificateThumbprint') != expected_thumbprint:
         raise ValueError('untrusted signing certificate')
-    verify_signatures([v['path'] for v in files.values()], expected_thumbprint)
+    verify_signatures([v['path'] for v in files.values()], expected_thumbprint,
+                      [{'size':v['size'],'sha256':v['sha256']} for v in files.values()])
     graph_descriptor = manifest['packages'][0]['native']['graph']
     files[graph_descriptor['key']] = {'path': graph_file, 'size': graph_descriptor['size'], 'sha256': graph_descriptor['sha256']}
     return manifest, graph, files
@@ -380,7 +426,7 @@ def prepare_manual_artifacts(output, manifest, graph, setup_path, setup_receipt_
             or type(setup.get('size')) is not int or size!=setup['size'] or actual!=setup.get('sha256')):
         raise ValueError('setup receipt mismatch')
     verify_source(setup['sourceCommit'],setup['sourceTree'])
-    verify_signatures([setup_path],expected_thumbprint)
+    verify_signatures([setup_path],expected_thumbprint,[{'size':size,'sha256':actual}])
     signed=metadata(output/'signed/receipt.json');archive_name=signed.get('archiveName')
     if not isinstance(archive_name,str) or not re.fullmatch(r'[A-Za-z0-9_.-]+\.zip',archive_name):raise ValueError('invalid archive name')
     archive=regular(output/'signed'/archive_name);sidecar=regular(archive.with_name(archive_name+'.sha256'))
@@ -697,6 +743,60 @@ class R2Driver:
         incoming['public/'+build_prefix(manifest['request']['buildId'])+'build.json'] = {'size': len(canonical_json(manifest))}
         return check_capacity(combined, incoming)
 
+    def publish_legacy_projection(self, channel, expected_head, directory, thumbprint, verify_signatures, sign):
+        """Publish an immutable closure for the currently selected old head."""
+        import hashlib
+        import stat
+        from pathlib import Path
+        from hermes_cli.release_channels import canonical_json, decode_json
+        from scripts.releases import r2
+        self.verify_lock()
+        record,etag=self.read_channel(channel)
+        if record.get('nativeHead')!=expected_head or record.get('nativeRetirePending') is not None:
+            raise ValueError('legacy head changed or cleanup pending')
+        self.ensure_no_uploads()
+        current=self.store.get(expected_head['manifestKey'])
+        if current is None or hashlib.sha256(current[0]).hexdigest()!=expected_head['sha256']:
+            raise ValueError('legacy immutable manifest mismatch')
+        manifest=decode_json(current[0]);descriptor=manifest['packages'][0]['native']['graph']
+        prefix='releases/channel-builds/'+expected_head['buildId']+'/'
+        if descriptor.get('key')!=prefix+'native-graph.json':
+            raise ValueError('legacy graph key mismatch')
+        remote_graph=self.store.get(descriptor['key'])
+        if remote_graph is None:raise ValueError('legacy graph missing')
+        directory=Path(directory)
+        if directory.is_symlink() or not directory.is_dir():raise ValueError('legacy package directory invalid')
+        def verify_objects(graph):
+            paths=[]
+            for row in graph['objects']:
+                path=directory/row['key'].rsplit('/',1)[1]
+                if path.is_symlink() or not stat.S_ISREG(path.stat().st_mode) or path.stat().st_size!=row['size']:
+                    raise ValueError('legacy local object location or size mismatch')
+                with path.open('rb') as stream:
+                    if hashlib.file_digest(stream,'sha256').hexdigest()!=row['sha256']:
+                        raise ValueError('legacy local object digest mismatch')
+                paths.append(path)
+            verify_signatures(paths,thumbprint,[{'size':row['size'],'sha256':row['sha256']} for row in graph['objects']])
+            for row in graph['objects']:
+                self.verify_lock()
+                url=self.store.scope.object_url(self.store.base,self.store.bucket,row['key'])
+                r2.verify_remote_artifact(url,self.store.creds,r2.amz_timestamp(),row['size'],row['sha256'],algorithm='sha256',encoding='hex')
+        projected=legacy_installation_projection(current[0],remote_graph[0],expected_head,self.public_base,verify_objects,sign)
+        body=canonical_json(projected);key=prefix+'installation.json'
+        self.verify_lock();self.ensure_no_uploads()
+        public=storage_inventory(r2,self.store.creds,self.store.base,self.store.bucket,self.store.scope)
+        private=storage_inventory(r2,self.control.credentials,self.control.base,self.control.bucket,self.store.scope)
+        combined={'public/'+k:v for k,v in public.items()};combined.update({'private/'+k:v for k,v in private.items()})
+        check_capacity(combined,{'public/'+key:{'size':len(body)}})
+        current_record,current_etag=self.read_channel(channel)
+        if current_record!=record or current_etag!=etag:raise ValueError('legacy head changed before projection upload')
+        self.upload_metadata(key,body)
+        self.verify_lock();final,final_etag=self.read_channel(channel)
+        if final!=record or final_etag!=etag:raise ValueError('legacy head changed during projection upload')
+        stored=self.store.get(key)
+        if stored is None or stored[0]!=body:raise ValueError('legacy projection readback mismatch')
+        return key,body
+
     def verify_manual_object(self, descriptor):
         """Read back the exact already-uploaded immutable manual artifact."""
         from urllib.parse import urlsplit
@@ -888,7 +988,7 @@ def cleanup_pending(driver, channel):
     return driver.finish_cleanup(channel, etag, build_id)
 
 
-def verify_windows_signatures(files, thumbprint):
+def verify_windows_signatures(files, thumbprint, expected=None):
     """Use the Windows SDK signer verifier without forwarding R2 credentials."""
     import base64
     import json
@@ -902,18 +1002,34 @@ def verify_windows_signatures(files, thumbprint):
         raise RuntimeError('Windows SignTool verification requires WSL with Windows SDK')
     paths = [subprocess.check_output(['wslpath', '-w', str(path.resolve(strict=True))], text=True).strip() for path in files]
     encoded = base64.b64encode(json.dumps(paths).encode()).decode()
+    if expected is not None and (len(expected)!=len(paths) or any(type(row.get('size')) is not int or not re.fullmatch('[a-f0-9]{64}',row.get('sha256','')) for row in expected)):
+        raise ValueError('invalid expected signed object facts')
+    encoded_facts=base64.b64encode(json.dumps(expected or []).encode()).decode()
     script = r'''
 $ErrorActionPreference='Stop'
-$files=([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('PATHS')) | ConvertFrom-Json)
+$decodedFiles=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('PATHS')) | ConvertFrom-Json
+$decodedFacts=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('FACTS')) | ConvertFrom-Json
+$files=@();foreach($item in $decodedFiles){$files+=,[string]$item}
+$expected=@();foreach($item in $decodedFacts){$expected+=,$item}
 $tool=@(Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1)
 if($tool.Count -ne 1){throw 'SignTool unavailable'}
-foreach($file in $files){
-  & $tool[0].FullName verify /pa $file *> $null
-  if($LASTEXITCODE -ne 0){throw 'SignTool verification failed'}
-  $signature=Get-AuthenticodeSignature -LiteralPath $file
-  if($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Thumbprint -cne 'THUMB'){throw 'Signature or signer mismatch'}
-}
-'''.replace('PATHS', encoded).replace('THUMB', thumbprint)
+$held=@()
+try {
+  foreach($file in $files){$held+=,[IO.File]::Open($file,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)}
+  for($i=0;$i -lt $files.Count;$i++){
+    & $tool[0].FullName verify /pa $files[$i] *> $null
+    if($LASTEXITCODE -ne 0){throw 'SignTool verification failed'}
+    $signature=Get-AuthenticodeSignature -LiteralPath $files[$i]
+    if($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Thumbprint -cne 'THUMB'){throw 'Signature or signer mismatch'}
+    if(CHECKFACTS){
+      $sha=[Security.Cryptography.SHA256]::Create()
+      try {$digest=([BitConverter]::ToString($sha.ComputeHash($held[$i]))).Replace('-','').ToLowerInvariant()}
+      finally {$sha.Dispose()}
+      if($held[$i].Length -ne $expected[$i].size -or $digest -cne $expected[$i].sha256){throw 'Signed object digest mismatch'}
+    }
+  }
+} finally {foreach($stream in $held){$stream.Dispose()}}
+'''.replace('PATHS', encoded).replace('CHECKFACTS', '$true' if expected is not None else '$false').replace('FACTS', encoded_facts).replace('THUMB', thumbprint)
     env = os.environ.copy()
     removed = {name for name in env if name.startswith('CLOUDFLARE_R2_') or name == 'SEMANTIER_CLIENT_RECEIPT_KEY'}
     for name in removed:
@@ -978,10 +1094,25 @@ def main(argv=None):
     parser.add_argument('--thumbprint', help='expected uppercase code-signing certificate thumbprint')
     parser.add_argument('--notes', type=Path, help='optional JSON map of localized release notes')
     parser.add_argument('--resume-cleanup', metavar='CHANNEL', help='resume a pending archive retirement')
+    parser.add_argument('--project-legacy-channel', metavar='CHANNEL', help='sign the current legacy native installation closure')
+    parser.add_argument('--legacy-directory', type=Path, help='retained signed native objects under deliverables work or release')
+    parser.add_argument('--expected-build', help='exact active build ID for the legacy projection')
+    parser.add_argument('--expected-manifest-sha256', help='exact active manifest SHA-256 for the legacy projection')
     args = parser.parse_args(argv)
-    if (bool(args.resume_cleanup) == bool(args.output) or (args.output and not args.thumbprint)
-            or (args.resume_cleanup and (args.thumbprint or args.notes))):
-        parser.error('provide --output and --thumbprint, or --resume-cleanup CHANNEL')
+    legacy=args.project_legacy_channel
+    if (sum(bool(v) for v in (args.resume_cleanup,args.output,legacy))!=1
+            or (args.output and (not args.thumbprint or args.legacy_directory or args.expected_build or args.expected_manifest_sha256))
+            or (args.resume_cleanup and (args.thumbprint or args.notes or args.legacy_directory or args.expected_build or args.expected_manifest_sha256))
+            or (legacy and (not args.thumbprint or not args.legacy_directory or not args.expected_build or not args.expected_manifest_sha256 or args.notes))):
+        parser.error('provide one publish, cleanup, or explicitly pinned legacy projection operation')
+    if legacy:
+        import re
+        if not re.fullmatch('[a-f0-9]{32}',args.expected_build) or not re.fullmatch('[a-f0-9]{64}',args.expected_manifest_sha256):
+            parser.error('legacy projection requires an exact build ID and manifest SHA-256')
+        directory=args.legacy_directory.resolve(strict=True)
+        roots=[Path('/mnt/d/repo/deliverables/work').resolve(strict=True),Path('/mnt/d/repo/deliverables/release').resolve(strict=True)]
+        if not any(directory.is_relative_to(root) for root in roots):
+            parser.error('legacy signed objects must be under the Windows deliverables work or release root')
     manifest = files = None
     if args.output:
         manifest, _, files = prepare(args.output, args.thumbprint, verify_windows_signatures)
@@ -996,6 +1127,8 @@ def main(argv=None):
     configured_public = os.environ.get('CLOUDFLARE_R2_PUBLIC_URL', '').rstrip('/')
     if manifest and (not configured_public or scope.public_base(configured_public) != manifest['request']['publicBase'].rstrip('/')):
         raise ValueError('configured public R2 origin does not match the signed request')
+    if legacy and (not configured_public or scope.public_base(configured_public)!='https://download.semantier.com'):
+        raise ValueError('legacy projection requires the configured Channel 2 origin')
     required = ('CLOUDFLARE_R2_CONTROL_BUCKET', 'CLOUDFLARE_R2_CONTROL_ACCESS_KEY_ID', 'CLOUDFLARE_R2_CONTROL_SECRET_ACCESS_KEY')
     if any(not os.environ.get(name) for name in required):
         raise RuntimeError('private R2 control bucket credentials required')
@@ -1005,10 +1138,11 @@ def main(argv=None):
     control = ControlStore(r2, {'access_key_id': os.environ[required[1]], 'secret_key': os.environ[required[2]]},
                            base, control_bucket, scope=scope)
     store = R2ChannelStore(creds, base, bucket, scope=scope)
-    channel = args.resume_cleanup or manifest['request']['channel']
+    channel = args.resume_cleanup or legacy or manifest['request']['channel']
+    projection_key=projection_body=None
     with publication_lock(control) as token:
-        driver = R2Driver(store, manifest['request']['publicBase'] if manifest else '', control, token)
-        cleanup_pending(driver, channel)
+        driver = R2Driver(store, manifest['request']['publicBase'] if manifest else (configured_public if legacy else ''), control, token)
+        if not legacy:cleanup_pending(driver, channel)
         if manifest:
             current, _ = driver.read_channel(channel)
             active = current.get('nativeHead')
@@ -1021,13 +1155,32 @@ def main(argv=None):
                 result = publish_prepared(driver, manifest, files)
             result = cleanup_pending(driver, channel)
             driver.sweep_old(channel)
+        elif legacy:
+            result,_=driver.read_channel(channel);active=result.get('nativeHead')
+            if not active or active['buildId']!=args.expected_build or active['sha256']!=args.expected_manifest_sha256:
+                raise ValueError('legacy active head differs from expected identity')
+            projection_key,projection_body=driver.publish_legacy_projection(channel,active,directory,args.thumbprint,
+                verify_windows_signatures,lambda payload:sign_windows_installation_proof(payload,args.thumbprint))
         else:
             result, _ = driver.read_channel(channel)
     if manifest:
         verify_public(manifest['request']['publicBase'], channel, result['nativeHead'])
+    if legacy:
+        import hashlib
+        from hermes_cli.release_channels import ChannelReader
+        verify_public(configured_public,channel,result['nativeHead'])
+        reader=ChannelReader(configured_public);opener=reader.opener
+        def public_open(request,timeout):
+            request.add_header('User-Agent','SemantierPublisher/1.0')
+            return opener(request,timeout=timeout)
+        reader.opener=public_open
+        if reader.read_bytes(projection_key,hashlib.sha256(projection_body).hexdigest())!=projection_body:
+            raise RuntimeError('public legacy projection mismatch')
+        verify_public(configured_public,channel,result['nativeHead'])
     print(json.dumps({'channel': channel, 'revision': result['revision'],
                       'active': result.get('nativeHead'), 'archive': result.get('nativeArchive'),
-                      'retired': driver.retired_builds, 'retained_shared': driver.retained_shared}))
+                      'retired': driver.retired_builds, 'retained_shared': driver.retained_shared,
+                      **({'legacy_projection':projection_key} if legacy else {})}))
 
 
 if __name__ == '__main__':

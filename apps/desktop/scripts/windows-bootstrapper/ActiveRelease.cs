@@ -60,7 +60,7 @@ internal sealed class ActiveRelease {
         using var cert=new X509Certificate2(raw); var key=cert.GetRSAPublicKey(); Require(key!=null); return key;
     }
     static void VerifyProof(JsonElement root, JsonElement request, JsonElement package, string origin,
-                            string id, string version, long sequence) {
+                            string id, string version, long sequence, string manifestHash) {
         var proof=root.GetProperty("installationProof");
         Require(N(proof,"schema")==1 && S(proof,"algorithm")=="rsa-pkcs1-sha256");
         byte[] payload=Convert.FromBase64String(S(proof,"payload"));
@@ -71,18 +71,25 @@ internal sealed class ActiveRelease {
         Require(N(signed,"schema")==1 && S(signed,"buildId")==id && S(signed,"channel")=="semantier-acceptance" &&
             N(signed,"sequence")==sequence && S(signed,"origin")==origin && S(signed,"version")==version &&
             S(signed,"identity")==Identity && S(signed,"publisher")==Publisher &&
-            S(request,"publicBase")==origin && S(package,"publisher")==Publisher &&
+            (manifestHash==null ? S(request,"publicBase")==origin : S(signed,"manifestSha256")==manifestHash) && S(package,"publisher")==Publisher &&
             Same(signed.GetProperty("installation"),root.GetProperty("installation")));
     }
     internal static ActiveRelease Fetch(Func<Uri,byte[]> read, string origin) {
         Require(origin=="https://download.semantier.cn" || origin=="https://download.semantier.com");
         var recordUri=new Uri(origin+"/releases/channels/semantier-acceptance.json");
-        byte[] before=read(recordUri); string key;
-        using (var record=Parse(before)) key=S(Head(record.RootElement),"manifestKey");
+        byte[] before=read(recordUri); string key, hash;
+        using (var record=Parse(before)) {var head=Head(record.RootElement);key=S(head,"manifestKey");hash=S(head,"sha256");}
         byte[] manifest=read(new Uri(origin+"/"+key));
-        return Resolve(before,manifest,read(recordUri),origin);
+        Require(Convert.ToHexString(SHA256.HashData(manifest)).ToLowerInvariant()==hash);
+        byte[] projection=null;
+        using(var parsed=Parse(manifest)) {
+            bool install=parsed.RootElement.TryGetProperty("installation",out _), proof=parsed.RootElement.TryGetProperty("installationProof",out _);
+            Require(install==proof);
+            if(!install) projection=read(new Uri(origin+"/"+key.Substring(0,key.Length-"build.json".Length)+"installation.json"));
+        }
+        return Resolve(before,manifest,read(recordUri),origin,projection);
     }
-    internal static ActiveRelease Resolve(byte[] before, byte[] manifest, byte[] after, string origin) {
+    internal static ActiveRelease Resolve(byte[] before, byte[] manifest, byte[] after, string origin, byte[] projection=null) {
         try {
             Require(origin=="https://download.semantier.cn" || origin=="https://download.semantier.com");
             using var b=Parse(before); using var a=Parse(after); using var m=Parse(manifest);
@@ -94,8 +101,13 @@ internal sealed class ActiveRelease {
             var parts=version.Split('.'); Require(parts.All(x=>ushort.TryParse(x,out _))); var v=new Version(version);
             var packages=root.GetProperty("packages"); Require(packages.ValueKind==JsonValueKind.Array && packages.GetArrayLength()==1); var package=packages[0];
             Require(S(package,"platform")=="win32" && S(package,"arch")=="x64" && S(package,"variant")=="native-msix-assets" && S(package,"identity")==Identity && S(package,"publisher")==Publisher && S(package,"version")==version);
-            VerifyProof(root,request,package,origin,id,version,N(h,"sequence"));
-            var install=root.GetProperty("installation"); Require(N(install,"schema")==1); var rows=install.GetProperty("objects"); Require(rows.ValueKind==JsonValueKind.Array && rows.GetArrayLength()>0 && rows.GetArrayLength()<=64);
+            bool inline=root.TryGetProperty("installation",out _), inlineProof=root.TryGetProperty("installationProof",out _);
+            Require(inline==inlineProof && (inline ? projection==null : projection!=null));
+            using var external=projection==null ? null : Parse(projection);
+            var closure=inline ? root : external.RootElement;
+            if(!inline) Require(N(closure,"schema")==1);
+            VerifyProof(closure,request,package,origin,id,version,N(h,"sequence"),inline ? null : S(h,"sha256"));
+            var install=closure.GetProperty("installation"); Require(N(install,"schema")==1); var rows=install.GetProperty("objects"); Require(rows.ValueKind==JsonValueKind.Array && rows.GetArrayLength()>0 && rows.GetArrayLength()<=64);
             string prefix="releases/channel-builds/"+id+"/", target=S(install,"root"); var objects=new List<Object>(); var keys=new HashSet<string>(StringComparer.Ordinal);
             foreach (var row in rows.EnumerateArray()) { var key=S(row,"key"); var size=N(row,"size"); var hash=S(row,"sha256"); Require(key.StartsWith(prefix,StringComparison.Ordinal) && File.IsMatch(key.Substring(prefix.Length)) && size>0 && size<=480_000_000 && Hash.IsMatch(hash) && keys.Add(key)); objects.Add(new Object(key,size,hash)); }
             Require(keys.Contains(target) && target.EndsWith(".msixbundle",StringComparison.Ordinal));
