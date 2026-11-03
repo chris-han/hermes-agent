@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import { spawnSync } from 'node:child_process'
 import path from 'node:path'
-import { builderNodeOptions, runElectronBuilder } from './run-electron-builder.mjs'
+import { builderNodeOptions, runElectronBuilder, validateExternalWindowsOutput } from './run-electron-builder.mjs'
 import fs from 'node:fs'
 import os from 'node:os'
 import { publishPackagingInputs } from './prepared-packaging.mjs'
@@ -67,6 +67,25 @@ test('external packaging refuses the source-writing convenience path', () => {
   } finally {
     if (previous === undefined) delete process.env.HERMES_DESKTOP_BUILD_DIR
     else process.env.HERMES_DESKTOP_BUILD_DIR = previous
+  }
+})
+
+test('direct prepared Windows packaging cannot redirect job output', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'external-output-'))
+  try {
+    const build = path.join(root, 'desktop-job', 'desktop-build')
+    const output = path.join(root, 'electron-output')
+    const env = { HERMES_DESKTOP_BUILD_DIR: build, SEMANTIER_DESKTOP_BUILD_OUTPUT: output }
+    const option = `-c.directories.output=${output}`
+    validateExternalWindowsOutput([option], 'win32-x64', env)
+    for (const [args, candidate] of [[[], env], [[option, option], env],
+      [[`-c.directories.output=${root}`], env], [[option], { ...env, SEMANTIER_DESKTOP_BUILD_OUTPUT: root }]]) {
+      assert.throws(() => validateExternalWindowsOutput(args, 'win32-x64', candidate), /package output/i)
+    }
+    fs.symlinkSync(root, output, 'dir')
+    assert.throws(() => validateExternalWindowsOutput([option], 'win32-x64', env), /package output/i)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
   }
 })
 

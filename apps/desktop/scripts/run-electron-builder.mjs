@@ -38,6 +38,25 @@ function takeOption(args, name) {
   return path.resolve(value)
 }
 
+/** @param {string[]} args @param {string} target @param {NodeJS.ProcessEnv} env @returns {void} */
+export function validateExternalWindowsOutput(args, target, env) {
+  const build = env.HERMES_DESKTOP_BUILD_DIR
+  if (!build || !target.startsWith('win32-')) return
+  const fail = () => { throw preparationRequired('External Windows package output must be job-local and unredirected') }
+  if (!path.isAbsolute(build) || path.basename(build) !== 'desktop-build' || path.basename(path.dirname(build)) !== 'desktop-job') fail()
+  const expected = path.join(path.dirname(path.dirname(build)), 'electron-output')
+  const outputs = args.filter(arg => /^(?:-c|--config)\.directories\.output=/.test(arg)).map(arg => arg.slice(arg.indexOf('=') + 1))
+  const equal = (/** @type {string} */ a, /** @type {string} */ b) => process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b
+  if (outputs.length !== 1 || !equal(outputs[0], expected) ||
+      (env.SEMANTIER_DESKTOP_BUILD_OUTPUT && !equal(env.SEMANTIER_DESKTOP_BUILD_OUTPUT, expected))) fail()
+  for (let current = expected; ; current = path.dirname(current)) {
+    try { if (fs.lstatSync(current).isSymbolicLink()) fail() } catch (error) {
+      if (error?.code !== 'ENOENT') throw error
+    }
+    if (path.dirname(current) === current) break
+  }
+}
+
 /** @param {string[]} args @param {import('./prepared-packaging.mjs').PreparedPackaging} inputs @returns {void} */
 export function validatePreparedBuilderArgs(args, inputs) {
   const requested = sourceFormats(args)
@@ -145,6 +164,7 @@ export function runElectronBuilder(args, { spawn = spawnSync } = {}) {
   const arch = args.find(arg => architectures.includes(arg))?.slice(2) || process.arch
   const inputs = readPackagingInputs(manifest, source, `${platform}-${arch}`)
   validatePreparedBuilderArgs(args, inputs)
+  validateExternalWindowsOutput(args, inputs.target, process.env)
   if (!nativeDeps) throw preparationRequired('--native-deps is required with --prepared')
   readNativeInputs({ source, nativeDeps, platform, arch })
   if (validateOnly) return 0
