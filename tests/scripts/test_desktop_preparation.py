@@ -321,6 +321,21 @@ def test_external_jobs_hold_checkout_and_shared_cache_locks(tmp_path):
             pass
 
 
+def test_checkout_lock_refuses_redirected_lock_file(tmp_path):
+    from scripts.bundles.desktop_inputs import build_lock
+
+    source, _ = _project(tmp_path)
+    directory = source / '.build'
+    directory.mkdir()
+    sentinel = tmp_path / 'other-owner'
+    sentinel.write_text('unchanged')
+    (directory / '.desktop-build.lock').symlink_to(sentinel)
+    with pytest.raises(ValueError, match='redirected'):
+        with build_lock(source):
+            pass
+    assert sentinel.read_text() == 'unchanged'
+
+
 def test_flavored_icon_staging_hands_the_admitted_checkout_back(tmp_path):
     from scripts.bundles.desktop import flavored_assets
     from scripts.bundles.desktop_prepare import require_source

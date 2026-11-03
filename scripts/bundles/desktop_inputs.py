@@ -33,11 +33,15 @@ def build_lock(source: Path, *, external_cache: Path | None = None):
             if path.is_symlink() or is_junction(path) or is_reparse_point(path):
                 raise ValueError("external build lock cache is redirected")
     directory = source / ".build"
-    if directory.is_symlink():
-        raise ValueError("desktop build scratch must not be a symlink")
+    if directory.is_symlink() or is_junction(directory) or is_reparse_point(directory):
+        raise ValueError("desktop build scratch is redirected")
     directory.mkdir(exist_ok=True)
     with ExitStack() as locks:
-        checkout_lock = locks.enter_context((directory / ".desktop-build.lock").open("a+b"))
+        lock_path = directory / ".desktop-build.lock"
+        if lock_path.is_symlink() or is_junction(lock_path) or is_reparse_point(lock_path):
+            raise ValueError("desktop checkout lock is redirected")
+        fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+        checkout_lock = locks.enter_context(os.fdopen(fd, 'a+b'))
         if not _lock(checkout_lock.fileno(), wait=False):
             raise ValueError("another desktop build or preparation is using this source checkout")
         if external_cache is not None:
