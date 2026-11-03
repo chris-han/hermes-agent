@@ -142,6 +142,8 @@ class DynamicBootstrapperTest(unittest.TestCase):
             self.assertIn('fresh task-owned directory',result.stderr)
 
     def test_existing_distribution_lock_is_not_removed_or_bypassed(self):
+        if Path('/mnt/d/repo/hermes-build.distribution.lock').exists():
+            self.skipTest('an existing Windows builder owns the shared lock')
         CHANNEL1_ROOT.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix='setup-lock-0080-',dir=CHANNEL1_ROOT) as tmp:
             script=win(HERE/'Build.ps1').replace("'","''");out=win(Path(tmp)/'output').replace("'","''")
