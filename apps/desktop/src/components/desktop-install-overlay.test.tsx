@@ -92,6 +92,20 @@ afterEach(() => {
 })
 
 describe('DesktopInstallOverlay first-run setup', () => {
+  it('shows only a larger left-aligned brand mark during installation', async () => {
+    installDesktopMock(bootstrapState({ active: true }))
+    const { container } = render(<DesktopInstallOverlay />)
+
+    expect(await screen.findByText('Setting up Hermes Agent')).toBeTruthy()
+    const brand = container.querySelector('[data-organization-brand]')
+    const logo = brand?.querySelector('img')
+
+    expect(brand?.textContent).toBe('')
+    expect(logo?.classList.contains('size-12')).toBe(true)
+    expect(screen.queryByText('Powered by Semantier')).toBeNull()
+    expect(brand?.parentElement?.classList.contains('items-start')).toBe(true)
+  })
+
   it('shows the remote/local choice without installer progress', async () => {
     installDesktopMock(
       bootstrapState({

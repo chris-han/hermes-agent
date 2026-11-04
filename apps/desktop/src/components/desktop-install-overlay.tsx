@@ -605,7 +605,7 @@ export function DesktopInstallOverlay({ enabled = true }: DesktopInstallOverlayP
       <div className="flex w-full max-w-2xl max-h-[90vh] flex-col rounded-xl border border-(--stroke-nous) bg-card shadow-nous">
         {/* Header -- always visible, never scrolls */}
         <div className="flex flex-shrink-0 items-start gap-4 p-8 pb-4">
-          <OrganizationBrand attribution compact />
+          <OrganizationBrand markOnly />
           <div className="min-w-0">
             <h2 className="text-xl font-semibold tracking-tight">
               {failed ? copy.failedTitle : state.active ? copy.settingUpTitle : copy.finishingTitle}

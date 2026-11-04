@@ -37,6 +37,38 @@ test('prepared npm accepts uppercase Windows environment dictionary keys', () =>
   expect(npmCommand({ env: { NPM_EXECPATH: cli, Path: '' } })).toEqual([node, cli])
 })
 
+test('Windows npm child PATH keeps Node and existing tools without duplicate keys or oversized dead entries', async () => {
+  const { npmChildEnvironment } = await import('../scripts/build/node-deps.mjs')
+  const longPath = Array.from({ length: 800 }, (_, i) => `C:\\missing\\${i}`).join(';')
+  const env = npmChildEnvironment({ Path: longPath + ';C:\\Build Tools\\bin', PATH: longPath, SystemRoot: 'C:\\Windows', TOKEN: 'kept' }, {
+    platform: 'win32', node: 'C:\\Node With Spaces\\node.exe',
+    pathExists: path => path === 'C:\\Build Tools\\bin'
+  })
+  expect(Object.keys(env).filter(key => key.toLowerCase() === 'path')).toEqual(['PATH'])
+  expect(env.PATH).toBe('C:\\Node With Spaces;C:\\Windows\\System32;C:\\Windows;C:\\Build Tools\\bin')
+  expect(env.TOKEN).toBe('kept')
+})
+
+test('Windows npm child PATH refuses to discard existing tool directories', async () => {
+  const { npmChildEnvironment } = await import('../scripts/build/node-deps.mjs')
+  const path = Array.from({ length: 500 }, (_, i) => `C:\\existing tool directory\\${i}`).join(';')
+  expect(() => npmChildEnvironment({ PATH: path, SystemRoot: 'C:\\Windows' }, {
+    platform: 'win32', node: 'C:\\Node\\node.exe', pathExists: () => true
+  })).toThrow(/PATH is too long/)
+})
+
+test.skipIf(process.platform !== 'win32')('npm lifecycle finds Node with an oversized inherited Windows PATH', async () => {
+  const { prepareNodeDependencies } = await import('../scripts/build/node-deps.mjs')
+  const source = fixture()
+  const [, cli] = npmCommand()
+  const inherited = Array.from({ length: 800 }, (_, i) => `C:\\missing\\${i}`).join(';')
+  prepareNodeDependencies({ source, workspaces: ['apps/desktop'], env: {
+    ...process.env, Path: inherited, PATH: inherited, npm_execpath: cli,
+    npm_config_offline: 'true', npm_config_cache: join(source, '.npm-cache')
+  } })
+  expect(readFileSync(join(source, 'apps/desktop/electron-provisioned'), 'utf8')).toBe('yes')
+}, 30000)
+
 test.each(['npm', 'npm-fixture'])('prepared npm discovers lib/%s without npm_execpath', (directory) => {
   const [node, installedCli] = npmCommand()
   const root = mkdtempSync(join(tmpdir(), 'npm layout with spaces-'))
