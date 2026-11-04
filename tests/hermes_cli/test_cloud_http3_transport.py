@@ -99,3 +99,23 @@ def test_http3_uses_explicit_development_ca_without_disabling_verification(monke
     monkeypatch.setattr(device, '_config', lambda: {'providers': {'semantier-cloud': {'http_version': '3', 'ssl_ca_cert': '/fixture/root.crt'}}})
     assert device._wire('https://cloud.example', 'start')['contract_version'] == device.CONTRACT
     assert calls == [{'http_version': 'v3only', 'trust_env': False, 'verify': '/fixture/root.crt'}]
+
+
+def test_windows_cloud_endpoint_defaults_to_http3(monkeypatch):
+    from hermes_cli import cloud_device_client as device
+
+    calls = []
+    class Session:
+        def __init__(self, **kwargs): calls.append(kwargs)
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def post(self, url, **kwargs):
+            return types.SimpleNamespace(status_code=200, content=b'{}', json=lambda: {'contract_version': device.CONTRACT})
+    class RequestException(Exception): pass
+    fake = types.SimpleNamespace(Session=Session, exceptions=types.SimpleNamespace(RequestException=RequestException))
+    monkeypatch.setattr(device.sys, 'platform', 'win32')
+    monkeypatch.setitem(sys.modules, 'curl_cffi', types.SimpleNamespace(requests=fake, CurlOpt=types.SimpleNamespace(SSL_OPTIONS=1)))
+    monkeypatch.setitem(sys.modules, 'requests', fake)
+    monkeypatch.setattr(device, '_config', lambda: {'providers': {'semantier-cloud': {'base_url': 'https://maas.semantier.cn/v1'}}})
+    assert device._wire('https://maas.semantier.cn', 'start')['contract_version'] == device.CONTRACT
+    assert calls == [{'http_version': 'v3only', 'trust_env': False, 'curl_options': {1: 1 << 4}}]

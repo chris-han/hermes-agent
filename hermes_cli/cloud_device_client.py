@@ -155,6 +155,8 @@ def _config_hash():
 def _cloud_http(origin):
     settings = (_config().get('providers') or {}).get('semantier-cloud') or {}
     version = settings.get('http_version')
+    if version is None and sys.platform == 'win32':
+        version = '3'
     if version not in (None, '3'):
         raise ValueError('Unsupported Cloud HTTP version.')
     if version == '3':
