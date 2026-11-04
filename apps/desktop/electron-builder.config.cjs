@@ -118,6 +118,9 @@ module.exports = {
   },
   files: selectedBuildDir
     ? [{ from: path.join(selectedBuildDir, 'dist'), to: 'dist', filter: ['**/*'] },
+        ...['node-pty', 'get-windows'].map(name => ({
+          from: path.join(selectedBuildDir, 'dist/node_modules', name), to: `dist/node_modules/${name}`, filter: ['**/*']
+        })),
         { from: path.join(selectedBuildDir, 'assets'), to: 'assets', filter: ['**/*'] }, 'public/**', 'package.json']
     : ['dist/**', 'assets/**', 'public/**', 'package.json'],
   beforeBuild: channelRequest ? async () => {

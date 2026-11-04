@@ -151,4 +151,7 @@ test('builder configuration consumes the selected external build directory', () 
   expect(actual.extra.map(item => item.from)).toContain(path.join(root, 'install-stamp.json'))
   expect(actual.extensions).toBe(path.join(root, 'msix-extensions.xml'))
   expect(actual.files).toContainEqual({ from: path.join(root, 'dist'), to: 'dist', filter: ['**/*'] })
+  for (const name of ['node-pty', 'get-windows']) {
+    expect(actual.files).toContainEqual({ from: path.join(root, 'dist/node_modules', name), to: `dist/node_modules/${name}`, filter: ['**/*'] })
+  }
 })
