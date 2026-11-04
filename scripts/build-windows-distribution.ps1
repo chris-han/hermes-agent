@@ -218,7 +218,7 @@ try {
     $reservationId = if ($request.PSObject.Properties.Name -contains 'reservationId') { [string]$request.reservationId } else { '' }
     $sourceBinding = if ($request.PSObject.Properties.Name -contains 'sourceBinding') { [string]$request.sourceBinding } else { '' }
     $semantierVersion = & (Join-Path $work 'scripts\next-windows-build-version.ps1') -State $counter -SourceCommit $source -RetryVersion $retryVersion -ExpectedNextVersion $expectedVersion -ReservationId $reservationId -SourceBinding $sourceBinding
-    if ($retryVersion) {
+    if ($retryVersion -and !$reservationId) {
       Json-File ([ordered]@{kind='semantier-windows-build-version-v1';version=$semantierVersion;sourceCommit=$source;reservedAt=[DateTime]::UtcNow.ToString('o');explicitRetry=$true;counterUnchanged=$true}) (Join-Path $output 'build-version.json')
     } else { Copy-Item -LiteralPath $counter -Destination (Join-Path $output 'build-version.json') }
     $arguments = @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',(Join-Path $work 'scripts\build-bundle.ps1'))

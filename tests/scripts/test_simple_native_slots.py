@@ -20,6 +20,102 @@ def test_stale_or_unallocated_sequence_refused():
     with pytest.raises(ValueError): advance({'nativeHead':head('a',1),'revision':1,'nextSequence':2},head('b',3))
 
 
+def test_source_bound_solo_allocation_allows_a_monotonic_sequence_gap():
+    import hashlib, json
+    from scripts.releases.simple_native_slots import validate_solo_allocation
+    from scripts.releases.semantier_windows import acceptance_request
+    source = {'parentCommit': 'a'*40, 'hermesCommit': 'b'*40, 'productReceiptSha256': 'c'*64}
+    binding = hashlib.sha256(json.dumps(source, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    intent = {'runId': 'd'*32, 'source': source}
+    allocation = {'kind': 'semantier-windows-build-version-v1', 'version': '0.0.83',
+                  'sourceCommit': source['hermesCommit'], 'reservationId': intent['runId'], 'sourceBinding': binding}
+    request = acceptance_request(commit=source['hermesCommit'], controller=source['parentCommit'],
+        version='0.0.83', source_version='0.0.0', base='https://download.semantier.com')
+    assert validate_solo_allocation(intent, allocation, {'request': request})
+    record = {'nativeHead':head('a',80), 'nativeArchive':None, 'nativeRetirePending':None,
+              'revision':6, 'nextSequence':81}
+    promoted = advance(record, head('b',83), allow_sequence_gap=True)
+    assert promoted['nativeHead']['sequence'] == 83
+    assert promoted['nativeArchive']['sequence'] == 80
+    assert promoted['nextSequence'] == 84
+    for bad in ({**allocation, 'reservationId': 'e'*32}, {**allocation, 'sourceBinding': 'f'*64},
+                {**allocation, 'version': '0.0.82'}, {**allocation, 'sourceCommit': 'e'*40}):
+        with pytest.raises(ValueError):
+            validate_solo_allocation(intent, bad, {'request': request})
+    with pytest.raises(ValueError):
+        advance(record, head('b',83))
+
+
+def test_solo_allocation_evidence_is_bound_to_one_owned_run(tmp_path, monkeypatch):
+    import hashlib, json
+    import scripts.releases.simple_native_slots as slots
+    from scripts.releases.semantier_windows import acceptance_request
+    source = {'parentCommit': 'a'*40, 'hermesCommit': 'b'*40, 'productReceiptSha256': 'c'*64}
+    run = 'd'*32
+    intent = {'runId': run, 'source': source, 'hermesTree': 'e'*40}
+    binding = hashlib.sha256(json.dumps(source, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    allocation = {'kind': 'semantier-windows-build-version-v1', 'version': '0.0.83',
+                  'sourceCommit': source['hermesCommit'], 'reservationId': run, 'sourceBinding': binding}
+    request = acceptance_request(commit=source['hermesCommit'], controller=source['parentCommit'],
+        version='0.0.83', source_version='0.0.0', base='https://download.semantier.com')
+    folder = tmp_path/'windows-solo-release'/run
+    folder.mkdir(parents=True)
+    evidence = folder/'intent.json'
+    evidence.write_text(json.dumps(intent))
+    build = tmp_path/('semantier-solo-'+run+'-build-'+'f'*32)
+    build.mkdir()
+    (build/'build-version.json').write_text(json.dumps(allocation))
+    receipt = {'runId':run, 'version':'0.0.83', 'source':source,
+               'buildId':request['buildId'], 'signedArtifactSha256':'9'*64,
+               'build':'SIGNED_PACKAGE_VERIFIED', 'installedAcceptance':'PASS',
+               'acceptance':{'runId':run, 'buildId':request['buildId'], 'artifactSha256':'9'*64}}
+    (folder/'result.json').write_text(json.dumps(receipt))
+    ledger = tmp_path/'version-ledger.json'
+    ledger.write_text(json.dumps(allocation))
+    manifest = {'request':request, 'packages':[{'artifact':{'sha256':'9'*64}}]}
+    verified = []
+    monkeypatch.setattr(slots, 'verify_solo_source', lambda value: verified.append(value))
+    assert slots.load_solo_allocation(build, evidence, manifest, work_root=tmp_path, ledger_path=ledger)
+    assert verified == [intent]
+    (folder/'result.json').write_text(json.dumps({**receipt, 'installedAcceptance':'FAIL'}))
+    with pytest.raises(ValueError, match='signed release'):
+        slots.load_solo_allocation(build, evidence, manifest, work_root=tmp_path, ledger_path=ledger)
+    (folder/'result.json').write_text(json.dumps(receipt))
+    ledger.write_text(json.dumps({**allocation, 'version':'0.0.82'}))
+    with pytest.raises(ValueError, match='ledger'):
+        slots.load_solo_allocation(build, evidence, manifest, work_root=tmp_path, ledger_path=ledger)
+    ledger.write_text(json.dumps({**allocation, 'version':'0.0.84', 'reservationId':'1'*32}))
+    assert slots.load_solo_allocation(build, evidence, manifest, work_root=tmp_path, ledger_path=ledger)
+    (build/'build-version.json').write_text(json.dumps({**allocation, 'reservationId': '0'*32}))
+    with pytest.raises(ValueError, match='allocation'):
+        slots.load_solo_allocation(build, evidence, manifest, work_root=tmp_path, ledger_path=ledger)
+
+
+def test_source_bound_gap_advances_only_under_expected_etag():
+    import json
+    from scripts.releases.simple_native_slots import commit_slot
+    class Store:
+        def __init__(self):
+            self.value = json.dumps({'nativeHead':head('a',80), 'nativeArchive':None,
+                'nativeRetirePending':None, 'revision':6, 'nextSequence':81}).encode()
+            self.etag = 'etag-1'
+        def get(self, key): return self.value, self.etag
+        def put(self, key, body, etag):
+            assert etag == self.etag
+            self.value = body
+    store = Store()
+    with pytest.raises(ValueError, match='changed'):
+        commit_slot(store, 'channel', 'old-etag', head('b',83), allow_sequence_gap=True)
+    unchanged = store.value
+    with pytest.raises(ValueError):
+        commit_slot(store, 'channel', 'etag-1', head('b',83))
+    assert store.value == unchanged
+    result = commit_slot(store, 'channel', 'etag-1', head('b',83), allow_sequence_gap=True)
+    assert result['nativeHead']['sequence'] == 83
+    assert result['nativeArchive']['sequence'] == 80
+    assert result['nextSequence'] == 84
+
+
 def test_rollback_swaps_existing_slots_and_keeps_allocation_high_water():
     from scripts.releases.simple_native_slots import rollback
     record={'nativeHead':head('b',2),'nativeArchive':head('a',1),'revision':3,'nextSequence':3}

@@ -257,6 +257,48 @@ def test_three_releases_leave_two_and_preserve_other_channel(tmp_path, monkeypat
         assert verify_public(base+'/public','semantier-acceptance',final['nativeHead'])['nativeHead']==final['nativeHead']
 
 
+def test_source_bound_gap_uses_existing_lock_and_single_channel_cas(tmp_path, monkeypatch):
+    monkeypatch.delenv('R2_DISPOSABLE_RUN', raising=False)
+    with storage() as (base, objects):
+        creds={'access_key_id':'fixture','secret_key':'fixture'};scope=R2Scope()
+        store=R2ChannelStore(creds,base,'public',scope=scope)
+        control=ControlStore(r2,creds,base,'private',scope=scope)
+        old='a'*32;old_key='releases/channel-builds/'+old+'/build.json'
+        old_body=json.dumps({'request':{'version':'0.0.80'}}).encode()
+        old_head={'buildId':old,'sequence':80,'manifestKey':old_key,'sha256':hashlib.sha256(old_body).hexdigest()}
+        channel={'schema':1,'name':'semantier-acceptance','repository':'chris-han/hermes-agent',
+                 'policy':'stable-release','state':'active','revision':6,'nextSequence':81,
+                 'identity':IDENTITY,'head':None,'nativeHead':old_head,'nativeArchive':None,'nativeRetirePending':None}
+        channel_key='public/releases/channels/semantier-acceptance.json'
+        objects[channel_key]=json.dumps(channel).encode();objects['public/'+old_key]=old_body
+        request=acceptance_request(commit='d'*40,controller='e'*40,version='0.0.83',source_version='0.0.0',base=base+'/public')
+        graph=native_graph();graph['root']=graph['root'].replace('a'*32,request['buildId']);files={}
+        for row in graph['objects']:
+            row['key']=row['key'].replace('a'*32,request['buildId'])
+            row['references']=[value.replace('a'*32,request['buildId']) for value in row['references']]
+            row['version']=request['windowsVersion']
+            content=('gap fixture '+row['key']).encode();row['size']=len(content);row['sha256']=hashlib.sha256(content).hexdigest()
+            path=tmp_path/row['key'].rsplit('/',1)[-1];path.write_bytes(content)
+            files[row['key']]={'path':path,'size':len(content),'sha256':row['sha256']}
+        signed={'signing':'PASS','verification':'PASS: fixture','sourceCommit':request['commit'],
+                'packageName':IDENTITY['msixAppIdWithOrg'],'packageVersion':request['windowsVersion'],
+                'publisher':'CN=Semantier Technology, O=Semantier Technology',
+                'nativeGraph':graph,'signedSha256':graph['objects'][0]['sha256']}
+        graph_body=json.dumps(graph,sort_keys=True,separators=(',',':')).encode();manifest,_=native_manifest(request,signed,graph_body)
+        graph_key=manifest['packages'][0]['native']['graph']['key'];graph_path=tmp_path/'graph.json';graph_path.write_bytes(graph_body)
+        files[graph_key]={'path':graph_path,'size':len(graph_body),'sha256':hashlib.sha256(graph_body).hexdigest()}
+        with publication_lock(control) as token:
+            with pytest.raises(ValueError):
+                publish_prepared(R2Driver(store,base+'/public',control,token),manifest,files)
+        assert json.loads(objects[channel_key])['nativeHead'] == old_head
+        with publication_lock(control) as token:
+            result=publish_prepared(R2Driver(store,base+'/public',control,token,allow_sequence_gap=True),manifest,files)
+        assert result['nativeHead']['buildId'] == request['buildId']
+        assert result['nativeArchive'] == old_head
+        assert result['nextSequence'] == 84
+        assert objects['public/'+old_key] == old_body
+
+
 def test_shared_manual_download_prevents_archive_deletion(tmp_path, monkeypatch):
     monkeypatch.delenv('R2_DISPOSABLE_RUN',raising=False)
     with storage() as (base,objects):

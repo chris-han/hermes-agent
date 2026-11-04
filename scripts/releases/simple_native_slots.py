@@ -2,9 +2,11 @@
 from copy import deepcopy
 
 
-def advance(record, new_head):
+def advance(record, new_head, *, allow_sequence_gap=False):
     """Return a new record; callers must commit it with the observed ETag."""
     from hermes_cli.release_channels import _head
+    if type(allow_sequence_gap) is not bool:
+        raise ValueError('Invalid sequence gap policy')
     if record.get('head') is not None:
         raise ValueError('legacy channel head requires separate retirement')
     old = _head(record.get('nativeHead'))
@@ -19,7 +21,7 @@ def advance(record, new_head):
     if record.get('nativeRetirePending') is not None:
         raise ValueError('previous archive cleanup pending')
     if (type(new_head.get('sequence')) is not int
-            or new_head['sequence'] > record['nextSequence']
+            or (new_head['sequence'] > record['nextSequence'] and not allow_sequence_gap)
             or (old is not None and new_head['sequence'] <= old['sequence'])
             or (archive is not None and new_head['sequence'] <= archive['sequence'])):
         raise ValueError('native release sequence is stale or unallocated')
@@ -28,9 +30,118 @@ def advance(record, new_head):
     result['nativeArchive'] = deepcopy(old)
     result['nativeHead'] = deepcopy(new_head)
     result['revision'] += 1
-    if new_head['sequence'] == record['nextSequence']:
-        result['nextSequence'] += 1
+    if new_head['sequence'] >= record['nextSequence']:
+        result['nextSequence'] = new_head['sequence'] + 1
     return result
+
+
+def validate_solo_allocation(intent, allocation, manifest):
+    """Admit only the existing source-bound Windows allocator's reserved version."""
+    import hashlib
+    import json
+    import re
+    from scripts.releases.semantier_windows import is_acceptance_request
+    if not isinstance(intent, dict) or not isinstance(allocation, dict) or not isinstance(manifest, dict):
+        raise ValueError('Invalid solo allocation evidence')
+    source = intent.get('source')
+    run_id = intent.get('runId')
+    request = manifest.get('request')
+    try:
+        acceptance = isinstance(request, dict) and is_acceptance_request(request)
+    except (TypeError, ValueError):
+        acceptance = False
+    if (not isinstance(source, dict) or set(source) != {'parentCommit', 'hermesCommit', 'productReceiptSha256'}
+            or not isinstance(run_id, str) or not re.fullmatch('[a-f0-9]{32}', run_id)
+            or any(not isinstance(source.get(key), str) or not re.fullmatch('[a-f0-9]{40}', source[key])
+                   for key in ('parentCommit', 'hermesCommit'))
+            or not isinstance(source.get('productReceiptSha256'), str)
+            or not re.fullmatch('[a-f0-9]{64}', source['productReceiptSha256'])
+            or not acceptance):
+        raise ValueError('Invalid solo allocation source or request')
+    binding = hashlib.sha256(json.dumps(source, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    version = allocation.get('version')
+    if (allocation.get('kind') != 'semantier-windows-build-version-v1'
+            or allocation.get('reservationId') != run_id or allocation.get('sourceBinding') != binding
+            or allocation.get('sourceCommit') != source['hermesCommit']
+            or request.get('commit') != source['hermesCommit']
+            or request.get('controllerCommit') != source['parentCommit']
+            or request.get('publicBase') != 'https://download.semantier.com'
+            or version != request.get('version') or request.get('windowsVersion') != version + '.0'
+            or request.get('sequence') != int(version.split('.')[2])):
+        raise ValueError('Solo allocation does not match the signed release source and version')
+    return True
+
+
+def verify_solo_source(intent):
+    """Rebind the selected parent gitlink and committed product receipt."""
+    import hashlib
+    import re
+    import subprocess
+    from pathlib import Path
+    source = intent['source']
+    hermes = Path(__file__).resolve().parents[2]
+    parent = hermes.parent
+    entry = subprocess.check_output(['/usr/bin/git', '-C', str(parent), 'ls-tree',
+        source['parentCommit'], '--', 'hermes-agent'], text=True).strip()
+    if entry != '160000 commit '+source['hermesCommit']+'\thermes-agent':
+        raise ValueError('Solo parent does not pin the accepted Hermes commit')
+    body = subprocess.check_output(['/usr/bin/git', '-C', str(hermes), 'show',
+        source['hermesCommit']+':semantier-product/source-receipt.json'])
+    if hashlib.sha256(body).hexdigest() != source['productReceiptSha256']:
+        raise ValueError('Solo committed product receipt digest differs')
+    tree = subprocess.check_output(['/usr/bin/git', '-C', str(hermes), 'rev-parse',
+        source['hermesCommit']+'^{tree}'], text=True).strip()
+    if not re.fullmatch('[a-f0-9]{40}', tree) or tree != intent.get('hermesTree'):
+        raise ValueError('Solo Hermes tree differs from frozen intent')
+
+
+def load_solo_allocation(output, intent_path, manifest, *, work_root=None, ledger_path=None):
+    """Read only the run-owned intent and the allocator receipt from its build."""
+    import re
+    from pathlib import Path
+    from hermes_cli.release_channels import decode_json
+    root = Path(work_root) if work_root is not None else Path('/mnt/d/repo/deliverables/work')
+    output, intent_path = Path(output), Path(intent_path)
+    if (intent_path.name != 'intent.json' or intent_path.parent.parent != root/'windows-solo-release'
+            or not re.fullmatch('[a-f0-9]{32}', intent_path.parent.name)
+            or output.parent != root or not re.fullmatch(
+                r'semantier-solo-'+intent_path.parent.name+r'-build-[a-f0-9]{32}', output.name)):
+        raise ValueError('Solo allocation paths do not belong to one release run')
+    allocation_path = output/'build-version.json'
+    result_path = intent_path.with_name('result.json')
+    ledger_path = Path(ledger_path) if ledger_path is not None else Path('/mnt/d/repo/semantier-agent-build-version.json')
+    for path in (intent_path, allocation_path, result_path, ledger_path):
+        if path.is_symlink() or path.resolve() != path or not path.is_file() or path.stat().st_size > 4*1024*1024:
+            raise ValueError('Unsafe solo allocation evidence path')
+    intent = decode_json(intent_path.read_bytes())
+    allocation = decode_json(allocation_path.read_bytes())
+    receipt = decode_json(result_path.read_bytes())
+    ledger = decode_json(ledger_path.read_bytes())
+    if intent.get('runId') != intent_path.parent.name:
+        raise ValueError('Solo intent path and run ID differ')
+    validate_solo_allocation(intent, allocation, manifest)
+    request = manifest['request']
+    packages = manifest.get('packages')
+    if (receipt.get('runId') != intent['runId'] or receipt.get('source') != intent['source']
+            or receipt.get('version') != allocation['version'] or receipt.get('buildId') != request['buildId']
+            or receipt.get('build') != 'SIGNED_PACKAGE_VERIFIED' or receipt.get('installedAcceptance') != 'PASS'
+            or not isinstance(receipt.get('acceptance'), dict)
+            or receipt['acceptance'].get('runId') != intent['runId']
+            or receipt['acceptance'].get('buildId') != request['buildId']
+            or receipt['acceptance'].get('artifactSha256') != receipt.get('signedArtifactSha256')
+            or not isinstance(packages, list) or len(packages) != 1
+            or receipt.get('signedArtifactSha256') != packages[0].get('artifact', {}).get('sha256')):
+        raise ValueError('Solo result does not bind the allocated signed release')
+    if ledger.get('kind') != 'semantier-windows-build-version-v1' or not re.fullmatch(
+            r'(?:0|[1-9][0-9]*)(?:\.(?:0|[1-9][0-9]*)){2}', str(ledger.get('version', ''))):
+        raise ValueError('Current Windows version ledger is invalid')
+    current = tuple(map(int, ledger['version'].split('.')))
+    reserved = tuple(map(int, allocation['version'].split('.')))
+    if any(part > 65535 for part in (*current, *reserved)) or current < reserved or (current == reserved and any(ledger.get(key) != allocation.get(key)
+            for key in ('version', 'sourceCommit', 'reservationId', 'sourceBinding'))):
+        raise ValueError('Current version ledger conflicts with the solo allocation')
+    verify_solo_source(intent)
+    return True
 
 
 def rollback(record):
@@ -50,14 +161,14 @@ def rollback(record):
     return result
 
 
-def commit_slot(store, key, expected_etag, new_head):
+def commit_slot(store, key, expected_etag, new_head, *, allow_sequence_gap=False):
     """Atomically change both slots; an ETag conflict never overwrites a newer head."""
     from hermes_cli.release_channels import canonical_json, decode_json
     found = store.get(key)
     if found is None or found[1] != expected_etag:
         raise ValueError('channel changed since verification')
     record = decode_json(found[0])
-    result = advance(record, new_head)
+    result = advance(record, new_head, allow_sequence_gap=allow_sequence_gap)
     if result != record:
         store.put(key, canonical_json(result), expected_etag)
     return result
@@ -676,11 +787,12 @@ def storage_inventory(transport, credentials, base, bucket, scope):
 
 class R2Driver:
     """Use the existing R2 transport directly; no Runtime service or database."""
-    def __init__(self, store, public_base, control=None, lock_body=None):
+    def __init__(self, store, public_base, control=None, lock_body=None, *, allow_sequence_gap=False):
         self.store = store
         self.public_base = public_base.rstrip('/')
         self.control = control
         self.lock_body = lock_body
+        self.allow_sequence_gap = allow_sequence_gap
         self.retired_builds = []
         self.retained_shared = []
 
@@ -744,7 +856,7 @@ class R2Driver:
                 raise ValueError('release version must increase')
         advance(record, {'buildId': request['buildId'], 'sequence': request['sequence'],
                          'manifestKey': 'releases/channel-builds/'+request['buildId']+'/build.json',
-                         'sha256': '0'*64})
+                         'sha256': '0'*64}, allow_sequence_gap=self.allow_sequence_gap)
 
     def ensure_no_uploads(self):
         import xml.etree.ElementTree as ET
@@ -917,7 +1029,7 @@ class R2Driver:
     def commit(self, channel, etag, head):
         self.verify_lock()
         from hermes_cli.release_channels import channel_key
-        return commit_slot(self.store, channel_key(channel), etag, head)
+        return commit_slot(self.store, channel_key(channel), etag, head, allow_sequence_gap=self.allow_sequence_gap)
 
 
     def can_retire(self, channel, build_id):
@@ -1263,6 +1375,7 @@ def main(argv=None):
     parser.add_argument('--manual-published-at', help='stable UTC catalog timestamp for retry')
     parser.add_argument('--expected-head', type=Path, help='exact currently active native head JSON')
     parser.add_argument('--expect-empty-head', action='store_true', help='require no currently active native head')
+    parser.add_argument('--solo-intent', type=Path, help='source-bound solo allocator intent for a skipped build sequence')
     parser.add_argument('--purge-explicit-channel', help='explicitly authorized cleanup-only channel')
     parser.add_argument('--purge-head', type=Path, help='exact active head JSON for cleanup')
     parser.add_argument('--purge-catalog-sha256', help='SHA-256 of the catalog inventoried before cleanup')
@@ -1282,6 +1395,7 @@ def main(argv=None):
             or (not purge and (args.purge_head or args.purge_catalog_sha256 or args.purge_build))
             or (args.purge_canary and (not args.purge_canary_installer_sha256 or not args.purge_canary_bundle_sha256 or args.thumbprint or args.notes or manual))
             or (not args.purge_canary and (args.purge_canary_installer_sha256 or args.purge_canary_bundle_sha256))
+            or (args.solo_intent and (not args.output or not manual))
             or (manual and (not args.output or not args.setup_exe or not args.setup_receipt or not args.manual_published_at
                             or bool(args.expected_head)==bool(args.expect_empty_head)))):
         parser.error('provide one publish, cleanup, or explicitly pinned legacy projection operation')
@@ -1294,6 +1408,7 @@ def main(argv=None):
         if not any(directory.is_relative_to(root) for root in roots):
             parser.error('legacy signed objects must be under the Windows deliverables work or release root')
     manifest = files = manual_files = None
+    allow_sequence_gap = False
     if args.output:
         manifest, graph, files = prepare(args.output, args.thumbprint, verify_windows_signatures)
         if args.notes:
@@ -1315,6 +1430,8 @@ def main(argv=None):
             else:expected_head=None
             manual_files,installer,archive=prepare_manual_artifacts(args.output,manifest,graph,args.setup_exe,
                 args.setup_receipt,args.thumbprint,verify_windows_signatures,setup_key=args.setup_key)
+        if args.solo_intent:
+            allow_sequence_gap = load_solo_allocation(args.output, args.solo_intent, manifest)
         add_installation_proof(manifest, lambda payload: sign_windows_installation_proof(payload, args.thumbprint))
     creds, base, bucket = r2.credentials()
     scope = R2Scope.configured()
@@ -1356,7 +1473,8 @@ def main(argv=None):
     channel = args.resume_cleanup or legacy or manifest['request']['channel']
     projection_key=projection_body=catalog_body=None
     with publication_lock(control) as token:
-        driver = R2Driver(store, manifest['request']['publicBase'] if manifest else (configured_public if legacy else ''), control, token)
+        driver = R2Driver(store, manifest['request']['publicBase'] if manifest else (configured_public if legacy else ''), control, token,
+                          allow_sequence_gap=allow_sequence_gap)
         if not legacy and not manual:cleanup_pending(driver, channel)
         if manual:
             result=publish_with_manual(driver,manifest,files,manual_files,installer,archive,args.manual_published_at,expected_head=expected_head)
