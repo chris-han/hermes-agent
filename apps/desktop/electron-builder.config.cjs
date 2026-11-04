@@ -155,7 +155,7 @@ module.exports = {
     }
   ],
   asar: {
-    unpack: ['**/*.node', '**/prebuilds/**', 'dist/**']
+    unpack: ['**/*.node', '**/prebuilds/**', 'dist/**', '**/node_modules/node-pty/**', '**/node_modules/get-windows/**']
   },
   mac: {
     // macOS 26 masks every icon into its own squircle: the layered Icon
