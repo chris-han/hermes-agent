@@ -106,7 +106,7 @@ describe('DesktopInstallOverlay first-run setup', () => {
 
     render(<DesktopInstallOverlay />)
 
-    expect(await screen.findByText('Set up Hermes Desktop')).toBeTruthy()
+    expect(await screen.findByText('Set up Semantier Agent')).toBeTruthy()
     expect(screen.getByText('Connect to existing Hermes')).toBeTruthy()
     expect(screen.getByText('Install Hermes locally')).toBeTruthy()
     expect(screen.getByText(/Will install to/i)).toBeTruthy()
@@ -131,13 +131,13 @@ describe('DesktopInstallOverlay first-run setup', () => {
     fireEvent.click(await screen.findByText('Install Hermes locally'))
 
     expect(desktop.continueBootstrapLocal).toHaveBeenCalledTimes(1)
-    expect(screen.getByText('Set up Hermes Desktop')).toBeTruthy()
+    expect(screen.getByText('Set up Semantier Agent')).toBeTruthy()
 
     act(() => {
       desktop.emitBootstrapEvent({ type: 'manifest', protocolVersion: 1, stages: [] })
     })
 
-    await waitFor(() => expect(screen.queryByText('Set up Hermes Desktop')).toBeNull())
+    await waitFor(() => expect(screen.queryByText('Set up Semantier Agent')).toBeNull())
     expect(screen.getByText(/Fetching installer manifest/i)).toBeTruthy()
   })
 
@@ -255,7 +255,7 @@ describe('DesktopInstallOverlay first-run setup', () => {
 
     fireEvent.click(screen.getByText('Back'))
 
-    expect(await screen.findByText('Set up Hermes Desktop')).toBeTruthy()
+    expect(await screen.findByText('Set up Semantier Agent')).toBeTruthy()
     expect(screen.getByText('Install Hermes locally')).toBeTruthy()
   })
 
@@ -308,7 +308,7 @@ describe('DesktopInstallOverlay first-run setup', () => {
       expect(desktop.testConnectionConfig).toHaveBeenCalledWith({
         mode: 'remote',
         remoteAuthMode: 'token',
-        remoteToken: 'session-secret',
+        remoteToken: [REDACTED_SECRET],
         remoteUrl: 'https://gateway.example.com/hermes'
       })
     })
@@ -322,7 +322,7 @@ describe('DesktopInstallOverlay first-run setup', () => {
       expect(desktop.applyConnectionConfig).toHaveBeenCalledWith({
         mode: 'remote',
         remoteAuthMode: 'token',
-        remoteToken: 'session-secret',
+        remoteToken: [REDACTED_SECRET],
         remoteUrl: 'https://gateway.example.com/hermes'
       })
     })

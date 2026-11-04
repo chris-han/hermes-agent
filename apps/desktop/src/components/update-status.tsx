@@ -1,7 +1,6 @@
 import { useStore } from '@nanostores/react'
 import { type ReactElement, type ReactNode, useState } from 'react'
 
-import { BrandMark } from '@/components/brand-mark'
 import { OrganizationBrand } from '@/components/organization-brand'
 import { Button } from '@/components/ui/button'
 import { Codicon } from '@/components/ui/codicon'
@@ -225,7 +224,6 @@ export function VersionHero({
 
   return (
     <div className="flex flex-col items-center gap-3 pt-6 pb-2 text-center">
-      <BrandMark className="size-16" />
       <OrganizationBrand compact />
       <div>
         {renderHeading ? (
