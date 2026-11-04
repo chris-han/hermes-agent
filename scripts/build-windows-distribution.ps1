@@ -266,7 +266,10 @@ try {
     if (!$request.python -or !(Test-Path -LiteralPath $request.python -PathType Leaf)) { throw 'Native closure gate requires the pinned Windows Python' }
     $gate = Join-Path $PSScriptRoot 'check_windows_native_closure.py'
     if (!(Test-Path -LiteralPath $gate -PathType Leaf)) { throw 'Native closure gate missing' }
-    Native $request.python @($gate,$copy)
+    $sourceJob = if ($request.unsignedReceipt) { Split-Path -Parent (Split-Path -Parent $receipt.originalBuildArtifact) } else { $output }
+    $preparedPty = Join-Path $sourceJob 'desktop-job\desktop-build\dist\node_modules\node-pty'
+    if (!(Test-Path -LiteralPath $preparedPty -PathType Container)) { throw 'Prepared node-pty tree unavailable for package verification' }
+    Native $request.python @($gate,$copy,'--prepared-pty',$preparedPty)
   }
   $receipt.preservedUnsignedArtifact = $copy
   Json-File $receipt (Join-Path $unsigned 'unsigned-build-receipt.json')
@@ -281,6 +284,13 @@ try {
   }
   if ($request.timestampUrl) { $signArgs += @('-TimestampUrl',$request.timestampUrl) }
   Native "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" $signArgs
+  if (($request.PSObject.Properties.Name -contains 'nativeAssets') -and $request.nativeAssets) {
+    $members = @(Get-ChildItem -LiteralPath (Join-Path $output 'signed\distribution') -Filter '*.msix' -File | Sort-Object Name)
+    if ($members.Count -eq 0) { throw 'Signed native package members missing' }
+    $finalGate = @($gate,$members[0].FullName,'--prepared-pty',$preparedPty)
+    foreach ($member in ($members | Select-Object -Skip 1)) { $finalGate += @('--package',$member.FullName) }
+    Native $request.python $finalGate
+  }
   Json-File ([ordered]@{result='PASS';sourceCommit=$source;controllerCommit=$request.controllerCommit;certificateThumbprint=$cert.Thumbprint;trustedTimestamp=[bool]$request.timestampUrl;worktree=$work;unsignedReceipt=(Join-Path $unsigned 'unsigned-build-receipt.json');signedReceipt=(Join-Path $output 'signed\receipt.json');zip=(Join-Path (Join-Path $output 'signed') ((Get-Content -LiteralPath (Join-Path $output 'signed\receipt.json') -Raw | ConvertFrom-Json).archiveName))}) (Join-Path $output 'result.json')
   Write-Host "Distribution complete: $output"
   $completed = $true
