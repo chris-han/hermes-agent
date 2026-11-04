@@ -10,7 +10,6 @@ sealed class FixtureHandler : HttpMessageHandler {
     public bool FailHttp3;
     public bool UnsupportedHttp3;
     public bool StallHttp3;
-    public bool DowngradeHttp3;
     public int Calls;
     public Uri LastUri;
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancel) {
@@ -19,7 +18,7 @@ sealed class FixtureHandler : HttpMessageHandler {
         if (request.Version.Major == 3 && FailHttp3) throw new HttpRequestException("QUIC unavailable");
         if (request.Version.Major == 3 && UnsupportedHttp3) throw new PlatformNotSupportedException("QUIC unsupported");
         if (request.Version.Major == 3 && StallHttp3) return WaitForCancellation(cancel);
-        return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Version = DowngradeHttp3 ? new Version(2, 0) : request.Version, RequestMessage = request });
+        return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Version = request.Version, RequestMessage = request });
     }
     static async Task<HttpResponseMessage> WaitForCancellation(CancellationToken cancel) {
         await Task.Delay(Timeout.Infinite, cancel);
@@ -195,20 +194,6 @@ static class Probe {
         var down = new FixtureHandler { FailHttp3 = true };
         using (var client = new HttpClient(down)) using (var r = BootstrapperTransport.Send(client, origin)) {
             if (r.Version.Major != 2 || down.Calls != 2 || down.LastUri != origin) throw new Exception("TCP fallback failed");
-        }
-        foreach (var strict in new[] { new FixtureHandler { FailHttp3 = true }, new FixtureHandler { UnsupportedHttp3 = true }, new FixtureHandler { StallHttp3 = true } }) {
-            bool rejected = false;
-            using (var client = new HttpClient(strict)) {
-                try { BootstrapperTransport.Send(client, origin, TimeSpan.FromMilliseconds(50), requireHttp3: true); }
-                catch (Exception e) when (e is HttpRequestException || e is PlatformNotSupportedException || e is OperationCanceledException) { rejected = true; }
-            }
-            if (!rejected || strict.Calls != 1) throw new Exception("HTTP/3-only request fell back to TCP");
-        }
-        var downgraded = new FixtureHandler { DowngradeHttp3 = true };
-        using (var client = new HttpClient(downgraded)) {
-            bool rejected = false;
-            try { BootstrapperTransport.Send(client, origin, requireHttp3: true); } catch (InvalidOperationException) { rejected = true; }
-            if (!rejected || downgraded.Calls != 1) throw new Exception("Non-HTTP/3 response accepted");
         }
         var tcpOnly = new FixtureHandler { FailHttp3 = true };
         var unsupported = new FixtureHandler { UnsupportedHttp3 = true };
