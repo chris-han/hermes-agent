@@ -193,9 +193,14 @@ def billing_request(resource: str, *, schema_version: str | None = None) -> dict
             path += '?' + urlencode({'account_id': str(account_id)})
         model = SemantierBillingV2
     try:
-        response = requests.get(settings.base_url[:-3] + path,
-                                headers={'Authorization': 'Bearer ' + settings.api_key},
-                                timeout=15, allow_redirects=False)
+        from hermes_cli.cloud_device_client import _cloud_http
+        requests, options = _cloud_http(settings.base_url[:-3])
+        args = dict(headers={'Authorization': 'Bearer ' + settings.api_key}, timeout=15, allow_redirects=False)
+        if options:
+            with requests.Session(**options) as client:
+                response = client.get(settings.base_url[:-3] + path, **args)
+        else:
+            response = requests.get(settings.base_url[:-3] + path, **args)
         request_id = response.headers.get('x-request-id')
         if response.status_code != 200:
             codes = {401: 'unauthenticated', 403: 'insufficient_scope', 429: 'rate_limited'}
@@ -221,7 +226,7 @@ def billing_request(resource: str, *, schema_version: str | None = None) -> dict
         return refusal('timeout', 'Semantier billing timed out. Retry this connection.')
     except requests.exceptions.ConnectionError:
         return refusal('network_unavailable', 'Semantier Cloud is unreachable. Check the network and retry.')
-    except (requests.RequestException, ValueError, ValidationError):
+    except (requests.exceptions.RequestException, ValueError, ValidationError):
         return refusal('billing_unavailable', 'Semantier billing could not be loaded. Retry this connection.')
 
 
@@ -296,7 +301,9 @@ def cloud_catalog(*, refresh=False, settings=None):
         except TimeoutError:
             raise ValueError('Semantier Cloud Provider catalog timed out; refresh.') from None
     try:
-        with requests.Session() as client:
+        from hermes_cli.cloud_device_client import _cloud_http
+        requests, options = _cloud_http(settings.base_url[:-3])
+        with requests.Session(**options) as client:
             client.trust_env = False
             response = client.get(settings.base_url[:-3]+'/api/cloud-provider/catalog',
                 headers={'Authorization':'Bearer '+settings.api_key}, timeout=5, allow_redirects=False)
@@ -313,7 +320,7 @@ def cloud_catalog(*, refresh=False, settings=None):
                 _catalog_cache[key] = (monotonic(),payload)
         pending.set_result(payload)
         return deepcopy(payload)
-    except (requests.RequestException,ValueError):
+    except (requests.exceptions.RequestException,ValueError):
         with _catalog_lock:
             _catalog_cache.pop(key,None)
         error = ValueError('Semantier Cloud Provider catalog unavailable; refresh or reconnect.')

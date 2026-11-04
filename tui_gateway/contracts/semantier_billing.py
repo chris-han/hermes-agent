@@ -36,6 +36,17 @@ class BillingUsage(Result):
     unresolved_attempts: int | None = Field(default=None, ge=0)
 
 
+class AccountProvisioning(Result):
+    """Exact public projection from account_sync_store.account_provisioning."""
+    local_status: str
+    inference_ready: bool
+    gateway_sync_status: str | None = None
+    organization_id: str | None = None
+    billing_account_id: str | None = None
+    currency: str | None = None
+    reason: str | None = None
+
+
 class SemantierBillingState(Result):
     schema_version: Literal['semantier.billing.v1']
     backend: Literal['semantier']
@@ -48,6 +59,16 @@ class SemantierBillingState(Result):
     usage: BillingUsage
     as_of: str = Field(pattern=r"^.+(?:Z|\+00:00)$")
     account: dict[str, JsonValue] = Field(default_factory=dict)
+    account_provisioning: AccountProvisioning | None = None
+
+    @model_validator(mode='after')
+    def readiness_scope(self):
+        projection = self.account_provisioning
+        if projection and any(value is not None and value != expected for value, expected in (
+                (projection.organization_id, self.organization.id),
+                (projection.billing_account_id, self.billing_account_id))):
+            raise ValueError('Billing readiness scope mismatch.')
+        return self
 
     @field_validator('as_of')
     @classmethod
@@ -116,17 +137,6 @@ class BillingPortal(Result):
 class BillingMerchant(Result):
     id: str
     display_name: str
-
-
-class AccountProvisioning(Result):
-    """Exact public projection from account_sync_store.account_provisioning."""
-    local_status: str
-    inference_ready: bool
-    gateway_sync_status: str | None = None
-    organization_id: str | None = None
-    billing_account_id: str | None = None
-    currency: str | None = None
-    reason: str | None = None
 
 
 class SemantierBillingV2(Result):
