@@ -111,7 +111,9 @@ module.exports = {
   directories: {
     output: 'release'
   },
-  files: ['dist/**', 'assets/**', 'public/**', 'package.json'],
+  files: ['dist/**', ...['node-pty', 'get-windows'].map(name => ({
+    from: `dist/node_modules/${name}`, to: `dist/node_modules/${name}`, filter: ['**/*']
+  })), 'assets/**', 'public/**', 'package.json'],
   beforeBuild: channelRequest ? async () => {
     await require(path.join(__dirname, 'scripts/before-build.mjs')).default()
     stageChannelManifest(__dirname, channelRequest)
@@ -144,7 +146,7 @@ module.exports = {
     }
   ],
   asar: {
-    unpack: ['**/*.node', '**/prebuilds/**', 'dist/**']
+    unpack: ['**/*.node', '**/prebuilds/**', 'dist/**', '**/node_modules/node-pty/**', '**/node_modules/get-windows/**']
   },
   mac: {
     // macOS 26 masks every icon into its own squircle: the layered Icon
