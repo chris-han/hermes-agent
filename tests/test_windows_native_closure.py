@@ -8,7 +8,7 @@ import pytest
 from scripts.check_windows_native_closure import BASE, REQUIRED, inspect
 
 
-def package(tmp_path, *, omit=None, wrong_arch=False, mismatch=False):
+def package(tmp_path, *, omit=None, wrong_arch=False, mismatch=False, http3_problem=None):
     prepared = tmp_path / 'prepared'
     prepared.mkdir()
     root = {'files': {}}
@@ -47,6 +47,29 @@ def package(tmp_path, *, omit=None, wrong_arch=False, mismatch=False):
         archive.writestr('app/resources/app.asar', asar)
         for name, data in unpacked.items():
             archive.writestr(name, data)
+        site = 'app/resources/agent-payload/venv/Lib/site-packages/'
+        native = bytes(pe)
+        if http3_problem == 'wrong-native-architecture':
+            bad = bytearray(native)
+            struct.pack_into('<H', bad, 68, 0x14c)
+            native = bytes(bad)
+        components = {
+            'curl_cffi/__init__.py': b'fixture',
+            'curl_cffi/requests/__init__.py': b'fixture',
+            'curl_cffi/_wrapper.pyd': bytes(pe),
+            'curl_cffi.libs/libcurl-impersonate-ec8ead0e422fe4ae62a99233a63f6007.dll': native,
+            '_cffi_backend.cp314-win_amd64.pyd': bytes(pe),
+            'certifi/cacert.pem': b'fixture certificate bundle',
+            'curl_cffi-0.16.0.dist-info/METADATA': b'Name: curl-cffi\nVersion: 0.16.0\n',
+        }
+        if http3_problem == 'missing-wrapper':
+            del components['curl_cffi/_wrapper.pyd']
+        elif http3_problem == 'missing-dll':
+            del components['curl_cffi.libs/libcurl-impersonate-ec8ead0e422fe4ae62a99233a63f6007.dll']
+        elif http3_problem == 'wrong-version':
+            components['curl_cffi-0.16.0.dist-info/METADATA'] = b'Name: curl-cffi\nVersion: 0.15.0\n'
+        for name, data in components.items():
+            archive.writestr(site + name, data)
     return msix, prepared
 
 
@@ -63,4 +86,11 @@ def test_valid_package_and_prepared_tree(tmp_path):
 def test_rejects_incomplete_or_unbound_native_package(tmp_path, kwargs, error):
     msix, prepared = package(tmp_path, **kwargs)
     with pytest.raises(ValueError, match=error):
+        inspect(msix, prepared)
+
+
+@pytest.mark.parametrize('problem', ['missing-wrapper', 'missing-dll', 'wrong-native-architecture', 'wrong-version'])
+def test_rejects_incomplete_http3_windows_payload(tmp_path, problem):
+    msix, prepared = package(tmp_path, http3_problem=problem)
+    with pytest.raises(ValueError, match='HTTP/3'):
         inspect(msix, prepared)

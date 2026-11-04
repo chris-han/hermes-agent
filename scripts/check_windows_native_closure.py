@@ -1,5 +1,6 @@
 """Inspect the actual MSIX Electron ASAR and node-pty Windows-x64 closure."""
 import json
+from email.parser import BytesParser
 from contextlib import ExitStack
 import struct
 import zipfile
@@ -92,7 +93,33 @@ def inspect(path, prepared_pty=None, packages=()):
                     raise ValueError('prepared node-pty content mismatch: ' + relative)
                 count += 1
             if count < len(REQUIRED): raise ValueError('prepared node-pty tree incomplete')
-        return {'nodePtyFiles': count, 'layout': 'asar-and-unpacked', 'architecture': 'win32-x64'}
+        # This product config defaults Windows Cloud connections to HTTP/3.
+        # Reject packages which would otherwise install successfully but fail at sign-in.
+        site = 'app/resources/agent-payload/venv/Lib/site-packages/'
+        required = ('curl_cffi/__init__.py', 'curl_cffi/requests/__init__.py',
+                    'curl_cffi/_wrapper.pyd', '_cffi_backend.cp314-win_amd64.pyd',
+                    'certifi/cacert.pem', 'curl_cffi-0.16.0.dist-info/METADATA')
+        for relative in required:
+            if site + relative not in entries:
+                raise ValueError('HTTP/3 runtime file missing: ' + relative)
+        dll_prefix = site + 'curl_cffi.libs/libcurl-impersonate-'
+        dlls = [name for name in entries if name.startswith(dll_prefix) and name.endswith('.dll')]
+        if len(dlls) != 1:
+            raise ValueError('HTTP/3 native DLL missing or ambiguous')
+        metadata = BytesParser().parsebytes(entries[site + required[-1]].read(site + required[-1]))
+        if metadata.get('Name', '').lower().replace('_', '-') != 'curl-cffi' or metadata.get('Version') != '0.16.0':
+            raise ValueError('HTTP/3 runtime version mismatch')
+        for key in (site + 'curl_cffi/_wrapper.pyd', site + '_cffi_backend.cp314-win_amd64.pyd', dlls[0]):
+            archive = entries[key]
+            if archive.getinfo(key).file_size > 64 * 1024 * 1024:
+                raise ValueError('HTTP/3 native binary exceeds size limit')
+            body = archive.read(key)
+            if len(body) < 64 or body[:2] != b'MZ':
+                raise ValueError('HTTP/3 native binary is invalid')
+            offset = struct.unpack_from('<I', body, 60)[0]
+            if offset + 6 > len(body) or body[offset:offset+4] != b'PE\0\0' or struct.unpack_from('<H', body, offset+4)[0] != 0x8664:
+                raise ValueError('HTTP/3 native binary is not Windows x64')
+        return {'nodePtyFiles': count, 'layout': 'asar-and-unpacked', 'architecture': 'win32-x64', 'http3': 'present'}
 
 
 if __name__ == '__main__':
