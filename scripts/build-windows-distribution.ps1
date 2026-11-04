@@ -216,6 +216,15 @@ try {
   $copy = Join-Path $unsigned ([IO.Path]::GetFileName($msix))
   Copy-Item -LiteralPath $msix -Destination $copy
   if ((Hash $copy) -cne $receipt.unsignedSha256) { throw 'Unsigned copy checksum mismatch' }
+  # Reject an incomplete packaged native module before signing. The original
+  # build artifact's sibling dist tree is the exact prepared source for this layout.
+  if (!$request.python -or !(Test-Path -LiteralPath $request.python -PathType Leaf)) { throw 'Native closure gate requires the pinned Windows Python' }
+  $gate = Join-Path $PSScriptRoot 'check_windows_native_closure.py'
+  if (!(Test-Path -LiteralPath $gate -PathType Leaf)) { throw 'Native closure gate missing' }
+  $desktopRoot = Split-Path -Parent (Split-Path -Parent $receipt.originalBuildArtifact)
+  $preparedPty = Join-Path $desktopRoot 'dist\node_modules\node-pty'
+  if (!(Test-Path -LiteralPath $preparedPty -PathType Container)) { throw 'Prepared node-pty tree unavailable for package verification' }
+  Native $request.python @($gate,$copy,'--prepared-pty',$preparedPty)
   $receipt.preservedUnsignedArtifact = $copy
   Json-File $receipt (Join-Path $unsigned 'unsigned-build-receipt.json')
   $signer = if ($request.unsignedReceipt) { Join-Path $PSScriptRoot '..\apps\desktop\scripts\sign-windows-distribution.ps1' } else { Join-Path $work 'apps\desktop\scripts\sign-windows-distribution.ps1' }
@@ -229,6 +238,13 @@ try {
   }
   if ($request.timestampUrl) { $signArgs += @('-TimestampUrl',$request.timestampUrl) }
   Native "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" $signArgs
+  if (($request.PSObject.Properties.Name -contains 'nativeAssets') -and $request.nativeAssets) {
+    $members = @(Get-ChildItem -LiteralPath (Join-Path $output 'signed\distribution') -Filter '*.msix' -File | Sort-Object Name)
+    if ($members.Count -eq 0) { throw 'Signed native package members missing' }
+    $finalGate = @($gate,$members[0].FullName,'--prepared-pty',$preparedPty)
+    foreach ($member in ($members | Select-Object -Skip 1)) { $finalGate += @('--package',$member.FullName) }
+    Native $request.python $finalGate
+  }
   Json-File ([ordered]@{result='PASS';sourceCommit=$source;controllerCommit=$request.controllerCommit;certificateThumbprint=$cert.Thumbprint;trustedTimestamp=[bool]$request.timestampUrl;worktree=$work;unsignedReceipt=(Join-Path $unsigned 'unsigned-build-receipt.json');signedReceipt=(Join-Path $output 'signed\receipt.json');zip=(Join-Path (Join-Path $output 'signed') ((Get-Content -LiteralPath (Join-Path $output 'signed\receipt.json') -Raw | ConvertFrom-Json).archiveName))}) (Join-Path $output 'result.json')
   Write-Host "Distribution complete: $output"
   $completed = $true

@@ -10,6 +10,7 @@ from hashlib import sha256
 import json
 import os
 import secrets
+import sys
 import threading
 from urllib.parse import parse_qs, urlsplit
 
@@ -151,13 +152,40 @@ def _config_hash():
     return _digest(path.read_bytes())
 
 
-def _wire(origin, operation, body=None, bearer=None):
+def _cloud_http(origin):
+    settings = (_config().get('providers') or {}).get('semantier-cloud') or {}
+    version = settings.get('http_version')
+    if version not in (None, '3'):
+        raise ValueError('Unsupported Cloud HTTP version.')
+    if version == '3':
+        if urlsplit(origin).scheme != 'https':
+            raise ValueError('HTTP/3 requires HTTPS.')
+        try:
+            from curl_cffi import requests
+        except ImportError:
+            raise ValueError('HTTP/3 transport unavailable.') from None
+        options = {'http_version': 'v3only', 'trust_env': False}
+        ca_file = settings.get('ssl_ca_cert')
+        if ca_file is not None:
+            if not isinstance(ca_file, str) or not ca_file.strip():
+                raise ValueError('Invalid Cloud CA certificate path.')
+            options['verify'] = ca_file.strip()
+        if sys.platform == 'win32' and ca_file is None:
+            from curl_cffi import CurlOpt
+            # libcurl CURLSSLOPT_NATIVE_CA: include the Windows ROOT and CA stores.
+            options['curl_options'] = {CurlOpt.SSL_OPTIONS: 1 << 4}
+        return requests, options
     import requests
+    return requests, {}
+
+
+def _wire(origin, operation, body=None, bearer=None):
+    requests, session_options = _cloud_http(origin)
     headers = {'Accept':'application/json'}
     if bearer:
         headers['Authorization'] = 'Bearer '+bearer
     try:
-        with requests.Session() as client:
+        with requests.Session(**session_options) as client:
             client.trust_env = False
             kwargs = dict(headers=headers, timeout=15, allow_redirects=False)
             if operation == 'readiness':
@@ -171,7 +199,7 @@ def _wire(origin, operation, body=None, bearer=None):
         if not isinstance(result, dict) or result.get('contract_version') != CONTRACT:
             raise ValueError('Cloud connection contract mismatch.')
         return result
-    except requests.RequestException:
+    except requests.exceptions.RequestException:
         raise ValueError('Cloud connection unavailable; retry the same connection.') from None
 
 
@@ -341,6 +369,11 @@ def _install(state, binding):
             raise ValueError('Original profile was reconfigured; reconnect.')
         cfg = _config()
         entry = {'base_url':state['origin']+'/v1', 'credential_ref':ref, 'portal_origin':state['portal_origin']}
+        previous_cloud = ((cfg.get('providers') or {}).get('semantier-cloud') or {})
+        if previous_cloud.get('http_version') == '3':
+            entry['http_version'] = '3'
+            if previous_cloud.get('ssl_ca_cert'):
+                entry['ssl_ca_cert'] = previous_cloud['ssl_ca_cert']
         cfg.setdefault('providers',{})['semantier-cloud'] = entry
         if not isinstance(cfg.get('model'),dict):
             cfg['model'] = {'default':str(cfg.get('model') or '')}
@@ -389,9 +422,9 @@ def _install(state, binding):
 
 
 def _catalog(origin, bearer):
-    import requests
+    requests, session_options = _cloud_http(origin)
     try:
-        with requests.Session() as client:
+        with requests.Session(**session_options) as client:
             client.trust_env = False
             response = client.get(origin+'/api/cloud-provider/catalog',
                 headers={'Authorization':'Bearer '+bearer}, timeout=5, allow_redirects=False)
@@ -401,7 +434,7 @@ def _catalog(origin, bearer):
         if result.get('object') != 'list' or not isinstance(result.get('data'),list):
             raise ValueError('Cloud model directory invalid.')
         return result['data']
-    except requests.RequestException:
+    except requests.exceptions.RequestException:
         raise ValueError('Cloud model directory unavailable; retry the same connection.') from None
 
 

@@ -370,3 +370,17 @@ def test_native_model_switch_preserves_logical_provider_and_drops_foreign_keys(n
     assert saved['provider'] == 'semantier-cloud'
     assert not {'api_key', 'key_env', 'api_key_env'} & saved.keys()
     assert 'private-account-token' not in json.dumps(saved)
+
+
+def test_install_preserves_selected_http3_transport(native, monkeypatch):
+    from hermes_cli.config import atomic_config_replace
+    device, home = native
+    config = device._config()
+    config['providers']['semantier-cloud']['http_version'] = '3'
+    config['providers']['semantier-cloud']['ssl_ca_cert'] = '/fixture/root.crt'
+    atomic_config_replace(home / 'config.yaml', config)
+    install_wire(device, monkeypatch)
+    session = device.start()['session_id']
+    assert device.poll(session)['status'] == 'approved'
+    assert device._config()['providers']['semantier-cloud']['http_version'] == '3'
+    assert device._config()['providers']['semantier-cloud']['ssl_ca_cert'] == '/fixture/root.crt'

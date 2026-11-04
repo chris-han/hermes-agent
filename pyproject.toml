@@ -55,6 +55,7 @@ dependencies = [
   # 0.18.17 requires ruamel.yaml.clib on 3.14, which has no Windows ARM64 wheel.
   "ruamel.yaml==0.18.16; python_version >= '3.14'",
   "requests==2.33.0; python_version >= '3.14'",  # CVE-2026-25645
+  "curl-cffi==0.16.0; sys_platform == 'win32' and python_version >= '3.14'",  # Optional Semantier Cloud HTTP/3 transport.
   "jinja2==3.1.6; python_version >= '3.14'",
   # Document-to-Markdown extraction for read_file (PDF, legacy Office,
   # OpenDocument, RTF, EPUB) + typed NeedsOcrError for scanned pages.

@@ -1249,6 +1249,22 @@ nvtx = [
 ]
 
 [[package]]
+name = "curl-cffi"
+version = "0.16.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "certifi" },
+    { name = "cffi" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b4/23/d32e113b16dbfb458bea408871ed98dd12f306a366a04215e84537e0af7e/curl_cffi-0.16.0.tar.gz", hash = "sha256:b00b423da8028eb6221e3b63bcd63d681150c07cee8b16000d1f7ea292731895", size = 238344, upload-time = "2026-08-01T13:45:12.372Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ad/03/b9df2973f1119f9d11d8fb3bf2682e5ffe5c52ef3ab89f720473c60fe97e/curl_cffi-0.16.0-cp310-abi3-win_amd64.whl", hash = "sha256:e22a8212d830108e977ff394237f637238e265f5f65037d6c1ee71ea8cc03bcb", size = 1976497, upload-time = "2026-08-01T13:44:51.839Z" },
+    { url = "https://files.pythonhosted.org/packages/6b/8b/092beeb5fbe3b7370666708eb5618a9e593ffc80ecb2c97c3395158d270b/curl_cffi-0.16.0-cp310-abi3-win_arm64.whl", hash = "sha256:095fc36e4988736f31521d6fe0aa1f243dba22656b4818fc2fb3b7a547e7a9ba", size = 1711122, upload-time = "2026-08-01T13:44:53.242Z" },
+    { url = "https://files.pythonhosted.org/packages/49/e5/16fe4881f4155afd5013e7d937fe9a204ee948db032f2adc0c34da2a7494/curl_cffi-0.16.0-cp314-cp314t-win_amd64.whl", hash = "sha256:3a1c8a7469453d09b500c47c83945179c4dd31c327906791e54292a06fec080a", size = 2029539, upload-time = "2026-08-01T13:45:09.619Z" },
+    { url = "https://files.pythonhosted.org/packages/86/57/c52fc76510a9ccd5629bc981bde877403562fc643dc68c5f06cd0b4c41c8/curl_cffi-0.16.0-cp314-cp314t-win_arm64.whl", hash = "sha256:c3dd33eaf267d017bfac09b4f71af1d94045dee5518ce18af380462e29f92fad", size = 1778763, upload-time = "2026-08-01T13:45:11.051Z" },
+]
+
+[[package]]
 name = "cymem"
 version = "2.0.13"
 source = { registry = "https://pypi.org/simple" }
@@ -2303,6 +2319,7 @@ dependencies = [
     { name = "concurrent-log-handler", marker = "sys_platform == 'win32'" },
     { name = "croniter" },
     { name = "cryptography" },
+    { name = "curl-cffi", marker = "sys_platform == 'win32'" },
     { name = "fastapi" },
     { name = "fire" },
     { name = "firecrawl-anydoc" },
@@ -2652,6 +2669,7 @@ requires-dist = [
     { name = "cryptography", marker = "python_full_version >= '3.14'", specifier = "==50.0.1" },
     { name = "cryptography", marker = "python_full_version < '3.14' and extra == 'semantier-windows'", specifier = "==50.0.1" },
     { name = "cryptography", marker = "extra == 'semantier-windows'", specifier = "==50.0.1" },
+    { name = "curl-cffi", marker = "python_full_version >= '3.14' and sys_platform == 'win32'", specifier = "==0.16.0" },
     { name = "daytona", marker = "extra == 'daytona'", specifier = "==0.155.0" },
     { name = "ddgs", marker = "extra == 'ddgs'", specifier = "==9.16.0" },
     { name = "defusedxml", marker = "extra == 'wecom'", specifier = "==0.7.1" },
