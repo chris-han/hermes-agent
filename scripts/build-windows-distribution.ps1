@@ -261,6 +261,13 @@ try {
   $copy = Join-Path $unsigned ([IO.Path]::GetFileName($msix))
   Copy-Item -LiteralPath $msix -Destination $copy
   if ((Hash $copy) -cne $receipt.unsignedSha256) { throw 'Unsigned copy checksum mismatch' }
+  # Inspect the actual unsigned package before the signing owner can seal it.
+  if (($request.PSObject.Properties.Name -contains 'nativeAssets') -and $request.nativeAssets) {
+    if (!$request.python -or !(Test-Path -LiteralPath $request.python -PathType Leaf)) { throw 'Native closure gate requires the pinned Windows Python' }
+    $gate = Join-Path $PSScriptRoot 'check_windows_native_closure.py'
+    if (!(Test-Path -LiteralPath $gate -PathType Leaf)) { throw 'Native closure gate missing' }
+    Native $request.python @($gate,$copy)
+  }
   $receipt.preservedUnsignedArtifact = $copy
   Json-File $receipt (Join-Path $unsigned 'unsigned-build-receipt.json')
   $signer = if ($request.unsignedReceipt) { Join-Path $PSScriptRoot '..\apps\desktop\scripts\sign-windows-distribution.ps1' } else { Join-Path $work 'apps\desktop\scripts\sign-windows-distribution.ps1' }
