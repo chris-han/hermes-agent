@@ -269,6 +269,12 @@ try {
     $gate = Join-Path $PSScriptRoot 'check_windows_native_closure.py'
     if (!(Test-Path -LiteralPath $gate -PathType Leaf)) { throw 'Native closure gate missing' }
     $sourceJob = if ($request.unsignedReceipt) { Split-Path -Parent (Split-Path -Parent $receipt.originalBuildArtifact) } else { $output }
+    $preparedPath = Join-Path $sourceJob 'desktop-job\prepared.json'
+    if (!(Test-Path -LiteralPath $preparedPath -PathType Leaf)) { throw 'Prepared native receipt binding unavailable' }
+    $prepared = Get-Content -LiteralPath $preparedPath -Raw | ConvertFrom-Json
+    $nativeVerifier = Join-Path $work 'apps\desktop\scripts\verify-prepared-native-cli.mjs'
+    if (!$prepared.node -or !$prepared.native -or !$prepared.native_toolchain -or !(Test-Path -LiteralPath $nativeVerifier -PathType Leaf)) { throw 'Prepared native verifier inputs unavailable' }
+    Native $prepared.node @($nativeVerifier,$work,$prepared.native,$prepared.native_toolchain)
     $preparedPty = Join-Path $sourceJob 'desktop-job\desktop-build\dist\node_modules\node-pty'
     if (!(Test-Path -LiteralPath $preparedPty -PathType Container)) { throw 'Prepared node-pty tree unavailable for package verification' }
     Native $request.python @($gate,$copy,'--prepared-pty',$preparedPty)
