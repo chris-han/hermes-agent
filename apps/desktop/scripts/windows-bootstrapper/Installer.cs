@@ -136,8 +136,13 @@ static class Installer {
         tracker.Dispose();held.Remove(tracker);return strict;
     }
     static bool PreferHttp3 => true;
+    #if CHANNEL1
+    static bool RequireHttp3 => true;
+    #else
+    static bool RequireHttp3 => false;
+    #endif
     static byte[] ReadMetadata(System.Net.Http.HttpClient client, Uri uri) {
-        using(var response=BootstrapperTransport.Send(client,uri,preferHttp3:PreferHttp3)) {
+        using(var response=BootstrapperTransport.Send(client,uri,preferHttp3:PreferHttp3,requireHttp3:RequireHttp3)) {
             if(response.StatusCode!=HttpStatusCode.OK || response.RequestMessage?.RequestUri!=uri ||
                 response.Content.Headers.ContentLength is long length && (length<=0 || length>4*1024*1024))
                 throw new InvalidOperationException("Unexpected metadata response.");
@@ -154,7 +159,7 @@ static class Installer {
         string name=Path.GetFileName(item.Key); var target=CreateOwned(Path.Combine(dir,name),held); int previous=-1;
         BootstrapperTransport.Download(client,new Uri(Origin+"/"+item.Key),target,item.Size,total=>{
             int percent=(int)(total*100/item.Size); if(percent!=previous){report("Downloading "+percent+"%");previous=percent;}
-        },preferHttp3:PreferHttp3);
+        },preferHttp3:PreferHttp3,requireHttp3:RequireHttp3);
         target.Flush(true); var file=Seal(target,held);
         if(file.Length!=item.Size || Hash(file)!=item.Sha256) throw new InvalidOperationException("Package SHA-256 mismatch.");
         return file;
@@ -213,8 +218,11 @@ static class Installer {
     }
     #if TESTING
     static void SelfTest() {
-        if(!PreferHttp3) throw new InvalidOperationException("Both channels must attempt HTTP/3 before TCP fallback.");
+        if(!PreferHttp3) throw new InvalidOperationException("Both channels must attempt HTTP/3.");
         #if CHANNEL1
+        if(!RequireHttp3) throw new InvalidOperationException("Channel 1 requires HTTP/3.");
+        #else
+        if(RequireHttp3) throw new InvalidOperationException("Channel 2 permits TCP fallback.");
         #endif
         // More than a pipe buffer on stderr must not prevent stdout completion.
         var noisyChild=System.Threading.Tasks.Task.Run(()=>PowerShell("[Console]::Error.Write(('x' * 262144)); Write-Output 'streams-drained'"));
