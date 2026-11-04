@@ -449,14 +449,16 @@ describe('ProvidersSettings', () => {
     await waitFor(() => expect(Element.prototype.scrollIntoView).toHaveBeenCalled())
   })
 
-  it('keeps endpoint and Cloud setup without retired local-model or Other providers entries', async () => {
+  it('offers other accounts alongside Cloud and the custom endpoint', async () => {
     listOAuthProviders.mockResolvedValue({ providers: [provider('semantier-cloud', false), provider('nous', false)] })
     const onViewChange = vi.fn()
     render(<ProvidersSettings onClose={vi.fn()} onViewChange={onViewChange} view="accounts" />)
     const endpoint = await screen.findByText('Custom endpoint')
     expect(screen.getByText('Semantier Cloud').compareDocumentPosition(endpoint) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(screen.queryByText('Run models locally')).toBeNull()
-    expect(screen.queryByText('Other providers')).toBeNull()
+    fireEvent.click(screen.getByText('Other providers'))
+    fireEvent.click(screen.getByText('Nous Portal'))
+    expect(startManualProviderOAuth).toHaveBeenCalledWith('nous', expect.anything())
     fireEvent.click(endpoint)
     expect(onViewChange).toHaveBeenCalledWith('custom-endpoints')
     fireEvent.click(screen.getByText('Semantier Cloud'))
