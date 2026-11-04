@@ -140,7 +140,7 @@ test('builder configuration consumes the selected external build directory', () 
   roots.push(root)
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(HERMES_|SEMANTIER_|GITHUB_)/.test(key)))
   Object.assign(env, { HERMES_DESKTOP_VARIANT: 'bundled', HERMES_DESKTOP_BUILD_DIR: root })
-  const code = `const c=require(process.argv[1]);console.log(JSON.stringify({resources:c.directories.buildResources,extra:c.extraResources,extensions:c.msix.customExtensionsPath,files:c.files,icon:c.icon}))`
+  const code = `const c=require(process.argv[1]);console.log(JSON.stringify({resources:c.directories.buildResources,extra:c.extraResources,extensions:c.msix.customExtensionsPath,files:c.files,icon:c.icon,unpack:c.asar.unpack}))`
   const run = spawnSync(process.execPath, ['-e', code, path.join(desktop, 'electron-builder.config.cjs')], { env, encoding: 'utf8' })
   expect(run.status, run.stderr).toBe(0)
   const actual = JSON.parse(run.stdout)
@@ -153,5 +153,6 @@ test('builder configuration consumes the selected external build directory', () 
   expect(actual.files).toContainEqual({ from: path.join(root, 'dist'), to: 'dist', filter: ['**/*'] })
   for (const name of ['node-pty', 'get-windows']) {
     expect(actual.files).toContainEqual({ from: path.join(root, 'dist/node_modules', name), to: `dist/node_modules/${name}`, filter: ['**/*'] })
+    expect(actual.unpack).toContain(`**/node_modules/${name}/**`)
   }
 })
