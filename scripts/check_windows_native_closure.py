@@ -74,7 +74,7 @@ def inspect(path, prepared_pty=None, packages=()):
                 if offset + 6 > len(body) or body[offset:offset+4] != b'PE\0\0' or struct.unpack_from('<H', body, offset+4)[0] != 0x8664:
                     raise ValueError('native binary is not Windows x64: ' + suffix)
         package = json.loads(objects['package.json'])
-        if package.get('name') != 'node-pty' or package.get('main') not in ('lib/index.js', './lib/index.js'):
+        if package.get('name') != 'node-pty' or package.get('version') != '1.1.0' or package.get('main') not in ('lib/index.js', './lib/index.js'):
             raise ValueError('node-pty package identity or entrypoint mismatch')
         count = len(REQUIRED)
         if prepared_pty is not None:
