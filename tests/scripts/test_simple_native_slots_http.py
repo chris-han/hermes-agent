@@ -56,7 +56,14 @@ def storage():
             del objects[key]; self.send_response(204); self.end_headers()
     server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
     thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
-    try: yield 'http://127.0.0.1:'+str(server.server_port),objects
+    from unittest.mock import patch
+    from scripts.releases.public_readback import verify_public_object
+    base = 'http://127.0.0.1:' + str(server.server_port)
+    def public_readback(origin, descriptor, guard):
+        return verify_public_object(base + '/public', descriptor, guard)
+    try:
+        with patch('scripts.releases.public_readback.verify_public_object', side_effect=public_readback):
+            yield base, objects
     finally: server.shutdown();server.server_close();thread.join()
 
 

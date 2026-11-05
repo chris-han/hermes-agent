@@ -801,6 +801,7 @@ class R2Driver:
         self.control = control
         self.lock_body = lock_body
         self.allow_sequence_gap = allow_sequence_gap
+        self.public_verified = set()
         self.retired_builds = []
         self.retained_shared = []
 
@@ -958,6 +959,14 @@ class R2Driver:
         self.verify_lock()
         url=self.store.scope.object_url(self.store.base,self.store.bucket,key)
         r2.verify_remote_artifact(url,self.store.creds,r2.amz_timestamp(),descriptor['size'],descriptor['sha256'],algorithm='sha256',encoding='hex')
+        self.verify_public_object({'key': key, 'size': descriptor['size'], 'sha256': descriptor['sha256']})
+
+    def verify_public_object(self, descriptor):
+        from scripts.releases.public_readback import verify_public_object
+        facts = (descriptor['key'], descriptor['size'], descriptor['sha256'])
+        if facts not in self.public_verified:
+            verify_public_object(self.public_base, descriptor, self.verify_lock)
+            self.public_verified.add(facts)
 
     def stage_manual_artifacts(self, channel, record, etag, candidate, files, installer, archive):
         """Create absent same-build manual bytes; never overwrite or recreate reused setup."""
@@ -1035,6 +1044,17 @@ class R2Driver:
             self.store.put(key, body)
 
     def commit(self, channel, etag, head):
+        self.verify_lock()
+        import hashlib
+        from hermes_cli.release_channels import decode_json
+        stored = self.store.get(head['manifestKey'])
+        if stored is None or hashlib.sha256(stored[0]).hexdigest() != head['sha256']:
+            raise ValueError('Immutable candidate manifest differs before public readback')
+        manifest = decode_json(stored[0])
+        for row in manifest['installation']['objects']:
+            self.verify_public_object(row)
+        self.verify_public_object(manifest['packages'][0]['native']['graph'])
+        self.verify_public_object({'key': head['manifestKey'], 'size': len(stored[0]), 'sha256': head['sha256']})
         self.verify_lock()
         from hermes_cli.release_channels import channel_key
         return commit_slot(self.store, channel_key(channel), etag, head, allow_sequence_gap=self.allow_sequence_gap)
