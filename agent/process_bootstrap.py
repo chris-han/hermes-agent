@@ -284,6 +284,11 @@ def build_keepalive_http_client(base_url: str = "", *, async_mode: bool = False,
     See #12952, #54049.
     See #10933.
     """
+    # Explicit Cloud HTTP/3 failures must escape the legacy best-effort fallback.
+    from agent.cloud_http3_transport import cloud_http3_client
+    cloud_client = cloud_http3_client(base_url, async_mode=async_mode)
+    if cloud_client is not None:
+        return cloud_client
     try:
         import httpx
         proxy = _get_proxy_for_base_url(base_url)

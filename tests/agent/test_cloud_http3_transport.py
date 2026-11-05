@@ -106,8 +106,17 @@ def test_real_http3_silent_stream_cancels_and_stops_loop():
     ca = os.environ.get('SEMANTIER_H3_FIXTURE_CA')
     if not origin or not ca:
         pytest.skip('Requires the owned Docker HTTP/3 silent-stream fixture')
-    session = LoopCloudSession(cacert=ca, buffer_capacity=32768)
-    with httpx.Client(transport=CloudHTTP3Transport(origin, session)) as client:
+    import hermes_cli.cloud_device_client as device
+    from agent.process_bootstrap import build_keepalive_http_client
+    original_config = device._config
+    device._config = lambda: {'providers': {'semantier-cloud': {
+        'base_url': origin, 'http_version': '3', 'ssl_ca_cert': ca}}}
+    try:
+        client = build_keepalive_http_client(origin)
+    finally:
+        device._config = original_config
+    session = client._transport.session
+    with client:
         with client.stream('GET', origin + '/events') as response:
             assert response.status_code == 200
             assert response.http_version == 'HTTP/3'
@@ -121,3 +130,69 @@ def test_real_http3_silent_stream_cancels_and_stops_loop():
             response.close()
             assert time.monotonic() - started < 1
     assert not session.thread.is_alive()
+
+
+def test_cloud_factory_scope_and_explicit_failure(monkeypatch):
+    import agent.cloud_http3_transport as transport
+    settings = {'base_url': 'https://cloud.example/v1', 'http_version': '3'}
+    assert transport.cloud_http3_client('https://other.example/v1', settings=settings) is None
+    with pytest.raises(ValueError, match='HTTPS'):
+        transport.cloud_http3_client('http://cloud.example/v1',
+            settings={**settings, 'base_url': 'http://cloud.example/v1'})
+    def unavailable(**kwargs):
+        raise ImportError('missing curl')
+    monkeypatch.setattr(transport, 'LoopCloudSession', unavailable)
+    with pytest.raises(ImportError):
+        transport.cloud_http3_client('https://cloud.example/v1', settings=settings)
+
+
+def test_bootstrap_cloud_failure_cannot_return_legacy_client(monkeypatch):
+    from agent.process_bootstrap import build_keepalive_http_client
+    import hermes_cli.cloud_device_client as device
+    monkeypatch.setattr(device, '_config', lambda: {'providers': {'semantier-cloud': {
+        'base_url': 'https://cloud.example/v1', 'http_version': 'invalid'}}})
+    with pytest.raises(ValueError, match='Unsupported'):
+        build_keepalive_http_client('https://cloud.example/v1')
+
+
+def test_async_cloud_factory_owns_and_closes_loop():
+    import asyncio
+    from agent.cloud_http3_transport import cloud_http3_client
+    async def check():
+        client = cloud_http3_client('https://cloud.example/v1', async_mode=True,
+            settings={'base_url': 'https://cloud.example/v1', 'http_version': '3'})
+        session = client._transport.sync.session
+        await client.aclose()
+        assert not session.thread.is_alive()
+    asyncio.run(check())
+
+
+def test_real_async_http3_stream_closes_during_silence(monkeypatch):
+    import asyncio
+    import os
+    import time
+    import hermes_cli.cloud_device_client as device
+    from agent.process_bootstrap import build_keepalive_http_client
+    origin = os.environ.get('SEMANTIER_H3_FIXTURE_ORIGIN')
+    ca = os.environ.get('SEMANTIER_H3_FIXTURE_CA')
+    if not origin or not ca:
+        pytest.skip('Requires the owned Docker HTTP/3 silent-stream fixture')
+    monkeypatch.setattr(device, '_config', lambda: {'providers': {'semantier-cloud': {
+        'base_url': origin, 'http_version': '3', 'ssl_ca_cert': ca}}})
+    async def check():
+        client = build_keepalive_http_client(origin, async_mode=True)
+        session = client._transport.sync.session
+        async with client:
+            async with client.stream('GET', origin + '/events') as response:
+                assert response.http_version == 'HTTP/3'
+                total = 0
+                async for chunk in response.aiter_bytes():
+                    total += len(chunk)
+                    if total >= 65544:
+                        break
+                assert total == 65544
+                started = time.monotonic()
+                await response.aclose()
+                assert time.monotonic() - started < 1
+        assert not session.thread.is_alive()
+    asyncio.run(check())

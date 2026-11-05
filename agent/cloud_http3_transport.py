@@ -266,3 +266,92 @@ class _LoopResponse:
             self.task.cancel()
             if not self.done.wait(10):
                 raise RuntimeError('Cloud HTTP/3 transfer did not close')
+
+
+def cloud_http3_client(base_url, *, async_mode=False, settings=None):
+    """Select only the configured Cloud origin; setup failures must propagate."""
+    import sys
+    if settings is None:
+        from hermes_cli.cloud_device_client import _config
+        settings = (_config().get('providers') or {}).get('semantier-cloud') or {}
+    configured = settings.get('base_url')
+    if not configured:
+        return None
+    def origin(value):
+        parsed = urlsplit(value)
+        return parsed.scheme, parsed.hostname, parsed.port or (443 if parsed.scheme == 'https' else 80)
+    if origin(base_url) != origin(configured):
+        return None
+    version = settings.get('http_version', '3' if sys.platform == 'win32' else None)
+    if version is None:
+        return None
+    if version != '3':
+        raise ValueError('Unsupported Cloud HTTP version.')
+    if urlsplit(base_url).scheme != 'https':
+        raise ValueError('Cloud HTTP/3 requires HTTPS.')
+    ca = settings.get('ssl_ca_cert')
+    if ca is not None and (not isinstance(ca, str) or not ca.strip()):
+        raise ValueError('Invalid Cloud CA certificate path.')
+    # Resolve the native dependency before allocating a worker or returning a client.
+    import_module('curl_cffi')
+    session = LoopCloudSession(cacert=ca.strip() if ca else None,
+                              native_ca=sys.platform == 'win32' and ca is None)
+    try:
+        transport = CloudHTTP3Transport(base_url, session)
+        client_class = httpx.AsyncClient if async_mode else httpx.Client
+        if async_mode:
+            transport = AsyncCloudHTTP3Transport(transport)
+        return client_class(transport=transport,
+            trust_env=False, follow_redirects=False,
+            timeout=httpx.Timeout(connect=15, read=None, write=15, pool=10))
+    except BaseException:
+        session.close()
+        raise
+
+
+class AsyncCloudHTTP3Transport(httpx.AsyncBaseTransport):
+    def __init__(self, sync):
+        self.sync = sync
+
+    async def handle_async_request(self, request):
+        import asyncio
+        payload = await request.aread()
+        sync_request = httpx.Request(request.method, request.url,
+            headers=request.headers, content=payload, extensions=request.extensions)
+        task = asyncio.create_task(asyncio.to_thread(self.sync.handle_request, sync_request))
+        try:
+            response = await asyncio.shield(task)
+        except asyncio.CancelledError:
+            # Closing the owner also wakes a worker waiting for response headers.
+            await asyncio.to_thread(self.sync.close)
+            await asyncio.gather(task, return_exceptions=True)
+            raise
+        return httpx.Response(response.status_code, headers=response.headers,
+            stream=_AsyncStream(response.stream), extensions=response.extensions)
+
+    async def aclose(self):
+        import asyncio
+        await asyncio.to_thread(self.sync.close)
+
+
+class _AsyncStream(httpx.AsyncByteStream):
+    def __init__(self, stream):
+        self.stream = stream
+
+    async def __aiter__(self):
+        import asyncio
+        iterator = iter(self.stream)
+        sentinel = object()
+        try:
+            while True:
+                chunk = await asyncio.to_thread(next, iterator, sentinel)
+                if chunk is sentinel:
+                    break
+                yield chunk
+        except BaseException:
+            await self.aclose()
+            raise
+
+    async def aclose(self):
+        import asyncio
+        await asyncio.to_thread(self.stream.close)
