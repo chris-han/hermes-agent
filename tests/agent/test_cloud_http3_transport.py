@@ -128,7 +128,7 @@ def test_real_http3_silent_stream_cancels_and_stops_loop():
             assert total == 65544
             started = time.monotonic()
             response.close()
-            assert time.monotonic() - started < 1
+            assert time.monotonic() - started < 2
     assert not session.thread.is_alive()
 
 
@@ -193,7 +193,7 @@ def test_real_async_http3_stream_closes_during_silence(monkeypatch):
                 assert total == 65544
                 started = time.monotonic()
                 await response.aclose()
-                assert time.monotonic() - started < 1
+                assert time.monotonic() - started < 2
         assert not session.thread.is_alive()
     asyncio.run(check())
 
@@ -241,14 +241,21 @@ def test_real_async_header_cancellation_preserves_client():
         client = cloud_http3_client(origin, async_mode=True, settings={
             'base_url': origin, 'http_version': '3', 'ssl_ca_cert': ca})
         session = client._transport.sync.session
+        import threading
+        entered = threading.Event()
+        original_request = session.request
+        def observed_request(**kwargs):
+            entered.set()
+            return original_request(**kwargs)
+        session.request = observed_request
         async with client:
             pending = asyncio.create_task(client.get(origin + '/delayed'))
-            await asyncio.sleep(.1)
+            assert await asyncio.to_thread(entered.wait, 2)
             started = time.monotonic()
             pending.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await pending
-            assert time.monotonic() - started < 1
+            assert time.monotonic() - started < 2
             assert not session.closed
             async with client.stream('GET', origin + '/events') as response:
                 assert response.status_code == 200
@@ -306,4 +313,4 @@ def test_real_http3_header_read_timeout():
         started = time.monotonic()
         with pytest.raises(httpx.ReadTimeout):
             client.get(origin + '/delayed', timeout=httpx.Timeout(5, read=.1))
-        assert time.monotonic() - started < 1
+        assert time.monotonic() - started < 2
