@@ -2,7 +2,7 @@
 """Build, locally sign and validate a Windows distribution from WSL. No remote push."""
 import argparse
 from contextlib import contextmanager, nullcontext
-from datetime import datetime, timezone
+from datetime import datetime
 import json
 import os
 from pathlib import Path
@@ -245,7 +245,7 @@ def validate_source(source, *, expected_ref, expected_tree, receipt_path=None, l
 
 def main():
     started = time.monotonic()
-    produced_at = datetime.now(timezone.utc).isoformat()  # noqa: UP017 - WSL Python 3.10 entry
+    produced_at = datetime.now(datetime.UTC).isoformat()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path, help='Explicit detached Desktop product source repository')
     parser.add_argument('--source-ref', help='Exact expected Desktop source commit (40 hex)')
@@ -323,7 +323,7 @@ def main():
         parser.error('Hermes source must be committed and clean; no implicit stash/reset')
     controller = source / 'scripts/build-windows-distribution.ps1'
     parent_commit = run('/usr/bin/git', '-C', str(ROOT), '--work-tree=' + str(ROOT), 'rev-parse', 'HEAD')
-    stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')  # noqa: UP017 - WSL Python 3.10 entry
+    stamp = datetime.now(datetime.UTC).strftime('%Y%m%dT%H%M%S%fZ')
     output = args.output or fr'D:\repo\deliverables\SemantierAgent-{stamp}'
     config = dict(repository=args.windows_repo or args.worktree, worktree=args.worktree, output=output,
                   commit=commit, controllerCommit=parent_commit, thumbprint=args.thumbprint.upper(), python=args.python,
@@ -351,7 +351,7 @@ def main():
         result_file = native_output / 'result.json'
         artifact_source = json.loads(result_file.read_text(encoding='utf-8-sig'))['sourceCommit'] if result_file.exists() else commit
         (native_output / 'wsl-controller-total.json').write_text(json.dumps({
-            'startedAt': produced_at, 'finishedAt': datetime.now(timezone.utc).isoformat(),  # noqa: UP017 - WSL Python 3.10 entry
+            'startedAt': produced_at, 'finishedAt': datetime.now(datetime.UTC).isoformat(),
             'elapsedSeconds': elapsed, 'sourceCommit': artifact_source, 'controllerSourceCommit': commit, 'parentControllerCommit': parent_commit, 'result': 'PASS',
             'mode': 'preflight' if args.preflight else ('packaging-only' if args.unsigned_receipt else 'full-build'),
             'retryVersion': args.retry_version,
