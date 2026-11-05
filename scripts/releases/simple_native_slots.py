@@ -419,11 +419,14 @@ def sign_windows_installation_proof(payload, thumbprint):
         raise ValueError('unexpected publisher certificate')
     if not isinstance(payload, bytes) or not payload or len(payload) > 4 * 1024 * 1024:
         raise ValueError('invalid installation proof payload')
-    powershell = '/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe'
-    if not os.path.isfile(powershell):
+    from hermes_platform.host.facts import os_family
+    from hermes_platform.resolver import locate_command
+    powershell = (locate_command('powershell.exe').command or [None])[0] if os_family() == 'win32' else '/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe'
+    if not powershell or not os.path.isfile(powershell):
         raise RuntimeError('Windows signing host unavailable')
     script = r'''
 $ErrorActionPreference='Stop'
+$ProgressPreference='SilentlyContinue'
 $cert=Get-Item -LiteralPath 'Cert:\CurrentUser\My\57BF15739B4AA447842EAF388856A01B4E5029FF'
 if (!$cert.HasPrivateKey -or $cert.NotBefore -gt (Get-Date) -or $cert.NotAfter -le (Get-Date) -or
     $cert.EnhancedKeyUsageList.ObjectId -notcontains '1.3.6.1.5.5.7.3.3') {throw 'Invalid signing certificate'}
@@ -442,15 +445,14 @@ try {
 } finally {$private.Dispose();$public.Dispose()}
 '''
     env = os.environ.copy()
-    removed = {name for name in env if name.startswith('CLOUDFLARE_R2_') or name == 'SEMANTIER_CLIENT_RECEIPT_KEY'}
+    removed = {name for name in env if name.startswith('CLOUDFLARE_R2_') or name == 'SEMANTIER_CLIENT_RECEIPT_KEY' or name.upper() == 'PSMODULEPATH'}
     for name in removed:
         env.pop(name, None)
     env['WSLENV'] = ':'.join(item for item in env.get('WSLENV', '').split(':')
                              if item and item.split('/')[0].upper() not in {name.upper() for name in removed})
     result = subprocess.run([powershell, '-NoProfile', '-NonInteractive', '-EncodedCommand',
                              base64.b64encode(script.encode('utf-16le')).decode()],
-                            input=base64.b64encode(payload), stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, check=True, env=env)
+                            input=base64.b64encode(payload), capture_output=True, check=True, env=env)
     return base64.b64decode(result.stdout, validate=True)
 
 
@@ -500,9 +502,13 @@ def verify_setup_source(commit, tree):
     """Require an available exact source commit/tree; signing remains separate."""
     import subprocess
     from pathlib import Path
+    from hermes_platform.resolver import locate_command
     root=Path(__file__).resolve().parents[2]
+    git = locate_command('git').command
+    if not git:
+        raise ValueError('Native Git unavailable')
     try:
-        actual=subprocess.check_output(['/usr/bin/git','-C',str(root),'rev-parse',commit+'^{tree}'],stderr=subprocess.DEVNULL,text=True).strip()
+        actual=subprocess.check_output([*git,'-C',str(root),'rev-parse',commit+'^{tree}'],stderr=subprocess.DEVNULL,text=True).strip()
     except (OSError,subprocess.CalledProcessError) as error:
         raise ValueError('setup source commit unavailable') from error
     if actual!=tree:raise ValueError('setup source tree mismatch')
@@ -673,14 +679,15 @@ def project_manual_catalog(raw, head, manifest_bytes, origin, installer, archive
     if not isinstance(version,str) or not re.fullmatch(r'(?:0|[1-9][0-9]*)(?:\.(?:0|[1-9][0-9]*)){3}',version) or any(int(x)>65535 for x in version.split('.')):
         raise ValueError('invalid release version')
     try:
-        when=datetime.fromisoformat(published_at.replace('Z','+00:00'))
+        when=datetime.fromisoformat(published_at)
         if when.utcoffset()!=timedelta(0):raise ValueError('UTC required')
     except (ValueError,TypeError,AttributeError) as error:
         raise ValueError('invalid publication time') from error
     def artifact(value, extension):
         if not isinstance(value,dict) or set(value)!={'url','size','sha256'} or type(value['size']) is not int or value['size']<=0 or not re.fullmatch('[a-f0-9]{64}',str(value['sha256'])):
             raise ValueError('invalid setup artifact')
-        url=urlsplit(value['url']);match=re.fullmatch(r'/releases/channel-builds/([a-f0-9]{32})/[A-Za-z0-9_.-]+\.'+extension,url.path)
+        url=urlsplit(value['url'])
+        match=re.fullmatch(r'/releases/channel-builds/([a-f0-9]{32})/[A-Za-z0-9_.-]+\.'+extension,url.path)
         if url.scheme!='https' or url.netloc!=urlsplit(origin).netloc or url.query or url.fragment or not match:
             raise ValueError('invalid setup origin or path')
         return match.group(1),url.path
@@ -704,7 +711,7 @@ def project_manual_catalog(raw, head, manifest_bytes, origin, installer, archive
                 or any(int(x)>65535 for x in old['version'].split('.'))):
             raise ValueError('invalid existing catalog')
         try:
-            stamp=datetime.fromisoformat(old['publishedAt'].replace('Z','+00:00'))
+            stamp=datetime.fromisoformat(old['publishedAt'])
             if stamp.utcoffset()!=timedelta(0):raise ValueError('UTC required')
         except (ValueError,TypeError,AttributeError) as error:raise ValueError('invalid existing catalog time') from error
         ids={};hosts=set()
@@ -713,7 +720,8 @@ def project_manual_catalog(raw, head, manifest_bytes, origin, installer, archive
             if (not isinstance(item,dict) or set(item)!={'url','size','sha256'} or type(item['size']) is not int
                     or item['size']<=0 or not re.fullmatch('[a-f0-9]{64}',str(item['sha256']))):
                 raise ValueError('invalid existing catalog artifact')
-            parsed=urlsplit(item['url']);match=re.fullmatch(r'/releases/channel-builds/([a-f0-9]{32})/[A-Za-z0-9_.-]+\.'+ext,parsed.path)
+            parsed=urlsplit(item['url'])
+            match=re.fullmatch(r'/releases/channel-builds/([a-f0-9]{32})/[A-Za-z0-9_.-]+\.'+ext,parsed.path)
             if parsed.scheme!='https' or parsed.netloc not in allowed_origins or parsed.query or parsed.fragment or not match:
                 raise ValueError('invalid existing catalog origin')
             ids[label]=match.group(1);hosts.add(parsed.netloc)
@@ -1268,16 +1276,23 @@ def verify_windows_signatures(files, thumbprint, expected=None):
     import subprocess
     if not re.fullmatch('[A-F0-9]{40}', thumbprint):
         raise ValueError('expected certificate thumbprint required')
-    powershell = '/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe'
-    if not os.path.isfile(powershell):
-        raise RuntimeError('Windows SignTool verification requires WSL with Windows SDK')
-    paths = [subprocess.check_output(['wslpath', '-w', str(path.resolve(strict=True))], text=True).strip() for path in files]
+    from hermes_platform.host.facts import os_family
+    from hermes_platform.resolver import locate_command
+    if os_family() == 'win32':
+        powershell = (locate_command('powershell.exe').command or [None])[0]
+        paths = [str(path.resolve(strict=True)) for path in files]
+    else:
+        powershell = '/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe'
+        paths = [subprocess.check_output(['wslpath', '-w', str(path.resolve(strict=True))], text=True).strip() for path in files]
+    if not powershell or not os.path.isfile(powershell):
+        raise RuntimeError('Windows signing host unavailable')
     encoded = base64.b64encode(json.dumps(paths).encode()).decode()
     if expected is not None and (len(expected)!=len(paths) or any(type(row.get('size')) is not int or not re.fullmatch('[a-f0-9]{64}',row.get('sha256','')) for row in expected)):
         raise ValueError('invalid expected signed object facts')
     encoded_facts=base64.b64encode(json.dumps(expected or []).encode()).decode()
     script = r'''
 $ErrorActionPreference='Stop'
+$ProgressPreference='SilentlyContinue'
 $decodedFiles=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('PATHS')) | ConvertFrom-Json
 $decodedFacts=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('FACTS')) | ConvertFrom-Json
 $files=@();foreach($item in $decodedFiles){$files+=,[string]$item}
@@ -1302,7 +1317,7 @@ try {
 } finally {foreach($stream in $held){$stream.Dispose()}}
 '''.replace('PATHS', encoded).replace('CHECKFACTS', '$true' if expected is not None else '$false').replace('FACTS', encoded_facts).replace('THUMB', thumbprint)
     env = os.environ.copy()
-    removed = {name for name in env if name.startswith('CLOUDFLARE_R2_') or name == 'SEMANTIER_CLIENT_RECEIPT_KEY'}
+    removed = {name for name in env if name.startswith('CLOUDFLARE_R2_') or name == 'SEMANTIER_CLIENT_RECEIPT_KEY' or name.upper() == 'PSMODULEPATH'}
     for name in removed:
         env.pop(name, None)
     env['WSLENV'] = ':'.join(item for item in env.get('WSLENV', '').split(':')
@@ -1376,6 +1391,10 @@ def main(argv=None):
     parser.add_argument('--expected-head', type=Path, help='exact currently active native head JSON')
     parser.add_argument('--expect-empty-head', action='store_true', help='require no currently active native head')
     parser.add_argument('--solo-intent', type=Path, help='source-bound solo allocator intent for a skipped build sequence')
+    parser.add_argument('--windows-allocation', type=Path, help='existing native Windows version reservation')
+    parser.add_argument('--windows-ledger', type=Path, help='current native Windows version ledger')
+    parser.add_argument('--windows-acceptance', type=Path, help='installed Windows package acceptance receipt')
+    parser.add_argument('--windows-ui', type=Path, help='real Windows application and backend acceptance receipt')
     parser.add_argument('--purge-explicit-channel', help='explicitly authorized cleanup-only channel')
     parser.add_argument('--purge-head', type=Path, help='exact active head JSON for cleanup')
     parser.add_argument('--purge-catalog-sha256', help='SHA-256 of the catalog inventoried before cleanup')
@@ -1384,6 +1403,9 @@ def main(argv=None):
     parser.add_argument('--purge-canary-installer-sha256', help='exact appinstaller SHA-256')
     parser.add_argument('--purge-canary-bundle-sha256', help='exact bundle SHA-256')
     args = parser.parse_args(argv)
+    windows_evidence = (args.windows_allocation, args.windows_ledger, args.windows_acceptance, args.windows_ui)
+    if any(windows_evidence) and (not all(windows_evidence) or not args.output or args.solo_intent):
+        parser.error('Windows recovery requires all four evidence paths and a signed output')
     legacy=args.project_legacy_channel
     purge=args.purge_explicit_channel
     manual=bool(args.setup_exe or args.setup_receipt or args.setup_key or args.manual_published_at or args.expected_head or args.expect_empty_head)
@@ -1432,6 +1454,9 @@ def main(argv=None):
                 args.setup_receipt,args.thumbprint,verify_windows_signatures,setup_key=args.setup_key)
         if args.solo_intent:
             allow_sequence_gap = load_solo_allocation(args.output, args.solo_intent, manifest)
+        if args.windows_allocation:
+            from scripts.releases.windows_allocation import admit_windows_allocation
+            allow_sequence_gap = admit_windows_allocation(args.output, *windows_evidence, manifest)
         add_installation_proof(manifest, lambda payload: sign_windows_installation_proof(payload, args.thumbprint))
     creds, base, bucket = r2.credentials()
     scope = R2Scope.configured()
