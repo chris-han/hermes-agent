@@ -226,3 +226,68 @@ def test_real_http3_idle_read_timeout_closes_transfer():
             with pytest.raises(httpx.ReadTimeout):
                 next(chunks)
     assert not session.thread.is_alive()
+
+
+def test_real_async_header_cancellation_preserves_client():
+    import asyncio
+    import os
+    import time
+    from agent.cloud_http3_transport import cloud_http3_client
+    origin = os.environ.get('SEMANTIER_H3_FIXTURE_ORIGIN')
+    ca = os.environ.get('SEMANTIER_H3_FIXTURE_CA')
+    if not origin or not ca:
+        pytest.skip('Requires owned Docker HTTP/3 delayed-header fixture')
+    async def check():
+        client = cloud_http3_client(origin, async_mode=True, settings={
+            'base_url': origin, 'http_version': '3', 'ssl_ca_cert': ca})
+        session = client._transport.sync.session
+        async with client:
+            pending = asyncio.create_task(client.get(origin + '/delayed'))
+            await asyncio.sleep(.1)
+            started = time.monotonic()
+            pending.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await pending
+            assert time.monotonic() - started < 1
+            assert not session.closed
+            async with client.stream('GET', origin + '/events') as response:
+                assert response.status_code == 200
+                assert response.http_version == 'HTTP/3'
+        assert not session.thread.is_alive()
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize('async_mode', [False, True])
+def test_real_openai_sdk_http3_stream(async_mode):
+    import asyncio
+    import os
+    from openai import OpenAI, AsyncOpenAI
+    from agent.cloud_http3_transport import cloud_http3_client
+    origin = os.environ.get('SEMANTIER_H3_FIXTURE_ORIGIN')
+    ca = os.environ.get('SEMANTIER_H3_FIXTURE_CA')
+    if not origin or not ca:
+        pytest.skip('Requires owned Docker synthetic OpenAI fixture')
+    url = origin + '/v1'
+    client = cloud_http3_client(url, async_mode=async_mode, settings={
+        'base_url': url, 'http_version': '3', 'ssl_ca_cert': ca})
+    seen = []
+    if async_mode:
+        async def record(response):
+            seen.append(response.http_version)
+        client.event_hooks['response'] = [record]
+        async def check():
+            async with AsyncOpenAI(base_url=url, api_key='fixture-only-token',
+                                   http_client=client, max_retries=0) as sdk:
+                stream = await sdk.chat.completions.create(model='fixture-only',
+                    messages=[{'role': 'user', 'content': 'fixture'}], stream=True)
+                async with stream:
+                    return ''.join([part.choices[0].delta.content async for part in stream])
+        result = asyncio.run(check())
+    else:
+        client.event_hooks['response'] = [lambda response: seen.append(response.http_version)]
+        with OpenAI(base_url=url, api_key='fixture-only-token', http_client=client, max_retries=0) as sdk:
+            with sdk.chat.completions.create(model='fixture-only',
+                    messages=[{'role': 'user', 'content': 'fixture'}], stream=True) as stream:
+                result = ''.join(part.choices[0].delta.content for part in stream)
+    assert result == 'fixture reply'
+    assert seen == ['HTTP/3']

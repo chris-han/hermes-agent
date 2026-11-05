@@ -46,6 +46,7 @@ class CloudHTTP3Transport(httpx.BaseTransport):
             response = self.session.request(method=request.method, url=str(request.url),
                 headers=list(request.headers.multi_items()), data=request.read(),
                 timeout=request.extensions.get('timeout', {}),
+                cancel_event=request.extensions.get('semantier_h3_cancel'),
                 # HTTPX owns decoding; curl must return the encoded response bytes.
                 accept_encoding=None, stream=True, allow_redirects=False)
         except Exception as error:
@@ -239,7 +240,17 @@ class LoopCloudSession:
                 done.set()
         response.task = asyncio.run_coroutine_threadsafe(transfer(), self.loop)
         try:
-            return ready.result()
+            cancel_event = kwargs.get('cancel_event')
+            if cancel_event is None:
+                return ready.result()
+            while True:
+                if cancel_event.is_set():
+                    raise httpx.ConnectError('Cloud HTTP/3 transfer cancelled')
+                try:
+                    return ready.result(timeout=.05)
+                except concurrent.futures.TimeoutError:
+                    if ready.done():
+                        raise
         except BaseException:
             response.close()
             raise
@@ -328,16 +339,20 @@ class AsyncCloudHTTP3Transport(httpx.AsyncBaseTransport):
 
     async def handle_async_request(self, request):
         import asyncio
+        import threading
         payload = await request.aread()
+        cancelled = threading.Event()
+        extensions = {**request.extensions, 'semantier_h3_cancel': cancelled}
         sync_request = httpx.Request(request.method, request.url,
-            headers=request.headers, content=payload, extensions=request.extensions)
+            headers=request.headers, content=payload, extensions=extensions)
         task = asyncio.create_task(asyncio.to_thread(self.sync.handle_request, sync_request))
         try:
             response = await asyncio.shield(task)
         except asyncio.CancelledError:
-            # Closing the owner also wakes a worker waiting for response headers.
-            await asyncio.to_thread(self.sync.close)
-            await asyncio.gather(task, return_exceptions=True)
+            cancelled.set()
+            results = await asyncio.gather(task, return_exceptions=True)
+            if isinstance(results[0], httpx.Response):
+                await asyncio.to_thread(results[0].close)
             raise
         return httpx.Response(response.status_code, headers=response.headers,
             stream=_AsyncStream(response.stream), extensions=response.extensions)
