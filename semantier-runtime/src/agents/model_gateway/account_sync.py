@@ -47,6 +47,27 @@ class AccountSyncWorker:
             # The entire aggregate ends before its 60-second database lease.
             # A late remote completion cannot pass the database activation fence.
             async with asyncio.timeout(45):
+                # Every independently priced and native-verified platform
+                # model is eligible for a funded personal account, regardless
+                # of which model the user chose as their default at signup.
+                # Each route creation and successor sync intent commits in the
+                # existing local PostgreSQL transaction. Native Team/Key writes
+                # occur only after the final desired policy is established.
+                from fastapi import HTTPException
+                from agents.model_gateway.default_activation import (
+                    configured_blueprints, maybe_activate_funded_default,
+                )
+                for alias in configured_blueprints():
+                    try:
+                        await maybe_activate_funded_default(
+                            self.store, self.proxy, claim, model_id=alias,
+                        )
+                    except HTTPException as exc:
+                        if exc.status_code not in {403, 409}:
+                            raise
+                        # One unavailable or drifting model must not prevent
+                        # otherwise eligible models from being provisioned.
+                        log.warning('platform_model_qualification_unavailable')
                 projection=await self.store.refresh(claim)
                 if projection is None:
                     return

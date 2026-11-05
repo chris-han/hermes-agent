@@ -47,6 +47,16 @@ class ManualStage(Strict):
     pass
 
 
+class Manual077Stage(Strict):
+    """Idempotency key for the exact reviewed 0.0.77 release."""
+    request_id: Identifier
+
+
+class LegacyRetirement(Strict):
+    """Retry key for the exact operator-approved legacy retirement."""
+    request_id: Identifier
+
+
 class UpdateEvent(Strict):
     schema_version: Literal['1.0.0']
     event_id: Identifier

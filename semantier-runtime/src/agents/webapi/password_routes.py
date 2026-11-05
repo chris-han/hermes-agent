@@ -26,6 +26,12 @@ from agents.gateway_identity import (
 router = APIRouter(tags=["authentication"])
 
 
+@router.get("/auth/model-preferences")
+async def signup_model_recommendations():
+    from agents.model_gateway.default_models import public_catalog
+    return public_catalog()
+
+
 def _registration_observation(request, attempt_ref, *, failed=False, reason=None, status=None):
     """A received signup attempt, without login/password or claimed user identity."""
     try:
@@ -63,6 +69,11 @@ async def auth_password_register(request: Request):
         body = {}
     if not isinstance(body, dict):
         body = {}
+    from agents.model_gateway.default_models import normalize_preference
+    try:
+        model_preference = normalize_preference(body.get("model_preference"))
+    except ValueError:
+        raise HTTPException(422, "Please choose a supported model") from None
     login = body.get("login")
     password = body.get("password")
     confirmation = body.get("password_confirm")
@@ -83,9 +94,9 @@ async def auth_password_register(request: Request):
             if journey is None:
                 await asyncio.to_thread(_registration_observation,request,attempt_ref,failed=True,reason='invitation_required',status='awaiting_invitation')
                 raise HTTPException(403, "Approved trial invitation required")
-            user = await asyncio.to_thread(register_invited, journey_ref=journey, login_name=login, password=password,device_intent=request.query_params.get("intent_ref"))
+            user = await asyncio.to_thread(register_invited, journey_ref=journey, login_name=login, password=password,device_intent=request.query_params.get("intent_ref"),model_preference=model_preference)
         else:
-            user = await asyncio.to_thread(register_password_user, login_name=login, password=password)
+            user = await asyncio.to_thread(register_password_user, login_name=login, password=password, model_preference=model_preference)
     except PermissionError:
         await asyncio.to_thread(_registration_observation,request,attempt_ref,failed=True,reason='invitation_required',status='awaiting_invitation')
         raise HTTPException(403, "Approved trial invitation required") from None

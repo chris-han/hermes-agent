@@ -51,6 +51,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+model-gateway-http3 = ["curl-cffi==0.16.0"]
 legacy-hermes = ["hermes-agent[feishu]"]
 task-runtime = ["psycopg[binary]==3.3.3", "PyJWT[crypto]==2.13.0", "websockets==15.0.1"]
 payments = ["wechatpayv3==2.0.4", "python-alipay-sdk==3.4.0"]

@@ -79,7 +79,7 @@ def decide(*,application_ref,actor_user_id,status,traffic_class=None):
         return {'application_ref':application_ref,'status':status}
 
 
-def register_invited(*,journey_ref,login_name,password,device_intent=None):
+def register_invited(*,journey_ref,login_name,password,device_intent=None,model_preference='platform_recommended'):
     """Invitation eligibility and canonical signup commit atomically."""
     from agents.gateway_identity import register_password_user
     with write_transaction(),connection() as c:
@@ -89,7 +89,7 @@ def register_invited(*,journey_ref,login_name,password,device_intent=None):
             device=c.execute("SELECT user_id FROM semantier_gateway.device_connections WHERE intent_ref=%s AND status='pending' AND expires_at>now()",(device_intent,)).fetchone()
             if not device or device['user_id'] is not None:raise ValueError('Device registration context expired; restart sign-in from Windows')
             surface='windows'
-        user=register_password_user(login_name=login_name,password=password)
+        user=register_password_user(login_name=login_name,password=password,model_preference=model_preference)
         from agents import auth_db
         users=auth_db.load_users()
         users[user['user_id']]['registration_origin']=surface

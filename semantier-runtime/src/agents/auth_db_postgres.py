@@ -426,6 +426,21 @@ def provision_personal_signup(user, *, insert_user=True):
             c.execute(sql.SQL("INSERT INTO {}.accounts(organization_id,account_id,currency,funding,budget_limit) VALUES(%s,%s,'CNY','SEMANTIER_CREDITS',0)").format(sql.Identifier(billing)),(org,aid))
             event={'currency':'CNY','funding':'SEMANTIER_CREDITS','budget_limit':'0','wallet':'0'}
             c.execute(sql.SQL("INSERT INTO {}.financial_policy_events(event_id,organization_id,actor_user_id,operation,target,payload) VALUES(%s,%s,%s,'account.create',%s,%s::jsonb)").format(sql.Identifier(billing)),(uuid4().hex,org,'server-provisioning',aid,_json(event)))
+        default_budget_changed=False
+        if account is not None:
+            # Repair funded, untouched signup defaults during authenticated login;
+            # a customer's budget.update is authoritative even when set to zero.
+            funded=c.execute(sql.SQL("SELECT wallet,budget_spent,budget_limit,blocked FROM {}.accounts WHERE organization_id=%s AND account_id=%s AND currency='CNY' FOR UPDATE").format(sql.Identifier(billing)),(org,aid)).fetchone()
+            if funded and not funded['blocked'] and funded['wallet']>0:
+                created=c.execute(sql.SQL("SELECT 1 FROM {}.financial_policy_events WHERE organization_id=%s AND target=%s AND operation='account.create' AND payload->>'budget_limit'='0' LIMIT 1").format(sql.Identifier(billing)),(org,aid)).fetchone()
+                overridden=c.execute(sql.SQL("SELECT 1 FROM {}.financial_policy_events WHERE organization_id=%s AND target=%s AND operation='budget.update' LIMIT 1").format(sql.Identifier(billing)),(org,aid)).fetchone()
+                if created and not overridden:
+                    ceiling=funded['budget_spent']+funded['wallet']
+                    if ceiling>funded['budget_limit']:
+                        c.execute(sql.SQL("UPDATE {}.accounts SET budget_limit=%s WHERE organization_id=%s AND account_id=%s AND currency='CNY'").format(sql.Identifier(billing)),(ceiling,org,aid))
+                        default_budget_changed=True
+                        event={'prior_limit':str(funded['budget_limit']),'limit':str(ceiling),'currency':'CNY','basis':'credited_wallet_not_additional_credit'}
+                        c.execute(sql.SQL("INSERT INTO {}.financial_policy_events(event_id,organization_id,actor_user_id,operation,target,payload) VALUES(%s,%s,'server-provisioning','budget.default_credit',%s,%s::jsonb)").format(sql.Identifier(billing)),(uuid4().hex,org,aid,_json(event)))
         permissions=['billing:manage','billing:read','model:invoke','usage:read_org','usage:read_self']
         c.execute('INSERT INTO semantier_gateway.grants VALUES(%s,%s,%s::jsonb) ON CONFLICT DO NOTHING',(org,uid,_json(permissions)))
         if os.environ.get('SEMANTIER_COMMERCE_ENVIRONMENT')=='DEVELOPMENT' and os.environ.get('SEMANTIER_ENVIRONMENT')=='development':
@@ -436,6 +451,11 @@ def provision_personal_signup(user, *, insert_user=True):
             VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING''',(uid,org,aid,'semantier-user-'+uid,'semantier-team-'+org,'semantier-key-'+uid))
         seed_personal_sync(c,user_id=uid,organization_id=org,account_id=aid,
                            currency='CNY',funding='SEMANTIER_CREDITS',billing_schema=billing)
+        if default_budget_changed and os.environ.get("SEMANTIER_RUNTIME_MODE") != "tasks":
+            # The legacy seed is insert-only; publish the current policy intent
+            # in the same PostgreSQL transaction as the credit-budget repair.
+            from agents.model_gateway.account_sync_policy import enqueue_membership_change
+            enqueue_membership_change(c,uid)
         if os.environ.get("SEMANTIER_RUNTIME_MODE") == "tasks":
             from agents.task_bootstrap import allocate_signup_storage
         else:

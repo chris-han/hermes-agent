@@ -9,7 +9,7 @@ from agents.model_gateway.physical_binding import extract_physical_binding
 
 
 class ProxyClient:
-    def __init__(self, base_url: str, service_key: str, *, timeout=10):
+    def __init__(self, base_url: str, service_key: str, *, timeout=10, transport: httpx.AsyncBaseTransport | None = None, http_version: str | None = None, ca_cert: str | None = None):
         trusted_internal = (base_url == 'http://litellm:4000'
                             and os.environ.get('SEMANTIER_STORAGE_BACKEND') == 'postgresql'
                             and os.environ.get('SEMANTIER_MODEL_GATEWAY_INTERNAL_PROXY_ENABLED') == '1')
@@ -18,10 +18,26 @@ class ProxyClient:
         parsed=urlsplit(base_url)
         if parsed.username or parsed.password or parsed.query or parsed.fragment:
             raise ValueError('private Proxy URL must not embed credentials or parameters')
+        if http_version not in (None, '3'):
+            raise ValueError('unsupported private Proxy HTTP version')
+        if http_version == '3':
+            if parsed.scheme != 'https':
+                raise ValueError('private Proxy HTTP/3 requires HTTPS')
+            if transport is not None:
+                raise ValueError('select only one private Proxy transport')
+            if ca_cert is not None and (not isinstance(ca_cert, str) or not ca_cert.strip()):
+                raise ValueError('invalid private Proxy CA certificate path')
+            try:
+                import curl_cffi  # noqa: F401 - resolve before allocating the worker
+                from agent.cloud_http3_transport import CloudHTTP3Transport, AsyncCloudHTTP3Transport, LoopCloudSession
+            except ImportError:
+                raise RuntimeError('private Proxy HTTP/3 transport unavailable') from None
+            session = LoopCloudSession(cacert=ca_cert)
+            transport = AsyncCloudHTTP3Transport(CloudHTTP3Transport(base_url, session))
         self.base_url=base_url.rstrip('/')
         self._key=service_key
         self._client=httpx.AsyncClient(timeout=httpx.Timeout(timeout,connect=5),
-                                       transport=httpx.AsyncHTTPTransport(retries=0,trust_env=False),follow_redirects=False,trust_env=False)
+                                       transport=transport if transport is not None else httpx.AsyncHTTPTransport(retries=0,trust_env=False),follow_redirects=False,trust_env=False)
 
     async def close(self):
         await self._client.aclose()

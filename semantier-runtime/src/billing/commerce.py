@@ -345,6 +345,7 @@ class CommerceService:
         await c.execute("INSERT INTO ledger_transactions(id,organization_id,account_id,currency,kind) VALUES(%s,%s,%s,'CNY',%s)",(gid,org,aid,'commerce_'+kind))
         await c.execute("INSERT INTO ledger_entries(transaction_id,book_account,amount) VALUES(%s,'wallet',%s),(%s,'issuance',%s)",(gid,amount,gid,-amount))
         await c.execute("UPDATE accounts SET wallet=wallet+%s WHERE organization_id=%s AND account_id=%s AND currency='CNY'",(amount,org,aid))
+        await self.billing.fund_default_credit_budget(c,org,aid,'CNY')
         return True
 
     async def fulfill(self,oid):

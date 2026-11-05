@@ -1717,7 +1717,9 @@ def verify_local_password_hash(password_hash: str, password: str) -> bool:
         return False
 
 
-def register_password_user(*, login_name: str, password: str) -> dict[str, Any]:
+def register_password_user(*, login_name: str, password: str, model_preference: str = "platform_recommended") -> dict[str, Any]:
+    from agents.model_gateway.default_models import normalize_preference
+    model_preference = normalize_preference(model_preference)
     login = login_name.strip().lower()
     if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", login) or not 3 <= len(login) <= 32:
         raise ValueError("Use 3–32 letters, numbers, or single hyphens for the login name")
@@ -1734,6 +1736,7 @@ def register_password_user(*, login_name: str, password: str) -> dict[str, Any]:
             "display_name": None, "password_login_name": login,
             "password_hash": password_hash, "profile_completed_at": None,
             "auth_provider": "password", "weixin_user_id": None,
+            "model_preference": model_preference,
             "feishu_open_id": "", "created_at": now, "updated_at": now,
         }
         if is_postgresql():
@@ -2016,7 +2019,10 @@ def upsert_weixin_owner(
     account_id: str,
     external_user_id: str,
     bind_user_id: str | None = None,
+    model_preference: str = "platform_recommended",
 ) -> dict[str, Any]:
+    from agents.model_gateway.default_models import normalize_preference
+    model_preference = normalize_preference(model_preference)
     account_id = account_id.strip()
     external_user_id = external_user_id.strip()
     if not account_id and not external_user_id:
@@ -2122,6 +2128,7 @@ def upsert_weixin_owner(
             "auth_provider": "weixin",
             "weixin_user_id": external_user_id or None,
             "feishu_open_id": "",
+            "model_preference": model_preference,
             "created_at": now,
             "updated_at": now,
         }
@@ -2165,10 +2172,13 @@ def create_weixin_login_state(
     qr_scan_data: str,
     base_url: str,
     bot_type: str,
+    model_preference: str = "platform_recommended",
     bind_user_id: str | None = None,
     prelogin_session_nonce_hash: str | None = None,
     request_user_agent_hash: str | None = None,
 ) -> dict[str, Any]:
+    from agents.model_gateway.default_models import normalize_preference
+    model_preference = normalize_preference(model_preference)
     with _WRITE_LOCK, identity_write_transaction():
         _ensure_auth_store()
         states = load_weixin_login_states()
@@ -2184,6 +2194,7 @@ def create_weixin_login_state(
             "qr_scan_data": qr_scan_data,
             "base_url": base_url,
             "redirect_base_url": "",
+            "model_preference": model_preference,
             "bot_type": bot_type,
             "status": "wait",
             "bind_user_id": bind_user_id,

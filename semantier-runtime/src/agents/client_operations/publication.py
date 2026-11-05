@@ -44,7 +44,9 @@ class Publisher:
                     raise OperationError(503, 'channel_provenance_mismatch')
                 immutable_write(target, canonical(head))
 
-    def admit(self,candidate,principal,*,persist=True):
+    def admit(self,candidate,principal,*,persist=True,local=False):
+        if local and self.target_id != "channel2":
+            raise OperationError(403, "local_admission_target_refused")
         from agents.webapi.deps import ensure_repo_hermes_agent_on_path
         ensure_repo_hermes_agent_on_path()
         from hermes_cli.release_channels import validate_manifest,validate_record,build_prefix
@@ -59,7 +61,9 @@ class Publisher:
         if len(packages)!=1 or (packages[0]['platform'],packages[0]['arch'])!=('win32','x64'):
             raise OperationError(422,'windows_x64_scope_required')
         receipt=data['native_receipt'];package=packages[0]
-        native_fields=self.native_receipt_fields(package,request,receipt)
+        native_fields=self.native_receipt_fields(package,request,receipt,local=local)
+        if local and not native_fields:
+            raise OperationError(422, "local_native_graph_required")
         from .chunks import chunk_entries
         chunk_entries(package['artifact'], request['buildId'])
         expected={'source_commit':request['commit'],'controller_commit':request.get('controllerCommit'),
@@ -83,14 +87,21 @@ class Publisher:
                 raise OperationError(422,'distribution_archive_contract_mismatch')
             expected['distribution_archive']=archive
         if (not self.receipt_key or not hmac.compare_digest(hmac.new(self.receipt_key,canonical(receipt),hashlib.sha256).hexdigest(),data['receipt_hmac'])
-            or any(receipt.get(k)!=v for k,v in expected.items()) or not receipt.get('workflow_run_id')
-            or receipt.get('workflow_result')!='native_gates_passed'
+            or any(receipt.get(k)!=v for k,v in expected.items())
             or not str(receipt.get('package_family','')).startswith(package['identity']+'_')):
             raise OperationError(422,'trusted_native_receipt_required')
-        from .ci import verify_workflow
-        ci_verification=(self.workflow_verifier or verify_workflow)(receipt)
-        data['ci_verification']=ci_verification
-        # Receipt-signer is CI-only. Operators cannot turn uploads into qualification.
+        if local:
+            if receipt.get('provenance') != 'local-ci' or any(k in receipt for k in (
+                'workflow_run_id','workflow_run_attempt','workflow_result','payload_result','installed_graph_result',
+                'native_remote_digest_enforcement','native_qualified_at','native_payload_verified_at')):
+                raise OperationError(422,'local_native_receipt_invalid')
+            data['provenance']='local-ci'
+            data['verification_scope']='local-artifact'
+        else:
+            if not receipt.get('workflow_run_id') or receipt.get('workflow_result')!='native_gates_passed':
+                raise OperationError(422,'trusted_native_receipt_required')
+            from .ci import verify_workflow
+            data['ci_verification']=(self.workflow_verifier or verify_workflow)(receipt)
         prefix=build_prefix(request['buildId']);manifest_key=prefix+'build.json'
         self.stage_package(package, request)
         body=canonical(manifest);target=safe_file(self.root,manifest_key)
@@ -112,15 +123,16 @@ class Publisher:
             self.store.audit(c,principal['principal_id'],'release_ingest',data['release_id'],{'build_id':request['buildId'],'scope':'windows-x64-native'})
         return data
 
-    def native_receipt_fields(self, package, request, receipt):
+    def native_receipt_fields(self, package, request, receipt, *, local=False):
         if not package.get('native'):return {}
         try:
-            if (receipt.get('qualification_contract')!='windows-native-uri-graph/v1'
+            contract='windows-native-uri-graph/local-v1' if local else 'windows-native-uri-graph/v1'
+            if (receipt.get('qualification_contract')!=contract
                 or re.fullmatch('[a-f0-9]{40}',receipt.get('runtime_parent_commit','')) is None
                 or re.fullmatch('[a-f0-9]{64}',receipt.get('runtime_composition_sha256','')) is None):
                 raise ValueError('Final composition binding absent')
-            times=[datetime.fromisoformat(receipt[key].replace('Z','+00:00')) for key in
-                   ('produced_at','native_qualified_at','native_payload_verified_at')]
+            keys=('produced_at',) if local else ('produced_at','native_qualified_at','native_payload_verified_at')
+            times=[datetime.fromisoformat(receipt[key].replace('Z','+00:00')) for key in keys]
             if any(value.utcoffset()!=timedelta(0) for value in times) or any(value>times[0] for value in times[1:]):
                 raise ValueError('Qualification chronology differs')
         except (KeyError,TypeError,ValueError,AttributeError) as error:
@@ -128,10 +140,14 @@ class Publisher:
 
         from .package_graph import read_package_graph
         graph=read_package_graph(self.incoming,package,request['buildId'])
-        return {'qualification':'windows-x64-native-uri-graph',
+        fields={'qualification':'windows-x64-native-uri-graph',
                 'native_graph_sha256':package['native']['graph']['sha256'],
-                'native_objects_sha256':digest(graph['objects']),
-                'native_remote_digest_enforcement':'PASS','installed_graph_result':'PASS','payload_result':'PASS'}
+                'native_objects_sha256':digest(graph['objects'])}
+        if not local:
+            fields.update(native_remote_digest_enforcement='PASS', installed_graph_result='PASS', payload_result='PASS')
+        else:
+            fields['artifact_result']='PASS'
+        return fields
 
     def stage_package(self, package, request):
         from .package_graph import package_objects

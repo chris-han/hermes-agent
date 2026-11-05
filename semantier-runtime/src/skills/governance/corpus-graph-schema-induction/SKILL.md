@@ -22,6 +22,10 @@ metadata:
 
 This is a non-selectable internal compiler capability invoked by `knowledge-graph-building`. Semantier core services retain semantic, persistence, review, and promotion authority.
 
+## Quality stewardship versus binding rule qualification
+
+This compiler performs evidence-grounded **knowledge production quality stewardship**. Preserve separate source spans, extracted claims, contributor-owned expert Notes, confidence, conflicts, version history and independent quality review. Graph induction is not a restriction on an authenticated user's ability to study documents, retain personal interpretations or consult Notes as clearly attributed advisory context. Formal candidate review/admission below concerns building an **accepted executable schema/rule**, not blanket permission for research or authoring. Do not confuse a reviewer-quality label with normative legal force or creator ownership; keep data-access checks in their separate security scope.
+
 ## Procedure
 
 1. Select the source through a governed upload, artifact, document reference, or registered repository fixture. Never accept an arbitrary host path from user prose.

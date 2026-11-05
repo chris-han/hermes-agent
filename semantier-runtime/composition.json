@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "parent_commit": "5492009709cd474b9716b47974d2051bfd48ce1f",
+  "parent_commit": "3357fe592b39e14ff956305badf879a8bcad78cb",
   "files": [
     {
       "path": "MODEL-NOTICE.txt",
@@ -228,7 +228,7 @@
     },
     {
       "path": "pyproject.toml",
-      "sha256": "7cd5cbeb2452e0473b7eae7adab59bb67020300bbce86dc230bf2ad773c36eff"
+      "sha256": "d2ba0889529d064bb8b31135e0c9b1f38038fc5a119842b136304fe3866c551d"
     },
     {
       "path": "src/agents/__init__.py",
@@ -248,7 +248,7 @@
     },
     {
       "path": "src/agents/auth_db_postgres.py",
-      "sha256": "5a73219a8816d7edf5007f71d0ea4695ad52cd3ee4fb80a5e5e885a492368db9"
+      "sha256": "f7544e1dd7a5d1a7792b1605ef14ae57acf8e0e39553ea3c245a3ac1606a7d93"
     },
     {
       "path": "src/agents/auth_pairing_postgres.py",
@@ -336,7 +336,7 @@
     },
     {
       "path": "src/agents/client_operations/publication.py",
-      "sha256": "72a3b8aedcc514e689327d61aa3794d521cda9c56cb01b4d3045d8556e00dbf3"
+      "sha256": "26762c29f4583f15a46934a0c1a9e6f99445abadf8a83c9b2a19a591018b188e"
     },
     {
       "path": "src/agents/client_operations/publications.py",
@@ -344,15 +344,19 @@
     },
     {
       "path": "src/agents/client_operations/r2_target.py",
-      "sha256": "82e241112e200e8146a5d4e7e1e4f45479fc899a8916d4afb9cbcbaaec29bc14"
+      "sha256": "36204f8ec7baadff7d687933775674a7ead85f05eb013bc681901f570a303d92"
     },
     {
       "path": "src/agents/client_operations/remote_publication.py",
       "sha256": "96d9cb5351c8ba6414d11329bf754eaf7801dfc368729be930617ab214e71c71"
     },
     {
+      "path": "src/agents/client_operations/resumable_r2_readback.py",
+      "sha256": "39969ee9e8f4594549831ad3b4bf4a788f2caa02f66e7c05cfe17f2698e9f9b9"
+    },
+    {
       "path": "src/agents/client_operations/runtime.py",
-      "sha256": "29f267bf10f3ab99e19ecf44f83aa99ffde229c06c8c7d886e51a9b7edc0e701"
+      "sha256": "837d59bec4e96da6b7b31967cdde3bed9da16bcd96f9e30827eb25602d118865"
     },
     {
       "path": "src/agents/client_operations/schema.sql",
@@ -364,7 +368,7 @@
     },
     {
       "path": "src/agents/client_operations/targets.py",
-      "sha256": "8c5f51af617793e995aa8b0149f872bc2e22307fe61fbaa63e219b19ed71501e"
+      "sha256": "f1a12f1370efe0f7a8cf86221c482bfa3f085bc9f0f09f519a869200b781c58d"
     },
     {
       "path": "src/agents/cloud_mode.py",
@@ -456,7 +460,7 @@
     },
     {
       "path": "src/agents/gateway_identity.py",
-      "sha256": "dba1c2cb051d5fddc2e9dda6ac0bc18ad7cc647633ee0da11d66fbed2e9b187d"
+      "sha256": "e12ce22383be64fd8ade96c7f29a4e2d743914f7ab1de7c107d34e2a8ac05453"
     },
     {
       "path": "src/agents/governed_context.py",
@@ -560,7 +564,7 @@
     },
     {
       "path": "src/agents/model_gateway/account_sync.py",
-      "sha256": "7f64d70c105e7dd8b2b82454c1bef38f62cb7e4cba8abba86853046c935ba316"
+      "sha256": "631eab0cfef8f957865bba0bd2a8d32b242c208dc55ef49a6dce5c3f957af327"
     },
     {
       "path": "src/agents/model_gateway/account_sync.sql",
@@ -589,6 +593,14 @@
     {
       "path": "src/agents/model_gateway/credential_store.py",
       "sha256": "f409cf572585ccd0fed84b3bf5da64eb42054430782552172a2a5a29875710d0"
+    },
+    {
+      "path": "src/agents/model_gateway/default_activation.py",
+      "sha256": "8065f80a6ce6e76f2a12e4022dd4b88a5db9eab635e0538eb2354734ddc53271"
+    },
+    {
+      "path": "src/agents/model_gateway/default_models.py",
+      "sha256": "a9533545b015fd617776cbc6ed48c0d0f06ad2e67fc26cdc69cb8229b045193b"
     },
     {
       "path": "src/agents/model_gateway/device_connections.py",
@@ -632,11 +644,11 @@
     },
     {
       "path": "src/agents/model_gateway/provision.py",
-      "sha256": "e0237e737ec156b3a1b7658e2eeb2552d4458694338c92dc08910f6724fa242e"
+      "sha256": "b6c5b914a62786f8746afd3728071c4233288e9a2471bd6cac9835c9c2bab68e"
     },
     {
       "path": "src/agents/model_gateway/proxy.py",
-      "sha256": "60ab91da2837b97558d32ab3b442405ce416b5e39e5cdd6bc5b1f3b41b581f17"
+      "sha256": "98ad7f07c64fba8aabfc7cecdce3ae93e42e11e4ec16564a3ba94195540dda48"
     },
     {
       "path": "src/agents/model_gateway/proxy_capture.py",
@@ -648,7 +660,7 @@
     },
     {
       "path": "src/agents/model_gateway/runtime.py",
-      "sha256": "c174736fefb7c37da8688c395eda7fa08968eaed0466a2782e2561b51481a313"
+      "sha256": "65f01c3774208155a403a25280701f1f7b8c5bc94aeae8e38b9aa437bb7133c7"
     },
     {
       "path": "src/agents/model_gateway/selection.py",
@@ -740,7 +752,7 @@
     },
     {
       "path": "src/agents/route_policy.py",
-      "sha256": "c791143fb669b156d9c7e1be69c4391455a6c6479a65a531b2f5ebf6b9b3ac79"
+      "sha256": "d3821615ecc6f8396c48ffc2b2d6956adaee3d3057a18bc4895ff19b16b4d7e4"
     },
     {
       "path": "src/agents/runtime_feedback_to_candidate.py",
@@ -828,7 +840,7 @@
     },
     {
       "path": "src/agents/trial_invitations.py",
-      "sha256": "4599c3bca52c24392c4b37799f473b2a4029adc9a4b5b4b4e55b09e7835030d6"
+      "sha256": "4b90e4a0c528894ea4cd012c594d1028d5bf72a963f1ff4a161048b332d27cb1"
     },
     {
       "path": "src/agents/webapi/__init__.py",
@@ -840,11 +852,11 @@
     },
     {
       "path": "src/agents/webapi/auth_routes.py",
-      "sha256": "9cfb57f1af3e0b4c727fccfd5c426d3c0b19f34a832593074a0d1fe0615cdf63"
+      "sha256": "71487db62da243746f67269a2addaf4fc3852754d970d83a00478ec00f21425a"
     },
     {
       "path": "src/agents/webapi/billing_commerce_routes.py",
-      "sha256": "660c1e55548c025d1203ac1e7843171e99e1d4c903c2fbbadddf0024ba99d18b"
+      "sha256": "b454074d7dd6d0b867189eeb56ca02cdff258bc2525fd5a78419100038b33762"
     },
     {
       "path": "src/agents/webapi/billing_routes.py",
@@ -856,7 +868,7 @@
     },
     {
       "path": "src/agents/webapi/client_operations_routes.py",
-      "sha256": "dc3269a9d45dd6cc8234a9f9e1c4933ecbf7855a935433bb62ac19fe4aad3cdf"
+      "sha256": "769e8d9bd67bade27d892d14b28d48eb4976a870f94b7cf8ac033b165b6735d0"
     },
     {
       "path": "src/agents/webapi/cloud_device_routes.py",
@@ -1012,7 +1024,7 @@
     },
     {
       "path": "src/agents/webapi/model_gateway_routes.py",
-      "sha256": "891865ab18fb7c7a0d032968d5a555ddf414b489cee1c3962bb582893c36c332"
+      "sha256": "2de702e6cb2609ca64fd519dfc633e3c9fde5d1de541d126c81d44e49d9a635d"
     },
     {
       "path": "src/agents/webapi/model_gateway_ui.py",
@@ -1040,7 +1052,7 @@
     },
     {
       "path": "src/agents/webapi/password_routes.py",
-      "sha256": "320fff724f363af0d488e1e0cda8a0ad9a08b4ded8e831e22c592b2abd21aa13"
+      "sha256": "307c67eeedc4a02adeaec5a3bd0650dd51381421b9cd1687ff22e5c7498e6adf"
     },
     {
       "path": "src/agents/webapi/plugin_extensions.py",
@@ -1192,7 +1204,7 @@
     },
     {
       "path": "src/billing/commerce.py",
-      "sha256": "24a8300765952d5337b8432e992d8020105cf18b99018dddb5c120ba2a3cce96"
+      "sha256": "5237fbf07bc40f6c037bc6384f73b80d322fdb293b721bee6cf8ffc83fa0651a"
     },
     {
       "path": "src/billing/native_evidence.py",
@@ -1207,6 +1219,10 @@
       "sha256": "a9c240272e63be2d55afdd66bc99cfbf0e0d93b58ffae34e41c6205e4daf5868"
     },
     {
+      "path": "src/billing/platform_pricing.py",
+      "sha256": "052b753253ae26b1fb570c2e891ed80bde9858092a926c19ac4b2f5ba61e8ccc"
+    },
+    {
       "path": "src/billing/rating.py",
       "sha256": "59492919d8fc85cc6a8ab53ccccb0307dea56039451fab63222d36f6182f74c2"
     },
@@ -1216,11 +1232,11 @@
     },
     {
       "path": "src/billing/schema.sql",
-      "sha256": "75b2cfaa2662db40659abb7e27f2671f88c0e66574759e45d88e8d1a82d73672"
+      "sha256": "a9e0265c5811da50645081f250a8d27061b6cd5aaeb2991bb0f12a57bd106219"
     },
     {
       "path": "src/billing/store.py",
-      "sha256": "e57227a1fb95c2e9e2ebe1ba21533b57b983af15191e55276fb20ff8a6e844b3"
+      "sha256": "5b5a6d2a3997ca05508da87ccbd2a3b635679a7d13e7916d2ea4d948e3c50c71"
     },
     {
       "path": "src/billing/supplier_catalog.py",
@@ -1408,7 +1424,7 @@
     },
     {
       "path": "src/contracts/client_operations.py",
-      "sha256": "e24404bebc89feec485b4168ab30d4cfaea27ef5395baf609c05788c816423f4"
+      "sha256": "64071c3017dbceee0e087401368c0eab1cac92f159e6b142ab393fe3a2a16322"
     },
     {
       "path": "src/contracts/cloud_device.py",
@@ -5668,19 +5684,19 @@
     },
     {
       "path": "src/skills/governance/corpus-graph-schema-induction/SKILL.md",
-      "sha256": "365850ac0ee3ed05c61f8c83806a492d101a39078f1b743de76d504b2c2d85a7"
+      "sha256": "1113253e43ea4b39e77a850b63daf61434de6a4c4ca42fea469d4aa668e691cd"
     },
     {
       "path": "src/skills/governance/knowledge-graph-building/SKILL.md",
-      "sha256": "4d74c8922943a0e96753c4bbe9f6ee8103b560e8ab23bf854f8f9ae6414815c3"
+      "sha256": "d4026a07f965fa59a6978f1a278a2e7aae71a05b74e1f2a13d30bc658d2f04d2"
     },
     {
       "path": "src/skills/governance/metadata-semantic-drift-monitor/SKILL.md",
-      "sha256": "5cb8a02b65435223f7cdc14b8e743df22c1d41790b8ae51b4f707a5c9cc05c1b"
+      "sha256": "2da7b8272079d3098f1bf3c42d9f756283f825e1928e7f92d63ce5a3b9b0e446"
     },
     {
       "path": "src/skills/governance/tender-review-journey/SKILL.md",
-      "sha256": "611b29e6832ee3d9a238ce3c3e241ca11fe188872e706e8b7bad652c3a206135"
+      "sha256": "4c109e93aba101f50f0ad410e31a67a2be3dda4260cde2afa896274a0753a054"
     },
     {
       "path": "src/skills/productivity/expense-reimbursement/SKILL.md",

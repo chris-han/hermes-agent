@@ -40,11 +40,18 @@ async def cloud_provider_catalog(request: Request):
     service=gateway(request)
     actor=await actor_for(request,service,'model:invoke')
     from agents.auth_db import get_workspace_config
+    from agents.gateway_identity import get_user_record
+    from agents.model_gateway.default_models import resolved_model
     from agents.model_gateway.selection import assignment_projection,supported_tasks
     from starlette.concurrency import run_in_threadpool
     payload=await service.catalog(actor,account_id=request.query_params.get('account_id'))
     config=await run_in_threadpool(get_workspace_config,actor.workspace_id)
-    return {**payload,'organization_id':actor.organization_id,'assignments':assignment_projection(config,actor.organization_id),'supported_purposes':supported_tasks()}
+    user=await run_in_threadpool(get_user_record,actor.user_id)
+    preferred=resolved_model((user or {}).get('model_preference'))
+    return {**payload,'organization_id':actor.organization_id,
+        'recommended_default_model':preferred,
+        'assignments':assignment_projection(config,actor.organization_id),
+        'supported_purposes':supported_tasks()}
 
 
 @router.get('/api/cloud-provider/model-info')

@@ -259,3 +259,19 @@ ALTER TABLE supplier_pricing_runs ADD COLUMN IF NOT EXISTS source_ref text NOT N
 DROP INDEX IF EXISTS supplier_pricing_one_capture;
 CREATE UNIQUE INDEX IF NOT EXISTS supplier_pricing_one_capture ON supplier_pricing_runs(organization_id,provider_id,source_ref,partition) WHERE state='COLLECTING';
 INSERT INTO schema_version(version) VALUES (12) ON CONFLICT DO NOTHING;
+
+-- v13: published retail model prices are pointers to immutable customer
+-- price versions. This table contains NO independent rate amounts. Pricing,
+-- signup model activation and settlement all reference the same prices row.
+CREATE TABLE IF NOT EXISTS platform_model_price_publications (
+ model_id text NOT NULL,
+ publication_revision integer NOT NULL CHECK(publication_revision>0),
+ customer_price_version text NOT NULL,
+ price_kind text NOT NULL DEFAULT 'customer' CHECK(price_kind='customer'),
+ published_by text NOT NULL,
+ published_at timestamptz NOT NULL DEFAULT now(),
+ PRIMARY KEY(model_id,publication_revision),
+ UNIQUE(model_id,customer_price_version),
+ FOREIGN KEY(customer_price_version,price_kind) REFERENCES prices(version_id,kind)
+);
+INSERT INTO schema_version(version) VALUES (13) ON CONFLICT DO NOTHING;

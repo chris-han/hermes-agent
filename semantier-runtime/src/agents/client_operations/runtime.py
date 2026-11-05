@@ -118,6 +118,109 @@ class ClientOperations:
                 self.store.audit(c,actor,'manual_zip_staged',MANUAL_064['build'],result)
             return {**result,'operation_id':operation_id}
 
+    def stage_manual_077(self, actor, request_id):
+        """Journal the pinned 0.0.77 publication and reconcile exact retries."""
+        from .r2_target import MANUAL_077
+        from contracts.client_operations import digest
+        if not isinstance(request_id, str) or not 1 <= len(request_id) <= 128:
+            raise OperationError(422, 'manual_request_invalid')
+        target = self.targets.owner('channel2'); remote = target.remote_target
+        if not remote or not remote.control_target or target.base != 'https://update2.semantier.com':
+            raise OperationError(503, 'manual_target_unavailable')
+        authorize = lambda: self.publications.authorize(actor, ['channel2'])
+        authorize()
+        intent = {'kind': 'manual_download', 'target_id': 'channel2', 'release_id': MANUAL_077['build']}
+        request_hash = digest(intent)
+        binding = [remote.base, remote.bucket, remote.control_target.bucket]
+        with self.store.connection() as claim:
+            acquired = claim.execute('SELECT pg_try_advisory_xact_lock(hashtext(%s)) AS acquired',
+                                     (self.store.schema+':manual:channel2',)).fetchone()['acquired']
+            if not acquired: raise OperationError(409, 'manual_publication_busy')
+            with self.store.connection() as c:
+                row = c.execute('SELECT operation_id,request_hash,status,body FROM operations WHERE user_id=%s AND idempotency_key=%s',
+                                (actor,request_id)).fetchone()
+                pending = c.execute("SELECT operation_id FROM operations WHERE channel=%s AND status IN ('manual_pending','retirement_pending') ORDER BY created_at LIMIT 2",
+                                    (self.channel,)).fetchall()
+            if row:
+                if row['request_hash'] != request_hash or row['body'].get('remote') != binding:
+                    raise OperationError(409, 'manual_intent_changed')
+                if row['status'] == 'manual_staged':
+                    return {**row['body']['result'], 'operation_id': row['operation_id']}
+                if row['status'] != 'manual_pending': raise OperationError(409, 'manual_state_invalid')
+                operation_id, body = row['operation_id'], row['body']
+                if any(p['operation_id'] != operation_id for p in pending):
+                    raise OperationError(503, 'manual_journal_requires_recovery')
+                remote.recover_owned_lock(body['remote_lock'],body['owner_instance'],current_instance=self.publications.instance)
+            else:
+                if pending: raise OperationError(503, 'manual_journal_requires_recovery')
+                operation_id=uuid4().hex
+                identity={**self.publications.instance,'kind':'manual_download','release_id':MANUAL_077['build'],
+                          'operation_id':operation_id,'actor':str(actor)}
+                reservation={'owner':identity,'id':uuid4().hex}
+                body={'intent':intent,'remote':binding,'owner_instance':identity,'remote_lock':reservation}
+                with self.store.connection() as c:
+                    c.execute("INSERT INTO operations(operation_id,user_id,channel,idempotency_key,request_hash,body,status) VALUES(%s,%s,%s,%s,%s,%s::jsonb,'manual_pending')",
+                              (operation_id,actor,self.channel,request_id,request_hash,json.dumps(body)))
+                    self.store.audit(c,actor,'manual_zip_requested',MANUAL_077['build'],{'operation_id':operation_id})
+            result=remote.stage_manual_077(target.incoming,body['owner_instance'],body['remote_lock'],authorize)
+            with self.store.connection() as c:
+                c.execute("UPDATE operations SET status='manual_staged',body=body || %s::jsonb,updated_at=now() WHERE operation_id=%s",
+                          (json.dumps({'result':result}),operation_id))
+                self.store.audit(c,actor,'manual_zip_staged',MANUAL_077['build'],result)
+            return {**result,'operation_id':operation_id}
+
+    def retire_approved_legacy(self, actor, request_id):
+        """Journal and reconcile the operator-approved one-time R2 retirement."""
+        from contracts.client_operations import digest
+        if not isinstance(request_id, str) or not 1 <= len(request_id) <= 128:
+            raise OperationError(422, 'retirement_request_invalid')
+        target = self.targets.owner('channel2')
+        remote = target.remote_target
+        if not remote or not remote.control_target or target.base != 'https://update2.semantier.com':
+            raise OperationError(503, 'manual_target_unavailable')
+        authorize = lambda: self.publications.authorize(actor, ['channel2'])
+        authorize()
+        intent = {'kind': 'approved-legacy-retirement', 'target_id': 'channel2'}
+        request_hash = digest(intent)
+        binding = [remote.base, remote.bucket, remote.control_target.bucket]
+        with self.store.connection() as claim:
+            acquired = claim.execute('SELECT pg_try_advisory_xact_lock(hashtext(%s)) AS acquired',
+                                     (self.store.schema+':manual:channel2',)).fetchone()['acquired']
+            if not acquired:
+                raise OperationError(409, 'manual_publication_busy')
+            with self.store.connection() as c:
+                row = c.execute('SELECT operation_id,request_hash,status,body FROM operations WHERE user_id=%s AND idempotency_key=%s',
+                                (actor, request_id)).fetchone()
+            if row:
+                if row['request_hash'] != request_hash or row['body'].get('remote') != binding:
+                    raise OperationError(409, 'retirement_intent_changed')
+                if row['status'] == 'retirement_succeeded':
+                    return {**row['body']['result'], 'operation_id': row['operation_id']}
+                if row['status'] != 'retirement_pending':
+                    raise OperationError(409, 'retirement_state_invalid')
+                operation_id, body = row['operation_id'], row['body']
+                remote.recover_owned_lock(body['remote_lock'], body['owner_instance'],
+                                          current_instance=self.publications.instance)
+            else:
+                snapshot = remote.snapshot_approved_retirement()
+                operation_id = uuid4().hex
+                identity = {**self.publications.instance, 'kind': intent['kind'],
+                            'operation_id': operation_id, 'actor': str(actor)}
+                reservation = {'owner': identity, 'id': uuid4().hex}
+                body = {'intent': intent, 'remote': binding, 'snapshot': snapshot,
+                        'owner_instance': identity, 'remote_lock': reservation}
+                with self.store.connection() as c:
+                    c.execute("INSERT INTO operations(operation_id,user_id,channel,idempotency_key,request_hash,body,status) VALUES(%s,%s,%s,%s,%s,%s::jsonb,'retirement_pending')",
+                              (operation_id, actor, self.channel, request_id, request_hash, json.dumps(body)))
+                    self.store.audit(c, actor, 'legacy_retirement_requested', operation_id, {'target_id': 'channel2'})
+            result = remote.retire_approved_objects(body['owner_instance'], body['remote_lock'], body['snapshot'], authorize)
+            result = {**result, 'verified_absent': sorted(body['snapshot'])}
+            with self.store.connection() as c:
+                c.execute("UPDATE operations SET status='retirement_succeeded',body=body || %s::jsonb,updated_at=now() WHERE operation_id=%s",
+                          (json.dumps({'result': result}), operation_id))
+                self.store.audit(c, actor, 'legacy_retirement_succeeded', operation_id, result)
+            return {**result, 'operation_id': operation_id}
+
     def maintain(self):
         self.maintain_retention()
         from .distribution import ingest_logs

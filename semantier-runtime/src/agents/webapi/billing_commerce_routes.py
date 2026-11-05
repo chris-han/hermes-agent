@@ -1,4 +1,5 @@
 """Browser-only commerce commands, separately authorized native read projection."""
+import asyncio
 import os
 from urllib.parse import urlsplit
 from fastapi import APIRouter, HTTPException, Request
@@ -55,6 +56,12 @@ async def catalog(request:Request):
     # Public pricing remains available without gateway, session or onboarding.
     return configured(None).catalog()
 
+@router.get('/model-rates')
+async def published_model_rates(request:Request):
+    service, _ = commerce(request)
+    return await service.billing.published_model_prices()
+
+
 @router.get('/accounts')
 async def accounts(request:Request):
     _,_,_,rows=await actor_accounts(request)
@@ -94,7 +101,13 @@ async def list_orders(request:Request,account_id:str|None=None):
 @router.get('/orders/{order_id}')
 async def get_order(request:Request,order_id:str,account_id:str|None=None):
     c,a,aid=await scoped(request,account_id)
-    return await run(c.get_order(a.organization_id,aid,order_id))
+    order=await run(c.get_order(a.organization_id,aid,order_id))
+    from agents.gateway_identity import account_provisioning_for_user
+    readiness=await asyncio.to_thread(account_provisioning_for_user,user_id=a.user_id,
+        organization_id=a.organization_id,workspace_id=a.workspace_id,account_id=aid)
+    if readiness is not None:
+        order['account_provisioning']=readiness
+    return order
 
 @router.post('/orders/{order_id}/test-payment')
 async def test_payment(request:Request,order_id:str):

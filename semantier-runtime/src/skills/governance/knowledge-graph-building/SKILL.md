@@ -45,6 +45,12 @@ metadata:
 
 Use this journey for a user-owned source-to-knowledge-graph outcome. Semantier core remains the authority for identity, source admission, intent review, candidate persistence, grounding, release, replay, and audit.
 
+## Governance is stewardship, not ordinary-use permission
+
+The purpose of this journey is **knowledge-production quality stewardship**: preserve source quality, extraction lineage, disagreements, contributor identity and versioned corrections. Distinguish an official legal Source/Span, extracted claim, AI Insight and independently owned expert Note; link them without collapsing authorship, source authority, quality review, data visibility and normative activation into one status. An expert Note may be explored and cited as attributed interpretation within the user's security scope without being approved as a binding rule. A Note reused by several notebooks/tasks retains its original owner, license and revision.
+
+The numbered preflight, schema/witness and release gates below govern **this particular normative graph-building/release operation** and its genuine security/release prerequisites. They are **not** generic approval gates for viewing sources, taking personal notes, exploring candidate graphs, or using unreviewed interpretations as clearly labeled advisory context. When a formal graph-build prerequisite is missing, explain its local blocker and preserve unaffected reading/analysis and suggested next steps. Do not infer downstream compliance or legal authority from an admitted graph edge.
+
 ## Source-first procedure
 
 1. Run **Graph-build preflight** before document intake or compiler work. Resolve the authenticated workspace, active organization membership when the route is tenant-member scoped, knowledge write entitlement when upload may occur, governed source-representation access, and schema-profile availability. Shell labels such as `My workspace` are not proof that these prerequisites exist. If preflight is not `READY`, do not upload, ingest, enter semantic-intent proposal, or invoke the compiler; expose the actual prerequisite and its recovery owner. After recovery, re-run preflight rather than resuming from stale context.

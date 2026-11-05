@@ -6,7 +6,7 @@ from fastapi import APIRouter,HTTPException,Request,Query
 from typing import Literal
 from fastapi.routing import APIRoute
 from pydantic import ValidationError
-from contracts.client_operations import ReleaseCandidate,Promotion,ChannelControl,EventBatch,Diagnostic,Classification,Identifier,Strict,PublicationIntent,PublicationRetry,TargetBindingAdmission,ManualStage
+from contracts.client_operations import ReleaseCandidate,Promotion,ChannelControl,EventBatch,Diagnostic,Classification,Identifier,Strict,PublicationIntent,PublicationRetry,TargetBindingAdmission,ManualStage,LegacyRetirement,Manual077Stage
 from agents.client_operations.artifact_io import OperationError
 from agents.webapi.deps import require_authenticated_context
 from agents.model_gateway.auth import csrf
@@ -110,6 +110,15 @@ async def ingest(request:Request):
     return envelope(owner,{'release':admitted})
 
 
+@router.post('/releases/local-native')
+async def ingest_local_native(request:Request):
+    import asyncio
+    owner,ctx,permissions=browser(request,'release_manage')
+    candidate=await body(request,ReleaseCandidate,1024*1024)
+    binding=await asyncio.to_thread(owner.targets.admit_local,candidate,ctx.user_id)
+    return envelope(owner,{'release':binding['body'],'variant_hash':binding['variant_hash']},permissions)
+
+
 @router.post('/manual-downloads/stage')
 async def stage_manual_download(request:Request):
     import asyncio
@@ -118,6 +127,26 @@ async def stage_manual_download(request:Request):
     await body(request,ManualStage,1024)
     result=await asyncio.to_thread(owner.stage_manual_064,ctx.user_id)
     return envelope(owner,{'manual_download':result},permissions)
+
+
+@router.post('/manual-downloads/stage-0077')
+async def stage_manual_0077(request:Request):
+    import asyncio
+    owner,ctx,permissions=browser(request,'release_manage')
+    owner.targets.require(ctx.user_id,['channel2'],'publish')
+    action=await body(request,Manual077Stage,1024)
+    result=await asyncio.to_thread(owner.stage_manual_077,ctx.user_id,action.request_id)
+    return envelope(owner,{'manual_download':result},permissions)
+
+
+@router.post('/manual-downloads/retire-legacy')
+async def retire_legacy_download(request:Request):
+    import asyncio
+    owner,ctx,permissions=browser(request,'release_manage')
+    owner.targets.require(ctx.user_id,['channel2'],'publish')
+    action=await body(request,LegacyRetirement,1024)
+    result=await asyncio.to_thread(owner.retire_approved_legacy,ctx.user_id,action.request_id)
+    return envelope(owner,{'retirement':result},permissions)
 
 
 @router.get('/channels/{channel}')

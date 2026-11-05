@@ -36,6 +36,12 @@ metadata:
 
 This is the selectable user-facing Tender journey. It orchestrates existing governed capabilities but owns no semantic compiler, certification, runtime authority, or inspection semantics.
 
+## User-facing governance objective: better tender work
+
+This journey applies **Knowledge Application Governance / Compliance Assistance** to help a user inspect, draft or revise a tender document. Present located clauses, applicable law and effective period, inspected source coverage, findings, disagreements, unresolved material facts, and specific editable correction options. Explain whether each cited item is binding law, professional interpretation, personal expert Note or model suggestion, and whether it has been quality-reviewed. Keep author identity and provenance for expert Notes; a review/quality marker neither creates legal force nor changes ownership.
+
+**Default: Warn / Explain / Recommend, not Block.** The user decides whether to accept a drafting change; lack of an admitted policy corpus or expert-note approval is not, by itself, a reason to deny independent descriptive inspection and qualified advisory assistance. Keep server-enforced identity/tenant scopes, exact production/certification prerequisites for the selected journey, and high-consequence external execution boundaries separate. An absent or incompatible normative basis yields UNKNOWN/limited conclusion, not a fabricated violation or all-work blocker.
+
 ## Authority and persistence
 
 <!-- runtime-owner: TOOL invariant-class: EXPLAINED_AND_ENFORCED enforced-by: src/agents/tender_journey_tool_api.py::TenderJourneyToolAPI.invoke -->

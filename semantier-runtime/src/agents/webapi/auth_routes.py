@@ -421,6 +421,11 @@ async def auth_weixin_login_start(request: Request):
         body = await request.json()
     except Exception:
         body = {}
+    from agents.model_gateway.default_models import normalize_preference
+    try:
+        model_preference = normalize_preference(body.get("model_preference") if isinstance(body, dict) else None)
+    except ValueError:
+        raise HTTPException(422, "Please choose a supported model") from None
     bot_type = "3"
     if isinstance(body, dict):
         requested_bot_type = body.get("bot_type")
@@ -437,13 +442,18 @@ async def auth_weixin_login_start(request: Request):
     from gateway.platforms.weixin import EP_GET_BOT_QR, ILINK_BASE_URL, _api_get, _make_ssl_connector
     import aiohttp
 
-    async with aiohttp.ClientSession(trust_env=True, connector=_make_ssl_connector()) as session:
-        payload = await _api_get(
-            session,
-            base_url=ILINK_BASE_URL,
-            endpoint=f"{EP_GET_BOT_QR}?bot_type={bot_type}",
-            timeout_ms=15_000,
-        )
+    try:
+        async with aiohttp.ClientSession(trust_env=True, connector=_make_ssl_connector()) as session:
+            payload = await _api_get(
+                session,
+                base_url=ILINK_BASE_URL,
+                endpoint=f"{EP_GET_BOT_QR}?bot_type={bot_type}",
+                timeout_ms=15_000,
+            )
+    except asyncio.TimeoutError as exc:
+        raise HTTPException(status_code=504, detail="Weixin QR service timed out. Please retry.") from exc
+    except (aiohttp.ClientError, RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail="Weixin QR service is unavailable. Please retry.") from exc
     qrcode_value = str(payload.get("qrcode") or "").strip()
     qrcode_url = str(payload.get("qrcode_img_content") or "").strip()
     if not qrcode_value:
@@ -456,6 +466,7 @@ async def auth_weixin_login_start(request: Request):
         qr_scan_data=qr_scan_data,
         base_url=ILINK_BASE_URL,
         bot_type=bot_type,
+        model_preference=model_preference,
         bind_user_id=bind_user_id,
         prelogin_session_nonce_hash=browser_session_nonce_hash(login_nonce),
         request_user_agent_hash=request_user_agent_hash(request),
@@ -625,6 +636,7 @@ async def auth_weixin_login_status(state: str, request: Request):
         user = upsert_weixin_owner(
             account_id=account_id,
             external_user_id=external_user_id or account_id,
+            model_preference=state_payload.get("model_preference", "platform_recommended"),
             **({"bind_user_id": bind_user_id} if bind_user_id else {}),
         )
     except ValueError as exc:

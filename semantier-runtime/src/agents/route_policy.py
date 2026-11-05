@@ -44,6 +44,8 @@ class RouteAuthorizationClass(str, Enum):
 #   docs/derived/gateway-unified-multitenant-design.md section 8.1.1.
 # - Until then, they remain target contract surfaces, not callable gateway routes.
 ROUTE_POLICY_MAP: dict[tuple[str, str], RoutePolicy] = {
+    ('POST', '/api/client-operations/manual-downloads/stage-0077'): RoutePolicy.AUTHENTICATED,
+    ('POST', '/api/client-operations/manual-downloads/retire-legacy'): RoutePolicy.AUTHENTICATED,
     ('GET', '/api/client-operations/delivery-targets'): RoutePolicy.AUTHENTICATED,
     ('POST', '/api/client-operations/delivery-targets/bindings'): RoutePolicy.PUBLIC,
     ('POST', '/api/client-operations/publications'): RoutePolicy.AUTHENTICATED,
@@ -62,6 +64,7 @@ ROUTE_POLICY_MAP: dict[tuple[str, str], RoutePolicy] = {
     ('GET', '/api/client-operations/releases'): RoutePolicy.AUTHENTICATED,
     ('GET', '/api/client-operations/releases/{release_id}'): RoutePolicy.AUTHENTICATED,
     ('POST', '/api/client-operations/releases'): RoutePolicy.PUBLIC,
+    ('POST', '/api/client-operations/releases/local-native'): RoutePolicy.AUTHENTICATED,
     ('GET', '/api/client-operations/channels/{channel}'): RoutePolicy.AUTHENTICATED,
     ('POST', '/api/client-operations/channels/{channel}/promotions'): RoutePolicy.AUTHENTICATED,
     ('POST', '/api/client-operations/channels/{channel}/pause'): RoutePolicy.AUTHENTICATED,
@@ -139,6 +142,7 @@ ROUTE_POLICY_MAP: dict[tuple[str, str], RoutePolicy] = {
     ('POST', '/api/admin/model-gateway/keys'): RoutePolicy.AUTHENTICATED,
     ('GET', '/api/admin/model-gateway/usage'): RoutePolicy.AUTHENTICATED,
     ('GET', '/api/billing/commerce/catalog'): RoutePolicy.PUBLIC,
+    ('GET', '/api/billing/commerce/model-rates'): RoutePolicy.PUBLIC,
     ('POST', '/api/billing/commerce/notifications/{method}'): RoutePolicy.PUBLIC,
     ('POST', '/api/billing/commerce/orders/{order_id}/payment-attempts/{attempt_id}/query'): RoutePolicy.AUTHENTICATED,
     ('POST', '/api/billing/commerce/orders/{order_id}/payment-attempts/{attempt_id}/close'): RoutePolicy.AUTHENTICATED,
@@ -205,6 +209,7 @@ ROUTE_POLICY_MAP: dict[tuple[str, str], RoutePolicy] = {
         "GET",
         "/auth/context",
     ): RoutePolicy.PUBLIC,  # session-aware, payload distinguishes
+    ("GET", "/auth/model-preferences"): RoutePolicy.PUBLIC,
     ("POST", "/auth/password/register"): RoutePolicy.PUBLIC,
     ("DELETE", "/auth/feishu/link"): RoutePolicy.AUTHENTICATED,
     # --- authenticated tenant surfaces ---
@@ -762,9 +767,12 @@ ROUTE_AUTHZ_CLASS_MAP: dict[tuple[str, str], RouteAuthorizationClass] = {
 
     ('GET', '/api/client-operations/authorizations/{intent_ref}'): RouteAuthorizationClass.SELF_ONLY,
     ('POST', '/api/client-operations/authorizations/{intent_ref}/decision'): RouteAuthorizationClass.SELF_ONLY,
+    ('POST', '/api/client-operations/manual-downloads/stage-0077'): RouteAuthorizationClass.SELF_ONLY,  # Handler enforces release grants.
+    ('POST', '/api/client-operations/manual-downloads/retire-legacy'): RouteAuthorizationClass.SELF_ONLY,  # Handler enforces release grants.
     ('GET', '/api/client-operations/context'): RouteAuthorizationClass.SELF_ONLY,  # Handler enforces explicit platform grants.
     ('GET', '/api/client-operations/releases'): RouteAuthorizationClass.SELF_ONLY,  # Handler enforces explicit platform grants.
     ('GET', '/api/client-operations/releases/{release_id}'): RouteAuthorizationClass.SELF_ONLY,  # Handler enforces explicit platform grants.
+    ('POST', '/api/client-operations/releases/local-native'): RouteAuthorizationClass.SELF_ONLY,  # Handler enforces release and target grants.
     ('GET', '/api/client-operations/channels/{channel}'): RouteAuthorizationClass.SELF_ONLY,  # Handler enforces explicit platform grants.
     ('POST', '/api/client-operations/channels/{channel}/promotions'): RouteAuthorizationClass.SELF_ONLY,  # Handler enforces explicit platform grants.
     ('POST', '/api/client-operations/channels/{channel}/pause'): RouteAuthorizationClass.SELF_ONLY,  # Handler enforces explicit platform grants.

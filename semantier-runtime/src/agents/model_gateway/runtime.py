@@ -33,6 +33,8 @@ class GatewayConfiguration:
     native_environment_namespace: str = ''
     credential_key_value: str = ''
     credential_key_ref: str = ''
+    proxy_http_version: str | None = None
+    proxy_ca_cert: str | None = None
 
     @classmethod
     def from_environment(cls, env: Mapping[str,str]):
@@ -59,6 +61,12 @@ class GatewayConfiguration:
         url=env.get('SEMANTIER_MODEL_GATEWAY_PROXY_URL','').strip()
         if not url and not hosted:
             raise ValueError('explicit private Proxy URL required')
+        http_version = env.get('SEMANTIER_MODEL_GATEWAY_PROXY_HTTP_VERSION') or None
+        ca_cert = env.get('SEMANTIER_MODEL_GATEWAY_PROXY_CA_CERT') or None
+        if http_version not in (None, '3'):
+            raise ValueError('unsupported private Proxy HTTP version')
+        if http_version == '3' and not url.startswith('https://'):
+            raise ValueError('private Proxy HTTP/3 requires HTTPS')
         proxy_key=secret('SEMANTIER_MODEL_GATEWAY_PROXY_SECRET_REF','SEMANTIER_MODEL_GATEWAY_PROXY_KEY',required=not hosted)
         credential_ref=env.get('SEMANTIER_NATIVE_CREDENTIAL_KEY_REF','SEMANTIER_NATIVE_CREDENTIAL_KEY')
         if 'SESSION' in credential_ref.upper() or credential_ref in {
@@ -72,10 +80,16 @@ class GatewayConfiguration:
         return cls(secret('SEMANTIER_MODEL_GATEWAY_DATABASE_SECRET_REF','SEMANTIER_MODEL_GATEWAY_DATABASE_URL'),
                    url,proxy_key,
                    env.get('SEMANTIER_MODEL_GATEWAY_BILLING_SCHEMA','semantier_billing'),
-                   target,namespace,credential_key,credential_ref)
+                   target,namespace,credential_key,credential_ref,http_version,ca_cert)
 
     def __repr__(self):
         return 'GatewayConfiguration(<server secrets redacted>)'
+
+
+def proxy_client(config):
+    from agents.model_gateway.proxy import ProxyClient
+    return ProxyClient(config.proxy_url, config.proxy_key,
+        http_version=config.proxy_http_version, ca_cert=config.proxy_ca_cert)
 
 
 def stores(config):
@@ -124,7 +138,6 @@ async def start_gateway(app, *, env=None, start_worker=True):
         await connection.execute('SELECT attempt_id FROM raw_observations LIMIT 0')
         await connection.execute('SELECT scope_id,policy_event_id,token_limit,token_used,token_held FROM task_finops_scopes LIMIT 0')
         await connection.execute('SELECT invocation_id,scope_id,policy_event_id,reserved_tokens,used_tokens,state FROM task_token_reservations LIMIT 0')
-    from agents.model_gateway.proxy import ProxyClient
     from agents.model_gateway.service import GatewayService
     sync_store=None
     if config.native_target_instance_id and config.native_environment_namespace:
@@ -134,7 +147,7 @@ async def start_gateway(app, *, env=None, start_worker=True):
             environment_namespace=config.native_environment_namespace,
             keyring=credential_keyring(config.credential_key_value,key_id=config.credential_key_ref))
         await sync_store.require_ready()
-    proxy=ProxyClient(config.proxy_url,config.proxy_key) if config.proxy_url and config.proxy_key else None
+    proxy=proxy_client(config) if config.proxy_url and config.proxy_key else None
     service=GatewayService(store=store,billing=billing,proxy=proxy,enabled=True,account_sync_store=sync_store)
     # Pricing metadata is not inference. Explicit server source configuration
     # and the existing service secret never become browser-controlled values.

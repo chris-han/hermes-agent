@@ -28,6 +28,25 @@ class DeliveryTargets:
         if any(action not in grants.get(target, set()) for target in target_ids):
             raise OperationError(403, 'delivery_target_scope_denied')
 
+    def admit_local(self, candidate, actor):
+        self.require(actor, ['channel2'], 'publish')
+        body = self.owner('channel2').admit(candidate, {'principal_id': str(actor)}, local=True)
+        variant_hash = digest({'target_id': 'channel2', 'manifest': body['manifest'],
+                               'native_receipt': body['native_receipt'], 'provenance': 'local-ci'})
+        with self.store.connection() as c:
+            c.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',
+                      (self.store.schema+':admission:channel2:'+candidate.release_id,))
+            row = c.execute('INSERT INTO release_delivery_variants(release_id,target_id,variant_hash,body) '
+                            'VALUES(%s,%s,%s,%s::jsonb) ON CONFLICT DO NOTHING RETURNING *',
+                            (candidate.release_id, 'channel2', variant_hash, json.dumps(body))).fetchone()
+            if row:
+                self.store.audit(c, str(actor), 'target_binding_admitted', candidate.release_id,
+                                 {'target_id': 'channel2', 'variant_hash': variant_hash, 'provenance': 'local-ci'})
+            else:
+                row = c.execute('SELECT * FROM release_delivery_variants WHERE release_id=%s AND target_id=%s AND variant_hash=%s',
+                                (candidate.release_id, 'channel2', variant_hash)).fetchone()
+        return row
+
     def admit(self, admission, principal):
         target_id = admission.delivery_target_id
         self.require(principal['principal_id'], [target_id], 'ingest')

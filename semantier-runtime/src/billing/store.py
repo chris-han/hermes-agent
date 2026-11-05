@@ -41,7 +41,7 @@ def _exact_money(method):
     return invoke
 
 
-BILLING_SCHEMA_VERSION = 12
+BILLING_SCHEMA_VERSION = 13
 
 
 class BillingStore:
@@ -62,7 +62,7 @@ class BillingStore:
             await conn.execute(sql.SQL('CREATE SCHEMA IF NOT EXISTS {}').format(sql.Identifier(self.schema)))
             await conn.execute(sql.SQL('SET LOCAL search_path TO {}, pg_catalog').format(sql.Identifier(self.schema)))
             await conn.execute(Path(__file__).with_name('schema.sql').read_text())
-            for table in ('invocation_reexecutions','raw_observations','usage_observations','prices','fx_quotes','ledger_transactions','ledger_entries','reconciliation_items','organization_customer_prices','financial_policy_events','commerce_quotes','commerce_payment_events','commerce_subscriptions','commerce_enterprise_offers'):
+            for table in ('invocation_reexecutions','raw_observations','usage_observations','prices','fx_quotes','ledger_transactions','ledger_entries','reconciliation_items','organization_customer_prices','platform_model_price_publications','financial_policy_events','commerce_quotes','commerce_payment_events','commerce_subscriptions','commerce_enterprise_offers'):
                 await conn.execute(sql.SQL('DROP TRIGGER IF EXISTS immutable ON {}').format(sql.Identifier(table)))
                 await conn.execute(sql.SQL('CREATE TRIGGER immutable BEFORE UPDATE OR DELETE ON {} FOR EACH ROW EXECUTE FUNCTION reject_financial_mutation()').format(sql.Identifier(table)))
             await conn.execute('DROP TRIGGER IF EXISTS balanced ON ledger_entries')
@@ -354,6 +354,47 @@ class BillingStore:
             if old is None:
                 old=await self._one(conn,'SELECT payload FROM prices WHERE version_id=%s AND kind=%s',(price.version_id,kind))
                 if old['payload']!=price.to_dict(): raise BillingError('immutable_price')
+
+    async def publish_platform_model_price(self,model_id,version_id,actor_user_id):
+        """Publish an immutable pointer to an existing customer price; never author rates."""
+        from billing.platform_pricing import qualify_publication
+        if not isinstance(actor_user_id,str) or not actor_user_id or not isinstance(version_id,str) or not version_id:
+            raise ValueError('explicit operator and price version required')
+        async with self.connection() as conn:
+            await conn.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',('platform-price:'+model_id,))
+            row=await self._one(conn,
+                "SELECT payload FROM prices WHERE version_id=%s AND kind='customer'",
+                (version_id,),required=False)
+            if row is None:raise BillingError('customer_price_not_found')
+            price=PriceVersion(**row['payload'])
+            qualify_publication(model_id,price)
+            scoped=await self._one(conn,
+                "SELECT 1 FROM organization_customer_prices WHERE version_id=%s AND kind='customer' LIMIT 1",
+                (version_id,),required=False)
+            if scoped is not None:raise BillingError('tenant_specific_price_cannot_be_published_platform_wide')
+            current=await self._one(conn,
+                "SELECT publication_revision,customer_price_version FROM platform_model_price_publications WHERE model_id=%s ORDER BY publication_revision DESC LIMIT 1",
+                (model_id,),required=False)
+            if current and current['customer_price_version']==version_id:
+                return {'model_id':model_id,'customer_price_version':version_id,
+                        'publication_revision':current['publication_revision'],'changed':False}
+            revision=1 if not current else current['publication_revision']+1
+            await conn.execute('''INSERT INTO platform_model_price_publications
+                (model_id,publication_revision,customer_price_version,published_by)
+                VALUES (%s,%s,%s,%s)''',(model_id,revision,version_id,actor_user_id))
+            # This remains the same PostgreSQL transaction as publication.
+            # Existing funded customers need no second payment or signup.
+            from billing.platform_pricing import wake_credited_personal_accounts
+            requeued=await wake_credited_personal_accounts(conn,model_id,billing_schema=self.schema)
+            return {'model_id':model_id,'customer_price_version':version_id,
+                    'publication_revision':revision,'changed':True,'requeued_funded_accounts':requeued}
+
+    async def published_model_prices(self):
+        """Read-only customer retail rates for public Pricing and funded onboarding."""
+        from billing.platform_pricing import list_published_prices
+        async with self.connection() as conn:
+            return {'schema_version':'semantier.model-prices.v1','currency':'CNY',
+                    'data':await list_published_prices(conn)}
 
     async def get_price(self,version_id,kind='customer'):
         async with self.connection() as conn:
@@ -673,6 +714,37 @@ class BillingStore:
             claim=await self._one(conn,"UPDATE attempts SET native_send_claimed_at=now() WHERE attempt_id=%s AND invocation_id=%s AND outbound_intent='POSSIBLY_SENT' AND native_send_claimed_at IS NULL RETURNING attempt_id,invocation_id,native_send_claimed_at",(attempt_id,invocation_id),required=False)
             if claim is None: raise BillingError('native_send_already_claimed')
             return _wire(claim)|{'provider':provider,'organization_id':row['organization_id']}
+
+    async def fund_default_credit_budget(self,conn,organization_id,account_id,currency):
+        """Maintain a credit-limited default ceiling only for untouched zero-budget accounts.
+
+        Financial credit remains authoritative. A customer budget.update, or an
+        account created with an explicit positive ceiling, is never overridden.
+        This is called only inside the existing credited-ledger transaction.
+        """
+        if currency != 'CNY':
+            return False
+        account=await self._account(conn,organization_id,account_id,currency)
+        if account['funding']!='SEMANTIER_CREDITS' or account['blocked'] or account['wallet']<=0:
+            return False
+        default=await self._one(conn,'''SELECT
+            EXISTS(SELECT 1 FROM financial_policy_events WHERE organization_id=%s
+                AND target=%s AND operation='account.create' AND (payload->>'budget_limit')::numeric=0) AS created_default,
+            EXISTS(SELECT 1 FROM financial_policy_events WHERE organization_id=%s
+                AND target=%s AND operation='budget.update') AS customer_override''',
+            (organization_id,account_id,organization_id,account_id))
+        if not default['created_default'] or default['customer_override']:
+            return False
+        ceiling=account['budget_spent']+account['wallet']
+        if ceiling<=account['budget_limit']:
+            return False
+        await conn.execute('UPDATE accounts SET budget_limit=%s WHERE organization_id=%s AND account_id=%s AND currency=%s',
+                           (ceiling,organization_id,account_id,currency))
+        await conn.execute('''INSERT INTO financial_policy_events(event_id,organization_id,actor_user_id,operation,target,payload)
+            VALUES(%s,%s,'server-provisioning','budget.default_credit',%s,%s)''',
+            (uuid4().hex,organization_id,account_id,Jsonb({'prior_limit':str(account['budget_limit']),
+                'limit':str(ceiling),'currency':currency,'basis':'credited_wallet_not_additional_credit'})))
+        return True
 
     async def set_account_budget(self,organization_id,account_id,currency,limit,actor_user_id):
         """Change an explicitly authorized account ceiling without changing credit."""
