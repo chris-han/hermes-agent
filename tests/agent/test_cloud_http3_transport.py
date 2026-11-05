@@ -291,3 +291,19 @@ def test_real_openai_sdk_http3_stream(async_mode):
                 result = ''.join(part.choices[0].delta.content for part in stream)
     assert result == 'fixture reply'
     assert seen == ['HTTP/3']
+
+
+def test_real_http3_header_read_timeout():
+    import os
+    import time
+    from agent.cloud_http3_transport import cloud_http3_client
+    origin = os.environ.get('SEMANTIER_H3_FIXTURE_ORIGIN')
+    ca = os.environ.get('SEMANTIER_H3_FIXTURE_CA')
+    if not origin or not ca:
+        pytest.skip('Requires owned Docker HTTP/3 delayed-header fixture')
+    with cloud_http3_client(origin, settings={
+        'base_url': origin, 'http_version': '3', 'ssl_ca_cert': ca}) as client:
+        started = time.monotonic()
+        with pytest.raises(httpx.ReadTimeout):
+            client.get(origin + '/delayed', timeout=httpx.Timeout(5, read=.1))
+        assert time.monotonic() - started < 1

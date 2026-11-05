@@ -160,7 +160,7 @@ class LoopCloudSession:
         import asyncio
         import concurrent.futures
         import threading
-        from curl_cffi import AsyncCurl, Curl, CurlHttpVersion, CurlOpt
+        from curl_cffi import AsyncCurl, Curl, CurlHttpVersion, CurlOpt, CurlInfo
         if self.closed:
             raise httpx.ConnectError('Cloud HTTP/3 session is closed')
         ready = concurrent.futures.Future()
@@ -174,6 +174,7 @@ class LoopCloudSession:
             curl = Curl(cacert=self.cacert or '')
             multi = AsyncCurl(loop=self.loop)
             pending = None
+            watchdog = None
             status = None
             response_headers = []
             def header(line):
@@ -214,6 +215,32 @@ class LoopCloudSession:
                 curl.setopt(CurlOpt.WRITEFUNCTION, body.write)
                 curl.setopt(CurlOpt.HEADERFUNCTION, header)
                 pending = multi.add_handle(curl)
+                async def watch_headers():
+                    # Read deadlines begin after the TLS/QUIC handshake and upload.
+                    # Inspect native transfer state only from its owning event loop.
+                    write_started = None
+                    read_started = None
+                    while not pending.done() and not ready.done():
+                        await asyncio.sleep(.01)
+                        if pending.done() or ready.done():
+                            return
+                        now = self.loop.time()
+                        if not curl.getinfo(CurlInfo.APPCONNECT_TIME):
+                            continue
+                        if write_started is None:
+                            write_started = now
+                        uploading = curl.getinfo(CurlInfo.SIZE_UPLOAD_T) < len(data)
+                        if not uploading and read_started is None:
+                            read_started = now
+                        phase = 'write' if uploading else 'read'
+                        limit = timeout.get(phase)
+                        started = write_started if uploading else read_started
+                        if limit is not None and now - started >= limit:
+                            error_type = httpx.WriteTimeout if uploading else httpx.ReadTimeout
+                            ready.set_exception(error_type('Cloud HTTP/3 transfer timed out'))
+                            multi.remove_handle(curl)
+                            return
+                watchdog = asyncio.create_task(watch_headers())
                 await pending
                 if not ready.done():
                     ready.set_exception(httpx.ConnectError('Cloud HTTP/3 response missing'))
@@ -233,6 +260,9 @@ class LoopCloudSession:
                     ready.set_exception(connect_error('Cloud HTTP/3 transfer failed'))
                 body.finish(error)
             finally:
+                if watchdog is not None:
+                    watchdog.cancel()
+                    await asyncio.gather(watchdog, return_exceptions=True)
                 if pending is not None:
                     multi.remove_handle(curl)
                 await multi.close()
