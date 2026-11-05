@@ -807,14 +807,17 @@ def _ensure_tender_runtime_expert_profile(runtime_root: Path) -> None:
     sanitize_user_memory_profile(profile_dir)
 
 
-_UPSTREAM_HERMES_SOUL_PREFIX = "You are Hermes Agent, an intelligent AI assistant created by Nous Research."
+_UPSTREAM_HERMES_SOUL_PREFIXES = (
+    "You are Hermes Agent, an intelligent AI assistant created by Nous Research.",
+    "You are Hermes Agent, built by Nous Research.",
+)
 
 
 def _ensure_repo_local_soul(runtime_root: Path) -> None:
     soul_path = runtime_root / "SOUL.md"
     if soul_path.exists():
         existing = soul_path.read_text(encoding="utf-8")
-        if not existing.startswith(_UPSTREAM_HERMES_SOUL_PREFIX):
+        if not existing.startswith(_UPSTREAM_HERMES_SOUL_PREFIXES):
             return
     soul_path.write_text(_default_soul_md(), encoding="utf-8")
 
