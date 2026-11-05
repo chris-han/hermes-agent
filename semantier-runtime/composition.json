@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "parent_commit": "3357fe592b39e14ff956305badf879a8bcad78cb",
+  "parent_commit": "ca254e1107ca515507225dd31bb84f3fb8e71617",
   "files": [
     {
       "path": "MODEL-NOTICE.txt",
@@ -540,7 +540,7 @@
     },
     {
       "path": "src/agents/launcher.py",
-      "sha256": "4504f603a92d95f88f35fdd08b965b862fc19be0be0e1a4bbcee2a5b6e5677bf"
+      "sha256": "85888e0427f7d613276e1e2455e4637b44a4755dad4e415bf2f19757c623d323"
     },
     {
       "path": "src/agents/managed_child_guard.py",
@@ -3456,7 +3456,7 @@
     },
     {
       "path": "src/prompts/agents/SOUL.md",
-      "sha256": "4f516aa84c6a80cbb07e079fdcc07f9517d12f8560924a48844b8fcbf925d2a4"
+      "sha256": "cc92477c68a1c1bbdf922478cc1a5b86712466ec375efcb4f7bf737f1b7fb501"
     },
     {
       "path": "src/prompts/agents/WEBAPI_BUNDLED_SKILL_INVOCATION.md",
@@ -3464,7 +3464,7 @@
     },
     {
       "path": "src/prompts/agents/WRAPPER_SYSTEM_INSTRUCTION.md",
-      "sha256": "c1a4723b498b865b4883a295a988eb8753899accc849a8cc06d03680424b9ad5"
+      "sha256": "5b8c2da89d77e58c3329a7f1bca8a0f908ad319cc0f6eeda0507fb9f8df49ac8"
     },
     {
       "path": "src/prompts/agents/core_work_receipt_tool.json",
