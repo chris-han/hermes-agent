@@ -48,3 +48,14 @@ def test_oversized_callback_fails_without_exceeding_capacity():
     assert body.buffered_bytes == 0
     with pytest.raises(httpx.ReadError):
         body.read()
+
+
+def test_idle_buffer_read_timeout():
+    import time
+    import httpx
+    import pytest
+    buffer = _BodyBuffer(32768, lambda: None, read_timeout=0.02)
+    started = time.monotonic()
+    with pytest.raises(httpx.ReadTimeout):
+        buffer.read()
+    assert time.monotonic() - started < 0.5

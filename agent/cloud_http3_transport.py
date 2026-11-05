@@ -45,6 +45,7 @@ class CloudHTTP3Transport(httpx.BaseTransport):
         try:
             response = self.session.request(method=request.method, url=str(request.url),
                 headers=list(request.headers.multi_items()), data=request.read(),
+                timeout=request.extensions.get('timeout', {}),
                 # HTTPX owns decoding; curl must return the encoded response bytes.
                 accept_encoding=None, stream=True, allow_redirects=False)
         except Exception as error:
@@ -68,12 +69,13 @@ class _BodyBuffer:
     PAUSE = 0x10000001
     ERROR = 0xFFFFFFFF
 
-    def __init__(self, capacity, resume):
+    def __init__(self, capacity, resume, *, read_timeout=None):
         from collections import deque
         from threading import Condition
         if capacity <= 0:
             raise ValueError('Positive HTTP/3 buffer capacity required')
         self.capacity = capacity
+        self.read_timeout = read_timeout
         self.resume = resume
         self.condition = Condition()
         self.chunks = deque()
@@ -101,10 +103,15 @@ class _BodyBuffer:
             return len(chunk)
 
     def read(self):
+        import time
         resume = False
+        deadline = None if self.read_timeout is None else time.monotonic() + self.read_timeout
         with self.condition:
             while not self.chunks and not self.finished and not self.closed:
-                self.condition.wait()
+                remaining = None if deadline is None else deadline - time.monotonic()
+                if remaining is not None and remaining <= 0:
+                    raise httpx.ReadTimeout('Cloud HTTP/3 response timed out')
+                self.condition.wait(remaining)
             if not self.chunks:
                 if self.error is not None and not self.closed:
                     raise self.error
@@ -157,7 +164,9 @@ class LoopCloudSession:
             raise httpx.ConnectError('Cloud HTTP/3 session is closed')
         ready = concurrent.futures.Future()
         done = threading.Event()
-        body = _BodyBuffer(self.buffer_capacity, lambda: None)
+        timeout = kwargs.get('timeout') or {}
+        body = _BodyBuffer(self.buffer_capacity, lambda: None,
+                           read_timeout=timeout.get('read'))
         response = _LoopResponse(body, done)
 
         async def transfer():
@@ -192,7 +201,8 @@ class LoopCloudSession:
                 curl.setopt(CurlOpt.HTTP_VERSION, CurlHttpVersion.V3ONLY)
                 curl.setopt(CurlOpt.PROXY, b'')
                 curl.setopt(CurlOpt.FOLLOWLOCATION, 0)
-                curl.setopt(CurlOpt.CONNECTTIMEOUT_MS, 15000)
+                curl.setopt(CurlOpt.CONNECTTIMEOUT_MS, max(1, int(timeout.get('connect') * 1000))
+                            if timeout.get('connect') is not None else 0)
                 curl.setopt(CurlOpt.HTTPHEADER,
                     [f'{key}: {value}'.encode() for key, value in headers])
                 if data or method not in ('GET', 'HEAD'):
@@ -212,11 +222,14 @@ class LoopCloudSession:
                 if not ready.done():
                     ready.set_exception(httpx.ConnectError('Cloud HTTP/3 transfer cancelled'))
                 raise
-            except Exception:
+            except Exception as exc:
                 # Native errors may contain request URLs or credential-bearing details.
-                error = httpx.ReadError('Cloud HTTP/3 transfer failed')
+                timed_out = getattr(exc, 'code', None) == 28
+                error_type = httpx.ReadTimeout if timed_out else httpx.ReadError
+                error = error_type('Cloud HTTP/3 transfer failed')
                 if not ready.done():
-                    ready.set_exception(httpx.ConnectError('Cloud HTTP/3 transfer failed'))
+                    connect_error = httpx.ConnectTimeout if timed_out else httpx.ConnectError
+                    ready.set_exception(connect_error('Cloud HTTP/3 transfer failed'))
                 body.finish(error)
             finally:
                 if pending is not None:

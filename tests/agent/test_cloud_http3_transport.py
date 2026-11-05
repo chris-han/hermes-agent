@@ -196,3 +196,33 @@ def test_real_async_http3_stream_closes_during_silence(monkeypatch):
                 assert time.monotonic() - started < 1
         assert not session.thread.is_alive()
     asyncio.run(check())
+
+
+def test_httpx_timeout_extensions_reach_transfer():
+    session = Session(Response())
+    with httpx.Client(transport=CloudHTTP3Transport('https://cloud.example', session),
+                      timeout=httpx.Timeout(0.25)) as client:
+        client.get('https://cloud.example/')
+    assert session.calls[0]['timeout'] == {'connect': .25, 'read': .25, 'write': .25, 'pool': .25}
+
+
+def test_real_http3_idle_read_timeout_closes_transfer():
+    import os
+    from agent.cloud_http3_transport import cloud_http3_client
+    origin = os.environ.get('SEMANTIER_H3_FIXTURE_ORIGIN')
+    ca = os.environ.get('SEMANTIER_H3_FIXTURE_CA')
+    if not origin or not ca:
+        pytest.skip('Requires the owned Docker HTTP/3 silent-stream fixture')
+    client = cloud_http3_client(origin, settings={
+        'base_url': origin, 'http_version': '3', 'ssl_ca_cert': ca})
+    session = client._transport.session
+    with client:
+        with client.stream('GET', origin + '/events', timeout=httpx.Timeout(15, read=.1)) as response:
+            assert response.http_version == 'HTTP/3'
+            chunks = response.iter_bytes()
+            total = 0
+            while total < 65544:
+                total += len(next(chunks))
+            with pytest.raises(httpx.ReadTimeout):
+                next(chunks)
+    assert not session.thread.is_alive()
