@@ -117,10 +117,10 @@ def test_real_native_stager_and_composed_publisher_bind_complete_final_graph(tmp
     assert receipt['controller_commit']==request['controllerCommit']!=receipt['source_commit']
     assert receipt['runtime_parent_commit']==json.loads(Path('semantier-runtime/composition.json').read_text())['parent_commit']
     assert hmac.compare_digest(candidate['receipt_hmac'],hmac.new(b'x'*32,canonical(receipt),hashlib.sha256).hexdigest())
-    from agents.client_operations.publication import Publisher
-    from contracts.client_operations import ReleaseCandidate
+    from client_operations.publication import Publisher
+    from client_operations.contracts import ReleaseCandidate
     owner=Publisher(None,tmp_path/'public',incoming,request['publicBase'],b'x'*32,request['identity'],request['channel'],workflow_verifier=lambda _: {'scope':'external-GitHub-boundary-fixture'})
-    from agents.client_operations.artifact_io import OperationError
+    from client_operations.artifact_io import OperationError
     wrong_owner=Publisher(None,tmp_path/'wrong-public',incoming,'http://127.0.0.1:8926',b'x'*32,request['identity'],request['channel'],workflow_verifier=lambda _: {'scope':'external-GitHub-boundary-fixture'})
     with pytest.raises(OperationError,match='manifest_contract_mismatch'):
         wrong_owner.admit(ReleaseCandidate(**candidate),{'principal_id':'ci-fixture'},persist=False)
