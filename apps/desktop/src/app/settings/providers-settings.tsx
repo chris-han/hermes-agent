@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { runInTerminal } from '@/app/right-sidebar/store'
-import { FEATURED_ID, FeaturedProviderRow, providerTitle, sortProviders } from '@/components/onboarding'
+import { FEATURED_ID, FeaturedProviderRow, ProviderRow, providerTitle, sortProviders } from '@/components/onboarding'
 import { Button } from '@/components/ui/button'
 import { RowButton } from '@/components/ui/row-button'
 import { SearchField } from '@/components/ui/search-field'
@@ -153,6 +153,7 @@ function OAuthPicker({
   const { t } = useI18n()
   const p = t.settings.providers
   const ordered = useMemo(() => sortProviders(providers), [providers])
+  const [showOther, setShowOther] = useState(false)
 
   if (ordered.length === 0) {
     return null
@@ -174,6 +175,7 @@ function OAuthPicker({
   // providers hide behind the disclosure, so the page leads with what's set up.
   // Both lists preserve `sortProviders` order (curated priority, then name).
   const connected = rest.filter(isConnected)
+  const other = rest.filter(provider => !isConnected(provider))
 
   return (
     <section className="mb-5 grid gap-2">
@@ -210,6 +212,14 @@ function OAuthPicker({
         </>
       )}
       <LocalEndpointRow onOpen={onWantLocalEndpoint} />
+      {other.length > 0 && (
+        <>
+          <Button aria-expanded={showOther} onClick={() => setShowOther(!showOther)} size="inline" type="button" variant="textStrong">
+            {showOther ? t.onboarding.collapse : t.onboarding.otherProviders}
+          </Button>
+          {showOther && other.map(provider => <ProviderRow key={provider.id} onSelect={select} provider={provider} />)}
+        </>
+      )}
     </section>
   )
 }

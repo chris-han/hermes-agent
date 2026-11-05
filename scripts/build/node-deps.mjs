@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto'
 import { appendFileSync, mkdirSync, existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { delimiter, dirname, join, resolve } from 'node:path'
+import { delimiter, dirname, join, resolve, win32 } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { parseArgs } from 'node:util'
 
@@ -87,6 +87,39 @@ function completedInstallReason({ source, receipt, hiddenLock, key, nativeKey })
   if (readFileSync(receipt, 'utf8') !== expected) return 'dependency-inputs-or-installed-lock-changed'
   if (!Object.keys(JSON.parse(installed).packages).every(path => existsSync(join(source,path,'package.json')))) return 'missing-package-manifest'
   return null
+}
+
+// npm runs lifecycle scripts through cmd.exe, which cannot inherit an
+// arbitrarily long PATH. Keep real toolchain entries, but discard duplicates
+// and, only when needed, paths that do not exist. Never silently discard a
+// usable compiler or other tool to make the result fit.
+export function npmChildEnvironment(env, { platform = process.platform, node = process.execPath, pathExists = existsSync } = {}) {
+  if (platform !== 'win32') return env
+  const result = { ...env }
+  const paths = Object.keys(result).filter(key => key.toLowerCase() === 'path')
+    .flatMap(key => String(result[key] || '').split(';'))
+  for (const key of Object.keys(result)) if (key.toLowerCase() === 'path') delete result[key]
+  const systemRoot = Object.entries(env).find(([key]) => key.toLowerCase() === 'systemroot')?.[1]
+  const required = [win32.dirname(node), ...(systemRoot ? [win32.join(systemRoot, 'System32'), systemRoot] : [])]
+  const unique = entries => {
+    const seen = new Set()
+    return entries.filter(entry => {
+      const clean = entry.trim().replace(/^"|"$/g, '')
+      const key = win32.normalize(clean).toLowerCase()
+      if (!clean || seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+  }
+  let entries = unique([...required, ...paths])
+  if (entries.join(';').length > 6000) {
+    entries = unique([...required, ...paths.filter(entry => pathExists(entry.trim().replace(/^"|"$/g, '')))])
+  }
+  if (entries.join(';').length > 6000) {
+    throw new Error('Windows PATH is too long for npm lifecycle scripts; remove unused PATH entries and retry')
+  }
+  result.PATH = entries.join(';')
+  return result
 }
 
 // An interrupted Windows update can leave a nested .bin that npm ci's own rmdir
@@ -179,7 +212,7 @@ export function prepareNodeDependencies({ source, workspaces, env = process.env,
   rmSync(receipt, { force: true })
   rmSync(nativeReceipt, { force: true })
   console.log(`node-deps: installing workspace dependencies with npm ci (${selected.join(', ')})...`)
-  runNpmCi(node, npm, args, { source, env })
+  runNpmCi(node, npm, args, { source, env: npmChildEnvironment(env, { node }) })
   if (reuse) {
     const completed = `${key}\n${createHash('sha256').update(readFileSync(hiddenLock)).digest('hex')}\n`
     writeFileSync(receipt, completed)
