@@ -508,7 +508,7 @@ def verify_setup_source(commit, tree):
     if not git:
         raise ValueError('Native Git unavailable')
     try:
-        actual=subprocess.check_output([*git,'-C',str(root),'rev-parse',commit+'^{tree}'],stderr=subprocess.DEVNULL,text=True).strip()
+        actual=subprocess.check_output([*git,'-C',str(root),'rev-parse',commit+'^{tree}'],stderr=subprocess.DEVNULL,text=True,timeout=30).strip()
     except (OSError,subprocess.CalledProcessError) as error:
         raise ValueError('setup source commit unavailable') from error
     if actual!=tree:raise ValueError('setup source tree mismatch')
@@ -635,6 +635,44 @@ def publish_with_manual(driver, manifest, files, manual_files, installer, archiv
 
 
 
+def _validate_existing_catalog(rows, identity, origin):
+    import re
+    from datetime import datetime, timedelta
+    from urllib.parse import urlsplit
+    old_versions=[];old_builds=set()
+    allowed_origins=({'channel1.semantier.com','download.semantier.cn'} if origin.endswith('.cn')
+                     else {'update2.semantier.com','download.semantier.com'})
+    for old in rows:
+        required={'version','track','identity','provenance','publishedAt','installer','zip'}
+        if (not isinstance(old,dict) or set(old) not in (required,required|{'nativeBuildId'})
+                or old['track']!='acceptance' or old['identity']!=identity
+                or old['provenance'] not in ('local-signed','ci-qualified') or not isinstance(old['version'],str)
+                or not re.fullmatch(r'(?:0|[1-9][0-9]*)(?:\.(?:0|[1-9][0-9]*)){3}',old['version'])
+                or any(int(x)>65535 for x in old['version'].split('.'))):
+            raise ValueError('invalid existing catalog')
+        try:
+            stamp=datetime.fromisoformat(old['publishedAt'])
+            if stamp.utcoffset()!=timedelta(0):raise ValueError('UTC required')
+        except (ValueError,TypeError,AttributeError) as error:raise ValueError('invalid existing catalog time') from error
+        ids={};hosts=set()
+        for label,ext in (('installer','exe'),('zip','zip')):
+            item=old[label]
+            if (not isinstance(item,dict) or set(item)!={'url','size','sha256'} or type(item['size']) is not int
+                    or item['size']<=0 or not re.fullmatch('[a-f0-9]{64}',str(item['sha256']))):
+                raise ValueError('invalid existing catalog artifact')
+            parsed=urlsplit(item['url'])
+            match=re.fullmatch(r'/releases/channel-builds/([a-f0-9]{32})/[A-Za-z0-9_.-]+\.'+ext,parsed.path)
+            if parsed.scheme!='https' or parsed.netloc not in allowed_origins or parsed.query or parsed.fragment or not match:
+                raise ValueError('invalid existing catalog origin')
+            ids[label]=match.group(1);hosts.add(parsed.netloc)
+        old_build=old.get('nativeBuildId',ids['zip'])
+        if (len(hosts)!=1 or old_build!=ids['zip'] or ('nativeBuildId' not in old and ids['installer']!=old_build)
+                or old_build in old_builds):raise ValueError('invalid existing catalog binding')
+        old_builds.add(old_build);old_versions.append(tuple(map(int,old['version'].split('.'))))
+    if len(old_versions)!=len(set(old_versions)) or old_versions!=sorted(old_versions,reverse=True):
+        raise ValueError('invalid existing catalog order')
+
+
 def project_manual_catalog(raw, head, manifest_bytes, origin, installer, archive, published_at):
     """Derive a manual compatibility row from an exact native head.
 
@@ -699,38 +737,7 @@ def project_manual_catalog(raw, head, manifest_bytes, origin, installer, archive
     if set(catalog)!={'schema','releases'} or catalog['schema']!=1 or not isinstance(catalog['releases'],list) or len(catalog['releases'])>3:
         raise ValueError('invalid manual catalog')
     rows=catalog['releases']
-    old_versions=[];old_builds=set()
-    allowed_origins=({'channel1.semantier.com','download.semantier.cn'} if origin.endswith('.cn')
-                     else {'update2.semantier.com','download.semantier.com'})
-    for old in rows:
-        required={'version','track','identity','provenance','publishedAt','installer','zip'}
-        if (not isinstance(old,dict) or set(old) not in (required,required|{'nativeBuildId'})
-                or old['track']!='acceptance' or old['identity']!=identity
-                or old['provenance'] not in ('local-signed','ci-qualified') or not isinstance(old['version'],str)
-                or not re.fullmatch(r'(?:0|[1-9][0-9]*)(?:\.(?:0|[1-9][0-9]*)){3}',old['version'])
-                or any(int(x)>65535 for x in old['version'].split('.'))):
-            raise ValueError('invalid existing catalog')
-        try:
-            stamp=datetime.fromisoformat(old['publishedAt'])
-            if stamp.utcoffset()!=timedelta(0):raise ValueError('UTC required')
-        except (ValueError,TypeError,AttributeError) as error:raise ValueError('invalid existing catalog time') from error
-        ids={};hosts=set()
-        for label,ext in (('installer','exe'),('zip','zip')):
-            item=old[label]
-            if (not isinstance(item,dict) or set(item)!={'url','size','sha256'} or type(item['size']) is not int
-                    or item['size']<=0 or not re.fullmatch('[a-f0-9]{64}',str(item['sha256']))):
-                raise ValueError('invalid existing catalog artifact')
-            parsed=urlsplit(item['url'])
-            match=re.fullmatch(r'/releases/channel-builds/([a-f0-9]{32})/[A-Za-z0-9_.-]+\.'+ext,parsed.path)
-            if parsed.scheme!='https' or parsed.netloc not in allowed_origins or parsed.query or parsed.fragment or not match:
-                raise ValueError('invalid existing catalog origin')
-            ids[label]=match.group(1);hosts.add(parsed.netloc)
-        old_build=old.get('nativeBuildId',ids['zip'])
-        if (len(hosts)!=1 or old_build!=ids['zip'] or ('nativeBuildId' not in old and ids['installer']!=old_build)
-                or old_build in old_builds):raise ValueError('invalid existing catalog binding')
-        old_builds.add(old_build);old_versions.append(tuple(map(int,old['version'].split('.'))))
-    if len(old_versions)!=len(set(old_versions)) or old_versions!=sorted(old_versions,reverse=True):
-        raise ValueError('invalid existing catalog order')
+    _validate_existing_catalog(rows, identity, origin)
     if setup_build!=active['buildId']:
         if not any(isinstance(row,dict) and isinstance(row.get('installer'),dict)
                    and urlsplit(row['installer'].get('url','')).path==setup_path
@@ -1385,6 +1392,87 @@ def verify_public(base, channel, expected_head):
     return record
 
 
+def _prepare_publish_output(args, manual, windows_evidence):
+    expected_head = installer = archive = None
+    manifest = files = manual_files = None
+    allow_sequence_gap = False
+    if args.output:
+        manifest, graph, files = prepare(args.output, args.thumbprint, verify_windows_signatures)
+        if args.notes:
+            if args.notes.is_symlink() or args.notes.stat().st_size > 160_000:
+                raise ValueError('invalid release notes file')
+            from hermes_cli.release_channels import decode_json
+            manifest['notes'] = validate_notes(decode_json(args.notes.read_bytes()))
+        if manifest['request']['publicBase']=='https://download.semantier.com' and not manual:
+            raise ValueError('Channel 2 publication requires its reusable setup and catalog projection')
+        if manual:
+            if manifest['request']['publicBase']!='https://download.semantier.com':
+                raise ValueError('manual publication requires Channel 2 origin')
+            from hermes_cli.release_channels import _head,decode_json
+            if args.expected_head:
+                if args.expected_head.is_symlink() or args.expected_head.stat().st_size>65536:
+                    raise ValueError('invalid expected native head file')
+                expected_head=_head(decode_json(args.expected_head.read_bytes()))
+                if expected_head is None:raise ValueError('expected native head missing')
+            else:expected_head=None
+            manual_files,installer,archive=prepare_manual_artifacts(args.output,manifest,graph,args.setup_exe,
+                args.setup_receipt,args.thumbprint,verify_windows_signatures,setup_key=args.setup_key)
+        if args.solo_intent:
+            allow_sequence_gap = load_solo_allocation(args.output, args.solo_intent, manifest)
+        if args.windows_allocation:
+            from scripts.releases.windows_allocation import admit_windows_allocation
+            allow_sequence_gap = admit_windows_allocation(args.output, *windows_evidence, manifest)
+        add_installation_proof(manifest, lambda payload: sign_windows_installation_proof(payload, args.thumbprint))
+    return manifest, files, manual_files, installer, archive, expected_head, allow_sequence_gap
+
+
+def _legacy_directory(args, parser):
+    from pathlib import Path
+    directory = None
+    if args.project_legacy_channel:
+        import re
+        if not re.fullmatch('[a-f0-9]{32}',args.expected_build) or not re.fullmatch('[a-f0-9]{64}',args.expected_manifest_sha256):
+            parser.error('legacy projection requires an exact build ID and manifest SHA-256')
+        directory=args.legacy_directory.resolve(strict=True)
+        roots=[Path('/mnt/d/repo/deliverables/work').resolve(strict=True),Path('/mnt/d/repo/deliverables/release').resolve(strict=True)]
+        if not any(directory.is_relative_to(root) for root in roots):
+            parser.error('legacy signed objects must be under the Windows deliverables work or release root')
+    return directory
+
+
+def _verify_publication_readback(args, manifest, result, configured_public, channel, manual, legacy):
+    from hermes_cli.release_channels import canonical_json
+    if manifest:
+        verify_public(manifest['request']['publicBase'], channel, result['nativeHead'])
+    if manual:
+        catalog_body, installer, archive = manual
+        import hashlib
+        from hermes_cli.release_channels import ChannelReader
+        reader=ChannelReader(configured_public);opener=reader.opener
+        def catalog_open(request,timeout):
+            request.add_header('User-Agent','SemantierPublisher/1.0')
+            return opener(request,timeout=timeout)
+        reader.opener=catalog_open
+        public_catalog=reader.read_bytes('releases/manual/catalog.json',hashlib.sha256(catalog_body).hexdigest())
+        if public_catalog!=catalog_body or project_manual_catalog(public_catalog,result['nativeHead'],canonical_json(manifest),
+                configured_public,installer,archive,args.manual_published_at)!=catalog_body:
+            raise RuntimeError('public manual catalog does not agree with active head')
+        verify_public(configured_public,channel,result['nativeHead'])
+    if legacy:
+        projection_key, projection_body = legacy
+        import hashlib
+        from hermes_cli.release_channels import ChannelReader
+        verify_public(configured_public,channel,result['nativeHead'])
+        reader=ChannelReader(configured_public);opener=reader.opener
+        def public_open(request,timeout):
+            request.add_header('User-Agent','SemantierPublisher/1.0')
+            return opener(request,timeout=timeout)
+        reader.opener=public_open
+        if reader.read_bytes(projection_key,hashlib.sha256(projection_body).hexdigest())!=projection_body:
+            raise RuntimeError('public legacy projection mismatch')
+        verify_public(configured_public,channel,result['nativeHead'])
+
+
 def main(argv=None):
     import argparse
     import json
@@ -1441,43 +1529,8 @@ def main(argv=None):
             or (manual and (not args.output or not args.setup_exe or not args.setup_receipt or not args.manual_published_at
                             or bool(args.expected_head)==bool(args.expect_empty_head)))):
         parser.error('provide one publish, cleanup, or explicitly pinned legacy projection operation')
-    if legacy:
-        import re
-        if not re.fullmatch('[a-f0-9]{32}',args.expected_build) or not re.fullmatch('[a-f0-9]{64}',args.expected_manifest_sha256):
-            parser.error('legacy projection requires an exact build ID and manifest SHA-256')
-        directory=args.legacy_directory.resolve(strict=True)
-        roots=[Path('/mnt/d/repo/deliverables/work').resolve(strict=True),Path('/mnt/d/repo/deliverables/release').resolve(strict=True)]
-        if not any(directory.is_relative_to(root) for root in roots):
-            parser.error('legacy signed objects must be under the Windows deliverables work or release root')
-    manifest = files = manual_files = None
-    allow_sequence_gap = False
-    if args.output:
-        manifest, graph, files = prepare(args.output, args.thumbprint, verify_windows_signatures)
-        if args.notes:
-            if args.notes.is_symlink() or args.notes.stat().st_size > 160_000:
-                raise ValueError('invalid release notes file')
-            from hermes_cli.release_channels import decode_json
-            manifest['notes'] = validate_notes(decode_json(args.notes.read_bytes()))
-        if manifest['request']['publicBase']=='https://download.semantier.com' and not manual:
-            raise ValueError('Channel 2 publication requires its reusable setup and catalog projection')
-        if manual:
-            if manifest['request']['publicBase']!='https://download.semantier.com':
-                raise ValueError('manual publication requires Channel 2 origin')
-            from hermes_cli.release_channels import _head,decode_json
-            if args.expected_head:
-                if args.expected_head.is_symlink() or args.expected_head.stat().st_size>65536:
-                    raise ValueError('invalid expected native head file')
-                expected_head=_head(decode_json(args.expected_head.read_bytes()))
-                if expected_head is None:raise ValueError('expected native head missing')
-            else:expected_head=None
-            manual_files,installer,archive=prepare_manual_artifacts(args.output,manifest,graph,args.setup_exe,
-                args.setup_receipt,args.thumbprint,verify_windows_signatures,setup_key=args.setup_key)
-        if args.solo_intent:
-            allow_sequence_gap = load_solo_allocation(args.output, args.solo_intent, manifest)
-        if args.windows_allocation:
-            from scripts.releases.windows_allocation import admit_windows_allocation
-            allow_sequence_gap = admit_windows_allocation(args.output, *windows_evidence, manifest)
-        add_installation_proof(manifest, lambda payload: sign_windows_installation_proof(payload, args.thumbprint))
+    directory = _legacy_directory(args, parser)
+    manifest, files, manual_files, installer, archive, expected_head, allow_sequence_gap = _prepare_publish_output(args, manual, windows_evidence)
     creds, base, bucket = r2.credentials()
     scope = R2Scope.configured()
     configured_public = os.environ.get('CLOUDFLARE_R2_PUBLIC_URL', '').rstrip('/')
@@ -1547,33 +1600,9 @@ def main(argv=None):
                 verify_windows_signatures,lambda payload:sign_windows_installation_proof(payload,args.thumbprint))
         else:
             result, _ = driver.read_channel(channel)
-    if manifest:
-        verify_public(manifest['request']['publicBase'], channel, result['nativeHead'])
-    if manual:
-        import hashlib
-        from hermes_cli.release_channels import ChannelReader
-        reader=ChannelReader(configured_public);opener=reader.opener
-        def catalog_open(request,timeout):
-            request.add_header('User-Agent','SemantierPublisher/1.0')
-            return opener(request,timeout=timeout)
-        reader.opener=catalog_open
-        public_catalog=reader.read_bytes('releases/manual/catalog.json',hashlib.sha256(catalog_body).hexdigest())
-        if public_catalog!=catalog_body or project_manual_catalog(public_catalog,result['nativeHead'],canonical_json(manifest),
-                configured_public,installer,archive,args.manual_published_at)!=catalog_body:
-            raise RuntimeError('public manual catalog does not agree with active head')
-        verify_public(configured_public,channel,result['nativeHead'])
-    if legacy:
-        import hashlib
-        from hermes_cli.release_channels import ChannelReader
-        verify_public(configured_public,channel,result['nativeHead'])
-        reader=ChannelReader(configured_public);opener=reader.opener
-        def public_open(request,timeout):
-            request.add_header('User-Agent','SemantierPublisher/1.0')
-            return opener(request,timeout=timeout)
-        reader.opener=public_open
-        if reader.read_bytes(projection_key,hashlib.sha256(projection_body).hexdigest())!=projection_body:
-            raise RuntimeError('public legacy projection mismatch')
-        verify_public(configured_public,channel,result['nativeHead'])
+    _verify_publication_readback(args, manifest, result, configured_public, channel,
+        (catalog_body, installer, archive) if manual else None,
+        (projection_key, projection_body) if legacy else None)
     print(json.dumps({'channel': channel, 'revision': result['revision'],
                       'active': result.get('nativeHead'), 'archive': result.get('nativeArchive'),
                       'retired': driver.retired_builds, 'retained_shared': driver.retained_shared,
