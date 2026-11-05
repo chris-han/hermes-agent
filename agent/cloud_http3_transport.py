@@ -260,14 +260,24 @@ class LoopCloudSession:
                     ready.set_exception(connect_error('Cloud HTTP/3 transfer failed'))
                 body.finish(error)
             finally:
-                if watchdog is not None:
-                    watchdog.cancel()
-                    await asyncio.gather(watchdog, return_exceptions=True)
-                if pending is not None:
-                    multi.remove_handle(curl)
-                await multi.close()
-                curl.close()
-                done.set()
+                # A caller may cancel while watchdog shutdown is suspended.
+                # Native handles and the completion signal must still be released.
+                try:
+                    if watchdog is not None:
+                        watchdog.cancel()
+                        await asyncio.gather(watchdog, return_exceptions=True)
+                finally:
+                    try:
+                        if pending is not None:
+                            multi.remove_handle(curl)
+                    finally:
+                        try:
+                            await multi.close()
+                        finally:
+                            try:
+                                curl.close()
+                            finally:
+                                done.set()
         response.task = asyncio.run_coroutine_threadsafe(transfer(), self.loop)
         try:
             cancel_event = kwargs.get('cancel_event')
