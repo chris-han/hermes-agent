@@ -20,7 +20,7 @@ test('three independent origins persist without changing the build stamp and rej
     source.select('channel2')
     expect(new DeliverySources(file, config, 'http://127.0.0.1:18780').base()).toBe('https://s3.semantier.com')
     source.select('channel1')
-    expect(source.base()).toBe('https://update.semantier.cn')
+    expect(source.base()).toBe('https://download.semantier.cn')
     expect(() => source.select('https://evil.example')).toThrow()
     writeFileSync(config, 'updates:\n  desktop_local_feed_base_url: http://evil.example\n')
     source.select('channel3')
@@ -55,6 +55,6 @@ test('cloudflare stamp retains source selection while resolving the public origi
     const source = new DeliverySources(path.join(root, 'source.json'), path.join(root, 'config.yaml'), 'https://s3.semantier.com')
     expect(source.status().selected).toBe('channel2')
     expect(source.base()).toBe('https://s3.semantier.com')
-    expect(source.status().options.find(row => row.id === 'channel1')?.publicBase).toBe('https://update.semantier.cn')
+    expect(source.status().options.find(row => row.id === 'channel1')?.publicBase).toBe('https://download.semantier.cn')
   } finally { rmSync(root, { recursive: true, force: true }) }
 })
