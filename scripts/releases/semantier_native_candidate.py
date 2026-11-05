@@ -82,9 +82,9 @@ def stage_native_graph(output,native,incoming,notes,request,signed,target_incomi
     if signed.get('signing')!='PASS' or not signed.get('verification','').startswith('PASS:') or signed.get('sourceCommit')!=request['commit']:
         raise ValueError('Final signed source proof required')
     from scripts.bundles.parent_composition import verify
-    composition=ROOT/'semantier-runtime';composition_info=verify(composition);sys.path.insert(0,str(composition/'src'))
-    from agents.client_operations.package_graph import decode_package_graph
-    from agents.client_operations.artifact_io import immutable_copy
+    composition=ROOT/'semantier-runtime';composition_info=verify(composition)
+    from client_operations.package_graph import decode_package_graph
+    from client_operations.artifact_io import immutable_copy
     graph=signed['nativeGraph'];file=output/'signed/distribution/native-graph.json';graph_sha=sha(file)
     root=next(row for row in graph['objects'] if row['key']==graph['root'])
     descriptor={'key':graph['root'].rsplit('/',1)[0]+'/native-graph.json','size':file.stat().st_size,'sha256':graph_sha}

@@ -695,6 +695,8 @@ exclude-newer = "3 days"
 
 [tool.setuptools.packages.find]
 include = [
+  "client_operations",
+  "client_operations.*",
   "agent",
   "agent.*",
   "tools",
@@ -721,6 +723,7 @@ include = [
 ]
 
 [tool.setuptools.package-data]
+client_operations = ["schema.sql"]
 hermes_cli = [
   "observability/schemas/*.json",
   "data/*.json",

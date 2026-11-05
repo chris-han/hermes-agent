@@ -117,13 +117,12 @@ def stage(output,native,incoming,notes,target_incoming=None):
     if len(files)!=1 or files[0].is_symlink():raise ValueError('One signed MSIX required')
     artifact=files[0];digest=sha(artifact)
     if digest!=signed['signedSha256'] or digest!=artifact_meta['sha256']:raise ValueError('Artifact bytes mismatch')
-    # Reuse the artifact-pinned parent publisher's chunk contract, never a
-    # second CI-only splitter. Verify its composed source before consuming it.
+    # Reuse the Hermes-owned publisher's chunk contract. The composition
+    # verification independently binds the frozen Runtime payload.
     from scripts.bundles.parent_composition import verify
     composition = ROOT/'semantier-runtime'
     verify(composition)
-    sys.path.insert(0, str(composition/'src'))
-    from agents.client_operations.chunks import prepare_chunks
+    from client_operations.chunks import prepare_chunks
     prefix='releases/channel-builds/'+request['buildId']+'/'
     key=prefix+artifact.name;feed_key=prefix+'win32/stable.appinstaller'
     target=incoming/key;target.parent.mkdir(parents=True,exist_ok=True)
