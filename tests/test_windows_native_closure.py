@@ -8,11 +8,19 @@ import pytest
 from scripts.check_windows_native_closure import BASE, REQUIRED, inspect
 
 
-def package(tmp_path, *, omit=None, wrong_arch=False, mismatch=False, http3_problem=None):
+def package(tmp_path, *, omit=None, wrong_arch=False, mismatch=False, http3_problem=None, notice_problem=None):
     prepared = tmp_path / 'prepared'
     prepared.mkdir()
     root = {'files': {}}
     files = {'dist/electron-main.mjs': b'import "node-pty"'}
+    from pathlib import Path
+    notices = Path(__file__).resolve().parents[1] / 'apps/desktop/public/third-party/semantier-cloud-http3'
+    for source in notices.glob('*.txt'):
+        if notice_problem == 'missing' and source.name == 'curl.txt':
+            continue
+        files['public/third-party/semantier-cloud-http3/' + source.name] = (
+            b'altered notice' if notice_problem == 'altered' and source.name == 'curl.txt'
+            else source.read_bytes())
     pe = bytearray(128)
     pe[:2] = b'MZ'
     struct.pack_into('<I', pe, 60, 64)
@@ -93,4 +101,11 @@ def test_rejects_incomplete_or_unbound_native_package(tmp_path, kwargs, error):
 def test_rejects_incomplete_http3_windows_payload(tmp_path, problem):
     msix, prepared = package(tmp_path, http3_problem=problem)
     with pytest.raises(ValueError, match='HTTP/3'):
+        inspect(msix, prepared)
+
+
+@pytest.mark.parametrize('problem', ['missing', 'altered'])
+def test_rejects_missing_or_changed_http3_license_notices(tmp_path, problem):
+    msix, prepared = package(tmp_path, notice_problem=problem)
+    with pytest.raises(ValueError, match='HTTP/3 notice'):
         inspect(msix, prepared)

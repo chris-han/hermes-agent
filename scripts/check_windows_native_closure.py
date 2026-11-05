@@ -93,6 +93,21 @@ def inspect(path, prepared_pty=None, packages=()):
                     raise ValueError('prepared node-pty content mismatch: ' + relative)
                 count += 1
             if count < len(REQUIRED): raise ValueError('prepared node-pty tree incomplete')
+        notice_base = 'public/third-party/semantier-cloud-http3/'
+        notice_source = Path(__file__).resolve().parents[1] / 'apps/desktop' / notice_base
+        for name in ('README', 'curl-cffi', 'curl-impersonate', 'curl', 'boringssl',
+                     'fiat-crypto', 'zlib', 'brotli', 'zstd', 'nghttp2', 'ngtcp2',
+                     'nghttp3', 'cffi', 'certifi', 'pycparser'):
+            relative = name + '.txt'
+            source = notice_source / relative
+            if source.is_symlink() or not source.is_file():
+                raise ValueError('HTTP/3 notice source missing: ' + relative)
+            try:
+                body, _ = read(notice_base + relative)
+            except ValueError as error:
+                raise ValueError('HTTP/3 notice missing or invalid: ' + relative) from error
+            if body != source.read_bytes():
+                raise ValueError('HTTP/3 notice content mismatch: ' + relative)
         # This product config defaults Windows Cloud connections to HTTP/3.
         # Reject packages which would otherwise install successfully but fail at sign-in.
         site = 'app/resources/agent-payload/venv/Lib/site-packages/'
