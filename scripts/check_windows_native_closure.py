@@ -87,10 +87,21 @@ def inspect(path, prepared_pty=None, packages=()):
                 if not source.is_file(): continue
                 relative = source.relative_to(root).as_posix()
                 body, _ = read(BASE + relative)
-                # Native PEs may be Authenticode-signed during electron-builder's
-                # afterPack step. JavaScript and package metadata must match exactly.
-                if source.suffix.lower() not in ('.node', '.dll', '.exe') and body != source.read_bytes():
-                    raise ValueError('prepared node-pty content mismatch: ' + relative)
+                # Native PEs may be Authenticode-signed during afterPack.
+                # Electron Builder 27's fileTransformer also prunes these three
+                # non-runtime package fields and writes JSON.stringify(data, null, 2).
+                # All other metadata and JavaScript remain byte-bound to preparation.
+                if source.suffix.lower() not in ('.node', '.dll', '.exe'):
+                    expected = source.read_bytes()
+                    if relative == 'package.json' and body != expected:
+                        metadata = json.loads(expected)
+                        pruned = ('scripts', 'keywords', 'bugs')
+                        if any(key in metadata for key in pruned):
+                            for key in pruned:
+                                metadata.pop(key, None)
+                            expected = json.dumps(metadata, ensure_ascii=False, indent=2).encode()
+                    if body != expected:
+                        raise ValueError('prepared node-pty content mismatch: ' + relative)
                 count += 1
             if count < len(REQUIRED): raise ValueError('prepared node-pty tree incomplete')
         notice_base = 'public/third-party/semantier-cloud-http3/'

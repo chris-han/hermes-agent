@@ -8,7 +8,7 @@ import pytest
 from scripts.check_windows_native_closure import BASE, REQUIRED, inspect
 
 
-def package(tmp_path, *, omit=None, wrong_arch=False, mismatch=False, http3_problem=None, notice_problem=None):
+def package(tmp_path, *, omit=None, wrong_arch=False, mismatch=False, http3_problem=None, notice_problem=None, pruned_metadata=False, changed_metadata=None):
     prepared = tmp_path / 'prepared'
     prepared.mkdir()
     root = {'files': {}}
@@ -29,9 +29,22 @@ def package(tmp_path, *, omit=None, wrong_arch=False, mismatch=False, http3_prob
     for name in REQUIRED:
         data = (json.dumps({'name': 'node-pty', 'version': '1.1.0', 'main': 'lib/index.js'}).encode()
                 if name == 'package.json' else bytes(pe) if name.endswith(('.node', '.dll', '.exe')) else b'module.exports = {}')
+        if name == 'package.json' and pruned_metadata:
+            metadata = json.loads(data)
+            metadata.update(scripts={'install': 'fixture'}, keywords=['fixture'],
+                            bugs={'url': 'https://example.invalid/issues'},
+                            dependencies={'node-addon-api': '^8.0.0'})
+            data = json.dumps(metadata).encode()
         target = prepared / name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(data + (b'changed' if mismatch and name == 'lib/index.js' else b''))
+        if name == 'package.json' and pruned_metadata:
+            metadata = json.loads(data)
+            for key in ('scripts', 'keywords', 'bugs'):
+                metadata.pop(key)
+            if changed_metadata:
+                metadata.update(changed_metadata)
+            data = json.dumps(metadata, ensure_ascii=False, indent=2).encode()
         if name != omit:
             files[BASE + name] = data
     body = b''
@@ -108,4 +121,25 @@ def test_rejects_incomplete_http3_windows_payload(tmp_path, problem):
 def test_rejects_missing_or_changed_http3_license_notices(tmp_path, problem):
     msix, prepared = package(tmp_path, notice_problem=problem)
     with pytest.raises(ValueError, match='HTTP/3 notice'):
+        inspect(msix, prepared)
+
+
+def test_accepts_electron_builder_nonruntime_metadata_pruning(tmp_path):
+    msix, prepared = package(tmp_path, pruned_metadata=True)
+    assert inspect(msix, prepared)['nodePtyFiles'] == len(REQUIRED)
+
+
+@pytest.mark.parametrize('change', [
+    {'version': '1.1.1'}, {'main': 'lib/other.js'},
+    {'dependencies': {'node-addon-api': '^9.0.0'}}, {'license': 'changed'},
+])
+def test_pruning_does_not_allow_other_metadata_changes(tmp_path, change):
+    msix, prepared = package(tmp_path, pruned_metadata=True, changed_metadata=change)
+    with pytest.raises(ValueError):
+        inspect(msix, prepared)
+
+
+def test_pruning_does_not_allow_javascript_changes(tmp_path):
+    msix, prepared = package(tmp_path, pruned_metadata=True, mismatch=True)
+    with pytest.raises(ValueError, match='content mismatch'):
         inspect(msix, prepared)
