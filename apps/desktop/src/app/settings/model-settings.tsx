@@ -34,6 +34,7 @@ import { AlertTriangle, Cpu, Loader2 } from '@/lib/icons'
 import { isSubmitEnter } from '@/lib/ime'
 import { catalogProviderMatches, findCatalogProvider } from '@/lib/model-options'
 import { composerServiceTier } from '@/lib/model-status-label'
+import { normalize } from '@/lib/text'
 import { cn } from '@/lib/utils'
 import { $customModels, withCustomModels } from '@/store/custom-models'
 import { setMainModelAssignment } from '@/store/model-assignment'
@@ -505,6 +506,9 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
   )
 
   const selectedProviderModels = selectedProviderRow?.models ?? []
+  const selectedUnavailable = (selectedProviderRow?.unavailable_models ?? []).some(
+    model => normalize(model) === normalize(selectedModel)
+  )
 
   // An unconfigured provider was picked: no credentials yet, so there are no
   // models to choose. `api_key` providers can be activated inline (paste key);
@@ -818,7 +822,7 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
   }
 
   const applyMainModel = useCallback(async () => {
-    if (!selectedProvider || !selectedModel) {
+    if (!selectedProvider || !selectedModel || selectedUnavailable) {
       return
     }
 
@@ -866,6 +870,7 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
     selectedModel,
     selectedProvider,
     selectedProviderRow,
+    selectedUnavailable,
     setCaughtError
   ])
 
@@ -1064,6 +1069,7 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
               <>
                 <ModelSelect
                   className="min-w-60"
+                  excludeUnavailable
                   models={selectedProviderModels}
                   onValueChange={setSelectedModel}
                   provider={selectedProviderRow}
@@ -1071,7 +1077,7 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
                   value={selectedModel}
                 />
                 <Button
-                  disabled={!selectedProvider || !selectedModel || applying}
+                  disabled={!selectedProvider || !selectedModel || selectedUnavailable || applying}
                   onClick={() => void applyMainModel()}
                   size="sm"
                 >

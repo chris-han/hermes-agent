@@ -190,6 +190,40 @@ describe('ModelSettings profile scope', () => {
 })
 
 describe('ModelSettings', () => {
+  it('keeps an explicitly unavailable saved model visible but cannot apply it', async () => {
+    getGlobalModelInfo.mockResolvedValueOnce({ provider: 'nous', model: 'locked-model' })
+    getGlobalModelOptions.mockResolvedValueOnce({ providers: [{
+      name: 'Nous', slug: 'nous', authenticated: true,
+      models: ['locked-model', 'allowed-model'], unavailable_models: ['locked-model']
+    }] })
+    renderModelSettings()
+    const model = (await screen.findAllByRole('combobox'))[1]
+    expect(model.textContent).toContain('locked-model')
+    const apply = await screen.findByRole('button', { name: 'Apply' })
+    expect((apply as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(model)
+    expect(screen.getByRole('option', { name: 'locked-model' }).getAttribute('aria-disabled')).toBe('true')
+    fireEvent.click(screen.getByRole('option', { name: 'allowed-model' }))
+    expect((apply as HTMLButtonElement).disabled).toBe(false)
+    fireEvent.click(apply)
+    await waitFor(() => expect(setModelAssignment).toHaveBeenCalledWith({ scope: 'main', provider: 'nous', model: 'allowed-model' }))
+  })
+
+  it('cannot apply an explicitly unavailable model typed as a custom id', async () => {
+    getGlobalModelOptions.mockResolvedValueOnce({ providers: [{
+      name: 'Nous', slug: 'nous', authenticated: true,
+      models: ['hermes-4', 'locked-model'], unavailable_models: ['locked-model']
+    }] })
+    renderModelSettings()
+    fireEvent.click((await screen.findAllByRole('combobox'))[1])
+    expect(screen.queryByRole('option', { name: 'locked-model' })).toBeNull()
+    fireEvent.click(await screen.findByRole('option', { name: /custom model/i }))
+    const input = await screen.findByPlaceholderText(/model/i)
+    fireEvent.change(input, { target: { value: 'locked-model' } })
+    expect((await screen.findByRole('button', { name: 'Apply' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(setModelAssignment).not.toHaveBeenCalled()
+  })
+
   it.each(['custom', 'local', 'custom:lab'])(
     'opens local endpoint setup when %s has no inventory row',
     async provider => {

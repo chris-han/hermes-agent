@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, Sele
 import { useI18n } from '@/i18n'
 import { Plus, X } from '@/lib/icons'
 import { isSubmitEnter } from '@/lib/ime'
+import { normalize } from '@/lib/text'
 import { cn } from '@/lib/utils'
 import { addCustomModel, customModelSlug } from '@/store/custom-models'
 
@@ -40,6 +41,7 @@ interface ModelSelectProps {
   /** Provider slug the id belongs to. Empty while none is picked. */
   providerSlug: string
   models: readonly string[]
+  excludeUnavailable?: boolean
   onValueChange: (model: string) => void
   value: string
 }
@@ -53,6 +55,7 @@ interface ModelSelectProps {
 export function ModelSelect({
   'aria-label': ariaLabel,
   className,
+  excludeUnavailable = false,
   models,
   onValueChange,
   provider,
@@ -63,6 +66,8 @@ export function ModelSelect({
   const m = t.settings.model
   const [typing, setTyping] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const isUnavailable = (model: string) => excludeUnavailable &&
+    (provider?.unavailable_models ?? []).some(item => normalize(item) === normalize(model))
 
   useEffect(() => {
     if (typing) {
@@ -79,7 +84,7 @@ export function ModelSelect({
   const remember = () => {
     const slug = customModelSlug(value)
 
-    if (!slug || !providerSlug) {
+    if (!slug || !providerSlug || isUnavailable(slug)) {
       return
     }
 
@@ -144,8 +149,8 @@ export function ModelSelect({
         <SelectValue placeholder={m.model} />
       </SelectTrigger>
       <SelectContent>
-        {withActive(models, value).map(model => (
-          <SelectItem key={model} value={toItemValue(model)}>
+        {withActive(models.filter(model => !isUnavailable(model)), value).map(model => (
+          <SelectItem disabled={isUnavailable(model)} key={model} value={toItemValue(model)}>
             {model}
           </SelectItem>
         ))}
