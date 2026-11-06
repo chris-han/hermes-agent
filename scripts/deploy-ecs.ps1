@@ -22,7 +22,7 @@
   BuildMode defaults to Beta: sign, install and publish without release verification.
   Use -BuildMode Prod for full verification and acceptance. Timings use checkpoints.jsonl.
   Run in an interactive Windows PowerShell session as the installing user.
-  Native SSH/SFTP first read ALI_ECS_SSH_PASSWORDE from the repository .env,
+  Native SSH/SFTP read ALI_ECS_SSH_PASSWORDE only from an explicit -CredentialsEnv,
   otherwise use your SSH key/agent or prompt for the ECS password. Secrets
   are never embedded in this script. No npm/uv install, Python publisher, WSL,
   release lock/database, split packages, bundles, ZIPs, or CH2/R2 operations.
@@ -39,7 +39,7 @@
 #>
 [CmdletBinding(SupportsShouldProcess=$true, ConfirmImpact='Low')]
 param(
-  [string]$Msix = 'D:\repo\hermes-build\apps\desktop\release\SemantierAgent-0.0.86-win-x64.msix',
+  [string]$Msix = 'D:\repo\deliverables\release\SemantierAgent-0.0.86-win-x64.msix',
   [string]$ExpectedInputSha256 = '416d715b00abc184a670e3c9e789a9baf18bd6996c47c20c67c05a7efb124ac7',
   [string]$SourceCommit = '5e9b6d5bd9025b9c64a28ae14243068e0125c3c0',
   [string]$Version = '0.0.86.0',
@@ -53,8 +53,9 @@ param(
   [string]$Output = ('D:\repo\deliverables\work\ecs-deploy-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0,8)),
   [string]$SetupExe = 'D:\repo\deliverables\cache\ecs-setup\semantier-setup-ch1.exe',
   [string]$SignTool = 'C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\signtool.exe',
-  [string]$Node = 'D:\repo\deliverables\cache\desktop-inputs\tools\node-26.7.0-win32-x64\node.exe',
-  [string]$Repository = 'D:\repo\hermes-build',
+  [string]$Node = '',
+  [string]$Repository = '',
+  [string]$CredentialsEnv = '',
   [string]$TimestampUrl = 'http://timestamp.digicert.com',
   [Alias('PrepareOnly')][switch]$LocalOnly,
   [switch]$SkipOldCleanup,
@@ -65,7 +66,8 @@ param(
   [switch]$VerifyPublicDownload,
   [string]$Commit = '',
   [string]$BuildCache = 'D:\repo\deliverables\cache\desktop-inputs',
-  [string]$BuildPython = 'D:\repo\hermes-build\apps\desktop\build\agent-payload\venv\Scripts\python.exe',
+  [string]$BuildPython = '',
+  [string]$AcceptanceNodeModules = '',
   [string]$VersionState = 'D:\repo\semantier-agent-build-version.json',
   [ValidateSet('Beta','Prod')][string]$BuildMode = 'Beta',
   [switch]$PreflightOnly
@@ -79,6 +81,99 @@ $script:statusClock = [Diagnostics.Stopwatch]::StartNew()
 $script:milestoneClock = [Diagnostics.Stopwatch]::StartNew()
 $script:statusLog = $null
 $script:askPassExe = $null
+$script:releaseEnvironment = @{}
+function Set-ReleaseEnvironment([string]$Name,[string]$Value) {
+  if(!$script:releaseEnvironment.ContainsKey($Name)){$script:releaseEnvironment[$Name]=[Environment]::GetEnvironmentVariable($Name,'Process')}
+  [Environment]::SetEnvironmentVariable($Name,$Value,'Process')
+}
+function Assert-LocalWindowsPath([string]$Path) {
+  if(!$Path -or ![IO.Path]::IsPathRooted($Path)){throw 'Build paths must be absolute local Windows paths.'}
+  $full=[IO.Path]::GetFullPath($Path)
+  $drive=New-Object IO.DriveInfo([IO.Path]::GetPathRoot($full))
+  if($full.StartsWith('\\') -or $drive.DriveType -ne [IO.DriveType]::Fixed){throw 'Build staging, tools and output must be on a local fixed Windows drive.'}
+  return $full
+}
+function Get-EcsSshPassword([string]$Path) {
+  if(!$Path){return $null}
+  if(!(Test-Path -LiteralPath $Path -PathType Leaf)){throw 'The explicit -CredentialsEnv file is unavailable.'}
+  $password=$null;$found=$false
+  foreach($line in [IO.File]::ReadAllLines($Path)) {
+    if($line -cnotmatch '^\s*(?:export\s+)?ALI_ECS_SSH_PASSWORDE\s*=\s*(.*)$'){continue}
+    if($found){throw 'Duplicate SSH password assignments in -CredentialsEnv.'}
+    $found=$true;$value=$Matches[1].Trim()
+    if($value.StartsWith('"') -or $value.StartsWith("'")) {
+      if($value -notmatch '^(["''])(.*?)\1\s*(?:#.*)?$'){throw 'Malformed SSH password assignment in -CredentialsEnv.'}
+      $password=$Matches[2]
+    } else {$password=($value -replace '\s+#.*$','').Trim()}
+  }
+  if(!$password){throw 'Credentials file must contain nonempty ALI_ECS_SSH_PASSWORDE; omit -CredentialsEnv to use SSH keys.'}
+  return $password
+}
+function Initialize-ReleasePaths {
+  if([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT){throw 'Run on native Windows.'}
+  if($env:SEMANTIER_WSL_GIT_DISTRO){throw 'Clear SEMANTIER_WSL_GIT_DISTRO; WSL Git is not supported by this workflow.'}
+  if(!$Repository){$script:Repository=Split-Path -Parent $PSScriptRoot}
+  $script:Repository=(Resolve-Path -LiteralPath $Repository -ErrorAction Stop).ProviderPath.TrimEnd('\','/')
+  if(!(Test-Path -LiteralPath (Join-Path $Repository 'scripts\bundles\desktop.py'))){throw 'Repository must name the Hermes source checkout.'}
+  $script:BuildCache=Assert-LocalWindowsPath $BuildCache
+  $script:Output=Assert-LocalWindowsPath $Output
+  $script:VersionState=Assert-LocalWindowsPath $VersionState
+  $script:SetupExe=Assert-LocalWindowsPath $SetupExe
+  $lock=Get-Content -LiteralPath (Join-Path $Repository 'pm\lock.json') -Raw | ConvertFrom-Json
+  if(!$BuildPython){$script:BuildPython=Join-Path $BuildCache ('tools\python-'+$lock.packages.python.version+'-win32-x64\python.exe')}
+  if(!$Node){$script:Node=Join-Path $BuildCache ('tools\node-'+$lock.packages.node.version+'-win32-x64\node.exe')}
+  foreach($tool in @($BuildPython,$Node)) {
+    $null=Assert-LocalWindowsPath $tool
+    if(!(Test-Path -LiteralPath $tool -PathType Leaf)){throw 'Existing cached Windows Python/Node unavailable; specify -BuildPython/-Node. No installation attempted.'}
+  }
+  if($AcceptanceNodeModules){$script:AcceptanceNodeModules=Assert-LocalWindowsPath $AcceptanceNodeModules}
+  if($CredentialsEnv){$script:CredentialsEnv=(Resolve-Path -LiteralPath $CredentialsEnv -ErrorAction Stop).ProviderPath;$null=Get-EcsSshPassword $CredentialsEnv}
+  $git=(Get-Command git.exe -CommandType Application -ErrorAction Stop).Source
+  Set-ReleaseEnvironment 'PATH' ((Split-Path -Parent $git)+';'+$env:PATH)
+  $trust=@($Repository.Replace('\','/'))
+  $script:RuntimeRoot=$null
+  $parent=Split-Path -Parent $Repository
+  if((Split-Path -Leaf $Repository) -eq 'hermes-agent' -and (Test-Path -LiteralPath (Join-Path $parent '.gitmodules'))){$script:RuntimeRoot=$parent;$trust+=$parent.Replace('\','/')}
+  $count=0
+  if($env:GIT_CONFIG_COUNT -and (![int]::TryParse($env:GIT_CONFIG_COUNT,[ref]$count) -or $count -lt 0)){throw 'Invalid inherited GIT_CONFIG_COUNT.'}
+  foreach($path in $trust){
+    Set-ReleaseEnvironment "GIT_CONFIG_KEY_$count" 'safe.directory'
+    Set-ReleaseEnvironment "GIT_CONFIG_VALUE_$count" $path
+    $count++
+  }
+  Set-ReleaseEnvironment "GIT_CONFIG_KEY_$count" 'core.longpaths'
+  Set-ReleaseEnvironment "GIT_CONFIG_VALUE_$count" 'true'
+  Set-ReleaseEnvironment 'GIT_CONFIG_COUNT' ([string]($count+1))
+  $head=& git.exe -C $Repository rev-parse HEAD
+  if($LASTEXITCODE -ne 0){throw 'Native Windows Git cannot inspect the source repository.'}
+  $script:SourceBinding=[ordered]@{repository=$Repository;toolingHermesHead=[string]$head;runtimeHead=$null;hermesGitlink=$null}
+  if($RuntimeRoot){
+    $runtimeHead=& git.exe -C $RuntimeRoot rev-parse HEAD
+    if($LASTEXITCODE -ne 0){throw 'Cannot inspect Runtime HEAD.'}
+    $link=& git.exe -C $RuntimeRoot ls-tree HEAD hermes-agent
+    if($LASTEXITCODE -ne 0 -or $link -notmatch '^160000 commit ([a-f0-9]{40})\s'){throw 'Cannot inspect recorded Hermes gitlink.'}
+    $script:SourceBinding.runtimeHead=[string]$runtimeHead;$script:SourceBinding.hermesGitlink=$Matches[1]
+  }
+}
+function Initialize-LocalBuildSource([string]$Source,[string]$Revision) {
+  $null=Assert-LocalWindowsPath $Source
+  if(!(Test-Path -LiteralPath $Source)){
+    Run 'git.exe' @('-c','core.autocrlf=false','clone','--no-local','--no-checkout','--',$Repository,$Source)
+  } else {
+    if(!(Test-Path -LiteralPath (Join-Path $Source '.git') -PathType Container) -or
+        (Test-Path -LiteralPath (Join-Path $Source '.git\objects\info\alternates'))){throw 'Build source must be an independent local clone; preserve and inspect existing directory.'}
+    $dirty=@(& git.exe -C $Source status --porcelain --untracked-files=all)
+    if($LASTEXITCODE -ne 0 -or $dirty){throw 'Local build clone has changes; preserve and inspect before continuing.'}
+  }
+  $previousErrorPreference=$ErrorActionPreference
+  try {
+    $ErrorActionPreference='Continue'
+    & git.exe -C $Source cat-file -e ($Revision+'^{commit}') 2>$null
+    $present=$LASTEXITCODE -eq 0
+  } finally {$ErrorActionPreference=$previousErrorPreference}
+  if(!$present){Run 'git.exe' @('-C',$Source,'fetch','--no-tags','--',$Repository,$Revision)}
+  Run 'git.exe' @('-C',$Source,'-c','core.autocrlf=false','switch','--detach',$Revision)
+}
 function Report-Status([string]$Message) {
   $line = '[{0}] [+{1:0}s] {2}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $script:statusClock.Elapsed.TotalSeconds, $Message
   Write-Host $line
@@ -168,7 +263,7 @@ function Run-Setup([string]$Exe, [string[]]$Arguments) {
 }
 function Hash([string]$Path) { (Get-FileHash -LiteralPath $Path -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant() }
 function Preserve-Databases([string]$Mode) {
-  $python=Join-Path $Repository 'apps\desktop\build\agent-payload\venv\Scripts\python.exe'
+  $python=$BuildPython
   $code=@'
 import os,sqlite3,sys,time,uuid
 from contextlib import closing
@@ -215,7 +310,7 @@ else:
   if($LASTEXITCODE -ne 0){throw "SQLite $Mode failed with exit code $LASTEXITCODE"}
 }
 function Test-PublicMsix([switch]$FullDownload) {
-  $python=Join-Path $Repository 'apps\desktop\build\agent-payload\venv\Scripts\python.exe'
+  $python=$BuildPython
   $code=@'
 import hashlib,sys
 from curl_cffi import requests,CurlHttpVersion
@@ -277,19 +372,7 @@ function Read-ZipText($Archive, [string]$Name) {
   try { $reader.ReadToEnd() } finally { $reader.Dispose() }
 }
 function Invoke-SshNative([string]$Exe, [string[]]$Arguments) {
-  $password=$null
-  $envFile=Join-Path $Repository '.env'
-  if(Test-Path -LiteralPath $envFile -PathType Leaf) {
-    foreach($line in [IO.File]::ReadLines($envFile)) {
-      if($line -match '^\s*(?:export\s+)?ALI_ECS_SSH_PASSWORDE\s*=\s*(.*)$') {
-        $value=$Matches[1].Trim()
-        if($value.StartsWith('"') -or $value.StartsWith("'")) {
-          $quote=$value.Substring(0,1);$end=$value.LastIndexOf($quote)
-          if($end -gt 0){$password=$value.Substring(1,$end-1)}
-        } else {$password=($value -replace '\s+#.*$','').Trim()}
-      }
-    }
-  }
+  $password=Get-EcsSshPassword $CredentialsEnv
   if(!$password) { & $Exe @Arguments; return }
   if(!$script:askPassExe) {
     $helperDirectory=Join-Path 'D:\repo\deliverables\work' ('ecs-ssh-askpass-'+[Guid]::NewGuid().ToString('N'))
@@ -536,7 +619,7 @@ function Initialize-RustPreflight {
 }
 function Initialize-ElectronPreflight {
   if($Commit){
-    $json=& git -C $Repository show ($Commit+':apps/desktop/package.json')
+    $json=& git.exe -C $Repository show ($Commit+':apps/desktop/package.json')
     if($LASTEXITCODE -ne 0){throw 'Cannot read Electron version at requested commit.'}
     $package=($json -join "`n") | ConvertFrom-Json
   } else {$package=Get-Content -LiteralPath (Join-Path $Repository 'apps\desktop\package.json') -Raw | ConvertFrom-Json}
@@ -599,7 +682,7 @@ globalThis.fetch=async(input,options)=>{
   Report-Status "Preflight: Electron $version official SHA-256 verified; Node will reuse the local archive and checksums."
 }
 function Initialize-BuildPreflight {
-  if($env:OS -ne 'Windows_NT'){throw 'Build preflight requires native Windows.'}
+  if([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT){throw 'Build preflight requires native Windows.'}
   Report-Status 'Preflight: initializing Windows PATH and VS 2022 x64 SDK environment.'
   $systemPaths=@("$env:WINDIR\System32","$env:WINDIR","$env:WINDIR\System32\Wbem",
     "$env:WINDIR\System32\OpenSSH","$env:WINDIR\System32\WindowsPowerShell\v1.0",'D:\Program Files\Git\cmd')
@@ -695,45 +778,14 @@ function Remove-ExistingAcceptancePackage {
     throw 'Existing acceptance package remains registered; installation stopped.'
   }
 }
-function Restore-InterruptedBuildIcons([string]$Source, [string]$RunDirectory) {
-  $head=& git -C $Source rev-parse HEAD
-  if($LASTEXITCODE -ne 0 -or $head -cne $Commit){return $false}
-  $status=@(& git -C $Source status --porcelain --untracked-files=all)
-  if($LASTEXITCODE -ne 0){return $false}
-  if(!$status.Count){return $true}
-  $allowed=@('apps/desktop/assets/icon-dark.icns','apps/desktop/assets/icon-mac.png','apps/desktop/assets/icon.icns',
-    'apps/desktop/assets/icon.icon/Assets/art-dark.png','apps/desktop/assets/icon.icon/Assets/art-light.png',
-    'apps/desktop/assets/icon.icon/Assets/mono.png')
-  $files=@()
-  foreach($line in $status){
-    if(!$line.StartsWith(' M ')){return $false}
-    $relative=$line.Substring(3)
-    if($relative -cnotin $allowed){return $false}
-    $current=Join-Path $Source $relative
-    $generated=Join-Path (Join-Path $Source 'apps\desktop\build\products\icons') $relative
-    if(!(Test-Path -LiteralPath $generated -PathType Leaf)){return $false}
-    if([Convert]::ToBase64String([IO.File]::ReadAllBytes($current)) -cne
-      [Convert]::ToBase64String([IO.File]::ReadAllBytes($generated))){return $false}
-    $files+=@($relative)
-  }
-  $saved=Join-Path $RunDirectory ('recovered-icons-'+[Guid]::NewGuid().ToString('N'))
-  foreach($relative in $files){
-    $destination=Join-Path $saved $relative
-    New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
-    Copy-Item -LiteralPath (Join-Path $Source $relative) -Destination $destination
-  }
-  Report-Status ('Restoring '+$files.Count+' interrupted generated icons; saved copies: '+$saved)
-  Run 'git' (@('-C',$Source,'restore','--source=HEAD','--worktree','--')+$files)
-  return $true
-}
 function Build-CommitPackage {
   if($Commit -cnotmatch '^[a-f0-9]{40}$'){throw '-Commit requires a complete 40-character Git commit.'}
-  $resolved=& git -C $Repository rev-parse --verify ($Commit+'^{commit}')
+  $resolved=& git.exe -C $Repository rev-parse --verify ($Commit+'^{commit}')
   if($LASTEXITCODE -ne 0 -or $resolved -cne $Commit){throw 'Requested commit is not available locally; fetch it first.'}
-  if($env:SEMANTIER_WSL_GIT_DISTRO){throw 'Clear SEMANTIER_WSL_GIT_DISTRO; this workflow uses native Windows only.'}
   if($WhatIfPreference){
     [ordered]@{commit=$Commit;builder='existing scripts/bundles/desktop.py --prepare-only / --prepared';
       version='reserve next version using existing next-windows-build-version.ps1; reuse on resume';
+      source=$script:SourceBinding;localBuildSource='D:\repo\deliverables\work\ecs-build-source';credentialsEnv=$CredentialsEnv;python=$BuildPython;node=$Node;
       mode=$BuildMode;verification=($(if($BuildMode -eq 'Beta'){'SKIPPED_BETA'}else{'REQUIRED_PROD'}));cache=$BuildCache;output=$Output;publish=(!$LocalOnly)} | ConvertTo-Json
     return
   }
@@ -758,7 +810,8 @@ function Build-CommitPackage {
   if($record -and $record.stage -eq 'cancelled'){
     throw 'This tooling-only version reservation was cancelled. Resume the application source commit and its original run instead.'
   }
-  $source='D:\repo\deliverables\work\ecs-build-source'
+  $source=if($record){[string]$record.source}else{'D:\repo\deliverables\work\ecs-build-source'}
+  $null=Assert-LocalWindowsPath $source
   if(!$record){
     $next=& (Join-Path $PSScriptRoot 'next-windows-build-version.ps1') -State $VersionState -SourceCommit $Commit
     $record=[pscustomobject]@{commit=$Commit;version=[string]$next;source=$source;publicBase=$PublicBase;cache=$BuildCache;
@@ -783,14 +836,7 @@ function Build-CommitPackage {
     return $record
   }
   if($BuildMode -eq 'Prod'){Initialize-BuildPreflight}
-  if(!(Test-Path -LiteralPath $source)){
-    Run 'git' @('-C',$Repository,'-c','core.autocrlf=false','worktree','add','--detach',$source,$Commit)
-  } else {
-    $dirty=& git -C $source status --porcelain --untracked-files=all
-    if($LASTEXITCODE -ne 0){throw 'Cannot inspect build worktree.'}
-    if($dirty -and !(Restore-InterruptedBuildIcons $source $Output)){throw 'Build worktree has changes other than proven interrupted generated icons; preserve and inspect before continuing.'}
-    Run 'git' @('-C',$source,'-c','core.autocrlf=false','switch','--detach',$Commit)
-  }
+  Initialize-LocalBuildSource $source $Commit
   if(!(Test-Path -LiteralPath $record.request)){
     Run $BuildPython @('-B',(Join-Path $source 'scripts\releases\semantier_windows.py'),
       '--source',$source,'--commit',$Commit,'--controller',$Commit,'--version',$record.version,
@@ -842,11 +888,11 @@ function Build-CommitPackage {
     Report-Status 'Packaging only: afterPack payload scan/repair and inner binary signing disabled; signing the final MSIX only.'
     $packagingDriver=Join-Path $Repository 'scripts\bundles\desktop.py'
     $packagingRunner=Join-Path $Repository 'apps\desktop\scripts\run-electron-builder.mjs'
-    $toolingHead=& git -C $Repository rev-parse HEAD
+    $toolingHead=& git.exe -C $Repository rev-parse HEAD
     if($LASTEXITCODE -ne 0){throw 'Cannot record packaging tooling commit.'}
     $tooling=[ordered]@{applicationCommit=$Commit;toolingCommit=$toolingHead;
       driverSha256=(Hash $packagingDriver);runnerSha256=(Hash $packagingRunner);
-      deployScriptSha256=(Hash $PSCommandPath);version=$record.version}
+      deployScriptSha256=(Hash $PSCommandPath);version=$record.version;sharedSource=$script:SourceBinding}
     $record | Add-Member -NotePropertyName tooling -NotePropertyValue $tooling -Force
     Write-RunEvent @{type='tooling';at=[DateTime]::UtcNow.ToString('o');tooling=$tooling}
     Report-Status ('Application source '+$Commit+'; packaging tooling '+$toolingHead+'; preserving version '+$record.version)
@@ -899,7 +945,7 @@ function Publish-IndependentSetup {
   if(!(Test-Path -LiteralPath $Output)){New-Item -ItemType Directory -Path $Output | Out-Null}
   $script:statusLog=Join-Path $Output 'checkpoints.jsonl'
   $script:checkpoints=@{}
-  $receipt=[ordered]@{kind='setup';result='IN_PROGRESS';setupExe=$null;publication='NOT_STARTED';MSIX='UNCHANGED';CH2='UNCHANGED';toolingCommit=(& git -C $Repository rev-parse HEAD)}
+  $receipt=[ordered]@{kind='setup';result='IN_PROGRESS';setupExe=$null;publication='NOT_STARTED';MSIX='UNCHANGED';CH2='UNCHANGED';toolingCommit=(& git.exe -C $Repository rev-parse HEAD)}
   if(Test-Path -LiteralPath $script:statusLog){
     $saved=Read-RunCheckpoint $script:statusLog
     if($saved){
@@ -942,6 +988,8 @@ function Publish-IndependentSetup {
     Write-Host "Result and evidence: $Output"
   }
 }
+try {
+Initialize-ReleasePaths
 $script:explicitOutput=$PSBoundParameters.ContainsKey('Output')
 if($LocalSetup){
   $SetupOnly=$true;$UpdateSetup=$true;$LocalOnly=$true
@@ -958,11 +1006,12 @@ if($PreflightOnly){
 if($Commit){
   $built=Build-CommitPackage
   if($WhatIfPreference){$built;return}
+  if(!$AcceptanceNodeModules){$AcceptanceNodeModules=Join-Path $built.source 'node_modules'}
   $Msix=$built.msix;$ExpectedInputSha256=$built.sha256;$SourceCommit=$Commit;$Version=$built.version+'.0'
   $buildRequest=Get-Content -LiteralPath $built.request -Raw | ConvertFrom-Json
   $BuildId=$buildRequest.buildId
 }
-if ($env:OS -ne 'Windows_NT') { throw 'Run on native Windows.' }
+if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'Run on native Windows.' }
 if ($SshTarget -cnotmatch '^[A-Za-z0-9_.-]+@[A-Za-z0-9.-]+$' -or
     $RemoteRoot -cnotmatch '^/opt/[A-Za-z0-9_/-]+/releases$' -or $RemoteRoot.Contains('/../') -or
     $PublicBase -cne 'https://download.semantier.cn' -or $BuildId -cnotmatch '^[a-f0-9]{32}$' -or
@@ -989,7 +1038,13 @@ $tools=@($SignTool,$Node)
 foreach ($tool in $tools) {
   if (!(Test-Path -LiteralPath $tool -PathType Leaf)) { throw "Required existing tool unavailable: $tool" }
 }
-if ($BuildMode -eq 'Prod' -and !(Test-Path -LiteralPath (Join-Path $Repository 'node_modules\@playwright\test'))) { throw 'Existing Playwright dependencies unavailable; no npm installation attempted.' }
+if($BuildMode -eq 'Prod'){
+  if(!$AcceptanceNodeModules){throw 'Prod acceptance requires -AcceptanceNodeModules pointing to existing Windows dependencies, or a -Commit build clone.'}
+  $null=Assert-LocalWindowsPath $AcceptanceNodeModules
+  if(!(Test-Path -LiteralPath (Join-Path $AcceptanceNodeModules '@playwright\test'))){throw 'Existing Windows Playwright dependencies unavailable; no npm installation attempted.'}
+  & $BuildPython -B -c 'import curl_cffi'
+  if($LASTEXITCODE -ne 0){throw 'Prod public checks need an existing Windows Python with curl_cffi; select it with -BuildPython. No dependencies installed.'}
+}
 if($BuildMode -eq 'Prod'){
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $archive = [IO.Compression.ZipFile]::OpenRead($Msix)
@@ -1172,7 +1227,7 @@ try {
   $binding=Join-Path $Output 'installed-binding.json';$uiOutput=Join-Path $Output ('acceptance-'+[Guid]::NewGuid().ToString('N'))
   Save-Json @{version=([Version]$Version).ToString(3);sourceCommit=$SourceCommit;artifactSha256=$hash;
     executable=(Join-Path $registered[0].InstallLocation 'app\Semantier Agent.exe');output=$uiOutput;
-    playwright=(Join-Path $Repository 'node_modules\@playwright\test')} $binding
+    playwright=(Join-Path $AcceptanceNodeModules '@playwright\test')} $binding
   $harness=@'
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
 const b=JSON.parse(fs.readFileSync(process.argv[2],'utf8').replace(/^\uFEFF/,''));
@@ -1318,7 +1373,7 @@ printf 'SINGLE_MSIX_ATOMIC_REPLACE_PASS\n'
   if (!$SkipOldCleanup) {
     $landingProbe=Join-Path $Output 'verify-live-landing.cjs'
     $landingProbeSource=@'
-const {chromium}=require(process.argv[2]+'/node_modules/@playwright/test');
+const {chromium}=require(process.argv[2]+'/@playwright/test');
 const fs=require('node:fs');
 (async()=>{
   const expected='https://download.semantier.cn/releases/installers/semantier-setup-ch1.exe';
@@ -1347,7 +1402,7 @@ const fs=require('node:fs');
     $landingEvidence=Join-Path $Output 'landing-cutover.json'
     try {
       Report-Status 'Checking both live Landing hosts before cleanup.'
-      Run $Node @($landingProbe,$Repository,$landingEvidence)
+      Run $Node @($landingProbe,$AcceptanceNodeModules,$landingEvidence)
       $landingProof=Get-Content -LiteralPath $landingEvidence -Raw | ConvertFrom-Json
       if ($landingProof.result -cne 'LIVE_LANDING_FIXED_SETUP_PASS' -or $landingProof.observations.Count -ne 2) {
         throw 'Landing browser evidence incomplete.'
@@ -1406,4 +1461,8 @@ printf 'OLD_PACKAGE_CLEANUP_PASS\n'
   [IO.File]::WriteAllText((Join-Path $Output 'release-note.md'),
     "Result: $($receipt.result)`nVersion: $Version`nSource: $SourceCommit`nSigned MSIX: $($receipt.signedMsix)`nSHA-256: $($receipt.sha256)`nFixed public MSIX: $PublicBase/releases/SemantierAgent.msix`nFixed Setup: $PublicBase/releases/installers/semantier-setup-ch1.exe`nLocal acceptance: $($receipt.localAcceptance)`nPublication: $($receipt.publication)`nH3: $($receipt.h3)`nPublic readback: $($receipt.publicReadback)`nLanding cutover: $($receipt.landingCutover)`nCleanup: $($receipt.cleanup)`nCH2: unchanged`n",$utf8)
   Write-Host "Result and evidence: $Output"
+}
+
+} finally {
+  foreach($name in $script:releaseEnvironment.Keys){[Environment]::SetEnvironmentVariable($name,$script:releaseEnvironment[$name],'Process')}
 }
