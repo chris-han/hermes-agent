@@ -529,10 +529,29 @@ def _absorb_entry_models(grp: dict, entry: dict, active_model: Any) -> None:
     from hermes_cli.model_switch import _declared_model_ids, _entry_models_discovered, _models_config_is_allowlist
     _extend_unique(grp["models"], [active_model])
     models_field = entry.get("models")
+    pinned = _explicit_pinned_models(entry)
+    if pinned is None:
+        grp["eligibility_known"] = False
+    else:
+        _extend_unique(grp["eligible_models"], pinned)
     if _models_config_is_allowlist(models_field, _entry_models_discovered(entry)):
         grp["has_explicit_models"] = True
     _extend_unique(grp["models"], _declared_model_ids(models_field))
     _split_chain_entries(grp["models"])
+
+
+def _explicit_pinned_models(entry: dict) -> list[str] | None:
+    """Only a manually pinned catalog is an explicit configured selection set."""
+    from hermes_cli.model_switch import _declared_model_ids, _entry_models_discovered
+
+    if "discover_models" not in entry or _discover_flag(entry) or _entry_models_discovered(entry):
+        return None
+    models = entry.get("models")
+    metadata = models.values() if isinstance(models, dict) else models if isinstance(models, (list, tuple)) else []
+    if any(isinstance(item, dict) and "enabled" in item for item in metadata):
+        return None
+    declared = _declared_model_ids(models)
+    return declared or None
 
 
 def _split_chain_entries(models: list) -> None:
@@ -771,12 +790,14 @@ class _PickerBuild:
 
     def add_endpoint_row(
         self, slug: str, name: str, api_url: str, models: list, is_current: bool, native_catalog_empty: bool,
-        *, source: str = "user-config", shown: list | None = None) -> None:
+        *, source: str = "user-config", shown: list | None = None, eligible_models: list | None = None) -> None:
         """Append a user-defined endpoint row (sections 3, 3b, 4)."""
         self.results.append({
             "slug": slug, "name": name, "is_current": is_current, "is_user_defined": True,
             "models": models if shown is None else shown, "total_models": len(models), "source": source,
             "api_url": api_url, "native_catalog_empty": native_catalog_empty})
+        if eligible_models is not None:
+            self.results[-1]["eligible_models"] = eligible_models
         self.seen_slugs.add(slug.lower())
 
     def record_section3_pair(self, name: str, url_norm: str) -> bool:
@@ -1008,7 +1029,7 @@ def _lap_user_provider_rows(b: _PickerBuild, user_providers: dict) -> None:
             # else key_env through the per-profile secret scope).
             ep_groups[group_key] = {
                 "slug": ep_name, "name": _group_display_name(display_name), "api_url": api_url, "models": [],
-                "has_explicit_models": False,
+                "has_explicit_models": False, "eligibility_known": True, "eligible_models": [],
                 "api_key": inline_api_key or _scoped_key_env(key_env),
                 "headers": headers, "api_mode": ep_cfg.get("api_mode"),
                 "discovery_allowed": bool(api_url) and _discover_flag(ep_cfg), "raw_names": [], "aliases": set()}
@@ -1036,7 +1057,8 @@ def _lap_user_provider_rows(b: _PickerBuild, user_providers: dict) -> None:
         if discovered is not None:
             models_list = discovered
 
-        b.add_endpoint_row(ep_name, display_name, api_url, models_list, is_current, native_catalog_empty)
+        b.add_endpoint_row(ep_name, display_name, api_url, models_list, is_current, native_catalog_empty,
+                           eligible_models=grp["eligible_models"] if grp["eligibility_known"] else None)
         b.seen_slugs.update(ep_aliases)
         # Record every raw member name so section 4 can match per-model custom_providers rows
         # even though the group label was collapsed.
@@ -1126,6 +1148,7 @@ def _lap_custom_provider_rows(b: _PickerBuild, custom_providers: list) -> None:
         grp = groups.setdefault(group_key, {
             "slug": custom_provider_slug(display_name, provider_key), "name": display_name,
             "api_url": api_url, "api_key": "", "credential_identity": cred_identity, "models": [], "has_explicit_models": False,
+            "eligibility_known": True, "eligible_models": [],
             "discover_models": True, "api_mode": api_mode, "extra_headers": entry_extra_headers,
             "aliases": set()})
         grp["api_key"] = grp["api_key"] or api_key  # first member with a key wins
@@ -1176,7 +1199,8 @@ def _lap_custom_provider_rows(b: _PickerBuild, custom_providers: list) -> None:
                         credential_identity=grp["credential_identity"])
                 except Exception:
                     pass
-        b.add_endpoint_row(slug, grp["name"], grp["api_url"], grp["models"], is_current, native_catalog_empty)
+        b.add_endpoint_row(slug, grp["name"], grp["api_url"], grp["models"], is_current, native_catalog_empty,
+                           eligible_models=grp["eligible_models"] if grp["eligibility_known"] else None)
         section4_slugs.add(slug.lower())
 
 

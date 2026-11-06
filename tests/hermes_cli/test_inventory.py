@@ -83,6 +83,18 @@ def _empty_ctx(provider="orig", model="orig-model", base_url="orig-url"):
     )
 
 
+def test_payload_keeps_only_offered_source_backed_ids(monkeypatch):
+    rows = [{"slug": "lab", "name": "Lab", "models": ["allowed", "stale"],
+             "eligible_models": ["allowed", "not-offered"], "is_current": True,
+             "is_user_defined": True, "total_models": 2}]
+    monkeypatch.setattr("hermes_cli.model_switch.list_authenticated_providers", lambda **kwargs: rows)
+    monkeypatch.setattr("hermes_cli.inventory._local_runtime_row", lambda ctx: None)
+    payload = build_models_payload(_empty_ctx(provider="lab", model="stale"), explicit_only=True)
+    row = next(row for row in payload["providers"] if row["slug"] == "lab")
+    assert row["eligible_models"] == ["allowed"]
+    assert payload["model"] == "stale"
+
+
 
 
 

@@ -1952,6 +1952,58 @@ def test_custom_provider_dict_models_pin_requires_discover_false(monkeypatch):
     row = next(p for p in providers if p["name"] == "Local Ollama")
     assert calls == []
     assert row["models"] == ["llama3"]
+    assert row["eligible_models"] == ["llama3"]
+
+
+def test_pinned_provider_eligibility_excludes_saved_id_and_disabled_provider(monkeypatch):
+    monkeypatch.setattr("agent.models_dev.fetch_models_dev", dict)
+    monkeypatch.setattr(providers_mod, "HERMES_OVERLAYS", {})
+    rows = list_authenticated_providers(
+        current_provider="lab-a", current_model="stale-model",
+        user_providers={
+            "lab-a": {"base_url": "http://a.example/v1", "discover_models": False,
+                      "models": {"allowed-a": {}}, "default_model": "stale-model"},
+            "lab-b": {"base_url": "http://b.example/v1", "discover_models": False,
+                      "models": {"allowed-b": {}}},
+            "disabled": {"base_url": "http://c.example/v1", "enabled": False,
+                         "discover_models": False, "models": {"hidden": {}}},
+        },
+    )
+    by_slug = {row["slug"]: row for row in rows}
+    assert by_slug["lab-a"]["eligible_models"] == ["allowed-a"]
+    assert by_slug["lab-b"]["eligible_models"] == ["allowed-b"]
+    assert "stale-model" not in by_slug["lab-a"]["eligible_models"]
+    assert "disabled" not in by_slug
+
+
+@pytest.mark.parametrize("entry", [
+    {"models": {"a": {}}, "discover_models": True},
+    {"models": {"a": {}}, "models_discovered": True, "discover_models": False},
+    {"models": {"a": {"enabled": False}}, "discover_models": False},
+    {"model": "saved", "discover_models": False},
+])
+def test_ambiguous_custom_catalog_does_not_claim_eligibility(monkeypatch, entry):
+    monkeypatch.setattr("agent.models_dev.fetch_models_dev", dict)
+    monkeypatch.setattr(providers_mod, "HERMES_OVERLAYS", {})
+    rows = list_authenticated_providers(
+        current_provider="lab", user_providers={"lab": {"base_url": "http://lab.example/v1", **entry}},
+        probe_custom_providers=False,
+    )
+    row = next(row for row in rows if row["slug"] == "lab")
+    assert row.get("eligible_models") is None
+
+
+def test_mixed_group_does_not_promote_partial_pinned_catalog(monkeypatch):
+    monkeypatch.setattr("agent.models_dev.fetch_models_dev", dict)
+    monkeypatch.setattr(providers_mod, "HERMES_OVERLAYS", {})
+    rows = list_authenticated_providers(
+        current_provider="lab-a", user_providers={
+            "lab-a": {"base_url": "http://lab.example/v1", "discover_models": False, "models": {"a": {}}},
+            "lab-b": {"base_url": "http://lab.example/v1", "discover_models": True, "models": {"b": {}}},
+        }, probe_custom_providers=False,
+    )
+    row = next(row for row in rows if row["slug"] == "lab-a")
+    assert row.get("eligible_models") is None
 
 
 # ─── No-probe picker opens still serve the cached catalog ───────────────
