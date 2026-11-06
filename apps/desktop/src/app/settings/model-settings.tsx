@@ -96,12 +96,10 @@ export function ModelSettingsSkeleton({ subpage }: Pick<ModelSettingsProps, 'sub
 
 type SpeedTier = 'fast' | 'normal' | 'ultrafast'
 
-// A provider row is "ready" to pick a model from when it reports models. The
-// backend now surfaces the full `hermes model` universe (every canonical
-// provider), so unconfigured providers come back with `authenticated:false`
-// and an empty `models` list — those need a setup step before a model exists.
+// An explicitly unauthenticated row may contain only a saved model for display.
+// Missing authentication metadata is not itself an authentication failure.
 function isProviderReady(p?: ModelOptionProvider): boolean {
-  return !!p && (p.authenticated !== false || (p.models?.length ?? 0) > 0)
+  return !!p && p.authenticated !== false
 }
 
 const NO_PROVIDERS: readonly ModelOptionProvider[] = [{ name: '—', slug: '', models: [] }]
@@ -111,11 +109,11 @@ const NO_PROVIDERS: readonly ModelOptionProvider[] = [{ name: '—', slug: '', m
 // controlled value has no matching item) while remaining out of the real
 // inventory used for readiness/setup metadata.
 function mainProviderOptionsFor(providers: readonly ModelOptionProvider[], selectedProvider: string) {
-  const options = providers.length ? providers : NO_PROVIDERS
+  const options = providers.filter(provider => provider.authenticated !== false || catalogProviderMatches(provider, selectedProvider))
 
   return selectedProvider && !findCatalogProvider(providers, selectedProvider)
-    ? [{ name: selectedProvider, slug: selectedProvider, models: [] as string[] }, ...providers]
-    : options
+    ? [{ name: selectedProvider, slug: selectedProvider, models: [] as string[], authenticated: false }, ...options]
+    : options.length ? options : NO_PROVIDERS
 }
 
 // True when the provider row is a configured endpoint the backend may know
@@ -822,7 +820,7 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
   }
 
   const applyMainModel = useCallback(async () => {
-    if (!selectedProvider || !selectedModel || selectedUnavailable) {
+    if (!selectedProvider || !selectedModel || selectedUnavailable || !isProviderReady(selectedProviderRow)) {
       return
     }
 
@@ -1029,7 +1027,7 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
               </SelectTrigger>
               <SelectContent>
                 {mainProviderOptions.map(provider => (
-                  <SelectItem key={provider.slug || 'none'} value={provider.slug || 'none'}>
+                  <SelectItem disabled={!provider.slug || provider.authenticated === false} key={provider.slug || 'none'} value={provider.slug || 'none'}>
                     {provider.name}
                   </SelectItem>
                 ))}

@@ -190,6 +190,29 @@ describe('ModelSettings profile scope', () => {
 })
 
 describe('ModelSettings', () => {
+  it('does not offer an explicitly unauthenticated provider as a new choice', async () => {
+    getGlobalModelOptions.mockResolvedValueOnce({ providers: [
+      { name: 'Nous', slug: 'nous', models: ['hermes-4'], authenticated: true },
+      { name: 'Disconnected', slug: 'disconnected', models: ['saved-model'], authenticated: false }
+    ] })
+    renderModelSettings()
+    fireEvent.click((await screen.findAllByRole('combobox'))[0])
+    expect(screen.queryByRole('option', { name: 'Disconnected' })).toBeNull()
+    expect(screen.getByRole('option', { name: 'Nous' })).toBeTruthy()
+  })
+
+  it('shows setup rather than Apply for a saved unauthenticated provider with a model', async () => {
+    getGlobalModelInfo.mockResolvedValueOnce({ provider: 'disconnected', model: 'saved-model' })
+    getGlobalModelOptions.mockResolvedValueOnce({ providers: [
+      { name: 'Disconnected', slug: 'disconnected', models: ['saved-model'], authenticated: false, auth_type: 'oauth' }
+    ] })
+    renderModelSettings()
+    expect((await screen.findAllByRole('combobox'))[0].textContent).toContain('Disconnected')
+    expect(await screen.findByRole('button', { name: 'Set up Disconnected' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Apply' })).toBeNull()
+    expect(setModelAssignment).not.toHaveBeenCalled()
+  })
+
   it('keeps an explicitly unavailable saved model visible but cannot apply it', async () => {
     getGlobalModelInfo.mockResolvedValueOnce({ provider: 'nous', model: 'locked-model' })
     getGlobalModelOptions.mockResolvedValueOnce({ providers: [{
