@@ -6,8 +6,10 @@ import type { ConfigFieldSchema, HermesConfigRecord } from '@/types/hermes'
 import {
   buildConfigSearchEntries,
   buildCredentialSearchEntries,
+  buildEligibleModelSearchEntries,
   credentialSettingsView,
-  filterSettingsSearchEntries
+  filterSettingsSearchEntries,
+  settingsSearchTargetQuery
 } from './settings-search'
 import { envVar } from './test-utils'
 
@@ -28,6 +30,26 @@ const searchCopy = {
 }
 
 describe('settings search index', () => {
+  it('indexes only explicit eligible models with exact provider and scope intent', () => {
+    const entries = buildEligibleModelSearchEntries([
+      { slug: 'a', name: 'Provider A', models: ['enabled', 'disabled', 'stale'], eligible_models: ['enabled', 'disabled'], unavailable_models: ['disabled'] },
+      { slug: 'b', name: 'Provider B', models: ['unknown'] },
+      { slug: 'c', name: 'Disconnected', models: ['hidden'], eligible_models: ['hidden'], authenticated: false },
+      { slug: 'a', name: 'Provider A', models: ['enabled'], eligible_models: ['enabled'] }
+    ], { profile: 'profile-a', connection: 'source-a', context: 'Main Model', icon: Settings2 })
+    expect(entries.map(entry => entry.label)).toEqual(['Provider A', 'enabled'])
+    expect(filterSettingsSearchEntries(entries, 'ENABLED')[0].target).toEqual({
+      view: 'config:model', subpage: 'main', modelProvider: 'a', modelId: 'enabled',
+      modelProfile: 'profile-a', modelConnection: 'source-a'
+    })
+    expect(filterSettingsSearchEntries(entries, 'disabled')).toHaveLength(0)
+    expect(filterSettingsSearchEntries(entries, 'unknown')).toHaveLength(0)
+    const query = new URLSearchParams(settingsSearchTargetQuery(entries[1].target))
+    expect(query.get('model')).toBe('enabled')
+    expect(query.get('model_profile')).toBe('profile-a')
+    expect(query.get('model_connection')).toBe('source-a')
+  })
+
   it('builds config results from renderable schema fields with exact deep links', () => {
     const schema: Record<string, ConfigFieldSchema> = {
       'display.personality': { type: 'select' },
