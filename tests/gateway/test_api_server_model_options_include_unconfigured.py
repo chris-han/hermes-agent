@@ -48,3 +48,21 @@ async def test_false_query_param_disables_unconfigured_rows():
         _make_adapter(), "?include_unconfigured=false")
     assert status == 200
     assert flag is False, "explicit include_unconfigured=false must reach the payload builder"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("query", "expected", "unconfigured"), [
+    ("", False, True),
+    ("?explicit_only=1", True, False),
+    ("?explicit_only=false", False, True),
+    ("?explicit_only=1&include_unconfigured=1", True, True),
+])
+async def test_explicit_only_is_forwarded(query, expected, unconfigured):
+    app = _create_app(_make_adapter())
+    with patch("hermes_cli.inventory.load_picker_context", return_value=object()), \
+         patch("hermes_cli.inventory.build_model_options_payload", return_value={"providers": []}) as build:
+        async with TestClient(TestServer(app)) as cli:
+            response = await cli.get(f"/api/model/options{query}")
+    assert response.status == 200
+    assert build.call_args.kwargs.get("explicit_only", False) is expected
+    assert build.call_args.kwargs["include_unconfigured"] is unconfigured
