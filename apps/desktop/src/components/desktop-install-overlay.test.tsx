@@ -322,7 +322,7 @@ describe('DesktopInstallOverlay first-run setup', () => {
       expect(desktop.testConnectionConfig).toHaveBeenCalledWith({
         mode: 'remote',
         remoteAuthMode: 'token',
-        remoteToken: [REDACTED_SECRET],
+        remoteToken: 'session-secret',
         remoteUrl: 'https://gateway.example.com/hermes'
       })
     })
@@ -336,7 +336,7 @@ describe('DesktopInstallOverlay first-run setup', () => {
       expect(desktop.applyConnectionConfig).toHaveBeenCalledWith({
         mode: 'remote',
         remoteAuthMode: 'token',
-        remoteToken: [REDACTED_SECRET],
+        remoteToken: 'session-secret',
         remoteUrl: 'https://gateway.example.com/hermes'
       })
     })
