@@ -49,13 +49,22 @@ describe('model search catalog scope', () => {
     expect(result.current.modelEntries[0].target.modelConnection).toBe('source-b')
   })
 
-  it('does not fetch model entries from an untagged remote source', () => {
-    $connection.set({ mode: 'remote' } as never)
+  it('indexes an untagged remote and drops its late results after the connection changes', async () => {
+    let finishA!: (value: unknown) => void
+    $connection.set({ mode: 'remote', baseUrl: 'https://first.example', token: 'secret-a' } as never)
+    getOptions.mockReturnValueOnce(new Promise(resolve => { finishA = resolve }))
+      .mockResolvedValueOnce({ providers: [{ slug: 'b', name: 'B', models: ['b-model'], eligible_models: ['b-model'] }] })
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>
     const { result } = renderHook(() => useSettingsSearchCatalog(true), { wrapper })
-    expect(result.current.modelEntries).toEqual([])
-    expect(getOptions).not.toHaveBeenCalled()
+    await waitFor(() => expect(getOptions).toHaveBeenCalledTimes(1))
+    act(() => $connection.set({ mode: 'remote', baseUrl: 'https://second.example', token: 'secret-b' } as never))
+    await waitFor(() => expect(result.current.modelEntries.some(entry => entry.label === 'b-model')).toBe(true))
+    const target = result.current.modelEntries[0].target.modelConnection!
+    expect(target).not.toContain('second.example')
+    expect(target).not.toContain('secret-b')
+    await act(async () => { finishA({ providers: [{ slug: 'a', name: 'A', models: ['a-model'], eligible_models: ['a-model'] }] }) })
+    expect(result.current.modelEntries.some(entry => entry.label === 'a-model')).toBe(false)
   })
 
   it('drops old profile results immediately and indexes the new scoped response', async () => {

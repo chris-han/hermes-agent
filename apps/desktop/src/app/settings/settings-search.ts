@@ -48,9 +48,31 @@ interface CredentialSearchCopy {
   tools: string
 }
 
-/** A legacy local descriptor is unambiguous; an untagged remote is not. */
+// Legacy remote descriptors have no registry id. Bind their navigation targets to
+// this exact live descriptor without putting a remote URL or credential in a route.
+const legacyRemoteSources = new WeakMap<object, string>()
+
 export function modelSearchSource(connection: { connectionId?: string; mode?: 'local' | 'remote' } | null): string | null {
-  return connection?.connectionId?.trim() || (connection?.mode === 'local' ? LOCAL_CONNECTION_ID : null)
+  const id = connection?.connectionId?.trim()
+  if (id) {
+    return id
+  }
+
+  if (connection?.mode === 'local') {
+    return LOCAL_CONNECTION_ID
+  }
+
+  if (connection?.mode !== 'remote') {
+    return null
+  }
+
+  let source = legacyRemoteSources.get(connection)
+  if (!source) {
+    source = `legacy-remote:${crypto.randomUUID()}`
+    legacyRemoteSources.set(connection, source)
+  }
+
+  return source
 }
 
 function offeredEligibleModels(provider: ModelOptionProvider): string[] {

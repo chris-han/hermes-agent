@@ -9,6 +9,7 @@ import {
   buildEligibleModelSearchEntries,
   credentialSettingsView,
   filterSettingsSearchEntries,
+  modelSearchSource,
   resolveEligibleModelTarget,
   settingsSearchTargetQuery
 } from './settings-search'
@@ -31,6 +32,19 @@ const searchCopy = {
 }
 
 describe('settings search index', () => {
+  it('binds untagged remotes to an opaque descriptor identity', () => {
+    const first = { mode: 'remote' as const }
+    const second = { mode: 'remote' as const }
+    const source = modelSearchSource(first)
+    expect(source).toBeTruthy()
+    expect(modelSearchSource(first)).toBe(source)
+    expect(modelSearchSource(second)).not.toBe(source)
+    expect(modelSearchSource(null)).toBeNull()
+    const params = new URLSearchParams({ model_provider: 'a', model: 'ready', model_profile: 'p', model_connection: source! })
+    const providers = [{ slug: 'a', name: 'A', models: ['ready'], eligible_models: ['ready'] }]
+    expect(resolveEligibleModelTarget(params, providers, { profile: 'p', connection: modelSearchSource(second)! })).toBeNull()
+  })
+
   it('indexes only explicit eligible models with exact provider and scope intent', () => {
     const entries = buildEligibleModelSearchEntries([
       { slug: 'a', name: 'Provider A', models: ['enabled', 'disabled', 'stale'], eligible_models: ['enabled', 'disabled'], unavailable_models: ['disabled'] },
