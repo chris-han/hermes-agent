@@ -9,6 +9,7 @@ import {
   buildEligibleModelSearchEntries,
   credentialSettingsView,
   filterSettingsSearchEntries,
+  resolveEligibleModelTarget,
   settingsSearchTargetQuery
 } from './settings-search'
 import { envVar } from './test-utils'
@@ -48,6 +49,22 @@ describe('settings search index', () => {
     expect(query.get('model')).toBe('enabled')
     expect(query.get('model_profile')).toBe('profile-a')
     expect(query.get('model_connection')).toBe('source-a')
+  })
+
+  it('rejects stale source, profile, removed and explicitly unavailable model intents', () => {
+    const providers = [{ slug: 'cloud', name: 'Cloud', models: ['ready', 'locked'],
+      eligible_models: ['ready', 'locked'], unavailable_models: ['locked'] }]
+    const params = new URLSearchParams('model_provider=cloud&model=ready&model_profile=a&model_connection=source')
+    expect(resolveEligibleModelTarget(params, providers, { profile: 'a', connection: 'source' })).toEqual({ provider: 'cloud', model: 'ready' })
+    expect(resolveEligibleModelTarget(params, providers, { profile: 'b', connection: 'source' })).toBeNull()
+    expect(resolveEligibleModelTarget(params, providers, { profile: 'a', connection: 'other' })).toBeNull()
+    params.set('model', 'locked')
+    expect(resolveEligibleModelTarget(params, providers, { profile: 'a', connection: 'source' })).toBeNull()
+    params.set('model', 'removed')
+    expect(resolveEligibleModelTarget(params, providers, { profile: 'a', connection: 'source' })).toBeNull()
+    params.delete('model')
+    expect(resolveEligibleModelTarget(params, providers, { profile: 'a', connection: 'source' })).toEqual({ provider: 'cloud' })
+    expect(resolveEligibleModelTarget(params, [{ ...providers[0], eligible_models: null }], { profile: 'a', connection: 'source' })).toBeNull()
   })
 
   it('builds config results from renderable schema fields with exact deep links', () => {
