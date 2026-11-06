@@ -50,6 +50,7 @@ type SearchableOption = string | { value: string; label: string; keywords?: stri
  */
 export function SearchableSelect({
   'aria-label': ariaLabel,
+  className,
   value,
   onChange,
   options,
@@ -58,6 +59,7 @@ export function SearchableSelect({
   clearLabel
 }: {
   'aria-label'?: string
+  className?: string
   value: string
   onChange: (value: string) => void
   options: SearchableOption[]
@@ -100,7 +102,8 @@ export function SearchableSelect({
             // floors at the trigger width, inherits the squish (#99751).
             // Same min-width-floor convention as the model-settings selects.
             'min-w-44',
-            !value && 'text-muted-foreground'
+            !value && 'text-muted-foreground',
+            className
           )}
           data-slot="searchable-select-trigger"
           ref={triggerRef}

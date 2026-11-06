@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils'
 import { addCustomModel, customModelSlug } from '@/store/custom-models'
 
 import { CONTROL_TEXT } from './constants'
+import { SearchableSelect } from './searchable-select'
 
 // Radix <Select> renders a blank trigger when `value` matches no <SelectItem>.
 // A custom model (e.g. one added via config that isn't in the provider's
@@ -42,6 +43,7 @@ interface ModelSelectProps {
   providerSlug: string
   models: readonly string[]
   excludeUnavailable?: boolean
+  searchable?: boolean
   onValueChange: (model: string) => void
   value: string
 }
@@ -60,6 +62,7 @@ export function ModelSelect({
   onValueChange,
   provider,
   providerSlug,
+  searchable = false,
   value
 }: ModelSelectProps) {
   const { t } = useI18n()
@@ -128,6 +131,31 @@ export function ModelSelect({
           </Button>
         }
         value={value}
+      />
+    )
+  }
+
+  if (searchable) {
+    return (
+      <SearchableSelect
+        aria-label={ariaLabel ?? m.model}
+        className={className}
+        onChange={next => {
+          const model = fromItemValue(next)
+          if (model === null) {
+            setTyping(true)
+          } else {
+            onValueChange(model)
+          }
+        }}
+        options={[
+          ...withActive(models.filter(model => !isUnavailable(model)), value).map(model => ({
+            value: toItemValue(model), label: model, disabled: isUnavailable(model)
+          })),
+          { value: CUSTOM_ITEM, label: m.customModel }
+        ]}
+        placeholder={m.model}
+        value={toItemValue(value)}
       />
     )
   }

@@ -1072,6 +1072,7 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
                   onValueChange={setSelectedModel}
                   provider={selectedProviderRow}
                   providerSlug={selectedProvider}
+                  searchable
                   value={selectedModel}
                 />
                 <Button

@@ -190,6 +190,21 @@ describe('ModelSettings profile scope', () => {
 })
 
 describe('ModelSettings', () => {
+  it('searches the Main model list case-insensitively and selects with Enter', async () => {
+    getGlobalModelOptions.mockResolvedValueOnce({ providers: [{
+      name: 'Nous', slug: 'nous', authenticated: true,
+      models: ['hermes-4', 'deepseek-v4-flash']
+    }] })
+    renderModelSettings()
+    fireEvent.click((await screen.findAllByRole('combobox'))[1])
+    const search = await screen.findByPlaceholderText('Model')
+    fireEvent.change(search, { target: { value: 'DEEPSEEK' } })
+    fireEvent.keyDown(search, { key: 'Enter' })
+    await waitFor(() => expect(screen.getAllByRole('combobox')[1].textContent).toContain('deepseek-v4-flash'))
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    await waitFor(() => expect(setModelAssignment).toHaveBeenCalledWith({ scope: 'main', provider: 'nous', model: 'deepseek-v4-flash' }))
+  })
+
   it('searches the provider selector by slug and chooses the matching provider', async () => {
     getGlobalModelOptions.mockResolvedValueOnce({ providers: [
       { name: 'Nous', slug: 'nous', models: ['hermes-4'], authenticated: true },
