@@ -114,6 +114,16 @@ function isStillEligible(row: ModelOptionProvider | undefined, previous: ModelOp
     (row.api_url ?? '') === (previous.api_url ?? '')
 }
 
+function availableMainModels(provider?: ModelOptionProvider): string[] {
+  if (!provider || provider.authenticated === false || provider.eligible_models == null) {
+    return []
+  }
+  const offered = new Set(provider.models ?? [])
+  const excluded = new Set((provider.unavailable_models ?? []).map(normalize))
+
+  return provider.eligible_models.filter(model => offered.has(model) && !excluded.has(normalize(model)))
+}
+
 const NO_PROVIDERS: readonly ModelOptionProvider[] = [{ name: '—', slug: '', models: [] }]
 
 // Options for the main provider Select: the full catalog, but a saved provider
@@ -122,7 +132,7 @@ const NO_PROVIDERS: readonly ModelOptionProvider[] = [{ name: '—', slug: '', m
 // inventory used for readiness/setup metadata.
 function mainProviderOptionsFor(providers: readonly ModelOptionProvider[], selectedProvider: string) {
   const options = providers.filter(provider =>
-    (provider.authenticated !== false && provider.eligible_models != null && provider.eligible_models.length > 0) ||
+    availableMainModels(provider).length > 0 ||
     catalogProviderMatches(provider, selectedProvider))
 
   return selectedProvider && !findCatalogProvider(providers, selectedProvider)
@@ -526,10 +536,10 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
   )
 
   const eligibilityUnknown = !!selectedProviderRow && selectedProviderRow.eligible_models == null
-  const selectedProviderModels = selectedProviderRow?.eligible_models ?? []
+  const selectedProviderModels = availableMainModels(selectedProviderRow)
   const selectedUnavailable = (selectedProviderRow?.unavailable_models ?? []).some(
     model => normalize(model) === normalize(selectedModel)
-  ) || (selectedProviderRow?.eligible_models != null && !selectedProviderRow.eligible_models.includes(selectedModel))
+  ) || (selectedProviderRow?.eligible_models != null && !selectedProviderModels.includes(selectedModel))
 
   // An unconfigured provider was picked: no credentials yet, so there are no
   // models to choose. `api_key` providers can be activated inline (paste key);
@@ -1120,7 +1130,7 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
               options={mainProviderOptions.filter(provider => provider.slug).map(provider => ({
                 value: provider.slug,
                 label: provider.name,
-                disabled: provider.authenticated === false || provider.eligible_models == null || provider.eligible_models.length === 0
+                disabled: availableMainModels(provider).length === 0
               }))}
               placeholder={m.provider}
               value={selectedProviderRow?.slug ?? selectedProvider}
@@ -1158,7 +1168,7 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
             ) : (
               <>
                 <ModelSelect
-                  allowedModels={selectedProviderRow?.eligible_models ?? []}
+                  allowedModels={selectedProviderModels}
                   className="min-w-60"
                   disabled={applying}
                   excludeUnavailable

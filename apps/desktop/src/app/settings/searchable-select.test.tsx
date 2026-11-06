@@ -44,6 +44,19 @@ describe('rankSearchOption', () => {
 describe('SearchableSelect', () => {
   const options = ['America/New_York', 'Asia/Kolkata', 'Europe/Berlin', 'UTC']
 
+  it('does not select a model when Enter confirms IME composition', () => {
+    const onChange = vi.fn()
+    render(<SearchableSelect aria-label="Model" onChange={onChange} options={['model-alpha']} value="" />)
+    fireEvent.click(screen.getByRole('combobox', { name: 'Model' }))
+    const input = screen.getByPlaceholderText('Search…')
+    fireEvent.compositionStart(input)
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true, keyCode: 229 })
+    expect(onChange).not.toHaveBeenCalled()
+    fireEvent.compositionEnd(input)
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onChange).toHaveBeenCalledWith('model-alpha')
+  })
+
   it('filters the complete loaded list and restores it when the query is cleared', () => {
     const options = Array.from({ length: 650 }, (_, index) => `vendor/model-${String(index).padStart(3, '0')}`)
     render(<SearchableSelect aria-label="Model" onChange={vi.fn()} options={options} value="" />)

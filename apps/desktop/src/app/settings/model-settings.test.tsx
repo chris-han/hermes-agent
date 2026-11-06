@@ -277,6 +277,18 @@ describe('ModelSettings', () => {
     await waitFor(() => expect(setModelAssignment).toHaveBeenCalledWith({ scope: 'main', provider: 'semantier-cloud', model: 'allowed-model' }))
   })
 
+  it('filters eligible ids that are absent from the offered inventory or explicitly excluded', async () => {
+    getGlobalModelOptions.mockResolvedValueOnce({ providers: [{
+      name: 'Nous', slug: 'nous', authenticated: true, models: ['hermes-4', 'excluded'],
+      eligible_models: ['hermes-4', 'excluded', 'not-offered'], unavailable_models: ['excluded']
+    }] })
+    renderModelSettings()
+    fireEvent.click((await screen.findAllByRole('combobox'))[1])
+    expect(screen.getByRole('option', { name: 'hermes-4' })).toBeTruthy()
+    expect(screen.queryByRole('option', { name: 'excluded' })).toBeNull()
+    expect(screen.queryByRole('option', { name: 'not-offered' })).toBeNull()
+  })
+
   it('does not offer or apply models when eligibility is unknown', async () => {
     getGlobalModelInfo.mockResolvedValueOnce({ provider: 'nous', model: 'saved-unknown' })
     getGlobalModelOptions.mockResolvedValueOnce({ providers: [{
