@@ -1976,6 +1976,30 @@ def test_pinned_provider_eligibility_excludes_saved_id_and_disabled_provider(mon
     assert "disabled" not in by_slug
 
 
+def test_pinned_provider_eligibility_reaches_shared_inventory(monkeypatch):
+    from hermes_cli.inventory import ConfigContext, build_models_payload
+
+    monkeypatch.setattr("agent.models_dev.fetch_models_dev", dict)
+    monkeypatch.setattr(providers_mod, "HERMES_OVERLAYS", {})
+    ctx = ConfigContext(
+        current_provider="lab-a", current_model="stale-model", current_base_url="http://a.example/v1",
+        user_providers={
+            "lab-a": {"base_url": "http://a.example/v1", "discover_models": False,
+                      "models": {"allowed-a": {}}, "default_model": "stale-model"},
+            "lab-b": {"base_url": "http://b.example/v1", "discover_models": False,
+                      "models": {"allowed-b": {}}},
+            "disabled": {"base_url": "http://c.example/v1", "enabled": False,
+                         "discover_models": False, "models": {"hidden": {}}},
+        }, custom_providers=[],
+    )
+    payload = build_models_payload(ctx, explicit_only=True, probe_custom_providers=False)
+    rows = {row["slug"]: row for row in payload["providers"]}
+    assert rows["lab-a"]["eligible_models"] == ["allowed-a"]
+    assert rows["lab-b"]["eligible_models"] == ["allowed-b"]
+    assert "disabled" not in rows
+    assert payload["model"] == "stale-model"
+
+
 @pytest.mark.parametrize("entry", [
     {"models": {"a": {}}, "discover_models": True},
     {"models": {"a": {}}, "models_discovered": True, "discover_models": False},
