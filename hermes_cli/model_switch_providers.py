@@ -536,7 +536,7 @@ def _absorb_entry_models(grp: dict, entry: dict, active_model: Any) -> None:
         _extend_unique(grp["eligible_models"], pinned)
     if _models_config_is_allowlist(models_field, _entry_models_discovered(entry)):
         grp["has_explicit_models"] = True
-    _extend_unique(grp["models"], _declared_model_ids(models_field))
+    _extend_unique(grp["models"], pinned if pinned is not None else _declared_model_ids(models_field))
     _split_chain_entries(grp["models"])
 
 
@@ -550,7 +550,7 @@ def _explicit_pinned_models(entry: dict) -> list[str] | None:
     metadata = models.values() if isinstance(models, dict) else models if isinstance(models, (list, tuple)) else []
     if any(isinstance(item, dict) and "enabled" in item for item in metadata):
         return None
-    declared = _declared_model_ids(models)
+    declared = _declared_model_ids(models, exact=True)
     return declared or None
 
 

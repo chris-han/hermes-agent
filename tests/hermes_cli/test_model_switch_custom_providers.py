@@ -2537,3 +2537,45 @@ def test_disabled_custom_provider_is_not_an_eligible_inventory_row(monkeypatch):
     rows = {row["slug"]: row for row in payload["providers"]}
     assert rows["custom:sample"]["eligible_models"] == ["enabled-model"]
     assert "custom:disabled" not in rows
+
+
+def test_pinned_provider_preserves_case_distinct_model_ids(monkeypatch):
+    from hermes_cli.inventory import ConfigContext, build_models_payload
+
+    monkeypatch.setattr("agent.models_dev.fetch_models_dev", dict)
+    monkeypatch.setattr(providers_mod, "HERMES_OVERLAYS", {})
+    ctx = ConfigContext(
+        current_provider="case-fixture", current_model="Model-A",
+        current_base_url="http://127.0.0.1:18768/v1",
+        user_providers={"case-fixture": {
+            "base_url": "http://127.0.0.1:18768/v1",
+            "discover_models": False,
+            "models": ["Model-A", "model-a"],
+        }},
+        custom_providers=[],
+    )
+    payload = build_models_payload(ctx, explicit_only=True, probe_custom_providers=False)
+    row = next(row for row in payload["providers"] if row["slug"] == "case-fixture")
+    assert row["models"] == ["Model-A", "model-a"]
+    assert row["eligible_models"] == ["Model-A", "model-a"]
+
+
+def test_case_distinct_pinned_catalog_stays_profile_scoped(monkeypatch):
+    from hermes_cli.inventory import ConfigContext, build_models_payload
+
+    monkeypatch.setattr("agent.models_dev.fetch_models_dev", dict)
+    monkeypatch.setattr(providers_mod, "HERMES_OVERLAYS", {})
+
+    def options(models):
+        ctx = ConfigContext(
+            current_provider="case-fixture", current_model=models[0],
+            current_base_url="http://127.0.0.1:18768/v1",
+            user_providers={"case-fixture": {"base_url": "http://127.0.0.1:18768/v1",
+                            "discover_models": False, "models": models}},
+            custom_providers=[],
+        )
+        payload = build_models_payload(ctx, explicit_only=True, probe_custom_providers=False)
+        return next(row for row in payload["providers"] if row["slug"] == "case-fixture")["eligible_models"]
+
+    assert options(["Model-A", "model-a"]) == ["Model-A", "model-a"]
+    assert options(["Profile-B"]) == ["Profile-B"]

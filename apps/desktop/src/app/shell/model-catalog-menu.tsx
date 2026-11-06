@@ -935,7 +935,16 @@ function ModelFamilyRow({
 
   const isCurrent = activeId !== null
   const { name, tag } = modelDisplayParts(family.id)
-  const decoration = useModelMenuRowDecoration({ label: name, model: family.id, provider: provider.slug })
+  const displayCollision = (provider.models ?? []).some(model => {
+    if (model === family.id) {
+      return false
+    }
+    const other = modelDisplayParts(model)
+
+    return other.name === name && other.tag === tag
+  })
+  const label = displayCollision ? family.id : name
+  const decoration = useModelMenuRowDecoration({ label, model: family.id, provider: provider.slug })
   const caps = provider.capabilities?.[family.id]
   const limit = familyLimit(provider, family, isCurrent)
 
@@ -1047,7 +1056,7 @@ function ModelFamilyRow({
         <span className={cn('flex min-w-0 flex-1 items-center gap-1.5', limit.tone)}>
           {decoration.icon !== undefined ? <ModelMenuRowIcon icon={decoration.icon} /> : null}
           <span className="min-w-0 truncate">
-            <HighlightMatches foldSeparators query={search} text={name} />
+            <HighlightMatches foldSeparators query={search} text={label} />
           </span>
           {tag ? <ModelChip>{tag}</ModelChip> : null}
           {decoration.badge ? (

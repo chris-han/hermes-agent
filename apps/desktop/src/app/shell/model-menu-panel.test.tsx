@@ -141,6 +141,17 @@ describe('ModelMenuPanel MoA presets', () => {
 })
 
 describe('ModelMenuPanel current selection', () => {
+  it('distinguishes eligible model IDs whose display names collide', async () => {
+    getGlobalModelOptions.mockResolvedValue({ providers: [{
+      slug: 'case-fixture', name: 'Case fixture', models: ['Model-A', 'model-a'], eligible_models: ['Model-A', 'model-a']
+    }] })
+    const { content, onSelectModel } = renderPanel()
+    expect(await content.findByText('Model-A')).toBeTruthy()
+    expect(content.getByText('model-a')).toBeTruthy()
+    fireEvent.click(content.getByText('model-a'))
+    await vi.waitFor(() => expect(onSelectModel).toHaveBeenCalledWith({ model: 'model-a', provider: 'case-fixture', sessionId: 'runtime-1' }))
+  })
+
   it('does not offer unknown-eligibility models in the composer', async () => {
     getGlobalModelOptions.mockResolvedValue({ providers: [{
       slug: 'unknown', name: 'Unknown provider', models: ['unproven-model']

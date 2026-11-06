@@ -27,7 +27,7 @@ from hermes_cli.model_switch_providers import list_authenticated_providers
 logger = logging.getLogger(__name__)
 
 
-def _declared_model_ids(value: Any) -> list[str]:
+def _declared_model_ids(value: Any, *, exact: bool = False) -> list[str]:
     """Configured model IDs from ``{"id": {...}}``, ``["a", "b"]``, ``[{"id"|"name": ...}]`` or ``"a"``."""
     if isinstance(value, str):
         candidates: Any = [value]
@@ -44,8 +44,9 @@ def _declared_model_ids(value: Any) -> list[str]:
         if not isinstance(candidate, str):
             continue  # non-str items are dropped
         model_id = candidate.strip()
-        if model_id and model_id.lower() not in seen:
-            seen.add(model_id.lower())
+        identity = model_id if exact else model_id.lower()
+        if model_id and identity not in seen:
+            seen.add(identity)
             ids.append(model_id)
     return ids
 
