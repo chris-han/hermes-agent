@@ -190,6 +190,20 @@ describe('ModelSettings profile scope', () => {
 })
 
 describe('ModelSettings', () => {
+  it('searches the provider selector by slug and chooses the matching provider', async () => {
+    getGlobalModelOptions.mockResolvedValueOnce({ providers: [
+      { name: 'Nous', slug: 'nous', models: ['hermes-4'], authenticated: true },
+      { name: 'Example AI', slug: 'example-vendor', models: ['model-b'], authenticated: true }
+    ] })
+    renderModelSettings()
+    fireEvent.click((await screen.findAllByRole('combobox'))[0])
+    const search = await screen.findByPlaceholderText('Provider')
+    fireEvent.change(search, { target: { value: 'VENDOR' } })
+    fireEvent.keyDown(search, { key: 'Enter' })
+    await waitFor(() => expect(screen.getAllByRole('combobox')[0].textContent).toContain('Example AI'))
+    expect((screen.getByRole('button', { name: 'Apply' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
   it('does not offer an explicitly unauthenticated provider as a new choice', async () => {
     getGlobalModelOptions.mockResolvedValueOnce({ providers: [
       { name: 'Nous', slug: 'nous', models: ['hermes-4'], authenticated: true },

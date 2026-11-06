@@ -56,6 +56,7 @@ import { CONTROL_TEXT } from './constants'
 import { getNested, setNested } from './helpers'
 import { ModelSelect, withActive } from './model-select'
 import { ListRow, ListRowSkeleton, Pill, SectionHeading, SectionHeadingSkeleton } from './primitives'
+import { SearchableSelect } from './searchable-select'
 import { dismissStaleAux, readStaleAuxDismissal, staleAuxFingerprint } from './stale-aux-dismissal'
 
 // Skeleton mirror of the Model settings DOM so the page keeps its shape while
@@ -1021,18 +1022,17 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
         <section>
           <p className="mb-3 text-xs text-muted-foreground">{m.appliesDesc}</p>
           <div className="flex flex-wrap items-center gap-2">
-            <Select onValueChange={switchProvider} value={selectedProviderRow?.slug ?? selectedProvider}>
-              <SelectTrigger className={cn('min-w-40', CONTROL_TEXT)}>
-                <SelectValue placeholder={m.provider} />
-              </SelectTrigger>
-              <SelectContent>
-                {mainProviderOptions.map(provider => (
-                  <SelectItem disabled={!provider.slug || provider.authenticated === false} key={provider.slug || 'none'} value={provider.slug || 'none'}>
-                    {provider.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              aria-label={m.provider}
+              onChange={switchProvider}
+              options={mainProviderOptions.filter(provider => provider.slug).map(provider => ({
+                value: provider.slug,
+                label: provider.name,
+                disabled: provider.authenticated === false
+              }))}
+              placeholder={m.provider}
+              value={selectedProviderRow?.slug ?? selectedProvider}
+            />
             {needsSetup ? (
               setupIsApiKey ? (
                 <>
