@@ -51,6 +51,7 @@ type SearchableOption = string | { value: string; label: string; keywords?: stri
 export function SearchableSelect({
   'aria-label': ariaLabel,
   className,
+  disabled = false,
   value,
   onChange,
   options,
@@ -60,6 +61,7 @@ export function SearchableSelect({
 }: {
   'aria-label'?: string
   className?: string
+  disabled?: boolean
   value: string
   onChange: (value: string) => void
   options: SearchableOption[]
@@ -106,6 +108,7 @@ export function SearchableSelect({
             className
           )}
           data-slot="searchable-select-trigger"
+          disabled={disabled}
           ref={triggerRef}
           role="combobox"
           type="button"

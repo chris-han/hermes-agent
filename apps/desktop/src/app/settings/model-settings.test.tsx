@@ -248,11 +248,73 @@ describe('ModelSettings profile scope', () => {
 })
 
 describe('ModelSettings', () => {
+  it('does not apply a source-backed model removed during revalidation', async () => {
+    getGlobalModelOptions
+      .mockResolvedValueOnce({ providers: [{ slug: 'nous', name: 'Nous', models: ['hermes-4'], eligible_models: ['hermes-4'] }] })
+      .mockResolvedValueOnce({ providers: [{ slug: 'nous', name: 'Nous', models: [], eligible_models: [] }] })
+    renderModelSettings()
+    fireEvent.click(await screen.findByRole('button', { name: 'Apply' }))
+    expect(await screen.findByText(/no longer available/i)).toBeTruthy()
+    expect(setModelAssignment).not.toHaveBeenCalled()
+  })
+
+  it('does not apply when source-backed revalidation fails', async () => {
+    getGlobalModelOptions
+      .mockResolvedValueOnce({ providers: [{ slug: 'nous', name: 'Nous', models: ['hermes-4'], eligible_models: ['hermes-4'] }] })
+      .mockRejectedValueOnce(new Error('discovery failed'))
+    renderModelSettings()
+    fireEvent.click(await screen.findByRole('button', { name: 'Apply' }))
+    expect(await screen.findByText(/discovery failed/i)).toBeTruthy()
+    expect(setModelAssignment).not.toHaveBeenCalled()
+  })
+
+  it('does not downgrade to legacy Apply when revalidation returns unknown eligibility', async () => {
+    getGlobalModelOptions
+      .mockResolvedValueOnce({ providers: [{ slug: 'nous', name: 'Nous', models: ['hermes-4'], eligible_models: ['hermes-4'] }] })
+      .mockResolvedValue({ providers: [{ slug: 'nous', name: 'Nous', models: ['hermes-4'] }] })
+    renderModelSettings()
+    const apply = await screen.findByRole('button', { name: 'Apply' })
+    fireEvent.click(apply)
+    expect(await screen.findByText(/no longer available/i)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(getGlobalModelOptions).toHaveBeenCalledTimes(3))
+    expect(setModelAssignment).not.toHaveBeenCalled()
+  })
+
+  it('retries discovery without saving and lets the user apply after recovery', async () => {
+    const available = { providers: [{ slug: 'nous', name: 'Nous', models: ['hermes-4'], eligible_models: ['hermes-4'] }] }
+    getGlobalModelOptions.mockResolvedValueOnce(available).mockRejectedValueOnce(new Error('discovery failed'))
+      .mockResolvedValue(available)
+    renderModelSettings()
+    fireEvent.click(await screen.findByRole('button', { name: 'Apply' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(screen.queryByText(/discovery failed/i)).toBeNull())
+    expect(setModelAssignment).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    await waitFor(() => expect(setModelAssignment).toHaveBeenCalledTimes(1))
+  })
+
+  it('does not apply after the profile changes during source-backed revalidation', async () => {
+    let finish!: (value: unknown) => void
+    getGlobalModelOptions
+      .mockResolvedValueOnce({ providers: [{ slug: 'nous', name: 'Nous', models: ['hermes-4'], eligible_models: ['hermes-4'] }] })
+      .mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
+    renderModelSettings()
+    fireEvent.click(await screen.findByRole('button', { name: 'Apply' }))
+    await waitFor(() => expect(getGlobalModelOptions).toHaveBeenCalledTimes(2))
+    await act(async () => { profileSwitchHandler?.() })
+    await act(async () => { finish({ providers: [{ slug: 'nous', name: 'Nous', models: ['hermes-4'], eligible_models: ['hermes-4'] }] }) })
+    expect(setModelAssignment).not.toHaveBeenCalled()
+  })
+
   it('only permits the source-backed set and keeps a stale saved model disabled', async () => {
     getGlobalModelInfo.mockResolvedValueOnce({ provider: 'semantier-cloud', model: 'stale-model' })
     getGlobalModelOptions.mockResolvedValueOnce({ providers: [{
       name: 'Cloud', slug: 'semantier-cloud', authenticated: true,
       models: ['allowed-model', 'stale-model'], eligible_models: ['allowed-model']
+    }] }).mockResolvedValueOnce({ providers: [{
+      name: 'Cloud', slug: 'semantier-cloud', authenticated: true,
+      models: ['allowed-model'], eligible_models: ['allowed-model']
     }] })
     renderModelSettings()
     const model = (await screen.findAllByRole('combobox'))[1]

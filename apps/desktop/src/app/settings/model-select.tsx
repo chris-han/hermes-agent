@@ -35,6 +35,7 @@ export const fromItemValue = (item: string): string | null =>
 interface ModelSelectProps {
   'aria-label'?: string
   className?: string
+  disabled?: boolean
   /** The provider's catalog row when known: the typed id is remembered under
    *  it and made visible in the pickers. Absent (provider not in the catalog)
    *  the id is still applied, just not remembered. */
@@ -59,6 +60,7 @@ export function ModelSelect({
   'aria-label': ariaLabel,
   allowedModels,
   className,
+  disabled = false,
   excludeUnavailable = false,
   models,
   onValueChange,
@@ -109,6 +111,7 @@ export function ModelSelect({
         aria-label={ariaLabel}
         className={cn(CONTROL_TEXT, 'font-mono')}
         containerClassName={className}
+        disabled={disabled}
         onBlur={remember}
         onChange={event => onValueChange(event.target.value)}
         onKeyDown={event => {
@@ -143,6 +146,7 @@ export function ModelSelect({
       <SearchableSelect
         aria-label={ariaLabel ?? m.model}
         className={className}
+        disabled={disabled}
         onChange={next => {
           const model = fromItemValue(next)
           if (model === null) {
@@ -165,6 +169,7 @@ export function ModelSelect({
 
   return (
     <Select
+      disabled={disabled}
       onValueChange={next => {
         const model = fromItemValue(next)
 

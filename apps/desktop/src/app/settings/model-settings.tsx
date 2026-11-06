@@ -30,6 +30,7 @@ import type {
   StaleAuxAssignment
 } from '@/hermes'
 import { useI18n } from '@/i18n'
+import { modelUnavailableCopy } from '@/i18n/model-selection-copy'
 import { isCodeSkewRestartRequired } from '@/lib/code-skew-error'
 import { AlertTriangle, Cpu, Loader2 } from '@/lib/icons'
 import { isSubmitEnter } from '@/lib/ime'
@@ -105,6 +106,13 @@ type SpeedTier = 'fast' | 'normal' | 'ultrafast'
 // Missing authentication metadata is not itself an authentication failure.
 function isProviderReady(p?: ModelOptionProvider): boolean {
   return !!p && p.authenticated !== false
+}
+
+function isStillEligible(row: ModelOptionProvider | undefined, previous: ModelOptionProvider, model: string): boolean {
+  return isProviderReady(row) && row?.eligible_models != null && row.eligible_models.includes(model) &&
+    (row.models ?? []).includes(model) &&
+    !(row.unavailable_models ?? []).some(item => normalize(item) === normalize(model)) &&
+    (row.api_url ?? '') === (previous.api_url ?? '')
 }
 
 const NO_PROVIDERS: readonly ModelOptionProvider[] = [{ name: '—', slug: '', models: [] }]
@@ -301,7 +309,7 @@ interface ModelSettingsProps {
 }
 
 export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: ModelSettingsProps) {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const { search } = useLocation()
   const connection = useStore($connection)
   const currentProfile = useStore($settingsScopeProfile)
@@ -334,6 +342,7 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
   const { data: config, writeScope } = useHermesConfigRecord(scopeProfile)
   const setConfig = useMemo(() => hermesConfigCacheWriter(scopeProfile), [scopeProfile])
   const [applying, setApplying] = useState(false)
+  const [eligibilityRetry, setEligibilityRetry] = useState(false)
   const [editingAuxTask, setEditingAuxTask] = useState<null | string>(null)
 
   const [auxDraft, setAuxDraft] = useState<{ model: string; provider: string; reasoningEffort: string }>({
@@ -457,6 +466,8 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
   const clearProfileState = useCallback(() => {
     profileEpoch.current += 1
     setLoading(true)
+    setApplying(false)
+    setEligibilityRetry(false)
     setMainModel(null)
     setCatalogProviders([])
     setCatalogBinding(null)
@@ -861,8 +872,26 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
     const epoch = profileEpoch.current
     setApplying(true)
     setError('')
+    let checkingEligibility = selectedProviderRow?.eligible_models != null
 
     try {
+      if (checkingEligibility && selectedProviderRow) {
+        const latest = await getGlobalModelOptions({ refresh: true }, scopeProfile)
+        if (profileEpoch.current !== epoch || modelSearchSource($connection.get()) !== searchSource) {
+          return
+        }
+        const refreshed = findCatalogProvider(latest.providers ?? [], selectedProvider)
+        // Do not downgrade a known eligibility set to an ambiguous legacy row.
+        if (refreshed?.eligible_models != null) {
+          setCatalogProviders(latest.providers ?? [])
+        }
+        if (!isStillEligible(refreshed, selectedProviderRow, selectedModel)) {
+          setEligibilityRetry(true)
+          setError(modelUnavailableCopy[locale] ?? modelUnavailableCopy.en)
+          return
+        }
+      }
+      checkingEligibility = false
       const result = await setMainModelAssignment(
         {
           model: selectedModel,
@@ -890,21 +919,60 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
 
       await refresh()
     } catch (err) {
-      setCaughtError(err, m.loadFailed)
+      if (profileEpoch.current === epoch) {
+        setEligibilityRetry(checkingEligibility)
+        setCaughtError(err, m.loadFailed)
+      }
     } finally {
-      setApplying(false)
+      if (profileEpoch.current === epoch) {
+        setApplying(false)
+      }
     }
   }, [
     m,
+    locale,
     onMainModelChanged,
     refresh,
     scopeProfile,
+    searchSource,
     selectedModel,
     selectedProvider,
     selectedProviderRow,
     selectedUnavailable,
     setCaughtError
   ])
+
+  const retryEligibility = useCallback(async () => {
+    if (!selectedProviderRow || !selectedProvider || !selectedModel) {
+      return
+    }
+    const epoch = profileEpoch.current
+    setApplying(true)
+    try {
+      const latest = await getGlobalModelOptions({ refresh: true }, scopeProfile)
+      if (profileEpoch.current !== epoch || modelSearchSource($connection.get()) !== searchSource) {
+        return
+      }
+      const refreshed = findCatalogProvider(latest.providers ?? [], selectedProvider)
+      if (refreshed?.eligible_models != null) {
+        setCatalogProviders(latest.providers ?? [])
+      }
+      if (isStillEligible(refreshed, selectedProviderRow, selectedModel)) {
+        setEligibilityRetry(false)
+        setError('')
+      } else {
+        setError(modelUnavailableCopy[locale] ?? modelUnavailableCopy.en)
+      }
+    } catch (err) {
+      if (profileEpoch.current === epoch) {
+        setCaughtError(err, m.loadFailed)
+      }
+    } finally {
+      if (profileEpoch.current === epoch) {
+        setApplying(false)
+      }
+    }
+  }, [locale, m.loadFailed, scopeProfile, searchSource, selectedModel, selectedProvider, selectedProviderRow, setCaughtError])
 
   // Sibling of the applyMainModel endpoint passthrough (#65254): auxiliary
   // assignments targeting a user-defined provider must carry that provider's
@@ -1039,6 +1107,11 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
   const errorNotice = error && (
     <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-destructive">
       <span>{error}</span>
+      {eligibilityRetry && (
+        <Button disabled={applying} onClick={() => void retryEligibility()} size="sm" variant="textStrong">
+          {t.common.retry}
+        </Button>
+      )}
       {skewRestart && (
         <Button disabled={restartingBackend} onClick={() => void recycleStaleBackend()} size="sm" variant="textStrong">
           {restartingBackend && <Loader2 className="size-3.5 animate-spin" />}
@@ -1057,7 +1130,14 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
           <div className="flex flex-wrap items-center gap-2">
             <SearchableSelect
               aria-label={m.provider}
-              onChange={switchProvider}
+              disabled={applying}
+              onChange={slug => {
+                if (eligibilityRetry) {
+                  setEligibilityRetry(false)
+                  setError('')
+                }
+                switchProvider(slug)
+              }}
               options={mainProviderOptions.filter(provider => provider.slug).map(provider => ({
                 value: provider.slug,
                 label: provider.name,
@@ -1101,16 +1181,23 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
                 <ModelSelect
                   allowedModels={selectedProviderRow?.eligible_models}
                   className="min-w-60"
+                  disabled={applying}
                   excludeUnavailable
                   models={selectedProviderModels}
-                  onValueChange={setSelectedModel}
+                  onValueChange={model => {
+                    if (eligibilityRetry) {
+                      setEligibilityRetry(false)
+                      setError('')
+                    }
+                    setSelectedModel(model)
+                  }}
                   provider={selectedProviderRow}
                   providerSlug={selectedProvider}
                   searchable
                   value={selectedModel}
                 />
                 <Button
-                  disabled={!selectedProvider || !selectedModel || selectedUnavailable || applying}
+                  disabled={!selectedProvider || !selectedModel || selectedUnavailable || eligibilityRetry || applying}
                   onClick={() => void applyMainModel()}
                   size="sm"
                 >
