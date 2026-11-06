@@ -67,6 +67,14 @@ import { ModelMenuRowIcon, useModelMenuRowDecoration } from './model-menu-row-de
 // items preventDefault on select).
 export const ModelMenuCloseContext = createContext<() => void>(() => {})
 
+function omitUnavailable(provider: ModelOptionProvider): ModelOptionProvider {
+  const excluded = new Set((provider.unavailable_models ?? []).map(normalize))
+
+  return excluded.size
+    ? { ...provider, models: (provider.models ?? []).filter(model => !excluded.has(normalize(model))) }
+    : provider
+}
+
 /** Compact per-row price: `$in/$out` per Mtok (cached read appended when the
  *  provider ships it), "free", and a sale tag when the portal reports a
  *  discounted list price. Rendered only when the provider's payload carries
@@ -241,7 +249,10 @@ export function ModelCatalogMenu({
 
   const error = queryErrorMessage(modelOptions.error)
 
-  const providers = modelOptions.data?.providers
+  const providers = useMemo(
+    () => modelOptions.data?.providers.map(omitUnavailable),
+    [modelOptions.data?.providers]
+  )
 
   // The catalog carries MoA presets as a virtual `moa` provider row. Keep it
   // out of the main groups so presets never show up twice.
@@ -251,7 +262,7 @@ export function ModelCatalogMenu({
   )
 
   const pickerProviders = useMemo(
-    () => withCustomModels(providers?.filter(provider => provider.slug.toLowerCase() !== 'moa') ?? [], customModels),
+    () => withCustomModels(providers?.filter(provider => provider.slug.toLowerCase() !== 'moa') ?? [], customModels).map(omitUnavailable),
     [providers, customModels]
   )
 
@@ -330,7 +341,8 @@ export function ModelCatalogMenu({
     () =>
       customSlug
         ? pickerProviders
-            .filter(provider => (provider.models ?? []).length > 0)
+            .filter(provider => (provider.models ?? []).length > 0 &&
+              !(provider.unavailable_models ?? []).some(model => normalize(model) === normalize(customSlug)))
             .sort(
               (a, b) =>
                 Number(catalogProviderMatches(b, current.provider)) -
@@ -349,6 +361,10 @@ export function ModelCatalogMenu({
     // is applied through setOptions below instead.
     const variantFast = !(caps?.fast ?? false) && !!family.fastId
     const targetId = variantFast && preset.fast === true ? family.fastId! : family.id
+
+    if ((provider.unavailable_models ?? []).some(model => normalize(model) === normalize(targetId))) {
+      return false
+    }
 
     if ((await controller.select(targetId, provider.slug)) === false) {
       return false

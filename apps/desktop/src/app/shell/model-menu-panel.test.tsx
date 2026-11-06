@@ -139,6 +139,23 @@ describe('ModelMenuPanel MoA presets', () => {
 })
 
 describe('ModelMenuPanel current selection', () => {
+  it('does not offer provider-excluded models, including as a searched custom id', async () => {
+    getGlobalModelOptions.mockResolvedValue({
+      providers: [{ slug: 'nous', name: 'Nous', models: ['allowed-model', 'locked-model'], unavailable_models: ['locked-model'] }]
+    })
+    $customModels.set([{ provider: 'nous', model: 'locked-model' }])
+    const { content, onSelectModel } = renderPanel()
+    await content.findByText('Nous')
+    expect(content.queryByText(/locked.model/i)).toBeNull()
+    const input = screen.getByRole('textbox', { name: 'Search models' })
+    fireEvent.change(input, { target: { value: 'locked-model' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onSelectModel).not.toHaveBeenCalled()
+    fireEvent.change(input, { target: { value: 'allowed-model' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await vi.waitFor(() => expect(onSelectModel).toHaveBeenCalledWith({ model: 'allowed-model', provider: 'nous', sessionId: 'runtime-1' }))
+  })
+
   it('keeps the checkmark on the live SessionView model when a stale options response disagrees', async () => {
     $currentProvider.set('google')
     $currentModel.set('gemini-3.1-pro')
