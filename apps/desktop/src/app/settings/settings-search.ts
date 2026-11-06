@@ -1,4 +1,4 @@
-import type { ModelOptionProvider } from '@hermes/shared'
+import { LOCAL_CONNECTION_ID, type ModelOptionProvider } from '@hermes/shared'
 
 import type { IconComponent } from '@/lib/icons'
 import { normalize } from '@/lib/text'
@@ -46,6 +46,11 @@ interface ConfigSearchCopy {
 interface CredentialSearchCopy {
   settings: string
   tools: string
+}
+
+/** A legacy local descriptor is unambiguous; an untagged remote is not. */
+export function modelSearchSource(connection: { connectionId?: string; mode?: 'local' | 'remote' } | null): string | null {
+  return connection?.connectionId?.trim() || (connection?.mode === 'local' ? LOCAL_CONNECTION_ID : null)
 }
 
 function offeredEligibleModels(provider: ModelOptionProvider): string[] {

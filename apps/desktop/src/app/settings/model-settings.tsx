@@ -3,6 +3,7 @@ import { DEFAULT_REASONING_EFFORT, REASONING_EFFORT_VALUES } from '@hermes/share
 import { useStore } from '@nanostores/react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
+import { useLocation } from 'react-router'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -40,6 +41,8 @@ import { $customModels, withCustomModels } from '@/store/custom-models'
 import { setMainModelAssignment } from '@/store/model-assignment'
 import { notify, notifyError, readableError } from '@/store/notifications'
 import { startManualLocalEndpoint, startManualOnboarding, startManualProviderOAuth } from '@/store/onboarding'
+import { $connection } from '@/store/session'
+import { $settingsScopeProfile } from '@/store/settings-scope'
 
 import { hermesConfigCacheWriter, invalidateHermesConfig, useHermesConfigRecord } from '../hooks/use-config-record'
 import { useOnProfileSwitch } from '../hooks/use-on-profile-switch'
@@ -57,6 +60,7 @@ import { getNested, setNested } from './helpers'
 import { ModelSelect, withActive } from './model-select'
 import { ListRow, ListRowSkeleton, Pill, SectionHeading, SectionHeadingSkeleton } from './primitives'
 import { SearchableSelect } from './searchable-select'
+import { modelSearchSource, resolveEligibleModelTarget } from './settings-search'
 import { dismissStaleAux, readStaleAuxDismissal, staleAuxFingerprint } from './stale-aux-dismissal'
 
 // Skeleton mirror of the Model settings DOM so the page keeps its shape while
@@ -298,6 +302,12 @@ interface ModelSettingsProps {
 
 export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: ModelSettingsProps) {
   const { t } = useI18n()
+  const { search } = useLocation()
+  const connection = useStore($connection)
+  const currentProfile = useStore($settingsScopeProfile)
+  const searchSource = modelSearchSource(connection)
+  const searchProfile = scopeProfile ?? currentProfile
+  const scopeBinding = JSON.stringify([searchSource, searchProfile])
   const m = t.settings.model
   const showMain = subpage === undefined || subpage === 'main'
   const showAuxiliary = subpage === undefined || subpage === 'auxiliary'
@@ -308,6 +318,7 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
   const [restartingBackend, setRestartingBackend] = useState(false)
   const [mainModel, setMainModel] = useState<{ model: string; provider: string } | null>(null)
   const [catalogProviders, setCatalogProviders] = useState<ModelOptionProvider[]>([])
+  const [catalogBinding, setCatalogBinding] = useState<string | null>(null)
   // Slugs typed into any picker ride along as rows of their provider, so a
   // model added from the composer is selectable here too.
   const customModels = useStore($customModels)
@@ -411,6 +422,7 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
 
         if (modelOptions) {
           setCatalogProviders(modelOptions.providers || [])
+          setCatalogBinding(scopeBinding)
         }
 
         setAuxiliary(auxiliaryModels)
@@ -437,16 +449,17 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
         }
       }
     },
-    [m.loadFailed, scopeProfile, setCaughtError]
+    [m.loadFailed, scopeBinding, scopeProfile, setCaughtError]
   )
 
-  const previousScope = useRef(scopeProfile)
+  const previousScope = useRef(scopeBinding)
 
   const clearProfileState = useCallback(() => {
     profileEpoch.current += 1
     setLoading(true)
     setMainModel(null)
     setCatalogProviders([])
+    setCatalogBinding(null)
     setAuxiliary(null)
     setMoa(null)
     setSelectedMoaPreset('')
@@ -460,15 +473,35 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
   // Compare successive explicit prop scopes; this ref is not an atom mirror.
   // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
-    const changed = previousScope.current !== scopeProfile
+    const changed = previousScope.current !== scopeBinding
 
     if (changed) {
-      previousScope.current = scopeProfile
+      previousScope.current = scopeBinding
       clearProfileState()
     }
 
     void refresh({ replaceSelection: changed })
-  }, [clearProfileState, refresh, scopeProfile])
+  }, [clearProfileState, refresh, scopeBinding])
+
+  const consumedSearch = useRef<string | null>(null)
+  // A one-shot route receipt, not a mirror of reactive state.
+  // eslint-disable-next-line no-restricted-syntax
+  useEffect(() => {
+    const params = new URLSearchParams(search)
+    if (!params.has('model_provider')) {
+      consumedSearch.current = null
+      return
+    }
+    if (loading || !searchSource || catalogBinding !== scopeBinding || consumedSearch.current === search) {
+      return
+    }
+    consumedSearch.current = search
+    const target = resolveEligibleModelTarget(params, catalogProviders, { profile: searchProfile, connection: searchSource })
+    if (target) {
+      setSelectedProvider(target.provider)
+      setSelectedModel(target.model ?? '')
+    }
+  }, [catalogBinding, catalogProviders, loading, scopeBinding, search, searchProfile, searchSource])
 
   // A profile switch swaps the backend under the mounted panel — reload for the
   // new profile (bumping the epoch first so any in-flight A request is discarded).

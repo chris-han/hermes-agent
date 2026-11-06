@@ -6,6 +6,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import type * as ConfigApi from '@/api/config'
 import { I18nProvider, TRANSLATIONS } from '@/i18n'
 import { $notifications, clearNotifications } from '@/store/notifications'
+import { $connection } from '@/store/session'
 
 import { ModelSettings } from './model-settings'
 
@@ -96,6 +97,7 @@ afterEach(() => {
   clearNotifications()
   vi.clearAllMocks()
   profileSwitchHandler = null
+  $connection.set(null)
 })
 
 function renderModelSettings(scopeProfile?: string) {
@@ -113,6 +115,62 @@ function renderModelSettings(scopeProfile?: string) {
 }
 
 describe('ModelSettings profile scope', () => {
+  it('selects a scoped eligible search target without applying it', async () => {
+    $connection.set({ mode: 'local', connectionId: 'source-a' } as never)
+    getGlobalModelOptions.mockResolvedValueOnce({ providers: [{
+      slug: 'cloud', name: 'Cloud', authenticated: true, models: ['target'], eligible_models: ['target']
+    }] })
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(<MemoryRouter initialEntries={['/?model_provider=cloud&model=target&model_profile=profile-a&model_connection=source-a']}>
+      <QueryClientProvider client={client}><ModelSettings scopeProfile="profile-a" /></QueryClientProvider>
+    </MemoryRouter>)
+    await waitFor(() => expect(screen.getAllByRole('combobox')[0].textContent).toContain('Cloud'))
+    expect(screen.getAllByRole('combobox')[1].textContent).toContain('target')
+    expect(setModelAssignment).not.toHaveBeenCalled()
+  })
+
+  it('ignores a search target from a different profile', async () => {
+    $connection.set({ mode: 'local', connectionId: 'source-a' } as never)
+    getGlobalModelOptions.mockResolvedValueOnce({ providers: [
+      { slug: 'nous', name: 'Nous', models: ['hermes-4'], eligible_models: ['hermes-4'] },
+      { slug: 'cloud', name: 'Cloud', models: ['target'], eligible_models: ['target'] }
+    ] })
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(<MemoryRouter initialEntries={['/?model_provider=cloud&model=target&model_profile=profile-b&model_connection=source-a']}>
+      <QueryClientProvider client={client}><ModelSettings scopeProfile="profile-a" /></QueryClientProvider>
+    </MemoryRouter>)
+    await waitFor(() => expect(screen.getAllByRole('combobox')[0].textContent).toContain('Nous'))
+    expect(setModelAssignment).not.toHaveBeenCalled()
+  })
+
+  it('ignores a model search target removed from the current eligible set', async () => {
+    $connection.set({ mode: 'local', connectionId: 'source-a' } as never)
+    getGlobalModelOptions.mockResolvedValueOnce({ providers: [
+      { slug: 'nous', name: 'Nous', models: ['hermes-4'], eligible_models: ['hermes-4'] },
+      { slug: 'cloud', name: 'Cloud', models: ['target'], eligible_models: [] }
+    ] })
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(<MemoryRouter initialEntries={['/?model_provider=cloud&model=target&model_profile=profile-a&model_connection=source-a']}>
+      <QueryClientProvider client={client}><ModelSettings scopeProfile="profile-a" /></QueryClientProvider>
+    </MemoryRouter>)
+    await waitFor(() => expect(screen.getAllByRole('combobox')[0].textContent).toContain('Nous'))
+    expect(setModelAssignment).not.toHaveBeenCalled()
+  })
+
+  it('ignores an intent from another connection even if the profile matches', async () => {
+    $connection.set({ mode: 'local', connectionId: 'source-b' } as never)
+    getGlobalModelOptions.mockResolvedValueOnce({ providers: [
+      { slug: 'nous', name: 'Nous', models: ['hermes-4'], eligible_models: ['hermes-4'] },
+      { slug: 'cloud', name: 'Cloud', models: ['target'], eligible_models: ['target'] }
+    ] })
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(<MemoryRouter initialEntries={['/?model_provider=cloud&model=target&model_profile=profile-a&model_connection=source-a']}>
+      <QueryClientProvider client={client}><ModelSettings scopeProfile="profile-a" /></QueryClientProvider>
+    </MemoryRouter>)
+    await waitFor(() => expect(screen.getAllByRole('combobox')[0].textContent).toContain('Nous'))
+    expect(setModelAssignment).not.toHaveBeenCalled()
+  })
+
   it('clears the previous catalog while an active profile switch is loading', async () => {
     let finish!: (value: unknown) => void
     getGlobalModelOptions.mockResolvedValueOnce({ providers: [{ name: 'Private A', slug: 'a', models: ['a-model'] }] })
