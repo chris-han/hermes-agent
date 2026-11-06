@@ -168,6 +168,11 @@ def build_models_payload(
 
     drop_unofferable_model_ids(rows)
 
+    for row in rows:
+        if row.get("eligible_models") is not None:
+            offered = set(row.get("models") or [])
+            row["eligible_models"] = [model for model in row["eligible_models"] if model in offered]
+
     return {"providers": rows, "model": ctx.current_model, "provider": ctx.current_provider}
 
 
@@ -254,6 +259,7 @@ def build_model_options_payload(
             'authenticated':settings is not None, 'is_current':True, 'aliases':[ctx.current_provider],
             'capabilities':{p['id']:{'fast':False,'reasoning':p['capabilities'].get('reasoning') is True and bool(p['request_parameters']['reasoning_controls'])} for p in profiles},
             'models':[p['id'] for p in profiles],
+            'eligible_models':[p['id'] for p in profiles],
             'model_profiles':{p['id']:p for p in profiles}, 'total_models':len(profiles)}],
             'model':ctx.current_model,'provider':'semantier-cloud'}
     refresh = bool(refresh)
@@ -1000,7 +1006,7 @@ def _local_runtime_row(ctx: ConfigContext) -> dict | None:
             except Exception:
                 current = False
         # Bare "Local" user-facing (engine name is an implementation detail); authenticated = reachability.
-        return _row(LLAMACPP_PROVIDER_ID, "Local", current, models=staged, total_models=len(staged),
+        return _row(LLAMACPP_PROVIDER_ID, "Local", current, models=staged, eligible_models=list(staged), total_models=len(staged),
                     source="local-runtime", authenticated=True, auth_type="local", warning=None)
     except Exception:
         return None

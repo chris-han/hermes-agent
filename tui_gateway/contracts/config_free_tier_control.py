@@ -534,6 +534,8 @@ class ModelOptionProvider(OpenModel):
     slug: str
     name: str
     models: list[str] = Field(default_factory=list)
+    # None means the producer cannot establish eligibility; [] is a known empty set.
+    eligible_models: list[str] | None = None
     total_models: int | None = None
     is_current: bool | None = None
     is_user_defined: bool | None = None

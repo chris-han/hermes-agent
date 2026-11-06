@@ -24574,6 +24574,21 @@
             "title": "Models",
             "type": "array"
           },
+          "eligible_models": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Eligible Models"
+          },
           "total_models": {
             "anyOf": [
               {

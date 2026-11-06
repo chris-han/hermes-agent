@@ -30,6 +30,13 @@ def test_no_staged_models_no_row(hermes_home):
     assert _local_runtime_row(load_picker_context()) is None
 
 
+def test_ordinary_row_does_not_claim_model_eligibility():
+    from tui_gateway.contracts.config_free_tier_control import ModelOptionProvider
+
+    row = ModelOptionProvider.model_validate({"slug": "example", "name": "Example", "models": ["hint"]})
+    assert row.eligible_models is None
+
+
 def test_staged_models_make_a_selectable_row(hermes_home):
     from hermes_cli.inventory import _local_runtime_row, load_picker_context
 
@@ -39,7 +46,24 @@ def test_staged_models_make_a_selectable_row(hermes_home):
     assert row["slug"] == "llamacpp"
     assert row["authenticated"] is True
     assert "Qwen3-4B-Instruct-2507-UD-Q8_K_XL" in row["models"]
+    assert set(row["eligible_models"]) == set(row["models"])
     assert row["total_models"] == 2
+
+
+def test_staged_eligibility_follows_the_active_home(tmp_path, monkeypatch):
+    from hermes_cli.inventory import _local_runtime_row, load_picker_context
+
+    home_a, home_b = tmp_path / "profile-a", tmp_path / "profile-b"
+    home_a.mkdir()
+    home_b.mkdir()
+    _stage(home_a, "only-a")
+    _stage(home_b, "only-b")
+    monkeypatch.setenv("HERMES_HOME", str(home_a))
+    row_a = _local_runtime_row(load_picker_context())
+    monkeypatch.setenv("HERMES_HOME", str(home_b))
+    row_b = _local_runtime_row(load_picker_context())
+    assert row_a["eligible_models"] == ["only-a"]
+    assert row_b["eligible_models"] == ["only-b"]
 
 
 def test_row_marks_current_when_config_points_at_llamacpp(hermes_home):

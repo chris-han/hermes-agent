@@ -196,11 +196,15 @@ def test_cloud_model_options_matches_native_wire_contract(tmp_path, monkeypatch)
     configure(tmp_path, monkeypatch)
     from hermes_cli.inventory import ConfigContext, build_model_options_payload
     from tui_gateway.contracts.config_free_tier_control import ModelOptionsResult
-    monkeypatch.setattr(sg, 'cloud_catalog', lambda **kwargs: {'data': []})
+    monkeypatch.setattr(sg, 'cloud_catalog', lambda **kwargs: {'data': [
+        {'id': 'enabled-model', 'capabilities': {}, 'request_parameters': {'reasoning_controls': []}}
+    ]})
     payload = build_model_options_payload(ConfigContext('semantier-cloud', '',
-        'http://127.0.0.1:8765/v1', {}, []))
+        'http://127.0.0.1:8765/v1', {}, []).with_overrides(current_model='stale-model'))
     result = ModelOptionsResult.model_validate(payload)
     assert result.provider == 'semantier-cloud'
+    assert result.providers[0].eligible_models == ['enabled-model']
+    assert result.model == 'stale-model'
 
 
 def test_task_root_and_child_lineage_are_runtime_owned():
@@ -279,3 +283,4 @@ def test_unconnected_cloud_model_options_remain_available_for_first_onboarding(t
     result=ModelOptionsResult.model_validate(payload)
     assert result.providers[0].authenticated is False
     assert result.providers[0].models==[]
+    assert result.providers[0].eligible_models==[]

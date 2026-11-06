@@ -914,6 +914,7 @@ export interface ModelOptionProvider {
   slug: string
   name: string
   models?: string[]
+  eligible_models?: string[] | null
   total_models?: number | null
   is_current?: boolean | null
   is_user_defined?: boolean | null
