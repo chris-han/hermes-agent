@@ -440,20 +440,40 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
     [m.loadFailed, scopeProfile, setCaughtError]
   )
 
+  const previousScope = useRef(scopeProfile)
+
+  const clearProfileState = useCallback(() => {
+    profileEpoch.current += 1
+    setLoading(true)
+    setMainModel(null)
+    setCatalogProviders([])
+    setAuxiliary(null)
+    setMoa(null)
+    setSelectedMoaPreset('')
+    setSelectedProvider('')
+    setSelectedModel('')
+    setApiKeyDraft('')
+    setSwitchStaleAux([])
+    setEditingAuxTask(null)
+  }, [])
+
+  // Compare successive explicit prop scopes; this ref is not an atom mirror.
+  // eslint-disable-next-line no-restricted-syntax
   useEffect(() => {
-    void refresh()
-  }, [refresh])
+    const changed = previousScope.current !== scopeProfile
+
+    if (changed) {
+      previousScope.current = scopeProfile
+      clearProfileState()
+    }
+
+    void refresh({ replaceSelection: changed })
+  }, [clearProfileState, refresh, scopeProfile])
 
   // A profile switch swaps the backend under the mounted panel — reload for the
   // new profile (bumping the epoch first so any in-flight A request is discarded).
   useOnProfileSwitch(() => {
-    profileEpoch.current += 1
-    // The panel stays mounted across profile switches, so clear the previous
-    // profile's draft selection before loading the new profile's source of
-    // truth. Ordinary same-profile refreshes still preserve in-progress edits.
-    setSelectedProvider('')
-    setSelectedModel('')
-    setApiKeyDraft('')
+    clearProfileState()
     void refresh({ replaceSelection: true })
   })
 

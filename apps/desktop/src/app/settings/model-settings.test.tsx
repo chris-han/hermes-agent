@@ -113,6 +113,59 @@ function renderModelSettings(scopeProfile?: string) {
 }
 
 describe('ModelSettings profile scope', () => {
+  it('clears the previous catalog while an active profile switch is loading', async () => {
+    let finish!: (value: unknown) => void
+    getGlobalModelOptions.mockResolvedValueOnce({ providers: [{ name: 'Private A', slug: 'a', models: ['a-model'] }] })
+      .mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
+    getGlobalModelInfo.mockResolvedValueOnce({ provider: 'a', model: 'a-model' })
+    renderModelSettings()
+    expect((await screen.findAllByRole('combobox'))[0].textContent).toContain('Private A')
+    await act(async () => { profileSwitchHandler?.() })
+    const triggers = screen.queryAllByRole('combobox')
+    if (triggers.length) {
+      fireEvent.click(triggers[0])
+      expect(screen.queryByRole('option', { name: 'Private A' })).toBeNull()
+    }
+    await act(async () => { finish({ providers: [] }) })
+  })
+
+  it('discards a late response after the explicit settings scope changes', async () => {
+    let finishA!: (value: unknown) => void
+    getGlobalModelInfo.mockReturnValueOnce(new Promise(resolve => { finishA = resolve }))
+      .mockResolvedValueOnce({ provider: 'b', model: 'b-model' })
+    getGlobalModelOptions.mockResolvedValueOnce({ providers: [{ name: 'Private A', slug: 'a', models: ['a-model'] }] })
+      .mockResolvedValueOnce({ providers: [{ name: 'Private B', slug: 'b', models: ['b-model'] }] })
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const view = (profile: string) => <MemoryRouter><QueryClientProvider client={client}><ModelSettings scopeProfile={profile} /></QueryClientProvider></MemoryRouter>
+    const { rerender } = render(view('a'))
+    rerender(view('b'))
+    await waitFor(() => expect(screen.getAllByRole('combobox')[0].textContent).toContain('Private B'))
+    await act(async () => { finishA({ provider: 'a', model: 'a-model' }) })
+    expect(screen.getAllByRole('combobox')[0].textContent).toContain('Private B')
+    expect(screen.queryByText('Private A')).toBeNull()
+  })
+
+  it('does not retain the old scope catalog when the new scope fails', async () => {
+    let failB!: (reason: Error) => void
+    getGlobalModelInfo.mockResolvedValueOnce({ provider: 'a', model: 'a-model' })
+      .mockReturnValueOnce(new Promise((_, reject) => { failB = reject }))
+    getGlobalModelOptions.mockResolvedValueOnce({ providers: [{ name: 'Private A', slug: 'a', models: ['a-model'] }] })
+      .mockRejectedValueOnce(new Error('catalog unavailable'))
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const view = (profile: string) => <MemoryRouter><QueryClientProvider client={client}><ModelSettings scopeProfile={profile} /></QueryClientProvider></MemoryRouter>
+    const { rerender } = render(view('a'))
+    expect((await screen.findAllByRole('combobox'))[0].textContent).toContain('Private A')
+    rerender(view('b'))
+    expect(screen.queryByText('Private A')).toBeNull()
+    await act(async () => { failB(new Error('model unavailable')) })
+    expect(await screen.findByText(/catalog unavailable/)).toBeTruthy()
+    const triggers = screen.queryAllByRole('combobox')
+    if (triggers.length) {
+      fireEvent.click(triggers[0])
+      expect(screen.queryByRole('option', { name: 'Private A' })).toBeNull()
+    }
+  })
+
   // #90549: the API helpers treat `null` as "deliberately target the
   // primary/default profile". A page following the active profile must pass
   // `undefined`, or every read repaints the primary's model and the user's
