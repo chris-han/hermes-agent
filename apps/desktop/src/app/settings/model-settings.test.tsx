@@ -190,6 +190,26 @@ describe('ModelSettings profile scope', () => {
 })
 
 describe('ModelSettings', () => {
+  it('only permits the source-backed set and keeps a stale saved model disabled', async () => {
+    getGlobalModelInfo.mockResolvedValueOnce({ provider: 'semantier-cloud', model: 'stale-model' })
+    getGlobalModelOptions.mockResolvedValueOnce({ providers: [{
+      name: 'Cloud', slug: 'semantier-cloud', authenticated: true,
+      models: ['allowed-model', 'stale-model'], eligible_models: ['allowed-model']
+    }] })
+    renderModelSettings()
+    const model = (await screen.findAllByRole('combobox'))[1]
+    expect(model.textContent).toContain('stale-model')
+    const apply = await screen.findByRole('button', { name: 'Apply' }) as HTMLButtonElement
+    expect(apply.disabled).toBe(true)
+    fireEvent.click(model)
+    expect(screen.getByRole('option', { name: 'stale-model' }).getAttribute('aria-disabled')).toBe('true')
+    expect(screen.queryByRole('option', { name: /custom model/i })).toBeNull()
+    fireEvent.click(screen.getByRole('option', { name: 'allowed-model' }))
+    expect(apply.disabled).toBe(false)
+    fireEvent.click(apply)
+    await waitFor(() => expect(setModelAssignment).toHaveBeenCalledWith({ scope: 'main', provider: 'semantier-cloud', model: 'allowed-model' }))
+  })
+
   it('searches the Main model list case-insensitively and selects with Enter', async () => {
     getGlobalModelOptions.mockResolvedValueOnce({ providers: [{
       name: 'Nous', slug: 'nous', authenticated: true,

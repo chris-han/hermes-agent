@@ -139,6 +139,21 @@ describe('ModelMenuPanel MoA presets', () => {
 })
 
 describe('ModelMenuPanel current selection', () => {
+  it('does not reintroduce IDs outside a source-backed eligibility set', async () => {
+    getGlobalModelOptions.mockResolvedValue({ providers: [{
+      slug: 'semantier-cloud', name: 'Cloud', models: ['allowed-model', 'stale-model'], eligible_models: ['allowed-model']
+    }] })
+    $customModels.set([{ provider: 'semantier-cloud', model: 'custom-model' }])
+    const { content, onSelectModel } = renderPanel()
+    await content.findByText('Cloud')
+    expect(content.queryByText(/stale model/i)).toBeNull()
+    expect(content.queryByText(/custom model/i)).toBeNull()
+    const input = screen.getByRole('textbox', { name: 'Search models' })
+    fireEvent.change(input, { target: { value: 'custom-model' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onSelectModel).not.toHaveBeenCalled()
+  })
+
   it('does not offer provider-excluded models, including as a searched custom id', async () => {
     getGlobalModelOptions.mockResolvedValue({
       providers: [{ slug: 'nous', name: 'Nous', models: ['allowed-model', 'locked-model'], unavailable_models: ['locked-model'] }]

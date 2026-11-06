@@ -43,6 +43,7 @@ interface ModelSelectProps {
   providerSlug: string
   models: readonly string[]
   excludeUnavailable?: boolean
+  allowedModels?: readonly string[] | null
   searchable?: boolean
   onValueChange: (model: string) => void
   value: string
@@ -56,6 +57,7 @@ interface ModelSelectProps {
  */
 export function ModelSelect({
   'aria-label': ariaLabel,
+  allowedModels,
   className,
   excludeUnavailable = false,
   models,
@@ -69,8 +71,9 @@ export function ModelSelect({
   const m = t.settings.model
   const [typing, setTyping] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
-  const isUnavailable = (model: string) => excludeUnavailable &&
-    (provider?.unavailable_models ?? []).some(item => normalize(item) === normalize(model))
+  const isUnavailable = (model: string) =>
+    (allowedModels != null && !allowedModels.includes(model)) ||
+    (excludeUnavailable && (provider?.unavailable_models ?? []).some(item => normalize(item) === normalize(model)))
 
   useEffect(() => {
     if (typing) {
@@ -152,7 +155,7 @@ export function ModelSelect({
           ...withActive(models.filter(model => !isUnavailable(model)), value).map(model => ({
             value: toItemValue(model), label: model, disabled: isUnavailable(model)
           })),
-          { value: CUSTOM_ITEM, label: m.customModel }
+          ...(allowedModels == null ? [{ value: CUSTOM_ITEM, label: m.customModel }] : [])
         ]}
         placeholder={m.model}
         value={toItemValue(value)}

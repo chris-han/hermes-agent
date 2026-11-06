@@ -504,10 +504,10 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
     [providers, selectedProvider]
   )
 
-  const selectedProviderModels = selectedProviderRow?.models ?? []
+  const selectedProviderModels = selectedProviderRow?.eligible_models ?? selectedProviderRow?.models ?? []
   const selectedUnavailable = (selectedProviderRow?.unavailable_models ?? []).some(
     model => normalize(model) === normalize(selectedModel)
-  )
+  ) || (selectedProviderRow?.eligible_models != null && !selectedProviderRow.eligible_models.includes(selectedModel))
 
   // An unconfigured provider was picked: no credentials yet, so there are no
   // models to choose. `api_key` providers can be activated inline (paste key);
@@ -1066,6 +1066,7 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
             ) : (
               <>
                 <ModelSelect
+                  allowedModels={selectedProviderRow?.eligible_models}
                   className="min-w-60"
                   excludeUnavailable
                   models={selectedProviderModels}

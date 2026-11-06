@@ -69,9 +69,10 @@ export const ModelMenuCloseContext = createContext<() => void>(() => {})
 
 function omitUnavailable(provider: ModelOptionProvider): ModelOptionProvider {
   const excluded = new Set((provider.unavailable_models ?? []).map(normalize))
+  const allowed = provider.eligible_models == null ? null : new Set(provider.eligible_models)
 
-  return excluded.size
-    ? { ...provider, models: (provider.models ?? []).filter(model => !excluded.has(normalize(model))) }
+  return excluded.size || allowed
+    ? { ...provider, models: (provider.models ?? []).filter(model => !excluded.has(normalize(model)) && (!allowed || allowed.has(model))) }
     : provider
 }
 
@@ -341,7 +342,7 @@ export function ModelCatalogMenu({
     () =>
       customSlug
         ? pickerProviders
-            .filter(provider => (provider.models ?? []).length > 0 &&
+            .filter(provider => provider.eligible_models == null && (provider.models ?? []).length > 0 &&
               !(provider.unavailable_models ?? []).some(model => normalize(model) === normalize(customSlug)))
             .sort(
               (a, b) =>
@@ -362,7 +363,8 @@ export function ModelCatalogMenu({
     const variantFast = !(caps?.fast ?? false) && !!family.fastId
     const targetId = variantFast && preset.fast === true ? family.fastId! : family.id
 
-    if ((provider.unavailable_models ?? []).some(model => normalize(model) === normalize(targetId))) {
+    if ((provider.eligible_models != null && !provider.eligible_models.includes(targetId)) ||
+        (provider.unavailable_models ?? []).some(model => normalize(model) === normalize(targetId))) {
       return false
     }
 
@@ -672,7 +674,7 @@ export function ModelCatalogMenu({
         <DropdownMenuItem className={dropdownMenuRow} disabled>
           {error}
         </DropdownMenuItem>
-      ) : groups.length === 0 && favoriteRows.length === 0 && moaPresets.length === 0 && !customSlug ? (
+      ) : groups.length === 0 && favoriteRows.length === 0 && moaPresets.length === 0 && customProviders.length === 0 ? (
         <DropdownMenuItem className={dropdownMenuRow} disabled>
           {copy.noModels}
         </DropdownMenuItem>
@@ -813,7 +815,7 @@ export function ModelCatalogMenu({
           trailing block it has always rendered. */}
       <DropdownMenuSeparator className="mx-0" />
       {footer}
-      <DropdownMenuItem
+      {pickerProviders.some(provider => provider.eligible_models == null) && <DropdownMenuItem
         className={cn(dropdownMenuRow, 'text-(--ui-text-tertiary)', slugEntry && 'text-foreground')}
         onSelect={event => {
           event.preventDefault()
@@ -826,7 +828,7 @@ export function ModelCatalogMenu({
       >
         <Codicon name="add" size="0.75rem" />
         {copyPicker.addCustomModelAction}
-      </DropdownMenuItem>
+      </DropdownMenuItem>}
       <DropdownMenuItem
         className={cn(dropdownMenuRow, 'text-(--ui-text-tertiary)')}
         onSelect={() => setModelVisibilityOpen(true)}
