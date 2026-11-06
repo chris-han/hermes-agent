@@ -2,11 +2,19 @@ import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import { spawnSync } from 'node:child_process'
 import path from 'node:path'
-import { builderNodeOptions, runElectronBuilder } from './run-electron-builder.mjs'
+import { builderNodeOptions, runElectronBuilder, validatePreparedBuilderArgs } from './run-electron-builder.mjs'
 import fs from 'node:fs'
 import os from 'node:os'
 import { publishPackagingInputs } from './prepared-packaging.mjs'
 import { recordNativeInputs } from './prepared-native-deps.mjs'
+
+test.runIf(process.platform === 'win32')('prepared MSIX accepts exact external-signing options while rejecting arbitrary hooks', () => {
+  const inputs = { target: `win32-${process.arch}`, formats: ['msix'] }
+  validatePreparedBuilderArgs(['--win', 'msix', '-c.win.sign=false', '-c.forceCodeSigning=false', '-c.afterPack=null'], inputs)
+  for (const arg of ['-c.win.sign=custom.js', '-c.afterPack=custom.js', '-c.npmRebuild=true', '-c.forceCodeSigning=true']) {
+    assert.throws(() => validatePreparedBuilderArgs(['--win', 'msix', arg], inputs), /not admitted/)
+  }
+})
 
 test('validate-only admits real prepared inputs without launching tools and rejects unsafe arguments', async () => {
   const source = path.resolve(import.meta.dirname, '../../..')

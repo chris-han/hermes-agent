@@ -59,6 +59,12 @@ export function validatePreparedBuilderArgs(args, inputs) {
       continue
     }
     if (arg === '--dir' || arg === '--publish=never' || arg === '--') continue
+    // External MSIX signing consumes the admitted package without signing or
+    // scanning its inner binaries. Admit only these exact disabling values;
+    // arbitrary hooks, certificate paths and dependency changes stay forbidden.
+    if (inputs.target.startsWith('win32-') && [
+      '-c.win.sign=false', '-c.forceCodeSigning=false', '-c.afterPack=null',
+    ].includes(arg)) continue
     if (/^(?:-c|--config)\.(?:extraMetadata\.(?:version|shortVersion|shortVersionWindows)|directories\.output|mac\.identity)=/.test(arg)) continue
     if (!arg.startsWith('-') && inputs.formats.includes(arg)) continue
     throw preparationRequired(`Argument is not admitted by prepared packaging: ${arg}`)
