@@ -44,6 +44,45 @@ describe('rankSearchOption', () => {
 describe('SearchableSelect', () => {
   const options = ['America/New_York', 'Asia/Kolkata', 'Europe/Berlin', 'UTC']
 
+  it('searches labels and stable ids, and selects the correct id when labels match', () => {
+    const onChange = vi.fn()
+    render(<SearchableSelect aria-label="Provider" onChange={onChange} options={[
+      { value: 'east-provider', label: 'Example' },
+      { value: 'west-provider', label: 'Example' }
+    ]} value="" />)
+    fireEvent.click(screen.getByRole('combobox', { name: 'Provider' }))
+    fireEvent.change(screen.getByPlaceholderText('Search…'), { target: { value: 'WEST' } })
+    fireEvent.click(screen.getByText('Example'))
+    expect(onChange).toHaveBeenCalledWith('west-provider')
+  })
+
+  it('keeps a disabled selected option visible but cannot select it', () => {
+    const onChange = vi.fn()
+    render(<SearchableSelect aria-label="Model" onChange={onChange} options={[
+      { value: 'old', label: 'Old model', disabled: true },
+      { value: 'new', label: 'New model' }
+    ]} value="old" />)
+    fireEvent.click(screen.getByRole('combobox', { name: 'Model' }))
+    const old = screen.getAllByText('Old model').at(-1)!
+    fireEvent.click(old)
+    expect(onChange).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByText('New model'))
+    expect(onChange).toHaveBeenCalledWith('new')
+  })
+
+  it('selects a filtered option with Enter', () => {
+    const onChange = vi.fn()
+    render(<SearchableSelect aria-label="Provider" onChange={onChange} options={[
+      { value: 'alpha', label: 'Alpha service' },
+      { value: 'beta', label: 'Beta service' }
+    ]} value="" />)
+    fireEvent.click(screen.getByRole('combobox', { name: 'Provider' }))
+    const search = screen.getByPlaceholderText('Search…')
+    fireEvent.change(search, { target: { value: 'BETA' } })
+    fireEvent.keyDown(search, { key: 'Enter' })
+    expect(onChange).toHaveBeenCalledWith('beta')
+  })
+
   it('opens, filters, and selects an option', () => {
     const onChange = vi.fn()
 

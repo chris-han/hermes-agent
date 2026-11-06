@@ -36,6 +36,8 @@ export function rankSearchOption(option: string, search: string): number {
   return 0
 }
 
+type SearchableOption = string | { value: string; label: string; keywords?: string[]; disabled?: boolean }
+
 /**
  * Searchable select for large option lists (e.g. ~590 IANA timezones).
  * Built on Popover + cmdk Command — the same stack as Shadcn's Combobox.
@@ -47,6 +49,7 @@ export function rankSearchOption(option: string, search: string): number {
  * `ConfigField` routes here when `schema.searchable === true`.
  */
 export function SearchableSelect({
+  'aria-label': ariaLabel,
   value,
   onChange,
   options,
@@ -54,9 +57,10 @@ export function SearchableSelect({
   emptyMessage = 'No results found.',
   clearLabel
 }: {
+  'aria-label'?: string
   value: string
   onChange: (value: string) => void
-  options: string[]
+  options: SearchableOption[]
   placeholder?: string
   emptyMessage?: string
   /** When set, prepends a "clear" item that sets the value to ''.
@@ -74,7 +78,11 @@ export function SearchableSelect({
     [onChange]
   )
 
-  const displayValue = value !== '' && value !== undefined ? value : placeholder
+  const normalizedOptions: Exclude<SearchableOption, string>[] = options.map(option =>
+    typeof option === 'string' ? { value: option, label: option } : option
+  )
+
+  const displayValue = value ? (normalizedOptions.find(option => option.value === value)?.label ?? value) : placeholder
 
   return (
     <Popover onOpenChange={setOpen} open={open}>
@@ -82,6 +90,7 @@ export function SearchableSelect({
         <button
           aria-expanded={open}
           aria-haspopup="listbox"
+          aria-label={ariaLabel}
           className={cn(
             controlVariants(),
             'flex items-center justify-between gap-2 whitespace-nowrap',
@@ -107,7 +116,7 @@ export function SearchableSelect({
           "Africa/A…". The popover keeps its own width and only grows to cover a
           trigger wider than that. */}
       <PopoverContent align="start" className="min-w-(--radix-popover-trigger-width)" variant="menu">
-        <Command filter={rankSearchOption} variant="menu">
+        <Command filter={(option, search, keywords) => Math.max(rankSearchOption(option, search), ...(keywords ?? []).map(keyword => rankSearchOption(keyword, search)))} variant="menu">
           <CommandInput autoFocus placeholder={placeholder} />
           <CommandList>
             <CommandEmpty>{emptyMessage}</CommandEmpty>
@@ -118,10 +127,10 @@ export function SearchableSelect({
                   <CommandItemCheck checked={value === ''} />
                 </CommandItem>
               )}
-              {options.map(option => (
-                <CommandItem key={option} onSelect={() => handleSelect(option)} value={option}>
-                  <span className="truncate">{option}</span>
-                  <CommandItemCheck checked={option === value} />
+              {normalizedOptions.map(option => (
+                <CommandItem disabled={option.disabled} key={option.value} keywords={[option.label, ...(option.keywords ?? [])]} onSelect={() => handleSelect(option.value)} value={option.value}>
+                  <span className="truncate">{option.label}</span>
+                  <CommandItemCheck checked={option.value === value} />
                 </CommandItem>
               ))}
             </CommandGroup>
