@@ -1127,10 +1127,10 @@ def _lap_custom_provider_rows(b: _PickerBuild, custom_providers: list) -> None:
     entries on one host become one "Ollama" row; distinct prefixes sharing a proxy URL keep
     their own rows."""
     from hermes_cli.model_switch import _extra_headers_from_config, _scoped_key_env
-    from hermes_cli.config import coerce_provider_id
+    from hermes_cli.config import coerce_provider_id, is_provider_enabled
     groups: dict[tuple, dict] = {}
     for entry in custom_providers:
-        if not isinstance(entry, dict):
+        if not isinstance(entry, dict) or not is_provider_enabled(entry):
             continue
         raw_name = coerce_provider_id(entry.get("name"))
         api_url = str(_entry_base_url(entry) or "").strip().rstrip("/")

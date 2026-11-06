@@ -114,7 +114,7 @@ _CAMEL_ALIASES: dict[str, str] = {
 _KNOWN_PROVIDER_KEYS = {
     # ``provider`` duplicates the ``providers.<name>`` mapping key and is unused here, but Hermes'
     # own config writer has historically emitted it. Accept it so self-written configs don't warn.
-    "provider",
+    "provider", "enabled",
     "name", "api", "url", "base_url", "api_key", "key_env", "api_key_env", "key_cmd",
     "api_mode", "transport", "model", "default_model", "models", "models_discovered",
     "context_length", "rate_limit_delay", "request_timeout_seconds", "stale_timeout_seconds",
@@ -219,6 +219,8 @@ def _normalize_custom_provider_entry(
     if not base_url or not name:
         return None
     normalized: dict[str, Any] = {"name": name, "base_url": base_url}
+    if "enabled" in entry:
+        normalized["enabled"] = entry["enabled"]
     if provider_key:
         normalized["provider_key"] = provider_key
 
@@ -294,7 +296,7 @@ def _custom_provider_entry_to_provider_config(
 
     provider_entry: dict[str, Any] = {"api": normalized["base_url"]}
     for field in (
-        "name", "api_key", "key_env", "key_cmd", "credential_ref", "portal_origin", "http_version", "models", "models_discovered", "context_length",
+        "name", "enabled", "api_key", "key_env", "key_cmd", "credential_ref", "portal_origin", "http_version", "models", "models_discovered", "context_length",
         "rate_limit_delay", "discover_models", "extra_body", "extra_headers",
         "session_affinity_header", "ssl_ca_cert", "ssl_verify", "catalog_provider"):
         if field in normalized:

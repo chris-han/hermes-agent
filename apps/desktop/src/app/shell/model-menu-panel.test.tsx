@@ -30,12 +30,14 @@ const MOA_PROVIDER = { models: ['default', 'BeastMode'], name: 'Mixture of Agent
 
 const DEEPSEEK_PROVIDER = {
   models: ['deepseek-v4-pro', 'deepseek-chat', 'deepseek-reasoner'],
+  eligible_models: ['deepseek-v4-pro', 'deepseek-chat', 'deepseek-reasoner'],
   name: 'DeepSeek',
   slug: 'deepseek'
 }
 
 const GOOGLE_PROVIDER = {
   models: ['gemini-3.1-pro', 'gemini-2.5-flash', 'gemini-2.5-pro'],
+  eligible_models: ['gemini-3.1-pro', 'gemini-2.5-flash', 'gemini-2.5-pro'],
   name: 'Google',
   slug: 'google'
 }
@@ -139,6 +141,20 @@ describe('ModelMenuPanel MoA presets', () => {
 })
 
 describe('ModelMenuPanel current selection', () => {
+  it('does not offer unknown-eligibility models in the composer', async () => {
+    getGlobalModelOptions.mockResolvedValue({ providers: [{
+      slug: 'unknown', name: 'Unknown provider', models: ['unproven-model']
+    }, { slug: 'known', name: 'Known provider', models: ['verified-model'], eligible_models: ['verified-model'] }] })
+    const { content, onSelectModel } = renderPanel()
+    const input = screen.getByRole('textbox', { name: 'Search models' })
+    await content.findByText('Known provider')
+    expect(content.queryByText('Unknown provider')).toBeNull()
+    fireEvent.change(input, { target: { value: 'unproven-model' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(content.queryByText(/unproven.model/i)).toBeNull()
+    expect(onSelectModel).not.toHaveBeenCalled()
+  })
+
   it('does not reintroduce IDs outside a source-backed eligibility set', async () => {
     getGlobalModelOptions.mockResolvedValue({ providers: [{
       slug: 'semantier-cloud', name: 'Cloud', models: ['allowed-model', 'stale-model'], eligible_models: ['allowed-model']
@@ -156,7 +172,7 @@ describe('ModelMenuPanel current selection', () => {
 
   it('does not offer provider-excluded models, including as a searched custom id', async () => {
     getGlobalModelOptions.mockResolvedValue({
-      providers: [{ slug: 'nous', name: 'Nous', models: ['allowed-model', 'locked-model'], unavailable_models: ['locked-model'] }]
+      providers: [{ slug: 'nous', name: 'Nous', models: ['allowed-model', 'locked-model'], eligible_models: ['allowed-model'], unavailable_models: ['locked-model'] }]
     })
     $customModels.set([{ provider: 'nous', model: 'locked-model' }])
     const { content, onSelectModel } = renderPanel()
@@ -245,29 +261,13 @@ describe('ModelMenuPanel search', () => {
     })
   })
 
-  it('Enter on an id nothing lists selects it as a custom model', async () => {
+  it('does not select a typed id outside the eligible catalog', async () => {
     const { content, onSelectModel } = renderPanel()
-
     await content.findByText('DeepSeek')
-
     const input = screen.getByRole('textbox', { name: 'Search models' })
     fireEvent.change(input, { target: { value: 'zzz-no-such-model' } })
-
-    // One row per configured provider (MoA excluded).
-    await vi.waitFor(() => {
-      expect(content.getAllByText(/^zzz-no-such-model/)).toHaveLength(2)
-    })
-
     fireEvent.keyDown(input, { key: 'Enter' })
-
-    // First configured provider, since no provider is current.
-    await vi.waitFor(() => {
-      expect(onSelectModel).toHaveBeenCalledWith({
-        model: 'zzz-no-such-model',
-        provider: 'deepseek',
-        sessionId: 'runtime-1'
-      })
-    })
+    expect(onSelectModel).not.toHaveBeenCalled()
   })
 
   it('a query that still matches catalog rows offers no custom model', async () => {
@@ -526,7 +526,7 @@ describe('ModelMenuPanel provider collapse', () => {
       .mockResolvedValueOnce({
         model: 'glm-4.5-air',
         provider: 'zhipu',
-        providers: [{ models: ['glm-4.5-air', 'glm-5-turbo'], name: '智谱2', slug: 'zhipu' }, MOA_PROVIDER]
+        providers: [{ models: ['glm-4.5-air', 'glm-5-turbo'], eligible_models: ['glm-4.5-air', 'glm-5-turbo'], name: '智谱2', slug: 'zhipu' }, MOA_PROVIDER]
       })
       .mockResolvedValueOnce({
         model: 'glm-4.5-air',
@@ -556,8 +556,8 @@ describe('ModelMenuPanel provider collapse', () => {
       model: 'glm-4.5-air',
       provider: 'zhipu',
       providers: [
-        { models: ['glm-4.5-air', 'gpt-5.5'], name: 'OpenRouter', slug: 'openrouter' },
-        { models: ['glm-4.5-air', 'glm-5-turbo'], name: '智谱2', slug: 'zhipu' },
+        { models: ['glm-4.5-air', 'gpt-5.5'], eligible_models: ['glm-4.5-air', 'gpt-5.5'], name: 'OpenRouter', slug: 'openrouter' },
+        { models: ['glm-4.5-air', 'glm-5-turbo'], eligible_models: ['glm-4.5-air', 'glm-5-turbo'], name: '智谱2', slug: 'zhipu' },
         MOA_PROVIDER
       ]
     }
@@ -582,8 +582,8 @@ describe('ModelMenuPanel provider collapse', () => {
       model: 'glm-4.5-air',
       provider: 'zhipu',
       providers: [
-        { models: ['glm-4.5-air', 'gpt-5.5'], name: 'OpenRouter', slug: 'openrouter' },
-        { models: ['glm-4.5-air', 'glm-5-turbo'], name: '智谱2', slug: 'zhipu' },
+        { models: ['glm-4.5-air', 'gpt-5.5'], eligible_models: ['glm-4.5-air', 'gpt-5.5'], name: 'OpenRouter', slug: 'openrouter' },
+        { models: ['glm-4.5-air', 'glm-5-turbo'], eligible_models: ['glm-4.5-air', 'glm-5-turbo'], name: '智谱2', slug: 'zhipu' },
         MOA_PROVIDER
       ]
     })

@@ -6,12 +6,9 @@ import type { ConfigFieldSchema, HermesConfigRecord } from '@/types/hermes'
 import {
   buildConfigSearchEntries,
   buildCredentialSearchEntries,
-  buildEligibleModelSearchEntries,
   credentialSettingsView,
   filterSettingsSearchEntries,
-  modelSearchSource,
-  resolveEligibleModelTarget,
-  settingsSearchTargetQuery
+  modelSearchSource
 } from './settings-search'
 import { envVar } from './test-utils'
 
@@ -40,45 +37,6 @@ describe('settings search index', () => {
     expect(modelSearchSource(first)).toBe(source)
     expect(modelSearchSource(second)).not.toBe(source)
     expect(modelSearchSource(null)).toBeNull()
-    const params = new URLSearchParams({ model_provider: 'a', model: 'ready', model_profile: 'p', model_connection: source! })
-    const providers = [{ slug: 'a', name: 'A', models: ['ready'], eligible_models: ['ready'] }]
-    expect(resolveEligibleModelTarget(params, providers, { profile: 'p', connection: modelSearchSource(second)! })).toBeNull()
-  })
-
-  it('indexes only explicit eligible models with exact provider and scope intent', () => {
-    const entries = buildEligibleModelSearchEntries([
-      { slug: 'a', name: 'Provider A', models: ['enabled', 'disabled', 'stale'], eligible_models: ['enabled', 'disabled'], unavailable_models: ['disabled'] },
-      { slug: 'b', name: 'Provider B', models: ['unknown'] },
-      { slug: 'c', name: 'Disconnected', models: ['hidden'], eligible_models: ['hidden'], authenticated: false },
-      { slug: 'a', name: 'Provider A', models: ['enabled'], eligible_models: ['enabled'] }
-    ], { profile: 'profile-a', connection: 'source-a', context: 'Main Model', icon: Settings2 })
-    expect(entries.map(entry => entry.label)).toEqual(['Provider A', 'enabled'])
-    expect(filterSettingsSearchEntries(entries, 'ENABLED')[0].target).toEqual({
-      view: 'config:model', subpage: 'main', modelProvider: 'a', modelId: 'enabled',
-      modelProfile: 'profile-a', modelConnection: 'source-a'
-    })
-    expect(filterSettingsSearchEntries(entries, 'disabled')).toHaveLength(0)
-    expect(filterSettingsSearchEntries(entries, 'unknown')).toHaveLength(0)
-    const query = new URLSearchParams(settingsSearchTargetQuery(entries[1].target))
-    expect(query.get('model')).toBe('enabled')
-    expect(query.get('model_profile')).toBe('profile-a')
-    expect(query.get('model_connection')).toBe('source-a')
-  })
-
-  it('rejects stale source, profile, removed and explicitly unavailable model intents', () => {
-    const providers = [{ slug: 'cloud', name: 'Cloud', models: ['ready', 'locked'],
-      eligible_models: ['ready', 'locked'], unavailable_models: ['locked'] }]
-    const params = new URLSearchParams('model_provider=cloud&model=ready&model_profile=a&model_connection=source')
-    expect(resolveEligibleModelTarget(params, providers, { profile: 'a', connection: 'source' })).toEqual({ provider: 'cloud', model: 'ready' })
-    expect(resolveEligibleModelTarget(params, providers, { profile: 'b', connection: 'source' })).toBeNull()
-    expect(resolveEligibleModelTarget(params, providers, { profile: 'a', connection: 'other' })).toBeNull()
-    params.set('model', 'locked')
-    expect(resolveEligibleModelTarget(params, providers, { profile: 'a', connection: 'source' })).toBeNull()
-    params.set('model', 'removed')
-    expect(resolveEligibleModelTarget(params, providers, { profile: 'a', connection: 'source' })).toBeNull()
-    params.delete('model')
-    expect(resolveEligibleModelTarget(params, providers, { profile: 'a', connection: 'source' })).toEqual({ provider: 'cloud' })
-    expect(resolveEligibleModelTarget(params, [{ ...providers[0], eligible_models: null }], { profile: 'a', connection: 'source' })).toBeNull()
   })
 
   it('builds config results from renderable schema fields with exact deep links', () => {

@@ -44,6 +44,21 @@ describe('rankSearchOption', () => {
 describe('SearchableSelect', () => {
   const options = ['America/New_York', 'Asia/Kolkata', 'Europe/Berlin', 'UTC']
 
+  it('filters the complete loaded list and restores it when the query is cleared', () => {
+    const options = Array.from({ length: 650 }, (_, index) => `vendor/model-${String(index).padStart(3, '0')}`)
+    render(<SearchableSelect aria-label="Model" onChange={vi.fn()} options={options} value="" />)
+    fireEvent.click(screen.getByRole('combobox', { name: 'Model' }))
+    const input = screen.getByPlaceholderText('Search…')
+    expect(screen.getAllByRole('option')).toHaveLength(650)
+    fireEvent.change(input, { target: { value: 'MODEL-649' } })
+    expect(screen.getAllByRole('option')).toHaveLength(1)
+    expect(screen.getByRole('option').textContent).toContain('model-649')
+    fireEvent.change(input, { target: { value: 'no-such-model' } })
+    expect(screen.getByText('No results found.')).toBeTruthy()
+    fireEvent.change(input, { target: { value: '' } })
+    expect(screen.getAllByRole('option')).toHaveLength(650)
+  })
+
   it('searches labels and stable ids, and selects the correct id when labels match', () => {
     const onChange = vi.fn()
     render(<SearchableSelect aria-label="Provider" onChange={onChange} options={[

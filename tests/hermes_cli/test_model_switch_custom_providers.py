@@ -2515,3 +2515,25 @@ def test_same_provider_switch_on_session_only_custom_endpoint_keeps_endpoint(mon
     assert result.success
     assert result.base_url == "http://10.0.0.5:8000/v1"
     assert result.api_key == "session-secret"
+
+
+def test_disabled_custom_provider_is_not_an_eligible_inventory_row(monkeypatch):
+    from hermes_cli.inventory import ConfigContext, build_models_payload
+    from hermes_cli.config import get_compatible_custom_providers
+
+    monkeypatch.setattr("agent.models_dev.fetch_models_dev", dict)
+    monkeypatch.setattr(providers_mod, "HERMES_OVERLAYS", {})
+    ctx = ConfigContext(
+        current_provider="custom:sample", current_model="enabled-model",
+        current_base_url="http://sample.example/v1", user_providers={},
+        custom_providers=get_compatible_custom_providers({"custom_providers": [
+            {"name": "sample", "base_url": "http://sample.example/v1", "discover_models": False,
+             "models": ["enabled-model"]},
+            {"name": "disabled", "base_url": "http://disabled.example/v1", "enabled": False,
+             "discover_models": False, "models": ["hidden-model"]},
+        ]}),
+    )
+    payload = build_models_payload(ctx, explicit_only=True, probe_custom_providers=False)
+    rows = {row["slug"]: row for row in payload["providers"]}
+    assert rows["custom:sample"]["eligible_models"] == ["enabled-model"]
+    assert "custom:disabled" not in rows

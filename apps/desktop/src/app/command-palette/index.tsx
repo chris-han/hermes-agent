@@ -1266,8 +1266,7 @@ function CommandPaletteBody({ onExited }: { onExited: () => void }) {
     const fieldItems = [
       ...settingsCatalog.subpageEntries,
       ...settingsCatalog.settingEntries,
-      ...settingsCatalog.configEntries,
-      ...settingsCatalog.modelEntries
+      ...settingsCatalog.configEntries
     ].map(settingsEntryItem)
 
     if (fieldItems.length > 0) {
@@ -1388,8 +1387,7 @@ function CommandPaletteBody({ onExited }: { onExited: () => void }) {
         items: [
           ...settingsCatalog.subpageEntries,
           ...settingsCatalog.settingEntries,
-          ...settingsCatalog.configEntries,
-          ...settingsCatalog.modelEntries
+          ...settingsCatalog.configEntries
         ].map(settingsEntryItem)
       })
 

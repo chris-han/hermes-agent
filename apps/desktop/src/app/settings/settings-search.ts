@@ -1,4 +1,4 @@
-import { LOCAL_CONNECTION_ID, type ModelOptionProvider } from '@hermes/shared'
+import { LOCAL_CONNECTION_ID } from '@hermes/shared'
 
 import type { IconComponent } from '@/lib/icons'
 import { normalize } from '@/lib/text'
@@ -20,10 +20,6 @@ export interface SettingsSearchTarget {
   keysView?: CredentialSettingsView
   providerView?: 'accounts' | 'custom-endpoints' | 'keys'
   setting?: string
-  modelProvider?: string
-  modelId?: string
-  modelProfile?: string
-  modelConnection?: string
   view: SettingsView
 }
 
@@ -73,77 +69,6 @@ export function modelSearchSource(connection: { connectionId?: string; mode?: 'l
   }
 
   return source
-}
-
-function offeredEligibleModels(provider: ModelOptionProvider): string[] {
-  if (provider.authenticated === false || provider.eligible_models == null) {
-    return []
-  }
-
-  const unavailable = new Set((provider.unavailable_models ?? []).map(normalize))
-  const listed = new Set(provider.models ?? [])
-
-  return provider.eligible_models.filter(model => listed.has(model) && !unavailable.has(normalize(model)))
-}
-
-/** Validate a navigation intent against the currently loaded, identically scoped inventory. */
-export function resolveEligibleModelTarget(
-  params: URLSearchParams,
-  providers: readonly ModelOptionProvider[],
-  scope: { profile: string; connection: string }
-): { provider: string; model?: string } | null {
-  const providerId = params.get('model_provider')
-  if (!providerId || !scope.profile || !scope.connection || params.get('model_profile') !== scope.profile ||
-      params.get('model_connection') !== scope.connection) {
-    return null
-  }
-
-  const provider = providers.find(row => row.slug === providerId)
-  const eligible = provider ? offeredEligibleModels(provider) : []
-  const model = params.get('model')
-  if (!eligible.length || (params.has('model') && (!model || !eligible.includes(model)))) {
-    return null
-  }
-
-  return model ? { provider: providerId, model } : { provider: providerId }
-}
-
-/** Index only producer-established model sets, never mixed picker hints. */
-export function buildEligibleModelSearchEntries(
-  providers: readonly ModelOptionProvider[],
-  scope: { profile: string; connection: string; context: string; icon: IconComponent }
-): SettingsSearchEntry[] {
-  const seen = new Set<string>()
-  const entries: SettingsSearchEntry[] = []
-
-  for (const provider of providers) {
-    if (!provider.slug || provider.authenticated === false || provider.eligible_models == null) {
-      continue
-    }
-
-    const models = offeredEligibleModels(provider)
-    const target = { view: 'config:model' as const, subpage: 'main', modelProvider: provider.slug,
-      modelProfile: scope.profile, modelConnection: scope.connection }
-    const providerKey = JSON.stringify([provider.slug])
-
-    if (models.length && !seen.has(providerKey)) {
-      seen.add(providerKey)
-      entries.push({ context: scope.context, icon: scope.icon, id: `model-provider:${providerKey}`,
-        keywords: [provider.slug], label: provider.name, target })
-    }
-
-    for (const model of models) {
-      const key = JSON.stringify([provider.slug, model])
-      if (seen.has(key)) {
-        continue
-      }
-      seen.add(key)
-      entries.push({ context: provider.name, icon: scope.icon, id: `model:${key}`,
-        keywords: [provider.slug, provider.name, model], label: model, target: { ...target, modelId: model } })
-    }
-  }
-
-  return entries
 }
 
 export function credentialSettingsView(info: EnvVarInfo): CredentialSettingsView | null {
@@ -317,22 +242,6 @@ export function settingsSearchTargetQuery(target: SettingsSearchTarget): string 
 
   if (target.key) {
     params.set('key', target.key)
-  }
-
-  if (target.modelProvider) {
-    params.set('model_provider', target.modelProvider)
-  }
-
-  if (target.modelId) {
-    params.set('model', target.modelId)
-  }
-
-  if (target.modelProfile) {
-    params.set('model_profile', target.modelProfile)
-  }
-
-  if (target.modelConnection) {
-    params.set('model_connection', target.modelConnection)
   }
 
   return params.toString()

@@ -263,7 +263,7 @@ export function ModelCatalogMenu({
   )
 
   const pickerProviders = useMemo(
-    () => withCustomModels(providers?.filter(provider => provider.slug.toLowerCase() !== 'moa') ?? [], customModels).map(omitUnavailable),
+    () => withCustomModels(providers?.filter(provider => provider.slug.toLowerCase() !== 'moa' && provider.authenticated !== false && provider.eligible_models != null) ?? [], customModels).map(omitUnavailable),
     [providers, customModels]
   )
 
@@ -363,7 +363,7 @@ export function ModelCatalogMenu({
     const variantFast = !(caps?.fast ?? false) && !!family.fastId
     const targetId = variantFast && preset.fast === true ? family.fastId! : family.id
 
-    if ((provider.eligible_models != null && !provider.eligible_models.includes(targetId)) ||
+    if ((provider.eligible_models == null || !provider.eligible_models.includes(targetId)) ||
         (provider.unavailable_models ?? []).some(model => normalize(model) === normalize(targetId))) {
       return false
     }

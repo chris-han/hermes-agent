@@ -3,7 +3,6 @@ import { DEFAULT_REASONING_EFFORT, REASONING_EFFORT_VALUES } from '@hermes/share
 import { useStore } from '@nanostores/react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
-import { useLocation } from 'react-router'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -30,7 +29,7 @@ import type {
   StaleAuxAssignment
 } from '@/hermes'
 import { useI18n } from '@/i18n'
-import { modelUnavailableCopy } from '@/i18n/model-selection-copy'
+import { modelEligibilityUnknownCopy, modelUnavailableCopy, savedModelUnavailableCopy } from '@/i18n/model-selection-copy'
 import { isCodeSkewRestartRequired } from '@/lib/code-skew-error'
 import { AlertTriangle, Cpu, Loader2 } from '@/lib/icons'
 import { isSubmitEnter } from '@/lib/ime'
@@ -61,7 +60,7 @@ import { getNested, setNested } from './helpers'
 import { ModelSelect, withActive } from './model-select'
 import { ListRow, ListRowSkeleton, Pill, SectionHeading, SectionHeadingSkeleton } from './primitives'
 import { SearchableSelect } from './searchable-select'
-import { modelSearchSource, resolveEligibleModelTarget } from './settings-search'
+import { modelSearchSource } from './settings-search'
 import { dismissStaleAux, readStaleAuxDismissal, staleAuxFingerprint } from './stale-aux-dismissal'
 
 // Skeleton mirror of the Model settings DOM so the page keeps its shape while
@@ -122,7 +121,9 @@ const NO_PROVIDERS: readonly ModelOptionProvider[] = [{ name: '—', slug: '', m
 // controlled value has no matching item) while remaining out of the real
 // inventory used for readiness/setup metadata.
 function mainProviderOptionsFor(providers: readonly ModelOptionProvider[], selectedProvider: string) {
-  const options = providers.filter(provider => provider.authenticated !== false || catalogProviderMatches(provider, selectedProvider))
+  const options = providers.filter(provider =>
+    (provider.authenticated !== false && provider.eligible_models != null && provider.eligible_models.length > 0) ||
+    catalogProviderMatches(provider, selectedProvider))
 
   return selectedProvider && !findCatalogProvider(providers, selectedProvider)
     ? [{ name: selectedProvider, slug: selectedProvider, models: [] as string[], authenticated: false }, ...options]
@@ -310,7 +311,6 @@ interface ModelSettingsProps {
 
 export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: ModelSettingsProps) {
   const { t, locale } = useI18n()
-  const { search } = useLocation()
   const connection = useStore($connection)
   const currentProfile = useStore($settingsScopeProfile)
   const searchSource = modelSearchSource(connection)
@@ -326,7 +326,6 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
   const [restartingBackend, setRestartingBackend] = useState(false)
   const [mainModel, setMainModel] = useState<{ model: string; provider: string } | null>(null)
   const [catalogProviders, setCatalogProviders] = useState<ModelOptionProvider[]>([])
-  const [catalogBinding, setCatalogBinding] = useState<string | null>(null)
   // Slugs typed into any picker ride along as rows of their provider, so a
   // model added from the composer is selectable here too.
   const customModels = useStore($customModels)
@@ -374,7 +373,7 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
   )
 
   const refresh = useCallback(
-    async ({ replaceSelection = false }: { replaceSelection?: boolean } = {}) => {
+    async ({ replaceSelection = false, forceRefresh = false }: { replaceSelection?: boolean; forceRefresh?: boolean } = {}) => {
       const epoch = profileEpoch.current
       setLoading(true)
       setError('')
@@ -387,7 +386,7 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
         // config-file reads — behind a single all-or-nothing Promise.all.
         const [modelInfoResult, modelOptionsResult, auxiliaryModelsResult, moaModelsResult] = await Promise.allSettled([
           getGlobalModelInfo(scopeProfile),
-          getGlobalModelOptions(undefined, scopeProfile),
+          getGlobalModelOptions(forceRefresh ? { refresh: true } : undefined, scopeProfile),
           getAuxiliaryModels(scopeProfile),
           getMoaModels(scopeProfile)
         ])
@@ -431,7 +430,6 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
 
         if (modelOptions) {
           setCatalogProviders(modelOptions.providers || [])
-          setCatalogBinding(scopeBinding)
         }
 
         setAuxiliary(auxiliaryModels)
@@ -458,7 +456,7 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
         }
       }
     },
-    [m.loadFailed, scopeBinding, scopeProfile, setCaughtError]
+    [m.loadFailed, scopeProfile, setCaughtError]
   )
 
   const previousScope = useRef(scopeBinding)
@@ -470,7 +468,6 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
     setEligibilityRetry(false)
     setMainModel(null)
     setCatalogProviders([])
-    setCatalogBinding(null)
     setAuxiliary(null)
     setMoa(null)
     setSelectedMoaPreset('')
@@ -493,26 +490,6 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
 
     void refresh({ replaceSelection: changed })
   }, [clearProfileState, refresh, scopeBinding])
-
-  const consumedSearch = useRef<string | null>(null)
-  // A one-shot route receipt, not a mirror of reactive state.
-  // eslint-disable-next-line no-restricted-syntax
-  useEffect(() => {
-    const params = new URLSearchParams(search)
-    if (!params.has('model_provider')) {
-      consumedSearch.current = null
-      return
-    }
-    if (loading || !searchSource || catalogBinding !== scopeBinding || consumedSearch.current === search) {
-      return
-    }
-    consumedSearch.current = search
-    const target = resolveEligibleModelTarget(params, catalogProviders, { profile: searchProfile, connection: searchSource })
-    if (target) {
-      setSelectedProvider(target.provider)
-      setSelectedModel(target.model ?? '')
-    }
-  }, [catalogBinding, catalogProviders, loading, scopeBinding, search, searchProfile, searchSource])
 
   // A profile switch swaps the backend under the mounted panel — reload for the
   // new profile (bumping the epoch first so any in-flight A request is discarded).
@@ -548,7 +525,8 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
     [providers, selectedProvider]
   )
 
-  const selectedProviderModels = selectedProviderRow?.eligible_models ?? selectedProviderRow?.models ?? []
+  const eligibilityUnknown = !!selectedProviderRow && selectedProviderRow.eligible_models == null
+  const selectedProviderModels = selectedProviderRow?.eligible_models ?? []
   const selectedUnavailable = (selectedProviderRow?.unavailable_models ?? []).some(
     model => normalize(model) === normalize(selectedModel)
   ) || (selectedProviderRow?.eligible_models != null && !selectedProviderRow.eligible_models.includes(selectedModel))
@@ -865,7 +843,7 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
   }
 
   const applyMainModel = useCallback(async () => {
-    if (!selectedProvider || !selectedModel || selectedUnavailable || !isProviderReady(selectedProviderRow)) {
+    if (!selectedProvider || !selectedModel || selectedUnavailable || eligibilityUnknown || !isProviderReady(selectedProviderRow)) {
       return
     }
 
@@ -929,6 +907,7 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
       }
     }
   }, [
+    eligibilityUnknown,
     m,
     locale,
     onMainModelChanged,
@@ -1141,7 +1120,7 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
               options={mainProviderOptions.filter(provider => provider.slug).map(provider => ({
                 value: provider.slug,
                 label: provider.name,
-                disabled: provider.authenticated === false
+                disabled: provider.authenticated === false || provider.eligible_models == null || provider.eligible_models.length === 0
               }))}
               placeholder={m.provider}
               value={selectedProviderRow?.slug ?? selectedProvider}
@@ -1179,7 +1158,7 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
             ) : (
               <>
                 <ModelSelect
-                  allowedModels={selectedProviderRow?.eligible_models}
+                  allowedModels={selectedProviderRow?.eligible_models ?? []}
                   className="min-w-60"
                   disabled={applying}
                   excludeUnavailable
@@ -1197,7 +1176,7 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
                   value={selectedModel}
                 />
                 <Button
-                  disabled={!selectedProvider || !selectedModel || selectedUnavailable || eligibilityRetry || applying}
+                  disabled={!selectedProvider || !selectedModel || selectedUnavailable || eligibilityUnknown || eligibilityRetry || applying}
                   onClick={() => void applyMainModel()}
                   size="sm"
                 >
@@ -1207,6 +1186,19 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
               </>
             )}
           </div>
+          {!needsSetup && eligibilityUnknown && (
+            <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground" role="status">
+              <span>{modelEligibilityUnknownCopy[locale] ?? modelEligibilityUnknownCopy.en}</span>
+              <Button disabled={loading || applying} onClick={() => void refresh({ forceRefresh: true })} size="sm" variant="textStrong">
+                {t.common.retry}
+              </Button>
+            </div>
+          )}
+          {!needsSetup && selectedModel && selectedUnavailable && (
+            <p className="mt-2 text-xs text-muted-foreground" role="status">
+              {savedModelUnavailableCopy[locale] ?? savedModelUnavailableCopy.en}
+            </p>
+          )}
           {needsSetup && !setupIsApiKey && selectedProviderRow && (
             <p className="mt-2 text-xs text-muted-foreground">
               {selectedProviderRow?.auth_type === 'api_key'

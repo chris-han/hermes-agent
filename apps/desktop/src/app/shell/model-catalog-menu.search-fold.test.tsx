@@ -24,7 +24,7 @@ vi.mock('@/hermes', () => ({
 beforeEach(() => {
   $visibleModels.set(null)
   getGlobalModelOptions.mockResolvedValue({
-    providers: [{ models: ['qwen3.8-flash', 'gpt-5.1'], name: 'OpenRouter', slug: 'openrouter' }]
+    providers: [{ models: ['qwen3.8-flash', 'gpt-5.1'], eligible_models: ['qwen3.8-flash', 'gpt-5.1'], name: 'OpenRouter', slug: 'openrouter' }]
   })
 })
 

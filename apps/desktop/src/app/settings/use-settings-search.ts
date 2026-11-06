@@ -4,12 +4,11 @@ import { useCallback, useEffect } from 'react'
 
 import { useGatewayRequest } from '@/app/gateway/hooks/use-gateway-request'
 import { $pluginRecords } from '@/contrib/plugins-store'
-import { getEnvVars, getGlobalModelOptions, getHermesConfigSchema } from '@/hermes'
+import { getEnvVars, getHermesConfigSchema } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { type IconComponent, Monitor, Package, Settings2, Wrench } from '@/lib/icons'
 import { $agentPlugins, isDesktopRelevantPlugin, loadAgentPlugins } from '@/store/agent-plugins'
-import { $connection, $gatewayState } from '@/store/session'
-import { $settingsRequestProfile, $settingsScopeProfile } from '@/store/settings-scope'
+import { $gatewayState } from '@/store/session'
 
 import { useHermesConfigRecord } from '../hooks/use-config-record'
 import { useOnProfileSwitch } from '../hooks/use-on-profile-switch'
@@ -17,7 +16,7 @@ import { useOnProfileSwitch } from '../hooks/use-on-profile-switch'
 import { SECTIONS } from './constants'
 import { OTHER_SUBPAGES } from './other-subpages'
 import { settingSearchTargets } from './settings-manifest'
-import { buildConfigSearchEntries, buildCredentialSearchEntries, buildEligibleModelSearchEntries, modelSearchSource, type SettingsSearchEntry } from './settings-search'
+import { buildConfigSearchEntries, buildCredentialSearchEntries, type SettingsSearchEntry } from './settings-search'
 import { settingsSubpages } from './subpages'
 import type { SettingsView } from './types'
 
@@ -41,23 +40,6 @@ export interface PluginSearchEntry {
 export function useSettingsSearchCatalog(enabled: boolean) {
   const { t } = useI18n()
   const configQuery = useHermesConfigRecord()
-  const connection = useStore($connection)
-  const profile = useStore($settingsScopeProfile)
-  const requestProfile = useStore($settingsRequestProfile)
-  const source = modelSearchSource(connection)
-  const modelQuery = useQuery({
-    queryKey: ['settings-model-search', source, profile],
-    queryFn: async () => {
-      const result = await getGlobalModelOptions(undefined, requestProfile)
-      if (modelSearchSource($connection.get()) !== source || $settingsScopeProfile.get() !== profile) {
-        throw new Error('Model search scope changed')
-      }
-      return result
-    },
-    enabled: enabled && !!source,
-    staleTime: 0
-  })
-
   const schemaQuery = useQuery({
     queryKey: ['hermes-config-schema'],
     queryFn: () => getHermesConfigSchema(),
@@ -192,9 +174,6 @@ export function useSettingsSearchCatalog(enabled: boolean) {
     .filter(entry => !settingLabels.has(`${entry.context}\u0000${entry.label}`))
 
   return {
-    modelEntries: enabled && source && !modelQuery.isFetching && !modelQuery.isError && modelQuery.data
-      ? buildEligibleModelSearchEntries(modelQuery.data.providers, { profile, connection: source, context: t.settings.model.model, icon: Settings2 })
-      : [],
     subpageEntries,
     settingEntries,
     configEntries,
