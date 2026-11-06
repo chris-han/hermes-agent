@@ -302,7 +302,7 @@ def merge_tree(src: Path, dst: Path) -> None:
         retry_held(lambda: item.replace(target))
 
 
-def tree_digest(root: Path) -> str:
+def tree_digest(root: Path, *, validate_entry=None) -> str:
     """Deterministic sha256 over a directory tree: walk every file, sort
     by posix relpath, hash `relpath\\0<content>` per entry. No mtimes, no
     mode bits. Symlinks contribute their LINK TARGET TEXT (os.readlink),
@@ -320,6 +320,8 @@ def tree_digest(root: Path) -> str:
         descend = []
         for name in sorted(dirnames):
             path = Path(dirpath) / name
+            if validate_entry is not None:
+                validate_entry(path)
             if path.is_symlink() or is_junction(path):
                 files.append((path.relative_to(root).as_posix(), path))
             elif name != "__pycache__":
@@ -327,6 +329,8 @@ def tree_digest(root: Path) -> str:
         dirnames[:] = descend
         for fname in filenames:
             path = Path(dirpath) / fname
+            if validate_entry is not None:
+                validate_entry(path)
             files.append((path.relative_to(root).as_posix(), path))
     files.sort(key=lambda item: item[0])
 

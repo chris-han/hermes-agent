@@ -81,14 +81,14 @@ const identity = {
   store,
   light,
   displayName,
-  appId: `com.nousresearch.${name.kebab}${kebabSuffix}`,
+  appId: `com.semantier.${name.kebab}${kebabSuffix}`,
   // Store and commit builds do not publish a release feed.
   channel: store || buildCommit ? null : light ? (canary ? 'light-canary' : 'light') : canary ? 'canary' : 'latest',
   appNamePascal: `${name.pascal}${pascalSuffix}`,
   artifactNamePascal: name.pascal,
   windowsExecutableName: semantierBuild ? 'Semantier Agent' : kebabSuffix ? cliName : displayName,
   cliName,
-  msixAppIdWithOrg: `NousResearch.${name.pascal}${pascalSuffix}`,
+  msixAppIdWithOrg: `Semantier.${name.pascal}${pascalSuffix}`,
   ...(store
     ? {
         storeMsix: {

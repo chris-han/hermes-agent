@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-  Sign, locally accept and publish the prepared 0.0.86 MSIX to ONE fixed ECS URL.
+  Build an exact -Commit, sign, locally accept and publish one MSIX to ECS.
 .EXAMPLE
   .\scripts\deploy-ecs.ps1 -WhatIf
 .EXAMPLE
@@ -11,15 +11,25 @@
 .EXAMPLE
   .\scripts\deploy-ecs.ps1 -NewRun
 .EXAMPLE
+  .\scripts\deploy-ecs.ps1 -SetupOnly
+.EXAMPLE
   .\scripts\deploy-ecs.ps1 -UpdateSetup
 .EXAMPLE
   .\scripts\deploy-ecs.ps1 -VerifyPublicDownload
+.EXAMPLE
+  .\scripts\deploy-ecs.ps1 -Commit eede5238816caa515089f99c558964fe6adec2e9
 .DESCRIPTION
+  BuildMode defaults to Beta: sign, install and publish without release verification.
+  Use -BuildMode Prod for full verification and acceptance. Timings use checkpoints.jsonl.
   Run in an interactive Windows PowerShell session as the installing user.
   Native SSH/SFTP first read ALI_ECS_SSH_PASSWORDE from the repository .env,
   otherwise use your SSH key/agent or prompt for the ECS password. Secrets
   are never embedded in this script. No npm/uv install, Python publisher, WSL,
   release lock/database, split packages, bundles, ZIPs, or CH2/R2 operations.
+  -LocalSetup builds a signed semantier-setup-ch0.exe for the single adjacent MSIX; never uploads.
+  -SetupOnly builds/reuses and publishes Setup in its own ecs-setup-* run.
+  -UpdateSetup forces a new Setup build; neither mode builds or installs MSIX.
+  Routine MSIX releases require an already compatible Setup on ECS.
   A signed Setup EXE downloads a single fixed MSIX over HTTP/3, with no
   current-release manifest or catalog. Existing Windows profile is preserved.
   A local result.json is evidence of this invocation, not a publication journal.
@@ -49,8 +59,16 @@ param(
   [Alias('PrepareOnly')][switch]$LocalOnly,
   [switch]$SkipOldCleanup,
   [switch]$NewRun,
+  [switch]$SetupOnly,
+  [switch]$LocalSetup,
   [switch]$UpdateSetup,
-  [switch]$VerifyPublicDownload
+  [switch]$VerifyPublicDownload,
+  [string]$Commit = '',
+  [string]$BuildCache = 'D:\repo\deliverables\cache\desktop-inputs',
+  [string]$BuildPython = 'D:\repo\hermes-build\apps\desktop\build\agent-payload\venv\Scripts\python.exe',
+  [string]$VersionState = 'D:\repo\semantier-agent-build-version.json',
+  [ValidateSet('Beta','Prod')][string]$BuildMode = 'Beta',
+  [switch]$PreflightOnly
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -58,6 +76,7 @@ $identity = 'Semantier.Agent.Acceptance'
 $publisher = 'CN=Semantier Technology, O=Semantier Technology'
 $utf8 = New-Object Text.UTF8Encoding($false)
 $script:statusClock = [Diagnostics.Stopwatch]::StartNew()
+$script:milestoneClock = [Diagnostics.Stopwatch]::StartNew()
 $script:statusLog = $null
 $script:askPassExe = $null
 function Report-Status([string]$Message) {
@@ -74,6 +93,7 @@ function Read-RunCheckpoint([string]$Path) {
   $last=$null
   foreach($line in [IO.File]::ReadLines($Path)) {
     if(!$line.Trim()){continue}
+    if($line -notmatch '"type"\s*:\s*"checkpoint"\s*[,}]'){continue}
     try {$entry=$line | ConvertFrom-Json -ErrorAction Stop}
     catch {Write-Warning 'Ignoring an incomplete or malformed run-log record; saved artifacts will still be verified.';continue}
     if($entry.PSObject.Properties['type'] -and $entry.type -eq 'checkpoint') {$last=$entry}
@@ -86,17 +106,53 @@ function Save-Json($Value, [string]$Path) {
   if ([IO.File]::Exists($Path)) {[IO.File]::Replace($temporary,$Path,$Path+'.previous')} else {[IO.File]::Move($temporary,$Path)}
 }
 function Complete-Checkpoint([string]$Stage) {
+  $seconds=[math]::Round($script:milestoneClock.Elapsed.TotalSeconds,3)
+  Write-RunEvent @{type='milestone-timing';stage=$Stage;seconds=$seconds;mode=$BuildMode;at=[DateTime]::UtcNow.ToString('o')}
+  Report-Status ("Milestone {0}: {1:N3}s since previous checkpoint" -f $Stage,$seconds)
+  $script:milestoneClock.Restart()
   Save-Json $receipt (Join-Path $Output 'result.json')
   $script:checkpoints[$Stage]=[DateTime]::UtcNow.ToString('o')
   Write-RunEvent @{type='checkpoint';stage=$Stage;status='SUCCESS';at=$script:checkpoints[$Stage];
     binding=$script:runBinding;completed=$script:checkpoints;receipt=$receipt}
   Report-Status "Checkpoint saved: $Stage"
 }
+function Test-UnsignedRepackageResume($Saved, [string]$Binding, $Build) {
+  if(!$Build -or $Build.stage -cne 'built' -or @($Saved.completed.PSObject.Properties).Count){return $false}
+  try{$old=$Saved.binding | ConvertFrom-Json;$current=$Binding | ConvertFrom-Json}catch{return $false}
+  $oldNames=@($old.PSObject.Properties.Name | Sort-Object)
+  $newNames=@($current.PSObject.Properties.Name | Sort-Object)
+  if(($oldNames -join '|') -cne ($newNames -join '|')){return $false}
+  foreach($name in $oldNames){
+    if($name -cne 'inputSha256' -and $old.$name -cne $current.$name){return $false}
+  }
+  return ($old.inputSha256 -cne $current.inputSha256 -and $Build.commit -ceq $current.source -and
+    ($Build.version+'.0') -ceq $current.version -and $Build.sha256 -ceq $current.inputSha256)
+}
 function Run([string]$Exe, [string[]]$Arguments) {
   $timer = [Diagnostics.Stopwatch]::StartNew()
   Report-Status ("Running {0} {1}" -f [IO.Path]::GetFileName($Exe), $Arguments[0])
-  if([IO.Path]::GetFileName($Exe) -in @('ssh.exe','sftp.exe')) {
+  if([IO.Path]::GetFileName($Exe) -ieq 'sftp.exe') {
+    # The progress meter needs the inherited console, not a PowerShell pipe.
+    Invoke-SshNative $Exe $Arguments
+  } elseif([IO.Path]::GetFileName($Exe) -ieq 'ssh.exe') {
     Invoke-SshNative $Exe $Arguments | Out-Host
+  } elseif([IO.Path]::GetFileName($Exe) -in @('python.exe','python3.exe')) {
+    # Windows PowerShell represents native stderr as ErrorRecord objects.
+    # Keep draining both streams so the actual builder error reaches the run log.
+    $previousErrorPreference=$ErrorActionPreference
+    try {
+      $ErrorActionPreference='Continue'
+      & $Exe @Arguments 2>&1 | ForEach-Object {
+        $line=[string]$_
+        Write-Host $line
+        if($script:statusLog){Write-RunEvent @{type='output';at=[DateTime]::UtcNow.ToString('o');tool=[IO.Path]::GetFileName($Exe);message=$line}}
+      }
+      $nativeExit=$LASTEXITCODE
+    } finally {$ErrorActionPreference=$previousErrorPreference}
+    if($script:statusLog){Write-RunEvent @{type='milestone-timing';stage=($Arguments -join ' ');tool=[IO.Path]::GetFileName($Exe);seconds=[math]::Round($timer.Elapsed.TotalSeconds,3);status=$(if($nativeExit -eq 0){'SUCCESS'}else{'FAIL'});mode=$BuildMode}}
+    if($nativeExit -ne 0){throw "$Exe failed with exit code $nativeExit; see builder output in $script:statusLog"}
+    Report-Status ("Completed {0} ({1:0}s)" -f [IO.Path]::GetFileName($Exe), $timer.Elapsed.TotalSeconds)
+    return
   } else { & $Exe @Arguments | Out-Host }
   if ($LASTEXITCODE -ne 0) { throw "$Exe failed with exit code $LASTEXITCODE" }
   Report-Status ("Completed {0} ({1:0}s)" -f [IO.Path]::GetFileName($Exe), $timer.Elapsed.TotalSeconds)
@@ -118,6 +174,7 @@ import os,sqlite3,sys,time,uuid
 from contextlib import closing
 from pathlib import Path
 mode,home,backup=sys.argv[1],Path(sys.argv[2]),Path(sys.argv[3])
+verify=sys.argv[4]=='Prod'
 suffixes={'.db','.sqlite','.sqlite3'}
 def connect(path,immutable=False):
     return sqlite3.connect(path.resolve().as_uri()+('?mode=ro&immutable=1' if immutable else '?mode=ro'),uri=True,timeout=5)
@@ -132,7 +189,7 @@ if mode=='backup':
         try:
             with closing(connect(source)) as src,closing(sqlite3.connect(temporary)) as dst:
                 src.backup(dst,pages=256,progress=progress,sleep=0.05)
-                if dst.execute('pragma integrity_check').fetchone()[0]!='ok': raise RuntimeError('Invalid SQLite snapshot: '+str(source))
+                if verify and dst.execute('pragma integrity_check').fetchone()[0]!='ok': raise RuntimeError('Invalid SQLite snapshot: '+str(source))
             os.replace(temporary,target)
         finally:
             if temporary.exists(): temporary.unlink()
@@ -154,7 +211,7 @@ else:
   # Windows PowerShell 5.1 strips embedded quotes in native -c arguments.
   # Standard input preserves the source exactly, including SQL string literals.
   Report-Status ('SQLite '+$Mode+': running snapshot/preservation checks.')
-  $code | & $python -B - $Mode $UserProfile $backup | Out-Host
+  $code | & $python -B - $Mode $UserProfile $backup $BuildMode | Out-Host
   if($LASTEXITCODE -ne 0){throw "SQLite $Mode failed with exit code $LASTEXITCODE"}
 }
 function Test-PublicMsix([switch]$FullDownload) {
@@ -190,6 +247,7 @@ with requests.Session() as client:
   if($LASTEXITCODE -ne 0){throw "Public H3 $mode verification failed"}
 }
 function Require-Signature([string]$Path) {
+  if($BuildMode -eq 'Beta'){return}
   Run $SignTool @('verify','/pa','/v',$Path)
   $signature = Get-AuthenticodeSignature -LiteralPath $Path
   if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Thumbprint -cne $Thumbprint) {
@@ -197,6 +255,14 @@ function Require-Signature([string]$Path) {
   }
 }
 function Sign-Copy([string]$InputFile, [string]$Destination) {
+  # Publisher equality is a signing prerequisite even when Beta tests are off.
+  if([IO.Path]::GetExtension($InputFile) -ieq '.msix') {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $package=[IO.Compression.ZipFile]::OpenRead($InputFile)
+    try{[xml]$manifest=Read-ZipText $package 'AppxManifest.xml'}finally{$package.Dispose()}
+    $cert=Get-Item -LiteralPath ('Cert:\CurrentUser\My\'+$Thumbprint)
+    if($manifest.Package.Identity.Publisher -cne $cert.Subject){throw 'MSIX Publisher does not match signing certificate; resume -Commit to repackage with the configured publisher.'}
+  }
   Copy-Item -LiteralPath $InputFile -Destination $Destination
   $signature = Get-AuthenticodeSignature -LiteralPath $Destination
   if ($signature.Status -eq 'NotSigned') {
@@ -263,8 +329,17 @@ class AskPass {
 function Ssh([string]$Command) {
   # Base64 avoids Windows/POSIX quoting differences, including $ and newlines.
   $encoded=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Command.Replace("`r",'')))
-  $text = Invoke-SshNative 'ssh.exe' ($script:sshOptions + @($SshTarget,"printf '%s' '$encoded' | base64 -d | sh"))
-  if ($LASTEXITCODE -ne 0) { throw "ECS SSH command failed ($LASTEXITCODE)" }
+  $previousErrorPreference=$ErrorActionPreference
+  try {
+    $ErrorActionPreference='Continue'
+    $text = @(Invoke-SshNative 'ssh.exe' ($script:sshOptions + @($SshTarget,"printf '%s' '$encoded' | base64 -d | sh")) 2>&1)
+    $remoteExit=$LASTEXITCODE
+  } finally {$ErrorActionPreference=$previousErrorPreference}
+  if ($remoteExit -ne 0) {
+    $detail=($text | ForEach-Object {[string]$_}) -join "`n"
+    if($script:statusLog){Write-RunEvent @{type='remote-error';exitCode=$remoteExit;message=$detail;at=[DateTime]::UtcNow.ToString('o')}}
+    throw "ECS SSH command failed ($remoteExit): $detail"
+  }
   return ($text -join "`n")
 }
 function Transfer-Sftp([string]$LocalFile, [string]$RemoteFile, [switch]$Download) {
@@ -278,16 +353,17 @@ function Transfer-Sftp([string]$LocalFile, [string]$RemoteFile, [switch]$Downloa
   $local=$LocalFile.Replace('\','/').Replace('[','\[').Replace(']','\]').Replace('*','\*').Replace('?','\?')
   $command=if($Download){'get "'+$RemoteFile+'" "'+$local+'"'}else{'reput "'+$local+'" "'+$RemoteFile+'"'}
   $batch=Join-Path $Output ('sftp-'+[Guid]::NewGuid().ToString('N')+'.txt')
-  [IO.File]::WriteAllText($batch,$command+"`nbye`n",$utf8)
+  [IO.File]::WriteAllText($batch,"progress`n"+$command+"`nbye`n",$utf8)
   try {
-    # -N keeps progress enabled in batch mode; BatchMode=no permits ASKPASS
-    # or console password authentication. Batch commands fail on transfer errors.
+    # -N clears quiet mode; the batch's progress command enables the meter.
+    # BatchMode=no permits ASKPASS/password authentication; errors still abort.
     Run 'sftp.exe' ($script:sshOptions + @('-o','BatchMode=no','-N','-b',$batch,$SshTarget))
   } finally {
     Remove-Item -LiteralPath $batch -Force
   }
 }
 function Upload([string]$Path, [string]$RemoteFile) {
+  if($BuildMode -eq 'Beta'){Transfer-Sftp $Path $RemoteFile;Complete-Checkpoint ('upload-'+[IO.Path]::GetFileName($Path));return}
   if([IO.Path]::GetExtension($Path) -ieq '.exe') {
     Require-Signature $Path
     Report-Status ('Uploading signed Setup: '+[IO.Path]::GetFileName($Path))
@@ -304,6 +380,588 @@ function Upload([string]$Path, [string]$RemoteFile) {
   if($remoteHash -cne $localHash){throw 'Uploaded file hash mismatch.'}
   Complete-Checkpoint ('upload-'+[IO.Path]::GetFileName($Path))
 }
+function Prepare-IndependentSetup {
+  $setupName=if($LocalSetup){'semantier-setup-ch0.exe'}else{'semantier-setup-ch1.exe'}
+  $setup=Join-Path $Output $setupName
+  $setupExpected=if($LocalSetup){'local-adjacent-single-msix'}else{"${PublicBase}/releases/SemantierAgent.msix"}
+  $setupContractVersion=$setupExpected+'|verify-remote-expected-sha256-v2'
+  if($UpdateSetup -and !$receipt.Contains('setupExplicitUpdate')){$script:checkpoints.Remove('setup')}
+  if($script:checkpoints.ContainsKey('setup')) {
+    Require-Signature $setup
+    Report-Status 'Reusing checkpointed signed Setup.'
+  } else {
+  $setupExpected=if($LocalSetup){'local-adjacent-single-msix'}else{"${PublicBase}/releases/SemantierAgent.msix"}
+  $setupIsReusable=$false
+  # Do not execute an older cached Setup merely to discover its command-line API.
+  # Only our own prior fixed-file builds carry this separate contract marker.
+  $cachedContract=$SetupExe+'.fixed-msix-url.txt'
+  $setupContractVersion=$setupExpected+'|verify-remote-expected-sha256-v2'
+  if (!$UpdateSetup -and (Test-Path -LiteralPath $SetupExe -PathType Leaf) -and
+      (Get-Item -LiteralPath $SetupExe).Length -le 2097152 -and
+      (Test-Path -LiteralPath $cachedContract -PathType Leaf) -and
+      (([IO.File]::ReadAllText($cachedContract)).Trim() -ceq ($setupContractVersion+'|asimov-v1'))) {
+    try {
+      Require-Signature $SetupExe
+      $probe=Join-Path $Output 'setup-contract.txt'
+      Run-Setup $SetupExe @('--describe-fixed-download',$probe)
+      if ((Test-Path -LiteralPath $probe -PathType Leaf) -and
+          (([IO.File]::ReadAllText($probe)).Trim() -ceq $setupExpected)) {
+        $setupIsReusable=$true
+        Copy-Item -LiteralPath $SetupExe -Destination $setup
+      }
+    } catch { Write-Host 'Cached Setup does not support fixed-file contract; will build the small Setup only.' }
+  }
+  if (!$setupIsReusable) {
+    Report-Status ('Building small '+$(if($LocalSetup){'offline'}else{'WinHTTP'})+' Setup with Windows .NET Framework; no runtime bundling.')
+    $compiler=Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+    $setupWork=Join-Path $Output 'setup-build'
+    New-Item -ItemType Directory -Path $setupWork -Force | Out-Null
+    $installerSource=Join-Path $Repository 'win-native-installer'
+    $source=[IO.File]::ReadAllText((Join-Path $installerSource 'Program.cs'))+"`n"+
+      [IO.File]::ReadAllText((Join-Path $installerSource 'WinHttp.cs'))+"`n"+
+      [IO.File]::ReadAllText((Join-Path $installerSource 'InstallerWindow.cs'))
+    [IO.File]::WriteAllText((Join-Path $setupWork 'Program.cs'),$source,$utf8)
+    $manifestPath=Join-Path $setupWork 'setup.manifest'
+    Copy-Item -LiteralPath (Join-Path $installerSource 'setup.manifest') -Destination $manifestPath
+    $built=Join-Path $setupWork 'SemantierSetup.exe'
+    $setupDefine=if($LocalSetup){'/define:LOCAL_SETUP'}else{'/define:ONLINE_SETUP'}
+    Run $compiler @($setupDefine,'/nologo','/target:winexe','/platform:x64','/optimize+',
+      ('/out:'+$built),('/win32manifest:'+$manifestPath),('/win32icon:'+(Join-Path $Repository 'apps\desktop\assets\icon.ico')),
+      ('/resource:'+(Join-Path $Repository 'apps\desktop\assets\icon.ico')+',Semantier.icon.ico'),
+      ('/resource:'+(Join-Path $installerSource 'SemantierPublisher.cer')+',Semantier.publisher.cer'),
+      ('/resource:'+(Join-Path $Repository 'apps\desktop\assets\icon.png')+',Semantier.logo.png'),
+      '/reference:System.Windows.Forms.dll','/reference:System.Drawing.dll',
+      '/reference:System.Xml.Linq.dll','/reference:System.IO.Compression.dll',
+      '/reference:System.IO.Compression.FileSystem.dll',(Join-Path $setupWork 'Program.cs'))
+    if((Get-Item -LiteralPath $built).Length -gt 2097152){throw 'Native Setup exceeds the 2 MiB size budget.'}
+    Sign-Copy $built $setup
+    New-Item -ItemType Directory -Path (Split-Path -Parent $SetupExe) -Force | Out-Null
+    Copy-Item -LiteralPath $setup -Destination $SetupExe
+    [IO.File]::WriteAllText($cachedContract,($setupContractVersion+'|asimov-v1'),$utf8)
+  }
+  Require-Signature $setup
+  $probe=Join-Path $Output 'setup-contract-verified.txt'
+  Run-Setup $setup @('--describe-fixed-download',$probe)
+  if (!(Test-Path -LiteralPath $probe -PathType Leaf) -or
+      ([IO.File]::ReadAllText($probe)).Trim() -cne $setupExpected) {
+    throw 'SETUP_PROTOCOL_INCOMPATIBLE: signed Setup does not target the one fixed ECS MSIX.'
+  }
+  $receipt.setupExe=$setup
+  $receipt.setupBytes=(Get-Item -LiteralPath $setup).Length
+  $receipt.setupImplementation=if($LocalSetup){'local-framework-asimov-v1'}else{'winhttp-framework-asimov-v2'}
+  $receipt.fixedMsixUrl=$setupExpected
+  Save-Json $receipt (Join-Path $Output 'result.json')
+  if($UpdateSetup){$receipt.setupExplicitUpdate=$true}
+  Complete-Checkpoint 'setup'
+  }
+  return $setup
+}
+function Read-CommitBuild([string]$Path) {
+  $last=$null
+  if(Test-Path -LiteralPath $Path){
+    foreach($line in [IO.File]::ReadLines($Path)){
+      if(!$line.Trim()){continue}
+        if($line -notmatch '"type"\s*:\s*"build"\s*[,}]'){continue}
+      try{$entry=$line | ConvertFrom-Json -ErrorAction Stop}catch{continue}
+      if($entry.PSObject.Properties['type'] -and $entry.type -eq 'build'){$last=$entry.build}
+    }
+  }
+  return $last
+}
+function Remove-OlderDeploymentRuns([string]$KeepRun, [string]$CurrentVersion) {
+  $root=[IO.Path]::GetFullPath('D:\repo\deliverables\work').TrimEnd('\')
+  $keep=[IO.Path]::GetFullPath($KeepRun).TrimEnd('\')
+  $current=[Version]$CurrentVersion
+  $active=@(Get-CimInstance Win32_Process | Where-Object {$_.ExecutablePath} | ForEach-Object {$_.ExecutablePath})
+  $removed=@();$deferred=@()
+  foreach($directory in (Get-ChildItem -LiteralPath $root -Directory)){
+    if($directory.Name -cnotmatch '^ecs-deploy-\d{8}-\d{6}-[a-f0-9]{8}$'){continue}
+    $path=[IO.Path]::GetFullPath($directory.FullName).TrimEnd('\')
+    if($path -ieq $keep){continue}
+    if([IO.Path]::GetDirectoryName($path) -ine $root){throw 'Deployment cleanup path escaped work root.'}
+    $build=Read-CommitBuild (Join-Path $path 'checkpoints.jsonl')
+    $version=if($build){[Version]$build.version}else{$null}
+    $cancelled=$build -and $build.stage -eq 'cancelled'
+    if(!$version -and (Test-Path -LiteralPath (Join-Path $path 'result.json'))){
+      $old=Get-Content -LiteralPath (Join-Path $path 'result.json') -Raw | ConvertFrom-Json
+      if($old.PSObject.Properties['plan'] -and $old.plan.PSObject.Properties['version']){$version=[Version]$old.plan.version}
+    }
+    if(!$cancelled -and (!$version -or $version -ge $current)){continue}
+    if(($directory.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+      (Test-Path -LiteralPath (Join-Path $path '.git')) -or
+      @($active | Where-Object {$_.StartsWith($path+'\',[StringComparison]::OrdinalIgnoreCase)}).Count){
+      $deferred+=@($path);continue
+    }
+    try{
+      if(@(Get-ChildItem -LiteralPath $path -Recurse -Force | Where-Object {$_.Attributes -band [IO.FileAttributes]::ReparsePoint}).Count){
+        $deferred+=@($path);continue
+      }
+      Report-Status ('Removing obsolete local deployment run, including its backups and artifacts: '+$path)
+      Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop
+      $removed+=@($path)
+    }catch{Report-Status ('Local cleanup deferred: '+$path+'; '+$_.Exception.Message);$deferred+=@($path)}
+  }
+  return @{removed=$removed;deferred=$deferred}
+}
+function Initialize-RustPreflight {
+  $rustRoot='D:\repo\deliverables\cache\rust\toolchain'
+  $rustBin=Join-Path $rustRoot 'bin'
+  if(!(Test-Path -LiteralPath (Join-Path $rustBin 'rustc.exe')) -or
+     !(Test-Path -LiteralPath (Join-Path $rustBin 'cargo.exe')) -or
+     !(Test-Path -LiteralPath (Join-Path $rustRoot 'lib\rustlib\x86_64-pc-windows-msvc\lib'))){
+    $pattern='D:\repo\deliverables\work\ecs-deploy-*\desktop-job\home\AppData\Local\puccinialin\puccinialin\Cache\rustup\toolchains\stable-x86_64-pc-windows-msvc'
+    $candidates=@(Get-Item -Path $pattern -ErrorAction SilentlyContinue | Where-Object {
+      (Test-Path -LiteralPath (Join-Path $_.FullName 'bin\rustc.exe')) -and
+      (Test-Path -LiteralPath (Join-Path $_.FullName 'bin\cargo.exe')) -and
+      (Test-Path -LiteralPath (Join-Path $_.FullName 'lib\rustlib\x86_64-pc-windows-msvc\lib'))
+    } | Sort-Object LastWriteTime -Descending)
+    if(!$candidates.Count){throw 'No downloaded Windows x64 Rust toolchain available. Preflight will not install Rust automatically.'}
+    Report-Status 'Preflight: copying the existing Rust toolchain to a fixed short cache path; no download.'
+    New-Item -ItemType Directory -Path $rustRoot -Force | Out-Null
+    & "$env:WINDIR\System32\robocopy.exe" $candidates[0].FullName $rustRoot /E /XJ /R:1 /W:1 /NFL /NDL /NP | Out-Host
+    if($LASTEXITCODE -gt 7){throw 'Rust toolchain cache copy failed.'}
+  }
+  $cargoHome='D:\repo\deliverables\cache\cargo'
+  New-Item -ItemType Directory -Path $cargoHome -Force | Out-Null
+  $env:CARGO_HOME=$cargoHome
+  $env:RUSTC=Join-Path $rustBin 'rustc.exe'
+  $env:RUSTDOC=Join-Path $rustBin 'rustdoc.exe'
+  $env:PATH=$rustBin+';'+$env:PATH
+  $rustVersion=& $env:RUSTC -vV
+  if($LASTEXITCODE -ne 0 -or !($rustVersion -contains 'host: x86_64-pc-windows-msvc')){throw 'Cached Rust compiler is invalid or not Windows x64 MSVC.'}
+  $cargoVersion=& (Join-Path $rustBin 'cargo.exe') --version
+  if($LASTEXITCODE -ne 0){throw 'Cached Cargo cannot start.'}
+  $rustVersion | Out-Host;$cargoVersion | Out-Host
+  Report-Status "Preflight: existing Rust ready; short Cargo cache: $cargoHome"
+}
+function Initialize-ElectronPreflight {
+  if($Commit){
+    $json=& git -C $Repository show ($Commit+':apps/desktop/package.json')
+    if($LASTEXITCODE -ne 0){throw 'Cannot read Electron version at requested commit.'}
+    $package=($json -join "`n") | ConvertFrom-Json
+  } else {$package=Get-Content -LiteralPath (Join-Path $Repository 'apps\desktop\package.json') -Raw | ConvertFrom-Json}
+  $version=[string]$package.devDependencies.electron
+  if($version -cnotmatch '^\d+\.\d+\.\d+$'){throw 'Electron version must be exactly pinned.'}
+  $name="electron-v$version-win32-x64.zip"
+  $base="https://github.com/electron/electron/releases/download/v$version"
+  $cache=Join-Path $BuildCache 'packager\electron'
+  New-Item -ItemType Directory -Path $cache -Force | Out-Null
+  $zip=Join-Path $cache $name
+  $sums=Join-Path $cache "SHASUMS256-v$version.txt"
+  $pattern='(?m)^([a-fA-F0-9]{64})[ \t]+\*?'+[Regex]::Escape($name)+'\r?$'
+  $legacy=Join-Path $cache 'SHASUMS256.txt'
+  if(!(Test-Path -LiteralPath $sums) -and (Test-Path -LiteralPath $legacy)){
+    if([Regex]::IsMatch([IO.File]::ReadAllText($legacy),$pattern)){Copy-Item -LiteralPath $legacy -Destination $sums}
+  }
+  if(!(Test-Path -LiteralPath $sums)){
+    Report-Status "Preflight: downloading official Electron $version checksum list."
+    Run 'curl.exe' @('--fail','--location','--retry','3','--retry-delay','2','--connect-timeout','15','--max-time','180',
+      '--output',($sums+'.download'),"$base/SHASUMS256.txt")
+    if(![Regex]::IsMatch([IO.File]::ReadAllText($sums+'.download'),$pattern)){throw 'Official Electron checksum entry missing.'}
+    Move-Item -LiteralPath ($sums+'.download') -Destination $sums -Force
+  }
+  $match=[Regex]::Match([IO.File]::ReadAllText($sums),$pattern)
+  if(!$match.Success){throw 'Cached Electron checksum list does not match requested version.'}
+  $expected=$match.Groups[1].Value.ToLowerInvariant()
+  if(!(Test-Path -LiteralPath $zip) -or (Hash $zip) -cne $expected){
+    Report-Status "Preflight: downloading Electron $version; absent or invalid ZIP cache."
+    Run 'curl.exe' @('--fail','--location','--retry','3','--retry-delay','2','--connect-timeout','15','--max-time','900',
+      '--output',($zip+'.download'),"$base/$name")
+    if((Hash ($zip+'.download')) -cne $expected){throw 'Electron archive failed official SHA-256 verification.'}
+    Move-Item -LiteralPath ($zip+'.download') -Destination $zip -Force
+  }
+  $preload=Join-Path $cache "verified-electron-cache-v$version.mjs"
+  $source=@'
+import fs from 'node:fs';
+import {Readable} from 'node:stream';
+const files=new Map([[__SUM_URL__,__SUM_FILE__],[__ZIP_URL__,__ZIP_FILE__]]);
+const original=globalThis.fetch;
+globalThis.fetch=async(input,options)=>{
+ const url=input instanceof Request?input.url:String(input),file=files.get(url);
+ if(!file)return original(input,options);
+ const method=options?.method||(input instanceof Request?input.method:'GET');
+ if(method!=='GET'&&method!=='HEAD')return original(input,options);
+ console.error('[VERIFIED LOCAL CACHE]',file);
+ return new Response(method==='HEAD'?null:Readable.toWeb(fs.createReadStream(file)),{
+  status:200,headers:{'content-length':String(fs.statSync(file).size),'content-type':file.endsWith('.zip')?'application/zip':'text/plain'}
+ });
+};
+'@
+  foreach($entry in @(@('__SUM_URL__',"$base/SHASUMS256.txt"),@('__SUM_FILE__',$sums),@('__ZIP_URL__',"$base/$name"),@('__ZIP_FILE__',$zip))){
+    $source=$source.Replace($entry[0],(ConvertTo-Json -InputObject $entry[1] -Compress))
+  }
+  [IO.File]::WriteAllText($preload,$source,$utf8)
+  Run $Node @('--check',$preload)
+  $option='--import='+([Uri]$preload).AbsoluteUri
+  $existing=[Environment]::GetEnvironmentVariable('NODE_OPTIONS','Process')
+  if(!$existing -or !$existing.Contains($option)){$env:NODE_OPTIONS=($existing+' '+$option).Trim()}
+  Write-RunEvent @{type='preflight-electron';at=[DateTime]::UtcNow.ToString('o');version=$version;sha256=$expected;status='PASS'}
+  Report-Status "Preflight: Electron $version official SHA-256 verified; Node will reuse the local archive and checksums."
+}
+function Initialize-BuildPreflight {
+  if($env:OS -ne 'Windows_NT'){throw 'Build preflight requires native Windows.'}
+  Report-Status 'Preflight: initializing Windows PATH and VS 2022 x64 SDK environment.'
+  $systemPaths=@("$env:WINDIR\System32","$env:WINDIR","$env:WINDIR\System32\Wbem",
+    "$env:WINDIR\System32\OpenSSH","$env:WINDIR\System32\WindowsPowerShell\v1.0",'D:\Program Files\Git\cmd')
+  $vs='C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat'
+  $sdk='10.0.26100.0'
+  if(!(Test-Path -LiteralPath $vs)){throw 'VS 2022 BuildTools is missing; preflight does not install tools.'}
+  $command='set "PATH='+($systemPaths -join ';')+'" && call "'+$vs+'" -arch=x64 -host_arch=x64 -winsdk='+$sdk+' && set'
+  $lines=& "$env:WINDIR\System32\cmd.exe" /d /s /c $command
+  if($LASTEXITCODE -ne 0){
+    $lines | Where-Object {$_ -match '^\[ERROR'} | Out-Host
+    throw 'VS/SDK initialization failed. Build stopped before dependency preparation.'
+  }
+  foreach($line in $lines){
+    $separator=$line.IndexOf('=');if($separator -le 0){continue}
+    $name=$line.Substring(0,$separator)
+    if($name -match '^(PATH|INCLUDE|LIB|LIBPATH|WindowsSDK.*|UniversalCRT.*|UCRTVersion|VCTools.*|VSINSTALLDIR|VCINSTALLDIR|VSCMD_ARG_.*)$'){
+      [Environment]::SetEnvironmentVariable($name,$line.Substring($separator+1),'Process')
+    }
+  }
+  if(!$env:WindowsSdkDir){throw 'VS did not supply WindowsSdkDir.'}
+  foreach($relative in @("Include\$sdk\um\winsdkver.h","Include\$sdk\shared\sdkddkver.h",
+    "Include\$sdk\ucrt\stdio.h","Lib\$sdk\um\x64\gdi32.lib","Lib\$sdk\ucrt\x64\ucrt.lib")){
+    $path=Join-Path $env:WindowsSdkDir $relative
+    $stream=[IO.File]::Open($path,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::ReadWrite)
+    $stream.Dispose()
+  }
+  foreach($tool in @($BuildPython,$Node,$SignTool)){if(!(Test-Path -LiteralPath $tool -PathType Leaf)){throw "Required existing tool missing: $tool"}}
+  $null=Get-Command git.exe,curl.exe,tar.exe -ErrorAction Stop
+  # Fail before npm if MSBuild itself cannot recognize the selected SDK. This
+  # target only checks SDK discovery; it does not compile or install anything.
+  $probe=Join-Path $Output 'sdk-preflight.vcxproj'
+  $project=@'
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup><Configuration>Release</Configuration><Platform>x64</Platform><WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion></PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="Configuration"><ConfigurationType>Utility</ConfigurationType><PlatformToolset>v143</PlatformToolset></PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>
+'@
+  [IO.File]::WriteAllText($probe,$project,$utf8)
+  $msbuild=Join-Path $env:VSINSTALLDIR 'MSBuild\Current\Bin\MSBuild.exe'
+  try {Run $msbuild @($probe,'/nologo','/v:minimal','/t:_CheckWindowsSDKInstalled')}
+  catch {
+    & $msbuild $probe /nologo /getProperty:WindowsSdkDir,WindowsSdkDir_10,TargetPlatformVersion,WindowsSDKInstalled | Out-Host
+    throw 'Preflight failed: MSBuild cannot recognize the SDK despite VS initialization. No npm install or build was started.'
+  }
+  Report-Status 'Preflight: SDK files are readable and MSBuild SDK discovery passed.'
+  Initialize-RustPreflight
+
+  $cacheRoot='D:\repo\deliverables\cache\node-pre-gyp\get-windows'
+  $archive=Join-Path $cacheRoot 'v9.3.0\napi-9-win32-unknown-x64.tar.gz'
+  New-Item -ItemType Directory -Path (Split-Path -Parent $archive) -Force | Out-Null
+  $valid=$false
+  if((Test-Path -LiteralPath $archive) -and (Test-Path -LiteralPath ($archive+'.sha256'))){
+    $valid=(Hash $archive) -ieq ([IO.File]::ReadAllText($archive+'.sha256')).Trim()
+  }
+  if(!$valid){
+    Report-Status 'Preflight: downloading official get-windows 9.3.0 Windows x64 N-API 9 archive.'
+    Run 'curl.exe' @('--fail','--location','--retry','3','--retry-delay','2','--connect-timeout','15','--max-time','180',
+      '--output',($archive+'.download'),'https://github.com/sindresorhus/get-windows/releases/download/v9.3.0/napi-9-win32-unknown-x64.tar.gz')
+    $entries=& tar.exe -tzf ($archive+'.download')
+    if($LASTEXITCODE -ne 0 -or !($entries | Where-Object {$_ -match 'node-get-windows\.node$'})){throw 'Invalid official prebuilt archive.'}
+    Move-Item -LiteralPath ($archive+'.download') -Destination $archive -Force
+    [IO.File]::WriteAllText(($archive+'.sha256'),(Hash $archive),[Text.Encoding]::ASCII)
+  }
+  # node-pre-gyp 1.0.11 strips file:// instead of decoding a Windows file URL.
+  # Its old url.resolve implementation therefore needs this readable local UNC.
+  $mirror='file:////localhost/D$/repo/deliverables/cache/node-pre-gyp/get-windows/'
+  $code=@'
+const fs=require('node:fs'),url=require('node:url');
+const path=url.resolve(url.resolve(process.argv[2],'v9.3.0/'),'napi-9-win32-unknown-x64.tar.gz').slice(7);
+const fd=fs.openSync(path,'r');fs.closeSync(fd);console.log('Prebuilt cache readable through node-pre-gyp file path');
+'@
+  $code | & $Node - $mirror | Out-Host
+  if($LASTEXITCODE -ne 0){throw 'Local prebuilt cache is not readable through localhost D$; no permissions were changed.'}
+  [Environment]::SetEnvironmentVariable('npm_config_node_get-windows_binary_host_mirror',$mirror,'Process')
+  Initialize-ElectronPreflight
+  Write-RunEvent @{type='preflight';at=[DateTime]::UtcNow.ToString('o');status='PASS';sdk=$sdk;
+    prebuiltArchive=$archive;prebuiltSha256=(Hash $archive)}
+  Report-Status 'Build preflight PASS: Windows tools, VS/SDK, Rust, native prebuilt and verified Electron caches ready.'
+}
+function Remove-ExistingAcceptancePackage {
+  # Removing the bundle unregisters its main/resource packages for this user.
+  # Do not remove other products, other users' installations, or profile files.
+  $bundles=@(Get-AppxPackage -Name $identity -PackageTypeFilter Bundle)
+  $packages=if($bundles.Count){$bundles}else{@(Get-AppxPackage -Name $identity)}
+  foreach($package in $packages){
+    Report-Status ('Uninstalling existing package: '+$package.PackageFullName)
+    Remove-AppxPackage -Package $package.PackageFullName -ErrorAction Stop
+  }
+  if(@(Get-AppxPackage -Name $identity).Count -or @(Get-AppxPackage -Name $identity -PackageTypeFilter Bundle).Count){
+    throw 'Existing acceptance package remains registered; installation stopped.'
+  }
+}
+function Restore-InterruptedBuildIcons([string]$Source, [string]$RunDirectory) {
+  $head=& git -C $Source rev-parse HEAD
+  if($LASTEXITCODE -ne 0 -or $head -cne $Commit){return $false}
+  $status=@(& git -C $Source status --porcelain --untracked-files=all)
+  if($LASTEXITCODE -ne 0){return $false}
+  if(!$status.Count){return $true}
+  $allowed=@('apps/desktop/assets/icon-dark.icns','apps/desktop/assets/icon-mac.png','apps/desktop/assets/icon.icns',
+    'apps/desktop/assets/icon.icon/Assets/art-dark.png','apps/desktop/assets/icon.icon/Assets/art-light.png',
+    'apps/desktop/assets/icon.icon/Assets/mono.png')
+  $files=@()
+  foreach($line in $status){
+    if(!$line.StartsWith(' M ')){return $false}
+    $relative=$line.Substring(3)
+    if($relative -cnotin $allowed){return $false}
+    $current=Join-Path $Source $relative
+    $generated=Join-Path (Join-Path $Source 'apps\desktop\build\products\icons') $relative
+    if(!(Test-Path -LiteralPath $generated -PathType Leaf)){return $false}
+    if([Convert]::ToBase64String([IO.File]::ReadAllBytes($current)) -cne
+      [Convert]::ToBase64String([IO.File]::ReadAllBytes($generated))){return $false}
+    $files+=@($relative)
+  }
+  $saved=Join-Path $RunDirectory ('recovered-icons-'+[Guid]::NewGuid().ToString('N'))
+  foreach($relative in $files){
+    $destination=Join-Path $saved $relative
+    New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $Source $relative) -Destination $destination
+  }
+  Report-Status ('Restoring '+$files.Count+' interrupted generated icons; saved copies: '+$saved)
+  Run 'git' (@('-C',$Source,'restore','--source=HEAD','--worktree','--')+$files)
+  return $true
+}
+function Build-CommitPackage {
+  if($Commit -cnotmatch '^[a-f0-9]{40}$'){throw '-Commit requires a complete 40-character Git commit.'}
+  $resolved=& git -C $Repository rev-parse --verify ($Commit+'^{commit}')
+  if($LASTEXITCODE -ne 0 -or $resolved -cne $Commit){throw 'Requested commit is not available locally; fetch it first.'}
+  if($env:SEMANTIER_WSL_GIT_DISTRO){throw 'Clear SEMANTIER_WSL_GIT_DISTRO; this workflow uses native Windows only.'}
+  if($WhatIfPreference){
+    [ordered]@{commit=$Commit;builder='existing scripts/bundles/desktop.py --prepare-only / --prepared';
+      version='reserve next version using existing next-windows-build-version.ps1; reuse on resume';
+      mode=$BuildMode;verification=($(if($BuildMode -eq 'Beta'){'SKIPPED_BETA'}else{'REQUIRED_PROD'}));cache=$BuildCache;output=$Output;publish=(!$LocalOnly)} | ConvertTo-Json
+    return
+  }
+  if(!(Test-Path -LiteralPath $BuildPython -PathType Leaf)){throw 'Existing build Python is unavailable; specify -BuildPython.'}
+  if($NewRun -and $script:explicitOutput -and (Test-Path -LiteralPath $Output)){throw '-NewRun requires a fresh -Output directory.'}
+  if(!$NewRun -and !$PSBoundParameters.ContainsKey('Output') -and !$script:explicitOutput){
+    foreach($candidate in (Get-ChildItem -LiteralPath (Split-Path -Parent $Output) -Directory -Filter 'ecs-deploy-*' | Sort-Object LastWriteTime -Descending)){
+      $log=Join-Path $candidate.FullName 'checkpoints.jsonl';$record=Read-CommitBuild $log
+      if($record -and $record.commit -ceq $Commit){
+        $checkpoint=if(Test-Path -LiteralPath $log){Read-RunCheckpoint $log}else{$null}
+        if(!$checkpoint -or !$checkpoint.completed.PSObject.Properties['finished']){$script:Output=$candidate.FullName}
+        break
+      }
+    }
+  }
+  if(!(Test-Path -LiteralPath $Output)){New-Item -ItemType Directory -Path $Output | Out-Null}
+  $script:statusLog=Join-Path $Output 'checkpoints.jsonl'
+  $record=Read-CommitBuild $script:statusLog
+  if($record -and ($record.commit -cne $Commit -or $record.publicBase -cne $PublicBase -or $record.cache -cne $BuildCache)){
+    throw 'Saved build configuration differs. Use -NewRun or a fresh -Output.'
+  }
+  if($record -and $record.stage -eq 'cancelled'){
+    throw 'This tooling-only version reservation was cancelled. Resume the application source commit and its original run instead.'
+  }
+  $source='D:\repo\deliverables\work\ecs-build-source'
+  if(!$record){
+    $next=& (Join-Path $PSScriptRoot 'next-windows-build-version.ps1') -State $VersionState -SourceCommit $Commit
+    $record=[pscustomobject]@{commit=$Commit;version=[string]$next;source=$source;publicBase=$PublicBase;cache=$BuildCache;
+      request=(Join-Path $Output 'channel-request.json');prepared=(Join-Path $Output 'desktop-job\prepared.json');
+      msix=(Join-Path $Output 'unsigned.msix');sha256='';stage='reserved'}
+    Write-RunEvent @{type='build';build=$record;at=[DateTime]::UtcNow.ToString('o')}
+    Report-Status ('Reserved version '+$record.version+' for '+$Commit)
+  }
+  if($record.stage -eq 'built'){
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $package=[IO.Compression.ZipFile]::OpenRead($record.msix)
+    try{[xml]$manifest=Read-ZipText $package 'AppxManifest.xml'}finally{$package.Dispose()}
+    if($manifest.Package.Identity.Publisher -cne $publisher){
+      Report-Status 'Existing unsigned MSIX has the wrong Publisher; repackaging the same version with cached build products.'
+      $record.stage='publisher-repackage-required'
+      Write-RunEvent @{type='build';build=$record;at=[DateTime]::UtcNow.ToString('o')}
+    }
+  }
+  if($record.stage -eq 'built'){
+    if($BuildMode -eq 'Prod' -and (Hash $record.msix) -cne $record.sha256){throw 'Checkpoint unsigned MSIX integrity mismatch.'}
+    Report-Status 'Reusing checkpointed unsigned MSIX; no rebuild.'
+    return $record
+  }
+  if($BuildMode -eq 'Prod'){Initialize-BuildPreflight}
+  if(!(Test-Path -LiteralPath $source)){
+    Run 'git' @('-C',$Repository,'-c','core.autocrlf=false','worktree','add','--detach',$source,$Commit)
+  } else {
+    $dirty=& git -C $source status --porcelain --untracked-files=all
+    if($LASTEXITCODE -ne 0){throw 'Cannot inspect build worktree.'}
+    if($dirty -and !(Restore-InterruptedBuildIcons $source $Output)){throw 'Build worktree has changes other than proven interrupted generated icons; preserve and inspect before continuing.'}
+    Run 'git' @('-C',$source,'-c','core.autocrlf=false','switch','--detach',$Commit)
+  }
+  if(!(Test-Path -LiteralPath $record.request)){
+    Run $BuildPython @('-B',(Join-Path $source 'scripts\releases\semantier_windows.py'),
+      '--source',$source,'--commit',$Commit,'--controller',$Commit,'--version',$record.version,
+      '--base',$PublicBase,'--output',$record.request)
+  }
+  $request=Get-Content -LiteralPath $record.request -Raw | ConvertFrom-Json
+  if($request.commit -cne $Commit -or $request.version -cne $record.version -or $request.publicBase -cne $PublicBase){throw 'Saved build request mismatch.'}
+  $builder=Join-Path $source 'scripts\bundles\desktop.py'
+  if(!(Test-Path -LiteralPath $record.prepared)){
+    $payload=Join-Path $source 'apps\desktop\build\agent-payload'
+    $retention=$payload+'.retention.json'
+    if((Test-Path -LiteralPath $payload -PathType Container) -and
+      @(Get-ChildItem -LiteralPath $payload -Force).Count -gt 0 -and
+      !(Test-Path -LiteralPath $retention)) {
+      # A failed cold preparation cannot publish its retention receipt. Preserve
+      # that unadmitted output instead of forging ownership or deleting caches.
+      $resolvedPayload=[IO.Path]::GetFullPath($payload)
+      $expectedPayload=[IO.Path]::GetFullPath((Join-Path $source 'apps\desktop\build\agent-payload'))
+      $savedPayload=[IO.Path]::GetFullPath((Join-Path $Output ('interrupted-payload-'+[Guid]::NewGuid().ToString('N'))))
+      $runRoot=[IO.Path]::GetFullPath($Output).TrimEnd('\')+'\'
+      if($resolvedPayload -cne $expectedPayload -or !$savedPayload.StartsWith($runRoot,[StringComparison]::OrdinalIgnoreCase) -or
+        ((Get-Item -LiteralPath $payload -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw 'Interrupted payload preservation path is unsafe; inspect manually.'
+      }
+      Report-Status ('Preserving unadmitted interrupted payload at '+$savedPayload+'; npm dependencies and shared caches remain in place.')
+      Move-Item -LiteralPath $resolvedPayload -Destination $savedPayload
+    }
+    Report-Status 'Preparing dependencies through the existing native builder; its receipts determine cache HIT/MISS.'
+    Run $BuildPython @('-B',$builder,'--repo',$source,'--channel-request',$record.request,'--variant','bundled',
+      '--prepare-only','--work',(Split-Path -Parent $record.prepared),'--cache',$BuildCache)
+  }
+  # --prepared performs the builder's own source-bound integrity checks. Never
+  # delete a rejected preparation or silently reinstall all dependencies.
+  Report-Status 'Building one complete unsigned MSIX from validated prepared inputs.'
+  # Sign only the finished distribution MSIX later. Do not let builder
+  # certificate discovery or inherited Azure credentials sign every payload PE.
+  $signingNames=@(Get-ChildItem Env: | Where-Object {$_.Name -match '^(AZURE_|CSC_|WIN_CSC_)'} | ForEach-Object {$_.Name})
+  $signingNames=@($signingNames+'CSC_IDENTITY_AUTO_DISCOVERY' | Select-Object -Unique)
+  $signingEnvironment=@{}
+  foreach($name in $signingNames){
+    $signingEnvironment[$name]=[Environment]::GetEnvironmentVariable($name,'Process')
+    [Environment]::SetEnvironmentVariable($name,$null,'Process')
+  }
+  try {
+    [Environment]::SetEnvironmentVariable('CSC_IDENTITY_AUTO_DISCOVERY','false','Process')
+    # This single-MSIX lane deliberately skips afterPack's full payload walk,
+    # PE repair/batch signing and digest refresh. No inner files are modified;
+    # final MSIX signature validation and real installed acceptance follow.
+    Report-Status 'Packaging only: afterPack payload scan/repair and inner binary signing disabled; signing the final MSIX only.'
+    $packagingDriver=Join-Path $Repository 'scripts\bundles\desktop.py'
+    $packagingRunner=Join-Path $Repository 'apps\desktop\scripts\run-electron-builder.mjs'
+    $toolingHead=& git -C $Repository rev-parse HEAD
+    if($LASTEXITCODE -ne 0){throw 'Cannot record packaging tooling commit.'}
+    $tooling=[ordered]@{applicationCommit=$Commit;toolingCommit=$toolingHead;
+      driverSha256=(Hash $packagingDriver);runnerSha256=(Hash $packagingRunner);
+      deployScriptSha256=(Hash $PSCommandPath);version=$record.version}
+    $record | Add-Member -NotePropertyName tooling -NotePropertyValue $tooling -Force
+    Write-RunEvent @{type='tooling';at=[DateTime]::UtcNow.ToString('o');tooling=$tooling}
+    Report-Status ('Application source '+$Commit+'; packaging tooling '+$toolingHead+'; preserving version '+$record.version)
+    Run $BuildPython @('-B',$packagingDriver,'--prepared',$record.prepared,'--variant','bundled',
+      '--packaging-controller',$packagingRunner,'--build-mode',$BuildMode,'--',
+      '-c.win.sign=false','-c.forceCodeSigning=false','-c.afterPack=null',
+      ('-c.msix.publisher='+$publisher),'-c.msix.publisherDisplayName=Semantier Technology',
+      ('-c.msix.displayName=Semantier Agent '+$record.version))
+  } finally {
+    foreach($name in $signingNames){[Environment]::SetEnvironmentVariable($name,$signingEnvironment[$name],'Process')}
+  }
+  $release=Join-Path $source 'apps\desktop\release'
+  $packages=@(Get-ChildItem -LiteralPath $release -File -Filter '*.msix' | Where-Object {$_.Name -like ('*'+$record.version+'*')})
+  if($packages.Count -ne 1){throw 'Expected exactly one newly built version-matching MSIX.'}
+  if($BuildMode -eq 'Prod'){
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $zip=[IO.Compression.ZipFile]::OpenRead($packages[0].FullName)
+  try{
+    $stamp=Read-ZipText $zip 'app/resources/install-stamp.json' | ConvertFrom-Json
+    [xml]$packageManifest=Read-ZipText $zip 'AppxManifest.xml'
+    if($packageManifest.Package.Properties.DisplayName -cne ('Semantier Agent '+$record.version)){
+      throw 'New MSIX display name does not match Semantier Agent and the application version.'
+    }
+  }
+  finally{$zip.Dispose()}
+  if($stamp.commit -cne $Commit -or $stamp.dirty -or $stamp.channelBuild.buildId -cne $request.buildId){throw 'New MSIX source/build stamp mismatch.'}
+  }
+  Copy-Item -LiteralPath $packages[0].FullName -Destination $record.msix
+  $record.sha256=Hash $record.msix;$record.stage='built'
+  Write-RunEvent @{type='build';build=$record;at=[DateTime]::UtcNow.ToString('o')}
+  return $record
+}
+function Publish-IndependentSetup {
+  if(!$script:explicitOutput){
+    $Output=Join-Path 'D:\repo\deliverables\work' ('ecs-setup-'+(Get-Date -Format 'yyyyMMdd-HHmmss')+'-'+[Guid]::NewGuid().ToString('N').Substring(0,8))
+  }
+  $script:runBinding=([ordered]@{kind='setup';localSetup=[bool]$LocalSetup;signer=$Thumbprint;target=$SshTarget;root=$RemoteRoot;origin=$PublicBase;forceRebuild=[bool]$UpdateSetup;implementation='winhttp-framework-asimov-v2';contract='verify-remote-expected-sha256-v2'} | ConvertTo-Json -Compress)
+  if($WhatIfPreference){[ordered]@{kind='Setup only';output=$Output;update=[bool]$UpdateSetup;stages=$(if($LocalSetup){@('build signed offline Setup','verify signature and adjacent-file contract')}else{@('reuse or build signed Setup','verify signature and download contract','SFTP upload Setup only','activate Setup only')});msix='UNCHANGED';CH2='UNCHANGED'} | ConvertTo-Json;return}
+  if(!$NewRun -and !$script:explicitOutput){
+    foreach($candidate in (Get-ChildItem 'D:\repo\deliverables\work' -Directory -Filter 'ecs-setup-*' | Sort-Object LastWriteTime -Descending)){
+      $log=Join-Path $candidate.FullName 'checkpoints.jsonl'
+      if(!(Test-Path -LiteralPath $log)){continue}
+      $last=Read-RunCheckpoint $log
+      if($last -and $last.binding -ceq $script:runBinding){
+        if(!$last.completed.PSObject.Properties['finished']){$Output=$candidate.FullName}
+        break
+      }
+    }
+  }
+  if(!(Test-Path -LiteralPath $Output)){New-Item -ItemType Directory -Path $Output | Out-Null}
+  $script:statusLog=Join-Path $Output 'checkpoints.jsonl'
+  $script:checkpoints=@{}
+  $receipt=[ordered]@{kind='setup';result='IN_PROGRESS';setupExe=$null;publication='NOT_STARTED';MSIX='UNCHANGED';CH2='UNCHANGED';toolingCommit=(& git -C $Repository rev-parse HEAD)}
+  if(Test-Path -LiteralPath $script:statusLog){
+    $saved=Read-RunCheckpoint $script:statusLog
+    if($saved){
+      if($saved.binding -cne $script:runBinding){throw 'Setup run configuration changed; use -NewRun.'}
+      foreach($property in $saved.completed.PSObject.Properties){$script:checkpoints[$property.Name]=$property.Value}
+      foreach($property in $saved.receipt.PSObject.Properties){$receipt[$property.Name]=$property.Value}
+    }
+  }
+  try {
+    Report-Status 'Independent Setup release; application version, MSIX and user profile remain unchanged.'
+    $setup=Prepare-IndependentSetup
+    if($LocalOnly){$receipt.result='SETUP_LOCAL_VERIFIED';Complete-Checkpoint 'finished';return}
+    $remoteSetup="$RemoteRoot/releases/installers/semantier-setup-ch1.exe"
+    $contract="${PublicBase}/releases/SemantierAgent.msix|verify-remote-expected-sha256-v2"
+    if(!$script:checkpoints.ContainsKey('published')){
+      if(!$receipt.Contains('remoteStage')){$receipt.remoteStage=$RemoteRoot.Substring(0,$RemoteRoot.LastIndexOf('/'))+'/.semantier-setup-stage-'+[Guid]::NewGuid().ToString('N')}
+      $stage=[string]$receipt.remoteStage
+      $parent=$RemoteRoot.Substring(0,$RemoteRoot.LastIndexOf('/'))
+      if($stage -cnotmatch ('^'+[Regex]::Escape($parent)+'/\.semantier-setup-stage-[a-f0-9]{32}$')){throw 'Invalid Setup staging path.'}
+      Complete-Checkpoint 'setup-stage'
+      $null=Ssh "set -eu; test ! -L '$stage'; mkdir -p '$stage'; chmod 700 '$stage'"
+      Upload $setup "$stage/semantier-setup-ch1.exe"
+      $marker=Join-Path $Output 'setup.contract.txt'
+      [IO.File]::WriteAllText($marker,$contract,$utf8)
+      Upload $marker "$stage/setup.contract.txt"
+      $receipt.publication=Ssh "set -eu; test -s '$stage/semantier-setup-ch1.exe'; test ! -L '$remoteSetup'; mkdir -p '$RemoteRoot/releases/installers'; mv -f '$stage/semantier-setup-ch1.exe' '$remoteSetup'; mv -f '$stage/setup.contract.txt' '$remoteSetup.contract.txt'; chmod 644 '$remoteSetup' '$remoteSetup.contract.txt'; rmdir '$stage'; printf SETUP_ONLY_PUBLISH_PASS"
+      Complete-Checkpoint 'published'
+    }
+    $state=Ssh "set -eu; test -s '$remoteSetup'; cat '$remoteSetup.contract.txt'"
+    if($state.Trim() -cne $contract){throw 'Published Setup contract verification failed.'}
+    $receipt.result='SETUP_PUBLISHED_VERIFIED'
+    Complete-Checkpoint 'finished'
+  } catch {
+    $receipt.result='FAIL';$receipt.error=$_.Exception.Message;Report-Status ('FAILED: '+$_.Exception.Message);throw
+  } finally {
+    $receipt.finishedAt=[DateTime]::UtcNow.ToString('o')
+    Save-Json $receipt (Join-Path $Output 'result.json')
+    [IO.File]::WriteAllText((Join-Path $Output 'release-note.md'),"Result: $($receipt.result)`nArtifact: Setup EXE`nSetup: $($receipt.setupExe)`nPublication: $($receipt.publication)`nMSIX: unchanged`nCH2: unchanged`n",$utf8)
+    Report-Status ('Finished: '+$receipt.result)
+    Write-Host "Result and evidence: $Output"
+  }
+}
+$script:explicitOutput=$PSBoundParameters.ContainsKey('Output')
+if($LocalSetup){
+  $SetupOnly=$true;$UpdateSetup=$true;$LocalOnly=$true
+  $SetupExe=Join-Path 'D:\repo\deliverables\cache\ecs-setup' 'semantier-setup-ch0.exe'
+}
+if(($SetupOnly -or $UpdateSetup) -and ($Commit -or $PreflightOnly)){throw 'Setup release is independent: do not combine -SetupOnly/-UpdateSetup with -Commit or -PreflightOnly.'}
+if($PreflightOnly){
+  if($WhatIfPreference){Write-Output 'Preflight only: Windows tools, VS/SDK discovery and official prebuilt cache; no version reservation or build.';return}
+  if(!(Test-Path -LiteralPath $Output)){New-Item -ItemType Directory -Path $Output | Out-Null}
+  $script:statusLog=Join-Path $Output 'checkpoints.jsonl'
+  if($BuildMode -eq 'Prod'){Initialize-BuildPreflight}
+  return
+}
+if($Commit){
+  $built=Build-CommitPackage
+  if($WhatIfPreference){$built;return}
+  $Msix=$built.msix;$ExpectedInputSha256=$built.sha256;$SourceCommit=$Commit;$Version=$built.version+'.0'
+  $buildRequest=Get-Content -LiteralPath $built.request -Raw | ConvertFrom-Json
+  $BuildId=$buildRequest.buildId
+}
 if ($env:OS -ne 'Windows_NT') { throw 'Run on native Windows.' }
 if ($SshTarget -cnotmatch '^[A-Za-z0-9_.-]+@[A-Za-z0-9.-]+$' -or
     $RemoteRoot -cnotmatch '^/opt/[A-Za-z0-9_/-]+/releases$' -or $RemoteRoot.Contains('/../') -or
@@ -314,22 +972,25 @@ if ($SshTarget -cnotmatch '^[A-Za-z0-9_.-]+@[A-Za-z0-9.-]+$' -or
 }
 $script:sshOptions = @('-o','ConnectTimeout=15','-o','StrictHostKeyChecking=yes','-o','ServerAliveInterval=15','-o','ServerAliveCountMax=3')
 if ($IdentityFile) { $script:sshOptions += @('-i',(Resolve-Path -LiteralPath $IdentityFile).Path) }
+if($SetupOnly -or $UpdateSetup){Publish-IndependentSetup;return}
 $plan = [ordered]@{input=$Msix;version=$Version;sourceCommit=$SourceCommit;ssh=$SshTarget;
   remoteRoot=$RemoteRoot;fixedMsixUrl="$PublicBase/releases/SemantierAgent.msix";
   profileBackup=(Join-Path $Output 'profile-backup');output=$Output;
-  stages=@('verify existing input','sign one MSIX','reuse/build fixed-file HTTP3 Setup',
+  mode=$BuildMode;verification=($(if($BuildMode -eq 'Beta'){'SKIPPED_BETA'}else{'REQUIRED_PROD'}));stages=@('verify existing input','sign one MSIX','check independently published Setup',
     'back up profile','install and observe Electron/real PTY','SFTP reput upload with progress to unpublished directory',
-    'verify remote hash','atomic replace one stable MSIX + Setup',
+    'verify remote hash','atomic replace one stable MSIX',
     $(if($VerifyPublicDownload){'explicit full public H3 download and hash'}else{'lightweight public H3 HEAD; no package body download'}),
     'verify live Landing before old-package cleanup')}
+if($BuildMode -eq 'Beta'){$plan.stages=@('build/reuse without release verification','sign MSIX','back up profile','install MSIX','SFTP upload','atomic ECS activation; UNVERIFIED')}
 if ($WhatIfPreference) { $plan | ConvertTo-Json -Depth 5; return }
 Report-Status 'Validating existing MSIX hash, source, identity and node-pty inputs; no dependency rebuild.'
-if (!(Test-Path -LiteralPath $Msix -PathType Leaf) -or (Hash $Msix) -cne $ExpectedInputSha256) { throw 'Existing MSIX integrity check failed; no rebuild attempted.' }
+if ($BuildMode -eq 'Prod' -and (!(Test-Path -LiteralPath $Msix -PathType Leaf) -or (Hash $Msix) -cne $ExpectedInputSha256)) { throw 'Existing MSIX integrity check failed; no rebuild attempted.' }
 $tools=@($SignTool,$Node)
 foreach ($tool in $tools) {
   if (!(Test-Path -LiteralPath $tool -PathType Leaf)) { throw "Required existing tool unavailable: $tool" }
 }
-if (!(Test-Path -LiteralPath (Join-Path $Repository 'node_modules\@playwright\test'))) { throw 'Existing Playwright dependencies unavailable; no npm installation attempted.' }
+if ($BuildMode -eq 'Prod' -and !(Test-Path -LiteralPath (Join-Path $Repository 'node_modules\@playwright\test'))) { throw 'Existing Playwright dependencies unavailable; no npm installation attempted.' }
+if($BuildMode -eq 'Prod'){
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $archive = [IO.Compression.ZipFile]::OpenRead($Msix)
 try {
@@ -354,15 +1015,16 @@ try {
     if (!$entry -or $entry.Length -le 0) { throw "node-pty native closure missing: $name" }
   }
 } finally { $archive.Dispose() }
+}
 if (!$LocalOnly) {
   $null=Get-Command ssh.exe,sftp.exe -ErrorAction Stop
   Write-Host 'Checking native SSH access (enter the ECS password if prompted).'
   $null=Ssh "set -eu; test -d '$RemoteRoot/releases'; test ! -L '$RemoteRoot'; command -v sha256sum"
 }
-$script:runBinding=([ordered]@{inputSha256=$ExpectedInputSha256;source=$SourceCommit;version=$Version;build=$BuildId;
+$script:runBinding=([ordered]@{mode=$BuildMode;inputSha256=$ExpectedInputSha256;source=$SourceCommit;version=$Version;build=$BuildId;
   signer=$Thumbprint;target=$SshTarget;root=$RemoteRoot;origin=$PublicBase;profile=$UserProfile;
   setupContract='verify-remote-expected-sha256-v2'} | ConvertTo-Json -Compress)
-if (!$NewRun -and !$PSBoundParameters.ContainsKey('Output')) {
+if (!$Commit -and !$NewRun -and !$PSBoundParameters.ContainsKey('Output')) {
   $candidates=Get-ChildItem -LiteralPath (Split-Path -Parent $Output) -Directory -Filter 'ecs-deploy-*' |
     Sort-Object LastWriteTime -Descending
   foreach($candidate in $candidates) {
@@ -380,20 +1042,28 @@ if (!(Test-Path -LiteralPath $Output)) {New-Item -ItemType Directory -Path $Outp
 $plan.output=$Output;$plan.profileBackup=Join-Path $Output 'profile-backup'
 $script:statusLog = Join-Path $Output 'checkpoints.jsonl'
 Report-Status "Input verification passed. Run log: $script:statusLog"
-$receipt=[ordered]@{result='IN_PROGRESS';plan=$plan;unsignedSha256=$ExpectedInputSha256;CH2='UNCHANGED';
+$receipt=[ordered]@{result='IN_PROGRESS';mode=$BuildMode;plan=$plan;unsignedSha256=$ExpectedInputSha256;CH2='UNCHANGED';
   reused=@('complete MSIX','npm dependencies','node-pty','Electron inputs','Python runtime/venv','uv cache','.NET/NuGet cache');
   signedMsix=$null;sha256=$null;localAcceptance=$null;publication='NOT_STARTED';
   h3='NOT_RUN';publicReadback='NOT_RUN';cleanup='NOT_STARTED';landingCutover='NOT_VERIFIED'}
+if($Commit -and $built.PSObject.Properties['tooling']){$receipt.tooling=$built.tooling}
 $script:checkpoints=@{}
 $checkpointPath=Join-Path $Output 'checkpoints.jsonl'
 $saved=Read-RunCheckpoint $checkpointPath
+$rebound=$false
+if($saved -and $saved.binding -cne $script:runBinding){
+  $build=Read-CommitBuild $checkpointPath
+  if(!(Test-UnsignedRepackageResume $saved $script:runBinding $build)){throw 'Run configuration changed. Use -NewRun or a new -Output.'}
+  Write-RunEvent @{type='unsigned-repackage-binding';at=[DateTime]::UtcNow.ToString('o');previousBinding=$saved.binding;binding=$script:runBinding;reason='Same source/version; replacement unsigned build; no completed release stages'}
+  Report-Status 'Adopting the replacement unsigned MSIX for the same source/version; no completed signing, installation or publication stages exist.'
+  $saved=$null;$rebound=$true
+}
 if($saved) {
-  if($saved.binding -cne $script:runBinding){throw 'Run configuration changed. Use -NewRun or a new -Output.'}
   foreach($property in $saved.completed.PSObject.Properties){$script:checkpoints[$property.Name]=$property.Value}
   $previous=$saved.receipt
   foreach($property in $previous.PSObject.Properties){$receipt[$property.Name]=$property.Value}
   Report-Status ('Resuming run; completed checkpoints: '+($script:checkpoints.Keys -join ', '))
-} elseif(Test-Path -LiteralPath (Join-Path $Output 'result.json')) {
+} elseif(!$rebound -and (Test-Path -LiteralPath (Join-Path $Output 'result.json'))) {
   # Explicitly selected older runs may predate checkpoints. Adopt only their
   # verified signed artifact; never infer local acceptance or publication.
   $previous=Get-Content -LiteralPath (Join-Path $Output 'result.json') -Raw | ConvertFrom-Json
@@ -410,7 +1080,7 @@ try {
   $signed=Join-Path $Output 'SemantierAgent.msix'
   Report-Status 'Signing and verifying the distribution MSIX copy.'
   if($script:checkpoints.ContainsKey('signed')) {
-    if((Hash $signed) -cne $receipt.sha256){throw 'Checkpoint signed MSIX hash changed.'}
+    if($BuildMode -eq 'Prod' -and (Hash $signed) -cne $receipt.sha256){throw 'Checkpoint signed MSIX hash changed.'}
     Require-Signature $signed
     Report-Status 'Reusing checkpointed signed MSIX; no re-signing.'
   } else {Sign-Copy $Msix $signed}
@@ -420,270 +1090,15 @@ try {
   [IO.File]::WriteAllText($sidecar, "$hash  $([IO.Path]::GetFileName($signed))`n",[Text.Encoding]::ASCII)
   Complete-Checkpoint 'signed'
 
-  # The installer is intentionally version-agnostic: one immutable URL contract
-  # identifies the ONE ECS MSIX, with a co-located .sha256 sidecar. No manifests.
-  $setup=Join-Path $Output 'semantier-setup-ch1.exe'
-  $setupExpected="${PublicBase}/releases/SemantierAgent.msix"
-  $setupContractVersion=$setupExpected+'|verify-remote-expected-sha256-v2'
+  # Setup has its own release run; routine MSIX publication never builds it.
   $remoteSetup="$RemoteRoot/releases/installers/semantier-setup-ch1.exe"
-  $uploadSetup=$false
-  $reuseRemoteSetup=$false
-  if(!$LocalOnly) {
-    $remoteSetupState=Ssh "if test -s '$remoteSetup'; then if test -f '$remoteSetup.contract.txt'; then cat '$remoteSetup.contract.txt'; else printf UNKNOWN; fi; else printf MISSING; fi"
-    if($UpdateSetup -or $remoteSetupState -ceq 'MISSING') {$uploadSetup=$true}
-    elseif($remoteSetupState.Trim() -ceq $setupContractVersion) {$reuseRemoteSetup=$true}
-    else {throw 'Existing ECS Setup compatibility is unverified. Run with -UpdateSetup once to install the stable-URL/checksum-validating installer.'}
+  $setupContractVersion="${PublicBase}/releases/SemantierAgent.msix|verify-remote-expected-sha256-v2"
+  if(!$LocalOnly -and $BuildMode -eq 'Prod') {
+    $state=Ssh "if test -s '$remoteSetup' && test -f '$remoteSetup.contract.txt'; then cat '$remoteSetup.contract.txt'; else printf MISSING_OR_UNVERIFIED; fi"
+    if($state.Trim() -cne $setupContractVersion){throw 'Compatible Setup is missing or unverified. Run -SetupOnly separately, then resume this MSIX run.'}
   }
-  if($reuseRemoteSetup) {
-    Report-Status 'Reusing the compatible signed Setup already on ECS; no Setup build or upload.'
-    $receipt.setupExe=$remoteSetup;$receipt.fixedMsixUrl=$setupExpected
-  } else {
-  if($UpdateSetup -and !$receipt.Contains('setupExplicitUpdate')){$script:checkpoints.Remove('setup')}
-  if($script:checkpoints.ContainsKey('setup')) {
-    Require-Signature $setup
-    Report-Status 'Reusing checkpointed signed Setup.'
-  } else {
-  $setupExpected="${PublicBase}/releases/SemantierAgent.msix"
-  $setupIsReusable=$false
-  # Do not execute an older cached Setup merely to discover its command-line API.
-  # Only our own prior fixed-file builds carry this separate contract marker.
-  $cachedContract=$SetupExe+'.fixed-msix-url.txt'
-  $setupContractVersion=$setupExpected+'|verify-remote-expected-sha256-v2'
-  if (!$UpdateSetup -and (Test-Path -LiteralPath $SetupExe -PathType Leaf) -and
-      (Test-Path -LiteralPath $cachedContract -PathType Leaf) -and
-      (([IO.File]::ReadAllText($cachedContract)).Trim() -ceq $setupContractVersion)) {
-    try {
-      Require-Signature $SetupExe
-      $probe=Join-Path $Output 'setup-contract.txt'
-      Run-Setup $SetupExe @('--describe-fixed-download',$probe)
-      if ((Test-Path -LiteralPath $probe -PathType Leaf) -and
-          (([IO.File]::ReadAllText($probe)).Trim() -ceq $setupExpected)) {
-        $setupIsReusable=$true
-        Copy-Item -LiteralPath $SetupExe -Destination $setup
-      }
-    } catch { Write-Host 'Cached Setup does not support fixed-file contract; will build the small Setup only.' }
-  }
-  if (!$setupIsReusable) {
-    Report-Status 'Building a compatible Setup EXE using the existing .NET cache.'
-    $dotnet=Join-Path $env:ProgramFiles 'dotnet\dotnet.exe'
-    if (!(Test-Path -LiteralPath $dotnet -PathType Leaf)) {
-      throw 'SETUP_INCOMPATIBLE: fixed-MSIX Setup is unavailable and .NET SDK is missing.'
-    }
-    $setupWork=Join-Path $Output 'setup-build'
-    New-Item -ItemType Directory -Path $setupWork -Force | Out-Null
-    $project=@'
-<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
-    <UseWindowsForms>true</UseWindowsForms>
-    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
-    <SelfContained>true</SelfContained>
-    <PublishSingleFile>true</PublishSingleFile>
-    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
-    <AssemblyName>SemantierSetup</AssemblyName>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
-  </PropertyGroup>
-</Project>
-'@
-    [IO.File]::WriteAllText((Join-Path $setupWork 'SemantierSetup.csproj'),$project,$utf8)
-    $source=@'
-using System;
-using System.Diagnostics;
-using System.IO;
-using System.IO.Compression;
-using System.Linq;
-using System.Net;
-using System.Net.Http;
-using System.Security.Cryptography;
-using System.Text;
-using System.Threading;
-using System.Threading.Tasks;
-using System.Windows.Forms;
-using System.Xml.Linq;
-
-internal static class Program {
-  private const string MsixUrl = "https://download.semantier.cn/releases/SemantierAgent.msix";
-  private const string PackageName = "Semantier.Agent.Acceptance";
-  private const string Publisher = "CN=Semantier Technology, O=Semantier Technology";
-  private const long MaxBytes = 12000000000;
-  [STAThread]
-  private static int Main(string[] args) {
-    if (args.Length == 2 && args[0] == "--describe-fixed-download") {
-      File.WriteAllText(args[1], MsixUrl, new UTF8Encoding(false));
-      return 0;
-    }
-    if (args.Length == 1 && args[0] == "--probe-h3") {
-      try {
-        using var client = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false });
-        var checksum = GetH3BytesAsync(client, MsixUrl + ".sha256", 4096, CancellationToken.None).GetAwaiter().GetResult();
-        if (checksum.Length < 64) throw new InvalidDataException("H3 checksum probe failed.");
-        return 0;
-      } catch (Exception e) { File.WriteAllText(Path.Combine(Path.GetTempPath(), "semantier-setup-last-error.txt"), e.ToString()); return 1; }
-    }
-    if (args.Length == 2 && args[0] == "--verify-remote") {
-      try {
-        string expectedHash = args[1].ToLowerInvariant();
-        if (expectedHash.Length != 64 || !expectedHash.All(Uri.IsHexDigit))
-          throw new ArgumentException("Invalid expected local MSIX SHA-256.");
-        var dir = Path.Combine(Path.GetTempPath(), "semantier-verify-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(dir);
-        try { DownloadAndVerifyAsync(dir, CancellationToken.None, expectedHash).GetAwaiter().GetResult(); return 0; }
-        finally { Directory.Delete(dir, true); }
-      } catch (Exception e) { File.WriteAllText(Path.Combine(Path.GetTempPath(), "semantier-setup-last-error.txt"), e.ToString()); return 1; }
-    }
-    if (args.Length != 0) return 2;
-    Application.EnableVisualStyles();
-    using var form = new Form { Text = "Semantier Setup", Width = 440, Height = 190,
-      StartPosition = FormStartPosition.CenterScreen, FormBorderStyle = FormBorderStyle.FixedDialog,
-      MaximizeBox = false, MinimizeBox = false };
-    var status = new Label { Text = "Install the latest signed Semantier application.", AutoSize = false,
-      Left = 20, Top = 24, Width = 386, Height = 43 };
-    var button = new Button { Text = "Download and install", Left = 20, Top = 86, Width = 185, Height = 36 };
-    form.Controls.Add(status); form.Controls.Add(button);
-    button.Click += async (_, _) => {
-      button.Enabled = false;
-      string? dir = null;
-      try {
-        status.Text = "Downloading over HTTP/3 and verifying checksum...";
-        dir = Path.Combine(Path.GetTempPath(), "semantier-install-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(dir);
-        var package = await DownloadAndVerifyAsync(dir, CancellationToken.None);
-        status.Text = "Installing the signed package...";
-        await Task.Run(() => InstallMsix(package));
-        status.Text = "Installation successful.";
-        MessageBox.Show(form, "Semantier is installed.", "Semantier", MessageBoxButtons.OK, MessageBoxIcon.Information);
-        form.Close();
-      } catch (Exception e) {
-        status.Text = "Installation failed. No unsigned package was installed.";
-        MessageBox.Show(form, e.Message, "Semantier Setup", MessageBoxButtons.OK, MessageBoxIcon.Error);
-      } finally {
-        if (dir != null) { try { Directory.Delete(dir, true); } catch { } }
-        button.Enabled = true;
-      }
-    };
-    Application.Run(form);
-    return 0;
-  }
-  private static async Task<string> DownloadAndVerifyAsync(string dir, CancellationToken cancel, string? expectedHash = null) {
-    using var handler = new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false };
-    using var client = new HttpClient(handler) { Timeout = TimeSpan.FromMinutes(60) };
-    string packagePath = Path.Combine(dir, "SemantierAgent.msix");
-    for (int attempt = 0; attempt != 3; attempt++) {
-      string sidecar = (await GetH3BytesAsync(client, MsixUrl + ".sha256", 4096, cancel)).Trim();
-      string wanted = sidecar.Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "";
-      if (wanted.Length != 64 || !wanted.All(Uri.IsHexDigit)) throw new InvalidDataException("Invalid SHA-256 sidecar.");
-      // This run's locally signed MSIX is the publication authority; the
-      // server's MSIX and sidecar could otherwise both belong to an older release.
-      if (expectedHash is not null && !string.Equals(wanted, expectedHash, StringComparison.OrdinalIgnoreCase))
-        throw new InvalidDataException("Public checksum is not the locally signed release SHA-256.");
-      var observed = await DownloadH3Async(client, MsixUrl, packagePath, cancel);
-      if (string.Equals(wanted, observed, StringComparison.OrdinalIgnoreCase) &&
-          (expectedHash is null || string.Equals(expectedHash, observed, StringComparison.OrdinalIgnoreCase))) {
-        VerifyIdentity(packagePath);
-        return packagePath;
-      }
-      if (attempt == 2) throw new InvalidDataException("MSIX SHA-256 mismatch; installation stopped.");
-      await Task.Delay(2000, cancel); // a release may swap file and checksum between two GETs
-    }
-    throw new InvalidDataException("No matching release.");
-  }
-  private static async Task<HttpResponseMessage> GetH3Async(HttpClient client, string url, CancellationToken cancel) {
-    using var request = new HttpRequestMessage(HttpMethod.Get, url) {
-      Version = HttpVersion.Version30,
-      VersionPolicy = HttpVersionPolicy.RequestVersionExact
-    };
-    var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancel);
-    if (response.Version != HttpVersion.Version30 || !response.IsSuccessStatusCode ||
-        response.Headers.Location != null || response.Content.Headers.ContentLength > MaxBytes) {
-      response.Dispose(); throw new HttpRequestException("Required HTTP/3 endpoint unavailable.");
-    }
-    return response;
-  }
-  private static async Task<string> GetH3BytesAsync(HttpClient client, string url, int maximum, CancellationToken cancel) {
-    using var response = await GetH3Async(client, url, cancel);
-    using var body = await response.Content.ReadAsStreamAsync(cancel);
-    using var memory = new MemoryStream();
-    var bytes = new byte[4096]; int n;
-    while ((n = await body.ReadAsync(bytes, cancel)) != 0) {
-      if (memory.Length + n > maximum) throw new InvalidDataException("Checksum response too large.");
-      memory.Write(bytes, 0, n);
-    }
-    return Encoding.ASCII.GetString(memory.ToArray());
-  }
-  private static async Task<string> DownloadH3Async(HttpClient client, string url, string file, CancellationToken cancel) {
-    using var response = await GetH3Async(client, url, cancel);
-    using var body = await response.Content.ReadAsStreamAsync(cancel);
-    using var output = new FileStream(file, FileMode.Create, FileAccess.Write, FileShare.None, 1024 * 1024, true);
-    using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-    var buffer = new byte[1024 * 1024]; long total = 0; int count;
-    while ((count = await body.ReadAsync(buffer, cancel)) != 0) {
-      total += count;
-      if (total > MaxBytes) throw new InvalidDataException("MSIX exceeds download size limit.");
-      digest.AppendData(buffer, 0, count);
-      await output.WriteAsync(buffer.AsMemory(0, count), cancel);
-    }
-    if (total == 0 || (response.Content.Headers.ContentLength is long expected && expected != total))
-      throw new InvalidDataException("MSIX transfer incomplete.");
-    await output.FlushAsync(cancel);
-    return Convert.ToHexString(digest.GetHashAndReset()).ToLowerInvariant();
-  }
-  private static void VerifyIdentity(string file) {
-    using var zip = ZipFile.OpenRead(file);
-    var entry = zip.GetEntry("AppxManifest.xml") ?? throw new InvalidDataException("Missing AppxManifest.");
-    using var stream = entry.Open();
-    var xml = XDocument.Load(stream);
-    var identity = xml.Descendants().FirstOrDefault(x => x.Name.LocalName == "Identity")
-      ?? throw new InvalidDataException("Missing package identity.");
-    string Attribute(string key) => identity.Attribute(key)?.Value ?? "";
-    if (Attribute("Name") != PackageName || Attribute("Publisher") != Publisher ||
-        Attribute("ProcessorArchitecture") != "x64" || !Version.TryParse(Attribute("Version"), out _))
-      throw new InvalidDataException("Unexpected MSIX identity / publisher / architecture.");
-    if (zip.GetEntry("AppxSignature.p7x") is null) throw new InvalidDataException("Missing MSIX signature.");
-    // Windows AppX deployment verifies signature trust and package integrity.
-  }
-  private static void InstallMsix(string path) {
-    var quoted = path.Replace("'", "''");
-    var command = "$ErrorActionPreference='Stop'; Add-AppxPackage -Path '" + quoted + "' -ForceApplicationShutdown -ForceUpdateFromAnyVersion";
-    var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(command));
-    using var process = new Process { StartInfo = new ProcessStartInfo("powershell.exe") {
-      UseShellExecute = false, CreateNoWindow = true, ArgumentList = { "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded }
-    }};
-    if (!process.Start()) throw new InvalidOperationException("Cannot launch Windows package installer.");
-    process.WaitForExit();
-    if (process.ExitCode != 0) throw new InvalidOperationException("Windows rejected the signed MSIX (exit code " + process.ExitCode + ").");
-  }
-}
-'@
-    [IO.File]::WriteAllText((Join-Path $setupWork 'Program.cs'),$source,$utf8)
-    $env:DOTNET_CLI_HOME='D:\repo\deliverables\cache\dotnet'
-    $env:NUGET_PACKAGES='D:\repo\deliverables\cache\nuget'
-    Run $dotnet @('publish',(Join-Path $setupWork 'SemantierSetup.csproj'),'-c','Release',
-      '-o',(Join-Path $setupWork 'published'),'-p:RestoreIgnoreFailedSources=true')
-    $built=Join-Path $setupWork 'published\SemantierSetup.exe'
-    if (!(Test-Path -LiteralPath $built -PathType Leaf)) {throw 'Built Setup EXE unavailable.'}
-    Sign-Copy $built $setup
-    New-Item -ItemType Directory -Path (Split-Path -Parent $SetupExe) -Force | Out-Null
-    Copy-Item -LiteralPath $setup -Destination $SetupExe
-    [IO.File]::WriteAllText($cachedContract,$setupContractVersion,$utf8)
-  }
-  Require-Signature $setup
-  $probe=Join-Path $Output 'setup-contract-verified.txt'
-  Run-Setup $setup @('--describe-fixed-download',$probe)
-  if (!(Test-Path -LiteralPath $probe -PathType Leaf) -or
-      ([IO.File]::ReadAllText($probe)).Trim() -cne $setupExpected) {
-    throw 'SETUP_PROTOCOL_INCOMPATIBLE: signed Setup does not target the one fixed ECS MSIX.'
-  }
-  $receipt.setupExe=$setup
-  $receipt.fixedMsixUrl=$setupExpected
-  Save-Json $receipt (Join-Path $Output 'result.json')
-  if($UpdateSetup){$receipt.setupExplicitUpdate=$true}
-  Complete-Checkpoint 'setup'
-  }
-  }
-  $receipt.setupAction=if($uploadSetup){'UPLOAD'}elseif($reuseRemoteSetup){'REUSE_ECS'}else{'LOCAL_ONLY'}
-
+  $receipt.setupExe=$remoteSetup
+  $receipt.setupAction='REUSE_INDEPENDENT_ECS_SETUP'
   # Stop only executables inside this registered package before copying its
   # existing profile. The acceptance app uses isolated state and cannot alter it.
   if(!$script:checkpoints.ContainsKey('local')) {
@@ -726,7 +1141,7 @@ internal static class Program {
   Save-Json @($profileFiles) (Join-Path $Output 'profile-files.json')
   Complete-Checkpoint 'backup'
   }
-  Report-Status 'Installing the signed MSIX; preserving user profile.'
+  Report-Status 'Preparing clean local installation; preserving the backed-up user profile.'
   if(!$script:checkpoints.ContainsKey('installed')) {
     $existing=@(Get-AppxPackage -Name $identity)
     $volumes=@(Get-AppxVolume)
@@ -736,9 +1151,13 @@ internal static class Program {
       })
     } else {$installVolume=@($volumes | Where-Object {$_.IsSystemVolume})}
     if($installVolume.Count -ne 1 -or $installVolume[0].IsOffline){throw 'Existing/system AppX installation volume is unavailable.'}
+    if($BuildMode -eq 'Prod' -and (Test-Path -LiteralPath $backup)){Preserve-Databases 'verify'}
+    Remove-ExistingAcceptancePackage
+    Complete-Checkpoint 'uninstalled'
     Report-Status ('Installing on explicit AppX volume: '+$installVolume[0].PackageStorePath)
     Add-AppxPackage -Path $signed -Volume $installVolume[0] -ForceApplicationShutdown -ForceUpdateFromAnyVersion
   }
+  if($BuildMode -eq 'Prod'){
   $registered=@(Get-AppxPackage -Name $identity)
   if ($registered.Count -ne 1 -or $registered[0].Version.ToString() -cne $Version) {throw 'Installed registration mismatch.'}
   $archive=[IO.Compression.ZipFile]::OpenRead($signed)
@@ -787,13 +1206,16 @@ const {_electron}=require(b.playwright);fs.mkdirSync(b.output);let app;const err
     if($file.relative -match '\.(db|sqlite|sqlite3)$'){continue}
     if (!(Test-Path -LiteralPath (Join-Path $UserProfile $file.relative) -PathType Leaf)) {throw "User profile file missing: $($file.relative)"}
   }
-  if(Test-Path -LiteralPath $backup){Preserve-Databases 'verify'}
+  if($BuildMode -eq 'Prod' -and (Test-Path -LiteralPath $backup)){Preserve-Databases 'verify'}
   $receipt.localAcceptance='LOCAL_SIGNED_MSIX_ELECTRON_PTY_PASS';$receipt.profileBackup=$backup
   Report-Status 'Local Electron, PTY and profile-preservation acceptance passed.'
   Save-Json $receipt (Join-Path $Output 'result.json')
   $receipt.uiReceipt=Join-Path $uiOutput 'acceptance.json'
   Complete-Checkpoint 'local'
   } else {
+    $receipt.localAcceptance='SKIPPED_BETA';Complete-Checkpoint 'installed';Complete-Checkpoint 'local'
+  }
+  } elseif($BuildMode -eq 'Prod') {
     $registered=@(Get-AppxPackage -Name $identity)
     if($registered.Count -ne 1 -or $registered[0].Version.ToString() -cne $Version -or
       (Hash (Join-Path $registered[0].InstallLocation 'AppxSignature.p7x')) -cne $receipt.installedSignature){throw 'Installed package changed since local acceptance; start a new run.'}
@@ -804,7 +1226,7 @@ const {_electron}=require(b.playwright);fs.mkdirSync(b.output);let app;const err
   if ($LocalOnly) {
     $receipt.h3='NOT_RUN_LOCAL_ONLY'
     $receipt.publicReadback='NOT_RUN_LOCAL_ONLY'
-    $receipt.result='LOCAL_PASS_NOT_PUBLISHED'
+    $receipt.result=if($BuildMode -eq 'Beta'){'BETA_INSTALLED_UNVERIFIED_NOT_PUBLISHED'}else{'LOCAL_PASS_NOT_PUBLISHED'}
     return
   }
 
@@ -812,20 +1234,19 @@ const {_electron}=require(b.playwright);fs.mkdirSync(b.output);let app;const err
   # Upload outside Caddy's document root; mv on the SAME filesystem is atomic.
   $remoteMsix="$RemoteRoot/releases/SemantierAgent.msix"
   $remoteProof="set -eu; test `$(sha256sum '$remoteMsix' | cut -d' ' -f1) = '$hash'; test -s '$RemoteRoot/releases/installers/semantier-setup-ch1.exe'"
-  if($script:checkpoints.ContainsKey('published') -and !$uploadSetup) {
-    $null=Ssh $remoteProof
+  if($script:checkpoints.ContainsKey('published')) {
+    if($BuildMode -eq 'Prod'){$null=Ssh $remoteProof}
     Report-Status 'Remote published hashes still match; skipping upload and activation.'
   } else {
   $remoteChecksum="$remoteMsix.sha256"
   $remoteSetup="$RemoteRoot/releases/installers/semantier-setup-ch1.exe"
-  $setupSize=if($uploadSetup){(Get-Item -LiteralPath $setup).Length}else{0}
   $msixSize=(Get-Item -LiteralPath $signed).Length
   # Compute the POSIX parent in PowerShell without Windows Split-Path (which uses backslashes).
   $posixParent=$RemoteRoot.Substring(0,$RemoteRoot.LastIndexOf('/'))
   $stage="$posixParent/.semantier-stage-$([Guid]::NewGuid().ToString('N'))"
   if($receipt.Contains('remoteStage')) {$stage=[string]$receipt.remoteStage}
   if($stage -cnotmatch ('^'+[Regex]::Escape($posixParent)+'/\.semantier-stage-[a-f0-9]{32}$')) {throw 'Invalid saved staging path.'}
-  $minimumFree=$msixSize+$setupSize+67108864
+  $minimumFree=$msixSize+67108864
   $prepare=@'
 set -eu
 root='__ROOT__'
@@ -835,7 +1256,7 @@ test -d "$root/releases" && test ! -L "$root"
 if test -d "$stage" && test ! -L "$stage"; then exit 0; fi
 test ! -e "$stage"
 free=$(df -PB1 "$root" | awk 'NR==2 {print $4}')
-test "$free" -ge "$minimum" || { echo 'Insufficient ECS staging space' >&2; exit 9; }
+test "$free" -ge "$minimum" || { printf 'Insufficient ECS staging space: available=%s required=%s deficit=%s bytes\n' "$free" "$minimum" "$((minimum-free))" >&2; exit 9; }
 mkdir -m 700 "$stage"
 '@
   $prepare=$prepare.Replace('__ROOT__',$RemoteRoot).Replace('__STAGE__',$stage).Replace('__MIN_FREE__',[string]$minimumFree)
@@ -845,12 +1266,6 @@ mkdir -m 700 "$stage"
   Save-Json $receipt (Join-Path $Output 'result.json')
   Upload $signed "$stage/SemantierAgent.msix"
   Upload $sidecar "$stage/SemantierAgent.msix.sha256"
-  if($uploadSetup) {
-    Upload $setup "$stage/semantier-setup-ch1.exe"
-    $contractFile=Join-Path $Output 'setup.contract.txt'
-    [IO.File]::WriteAllText($contractFile,$setupContractVersion,$utf8)
-    Upload $contractFile "$stage/setup.contract.txt"
-  }
   $publish=@'
 set -eu
 root='__ROOT__'
@@ -866,21 +1281,20 @@ mkdir -p "$root/releases/installers"
 # new complete inode. There is NO manifest/catalog/version swap.
 mv -f SemantierAgent.msix "$msix"
 mv -f SemantierAgent.msix.sha256 "$checksum"
-if test -f semantier-setup-ch1.exe; then
-  mv -f semantier-setup-ch1.exe "$setup"
-  mv -f setup.contract.txt "$setup.contract.txt"
-  chmod 644 "$setup" "$setup.contract.txt"
-fi
 chmod 644 "$msix" "$checksum"
 ( cd "$root/releases" && sha256sum -c SemantierAgent.msix.sha256 )
 rmdir "$stage"
 printf 'SINGLE_MSIX_ATOMIC_REPLACE_PASS\n'
 '@
   $publish=$publish.Replace('__ROOT__',$RemoteRoot).Replace('__STAGE__',$stage)
+  if($BuildMode -eq 'Beta'){$publish=($publish -split "`n" | Where-Object {$_ -notmatch 'sha256sum -c'}) -join "`n"}
   Report-Status 'Verifying uploaded hashes on ECS and replacing the public files.'
   $receipt.publication=Ssh $publish
   Save-Json $receipt (Join-Path $Output 'result.json')
   Complete-Checkpoint 'published'
+  }
+  if($BuildMode -eq 'Beta'){
+    $receipt.result='BETA_PUBLISHED_UNVERIFIED';$receipt.h3='SKIPPED_BETA';$receipt.publicReadback='SKIPPED_BETA';$receipt.cleanup='SKIPPED_BETA';Complete-Checkpoint 'finished';return
   }
   $null=Ssh $remoteProof
   Report-Status 'Verifying public H3 status and package size with HEAD; no package body download.'
@@ -983,6 +1397,10 @@ printf 'OLD_PACKAGE_CLEANUP_PASS\n'
   throw
 } finally {
   $receipt.finishedAt=[DateTime]::UtcNow.ToString('o')
+  if($receipt.result -like 'MSIX_PUBLISHED_VERIFIED_*'){
+    try{$receipt.tempCleanup=Remove-OlderDeploymentRuns $Output $Version}
+    catch{$receipt.tempCleanup=@{error=$_.Exception.Message};Report-Status ('Local temporary-run cleanup deferred: '+$_.Exception.Message)}
+  }
   Save-Json $receipt (Join-Path $Output 'result.json')
   Report-Status ('Finished: '+$receipt.result)
   [IO.File]::WriteAllText((Join-Path $Output 'release-note.md'),

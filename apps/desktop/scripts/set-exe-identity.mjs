@@ -88,8 +88,8 @@ async function stampExeIdentity(
     'version-string': {
       ProductName: 'Hermes',
       FileDescription: 'Hermes',
-      CompanyName: 'Nous Research',
-      LegalCopyright: 'Copyright (c) 2026 Nous Research'
+      CompanyName: 'Semantier Technology',
+      LegalCopyright: 'Copyright (c) 2026 Semantier Technology'
     }
   }
 

@@ -26,13 +26,18 @@ def build_lock(source: Path):
         yield
 
 
-def build_environment(prepared: PreparedDesktop, variant: str, inherited: Mapping[str, str]) -> dict[str, str]:
+def build_environment(prepared: PreparedDesktop, variant: str, inherited: Mapping[str, str], *, verify: bool = True) -> dict[str, str]:
     from pm.build_operations import verified_tools
     from pm.lock import Lockfile
     from scripts.bundles.desktop_toolchain import bootstrap_environment
 
     request = prepared.request
     env = bootstrap_environment(request.source, request.work, request.cache, inherited)
+    if not verify:
+        import os
+        env["PATH"] = os.pathsep.join([str(prepared.node.parent), str(prepared.python.parent), env.get("PATH", "")])
+        env["HERMES_PYTHON"] = str(prepared.python)
+        return identity_environment(request, variant, env)
     selection = verified_tools(["python", "node", "npm"], source_store=request.cache / "tools",
                                target=request.target, lock=Lockfile(request.source / "pm/lock.json"))
     if prepared.python != selection.entries["python"].binary or prepared.node != selection.entries["node"].binary:

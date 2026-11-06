@@ -78,6 +78,23 @@ def _check_links(path: Path, out: Path) -> None:
                 _owned(entry, out)
 
 
+def _verified_digest(path: Path, out: Path) -> str:
+    """Check containment while collecting the same tree used for hashing."""
+    from pm.filesystem import is_junction
+
+    def validate(entry):
+        if entry.is_symlink() or is_junction(entry):
+            _owned(entry, out)
+        elif entry.name == "__pycache__" and entry.is_dir():
+            # Cache bytes are excluded from the digest, but their links must
+            # retain the original containment checks.
+            _check_links(entry, out)
+
+    if path.is_dir():
+        return tree_digest(path, validate_entry=validate)
+    return _digest(path)
+
+
 def _input_paths(inputs: AgentInputs, out: Path) -> list[Path]:
     expected = {"code": out / "hermes-agent", "project": out / "hermes-agent/pyproject.toml",
                 "tools": out / "tools", "environment": out / "venv", "pm_runtime": out / "pm-runtime",
@@ -138,12 +155,14 @@ def load_prepared(prepared: Path) -> AgentInputs:
         def validate_component(item):
             index, (name, digest) = item
             progress = f"payload verification [{index}/{len(data['digests'])}]: {name}"
-            print(f"{progress} — checking paths and links", flush=True)
+            print(f"{progress} — verifying current paths, links and bytes", flush=True)
             path = out / name
             _owned(path, out)
-            _check_links(path, out)
-            print(f"{progress} — hashing files", flush=True)
-            actual = _source_digest(path) if path == inputs.code else _digest(path)
+            if path == inputs.code:
+                _check_links(path, out)
+                actual = _source_digest(path)
+            else:
+                actual = _verified_digest(path, out)
             if actual != digest:
                 raise ValueError(f"prepared bytes changed: {name}")
         with ThreadPoolExecutor(max_workers=4) as readers:

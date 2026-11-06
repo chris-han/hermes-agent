@@ -26,7 +26,7 @@ if str(ROOT) not in sys.path:
 # (scripts/bundles/stage.py) needs its full tree and passes no exclusions.
 INERT_SNAPSHOT_DIRS = (
     "tests", "tests-js", "website", "evals", ".github", "nix", "docker",
-    "apps", "ui-tui", "web", "scripts",
+    "apps", "ui-tui", "web", "scripts", "win-native-installer",
 )
 
 

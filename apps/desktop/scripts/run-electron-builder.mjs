@@ -59,11 +59,18 @@ export function validatePreparedBuilderArgs(args, inputs) {
       continue
     }
     if (arg === '--dir' || arg === '--publish=never' || arg === '--') continue
+    if (inputs.target.startsWith('win32-') && /^-c\.msix\.displayName=Semantier Agent \d+\.\d+\.\d+$/.test(arg)) {
+      const version = args.find(value => value.startsWith('-c.extraMetadata.version='))?.slice('-c.extraMetadata.version='.length)
+      if (arg === `-c.msix.displayName=Semantier Agent ${version}`) continue
+      throw preparationRequired('MSIX display name version must match the admitted application version')
+    }
     // External MSIX signing consumes the admitted package without signing or
     // scanning its inner binaries. Admit only these exact disabling values;
     // arbitrary hooks, certificate paths and dependency changes stay forbidden.
     if (inputs.target.startsWith('win32-') && [
       '-c.win.sign=false', '-c.forceCodeSigning=false', '-c.afterPack=null',
+      '-c.msix.publisher=CN=Semantier Technology, O=Semantier Technology',
+      '-c.msix.publisherDisplayName=Semantier Technology',
     ].includes(arg)) continue
     if (/^(?:-c|--config)\.(?:extraMetadata\.(?:version|shortVersion|shortVersionWindows)|directories\.output|mac\.identity)=/.test(arg)) continue
     if (!arg.startsWith('-') && inputs.formats.includes(arg)) continue
@@ -77,10 +84,11 @@ export function validatePreparedBuilderArgs(args, inputs) {
  * @param {import('./prepared-packaging.mjs').PreparedPackaging} inputs
  * @returns {string[]}
  */
-function toolsetArguments(inputs) {
-  const require = createRequire(path.join(source, 'apps/desktop/package.json'))
-  const config = require(path.join(app, 'electron-builder.config.cjs'))
-  const tools = path.join(app, config.directories?.buildResources || 'build', 'prepared-packaging-tools')
+function toolsetArguments(inputs, preparedSource) {
+  const preparedApp = path.join(preparedSource, 'apps/desktop')
+  const require = createRequire(path.join(preparedApp, 'package.json'))
+  const config = require(path.join(preparedApp, 'electron-builder.config.cjs'))
+  const tools = path.join(preparedApp, config.directories?.buildResources || 'build', 'prepared-packaging-tools')
   fs.mkdirSync(tools, { recursive: true })
   return Object.entries(inputs.toolsets).map(([name, directory]) => {
     const destination = path.join(tools, name)
@@ -89,6 +97,28 @@ function toolsetArguments(inputs) {
     // Upstream parses this as a literal path after slicing file:// (not URL decoding).
     return `-c.toolsets.${name}.url=file://${destination}`
   })
+}
+
+/** Preserve typed disabling values: electron-builder's CLI treats null as a hook filename.
+ * @param {string} preparedSource @param {string[]} args
+ */
+export function preparedBuilderConfiguration(preparedSource, args) {
+  const overrides = new Map([
+    ['-c.win.sign=false', 'config.win = { ...config.win, sign: false };'],
+    ['-c.forceCodeSigning=false', 'config.forceCodeSigning = false;'],
+    ['-c.afterPack=null', 'config.afterPack = null;'],
+  ])
+  const selected = args.filter(arg => overrides.has(arg))
+  const windowsMsix = selectedPlatform(args) === 'win32' && sourceFormats(args).includes('msix')
+  if (!selected.length && !windowsMsix) return { config: 'electron-builder.config.cjs', args }
+  const original = path.join(preparedSource, 'apps/desktop/electron-builder.config.cjs')
+  const config = path.join(preparedSource, 'apps/desktop/build/external-msix.config.cjs')
+  fs.mkdirSync(path.dirname(config), { recursive: true })
+  const resourceFilter = windowsMsix
+    ? `config.extraResources = (config.extraResources || []).map(resource => typeof resource === 'object' && resource.to === 'agent-payload' ? { ...resource, filter: [...(resource.filter ? [].concat(resource.filter) : ['**/*']), '!**/win-native-installer{,/**/*}', '!uv-cache{,/**/*}', '!**/__pycache__{,/**/*}', '!**/*.pyc'] } : resource);`
+    : ''
+  fs.writeFileSync(config, `const config = { ...require(${JSON.stringify(original)}) };\n${selected.map(arg => overrides.get(arg)).join('\n')}\n${resourceFilter}\nmodule.exports = config;\n`)
+  return { config, args: args.filter(arg => !overrides.has(arg)) }
 }
 
 /**
@@ -138,21 +168,32 @@ function selectedPlatform(args) {
 
 /** @param {string[]} args @param {{ spawn?: typeof spawnSync }} [options] @returns {number} */
 export function runElectronBuilder(args, { spawn = spawnSync } = {}) {
+  const beta = args.includes('--beta')
+  args = args.filter(arg => arg !== '--beta')
   const validateOnly = args.includes('--validate-only')
   args = args.filter(arg => arg !== '--validate-only')
   const manifest = takeOption(args, '--prepared')
   const nativeDeps = takeOption(args, '--native-deps')
+  const sourceOverride = takeOption(args, '--source')
+  if (sourceOverride && !manifest) throw preparationRequired('--source requires admitted --prepared inputs')
   if (validateOnly && !manifest) throw preparationRequired('--validate-only requires --prepared')
   if (!manifest) return runSourceBuilds(args, nativeDeps, spawn)
   const platform = selectedPlatform(args)
   const arch = args.find(arg => architectures.includes(arg))?.slice(2) || process.arch
-  const inputs = readPackagingInputs(manifest, source, `${platform}-${arch}`)
+  const preparedSource = sourceOverride || source
+  // Preparation remains admitted by the application's own frozen recipe.
+  // The external controller changes packaging policy, not source identity.
+  const contracts = sourceOverride
+    ? createRequire(import.meta.url)(path.join(preparedSource, 'apps/desktop/scripts/prepared-packaging.mjs'))
+    : { readPackagingInputs }
+  const inputs = beta ? JSON.parse(fs.readFileSync(manifest, 'utf8').replace(/^\uFEFF/, ''))
+    : contracts.readPackagingInputs(manifest, preparedSource, `${platform}-${arch}`)
   validatePreparedBuilderArgs(args, inputs)
   if (!nativeDeps) throw preparationRequired('--native-deps is required with --prepared')
-  readNativeInputs({ source, nativeDeps, platform, arch })
+  if (!beta) readNativeInputs({ source: preparedSource, nativeDeps, platform, arch })
   if (validateOnly) return 0
-  const builder = pinnedPackageRoot(source, 'electron-builder')
-  pinnedPackageRoot(source, 'app-builder-lib')
+  const builder = pinnedPackageRoot(preparedSource, 'electron-builder')
+  pinnedPackageRoot(preparedSource, 'app-builder-lib')
   const require = createRequire(path.join(builder, 'package.json'))
   const bin = require(path.join(builder, 'package.json')).bin['electron-builder']
   const preloads = []
@@ -165,9 +206,10 @@ export function runElectronBuilder(args, { spawn = spawnSync } = {}) {
     HERMES_PREPARED_NATIVE_DEPS: nativeDeps, HERMES_PREPARED_TARGET: inputs.target }
   if (inputs.dmgbuild) env.CUSTOM_DMGBUILD_PATH = inputs.dmgbuild
   if (inputs.windows?.dotnetRoot) env.DOTNET_ROOT = inputs.windows.dotnetRoot
-  const result = spawn(process.execPath, [...preloads, path.join(builder, bin), ...args,
-    '--config', 'electron-builder.config.cjs', '--publish', 'never', `-c.electronDist=${inputs.electron}`,
-    ...toolsetArguments(inputs)], { cwd: app, stdio: 'inherit', env })
+  const configuration = preparedBuilderConfiguration(preparedSource, args)
+  const result = spawn(process.execPath, [...preloads, path.join(builder, bin), ...configuration.args,
+    '--config', configuration.config, '--publish', 'never', `-c.electronDist=${inputs.electron}`,
+    ...toolsetArguments(inputs, preparedSource)], { cwd: path.join(preparedSource, 'apps/desktop'), stdio: 'inherit', env })
   if (result.error) throw result.error
   return result.status ?? 1
 }

@@ -5,15 +5,65 @@ import path from 'node:path'
 import { builderNodeOptions, runElectronBuilder, validatePreparedBuilderArgs } from './run-electron-builder.mjs'
 import fs from 'node:fs'
 import os from 'node:os'
+import { createRequire } from 'node:module'
+import { preparedBuilderConfiguration } from './run-electron-builder.mjs'
 import { publishPackagingInputs } from './prepared-packaging.mjs'
 import { recordNativeInputs } from './prepared-native-deps.mjs'
+
+test('Beta skips prepared byte verification while Prod rejects the same unverified inputs', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'beta-builder-'))
+  try {
+    const manifest = path.join(directory, 'prepared.json')
+    fs.writeFileSync(manifest, JSON.stringify({ target: `${process.platform}-${process.arch}`, formats: ['dir'] }))
+    const args = ['--validate-only', '--prepared', manifest, '--native-deps', path.join(directory, 'missing-native'), '--dir']
+    assert.equal(runElectronBuilder(['--beta', ...args]), 0)
+    assert.throws(() => runElectronBuilder(args), /prepar|identity|input|schema/i)
+  } finally { fs.rmSync(directory, { recursive: true, force: true }) }
+})
+
+test('external MSIX signing disables hooks with typed values instead of CLI strings', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'msix-config-'))
+  try {
+    const app = path.join(root, 'apps/desktop')
+    fs.mkdirSync(app, { recursive: true })
+    const original = path.join(app, 'electron-builder.config.cjs')
+    fs.writeFileSync(original, "module.exports = { afterPack: 'expensive-scan.mjs', forceCodeSigning: true, win: { sign: 'inner-sign.mjs', target: 'msix' }, appId: 'preserved', extraResources: [{from:'build/agent-payload',to:'agent-payload',filter:['**/*','!existing-exclusion']}, 'icon.ico'] }")
+    const args = ['--win', 'msix', '-c.win.sign=false', '-c.forceCodeSigning=false', '-c.afterPack=null', '-c.extraMetadata.version=0.0.87']
+    const result = preparedBuilderConfiguration(root, args)
+    const require = createRequire(import.meta.url)
+    const config = require(result.config)
+    assert.equal(config.afterPack, null)
+    assert.equal(config.win.sign, false)
+    assert.equal(config.forceCodeSigning, false)
+    assert.equal(config.win.target, 'msix')
+    assert.equal(config.appId, 'preserved')
+    assert.deepEqual(config.extraResources[0].filter, ['**/*', '!existing-exclusion', '!**/win-native-installer{,/**/*}', '!uv-cache{,/**/*}', '!**/__pycache__{,/**/*}', '!**/*.pyc'])
+    assert.equal(config.extraResources[1], 'icon.ico')
+    assert.deepEqual(require(original).extraResources[0].filter, ['**/*', '!existing-exclusion'])
+    assert.equal(require(original).win.sign, 'inner-sign.mjs')
+    assert.deepEqual(result.args, ['--win', 'msix', '-c.extraMetadata.version=0.0.87'])
+  } finally { fs.rmSync(root, { recursive: true, force: true }) }
+})
 
 test.runIf(process.platform === 'win32')('prepared MSIX accepts exact external-signing options while rejecting arbitrary hooks', () => {
   const inputs = { target: `win32-${process.arch}`, formats: ['msix'] }
   validatePreparedBuilderArgs(['--win', 'msix', '-c.win.sign=false', '-c.forceCodeSigning=false', '-c.afterPack=null'], inputs)
-  for (const arg of ['-c.win.sign=custom.js', '-c.afterPack=custom.js', '-c.npmRebuild=true', '-c.forceCodeSigning=true']) {
+  validatePreparedBuilderArgs(['--win', 'msix', '-c.msix.publisher=CN=Semantier Technology, O=Semantier Technology', '-c.msix.publisherDisplayName=Semantier Technology'], inputs)
+  for (const arg of ['-c.win.sign=custom.js', '-c.afterPack=custom.js', '-c.npmRebuild=true', '-c.forceCodeSigning=true', '-c.msix.publisher=CN=Other']) {
     assert.throws(() => validatePreparedBuilderArgs(['--win', 'msix', arg], inputs), /not admitted/)
   }
+})
+
+test('external packaging controller cannot select application source without admitted preparation', () => {
+  assert.throws(() => runElectronBuilder(['--source', os.tmpdir(), '--dir']), /--source requires admitted --prepared inputs/)
+})
+
+test.runIf(process.platform === 'win32')('versioned installed display name follows the admitted app version', () => {
+  const inputs = { target: `win32-${process.arch}`, formats: ['msix'] }
+  const args = ['--win', 'msix', '-c.extraMetadata.version=0.0.87']
+  validatePreparedBuilderArgs([...args, '-c.msix.displayName=Semantier Agent 0.0.87'], inputs)
+  assert.throws(() => validatePreparedBuilderArgs([...args, '-c.msix.displayName=Semantier Agent 0.0.88'], inputs), /version must match/)
+  assert.throws(() => validatePreparedBuilderArgs([...args, '-c.msix.displayName=Other Application'], inputs), /not admitted/)
 })
 
 test('validate-only admits real prepared inputs without launching tools and rejects unsafe arguments', async () => {

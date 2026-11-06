@@ -137,7 +137,8 @@ module.exports = {
           // unpacked template source is inert, but MSIX treats _rels/*.rels as
           // package relationships and rejects those nested payload names.
           ...(process.platform === 'win32' ? {
-            filter: ['**/*', '!venv/Lib/site-packages/docx/templates/default-docx-template{,/**/*}']
+            filter: ['**/*', '!**/win-native-installer{,/**/*}', '!uv-cache{,/**/*}', '!**/__pycache__{,/**/*}', '!**/*.pyc',
+              '!venv/Lib/site-packages/docx/templates/default-docx-template{,/**/*}']
           } : {}) }]
       : []),
     {
@@ -255,10 +256,9 @@ module.exports = {
     identityName: store ? mustStoreMsix(storeMsixWhenStore).identityName : msixAppIdWithOrg,
     applicationId: appNamePascal,
     displayName,
-    publisher: store ? mustStoreMsix(storeMsixWhenStore).publisher
-      : process.env.SEMANTIER_DESKTOP_VERSION ? 'CN=Semantier Technology, O=Semantier Technology' : OUT_OF_STORE_PUBLISHER,
+    publisher: store ? mustStoreMsix(storeMsixWhenStore).publisher : OUT_OF_STORE_PUBLISHER,
     publisherDisplayName: store ? mustStoreMsix(storeMsixWhenStore).publisherDisplayName
-      : process.env.SEMANTIER_DESKTOP_VERSION ? 'Semantier Technology' : 'Nous Research',
+      : 'Semantier Technology',
     // The native quad is the build time (scripts/msix-shared.mjs::nativeQuad),
     // baked into the manifest template, so the builder's own build-number
     // override would stamp a second, conflicting version.
@@ -288,7 +288,7 @@ module.exports = {
   },
   linux: {
     category: 'Development',
-    maintainer: 'Nous Research <support@nousresearch.com>',
+    maintainer: 'Semantier Technology',
     synopsis: light
       ? 'Remote-only desktop client for Hermes Agent.'
       : 'Native desktop shell for Hermes Agent.',

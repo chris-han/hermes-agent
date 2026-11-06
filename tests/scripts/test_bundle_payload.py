@@ -82,6 +82,7 @@ def test_sealed_snapshot_keeps_tui_runtime_helpers_from_requested_revision(tmp_p
         'ui-tui/scripts/clipboard_image.py': 'clipboard from revision\n',
         'ui-tui/src/dev.ts': 'development source\n',
         'agent.py': 'runtime\n',
+        'win-native-installer/Program.cs': 'installer source\n',
     }.items():
         path = repo / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -95,3 +96,5 @@ def test_sealed_snapshot_keeps_tui_runtime_helpers_from_requested_revision(tmp_p
     assert (out / 'ui-tui/scripts/gateway_bootstrap.py').read_text() == 'bootstrap from revision\n'
     assert (out / 'ui-tui/scripts/clipboard_image.py').read_text() == 'clipboard from revision\n'
     assert not (out / 'ui-tui/src/dev.ts').exists()
+
+    assert not (out / 'win-native-installer').exists()

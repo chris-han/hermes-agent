@@ -4,7 +4,7 @@
   "private": true,
   "version": "0.0.0",
   "description": "Native desktop shell for Hermes Agent.",
-  "author": "Nous Research",
+  "author": "Semantier Technology",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/NousResearch/hermes-agent.git"

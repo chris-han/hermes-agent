@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -498,7 +499,7 @@ def _prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
         return publish_prepared(out, source, revision, inputs)
 
 
-def finish_native(prepared: Path, frontends: dict[str, Path]) -> int:
+def finish_native(prepared: Path, frontends: dict[str, Path], *, verify: bool = True) -> int:
     """Consume verified job-local paths. No dependency acquisition or repair."""
     from scripts.build.agent import assemble
     from scripts.build.inputs import AgentInputs
@@ -514,7 +515,11 @@ def finish_native(prepared: Path, frontends: dict[str, Path]) -> int:
         serial = os.environ.get("HERMES_DESKTOP_SERIAL_CACHE")
         log_root = Path(serial) if serial else None
         with measure(log_root, "runtime.admission"):
-            inputs = load_prepared(prepared)
+            if verify:
+                inputs = load_prepared(prepared)
+            else:
+                from scripts.build.inputs import AgentInputs
+                inputs = AgentInputs.from_dict(json.loads(prepared.read_text(encoding="utf-8-sig"))["inputs"])
         values = asdict(inputs)
         values["frontends"] = {name: Path(path).absolute() for name, path in frontends.items()}
         print("assembling verified payload", flush=True)

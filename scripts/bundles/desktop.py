@@ -2,17 +2,73 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
 import subprocess
 import sys
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+
+class BuildCheckpoints:
+    """Append successful product receipts to the existing per-run log."""
+
+    def __init__(self, log: Path, binding: str, *, verify: bool = True):
+        self.log, self.binding = log, binding
+        self.verify = verify
+        self.saved = {}
+        if log.exists():
+            for line in log.read_text(encoding="utf-8-sig").splitlines():
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if event.get("type") == "build-stage":
+                    self.saved[(event.get("binding"), event["stage"])] = event
+
+    def execute(self, stage: str, outputs: list[Path], action) -> None:
+        from scripts.bundles.desktop_prepare import fingerprint
+        started = time.perf_counter()
+        key = (self.binding, stage)
+        previous = self.saved.get(key)
+        current = {str(p): fingerprint(p) if self.verify else "BETA_UNVERIFIED" for p in outputs if p.exists()}
+        if previous and len(current) == len(outputs) and current == previous["outputs"]:
+            print(f"[CHECKPOINT HIT] {stage}", flush=True)
+            self._timing(stage, started, "HIT")
+            self.binding = hashlib.sha256(json.dumps(previous, sort_keys=True).encode()).hexdigest()
+            return
+        print(f"[CHECKPOINT MISS] {stage}", flush=True)
+        try:
+            action()
+        except BaseException:
+            self._timing(stage, started, "FAIL")
+            raise
+        if not all(p.exists() for p in outputs):
+            raise ValueError(f"stage {stage} did not produce its required outputs")
+        event = {"type": "build-stage", "binding": self.binding, "stage": stage,
+                 "outputs": {str(p): fingerprint(p) if self.verify else "BETA_UNVERIFIED" for p in outputs}}
+        self.log.parent.mkdir(parents=True, exist_ok=True)
+        with self.log.open("a", encoding="utf-8") as stream:
+            stream.write("\n" + json.dumps(event) + "\n")
+        self.saved[key] = event
+        self.binding = hashlib.sha256(json.dumps(event, sort_keys=True).encode()).hexdigest()
+        print(f"[CHECKPOINT SAVED] {stage}", flush=True)
+        self._timing(stage, started, "SUCCESS")
+
+    def _timing(self, stage: str, started: float, status: str) -> None:
+        seconds = round(time.perf_counter() - started, 3)
+        self.log.parent.mkdir(parents=True, exist_ok=True)
+        with self.log.open("a", encoding="utf-8") as stream:
+            stream.write("\n" + json.dumps({"type": "milestone-timing", "stage": stage,
+                "status": status, "seconds": seconds, "mode": "Prod" if self.verify else "Beta"}) + "\n")
+        print(f"[TIMING] {stage}: {seconds:.3f}s ({status})", flush=True)
 
 
 def run(argv: list[str], *, cwd: Path, env: dict[str, str]) -> None:
@@ -77,16 +133,20 @@ def build(repo: Path, tag: str | None, variant: str, builder_args: list[str],
     build_prepared(prepare(request), builder_args)
 
 
-def build_prepared(path: Path, builder_args: list[str], variant: str | None = None) -> None:
+def build_prepared(path: Path, builder_args: list[str], variant: str | None = None,
+                   packaging_controller: Path | None = None, build_mode: str = "Prod") -> None:
     from scripts.bundles.desktop_prepare import PreparedDesktop
     from scripts.bundles.desktop_inputs import build_lock
     prepared = PreparedDesktop.load(path)
     with build_lock(prepared.request.source):
-        _build_prepared(prepared, builder_args, variant)
+        _build_prepared(prepared, builder_args, variant, packaging_controller, build_mode)
 
 
-def _build_prepared(prepared, builder_args: list[str], variant: str | None) -> None:
-    prepared.validate()
+def _build_prepared(prepared, builder_args: list[str], variant: str | None,
+                    packaging_controller: Path | None = None, build_mode: str = "Prod") -> None:
+    verify = build_mode == "Prod"
+    if verify:
+        prepared.validate()
     from scripts.bundles.desktop_inputs import build_environment, packaging_environment, select_variant, validate_builder_identity
     from scripts.bundles.native import finish_native
 
@@ -96,7 +156,13 @@ def _build_prepared(prepared, builder_args: list[str], variant: str | None) -> N
         raise ValueError("channel builds require a supported native macOS or Windows target")
     variant = select_variant(prepared, variant)
     repo, node = request.source, str(prepared.node)
-    env = build_environment(prepared, variant, os.environ)
+    runner = ([str(packaging_controller.resolve()), '--source', str(repo)] if packaging_controller
+              else ['scripts/run-electron-builder.mjs'])
+    if not verify:
+        if packaging_controller is None:
+            raise ValueError("Beta requires the external packaging controller")
+        runner.append('--beta')
+    env = build_environment(prepared, variant, os.environ, verify=verify)
     if request.release_epoch is not None:
         env["HERMES_RELEASE_EPOCH"] = str(request.release_epoch)
     desktop = repo / "apps/desktop"
@@ -106,23 +172,38 @@ def _build_prepared(prepared, builder_args: list[str], variant: str | None) -> N
         raise ValueError("Semantier app version is only valid for local Windows commit builds")
     package_args = ["--prepared", str(prepared.packager), "--native-deps", str(prepared.native),
                     *targets, f"-c.extraMetadata.version={app_version}"]
-    run([node, "scripts/run-electron-builder.mjs", "--validate-only", *package_args, *builder_args],
-        cwd=desktop, env=env)
-    run([node, "scripts/build/node-deps.mjs", "--source", str(repo), "--reuse", "--no-install",
+    if verify:
+        run([node, *runner, "--validate-only", *package_args, *builder_args], cwd=desktop, env=env)
+        run([node, "scripts/build/node-deps.mjs", "--source", str(repo), "--reuse", "--no-install",
          "--native-toolchain", prepared.native_toolchain,
-         *[arg for name in request.workspaces() for arg in ("--workspace", name)]], cwd=repo, env=env)
+            *[arg for name in request.workspaces() for arg in ("--workspace", name)]], cwd=repo, env=env)
     products = repo / "apps/desktop/build/products"
     icons = products / "icons"
-    run([str(prepared.icon_python), "-I", str(repo / "scripts/generate_icons.py"),
-         "--source", str(repo), "--out", str(icons)], cwd=repo, env=env)
+    binding = hashlib.sha256(json.dumps({"request": request.identity_digest(), "variant": variant,
+        "version": app_version, "mode": build_mode, "driver": hashlib.sha256(Path(__file__).read_bytes()).hexdigest()},
+        sort_keys=True).encode()).hexdigest()
+    checkpoints = BuildCheckpoints(request.work.parent / "checkpoints.jsonl", binding, verify=verify)
+    checkpoints.execute("icons", [icons], lambda: run(
+        [str(prepared.icon_python), "-I", str(repo / "scripts/generate_icons.py"),
+         "--source", str(repo), "--out", str(icons)], cwd=repo, env=env))
     if variant != "light":
-        run([node, "scripts/build/tui.mjs", "--source", str(repo), "--out", str(products / "tui")], cwd=repo, env=env)
-        run([node, "scripts/build/web.mjs", "--source", str(repo), "--icons", str(products / "icons"),
-             "--out", str(products / "web")], cwd=repo, env=env)
+        checkpoints.execute("tui", [products / "tui"], lambda: run(
+            [node, "scripts/build/tui.mjs", "--source", str(repo), "--out", str(products / "tui")], cwd=repo, env=env))
+        checkpoints.execute("web", [products / "web"], lambda: run(
+            [node, "scripts/build/web.mjs", "--source", str(repo), "--icons", str(products / "icons"),
+             "--out", str(products / "web")], cwd=repo, env=env))
         if prepared.payload is None:
             raise ValueError("payload dependencies were not prepared")
-        if finish_native(prepared.payload, {"tui": products / "tui", "web": products / "web"}):
-            raise RuntimeError("prepared payload assembly failed")
+        def assemble_payload():
+            if finish_native(prepared.payload, {"tui": products / "tui", "web": products / "web"}, verify=verify):
+                raise RuntimeError("prepared payload assembly failed")
+        payload_root = prepared.payload.with_name(prepared.payload.name.removesuffix(".prepared.json"))
+        payload_inputs = json.loads(prepared.payload.read_text(encoding="utf-8-sig"))["inputs"]
+        # Dependency trees are admitted by prepared.validate(); checkpoint the
+        # assembled application and launchers without rehashing those caches.
+        checkpoints.execute("runtime-assembly", [payload_root / "manifest.json",
+            payload_root / payload_inputs["repo"], payload_root / payload_inputs["bin_dir"],
+            payload_root / "enabled-features.json"], assemble_payload)
     from scripts.bundles.desktop_prepare import require_source
     require_source(repo, request.commit)
     # The admitted checkout stays clean across the whole build: packaging reads
@@ -130,18 +211,25 @@ def _build_prepared(prepared, builder_args: list[str], variant: str | None) -> N
     # electron-builder holds it, and the final check proves it was handed back.
     # Stamp before the render lands: the stamp's git check would call the
     # checkout dirty while the flavored icons sit over committed files.
-    run([node, "scripts/write-build-stamp.mjs"], cwd=desktop, env=env)
+    checkpoints.execute("build-stamp", [desktop / "build/install-stamp.json"], lambda: run(
+        [node, "scripts/write-build-stamp.mjs"], cwd=desktop, env=env))
     with flavored_assets(icons / "apps/desktop/assets", desktop / "assets"):
-        run([node, "scripts/build/desktop.mjs", "--source", str(repo), "--icons", str(icons),
+        checkpoints.execute("desktop", [desktop / "dist"], lambda: run([node, "scripts/build/desktop.mjs", "--source", str(repo), "--icons", str(icons),
              "--stamp", str(desktop / "build/install-stamp.json"), "--native-deps", str(prepared.native),
-             "--out", str(desktop / "dist")], cwd=repo, env=env)
+             "--out", str(desktop / "dist")], cwd=repo, env=env))
         version_args = []
         if sys.platform == "win32" and request.channel_request is None and request.tag is not None:
             script = "const m=require('./scripts/msix-shared.mjs');console.log(m.nativeQuad(process.argv[1], Number(process.env.HERMES_RELEASE_EPOCH)))"
             quad = capture([node, "-e", script, request.tag], repo, env)
             version_args = [f'-c.extraMetadata.shortVersion={quad}', f'-c.extraMetadata.shortVersionWindows={quad}']
-        run([node, "scripts/run-electron-builder.mjs", *package_args, *version_args, *builder_args], cwd=desktop,
-            env=packaging_environment(env, os.environ, request.target))
+        started = time.perf_counter()
+        status = "FAIL"
+        try:
+            run([node, *runner, *package_args, *version_args, *builder_args], cwd=desktop,
+                env=packaging_environment(env, os.environ, request.target))
+            status = "SUCCESS"
+        finally:
+            checkpoints._timing("msix-packaging" if sys.platform == "win32" else "packaging", started, status)
     require_source(repo, request.commit)
 
 
@@ -162,6 +250,9 @@ def main() -> None:
     parser.add_argument("--clean", action="store_true",
                         help="Remove this checkout's previous build outputs, under the checkout lock, before preparing")
     parser.add_argument("--prepared", type=Path)
+    parser.add_argument("--build-mode", choices=["Beta", "Prod"], default="Prod")
+    parser.add_argument("--packaging-controller", type=Path,
+                        help="External packaging runner; application source remains bound to --prepared")
     parser.add_argument("builder_args", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     builder_args = [v for v in args.builder_args if v != "--"]
@@ -170,8 +261,10 @@ def main() -> None:
             if (args.tag or args.commit_build or args.release_commit or args.channel_request
                     or args.prepare_only or args.work or args.cache or args.clean):
                 parser.error("--prepared supplies the complete build request")
-            build_prepared(args.prepared, builder_args, args.variant)
+            build_prepared(args.prepared, builder_args, args.variant, args.packaging_controller, args.build_mode)
         else:
+            if args.packaging_controller:
+                parser.error('--packaging-controller requires --prepared')
             from scripts.bundles.desktop_prepare import BuildRequest, prepare
             from scripts.releases.bundle_env import decode
             request = BuildRequest.create(args.repo, tag=args.tag, commit=args.commit_build,

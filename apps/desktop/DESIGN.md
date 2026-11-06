@@ -1,5 +1,13 @@
 # Desktop Design System
 
+The Windows Setup retains the Semantier Asimov identity: light gray surface
+(`#f3f4f5`), dark wordmark and typography, yellow primary action (`#e8c92d`),
+the existing Semantier logo, and English/Chinese progress and recovery states.
+Its native window lives in `win-native-installer/InstallerWindow.cs`;
+changing the download transport must preserve this visual contract. The wordmark is `Semantier`. On constrained/high-DPI desktops, the action remains visible; status text uses bounded lines with ellipsis, optional edition/stage/note copy yields to available space, and complete errors remain in Technical details. Setup
+resolves the latest release and must not bake an application version or size
+into the interface.
+
 Conventions for the Electron desktop app (`apps/desktop`). Read this before
 adding a component, overlay, or style. The rule of thumb: **one source per
 concern, tokens over literals, flat over boxed.** If you reach for a raw color,
@@ -684,3 +692,5 @@ New installations and `/skin default` select Semantier. Persisted global/per-pro
 IA review: **NOT_APPLICABLE** to restructuring. This is a presentation and default-preference replacement for the existing chat/settings tasks; navigation, information order, tool ownership and task flows are preserved. Task-effort acceptance is first launch with no theme setup, direct theme/mode selection in the existing Appearance page, keyboard operation, and persistence across reload. This is not a measured human cognitive-load claim.
 
 Verification: `npx vitest run --project ui src/themes`; `npx tsc -p . --noEmit`; `SEMANTIER_THEME_CDP=<owned-Windows-Chrome-endpoint> node e2e/verify-semantier-theme.mjs`. The rendering fixture uses the production ThemeProvider, AppearanceSettings and shared controls at desktop/narrow widths in both appearances; native installer delivery is a separate check.
+
+The offline `semantier-setup-ch0.exe` uses the same Setup window and installs the adjacent `SemantierAgent.msix` (or the single adjacent MSIX if that filename is absent), independent of the working directory. It rejects missing or ambiguous packages, checks product identity, and delegates signature enforcement to Windows. Build it with `scripts/deploy-ecs.ps1 -LocalSetup -BuildMode Prod`; this mode never publishes.
