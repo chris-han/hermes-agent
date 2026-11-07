@@ -180,7 +180,9 @@ def owner_scope(authority, *, hydrate_secrets=False):
     """
     from contextlib import nullcontext
     runner = getattr(authority, 'runner', None)
-    if not getattr(getattr(runner, 'config', None), 'multiplex_profiles', False):
+    registry = getattr(runner, 'session_authorities', None)
+    if not (getattr(getattr(runner, 'config', None), 'multiplex_profiles', False)
+            or getattr(registry, 'multiplexed', False)):
         return nullcontext()
     home = Path(str(authority.profile_id))
     if not home.is_absolute() or not home.is_dir():
