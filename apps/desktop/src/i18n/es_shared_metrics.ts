@@ -15,21 +15,21 @@ export const esSharedMetrics = {
     'Calidad del agente: ediciones fallidas, llamadas a herramientas rotas, bucles atascados, coste por tarea',
   collectedMachine: 'Equipo: sistema operativo, rango de RAM, tipo de GPU, versión de Hermes, uso de modelos locales',
   sending:
-    'Las estadísticas se quedan en este equipo a menos que elijas Compartir. Las estadísticas compartidas se envían a Nous una vez al día con un ID aleatorio para este perfil. Salvo un aviso único de que Hermes se instaló, que solo se cuenta cuando aceptas, las estadísticas de antes de aceptar nunca se envían. Puedes cambiarlo cuando quieras en Configuración.',
+    'Las estadísticas se quedan en este equipo a menos que elijas Compartir. Las estadísticas compartidas se envían a Semantier una vez al día con un ID aleatorio para este perfil. Salvo un aviso único de que Hermes se instaló, que solo se cuenta cuando aceptas, las estadísticas de antes de aceptar nunca se envían. Puedes cambiarlo cuando quieras en Configuración.',
   readDocs: 'Leer todos los detalles',
-  share: 'Compartir con Nous',
+  share: 'Compartir con Semantier',
   local: 'Guardar en este equipo',
   off: 'No, gracias',
   saveFailed: 'No se pudo guardar tu elección',
   collectLabel: 'Recopilar estadísticas de uso',
   collectDesc: 'Solo recuentos, guardados en este equipo. Nunca tus mensajes, archivos, rutas ni textos de error.',
-  sendLabel: 'Compartir estadísticas de uso con Nous',
+  sendLabel: 'Compartir estadísticas de uso con Semantier',
   sendDesc:
-    'Envía las estadísticas a Nous una vez al día con un ID aleatorio para este perfil. Salvo el aviso único de instalación, nunca se envían estadísticas de antes de que aceptaras. Requiere la recopilación activada.',
+    'Envía las estadísticas a Semantier una vez al día con un ID aleatorio para este perfil. Salvo el aviso único de instalación, nunca se envían estadísticas de antes de que aceptaras. Requiere la recopilación activada.',
   unavailable: 'Actualiza el backend de Hermes para cambiar este ajuste.',
   stripBody: 'Solo recuentos. Nunca tus mensajes ni archivos.',
   stripReaskBody:
-    'Te lo preguntamos de nuevo: una versión anterior podía guardar «No, gracias» antes de que vieras esta pregunta.',
-  stripChoices: { share: 'Compartir con Nous', local: 'Guardar en este equipo', off: 'No, gracias' },
+    'Elige de nuevo: las estadísticas ahora se envían a Semantier en lugar de Nous.',
+  stripChoices: { share: 'Compartir con Semantier', local: 'Guardar en este equipo', off: 'No, gracias' },
   stripDetails: 'Detalles'
 }

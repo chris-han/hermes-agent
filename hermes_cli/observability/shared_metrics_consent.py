@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 # (label, enabled, send): the Desktop strip's three equal answers, in its order.
 OFFER_CHOICES = (
-    ("Collect and send to Nous", True, True),
+    ("Collect and send to Semantier", True, True),
     ("Collect locally only", True, False),
     ("No thanks", False, False),
 )
@@ -36,13 +36,13 @@ _OFFER_DESCRIPTION = "\n".join((
     "model routes, token totals, feature use and coarse machine facts. A failed or",
     "finished fresh install is noted on this machine and counted only if you opt in.",
     "Never prompts, files, paths,",
-    "setting values or error text. Collection stays on this machine; sending to Nous is",
+    "setting values or error text. Collection stays on this machine; sending to Semantier is",
     "a separate choice, and apart from that install note, data from before you opt in",
     "is never sent.",
     f"Details: {DOCS_URL}",
     "Change it any time: hermes setup telemetry",
 ))
-_REASK_NOTE = "Asking once more: an earlier version could save \"No thanks\" before you saw this question."
+_REASK_NOTE = "Please decide again: usage statistics now go to Semantier instead of Nous (or a past response may not have been seen)."
 
 
 def _section(cfg: Any) -> dict:
@@ -51,8 +51,8 @@ def _section(cfg: Any) -> dict:
     return section if isinstance(section, dict) else {}
 
 
-# Bumped only when every earlier answer must be asked again; 2 = after the type-ahead fix.
-OFFER_VERSION = 2
+# Bumped for recipient change: previous consent to Nous is not consent to Semantier.
+OFFER_VERSION = 3
 
 
 def consent_state(raw_cfg: Any) -> dict:
@@ -62,10 +62,13 @@ def consent_state(raw_cfg: Any) -> dict:
     section = _section(raw_cfg)
     enabled = section.get("enabled") is True
     answered = "enabled" in section or "send" in section
-    reask = answered and not enabled and section.get("offer_version") != OFFER_VERSION
+    recipient_changed = section.get("send") is True and section.get("offer_version") != OFFER_VERSION
+    # Preserve an intentional prior opt-out; only re-ask those who had consented
+    # to Nous, plus pre-type-ahead-fix declines that may never have been seen.
+    reask = answered and (recipient_changed or (not enabled and section.get("offer_version") not in (2, OFFER_VERSION)))
     return {
         "enabled": enabled,
-        "send": enabled and section.get("send") is True,
+        "send": enabled and section.get("send") is True and not recipient_changed,
         "decided": answered and not reask,
         "reask": reask,
     }
@@ -105,6 +108,11 @@ def save_consent(enabled: bool, send: bool, config: dict | None = None) -> None:
     send = enabled and send
     config_path = get_config_path()
     user_config = require_readable_config_before_write(config_path)
+    # A prior opt-in to Nous is not authorization to send to Semantier.
+    # Close the old consent interval before writing a new recipient opt-in.
+    old_section = _section(user_config)
+    if old_section.get("send") is True and old_section.get("offer_version") != OFFER_VERSION:
+        _record_send_consent_change(enabled=False)
     set_answer(user_config, enabled, send)
     _write_user_config(config_path, user_config)
     if config is not None:
@@ -142,7 +150,7 @@ def offer_consent(config: dict | None = None, *, reask: bool = False) -> bool:
         return False
     _, enabled, send = OFFER_CHOICES[idx]
     save_consent(enabled, send, config)
-    outcome = "collected and sent to Nous" if send else "collected on this machine only" if enabled else "off"
+    outcome = "collected and sent to Semantier" if send else "collected on this machine only" if enabled else "off"
     print_success(f"Shared metrics {outcome}. Change it any time with `hermes setup telemetry`.")
     return True
 

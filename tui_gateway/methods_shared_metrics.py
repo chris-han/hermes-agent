@@ -64,6 +64,11 @@ def _(rid, params: dict) -> dict:
     from hermes_cli.observability.shared_metrics_consent import set_answer
     try:
         cfg = _load_cfg_raw()
+        from hermes_cli.observability.shared_metrics_consent import OFFER_VERSION
+        old_section = (cfg.get("telemetry") or {}).get("shared_metrics") or {}
+        if old_section.get("send") is True and old_section.get("offer_version") != OFFER_VERSION:
+            from hermes_cli.setup import _record_send_consent_change
+            _record_send_consent_change(enabled=False)
         set_answer(cfg, enabled, send)
         _save_cfg(cfg)
     except Exception as e:

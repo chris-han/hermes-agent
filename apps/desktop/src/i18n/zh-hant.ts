@@ -58,21 +58,21 @@ export const zhHantOverrides = {
     collectedUsage: '代理品質：未成功的編輯、損壞的工具呼叫、卡住的迴圈、每個任務的成本',
     collectedMachine: '機器：作業系統、記憶體範圍、GPU 類型、Hermes 版本、本機模型使用情況',
     sending:
-      '除非你選擇分享，否則統計資料只會保留在這台電腦上。分享的統計資料每天傳送給 Nous 一次，並附帶此設定檔的隨機 ID。除了一則 Hermes 已安裝的一次性記錄（僅在你同意後計入）之外，你同意之前的統計資料永遠不會被傳送。你可以隨時在設定中變更。',
+      '除非你選擇分享，否則統計資料只會保留在這台電腦上。分享的統計資料每天傳送給 Semantier 一次，並附帶此設定檔的隨機 ID。除了一則 Hermes 已安裝的一次性記錄（僅在你同意後計入）之外，你同意之前的統計資料永遠不會被傳送。你可以隨時在設定中變更。',
     readDocs: '查看完整說明',
-    share: '與 Nous 分享',
+    share: '與 Semantier 分享',
     local: '保留在這部電腦上',
     off: '不用了',
     saveFailed: '無法儲存你的選擇',
     collectLabel: '收集使用統計',
     collectDesc: '僅限計數，保留在這部電腦上。絕不包含你的訊息、檔案、路徑或錯誤文字。',
-    sendLabel: '與 Nous 分享使用統計',
+    sendLabel: '與 Semantier 分享使用統計',
     sendDesc:
-      '每天一次將統計資料連同此設定檔的隨機 ID 傳送給 Nous。除一次性的安裝記錄外，你同意之前的統計資料絕不會被傳送。需要先開啟收集。',
+      '每天一次將統計資料連同此設定檔的隨機 ID 傳送給 Semantier。除一次性的安裝記錄外，你同意之前的統計資料絕不會被傳送。需要先開啟收集。',
     unavailable: '請更新 Hermes 後端以變更此設定。',
     stripBody: '僅限計數，絕不包含你的訊息或檔案。',
-    stripReaskBody: '再次詢問：舊版本可能在你看到此問題之前就已儲存了「不用了」。',
-    stripChoices: { share: '與 Nous 分享', local: '保留在這部電腦上', off: '不用了' },
+    stripReaskBody: '請重新選擇：使用統計的接收方已由 Nous 變更為 Semantier。',
+    stripChoices: { share: '與 Semantier 分享', local: '保留在這部電腦上', off: '不用了' },
     stripDetails: '詳細資訊'
   },
   firstRun: zhHantFirstRun,
@@ -151,7 +151,7 @@ export const zhHantOverrides = {
   freeTier: {
     offer: {
       heading: '繼續使用 Semantier',
-      body: '你正在使用免費額度。繼續使用 Semantier 的話，你會開始遇到限制。登入免費的 Nous 帳戶，即可獲得更多額度。',
+      body: '你正在使用免費額度。繼續使用 Semantier 的話，你會開始遇到限制。登入免費的 Semantier 帳戶，即可獲得更多額度。',
       signIn: '登入',
       notNow: '暫不'
     }

@@ -92,7 +92,7 @@ def test_no_answer_survives_the_callers_later_config_save(monkeypatch):
     setup_telemetry(config)
     save_config(config)  # what the wizard and `hermes tools` do afterwards
 
-    assert read_raw_config()["telemetry"]["shared_metrics"] == {"enabled": False, "send": False, "offer_version": 2}
+    assert read_raw_config()["telemetry"]["shared_metrics"] == {"enabled": False, "send": False, "offer_version": 3}
 
 
 def test_chat_offer_asks_an_undecided_profile_once(monkeypatch):

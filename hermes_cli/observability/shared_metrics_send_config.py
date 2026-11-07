@@ -12,7 +12,9 @@ logger = logging.getLogger(__name__)
 #: environment variable: AGENTS.md reserves HERMES_* for secrets, and an inherited variable
 #: could silently redirect consented metrics to any host with nothing visible in config.
 #: Tests and the staging E2E write this key into a throwaway profile instead.
-DEFAULT_ENDPOINT = "https://telemetry.nousresearch.com/v1/telemetry"
+DEFAULT_ENDPOINT = "https://cloud.semantier.com/v1/telemetry"
+_OLD_NOUS_ENDPOINT = "https://telemetry.nousresearch.com/v1/telemetry"
+_SEMANTIER_OFFER_VERSION = 3
 
 _LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
 
@@ -77,6 +79,12 @@ def resolve_send_config(config: dict | None) -> SendConfig:
     if not isinstance(endpoint, str) or not endpoint.strip():
         endpoint = DEFAULT_ENDPOINT
     endpoint = endpoint.strip()
+    # Retired built-in Nous endpoint: never transmit Semantier-branded metrics to Nous.
+    # Existing users must explicitly re-consent to the changed recipient.
+    if endpoint == _OLD_NOUS_ENDPOINT:
+        endpoint = DEFAULT_ENDPOINT
+    if endpoint == DEFAULT_ENDPOINT and shared.get("offer_version") != _SEMANTIER_OFFER_VERSION:
+        send_requested = False
 
     if send_requested and not _endpoint_is_safe(endpoint):
         logger.error(
