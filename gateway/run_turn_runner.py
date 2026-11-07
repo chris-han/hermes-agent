@@ -1166,7 +1166,9 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
             runner._pre_agent_fallback_notice = None
             from gateway.session_api_turn import prepare_api_runtime
             model, runtime_kwargs = prepare_api_runtime(model, runtime_kwargs)
-            if policy and policy.model and not pending_fallback_notice:
+            from gateway.session_host_runtime import host_runtime_for
+            hosted = host_runtime_for(runner, ctx.source, ctx.session_key)
+            if policy and policy.model and not pending_fallback_notice and hosted is None:
                 # The frozen route's model, unless resolution just fell back: the fallback entry's
                 # model is the one this agent must send (#112600).
                 from gateway.session_authorities import active_authority

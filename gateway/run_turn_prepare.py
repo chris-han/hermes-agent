@@ -125,6 +125,11 @@ class GatewayTurnPrepareMixin:
 
         Priority (highest first): session ``/model`` → ``channel_overrides`` → global config/env
         (``_resolve_gateway_model(user_config)`` and default provider resolution)."""
+        from gateway.session_host_runtime import host_runtime_for
+        hosted = host_runtime_for(self, source, session_key)
+        if hosted is not None:
+            self._pre_agent_fallback_notice = None
+            return hosted
         from gateway.run import (
             _credential_pool_for_provider, _get_channel_override, _resolve_gateway_model,
             _resolve_runtime_agent_kwargs, _resolve_runtime_agent_kwargs_for_provider,

@@ -226,7 +226,7 @@ async def execute_admission(authority, ref, row):
     author = event.metadata.get('turn_author')
     author_token = admission_author.set(author if author is not None else row_turn_author(local_policy, row))
     api_token = api_execution.set(None)
-    captured = {}
+    captured = {"admission_id": row["admission_id"]}
     result_token = execution_result.set(captured)
     token = executing_admission.set(True)
     # This drain, not the handler's unwind, releases the turn's crash marker (see below).
