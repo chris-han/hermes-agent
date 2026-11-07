@@ -71,7 +71,7 @@ def resolve_postgres_scope(home):
                 if row is None and conn.execute(
                     "SELECT to_regclass('semantier_identity.winman_profile_bindings') IS NOT NULL"
                 ).fetchone()[0]:
-                    row=conn.execute("""SELECT b.tenant_id,b.workspace_id,b.source_store_id,b.schema_name
+                    row=conn.execute("""SELECT b.tenant_id,b.workspace_id,b.source_store_id,b.schema_name,b.stage_device,b.stage_inode
                         FROM semantier_identity.winman_profile_bindings b
                         JOIN semantier_identity.workspace_runtime_bindings w
                           ON w.user_id=b.user_id AND w.workspace_id=b.workspace_id
@@ -93,6 +93,14 @@ def resolve_postgres_scope(home):
             scope=SessionScope(*row[:3])
             if scope.schema!=row[3]:
                 raise ValueError('Governed PostgreSQL namespace binding conflict')
+            if len(row) > 4:
+                try:
+                    profile=Path(key)
+                    stat=profile.stat()
+                    if not profile.is_dir() or (stat.st_dev,stat.st_ino)!=(row[4],row[5]):
+                        raise ValueError('Governed Winman profile identity conflict')
+                except OSError as exc:
+                    raise ValueError('Governed Winman profile identity conflict') from exc
             return scope
     raise ValueError('Explicit governed PostgreSQL session home mapping required')
 
