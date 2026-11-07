@@ -422,16 +422,23 @@ class SessionMessagesMixin(SessionMessageCleanupMixin):
         # holding the lock for seconds (VACUUM, checkpoint) can't kill it.
         return self._execute_write(_do, patience_s=self._TRANSCRIPT_WRITE_PATIENCE_S)
 
-    def append_internal_result(self, session_id: str, content: str, *, result_id: str, result_hash: str) -> int:
-        """Project host-committed bytes once; collision checks and insert share a transaction."""
+    def append_internal_result(self, session_id: str, content: str, *, result_id: str, result_hash: str,
+                               author_bot_id: str | None = None) -> int:
+        """Project host-committed bytes once; the host must authorize any supplied Bot author."""
         if not result_id or not result_hash:
             raise ValueError('Internal result identity required')
-        msg={'content':content,'platform_message_id':result_id,'display_metadata':{'internal_result_hash':result_hash}}
+        if author_bot_id is not None and (not isinstance(author_bot_id, str) or not author_bot_id.strip()):
+            raise ValueError('Invalid internal result Bot author')
+        metadata={'internal_result_hash':result_hash}
+        if author_bot_id is not None: metadata['author_bot_id']=author_bot_id
+        msg={'content':content,'platform_message_id':result_id,'display_metadata':metadata}
         params=self._message_row_params(session_id,'assistant',msg,None,time.time(),keep_reasoning=True)
         def project(conn):
             old=conn.execute('SELECT id,content,display_metadata FROM messages WHERE session_id=? AND platform_message_id=?',(session_id,result_id)).fetchone()
             if old:
-                if old['content']!=content or json.loads(old['display_metadata'] or '{}').get('internal_result_hash')!=result_hash:
+                old_metadata=json.loads(old['display_metadata'] or '{}')
+                if (old['content']!=content or old_metadata.get('internal_result_hash')!=result_hash
+                        or old_metadata.get('author_bot_id')!=author_bot_id):
                     raise ValueError('INTERNAL_RESULT_IDENTITY_CONFLICT')
                 return old['id']
             self._check_transcript_write_guards(conn,session_id,None,reject_active_turn_lease=True)
