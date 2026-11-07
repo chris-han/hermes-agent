@@ -214,7 +214,13 @@ function OAuthPicker({
       <LocalEndpointRow onOpen={onWantLocalEndpoint} />
       {other.length > 0 && (
         <>
-          <Button aria-expanded={showOther} onClick={() => setShowOther(!showOther)} size="inline" type="button" variant="textStrong">
+          <Button
+            aria-expanded={showOther}
+            onClick={() => setShowOther(!showOther)}
+            size="inline"
+            type="button"
+            variant="textStrong"
+          >
             {showOther ? t.onboarding.collapse : t.onboarding.otherProviders}
           </Button>
           {showOther && other.map(provider => <ProviderRow key={provider.id} onSelect={select} provider={provider} />)}

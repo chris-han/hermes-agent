@@ -29,11 +29,17 @@ describe('ThemeProvider ← backend skin sync', () => {
   it('keeps the default action fill yellow with dark ink in both modes', () => {
     let theme!: ReturnType<typeof useTheme>
 
-    function Probe() { theme = useTheme();
+    function Probe() {
+      theme = useTheme()
 
- return null }
+      return null
+    }
 
-    render(<ThemeProvider><Probe /></ThemeProvider>)
+    render(
+      <ThemeProvider>
+        <Probe />
+      </ThemeProvider>
+    )
 
     for (const mode of ['light', 'dark'] as const) {
       act(() => theme.setMode(mode))

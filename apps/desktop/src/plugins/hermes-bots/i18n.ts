@@ -1455,7 +1455,8 @@ const zhHant: BotsMessages = {
     statusUnknown: '狀態未知',
     unavailable: '不可用',
     retryNow: '立即重試',
-    rosterUnavailable: reason => `無法取得名單：${reason}。如果閘道早於 profiles.list，請更新 Semantier 並重新啟動閘道。`,
+    rosterUnavailable: reason =>
+      `無法取得名單：${reason}。如果閘道早於 profiles.list，請更新 Semantier 並重新啟動閘道。`,
     waitingForGateway: '正在等待閘道連線…（遠端閘道可能需要幾秒；會自動重試）'
   },
   sections: {

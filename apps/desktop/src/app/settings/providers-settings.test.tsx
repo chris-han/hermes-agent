@@ -454,7 +454,9 @@ describe('ProvidersSettings', () => {
     const onViewChange = vi.fn()
     render(<ProvidersSettings onClose={vi.fn()} onViewChange={onViewChange} view="accounts" />)
     const endpoint = await screen.findByText('Custom endpoint')
-    expect(screen.getByText('Semantier Cloud').compareDocumentPosition(endpoint) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(
+      screen.getByText('Semantier Cloud').compareDocumentPosition(endpoint) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
     expect(screen.queryByText('Run models locally')).toBeNull()
     fireEvent.click(screen.getByText('Other providers'))
     fireEvent.click(screen.getByText('Nous Portal'))
@@ -466,10 +468,14 @@ describe('ProvidersSettings', () => {
   })
 
   it('keeps a connected Semantier Cloud account above Custom endpoint', async () => {
-    listOAuthProviders.mockResolvedValue({ providers: [provider('semantier-cloud', true, { name: 'Semantier Cloud' })] })
+    listOAuthProviders.mockResolvedValue({
+      providers: [provider('semantier-cloud', true, { name: 'Semantier Cloud' })]
+    })
     render(<ProvidersSettings onClose={vi.fn()} onViewChange={vi.fn()} view="accounts" />)
     const endpoint = await screen.findByText('Custom endpoint')
-    expect(screen.getByText('Semantier Cloud').compareDocumentPosition(endpoint) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(
+      screen.getByText('Semantier Cloud').compareDocumentPosition(endpoint) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
     expect(screen.getAllByText('Connected').length).toBeGreaterThan(0)
   })
 

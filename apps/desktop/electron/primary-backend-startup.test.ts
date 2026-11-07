@@ -274,8 +274,12 @@ test('a null registry primary classifies the following runtime failure as local'
 
   const options = startupOptions({
     selectRegistryPrimary: async () => null,
-    onLocalStart: () => { target = 'local' },
-    prepareLocalBackend: async () => { throw failure }
+    onLocalStart: () => {
+      target = 'local'
+    },
+    prepareLocalBackend: async () => {
+      throw failure
+    }
   })
 
   await assert.rejects(runPrimaryBackendStartup(options), failure)

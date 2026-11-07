@@ -30,9 +30,9 @@ export interface SemantierBillingCopy {
 
 export const semantierBillingCopy: Record<string, SemantierBillingCopy> = {
   en: {
-    lifetime: "Lifetime",
-    balance: "Credit balance",
-    held: "Reserved credit",
+    lifetime: 'Lifetime',
+    balance: 'Credit balance',
+    held: 'Reserved credit',
     estimated: 'Estimated',
     complete: 'Complete',
     unpriced: 'Unpriced',
@@ -58,9 +58,9 @@ export const semantierBillingCopy: Record<string, SemantierBillingCopy> = {
     account: 'Billing account'
   },
   zh: {
-    lifetime: "累计",
-    balance: "额度余额",
-    held: "预留额度",
+    lifetime: '累计',
+    balance: '额度余额',
+    held: '预留额度',
     estimated: '估算',
     complete: '完整',
     unpriced: '未定价',
@@ -86,9 +86,9 @@ export const semantierBillingCopy: Record<string, SemantierBillingCopy> = {
     account: '计费账户'
   },
   'zh-hant': {
-    lifetime: "累計",
-    balance: "額度餘額",
-    held: "預留額度",
+    lifetime: '累計',
+    balance: '額度餘額',
+    held: '預留額度',
     estimated: '估算',
     complete: '完整',
     unpriced: '未定價',
@@ -114,9 +114,9 @@ export const semantierBillingCopy: Record<string, SemantierBillingCopy> = {
     account: '計費帳戶'
   },
   ja: {
-    lifetime: "累計",
-    balance: "クレジット残高",
-    held: "予約済みクレジット",
+    lifetime: '累計',
+    balance: 'クレジット残高',
+    held: '予約済みクレジット',
     estimated: '推定',
     complete: '完了',
     unpriced: '価格未設定',
@@ -142,9 +142,9 @@ export const semantierBillingCopy: Record<string, SemantierBillingCopy> = {
     account: '請求アカウント'
   },
   fr: {
-    lifetime: "Cumul",
-    balance: "Solde de crédits",
-    held: "Crédit réservé",
+    lifetime: 'Cumul',
+    balance: 'Solde de crédits',
+    held: 'Crédit réservé',
     estimated: 'Estimé',
     complete: 'Complet',
     unpriced: 'Sans tarif',
@@ -170,9 +170,9 @@ export const semantierBillingCopy: Record<string, SemantierBillingCopy> = {
     account: 'Compte de facturation'
   },
   de: {
-    lifetime: "Gesamtzeit",
-    balance: "Guthabenstand",
-    held: "Reserviertes Guthaben",
+    lifetime: 'Gesamtzeit',
+    balance: 'Guthabenstand',
+    held: 'Reserviertes Guthaben',
     estimated: 'Geschätzt',
     complete: 'Vollständig',
     unpriced: 'Ohne Preis',
@@ -198,9 +198,9 @@ export const semantierBillingCopy: Record<string, SemantierBillingCopy> = {
     account: 'Abrechnungskonto'
   },
   es: {
-    lifetime: "Acumulado",
-    balance: "Saldo de crédito",
-    held: "Crédito reservado",
+    lifetime: 'Acumulado',
+    balance: 'Saldo de crédito',
+    held: 'Crédito reservado',
     estimated: 'Estimado',
     complete: 'Completo',
     unpriced: 'Sin precio',
@@ -226,9 +226,9 @@ export const semantierBillingCopy: Record<string, SemantierBillingCopy> = {
     account: 'Cuenta de facturación'
   },
   ru: {
-    lifetime: "За всё время",
-    balance: "Баланс кредитов",
-    held: "Зарезервированный кредит",
+    lifetime: 'За всё время',
+    balance: 'Баланс кредитов',
+    held: 'Зарезервированный кредит',
     estimated: 'Оценка',
     complete: 'Полные данные',
     unpriced: 'Без цены',
@@ -254,9 +254,9 @@ export const semantierBillingCopy: Record<string, SemantierBillingCopy> = {
     account: 'Платёжный аккаунт'
   },
   ar: {
-    lifetime: "إجمالي المدة",
-    balance: "رصيد الائتمان",
-    held: "الائتمان المحجوز",
+    lifetime: 'إجمالي المدة',
+    balance: 'رصيد الائتمان',
+    held: 'الائتمان المحجوز',
     estimated: 'تقديري',
     complete: 'مكتمل',
     unpriced: 'بلا تسعير',

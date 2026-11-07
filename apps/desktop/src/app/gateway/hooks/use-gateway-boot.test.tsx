@@ -448,9 +448,13 @@ describe('default-route profile adoption', () => {
     const config = deferred<void>()
     render(<Harness refreshHermesConfig={() => config.promise} />)
     await flushAsync()
-    expect(refreshModelsOnConnectionReady).toHaveBeenCalledWith('primary-vps', 'default', expect.objectContaining({
-      connectionId: 'primary-vps'
-    }))
+    expect(refreshModelsOnConnectionReady).toHaveBeenCalledWith(
+      'primary-vps',
+      'default',
+      expect.objectContaining({
+        connectionId: 'primary-vps'
+      })
+    )
     expect($desktopBoot.get().running).toBe(true)
     config.resolve()
     await flushAsync()

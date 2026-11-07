@@ -137,8 +137,9 @@ if($info -and $info.Uri){@{supported=$false;reason='appinstaller-association-mig
 
   const value: { supported?: boolean; reason?: string } = JSON.parse(result.stdout)
 
-  if (typeof value.supported !== 'boolean' || !value.reason || !/^[a-z-]+$/.test(value.reason))
-    {throw new Error('Invalid native capability observation')}
+  if (typeof value.supported !== 'boolean' || !value.reason || !/^[a-z-]+$/.test(value.reason)) {
+    throw new Error('Invalid native capability observation')
+  }
 
   return { supported: value.supported, reason: value.reason }
 }
@@ -170,12 +171,15 @@ export function createNativeUriAppInstallerStrategy(
         !installed.packageFamilyName ||
         !installed.applicationId ||
         !target.package.publisher
-      )
-        {throw new Error('Native package identity unavailable')}
+      ) {
+        throw new Error('Native package identity unavailable')
+      }
 
       const eligible = await (context.eligibility ?? inspectNativePackageUriEligibility)(installed.packageFullName)
 
-      if (!eligible.supported) {throw new Error(`Native update unavailable: ${eligible.reason}`)}
+      if (!eligible.supported) {
+        throw new Error(`Native update unavailable: ${eligible.reason}`)
+      }
 
       const graph = decodeNativePackageGraph(
         JSON.stringify(target.nativeGraph),
@@ -210,7 +214,10 @@ export function createNativeUriAppInstallerStrategy(
               applicationId: installed.applicationId!,
               executable: installed.executable,
               userDataDirectory: context.app.getPath('userData'),
-              journalDirectory: path.join(updates, `native-${target.manifestSha256}-${randomUUID().replaceAll('-', '')}`)
+              journalDirectory: path.join(
+                updates,
+                `native-${target.manifestSha256}-${randomUUID().replaceAll('-', '')}`
+              )
             }
           )
       })

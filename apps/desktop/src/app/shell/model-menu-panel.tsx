@@ -70,15 +70,21 @@ export function ModelMenuPanel({ onFollowDefaultModel, ...props }: ModelMenuPane
       // a custom slug the row lacks is still what the user selected.
       queryClient.setQueryData<ModelOptionsResult>(queryKey, next)
       void queryClient.invalidateQueries({
-        predicate: query => query.queryKey[0] === 'model-options' && query.queryKey[1] === profile &&
+        predicate: query =>
+          query.queryKey[0] === 'model-options' &&
+          query.queryKey[1] === profile &&
           query.queryKey[2] !== (activeSessionId || 'global') &&
-          query.queryKey[3] === 'owner' && query.queryKey[4] === ownerKey
+          query.queryKey[3] === 'owner' &&
+          query.queryKey[4] === ownerKey
       })
     } catch {
       // Reload this source's snapshot so a failed refresh can surface its stale marker.
       void queryClient.invalidateQueries({
-        predicate: query => query.queryKey[0] === 'model-options' && query.queryKey[1] === profile &&
-          query.queryKey[3] === 'owner' && query.queryKey[4] === ownerKey
+        predicate: query =>
+          query.queryKey[0] === 'model-options' &&
+          query.queryKey[1] === profile &&
+          query.queryKey[3] === 'owner' &&
+          query.queryKey[4] === ownerKey
       })
     } finally {
       setRefreshing(false)

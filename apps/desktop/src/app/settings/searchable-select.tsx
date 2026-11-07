@@ -122,7 +122,15 @@ export function SearchableSelect({
           "Africa/A…". The popover keeps its own width and only grows to cover a
           trigger wider than that. */}
       <PopoverContent align="start" className="min-w-(--radix-popover-trigger-width)" variant="menu">
-        <Command filter={(option, search, keywords) => Math.max(rankSearchOption(option, search), ...(keywords ?? []).map(keyword => rankSearchOption(keyword, search)))} variant="menu">
+        <Command
+          filter={(option, search, keywords) =>
+            Math.max(
+              rankSearchOption(option, search),
+              ...(keywords ?? []).map(keyword => rankSearchOption(keyword, search))
+            )
+          }
+          variant="menu"
+        >
           <CommandInput autoFocus placeholder={placeholder} />
           <CommandList>
             <CommandEmpty>{emptyMessage}</CommandEmpty>
@@ -134,7 +142,13 @@ export function SearchableSelect({
                 </CommandItem>
               )}
               {normalizedOptions.map(option => (
-                <CommandItem disabled={option.disabled} key={option.value} keywords={[option.label, ...(option.keywords ?? [])]} onSelect={() => handleSelect(option.value)} value={option.value}>
+                <CommandItem
+                  disabled={option.disabled}
+                  key={option.value}
+                  keywords={[option.label, ...(option.keywords ?? [])]}
+                  onSelect={() => handleSelect(option.value)}
+                  value={option.value}
+                >
                   <span className="truncate">{option.label}</span>
                   <CommandItemCheck checked={option.value === value} />
                 </CommandItem>

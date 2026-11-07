@@ -28,8 +28,7 @@ export const esSharedMetrics = {
     'Envía las estadísticas a Semantier una vez al día con un ID aleatorio para este perfil. Salvo el aviso único de instalación, nunca se envían estadísticas de antes de que aceptaras. Requiere la recopilación activada.',
   unavailable: 'Actualiza el backend de Hermes para cambiar este ajuste.',
   stripBody: 'Solo recuentos. Nunca tus mensajes ni archivos.',
-  stripReaskBody:
-    'Elige de nuevo: las estadísticas ahora se envían a Semantier en lugar de Nous.',
+  stripReaskBody: 'Elige de nuevo: las estadísticas ahora se envían a Semantier en lugar de Nous.',
   stripChoices: { share: 'Compartir con Semantier', local: 'Guardar en este equipo', off: 'No, gracias' },
   stripDetails: 'Detalles'
 }

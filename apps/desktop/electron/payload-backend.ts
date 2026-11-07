@@ -67,7 +67,6 @@ export function installIdForRoot(root: string, canonicalize: (p: string) => stri
   return createHash('sha256').update(canonicalize(root), 'utf8').digest('hex').slice(0, 16)
 }
 
-
 /**
  * The bundled Python payload for a strategy whose update check runs inside
  * it. A stamp that names such a mechanism without a payload is a broken

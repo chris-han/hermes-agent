@@ -134,7 +134,11 @@ export function ConfirmDialog({
         onKeyDown={event => {
           // Enter/Space confirms from the primary action or dialog body.
           // Other focused buttons retain their native keyboard action.
-          if ((event.key === 'Enter' || event.key === ' ') && !busy && !(event.target instanceof HTMLButtonElement && event.target !== confirmRef.current)) {
+          if (
+            (event.key === 'Enter' || event.key === ' ') &&
+            !busy &&
+            !(event.target instanceof HTMLButtonElement && event.target !== confirmRef.current)
+          ) {
             event.preventDefault()
             void run()
           }

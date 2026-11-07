@@ -40,6 +40,7 @@ export interface PluginSearchEntry {
 export function useSettingsSearchCatalog(enabled: boolean) {
   const { t } = useI18n()
   const configQuery = useHermesConfigRecord()
+
   const schemaQuery = useQuery({
     queryKey: ['hermes-config-schema'],
     queryFn: () => getHermesConfigSchema(),

@@ -8,7 +8,9 @@ const route = { connectionId: null, profile: 'semantier-local' }
 
 describe('managed desktop bot roster', () => {
   it('shows the managed bot once, omits the duplicate root, and preserves raw owner rows', () => {
-    const root = local('default'), managed = local('semantier-local'), other = local('scout')
+    const root = local('default'),
+      managed = local('semantier-local'),
+      other = local('scout')
     const source = [root, other, managed]
     const visible = desktopBotRoster(source, route)
     expect(visible).toEqual([other, managed])
@@ -35,7 +37,10 @@ describe('managed desktop bot roster', () => {
   it('does not suppress a real root on a stale or ghost-only managed roster', () => {
     const root = local('default')
 
-    for (const managed of [{ ...local('semantier-local'), ghost: true }, { ...local('semantier-local'), retained: true }]) {
+    for (const managed of [
+      { ...local('semantier-local'), ghost: true },
+      { ...local('semantier-local'), retained: true }
+    ]) {
       const source = [root, managed]
       expect(desktopBotRoster(source, route)).toBe(source)
     }

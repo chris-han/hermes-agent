@@ -246,13 +246,16 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
           ? ce.endpointReachableTransport(response.transport_checked)
           : ce.endpointReachable
 
-        const success = response.models.length ? ce.endpointReachableModels(reachable, response.models.length) : reachable
+        const success = response.models.length
+          ? ce.endpointReachableModels(reachable, response.models.length)
+          : reachable
 
-        const suggestion = resolvedBaseUrl && resolvedBaseUrl !== form.baseUrl.trim().replace(/\/+$/, '')
-          ? `${ce.fields.endpointUrl}: ${resolvedBaseUrl}` : ''
+        const suggestion =
+          resolvedBaseUrl && resolvedBaseUrl !== form.baseUrl.trim().replace(/\/+$/, '')
+            ? `${ce.fields.endpointUrl}: ${resolvedBaseUrl}`
+            : ''
 
         setValidation([success, response.message, serviceCopy.coverage, suggestion].filter(Boolean).join(' '))
-
       } else {
         setValidation(response.message || ce.endpointValidationFailed)
       }
@@ -342,8 +345,8 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
   const allModelOptions = Array.from(new Set([...discoveredModels, form.model].filter(Boolean)))
   const savedKey = endpoints.some(endpoint => endpoint.id === form.id && endpoint.has_api_key)
 
-  const canSave = form.name.trim() && form.baseUrl.trim() && form.model.trim()
-    && (form.noApiKey || form.apiKey.trim() || savedKey)
+  const canSave =
+    form.name.trim() && form.baseUrl.trim() && form.model.trim() && (form.noApiKey || form.apiKey.trim() || savedKey)
 
   return (
     <SettingsContent>
@@ -465,7 +468,11 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
                 {ce.test}
               </Button>
             </div>
-            {validation && <p aria-live="polite" className="text-xs text-(--ui-text-secondary)" role="status">{validation}</p>}
+            {validation && (
+              <p aria-live="polite" className="text-xs text-(--ui-text-secondary)" role="status">
+                {validation}
+              </p>
+            )}
             <fieldset className="grid min-w-0 gap-1.5 text-xs text-muted-foreground">
               <legend className="mb-1.5">{ce.apiMode}</legend>
               <SegmentedControl
@@ -497,7 +504,12 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
             </div>
             <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
               <label className="flex items-center gap-2">
-                <Checkbox checked={form.noApiKey} onCheckedChange={checked => setForm(current => ({ ...current, noApiKey: checked === true, apiKey: '' }))} />
+                <Checkbox
+                  checked={form.noApiKey}
+                  onCheckedChange={checked =>
+                    setForm(current => ({ ...current, noApiKey: checked === true, apiKey: '' }))
+                  }
+                />
                 {serviceCopy.noKey}
               </label>
               <label className="flex items-center gap-2">
@@ -520,11 +532,16 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
                 {saving ? <Loader2 className="animate-spin" /> : <Save />}
                 {form.makeDefault ? serviceCopy.saveUse : ce.save}
               </Button>
-              <Button onClick={() => {
-                const previous = endpoints.find(endpoint => endpoint.id === form.id)
-                setForm(previous ? formFromEndpoint(previous) : EMPTY_FORM)
-                setValidation(null)
-              }} variant="text">{serviceCopy.cancel}</Button>
+              <Button
+                onClick={() => {
+                  const previous = endpoints.find(endpoint => endpoint.id === form.id)
+                  setForm(previous ? formFromEndpoint(previous) : EMPTY_FORM)
+                  setValidation(null)
+                }}
+                variant="text"
+              >
+                {serviceCopy.cancel}
+              </Button>
               <Button
                 className={cn(!form.id && 'hidden')}
                 onClick={() => {

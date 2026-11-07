@@ -12,33 +12,38 @@ function WindowCloseDialog({ request, onDismiss }: { request: WindowCloseRequest
   const answered = useRef(false)
   const answer = window.hermesDesktop?.minimizeToTray?.answerClose
 
-  return <ConfirmDialog
-    confirmLabel={copy.keep}
-    description={`${copy.question}\n\n${copy.detail}`}
-    onClose={() => {
-      if (!answered.current) {
+  return (
+    <ConfirmDialog
+      confirmLabel={copy.keep}
+      description={`${copy.question}\n\n${copy.detail}`}
+      onClose={() => {
+        if (!answered.current) {
+          answered.current = true
+          void answer?.(request.id, 'cancel').catch(() => undefined)
+        }
+
+        onDismiss(request.id)
+      }}
+      onConfirm={async () => {
+        const result = await answer?.(request.id, 'background')
+
+        if (!result?.ok) {
+          throw new Error(result?.reason === 'background-unavailable' ? copy.backgroundUnavailable : copy.unavailable)
+        }
+
         answered.current = true
-        void answer?.(request.id, 'cancel').catch(() => undefined)
-      }
-
-      onDismiss(request.id)
-    }}
-    onConfirm={async () => {
-      const result = await answer?.(request.id, 'background')
-
-      if (!result?.ok) {
-        throw new Error(result?.reason === 'background-unavailable' ? copy.backgroundUnavailable : copy.unavailable)
-      }
-
-      answered.current = true
-    }}
-    open
-    secondaryAction={{ label: copy.quit, onClick: () => {
-      answered.current = true
-      void answer?.(request.id, 'quit').catch(() => undefined)
-    } }}
-    title={copy.title}
-  />
+      }}
+      open
+      secondaryAction={{
+        label: copy.quit,
+        onClick: () => {
+          answered.current = true
+          void answer?.(request.id, 'quit').catch(() => undefined)
+        }
+      }}
+      title={copy.title}
+    />
+  )
 }
 
 /** Main owns the lifecycle request. Subscribe before reading its snapshot so a
@@ -49,23 +54,41 @@ export function WindowCloseChoiceHost() {
   useEffect(() => {
     const api = window.hermesDesktop?.minimizeToTray
 
-    if (!api?.onCloseRequested || !api.getCloseRequest || !api.answerClose) { return }
+    if (!api?.onCloseRequested || !api.getCloseRequest || !api.answerClose) {
+      return
+    }
     let live = true
     let revision = 0
 
     const stop = api.onCloseRequested(next => {
       revision += 1
 
-      if (live) { setRequest(next) }
+      if (live) {
+        setRequest(next)
+      }
     })
 
     const readRevision = revision
-    void api.getCloseRequest().then(next => {
-      if (live && revision === readRevision) { setRequest(next) }
-    }).catch(() => undefined)
+    void api
+      .getCloseRequest()
+      .then(next => {
+        if (live && revision === readRevision) {
+          setRequest(next)
+        }
+      })
+      .catch(() => undefined)
 
-    return () => { live = false; stop() }
+    return () => {
+      live = false
+      stop()
+    }
   }, [])
 
-  return request ? <WindowCloseDialog key={request.id} onDismiss={id => setRequest(current => current?.id === id ? null : current)} request={request} /> : null
+  return request ? (
+    <WindowCloseDialog
+      key={request.id}
+      onDismiss={id => setRequest(current => (current?.id === id ? null : current))}
+      request={request}
+    />
+  ) : null
 }

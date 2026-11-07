@@ -18,7 +18,9 @@ export function useBillingScope(): string {
     descriptors.set(connection, ++nextDescriptorId)
   }
 
-  if (gateway && !sockets.has(gateway)) {sockets.set(gateway, ++nextSocketId)}
+  if (gateway && !sockets.has(gateway)) {
+    sockets.set(gateway, ++nextSocketId)
+  }
 
   return `${gateway ? sockets.get(gateway) : 'disconnected'}:${profile}:${connection ? descriptors.get(connection) : 'unbound'}`
 }

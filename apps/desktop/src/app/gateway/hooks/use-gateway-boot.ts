@@ -1044,6 +1044,7 @@ export function useGatewayBoot({
         if (normalizeProfileKey($activeGatewayProfile.get()) !== key) {
           $activeGatewayProfile.set(key)
         }
+
         if (bootCompleted && activeGateway()?.connectionState === 'open') {
           void refreshModelsOnConnectionReady(activeGatewayConnectionId(), key, $connection.get())
         }

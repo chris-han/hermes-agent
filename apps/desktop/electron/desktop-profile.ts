@@ -220,5 +220,14 @@ export function createDesktopProfilePreferences(
     }
   }
 
-  return { afterProfileRequest, connectionRemoved, getDefault, profileChanged, readActive, readStartup, remember, setDefault }
+  return {
+    afterProfileRequest,
+    connectionRemoved,
+    getDefault,
+    profileChanged,
+    readActive,
+    readStartup,
+    remember,
+    setDefault
+  }
 }

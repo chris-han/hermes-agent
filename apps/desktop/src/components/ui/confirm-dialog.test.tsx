@@ -58,5 +58,4 @@ describe('ConfirmDialog secondary action', () => {
       expect(onConfirm).not.toHaveBeenCalled()
     }
   })
-
 })

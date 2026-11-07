@@ -70,7 +70,9 @@ describe('Edit Models reset', () => {
 
   it('labels a retained verified list when refresh failed', async () => {
     vi.mocked(requestModelOptions).mockResolvedValue({
-      providers: [{ name: 'Lab', slug: 'lab', models: ['live-model'], discovery_state: 'stale', discovery_source_id: 'opaque' }],
+      providers: [
+        { name: 'Lab', slug: 'lab', models: ['live-model'], discovery_state: 'stale', discovery_source_id: 'opaque' }
+      ],
       discovery_contract: 'provider-query-v1'
     })
     renderDialog()

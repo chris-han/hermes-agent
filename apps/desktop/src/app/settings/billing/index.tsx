@@ -506,10 +506,12 @@ function BillingSettingsContent({
   const semantierProps = semantierBillingProps(billingResult)
 
   if (semantierProps) {
-    return <SettingsContent>
-      <BillingHeader fixtureName={fixtureName} onFixtureChange={onFixtureChange} />
-      <SemantierBilling {...semantierProps} />
-    </SettingsContent>
+    return (
+      <SettingsContent>
+        <BillingHeader fixtureName={fixtureName} onFixtureChange={onFixtureChange} />
+        <SemantierBilling {...semantierProps} />
+      </SettingsContent>
+    )
   }
 
   const view = deriveBillingView(billingResult, subscriptionResult, b)
