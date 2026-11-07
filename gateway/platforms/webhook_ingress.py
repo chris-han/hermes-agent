@@ -128,13 +128,16 @@ async def recover_webhook_finalizations(authority):
     from gateway.session_contract import SessionRef
     from hermes_state_runtime import RuntimeStoreError, get_session_admission
 
-    rows = authority.db._read_all("""
+    is_postgres = getattr(authority.db, 'backend', None) == 'postgresql'
+    platform_expr = "(a.payload_json::jsonb #>> '{native_text_v1,source,platform}')" if is_postgres else "json_extract(a.payload_json, '$.native_text_v1.source.platform')"
+    automation_expr = "(a.payload_json::jsonb #>> '{native_text_v1,automation}')" if is_postgres else "json_extract(a.payload_json, '$.native_text_v1.automation')"
+    rows = authority.db._read_all(f"""
         SELECT a.admission_id FROM sessions AS s
         JOIN session_admissions AS a ON a.target_session_id=s.id
         WHERE s.source='webhook' AND s.ended_at IS NULL
           AND a.status='terminal' AND a.generation IS NOT NULL
-          AND json_extract(a.payload_json, '$.native_text_v1.source.platform')='webhook'
-          AND json_extract(a.payload_json, '$.native_text_v1.automation') IS NULL
+          AND {platform_expr}='webhook'
+          AND {automation_expr} IS NULL
         """)
     results = {}
     for candidate in rows:
