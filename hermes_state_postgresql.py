@@ -451,25 +451,24 @@ class PostgreSQLSessionDB(PostgreSQLMaintenanceMixin,PostgreSQLMutationsMixin,Po
             self._guard_on_conn(conn,session_id,turn_lease_holder=turn,compression_lock_holder=compression)
             return self._append_on_conn(conn,session_id,[message])[0]
 
-    def append_internal_result(self,session_id,content,*,result_id,result_hash,author_bot_id=None):
+    def append_internal_result(self,session_id,content,*,result_id,result_hash,author_bot_id=None,result_metadata=None):
         """Project host-committed bytes once; the host must authorize any supplied Bot author."""
         if not result_id or not result_hash:
             raise ValueError('Internal result identity required')
         if author_bot_id is not None and (not isinstance(author_bot_id,str) or not author_bot_id.strip()):
             raise ValueError('Invalid internal result Bot author')
+        from hermes_state_messages import internal_result_metadata
+        metadata=internal_result_metadata(result_hash, author_bot_id, result_metadata)
         with self._transaction() as conn:
             self._lock_conversation(conn,session_id)
             old=conn.execute(sql.SQL('SELECT * FROM {} WHERE session_id=%s AND platform_message_id=%s').format(self.table('messages')),(session_id,result_id)).fetchone()
             if old:
                 decoded=self._decode_message(old)
-                metadata=decoded.get('display_metadata') or {}
-                if (decoded['content']!=content or metadata.get('internal_result_hash')!=result_hash
-                        or metadata.get('author_bot_id')!=author_bot_id):
+                old_metadata=decoded.get('display_metadata') or {}
+                if decoded['content']!=content or old_metadata!=metadata:
                     raise ValueError('INTERNAL_RESULT_IDENTITY_CONFLICT')
                 return old['id']
             self._guard_on_conn(conn,session_id)
-            metadata={'internal_result_hash':result_hash}
-            if author_bot_id is not None: metadata['author_bot_id']=author_bot_id
             message={'role':'assistant','content':content,'platform_message_id':result_id,'display_metadata':metadata}
             return self._append_on_conn(conn,session_id,[message])[0]
 

@@ -29,6 +29,19 @@ from hermes_state_identity import (
 
 logger = logging.getLogger("hermes_state")  # caplog tests pin the origin module's name
 
+
+def internal_result_metadata(result_hash, author_bot_id, result_metadata=None):
+    """Host-supplied presentation references cannot replace result/author identity."""
+    if result_metadata is not None and not isinstance(result_metadata, dict):
+        raise ValueError('Internal result metadata must be an object')
+    metadata = dict(result_metadata or {})
+    if {'internal_result_hash', 'author_bot_id'} & metadata.keys():
+        raise ValueError('Reserved internal result metadata')
+    metadata['internal_result_hash'] = result_hash
+    if author_bot_id is not None:
+        metadata['author_bot_id'] = author_bot_id
+    return metadata
+
 # One INSERT shape for every message writer (append, batch, replace, compact, import).
 _INSERT_MESSAGE_SQL = """INSERT INTO messages (session_id, role, content, tool_call_id,
                    tool_calls, tool_name, effect_disposition, timestamp, token_count, finish_reason,
@@ -423,22 +436,20 @@ class SessionMessagesMixin(SessionMessageCleanupMixin):
         return self._execute_write(_do, patience_s=self._TRANSCRIPT_WRITE_PATIENCE_S)
 
     def append_internal_result(self, session_id: str, content: str, *, result_id: str, result_hash: str,
-                               author_bot_id: str | None = None) -> int:
+                               author_bot_id: str | None = None, result_metadata: dict | None = None) -> int:
         """Project host-committed bytes once; the host must authorize any supplied Bot author."""
         if not result_id or not result_hash:
             raise ValueError('Internal result identity required')
         if author_bot_id is not None and (not isinstance(author_bot_id, str) or not author_bot_id.strip()):
             raise ValueError('Invalid internal result Bot author')
-        metadata={'internal_result_hash':result_hash}
-        if author_bot_id is not None: metadata['author_bot_id']=author_bot_id
+        metadata=internal_result_metadata(result_hash, author_bot_id, result_metadata)
         msg={'content':content,'platform_message_id':result_id,'display_metadata':metadata}
         params=self._message_row_params(session_id,'assistant',msg,None,time.time(),keep_reasoning=True)
         def project(conn):
             old=conn.execute('SELECT id,content,display_metadata FROM messages WHERE session_id=? AND platform_message_id=?',(session_id,result_id)).fetchone()
             if old:
                 old_metadata=json.loads(old['display_metadata'] or '{}')
-                if (old['content']!=content or old_metadata.get('internal_result_hash')!=result_hash
-                        or old_metadata.get('author_bot_id')!=author_bot_id):
+                if old['content']!=content or old_metadata!=metadata:
                     raise ValueError('INTERNAL_RESULT_IDENTITY_CONFLICT')
                 return old['id']
             self._check_transcript_write_guards(conn,session_id,None,reject_active_turn_lease=True)
