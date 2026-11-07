@@ -42,6 +42,7 @@ import { catalogProviderMatches, modelOptionsQueryKey, providerSelectableModels,
 import { displayModelName, modelDisplayParts } from '@/lib/model-status-label'
 import { accountResetMs, formatReset, modelResetMs } from '@/lib/provider-limit'
 import { reasoningEffortLabel } from '@/lib/reasoning-effort'
+import { refreshModelsOnConnectionReady } from '@/lib/startup-model-discovery'
 import { foldIncludes, normalize } from '@/lib/text'
 import { cn } from '@/lib/utils'
 import { addCustomModel, customModelCandidate } from '@/store/custom-models'
@@ -223,6 +224,9 @@ export function ModelCatalogMenu({
   const copyPicker = t.modelPicker
   const connection = useStore($connection)
   const ownerKey = modelDiscoveryOwnerKey(ownerConnectionId, connection)
+  useEffect(() => {
+    if (ownerKey) {void refreshModelsOnConnectionReady(ownerConnectionId ?? connection?.connectionId ?? null, profile, connection)}
+  }, [connection, ownerConnectionId, ownerKey, profile])
   const closeMenu = useContext(ModelMenuCloseContext)
   const [search, setSearch] = useState<string>('')
   // "Add custom model…" turns the search box into slug entry: the catalog

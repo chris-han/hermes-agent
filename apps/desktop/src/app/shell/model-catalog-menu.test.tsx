@@ -17,6 +17,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { DropdownMenu, DropdownMenuContent } from '@/components/ui/dropdown-menu'
 import { registry } from '@/contrib/registry'
 import { queryClient } from '@/lib/query-client'
+import { refreshModelsOnConnectionReady } from '@/lib/startup-model-discovery'
 import { $favoriteModels, favoriteModelKey, toggleFavoriteModel } from '@/store/favorite-models'
 import { setShowModelPricing } from '@/store/model-pricing'
 import {
@@ -40,6 +41,8 @@ beforeAll(() => {
 
 const getGlobalModelOptions = vi.fn()
 const closeMenu = vi.fn()
+
+vi.mock('@/lib/startup-model-discovery', () => ({ refreshModelsOnConnectionReady: vi.fn(async () => undefined) }))
 
 vi.mock('@/hermes', () => ({
   getGlobalModelOptions: (...args: unknown[]) => getGlobalModelOptions(...args),
@@ -212,6 +215,12 @@ function renderMenu(current: Partial<ModelMenuController['current']> = {}) {
 // the kanban board would end up disagreeing about what "my models" means —
 // which is exactly the drift extracting this component was meant to prevent.
 describe('the catalog owns model curation', () => {
+  it('starts discovery for the catalog owner when a profile route is still waking', async () => {
+    renderMenu()
+
+    await waitFor(() => expect(refreshModelsOnConnectionReady).toHaveBeenCalledWith('test', 'default', null))
+  })
+
   it('does not insert the saved current model into the provider result list', async () => {
     getGlobalModelOptions.mockResolvedValue({
       discovery_contract: 'provider-query-v1',
