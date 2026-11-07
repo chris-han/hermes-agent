@@ -184,17 +184,29 @@ export async function fetchBillingWithRetry(
   let result = await fetchState(signal)
 
   for (const delay of [250, 750]) {
-    if (signal.aborted || result.ok || result.refusal.backend !== 'semantier'
-      || result.refusal.kind !== 'billing_unavailable') {break}
+    if (
+      signal.aborted ||
+      result.ok ||
+      result.refusal.backend !== 'semantier' ||
+      result.refusal.kind !== 'billing_unavailable'
+    ) {
+      break
+    }
 
     await new Promise<void>(resolve => {
-      const finish = () => {clearTimeout(timer); signal.removeEventListener('abort', finish); resolve()}
+      const finish = () => {
+        clearTimeout(timer)
+        signal.removeEventListener('abort', finish)
+        resolve()
+      }
       const timer = setTimeout(finish, delay)
 
       signal.addEventListener('abort', finish, { once: true })
     })
 
-    if (signal.aborted) {break}
+    if (signal.aborted) {
+      break
+    }
     result = await fetchState(signal)
   }
 
@@ -216,9 +228,13 @@ export function useBillingState(enabled = true) {
   const { refetch } = query
 
   useEffect(() => {
-    if (!enabled) {return}
+    if (!enabled) {
+      return
+    }
 
-    const refresh = () => {void refetch({ cancelRefetch: false })}
+    const refresh = () => {
+      void refetch({ cancelRefetch: false })
+    }
 
     window.addEventListener('focus', refresh)
 

@@ -38,7 +38,11 @@ describe('native desktop initial bot selection', () => {
 
   it('preserves a valid existing root selection and its open canonical-chat identity', () => {
     $selectedRosterKey.set('local::default')
-    const opened = { key: 'local::default', openedRegistryId: 'existing-root-chat', openedSessionId: 'existing-root-tip' }
+    const opened = {
+      key: 'local::default',
+      openedRegistryId: 'existing-root-chat',
+      openedSessionId: 'existing-root-tip'
+    }
     $openBotChat.set(opened)
     reconcileRosterSelection([root, managed], [], {}, defaultRoute)
     expect($selectedRosterKey.get()).toBe('local::default')

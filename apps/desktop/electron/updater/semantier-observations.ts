@@ -27,16 +27,32 @@ export interface Observation extends ObservationTarget {
 }
 
 function validObservation(value: unknown): value is Observation {
-  if (!value || typeof value !== 'object') { return false }
+  if (!value || typeof value !== 'object') {
+    return false
+  }
   const e = value as Record<string, unknown>
-  const text = ['event_id','update_id','installation_ref','release_id','target_version','package_family','build_id','from_version']
+  const text = [
+    'event_id',
+    'update_id',
+    'installation_ref',
+    'release_id',
+    'target_version',
+    'package_family',
+    'build_id',
+    'from_version'
+  ]
 
-  return e.schema_version === '1.0.0' && text.every(k => typeof e[k] === 'string' && (e[k] as string).length > 0 && (e[k] as string).length <= 160)
-    && typeof e.target_sha256 === 'string' && /^[a-f0-9]{64}$/.test(e.target_sha256)
-    && (e.verified_artifact_sha256 === undefined || e.verified_artifact_sha256 === e.target_sha256)
-    && typeof e.occurred_at === 'string' && Number.isFinite(Date.parse(e.occurred_at))
-    && ['handoff','verify','restart_confirmation'].includes(String(e.stage))
-    && ['pending','unknown','failed','target_confirmed'].includes(String(e.outcome))
+  return (
+    e.schema_version === '1.0.0' &&
+    text.every(k => typeof e[k] === 'string' && (e[k] as string).length > 0 && (e[k] as string).length <= 160) &&
+    typeof e.target_sha256 === 'string' &&
+    /^[a-f0-9]{64}$/.test(e.target_sha256) &&
+    (e.verified_artifact_sha256 === undefined || e.verified_artifact_sha256 === e.target_sha256) &&
+    typeof e.occurred_at === 'string' &&
+    Number.isFinite(Date.parse(e.occurred_at)) &&
+    ['handoff', 'verify', 'restart_confirmation'].includes(String(e.stage)) &&
+    ['pending', 'unknown', 'failed', 'target_confirmed'].includes(String(e.outcome))
+  )
 }
 
 interface Journal {
@@ -106,7 +122,13 @@ export class SemantierObservations {
     } catch {
       this.storageUnavailable = true
     } finally {
-      try { if (fs.existsSync(tmp)) { fs.unlinkSync(tmp) } } catch { this.storageUnavailable = true }
+      try {
+        if (fs.existsSync(tmp)) {
+          fs.unlinkSync(tmp)
+        }
+      } catch {
+        this.storageUnavailable = true
+      }
     }
   }
   consent(enabled: boolean, profile: string) {
@@ -209,7 +231,9 @@ export class SemantierObservations {
 
     const exact =
       p.verified_artifact_sha256 === p.target_sha256 &&
-      p.target_version === actual.version && p.package_family === actual.family && p.build_id === actual.buildId
+      p.target_version === actual.version &&
+      p.package_family === actual.family &&
+      p.build_id === actual.buildId
 
     const already = this.state.queue.some(
       e =>

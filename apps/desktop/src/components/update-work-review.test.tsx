@@ -11,8 +11,17 @@ vi.mock('@/store/updates', async () => {
 
   return { $updateWorkReview: atom(undefined), applyUpdates: vi.fn() }
 })
-afterEach(() => { cleanup(); vi.clearAllMocks() })
-const review = { token: 'bound-review', currentVersion: '0.0.39.0', targetVersion: '0.0.40.0', work: { count: 1, titles: ['Draft'] }, stopsWork: true }
+afterEach(() => {
+  cleanup()
+  vi.clearAllMocks()
+})
+const review = {
+  token: 'bound-review',
+  currentVersion: '0.0.39.0',
+  targetVersion: '0.0.40.0',
+  work: { count: 1, titles: ['Draft'] },
+  stopsWork: true
+}
 
 test('Later does not apply, and closing an old review cannot dismiss a newer request', async () => {
   $updateWorkReview.set(review)
@@ -32,7 +41,11 @@ test('Later does not apply, and closing an old review cannot dismiss a newer req
 test('Chinese confirmation sends only the bound token and keeps a failed update usable', async () => {
   vi.mocked(applyUpdates).mockResolvedValue({ ok: false, message: 'Verification failed' })
   $updateWorkReview.set(review)
-  render(<I18nProvider configClient={null} initialLocale="zh"><UpdateWorkReviewDialog review={{ ...review, stopsWork: false }} /></I18nProvider>)
+  render(
+    <I18nProvider configClient={null} initialLocale="zh">
+      <UpdateWorkReviewDialog review={{ ...review, stopsWork: false }} />
+    </I18nProvider>
+  )
   expect((await screen.findByRole('dialog')).textContent).toContain('独立网关')
   fireEvent.click(screen.getByRole('button', { name: '更新并重启' }))
   await waitFor(() => expect(applyUpdates).toHaveBeenCalledWith({ workReviewToken: 'bound-review' }))

@@ -27,7 +27,9 @@ export class UpdateOperation {
   }
 
   async check(run: () => Promise<UpdaterStatusWire>): Promise<UpdaterStatusWire> {
-    if (this.applying) { throw new Error('An update is already in progress.') }
+    if (this.applying) {
+      throw new Error('An update is already in progress.')
+    }
     this.checking++
 
     try {
@@ -38,11 +40,15 @@ export class UpdateOperation {
     } catch (error) {
       this.lastCheckStatus = 'failed'
       throw error
-    } finally { this.checking-- }
+    } finally {
+      this.checking--
+    }
   }
 
   changeSelection(save: () => void): void {
-    if (this.applying || this.checking) { throw new Error('An update operation is already in progress.') }
+    if (this.applying || this.checking) {
+      throw new Error('An update operation is already in progress.')
+    }
     save()
     this.strategy = undefined
     this.lastCheckStatus = undefined

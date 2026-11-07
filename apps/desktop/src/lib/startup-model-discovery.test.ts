@@ -10,7 +10,9 @@ vi.mock('@/store/gateway', () => ({
   activeGatewayConnectionId: () => activeGatewayConnectionId(),
   requestGatewayForAgent: (...args: unknown[]) => requestGatewayForAgent(...args)
 }))
-vi.mock('@/lib/query-client', () => ({ queryClient: { invalidateQueries: (...args: unknown[]) => invalidateQueries(...args) } }))
+vi.mock('@/lib/query-client', () => ({
+  queryClient: { invalidateQueries: (...args: unknown[]) => invalidateQueries(...args) }
+}))
 vi.mock('@/store/session', () => ({ $connection: { get: () => null } }))
 
 beforeEach(() => {
@@ -23,7 +25,12 @@ beforeEach(() => {
 describe('connection-ready model discovery', () => {
   it('refreshes each connection and profile only once without blocking readiness', async () => {
     let release!: (value: unknown) => void
-    requestModelOptions.mockImplementationOnce(() => new Promise(resolve => { release = resolve }))
+    requestModelOptions.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          release = resolve
+        })
+    )
     const { refreshModelsOnConnectionReady } = await import('./startup-model-discovery')
     const { $refreshingModelSources, modelDiscoveryRefreshKey } = await import('@/store/model-discovery')
     const first = refreshModelsOnConnectionReady('source-a', 'profile-a')
@@ -31,7 +38,12 @@ describe('connection-ready model discovery', () => {
     expect($refreshingModelSources.get().has(modelDiscoveryRefreshKey('source-a', 'profile-a'))).toBe(true)
     await refreshModelsOnConnectionReady('source-a', 'profile-a')
     expect(requestModelOptions).toHaveBeenCalledTimes(1)
-    expect(requestModelOptions.mock.calls[0][0]).toMatchObject({ queryOnly: true, queryScope: 'source-a', refresh: true, profile: 'profile-a' })
+    expect(requestModelOptions.mock.calls[0][0]).toMatchObject({
+      queryOnly: true,
+      queryScope: 'source-a',
+      refresh: true,
+      profile: 'profile-a'
+    })
     await refreshModelsOnConnectionReady('source-b', 'profile-a')
     await refreshModelsOnConnectionReady('source-a', 'profile-b')
     expect(requestModelOptions).toHaveBeenCalledTimes(3)

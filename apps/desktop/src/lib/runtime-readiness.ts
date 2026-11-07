@@ -209,12 +209,15 @@ export async function evaluateRuntimeReadiness(
   const signals = await fetchRuntimeReadinessSignals(requestGateway, options.requestedProvider)
   const result = interpretRuntimeReadiness(signals, options)
 
-  if (signals.runtime?.source !== 'semantier-cloud') { return result }
+  if (signals.runtime?.source !== 'semantier-cloud') {
+    return result
+  }
 
   // Only the selected Cloud route reads Cloud account readiness. BYOK/local
   // routes never enumerate other provider accounts or perform inference probes.
   const [{ createBillingApi }, { cloudServiceStatus }] = await Promise.all([
-    import('@/app/settings/billing/api'), import('./model-service-status')
+    import('@/app/settings/billing/api'),
+    import('./model-service-status')
   ])
 
   const modelService = cloudServiceStatus(await createBillingApi(requestGateway).fetchBillingState())

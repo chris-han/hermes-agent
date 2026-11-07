@@ -75,12 +75,14 @@ export function useModelControls({
         return { ...prev, provider, model, providers }
       }
 
-      queryClient.setQueryData<ModelOptionsResult>(modelOptionsQueryKey(profile, sessionId, ownerConnectionId), patch,
-        { updatedAt: 0 })
+      queryClient.setQueryData<ModelOptionsResult>(modelOptionsQueryKey(profile, sessionId, ownerConnectionId), patch, {
+        updatedAt: 0
+      })
 
       if (includeGlobal) {
-        queryClient.setQueryData<ModelOptionsResult>(modelOptionsQueryKey(profile, null, ownerConnectionId), patch,
-          { updatedAt: 0 })
+        queryClient.setQueryData<ModelOptionsResult>(modelOptionsQueryKey(profile, null, ownerConnectionId), patch, {
+          updatedAt: 0
+        })
       }
     },
     [cacheOwnerConnectionId, cacheProfile, queryClient]

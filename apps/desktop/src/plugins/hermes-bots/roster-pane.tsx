@@ -124,7 +124,12 @@ function rosterWithSelectedOwner(roster: RosterRow[], sources: GatewaySource[], 
  *  first selection when there is none. PRESENTATION ONLY: it never opens,
  *  prepares, activates, or creates anything — an unreachable owner keeps its
  *  selection rather than falling back onto some other gateway's bot. */
-export function reconcileRosterSelection(roster: RosterRow[], sources: GatewaySource[], metaByName: Record<string, BotMeta>, defaultRoute: NativeDefaultRoute) {
+export function reconcileRosterSelection(
+  roster: RosterRow[],
+  sources: GatewaySource[],
+  metaByName: Record<string, BotMeta>,
+  defaultRoute: NativeDefaultRoute
+) {
   if (!$rosterHydrated.get() || !$selectedRosterHydrated.get()) {
     return
   }

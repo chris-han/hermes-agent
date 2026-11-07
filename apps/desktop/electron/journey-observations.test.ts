@@ -1,67 +1,108 @@
-import { mkdtempSync,readFileSync,rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach,expect,it,vi } from 'vitest'
+
+import { afterEach, expect, it, vi } from 'vitest'
+
 import { JourneyObservations } from './journey-observations'
-const dirs:string[]=[]
-function root(){const d=mkdtempSync(path.join(os.tmpdir(),'semantier-journey-'));dirs.push(d);return d}
-afterEach(()=>{for(const d of dirs.splice(0))rmSync(d,{recursive:true,force:true})})
-it('sends nothing without explicit consent',async()=>{
- const send=vi.fn();const owner=new JourneyObservations(root(),'http://127.0.0.1:8899',()=>false,send)
- await owner.firstOpen();expect(send).not.toHaveBeenCalled()
+const dirs: string[] = []
+
+function root() {
+  const d = mkdtempSync(path.join(os.tmpdir(), 'semantier-journey-'))
+  dirs.push(d)
+
+  return d
+}
+
+afterEach(() => {
+  for (const d of dirs.splice(0)) {
+    rmSync(d, { recursive: true, force: true })
+  }
 })
-it('emits exactly one first-open across repeated launches with stable installation and event identity',async()=>{
- const dir=root();const send=vi.fn().mockImplementation(async()=>Response.json({status:'accepted'}))
- const owner=new JourneyObservations(dir,'http://127.0.0.1:8899',()=>true,send)
- await Promise.all([owner.firstOpen(),owner.firstOpen()]);expect(send).toHaveBeenCalledTimes(2)
- const body=JSON.parse(send.mock.calls[1][1].body);expect(body.event_name).toBe('app_first_open');expect(body.user_id).toBeUndefined()
- await new JourneyObservations(dir,'http://127.0.0.1:8899',()=>true,send).firstOpen();expect(send).toHaveBeenCalledTimes(2)
- expect(JSON.parse(readFileSync(path.join(dir,'semantier-journey-first-open.json'),'utf8')).acknowledged).toBe(true)
+it('sends nothing without explicit consent', async () => {
+  const send = vi.fn()
+  const owner = new JourneyObservations(root(), 'http://127.0.0.1:8899', () => false, send)
+  await owner.firstOpen()
+  expect(send).not.toHaveBeenCalled()
 })
-it('bounds offline retries without blocking startup or fabricating acknowledgement',async()=>{
- const send=vi.fn().mockRejectedValue(Error('offline'));const owner=new JourneyObservations(root(),'http://127.0.0.1:8899',()=>true,send)
- await owner.firstOpen();expect(send).toHaveBeenCalledTimes(3);expect(owner.status().acknowledged).toBe(false)
+it('emits exactly one first-open across repeated launches with stable installation and event identity', async () => {
+  const dir = root()
+  const send = vi.fn().mockImplementation(async () => Response.json({ status: 'accepted' }))
+  const owner = new JourneyObservations(dir, 'http://127.0.0.1:8899', () => true, send)
+  await Promise.all([owner.firstOpen(), owner.firstOpen()])
+  expect(send).toHaveBeenCalledTimes(2)
+  const body = JSON.parse(send.mock.calls[1][1].body)
+  expect(body.event_name).toBe('app_first_open')
+  expect(body.user_id).toBeUndefined()
+  await new JourneyObservations(dir, 'http://127.0.0.1:8899', () => true, send).firstOpen()
+  expect(send).toHaveBeenCalledTimes(2)
+  expect(JSON.parse(readFileSync(path.join(dir, 'semantier-journey-first-open.json'), 'utf8')).acknowledged).toBe(true)
 })
-it('records a renderer failure before recovery without retaining error prose',async()=>{
- const send=vi.fn().mockImplementation(async()=>Response.json({status:'accepted'}))
- const owner=new JourneyObservations(root(),'http://127.0.0.1:8899',()=>true,send)
- await owner.firstOpen();send.mockClear()
- await owner.rendererState(false);expect(send).not.toHaveBeenCalled()
- await Promise.all([owner.rendererState(true),owner.rendererState(false)])
- const bodies=send.mock.calls.filter(([,init])=>init.body).map(([,init])=>JSON.parse(init.body))
- expect(bodies.map(b=>b.event_name)).toEqual(['client_failed','client_resumed'])
- expect(bodies[0].installation_id).toBe(bodies[1].installation_id)
- expect(bodies[0].properties).toEqual({reason_code:'renderer_load_failed'})
+it('bounds offline retries without blocking startup or fabricating acknowledgement', async () => {
+  const send = vi.fn().mockRejectedValue(Error('offline'))
+  const owner = new JourneyObservations(root(), 'http://127.0.0.1:8899', () => true, send)
+  await owner.firstOpen()
+  expect(send).toHaveBeenCalledTimes(3)
+  expect(owner.status().acknowledged).toBe(false)
 })
-it('freezes the packaged app version with the first observation across upgrade and retry',async()=>{
- const dir=root();const offline=vi.fn().mockRejectedValue(Error('offline'))
- await new JourneyObservations(dir,'http://127.0.0.1:8899',()=>true,offline,'0.0.65').firstOpen()
- const saved=JSON.parse(readFileSync(path.join(dir,'semantier-journey-first-open.json'),'utf8'))
- expect(saved.client_version).toBe('0.0.65')
- const send=vi.fn().mockImplementation(async()=>Response.json({status:'accepted'}))
- await new JourneyObservations(dir,'http://127.0.0.1:8899',()=>true,send,'0.0.66').firstOpen()
- const body=JSON.parse(send.mock.calls[1][1].body)
- expect(body.properties.client_version).toBe('0.0.65');expect(body.event_id).toBe(saved.event_id);expect(body.occurred_at).toBe(saved.occurred_at)
+it('records a renderer failure before recovery without retaining error prose', async () => {
+  const send = vi.fn().mockImplementation(async () => Response.json({ status: 'accepted' }))
+  const owner = new JourneyObservations(root(), 'http://127.0.0.1:8899', () => true, send)
+  await owner.firstOpen()
+  send.mockClear()
+  await owner.rendererState(false)
+  expect(send).not.toHaveBeenCalled()
+  await Promise.all([owner.rendererState(true), owner.rendererState(false)])
+  const bodies = send.mock.calls.filter(([, init]) => init.body).map(([, init]) => JSON.parse(init.body))
+  expect(bodies.map(b => b.event_name)).toEqual(['client_failed', 'client_resumed'])
+  expect(bodies[0].installation_id).toBe(bodies[1].installation_id)
+  expect(bodies[0].properties).toEqual({ reason_code: 'renderer_load_failed' })
 })
-it('keeps the version unknown for a previously journaled observation',async()=>{
- const dir=root();const offline=vi.fn().mockRejectedValue(Error('offline'))
- await new JourneyObservations(dir,'http://127.0.0.1:8899',()=>true,offline).firstOpen()
- const send=vi.fn().mockImplementation(async()=>Response.json({status:'accepted'}))
- await new JourneyObservations(dir,'http://127.0.0.1:8899',()=>true,send,'0.0.66').firstOpen()
- expect(JSON.parse(send.mock.calls[1][1].body).properties).toEqual({})
+it('freezes the packaged app version with the first observation across upgrade and retry', async () => {
+  const dir = root()
+  const offline = vi.fn().mockRejectedValue(Error('offline'))
+  await new JourneyObservations(dir, 'http://127.0.0.1:8899', () => true, offline, '0.0.65').firstOpen()
+  const saved = JSON.parse(readFileSync(path.join(dir, 'semantier-journey-first-open.json'), 'utf8'))
+  expect(saved.client_version).toBe('0.0.65')
+  const send = vi.fn().mockImplementation(async () => Response.json({ status: 'accepted' }))
+  await new JourneyObservations(dir, 'http://127.0.0.1:8899', () => true, send, '0.0.66').firstOpen()
+  const body = JSON.parse(send.mock.calls[1][1].body)
+  expect(body.properties.client_version).toBe('0.0.65')
+  expect(body.event_id).toBe(saved.event_id)
+  expect(body.occurred_at).toBe(saved.occurred_at)
 })
-it('does not deliver after consent is withdrawn during session setup',async()=>{
- let allowed=true
- const send=vi.fn().mockImplementation(async()=>{allowed=false;return Response.json({status:'accepted'})})
- const owner=new JourneyObservations(root(),'http://127.0.0.1:8899',()=>allowed,send,'0.0.65')
- await owner.firstOpen()
- expect(send.mock.calls.filter(([,init])=>init.body)).toHaveLength(0)
+it('keeps the version unknown for a previously journaled observation', async () => {
+  const dir = root()
+  const offline = vi.fn().mockRejectedValue(Error('offline'))
+  await new JourneyObservations(dir, 'http://127.0.0.1:8899', () => true, offline).firstOpen()
+  const send = vi.fn().mockImplementation(async () => Response.json({ status: 'accepted' }))
+  await new JourneyObservations(dir, 'http://127.0.0.1:8899', () => true, send, '0.0.66').firstOpen()
+  expect(JSON.parse(send.mock.calls[1][1].body).properties).toEqual({})
 })
-it('does not emit renderer state after consent is withdrawn during session setup',async()=>{
- let allowed=true
- const send=vi.fn().mockImplementation(async()=>Response.json({status:'accepted'}))
- const owner=new JourneyObservations(root(),'http://127.0.0.1:8899',()=>allowed,send,'0.0.65')
- await owner.firstOpen();send.mockClear();send.mockImplementation(async()=>{allowed=false;return Response.json({status:'accepted'})})
- await owner.rendererState(true)
- expect(send.mock.calls.filter(([,init])=>init.body)).toHaveLength(0)
+it('does not deliver after consent is withdrawn during session setup', async () => {
+  let allowed = true
+
+  const send = vi.fn().mockImplementation(async () => {
+    allowed = false
+
+    return Response.json({ status: 'accepted' })
+  })
+
+  const owner = new JourneyObservations(root(), 'http://127.0.0.1:8899', () => allowed, send, '0.0.65')
+  await owner.firstOpen()
+  expect(send.mock.calls.filter(([, init]) => init.body)).toHaveLength(0)
+})
+it('does not emit renderer state after consent is withdrawn during session setup', async () => {
+  let allowed = true
+  const send = vi.fn().mockImplementation(async () => Response.json({ status: 'accepted' }))
+  const owner = new JourneyObservations(root(), 'http://127.0.0.1:8899', () => allowed, send, '0.0.65')
+  await owner.firstOpen()
+  send.mockClear()
+  send.mockImplementation(async () => {
+    allowed = false
+
+    return Response.json({ status: 'accepted' })
+  })
+  await owner.rendererState(true)
+  expect(send.mock.calls.filter(([, init]) => init.body)).toHaveLength(0)
 })

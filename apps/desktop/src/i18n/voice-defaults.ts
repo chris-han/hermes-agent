@@ -25,7 +25,9 @@ export function withLocaleVoiceDefaults(
   const previous = LOCALE_VOICE_DEFAULTS[previousLocale]
 
   // Plugin language packs need their own voice mapping; don't assign an unrelated English voice.
-  if (!next) {return config}
+  if (!next) {
+    return config
+  }
 
   const stt = isRecord(config.stt) ? config.stt : {}
   const local = isRecord(stt.local) ? stt.local : {}

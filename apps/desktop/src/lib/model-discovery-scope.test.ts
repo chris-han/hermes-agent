@@ -12,7 +12,11 @@ describe('model discovery connection scope', () => {
 
   it('partitions legacy remotes stably without exposing their address or credentials', async () => {
     Object.defineProperty(globalThis.crypto, 'subtle', { configurable: true, value: webcrypto.subtle })
-    const remote = { mode: 'remote' as const, baseUrl: 'https://secret.example/path?token=private', remoteIdentity: 'actor' }
+    const remote = {
+      mode: 'remote' as const,
+      baseUrl: 'https://secret.example/path?token=private',
+      remoteIdentity: 'actor'
+    }
     const first = await modelDiscoveryScope(null, remote)
     const same = await modelDiscoveryScope(null, { ...remote })
     const second = await modelDiscoveryScope(null, { ...remote, baseUrl: 'https://other.example/path' })

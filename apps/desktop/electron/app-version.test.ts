@@ -126,12 +126,18 @@ describe('artifact version identity', (): void => {
 
 it('uses the Semantier package version rather than the upstream placeholder', () => {
   const stamp = {
-    source: 'channel-build', payload: 'bundled', updateMechanism: 'app-installer',
+    source: 'channel-build',
+    payload: 'bundled',
+    updateMechanism: 'app-installer',
     commit: '8de58004d0403e1bb75aaa06c5ac5f49d8dbaed8',
     channelBuild: {
-      semantierScope: 'semantier-windows-x64/v1', sourceVersion: '0.0.0',
-      version: '0.0.39', windowsVersion: '0.0.39.0', channel: 'semantier-acceptance',
-      sequence: 39, commit: '8de58004d0403e1bb75aaa06c5ac5f49d8dbaed8',
+      semantierScope: 'semantier-windows-x64/v1',
+      sourceVersion: '0.0.0',
+      version: '0.0.39',
+      windowsVersion: '0.0.39.0',
+      channel: 'semantier-acceptance',
+      sequence: 39,
+      commit: '8de58004d0403e1bb75aaa06c5ac5f49d8dbaed8',
       buildId: '0530ad477516411dafe393e393c34c82'
     }
   } as InstallStamp

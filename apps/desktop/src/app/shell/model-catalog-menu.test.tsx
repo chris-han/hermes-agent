@@ -62,7 +62,14 @@ beforeEach((): void => {
   $favoriteModels.set([])
   setModelVisibilityOpen(false)
   getGlobalModelOptions.mockResolvedValue({
-    providers: [{ models: ['gemini-3.1-pro', 'gemini-2.5-flash'], eligible_models: ['gemini-3.1-pro', 'gemini-2.5-flash'], name: 'Google', slug: 'google' }]
+    providers: [
+      {
+        models: ['gemini-3.1-pro', 'gemini-2.5-flash'],
+        eligible_models: ['gemini-3.1-pro', 'gemini-2.5-flash'],
+        name: 'Google',
+        slug: 'google'
+      }
+    ]
   })
 })
 
@@ -163,7 +170,8 @@ describe('the reasoning-effort badge (#51833)', () => {
         {
           name: 'Google',
           slug: 'google',
-          models: ['gemini-2.5-flash'], eligible_models: ['gemini-2.5-flash'],
+          models: ['gemini-2.5-flash'],
+          eligible_models: ['gemini-2.5-flash'],
           capabilities: { 'gemini-2.5-flash': { fast: false, reasoning: false } }
         }
       ]
@@ -224,8 +232,16 @@ describe('the catalog owns model curation', () => {
   it('does not insert the saved current model into the provider result list', async () => {
     getGlobalModelOptions.mockResolvedValue({
       discovery_contract: 'provider-query-v1',
-      providers: [{ name: 'Lab', slug: 'lab', models: ['live-model'],
-        discovery_state: 'fresh', discovery_source_id: 'opaque', discovery_fetched_at: '2026-11-07T00:00:00+00:00' }]
+      providers: [
+        {
+          name: 'Lab',
+          slug: 'lab',
+          models: ['live-model'],
+          discovery_state: 'fresh',
+          discovery_source_id: 'opaque',
+          discovery_fetched_at: '2026-11-07T00:00:00+00:00'
+        }
+      ]
     })
     renderMenu({ model: 'retired-model', provider: 'lab' })
     expect(await screen.findByText('Live Model')).toBeTruthy()
@@ -235,8 +251,16 @@ describe('the catalog owns model curation', () => {
   it('offers verified discovery without promoting it to an eligibility grant', async () => {
     getGlobalModelOptions.mockResolvedValue({
       discovery_contract: 'provider-query-v1',
-      providers: [{ name: 'Fixture', slug: 'fixture', models: ['queried-model', 'blocked-model'],
-        discovery_state: 'cached', discovery_source_id: 'opaque', unavailable_models: ['blocked-model'] }]
+      providers: [
+        {
+          name: 'Fixture',
+          slug: 'fixture',
+          models: ['queried-model', 'blocked-model'],
+          discovery_state: 'cached',
+          discovery_source_id: 'opaque',
+          unavailable_models: ['blocked-model']
+        }
+      ]
     })
     const select = renderMenu()
     fireEvent.click(await screen.findByText('Queried Model'))
@@ -300,7 +324,12 @@ describe('the catalog owns favorite models', () => {
   it('names each provider once over its favorites when the section mixes providers', async () => {
     getGlobalModelOptions.mockResolvedValue({
       providers: [
-        { models: ['gemini-3.1-pro', 'gemini-2.5-flash'], eligible_models: ['gemini-3.1-pro', 'gemini-2.5-flash'], name: 'Google', slug: 'google' },
+        {
+          models: ['gemini-3.1-pro', 'gemini-2.5-flash'],
+          eligible_models: ['gemini-3.1-pro', 'gemini-2.5-flash'],
+          name: 'Google',
+          slug: 'google'
+        },
         { models: ['gemini-3.1-pro'], eligible_models: ['gemini-3.1-pro'], name: 'OpenRouter', slug: 'openrouter' }
       ]
     })
@@ -416,7 +445,14 @@ describe('the catalog owns favorite models', () => {
 describe('the current model the catalog omits (#57534)', () => {
   it('keeps an omitted current model out of selectable provider rows', async () => {
     getGlobalModelOptions.mockResolvedValue({
-      providers: [{ models: ['openai/gpt-4o-mini'], eligible_models: ['openai/gpt-4o-mini'], name: 'OpenRouter', slug: 'openrouter' }]
+      providers: [
+        {
+          models: ['openai/gpt-4o-mini'],
+          eligible_models: ['openai/gpt-4o-mini'],
+          name: 'OpenRouter',
+          slug: 'openrouter'
+        }
+      ]
     })
 
     renderMenu({ model: 'qwen/qwen-2.5-72b-instruct', provider: 'openrouter' })
@@ -428,7 +464,14 @@ describe('the current model the catalog omits (#57534)', () => {
   it('does not inject the current model into a provider that is not the current one', async () => {
     // current.provider has no row; the model must not leak into another group.
     getGlobalModelOptions.mockResolvedValue({
-      providers: [{ models: ['openai/gpt-4o-mini'], eligible_models: ['openai/gpt-4o-mini'], name: 'OpenRouter', slug: 'openrouter' }]
+      providers: [
+        {
+          models: ['openai/gpt-4o-mini'],
+          eligible_models: ['openai/gpt-4o-mini'],
+          name: 'OpenRouter',
+          slug: 'openrouter'
+        }
+      ]
     })
 
     renderMenu({ model: 'qwen/qwen-2.5-72b-instruct', provider: 'nous' })
@@ -533,7 +576,8 @@ describe('the catalog renders per-model pricing', () => {
     getGlobalModelOptions.mockResolvedValue({
       providers: [
         {
-          models: ['anthropic/claude-sonnet-5', 'nous/hermes-4'], eligible_models: ['anthropic/claude-sonnet-5', 'nous/hermes-4'],
+          models: ['anthropic/claude-sonnet-5', 'nous/hermes-4'],
+          eligible_models: ['anthropic/claude-sonnet-5', 'nous/hermes-4'],
           name: 'Nous Portal',
           slug: 'nous',
           pricing: {
@@ -559,7 +603,8 @@ describe('the catalog renders per-model pricing', () => {
     getGlobalModelOptions.mockResolvedValue({
       providers: [
         {
-          models: ['anthropic/claude-sonnet-5'], eligible_models: ['anthropic/claude-sonnet-5'],
+          models: ['anthropic/claude-sonnet-5'],
+          eligible_models: ['anthropic/claude-sonnet-5'],
           name: 'Nous Portal',
           slug: 'nous',
           pricing: {
@@ -585,7 +630,8 @@ describe('the catalog renders per-model pricing', () => {
     getGlobalModelOptions.mockResolvedValue({
       providers: [
         {
-          models: ['nous/hermes-4'], eligible_models: ['nous/hermes-4'],
+          models: ['nous/hermes-4'],
+          eligible_models: ['nous/hermes-4'],
           name: 'Nous Portal',
           slug: 'nous',
           pricing: {
@@ -604,7 +650,8 @@ describe('the catalog renders per-model pricing', () => {
     getGlobalModelOptions.mockResolvedValue({
       providers: [
         {
-          models: ['anthropic/claude-sonnet-5'], eligible_models: ['anthropic/claude-sonnet-5'],
+          models: ['anthropic/claude-sonnet-5'],
+          eligible_models: ['anthropic/claude-sonnet-5'],
           name: 'Nous Portal',
           slug: 'nous',
           pricing: {
@@ -631,7 +678,8 @@ describe('the catalog renders per-model pricing', () => {
     getGlobalModelOptions.mockResolvedValue({
       providers: [
         {
-          models: ['anthropic/claude-sonnet-5', 'anthropic/claude-sonnet-5-fast'], eligible_models: ['anthropic/claude-sonnet-5', 'anthropic/claude-sonnet-5-fast'],
+          models: ['anthropic/claude-sonnet-5', 'anthropic/claude-sonnet-5-fast'],
+          eligible_models: ['anthropic/claude-sonnet-5', 'anthropic/claude-sonnet-5-fast'],
           name: 'Nous Portal',
           slug: 'nous',
           pricing: {
@@ -655,7 +703,8 @@ describe('the catalog renders per-model pricing', () => {
     getGlobalModelOptions.mockResolvedValue({
       providers: [
         {
-          models: ['anthropic/claude-sonnet-5'], eligible_models: ['anthropic/claude-sonnet-5'],
+          models: ['anthropic/claude-sonnet-5'],
+          eligible_models: ['anthropic/claude-sonnet-5'],
           name: 'Nous Portal',
           slug: 'nous'
         }

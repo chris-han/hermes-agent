@@ -90,8 +90,14 @@ export function useModelMenuController({
   const modelOptions = useQuery({
     queryKey: modelOptionsQueryKey(profile, activeSessionId, ownerKey),
     queryFn: (): Promise<ModelOptionsResult> =>
-      requestDiscoveredModelOptions({ connection, gateway, ownerConnectionId, profile,
-        request: requestGateway, sessionId: activeSessionId }),
+      requestDiscoveredModelOptions({
+        connection,
+        gateway,
+        ownerConnectionId,
+        profile,
+        request: requestGateway,
+        sessionId: activeSessionId
+      }),
     enabled: !!ownerKey
   })
 

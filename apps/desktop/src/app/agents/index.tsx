@@ -294,7 +294,9 @@ function DelegationGroup({ group, nowMs }: { group: RootGroup; nowMs: number }) 
       <p className="text-[0.66rem] font-medium uppercase tracking-wider text-muted-foreground/70">
         {group.delegationIndex > 0 ? t.agents.delegation(group.delegationIndex) : ''}{' '}
         <span className="text-muted-foreground/50">·</span> {t.agents.workers(group.nodes.length)}
-        {activeWorkers > 0 ? <span className="text-(--theme-primary-text)/85"> · {t.agents.workersActive(activeWorkers)}</span> : null}
+        {activeWorkers > 0 ? (
+          <span className="text-(--theme-primary-text)/85"> · {t.agents.workersActive(activeWorkers)}</span>
+        ) : null}
       </p>
       <div className="grid min-w-0 gap-4">
         {group.nodes.map(node => (

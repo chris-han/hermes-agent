@@ -25,8 +25,7 @@ export const jaSharedMetrics = {
     'このプロファイル用のランダムな ID を付けて、1 日 1 回 Semantier に統計を送信します。1 回限りのインストール記録を除き、オプトイン前の統計は送信されません。収集がオンである必要があります。',
   unavailable: 'この設定を変更するには Hermes バックエンドを更新してください。',
   stripBody: '件数のみ。メッセージやファイルは一切含みません。',
-  stripReaskBody:
-    '送信先が Nous から Semantier に変わりました。もう一度選択してください。',
+  stripReaskBody: '送信先が Nous から Semantier に変わりました。もう一度選択してください。',
   stripChoices: { share: 'Semantier と共有', local: 'このコンピューターに保存', off: '今はしない' },
   stripDetails: '詳細'
 }

@@ -935,12 +935,19 @@ test('native graph resolution reads only metadata and preserves the legacy head 
 
   expect(legacy.kind).toBe('active')
 
-  if (legacy.kind === 'active') {expect(legacy.target.manifestSha256).toBe(legacyHead.sha256)}
+  if (legacy.kind === 'active') {
+    expect(legacy.target.manifestSha256).toBe(legacyHead.sha256)
+  }
   f.record.head = null
   f.objects.set(`/releases/channels/${f.record.name}.json`, JSON.stringify(f.record))
-  await expect(new ChannelResolver({
-    build: f.build, platform: 'darwin', arch: 'arm64', signer: 'ABCDE12345'
-  }).resolve()).rejects.toThrow('Native channel is not supported')
+  await expect(
+    new ChannelResolver({
+      build: f.build,
+      platform: 'darwin',
+      arch: 'arm64',
+      signer: 'ABCDE12345'
+    }).resolve()
+  ).rejects.toThrow('Native channel is not supported')
   f.requests.length = 0
 
   const resolver = new ChannelResolver({
@@ -954,16 +961,24 @@ test('native graph resolution reads only metadata and preserves the legacy head 
   const result = await resolver.resolve()
   expect(result.kind).toBe('active')
 
-  if (result.kind !== 'active') {throw new Error('Expected native candidate')}
+  if (result.kind !== 'active') {
+    throw new Error('Expected native candidate')
+  }
   expect(result.target.nativeGraph).toEqual(graph)
   expect(f.requests).toEqual([
     `/releases/channels/${f.record.name}.json`,
     '/' + f.record.nativeHead.manifestKey,
     '/' + native.graph.key
   ])
-  await expect(new ChannelResolver({
-    build: f.build, platform: 'win32', arch: 'x64', signer: 'wrong publisher', nativePackageUri: true
-  }).resolve()).rejects.toThrow('signing identity mismatch')
+  await expect(
+    new ChannelResolver({
+      build: f.build,
+      platform: 'win32',
+      arch: 'x64',
+      signer: 'wrong publisher',
+      nativePackageUri: true
+    }).resolve()
+  ).rejects.toThrow('signing identity mismatch')
   const wrongOriginBody = JSON.stringify({ ...manifest, request: { ...next, publicBase: 'https://wrong.example' } })
   f.record.nativeHead.sha256 = createHash('sha256').update(wrongOriginBody).digest('hex')
   f.objects.set('/' + f.record.nativeHead.manifestKey, wrongOriginBody)
@@ -1065,8 +1080,17 @@ test('native graph resolution reads only metadata and preserves the legacy head 
 
 test('channel decoder ignores storage-only native archive bookkeeping', async () => {
   const f = await fixture()
-  const record = { ...f.record, nativeArchive: { buildId: 'a'.repeat(32), sequence: 1,
-    manifestKey: `releases/channel-builds/${'a'.repeat(32)}/build.json`, sha256: 'a'.repeat(64) },
-    nativeRetirePending: null }
+
+  const record = {
+    ...f.record,
+    nativeArchive: {
+      buildId: 'a'.repeat(32),
+      sequence: 1,
+      manifestKey: `releases/channel-builds/${'a'.repeat(32)}/build.json`,
+      sha256: 'a'.repeat(64)
+    },
+    nativeRetirePending: null
+  }
+
   expect(decodeChannelRecord(JSON.stringify(record))).toEqual(decodeChannelRecord(JSON.stringify(f.record)))
 })

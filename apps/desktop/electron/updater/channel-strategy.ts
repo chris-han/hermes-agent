@@ -105,7 +105,11 @@ export class ChannelStrategy implements UpdaterStrategy {
       }
     }
 
-    return await this.selectNative(base, result.target, { crossChannel: this.deps.installedChannel !== undefined && this.deps.installedChannel !== result.target.manifest.request.channel })
+    return await this.selectNative(base, result.target, {
+      crossChannel:
+        this.deps.installedChannel !== undefined &&
+        this.deps.installedChannel !== result.target.manifest.request.channel
+    })
   }
 
   private async selectNative(
@@ -160,7 +164,9 @@ export class ChannelStrategy implements UpdaterStrategy {
       if (selected?.kind === 'native' && selected.available) {
         const review = this.deps.reviewApplyTarget?.(selected.target)
 
-        if (review) { return review }
+        if (review) {
+          return review
+        }
         await this.deps.onApplyTarget?.(selected.target)
 
         return await selected.strategy.apply()

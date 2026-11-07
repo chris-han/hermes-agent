@@ -794,7 +794,9 @@ export async function refreshOnboarding(ctx: OnboardingContext, stillWanted?: ()
     const explicitlyRequested = $desktopOnboarding.get().requested
     completeDesktopOnboarding()
 
-    if (explicitlyRequested) { await applyFreeTierIntro(ctx, runtime) }
+    if (explicitlyRequested) {
+      await applyFreeTierIntro(ctx, runtime)
+    }
     ctx.onCompleted?.()
 
     return true
@@ -834,7 +836,9 @@ export async function refreshOnboarding(ctx: OnboardingContext, stillWanted?: ()
     return false
   }
 
-  if (state.requested) { await refreshProviders() }
+  if (state.requested) {
+    await refreshProviders()
+  }
 
   return false
 }

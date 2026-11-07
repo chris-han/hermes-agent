@@ -26,14 +26,21 @@ interface Approval {
 export class UpdateWorkGuard {
   private pending?: Approval
   private allowedSnapshot?: string
-  constructor(private readonly read: () => Snapshot, private readonly now = Date.now) {}
+  constructor(
+    private readonly read: () => Snapshot,
+    private readonly now = Date.now
+  ) {}
 
   review(target: string, currentVersion: string, targetVersion: string, token?: unknown): UpdateWorkReview | null {
     const state = this.read()
     const snapshot = JSON.stringify(state)
 
-    const valid = this.pending && this.pending.token === token && this.pending.target === target &&
-      this.pending.snapshot === snapshot && this.pending.expires > this.now()
+    const valid =
+      this.pending &&
+      this.pending.token === token &&
+      this.pending.target === target &&
+      this.pending.snapshot === snapshot &&
+      this.pending.expires > this.now()
 
     if (!state.work.count || valid) {
       this.allowedSnapshot = snapshot
@@ -51,13 +58,17 @@ export class UpdateWorkGuard {
   /** The token expires before acceptance, not during a large download. The
    * accepted operation still rechecks work immediately before stopping it. */
   assertBeforeStop(): void {
-    if (this.allowedSnapshot === undefined) { return }
+    if (this.allowedSnapshot === undefined) {
+      return
+    }
     const state = this.read()
 
-    if (state.work.count && (JSON.stringify(state) !== this.allowedSnapshot)) {
+    if (state.work.count && JSON.stringify(state) !== this.allowedSnapshot) {
       throw new Error('Active work changed. Review the update again before restarting.')
     }
   }
 
-  finish(): void { this.allowedSnapshot = undefined }
+  finish(): void {
+    this.allowedSnapshot = undefined
+  }
 }

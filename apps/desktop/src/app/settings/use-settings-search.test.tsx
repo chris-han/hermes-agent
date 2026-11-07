@@ -19,12 +19,17 @@ vi.mock('@/app/gateway/hooks/use-gateway-request', () => ({
   useGatewayRequest: () => ({ requestGateway: vi.fn() })
 }))
 
-afterEach(() => { cleanup(); vi.clearAllMocks() })
+afterEach(() => {
+  cleanup()
+  vi.clearAllMocks()
+})
 
 describe('settings search catalog', () => {
   it('does not query or expose individual providers and models', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    )
     const { result } = renderHook(() => useSettingsSearchCatalog(true), { wrapper })
     expect(getOptions).not.toHaveBeenCalled()
     expect(result.current).not.toHaveProperty('modelEntries')

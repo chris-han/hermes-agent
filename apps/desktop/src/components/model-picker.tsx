@@ -6,7 +6,12 @@ import { type ReactElement, useRef, useState } from 'react'
 
 import { useI18n } from '@/i18n'
 import { modelDiscoveryOwnerKey } from '@/lib/model-discovery-scope'
-import { catalogProviderMatches, modelOptionsQueryKey, providerSelectableModels, requestDiscoveredModelOptions } from '@/lib/model-options'
+import {
+  catalogProviderMatches,
+  modelOptionsQueryKey,
+  providerSelectableModels,
+  requestDiscoveredModelOptions
+} from '@/lib/model-options'
 import { currentPickerSelection } from '@/lib/model-status-label'
 import { accountResetMs, formatReset, modelResetMs } from '@/lib/provider-limit'
 import { foldIncludes, normalize } from '@/lib/text'
@@ -81,14 +86,24 @@ export function ModelPickerDialog({
 
   const modelOptions = useQuery({
     queryKey: modelOptionsQueryKey(profile, sessionId, ownerKey),
-    queryFn: () => requestDiscoveredModelOptions({ connection, gateway: gw, ownerConnectionId, profile, sessionId,
-      request: request ?? (<T,>(method: string, params?: Record<string, unknown>) =>
-        requestGatewayForAgent<T>(ownerConnectionId ?? connection?.connectionId ?? null, profile, method, params)) }),
+    queryFn: () =>
+      requestDiscoveredModelOptions({
+        connection,
+        gateway: gw,
+        ownerConnectionId,
+        profile,
+        sessionId,
+        request:
+          request ??
+          (<T,>(method: string, params?: Record<string, unknown>) =>
+            requestGatewayForAgent<T>(ownerConnectionId ?? connection?.connectionId ?? null, profile, method, params))
+      }),
     enabled: open && !!ownerKey
   })
 
   const providers = (modelOptions.data?.providers ?? []).map(provider => ({
-    ...provider, models: providerSelectableModels(provider)
+    ...provider,
+    models: providerSelectableModels(provider)
   }))
 
   const { model: optionsModel, provider: optionsProvider } = currentPickerSelection(
@@ -110,7 +125,12 @@ export function ModelPickerDialog({
   }
 
   const selectCustomModel = (provider: ModelOptionProvider, model: string) => {
-    if (provider.eligible_models != null || (provider.unavailable_models ?? []).some(item => normalize(item) === normalize(model))) {return}
+    if (
+      provider.eligible_models != null ||
+      (provider.unavailable_models ?? []).some(item => normalize(item) === normalize(model))
+    ) {
+      return
+    }
     addCustomModel(provider.slug, model, provider)
     selectModel(provider, model)
   }
@@ -158,7 +178,9 @@ export function ModelPickerDialog({
           />
           <CommandList className="max-h-96">
             <ModelDiscoveryRefreshStatus ownerKey={ownerKey} profile={profile} />
-            {(modelOptions.data?.providers ?? []).map(provider => <ModelDiscoveryStatus key={provider.slug} provider={provider} />)}
+            {(modelOptions.data?.providers ?? []).map(provider => (
+              <ModelDiscoveryStatus key={provider.slug} provider={provider} />
+            ))}
             {!loading && !error && <CommandEmpty>{copy.noModels}</CommandEmpty>}
             <ModelResults
               currentModel={optionsModel || currentModel}
@@ -261,11 +283,16 @@ function ModelResults({
   const customSlug = offerCustom ? customModelCandidate(search, configured) : null
 
   const customProviders = customSlug
-    ? configured.filter(provider => provider.eligible_models == null &&
-        !(provider.unavailable_models ?? []).some(model => normalize(model) === normalize(customSlug))).sort(
-        (a, b) =>
-          Number(catalogProviderMatches(b, currentProvider)) - Number(catalogProviderMatches(a, currentProvider))
-      )
+    ? configured
+        .filter(
+          provider =>
+            provider.eligible_models == null &&
+            !(provider.unavailable_models ?? []).some(model => normalize(model) === normalize(customSlug))
+        )
+        .sort(
+          (a, b) =>
+            Number(catalogProviderMatches(b, currentProvider)) - Number(catalogProviderMatches(a, currentProvider))
+        )
     : []
 
   return (

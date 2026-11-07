@@ -64,9 +64,17 @@ function renderPanel(onSelectModel = vi.fn(), onFollowDefaultModel?: () => void)
   const requestGateway = vi.fn(async (method: string) => {
     if (method === 'model.options') {
       const options = await getGlobalModelOptions()
-      return { ...options, discovery_contract: 'provider-query-v1', providers: (options.providers ?? []).map((provider: Record<string, unknown>) => ({
-        ...provider, discovery_state: provider.discovery_state ?? 'fresh', discovery_source_id: 'fixture-source', discovery_fetched_at: '2026-11-07T00:00:00+00:00'
-      })) }
+
+      return {
+        ...options,
+        discovery_contract: 'provider-query-v1',
+        providers: (options.providers ?? []).map((provider: Record<string, unknown>) => ({
+          ...provider,
+          discovery_state: provider.discovery_state ?? 'fresh',
+          discovery_source_id: 'fixture-source',
+          discovery_fetched_at: '2026-11-07T00:00:00+00:00'
+        }))
+      }
     }
 
     throw new Error(`unexpected gateway method: ${method}`)
@@ -146,20 +154,37 @@ describe('ModelMenuPanel MoA presets', () => {
 
 describe('ModelMenuPanel current selection', () => {
   it('distinguishes eligible model IDs whose display names collide', async () => {
-    getGlobalModelOptions.mockResolvedValue({ providers: [{
-      slug: 'case-fixture', name: 'Case fixture', models: ['Model-A', 'model-a'], eligible_models: ['Model-A', 'model-a']
-    }] })
+    getGlobalModelOptions.mockResolvedValue({
+      providers: [
+        {
+          slug: 'case-fixture',
+          name: 'Case fixture',
+          models: ['Model-A', 'model-a'],
+          eligible_models: ['Model-A', 'model-a']
+        }
+      ]
+    })
     const { content, onSelectModel } = renderPanel()
     expect(await content.findByText('Model-A')).toBeTruthy()
     expect(content.getByText('model-a')).toBeTruthy()
     fireEvent.click(content.getByText('model-a'))
-    await vi.waitFor(() => expect(onSelectModel).toHaveBeenCalledWith({ model: 'model-a', provider: 'case-fixture', sessionId: 'runtime-1' }))
+    await vi.waitFor(() =>
+      expect(onSelectModel).toHaveBeenCalledWith({ model: 'model-a', provider: 'case-fixture', sessionId: 'runtime-1' })
+    )
   })
 
   it('does not offer models without a verified provider response', async () => {
-    getGlobalModelOptions.mockResolvedValue({ providers: [{
-      slug: 'unknown', name: 'Unknown provider', models: [], discovery_state: 'missing'
-    }, { slug: 'known', name: 'Known provider', models: ['verified-model'], eligible_models: ['verified-model'] }] })
+    getGlobalModelOptions.mockResolvedValue({
+      providers: [
+        {
+          slug: 'unknown',
+          name: 'Unknown provider',
+          models: [],
+          discovery_state: 'missing'
+        },
+        { slug: 'known', name: 'Known provider', models: ['verified-model'], eligible_models: ['verified-model'] }
+      ]
+    })
     const { content, onSelectModel } = renderPanel()
     const input = screen.getByRole('textbox', { name: 'Search models' })
     await content.findByText('Known provider')
@@ -170,9 +195,16 @@ describe('ModelMenuPanel current selection', () => {
   })
 
   it('does not reintroduce IDs outside a source-backed eligibility set', async () => {
-    getGlobalModelOptions.mockResolvedValue({ providers: [{
-      slug: 'semantier-cloud', name: 'Cloud', models: ['allowed-model', 'stale-model'], eligible_models: ['allowed-model']
-    }] })
+    getGlobalModelOptions.mockResolvedValue({
+      providers: [
+        {
+          slug: 'semantier-cloud',
+          name: 'Cloud',
+          models: ['allowed-model', 'stale-model'],
+          eligible_models: ['allowed-model']
+        }
+      ]
+    })
     $customModels.set([{ provider: 'semantier-cloud', model: 'custom-model' }])
     const { content, onSelectModel } = renderPanel()
     await content.findByText('Cloud')
@@ -186,7 +218,15 @@ describe('ModelMenuPanel current selection', () => {
 
   it('does not offer provider-excluded models, including as a searched custom id', async () => {
     getGlobalModelOptions.mockResolvedValue({
-      providers: [{ slug: 'nous', name: 'Nous', models: ['allowed-model', 'locked-model'], eligible_models: ['allowed-model'], unavailable_models: ['locked-model'] }]
+      providers: [
+        {
+          slug: 'nous',
+          name: 'Nous',
+          models: ['allowed-model', 'locked-model'],
+          eligible_models: ['allowed-model'],
+          unavailable_models: ['locked-model']
+        }
+      ]
     })
     $customModels.set([{ provider: 'nous', model: 'locked-model' }])
     const { content, onSelectModel } = renderPanel()
@@ -198,7 +238,9 @@ describe('ModelMenuPanel current selection', () => {
     expect(onSelectModel).not.toHaveBeenCalled()
     fireEvent.change(input, { target: { value: 'allowed-model' } })
     fireEvent.keyDown(input, { key: 'Enter' })
-    await vi.waitFor(() => expect(onSelectModel).toHaveBeenCalledWith({ model: 'allowed-model', provider: 'nous', sessionId: 'runtime-1' }))
+    await vi.waitFor(() =>
+      expect(onSelectModel).toHaveBeenCalledWith({ model: 'allowed-model', provider: 'nous', sessionId: 'runtime-1' })
+    )
   })
 
   it('keeps the checkmark on the live SessionView model when a stale options response disagrees', async () => {
@@ -540,7 +582,15 @@ describe('ModelMenuPanel provider collapse', () => {
       .mockResolvedValueOnce({
         model: 'glm-4.5-air',
         provider: 'zhipu',
-        providers: [{ models: ['glm-4.5-air', 'glm-5-turbo'], eligible_models: ['glm-4.5-air', 'glm-5-turbo'], name: '智谱2', slug: 'zhipu' }, MOA_PROVIDER]
+        providers: [
+          {
+            models: ['glm-4.5-air', 'glm-5-turbo'],
+            eligible_models: ['glm-4.5-air', 'glm-5-turbo'],
+            name: '智谱2',
+            slug: 'zhipu'
+          },
+          MOA_PROVIDER
+        ]
       })
       .mockResolvedValueOnce({
         model: 'glm-4.5-air',
@@ -570,8 +620,18 @@ describe('ModelMenuPanel provider collapse', () => {
       model: 'glm-4.5-air',
       provider: 'zhipu',
       providers: [
-        { models: ['glm-4.5-air', 'gpt-5.5'], eligible_models: ['glm-4.5-air', 'gpt-5.5'], name: 'OpenRouter', slug: 'openrouter' },
-        { models: ['glm-4.5-air', 'glm-5-turbo'], eligible_models: ['glm-4.5-air', 'glm-5-turbo'], name: '智谱2', slug: 'zhipu' },
+        {
+          models: ['glm-4.5-air', 'gpt-5.5'],
+          eligible_models: ['glm-4.5-air', 'gpt-5.5'],
+          name: 'OpenRouter',
+          slug: 'openrouter'
+        },
+        {
+          models: ['glm-4.5-air', 'glm-5-turbo'],
+          eligible_models: ['glm-4.5-air', 'glm-5-turbo'],
+          name: '智谱2',
+          slug: 'zhipu'
+        },
         MOA_PROVIDER
       ]
     }
@@ -596,8 +656,18 @@ describe('ModelMenuPanel provider collapse', () => {
       model: 'glm-4.5-air',
       provider: 'zhipu',
       providers: [
-        { models: ['glm-4.5-air', 'gpt-5.5'], eligible_models: ['glm-4.5-air', 'gpt-5.5'], name: 'OpenRouter', slug: 'openrouter' },
-        { models: ['glm-4.5-air', 'glm-5-turbo'], eligible_models: ['glm-4.5-air', 'glm-5-turbo'], name: '智谱2', slug: 'zhipu' },
+        {
+          models: ['glm-4.5-air', 'gpt-5.5'],
+          eligible_models: ['glm-4.5-air', 'gpt-5.5'],
+          name: 'OpenRouter',
+          slug: 'openrouter'
+        },
+        {
+          models: ['glm-4.5-air', 'glm-5-turbo'],
+          eligible_models: ['glm-4.5-air', 'glm-5-turbo'],
+          name: '智谱2',
+          slug: 'zhipu'
+        },
         MOA_PROVIDER
       ]
     })

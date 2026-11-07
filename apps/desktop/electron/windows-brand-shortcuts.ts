@@ -18,6 +18,7 @@ export function validateShortcutName(value: unknown): string {
   if (!validBrandShortcutName(value)) {
     throw new Error('Invalid shortcut name')
   }
+
   return value
 }
 
@@ -36,6 +37,7 @@ export function pngsToIco(images: { size: number; png: Buffer }[]): Buffer {
     header.writeUInt32LE(offset, row + 12)
     offset += png.length
   })
+
   return Buffer.concat([header, ...images.map(image => image.png)])
 }
 
@@ -48,28 +50,35 @@ function brandingIcon(branding: DesktopBranding): Buffer {
       unpackedPathFor: p => p.replace(/\.asar(?=[\\/])/, '.asar.unpacked')
     })
   )
+
   const source = branding.logo
     ? nativeImage.createFromDataURL(branding.logo)
     : fallback
       ? nativeImage.createFromPath(fallback)
       : null
+
   if (!source || source.isEmpty()) {
     throw new Error('Brand icon unavailable')
   }
+
   const { width, height } = source.getSize()
+
   return pngsToIco(
     [16, 24, 32, 48, 64, 128, 256].map(size => {
       const ratio = size / Math.max(width, height)
+
       const fitted = source.resize({
         width: Math.max(1, Math.round(width * ratio)),
         height: Math.max(1, Math.round(height * ratio)),
         quality: 'best'
       })
+
       const dimensions = fitted.getSize()
       const canvas = Buffer.alloc(size * size * 4)
       const pixels = fitted.toBitmap()
       const left = Math.floor((size - dimensions.width) / 2)
       const top = Math.floor((size - dimensions.height) / 2)
+
       for (let row = 0; row < dimensions.height; row++) {
         pixels.copy(
           canvas,
@@ -78,6 +87,7 @@ function brandingIcon(branding: DesktopBranding): Buffer {
           (row + 1) * dimensions.width * 4
         )
       }
+
       return { size, png: nativeImage.createFromBitmap(canvas, { width: size, height: size }).toPNG() }
     })
   )
@@ -108,6 +118,7 @@ if ($packages.Count -eq 1) {
       appId: PRODUCT_IDENTITY.appId
     })
   )
+
   return JSON.parse(result.stdout) as ShortcutDetails
 }
 
@@ -134,6 +145,7 @@ export interface ShortcutServiceOptions {
 export function createBrandShortcutService(options: ShortcutServiceOptions) {
   const registryFile = path.join(options.directory, 'owned-shortcuts.v1.json')
   let pending = Promise.resolve<unknown>(undefined)
+
   const records = (): Record<string, ShortcutDetails> => {
     try {
       return JSON.parse(fs.readFileSync(registryFile, 'utf8'))
@@ -141,23 +153,29 @@ export function createBrandShortcutService(options: ShortcutServiceOptions) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         return {}
       }
+
       throw error
     }
   }
+
   const linkPath = (name: string, destination: ShortcutDestination) => {
     if (!DESTINATIONS.includes(destination)) {
       throw new Error('Invalid shortcut destination')
     }
+
     return path.join(options.roots[destination], validateShortcutName(name) + '.lnk')
   }
+
   const owned = (file: string, all: Record<string, ShortcutDetails>) => {
     if (!all[file]) {
       return false
     }
+
     try {
       if (fs.lstatSync(file).isSymbolicLink()) {
         return false
       }
+
       return sameLink(shell.readShortcutLink(file), all[file])
     } catch {
       return false
@@ -168,6 +186,7 @@ export function createBrandShortcutService(options: ShortcutServiceOptions) {
     create(request: BrandShortcutRequest): Promise<BrandShortcutResult[]> {
       const task = pending.then(async () => {
         validateShortcutName(request?.name)
+
         if (
           !Array.isArray(request.destinations) ||
           !request.destinations.length ||
@@ -177,55 +196,74 @@ export function createBrandShortcutService(options: ShortcutServiceOptions) {
         ) {
           throw new Error('Invalid shortcut destination')
         }
+
         const branding = options.branding()
+
         if (JSON.stringify(validateDesktopBranding(request.branding)) !== JSON.stringify(branding)) {
           throw new Error('Branding changed; refresh and retry')
         }
+
         const target = await (options.target ?? runningShortcutTarget)()
+
         // A concurrent branding save must not relabel a shortcut after native target resolution.
         if (JSON.stringify(options.branding()) !== JSON.stringify(branding)) {
           throw new Error('Branding changed; refresh and retry')
         }
+
         const iconBytes = brandingIcon(branding)
         fs.mkdirSync(options.directory, { recursive: true })
         const icon = path.join(options.directory, createHash('sha256').update(iconBytes).digest('hex') + '.ico')
+
         if (!fs.existsSync(icon)) {
           fs.writeFileSync(icon, iconBytes, { flag: 'wx' })
         }
+
         const all = records()
         const results: BrandShortcutResult[] = []
+
         for (const destination of request.destinations) {
           const file = linkPath(request.name, destination)
           let temporary = ''
           let before: Buffer | null = null
           let written = false
+
           try {
             const exists = fs.existsSync(file)
+
             if (exists && !owned(file, all)) {
               results.push({ destination, status: 'conflict' })
+
               continue
             }
+
             if (exists) {
               before = fs.readFileSync(file)
             }
+
             fs.mkdirSync(options.roots[destination], { recursive: true })
             temporary = path.join(options.roots[destination], '.' + randomUUID() + '.lnk')
             const details = { ...target, icon, iconIndex: 0, description: 'Semantier Agent custom shortcut' }
+
             if (!shell.writeShortcutLink(temporary, 'create', details)) {
               throw new Error('Shortcut write failed')
             }
+
             if (!sameLink(shell.readShortcutLink(temporary), details)) {
               throw new Error('Shortcut verification failed')
             }
+
             if (exists) {
               if (!owned(file, all)) {
                 results.push({ destination, status: 'conflict' })
+
                 continue
               }
+
               fs.renameSync(temporary, file)
             } else {
               fs.copyFileSync(temporary, file, fs.constants.COPYFILE_EXCL)
             }
+
             written = true
             const updated = { ...all, [file]: shell.readShortcutLink(file) }
             const registryTemp = registryFile + '.tmp'
@@ -242,6 +280,7 @@ export function createBrandShortcutService(options: ShortcutServiceOptions) {
                 fs.unlinkSync(file)
               }
             }
+
             results.push({ destination, status: 'failed' })
           } finally {
             if (temporary && fs.existsSync(temporary)) {
@@ -249,16 +288,21 @@ export function createBrandShortcutService(options: ShortcutServiceOptions) {
             }
           }
         }
+
         return results
       })
+
       pending = task.catch(() => undefined)
+
       return task
     },
     reveal(name: string, destination: ShortcutDestination) {
       const file = linkPath(name, destination)
+
       if (!fs.existsSync(file) || !owned(file, records())) {
         throw new Error('Shortcut is not owned')
       }
+
       shell.showItemInFolder(file)
     }
   }

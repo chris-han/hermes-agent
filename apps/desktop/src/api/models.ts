@@ -57,7 +57,9 @@ export function getGlobalModelOptions(
   }
 
   if (opts?.queryOnly) {
-    if (!opts.queryScope?.trim()) {throw new Error('A connection scope is required for provider model discovery.')}
+    if (!opts.queryScope?.trim()) {
+      throw new Error('A connection scope is required for provider model discovery.')
+    }
     params.set('query_only', '1')
     params.set('query_scope', opts.queryScope.trim())
   }

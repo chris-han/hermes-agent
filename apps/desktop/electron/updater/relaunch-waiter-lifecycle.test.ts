@@ -38,12 +38,33 @@ for (const mode of [
   { name: 'cleanup-error', ready: true, refuseCleanup: true }
 ]) {
   test(`waiter ownership survives its complete lifecycle (${mode.name})`, async (): Promise<void> => {
-    const nativeUpdate: NativeUpdateHandoff | undefined = mode.native ? {
-      schema:1, base:'https://s3.semantier.com', graph:{schema:1, transport:'windows-package-uri', root:'fixture', payloadInventorySha256:'a'.repeat(64), objects:[]},
-      manifestSha256:'b'.repeat(64), graphSha256:'a'.repeat(64), publisher:'CN=Fixture', identity:'disposable-waiter-test', version:'2.0.0.0', currentVersion:'1.0.0.0',
-      targetBuildId:'c'.repeat(32), targetCommit:'d'.repeat(40), fullName:'baseline-package', familyName:'baseline-family',
-      applicationId:'Hermes', executable:process.execPath, userDataDirectory:os.tmpdir(), journalDirectory:'fixture-only-no-native-execution'
-    } : undefined
+    const nativeUpdate: NativeUpdateHandoff | undefined = mode.native
+      ? {
+          schema: 1,
+          base: 'https://s3.semantier.com',
+          graph: {
+            schema: 1,
+            transport: 'windows-package-uri',
+            root: 'fixture',
+            payloadInventorySha256: 'a'.repeat(64),
+            objects: []
+          },
+          manifestSha256: 'b'.repeat(64),
+          graphSha256: 'a'.repeat(64),
+          publisher: 'CN=Fixture',
+          identity: 'disposable-waiter-test',
+          version: '2.0.0.0',
+          currentVersion: '1.0.0.0',
+          targetBuildId: 'c'.repeat(32),
+          targetCommit: 'd'.repeat(40),
+          fullName: 'baseline-package',
+          familyName: 'baseline-family',
+          applicationId: 'Hermes',
+          executable: process.execPath,
+          userDataDirectory: os.tmpdir(),
+          journalDirectory: 'fixture-only-no-native-execution'
+        }
+      : undefined
 
     let child: ChildProcess | undefined
     let originalKill: ChildProcess['kill'] | undefined
@@ -89,7 +110,10 @@ for (const mode of [
         assert.deepEqual(JSON.parse(fs.readFileSync(path.join(stage, 'native-update.json'), 'utf8')), nativeUpdate)
 
         for (const helper of ['native-package-digest.ps1', 'native-package-update.ps1']) {
-          assert.deepEqual(fs.readFileSync(path.join(stage, helper)), fs.readFileSync(path.join(path.dirname(scriptPath), helper)))
+          assert.deepEqual(
+            fs.readFileSync(path.join(stage, helper)),
+            fs.readFileSync(path.join(path.dirname(scriptPath), helper))
+          )
         }
       }
 

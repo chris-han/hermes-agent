@@ -83,7 +83,12 @@ describe('CustomEndpointsSettings', () => {
     getCustomEndpoints.mockResolvedValue(emptyResponse)
     validateCustomEndpoint.mockResolvedValueOnce({ ok: true, reachable: true, models: ['example-model'], message: '' })
     let finish!: (value: unknown) => void
-    validateCustomEndpoint.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    validateCustomEndpoint.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finish = resolve
+        })
+    )
     render(<CustomEndpointsSettings />)
     const url = await screen.findByPlaceholderText('http://localhost:4000/v1')
     fireEvent.change(url, { target: { value: 'http://localhost:4000/v1' } })
@@ -120,10 +125,12 @@ describe('CustomEndpointsSettings', () => {
     fireEvent.change(url, { target: { value: 'http://localhost:4000/v1' } })
     fireEvent.change(key, { target: { value: 'test-key-only' } })
     fireEvent.click(test)
-    await waitFor(() => expect(validateCustomEndpoint).toHaveBeenCalledWith(
-      expect.objectContaining({ base_url: 'http://localhost:4000/v1', api_key: 'test-key-only' }),
-      'default'
-    ))
+    await waitFor(() =>
+      expect(validateCustomEndpoint).toHaveBeenCalledWith(
+        expect.objectContaining({ base_url: 'http://localhost:4000/v1', api_key: 'test-key-only' }),
+        'default'
+      )
+    )
   })
 
   it('preserves an unchanged masked key and manual model after catalog failure; Cancel drops a new secret', async () => {
