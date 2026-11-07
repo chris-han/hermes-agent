@@ -68,6 +68,25 @@ def resolve_postgres_scope(home):
                      AND u.payload_json::jsonb->>'user_id'=u.user_id
                      AND u.payload_json::jsonb->>'workspace_id'=b.workspace_id
                     WHERE b.hermes_home=%s""",(key,)).fetchone()
+                if row is None and conn.execute(
+                    "SELECT to_regclass('semantier_identity.winman_profile_bindings') IS NOT NULL"
+                ).fetchone()[0]:
+                    row=conn.execute("""SELECT b.tenant_id,b.workspace_id,b.source_store_id,b.schema_name
+                        FROM semantier_identity.winman_profile_bindings b
+                        JOIN semantier_identity.workspace_runtime_bindings w
+                          ON w.user_id=b.user_id AND w.workspace_id=b.workspace_id
+                        JOIN semantier_identity.users u ON u.user_id=b.user_id
+                        WHERE b.hermes_home=%s AND b.bot_id ~ '^bot_[a-f0-9]{32}$'
+                          AND b.hermes_home=w.hermes_home || '/profiles/winman-' || substr(b.bot_id,5)
+                          AND b.tenant_id=w.tenant_id
+                          AND b.source_store_id='winman-native-' || b.user_id
+                          AND u.payload_json::jsonb->>'user_id'=b.user_id
+                          AND u.payload_json::jsonb->>'workspace_id'=b.workspace_id
+                          AND u.payload_json::jsonb->>'organization_id'=b.organization_id
+                          AND u.payload_json::jsonb->>'membership_status'='active'
+                          AND EXISTS (SELECT 1 FROM jsonb_array_elements(u.payload_json::jsonb->'organization_memberships') m
+                                      WHERE m->>'organization_id'=b.organization_id
+                                        AND m->>'membership_status'='active')""",(key,)).fetchone()
         except psycopg.errors.UndefinedTable:
             row=None
         if row:
