@@ -28,6 +28,7 @@ import {
   resetSidebarBatchCapability,
   setApiRequestConnection,
   setApiRequestProfile,
+  setModelAssignment,
   setSttLease,
   speakText,
   transcribeAudio,
@@ -744,6 +745,16 @@ describe('Hermes REST helpers', () => {
         path: '/api/model/options?explicit_only=1'
       })
     )
+  })
+
+  it('allows the model assignment guard to finish before timing out', async () => {
+    await setModelAssignment({ scope: 'main', provider: 'custom:alpha', model: 'alpha-only' })
+
+    expect(api.mock.calls[0][0]).toEqual(expect.objectContaining({
+      path: '/api/model/set',
+      timeoutMs: expect.any(Number)
+    }))
+    expect(api.mock.calls[0][0].timeoutMs).toBeGreaterThanOrEqual(60_000)
   })
 
   it('can opt into unconfigured providers for onboarding flows', async () => {

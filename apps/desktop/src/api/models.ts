@@ -136,6 +136,10 @@ export function setModelAssignment(
     ...capabilityScoped(profile),
     path: '/api/model/set',
     method: 'POST',
-    body
+    body,
+    // Assignment includes provider validation and selection-guard lookups.
+    // Keep the UI waiting for their result instead of reporting failure while
+    // the backend is still about to persist the requested model.
+    timeoutMs: STARTUP_REQUEST_TIMEOUT_MS
   })
 }
