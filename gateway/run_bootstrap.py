@@ -241,7 +241,7 @@ def _start_gateway_claim_pid_file(force: bool = False) -> bool:
     return True
 
 
-async def _start_gateway_start_control_socket(runner):
+async def _start_gateway_start_control_socket(runner, *, home=None):
     """Start the gateway control socket (identify/status/pause-for-update); None when unavailable."""
     from gateway.run import (asyncio, logger, os, threading)
     import atexit
@@ -319,7 +319,7 @@ async def _start_gateway_start_control_socket(runner):
             except concurrent.futures.TimeoutError:
                 return {"multiplex": True, "pending": True, "served_profiles": runner.served_profile_names()}
 
-        _control_server = GatewayControlServer(
+        _control_server = GatewayControlServer(home=home,
             verb_handlers={"pause-for-update": _pause_for_update_handler, "identify": _identify_runtime,
                            "rescan-profiles": _rescan_profiles_handler,
                            "migrate-profile-identity": migrate_profile_identity_verb(runner),
