@@ -4062,7 +4062,8 @@ class GatewayRunner(
                 require_boundary = bool(
                     getattr(self, "_semantier_embedded_boundary_required", False)
                 )
-                boundary = resolve_execution_boundary(
+                from gateway.session_host_runtime import host_boundary_for
+                boundary = host_boundary_for(self) or resolve_execution_boundary(
                     ExecutionBoundaryRequest(
                         source="gateway_runner",
                         session_id=get_session_env("HERMES_SESSION_ID", "") or None,
