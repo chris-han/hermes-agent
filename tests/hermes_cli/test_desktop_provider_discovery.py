@@ -194,3 +194,32 @@ def test_snapshot_without_valid_utc_provenance_is_not_admitted(cache_path, monke
         row["fetched_at"] = bad
         cache_path.write_text(json.dumps(data))
         assert read_provider_snapshot(**source).models is None
+
+
+def test_configured_provider_projection_never_uses_saved_or_static_models(cache_path, monkeypatch):
+    from hermes_cli import models
+    from hermes_cli.desktop_model_discovery import configured_provider_rows
+    from hermes_cli.inventory import ConfigContext
+
+    monkeypatch.setattr(models, "probe_api_models", lambda *args, **kwargs: {"models": ["live"]})
+    ctx = ConfigContext(current_provider="alpha", current_model="retired", current_base_url="https://alpha.test/v1",
+        user_providers={"alpha": {"base_url": "https://alpha.test/v1", "api_key": "secret", "models": ["static-only"]},
+                        "disabled": {"enabled": False, "base_url": "https://disabled.test/v1"}},
+        custom_providers=[])
+    rows = configured_provider_rows(ctx, source_scope="connection-a", refresh=True)
+    assert [row["slug"] for row in rows] == ["alpha"]
+    assert rows[0]["models"] == ["live"]
+    assert rows[0]["discovery_state"] == "fresh"
+    assert "secret" not in json.dumps(rows)
+    assert "eligible_models" not in rows[0]
+
+
+def test_command_credentials_are_partitioned_by_materialized_principal(cache_path, monkeypatch):
+    from hermes_cli import models
+    principal = ["first"]
+    monkeypatch.setattr(models, "probe_api_models", lambda *args, **kwargs: {"models": ["private"]})
+    source = {"provider": "fixture", "base_url": "https://provider.test/v1",
+              "api_key": lambda: principal[0], "source_scope": "connection-a"}
+    assert read_provider_snapshot(**source, refresh=True).models == ["private"]
+    principal[0] = "second"
+    assert read_provider_snapshot(**source).models is None

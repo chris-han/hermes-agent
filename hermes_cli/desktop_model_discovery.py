@@ -40,7 +40,12 @@ def read_provider_snapshot(*, provider: str, base_url: str, api_key: str | None,
     if (not provider or not source_scope or parsed.scheme not in {"http", "https"}
             or not parsed.hostname or parsed.username or parsed.password):
         return ProviderSnapshot(None, "unsupported")
-    principal = owner._custom_endpoint_fingerprint(api_key, api_mode, headers)
+    from agent.command_token_source import materialize_probe_api_key
+
+    materialized_key = materialize_probe_api_key(api_key)
+    if callable(api_key) and not materialized_key:
+        return ProviderSnapshot(None, "error")
+    principal = owner._custom_endpoint_fingerprint(materialized_key, api_mode, headers)
     identity = json.dumps([str(owner._provider_models_cache_path().resolve()), source_scope, provider, endpoint, principal],
                           ensure_ascii=True, separators=(",", ":"))
     key = "desktop-query-v1:" + hashlib.sha256(identity.encode()).hexdigest()
@@ -86,7 +91,7 @@ def read_provider_snapshot(*, provider: str, base_url: str, api_key: str | None,
             return ProviderSnapshot(previous, "stale" if previous is not None else "error")
     try:
         try:
-            result = owner.probe_api_models(api_key, endpoint, api_mode=api_mode, request_headers=headers,
+            result = owner.probe_api_models(materialized_key, endpoint, api_mode=api_mode, request_headers=headers,
                                             require_complete=True)
             values = result.get("models") if isinstance(result, dict) else None
             if not isinstance(values, list) or any(not isinstance(value, str) or not value.strip() for value in values):
@@ -105,3 +110,30 @@ def read_provider_snapshot(*, provider: str, base_url: str, api_key: str | None,
     finally:
         with _inflight_lock:
             _inflight.pop(key, None)
+
+
+def configured_provider_rows(ctx, *, source_scope: str, refresh: bool = False) -> list[dict]:
+    """Project explicit configured endpoints; never accept endpoint input from a client."""
+    from hermes_cli.config import is_provider_enabled
+    from hermes_cli.model_switch import _extra_headers_from_config, _scoped_key_env
+    from hermes_cli.model_switch_providers import _discover_flag, _entry_api_mode, _entry_base_url, _entry_credentials
+
+    rows = []
+    excluded = {str(value).lower() for value in (ctx.excluded_providers or [])}
+    for slug, entry in ctx.user_providers.items():
+        if not isinstance(entry, dict) or not is_provider_enabled(entry) or slug.lower() in excluded:
+            continue
+        endpoint = str(_entry_base_url(entry) or "")
+        key, key_env, _ = _entry_credentials(entry, "key_env", "api_key_env")
+        key = key or _scoped_key_env(key_env)
+        if not _discover_flag(entry):
+            snapshot = ProviderSnapshot(None, "unsupported")
+        else:
+            snapshot = read_provider_snapshot(provider=slug, base_url=endpoint, api_key=key,
+                source_scope=source_scope, api_mode=_entry_api_mode(entry),
+                headers=_extra_headers_from_config(entry), refresh=refresh)
+        rows.append({"slug": slug, "name": str(entry.get("name") or slug),
+                     "is_current": slug.lower() == ctx.current_provider.lower(),
+                     "models": snapshot.models or [], "total_models": len(snapshot.models or []),
+                     "discovery_state": snapshot.state})
+    return rows
