@@ -14,6 +14,7 @@ import {
   useState
 } from 'react'
 
+import { ModelDiscoveryRefreshStatus, ModelDiscoveryStatus } from '@/components/model-discovery-status'
 import { ProviderStatusChip } from '@/components/provider-status-chip'
 import { Badge } from '@/components/ui/badge'
 import { Codicon } from '@/components/ui/codicon'
@@ -36,14 +37,16 @@ import type { HermesGateway } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { triggerHaptic } from '@/lib/haptics'
 import { isSubmitEnter } from '@/lib/ime'
-import { catalogProviderMatches, modelOptionsQueryKey, requestModelOptions } from '@/lib/model-options'
+import { modelDiscoveryOwnerKey } from '@/lib/model-discovery-scope'
+import { catalogProviderMatches, modelOptionsQueryKey, providerSelectableModels, requestDiscoveredModelOptions } from '@/lib/model-options'
 import { displayModelName, modelDisplayParts } from '@/lib/model-status-label'
 import { accountResetMs, formatReset, modelResetMs } from '@/lib/provider-limit'
 import { reasoningEffortLabel } from '@/lib/reasoning-effort'
 import { foldIncludes, normalize } from '@/lib/text'
 import { cn } from '@/lib/utils'
-import { $customModels, addCustomModel, customModelCandidate, withCustomModels } from '@/store/custom-models'
+import { addCustomModel, customModelCandidate } from '@/store/custom-models'
 import { $favoriteModels, favoriteModelKey, toggleFavoriteModel } from '@/store/favorite-models'
+import { requestGatewayForAgent } from '@/store/gateway'
 import { $showModelPricing } from '@/store/model-pricing'
 import {
   $visibleModels,
@@ -56,7 +59,7 @@ import {
   setModelVisibilityOpen
 } from '@/store/model-visibility'
 import { $collapsedProviders, toggleCollapsedProvider } from '@/store/provider-collapse'
-import { $defaultReasoningEffort } from '@/store/session'
+import { $connection, $defaultReasoningEffort } from '@/store/session'
 
 import { type FastControl, ModelEditSubmenu, resolveFastControl } from './model-edit-submenu'
 import { ModelMenuRowIcon, useModelMenuRowDecoration } from './model-menu-row-decorations'
@@ -218,6 +221,8 @@ export function ModelCatalogMenu({
   const { t } = useI18n()
   const copy = t.shell.modelMenu
   const copyPicker = t.modelPicker
+  const connection = useStore($connection)
+  const ownerKey = modelDiscoveryOwnerKey(ownerConnectionId, connection)
   const closeMenu = useContext(ModelMenuCloseContext)
   const [search, setSearch] = useState<string>('')
   // "Add custom model…" turns the search box into slug entry: the catalog
@@ -232,18 +237,22 @@ export function ModelCatalogMenu({
   // catalog must show the same shortlist. A per-caller opt-in is how the board
   // and the composer would end up disagreeing about what "my models" means.
   const visibleModels = useStore($visibleModels)
-  const customModels = useStore($customModels)
   // Favorite models, same reasoning as the shortlist above: one global
   // preference owned by the catalog, so the composer pill, session tiles and
   // the kanban override all show the same Favorites section.
   const favoriteKeys = useStore($favoriteModels)
 
   const modelOptions = useQuery({
-    queryKey: modelOptionsQueryKey(profile, sessionId, ownerConnectionId),
+    queryKey: modelOptionsQueryKey(profile, sessionId, ownerKey),
     // Gateway-first even with no session: a connected (possibly remote)
     // gateway owns the model catalog, including virtual providers the local
     // REST fallback can't know about (#53817).
-    queryFn: (): Promise<ModelOptionsResult> => requestModelOptions({ gateway, profile, request, sessionId })
+    queryFn: (): Promise<ModelOptionsResult> => requestDiscoveredModelOptions({
+      connection, gateway, ownerConnectionId, profile, sessionId,
+      request: request ?? (<T,>(method: string, params?: Record<string, unknown>) =>
+        requestGatewayForAgent<T>(ownerConnectionId ?? connection?.connectionId ?? null, profile, method, params))
+    }),
+    enabled: !!ownerKey
   })
 
   const loading = modelOptions.isPending && !modelOptions.data
@@ -263,8 +272,11 @@ export function ModelCatalogMenu({
   )
 
   const pickerProviders = useMemo(
-    () => withCustomModels(providers?.filter(provider => provider.slug.toLowerCase() !== 'moa' && provider.authenticated !== false && provider.eligible_models != null) ?? [], customModels).map(omitUnavailable),
-    [providers, customModels]
+    () => (providers ?? [])
+      .filter(provider => provider.slug.toLowerCase() !== 'moa' && provider.authenticated !== false)
+      .map(provider => ({ ...provider, models: providerSelectableModels(provider) }))
+      .filter(provider => provider.models.length > 0),
+    [providers]
   )
 
   const current = controller.current
@@ -335,8 +347,7 @@ export function ModelCatalogMenu({
   // catalog lacks is one Enter away, then remember it as a normal row. While
   // the query still matches catalog rows the section stays out of the way
   // unless the user asked for it via "Add custom model…".
-  const customSlug =
-    slugEntry || (!hasList && shownMoaPresets.length === 0) ? customModelCandidate(search, pickerProviders) : null
+  const customSlug = slugEntry ? customModelCandidate(search, pickerProviders) : null
 
   const customProviders = useMemo(
     () =>
@@ -353,7 +364,7 @@ export function ModelCatalogMenu({
     [customSlug, pickerProviders, current.provider]
   )
 
-  const selectFamily = async (family: ModelFamily, provider: ModelOptionProvider): Promise<boolean> => {
+  const selectFamily = async (family: ModelFamily, provider: ModelOptionProvider, manual = false): Promise<boolean> => {
     const caps = provider.capabilities?.[family.id]
     const preset = controller.presetFor(provider.slug, family.id)
 
@@ -363,7 +374,8 @@ export function ModelCatalogMenu({
     const variantFast = !(caps?.fast ?? false) && !!family.fastId
     const targetId = variantFast && preset.fast === true ? family.fastId! : family.id
 
-    if ((provider.eligible_models == null || !provider.eligible_models.includes(targetId)) ||
+    if ((!manual && !providerSelectableModels(provider).includes(targetId)) ||
+        (manual && provider.eligible_models != null && !provider.eligible_models.includes(targetId)) ||
         (provider.unavailable_models ?? []).some(model => normalize(model) === normalize(targetId))) {
       return false
     }
@@ -403,7 +415,7 @@ export function ModelCatalogMenu({
   }
 
   const selectCustom = async (slug: string, provider: ModelOptionProvider) => {
-    if (!(await selectFamily({ fastId: null, id: slug }, provider))) {
+    if (!(await selectFamily({ fastId: null, id: slug }, provider, true))) {
       return
     }
 
@@ -656,6 +668,12 @@ export function ModelCatalogMenu({
       />
 
       {!hideCatalog && <DropdownMenuSeparator className="mx-0" />}
+
+      {!hideCatalog && <ModelDiscoveryRefreshStatus ownerKey={ownerKey} profile={profile} />}
+
+      {!hideCatalog && (modelOptions.data?.providers ?? []).map(provider => (
+        <ModelDiscoveryStatus key={provider.slug} provider={provider} />
+      ))}
 
       {hideCatalog ? null : loading ? (
         <DropdownMenuGroup className="py-1">

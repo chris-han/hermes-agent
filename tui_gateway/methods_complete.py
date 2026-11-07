@@ -313,7 +313,18 @@ def _(rid, params: dict) -> dict:
     skew = _model_skew_err(rid)
     if skew is not None:
         return skew
-    from hermes_cli.inventory import build_model_options_payload
+    from hermes_cli.inventory import build_model_options_payload, build_desktop_model_options_payload
+    if params.get("query_only"):
+        import json
+
+        scope = params.get("query_scope")
+        if (type(params.get("query_only")) is not bool or not isinstance(scope, str)
+                or not scope.strip() or len(scope) > 200 or type(params.get("refresh", False)) is not bool):
+            return _err(rid, -32602, "invalid_params")
+        source_scope = json.dumps(["desktop-model-query-v1", "legacy-local", scope],
+                                  ensure_ascii=True, separators=(",", ":"))
+        return _ok(rid, build_desktop_model_options_payload(_model_picker_context(_session_agent(params)),
+                   source_scope=source_scope, refresh=params.get("refresh", False)))
     # A spawned agent owns the live provider/model/base_url; empty attributes must
     # NOT clobber disk config (with_overrides is truthy-only).
     return _ok(rid, build_model_options_payload(

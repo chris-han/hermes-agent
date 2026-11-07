@@ -1,6 +1,22 @@
 import type { ModelCapabilities, ModelOptionProvider, ModelOptionsResult } from '@hermes/shared'
 
 import { getGlobalModelOptions, type HermesGateway } from '@/hermes'
+import { type DiscoveryConnection, modelDiscoveryScope } from '@/lib/model-discovery-scope'
+import { normalize } from '@/lib/text'
+
+/** Discovery is a candidate source; an independent entitlement, when supplied, still applies. */
+export function providerSelectableModels(provider?: ModelOptionProvider): string[] {
+  if (!provider || provider.authenticated === false) {return []}
+  if (provider.discovery_state != null) {
+    if (!provider.discovery_source_id || !['fresh', 'cached', 'stale'].includes(provider.discovery_state)) {return []}
+  } else if (provider.eligible_models == null) {
+    return []
+  }
+
+  const eligible = provider.eligible_models == null ? null : new Set(provider.eligible_models)
+  const unavailable = new Set((provider.unavailable_models ?? []).map(normalize))
+  return (provider.models ?? []).filter(model => (!eligible || eligible.has(model)) && !unavailable.has(normalize(model)))
+}
 
 type CatalogProviderIdentity = Partial<Pick<ModelOptionProvider, 'aliases' | 'name'>> &
   Pick<ModelOptionProvider, 'slug'>
@@ -113,8 +129,27 @@ interface ModelOptionsRequest {
   /** Profile for the REST recovery path. Must match the catalog owner so a
    *  secondary tile does not fall back to the launch profile's models. */
   profile?: null | string
+  /** Request only provider-verified query snapshots, within this connection namespace. */
+  queryOnly?: boolean
+  queryScope?: string
   refresh?: boolean
   sessionId?: null | string
+}
+
+export async function requestDiscoveredModelOptions({
+  connection,
+  ownerConnectionId,
+  ...request
+}: Omit<ModelOptionsRequest, 'queryOnly' | 'queryScope'> & {
+  connection?: DiscoveryConnection | null
+  ownerConnectionId?: null | string
+}): Promise<ModelOptionsResult> {
+  if (!request.gateway && !request.request && ownerConnectionId &&
+      ownerConnectionId !== connection?.connectionId) {
+    throw new Error('The model discovery owner is not connected.')
+  }
+  const queryScope = await modelDiscoveryScope(ownerConnectionId, connection)
+  return requestModelOptions({ ...request, queryOnly: true, queryScope })
 }
 
 export function modelOptionsQueryKey(
@@ -132,6 +167,21 @@ function hasSelectableModels(options: ModelOptionsResult | null | undefined): bo
   return options?.providers?.some(provider => (provider.models?.length ?? 0) > 0) ?? false
 }
 
+function hasVerifiedProvenance(options: ModelOptionsResult): boolean {
+  if (options.discovery_contract !== 'provider-query-v1' || !Array.isArray(options.providers)) {return false}
+  return options.providers.every(provider => {
+    if (!provider.slug || !Array.isArray(provider.models) || provider.models.some(model => typeof model !== 'string' || !model)) {return false}
+    const state = provider.discovery_state
+    if (state === 'fresh' || state === 'cached' || state === 'stale') {
+      const timestamp = provider.discovery_fetched_at
+      return !!provider.discovery_source_id && typeof timestamp === 'string' &&
+        /(?:Z|\+00:00)$/.test(timestamp) && !Number.isNaN(Date.parse(timestamp))
+    }
+    return (state === 'missing' || state === 'error' || state === 'unsupported') &&
+      provider.models.length === 0 && !(provider.eligible_models?.length)
+  })
+}
+
 function restModelOptions(
   explicitOnly: boolean,
   refresh: boolean,
@@ -147,11 +197,32 @@ export async function requestModelOptions({
   explicitOnly = true,
   gateway,
   profile,
+  queryOnly = false,
+  queryScope,
   refresh = false,
   request,
   sessionId
 }: ModelOptionsRequest): Promise<ModelOptionsResult> {
   const dispatch = request ?? (gateway ? gateway.request.bind(gateway) : null)
+
+  if (queryOnly) {
+    const scope = queryScope?.trim()
+    if (!scope) {
+      throw new Error('A connection scope is required for provider model discovery.')
+    }
+    const params: Record<string, unknown> = { query_only: true, query_scope: scope }
+    if (sessionId) {params.session_id = sessionId}
+    if (refresh) {params.refresh = true}
+    if (explicitOnly) {params.explicit_only = true}
+    if (profile?.trim()) {params.profile = profile.trim()}
+    const result = dispatch
+      ? await dispatch<ModelOptionsResult>('model.options', params)
+      : await getGlobalModelOptions({ explicitOnly, queryOnly: true, queryScope: scope, refresh }, profile)
+    if (!hasVerifiedProvenance(result)) {
+      throw new Error('The connected provider does not support verified model discovery.')
+    }
+    return result
+  }
 
   if (dispatch) {
     const params: Record<string, unknown> = {}

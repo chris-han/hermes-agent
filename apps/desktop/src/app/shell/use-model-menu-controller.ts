@@ -7,7 +7,8 @@ import { useRef } from 'react'
 import { useSessionView } from '@/app/chat/session-view'
 import type { HermesGateway } from '@/hermes'
 import { useI18n } from '@/i18n'
-import { modelOptionsQueryKey, requestModelOptions } from '@/lib/model-options'
+import { modelDiscoveryOwnerKey } from '@/lib/model-discovery-scope'
+import { modelOptionsQueryKey, requestDiscoveredModelOptions } from '@/lib/model-options'
 import { currentPickerSelection } from '@/lib/model-status-label'
 import {
   $modelPresets,
@@ -18,7 +19,7 @@ import {
   modelPresetServiceTier,
   setModelPreset
 } from '@/store/model-presets'
-import { $defaultReasoningEffort, markComposerSelectionManual } from '@/store/session'
+import { $connection, $defaultReasoningEffort, markComposerSelectionManual } from '@/store/session'
 
 import type { ModelMenuController } from './model-catalog-menu'
 
@@ -63,6 +64,8 @@ export function useModelMenuController({
   requestGateway
 }: ModelMenuHostProps) {
   const { t } = useI18n()
+  const connection = useStore($connection)
+  const ownerKey = modelDiscoveryOwnerKey(ownerConnectionId, connection)
   // Bind to THIS surface's SessionView (primary or tile) so each pane's menu
   // shows/switches its own model — not the primary-only globals.
   const view = useSessionView()
@@ -85,9 +88,11 @@ export function useModelMenuController({
   // back to the catalog's reported current, and a non-reactive read would
   // never repaint that fallback once the catalog resolved.
   const modelOptions = useQuery({
-    queryKey: modelOptionsQueryKey(profile, activeSessionId, ownerConnectionId),
+    queryKey: modelOptionsQueryKey(profile, activeSessionId, ownerKey),
     queryFn: (): Promise<ModelOptionsResult> =>
-      requestModelOptions({ gateway, profile, request: requestGateway, sessionId: activeSessionId })
+      requestDiscoveredModelOptions({ connection, gateway, ownerConnectionId, profile,
+        request: requestGateway, sessionId: activeSessionId }),
+    enabled: !!ownerKey
   })
 
   const { model: optionsModel, provider: optionsProvider } = currentPickerSelection(

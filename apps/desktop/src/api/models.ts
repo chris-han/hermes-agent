@@ -37,6 +37,8 @@ export function getGlobalModelOptions(
     refresh?: boolean
     includeUnconfigured?: boolean
     explicitOnly?: boolean
+    queryOnly?: boolean
+    queryScope?: string
   },
   profile?: ProfileScope
 ): Promise<ModelOptionsResult> {
@@ -52,6 +54,12 @@ export function getGlobalModelOptions(
 
   if (opts?.explicitOnly !== false) {
     params.set('explicit_only', '1')
+  }
+
+  if (opts?.queryOnly) {
+    if (!opts.queryScope?.trim()) {throw new Error('A connection scope is required for provider model discovery.')}
+    params.set('query_only', '1')
+    params.set('query_scope', opts.queryScope.trim())
   }
 
   return window.hermesDesktop.api<ModelOptionsResult>({

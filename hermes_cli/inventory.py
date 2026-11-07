@@ -24,6 +24,8 @@ class ConfigContext:
     user_providers: dict
     custom_providers: list
     excluded_providers: list = None
+    configured_base_url: str = ""
+    configured_provider: str = ""
 
     def with_overrides(
         self, *, current_provider: Optional[str] = None, current_model: Optional[str] = None,
@@ -57,6 +59,8 @@ def load_picker_context() -> ConfigContext:
     excluded = cfg.get("model_catalog", {}).get("excluded_providers") or []
     return ConfigContext(
         current_provider=current_provider, current_model=current_model, current_base_url=current_base_url,
+        configured_base_url=current_base_url,
+        configured_provider=current_provider,
         user_providers=stringify_provider_map(cfg.get("providers")),
         custom_providers=get_compatible_custom_providers(cfg),
         excluded_providers=excluded if isinstance(excluded, list) else [],

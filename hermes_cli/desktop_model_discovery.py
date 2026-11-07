@@ -12,7 +12,7 @@ import threading
 from concurrent.futures import Future, TimeoutError
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 
 @dataclass(frozen=True)
@@ -41,7 +41,7 @@ def read_provider_snapshot(*, provider: str, base_url: str, api_key: str | None,
         return ProviderSnapshot(None, "unsupported")
     if (not provider or not source_scope or parsed.scheme not in {"http", "https"}
             or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment
-            or adapter not in {"openai", "ollama", "cloud"}):
+            or adapter not in {"openai", "ollama", "cloud", "anthropic", "gemini"}):
         return ProviderSnapshot(None, "unsupported")
     from agent.command_token_source import materialize_probe_api_key
 
@@ -49,8 +49,11 @@ def read_provider_snapshot(*, provider: str, base_url: str, api_key: str | None,
     if callable(api_key) and not materialized_key:
         return ProviderSnapshot(None, "error")
     principal = owner._custom_endpoint_fingerprint(materialized_key, api_mode, headers)
+    principal_material = json.dumps([materialized_key, api_mode, headers or {}], sort_keys=True,
+                                    ensure_ascii=True, separators=(",", ":"))
+    principal_full = hashlib.sha256(principal_material.encode()).hexdigest()
     identity = json.dumps([str(owner._provider_models_cache_path().resolve()), source_scope, provider, endpoint,
-                           principal, adapter],
+                           principal, principal_full, adapter],
                           ensure_ascii=True, separators=(",", ":"))
     key = "desktop-query-v1:" + hashlib.sha256(identity.encode()).hexdigest()
 
@@ -98,7 +101,66 @@ def read_provider_snapshot(*, provider: str, base_url: str, api_key: str | None,
                                     previous_row.get("fetched_at") if previous_row else None)
     try:
         try:
-            if adapter == "cloud":
+            if adapter == "gemini":
+                request_headers = {"User-Agent": owner._HERMES_USER_AGENT, "x-goog-api-key": materialized_key,
+                                   **(headers or {})}
+                values = None
+                seen: set[str] = set()
+                collected = []
+                cursor = None
+                ssl_context = owner._custom_provider_ssl_context(endpoint)
+                kwargs = {"ssl_context": ssl_context} if ssl_context is not None else {}
+                for _ in range(20):
+                    if not materialized_key:
+                        break
+                    params = {"pageSize": "1000"}
+                    if cursor:
+                        params["pageToken"] = cursor
+                    payload = owner._get_json(endpoint + "/models?" + urlencode(params), timeout=5.0,
+                                              headers=request_headers, **kwargs)
+                    raw = payload.get("models") if isinstance(payload, dict) else None
+                    if (not isinstance(raw, list) or any(not isinstance(item, dict) or
+                            not isinstance(item.get("name"), str) or not item["name"].strip() or
+                            ("supportedGenerationMethods" in item and
+                             not isinstance(item["supportedGenerationMethods"], list)) for item in raw)):
+                        break
+                    collected.extend(item["name"] for item in raw if "supportedGenerationMethods" not in item or
+                                     "generateContent" in item["supportedGenerationMethods"])
+                    next_cursor = payload.get("nextPageToken")
+                    if next_cursor is None or next_cursor == "":
+                        values = collected
+                        break
+                    if not isinstance(next_cursor, str) or next_cursor in seen:
+                        break
+                    seen.add(next_cursor)
+                    cursor = next_cursor
+            elif adapter == "anthropic":
+                request_headers = {"User-Agent": owner._HERMES_USER_AGENT, "anthropic-version": "2023-06-01",
+                                   "x-api-key": materialized_key, **(headers or {})}
+                values = None
+                seen: set[str] = set()
+                collected = []
+                cursor = None
+                ssl_context = owner._custom_provider_ssl_context(endpoint)
+                kwargs = {"ssl_context": ssl_context} if ssl_context is not None else {}
+                for _ in range(owner._ANTHROPIC_MODELS_MAX_PAGES):
+                    if not materialized_key:
+                        break
+                    payload = owner._get_json(owner._anthropic_models_url(endpoint, after_id=cursor),
+                                              timeout=5.0, headers=request_headers, **kwargs)
+                    raw = payload.get("data") if isinstance(payload, dict) else None
+                    if (not isinstance(raw, list) or type(payload.get("has_more")) is not bool or
+                            any(not isinstance(item, dict) or not isinstance(item.get("id"), str) or
+                                not item["id"].strip() for item in raw)):
+                        break
+                    collected.extend(item["id"] for item in raw)
+                    if not payload["has_more"]:
+                        values = collected
+                        break
+                    cursor = owner._anthropic_next_cursor(payload, seen)
+                    if cursor is None:
+                        break
+            elif adapter == "cloud":
                 from agent.semantier_gateway import GatewaySettings, cloud_catalog
 
                 payload = cloud_catalog(refresh=True, settings=GatewaySettings(endpoint, materialized_key))
@@ -187,10 +249,14 @@ def configured_provider_rows(ctx, *, source_scope: str, refresh: bool = False) -
         if (is_cloud and (not settings or settings.base_url.rstrip("/") != endpoint.rstrip("/"))) or not _discover_flag(entry):
             snapshot = ProviderSnapshot(None, "unsupported")
         else:
+            native_anthropic = slug.lower() == "anthropic" and host == "api.anthropic.com"
+            native_gemini = (slug.lower() == "gemini" and host == "generativelanguage.googleapis.com"
+                             and urlsplit(endpoint).path.rstrip("/") in {"/v1", "/v1beta"})
             snapshot = read_provider_snapshot(provider=slug, base_url=endpoint, api_key=settings.api_key if is_cloud else key,
                 source_scope=source_scope, api_mode=_entry_api_mode(entry),
                 headers=_extra_headers_from_config(entry), refresh=refresh,
-                adapter="cloud" if is_cloud else "ollama" if native_ollama else "openai")
+                adapter="cloud" if is_cloud else "ollama" if native_ollama else "anthropic" if native_anthropic
+                        else "gemini" if native_gemini else "openai")
         aliases = sorted(aliases or [])
         current = ctx.current_provider.lower()
         is_current = current in {slug.lower(), *(alias.lower() for alias in aliases)}
@@ -216,8 +282,9 @@ def configured_provider_rows(ctx, *, source_scope: str, refresh: bool = False) -
             continue
         registered = PROVIDER_REGISTRY.get(slug)
         endpoint = str(_entry_base_url(entry) or "")
-        if slug.lower() == ctx.current_provider.lower() and ctx.current_base_url:
-            endpoint = ctx.current_base_url
+        aliases = custom_provider_aliases(str(entry.get("name") or slug), slug)
+        if not endpoint and ctx.configured_provider.lower() in {slug.lower(), *(alias.lower() for alias in aliases)}:
+            endpoint = ctx.configured_base_url
         if not endpoint and registered and registered.auth_type == "api_key":
             endpoint = (_scoped_key_env(registered.base_url_env_var) if registered.base_url_env_var else "")
             endpoint = endpoint or registered.inference_base_url
@@ -232,7 +299,7 @@ def configured_provider_rows(ctx, *, source_scope: str, refresh: bool = False) -
             # OAuth/external-process providers require their own account-aware
             # listing adapter; an anonymous OpenAI-style request is not one.
             entry = {**entry, "discover_models": False}
-        sources.append((slug, str(entry.get("name") or slug), endpoint, key, entry, None))
+        sources.append((slug, str(entry.get("name") or slug), endpoint, key, entry, aliases))
 
     groups = {}
     for entry in ctx.custom_providers:
@@ -250,6 +317,14 @@ def configured_provider_rows(ctx, *, source_scope: str, refresh: bool = False) -
             continue
         key, key_env, identity = _entry_credentials(entry, "key_env", "api_key_env")
         key = key or _scoped_key_env(key_env)
+        provider_key = str(entry.get("provider_key") or "").strip().lower()
+        duplicate = next((source for source in sources if source[0].lower() == provider_key
+                          and normalize_route_base_url(source[2]) == normalize_route_base_url(endpoint)
+                          and _entry_credentials(source[4], "key_env", "api_key_env")[2] == identity
+                          and _entry_api_mode(source[4]) == _entry_api_mode(entry)
+                          and _extra_headers_from_config(source[4]) == _extra_headers_from_config(entry)), None)
+        if duplicate is not None:
+            continue
         group_key = (slug.lower(), endpoint, identity, _entry_api_mode(entry),
                      tuple(sorted(_extra_headers_from_config(entry).items())))
         if group_key not in groups:

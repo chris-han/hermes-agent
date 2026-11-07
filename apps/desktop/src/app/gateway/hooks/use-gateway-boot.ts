@@ -23,6 +23,7 @@ import {
   LIVENESS_REPROBE_DELAY_MS
 } from '@/lib/gateway-liveness-policy'
 import { resolveDesktopGatewayWsUrl } from '@/lib/gateway-ws-url'
+import { refreshModelsOnConnectionReady } from '@/lib/startup-model-discovery'
 import { BACKEND_BOOT_WAIT_TIMEOUT_MS, RECONNECT_ATTEMPT_TIMEOUT_MS, withTimeout } from '@/lib/with-timeout'
 import {
   $desktopBoot,
@@ -864,6 +865,8 @@ export function useGatewayBoot({
           return
         }
 
+        void refreshModelsOnConnectionReady(conn.connectionId ?? null, $activeGatewayProfile.get(), conn)
+
         void refreshActiveProfile().catch(() => undefined)
 
         await Promise.all([
@@ -1040,6 +1043,9 @@ export function useGatewayBoot({
 
         if (normalizeProfileKey($activeGatewayProfile.get()) !== key) {
           $activeGatewayProfile.set(key)
+        }
+        if (bootCompleted && activeGateway()?.connectionState === 'open') {
+          void refreshModelsOnConnectionReady(activeGatewayConnectionId(), key, $connection.get())
         }
       },
       onEvent: deliverGatewayEvent,
@@ -1535,6 +1541,8 @@ export function useGatewayBoot({
         // the max is needed.
         await adoptPrimaryProfile(conn)
 
+        void refreshModelsOnConnectionReady(conn.connectionId ?? null, $activeGatewayProfile.get(), conn)
+
         setDesktopBootStep({
           phase: 'renderer.config',
           message: translateNow('boot.steps.loadingSettings'),
@@ -1622,6 +1630,7 @@ export function useGatewayBoot({
       const profile = survivor?.profile ?? $activeGatewayProfile.get()
       $activeGatewayProfile.set(profile)
       void ensureGatewayForProfile(profile)
+      void refreshModelsOnConnectionReady(survivor?.connection?.connectionId ?? null, profile, survivor?.connection)
 
       // Mirror the current (already-open) socket state into the composer so the
       // input doesn't sit disabled after the swap.

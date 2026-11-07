@@ -536,7 +536,7 @@ def _redact_managed_config(value, parent=''):
         return [_redact_managed_config(item,parent) for item in value]
     if not isinstance(value,dict):
         return value
-    return {key:('[configured]' if item else '') if (re.search(r'api[_-]?key|token$|password$|secret$',key,re.I) or (parent=='model' and key=='api'))
+    return {key:('[configured]' if item else '') if (re.search(r'api[_-]?key|token$|password$|secret$',key,re.IGNORECASE) or (parent=='model' and key=='api'))
         and not re.search(r'(key_env|api_key_env|credential_ref)$',key) else _redact_managed_config(item,key)
         for key,item in value.items()}
 
@@ -780,6 +780,9 @@ def _prepare_main_assignment(cfg: dict, provider: str, model: str, base_url: str
     provider_entry = _provider_entry(cfg, provider)
     if not base_url and isinstance(provider_entry, dict) and provider_entry.get('base_url'):
         base_url = str(provider_entry.get('base_url') or '').strip()
+    if (not base_url and provider.strip().lower() in {'custom', 'local'}
+            and str(current.get('provider') or '').strip().lower() in {'custom', 'local'}):
+        base_url = str(current.get('base_url') or '').strip()
     return base_url, _validated_main_model_selection(cfg, provider, model, base_url, api_key)
 
 

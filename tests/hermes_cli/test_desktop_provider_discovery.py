@@ -292,6 +292,7 @@ def test_configured_registered_provider_uses_profile_credential_and_runtime_endp
     monkeypatch.setattr(models, "probe_api_models", lambda key, url, **kwargs:
                         calls.append((key, url)) or {"models": ["live"]})
     ctx = ConfigContext(current_provider="openai-api", current_model="old", current_base_url="https://relay.test/v1",
+                        configured_provider="openai-api", configured_base_url="https://relay.test/v1",
                         user_providers={"openai-api": {}}, custom_providers=[])
     rows = configured_provider_rows(ctx, source_scope="connection-a", refresh=True)
     assert rows[0]["models"] == ["live"]
@@ -472,3 +473,192 @@ def test_bare_current_custom_endpoint_comes_from_profile_config_only(cache_path,
     changed = ctx.with_overrides(current_base_url="https://other.test/v1")
     assert configured_provider_rows(changed, source_scope="connection-a", refresh=True) == []
     assert calls == []
+
+
+def test_session_model_options_query_scope_is_bound_to_authenticated_actor(monkeypatch, tmp_path):
+    import asyncio
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+    from gateway import session_config
+    from gateway import run as gateway_run
+    from hermes_cli import inventory
+    from hermes_state_runtime import RuntimeStoreError
+
+    actor = SimpleNamespace(profile_id=str(tmp_path), subject="actor-one", capabilities={"session:read"})
+    connection = SimpleNamespace(actor=actor, authority=SimpleNamespace(profile_id=str(tmp_path)))
+    ref = SimpleNamespace(session_id="")
+    monkeypatch.setattr(gateway_run, "_profile_runtime_scope", lambda home: nullcontext())
+    monkeypatch.setattr(inventory, "load_picker_context", lambda: inventory.ConfigContext(
+        current_provider="", current_model="", current_base_url="", user_providers={}, custom_providers=[]))
+    scopes = []
+    monkeypatch.setattr(inventory, "build_desktop_model_options_payload", lambda ctx, **kwargs:
+                        scopes.append(kwargs["source_scope"]) or {"providers": [], "discovery_contract": "provider-query-v1"})
+    response = asyncio.run(session_config.model_options(connection, ref, {"query_only": True, "query_scope": "connection-a"}))
+    assert response["discovery_contract"] == "provider-query-v1"
+    actor.subject = "actor-two"
+    asyncio.run(session_config.model_options(connection, ref, {"query_only": True, "query_scope": "connection-a"}))
+    assert scopes[0] != scopes[1]
+    for params in ({"query_only": True}, {"query_only": True, "query_scope": ""},
+                   {"query_only": "true", "query_scope": "connection-a"},
+                   {"query_only": True, "query_scope": "x" * 201},
+                   {"query_only": True, "query_scope": "connection-a", "base_url": "https://spoof.test"}):
+        with pytest.raises(RuntimeStoreError):
+            asyncio.run(session_config.model_options(connection, ref, params))
+
+
+def test_legacy_rpc_query_only_forwards_scoped_contract_without_legacy_builder(monkeypatch):
+    from tui_gateway import server
+    from hermes_cli import inventory
+
+    ctx = inventory.ConfigContext(current_provider="", current_model="", current_base_url="", user_providers={}, custom_providers=[])
+    monkeypatch.setattr(server, "_model_picker_context", lambda agent: ctx)
+    monkeypatch.setattr(inventory, "build_model_options_payload", lambda *args, **kwargs: pytest.fail("legacy picker used"))
+    seen = []
+    monkeypatch.setattr(inventory, "build_desktop_model_options_payload", lambda ctx, **kwargs:
+                        seen.append(kwargs) or {"providers": [], "discovery_contract": "provider-query-v1"})
+    response = server._methods["model.options"](1, {"query_only": True, "query_scope": "connection-a", "refresh": True})
+    assert response["result"]["discovery_contract"] == "provider-query-v1"
+    assert seen[0]["refresh"] and "connection-a" in seen[0]["source_scope"]
+    assert "error" in server._methods["model.options"](1, {"query_only": True})
+
+
+def test_dashboard_rest_query_only_uses_profile_scope_and_validates_connection_scope(monkeypatch, tmp_path):
+    import asyncio
+    from contextlib import contextmanager
+    from fastapi import HTTPException
+    from hermes_cli import inventory
+    from hermes_cli.web_routers import models as router
+
+    seen = []
+    @contextmanager
+    def profile_scope(profile):
+        seen.append(("profile", profile))
+        yield
+    monkeypatch.setattr(router, "_config_profile_scope", profile_scope)
+    monkeypatch.setattr(router, "_dashboard_code_skew_guard", lambda: None)
+    monkeypatch.setattr(inventory, "load_picker_context", lambda: object())
+    monkeypatch.setattr(inventory, "build_desktop_model_options_payload", lambda ctx, **kwargs:
+                        seen.append(("scope", kwargs["source_scope"])) or {"providers": [], "discovery_contract": "provider-query-v1"})
+    payload = asyncio.run(router.get_model_options(profile="work", query_only=True, query_scope="connection-a"))
+    assert payload["discovery_contract"] == "provider-query-v1"
+    assert seen[0] == ("profile", "work") and "connection-a" in seen[1][1]
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(router.get_model_options(query_only=True))
+    assert exc.value.status_code == 400
+
+
+def test_bare_custom_assignment_resolves_existing_configured_endpoint(monkeypatch):
+    from agent import semantier_gateway
+    from hermes_cli import web_server_config
+
+    seen = []
+    monkeypatch.setattr(semantier_gateway, "is_gateway_route", lambda _: False)
+    monkeypatch.setattr(web_server_config, "_validated_main_model_selection", lambda cfg, provider, model, base_url, key:
+                        seen.append((provider, model, base_url, key)) or object())
+    cfg = {"model": {"provider": "custom", "base_url": "https://configured.test/v1", "default": "old"}}
+    url, _ = web_server_config._prepare_main_assignment(cfg, "custom", "live", "", "")
+    assert url == "https://configured.test/v1"
+    assert seen == [("custom", "live", url, "")]
+
+
+def test_anthropic_native_pagination_is_complete_and_failure_retains_prior(cache_path, monkeypatch):
+    from hermes_cli import models
+    urls = []
+    replies = iter([
+        {"data": [{"id": "first"}], "has_more": True, "last_id": "cursor-1"},
+        {"data": [{"id": "second"}], "has_more": False},
+        {"data": [{"id": "partial"}], "has_more": True, "last_id": "repeat"},
+        {"data": [{"id": "ignored"}], "has_more": True, "last_id": "repeat"},
+    ])
+    def get_json(url, *, headers, **kwargs):
+        urls.append(url)
+        assert headers["x-api-key"] == "secret" and headers["anthropic-version"]
+        return next(replies)
+    monkeypatch.setattr(models, "_get_json", get_json)
+    source = {"provider": "anthropic", "base_url": "https://api.anthropic.com", "api_key": "secret",
+              "source_scope": "connection-a", "adapter": "anthropic"}
+    assert read_provider_snapshot(**source, refresh=True).models == ["first", "second"]
+    assert "after_id=cursor-1" in urls[1]
+    stale = read_provider_snapshot(**source, refresh=True)
+    assert stale.state == "stale" and stale.models == ["first", "second"]
+    assert "secret" not in cache_path.read_text()
+
+
+def test_gemini_native_listing_follows_pages_and_excludes_non_generation_models(cache_path, monkeypatch):
+    from hermes_cli import models
+    urls = []
+    replies = iter([
+        {"models": [{"name": "models/gemini-live", "supportedGenerationMethods": ["generateContent"]},
+                    {"name": "models/embedding", "supportedGenerationMethods": ["embedContent"]}], "nextPageToken": "next"},
+        {"models": [{"name": "models/gemini-new", "supportedGenerationMethods": ["generateContent"]}]},
+        {"models": [{"name": "models/partial"}], "nextPageToken": "repeat"},
+        {"models": [], "nextPageToken": "repeat"},
+    ])
+    def get_json(url, *, headers, **kwargs):
+        urls.append(url)
+        assert headers["x-goog-api-key"] == "key"
+        return next(replies)
+    monkeypatch.setattr(models, "_get_json", get_json)
+    source = {"provider": "gemini", "base_url": "https://generativelanguage.googleapis.com/v1beta",
+              "api_key": "key", "source_scope": "connection-a", "adapter": "gemini"}
+    first = read_provider_snapshot(**source, refresh=True)
+    assert first.models == ["models/gemini-live", "models/gemini-new"]
+    assert "pageToken=next" in urls[1]
+    stale = read_provider_snapshot(**source, refresh=True)
+    assert stale.state == "stale" and stale.models == first.models
+
+
+def test_cache_scope_retains_full_principal_identity_if_legacy_fingerprint_collides(cache_path, monkeypatch):
+    from hermes_cli import models
+    monkeypatch.setattr(models, "_custom_endpoint_fingerprint", lambda *args: "legacy-collision")
+    monkeypatch.setattr(models, "probe_api_models", lambda *args, **kwargs: {"models": ["private"]})
+    source = {"provider": "fixture", "base_url": "https://provider.test/v1", "api_key": "first-key", "source_scope": "connection-a"}
+    assert read_provider_snapshot(**source, refresh=True).models == ["private"]
+    assert read_provider_snapshot(**{**source, "api_key": "second-key"}).models is None
+
+
+def test_compatible_provider_projection_does_not_query_the_same_config_twice(cache_path, monkeypatch):
+    from hermes_cli import config, models
+    from hermes_cli.desktop_model_discovery import configured_provider_rows
+    from hermes_cli.inventory import ConfigContext
+
+    calls = []
+    monkeypatch.setattr(models, "probe_api_models", lambda key, url, **kwargs:
+                        calls.append(url) or {"models": ["live"]})
+    entries = {"lab": {"name": "Lab", "base_url": "https://lab.test/v1", "api_key": "secret", "models": ["retired"]}}
+    ctx = ConfigContext(current_provider="custom:lab", current_model="retired", current_base_url="https://lab.test/v1",
+                        user_providers=entries, custom_providers=config.get_compatible_custom_providers({"providers": entries}))
+    rows = configured_provider_rows(ctx, source_scope="connection-a", refresh=True)
+    assert len(rows) == 1 and rows[0]["models"] == ["live"]
+    assert rows[0]["is_current"] and "custom:lab" in rows[0]["aliases"]
+    assert calls == ["https://lab.test/v1"]
+
+
+def test_live_session_base_url_cannot_redirect_configured_provider_probe(cache_path, monkeypatch):
+    from hermes_cli import models, model_switch
+    from hermes_cli.desktop_model_discovery import configured_provider_rows
+    from hermes_cli.inventory import ConfigContext
+
+    calls = []
+    monkeypatch.setattr(model_switch, "_scoped_key_env", lambda name: "secret" if name == "OPENAI_API_KEY" else "")
+    monkeypatch.setattr(models, "probe_api_models", lambda key, url, **kwargs: calls.append(url) or {"models": ["live"]})
+    ctx = ConfigContext(current_provider="openai-api", current_model="old", current_base_url="https://other.test/v1",
+                        configured_provider="openai-api", configured_base_url="https://configured.test/v1", user_providers={"openai-api": {}}, custom_providers=[])
+    rows = configured_provider_rows(ctx, source_scope="connection-a", refresh=True)
+    assert calls == ["https://configured.test/v1"]
+    assert rows[0]["is_current"] is False
+
+
+def test_provider_without_endpoint_does_not_inherit_another_configured_provider_route(cache_path, monkeypatch):
+    from hermes_cli import models, model_switch
+    from hermes_cli.desktop_model_discovery import configured_provider_rows
+    from hermes_cli.inventory import ConfigContext
+
+    calls = []
+    monkeypatch.setattr(model_switch, "_scoped_key_env", lambda name: "secret" if name == "OPENAI_API_KEY" else "")
+    monkeypatch.setattr(models, "probe_api_models", lambda key, url, **kwargs: calls.append(url) or {"models": []})
+    ctx = ConfigContext(current_provider="openai-api", current_model="old", current_base_url="https://other.test/v1",
+                        configured_provider="different", configured_base_url="https://different.test/v1",
+                        user_providers={"openai-api": {}}, custom_providers=[])
+    configured_provider_rows(ctx, source_scope="connection-a", refresh=True)
+    assert calls == ["https://api.openai.com/v1"]

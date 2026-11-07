@@ -46,6 +46,11 @@ vi.mock('@/hermes', () => ({
   setApiRequestProfile: vi.fn()
 }))
 
+vi.mock('@/lib/model-options', async importOriginal => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  requestDiscoveredModelOptions: () => getGlobalModelOptions()
+}))
+
 beforeEach((): void => {
   queryClient.clear()
   queryClient.setDefaultOptions({ queries: { ...queryClient.getDefaultOptions().queries, retry: false } })
@@ -192,7 +197,7 @@ function renderMenu(current: Partial<ModelMenuController['current']> = {}) {
       <ModelMenuCloseContext.Provider value={closeMenu}>
         <DropdownMenu open>
           <DropdownMenuContent>
-            <ModelCatalogMenu controller={controller} />
+            <ModelCatalogMenu controller={controller} ownerConnectionId="test" />
           </DropdownMenuContent>
         </DropdownMenu>
       </ModelMenuCloseContext.Provider>
@@ -207,6 +212,18 @@ function renderMenu(current: Partial<ModelMenuController['current']> = {}) {
 // the kanban board would end up disagreeing about what "my models" means —
 // which is exactly the drift extracting this component was meant to prevent.
 describe('the catalog owns model curation', () => {
+  it('offers verified discovery without promoting it to an eligibility grant', async () => {
+    getGlobalModelOptions.mockResolvedValue({
+      discovery_contract: 'provider-query-v1',
+      providers: [{ name: 'Fixture', slug: 'fixture', models: ['queried-model', 'blocked-model'],
+        discovery_state: 'cached', discovery_source_id: 'opaque', unavailable_models: ['blocked-model'] }]
+    })
+    const select = renderMenu()
+    fireEvent.click(await screen.findByText('Queried Model'))
+    await waitFor(() => expect(select).toHaveBeenCalledWith('queried-model', 'fixture'))
+    expect(screen.queryByText('Blocked Model')).toBeNull()
+  })
+
   it('honours the stored Edit Models shortlist', async () => {
     setVisibleModels(new Set([modelVisibilityKey('google', 'gemini-2.5-flash')]))
 

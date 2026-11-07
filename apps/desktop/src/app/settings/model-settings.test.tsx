@@ -59,6 +59,17 @@ vi.mock('@/store/onboarding', () => ({
   startManualProviderOAuth: (...args: unknown[]) => startManualProviderOAuth(...args)
 }))
 
+vi.mock('@/lib/model-options', async importOriginal => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  requestDiscoveredModelOptions: async (opts: { profile?: string; refresh?: boolean }) => {
+    const profile = opts.profile === 'default' ? undefined : opts.profile
+    const options = await getGlobalModelOptions(opts.refresh ? { refresh: true } : undefined, profile)
+    if (options.model !== undefined && options.provider !== undefined) {return options}
+    const info = await getGlobalModelInfo(profile)
+    return { model: info.model, provider: info.provider, ...options }
+  }
+}))
+
 vi.mock('../hooks/use-on-profile-switch', () => ({
   useOnProfileSwitch: (handler: () => void) => {
     profileSwitchHandler = handler
@@ -150,17 +161,15 @@ describe('ModelSettings profile scope', () => {
 
   it('does not retain the old scope catalog when the new scope fails', async () => {
     let failB!: (reason: Error) => void
-    getGlobalModelInfo.mockResolvedValueOnce({ provider: 'a', model: 'a-model' })
+    getGlobalModelOptions.mockResolvedValueOnce({ model: 'a-model', provider: 'a', providers: [{ name: 'Private A', slug: 'a', models: ['a-model'] }] })
       .mockReturnValueOnce(new Promise((_, reject) => { failB = reject }))
-    getGlobalModelOptions.mockResolvedValueOnce({ providers: [{ name: 'Private A', slug: 'a', models: ['a-model'] }] })
-      .mockRejectedValueOnce(new Error('catalog unavailable'))
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const view = (profile: string) => <MemoryRouter><QueryClientProvider client={client}><ModelSettings scopeProfile={profile} /></QueryClientProvider></MemoryRouter>
     const { rerender } = render(view('a'))
     expect((await screen.findAllByRole('combobox'))[0].textContent).toContain('Private A')
     rerender(view('b'))
     expect(screen.queryByText('Private A')).toBeNull()
-    await act(async () => { failB(new Error('model unavailable')) })
+    await act(async () => { failB(new Error('catalog unavailable')) })
     expect(await screen.findByText(/catalog unavailable/)).toBeTruthy()
     const triggers = screen.queryAllByRole('combobox')
     if (triggers.length) {
@@ -193,6 +202,28 @@ describe('ModelSettings profile scope', () => {
 })
 
 describe('ModelSettings', () => {
+  it('loads the saved model from discovery without making a separate model-info probe', async () => {
+    getGlobalModelOptions.mockResolvedValue({ model: 'live-model', provider: 'lab', providers: [
+      { slug: 'lab', name: 'Lab', models: ['live-model'], discovery_state: 'fresh', discovery_source_id: 'opaque' }
+    ] })
+    renderModelSettings()
+    expect((await screen.findAllByRole('combobox'))[0].textContent).toContain('Lab')
+    expect(getGlobalModelInfo).not.toHaveBeenCalled()
+  })
+
+  it('allows a verified generic model but rejects Apply when its refresh becomes stale', async () => {
+    const row = { slug: 'lab', name: 'Lab', models: ['live-model'], discovery_state: 'fresh', discovery_source_id: 'opaque' }
+    getGlobalModelInfo.mockResolvedValue({ provider: 'lab', model: 'live-model' })
+    getGlobalModelOptions.mockResolvedValueOnce({ providers: [row] })
+      .mockResolvedValueOnce({ providers: [{ ...row, discovery_state: 'stale' }] })
+    renderModelSettings()
+    const apply = await screen.findByRole('button', { name: 'Apply' })
+    expect(apply.hasAttribute('disabled')).toBe(false)
+    fireEvent.click(apply)
+    expect(await screen.findByText(/no longer available/i)).toBeTruthy()
+    expect(setModelAssignment).not.toHaveBeenCalled()
+  })
+
   it('does not apply a source-backed model removed during revalidation', async () => {
     getGlobalModelOptions
       .mockResolvedValueOnce({ providers: [{ slug: 'nous', name: 'Nous', models: ['hermes-4'], eligible_models: ['hermes-4'] }] })
@@ -745,16 +776,17 @@ describe('ModelSettings', () => {
     )
   })
 
-  it('keeps config-backed settings usable when live model metadata times out (#63214)', async () => {
-    getGlobalModelInfo.mockRejectedValueOnce(new Error('Model metadata request timed out'))
+  it('keeps config-backed settings usable without a model metadata probe (#63214)', async () => {
+    getGlobalModelOptions.mockResolvedValueOnce({ model: 'hermes-4', provider: 'nous', providers: [
+      { name: 'Nous', slug: 'nous', models: ['hermes-4'], eligible_models: ['hermes-4'] }
+    ] })
 
     renderModelSettings()
 
     // Auxiliary assignments are a config-file read: they must still render
     // instead of the whole page waiting on the hung metadata probe.
     expect((await screen.findAllByRole('button', { name: 'Set to main' })).length).toBeGreaterThan(0)
-    // The failure surfaces in the load banner rather than skeletons forever.
-    await waitFor(() => expect(screen.getByText('Model metadata request timed out')).toBeTruthy())
+    expect(getGlobalModelInfo).not.toHaveBeenCalled()
     // The main-model selector still resolves from the config-backed auxiliary
     // read, so the page is interactive, not just an error shell.
     await waitFor(() => expect(screen.getAllByRole('combobox')[0].textContent).toContain('Nous'))

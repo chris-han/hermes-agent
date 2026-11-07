@@ -2473,12 +2473,25 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         can sync to the configured provider catalog instead of scraping /v1/models."""
         refresh = _coerce_request_bool(request.query.get("refresh"), default=False)
         explicit_only = _coerce_request_bool(request.query.get("explicit_only"), default=False)
+        query_only = _coerce_request_bool(request.query.get("query_only"), default=False)
+        query_scope = request.query.get("query_scope")
+        if ((query_only and (not query_scope or not query_scope.strip() or len(query_scope) > 200))
+                or (query_scope is not None and not query_only)):
+            return _error_response("Invalid query scope.", 400, code="invalid_params")
         include_unconfigured = _coerce_request_bool(
             request.query.get("include_unconfigured"), default=not explicit_only)
         try:
-            from hermes_cli.inventory import build_model_options_payload, load_picker_context
+            from hermes_cli.inventory import build_desktop_model_options_payload, build_model_options_payload, load_picker_context
+
+            profile = _api_request_profile.get() or "default"
+            principal = self._derive_browser_control_principal(profile) if query_only else ""
 
             def _build_payload() -> dict[str, Any]:
+                if query_only:
+                    source_scope = json.dumps(["desktop-model-query-v1", principal, query_scope],
+                                              ensure_ascii=True, separators=(",", ":"))
+                    return build_desktop_model_options_payload(load_picker_context(), source_scope=source_scope,
+                                                               refresh=refresh)
                 return build_model_options_payload(
                     load_picker_context(), explicit_only=explicit_only,
                     include_unconfigured=include_unconfigured, refresh=refresh)

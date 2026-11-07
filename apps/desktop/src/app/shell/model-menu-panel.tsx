@@ -7,9 +7,10 @@ import { useSessionView } from '@/app/chat/session-view'
 import { Codicon } from '@/components/ui/codicon'
 import { DropdownMenuItem, dropdownMenuRow } from '@/components/ui/dropdown-menu'
 import { useI18n } from '@/i18n'
-import { modelOptionsQueryKey, requestModelOptions } from '@/lib/model-options'
+import { modelDiscoveryOwnerKey } from '@/lib/model-discovery-scope'
+import { modelOptionsQueryKey, requestDiscoveredModelOptions } from '@/lib/model-options'
 import { cn } from '@/lib/utils'
-import { $currentModelSource } from '@/store/session'
+import { $connection, $currentModelSource } from '@/store/session'
 
 import { ModelCatalogMenu } from './model-catalog-menu'
 import { type ModelMenuHostProps, useModelMenuController } from './use-model-menu-controller'
@@ -34,6 +35,8 @@ export function ModelMenuPanel({ onFollowDefaultModel, ...props }: ModelMenuPane
   const queryClient = useQueryClient()
   const view = useSessionView()
   const modelSource = useStore($currentModelSource)
+  const connection = useStore($connection)
+  const ownerKey = modelDiscoveryOwnerKey(ownerConnectionId, connection)
   const { activeSessionId, controller } = useModelMenuController(props)
   // Same condition as the pill's pin dot: a draft whose next session.create
   // ships the manual pick instead of the Settings default (#107410).
@@ -51,10 +54,12 @@ export function ModelMenuPanel({ onFollowDefaultModel, ...props }: ModelMenuPane
     setRefreshing(true)
 
     try {
-      const queryKey = modelOptionsQueryKey(profile, activeSessionId, ownerConnectionId)
+      const queryKey = modelOptionsQueryKey(profile, activeSessionId, ownerKey)
 
-      const next = await requestModelOptions({
+      const next = await requestDiscoveredModelOptions({
+        connection,
         gateway,
+        ownerConnectionId,
         profile,
         refresh: true,
         request: requestGateway,
@@ -64,10 +69,17 @@ export function ModelMenuPanel({ onFollowDefaultModel, ...props }: ModelMenuPane
       // The refreshed catalog is a hint list, never a reason to move the pick:
       // a custom slug the row lacks is still what the user selected.
       queryClient.setQueryData<ModelOptionsResult>(queryKey, next)
+      void queryClient.invalidateQueries({
+        predicate: query => query.queryKey[0] === 'model-options' && query.queryKey[1] === profile &&
+          query.queryKey[2] !== (activeSessionId || 'global') &&
+          query.queryKey[3] === 'owner' && query.queryKey[4] === ownerKey
+      })
     } catch {
-      // Network/backend hiccup — fall back to a plain invalidate so the next
-      // open re-fetches (still cached, but no worse than before).
-      void queryClient.invalidateQueries({ queryKey: ['model-options'] })
+      // Reload this source's snapshot so a failed refresh can surface its stale marker.
+      void queryClient.invalidateQueries({
+        predicate: query => query.queryKey[0] === 'model-options' && query.queryKey[1] === profile &&
+          query.queryKey[3] === 'owner' && query.queryKey[4] === ownerKey
+      })
     } finally {
       setRefreshing(false)
     }

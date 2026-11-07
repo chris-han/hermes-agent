@@ -316,13 +316,7 @@ describe('useModelControls', () => {
     expect(queryClient.getQueryData(modelOptionsQueryKey('default'))).toEqual({
       model: 'poolside/laguna-xs-2.1:free',
       provider: 'nous',
-      providers: [
-        {
-          models: ['poolside/laguna-xs-2.1:free'],
-          name: 'nous',
-          slug: 'nous'
-        }
-      ]
+      providers: []
     })
   })
 
@@ -333,7 +327,8 @@ describe('useModelControls', () => {
     queryClient.setQueryData(modelOptionsQueryKey('default'), {
       model: 'tencent/hy3:free',
       provider: 'nous',
-      providers
+      providers,
+      discovery_contract: 'provider-query-v1'
     })
 
     const { result } = renderHook(() =>
@@ -348,7 +343,8 @@ describe('useModelControls', () => {
     expect(queryClient.getQueryData(modelOptionsQueryKey('default'))).toEqual({
       model: 'poolside/laguna-xs-2.1:free',
       provider: 'nous',
-      providers
+      providers,
+      discovery_contract: 'provider-query-v1'
     })
   })
 
@@ -879,7 +875,7 @@ describe('useModelControls', () => {
     setCurrentProvider('moa')
     setCurrentModelSource('manual')
     // Populated catalog without a moa row: every preset disabled.
-    queryClient.setQueryData(modelOptionsQueryKey('default'), {
+    queryClient.setQueryData(['legacy-moa-options', 'default', 'local'], {
       model: 'openai/gpt-5.5',
       provider: 'openai',
       providers: [{ models: ['gpt-5.5'], name: 'OpenAI', slug: 'openai' }]
@@ -905,7 +901,7 @@ describe('useModelControls', () => {
     setCurrentModel('balanced')
     setCurrentProvider('moa')
     setCurrentModelSource('manual')
-    queryClient.setQueryData(modelOptionsQueryKey('default'), {
+    queryClient.setQueryData(['legacy-moa-options', 'default', 'local'], {
       model: 'openai/gpt-5.5',
       provider: 'openai',
       providers: [{ models: ['default', 'balanced'], name: 'Mixture of Agents', slug: 'moa' }]
