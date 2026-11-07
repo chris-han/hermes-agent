@@ -14,12 +14,20 @@ import {
   messageCreatedAt,
   optimisticAttachmentRef,
   personalityNamesFromConfig,
+  quickModelOptions,
   stripAttachmentRefs,
   toRuntimeMessage
 } from './chat-runtime'
 
 const DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANS'
 const THUMB_URL = 'data:image/png;base64,dGh1bWI='
+
+it('does not turn a saved unavailable model into a quick selection', () => {
+  expect(quickModelOptions({ discovery_contract: 'provider-query-v1', providers: [{
+    slug: 'lab', name: 'Lab', models: ['live'], discovery_state: 'fresh', discovery_source_id: 'opaque',
+    discovery_fetched_at: '2026-11-07T00:00:00+00:00'
+  }] }, 'lab', 'retired')).toEqual([{ provider: 'lab', providerName: 'Lab', model: 'live' }])
+})
 
 describe('createClientSessionState', () => {
   it('anchors a fresh runtime to its creation time', () => {

@@ -24589,6 +24589,50 @@
             "default": null,
             "title": "Eligible Models"
           },
+          "discovery_state": {
+            "anyOf": [
+              {
+                "enum": [
+                  "fresh",
+                  "cached",
+                  "stale",
+                  "missing",
+                  "error",
+                  "unsupported"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Discovery State"
+          },
+          "discovery_source_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Discovery Source Id"
+          },
+          "discovery_fetched_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Discovery Fetched At"
+          },
           "total_models": {
             "anyOf": [
               {
@@ -24891,6 +24935,23 @@
             "default": false,
             "title": "Refresh",
             "type": "boolean"
+          },
+          "query_only": {
+            "default": false,
+            "title": "Query Only",
+            "type": "boolean"
+          },
+          "query_scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Query Scope"
           }
         },
         "title": "ModelOptionsParams",
@@ -24915,6 +24976,19 @@
             "default": "",
             "title": "Provider",
             "type": "string"
+          },
+          "discovery_contract": {
+            "anyOf": [
+              {
+                "const": "provider-query-v1",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Discovery Contract"
           }
         },
         "required": [

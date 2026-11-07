@@ -445,6 +445,8 @@ class ModelOptionsParams(ProfileParams):
     explicit_only: bool = False
     include_unconfigured: bool = False
     refresh: bool = False
+    query_only: bool = False
+    query_scope: str | None = None
 
 
 # TODO(common): ModelPricing / ModelCapabilities / ModelOptionProvider are also the row shape of
@@ -536,6 +538,9 @@ class ModelOptionProvider(OpenModel):
     models: list[str] = Field(default_factory=list)
     # None means the producer cannot establish eligibility; [] is a known empty set.
     eligible_models: list[str] | None = None
+    discovery_state: Literal["fresh", "cached", "stale", "missing", "error", "unsupported"] | None = None
+    discovery_source_id: str | None = None
+    discovery_fetched_at: str | None = None
     total_models: int | None = None
     is_current: bool | None = None
     is_user_defined: bool | None = None
@@ -562,6 +567,7 @@ class ModelOptionsResult(Result):
     providers: list[ModelOptionProvider]
     model: str = ""
     provider: str = ""
+    discovery_contract: Literal["provider-query-v1"] | None = None
 
 
 method("model.options", params=ModelOptionsParams, result=ModelOptionsResult,

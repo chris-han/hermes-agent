@@ -132,9 +132,13 @@ def _project(params, policy, cfg):
 
 
 async def model_options(connection, ref, params):
-    flags = {'explicit_only', 'include_unconfigured', 'refresh'}
-    if (set(params) - flags - {'profile', 'session_id'}
-            or any(type(params[k]) is not bool for k in flags & params.keys())):
+    flags = {'explicit_only', 'include_unconfigured', 'refresh', 'query_only'}
+    query_scope = params.get('query_scope')
+    if (set(params) - flags - {'profile', 'session_id', 'query_scope'}
+            or any(type(params[k]) is not bool for k in flags & params.keys())
+            or (params.get('query_only') and
+                (not isinstance(query_scope, str) or not query_scope.strip() or len(query_scope) > 200))
+            or ('query_scope' in params and not params.get('query_only'))):
         raise RuntimeStoreError('invalid_params')
     policy = _authorize(connection, ref, params)
     agent = connection.authority.agent(ref) if ref.session_id else None
@@ -144,7 +148,7 @@ async def model_options(connection, ref, params):
 
     def discover():
         from gateway.run import _profile_runtime_scope
-        from hermes_cli.inventory import load_picker_context, build_model_options_payload
+        from hermes_cli.inventory import load_picker_context, build_model_options_payload, build_desktop_model_options_payload
         with _profile_runtime_scope(Path(connection.authority.profile_id)):
             ctx = load_picker_context()
             selected = provider
@@ -152,6 +156,12 @@ async def model_options(connection, ref, params):
                 from hermes_cli.runtime_provider import canonical_custom_identity
                 selected = canonical_custom_identity(base_url=base_url, config_provider=ctx.current_provider,
                                                      model=model) or selected
-            return build_model_options_payload(ctx.with_overrides(current_provider=selected,
-                current_model=model, current_base_url=base_url), **{k: params[k] for k in flags & params.keys()})
+            ctx = ctx.with_overrides(current_provider=selected, current_model=model, current_base_url=base_url)
+            if params.get('query_only'):
+                source_scope = json.dumps(['desktop-model-query-v1', connection.actor.subject, query_scope],
+                                          ensure_ascii=True, separators=(',', ':'))
+                return build_desktop_model_options_payload(ctx, source_scope=source_scope,
+                                                           refresh=params.get('refresh', False))
+            legacy_flags = flags - {'query_only'}
+            return build_model_options_payload(ctx, **{k: params[k] for k in legacy_flags & params.keys()})
     return await asyncio.to_thread(discover)

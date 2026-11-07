@@ -66,3 +66,22 @@ async def test_explicit_only_is_forwarded(query, expected, unconfigured):
     assert response.status == 200
     assert build.call_args.kwargs.get("explicit_only", False) is expected
     assert build.call_args.kwargs["include_unconfigured"] is unconfigured
+
+
+@pytest.mark.asyncio
+async def test_query_only_is_principal_bound_and_requires_scope():
+    adapter = _make_adapter()
+    app = _create_app(adapter)
+    with patch("hermes_cli.inventory.load_picker_context", return_value=object()), \
+         patch("hermes_cli.inventory.build_model_options_payload", side_effect=AssertionError("legacy path")), \
+         patch("hermes_cli.inventory.build_desktop_model_options_payload",
+               return_value={"providers": [], "discovery_contract": "provider-query-v1"}) as build:
+        async with TestClient(TestServer(app)) as cli:
+            response = await cli.get("/api/model/options?query_only=1&query_scope=connection-a&refresh=1")
+            assert response.status == 200
+            assert (await response.json())["discovery_contract"] == "provider-query-v1"
+            assert build.call_args.kwargs["refresh"] is True
+            assert "connection-a" in build.call_args.kwargs["source_scope"]
+            assert "principal:" in build.call_args.kwargs["source_scope"]
+            response = await cli.get("/api/model/options?query_only=1")
+            assert response.status == 400

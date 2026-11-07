@@ -903,11 +903,14 @@ export interface ModelOptionsParams {
   explicit_only?: boolean
   include_unconfigured?: boolean
   refresh?: boolean
+  query_only?: boolean
+  query_scope?: string | null
 }
 export interface ModelOptionsResult {
   providers: ModelOptionProvider[]
   model?: string
   provider?: string
+  discovery_contract?: 'provider-query-v1' | null
 }
 /** One ``hermes_cli/inventory.py::build_models_payload`` provider row (the union of every field the builder sets; ``pricing_pending`` / ``free_tier_pending`` mark the cached-only path). */
 export interface ModelOptionProvider {
@@ -915,6 +918,9 @@ export interface ModelOptionProvider {
   name: string
   models?: string[]
   eligible_models?: string[] | null
+  discovery_state?: 'fresh' | 'cached' | 'stale' | 'missing' | 'error' | 'unsupported' | null
+  discovery_source_id?: string | null
+  discovery_fetched_at?: string | null
   total_models?: number | null
   is_current?: boolean | null
   is_user_defined?: boolean | null

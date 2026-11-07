@@ -1,12 +1,13 @@
 import type { ModelOptionsResult } from '@hermes/shared'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ConfirmHost } from '@/components/confirm-host'
 import { I18nProvider } from '@/i18n'
 import { $confirmRequest } from '@/store/confirm'
 import { $customModels } from '@/store/custom-models'
+import { $refreshingModelSources, modelDiscoveryRefreshKey } from '@/store/model-discovery'
 import { $knownModels, $visibleModels, modelVisibilityKey, setVisibleModels } from '@/store/model-visibility'
 import { stubResizeObserver } from '@/test/jsdom'
 
@@ -14,10 +15,10 @@ import { ModelVisibilityDialog } from './model-visibility-dialog'
 
 vi.mock('@/lib/model-options', async importOriginal => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  requestModelOptions: vi.fn()
+  requestDiscoveredModelOptions: vi.fn()
 }))
 
-import { requestModelOptions } from '@/lib/model-options'
+import { requestDiscoveredModelOptions as requestModelOptions } from '@/lib/model-options'
 
 stubResizeObserver()
 
@@ -34,7 +35,7 @@ function renderDialog() {
   return render(
     <QueryClientProvider client={client}>
       <I18nProvider>
-        <ModelVisibilityDialog onOpenChange={() => {}} onOpenProviders={() => {}} open />
+        <ModelVisibilityDialog onOpenChange={() => {}} onOpenProviders={() => {}} open ownerConnectionId="test" />
         <ConfirmHost />
       </I18nProvider>
     </QueryClientProvider>
@@ -49,6 +50,7 @@ beforeEach(() => {
   $customModels.set([])
   $visibleModels.set(null)
   $knownModels.set(null)
+  $refreshingModelSources.set(new Set())
   vi.mocked(requestModelOptions).mockResolvedValue(OPTIONS)
 })
 
@@ -59,6 +61,23 @@ afterEach(() => {
 })
 
 describe('Edit Models reset', () => {
+  it('shows nonblocking startup refresh progress for this source', async () => {
+    $refreshingModelSources.set(new Set([modelDiscoveryRefreshKey('test', 'default')]))
+    renderDialog()
+    expect(await screen.findByText(/refreshing provider models/i)).toBeTruthy()
+    expect(await isShown(/gpt-6/i)).toBe(true)
+  })
+
+  it('labels a retained verified list when refresh failed', async () => {
+    vi.mocked(requestModelOptions).mockResolvedValue({
+      providers: [{ name: 'Lab', slug: 'lab', models: ['live-model'], discovery_state: 'stale', discovery_source_id: 'opaque' }],
+      discovery_contract: 'provider-query-v1'
+    })
+    renderDialog()
+    expect(await screen.findByText(/last verified/i)).toBeTruthy()
+    expect(await isShown(/live model/i)).toBe(true)
+  })
+
   it('restores the default shortlist when a model is stuck hidden by the known snapshot', async () => {
     // A curation saved while the snapshot machinery was live: gpt-6 was listed
     // when the user kept gpt-5.5 and switched it off, so the snapshot counts it
@@ -92,7 +111,7 @@ describe('Edit Models reset', () => {
     expect(await isShown(/gpt-6/i)).toBe(false)
   })
 
-  it('keeps a custom model stored and switched on where the defaults would hide it', async () => {
+  it('retains a saved custom model without inserting it into provider discovery', async () => {
     // An aggregator row defaults to its featured shortlist; the typed id is
     // appended after the catalog, so the bare default rule would hide it.
     vi.mocked(requestModelOptions).mockResolvedValue({
@@ -117,11 +136,7 @@ describe('Edit Models reset', () => {
     fireEvent.click(await screen.findByRole('button', { name: /^reset$/i }))
 
     await waitFor(async () => expect(await isShown(/gpt-6/i)).toBe(true))
-    // The custom row's <label> also wraps its remove button, so its switch has
-    // no accessible name of its own; find it through the row instead.
-    const customRow = screen.getByText('Model X').closest('label')!
-    expect(within(customRow).getByRole('switch').getAttribute('aria-checked')).toBe('true')
-    expect(screen.getByRole('button', { name: /remove custom model/i })).toBeTruthy()
+    expect(screen.queryByText('Model X')).toBeNull()
     expect($customModels.get()).toEqual([{ model: 'acme/model-x', provider: 'openrouter' }])
   })
 
