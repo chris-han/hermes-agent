@@ -29,3 +29,15 @@ def test_host_runtime_precedes_local_policy_and_default_provider():
         assert GatewayTurnPrepareMixin._resolve_session_agent_runtime(
             runner, source=source, session_key='chat') == ('governed', {'provider':'custom'})
     assert runner._pre_agent_fallback_notice is None
+
+
+def test_host_cloud_recognition_requires_exact_transient_route():
+    from gateway.session_host_runtime import host_cloud_route
+    runner, source = object(), object()
+    assert not host_cloud_route('http://fixture/v1', 'secret-fixture')
+    with bind_host_runtime(runner, source, 'chat', 'model',
+                           {'base_url':'http://fixture/v1','api_key':'secret-fixture'}, cloud_bound=True):
+        assert host_cloud_route('http://fixture/v1/', 'secret-fixture')
+        assert not host_cloud_route('http://foreign/v1', 'secret-fixture')
+        assert not host_cloud_route('http://fixture/v1', 'wrong')
+    assert not host_cloud_route('http://fixture/v1', 'secret-fixture')

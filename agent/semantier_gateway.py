@@ -81,7 +81,8 @@ def is_gateway_route(base_url: str) -> bool:
 def capture_agent_route(agent):
     """Retain the native task's credential/account route across later profile edits."""
     agent._semantier_cloud_settings = None
-    if is_gateway_route(str(agent.base_url or '')):
+    from gateway.session_host_runtime import host_cloud_route
+    if host_cloud_route(agent.base_url, agent.api_key) or is_gateway_route(str(agent.base_url or '')):
         if not isinstance(agent.api_key,str) or not agent.api_key:
             raise ValueError('Cloud scoped credential required.')
         agent._semantier_cloud_settings = GatewaySettings(str(agent.base_url).rstrip('/'),agent.api_key)
