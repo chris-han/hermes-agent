@@ -64,11 +64,10 @@ def test_status_is_undecided_until_a_key_is_written(tmp_path, monkeypatch):
     unasked = {"enabled": False, "send": False, "decided": False, "reask": False}
     assert _call("shared_metrics.status", {"profile": "code"}) == unasked
 
-    # A "No thanks" from before the type-ahead fix (no offer_version) may never have been seen:
-    # it is offered once more, and the answer to that settles it.
+    # A prior decline stays declined even without an offer version.
     (worker / "config.yaml").write_text(
         yaml.safe_dump({"telemetry": {"shared_metrics": {"enabled": False}}}), encoding="utf-8")
-    assert _call("shared_metrics.status", {"profile": "code"}) == {**unasked, "reask": True}
+    assert _call("shared_metrics.status", {"profile": "code"}) == {**unasked, "decided": True}
     _call("shared_metrics.set", {"profile": "code", "enabled": False, "send": False})
     assert _call("shared_metrics.status", {"profile": "code"}) == {**unasked, "decided": True}
 

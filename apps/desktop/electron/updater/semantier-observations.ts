@@ -1,4 +1,4 @@
-/** Semantier-only consent/journal. Never reads or changes Nous telemetry. */
+/** Semantier-only consent/journal. Never reads or changes usage-statistics consent. */
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'

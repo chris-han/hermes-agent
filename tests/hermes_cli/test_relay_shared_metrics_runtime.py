@@ -33,6 +33,11 @@ class _ToolExecutionResult:
 class _Relay:
     def __init__(self) -> None:
         self.events: list[tuple[Any, ...]] = []
+        # This Relay double has no plugins, but must satisfy the current host API.
+        self.plugin = SimpleNamespace(initialize=lambda *a, **k: SimpleNamespace(
+            report={"resolved_config": {"components": []}, "dynamic_plugins": []},
+            close=lambda: None,
+        ))
         self._callbacks: dict[str, Any] = {}
         self._starts: dict[Any, dict[str, Any]] = {}
         self._tool_starts: dict[Any, dict[str, Any]] = {}
@@ -56,6 +61,7 @@ class _Relay:
             register=self._register,
             deregister=self._deregister,
             flush=self._flush,
+            flush_async=self._flush,
         )
         self.get_scope_stack = self._get_scope_stack
 

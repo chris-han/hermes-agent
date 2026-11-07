@@ -15,7 +15,8 @@ from hermes_cli.tools_config import (
 
 
 def _config(**shared):
-    return {"telemetry": {"shared_metrics": shared}}
+    from hermes_cli.observability.shared_metrics_consent import OFFER_VERSION
+    return {"telemetry": {"shared_metrics": {"offer_version": OFFER_VERSION, **shared}}}
 
 
 class TestState:
@@ -34,7 +35,7 @@ class TestMenuLabel:
 
     def test_sending_state_names_the_destination(self):
         label = _shared_metrics_menu_label(_config(enabled=True, send=True))
-        assert "sending to Nous" in label
+        assert "sending to Semantier" in label
 
 
 class TestToggle:

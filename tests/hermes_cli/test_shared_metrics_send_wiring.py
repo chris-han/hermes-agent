@@ -74,7 +74,8 @@ def runtime():
 
 
 def _config(**shared):
-    return {"telemetry": {"shared_metrics": shared}}
+    from hermes_cli.observability.shared_metrics_consent import OFFER_VERSION
+    return {"telemetry": {"shared_metrics": {"offer_version": OFFER_VERSION, **shared}}}
 
 
 @pytest.fixture

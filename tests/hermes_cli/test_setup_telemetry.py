@@ -128,9 +128,8 @@ def test_offer_drops_keys_typed_before_it_appeared(monkeypatch):
     assert events == ["flush", "ask"]
 
 
-def test_unseen_no_thanks_is_asked_once_more_and_then_settled(monkeypatch):
-    """A pre-fix "No thanks" is re-offered with the reason; Esc on the re-ask keeps it for good,
-    while a pre-fix opt-in was a deliberate pick and is never re-asked."""
+def test_prior_no_thanks_remains_settled(monkeypatch):
+    """Prior local-only and off answers stay settled without a recipient-change prompt."""
     from hermes_cli.config import read_raw_config, save_config
     from hermes_cli.observability import shared_metrics_consent as consent
 
@@ -149,7 +148,7 @@ def test_unseen_no_thanks_is_asked_once_more_and_then_settled(monkeypatch):
     consent.offer_consent_before_chat(argparse.Namespace())
     consent.offer_consent_before_chat(argparse.Namespace())
 
-    assert len(shown) == 1 and shown[0].startswith(consent._REASK_NOTE)
+    assert shown == []
     assert consent.consent_state(read_raw_config()) == {"enabled": False, "send": False, "decided": True, "reask": False}
 
 

@@ -3,8 +3,8 @@ import { atom } from 'nanostores'
 
 import { recordOnboarding, setDesktopMetricsGate } from './desktop-metrics'
 
-/** Public page describing exactly what shared metrics contain and how consent windows work. */
-export const SHARED_METRICS_DOCS_URL = 'https://hermes-agent.nousresearch.com/docs/developer-guide/relay-shared-metrics'
+/** Pending a verified Semantier-owned privacy explanation; never substitute upstream policy. */
+export const SHARED_METRICS_DOCS_URL: string | undefined = undefined
 
 export type SharedMetricsConsent = SharedMetricsConsentResult
 

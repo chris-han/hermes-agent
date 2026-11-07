@@ -511,7 +511,7 @@ def setup_tools(config: dict, first_install: bool = False):
 
 
 _SEND_CONSENT_EXPLAINER = (
-    "", "Sending uploads each daily package to the Nous telemetry",
+    "", "Sending uploads each daily package to the Semantier telemetry",
     "service. Packages carry your profile-scoped install ID, a",
     "stable random UUID that identifies this profile across days",
     "(it contains no personal information and is reset by deleting",
@@ -540,10 +540,10 @@ def setup_telemetry(config: dict):
           "machine facts (RAM range, GPU type, version age and channel, updates behind,",
           "local model server yes/no). Never prompts, files, paths, setting values or",
           "error text.",
-          "Collection is local. Sending them to Nous is a separate opt-in.")
+          "Collection is local. Sending them to Semantier is a separate opt-in.")
     # The answer is written to config.yaml here, not by the caller's later save: that save strips
     # values equal to the defaults, so a "no" would vanish and every surface would ask again.
-    from hermes_cli.observability.shared_metrics_consent import save_consent
+    from hermes_cli.observability.shared_metrics_consent import consent_state, save_consent
 
     shared_metrics = _sub_dict(_sub_dict(config, "telemetry"), "shared_metrics")
     if not prompt_yes_no("Enable local shared metrics?", default=shared_metrics.get("enabled") is True):
@@ -555,7 +555,7 @@ def setup_telemetry(config: dict):
         return
     print_success("Local shared metrics enabled.")
     _info(*_SEND_CONSENT_EXPLAINER)
-    save_consent(True, prompt_yes_no("Send shared metrics to Nous?", default=shared_metrics.get("send") is True), config)
+    save_consent(True, prompt_yes_no("Send shared metrics to Semantier?", default=consent_state(config)["send"]), config)
     if shared_metrics["send"]:
         print_success("Sending shared metrics enabled.")
     else:
@@ -567,9 +567,10 @@ def _record_send_consent_change(*, enabled: bool) -> None:
     and the sender, so wizard, relay and mid-pass callers cannot disagree."""
     try:
         from hermes_cli.observability.shared_metrics import SharedMetricsStore
-        from hermes_cli.observability.shared_metrics_sender import reconcile_send_consent
+        from hermes_cli.observability.shared_metrics_sender import ensure_semantier_consent_boundary, reconcile_send_consent
         from hermes_cli.sqlite_util import write_txn
         with SharedMetricsStore()._connection() as connection, write_txn(connection):
+            ensure_semantier_consent_boundary(connection)
             reconcile_send_consent(connection, enabled)
     except Exception:
         # Never block the wizard on telemetry bookkeeping; the relay reconciles on the next hook.

@@ -2328,8 +2328,8 @@ DEFAULT_CONFIG = {
         "run": None,
     },
     # Privacy-safe aggregate metrics in this profile's local telemetry dir. Collection (`enabled`)
-    # and transmission to Nous (`send`) are SEPARATE opt-ins; see
-    # website/docs/developer-guide/relay-shared-metrics.md Appendix A for consent/retention.
+    # and transmission to Semantier (`send`) are SEPARATE opt-ins; see
+    # the local shared-metrics consent explanation for collection and transmission details.
     "telemetry": {
         "shared_metrics": {
             "enabled": False,
@@ -2338,7 +2338,7 @@ DEFAULT_CONFIG = {
             "send": False,
             # Ingest endpoint (override for staging/local). Deliberately NOT env- overridable.
             # Non-HTTPS refused unless the host is localhost.
-            "endpoint": "https://telemetry.nousresearch.com/v1/telemetry",
+            "endpoint": "https://cloud.semantier.com/v1/telemetry",
         },
     },
 

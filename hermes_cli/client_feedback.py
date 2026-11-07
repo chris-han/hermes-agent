@@ -1,4 +1,4 @@
-"""Profile-bound Semantier feedback custody. Independent of Nous telemetry.
+"""Profile-bound Semantier feedback custody. Independent of usage-statistics sharing.
 
 A dedicated possession-bound feedback authorization authenticates submission.
 The reporting capability remains DPAPI-protected and is never returned locally.

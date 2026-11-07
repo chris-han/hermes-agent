@@ -1011,3 +1011,18 @@ class TestCompression:
         captured = self._captured_request(payload)
         assert captured["data"] == payload
         assert "content-encoding" not in captured["headers"]
+
+
+def test_revocation_during_retry_backoff_prevents_another_post(store):
+    _add_package(store, 'retry-revoked', '2026-08-26')
+    consented = [True]
+    transport = FakeTransport(FakeResponse(503), FakeResponse(202))
+    def revoke(_seconds):
+        consented[0] = False
+    outcome = SharedMetricsSender(
+        store, ENDPOINT, post=transport, sleep=revoke, now=lambda: NOW,
+        consent_check=lambda: consented[0],
+    ).send_pending()
+    assert len(transport.calls) == 1
+    assert outcome.sent == 0
+    assert outcome.deferred == 1

@@ -81,9 +81,14 @@ def resolve_send_config(config: dict | None) -> SendConfig:
     endpoint = endpoint.strip()
     # Retired built-in Nous endpoint: never transmit Semantier-branded metrics to Nous.
     # Existing users must explicitly re-consent to the changed recipient.
-    if endpoint == _OLD_NOUS_ENDPOINT:
+    try:
+        host = (urlparse(endpoint).hostname or "").lower().rstrip(".")
+    except ValueError:
+        host = ""
+    if host == urlparse(_OLD_NOUS_ENDPOINT).hostname:
         endpoint = DEFAULT_ENDPOINT
-    if endpoint == DEFAULT_ENDPOINT and shared.get("offer_version") != _SEMANTIER_OFFER_VERSION:
+        host = urlparse(DEFAULT_ENDPOINT).hostname
+    if host == urlparse(DEFAULT_ENDPOINT).hostname and shared.get("offer_version") != _SEMANTIER_OFFER_VERSION:
         send_requested = False
 
     if send_requested and not _endpoint_is_safe(endpoint):

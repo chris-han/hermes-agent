@@ -24,6 +24,7 @@ from agent.retry_utils import parse_retry_after_seconds
 from hermes_cli.sqlite_util import write_txn
 
 from .shared_metrics import _isoformat, _utc_now
+from .shared_metrics_send_config import DEFAULT_ENDPOINT
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +127,24 @@ def _retry_after_seconds(value: str | None, default: int) -> int:
     return max(1, min(int(seconds), 86_400))
 
 
+def ensure_semantier_consent_boundary(connection: sqlite3.Connection, *, now: datetime | None = None) -> None:
+    """Pin the new recipient's earliest eligible period once, in the caller's transaction.
+
+    Retain upstream windows for history, but never reuse them as Semantier authorization.
+    The raw UTC observation is intentional: the heartbeat advance cap must not backdate
+    a recipient change. A failed transaction leaves sending fail-closed on the next pass.
+    """
+    if connection.execute("SELECT 1 FROM telemetry_state WHERE key = 'semantier_start'").fetchone():
+        return
+    stamp = _isoformat(now or _utc_now())
+    marks = dict(connection.execute("SELECT name, stamp FROM consent_marks").fetchall())
+    boundary = max(stamp, marks.get("obs", stamp), marks.get("data", stamp))
+    connection.execute("INSERT INTO telemetry_state(key, value) VALUES ('semantier_start', ?)", (boundary,))
+    reconcile_send_consent(connection, False, now=now)
+    # A future consent observation may advance normally from the new boundary.
+    connection.execute("UPDATE consent_marks SET stamp = MAX(stamp, ?) WHERE name = 'obs'", (boundary,))
+
+
 def reconcile_send_consent(
     connection: sqlite3.Connection,
     send_enabled: bool,
@@ -197,6 +216,8 @@ def reconcile_send_consent(
 CONSENT_GATE_SQL = """EXISTS (
     SELECT 1 FROM send_consent_windows w
     WHERE package_outbox.period_start >= w.opened_at
+      AND package_outbox.period_start >= COALESCE(
+          (SELECT value FROM telemetry_state WHERE key = 'semantier_start'), '')
       AND package_outbox.period_end <=
           CASE WHEN w.closed_at IS NULL THEN w.last_confirmed_at
                ELSE w.closed_at END
@@ -422,6 +443,10 @@ class SharedMetricsSender:
             return "deferred"
 
         for attempt in range(1, self._max_attempts + 1):
+            # Consent can be withdrawn during retry backoff as well as between packages.
+            if not self._still_consented():
+                self._reconcile(send_enabled=False)
+                return defer(_FAILURE_BACKOFF_SECONDS, "Send consent withdrawn")
             # Renew before EVERY external POST so a lapsed claimant yields even before anyone
             # reclaims. The ingest key is minute-prefixed: duplicates are distinct objects.
             if not self._renew_claim(package_id, token):
@@ -475,6 +500,13 @@ class SharedMetricsSender:
         """Run one bounded pass, one claim+send at a time, re-checking consent before each
         send so revoking `send` mid-pass stops the remainder. Never raises."""
         outcome = SendOutcome()
+        if self._endpoint == DEFAULT_ENDPOINT:
+            try:
+                with self._write() as connection:
+                    ensure_semantier_consent_boundary(connection, now=self._now())
+            except Exception:
+                logger.warning("Unable to establish Semantier consent boundary", exc_info=True)
+                return outcome
         seen: set[str] = set()
 
         for _ in range(MAX_PACKAGES_PER_PASS):

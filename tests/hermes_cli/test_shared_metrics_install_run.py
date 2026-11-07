@@ -181,7 +181,7 @@ def test_receipt_is_recorded_only_on_a_day_the_sender_can_ever_send(marks, monke
     clock = {"now": t0 + timedelta(hours=9)}
     monkeypatch.setattr(store_module, "_utc_now", lambda: clock["now"])
     monkeypatch.setattr("hermes_cli.config.read_raw_config_readonly",
-                        lambda: {"telemetry": {"shared_metrics": {"enabled": True, "send": True}}})
+                        lambda: {"telemetry": {"shared_metrics": {"enabled": True, "send": True, "offer_version": 3}}})
     store = store_module.SharedMetricsStore()
 
     def observe(send=True):
@@ -217,7 +217,7 @@ def test_receipt_is_recorded_only_on_a_day_the_sender_can_ever_send(marks, monke
 
 
 def test_receipt_waits_without_an_open_send_window_and_is_recorded_at_once_when_kept_local(marks, monkeypatch):
-    config = {"enabled": True, "send": True}
+    config = {"enabled": True, "send": True, "offer_version": 3}
     monkeypatch.setattr("hermes_cli.config.read_raw_config_readonly",
                         lambda: {"telemetry": {"shared_metrics": config}})
     receipt = _park(marks.home, _receipt())
