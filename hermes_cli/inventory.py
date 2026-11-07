@@ -230,6 +230,18 @@ def _strip_aggregator_overlaps(rows: list[dict]) -> None:
             row["total_models"] = len(filtered)
 
 
+def build_desktop_model_options_payload(ctx: ConfigContext, *, source_scope: str, refresh: bool = False) -> dict:
+    """Desktop candidates from configured provider queries, independent of legacy picker fallbacks."""
+    from hermes_cli.desktop_model_discovery import configured_provider_rows
+
+    rows = configured_provider_rows(ctx, source_scope=source_scope, refresh=refresh)
+    # Pricing only annotates the verified IDs. In particular, the existing Nous
+    # tier guard retains its independent unavailable-model constraint.
+    _apply_pricing(rows, cached_only=True)
+    return {"providers": rows, "model": ctx.current_model, "provider": ctx.current_provider,
+            "discovery_contract": "provider-query-v1"}
+
+
 def build_model_options_payload(
     ctx: ConfigContext, *, explicit_only: bool = False, include_unconfigured: bool = False,
     refresh: bool = False,

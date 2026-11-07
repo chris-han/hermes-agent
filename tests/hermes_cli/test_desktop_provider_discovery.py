@@ -223,3 +223,252 @@ def test_command_credentials_are_partitioned_by_materialized_principal(cache_pat
     assert read_provider_snapshot(**source, refresh=True).models == ["private"]
     principal[0] = "second"
     assert read_provider_snapshot(**source).models is None
+
+
+def test_ollama_native_refresh_queries_tags_and_preserves_empty_failure(cache_path, monkeypatch):
+    from hermes_cli import models
+    seen = []
+    replies = iter([{"models": [{"name": "local-a"}]}, {"models": []}, OSError("offline")])
+
+    def get_json(url, *, timeout, headers=None, **kwargs):
+        seen.append((url, headers))
+        result = next(replies)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    monkeypatch.setattr(models, "_get_json", get_json)
+    source = {"provider": "ollama", "base_url": "http://localhost:11434/v1",
+              "api_key": "local-key", "source_scope": "connection-a", "adapter": "ollama"}
+    assert read_provider_snapshot(**source, refresh=True).models == ["local-a"]
+    assert read_provider_snapshot(**source, refresh=True).models == []
+    failed = read_provider_snapshot(**source, refresh=True)
+    assert failed.models == [] and failed.state == "stale"
+    assert [item[0] for item in seen] == ["http://localhost:11434/api/tags"] * 3
+    assert all(any(k.lower() == "authorization" and v == "Bearer local-key" for k, v in headers.items())
+               for _, headers in seen)
+
+
+def test_ollama_malformed_item_cannot_replace_verified_snapshot(cache_path, monkeypatch):
+    from hermes_cli import models
+    responses = iter([{"models": [{"name": "verified"}]}, {"models": [{"name": "new"}, {}]}])
+    monkeypatch.setattr(models, "_get_json", lambda *args, **kwargs: next(responses))
+    source = {"provider": "ollama", "base_url": "http://localhost:11434/v1",
+              "api_key": None, "source_scope": "connection-a", "adapter": "ollama"}
+    assert read_provider_snapshot(**source, refresh=True).models == ["verified"]
+    result = read_provider_snapshot(**source, refresh=True)
+    assert result.models == ["verified"] and result.state == "stale"
+
+
+def test_custom_provider_entries_use_source_query_once_and_never_offer_saved_models(cache_path, monkeypatch):
+    from hermes_cli import models
+    from hermes_cli.desktop_model_discovery import configured_provider_rows
+    from hermes_cli.inventory import ConfigContext
+
+    calls = []
+    monkeypatch.setattr(models, "probe_api_models", lambda key, url, **kwargs:
+                        calls.append((key, url)) or {"models": ["queried"]})
+    ctx = ConfigContext(current_provider="custom:sample", current_model="retired", current_base_url="https://example.test/v1",
+        user_providers={}, custom_providers=[
+            {"name": "Sample — Old", "provider_key": "sample", "base_url": "https://example.test/v1", "api_key": "key", "model": "old"},
+            {"name": "Sample — Retired", "provider_key": "sample", "base_url": "https://example.test/v1", "api_key": "key", "model": "retired"},
+        ])
+    rows = configured_provider_rows(ctx, source_scope="connection-a", refresh=True)
+    assert len(rows) == 1
+    assert rows[0]["slug"] == "custom:sample"
+    assert rows[0]["is_current"] is True
+    assert rows[0]["models"] == ["queried"]
+    assert calls == [("key", "https://example.test/v1")]
+    assert "key" not in json.dumps(rows)
+
+
+def test_configured_registered_provider_uses_profile_credential_and_runtime_endpoint(cache_path, monkeypatch):
+    from hermes_cli import models, model_switch
+    from hermes_cli.desktop_model_discovery import configured_provider_rows
+    from hermes_cli.inventory import ConfigContext
+
+    calls = []
+    monkeypatch.setattr(model_switch, "_scoped_key_env", lambda name: {"OPENAI_API_KEY": "profile-key"}.get(name, ""))
+    monkeypatch.setattr(models, "probe_api_models", lambda key, url, **kwargs:
+                        calls.append((key, url)) or {"models": ["live"]})
+    ctx = ConfigContext(current_provider="openai-api", current_model="old", current_base_url="https://relay.test/v1",
+                        user_providers={"openai-api": {}}, custom_providers=[])
+    rows = configured_provider_rows(ctx, source_scope="connection-a", refresh=True)
+    assert rows[0]["models"] == ["live"]
+    assert calls == [("profile-key", "https://relay.test/v1")]
+
+
+def test_refresh_queries_sources_concurrently_with_profile_context(cache_path, monkeypatch):
+    import contextvars
+    import threading
+    from hermes_cli import models
+    from hermes_cli.desktop_model_discovery import configured_provider_rows
+    from hermes_cli.inventory import ConfigContext
+
+    context = contextvars.ContextVar("test_profile", default="wrong")
+    context.set("profile-a")
+    barrier = threading.Barrier(2)
+    seen = []
+
+    def probe(key, url, **kwargs):
+        seen.append((url, context.get()))
+        barrier.wait(timeout=2)
+        return {"models": ["verified"]}
+
+    monkeypatch.setattr(models, "probe_api_models", probe)
+    ctx = ConfigContext(current_provider="", current_model="", current_base_url="", user_providers={
+        "a": {"base_url": "https://a.test/v1"}, "b": {"base_url": "https://b.test/v1"}}, custom_providers=[])
+    rows = configured_provider_rows(ctx, source_scope="connection-a", refresh=True)
+    assert [row["models"] for row in rows] == [["verified"], ["verified"]]
+    assert sorted(seen) == [("https://a.test/v1", "profile-a"), ("https://b.test/v1", "profile-a")]
+
+
+def test_snapshot_exposes_only_opaque_source_and_utc_timestamp(cache_path, monkeypatch):
+    from hermes_cli import models
+    monkeypatch.setattr(models, "probe_api_models", lambda *args, **kwargs: {"models": ["live"]})
+    source = {"provider": "fixture", "base_url": "https://provider.test/v1",
+              "api_key": "private-key", "source_scope": "connection-a"}
+    fresh = read_provider_snapshot(**source, refresh=True)
+    cached = read_provider_snapshot(**source)
+    other = read_provider_snapshot(**{**source, "api_key": "another-key"})
+    assert fresh.source_id and fresh.source_id == cached.source_id and fresh.source_id != other.source_id
+    assert fresh.fetched_at == cached.fetched_at and fresh.fetched_at.endswith("+00:00")
+    assert "private-key" not in str(fresh.source_id)
+
+
+def test_cloud_uses_actor_catalog_and_retains_only_same_actor_snapshot(cache_path, monkeypatch):
+    from hermes_cli import models
+    from agent import semantier_gateway
+    from hermes_cli.desktop_model_discovery import configured_provider_rows
+    from hermes_cli.inventory import ConfigContext
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Cloud must use the actor-authorized catalog")
+    monkeypatch.setattr(models, "probe_api_models", forbidden)
+    principal = ["key-a"]
+    monkeypatch.setattr(semantier_gateway, "gateway_settings", lambda:
+                        semantier_gateway.GatewaySettings("https://cloud.test/v1", principal[0]))
+    replies = iter([{"object": "list", "data": [{"id": "actor-a"}]}, ValueError("offline")])
+    def catalog(*, refresh, settings):
+        assert refresh and settings.api_key == "key-a"
+        reply = next(replies)
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+    monkeypatch.setattr(semantier_gateway, "cloud_catalog", catalog)
+    ctx = ConfigContext(current_provider="semantier-cloud", current_model="old", current_base_url="https://cloud.test/v1",
+        user_providers={"semantier-cloud": {"base_url": "https://cloud.test/v1", "api_key": "key"}}, custom_providers=[])
+    row = configured_provider_rows(ctx, source_scope="connection-a", refresh=True)[0]
+    assert row["models"] == row["eligible_models"] == ["actor-a"]
+    row = configured_provider_rows(ctx, source_scope="connection-a", refresh=True)[0]
+    assert row["discovery_state"] == "stale" and row["eligible_models"] == ["actor-a"]
+    principal[0] = "key-b"
+    row = configured_provider_rows(ctx, source_scope="connection-a")[0]
+    assert row["models"] == [] and row.get("eligible_models") is None
+
+
+def test_desktop_inventory_uses_separate_query_only_path_and_retains_saved_selection(cache_path, monkeypatch):
+    from hermes_cli import inventory, models
+    from hermes_cli.inventory import ConfigContext
+
+    monkeypatch.setattr(models, "probe_api_models", lambda *args, **kwargs: {"models": []})
+    monkeypatch.setattr(inventory, "build_models_payload", lambda *args, **kwargs: pytest.fail("legacy fallback called"))
+    ctx = ConfigContext(current_provider="fixture", current_model="retired", current_base_url="https://fixture.test/v1",
+                        user_providers={"fixture": {"base_url": "https://fixture.test/v1", "models": ["static"]}},
+                        custom_providers=[])
+    payload = inventory.build_desktop_model_options_payload(ctx, source_scope="connection-a", refresh=True)
+    assert payload["discovery_contract"] == "provider-query-v1"
+    assert payload["provider"] == "fixture" and payload["model"] == "retired"
+    assert payload["providers"][0]["models"] == []
+    assert payload["providers"][0]["discovery_state"] == "fresh"
+    assert payload["providers"][0].get("eligible_models") is None
+
+
+def test_ollama_native_force_refresh_uses_real_http_and_same_source_cache(cache_path):
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    state = {"status": 200, "models": [{"name": "alpha"}], "paths": []}
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            state["paths"].append(self.path)
+            body = json.dumps({"models": state["models"]}).encode()
+            self.send_response(state["status"])
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        source = {"provider": "ollama", "base_url": f"http://127.0.0.1:{server.server_port}/v1",
+                  "api_key": None, "source_scope": "connection-a", "adapter": "ollama"}
+        assert read_provider_snapshot(**source, refresh=True).models == ["alpha"]
+        state["models"] = [{"name": "beta"}]
+        assert read_provider_snapshot(**source, refresh=True).models == ["beta"]
+        state["status"] = 503
+        stale = read_provider_snapshot(**source, refresh=True)
+        assert stale.models == ["beta"] and stale.state == "stale"
+        state.update(status=200, models=[])
+        assert read_provider_snapshot(**source, refresh=True).models == []
+        assert state["paths"] == ["/api/tags"] * 4
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_legacy_cloud_route_is_actor_catalog_only_even_when_custom_endpoint_exists(cache_path, monkeypatch):
+    from agent import semantier_gateway
+    from hermes_cli import models
+    from hermes_cli.desktop_model_discovery import configured_provider_rows
+    from hermes_cli.inventory import ConfigContext
+
+    monkeypatch.setattr(semantier_gateway, "cloud_connection_config", lambda: {"base_url": "https://cloud.test/v1"})
+    monkeypatch.setattr(semantier_gateway, "gateway_settings", lambda:
+                        semantier_gateway.GatewaySettings("https://cloud.test/v1", "actor-key"))
+    monkeypatch.setattr(semantier_gateway, "cloud_catalog", lambda **kwargs: {"object": "list", "data": [{"id": "granted"}]})
+    monkeypatch.setattr(models, "probe_api_models", lambda *args, **kwargs: pytest.fail("generic Cloud query"))
+    ctx = ConfigContext(current_provider="custom", current_model="granted", current_base_url="https://cloud.test/v1",
+                        user_providers={}, custom_providers=[{"name": "Proxy", "base_url": "https://cloud.test/v1"}])
+    rows = configured_provider_rows(ctx, source_scope="connection-a", refresh=True)
+    assert len(rows) == 1 and rows[0]["slug"] == "semantier-cloud"
+    assert rows[0]["models"] == rows[0]["eligible_models"] == ["granted"]
+    assert rows[0]["is_current"] is True
+
+
+def test_registered_oauth_provider_is_disclosed_as_unsupported_without_native_adapter(cache_path, monkeypatch):
+    from hermes_cli import models
+    from hermes_cli.desktop_model_discovery import configured_provider_rows
+    from hermes_cli.inventory import ConfigContext
+
+    monkeypatch.setattr(models, "probe_api_models", lambda *args, **kwargs: pytest.fail("unqualified OAuth probe"))
+    ctx = ConfigContext(current_provider="openai-codex", current_model="old", current_base_url="https://service.test/v1",
+                        user_providers={"openai-codex": {"base_url": "https://service.test/v1"}}, custom_providers=[])
+    row = configured_provider_rows(ctx, source_scope="connection-a", refresh=True)[0]
+    assert row["models"] == [] and row["discovery_state"] == "unsupported"
+
+
+def test_bare_current_custom_endpoint_comes_from_profile_config_only(cache_path, monkeypatch):
+    from hermes_cli import config, models
+    from hermes_cli.desktop_model_discovery import configured_provider_rows
+    from hermes_cli.inventory import ConfigContext
+
+    calls = []
+    monkeypatch.setattr(config, "load_config", lambda: {"model": {"provider": "custom",
+                        "base_url": "https://configured.test/v1", "api_key": "key"}})
+    monkeypatch.setattr(models, "probe_api_models", lambda key, url, **kwargs:
+                        calls.append((key, url)) or {"models": ["live"]})
+    ctx = ConfigContext(current_provider="custom", current_model="old", current_base_url="https://configured.test/v1",
+                        user_providers={}, custom_providers=[])
+    rows = configured_provider_rows(ctx, source_scope="connection-a", refresh=True)
+    assert len(rows) == 1 and rows[0]["slug"] == "custom" and rows[0]["models"] == ["live"]
+    assert calls == [("key", "https://configured.test/v1")]
+    calls.clear()
+    changed = ctx.with_overrides(current_base_url="https://other.test/v1")
+    assert configured_provider_rows(changed, source_scope="connection-a", refresh=True) == []
+    assert calls == []
