@@ -41,3 +41,21 @@ def test_host_cloud_recognition_requires_exact_transient_route():
         assert not host_cloud_route('http://foreign/v1', 'secret-fixture')
         assert not host_cloud_route('http://fixture/v1', 'wrong')
     assert not host_cloud_route('http://fixture/v1', 'secret-fixture')
+
+
+def test_host_cloud_capture_retains_admitted_revision_and_original_lineage():
+    from agent.semantier_gateway import capture_agent_route, bind_task_context
+    runner, source = object(), object()
+    parent = {'task_id': 'admission', 'root_run_id': 'workspace:original',
+              'business_object_ref': 'winman:bot:workspace:original'}
+    agent = SimpleNamespace(base_url='http://fixture/v1', api_key='fixture-key')
+    with bind_host_runtime(runner, source, 'chat', 'model',
+            {'base_url':agent.base_url, 'api_key':agent.api_key}, cloud_bound=True,
+            cloud_revision='admitted-revision', task_context=parent):
+        capture_agent_route(agent)
+    assert agent._semantier_cloud_revision == 'admitted-revision'
+    assert agent._semantier_parent_task_context == parent
+    parent['task_id'] = 'changed'
+    bind_task_context(agent, 'new-turn', 'run')
+    assert agent._semantier_task_context == {'task_id':'admission', 'root_run_id':'workspace:original',
+        'run_id':'run', 'business_object_ref':'winman:bot:workspace:original'}

@@ -86,6 +86,11 @@ def capture_agent_route(agent):
         if not isinstance(agent.api_key,str) or not agent.api_key:
             raise ValueError('Cloud scoped credential required.')
         agent._semantier_cloud_settings = GatewaySettings(str(agent.base_url).rstrip('/'),agent.api_key)
+        from gateway.session_host_runtime import host_cloud_metadata
+        metadata = host_cloud_metadata(agent.base_url, agent.api_key)
+        if metadata is not None:
+            agent._semantier_cloud_revision = metadata['revision']
+            agent._semantier_parent_task_context = metadata['task_context']
 
 
 def agent_cloud_settings(agent):
