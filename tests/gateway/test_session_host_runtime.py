@@ -59,3 +59,23 @@ def test_host_cloud_capture_retains_admitted_revision_and_original_lineage():
     bind_task_context(agent, 'new-turn', 'run')
     assert agent._semantier_task_context == {'task_id':'admission', 'root_run_id':'workspace:original',
         'run_id':'run', 'business_object_ref':'winman:bot:workspace:original'}
+
+
+def test_host_inventory_scope_is_limited_to_background_executor_probes():
+    import asyncio
+    from gateway.run import _resolve_handoff_watch_scopes
+    from gateway.run_idle_gates import off_loop_gate
+    runner = SimpleNamespace(config=SimpleNamespace(multiplex_profiles=True))
+    boundary, source = object(), object()
+    runner._host_inventory_scope = lambda: bind_host_runtime(
+        runner, source, 'inventory', '', {}, boundary=boundary)
+    async def offload(probe, *args):
+        assert host_boundary_for(runner) is boundary
+        return [(None, None)] if args else True
+    runner._run_in_executor_with_context = offload
+    async def run():
+        assert await _resolve_handoff_watch_scopes(runner) == [(None, None)]
+        assert host_boundary_for(runner) is None
+        assert await off_loop_gate(runner, lambda: True)
+        assert host_boundary_for(runner) is None
+    asyncio.run(run())

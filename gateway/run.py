@@ -1752,7 +1752,9 @@ async def _resolve_handoff_watch_scopes(runner: object) -> list:
         return [(None, None)]
     offload = getattr(runner, "_run_in_executor_with_context", None)
     if callable(offload):
-        return await offload(_handoff_watch_scopes, runner)
+        from gateway.session_host_runtime import host_inventory_scope
+        with host_inventory_scope(runner):
+            return await offload(_handoff_watch_scopes, runner)
     return _handoff_watch_scopes(runner)
 
 

@@ -1,5 +1,5 @@
 """Host-authorized transient runtime for one exact native turn."""
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 
 _current = ContextVar('host_session_runtime', default=None)
@@ -40,3 +40,8 @@ def host_cloud_metadata(base_url, api_key):
         return None
     value = _current.get()
     return {'revision': value[7], 'task_context': dict(value[8])}
+
+
+def host_inventory_scope(runner):
+    factory = getattr(runner, '_host_inventory_scope', None)
+    return factory() if callable(factory) else nullcontext()

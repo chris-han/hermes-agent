@@ -63,4 +63,6 @@ async def off_loop_gate(runner: object, probe: Callable[[], bool]) -> bool:
     offload = getattr(runner, "_run_in_executor_with_context", None)
     if not callable(offload):
         return True
-    return bool(await offload(probe))
+    from gateway.session_host_runtime import host_inventory_scope
+    with host_inventory_scope(runner):
+        return bool(await offload(probe))
