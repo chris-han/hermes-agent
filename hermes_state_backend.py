@@ -76,7 +76,7 @@ def resolve_postgres_scope(home):
                         JOIN semantier_identity.workspace_runtime_bindings w
                           ON w.user_id=b.user_id AND w.workspace_id=b.workspace_id
                         JOIN semantier_identity.users u ON u.user_id=b.user_id
-                        WHERE b.hermes_home=%s AND b.bot_id ~ '^bot_[a-f0-9]{32}$'
+                        WHERE b.hermes_home=%s AND b.materialized AND b.bot_id ~ '^bot_[a-f0-9]{32}$'
                           AND b.hermes_home=w.hermes_home || '/profiles/winman-' || substr(b.bot_id,5)
                           AND b.tenant_id=w.tenant_id
                           AND b.source_store_id='winman-native-' || b.user_id
