@@ -5,6 +5,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 import type * as ConfigApi from '@/api/config'
 import { I18nProvider, TRANSLATIONS } from '@/i18n'
+import { refreshModelsOnConnectionReady } from '@/lib/startup-model-discovery'
 import { $notifications, clearNotifications } from '@/store/notifications'
 import { $connection } from '@/store/session'
 
@@ -58,6 +59,8 @@ vi.mock('@/store/onboarding', () => ({
   startManualOnboarding: (...args: unknown[]) => startManualOnboarding(...args),
   startManualProviderOAuth: (...args: unknown[]) => startManualProviderOAuth(...args)
 }))
+
+vi.mock('@/lib/startup-model-discovery', () => ({ refreshModelsOnConnectionReady: vi.fn(async () => undefined) }))
 
 vi.mock('@/lib/model-options', async importOriginal => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -127,6 +130,12 @@ function renderModelSettings(scopeProfile?: string) {
 }
 
 describe('ModelSettings profile scope', () => {
+  it('starts one background discovery for a newly targeted profile', async () => {
+    $connection.set({ mode: 'local', baseUrl: 'http://localhost:9119' } as never)
+    renderModelSettings('research')
+    await waitFor(() => expect(refreshModelsOnConnectionReady).toHaveBeenCalledWith(null, 'research', expect.any(Object)))
+  })
+
   it('clears the previous catalog while an active profile switch is loading', async () => {
     let finish!: (value: unknown) => void
     getGlobalModelOptions.mockResolvedValueOnce({ providers: [{ name: 'Private A', slug: 'a', models: ['a-model'] }] })

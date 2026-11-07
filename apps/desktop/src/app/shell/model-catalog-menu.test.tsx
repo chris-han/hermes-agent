@@ -212,6 +212,17 @@ function renderMenu(current: Partial<ModelMenuController['current']> = {}) {
 // the kanban board would end up disagreeing about what "my models" means —
 // which is exactly the drift extracting this component was meant to prevent.
 describe('the catalog owns model curation', () => {
+  it('does not insert the saved current model into the provider result list', async () => {
+    getGlobalModelOptions.mockResolvedValue({
+      discovery_contract: 'provider-query-v1',
+      providers: [{ name: 'Lab', slug: 'lab', models: ['live-model'],
+        discovery_state: 'fresh', discovery_source_id: 'opaque', discovery_fetched_at: '2026-11-07T00:00:00+00:00' }]
+    })
+    renderMenu({ model: 'retired-model', provider: 'lab' })
+    expect(await screen.findByText('Live Model')).toBeTruthy()
+    expect(screen.queryByText('Retired Model')).toBeNull()
+  })
+
   it('offers verified discovery without promoting it to an eligibility grant', async () => {
     getGlobalModelOptions.mockResolvedValue({
       discovery_contract: 'provider-query-v1',
@@ -394,18 +405,15 @@ describe('the catalog owns favorite models', () => {
 })
 
 describe('the current model the catalog omits (#57534)', () => {
-  it('renders the current model as a selectable row when the provider catalog lacks it', async () => {
+  it('keeps an omitted current model out of selectable provider rows', async () => {
     getGlobalModelOptions.mockResolvedValue({
       providers: [{ models: ['openai/gpt-4o-mini'], eligible_models: ['openai/gpt-4o-mini'], name: 'OpenRouter', slug: 'openrouter' }]
     })
 
     renderMenu({ model: 'qwen/qwen-2.5-72b-instruct', provider: 'openrouter' })
 
-    // The current model paints as its own family row (humanized name), ahead
-    // of the catalog's families, and stays selectable.
-    const row = (await screen.findByText('Qwen 2.5 72B Instruct')).closest('[role="menuitem"]')!
-
-    expect(row.textContent).toContain('Qwen 2.5 72B Instruct')
+    await screen.findByText('GPT-4o-mini')
+    expect(screen.queryByText('Qwen 2.5 72B Instruct')).toBeNull()
   })
 
   it('does not inject the current model into a provider that is not the current one', async () => {

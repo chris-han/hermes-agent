@@ -36,6 +36,7 @@ import { isSubmitEnter } from '@/lib/ime'
 import { modelDiscoveryOwnerKey } from '@/lib/model-discovery-scope'
 import { catalogProviderMatches, findCatalogProvider, modelOptionsQueryKey, providerSelectableModels, requestDiscoveredModelOptions } from '@/lib/model-options'
 import { composerServiceTier } from '@/lib/model-status-label'
+import { refreshModelsOnConnectionReady } from '@/lib/startup-model-discovery'
 import { normalize } from '@/lib/text'
 import { cn } from '@/lib/utils'
 import { requestGatewayForAgent } from '@/store/gateway'
@@ -291,6 +292,9 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
       requestGatewayForAgent<T>(connection?.connectionId ?? null, searchProfile, method, params)
   }), [connection, searchProfile])
   const catalogQuery = useQuery({ queryKey: catalogKey, queryFn: () => requestDiscovery(), enabled: !!ownerKey })
+  useEffect(() => {
+    if (ownerKey) {void refreshModelsOnConnectionReady(connection?.connectionId ?? null, searchProfile, connection)}
+  }, [connection, ownerKey, searchProfile])
   const m = t.settings.model
   const showMain = subpage === undefined || subpage === 'main'
   const showAuxiliary = subpage === undefined || subpage === 'auxiliary'

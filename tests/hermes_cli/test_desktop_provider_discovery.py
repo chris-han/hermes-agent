@@ -662,3 +662,14 @@ def test_provider_without_endpoint_does_not_inherit_another_configured_provider_
                         user_providers={"openai-api": {}}, custom_providers=[])
     configured_provider_rows(ctx, source_scope="connection-a", refresh=True)
     assert calls == ["https://api.openai.com/v1"]
+
+
+def test_strict_query_never_changes_the_configured_endpoint_on_failure(monkeypatch):
+    from hermes_cli import models
+    calls = []
+    def fail(url, **kwargs):
+        calls.append(url)
+        raise OSError("offline")
+    monkeypatch.setattr(models, "_get_json", fail)
+    assert models.probe_api_models("key", "https://provider.test/tenant/v1", require_complete=True)["models"] is None
+    assert calls == ["https://provider.test/tenant/v1/models"]

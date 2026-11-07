@@ -2678,7 +2678,7 @@ def probe_api_models(
 
     alternate_base = normalized[:-3].rstrip("/") if normalized.endswith("/v1") else normalized + "/v1"
     candidates: list[tuple[str, bool]] = [(normalized, False)]
-    if alternate_base and alternate_base != normalized:
+    if not require_complete and alternate_base and alternate_base != normalized:
         candidates.append((alternate_base, True))
 
     tried: list[str] = []
