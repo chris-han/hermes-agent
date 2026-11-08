@@ -855,6 +855,17 @@ fs.writeFileSync(path.join(output,'result.json'),JSON.stringify({result:'DESKTOP
   Report-Status 'Desktop check build complete; this is not full bundled application qualification.'
 }
 
+function Assert-MsixWithoutUvCache([string]$Path) {
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $archive=[IO.Compression.ZipFile]::OpenRead($Path)
+  try {
+    foreach($entry in $archive.Entries){
+      if($entry.FullName -match '(?i)(^|[/\\])uv-cache([/\\]|$)'){
+        throw "MSIX contains forbidden uv-cache content: $($entry.FullName). Repackage with current R: tooling; shared caches must not be deleted."
+      }
+    }
+  } finally {$archive.Dispose()}
+}
 function Build-CommitPackage {
   if($Commit -cnotmatch '^[a-f0-9]{40}$'){throw '-Commit requires a complete 40-character Git commit.'}
   $resolved=& git.exe -C $Repository rev-parse --verify ($Commit+'^{commit}')
@@ -909,6 +920,7 @@ function Build-CommitPackage {
   }
   if($record.stage -eq 'built'){
     if($BuildMode -eq 'Prod' -and (Hash $record.msix) -cne $record.sha256){throw 'Checkpoint unsigned MSIX integrity mismatch.'}
+    Assert-MsixWithoutUvCache $record.msix
     Report-Status 'Reusing checkpointed unsigned MSIX; no rebuild.'
     return $record
   }
@@ -997,6 +1009,7 @@ function Build-CommitPackage {
   finally{$zip.Dispose()}
   if($stamp.commit -cne $Commit -or $stamp.dirty -or $stamp.channelBuild.buildId -cne $request.buildId){throw 'New MSIX source/build stamp mismatch.'}
   }
+  Assert-MsixWithoutUvCache $packages[0].FullName
   Copy-Item -LiteralPath $packages[0].FullName -Destination $record.msix
   $record.sha256=Hash $record.msix;$record.stage='built'
   Write-RunEvent @{type='build';build=$record;at=[DateTime]::UtcNow.ToString('o')}
@@ -1124,6 +1137,7 @@ $plan = [ordered]@{input=$Msix;version=$Version;sourceCommit=$SourceCommit;ssh=$
 if($BuildMode -eq 'Beta'){$plan.stages=@('build/reuse without release verification','sign MSIX','back up profile','install MSIX','SFTP upload','atomic ECS activation; UNVERIFIED')}
 if ($WhatIfPreference) { $plan | ConvertTo-Json -Depth 5; return }
 Report-Status 'Validating existing MSIX hash, source, identity and node-pty inputs; no dependency rebuild.'
+Assert-MsixWithoutUvCache $Msix
 if ($BuildMode -eq 'Prod' -and (!(Test-Path -LiteralPath $Msix -PathType Leaf) -or (Hash $Msix) -cne $ExpectedInputSha256)) { throw 'Existing MSIX integrity check failed; no rebuild attempted.' }
 $tools=@($SignTool,$Node)
 foreach ($tool in $tools) {
