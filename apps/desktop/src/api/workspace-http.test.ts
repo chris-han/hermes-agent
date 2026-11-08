@@ -303,3 +303,27 @@ it('does not silently discard explicit Main model or tier choices', async () => 
   expect(createSession).not.toHaveBeenCalled()
   gateway.close()
 })
+
+it('acknowledges Main completion with the retained request and actual server user row', async () => {
+  const send=vi.fn().mockResolvedValue({sessionId:'main-original',nextCursor:'256',messages:[
+    {messageId:'255',role:'user',text:'Acknowledge once',metadata:{durable_request_id:'request-main'}},
+    {messageId:'256',role:'assistant',text:'Acknowledged'}
+  ]})
+  Object.defineProperty(window,'hermesDesktop',{configurable:true,value:{workspace:{identity:vi.fn().mockResolvedValue(identity),send}}})
+  const gateway=new HermesGateway()
+  await gateway.connectWorkspace('https://cloud.example',scope,'cloud-a')
+  const result=await gateway.request('prompt.submit',{session_id:'main-original',text:'Acknowledge once',submission_id:'request-main'})
+  expect(result).toEqual({session_id:'main-original',submission_id:'request-main',status:'terminal',user_row_id:255})
+  expect(send).toHaveBeenCalledTimes(1)
+  gateway.close()
+})
+
+it('does not acknowledge a Main completion without the matching durable request row', async () => {
+  const send=vi.fn().mockResolvedValue({sessionId:'main-original',messages:[{messageId:'255',role:'user',metadata:{durable_request_id:'other-request'}}]})
+  Object.defineProperty(window,'hermesDesktop',{configurable:true,value:{workspace:{identity:vi.fn().mockResolvedValue(identity),send}}})
+  const gateway=new HermesGateway()
+  await gateway.connectWorkspace('https://cloud.example',scope,'cloud-a')
+  await expect(gateway.request('prompt.submit',{session_id:'main-original',text:'Acknowledge once',submission_id:'request-main'})).rejects.toThrow('receipt')
+  expect(send).toHaveBeenCalledTimes(1)
+  gateway.close()
+})

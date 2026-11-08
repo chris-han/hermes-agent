@@ -276,6 +276,7 @@ export class HermesGateway extends JsonRpcGatewayClient {
         const prepared = this.protocol.prepare('session.create', params)
         const snapshot = await bridge.createSession(connection.origin, connection.scope, String(params.title || ''), String(prepared.request_id))
         this.requireConnectionGeneration(generation)
+        this.rememberWorkspaceSnapshot(snapshot.sessionId, 'default', snapshot.messages, snapshot.nextCursor)
         return this.protocol.result('session.create', prepared, {
           session_id: snapshot.sessionId, stored_session_id: snapshot.sessionId, messages: workspaceTranscript(snapshot)
         }) as T
@@ -364,11 +365,16 @@ export class HermesGateway extends JsonRpcGatewayClient {
       }
       const identity = String(params.submission_id || params.request_id || '')
       if (!identity) { throw new Error('A retained request identity is required to send a Cloud message.') }
-      await bridge.send(connection.origin, connection.scope, sessionId, String(params.text || ''), identity)
+      const snapshot = await bridge.send(connection.origin, connection.scope, sessionId, String(params.text || ''), identity)
       this.requireConnectionGeneration(generation)
-      // The existing snapshot recovery handler updates only the matching visible pane.
+      // IPC requires the completed server stream before returning real history.
+      const rows = snapshot.messages.filter(message => message.role === 'user' && message.metadata?.durable_request_id === identity)
+      if (snapshot.sessionId !== sessionId || rows.length !== 1) { throw new Error('The Main completion receipt is uncertain. Recover history before sending again.') }
+      const rowId = Number(rows[0].messageId)
+      this.rememberWorkspaceSnapshot(sessionId, 'default', snapshot.messages, snapshot.nextCursor)
       this.workspaceEvents.dispatch({ type: 'session.replay_gap', session_id: sessionId, profile: 'default', payload: {} })
-      return { session_id: sessionId } as T
+      return { session_id: sessionId, submission_id: identity, status: 'terminal',
+        ...(Number.isSafeInteger(rowId) && rowId > 0 ? { user_row_id: rowId } : {}) } as T
     }
     throw Object.assign(new Error(`Semantier Workspace does not support Desktop operation ${method}.`), { code: -32601 })
   }
