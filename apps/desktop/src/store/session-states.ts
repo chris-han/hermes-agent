@@ -16,7 +16,7 @@
  * itself here as the delegate so tile UI stays dependency-light.
  */
 
-import { backendScopeKey, type GatewayEvent, LOCAL_CONNECTION_ID, registryBackendScopeKey } from '@hermes/shared'
+import { backendScopeKey, backendScopePrefix, type GatewayEvent, LOCAL_CONNECTION_ID, registryBackendScopeKey } from '@hermes/shared'
 import { atom, computed } from 'nanostores'
 
 import { setSessionOwnerResolver } from '@/api/client'
@@ -2835,6 +2835,29 @@ export function dropTilesForProfile(
   // The rail is a profile-keyed family too: a deleted profile's tabs must not
   // outlive it, or a later profile of the same name inherits them.
   dropPreviewTabsForProfile(name)
+}
+
+/** Account transitions discard only this connection's cached views, not server work. */
+export function dropTilesForConnection(connectionId: string): void {
+  const id = connectionId.trim()
+  if (!id || id === LOCAL_CONNECTION_ID) { return }
+  const prefix = backendScopePrefix(id)
+  for (const buckets of [tilesByProfile, closedTilesByProfile]) {
+    for (const key of Object.keys(buckets)) {
+      const remaining = buckets[key].filter(tile => tile.ownerRoute?.connectionId
+        ? tile.ownerRoute.connectionId !== id : !key.startsWith(prefix))
+      if (remaining.length) { buckets[key] = remaining }
+      else { delete buckets[key] }
+    }
+  }
+  const remaining = $sessionTiles.get().filter(tile => tile.ownerRoute?.connectionId
+    ? tile.ownerRoute.connectionId !== id
+    : tile.workspaceMode === 'bots' || !visibleTileScope.startsWith(prefix))
+  $sessionTiles.set(remaining)
+  for (const [runtimeId, owner] of sessionOwnerByRuntimeId) {
+    if (owner && typeof owner === 'object' && owner.connectionId === id) { dropSessionState(runtimeId) }
+  }
+  persistTiles()
 }
 
 /**

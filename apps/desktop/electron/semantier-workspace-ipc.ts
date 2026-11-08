@@ -27,12 +27,13 @@ export function workspace(origin: string) {
   return { owned, origin: canonicalOrigin, client: createSemantierWorkspaceClient(canonicalOrigin, owned.fetch.bind(owned)) }
 }
 
-export function registerSemantierWorkspaceIpc(): void {
+export function registerSemantierWorkspaceIpc(onAccountChanged?: (origin: string, authenticated: boolean) => void): void {
   ipcMain.handle('hermes:workspace:identity', (_event, origin: string) => workspace(origin).client.identity())
   ipcMain.handle('hermes:workspace:logout', async (_event, origin: string) => {
     const { owned } = workspace(origin)
     await owned.clearStorageData()
     await owned.clearCache()
+    onAccountChanged?.(new URL(origin).origin, false)
   })
   ipcMain.handle('hermes:workspace:login', async (_event, origin: string) => {
     const target = workspace(origin)
@@ -52,6 +53,7 @@ export function registerSemantierWorkspaceIpc(): void {
           const identity = await target.client.identity()
           if (identity.authenticated) {
             await target.owned.cookies.flushStore()
+            onAccountChanged?.(target.origin, true)
             return identity
           }
         } catch { /* The hosted sign-in owns authentication; wait for its cookie. */ }

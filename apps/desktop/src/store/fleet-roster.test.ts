@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { DesktopAgentRoster } from '@/global'
 
-import { $fleetRoster, _resetFleetRosterForTests, refreshFleetRoster } from './fleet-roster'
+import { $fleetRoster, _resetFleetRosterForTests, refreshFleetRoster, forgetFleetRosterConnection } from './fleet-roster'
 
 afterEach(() => {
   _resetFleetRosterForTests()
@@ -82,4 +82,20 @@ describe('fleet roster recovery', () => {
     await refreshFleetRoster()
     expect(getAgentRoster).toHaveBeenCalledTimes(2)
   })
+})
+
+
+it('does not restore an old account roster when an outstanding enumeration finishes', async () => {
+  let resolve!: (value: DesktopAgentRoster) => void
+  vi.stubGlobal('hermesDesktop', undefined)
+  Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: {
+    getAgentRoster: vi.fn(() => new Promise<DesktopAgentRoster>(done => { resolve = done }))
+  } })
+  $fleetRoster.set(recovered)
+  const pending = refreshFleetRoster({ force: true })
+  forgetFleetRosterConnection('lab')
+  expect($fleetRoster.get()?.agents).toEqual([])
+  resolve(recovered)
+  await pending
+  expect($fleetRoster.get()?.agents).toEqual([])
 })

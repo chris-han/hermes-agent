@@ -10,6 +10,9 @@ import {
 import { useEffect, useRef } from 'react'
 
 import { canonicalOwnerProfile } from '@/api/canonical-protocol'
+import { forgetWorkspaceReadScope } from '@/api/client'
+import { rescopeConnectionScopedStores } from '@/lib/connection-scoped'
+import { forgetFleetRosterConnection } from '@/store/fleet-roster'
 import { createGatewayEventDedupe } from '@/app/gateway/gateway-event-dedupe'
 import { reportStartupLatency } from '@/app/gateway/report-startup-latency'
 import { shouldApplyPostBootProgressError } from '@/components/boot-failure-reauth'
@@ -67,7 +70,7 @@ import {
   registerGatewaySwitchLifecycle
 } from '@/store/gateway-switch'
 import { notify, notifyError, RECOVERY_ACTIONS } from '@/store/notifications'
-import { $activeGatewayProfile, normalizeProfileKey, refreshActiveProfile } from '@/store/profile'
+import { $profiles, $profilesByConnection, invalidateProfileListFetches, $activeGatewayProfile, normalizeProfileKey, refreshActiveProfile } from '@/store/profile'
 import { requestBackendRestart } from '@/store/recovery-requests'
 import {
   $activeSessionId,
@@ -90,6 +93,7 @@ import {
   $sessionTiles,
   $workingSessionIds,
   foregroundSessionScopes,
+  dropTilesForConnection,
   forgetProfileOnlyRuntimeOwners,
   liveSessionScopes,
   openTileGatewayScopes,
@@ -1294,8 +1298,42 @@ export function useGatewayBoot({
     // (remote/cloud have no local process whose death would drop the socket —
     // they'd keep streaming ghost events); a materially edited one is
     // disposed AND re-dialed so its sockets target the new endpoint.
+    let signedOutWorkspaceConnectionId: null | string = null
     const offConnectionsChanged = desktop.connections?.onChanged?.(payload => {
       if (!payload || typeof payload.connectionId !== 'string') {
+        return
+      }
+
+      if (payload.reason === 'account-changed') {
+        const previous = $connection.get()
+        const ownsView = previous?.connectionId === payload.connectionId || signedOutWorkspaceConnectionId === payload.connectionId
+        disposeSecondariesForConnection(payload.connectionId)
+        forgetWorkspaceReadScope(payload.connectionId)
+        forgetSessionOwnerHintsForConnection(payload.connectionId)
+        dropTilesForConnection(payload.connectionId)
+        invalidateProfileListFetches()
+        const profiles = new Map($profilesByConnection.get())
+        profiles.delete(payload.connectionId)
+        $profilesByConnection.set(profiles)
+        forgetFleetRosterConnection(payload.connectionId)
+        if (ownsView) {
+          signedOutWorkspaceConnectionId = payload.authenticated ? null : payload.connectionId
+          const token = beginGatewaySwitch()
+          try {
+            clearReconnectTimer()
+            clearBootRetryTimer()
+            gateway.close()
+            $profiles.set([])
+            $activeGatewayProfile.set('default')
+            if (previous?.transport === 'semantier-workspace-http') {
+              const signedOut = { ...previous, profile: 'default', workspaceScope: undefined }
+              rescopeConnectionScopedStores(signedOut)
+              publish(signedOut)
+            }
+            window.location.hash = '#/'
+          } finally { endGatewaySwitch(token) }
+          if (payload.authenticated) { void softSwitch() }
+        }
         return
       }
 

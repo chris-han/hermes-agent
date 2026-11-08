@@ -35,6 +35,15 @@ import type {
 } from './types'
 
 export const ROSTER_KEY = [ID, 'roster']
+
+/** Drop an account's projection immediately; server Bots and custom names remain untouched. */
+export function forgetConnectionRoster(connectionId: string): void {
+  $lastRoster.set($lastRoster.get().filter(row => row.connectionId !== connectionId))
+  void queryClient.cancelQueries({ queryKey: ROSTER_KEY })
+  queryClient.setQueriesData<RosterSnapshot>({ queryKey: ROSTER_KEY }, data => data ? {
+    ...data, profiles: data.profiles?.filter(row => (row.connectionId || data.primaryConnectionId) !== connectionId)
+  } : data)
+}
 // Bounded retries. `retry: true` keeps React Query in isLoading until the
 // first success, so a stalled profiles.list (live state.db write lock, SSH
 // flap) leaves the Bots sidebar on a spinner with no error card. The 5s

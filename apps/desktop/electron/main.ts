@@ -16,6 +16,8 @@ import {
 import { closeGatewayTicketBridges, createGatewayTicketResolver } from './local-gateway-python'
 import { registerSemantierFeedbackIpc } from './updater/semantier-feedback-ipc'
 import { registerSemantierWorkspaceIpc, workspace as semantierWorkspace, assertWorkspaceScope } from './semantier-workspace-ipc'
+
+const workspaceAccountGenerations = new Map<string, number>()
 import { workspaceDesktopRead } from './semantier-workspace-client'
 import { JourneyObservations } from './journey-observations'
 let journeyObservations: JourneyObservations | null = null
@@ -10855,7 +10857,7 @@ function sendConnectionApplied() {
 // scoped to that connection. Without this, a removed remote/cloud source keeps
 // its renderer WebSocket open and streaming as a ghost, and an edited one
 // keeps talking to the OLD endpoint indefinitely.
-function broadcastConnectionsChanged(payload: { connectionId: string; reason: 'removed' | 'saved' | 'updated' }) {
+function broadcastConnectionsChanged(payload: { connectionId: string; reason: 'removed' | 'saved' | 'updated' | 'account-changed'; authenticated?: boolean }) {
   for (const win of BrowserWindow.getAllWindows()) {
     const { webContents } = win
 
@@ -14520,9 +14522,8 @@ function createWindow() {
 ipcMain.handle('hermes:connection', async (event, profile) => {
   const ownRoute = windowConnectionRoutes.get(event.sender.id)
   const ownSource = readDesktopConnectionsRegistry().connections.find(item => item.id === ownRoute?.connectionId)
-  if (ownRoute?.registryScoped && ownSource?.transport === 'semantier-workspace-http' &&
-      (!profile || profile === ownRoute.profile)) {
-    return connectDesktopProfileRoute(ownRoute, event.sender)
+  if (ownRoute?.registryScoped && ownSource?.transport === 'semantier-workspace-http') {
+    return connectDesktopProfileRoute({ ...ownRoute, profile: typeof profile === 'string' && profile ? profile : ownRoute.profile }, event.sender)
   }
   const route = resolveDesktopConnectionRequest(
     profile,
@@ -15411,6 +15412,7 @@ async function enumerateRegistryAgentSources(registry = readDesktopConnectionsRe
   return withoutInteractiveOauthLogin(() =>
     Promise.all(
       registry.connections.map(async connection => {
+        const accountGeneration = workspaceAccountGenerations.get(connection.id) || 0
         let sourceFailureDetail = ''
 
         let raw: {
@@ -15541,6 +15543,10 @@ async function enumerateRegistryAgentSources(registry = readDesktopConnectionsRe
             needsSignIn:
               isReauthRequiredError(error) || (connection.authMode === 'oauth' && isGatewayAuthRejection(error))
           }
+        }
+
+        if ((workspaceAccountGenerations.get(connection.id) || 0) !== accountGeneration) {
+          return { connection, profiles: null, error: 'account-changed' }
         }
 
         if (raw.error && raw.error !== 'connect-on-demand') {
@@ -16741,7 +16747,21 @@ function formatApiRequestFailure(
   return `[hermes:api ${method} ${path}] ${detail}`.slice(0, 6000)
 }
 
-registerSemantierWorkspaceIpc()
+registerSemantierWorkspaceIpc((origin, authenticated) => {
+  for (const source of readDesktopConnectionsRegistry().connections) {
+    if (source.transport !== 'semantier-workspace-http' || new URL(source.url).origin !== origin) { continue }
+    workspaceAccountGenerations.set(source.id, (workspaceAccountGenerations.get(source.id) || 0) + 1)
+    sshRosterCache.delete(source.id)
+    rosterSourceErrors.delete(source.id)
+    connectionInstallIds.delete(source.id)
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (windowConnectionRoutes.get(win.webContents.id)?.connectionId === source.id) {
+        recordWindowConnectionRoute(win.webContents, { connectionId: source.id, profile: 'default', registryScoped: true })
+      }
+    }
+    broadcastConnectionsChanged({ connectionId: source.id, reason: 'account-changed', authenticated })
+  }
+})
 
 ipcMain.handle('hermes:api', async (event, request) => {
   const ownRoute = windowConnectionRoutes.get(event.sender.id)

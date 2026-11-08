@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest'
 
-import { HermesGateway, hermesApi, setApiRequestConnection } from './client'
+import { HermesGateway, hermesApi, setApiRequestConnection, forgetWorkspaceReadScope } from './client'
 
 const scope = { userId: 'a', workspaceId: 'wa', organizationId: 'org' }
 const identity = { authenticated: true, user: { user_id: 'a', workspace_id: 'wa' }, workspace: { id: 'wa' }, organization_id: 'org' }
@@ -105,5 +105,23 @@ it('resumes the explicit Native Cloud profile through its owner and never sends 
   expect(history).not.toHaveBeenCalled()
   await expect(gateway.request('prompt.submit', { session_id: 'canonical-a', text: 'Hello', submission_id: 'stable' })).rejects.toThrow('owner adapter')
   expect(send).not.toHaveBeenCalled()
+  gateway.close()
+})
+
+
+it('rejects a late account response before it can enter renderer caches', async () => {
+  let resolve!: (value: unknown) => void
+  const api = vi.fn(() => new Promise(done => { resolve = done }))
+  Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: {
+    api, workspace: { identity: vi.fn().mockResolvedValue(identity) }
+  } })
+  const gateway = new HermesGateway()
+  await gateway.connectWorkspace('https://cloud.example', scope, 'cloud-a')
+  setApiRequestConnection('cloud-a')
+  const pending = hermesApi({ path: '/api/sessions' })
+  forgetWorkspaceReadScope('cloud-a')
+  resolve({ sessions: [{ id: 'A-private' }] })
+  await expect(pending).rejects.toThrow('changed during this read')
+  setApiRequestConnection(null)
   gateway.close()
 })

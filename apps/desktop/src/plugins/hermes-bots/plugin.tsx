@@ -35,7 +35,9 @@ import {
   $selectedBot,
   $selectedRosterHydrated,
   $selectedRosterKey,
-  focusedMentionProfile
+  focusedMentionProfile,
+  clearSelectedRosterKey,
+  parseRosterKey
 } from './bot-state'
 import { isCanonicalChatOnScreen, openBotCanonicalChat } from './canonical-chat'
 import { BotChatEmpty } from './chat-empty'
@@ -47,6 +49,7 @@ import {
   botMentionTag,
   botSelectionKey,
   cachedUnionRoster,
+  forgetConnectionRoster,
   isActiveRosterBot,
   migrateBotMeta,
   primeRoster,
@@ -395,6 +398,16 @@ export default {
       if (typeof window !== 'undefined') {
         unbindConnectionsChanged =
           window.hermesDesktop?.connections?.onChanged?.(payload => {
+            if (payload?.reason === 'account-changed') {
+              forgetConnectionRoster(payload.connectionId)
+              const key = $selectedRosterKey.get()
+              if (parseRosterKey(key).connectionId === payload.connectionId) {
+                clearSelectedRosterKey(key)
+                $selectedBot.set('default')
+                $openBotChat.set(null)
+                $botChatFocused.set(false)
+              }
+            }
             if (payload?.reason === 'removed') {
               sweepGroupChatMembersForRemovedConnection(payload.connectionId)
             }

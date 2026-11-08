@@ -716,6 +716,10 @@ export function resolveOwnerNow(owner?: OwnerScope): ResolvedOwner {
  *  ambient connection spread underneath. An untagged half stays untagged. A
  *  named profile is always explicit here, so it carries the foreground
  *  priority `profileScoped` gives explicit profiles (voice is user-driven). */
+export function forgetWorkspaceReadScope(connectionId: string): void {
+  workspaceReadScopes.delete(connectionId)
+}
+
 export function hermesApiAs<T>(owner: ResolvedOwner, request: HermesApiRequest): Promise<T> {
   const tagged = {
     ...(owner.connectionId ? { connectionId: owner.connectionId } : {}),
@@ -723,7 +727,14 @@ export function hermesApiAs<T>(owner: ResolvedOwner, request: HermesApiRequest):
     ...request
   }
   const workspaceScope = tagged.connectionId ? workspaceReadScopes.get(tagged.connectionId) : undefined
-  return window.hermesDesktop.api<T>({ ...tagged, ...(workspaceScope ? { workspaceScope } : {}) })
+  const response = window.hermesDesktop.api<T>({ ...tagged, ...(workspaceScope ? { workspaceScope } : {}) })
+  if (!workspaceScope) { return response }
+  return response.then(result => {
+    if (workspaceReadScopes.get(tagged.connectionId!) !== workspaceScope) {
+      throw new Error('The Semantier account or workspace changed during this read.')
+    }
+    return result
+  })
 }
 
 /** Profile that profile-scoped REST/WS calls should target (null → primary).
@@ -788,7 +799,14 @@ export function ambientOwnerConnectionId(): string | undefined {
 export function hermesApi<T>(request: HermesApiRequest): Promise<T> {
   const tagged = { ...connectionScoped(), ...request }
   const workspaceScope = tagged.connectionId ? workspaceReadScopes.get(tagged.connectionId) : undefined
-  return window.hermesDesktop.api<T>({ ...tagged, ...(workspaceScope ? { workspaceScope } : {}) })
+  const response = window.hermesDesktop.api<T>({ ...tagged, ...(workspaceScope ? { workspaceScope } : {}) })
+  if (!workspaceScope) { return response }
+  return response.then(result => {
+    if (workspaceReadScopes.get(tagged.connectionId!) !== workspaceScope) {
+      throw new Error('The Semantier account or workspace changed during this read.')
+    }
+    return result
+  })
 }
 
 // ── Capability scope: (connection, profile) routing for the Capabilities
