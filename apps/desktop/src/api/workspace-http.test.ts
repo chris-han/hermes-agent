@@ -233,7 +233,7 @@ it('creates only the authenticated Native Bot Chat through its owner adapter', a
 
 it('sends Native chat through its retained Main binding and never the Main send endpoint', async () => {
   const context={user_id:'a',workspace_id:'wa',organization_id:'org',native_profile_id:'profile-a',binding_id:'bound-a',original_conversation:{session_key:'main-a',session_id:'main-a'}}
-  const snapshot={session_id:'canonical-a',canonical_session:{id:'canonical-a'},bot_id:'bot-a',native_profile_id:'profile-a',messages:[]}
+  const snapshot={session_id:'canonical-a',canonical_session:{id:'canonical-a'},bot_id:'bot-a',native_profile_id:'profile-a',messages:[],admission_receipt:{admission_id:'a'.repeat(32),status:'terminal',outcome:'completed',ref:{session_id:'canonical-a',profile_id:'profile-a'}}}
   const nativeContext=vi.fn().mockResolvedValue(context)
   const bindNativeContext=vi.fn().mockResolvedValue({...context,binding_id:'bound-b',original_conversation:{session_key:'main-b',session_id:'main-b'}})
   const sendNative=vi.fn().mockResolvedValue(snapshot)
@@ -242,7 +242,7 @@ it('sends Native chat through its retained Main binding and never the Main send 
   const gateway=new HermesGateway()
   await gateway.connectWorkspace('https://cloud.example',scope,'cloud-a','winman-a')
   await gateway.request('session.resume',{session_id:'canonical-a'})
-  await gateway.request('prompt.submit',{session_id:'canonical-a',text:'Hello',submission_id:'same-request'})
+  await expect(gateway.request('prompt.submit',{session_id:'canonical-a',text:'Hello',submission_id:'same-request'})).resolves.toMatchObject({submission_id:'same-request',admission_id:'a'.repeat(32),status:'terminal',outcome:'completed'})
   expect(sendNative).toHaveBeenLastCalledWith('https://cloud.example',scope,'canonical-a','Hello','same-request','bound-a')
   nativeContext.mockResolvedValue({...context,binding_id:'unrelated-window'})
   await gateway.request('session.resume',{session_id:'canonical-a'})

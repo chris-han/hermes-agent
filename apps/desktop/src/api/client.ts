@@ -313,7 +313,7 @@ export class HermesGateway extends JsonRpcGatewayClient {
         this.requireConnectionGeneration(generation)
         this.rememberWorkspaceSnapshot(sessionId, String(params.profile || connection.profile), snapshot.messages)
         this.workspaceEvents.dispatch({ type: 'session.replay_gap', session_id: sessionId, profile: String(connection.profile), payload: {} })
-        return { session_id: snapshot.session_id, admission_id: snapshot.admission_receipt?.admission_id } as T
+        return this.protocol.result('prompt.submit', params, snapshot.admission_receipt) as T
       }
       const identity = String(params.submission_id || params.request_id || '')
       if (!identity) { throw new Error('A retained request identity is required to send a Cloud message.') }
