@@ -20,20 +20,34 @@ export function CanonicalGroupList({ onOpen }: { onOpen: (key: string) => void }
   const profile = useValue(host.state.profile)
   const [rooms, setRooms] = useState<Array<{ key: string; name: string }>>([])
   const [error, setError] = useState('')
+  const [available, setAvailable] = useState<boolean | null>(null)
   const [refresh, setRefresh] = useState(0)
   useEffect(() => {
     let cancelled = false
     setRooms([])
     setError('')
+    setAvailable(null)
     void (async () => {
       const route = captureCanonicalGroupRoute()
       const result = await discoverCanonicalGroups(route)
 
-      if (!cancelled) {setRooms(result.rooms.map(room => ({ key: registerCanonicalGroup(route, room), name: room.name })))}
-    })().catch(e => { if (!cancelled) {setError(e instanceof Error ? e.message : String(e))} })
+      if (!cancelled) {
+        setAvailable(true)
+        setRooms(result.rooms.map(room => ({ key: registerCanonicalGroup(route, room), name: room.name })))
+      }
+    })().catch(e => {
+      if (cancelled) {return}
+      // Method-not-found is absence of this optional surface, not a broken roster.
+      // Keep transport/auth failures visible and retryable.
+      const unsupported = typeof e === 'object' && e !== null && e.code === -32601
+      setAvailable(!unsupported)
+      if (!unsupported) {setError(e instanceof Error ? e.message : String(e))}
+    })
 
     return () => { cancelled = true }
   }, [connectionId, profile, refresh])
+
+  if (available !== true) {return null}
 
   return <div className="grid gap-1 px-2">
     <Button onClick={() => setRefresh(value => value + 1)} variant="ghost">{labels.refreshGroups}</Button>
