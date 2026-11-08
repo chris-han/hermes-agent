@@ -72,6 +72,7 @@ export function ConfigSettings({
   // provides for app-wide switches, without hand-clearing each piece.
   const scopeProfile = useStore($settingsRequestProfile)
   const connection = useStore($connection)
+
   // Cloud Main owns a query-only inventory and its validated assignment route.
   // The unrelated Native configuration schema is not a prerequisite for it.
   if (connection?.transport === 'semantier-workspace-http' && activeSectionId === 'model' && subpage === 'main') {

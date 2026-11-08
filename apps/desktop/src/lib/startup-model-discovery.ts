@@ -15,16 +15,20 @@ export async function refreshModelsOnConnectionReady(
   connection?: DiscoveryConnection | null
 ): Promise<void> {
   let source: string
+
   try {
     source = await modelDiscoveryScope(connectionId, connection)
   } catch {
     return
   }
+
   const profileKey = profile.trim() || 'default'
   const ownerKey = modelDiscoveryOwnerKey(connectionId, connection)
   const launchKey = JSON.stringify([source, profileKey])
+
   if (started.has(launchKey)) {return}
   started.add(launchKey)
+
   if (ownerKey) {setModelDiscoveryRefreshing(ownerKey, profileKey, true)}
 
   try {
@@ -40,12 +44,16 @@ export async function refreshModelsOnConnectionReady(
         requestGatewayForAgent<T>(connectionId, profileKey, method, params)
     })
     }
+
     const activeSource = await modelDiscoveryScope(activeGatewayConnectionId(), $connection.get()).catch(() => null)
     await queryClient.invalidateQueries({
       predicate: query => {
         const key = query.queryKey
+
         if (key[0] !== 'model-options' || key[1] !== profileKey) {return false}
+
         if (key[3] === 'owner') {return key[4] === ownerKey}
+
         return activeSource === source
       }
     })

@@ -460,6 +460,7 @@ it('does not borrow timing from an identical reply belonging to a different dura
   const cached = [row('cached-212', 'assistant', 'Controlled commerce supplier response.', {
     rowId: 212, timestamp: 100, parts: [textPart('Controlled commerce supplier response.', 100)]
   })]
+
   const hydrated = [
     row('stored-212', 'assistant', 'Controlled commerce supplier response.', {
       rowId: 212, timestamp: 100, parts: [textPart('Controlled commerce supplier response.', 100)]
@@ -468,6 +469,7 @@ it('does not borrow timing from an identical reply belonging to a different dura
       rowId: 214, timestamp: 200, parts: [textPart('Controlled commerce supplier response.', 200)]
     })
   ]
+
   const result = preserveLocalAssistantErrors(hydrated, cached)
   expect(result.find(message => message.rowId === 214)?.timestamp).toBe(200)
   expect(result.find(message => message.rowId === 214)?.parts[0].timestamp).toBe(200)

@@ -163,8 +163,9 @@ describe('ConfigSettings autosave', () => {
   getHermesConfigRecord.mockRejectedValue(new Error('unsupported Native config'))
   getHermesConfigSchema.mockRejectedValue(new Error('unsupported Native schema'))
   const queryClient=new QueryClient({defaultOptions:{queries:{retry:false}}})
+
   try {
-   render(<QueryClientProvider client={queryClient}><MemoryRouter><ConfigSettings activeSectionId="model" subpage="main" importInputRef={createRef()} /></MemoryRouter></QueryClientProvider>)
+   render(<QueryClientProvider client={queryClient}><MemoryRouter><ConfigSettings activeSectionId="model" importInputRef={createRef()} subpage="main" /></MemoryRouter></QueryClientProvider>)
    expect(await screen.findByText('Cloud model controller')).toBeTruthy()
    expect(getHermesConfigSchema).not.toHaveBeenCalled()
   } finally {$connection.set(null);queryClient.clear()}

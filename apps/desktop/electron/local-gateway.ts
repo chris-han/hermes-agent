@@ -1,7 +1,7 @@
-import { desktopCloudEnvironment } from './semantier-cloud'
 import { spawn } from 'node:child_process'
 import crypto from 'node:crypto'
 
+import { desktopCloudEnvironment } from './semantier-cloud'
 import { hiddenWindowsChildOptions, windowsShellCommand } from './windows-child-options'
 
 // `hermes gateway ensure` answers with a protocol verdict (ready, or `starting: deadline`) within

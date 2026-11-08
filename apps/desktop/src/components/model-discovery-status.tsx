@@ -1,8 +1,8 @@
-import { modelProviderName } from '@/i18n/model-service'
 import type { ModelOptionProvider } from '@hermes/shared'
 import { useStore } from '@nanostores/react'
 
 import { useI18n } from '@/i18n'
+import { modelProviderName } from '@/i18n/model-service'
 import { $refreshingModelSources, modelDiscoveryRefreshKey } from '@/store/model-discovery'
 
 const messages: Record<string, Record<string, string>> = {
@@ -53,7 +53,9 @@ const messages: Record<string, Record<string, string>> = {
 export function ModelDiscoveryRefreshStatus({ ownerKey, profile }: { ownerKey?: string; profile: string }) {
   const { locale } = useI18n()
   const refreshing = useStore($refreshingModelSources)
+
   if (!ownerKey || !refreshing.has(modelDiscoveryRefreshKey(ownerKey, profile))) {return null}
+
   return <div className="px-3 py-1 text-xs text-(--ui-text-tertiary)" role="status">
     {messages.refreshing[locale] ?? messages.refreshing.en}
   </div>
@@ -62,8 +64,11 @@ export function ModelDiscoveryRefreshStatus({ ownerKey, profile }: { ownerKey?: 
 export function ModelDiscoveryStatus({ provider }: { provider: ModelOptionProvider }) {
   const { locale } = useI18n()
   const state = provider.discovery_state === 'fresh' && !(provider.models?.length) ? 'empty' : provider.discovery_state
+
   if (!state || state === 'fresh') {return null}
   const message = messages[state]?.[locale] ?? messages[state]?.en
+
   if (!message) {return null}
+
   return <div className="px-3 py-1 text-xs text-(--ui-text-tertiary)" role="status">{modelProviderName(provider, locale)}: {message}</div>
 }

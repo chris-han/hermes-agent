@@ -73,6 +73,7 @@ export function ModelSelect({
   const m = t.settings.model
   const [typing, setTyping] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+
   const isUnavailable = (model: string) =>
     (allowedModels != null && !allowedModels.includes(model)) ||
     (excludeUnavailable && (provider?.unavailable_models ?? []).some(item => normalize(item) === normalize(model)))
@@ -149,6 +150,7 @@ export function ModelSelect({
         disabled={disabled}
         onChange={next => {
           const model = fromItemValue(next)
+
           if (model === null) {
             setTyping(true)
           } else {
