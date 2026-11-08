@@ -16,7 +16,8 @@ export interface PreparedSubmission {
   legacyAttempted?: boolean
 }
 
-// Admitted entries whose durable removal failed (ENOSPC/EIO): journal key -> spent submission id.
+// Locally retired entries (admitted or explicitly withdrawn) whose durable removal failed:
+// journal key -> spent submission id. This is client retry intent, not server execution truth.
 // Their identity is spent: no window adopts, lists or slots them again, so a later send is never
 // deduplicated into an earlier admission. The tombstone is written BEFORE the journal removal to a
 // separate store and read on every journal access, so a reload (fresh module memory) still honors

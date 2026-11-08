@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 
 import { BrowserWindow, ipcMain, session } from 'electron'
 
-import { assertWorkspaceScope, createSemantierWorkspaceClient, requireNativeCompletion, requireWorkspaceCompletion, type WorkspaceIdentity, type WorkspaceScope } from './semantier-workspace-client'
+import { WORKSPACE_USER_STOP_ERROR, assertWorkspaceScope, createSemantierWorkspaceClient, requireNativeCompletion, requireWorkspaceCompletion, type WorkspaceIdentity, type WorkspaceScope } from './semantier-workspace-client'
 
 export { assertWorkspaceScope } from './semantier-workspace-client'
 export type { WorkspaceScope } from './semantier-workspace-client'
@@ -188,6 +188,9 @@ export function registerSemantierWorkspaceIpc(onAccountChanged?: (origin: string
       const result = await client.history(sessionId)
       assertWorkspaceScope(await client.identity(), scope)
       return result
+    } catch (error) {
+      if (stream.controller.signal.aborted) throw new Error(`${WORKSPACE_USER_STOP_ERROR}:${requestIdentity}`)
+      throw error
     } finally {
       if (streams.get(key) === stream) streams.delete(key)
     }

@@ -381,3 +381,29 @@ it('stops an exact pending request through another client alias of the same auth
   await pending
   sender.close();controller.close()
 })
+
+
+it('distinguishes an intentional Main stop from an uncertain transport failure without reporting acceptance', async () => {
+  let fail: ((error: Error) => void) | undefined
+  const send=vi.fn(()=>new Promise((_resolve,reject)=>{fail=reject}))
+  const interrupt=vi.fn(async()=>{fail!(new Error('Error invoking remote method: semantier.workspace.user_stop.v1:stopped-request'));return {cancel_requested:true}})
+  Object.defineProperty(window,'hermesDesktop',{configurable:true,value:{workspace:{identity:vi.fn().mockResolvedValue(identity),send,interrupt}}})
+  const gateway=new HermesGateway();await gateway.connectWorkspace('https://cloud.example',scope)
+  const pending=gateway.request('prompt.submit',{session_id:'original',text:'hello',submission_id:'stopped-request'})
+  const rejection=expect(pending).rejects.toMatchObject({name:'WorkspaceRequestStopped',requestId:'stopped-request'})
+  await vi.waitFor(()=>expect(send).toHaveBeenCalledTimes(1))
+  await gateway.request('session.interrupt',{session_id:'original'})
+  await rejection
+  gateway.close()
+})
+
+it('does not treat an unrequested cancellation-looking error as a user withdrawal', async () => {
+  const send=vi.fn().mockRejectedValue(new Error('semantier.workspace.user_stop.v1:not-stopped'))
+  Object.defineProperty(window,'hermesDesktop',{configurable:true,value:{workspace:{identity:vi.fn().mockResolvedValue(identity),send}}})
+  const gateway=new HermesGateway();await gateway.connectWorkspace('https://cloud.example',scope)
+  const error=await gateway.request('prompt.submit',{session_id:'original',text:'hello',submission_id:'not-stopped'}).catch(error=>error)
+  expect(error).toBeInstanceOf(Error)
+  expect((error as Error).name).toBe('Error')
+  expect((error as Error).message).toContain('semantier.workspace.user_stop.v1:not-stopped')
+  gateway.close()
+})

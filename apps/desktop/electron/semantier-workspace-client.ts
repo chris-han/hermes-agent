@@ -1,3 +1,5 @@
+export const WORKSPACE_USER_STOP_ERROR = 'semantier.workspace.user_stop.v1'
+
 /** Semantier's existing Workspace HTTP resources, using an owned Electron session. */
 export interface WorkspaceIdentity {
   authenticated: boolean

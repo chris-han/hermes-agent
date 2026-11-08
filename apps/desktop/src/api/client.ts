@@ -11,10 +11,15 @@ import { map, type MapStore } from 'nanostores'
 
 import type { HermesApiRequest } from '@/global'
 
-import { assertWorkspaceScope, type WorkspaceMainContext, workspaceTranscript } from '../../electron/semantier-workspace-client'
+import { WORKSPACE_USER_STOP_ERROR, assertWorkspaceScope, type WorkspaceMainContext, workspaceTranscript } from '../../electron/semantier-workspace-client'
 import type { WorkspaceScope } from '../../electron/semantier-workspace-ipc'
 
 import { CANONICAL_GATEWAY_PROTOCOL, CanonicalDesktopProtocol, canonicalProfile, canonicalSessionKey, recordCanonicalOwner, splitRewindSubmit } from './canonical-protocol'
+
+/** A local user withdrew its retry intent; this is not a server completion receipt. */
+export class WorkspaceRequestStopped extends Error {
+  constructor(readonly requestId: string) { super('Workspace request stopped by user'); this.name = 'WorkspaceRequestStopped' }
+}
 
 // Desktop startup fires a burst of read-only data calls (config, profiles,
 // model info/options, cron) the moment the backend passes readiness. On a
@@ -84,7 +89,7 @@ function remainingRequestBudget(deadline: number, signal?: AbortSignal): number 
 
 const workspaceReadScopes = new Map<string, { scope: WorkspaceScope; origin: string }>()
 // HTTP aliases share a server workspace, not one physical WebSocket/client instance.
-const workspacePendingRequests = new Map<string, { owner: object; requestId: string }>()
+const workspacePendingRequests = new Map<string, { owner: object; requestId: string; stopRequested?: boolean }>()
 
 export class HermesGateway extends JsonRpcGatewayClient {
   private workspaceConnection: { origin: string; scope: WorkspaceScope; connectionId?: string; profile?: string } | null = null
@@ -367,9 +372,10 @@ export class HermesGateway extends JsonRpcGatewayClient {
     }
     if (method === 'session.interrupt') {
       if (!bridge.interrupt) throw new Error('Stream interruption requires its Cloud owner adapter.')
-      const requestId = workspacePendingRequests.get(pendingKey)?.requestId
-      if (!requestId) return { cancel_requested: false } as T
-      const result = await bridge.interrupt(connection.origin, connection.scope, sessionId, requestId)
+      const pending = workspacePendingRequests.get(pendingKey)
+      if (!pending) return { cancel_requested: false } as T
+      pending.stopRequested = true
+      const result = await bridge.interrupt(connection.origin, connection.scope, sessionId, pending.requestId)
       this.requireConnectionGeneration(generation)
       return result as T
     }
@@ -377,7 +383,8 @@ export class HermesGateway extends JsonRpcGatewayClient {
       const requestId = String(params.submission_id || params.request_id || '')
       if (!requestId) throw new Error('A retained request identity is required to send a Cloud message.')
       if (workspacePendingRequests.has(pendingKey)) throw new Error('A Cloud request is already pending in this conversation.')
-      workspacePendingRequests.set(pendingKey, { owner: this, requestId })
+      const pending = { owner: this, requestId, stopRequested: false }
+      workspacePendingRequests.set(pendingKey, pending)
       try {
         if ((params.profile || connection.profile || 'default') !== 'default') {
           if (!bridge.sendNative) { throw new Error('Native Bot Chat submission requires its Cloud owner adapter.') }
@@ -403,6 +410,10 @@ export class HermesGateway extends JsonRpcGatewayClient {
         this.workspaceEvents.dispatch({ type: 'session.replay_gap', session_id: sessionId, profile: 'default', payload: {} })
         return { session_id: sessionId, submission_id: identity, status: 'terminal',
           ...(Number.isSafeInteger(rowId) && rowId > 0 ? { user_row_id: rowId } : {}) } as T
+      } catch (error) {
+        if (pending.stopRequested && error instanceof Error && error.message.endsWith(`${WORKSPACE_USER_STOP_ERROR}:${requestId}`))
+          throw new WorkspaceRequestStopped(requestId)
+        throw error
       } finally {
         if (workspacePendingRequests.get(pendingKey)?.owner === this && workspacePendingRequests.get(pendingKey)?.requestId === requestId)
           workspacePendingRequests.delete(pendingKey)

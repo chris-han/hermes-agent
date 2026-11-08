@@ -1,3 +1,4 @@
+import { WorkspaceRequestStopped } from '@/api/client'
 import type { PromptSubmitResult } from '@hermes/shared'
 import { type MutableRefObject, useCallback } from 'react'
 
@@ -20,7 +21,7 @@ import {
   mainComposerScope,
   revokeDiscardedAttachmentPreviews
 } from '@/store/composer'
-import { serverOwnsComposerQueue } from '@/store/composer-queue'
+import { removeQueuedPrompt, serverOwnsComposerQueue } from '@/store/composer-queue'
 import { noteMessageSent } from '@/store/desktop-metrics'
 import { $hudMode } from '@/store/hud'
 import { clearNotifications, notify, notifyError } from '@/store/notifications'
@@ -993,6 +994,7 @@ export function useSubmitPrompt(deps: SubmitPromptDeps) {
         requestGateway = destination.requestGateway
       }
 
+      let attemptedJournalKey: string | undefined
       try {
         // Attach runs BEFORE prompt.submit, so a stale runtime id fails there
         // first and submit's own recovery never runs — that asymmetry is why
@@ -1079,6 +1081,7 @@ export function useSubmitPrompt(deps: SubmitPromptDeps) {
 
         const retryKey = retainedKey ?? (await preparedSubmissionSlot(retryKeyForTarget()))
         await writePreparedSubmission(retryKey, prepared)
+        attemptedJournalKey = retryKey
 
         if (sessionDriftReason()) {
           return abortForSessionSwitch(liveSessionId)
@@ -1301,6 +1304,16 @@ export function useSubmitPrompt(deps: SubmitPromptDeps) {
         return true
       } catch (err) {
         releaseBusy()
+        if (err instanceof WorkspaceRequestStopped && err.requestId === submissionId) {
+          // Withdraw only this local retry. No receipt or rollback of server effects is inferred.
+          const admitted = sessionId && $sessionStates.get()[sessionId]?.messages.some(
+            message => message.id === optimisticId && typeof message.rowId === 'number' && message.rowId > 0)
+          if (!admitted) dropOptimistic(sessionId)
+          if (options?.fromQueue) removeQueuedPrompt(targetStoredSessionId ?? sessionId, submissionId)
+          if (attemptedJournalKey) await removePreparedSubmission(attemptedJournalKey, submissionId)
+            .catch(error => console.warn('[prepared-submission-retire]', error))
+          throw err
+        }
 
         // A queued drain that raced a not-yet-settled turn gets a transient
         // "session busy" (4009). Don't surface an error bubble/toast — the entry

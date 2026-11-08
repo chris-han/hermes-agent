@@ -1,3 +1,4 @@
+import { WorkspaceRequestStopped } from '@/api/client'
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { type Dispatch, type PropsWithChildren, type SetStateAction, useLayoutEffect, useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -1024,4 +1025,20 @@ describe('useComposerSubmit with a setup card waiting in the onboarding chat', (
     expect(onSteer).not.toHaveBeenCalled()
     expect(onSubmit).not.toHaveBeenCalled()
   })
+})
+
+
+it('does not restore an explicitly stopped request as a retry draft', async()=>{
+  const harness=renderSubmitHook({text:'stop this request'})
+  let reject:((error:Error)=>void)|undefined
+  harness.onSubmit.mockImplementationOnce(()=>new Promise<boolean>((_resolve,fail)=>{reject=fail}))
+  await act(async()=>{
+    harness.hook.result.current.submitDraft()
+    const options=(harness.onSubmit.mock.calls[0] as unknown as [string,{submission_id:string}])[1]
+    reject!(new WorkspaceRequestStopped(options.submission_id))
+    await new Promise(resolve=>setTimeout(resolve,0))
+  })
+  expect(harness.onSubmit).toHaveBeenCalledTimes(1)
+  expect(harness.loadIntoComposer).not.toHaveBeenCalled()
+  expect(harness.stashAt).not.toHaveBeenCalled()
 })

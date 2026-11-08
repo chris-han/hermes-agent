@@ -106,7 +106,7 @@ it('cancels only the caller-owned in-flight Main stream without retrying or subm
   expect(stop).toBeTypeOf('function')
   const event = { sender: { id: 99 } } as never
   const pending = handler('hermes:workspace:send')!(event, 'https://cloud.example', scope, 'original', 'hello', 'retained-request')
-  const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+  const rejected = expect(pending).rejects.toThrow('semantier.workspace.user_stop.v1:retained-request')
   await vi.waitFor(() => expect(streamController).toBeDefined())
   await expect(stop!(event, 'https://cloud.example', { ...scope, userId: 'other' }, 'original', 'retained-request')).rejects.toThrow('changed')
   expect(streamSignal?.aborted).toBe(false)
@@ -136,7 +136,7 @@ it('withdraws a Main send stopped while its initial identity check is still wait
   const handler = (name: string) => vi.mocked(ipcMain.handle).mock.calls.find(([channel]) => channel === name)![1]
   const event = { sender: { id: 101 } } as never
   const pending = handler('hermes:workspace:send')(event, 'https://cloud.example', scope, 'original', 'hello', 'withdrawn-request')
-  const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+  const rejected = expect(pending).rejects.toThrow('semantier.workspace.user_stop.v1:withdrawn-request')
   await vi.waitFor(() => expect(release).toBeTypeOf('function'))
   await expect(handler('hermes:workspace:interrupt')(event, 'https://cloud.example', scope, 'original', 'withdrawn-request')).resolves.toMatchObject({ cancel_requested: true })
   release!()
