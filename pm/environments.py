@@ -497,6 +497,8 @@ def activate_dependencies(project_root: Path) -> None:
                    *[entry for entry in sys.path if Path(entry).resolve() != selected.resolve()]]
     os.environ["PYTHONPATH"] = os.pathsep.join([str(project_root.resolve()), str(selected)])
     os.environ.pop("VIRTUAL_ENV", None)
+    from pm.payload_node import configure_payload_node
+    configure_payload_node(project_root)
     # The venv's own `hermes`/`hermes-acp` console scripts are editable installs bound to
     # the build-time source snapshot, not this checkout (#124627): a child that resolves
     # `hermes` off PATH must hit the checkout's own launcher first, never the venv's copy.

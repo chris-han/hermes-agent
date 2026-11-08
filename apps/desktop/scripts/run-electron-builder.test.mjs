@@ -37,7 +37,7 @@ test('external MSIX signing disables hooks with typed values instead of CLI stri
     assert.equal(config.forceCodeSigning, false)
     assert.equal(config.win.target, 'msix')
     assert.equal(config.appId, 'preserved')
-    assert.deepEqual(config.extraResources[0].filter, ['**/*', '!existing-exclusion', '!**/win-native-installer{,/**/*}', '!uv-cache{,/**/*}', '!**/__pycache__{,/**/*}', '!**/*.pyc'])
+    assert.deepEqual(config.extraResources[0].filter, ['**/*', '!existing-exclusion', '!**/win-native-installer{,/**/*}', '!uv-cache{,/**/*}', '!venv/Lib/site-packages/playwright/driver/node.exe', '!**/__pycache__{,/**/*}', '!**/*.pyc'])
     assert.equal(config.extraResources[1], 'icon.ico')
     assert.deepEqual(require(original).extraResources[0].filter, ['**/*', '!existing-exclusion'])
     assert.equal(require(original).win.sign, 'inner-sign.mjs')
