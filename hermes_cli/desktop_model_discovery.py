@@ -358,7 +358,7 @@ def configured_provider_rows(ctx, *, source_scope: str, refresh: bool = False) -
 
     used = {source[0].lower() for source in sources}
     if cloud_identity and "semantier-cloud" not in used and "semantier-cloud" not in excluded:
-        sources.append(("semantier-cloud", "Semantier Cloud Provider", cloud_endpoint, "",
+        sources.append(("semantier-cloud", "Semantier Model Provider", cloud_endpoint, "",
                         {"base_url": cloud_endpoint}, None))
         used.add("semantier-cloud")
     for group in groups.values():

@@ -143,7 +143,7 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
       const managed = catalog.data
       return { discovery_contract: 'provider-query-v1',
         provider: config.activeProvider || '', model: config.activeModel || '',
-        providers: [...inventory.providers, {slug:'semantier-cloud', name:'Semantier Cloud Provider',
+        providers: [...inventory.providers, {slug:'semantier-cloud', name:'Semantier Model Provider',
           authenticated:catalog.discovery_state !== 'error', models:managed.map((r: any)=>r.id), eligible_models:managed.map((r: any)=>r.id),
           model_profiles:Object.fromEntries(managed.map((r: any)=>[r.id,r])),
           discovery_state:catalog.discovery_state || 'fresh', discovery_source_id:'managed:' + JSON.stringify(managed.map((r: any)=>[r.account_id,r.revision])),

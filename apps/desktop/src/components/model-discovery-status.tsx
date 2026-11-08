@@ -1,3 +1,4 @@
+import { modelProviderName } from '@/i18n/model-service'
 import type { ModelOptionProvider } from '@hermes/shared'
 import { useStore } from '@nanostores/react'
 
@@ -64,5 +65,5 @@ export function ModelDiscoveryStatus({ provider }: { provider: ModelOptionProvid
   if (!state || state === 'fresh') {return null}
   const message = messages[state]?.[locale] ?? messages[state]?.en
   if (!message) {return null}
-  return <div className="px-3 py-1 text-xs text-(--ui-text-tertiary)" role="status">{provider.name}: {message}</div>
+  return <div className="px-3 py-1 text-xs text-(--ui-text-tertiary)" role="status">{modelProviderName(provider, locale)}: {message}</div>
 }

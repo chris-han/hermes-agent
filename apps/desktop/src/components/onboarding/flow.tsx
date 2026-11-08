@@ -38,8 +38,8 @@ export function FlowPanel({
   leaving: boolean
   onBegin: () => void
 }) {
-  const { t } = useI18n()
-  const title = 'provider' in flow && flow.provider ? providerTitle(flow.provider) : ''
+  const { t, locale } = useI18n()
+  const title = 'provider' in flow && flow.provider ? providerTitle(flow.provider, locale) : ''
 
   if (flow.status === 'starting') {
     return <Status>{t.onboarding.startingSignIn(title)}</Status>

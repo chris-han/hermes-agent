@@ -2241,7 +2241,7 @@ def get_model_context_length(
         profile = cloud_model_profile(model)
         context = profile.get('context_window')
         if type(context) is not int or context <= 0:
-            raise ValueError('Semantier Cloud Provider context limit unknown; deployment configuration required.')
+            raise ValueError('Semantier Model Provider context limit unknown; deployment configuration required.')
         return min(context,config_context_length) if type(config_context_length) is int and config_context_length > 0 else context
     # 0. Explicit config override — user knows best
     if isinstance(config_context_length, int) and config_context_length > 0:

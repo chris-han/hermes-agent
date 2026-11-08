@@ -1,3 +1,4 @@
+import { modelProviderName } from '@/i18n/model-service'
 import type { ModelOptionProvider } from '@hermes/shared'
 import { DEFAULT_REASONING_EFFORT, REASONING_EFFORT_VALUES } from '@hermes/shared'
 import { useStore } from '@nanostores/react'
@@ -1107,7 +1108,7 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
               }}
               options={mainProviderOptions.filter(provider => provider.slug).map(provider => ({
                 value: provider.slug,
-                label: provider.name,
+                label: modelProviderName(provider, locale),
                 disabled: availableMainModels(provider).length === 0
               }))}
               placeholder={m.provider}
@@ -1354,7 +1355,7 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
                               <SelectContent>
                                 {providerOptions.map(provider => (
                                   <SelectItem key={provider.slug || 'none'} value={provider.slug || 'none'}>
-                                    {provider.name}
+                                    {modelProviderName(provider, locale)}
                                   </SelectItem>
                                 ))}
                               </SelectContent>

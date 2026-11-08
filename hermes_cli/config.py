@@ -595,7 +595,7 @@ if _runtime_distribution_extras() is not None:
     # Initial connection only. Credentials are supplied by the user/service, never shipped.
     DEFAULT_CONFIG["model"] = {"provider": "semantier-cloud", "default": ""}
     DEFAULT_CONFIG["providers"]["semantier-cloud"] = {
-        "name": "Semantier Cloud Provider", "base_url": "", "api_mode": "chat_completions",
+        "name": "Semantier Model Provider", "base_url": "", "api_mode": "chat_completions",
         "models": [],
     }
 

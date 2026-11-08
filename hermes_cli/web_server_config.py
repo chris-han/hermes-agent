@@ -766,7 +766,7 @@ def _prepare_main_assignment(cfg: dict, provider: str, model: str, base_url: str
     if provider == 'semantier-cloud' or current_cloud and provider == current.get('provider') and not base_url or is_gateway_route(base_url):
         settings = gateway_settings()
         if not settings:
-            raise HTTPException(422,'Semantier Cloud Provider connection required')
+            raise HTTPException(422,'Semantier Model Provider connection required')
         if (base_url and base_url.rstrip('/') != settings.base_url) or api_key:
             raise HTTPException(422,'Cloud transport is profile-owned')
         profile_info = cloud_model_profile(model,refresh=True)
@@ -775,7 +775,7 @@ def _prepare_main_assignment(cfg: dict, provider: str, model: str, base_url: str
         from hermes_cli.model_switch import ModelSwitchResult
         target = 'semantier-cloud' if (cloud_connection_config() or {}).get('credential_ref') else 'custom'
         return settings.base_url, ModelSwitchResult(success=True,new_model=model,target_provider=target,
-            base_url=settings.base_url,api_mode='chat_completions',provider_label='Semantier Cloud Provider',is_global=True)
+            base_url=settings.base_url,api_mode='chat_completions',provider_label='Semantier Model Provider',is_global=True)
     provider, model = _normalize_main_model_assignment(provider, model)
     provider_entry = _provider_entry(cfg, provider)
     if not base_url and isinstance(provider_entry, dict) and provider_entry.get('base_url'):

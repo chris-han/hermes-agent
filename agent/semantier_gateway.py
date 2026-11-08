@@ -56,7 +56,7 @@ def gateway_settings() -> GatewaySettings | None:
             or parsed.path != '/v1' or not parsed.hostname
             or (parsed.scheme != 'https' and not (
                 parsed.scheme == 'http' and parsed.hostname in {'127.0.0.1', 'localhost', '::1'}))):
-        raise ValueError('Semantier Cloud Provider requires a configured public HTTPS /v1 endpoint (HTTP loopback is allowed).')
+        raise ValueError('Semantier Model Provider requires a configured public HTTPS /v1 endpoint (HTTP loopback is allowed).')
     if config.get('credential_ref'):
         from hermes_cli.cloud_device_client import credential
         return GatewaySettings(base, credential(config['credential_ref'], base_url=base))
@@ -178,7 +178,7 @@ def billing_request(resource: str, *, schema_version: str | None = None) -> dict
     try:
         settings = gateway_settings()
         if not settings:
-            return refusal('provider_not_configured', 'Semantier Cloud Provider is disabled for this profile.')
+            return refusal('provider_not_configured', 'Semantier Model Provider is disabled for this profile.')
     except CloudCredentialError:
         return refusal('unauthenticated', 'The profile credential expired or was revoked. Sign in again; local data and paid rights are preserved.')
     except ValueError:
@@ -289,7 +289,7 @@ def cloud_catalog(*, refresh=False, settings=None):
         raise
     if settings is None:
         clear_cloud_catalog()
-        raise ValueError('Semantier Cloud Provider is not configured for this profile.')
+        raise ValueError('Semantier Model Provider is not configured for this profile.')
     key = (str(get_hermes_home()), settings.base_url, sha256(settings.api_key.encode()).hexdigest())
     with _catalog_lock:
         generation = _catalog_generation
@@ -305,7 +305,7 @@ def cloud_catalog(*, refresh=False, settings=None):
         try:
             return deepcopy(pending.result(timeout=5))
         except TimeoutError:
-            raise ValueError('Semantier Cloud Provider catalog timed out; refresh.') from None
+            raise ValueError('Semantier Model Provider catalog timed out; refresh.') from None
     try:
         from hermes_cli.cloud_device_client import _cloud_http
         requests, options = _cloud_http(settings.base_url[:-3])
@@ -315,10 +315,10 @@ def cloud_catalog(*, refresh=False, settings=None):
                 headers={'Authorization':'Bearer '+settings.api_key}, timeout=5, allow_redirects=False)
         if response.status_code != 200:
             logging.getLogger(__name__).warning('Cloud catalog rejected status=%s',response.status_code)
-            raise ValueError('Semantier Cloud Provider catalog unavailable; refresh or reconnect.')
+            raise ValueError('Semantier Model Provider catalog unavailable; refresh or reconnect.')
         payload = response.json()
         if payload.get('object') != 'list' or not isinstance(payload.get('data'),list):
-            raise ValueError('Invalid Semantier Cloud Provider catalog.')
+            raise ValueError('Invalid Semantier Model Provider catalog.')
         with _catalog_lock:
             if len(_catalog_cache) >= 16:
                 _catalog_cache.clear()
@@ -329,7 +329,7 @@ def cloud_catalog(*, refresh=False, settings=None):
     except (requests.exceptions.RequestException,ValueError):
         with _catalog_lock:
             _catalog_cache.pop(key,None)
-        error = ValueError('Semantier Cloud Provider catalog unavailable; refresh or reconnect.')
+        error = ValueError('Semantier Model Provider catalog unavailable; refresh or reconnect.')
         pending.set_exception(error)
         raise error from None
     finally:
@@ -342,7 +342,7 @@ def cloud_model_profile(model, *, refresh=False, settings=None):
     options = {"settings":settings} if settings is not None else {}
     rows = [row for row in cloud_catalog(refresh=refresh,**options)['data'] if row.get('id') == model]
     if len(rows) != 1:
-        raise ValueError('Selected Semantier Cloud Provider model is unavailable; refresh models.')
+        raise ValueError('Selected Semantier Model Provider model is unavailable; refresh models.')
     return rows[0]
 
 
@@ -356,11 +356,11 @@ def configure_cloud_request(kwargs, *, base_url, settings=None, expected_revisio
         raise ValueError('Cloud selection changed; refresh and start a new chat.')
     context, output = profile.get('context_window'), profile.get('max_output_tokens')
     if type(context) is not int or context <= 0 or type(output) is not int or output <= 0:
-        raise ValueError('Semantier Cloud Provider context/output limits unknown; deployment configuration required.')
+        raise ValueError('Semantier Model Provider context/output limits unknown; deployment configuration required.')
     result = dict(kwargs)
     extra = result.pop('extra_body',{}) or {}
     if not isinstance(extra,dict) or set(extra)-{'enable_thinking','response_format'}:
-        raise ValueError('Unsupported Semantier Cloud Provider request overrides.')
+        raise ValueError('Unsupported Semantier Model Provider request overrides.')
     result.update(extra)
     caps = profile['capabilities']
     for capability, fields in {'tools':('tools','tool_choice','parallel_tool_calls'),
@@ -371,16 +371,16 @@ def configure_cloud_request(kwargs, *, base_url, settings=None, expected_revisio
     messages = result.get('messages',[])
     if caps.get('vision') is not True and any(isinstance(m.get('content'),list) and any(
             isinstance(c,dict) and c.get('type') in {'image_url','input_image'} for c in m['content']) for m in messages):
-        raise ValueError('Selected Semantier Cloud Provider model has no approved vision capability.')
+        raise ValueError('Selected Semantier Model Provider model has no approved vision capability.')
     import json
     prompt = {k:result[k] for k in ('messages','tools','response_format') if k in result}
     reserve = len(json.dumps(prompt,ensure_ascii=False).encode()) + 64*len(messages)
     room = min(output,32768,context-reserve)
     if room < 1:
-        raise ValueError('Semantier Cloud Provider context budget exceeded; compact or start a new session.')
+        raise ValueError('Semantier Model Provider context budget exceeded; compact or start a new session.')
     cap = result.pop('max_completion_tokens',result.pop('max_tokens',None))
     if cap is not None and (type(cap) is not int or cap <= 0):
-        raise ValueError('Invalid Semantier Cloud Provider output cap.')
+        raise ValueError('Invalid Semantier Model Provider output cap.')
     result[profile['request_parameters']['output']] = min(cap or room,room)
     if caps.get('stream') is not True:
         result['stream'] = False
@@ -398,14 +398,14 @@ def cloud_switch_result(model, current_provider, *, is_global=False):
     try:
         settings = gateway_settings()
         if settings is None:
-            raise ValueError('Semantier Cloud Provider connection required.')
+            raise ValueError('Semantier Model Provider connection required.')
         profile = cloud_model_profile(model,refresh=True)
         if profile['protocol'] not in {'chat','chat_completions'}:
-            raise ValueError('Unsupported Semantier Cloud Provider protocol.')
+            raise ValueError('Unsupported Semantier Model Provider protocol.')
         target = 'semantier-cloud' if (cloud_connection_config() or {}).get('credential_ref') else 'custom'
         return ModelSwitchResult(success=True,new_model=model,target_provider=target,
             provider_changed=current_provider!=target,api_key=settings.api_key,base_url=settings.base_url,
-            api_mode='chat_completions',provider_label='Semantier Cloud Provider',is_global=is_global,
+            api_mode='chat_completions',provider_label='Semantier Model Provider',is_global=is_global,
             runtime_capabilities={'supports_'+k:v is True for k,v in profile['capabilities'].items()})
     except ValueError as error:
         return ModelSwitchResult(success=False,error_message=str(error))

@@ -1,3 +1,4 @@
+import { modelProviderName } from '@/i18n/model-service'
 import type { ModelOptionProvider, ModelPricing } from '@hermes/shared'
 import { fuzzyRank, modelSearchText } from '@hermes/shared'
 import { useStore } from '@nanostores/react'
@@ -212,7 +213,7 @@ function ModelResults({
   offerCustom: boolean
   search: string
 }): ReactElement {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const copy = t.modelPicker
 
   if (loading) {
@@ -353,7 +354,7 @@ function ModelResults({
               value={`custom:${provider.slug}:${customSlug}`}
             >
               <span className="min-w-0 flex-1 truncate">{customSlug}</span>
-              <span className="shrink-0 text-[0.66rem] text-muted-foreground">{provider.name}</span>
+              <span className="shrink-0 text-[0.66rem] text-muted-foreground">{modelProviderName(provider, locale)}</span>
             </CommandItem>
           ))}
         </CommandGroup>
@@ -447,7 +448,7 @@ function LoadingResults() {
 }
 
 function ProviderHeading({ provider }: { provider: ModelOptionProvider }) {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const copy = t.modelPicker
 
   // Two different facts wear the same badge: `free_tier` is a signed-in Nous
@@ -467,7 +468,7 @@ function ProviderHeading({ provider }: { provider: ModelOptionProvider }) {
 
   return (
     <span className="flex min-w-0 items-center gap-2">
-      <span className="truncate">{provider.name}</span>
+      <span className="truncate">{modelProviderName(provider, locale)}</span>
       <span className="font-mono text-xs font-normal normal-case tracking-normal text-muted-foreground">
         {provider.slug} · {provider.total_models ?? provider.models?.length ?? 0}
       </span>

@@ -175,7 +175,7 @@ describe('ModelMenuPanel current selection', () => {
     }] })
     $customModels.set([{ provider: 'semantier-cloud', model: 'custom-model' }])
     const { content, onSelectModel } = renderPanel()
-    await content.findByText('Cloud')
+    await content.findByText('Semantier Model Provider')
     expect(content.queryByText(/stale model/i)).toBeNull()
     expect(content.queryByText(/custom model/i)).toBeNull()
     const input = screen.getByRole('textbox', { name: 'Search models' })

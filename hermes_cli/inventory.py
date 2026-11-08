@@ -271,7 +271,7 @@ def build_model_options_payload(
         except ValueError:
             settings = None
         profiles = cloud_catalog(refresh=refresh,settings=settings)['data'] if settings else []
-        return {'providers':[{'slug':'semantier-cloud','name':'Semantier Cloud Provider',
+        return {'providers':[{'slug':'semantier-cloud','name':'Semantier Model Provider',
             'authenticated':settings is not None, 'is_current':True, 'aliases':[ctx.current_provider],
             'capabilities':{p['id']:{'fast':False,'reasoning':p['capabilities'].get('reasoning') is True and bool(p['request_parameters']['reasoning_controls'])} for p in profiles},
             'models':[p['id'] for p in profiles],

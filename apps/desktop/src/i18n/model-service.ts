@@ -1,6 +1,7 @@
 import type { BundledLocale } from './types'
 
 export interface ModelServiceCopy {
+  providerName: string
   title: string
   custom: string
   customDescription: string
@@ -27,14 +28,15 @@ export interface ModelServiceCopy {
 
 export const modelServiceCopy: Record<string, ModelServiceCopy> = {
   "en": {
+    providerName: 'Semantier Model Provider',
     title: "Model service",
     custom: "Custom endpoint",
     customDescription: "Use an OpenAI-compatible model URL, API key and model. The agent keeps running locally.",
     cloudDescription: "Sign in to use your Semantier models and account credit.",
-    signIn: "Sign in to Semantier Cloud",
+    signIn: "Sign in to Semantier Model Provider",
     advancedRuntime: "Advanced · Agent runtime",
     setup: "Connect a model service to start",
-    plan: "Choose a plan to use Semantier Cloud",
+    plan: "Choose a plan to use Semantier Model Provider",
     preparing: "Setting up model access",
     expired: "Renew model access",
     credit: "Add credit",
@@ -51,14 +53,15 @@ export const modelServiceCopy: Record<string, ModelServiceCopy> = {
     details: "Details",
   },
   "zh": {
+    providerName: 'Semantier 模型服务',
     title: "模型服务",
     custom: "自定义端点",
     customDescription: "填写兼容 OpenAI 的模型服务地址、API 密钥和模型。Agent 仍在本地运行。",
     cloudDescription: "登录后使用 Semantier 模型与账户额度。",
-    signIn: "登录 Semantier Cloud",
+    signIn: "登录 Semantier 模型服务",
     advancedRuntime: "高级 · Agent 运行位置",
     setup: "连接模型服务即可开始",
-    plan: "选择套餐以使用 Semantier Cloud",
+    plan: "选择套餐以使用 Semantier 模型服务",
     preparing: "正在开通模型服务",
     expired: "续订模型服务",
     credit: "充值",
@@ -75,14 +78,15 @@ export const modelServiceCopy: Record<string, ModelServiceCopy> = {
     details: "详细信息",
   },
   "zh-hant": {
+    providerName: 'Semantier 模型服務',
     title: "模型服務",
     custom: "自訂端點",
     customDescription: "填寫相容 OpenAI 的模型服務網址、API 金鑰與模型。Agent 仍在本機執行。",
     cloudDescription: "登入後使用 Semantier 模型與帳戶額度。",
-    signIn: "登入 Semantier Cloud",
+    signIn: "登入 Semantier 模型服務",
     advancedRuntime: "進階 · Agent 執行位置",
     setup: "連線模型服務即可開始",
-    plan: "選擇方案以使用 Semantier Cloud",
+    plan: "選擇方案以使用 Semantier 模型服務",
     preparing: "正在開通模型服務",
     expired: "續訂模型服務",
     credit: "儲值",
@@ -99,14 +103,15 @@ export const modelServiceCopy: Record<string, ModelServiceCopy> = {
     details: "詳細資訊",
   },
   "ja": {
+    providerName: 'Semantier Model Provider',
     title: "モデルサービス",
     custom: "カスタムエンドポイント",
     customDescription: "OpenAI互換のモデルURL、APIキー、モデルを設定します。Agentはローカルで動作します。",
     cloudDescription: "ログインしてSemantierモデルとアカウント残高を利用します。",
-    signIn: "Semantier Cloudにログイン",
+    signIn: "Semantier Model Providerにログイン",
     advancedRuntime: "詳細 · Agentの実行環境",
     setup: "モデルサービスに接続してください",
-    plan: "Semantier Cloudのプランを選択",
+    plan: "Semantier Model Providerのプランを選択",
     preparing: "モデルアクセスを準備中",
     expired: "モデルアクセスを更新",
     credit: "残高を追加",
@@ -123,14 +128,15 @@ export const modelServiceCopy: Record<string, ModelServiceCopy> = {
     details: "詳細",
   },
   "fr": {
+    providerName: 'Semantier Model Provider',
     title: "Service de modèles",
     custom: "Point de terminaison personnalisé",
     customDescription: "Configurez une URL de modèle compatible OpenAI, une clé API et un modèle. L’agent reste local.",
     cloudDescription: "Connectez-vous pour utiliser vos modèles Semantier et votre crédit.",
-    signIn: "Se connecter à Semantier Cloud",
+    signIn: "Se connecter à Semantier Model Provider",
     advancedRuntime: "Avancé · Exécution de l’agent",
     setup: "Connectez un service de modèles",
-    plan: "Choisissez un forfait Semantier Cloud",
+    plan: "Choisissez un forfait Semantier Model Provider",
     preparing: "Préparation de l’accès aux modèles",
     expired: "Renouveler l’accès",
     credit: "Ajouter du crédit",
@@ -147,11 +153,12 @@ export const modelServiceCopy: Record<string, ModelServiceCopy> = {
     details: "Détails",
   },
   "de": {
+    providerName: 'Semantier Model Provider',
     title: "Modelldienst",
     custom: "Benutzerdefinierter Endpunkt",
     customDescription: "OpenAI-kompatible Modell-URL, API-Schlüssel und Modell einrichten. Der Agent läuft weiterhin lokal.",
     cloudDescription: "Anmelden, um Semantier-Modelle und Kontoguthaben zu nutzen.",
-    signIn: "Bei Semantier Cloud anmelden",
+    signIn: "Bei Semantier Model Provider anmelden",
     advancedRuntime: "Erweitert · Agent-Laufzeit",
     setup: "Einen Modelldienst verbinden",
     plan: "Semantier-Cloud-Tarif auswählen",
@@ -171,14 +178,15 @@ export const modelServiceCopy: Record<string, ModelServiceCopy> = {
     details: "Details",
   },
   "es": {
+    providerName: 'Semantier Model Provider',
     title: "Servicio de modelos",
     custom: "Endpoint personalizado",
     customDescription: "Configura una URL compatible con OpenAI, clave API y modelo. El agente sigue ejecutándose localmente.",
     cloudDescription: "Inicia sesión para usar tus modelos Semantier y el saldo de tu cuenta.",
-    signIn: "Iniciar sesión en Semantier Cloud",
+    signIn: "Iniciar sesión en Semantier Model Provider",
     advancedRuntime: "Avanzado · Ejecución del agente",
     setup: "Conecta un servicio de modelos",
-    plan: "Elige un plan de Semantier Cloud",
+    plan: "Elige un plan de Semantier Model Provider",
     preparing: "Preparando el acceso a modelos",
     expired: "Renovar el acceso",
     credit: "Añadir saldo",
@@ -195,14 +203,15 @@ export const modelServiceCopy: Record<string, ModelServiceCopy> = {
     details: "Detalles",
   },
   "ru": {
+    providerName: 'Semantier Model Provider',
     title: "Сервис моделей",
     custom: "Свой эндпоинт",
     customDescription: "Укажите совместимый с OpenAI URL, API-ключ и модель. Агент продолжит работать локально.",
     cloudDescription: "Войдите для доступа к моделям Semantier и средствам аккаунта.",
-    signIn: "Войти в Semantier Cloud",
+    signIn: "Войти в Semantier Model Provider",
     advancedRuntime: "Дополнительно · Среда агента",
     setup: "Подключите сервис моделей",
-    plan: "Выберите тариф Semantier Cloud",
+    plan: "Выберите тариф Semantier Model Provider",
     preparing: "Подготовка доступа к моделям",
     expired: "Продлить доступ",
     credit: "Пополнить баланс",
@@ -219,14 +228,15 @@ export const modelServiceCopy: Record<string, ModelServiceCopy> = {
     details: "Подробности",
   },
   "ar": {
+    providerName: 'Semantier Model Provider',
     title: "خدمة النماذج",
     custom: "نقطة نهاية مخصصة",
     customDescription: "أدخل عنوان نموذج متوافق مع OpenAI ومفتاح API والنموذج. يبقى الوكيل محلياً.",
     cloudDescription: "سجّل الدخول لاستخدام نماذج Semantier ورصيد حسابك.",
-    signIn: "تسجيل الدخول إلى Semantier Cloud",
+    signIn: "تسجيل الدخول إلى Semantier Model Provider",
     advancedRuntime: "متقدم · بيئة تشغيل الوكيل",
     setup: "اربط خدمة نماذج للبدء",
-    plan: "اختر خطة Semantier Cloud",
+    plan: "اختر خطة Semantier Model Provider",
     preparing: "جارٍ إعداد الوصول للنماذج",
     expired: "تجديد الوصول للنماذج",
     credit: "إضافة رصيد",
@@ -243,3 +253,10 @@ export const modelServiceCopy: Record<string, ModelServiceCopy> = {
     details: "التفاصيل",
   },
 } satisfies Record<BundledLocale, ModelServiceCopy>
+
+/** Managed service presentation; wire/provider identity and custom names stay intact. */
+export function modelProviderName(provider: { slug?: string; id?: string; name: string }, locale = 'en'): string {
+  return (provider.slug ?? provider.id) === 'semantier-cloud'
+    ? (modelServiceCopy[locale] ?? modelServiceCopy.en).providerName
+    : provider.name
+}

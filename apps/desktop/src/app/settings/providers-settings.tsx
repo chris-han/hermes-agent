@@ -237,9 +237,9 @@ function ConnectedProviderRow({
   onTerminalDisconnect: (provider: OAuthProvider) => void
   provider: OAuthProvider
 }) {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const copy = t.settings.providers
-  const title = providerTitle(provider)
+  const title = providerTitle(provider, locale)
   const Trail = provider.flow === 'external' ? Terminal : ChevronRight
   // Hermes can clear this provider's creds via the API.
   const canDisconnect = provider.disconnectable ?? provider.flow !== 'external'
@@ -360,7 +360,7 @@ export function ProvidersSettings({
   onViewChange,
   view
 }: ProvidersSettingsProps) {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const scopeProfile = useStore($settingsRequestProfile)
   const { rowProps, vars } = useEnvCredentials(scopeProfile)
   const [oauthProviders, setOauthProviders] = useState<OAuthProvider[]>([])
@@ -455,7 +455,7 @@ export function ProvidersSettings({
       return
     }
 
-    const name = providerTitle(provider)
+    const name = providerTitle(provider, locale)
 
     const ok = await confirm({
       confirmLabel: t.settings.providers.disconnect,
@@ -478,7 +478,7 @@ export function ProvidersSettings({
   }
 
   async function handleDisconnect(provider: OAuthProvider) {
-    const name = providerTitle(provider)
+    const name = providerTitle(provider, locale)
 
     const ok = await confirm({
       confirmLabel: t.settings.providers.disconnect,

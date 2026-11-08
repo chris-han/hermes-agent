@@ -82,7 +82,7 @@ def handle_api_error(
     from agent.semantier_gateway import is_gateway_route, clear_cloud_catalog
     if is_gateway_route(str(agent.base_url or '')):
         clear_cloud_catalog()
-        message = 'Semantier Cloud Provider request stopped. Refresh model configuration before a new task; check usage for an uncertain dispatched request.'
+        message = 'Semantier Model Provider request stopped. Refresh model configuration before a new task; check usage for an uncertain dispatched request.'
         return _verdict('return', {'final_response':message,'messages':messages,'api_calls':api_call_count,
             'completed':False,'failed':True,'error':message,'failure_reason':'cloud_request_stopped','failure_retryable':False})
 

@@ -1,3 +1,4 @@
+import { modelProviderName } from '@/i18n/model-service'
 import type { ModelOptionProvider, ModelOptionsResult } from '@hermes/shared'
 import { useStore } from '@nanostores/react'
 import { useQuery } from '@tanstack/react-query'
@@ -53,7 +54,7 @@ export function ModelVisibilityDialog({
   profile = 'default',
   sessionId
 }: ModelVisibilityDialogProps) {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const copy = t.modelVisibility
   const [search, setSearch] = useState('')
   const connection = useStore($connection)
@@ -162,7 +163,7 @@ export function ModelVisibilityDialog({
                       type="button"
                     >
                       <span className="min-w-0 truncate">
-                        <HighlightMatches foldSeparators query={search} text={provider.name} />
+                        <HighlightMatches foldSeparators query={search} text={modelProviderName(provider, locale)} />
                       </span>
                       <DisclosureCaret
                         className="shrink-0 opacity-0 transition group-hover/label:opacity-100"

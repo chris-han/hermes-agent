@@ -1,3 +1,4 @@
+import { modelProviderName } from '@/i18n/model-service'
 import type { ModelOptionProvider, ModelOptionsResult, ModelPricing } from '@hermes/shared'
 import { DEFAULT_REASONING_EFFORT } from '@hermes/shared'
 import { useStore } from '@nanostores/react'
@@ -219,7 +220,7 @@ export function ModelCatalogMenu({
   request,
   sessionId = null
 }: ModelCatalogMenuProps): ReactElement {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const copy = t.shell.modelMenu
   const copyPicker = t.modelPicker
   const connection = useStore($connection)
@@ -711,7 +712,7 @@ export function ModelCatalogMenu({
               {favoriteRows.map(({ family, provider }, index) => (
                 <Fragment key={`${provider.slug}:${family.id}`}>
                   {favoritesSpanProviders && favoriteRows[index - 1]?.provider.slug !== provider.slug ? (
-                    <DropdownMenuLabel className={favoriteProviderLabel}>{provider.name}</DropdownMenuLabel>
+                    <DropdownMenuLabel className={favoriteProviderLabel}>{modelProviderName(provider, locale)}</DropdownMenuLabel>
                   ) : null}
                   <ModelFamilyRow
                     controller={controller}
@@ -750,7 +751,7 @@ export function ModelCatalogMenu({
                   textValue=""
                 >
                   <span className="truncate">
-                    <HighlightMatches foldSeparators query={search} text={group.provider.name} />
+                    <HighlightMatches foldSeparators query={search} text={modelProviderName(group.provider, locale)} />
                   </span>
                   <DisclosureCaret
                     className="shrink-0 text-(--ui-text-tertiary) opacity-0 transition group-hover/label:opacity-100"
@@ -822,7 +823,7 @@ export function ModelCatalogMenu({
             >
               <span className="min-w-0 flex-1 truncate">
                 {customSlug}
-                <span className="text-(--ui-text-tertiary)"> {provider.name}</span>
+                <span className="text-(--ui-text-tertiary)"> {modelProviderName(provider, locale)}</span>
               </span>
             </DropdownMenuItem>
           ))}
@@ -1163,7 +1164,7 @@ function familyLimit(
 }
 
 function ModelResetBadge({ time }: { time: null | string }): null | ReactElement {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const copy = t.shell.modelMenu
 
   return time ? (

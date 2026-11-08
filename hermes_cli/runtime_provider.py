@@ -1060,9 +1060,9 @@ def resolve_runtime_provider(*, requested: Optional[str] = None, explicit_api_ke
     if requested_provider == 'semantier-cloud' or (requested_provider == 'custom' and is_gateway_route(cloud_base)):
         settings = gateway_settings()
         if settings is None:
-            raise ValueError('Semantier Cloud Provider connection required.')
+            raise ValueError('Semantier Model Provider connection required.')
         if (explicit_base_url and explicit_base_url.rstrip('/') != settings.base_url) or (requested_provider == 'semantier-cloud' and explicit_api_key and explicit_api_key != settings.api_key):
-            raise ValueError('Semantier Cloud Provider transport is profile-owned.')
+            raise ValueError('Semantier Model Provider transport is profile-owned.')
         if target_model:
             cloud_model_profile(target_model)
         return {'provider':'custom','api_key':settings.api_key,'base_url':settings.base_url,
