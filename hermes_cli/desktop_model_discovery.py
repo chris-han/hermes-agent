@@ -59,6 +59,8 @@ def read_provider_snapshot(*, provider: str, base_url: str, api_key: str | None,
     key = "desktop-query-v1:" + hashlib.sha256(identity.encode()).hexdigest()
 
     def cache_rows():
+        if cache_path == owner._provider_models_cache_path():
+            return owner._load_provider_models_cache()
         try:
             return owner._read_json_cache(cache_path) or {}
         except Exception:
