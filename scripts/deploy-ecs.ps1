@@ -18,6 +18,9 @@
   .\scripts\deploy-ecs.ps1 -VerifyPublicDownload
 .EXAMPLE
   .\scripts\deploy-ecs.ps1 -Commit eede5238816caa515089f99c558964fe6adec2e9
+.EXAMPLE
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File 'R:\hermes-agent\scripts\deploy-ecs.ps1' -WhatIf
+  If Windows blocks this unsigned network-source script before it starts, use this process-scoped launch.
 .DESCRIPTION
   BuildMode defaults to Beta: sign, install and publish without release verification.
   Use -BuildMode Prod for full verification and acceptance. Timings use checkpoints.jsonl.
@@ -114,7 +117,21 @@ function Get-EcsSshPassword([string]$Path) {
   if(!$password){throw 'Credentials file must contain nonempty ALI_ECS_SSH_PASSWORDE; omit -CredentialsEnv to use SSH keys.'}
   return $password
 }
+function Assert-ExecutionPolicyPreflight {
+  $effective=Get-ExecutionPolicy
+  $policies=@(Get-ExecutionPolicy -List)
+  $managed=@($policies | Where-Object {$_.Scope -in @('MachinePolicy','UserPolicy') -and $_.ExecutionPolicy -ne 'Undefined'})
+  if($effective -in @('Restricted','AllSigned')){
+    if($managed.Count){throw "Execution policy $effective is enforced by Group Policy. Use administrator-approved signed build scripts; this operator cannot override managed policy."}
+    throw "Execution policy $effective can block unsigned build helpers. Relaunch with: powershell.exe -NoProfile -ExecutionPolicy Bypass -File '$PSCommandPath' (append the same build arguments). Persistent CurrentUser Bypass is an explicit user choice; this script never sets it."
+  }
+  Report-Status ("Execution-policy preflight: {0}; persistent policy unchanged." -f $effective)
+  if($effective -eq 'RemoteSigned'){
+    Report-Status "UNC/R: unsigned scripts may be blocked before preflight. If so, use powershell.exe -NoProfile -ExecutionPolicy Bypass -File '$PSCommandPath' with the same arguments."
+  }
+}
 function Initialize-ReleasePaths {
+  Assert-ExecutionPolicyPreflight
   if([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT){throw 'Run on native Windows.'}
   if($env:SEMANTIER_WSL_GIT_DISTRO){throw 'Clear SEMANTIER_WSL_GIT_DISTRO; WSL Git is not supported by this workflow.'}
   if(!$Repository){$script:Repository=Split-Path -Parent $PSScriptRoot}
