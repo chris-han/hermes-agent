@@ -154,9 +154,25 @@ function Initialize-ReleasePaths {
   if($LASTEXITCODE -ne 0){throw 'Native Windows Git cannot inspect the source repository.'}
   $script:SourceBinding=[ordered]@{repository=$Repository;toolingHermesHead=[string]$head;runtimeHead=$null;hermesGitlink=$null}
   if($RuntimeRoot){
-    $runtimeHead=& git.exe -C $RuntimeRoot rev-parse HEAD
+    $runtimeGitArgs=@('-C',$RuntimeRoot)
+    $runtimeGitFile=Join-Path $RuntimeRoot '.git'
+    if(Test-Path -LiteralPath $runtimeGitFile -PathType Leaf){
+      $pointer=[IO.File]::ReadAllText($runtimeGitFile).Trim()
+      # WSL worktree pointers are POSIX absolute paths. Translate only within
+      # the selected WSL share; never rewrite the pointer or invoke WSL Git.
+      if($pointer -match '^gitdir: (/[^\r\n]+)$'){
+        $posixGitDir=$Matches[1]
+        if($RuntimeRoot -notmatch '^(\\\\(?:wsl\.localhost|wsl\$)\\[^\\]+)\\'){
+          throw 'A WSL Runtime worktree requires its explicit UNC Repository path.'
+        }
+        $nativeGitDir=$Matches[1]+$posixGitDir.Replace('/','\')
+        if(!(Test-Path -LiteralPath $nativeGitDir -PathType Container)){throw 'Runtime worktree Git directory is unavailable on the selected WSL share.'}
+        $runtimeGitArgs=@("--git-dir=$nativeGitDir","--work-tree=$RuntimeRoot",'-C',$RuntimeRoot)
+      }
+    }
+    $runtimeHead=& git.exe @runtimeGitArgs rev-parse HEAD
     if($LASTEXITCODE -ne 0){throw 'Cannot inspect Runtime HEAD.'}
-    $link=& git.exe -C $RuntimeRoot ls-tree HEAD hermes-agent
+    $link=& git.exe @runtimeGitArgs ls-tree HEAD hermes-agent
     if($LASTEXITCODE -ne 0 -or $link -notmatch '^160000 commit ([a-f0-9]{40})\s'){throw 'Cannot inspect recorded Hermes gitlink.'}
     $script:SourceBinding.runtimeHead=[string]$runtimeHead;$script:SourceBinding.hermesGitlink=$Matches[1]
   }
