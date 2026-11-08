@@ -6,6 +6,7 @@ import { MemoryRouter } from 'react-router'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type * as ConfigApi from '@/api/config'
+import { $connection } from '@/store/session'
 import { $settingsRequestProfile } from '@/store/settings-scope'
 
 import type { ConfigSettings as ConfigSettingsType } from './config-settings'
@@ -13,6 +14,8 @@ import type { ConfigSettings as ConfigSettingsType } from './config-settings'
 // The vi.mock factory below replaces the computed (read-only) atom with a
 // writable one; narrow the import back so tests can drive it.
 const scopeProfileMock = $settingsRequestProfile as unknown as { set: (value: string) => void }
+
+vi.mock('./model-settings',()=>({ModelSettings:()=> <div>Cloud model controller</div>,ModelSettingsSkeleton:()=> <div>Model loading</div>}))
 
 const getHermesConfigRecord = vi.fn()
 const getHermesConfigSchema = vi.fn()
@@ -154,3 +157,15 @@ describe('ConfigSettings autosave', () => {
     }
   })
 })
+
+ it('opens Cloud Main directly without inventing a Native config/schema dependency', async () => {
+  $connection.set({baseUrl:'https://cloud.example',mode:'remote',connectionId:'cloud',transport:'semantier-workspace-http',workspaceScope:{userId:'a',workspaceId:'wa',organizationId:'org'}} as never)
+  getHermesConfigRecord.mockRejectedValue(new Error('unsupported Native config'))
+  getHermesConfigSchema.mockRejectedValue(new Error('unsupported Native schema'))
+  const queryClient=new QueryClient({defaultOptions:{queries:{retry:false}}})
+  try {
+   render(<QueryClientProvider client={queryClient}><MemoryRouter><ConfigSettings activeSectionId="model" subpage="main" importInputRef={createRef()} /></MemoryRouter></QueryClientProvider>)
+   expect(await screen.findByText('Cloud model controller')).toBeTruthy()
+   expect(getHermesConfigSchema).not.toHaveBeenCalled()
+  } finally {$connection.set(null);queryClient.clear()}
+ })

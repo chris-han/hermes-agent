@@ -62,7 +62,7 @@ export function getGlobalModelOptions(
     params.set('query_scope', opts.queryScope.trim())
   }
 
-  return window.hermesDesktop.api<ModelOptionsResult>({
+  return hermesApi<ModelOptionsResult>({
     ...capabilityScoped(profile),
     path: params.size > 0 ? `/api/model/options?${params.toString()}` : '/api/model/options',
     timeoutMs: STARTUP_REQUEST_TIMEOUT_MS
@@ -132,7 +132,7 @@ export function setModelAssignment(
   body: ModelAssignmentRequest,
   profile?: ProfileScope
 ): Promise<ModelAssignmentResponse> {
-  return window.hermesDesktop.api<ModelAssignmentResponse>({
+  return hermesApi<ModelAssignmentResponse>({
     ...capabilityScoped(profile),
     path: '/api/model/set',
     method: 'POST',

@@ -30,7 +30,7 @@ _inflight: dict[str, Future[ProviderSnapshot]] = {}
 def read_provider_snapshot(*, provider: str, base_url: str, api_key: str | None,
                            source_scope: str, api_mode: str | None = None,
                            headers: dict[str, str] | None = None,
-                           refresh: bool = False, adapter: str = "openai") -> ProviderSnapshot:
+                           refresh: bool = False, adapter: str = "openai", query=None, cache_path=None) -> ProviderSnapshot:
     """Read a verified same-source snapshot or refresh it through the provider adapter."""
     from hermes_cli import models as owner
 
@@ -41,7 +41,7 @@ def read_provider_snapshot(*, provider: str, base_url: str, api_key: str | None,
         return ProviderSnapshot(None, "unsupported")
     if (not provider or not source_scope or parsed.scheme not in {"http", "https"}
             or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment
-            or adapter not in {"openai", "ollama", "cloud", "anthropic", "gemini"}):
+            or adapter not in {"openai", "ollama", "cloud", "anthropic", "gemini", "workspace-byok"}):
         return ProviderSnapshot(None, "unsupported")
     from agent.command_token_source import materialize_probe_api_key
 
@@ -52,13 +52,33 @@ def read_provider_snapshot(*, provider: str, base_url: str, api_key: str | None,
     principal_material = json.dumps([materialized_key, api_mode, headers or {}], sort_keys=True,
                                     ensure_ascii=True, separators=(",", ":"))
     principal_full = hashlib.sha256(principal_material.encode()).hexdigest()
-    identity = json.dumps([str(owner._provider_models_cache_path().resolve()), source_scope, provider, endpoint,
+    cache_path = cache_path or owner._provider_models_cache_path()
+    identity = json.dumps([str(cache_path.resolve()), source_scope, provider, endpoint,
                            principal, principal_full, adapter],
                           ensure_ascii=True, separators=(",", ":"))
     key = "desktop-query-v1:" + hashlib.sha256(identity.encode()).hexdigest()
 
+    def cache_rows():
+        if cache_path == owner._provider_models_cache_path():
+            return owner._load_provider_models_cache()
+        try:
+            return owner._read_json_cache(cache_path) or {}
+        except Exception:
+            return {}
+
+    def store(row):
+        if cache_path == owner._provider_models_cache_path():
+            owner._store_cache_entry(key, row)
+        else:
+            rows = cache_rows()
+            rows[key] = row
+            try:
+                owner._write_json_cache(cache_path, rows, indent=None)
+            except Exception:
+                pass  # Cache failure never turns a verified query into configuration loss.
+
     def cached():
-        row = owner._load_provider_models_cache().get(key)
+        row = cache_rows().get(key)
         if not isinstance(row, dict) or row.get("source") != "provider-query-v1":
             return None
         try:
@@ -84,7 +104,7 @@ def read_provider_snapshot(*, provider: str, base_url: str, api_key: str | None,
             with owner._cache_write_lock:
                 current = cached()
                 if current is not None:
-                    owner._store_cache_entry(key, {**current, "last_refresh_failed": True})
+                    store({**current, "last_refresh_failed": True})
         return ProviderSnapshot(previous, "stale" if previous is not None else "error", key,
                                 previous_row.get("fetched_at") if previous_row else None)
     with _inflight_lock:
@@ -101,7 +121,9 @@ def read_provider_snapshot(*, provider: str, base_url: str, api_key: str | None,
                                     previous_row.get("fetched_at") if previous_row else None)
     try:
         try:
-            if adapter == "gemini":
+            if adapter == "workspace-byok":
+                values = query() if callable(query) else None
+            elif adapter == "gemini":
                 request_headers = {"User-Agent": owner._HERMES_USER_AGENT, "x-goog-api-key": materialized_key,
                                    **(headers or {})}
                 values = None
@@ -198,7 +220,7 @@ def read_provider_snapshot(*, provider: str, base_url: str, api_key: str | None,
                 row = {"source": "provider-query-v1", "models": values,
                        "fetched_at": datetime.now(UTC).isoformat()}
                 with owner._cache_write_lock:
-                    owner._store_cache_entry(key, row)
+                    store(row)
                 snapshot = ProviderSnapshot(values, "fresh", key, row["fetched_at"])
         except Exception:
             snapshot = failed()

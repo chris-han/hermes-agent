@@ -89,12 +89,13 @@ export function normalizeSemantierWorkspaceOrigin(origin: string): string {
 export function createSemantierWorkspaceClient(origin: string, fetchSession: (input: string, init?: RequestInit) => Promise<Response>) {
   const base = new URL(normalizeSemantierWorkspaceOrigin(origin))
 
-  async function request(path: string, body?: Record<string, unknown>) {
+  async function request(path: string, body?: Record<string, unknown>, method = 'POST') {
     const response = await fetchSession(new URL(path, base.origin).href, {
-      method: body ? 'POST' : 'GET',
+      method: body ? method : 'GET',
       credentials: 'include',
+      cache: 'no-store',
       redirect: 'error',
-      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      headers: body ? { 'Content-Type': 'application/json', Origin:base.origin, 'X-Semantier-CSRF':'1' } : undefined,
       body: body ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(body ? 120_000 : 15_000)
     })
@@ -110,6 +111,59 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
   }
 
   return {
+    async auxiliaryModels() {
+      const data = await (await request('/api/hermes-config')).json()
+      const main = data.config?.model || {}
+      return {main:{provider:main.provider || '',model:main.default || ''},
+        tasks:Object.entries(data.config?.auxiliary || {}).map(([task,value])=>{
+          const r = value as Record<string, unknown>
+          return {task,provider:r.provider || '',model:r.model || r.default || '',base_url:r.base_url || ''}
+        })}
+    },
+    async modelOptions(refresh: boolean) {
+      const [inventory, config, catalog] = await Promise.all([
+        request('/api/hermes-proxy/api/available-models?provider=configured&refresh=' + refresh).then(r => r.json()),
+        request('/api/hermes-config').then(r => r.json()),
+        request('/api/hermes-proxy/api/cloud-provider/catalog').then(r => r.json()).catch(error => {
+          if (error.statusCode === 401) {throw error}
+          return {object:'list',data:[],discovery_state:'error'}
+        })
+      ])
+      if (inventory.discovery_contract !== 'provider-query-v1' || !Array.isArray(inventory.providers) ||
+          catalog.object !== 'list' || !Array.isArray(catalog.data)) {
+        throw new Error('The Workspace model discovery contract is unavailable.')
+      }
+      const managed = catalog.data
+      return { discovery_contract: 'provider-query-v1',
+        provider: config.activeProvider || '', model: config.activeModel || '',
+        providers: [...inventory.providers, {slug:'semantier-cloud', name:'Semantier Cloud Provider',
+          authenticated:catalog.discovery_state !== 'error', models:managed.map((r: any)=>r.id), eligible_models:managed.map((r: any)=>r.id),
+          model_profiles:Object.fromEntries(managed.map((r: any)=>[r.id,r])),
+          discovery_state:catalog.discovery_state || 'fresh', discovery_source_id:'managed:' + JSON.stringify(managed.map((r: any)=>[r.account_id,r.revision])),
+          discovery_fetched_at:new Date().toISOString(), total_models:managed.length}]
+      }
+    },
+    async setMainModel(body: Record<string, unknown>, scope: WorkspaceScope) {
+      if (body.scope !== 'main' || Object.keys(body).some(k=>!['scope','provider','model'].includes(k)) ||
+          typeof body.provider !== 'string' || typeof body.model !== 'string') {
+        throw new Error('Only an explicit Main Model selection is supported here.')
+      }
+      const expected_scope = {user_id:scope.userId,workspace_id:scope.workspaceId,organization_id:scope.organizationId}
+      const config = await (await request('/api/hermes-config')).json()
+      if (body.provider === 'semantier-cloud') {
+        const catalog = await (await request('/api/hermes-proxy/api/cloud-provider/catalog')).json()
+        const profile = catalog.data?.find((p: any)=>p.id === body.model)
+        if (!profile) {throw new Error('Refresh the authorized managed model catalog before selecting.')}
+        await request('/api/hermes-proxy/api/model/set', {...body,account_id:profile.account_id,revision:profile.revision,expected_scope})
+      } else {
+        const route = config.config?.providers?.[body.provider]
+        if (!route || !['alibaba','openai','custom','litellm'].includes(body.provider)) {throw new Error('Configure this provider in Workspace before selecting.')}
+        await request('/api/hermes-config', {expected_scope,config:{provider:body.provider,model:{provider:body.provider,
+          default:body.model,base_url:route.base_url || '',key_env:route.key_env || '',api_key:'',api_key_env:'',
+          api_mode:route.api_mode || '',transport:route.transport || ''}}}, 'PATCH')
+      }
+      return {ok:true,provider:body.provider,model:body.model}
+    },
     async identity(): Promise<WorkspaceIdentity> {
       return (await request('/auth/context')).json()
     },
@@ -211,6 +265,12 @@ export async function workspaceDesktopRead(
   const url = new URL(path, 'https://desktop.invalid')
   const pathname = url.pathname
   const profile = routeProfile && routeProfile !== 'default' ? routeProfile : url.searchParams.get('profile')
+  if (pathname === '/api/model/auxiliary' && (!profile || profile === 'default')) {
+    return client.auxiliaryModels()
+  }
+  if (pathname === '/api/model/options' && (!profile || profile === 'default')) {
+    return client.modelOptions(url.searchParams.get('refresh') === '1')
+  }
   if (profile && profile !== 'default' && profile !== 'all') {
     const owner = await client.winman()
     if (owner.profile.name !== profile) {

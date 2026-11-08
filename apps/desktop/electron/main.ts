@@ -16577,12 +16577,16 @@ async function dispatchRegistryApiRequest(
       )
 
   if (connection.transport === 'semantier-workspace-http') {
-    if ((request?.method || 'GET').toUpperCase() !== 'GET') {
+    const method = (request?.method || 'GET').toUpperCase()
+    const path = new URL(request.path, 'https://desktop.invalid').pathname
+    if (method !== 'GET' && !(method === 'POST' && path === '/api/model/set' && connection.profile === 'default')) {
       throw new Error('This Semantier Workspace Desktop mutation is not implemented.')
     }
     const { client } = semantierWorkspace(connection.baseUrl)
     assertWorkspaceScope(await client.identity(), request.workspaceScope)
-    const result = await workspaceDesktopRead(client, request.path, connection.profile)
+    const result = method === 'GET'
+      ? await workspaceDesktopRead(client, request.path, connection.profile)
+      : await client.setMainModel(request.body, request.workspaceScope)
     assertWorkspaceScope(await client.identity(), request.workspaceScope)
     return result
   }

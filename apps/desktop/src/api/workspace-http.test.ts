@@ -253,3 +253,28 @@ it('sends Native chat through its retained Main binding and never the Main send 
   expect(send).not.toHaveBeenCalled()
   gateway.close()
 })
+
+it('routes an owned Cloud model.options to scoped Workspace HTTP without a socket or provider credential', async () => {
+ const api=vi.fn().mockResolvedValue({discovery_contract:'provider-query-v1',providers:[]})
+ Object.defineProperty(window,'hermesDesktop',{configurable:true,value:{api,workspace:{identity:vi.fn().mockResolvedValue(identity)}}})
+ const gateway=new HermesGateway();await gateway.connectWorkspace('https://cloud.example',scope,'cloud-discovery')
+ await gateway.request('model.options',{query_only:true,query_scope:'cloud-source',refresh:true})
+ expect(api).toHaveBeenCalledWith(expect.objectContaining({connectionId:'cloud-discovery',workspaceScope:scope,path:'/api/model/options?query_only=1&query_scope=cloud-source&refresh=1'}))
+ await expect(gateway.request('model.options',{query_only:false})).rejects.toThrow(/query-only/)
+ gateway.close();forgetWorkspaceReadScope('cloud-discovery')
+})
+
+it('coalesces identical Cloud authentication dials without weakening a different account fence', async () => {
+ let release!: (value: unknown)=>void
+ const pending=new Promise(resolve=>{release=resolve})
+ const auth=vi.fn().mockReturnValueOnce(pending).mockResolvedValue(identity)
+ Object.defineProperty(window,'hermesDesktop',{configurable:true,value:{workspace:{identity:auth}}})
+ const gateway=new HermesGateway()
+ const first=gateway.connectWorkspace('https://cloud.example',scope,'same-cloud')
+ const second=gateway.connectWorkspace('https://cloud.example',{...scope},'same-cloud')
+ release(identity)
+ await expect(Promise.all([first,second])).resolves.toEqual([undefined,undefined])
+ expect(auth).toHaveBeenCalledTimes(1)
+ await expect(gateway.connectWorkspace('https://cloud.example',{...scope,userId:'foreign'},'same-cloud')).rejects.toThrow(/changed/)
+ gateway.close();forgetWorkspaceReadScope('same-cloud')
+})

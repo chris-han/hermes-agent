@@ -4,6 +4,8 @@ export type DiscoveryConnection = {
   connectionId?: string
   mode?: 'local' | 'remote'
   remoteIdentity?: string
+  transport?: 'semantier-workspace-http'
+  workspaceScope?: {userId:string; workspaceId:string; organizationId:string}
 }
 
 const remoteOwnerKeys = new WeakMap<DiscoveryConnection, string>()
@@ -15,6 +17,13 @@ export function modelDiscoveryOwnerKey(
   connection: DiscoveryConnection | null | undefined
 ): string | undefined {
   const id = ownerConnectionId?.trim() || connection?.connectionId?.trim()
+  if (connection?.transport === 'semantier-workspace-http' &&
+      (!ownerConnectionId || ownerConnectionId === connection.connectionId)) {
+    const s = connection.workspaceScope
+    let origin = 'unavailable'
+    try {origin = new URL(connection.baseUrl).origin} catch { /* An incomplete connection has no reusable source. */ }
+    return `${id || 'workspace'}:${JSON.stringify(s ? [origin,s.userId,s.workspaceId,s.organizationId] : [origin,'signed-out'])}`
+  }
   if (id) {return id}
   if (connection?.mode === 'local') {return 'local'}
   if (connection?.mode !== 'remote') {return undefined}
@@ -31,6 +40,11 @@ export async function modelDiscoveryScope(
   connection: DiscoveryConnection | null | undefined
 ): Promise<string> {
   const id = ownerConnectionId?.trim() || connection?.connectionId?.trim()
+  if (connection?.transport === 'semantier-workspace-http' &&
+      (!ownerConnectionId || ownerConnectionId === connection.connectionId)) {
+    if (!connection.workspaceScope) {throw new Error('Sign in to the Workspace before model discovery.')}
+    return modelDiscoveryOwnerKey(ownerConnectionId, connection)!
+  }
   if (id) {return id}
   if (connection?.mode === 'local') {return 'local'}
   if (connection?.mode !== 'remote' || !connection.baseUrl || !globalThis.crypto?.subtle) {

@@ -34,3 +34,18 @@ describe('model discovery connection scope', () => {
     expect(modelDiscoveryOwnerKey(null, first)).not.toContain('first.example')
   })
 })
+
+it('partitions the same Cloud connection by current server identity and refuses signed-out discovery', async () => {
+  const cloud = {baseUrl:'https://cloud.example',connectionId:'cloud',transport:'semantier-workspace-http' as const,workspaceScope:{userId:'a',workspaceId:'wa',organizationId:'org'}}
+  const other = {...cloud,workspaceScope:{...cloud.workspaceScope,userId:'b',workspaceId:'wb'}}
+  expect(modelDiscoveryOwnerKey(null,cloud)).not.toBe(modelDiscoveryOwnerKey(null,{...cloud,baseUrl:'https://other.example'}))
+  expect(modelDiscoveryOwnerKey(null,cloud)).not.toBe(modelDiscoveryOwnerKey(null,other))
+  expect(await modelDiscoveryScope(null,cloud)).not.toBe(await modelDiscoveryScope(null,other))
+  await expect(modelDiscoveryScope(null,{...cloud,workspaceScope:undefined})).rejects.toThrow(/Sign in/)
+})
+
+it('keeps a different Native tile owner independent of the ambient Cloud account', async () => {
+ const cloud={baseUrl:'https://cloud.example',connectionId:'cloud',transport:'semantier-workspace-http' as const,workspaceScope:{userId:'a',workspaceId:'wa',organizationId:'org'}}
+ expect(modelDiscoveryOwnerKey('native-owner',cloud)).toBe('native-owner')
+ expect(await modelDiscoveryScope('native-owner',cloud)).toBe('native-owner')
+})

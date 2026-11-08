@@ -1,7 +1,7 @@
 import {
   type ConnectionState,
-  GatewayEventHub,
   type GatewayEvent,
+  GatewayEventHub,
   type GatewayEventName,
   JsonRpcGatewayClient,
   type ServerRequest,
@@ -10,8 +10,9 @@ import {
 import { map, type MapStore } from 'nanostores'
 
 import type { HermesApiRequest } from '@/global'
+
+import { assertWorkspaceScope, type WorkspaceMainContext, workspaceTranscript } from '../../electron/semantier-workspace-client'
 import type { WorkspaceScope } from '../../electron/semantier-workspace-ipc'
-import { assertWorkspaceScope, workspaceTranscript, type WorkspaceMainContext } from '../../electron/semantier-workspace-client'
 
 import { CANONICAL_GATEWAY_PROTOCOL, CanonicalDesktopProtocol, canonicalProfile, canonicalSessionKey, recordCanonicalOwner, splitRewindSubmit } from './canonical-protocol'
 
@@ -85,6 +86,7 @@ const workspaceReadScopes = new Map<string, { scope: WorkspaceScope; origin: str
 
 export class HermesGateway extends JsonRpcGatewayClient {
   private workspaceConnection: { origin: string; scope: WorkspaceScope; connectionId?: string; profile?: string } | null = null
+  private workspaceDial: Promise<void> | null = null
   private workspaceState: ConnectionState = 'idle'
   private readonly workspaceStates = new Set<(state: ConnectionState) => void>()
   private readonly workspaceEvents = new GatewayEventHub()
@@ -179,6 +181,24 @@ export class HermesGateway extends JsonRpcGatewayClient {
 
   /** HTTP readiness is an authenticated resource check, never a gateway.ready handshake. */
   async connectWorkspace(origin: string, scope: WorkspaceScope, connectionId?: string, profile = 'default'): Promise<void> {
+    const current = this.workspaceConnection
+    const same = current?.origin === origin && current.connectionId === connectionId && current.profile === profile &&
+      current.scope.userId === scope.userId && current.scope.workspaceId === scope.workspaceId &&
+      current.scope.organizationId === scope.organizationId
+    if (same && this.workspaceState === 'connecting' && this.workspaceDial) {return this.workspaceDial}
+    if (same && this.workspaceState === 'open') {
+      const generation = this.connectionGeneration
+      const identity = await window.hermesDesktop.workspace!.identity(origin)
+      this.requireConnectionGeneration(generation)
+      assertWorkspaceScope(identity, scope)
+      return
+    }
+    const pending = this.openWorkspace(origin, scope, connectionId, profile)
+    this.workspaceDial = pending
+    try {await pending} finally {if (this.workspaceDial === pending) {this.workspaceDial = null}}
+  }
+
+  private async openWorkspace(origin: string, scope: WorkspaceScope, connectionId?: string, profile = 'default'): Promise<void> {
     this.stopWorkspacePoll()
     this.workspacePollDelay = 2_000
     this.connectionGeneration++
@@ -223,6 +243,17 @@ export class HermesGateway extends JsonRpcGatewayClient {
     const bridge = window.hermesDesktop.workspace!
     signal?.throwIfAborted()
     const sessionId = String(params.session_id || params.session_key || '')
+    if (method === 'model.options') {
+      if (params.query_only !== true || typeof params.query_scope !== 'string' || !params.query_scope.trim()) {
+        throw new Error('Cloud model discovery requires the query-only source contract.')
+      }
+      const query = new URLSearchParams({query_only:'1',query_scope:params.query_scope})
+      if (params.refresh === true) {query.set('refresh','1')}
+      const result = await hermesApiAs<T>({connectionId:connection.connectionId || null,profile:connection.profile || 'default'},
+        {path:'/api/model/options?' + query})
+      this.requireConnectionGeneration(generation)
+      return result
+    }
     if (method === 'session.bind_original') {
       if (!bridge.bindNativeContext || (connection.profile || 'default') === 'default') {
         throw new Error('Native original-chat binding requires its Cloud owner adapter.')
