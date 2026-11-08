@@ -814,7 +814,7 @@ function Build-DesktopCheck {
 import fs from 'node:fs';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
-const [source,output,nativeDeps,commit]=process.argv.slice(1);
+const [source,output,nativeDeps,commit,tooling]=process.argv.slice(1);
 const stamps=await import(pathToFileURL(path.join(source,'apps/desktop/scripts/write-build-stamp.mjs')));
 const resolved=stamps.resolveStamp({repoRoot:source});
 if(resolved.commit!==commit || resolved.dirty)throw Error('Desktop source differs from the requested clean commit');
@@ -824,13 +824,13 @@ const app=path.join(output,'apps/desktop');
 const {buildDesktop}=await import(pathToFileURL(path.join(source,'scripts/build/desktop.mjs')));
 await buildDesktop({source,out:path.join(app,'dist'),icons:source,stamp:path.join(inputs,'install-stamp.json'),nativeDeps});
 fs.copyFileSync(path.join(source,'apps/desktop/package.json'),path.join(app,'package.json'));
-const {checkDesktopLaunch}=await import(pathToFileURL(path.join(source,'apps/desktop/scripts/assert-dist-built.mjs')));
+const {checkDesktopLaunch}=await import(pathToFileURL(path.join(tooling,'apps/desktop/scripts/assert-dist-built.mjs')));
 const launch=checkDesktopLaunch(path.join(app,'dist'));if(!launch.ok)throw Error(launch.error);
 fs.writeFileSync(path.join(output,'result.json'),JSON.stringify({result:'DESKTOP_CHECK_BUILT',commit,appRoot:app,stamp:built,scope:'Desktop UI check; full bundled-runtime qualification remains separate',signing:'NOT_RUN',installation:'NOT_RUN',publication:'NOT_RUN'},null,2));
 '@
   Report-Status 'Compiling the same Desktop source with prepared native inputs; no runtime preparation, package signing or installation.'
   Push-Location -LiteralPath $BuildSource
-  try { Run $Node @('--input-type=module','-e',$code,$BuildSource,$Output,$nativeInputs,$Commit) }
+  try { Run $Node @('--input-type=module','-e',$code,$BuildSource,$Output,$nativeInputs,$Commit,$Repository) }
   finally { Pop-Location }
   Report-Status 'Desktop check build complete; this is not full bundled application qualification.'
 }
