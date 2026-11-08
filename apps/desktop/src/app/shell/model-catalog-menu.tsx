@@ -1,4 +1,3 @@
-import { modelProviderName } from '@/i18n/model-service'
 import type { ModelOptionProvider, ModelOptionsResult, ModelPricing } from '@hermes/shared'
 import { DEFAULT_REASONING_EFFORT } from '@hermes/shared'
 import { useStore } from '@nanostores/react'
@@ -36,6 +35,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Tip, TipHintLabel } from '@/components/ui/tooltip'
 import type { HermesGateway } from '@/hermes'
 import { useI18n } from '@/i18n'
+import { modelProviderName } from '@/i18n/model-service'
 import { triggerHaptic } from '@/lib/haptics'
 import { isSubmitEnter } from '@/lib/ime'
 import { modelDiscoveryOwnerKey } from '@/lib/model-discovery-scope'
@@ -958,14 +958,17 @@ function ModelFamilyRow({
 
   const isCurrent = activeId !== null
   const { name, tag } = modelDisplayParts(family.id)
+
   const displayCollision = (provider.models ?? []).some(model => {
     if (model === family.id) {
       return false
     }
+
     const other = modelDisplayParts(model)
 
     return other.name === name && other.tag === tag
   })
+
   const label = displayCollision ? family.id : name
   const decoration = useModelMenuRowDecoration({ label, model: family.id, provider: provider.slug })
   const caps = provider.capabilities?.[family.id]

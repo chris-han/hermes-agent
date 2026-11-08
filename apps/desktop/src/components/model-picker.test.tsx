@@ -12,11 +12,13 @@ import { ModelPickerDialog } from './model-picker'
 
 vi.mock('@/lib/model-options', async importOriginal => {
   const request = vi.fn()
+
   return {
     ...(await importOriginal<Record<string, unknown>>()),
     requestModelOptions: request,
     requestDiscoveredModelOptions: async (...args: unknown[]) => {
       const options = await request(...args)
+
       return { ...options, providers: (options.providers ?? []).map((provider: object) => ({
         ...provider, discovery_state: 'fresh', discovery_source_id: 'fixture', discovery_fetched_at: '2026-11-07T00:00:00+00:00'
       })) }

@@ -64,6 +64,7 @@ function renderPanel(onSelectModel = vi.fn(), onFollowDefaultModel?: () => void)
   const requestGateway = vi.fn(async (method: string) => {
     if (method === 'model.options') {
       const options = await getGlobalModelOptions()
+
       return { ...options, discovery_contract: 'provider-query-v1', providers: (options.providers ?? []).map((provider: Record<string, unknown>) => ({
         ...provider, discovery_state: provider.discovery_state ?? 'fresh', discovery_source_id: 'fixture-source', discovery_fetched_at: '2026-11-07T00:00:00+00:00'
       })) }

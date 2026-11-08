@@ -1060,6 +1060,7 @@ export function useGatewayBoot({
         if (normalizeProfileKey($activeGatewayProfile.get()) !== key) {
           $activeGatewayProfile.set(key)
         }
+
         if (bootCompleted && activeGateway()?.connectionState === 'open') {
           void refreshModelsOnConnectionReady(activeGatewayConnectionId(), key, $connection.get())
         }
@@ -1300,6 +1301,7 @@ export function useGatewayBoot({
     // they'd keep streaming ghost events); a materially edited one is
     // disposed AND re-dialed so its sockets target the new endpoint.
     let signedOutWorkspaceConnectionId: null | string = null
+
     const offConnectionsChanged = desktop.connections?.onChanged?.(payload => {
       if (!payload || typeof payload.connectionId !== 'string') {
         return
@@ -1310,12 +1312,15 @@ export function useGatewayBoot({
         const ownsView = previous?.connectionId === payload.connectionId || signedOutWorkspaceConnectionId === payload.connectionId
         disposeSecondariesForConnection(payload.connectionId)
         forgetWorkspaceReadScope(payload.connectionId)
+
         const catalogScope = {predicate:(query: {queryKey: readonly unknown[]}) => {
           const key = query.queryKey
           const owner = key[3] === 'owner' ? key[4] : null
+
           return key[0] === 'model-options' && typeof owner === 'string' &&
             (owner === payload.connectionId || owner.startsWith(payload.connectionId + ':'))
         }}
+
         void queryClient.cancelQueries(catalogScope)
         queryClient.removeQueries(catalogScope)
         forgetSessionOwnerHintsForConnection(payload.connectionId)
@@ -1325,24 +1330,30 @@ export function useGatewayBoot({
         profiles.delete(payload.connectionId)
         $profilesByConnection.set(profiles)
         forgetFleetRosterConnection(payload.connectionId)
+
         if (ownsView) {
           signedOutWorkspaceConnectionId = payload.authenticated ? null : payload.connectionId
           const token = beginGatewaySwitch()
+
           try {
             clearReconnectTimer()
             clearBootRetryTimer()
             gateway.close()
             $profiles.set([])
             $activeGatewayProfile.set('default')
+
             if (previous?.transport === 'semantier-workspace-http') {
               const signedOut = { ...previous, profile: 'default', workspaceScope: undefined }
               rescopeConnectionScopedStores(signedOut)
               publish(signedOut)
             }
+
             window.location.hash = '#/'
           } finally { endGatewaySwitch(token) }
+
           if (payload.authenticated) { void softSwitch() }
         }
+
         return
       }
 
@@ -1519,11 +1530,13 @@ export function useGatewayBoot({
           await callbacksRef.current.refreshSessions()
           // Native local-runtime setup does not own an authenticated Cloud account.
           markOnboardingDecided()
+
           if (!cancelled) {
             completeDesktopBoot()
             bootCompleted = true
             bootRetryAttempt = 0
           }
+
           return
         }
 

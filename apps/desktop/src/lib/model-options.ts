@@ -7,6 +7,7 @@ import { normalize } from '@/lib/text'
 /** Discovery is a candidate source; an independent entitlement, when supplied, still applies. */
 export function providerSelectableModels(provider?: ModelOptionProvider): string[] {
   if (!provider || provider.authenticated === false) {return []}
+
   if (provider.discovery_state != null) {
     if (!provider.discovery_source_id || !['fresh', 'cached', 'stale'].includes(provider.discovery_state)) {return []}
   } else if (provider.eligible_models == null) {
@@ -15,6 +16,7 @@ export function providerSelectableModels(provider?: ModelOptionProvider): string
 
   const eligible = provider.eligible_models == null ? null : new Set(provider.eligible_models)
   const unavailable = new Set((provider.unavailable_models ?? []).map(normalize))
+
   return (provider.models ?? []).filter(model => (!eligible || eligible.has(model)) && !unavailable.has(normalize(model)))
 }
 
@@ -148,14 +150,19 @@ export async function requestDiscoveredModelOptions({
       ownerConnectionId !== connection?.connectionId) {
     throw new Error('The model discovery owner is not connected.')
   }
+
   const queryScope = await modelDiscoveryScope(ownerConnectionId, connection)
+
   if (connection?.transport === 'semantier-workspace-http' &&
       (!ownerConnectionId || ownerConnectionId === connection.connectionId)) {
     const result = await getGlobalModelOptions({explicitOnly:true, queryOnly:true, queryScope, refresh:request.refresh},
       {connectionId:ownerConnectionId || connection.connectionId, profile:request.profile || 'default'})
+
     if (!hasVerifiedProvenance(result)) {throw new Error('The Workspace provider discovery contract is unavailable.')}
+
     return result
   }
+
   return requestModelOptions({ ...request, queryOnly: true, queryScope })
 }
 
@@ -176,14 +183,18 @@ function hasSelectableModels(options: ModelOptionsResult | null | undefined): bo
 
 function hasVerifiedProvenance(options: ModelOptionsResult): boolean {
   if (options.discovery_contract !== 'provider-query-v1' || !Array.isArray(options.providers)) {return false}
+
   return options.providers.every(provider => {
     if (!provider.slug || !Array.isArray(provider.models) || provider.models.some(model => typeof model !== 'string' || !model)) {return false}
     const state = provider.discovery_state
+
     if (state === 'fresh' || state === 'cached' || state === 'stale') {
       const timestamp = provider.discovery_fetched_at
+
       return !!provider.discovery_source_id && typeof timestamp === 'string' &&
         /(?:Z|\+00:00)$/.test(timestamp) && !Number.isNaN(Date.parse(timestamp))
     }
+
     return (state === 'missing' || state === 'error' || state === 'unsupported') &&
       provider.models.length === 0 && !(provider.eligible_models?.length)
   })
@@ -214,20 +225,29 @@ export async function requestModelOptions({
 
   if (queryOnly) {
     const scope = queryScope?.trim()
+
     if (!scope) {
       throw new Error('A connection scope is required for provider model discovery.')
     }
+
     const params: Record<string, unknown> = { query_only: true, query_scope: scope }
+
     if (sessionId) {params.session_id = sessionId}
+
     if (refresh) {params.refresh = true}
+
     if (explicitOnly) {params.explicit_only = true}
+
     if (profile?.trim()) {params.profile = profile.trim()}
+
     const result = dispatch
       ? await dispatch<ModelOptionsResult>('model.options', params)
       : await getGlobalModelOptions({ explicitOnly, queryOnly: true, queryScope: scope, refresh }, profile)
+
     if (!hasVerifiedProvenance(result)) {
       throw new Error('The connected provider does not support verified model discovery.')
     }
+
     return result
   }
 

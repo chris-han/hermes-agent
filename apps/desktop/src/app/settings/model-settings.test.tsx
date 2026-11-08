@@ -67,8 +67,10 @@ vi.mock('@/lib/model-options', async importOriginal => ({
   requestDiscoveredModelOptions: async (opts: { profile?: string; refresh?: boolean }) => {
     const profile = opts.profile === 'default' ? undefined : opts.profile
     const options = await getGlobalModelOptions(opts.refresh ? { refresh: true } : undefined, profile)
+
     if (options.model !== undefined && options.provider !== undefined) {return options}
     const info = await getGlobalModelInfo(profile)
+
     return { model: info.model, provider: info.provider, ...options }
   }
 }))
@@ -145,10 +147,12 @@ describe('ModelSettings profile scope', () => {
     expect((await screen.findAllByRole('combobox'))[0].textContent).toContain('Private A')
     await act(async () => { profileSwitchHandler?.() })
     const triggers = screen.queryAllByRole('combobox')
+
     if (triggers.length) {
       fireEvent.click(triggers[0])
       expect(screen.queryByRole('option', { name: 'Private A' })).toBeNull()
     }
+
     await act(async () => { finish({ providers: [] }) })
   })
 
@@ -181,6 +185,7 @@ describe('ModelSettings profile scope', () => {
     await act(async () => { failB(new Error('catalog unavailable')) })
     expect(await screen.findByText(/catalog unavailable/)).toBeTruthy()
     const triggers = screen.queryAllByRole('combobox')
+
     if (triggers.length) {
       fireEvent.click(triggers[0])
       expect(screen.queryByRole('option', { name: 'Private A' })).toBeNull()

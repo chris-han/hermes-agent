@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest'
 
-import { HermesGateway, hermesApi, setApiRequestConnection, forgetWorkspaceReadScope } from './client'
+import { forgetWorkspaceReadScope, hermesApi, HermesGateway, setApiRequestConnection } from './client'
 
 const scope = { userId: 'a', workspaceId: 'wa', organizationId: 'org' }
 const identity = { authenticated: true, user: { user_id: 'a', workspace_id: 'wa' }, workspace: { id: 'wa' }, organization_id: 'org' }
@@ -62,6 +62,7 @@ it('uses server-owned Cloud admission for readiness and a real context read for 
 it('reads the Native Winman roster through the explicit account-scoped HTTP owner', async () => {
   const roster = { profiles: [{ name: 'winman-a', runtime_bot_id: 'bot-a',
     canonical_session: { id: 'canonical-a' } }], bot_mode_protocol: true }
+
   const api = vi.fn().mockResolvedValue(roster)
   Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: {
     api, workspace: { identity: vi.fn().mockResolvedValue(identity) }
@@ -78,6 +79,7 @@ it('reads the Native Winman roster through the explicit account-scoped HTTP owne
 it('resolves Bot Chat by its server title registry only for the selected Native profile', async () => {
   const api = vi.fn().mockResolvedValue({ profiles: [{ name: 'winman-a',
     canonical_session: { id: 'canonical-a', resolved_id: 'tip-a', title: 'Bot Chat', message_count: 7 } }] })
+
   Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: {
     api, workspace: { identity: vi.fn().mockResolvedValue(identity) }
   } })
@@ -152,6 +154,7 @@ it('recovers changed history on network restoration without sending a turn and s
   Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: { workspace: { identity: vi.fn().mockResolvedValue(identity), history, send } } })
   const gateway = new HermesGateway(), changed = vi.fn()
   gateway.on('session.replay_gap', changed)
+
   try {
     await gateway.connectWorkspace('https://cloud.example', scope)
     await gateway.request('session.resume', { session_id: 'original' })
@@ -175,11 +178,14 @@ it('recovers changed history on network restoration without sending a turn and s
 it('discards a pending recovery read after the Cloud owner closes', async () => {
   vi.useFakeTimers()
   let resolve!: (value: unknown) => void
+
   const history = vi.fn().mockResolvedValueOnce({ sessionId: 'original', messages: [] })
     .mockImplementationOnce(() => new Promise(done => { resolve = done }))
+
   Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: { workspace: { identity: vi.fn().mockResolvedValue(identity), history } } })
   const gateway = new HermesGateway(), changed = vi.fn()
   gateway.on('session.replay_gap', changed)
+
   try {
     await gateway.connectWorkspace('https://cloud.example', scope)
     await gateway.request('session.resume', { session_id: 'original' })
@@ -196,11 +202,14 @@ it('discards a pending recovery read after the Cloud owner closes', async () => 
 
 it('uses the server cursor for idle reads and periodically recovers an authoritative snapshot', async () => {
   vi.useFakeTimers()
+
   const history = vi.fn().mockResolvedValueOnce({ sessionId: 'original', nextCursor: '218', messages: [{ messageId: '218', role: 'assistant', text: 'last' }] })
     .mockResolvedValue({ sessionId: 'original', nextCursor: '218', messages: [] })
+
   Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: { workspace: { identity: vi.fn().mockResolvedValue(identity), history } } })
   const gateway = new HermesGateway(), changed = vi.fn()
   gateway.on('session.replay_gap', changed)
+
   try {
     await gateway.connectWorkspace('https://cloud.example', scope)
     await gateway.request('session.resume', { session_id: 'original' })
@@ -220,6 +229,7 @@ it('creates only the authenticated Native Bot Chat through its owner adapter', a
   const api = vi.fn().mockResolvedValue({ profiles: [{ name: 'winman-a' }] })
   Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: { api, workspace: { identity: vi.fn().mockResolvedValue(identity), ensureWinmanChat } } })
   const gateway = new HermesGateway()
+
   try {
     await gateway.connectWorkspace('https://cloud.example', scope, 'cloud-a', 'winman-a')
     await expect(gateway.request('session.create', { profile: 'foreign', title: 'Bot Chat' })).rejects.toThrow('profile')
@@ -309,6 +319,7 @@ it('acknowledges Main completion with the retained request and actual server use
     {messageId:'255',role:'user',text:'Acknowledge once',metadata:{durable_request_id:'request-main'}},
     {messageId:'256',role:'assistant',text:'Acknowledged'}
   ]})
+
   Object.defineProperty(window,'hermesDesktop',{configurable:true,value:{workspace:{identity:vi.fn().mockResolvedValue(identity),send}}})
   const gateway=new HermesGateway()
   await gateway.connectWorkspace('https://cloud.example',scope,'cloud-a')

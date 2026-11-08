@@ -29,6 +29,7 @@ export function workspace(origin: string) {
   const canonicalOrigin = new URL(origin).origin
   const partition = 'persist:semantier-workspace-' + createHash('sha256').update(canonicalOrigin).digest('hex')
   const owned = session.fromPartition(partition)
+
   return { owned, origin: canonicalOrigin, client: createSemantierWorkspaceClient(canonicalOrigin, owned.fetch.bind(owned)) }
 }
 
@@ -42,28 +43,36 @@ export function registerSemantierWorkspaceIpc(onAccountChanged?: (origin: string
   })
   ipcMain.handle('hermes:workspace:login', async (_event, origin: string) => {
     const target = workspace(origin)
+
     const win = new BrowserWindow({
       width: 520, height: 720, title: 'Semantier Cloud',
       webPreferences: { session: target.owned, sandbox: true, contextIsolation: true, nodeIntegration: false }
     })
+
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
     win.webContents.on('will-navigate', (event, url) => {
       if (new URL(url).origin !== target.origin) { event.preventDefault() }
     })
+
     try {
       await win.loadURL(target.origin)
       const deadline = Date.now() + 120_000
+
       while (!win.isDestroyed() && Date.now() < deadline) {
         try {
           const identity = await target.client.identity()
+
           if (identity.authenticated) {
             await target.owned.cookies.flushStore()
             onAccountChanged?.(target.origin, true)
+
             return identity
           }
         } catch { /* The hosted sign-in owns authentication; wait for its cookie. */ }
+
         await new Promise(resolve => setTimeout(resolve, 500))
       }
+
       throw new Error('Semantier Cloud sign-in was closed or timed out.')
     } finally {
       if (!win.isDestroyed()) { win.close() }
@@ -74,6 +83,7 @@ export function registerSemantierWorkspaceIpc(onAccountChanged?: (origin: string
     assertWorkspaceScope(await client.identity(), scope)
     const result = await client.ensureWinmanChat()
     assertWorkspaceScope(await client.identity(), scope)
+
     return result
   })
   ipcMain.handle('hermes:workspace:create-session', async (_event, origin: string, scope: WorkspaceScope, label: string, requestIdentity: string) => {
@@ -82,6 +92,7 @@ export function registerSemantierWorkspaceIpc(onAccountChanged?: (origin: string
     const created = await client.createSession(label, requestIdentity)
     const history = await client.history(created.sessionKey)
     assertWorkspaceScope(await client.identity(), scope)
+
     return history
   })
   ipcMain.handle('hermes:workspace:sessions', async (_event, origin: string, scope: WorkspaceScope) => {
@@ -89,6 +100,7 @@ export function registerSemantierWorkspaceIpc(onAccountChanged?: (origin: string
     assertWorkspaceScope(await client.identity(), scope)
     const result = await client.sessions()
     assertWorkspaceScope(await client.identity(), scope)
+
     return result
   })
   ipcMain.handle('hermes:workspace:history', async (_event, origin: string, scope: WorkspaceScope, sessionId: string, afterId?: string) => {
@@ -96,6 +108,7 @@ export function registerSemantierWorkspaceIpc(onAccountChanged?: (origin: string
     assertWorkspaceScope(await client.identity(), scope)
     const result = await client.history(sessionId, ...(afterId === undefined ? [] : [afterId]))
     assertWorkspaceScope(await client.identity(), scope)
+
     return result
   })
   ipcMain.handle('hermes:workspace:native-context', async (_event, origin: string, scope: WorkspaceScope, sessionId: string) => {
@@ -103,6 +116,7 @@ export function registerSemantierWorkspaceIpc(onAccountChanged?: (origin: string
     assertWorkspaceScope(await client.identity(), scope)
     const result = await client.nativeContext(sessionId)
     assertWorkspaceScope(await client.identity(), scope)
+
     return result
   })
   ipcMain.handle('hermes:workspace:bind-native-context', async (_event, origin: string, scope: WorkspaceScope, sessionId: string, originalSessionKey: string) => {
@@ -110,6 +124,7 @@ export function registerSemantierWorkspaceIpc(onAccountChanged?: (origin: string
     assertWorkspaceScope(await client.identity(), scope)
     const result = await client.bindNativeContext(sessionId, originalSessionKey)
     assertWorkspaceScope(await client.identity(), scope)
+
     return result
   })
   ipcMain.handle('hermes:workspace:send-native', async (_event, origin: string, scope: WorkspaceScope, sessionId: string, message: string, requestId: string, bindingId: string) => {
@@ -118,6 +133,7 @@ export function registerSemantierWorkspaceIpc(onAccountChanged?: (origin: string
     const admitted = await client.sendNative(sessionId, message, requestId, bindingId)
     const result = await requireNativeCompletion(client, sessionId, admitted.receipt.admission_id)
     assertWorkspaceScope(await client.identity(), scope)
+
     return result
   })
   ipcMain.handle('hermes:workspace:native-history', async (_event, origin: string, scope: WorkspaceScope, sessionId: string) => {
@@ -125,6 +141,7 @@ export function registerSemantierWorkspaceIpc(onAccountChanged?: (origin: string
     assertWorkspaceScope(await client.identity(), scope)
     const result = await client.nativeHistory(sessionId)
     assertWorkspaceScope(await client.identity(), scope)
+
     return result
   })
   ipcMain.handle('hermes:workspace:send', async (_event, origin: string, scope: WorkspaceScope, sessionId: string, message: string, requestIdentity: string) => {
@@ -136,6 +153,7 @@ export function registerSemantierWorkspaceIpc(onAccountChanged?: (origin: string
     assertWorkspaceScope(await client.identity(), scope)
     const result = await client.history(sessionId)
     assertWorkspaceScope(await client.identity(), scope)
+
     return result
   })
 }
