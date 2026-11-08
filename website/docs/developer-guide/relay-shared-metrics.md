@@ -1,3 +1,17 @@
+> **Semantier distribution:** Windows Desktop and CLI usage-statistics sharing goes to
+> `https://cloud.semantier.com/v1/telemetry`, with sharing disabled by default.
+> Consent from a prior Nous offer is not Semantier consent. Prior declines stay declined.
+> A local recipient boundary excludes historical queued packages even when their periods
+> fit old, closed consent windows. New sharing covers only complete post-consent periods.
+> The v4 wire format is unchanged; the Runtime validates the full pinned schema and
+> commits accepted packages to PostgreSQL with package-ID/hash deduplication.
+>
+> **Documentation dependency:** No verified public Semantier-owned shared-metrics
+> privacy explanation is available. Desktop and CLI therefore do not link the upstream
+> Nous guide as Semantier's privacy policy. Publish and review that explanation before
+> enabling the external details link. The upstream design history below describes
+> Hermes/Nous behavior and storage; it is not Semantier's privacy policy.
+
 ---
 title: "Relay Shared Metrics"
 description: "NeMo Relay shared metrics: what is exported, consent and retention, staging validation"

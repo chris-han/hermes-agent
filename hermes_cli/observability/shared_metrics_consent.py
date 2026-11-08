@@ -3,9 +3,8 @@
 Every surface reads and writes the same two keys in the profile's config.yaml:
 ``telemetry.shared_metrics.enabled`` (collect locally) and ``.send`` (upload daily). The question
 counts as answered once either key is written explicitly; the shipped defaults are not an answer.
-Every answer also writes ``offer_version``. A "No thanks" without it predates the type-ahead fix
-(an Enter pressed during startup could save it unseen), so that profile is asked once more, with
-the reason, and any response (Esc or dismiss included) settles it for good.
+Every answer also writes ``offer_version``. Prior sharing consent must be renewed when the
+recipient changes to Semantier; prior declines remain settled.
 Desktop paints the offer as a composer strip (``consent-strip.tsx`` over the ``shared_metrics.*``
 RPCs). The terminal asks at the end of every ``hermes setup`` flow and, for a profile that never
 answered, once before an interactive ``hermes`` / ``hermes --tui`` chat (which also covers the
@@ -24,25 +23,24 @@ logger = logging.getLogger(__name__)
 
 # (label, enabled, send): the Desktop strip's three equal answers, in its order.
 OFFER_CHOICES = (
-    ("Collect and send to Nous", True, True),
+    ("Collect and send to Semantier", True, True),
     ("Collect locally only", True, False),
     ("No thanks", False, False),
 )
 _NO_THANKS = len(OFFER_CHOICES) - 1
-DOCS_URL = "https://hermes-agent.nousresearch.com/docs/developer-guide/relay-shared-metrics"
+DOCS_URL = None  # No verified public Semantier shared-metrics privacy page yet.
 _OFFER_DESCRIPTION = "\n".join((
     "Shared metrics are bounded counters: activity, outcomes, error classes (with a",
     "fixed-list reason when a memory write, compression, update or install fails),",
     "model routes, token totals, feature use and coarse machine facts. A failed or",
     "finished fresh install is noted on this machine and counted only if you opt in.",
     "Never prompts, files, paths,",
-    "setting values or error text. Collection stays on this machine; sending to Nous is",
+    "setting values or error text. Collection stays on this machine; sending to Semantier is",
     "a separate choice, and apart from that install note, data from before you opt in",
     "is never sent.",
-    f"Details: {DOCS_URL}",
     "Change it any time: hermes setup telemetry",
 ))
-_REASK_NOTE = "Asking once more: an earlier version could save \"No thanks\" before you saw this question."
+_REASK_NOTE = "Please decide again: usage statistics now go to Semantier instead of Nous."
 
 
 def _section(cfg: Any) -> dict:
@@ -51,21 +49,22 @@ def _section(cfg: Any) -> dict:
     return section if isinstance(section, dict) else {}
 
 
-# Bumped only when every earlier answer must be asked again; 2 = after the type-ahead fix.
-OFFER_VERSION = 2
+# Bumped for recipient change: previous consent to Nous is not consent to Semantier.
+OFFER_VERSION = 3
 
 
 def consent_state(raw_cfg: Any) -> dict:
     """``{enabled, send, decided, reask}`` from a RAW config mapping (no defaults merged). ``reask``:
-    an "off" answer from before ``OFFER_VERSION`` that may never have been seen; it reads undecided
-    so every surface offers it once more. An opt-in was always a deliberate pick and stays."""
+    legacy sharing must be authorized again for Semantier; prior declines stay settled."""
     section = _section(raw_cfg)
     enabled = section.get("enabled") is True
     answered = "enabled" in section or "send" in section
-    reask = answered and not enabled and section.get("offer_version") != OFFER_VERSION
+    recipient_changed = section.get("send") is True and section.get("offer_version") != OFFER_VERSION
+    # Preserve prior declines; only re-ask profiles that had authorized legacy sharing.
+    reask = answered and recipient_changed
     return {
         "enabled": enabled,
-        "send": enabled and section.get("send") is True,
+        "send": enabled and section.get("send") is True and not recipient_changed,
         "decided": answered and not reask,
         "reask": reask,
     }
@@ -105,6 +104,11 @@ def save_consent(enabled: bool, send: bool, config: dict | None = None) -> None:
     send = enabled and send
     config_path = get_config_path()
     user_config = require_readable_config_before_write(config_path)
+    # A prior opt-in to Nous is not authorization to send to Semantier.
+    # Close the old consent interval before writing a new recipient opt-in.
+    old_section = _section(user_config)
+    if old_section.get("send") is True and old_section.get("offer_version") != OFFER_VERSION:
+        _record_send_consent_change(enabled=False)
     set_answer(user_config, enabled, send)
     _write_user_config(config_path, user_config)
     if config is not None:
@@ -142,7 +146,7 @@ def offer_consent(config: dict | None = None, *, reask: bool = False) -> bool:
         return False
     _, enabled, send = OFFER_CHOICES[idx]
     save_consent(enabled, send, config)
-    outcome = "collected and sent to Nous" if send else "collected on this machine only" if enabled else "off"
+    outcome = "collected and sent to Semantier" if send else "collected on this machine only" if enabled else "off"
     print_success(f"Shared metrics {outcome}. Change it any time with `hermes setup telemetry`.")
     return True
 

@@ -6,6 +6,7 @@ import type { QuickModelOption } from '@/app/chat/composer/types'
 import type { ClientSessionState } from '@/app/types'
 import { formatRefValue } from '@/components/assistant-ui/directive-text'
 import { type ChatMessage, type ChatMessagePart, chatMessageText, textPart } from '@/lib/chat-messages'
+import { providerSelectableModels } from '@/lib/model-options'
 import { foldPersonalityName } from '@/lib/personalities'
 import type { ComposerAttachment } from '@/store/composer'
 import type { SessionInfo } from '@/types/hermes'
@@ -383,12 +384,8 @@ export function quickModelOptions(
     options.push({ provider, providerName, model })
   }
 
-  if (currentProvider && currentModel) {
-    add(currentProvider, currentProvider, currentModel)
-  }
-
   for (const provider of providers) {
-    const models = [...(provider.models ?? [])].sort((a, b) => {
+    const models = [...providerSelectableModels(provider)].sort((a, b) => {
       if (provider.slug === currentProvider && a === currentModel) {
         return -1
       }

@@ -153,9 +153,9 @@ export function SharedMetricsConsentDialog({ enabled, profile, requestGateway }:
 
         <div className="grid gap-2 text-[0.8125rem] leading-5 text-(--ui-text-secondary)">
           <p>{copy.sending}</p>
-          <div>
-            <DocsLink href={SHARED_METRICS_DOCS_URL}>{copy.readDocs}</DocsLink>
-          </div>
+          {SHARED_METRICS_DOCS_URL ? (
+            <div><DocsLink href={SHARED_METRICS_DOCS_URL}>{copy.readDocs}</DocsLink></div>
+          ) : null}
         </div>
 
         <div className="grid gap-2">

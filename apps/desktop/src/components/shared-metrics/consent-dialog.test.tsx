@@ -77,6 +77,8 @@ describe('SharedMetricsConsentDialog', () => {
 
     $sharedMetricsDetailsOpen.set(true)
     await screen.findByRole('dialog')
+    expect(screen.getByRole('button', { name: 'Share with Semantier' })).toBeTruthy()
+    expect(screen.queryByRole('link', { name: copy.readDocs })).toBeNull()
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(calls.some(c => c.method === 'shared_metrics.set')).toBe(false)

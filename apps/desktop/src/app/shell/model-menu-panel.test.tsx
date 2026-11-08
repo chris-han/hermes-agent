@@ -63,7 +63,10 @@ function renderPanel(onSelectModel = vi.fn(), onFollowDefaultModel?: () => void)
 
   const requestGateway = vi.fn(async (method: string) => {
     if (method === 'model.options') {
-      return getGlobalModelOptions()
+      const options = await getGlobalModelOptions()
+      return { ...options, discovery_contract: 'provider-query-v1', providers: (options.providers ?? []).map((provider: Record<string, unknown>) => ({
+        ...provider, discovery_state: provider.discovery_state ?? 'fresh', discovery_source_id: 'fixture-source', discovery_fetched_at: '2026-11-07T00:00:00+00:00'
+      })) }
     }
 
     throw new Error(`unexpected gateway method: ${method}`)
@@ -76,6 +79,7 @@ function renderPanel(onSelectModel = vi.fn(), onFollowDefaultModel?: () => void)
           <ModelMenuPanel
             onFollowDefaultModel={onFollowDefaultModel}
             onSelectModel={onSelectModel}
+            ownerConnectionId="test"
             requestGateway={requestGateway as never}
           />
         </DropdownMenuContent>
@@ -152,14 +156,13 @@ describe('ModelMenuPanel current selection', () => {
     await vi.waitFor(() => expect(onSelectModel).toHaveBeenCalledWith({ model: 'model-a', provider: 'case-fixture', sessionId: 'runtime-1' }))
   })
 
-  it('does not offer unknown-eligibility models in the composer', async () => {
+  it('does not offer models without a verified provider response', async () => {
     getGlobalModelOptions.mockResolvedValue({ providers: [{
-      slug: 'unknown', name: 'Unknown provider', models: ['unproven-model']
+      slug: 'unknown', name: 'Unknown provider', models: [], discovery_state: 'missing'
     }, { slug: 'known', name: 'Known provider', models: ['verified-model'], eligible_models: ['verified-model'] }] })
     const { content, onSelectModel } = renderPanel()
     const input = screen.getByRole('textbox', { name: 'Search models' })
     await content.findByText('Known provider')
-    expect(content.queryByText('Unknown provider')).toBeNull()
     fireEvent.change(input, { target: { value: 'unproven-model' } })
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(content.queryByText(/unproven.model/i)).toBeNull()

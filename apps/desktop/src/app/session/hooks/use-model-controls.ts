@@ -68,22 +68,19 @@ export function useModelControls({
       ownerConnectionId = cacheOwnerConnectionId
     ) => {
       const patch = (prev: ModelOptionsResult | undefined) => {
-        // Selection state can update before the catalog query has resolved.
-        // Keep that optimistic cache structurally complete; the composer
-        // interprets a response without `providers` as an empty catalog.
-        const providers = prev?.providers?.length
-          ? prev.providers
-          : provider && model
-            ? [{ models: [model], name: provider, slug: provider }]
-            : []
+        // A saved or manually entered selection is display state, never proof
+        // that the provider returned it. Only retain a query-backed catalog.
+        const providers = prev?.discovery_contract === 'provider-query-v1' ? (prev.providers ?? []) : []
 
         return { ...prev, provider, model, providers }
       }
 
-      queryClient.setQueryData<ModelOptionsResult>(modelOptionsQueryKey(profile, sessionId, ownerConnectionId), patch)
+      queryClient.setQueryData<ModelOptionsResult>(modelOptionsQueryKey(profile, sessionId, ownerConnectionId), patch,
+        { updatedAt: 0 })
 
       if (includeGlobal) {
-        queryClient.setQueryData<ModelOptionsResult>(modelOptionsQueryKey(profile, null, ownerConnectionId), patch)
+        queryClient.setQueryData<ModelOptionsResult>(modelOptionsQueryKey(profile, null, ownerConnectionId), patch,
+          { updatedAt: 0 })
       }
     },
     [cacheOwnerConnectionId, cacheProfile, queryClient]
@@ -178,7 +175,9 @@ export function useModelControls({
 
         if (staleMoaPick()) {
           const catalogProfile = cacheProfile || profile
-          const catalogKey = modelOptionsQueryKey(catalogProfile, null, cacheOwnerConnectionId)
+          // MoA presets are an existing virtual configuration, not provider
+          // query results. Keep their legacy lookup out of discovery caches.
+          const catalogKey = ['legacy-moa-options', catalogProfile, cacheOwnerConnectionId ?? 'local'] as const
 
           const catalog =
             queryClient.getQueryData<ModelOptionsResult>(catalogKey) ??

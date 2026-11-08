@@ -293,6 +293,10 @@ def test_active_profiles_are_counted_once_per_host_day_on_the_root_profiles_row(
     (root / "profiles").mkdir(parents=True)
     (root / "config.yaml").write_text(f"telemetry:\n  shared_metrics:\n    enabled: {str(root_collects).lower()}\n")
     a, b = root / "profiles" / "a", root / "profiles" / "b"
+    # A named profile needs an identity marker; a telemetry-only directory is scratch.
+    for home in (a, b):
+        home.mkdir()
+        (home / "config.yaml").write_text("telemetry:\n  shared_metrics:\n    enabled: true\n")
     resource = {"architecture": "x86_64", "hermes_version": "0.0.0", "install_method": "git", "os_family": "linux"}
     for home, at in ((a, 0), (b, 60), (a, 120), (a, 86_400)):
         clock["now"] = DAY1 + at

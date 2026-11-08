@@ -160,6 +160,8 @@ async def get_model_options(
     refresh: bool = False,
     include_unconfigured: bool = False,
     explicit_only: bool = False,
+    query_only: bool = False,
+    query_scope: Optional[str] = None,
 ):
     """Authenticated providers + curated model lists — REST twin of the ``model.options``
     JSON-RPC on tui_gateway, same response shape so ``ModelPickerDialog`` shares the types.
@@ -167,12 +169,15 @@ async def get_model_options(
     /api/model/set writes. ``refresh`` busts the per-provider model-id disk cache
     (picker's explicit "Refresh Models"); normal opens stay on the 1h cache."""
     with http_failure("GET /api/model/options failed", 500, detail="Failed to list model options"):
+        if ((query_only and (not isinstance(query_scope, str) or not query_scope.strip() or len(query_scope) > 200))
+                or (query_scope is not None and not query_only)):
+            raise HTTPException(status_code=400, detail="invalid query scope")
         skew_msg = _dashboard_code_skew_guard()
         if skew_msg:
             _log.warning("GET /api/model/options refused: %s", skew_msg)
             raise HTTPException(status_code=503, detail=f"Restart required: {skew_msg}")
 
-        from hermes_cli.inventory import build_model_options_payload, load_picker_context
+        from hermes_cli.inventory import build_desktop_model_options_payload, build_model_options_payload, load_picker_context
 
         def _build_payload_scoped() -> dict:
             # Full sync picker build off the event loop under the requested profile.
@@ -180,6 +185,13 @@ async def get_model_options(
             # block 15s on a models.dev cache miss, and _profile_scope's RLock held across
             # that starves concurrent /api/config and freezes the server.
             with _config_profile_scope(profile):
+                if query_only:
+                    import json
+
+                    source_scope = json.dumps(["desktop-model-query-v1", "legacy-local", query_scope],
+                                              ensure_ascii=True, separators=(",", ":"))
+                    return build_desktop_model_options_payload(load_picker_context(), source_scope=source_scope,
+                                                               refresh=bool(refresh))
                 return build_model_options_payload(
                     load_picker_context(), explicit_only=bool(explicit_only),
                     include_unconfigured=bool(include_unconfigured), refresh=bool(refresh))

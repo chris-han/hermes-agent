@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { DesktopBootstrapState, DesktopConnectionsRegistry } from '@/global'
 import { createClientSessionState } from '@/lib/chat-runtime'
+import { refreshModelsOnConnectionReady } from '@/lib/startup-model-discovery'
 import { BACKEND_BOOT_WAIT_TIMEOUT_MS } from '@/lib/with-timeout'
 import { $desktopBoot } from '@/store/boot'
 import {
@@ -67,6 +68,8 @@ vi.mock(import('@/store/notifications'), async importOriginal => ({
 vi.mock(import('@/store/terminal-backend-warning'), () => ({
   warnIfTerminalBackendUnavailable: vi.fn(async () => false)
 }))
+
+vi.mock('@/lib/startup-model-discovery', () => ({ refreshModelsOnConnectionReady: vi.fn(async () => undefined) }))
 
 // End-to-end-ish repro of the "remote VPS → stuck on CONNECTING, no Settings"
 // bug that drives the REAL useGatewayBoot hook + REAL HermesGateway through a
@@ -226,6 +229,7 @@ beforeEach(() => {
   clearNotifications()
   vi.mocked(notifyError).mockReset()
   vi.mocked(warnIfTerminalBackendUnavailable).mockClear()
+  vi.mocked(refreshModelsOnConnectionReady).mockClear()
   ;(globalThis as { WebSocket: unknown }).WebSocket = FakeWebSocket
   ;(window as { hermesDesktop?: unknown }).hermesDesktop = fakeDesktop()
   $gatewayState.set('idle')
@@ -437,6 +441,19 @@ describe('default-route profile adoption', () => {
     await flushAsync()
     expect($connection.get()?.profile).toBe('research')
     expect($activeGatewayProfile.get()).toBe('research')
+    expect($desktopBoot.get().running).toBe(false)
+  })
+
+  it('starts model discovery after profile adoption without waiting for settings', async () => {
+    const config = deferred<void>()
+    render(<Harness refreshHermesConfig={() => config.promise} />)
+    await flushAsync()
+    expect(refreshModelsOnConnectionReady).toHaveBeenCalledWith('primary-vps', 'default', expect.objectContaining({
+      connectionId: 'primary-vps'
+    }))
+    expect($desktopBoot.get().running).toBe(true)
+    config.resolve()
+    await flushAsync()
     expect($desktopBoot.get().running).toBe(false)
   })
 })

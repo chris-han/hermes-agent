@@ -4,8 +4,7 @@ import { api, type SharedMetricsConsent } from "@/lib/api";
 import { useProfileScope } from "@/contexts/useProfileScope";
 import { useI18n } from "@/i18n";
 
-const DOCS_URL =
-  "https://hermes-agent.nousresearch.com/docs/developer-guide/relay-shared-metrics";
+// No verified public Semantier privacy page yet; keep the explanation inline.
 const STORAGE_KEY = "sharedMetricsOfferDismissed";
 
 /**
@@ -87,15 +86,12 @@ export function SharedMetricsConsentBanner() {
           ? (t.app.sharedMetricsSaveFailed ?? "Couldn't save your choice")
           : consent.reask
             ? (t.app.sharedMetricsReaskBody ??
-              'Asking once more: an earlier version could save "No thanks" before you saw this question.')
+              'Please choose again: usage statistics now go to Semantier instead of Nous.')
             : (t.app.sharedMetricsBody ??
-            "Shared metrics are bounded counters, never prompts, files, paths or error text. Collection stays on this machine; sending to Nous is a separate choice.")}{" "}
-        <a href={DOCS_URL} target="_blank" rel="noreferrer" className="underline">
-          {t.app.sharedMetricsDetails ?? "Details"}
-        </a>
+            "Shared metrics are bounded counters, never prompts, files, paths or error text. Collection stays on this machine; sending to Semantier is a separate choice.")}{" "}
       </span>
       <button type="button" disabled={saving} className={choice} onClick={() => answer(true, true)}>
-        {t.app.sharedMetricsShare ?? "Send to Nous"}
+        {t.app.sharedMetricsShare ?? "Send to Semantier"}
       </button>
       <button type="button" disabled={saving} className={choice} onClick={() => answer(true, false)}>
         {t.app.sharedMetricsLocal ?? "Local only"}

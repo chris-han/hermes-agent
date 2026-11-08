@@ -50,7 +50,7 @@ def test_send_without_collection_is_normalized_off_and_closes_the_consent_window
     # send=true alone is refused: collection off withdraws send consent, in config AND in the store.
     assert _call("shared_metrics.set", {"profile": "code", "enabled": False, "send": True}) == {
         "enabled": False, "send": False, "decided": True, "reask": False}
-    assert _shared_metrics(worker) == {"enabled": False, "send": False, "offer_version": 2}
+    assert _shared_metrics(worker) == {"enabled": False, "send": False, "offer_version": 3}
     [(_, closed)] = _windows(worker)
     assert closed is not None
 
@@ -64,11 +64,10 @@ def test_status_is_undecided_until_a_key_is_written(tmp_path, monkeypatch):
     unasked = {"enabled": False, "send": False, "decided": False, "reask": False}
     assert _call("shared_metrics.status", {"profile": "code"}) == unasked
 
-    # A "No thanks" from before the type-ahead fix (no offer_version) may never have been seen:
-    # it is offered once more, and the answer to that settles it.
+    # A prior decline stays declined even without an offer version.
     (worker / "config.yaml").write_text(
         yaml.safe_dump({"telemetry": {"shared_metrics": {"enabled": False}}}), encoding="utf-8")
-    assert _call("shared_metrics.status", {"profile": "code"}) == {**unasked, "reask": True}
+    assert _call("shared_metrics.status", {"profile": "code"}) == {**unasked, "decided": True}
     _call("shared_metrics.set", {"profile": "code", "enabled": False, "send": False})
     assert _call("shared_metrics.status", {"profile": "code"}) == {**unasked, "decided": True}
 
@@ -100,3 +99,23 @@ def test_an_opt_out_purges_receipts_kept_for_a_later_start(tmp_path, monkeypatch
     _call("shared_metrics.set", {"profile": "code", "enabled": False, "send": False})
     assert not any(d.exists() for d in kept)
     assert (launch / "telemetry" / "shared_metrics" / "pending_installs").exists()
+
+
+def test_nous_consent_is_closed_before_semantier_reopt_in(tmp_path, monkeypatch):
+    launch, worker = _bind_homes(monkeypatch, tmp_path)
+    _call("shared_metrics.set", {"profile": "code", "enabled": True, "send": True})
+    assert len(_windows(worker)) == 1
+    cfg_path = worker / "config.yaml"
+    cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+    cfg["telemetry"]["shared_metrics"]["offer_version"] = 2
+    cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    assert _call("shared_metrics.status", {"profile": "code"}) == {
+        "enabled": True, "send": False, "decided": False, "reask": True
+    }
+    _call("shared_metrics.set", {"profile": "code", "enabled": True, "send": True})
+    windows = _windows(worker)
+    assert len(windows) == 2
+    assert windows[0][1] is not None
+    assert windows[1][1] is None
+    assert _shared_metrics(launch) == {}
+

@@ -1,11 +1,15 @@
 import type { ModelOptionsResult } from '@hermes/shared'
+import { useStore } from '@nanostores/react'
 import { useQuery } from '@tanstack/react-query'
 import type * as React from 'react'
 import { useMemo } from 'react'
 
 import type { HermesGateway } from '@/hermes'
 import { quickModelOptions } from '@/lib/chat-runtime'
-import { currentModelCapabilities, modelOptionsQueryKey, requestModelOptions } from '@/lib/model-options'
+import { modelDiscoveryOwnerKey } from '@/lib/model-discovery-scope'
+import { currentModelCapabilities, modelOptionsQueryKey, requestDiscoveredModelOptions } from '@/lib/model-options'
+import { requestGatewayForAgent } from '@/store/gateway'
+import { $connection } from '@/store/session'
 
 import type { ChatBarState } from './composer/types'
 
@@ -40,20 +44,22 @@ export function useChatBarState({
   reasoningMenuContent,
   requestModelOptionsForOwner
 }: ChatBarStateOptions): ChatBarState {
+  const connection = useStore($connection)
+  const ownerKey = modelDiscoveryOwnerKey(modelOptionsOwnerConnectionId, connection)
+  const profile = modelOptionsProfile || activeGatewayProfile
   const modelOptionsQuery = useQuery<ModelOptionsResult>({
-    queryKey: modelOptionsQueryKey(
-      modelOptionsProfile || activeGatewayProfile,
-      activeSessionId,
-      modelOptionsOwnerConnectionId
-    ),
+    queryKey: modelOptionsQueryKey(profile, activeSessionId, ownerKey),
     queryFn: () =>
-      requestModelOptions({
+      requestDiscoveredModelOptions({
+        connection,
         gateway: gateway || undefined,
-        profile: modelOptionsProfile || activeGatewayProfile,
-        request: requestModelOptionsForOwner,
+        ownerConnectionId: modelOptionsOwnerConnectionId,
+        profile,
+        request: requestModelOptionsForOwner ?? (<T,>(method: string, params?: Record<string, unknown>) =>
+          requestGatewayForAgent<T>(modelOptionsOwnerConnectionId ?? connection?.connectionId ?? null, profile, method, params)),
         sessionId: activeSessionId
       }),
-    enabled: gatewayOpen
+    enabled: gatewayOpen && !!ownerKey
   })
 
   const quickModels = useMemo(

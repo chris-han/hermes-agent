@@ -20,7 +20,7 @@ export const feedbackEnglish = {
 
   "reportingCouldNotChangeSignInOr": "Reporting could not change. Sign in or retry from this local profile.",
   "semantierDiagnosticsPrivacy": "Semantier diagnostics & privacy",
-  "optionalUpdateResultReportingToSemantierCloud": "Optional update-result reporting to Semantier Cloud. Separate from Nous telemetry. Updates work with reporting off.",
+  "optionalUpdateResultReportingToSemantierCloud": "Optional update-result reporting to Semantier Cloud. Separate from usage-statistics sharing. Updates work with reporting off.",
   "reporting": "Reporting",
   "on": "On",
   "off": "Off",
@@ -80,7 +80,7 @@ export const feedbackChinese: FeedbackCopy = {
 
   "reportingCouldNotChangeSignInOr": "上报设置未能完成，请使用此本地配置登录或重试。",
   "semantierDiagnosticsPrivacy": "Semantier 诊断与隐私",
-  "optionalUpdateResultReportingToSemantierCloud": "可选向 Semantier Cloud 上报更新结果，与 Nous 遥测独立；关闭上报仍可更新。",
+  "optionalUpdateResultReportingToSemantierCloud": "可选向 Semantier Cloud 上报更新结果，与使用统计分享独立；关闭上报仍可更新。",
   "reporting": "上报",
   "on": "开启",
   "off": "关闭",

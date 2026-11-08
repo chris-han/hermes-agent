@@ -5,16 +5,20 @@ import { useQuery } from '@tanstack/react-query'
 import { type ReactElement, useRef, useState } from 'react'
 
 import { useI18n } from '@/i18n'
-import { catalogProviderMatches, modelOptionsQueryKey, requestModelOptions } from '@/lib/model-options'
+import { modelDiscoveryOwnerKey } from '@/lib/model-discovery-scope'
+import { catalogProviderMatches, modelOptionsQueryKey, providerSelectableModels, requestDiscoveredModelOptions } from '@/lib/model-options'
 import { currentPickerSelection } from '@/lib/model-status-label'
 import { accountResetMs, formatReset, modelResetMs } from '@/lib/provider-limit'
 import { foldIncludes, normalize } from '@/lib/text'
 import { cn } from '@/lib/utils'
-import { $customModels, addCustomModel, customModelCandidate, withCustomModels } from '@/store/custom-models'
+import { addCustomModel, customModelCandidate } from '@/store/custom-models'
+import { requestGatewayForAgent } from '@/store/gateway'
+import { $connection } from '@/store/session'
 
 import type { HermesGateway } from '../hermes'
 import { startManualOnboarding } from '../store/onboarding'
 
+import { ModelDiscoveryRefreshStatus, ModelDiscoveryStatus } from './model-discovery-status'
 import { InlineNotice } from './notifications'
 import { ProviderStatusChip } from './provider-status-chip'
 import { Badge } from './ui/badge'
@@ -62,6 +66,8 @@ export function ModelPickerDialog({
 }: ModelPickerDialogProps): ReactElement {
   const { t } = useI18n()
   const copy = t.modelPicker
+  const connection = useStore($connection)
+  const ownerKey = modelDiscoveryOwnerKey(ownerConnectionId, connection)
   // Own the search term so we can filter manually. cmdk's built-in
   // shouldFilter reorders items by its fuzzy-match score (≈alphabetical with
   // an empty query), which destroys the backend's curated order. We disable
@@ -74,13 +80,16 @@ export function ModelPickerDialog({
   const searchRef = useRef<HTMLInputElement>(null)
 
   const modelOptions = useQuery({
-    queryKey: modelOptionsQueryKey(profile, sessionId, ownerConnectionId),
-    queryFn: () => requestModelOptions({ gateway: gw, profile, request, sessionId }),
-    enabled: open
+    queryKey: modelOptionsQueryKey(profile, sessionId, ownerKey),
+    queryFn: () => requestDiscoveredModelOptions({ connection, gateway: gw, ownerConnectionId, profile, sessionId,
+      request: request ?? (<T,>(method: string, params?: Record<string, unknown>) =>
+        requestGatewayForAgent<T>(ownerConnectionId ?? connection?.connectionId ?? null, profile, method, params)) }),
+    enabled: open && !!ownerKey
   })
 
-  const customModels = useStore($customModels)
-  const providers = withCustomModels(modelOptions.data?.providers ?? [], customModels)
+  const providers = (modelOptions.data?.providers ?? []).map(provider => ({
+    ...provider, models: providerSelectableModels(provider)
+  }))
 
   const { model: optionsModel, provider: optionsProvider } = currentPickerSelection(
     { model: currentModel, provider: currentProvider },
@@ -101,6 +110,7 @@ export function ModelPickerDialog({
   }
 
   const selectCustomModel = (provider: ModelOptionProvider, model: string) => {
+    if (provider.eligible_models != null || (provider.unavailable_models ?? []).some(item => normalize(item) === normalize(model))) {return}
     addCustomModel(provider.slug, model, provider)
     selectModel(provider, model)
   }
@@ -147,6 +157,8 @@ export function ModelPickerDialog({
             value={search}
           />
           <CommandList className="max-h-96">
+            <ModelDiscoveryRefreshStatus ownerKey={ownerKey} profile={profile} />
+            {(modelOptions.data?.providers ?? []).map(provider => <ModelDiscoveryStatus key={provider.slug} provider={provider} />)}
             {!loading && !error && <CommandEmpty>{copy.noModels}</CommandEmpty>}
             <ModelResults
               currentModel={optionsModel || currentModel}
@@ -242,16 +254,15 @@ function ModelResults({
     models: rankModels(provider, provider.models ?? [])
   }))
 
-  const hasMatches = groups.some(g => g.models.length > 0)
-
   // A typed id nothing lists: one row per configured provider, current
   // provider first, so the slug is one Enter away and remembered afterwards.
   // While the query still matches catalog rows the section stays out of the
   // way unless the user asked for it via "Add custom model…".
-  const customSlug = offerCustom || !hasMatches ? customModelCandidate(search, configured) : null
+  const customSlug = offerCustom ? customModelCandidate(search, configured) : null
 
   const customProviders = customSlug
-    ? [...configured].sort(
+    ? configured.filter(provider => provider.eligible_models == null &&
+        !(provider.unavailable_models ?? []).some(model => normalize(model) === normalize(customSlug))).sort(
         (a, b) =>
           Number(catalogProviderMatches(b, currentProvider)) - Number(catalogProviderMatches(a, currentProvider))
       )

@@ -24,6 +24,8 @@ class ConfigContext:
     user_providers: dict
     custom_providers: list
     excluded_providers: list = None
+    configured_base_url: str = ""
+    configured_provider: str = ""
 
     def with_overrides(
         self, *, current_provider: Optional[str] = None, current_model: Optional[str] = None,
@@ -57,6 +59,8 @@ def load_picker_context() -> ConfigContext:
     excluded = cfg.get("model_catalog", {}).get("excluded_providers") or []
     return ConfigContext(
         current_provider=current_provider, current_model=current_model, current_base_url=current_base_url,
+        configured_base_url=current_base_url,
+        configured_provider=current_provider,
         user_providers=stringify_provider_map(cfg.get("providers")),
         custom_providers=get_compatible_custom_providers(cfg),
         excluded_providers=excluded if isinstance(excluded, list) else [],
@@ -228,6 +232,18 @@ def _strip_aggregator_overlaps(rows: list[dict]) -> None:
         if len(filtered) < len(original):
             row["models"] = filtered
             row["total_models"] = len(filtered)
+
+
+def build_desktop_model_options_payload(ctx: ConfigContext, *, source_scope: str, refresh: bool = False) -> dict:
+    """Desktop candidates from configured provider queries, independent of legacy picker fallbacks."""
+    from hermes_cli.desktop_model_discovery import configured_provider_rows
+
+    rows = configured_provider_rows(ctx, source_scope=source_scope, refresh=refresh)
+    # Pricing only annotates the verified IDs. In particular, the existing Nous
+    # tier guard retains its independent unavailable-model constraint.
+    _apply_pricing(rows, cached_only=True)
+    return {"providers": rows, "model": ctx.current_model, "provider": ctx.current_provider,
+            "discovery_contract": "provider-query-v1"}
 
 
 def build_model_options_payload(
