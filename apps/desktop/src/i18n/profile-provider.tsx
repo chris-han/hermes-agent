@@ -1,5 +1,5 @@
 import { useStore } from '@nanostores/react'
-import { type ReactNode, useEffect } from 'react'
+import { type ReactNode, useEffect, useMemo } from 'react'
 
 import { $gateway } from '@/store/gateway'
 import { $activeGatewayProfile } from '@/store/profile'
@@ -9,6 +9,7 @@ import { syncBackendLocalePacks } from './backend-packs'
 import { I18nProvider } from './context'
 import { unregisterAppLocaleSource } from './registry'
 import { $requestedLocale } from './runtime'
+import { workspaceLocaleClient } from './workspace-locale'
 
 /** Keep gateway/store imports outside the shared i18n context's import graph. */
 export function ProfileI18nProvider({ children }: { children: ReactNode }) {
@@ -22,12 +23,17 @@ export function ProfileI18nProvider({ children }: { children: ReactNode }) {
     connection?.registryScoped ?? false,
     connection?.baseUrl,
     connection?.profile,
+    connection?.workspaceScope,
     profile
   ])
 
+  const configClient = useMemo(() => connection?.transport === 'semantier-workspace-http'
+    ? workspaceLocaleClient(connection.baseUrl, connection.workspaceScope)
+    : undefined, [connection?.transport, connection?.baseUrl, connection?.workspaceScope])
+
   useBackendLocalePacks(scopeKey)
 
-  return <I18nProvider scopeKey={scopeKey}>{children}</I18nProvider>
+  return <I18nProvider scopeKey={scopeKey} configClient={configClient}>{children}</I18nProvider>
 }
 
 /**
