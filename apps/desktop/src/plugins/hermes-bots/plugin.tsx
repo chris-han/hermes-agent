@@ -444,7 +444,7 @@ export default {
       area: 'panes',
       // `title` is sampled at register (module import, before the locale has
       // loaded) — the tab renders `tabTitle` below so BOTS follows the locale.
-      title: translateNow('common.bots'),
+      title: translateNow('common.winmanTab'),
       // dock: explicit adoption gesture — CENTER-STACK into the sessions zone
       // so the sidebar grows a SESSIONS | BOTS tab strip instead of splitting
       // two cramped panes down the column. Center is safe now: insertAtGroup
@@ -472,8 +472,8 @@ export default {
         width: '260px',
         collapsible: true,
         hideOnly: true,
-        tabTitle: () => <LocalizedTabTitle select={t => t.common.bots} />,
-        tabTitleText: () => translateNow('common.bots'),
+        tabTitle: () => <LocalizedTabTitle select={t => t.common.winmanTab} />,
+        tabTitleText: () => translateNow('common.winmanTab'),
         dock: {
           pane: 'sessions',
           pos: 'center',

@@ -113,6 +113,7 @@ const en: BotsMessages = {
     createdOn: (name, target) => `Bot "${name}" created on ${target}`
   },
   roster: {
+    heading: 'My Agents',
     search: 'Search bots and group chats',
     searchPlaceholder: 'Search bots and group chats…',
     newBotOrGroup: 'New bot or group chat',
@@ -556,6 +557,7 @@ const ja: BotsMessages = {
     createdOn: (name, target) => `${target} にボット「${name}」を作成しました`
   },
   roster: {
+    heading: 'Bots',
     search: 'ボットとグループチャットを検索',
     searchPlaceholder: 'ボットとグループチャットを検索…',
     newBotOrGroup: '新しいボットまたはグループチャット',
@@ -995,6 +997,7 @@ const zh: BotsMessages = {
     createdOn: (name, target) => `已在 ${target} 上创建机器人“${name}”`
   },
   roster: {
+    heading: '我的僚机',
     search: '搜索机器人和群聊',
     searchPlaceholder: '搜索机器人和群聊…',
     newBotOrGroup: '新建机器人或群聊',
@@ -1423,6 +1426,7 @@ const zhHant: BotsMessages = {
     createdOn: (name, target) => `已在 ${target} 上建立機器人「${name}」`
   },
   roster: {
+    heading: '我的僚機',
     search: '搜尋機器人和群組聊天',
     searchPlaceholder: '搜尋機器人和群組聊天…',
     newBotOrGroup: '新增機器人或群組聊天',

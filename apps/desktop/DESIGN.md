@@ -63,6 +63,8 @@ The initial boot wordmark uses the existing DecodeText scramble treatment: **SĒ
 
 ### Semantier Cloud and Winman
 
+Navigation copy is scoped to `common.winmanTab`; generic `common.bots` remains available to plugin metadata. The existing roster toolbar uses plugin-owned `roster.heading` for **My Agents** and its approved Chinese translations.
+
 The top navigation is **Sessions | Winman** (ZH: **会话 | 僚机**; ZH-Hant: **會話 | 僚機**). The existing agent roster remains in `hermes-bots:pane`, headed **My Agents** / **我的僚机** / **我的僚機**. Its managed Cloud entry is **Winman — Semantier Cloud**, alongside **Semantier Local — Local** and existing user-created agents. Preserve explicitly customized names and aliases. Never use “Winmen”; presentation changes do not rename profile IDs, routes or RPC methods.
 
 Cloud Sessions reads and sends belong to the same authenticated Runtime workspace and original server conversation/message IDs used by Hermes Workspace. The explicit `semantier-workspace-http` connection provenance selects authenticated HTTP resources and finite, on-demand SSE; it does not imply a Native WebSocket handshake. Legacy Nous and Local/Remote/SSH connections retain their existing transports. Cloud credentials remain in the origin-owned Electron session. Cached reads are pinned to the user/workspace/organization that opened the connection. Unsupported operations must surface as unavailable rather than fall back to a local profile. Passive synchronization never submits a model turn or changes the visible conversation.
