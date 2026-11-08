@@ -2880,3 +2880,24 @@ describe('window-state IPC before the first connection publishes (#108641)', () 
     expect($connection.get()?.windowButtonPosition).toBeNull()
   })
 })
+
+it('keeps authenticated Workspace boot usable when its initial session-list request times out', async () => {
+  const desktop = fakeDesktop()
+  const scope = { userId: 'actor-a', workspaceId: 'workspace-a', organizationId: 'org-a' }
+  Object.assign(desktop, {
+    getConnection: vi.fn(async () => ({ ...remotePrimaryConn, transport: 'semantier-workspace-http', workspaceScope: scope })),
+    workspace: { identity: vi.fn(async () => ({ authenticated: true, user: { user_id: scope.userId },
+      workspace: { id: scope.workspaceId }, organization_id: scope.organizationId })) }
+  })
+  ;(window as { hermesDesktop?: unknown }).hermesDesktop = desktop
+  const refreshSessions = vi.fn(async () => { throw new DOMException('Session-list request timed out', 'TimeoutError') })
+  render(<Harness refreshSessions={refreshSessions} />)
+  await flushAsync()
+  expect(refreshSessions).toHaveBeenCalled()
+  expect($gatewayState.get()).toBe('open')
+  expect($desktopBoot.get().error).toBeNull()
+  expect($desktopBoot.get().visible).toBe(false)
+  expect($sessionsLoading.get()).toBe(false)
+  expect(desktop.getGatewayWsUrl).not.toHaveBeenCalled()
+  expect(FakeWebSocket.instances).toHaveLength(0)
+})

@@ -1516,7 +1516,11 @@ export function useGatewayBoot({
           await gateway.connectWorkspace(conn.baseUrl, conn.workspaceScope, conn.connectionId, conn.profile)
           await adoptPrimaryProfile(conn)
           stage = 'connected'
-          await callbacksRef.current.refreshSessions()
+          // Like Native boot, an unavailable sidebar must not turn an already
+          // authenticated connection into an installation failure.
+          await callbacksRef.current.refreshSessions().catch(() => {
+            setSessionsLoading(false)
+          })
           // Native local-runtime setup does not own an authenticated Cloud account.
           markOnboardingDecided()
           if (!cancelled) {
