@@ -160,10 +160,40 @@ function verifyChunksParse(assetsDir) {
   }
 }
 
+// A standalone development bundle still loads source-adjacent product identity.
+// Probe from the emitted main's location, including that module's own imports.
+export function checkDesktopLaunch(distDir) {
+  const renderer = checkDistBuilt(distDir)
+  if (!renderer.ok) return renderer
+  for (const name of ["electron-main.mjs", "electron-preload.js", "preview-guest-preload.js"]) {
+    if (!existsSync(join(distDir, name))) return { ok: false, error: `launch asset missing: ${name}` }
+  }
+  const html = readFileSync(join(distDir, "index.html"), "utf8")
+  for (const match of html.matchAll(/(?:src|href)=["']((?:\.\/)?assets\/[^"']+)["']/g)) {
+    const asset = match[1].split(/[?#]/)[0]
+    if (!existsSync(join(distDir, asset))) return { ok: false, error: `HTML launch asset missing: ${asset}` }
+  }
+  const main = join(distDir, "electron-main.mjs")
+  const code = readFileSync(main, "utf8")
+  if (code.includes("typeof __HERMES_PRODUCT_IDENTITY__")) {
+    const reference = code.match(/["'](\.{1,2}\/product-identity\.cjs)["']/)?.[1]
+    if (!reference) return { ok: false, error: "development identity reference is missing" }
+    const probe = spawnSync(process.execPath, ["-e",
+      "require('node:module').createRequire(process.argv[1])(process.argv[2])", resolve(main), reference],
+      { encoding: "utf8", timeout: 15_000, windowsHide: true })
+    if (probe.error || probe.status !== 0) return {
+      ok: false, kind: probe.error ? "harness" : "bundle",
+      error: `development identity dependency failed from ${main}: ${probe.error?.message || String(probe.stderr).trim().slice(0, 400)}`,
+    }
+  }
+  return { ok: true }
+}
+
 function main() {
   const desktopRoot = resolve(import.meta.dirname, "..")
-  const distDir = join(desktopRoot, "dist")
-  const result = checkDistBuilt(distDir)
+  const at = process.argv.indexOf("--dist")
+  const distDir = at >= 0 ? resolve(process.argv[at + 1]) : join(desktopRoot, "dist")
+  const result = process.argv.includes("--launch") ? checkDesktopLaunch(distDir) : checkDistBuilt(distDir)
 
   if (!result.ok) {
     console.error(`\n✗ assert-dist-built: ${result.error}`)
@@ -177,6 +207,10 @@ function main() {
       console.error(`    build tree, then re-run: cd ${desktopRoot} && npm run build\n`)
       process.exit(1)
     }
+    if (process.argv.includes("--launch")) {
+      console.error("  Final desktop staging is incomplete. Rebuild or restage from the authoritative source with the correct bundle mode.")
+      process.exit(1)
+    }
     console.error("  The renderer bundle is missing or incomplete, so packaging")
     console.error("  would produce an app that launches to a blank page.")
     console.error("  Re-run the build and check the tsc/vite output above for the")
@@ -185,11 +219,13 @@ function main() {
     process.exit(1)
   }
 
-  console.log("✓ assert-dist-built: dist/index.html + assets present")
+  console.log(process.argv.includes("--launch")
+    ? "✓ assert-dist-built: final launch assets and identity dependencies verified"
+    : "✓ assert-dist-built: dist/index.html + assets present")
 }
 
 if (isMain(import.meta.url)) {
   main()
 }
 
-export default { checkDistBuilt }
+export default { checkDistBuilt, checkDesktopLaunch }
