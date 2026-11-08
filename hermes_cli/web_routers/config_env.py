@@ -247,6 +247,13 @@ def _catalog_provider_env_metadata() -> dict:
                 _provider_card(d, f"{d.label} base URL override", None, is_password=False, advanced=True),
             )
 
+        # OpenAI account/project scope belongs to its existing credential card,
+        # not to the API-key aliases used for authentication detection.
+        if d.slug == "openai-api":
+            for var, label in (("OPENAI_ORG_ID", "Organization ID"),
+                               ("OPENAI_PROJECT_ID", "Project ID")):
+                meta[var] = _provider_card(d, label, None, is_password=False, advanced=True)
+
         # Providers without api_key_env_vars would otherwise be invisible on
         # the Keys tab: AWS-SDK providers (Bedrock) authenticate via the AWS
         # credential chain, Vertex via OAuth2 (service-account JSON path or

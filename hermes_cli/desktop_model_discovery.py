@@ -274,9 +274,16 @@ def configured_provider_rows(ctx, *, source_scope: str, refresh: bool = False) -
             native_anthropic = slug.lower() == "anthropic" and host == "api.anthropic.com"
             native_gemini = (slug.lower() == "gemini" and host == "generativelanguage.googleapis.com"
                              and urlsplit(endpoint).path.rstrip("/") in {"/v1", "/v1beta"})
+            request_headers = _extra_headers_from_config(entry)
+            if slug.lower() == "openai-api":
+                for header, env_var in (("OpenAI-Organization", "OPENAI_ORG_ID"),
+                                        ("OpenAI-Project", "OPENAI_PROJECT_ID")):
+                    value = _scoped_key_env(env_var)
+                    if value and not any(k.lower() == header.lower() for k in request_headers):
+                        request_headers[header] = value
             snapshot = read_provider_snapshot(provider=slug, base_url=endpoint, api_key=settings.api_key if is_cloud else key,
                 source_scope=source_scope, api_mode=_entry_api_mode(entry),
-                headers=_extra_headers_from_config(entry), refresh=refresh,
+                headers=request_headers, refresh=refresh,
                 adapter="cloud" if is_cloud else "ollama" if native_ollama else "anthropic" if native_anthropic
                         else "gemini" if native_gemini else "openai")
         aliases = sorted(aliases or [])

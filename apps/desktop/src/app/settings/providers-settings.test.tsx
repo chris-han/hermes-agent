@@ -117,6 +117,31 @@ async function renderProvidersSettings() {
 }
 
 describe('ProvidersSettings', () => {
+  it('shows and saves optional OpenAI organization/project fields in the existing API card', async () => {
+    getEnvVars.mockResolvedValue({
+      OPENAI_API_KEY: keyVar({ provider: 'openai-api', provider_label: 'OpenAI API', provider_primary: true }),
+      OPENAI_BASE_URL: keyVar({ provider: 'openai-api', provider_label: 'OpenAI API', description: 'Base URL', is_password: false, advanced: true }),
+      OPENAI_ORG_ID: keyVar({ provider: 'openai-api', provider_label: 'OpenAI API', description: 'Organization ID', is_password: false, advanced: true }),
+      OPENAI_PROJECT_ID: keyVar({ provider: 'openai-api', provider_label: 'OpenAI API', description: 'Project ID', is_password: false, advanced: true })
+    })
+    render(<ProvidersSettings onClose={vi.fn()} onViewChange={vi.fn()} view="keys" />)
+    fireEvent.click(await screen.findByText('OpenAI API', { exact: true }))
+    expect(screen.getByText('Base URL', { exact: true })).toBeTruthy()
+    expect(screen.getByText('Organization ID', { exact: true })).toBeTruthy()
+    expect(screen.getByText('Project ID', { exact: true })).toBeTruthy()
+    const card = screen.getByText('OpenAI API', { exact: true }).closest('[role=button]') as HTMLElement
+    const inputs = within(card).getAllByRole('textbox')
+    expect(inputs).toHaveLength(3)
+    fireEvent.focus(inputs[1])
+    fireEvent.change(inputs[1], { target: { value: 'org-fixture' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(setEnvVar).toHaveBeenCalledWith('OPENAI_ORG_ID', 'org-fixture', expect.anything()))
+    fireEvent.focus(inputs[2])
+    fireEvent.change(inputs[2], { target: { value: 'proj_fixture' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(setEnvVar).toHaveBeenCalledWith('OPENAI_PROJECT_ID', 'proj_fixture', expect.anything()))
+  })
+
   it('reads and saves API keys for the shared Settings target and reloads when it changes', async () => {
     $activeGatewayProfile.set('profile-a')
     $settingsScopeOverride.set('profile-b')
