@@ -73,6 +73,15 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
     async identity(): Promise<WorkspaceIdentity> {
       return (await request('/auth/context')).json()
     },
+    async winman(): Promise<{ bot_id: string; native_profile_id: string;
+      profile: { name: string; path: string; [key: string]: unknown }; bot_mode_protocol?: boolean }> {
+      const result = await (await request('/api/winman')).json()
+      if (!result?.bot_id || !result.native_profile_id || !result.profile?.name ||
+        result.profile.path !== result.native_profile_id) {
+        throw new Error('The server-owned Winman profile is unavailable.')
+      }
+      return result
+    },
     async sessions(): Promise<{ sessions: Array<{ key: string; title?: string }> }> {
       return (await request('/api/sessions')).json()
     },
@@ -142,6 +151,12 @@ export async function workspaceDesktopRead(
         is_active: row.status === 'running', source: row.platform
       }
     })
+  }
+
+  if (pathname === '/api/profiles') {
+    const result = await client.winman()
+    return { profiles: [{ ...result.profile, runtime_bot_id: result.bot_id,
+      native_profile_id: result.native_profile_id }], bot_mode_protocol: result.bot_mode_protocol }
   }
 
   if (pathname === '/api/sessions' || pathname === '/api/profiles/sessions') {

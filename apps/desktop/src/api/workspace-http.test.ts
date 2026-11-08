@@ -58,3 +58,19 @@ it('uses server-owned Cloud admission for readiness and a real context read for 
   await expect(gateway.request('setup.runtime_check')).resolves.toEqual({ ok: false, error: 'admission revoked' })
   gateway.close()
 })
+
+it('reads the Native Winman roster through the explicit account-scoped HTTP owner', async () => {
+  const roster = { profiles: [{ name: 'winman-a', runtime_bot_id: 'bot-a',
+    canonical_session: { id: 'canonical-a' } }], bot_mode_protocol: true }
+  const api = vi.fn().mockResolvedValue(roster)
+  Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: {
+    api, workspace: { identity: vi.fn().mockResolvedValue(identity) }
+  } })
+  const gateway = new HermesGateway()
+  await gateway.connectWorkspace('https://cloud.example', scope, 'cloud-a')
+  await expect(gateway.request('profiles.list', {})).resolves.toEqual(roster)
+  expect(api).toHaveBeenCalledWith(expect.objectContaining({
+    connectionId: 'cloud-a', workspaceScope: scope, profile: 'default', path: '/api/profiles'
+  }))
+  gateway.close()
+})

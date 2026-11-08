@@ -57,6 +57,8 @@ async def test_profile_bound_ticket_never_reaches_a_sibling_authority(tmp_path, 
 
         alpha, root_ticket = connect(alpha_id), connect(str(root.resolve()))
         for connection in (alpha, root_ticket):
+            roster = await call(connection, 'profiles.list', include_sessions=False)
+            assert [row['path'] for row in roster['result']['profiles']] == [connection.authority.profile_id]
             for method, params in (('session.list', {}), ('session.resume', {'session_id': 'beta-private'}),
                                    ('prompt.submit', {'session_id': 'beta-private', 'submission_id': 'x', 'text': 't'}),
                                    ('session.interrupt', {'session_id': 'beta-private'}),
@@ -70,6 +72,8 @@ async def test_profile_bound_ticket_never_reaches_a_sibling_authority(tmp_path, 
         assert (await call(alpha, 'session.list', profile='default'))['error']['message'] == 'profile_mismatch'
         # The Desktop's shared-primary socket asks for a host-scoped grant and keeps its sibling route.
         host = connect(str(root.resolve()), scope='host')
+        roster = await call(host, 'profiles.list', include_sessions=False)
+        assert beta_id in {row['path'] for row in roster['result']['profiles']}
         listed = await call(host, 'session.list', profile='beta')
         assert [row['session_id'] for row in listed['result']['sessions']] == ['beta-private'], listed
         assert (await call(host, 'session.list', profile='gamma'))['error']['message'] == 'profile_mismatch'

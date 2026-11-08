@@ -53,3 +53,18 @@ it('requires the actual completed SSE terminal and rejects failed or uncertain o
   await expect(requireWorkspaceCompletion(new Response('event: done\ndata: {"state":"error"}\n\n'))).rejects.toThrow('failed')
   await expect(requireWorkspaceCompletion(new Response('event: delta\ndata: {"text":"unfinished"}\n\n'))).rejects.toThrow('uncertain')
 })
+
+it('projects only the server-selected Native Winman profile and canonical chat', async () => {
+  const profile = { name: 'winman-server', path: 'profile-server', display_name: 'Custom Wing',
+    canonical_session: { id: 'canonical-server', resolved_id: 'canonical-server' } }
+  const transport = vi.fn<typeof fetch>().mockResolvedValue(Response.json({
+    bot_id: 'bot-server', native_profile_id: 'profile-server', profile, bot_mode_protocol: true
+  }))
+  const client = createSemantierWorkspaceClient('https://cloud.example', transport)
+  await expect(workspaceDesktopRead(client, '/api/profiles')).resolves.toMatchObject({
+    profiles: [{ ...profile, runtime_bot_id: 'bot-server', native_profile_id: 'profile-server' }],
+    bot_mode_protocol: true
+  })
+  expect(transport).toHaveBeenCalledWith('https://cloud.example/api/winman', expect.objectContaining({ method: 'GET' }))
+  expect(transport).toHaveBeenCalledTimes(1)
+})

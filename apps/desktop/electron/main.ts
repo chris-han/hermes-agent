@@ -15514,7 +15514,7 @@ async function enumerateRegistryAgentSources(registry = readDesktopConnectionsRe
 
             // The root HERMES_HOME is an agent too; enumerations that omit it
             // (older backends list only named profiles) still get a default row.
-            if (!profiles.includes('default')) {
+            if (connection.transport !== 'semantier-workspace-http' && !profiles.includes('default')) {
               profiles.unshift('default')
             }
 
@@ -15764,6 +15764,16 @@ async function fetchJsonForBackend(
   path,
   opts: { method?: string; body?: unknown; upload?: unknown; timeoutMs?: number; profileScoped?: boolean } = {}
 ) {
+  if (descriptor.transport === 'semantier-workspace-http') {
+    if ((opts.method || 'GET').toUpperCase() !== 'GET') {
+      throw new Error('This Semantier Workspace Desktop mutation is not implemented.')
+    }
+    const { client } = semantierWorkspace(descriptor.baseUrl)
+    assertWorkspaceScope(await client.identity(), descriptor.workspaceScope)
+    const result = await workspaceDesktopRead(client, path)
+    assertWorkspaceScope(await client.identity(), descriptor.workspaceScope)
+    return result
+  }
   const url = `${descriptor.baseUrl}${path}`
 
   // A native grant names one profile and the gateway refuses `all`: assemble the unified

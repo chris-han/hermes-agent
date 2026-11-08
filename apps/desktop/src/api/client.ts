@@ -84,7 +84,7 @@ function remainingRequestBudget(deadline: number, signal?: AbortSignal): number 
 const workspaceReadScopes = new Map<string, WorkspaceScope>()
 
 export class HermesGateway extends JsonRpcGatewayClient {
-  private workspaceConnection: { origin: string; scope: WorkspaceScope } | null = null
+  private workspaceConnection: { origin: string; scope: WorkspaceScope; connectionId?: string } | null = null
   private workspaceState: ConnectionState = 'idle'
   private readonly workspaceStates = new Set<(state: ConnectionState) => void>()
   private readonly workspaceEvents = new GatewayEventHub()
@@ -110,7 +110,7 @@ export class HermesGateway extends JsonRpcGatewayClient {
     this.connectionGeneration++
     const generation = this.connectionGeneration
     super.close()
-    this.workspaceConnection = { origin, scope }
+    this.workspaceConnection = { origin, scope, connectionId }
     this.setWorkspaceState('connecting')
     try {
       const identity = await window.hermesDesktop.workspace!.identity(origin)
@@ -130,6 +130,12 @@ export class HermesGateway extends JsonRpcGatewayClient {
     const bridge = window.hermesDesktop.workspace!
     signal?.throwIfAborted()
     const sessionId = String(params.session_id || params.session_key || '')
+    if (method === 'profiles.list') {
+      if (!connection.connectionId) { throw new Error('The Cloud roster requires an explicit connection owner.') }
+      const result = await hermesApiAs<T>({ connectionId: connection.connectionId, profile: 'default' }, { path: '/api/profiles' })
+      this.requireConnectionGeneration(generation)
+      return result
+    }
     if (method === 'ping' || method === 'setup.status' || method === 'setup.runtime_check') {
       const identity = await bridge.identity(connection.origin)
       this.requireConnectionGeneration(generation)
