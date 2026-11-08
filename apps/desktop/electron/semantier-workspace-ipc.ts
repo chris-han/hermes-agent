@@ -18,7 +18,9 @@ export interface DesktopWorkspaceApi {
   nativeContext: (origin: string, scope: WorkspaceScope, sessionId: string) => Promise<import('./semantier-workspace-client').WorkspaceMainContext | null>
   bindNativeContext: (origin: string, scope: WorkspaceScope, sessionId: string, originalSessionKey: string) => Promise<import('./semantier-workspace-client').WorkspaceMainContext>
   sendNative: (origin: string, scope: WorkspaceScope, sessionId: string, message: string, requestId: string, bindingId: string) => Promise<import('./semantier-workspace-client').WorkspaceNativeSnapshot>
+  cancelNative: (origin: string, scope: WorkspaceScope, sessionId: string, admissionId: string) => Promise<import('./semantier-workspace-client').WorkspaceNativeCancellation>
   nativeHistory: (origin: string, scope: WorkspaceScope, sessionId: string) => Promise<import('./semantier-workspace-client').WorkspaceNativeSnapshot>
+  interrupt: (origin: string, scope: WorkspaceScope, sessionId: string, requestId: string) => Promise<{ cancel_requested: boolean; request_id?: string }>
   send: (origin: string, scope: WorkspaceScope, sessionId: string, message: string, requestIdentity: string) => Promise<import('./semantier-workspace-client').WorkspaceHistory>
 }
 
@@ -33,6 +35,30 @@ export function workspace(origin: string) {
 }
 
 export function registerSemantierWorkspaceIpc(onAccountChanged?: (origin: string, authenticated: boolean) => void): void {
+  // Ephemeral ownership of this renderer's pending HTTP stream, never task state.
+  const streams = new Map<string, { controller: AbortController; requestId: string }>()
+  const nativeStreams = new Map<string, { controller: AbortController; requestId: string; admission?: Promise<import('./semantier-workspace-client').WorkspaceNativeSubmission> }>()
+  const streamKey = (senderId: number, origin: string, scope: WorkspaceScope, sessionId: string) =>
+    JSON.stringify([senderId, new URL(origin).origin, scope.userId, scope.workspaceId, scope.organizationId, sessionId])
+  ipcMain.handle('hermes:workspace:interrupt', async (event, origin: string, scope: WorkspaceScope, sessionId: string, requestId: string) => {
+    const { client } = workspace(origin)
+    assertWorkspaceScope(await client.identity(), scope)
+    const key = streamKey(event.sender.id, origin, scope, sessionId)
+    const native = nativeStreams.get(key)
+    if (native && native.requestId === requestId) {
+      native.controller.abort()
+      if (!native.admission) return { cancel_requested: true, request_id: native.requestId }
+      // Await the original admission, never abort/replay an uncertain admission POST.
+      const admitted = await native.admission
+      const result = await client.cancelNative(sessionId, admitted.receipt.admission_id)
+      assertWorkspaceScope(await client.identity(), scope)
+      return { ...result, request_id: native.requestId }
+    }
+    const stream = streams.get(key)
+    if (!stream || stream.requestId !== requestId) return { cancel_requested: false }
+    stream.controller.abort()
+    return { cancel_requested: true, request_id: stream.requestId }
+  })
   ipcMain.handle('hermes:workspace:identity', (_event, origin: string) => workspace(origin).client.identity())
   ipcMain.handle('hermes:workspace:logout', async (_event, origin: string) => {
     const { owned } = workspace(origin)
@@ -112,11 +138,30 @@ export function registerSemantierWorkspaceIpc(onAccountChanged?: (origin: string
     assertWorkspaceScope(await client.identity(), scope)
     return result
   })
-  ipcMain.handle('hermes:workspace:send-native', async (_event, origin: string, scope: WorkspaceScope, sessionId: string, message: string, requestId: string, bindingId: string) => {
+  ipcMain.handle('hermes:workspace:send-native', async (event, origin: string, scope: WorkspaceScope, sessionId: string, message: string, requestId: string, bindingId: string) => {
+    const { client } = workspace(origin)
+    const key = streamKey(event.sender.id, origin, scope, sessionId)
+    if (nativeStreams.has(key)) throw new Error('A Native admission is already pending in this renderer.')
+    const native: { controller: AbortController; requestId: string; admission?: Promise<import('./semantier-workspace-client').WorkspaceNativeSubmission> } = { controller: new AbortController(), requestId }
+    nativeStreams.set(key, native)
+    try {
+      assertWorkspaceScope(await client.identity(), scope)
+      native.controller.signal.throwIfAborted()
+      native.admission = client.sendNative(sessionId, message, requestId, bindingId)
+      const admitted = await native.admission
+      const result = await requireNativeCompletion(client, sessionId, admitted.receipt.admission_id, native.controller.signal)
+      assertWorkspaceScope(await client.identity(), scope)
+      return result
+    } finally {
+      if (nativeStreams.get(key) === native) nativeStreams.delete(key)
+    }
+  })
+  ipcMain.handle('hermes:workspace:cancel-native', async (event, origin: string, scope: WorkspaceScope, sessionId: string, admissionId: string) => {
     const { client } = workspace(origin)
     assertWorkspaceScope(await client.identity(), scope)
-    const admitted = await client.sendNative(sessionId, message, requestId, bindingId)
-    const result = await requireNativeCompletion(client, sessionId, admitted.receipt.admission_id)
+    const pending = nativeStreams.get(streamKey(event.sender.id, origin, scope, sessionId))
+    if (pending?.admission && (await pending.admission).receipt.admission_id === admissionId) pending.controller.abort()
+    const result = await client.cancelNative(sessionId, admissionId)
     assertWorkspaceScope(await client.identity(), scope)
     return result
   })
@@ -127,15 +172,24 @@ export function registerSemantierWorkspaceIpc(onAccountChanged?: (origin: string
     assertWorkspaceScope(await client.identity(), scope)
     return result
   })
-  ipcMain.handle('hermes:workspace:send', async (_event, origin: string, scope: WorkspaceScope, sessionId: string, message: string, requestIdentity: string) => {
+  ipcMain.handle('hermes:workspace:send', async (event, origin: string, scope: WorkspaceScope, sessionId: string, message: string, requestIdentity: string) => {
     const { client } = workspace(origin)
-    assertWorkspaceScope(await client.identity(), scope)
-    const response = await client.send(sessionId, message, requestIdentity)
-    // Finite on-demand SSE. Synchronizing history itself never submits a turn.
-    await requireWorkspaceCompletion(response)
-    assertWorkspaceScope(await client.identity(), scope)
-    const result = await client.history(sessionId)
-    assertWorkspaceScope(await client.identity(), scope)
-    return result
+    const key = streamKey(event.sender.id, origin, scope, sessionId)
+    if (streams.has(key)) throw new Error('A Main stream is already pending in this renderer.')
+    const stream = { controller: new AbortController(), requestId: requestIdentity }
+    streams.set(key, stream)
+    try {
+      assertWorkspaceScope(await client.identity(), scope)
+      stream.controller.signal.throwIfAborted()
+      const response = await client.send(sessionId, message, requestIdentity, stream.controller.signal)
+      // Closing this finite SSE does not authorize replay or cancel durable responsibilities.
+      await requireWorkspaceCompletion(response)
+      assertWorkspaceScope(await client.identity(), scope)
+      const result = await client.history(sessionId)
+      assertWorkspaceScope(await client.identity(), scope)
+      return result
+    } finally {
+      if (streams.get(key) === stream) streams.delete(key)
+    }
   })
 }

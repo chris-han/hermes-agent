@@ -94,6 +94,7 @@ export class HermesGateway extends JsonRpcGatewayClient {
   private workspacePollTimer: ReturnType<typeof setTimeout> | null = null
   private workspacePollGeneration: number | null = null
   private workspacePollDelay = 2_000
+  private readonly workspacePendingRequests = new Map<string, string>()
   private readonly workspaceOriginalContexts = new Map<string, WorkspaceMainContext>()
   private readonly workspaceSnapshots = new Map<string, { profile: string; messages: string; cursor?: string; fullReadAt: number }>()
   private readonly wakeWorkspacePoll = () => {
@@ -105,9 +106,12 @@ export class HermesGateway extends JsonRpcGatewayClient {
     this.workspacePollTimer = null
     this.workspaceSnapshots.clear()
     this.workspaceOriginalContexts.clear()
-    window.removeEventListener('online', this.wakeWorkspacePoll)
-    window.removeEventListener('focus', this.wakeWorkspacePoll)
-    document.removeEventListener('visibilitychange', this.wakeWorkspacePoll)
+    this.workspacePendingRequests.clear()
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('online', this.wakeWorkspacePoll)
+      window.removeEventListener('focus', this.wakeWorkspacePoll)
+    }
+    if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', this.wakeWorkspacePoll)
   }
 
   private scheduleWorkspacePoll(delay = this.workspacePollDelay): void {
@@ -350,31 +354,53 @@ export class HermesGateway extends JsonRpcGatewayClient {
       return { resumed: history.sessionId, session_id: history.sessionId, session_key: history.sessionId,
         message_count: history.messages.length, messages: workspaceTranscript(history) } as T
     }
-    if (method === 'prompt.submit') {
-      if ((params.profile || connection.profile || 'default') !== 'default') {
-        if (!bridge.sendNative) { throw new Error('Native Bot Chat submission requires its Cloud owner adapter.') }
-        const context = this.workspaceOriginalContexts.get(sessionId)
-        if (!context) { throw new Error('Open Winman from the original Main conversation before sending.') }
-        const identity = String(params.submission_id || params.request_id || '')
-        if (!identity) { throw new Error('A retained Native request identity is required.') }
-        const snapshot = await bridge.sendNative(connection.origin, connection.scope, sessionId, String(params.text || ''), identity, context.binding_id)
-        this.requireConnectionGeneration(generation)
-        this.rememberWorkspaceSnapshot(sessionId, String(params.profile || connection.profile), snapshot.messages)
-        this.workspaceEvents.dispatch({ type: 'session.replay_gap', session_id: sessionId, profile: String(connection.profile), payload: {} })
-        return this.protocol.result('prompt.submit', params, snapshot.admission_receipt) as T
-      }
-      const identity = String(params.submission_id || params.request_id || '')
-      if (!identity) { throw new Error('A retained request identity is required to send a Cloud message.') }
-      const snapshot = await bridge.send(connection.origin, connection.scope, sessionId, String(params.text || ''), identity)
+    if (method === 'prompt.cancel' && (params.profile || connection.profile || 'default') !== 'default') {
+      if (!bridge.cancelNative) throw new Error('Native admission cancellation requires its Cloud owner adapter.')
+      const result = await bridge.cancelNative(connection.origin, connection.scope, sessionId, String(params.admission_id || ''))
       this.requireConnectionGeneration(generation)
-      // IPC requires the completed server stream before returning real history.
-      const rows = snapshot.messages.filter(message => message.role === 'user' && message.metadata?.durable_request_id === identity)
-      if (snapshot.sessionId !== sessionId || rows.length !== 1) { throw new Error('The Main completion receipt is uncertain. Recover history before sending again.') }
-      const rowId = Number(rows[0].messageId)
-      this.rememberWorkspaceSnapshot(sessionId, 'default', snapshot.messages, snapshot.nextCursor)
-      this.workspaceEvents.dispatch({ type: 'session.replay_gap', session_id: sessionId, profile: 'default', payload: {} })
-      return { session_id: sessionId, submission_id: identity, status: 'terminal',
-        ...(Number.isSafeInteger(rowId) && rowId > 0 ? { user_row_id: rowId } : {}) } as T
+      return result.receipt as T
+    }
+    if (method === 'session.interrupt') {
+      if (!bridge.interrupt) throw new Error('Stream interruption requires its Cloud owner adapter.')
+      const requestId = this.workspacePendingRequests.get(sessionId)
+      if (!requestId) return { cancel_requested: false } as T
+      const result = await bridge.interrupt(connection.origin, connection.scope, sessionId, requestId)
+      this.requireConnectionGeneration(generation)
+      return result as T
+    }
+    if (method === 'prompt.submit') {
+      const requestId = String(params.submission_id || params.request_id || '')
+      if (!requestId) throw new Error('A retained request identity is required to send a Cloud message.')
+      if (this.workspacePendingRequests.has(sessionId)) throw new Error('A Cloud request is already pending in this conversation.')
+      this.workspacePendingRequests.set(sessionId, requestId)
+      try {
+        if ((params.profile || connection.profile || 'default') !== 'default') {
+          if (!bridge.sendNative) { throw new Error('Native Bot Chat submission requires its Cloud owner adapter.') }
+          const context = this.workspaceOriginalContexts.get(sessionId)
+          if (!context) { throw new Error('Open Winman from the original Main conversation before sending.') }
+          const identity = String(params.submission_id || params.request_id || '')
+          if (!identity) { throw new Error('A retained Native request identity is required.') }
+          const snapshot = await bridge.sendNative(connection.origin, connection.scope, sessionId, String(params.text || ''), identity, context.binding_id)
+          this.requireConnectionGeneration(generation)
+          this.rememberWorkspaceSnapshot(sessionId, String(params.profile || connection.profile), snapshot.messages)
+          this.workspaceEvents.dispatch({ type: 'session.replay_gap', session_id: sessionId, profile: String(connection.profile), payload: {} })
+          return this.protocol.result('prompt.submit', params, snapshot.admission_receipt) as T
+        }
+        const identity = String(params.submission_id || params.request_id || '')
+        if (!identity) { throw new Error('A retained request identity is required to send a Cloud message.') }
+        const snapshot = await bridge.send(connection.origin, connection.scope, sessionId, String(params.text || ''), identity)
+        this.requireConnectionGeneration(generation)
+        // IPC requires the completed server stream before returning real history.
+        const rows = snapshot.messages.filter(message => message.role === 'user' && message.metadata?.durable_request_id === identity)
+        if (snapshot.sessionId !== sessionId || rows.length !== 1) { throw new Error('The Main completion receipt is uncertain. Recover history before sending again.') }
+        const rowId = Number(rows[0].messageId)
+        this.rememberWorkspaceSnapshot(sessionId, 'default', snapshot.messages, snapshot.nextCursor)
+        this.workspaceEvents.dispatch({ type: 'session.replay_gap', session_id: sessionId, profile: 'default', payload: {} })
+        return { session_id: sessionId, submission_id: identity, status: 'terminal',
+          ...(Number.isSafeInteger(rowId) && rowId > 0 ? { user_row_id: rowId } : {}) } as T
+      } finally {
+        if (this.workspacePendingRequests.get(sessionId) === requestId) this.workspacePendingRequests.delete(sessionId)
+      }
     }
     throw Object.assign(new Error(`Semantier Workspace does not support Desktop operation ${method}.`), { code: -32601 })
   }

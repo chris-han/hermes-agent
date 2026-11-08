@@ -51,6 +51,11 @@ export interface WorkspaceNativeReceipt {
   outcome: string | null
 }
 
+export interface WorkspaceNativeCancellation {
+  cancel_requested: boolean
+  receipt: WorkspaceNativeReceipt
+}
+
 export interface WorkspaceNativeSubmission {
   bot_id: string
   session_id: string
@@ -89,7 +94,7 @@ export function normalizeSemantierWorkspaceOrigin(origin: string): string {
 export function createSemantierWorkspaceClient(origin: string, fetchSession: (input: string, init?: RequestInit) => Promise<Response>) {
   const base = new URL(normalizeSemantierWorkspaceOrigin(origin))
 
-  async function request(path: string, body?: Record<string, unknown>, method = 'POST') {
+  async function request(path: string, body?: Record<string, unknown>, method = 'POST', signal?: AbortSignal) {
     const response = await fetchSession(new URL(path, base.origin).href, {
       method: body ? method : 'GET',
       credentials: 'include',
@@ -97,7 +102,7 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
       redirect: 'error',
       headers: body ? { 'Content-Type': 'application/json', Origin:base.origin, 'X-Semantier-CSRF':'1' } : undefined,
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(body ? 120_000 : 15_000)
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(body ? 120_000 : 15_000)]) : AbortSignal.timeout(body ? 120_000 : 15_000)
     })
 
     if (!response.ok) {
@@ -210,6 +215,13 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
       }
       return result
     },
+    async cancelNative(sessionId: string, admissionId: string): Promise<WorkspaceNativeCancellation> {
+      if (!/^[a-f0-9]{32}$/.test(admissionId)) throw new Error('Exact Native admission required.')
+      const result: WorkspaceNativeCancellation = await (await request(`/api/winman/messages/${encodeURIComponent(sessionId)}/cancel`, { admission_id: admissionId })).json()
+      if (typeof result.cancel_requested !== 'boolean' || result.receipt?.admission_id !== admissionId)
+        throw new Error('Native cancellation receipt is uncertain; recover history before retrying.')
+      return result
+    },
     async nativeHistory(sessionId: string, admissionId?: string): Promise<WorkspaceNativeSnapshot> {
       if (admissionId !== undefined && !/^[a-f0-9]{32}$/.test(admissionId)) { throw new Error('Invalid Native admission identity.') }
       const query = admissionId === undefined ? '' : `?admission_id=${admissionId}`
@@ -234,14 +246,14 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
 
       return result
     },
-    async send(sessionKey: string, message: string, requestIdentity: string) {
+    async send(sessionKey: string, message: string, requestIdentity: string, signal?: AbortSignal) {
       if (!requestIdentity.trim()) { throw new Error('A message request identity is required.') }
 
       // No automatic POST retry: a lost response is not permission to execute again.
       return request('/api/send-stream', {
         sessionKey, friendlyId: sessionKey, message, history: [],
         requestIdentity, idempotencyKey: requestIdentity, locale: 'en'
-      })
+      }, 'POST', signal)
     }
   }
 }
@@ -373,7 +385,7 @@ export async function requireWorkspaceCompletion(response: Response): Promise<vo
 /** Finite receipt reads after one explicit submit; an uncertain outcome never resubmits. */
 export async function requireNativeCompletion(
   client: Pick<ReturnType<typeof createSemantierWorkspaceClient>, 'nativeHistory'>,
-  sessionId: string, admissionId: string
+  sessionId: string, admissionId: string, cancelRequested?: AbortSignal
 ): Promise<WorkspaceNativeSnapshot> {
   const deadline = Date.now() + 120_000
   let delay = 250
@@ -382,6 +394,7 @@ export async function requireNativeCompletion(
     const receipt = snapshot.admission_receipt
     if (receipt?.admission_id !== admissionId) { throw new Error('Native receipt changed. Recover history before sending again.') }
     if (receipt.status === 'terminal') {
+      if (cancelRequested?.aborted && ['cancelled', 'interrupted'].includes(receipt.outcome || '')) return snapshot
       if (receipt.outcome !== 'completed') { throw new Error('Winman did not complete this request. Recover its status before sending again.') }
       return snapshot
     }

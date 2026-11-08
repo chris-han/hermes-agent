@@ -327,3 +327,25 @@ it('does not acknowledge a Main completion without the matching durable request 
   expect(send).toHaveBeenCalledTimes(1)
   gateway.close()
 })
+
+
+it('routes stop with its exact pending request identity and never submits a second prompt', async () => {
+  const interrupt = vi.fn().mockResolvedValue({ cancel_requested: true, request_id: 'original-request' })
+  let finish: ((value: unknown) => void) | undefined
+  const send = vi.fn(() => new Promise(resolve => { finish = resolve }))
+  Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: { workspace: {
+    identity: vi.fn().mockResolvedValue(identity), interrupt, send
+  } } })
+  const gateway = new HermesGateway()
+  await gateway.connectWorkspace('https://cloud.example', scope)
+  await expect(gateway.request('session.interrupt', { session_id:'original' })).resolves.toEqual({cancel_requested:false})
+  expect(interrupt).not.toHaveBeenCalled()
+  const pending = gateway.request('prompt.submit', {session_id:'original',text:'hello',submission_id:'original-request'})
+  await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1))
+  await expect(gateway.request('session.interrupt', { session_id: 'original' })).resolves.toEqual({ cancel_requested: true, request_id: 'original-request' })
+  expect(interrupt).toHaveBeenCalledWith('https://cloud.example', scope, 'original', 'original-request')
+  finish!({sessionId:'original',messages:[{messageId:'257',role:'user',metadata:{durable_request_id:'original-request'}}]})
+  await pending
+  expect(send).toHaveBeenCalledTimes(1)
+  gateway.close()
+})

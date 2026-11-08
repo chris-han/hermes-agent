@@ -170,3 +170,14 @@ it('never retries an uncertain Main creation', async () => {
   await expect(createSemantierWorkspaceClient('https://cloud.example',transport).createSession('', 'create-001')).rejects.toThrow()
   expect(transport).toHaveBeenCalledTimes(1)
 })
+
+it('cancels only a retained Native admission and validates the returned receipt', async () => {
+  const fetch = vi.fn().mockResolvedValue(Response.json({ cancel_requested:true, receipt:{admission_id:'a'.repeat(32),status:'terminal',outcome:'cancelled'} }))
+  const client = createSemantierWorkspaceClient('https://cloud.example',fetch)
+  await expect(client.cancelNative('canonical-a','invalid')).rejects.toThrow('admission')
+  expect(fetch).not.toHaveBeenCalled()
+  await expect(client.cancelNative('canonical-a','a'.repeat(32))).resolves.toMatchObject({cancel_requested:true})
+  expect(fetch).toHaveBeenCalledWith('https://cloud.example/api/winman/messages/canonical-a/cancel',expect.objectContaining({method:'POST',body:JSON.stringify({admission_id:'a'.repeat(32)})}))
+  fetch.mockResolvedValue(Response.json({cancel_requested:true,receipt:{admission_id:'b'.repeat(32)}}))
+  await expect(client.cancelNative('canonical-a','a'.repeat(32))).rejects.toThrow('receipt')
+})

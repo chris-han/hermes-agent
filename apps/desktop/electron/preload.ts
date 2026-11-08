@@ -336,7 +336,9 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     nativeContext: (origin, scope, sessionId) => ipcRenderer.invoke('hermes:workspace:native-context', origin, scope, sessionId),
     bindNativeContext: (origin, scope, sessionId, originalSessionKey) => ipcRenderer.invoke('hermes:workspace:bind-native-context', origin, scope, sessionId, originalSessionKey),
     sendNative: (origin, scope, sessionId, message, requestId, bindingId) => ipcRenderer.invoke('hermes:workspace:send-native', origin, scope, sessionId, message, requestId, bindingId),
+    cancelNative: (origin, scope, sessionId, admissionId) => ipcRenderer.invoke('hermes:workspace:cancel-native', origin, scope, sessionId, admissionId),
     nativeHistory: (origin, scope, sessionId) => ipcRenderer.invoke('hermes:workspace:native-history', origin, scope, sessionId),
+    interrupt: (origin, scope, sessionId, requestId) => ipcRenderer.invoke('hermes:workspace:interrupt', origin, scope, sessionId, requestId),
     send: (origin, scope, sessionId, message, requestIdentity) => ipcRenderer.invoke('hermes:workspace:send', origin, scope, sessionId, message, requestIdentity)
   },
   profile: {
