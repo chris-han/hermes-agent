@@ -349,3 +349,35 @@ it('routes stop with its exact pending request identity and never submits a seco
   expect(send).toHaveBeenCalledTimes(1)
   gateway.close()
 })
+
+it('stops an exact pending request through another client alias of the same authenticated HTTP workspace', async () => {
+  let finish: ((value: unknown) => void) | undefined
+  const send = vi.fn(() => new Promise(resolve => { finish = resolve }))
+  const interrupt = vi.fn().mockResolvedValue({cancel_requested:true,request_id:'alias-request'})
+  Object.defineProperty(window,'hermesDesktop',{configurable:true,value:{workspace:{identity:vi.fn().mockResolvedValue(identity),send,interrupt}}})
+  const sender = new HermesGateway(), controller = new HermesGateway(), unrelated = new HermesGateway()
+  await sender.connectWorkspace('https://cloud.example',scope,'sender-door')
+  await controller.connectWorkspace('https://cloud.example',scope,'controller-door')
+  await unrelated.connectWorkspace('https://other.example',scope,'other-door')
+  const pending=sender.request('prompt.submit',{session_id:'original',text:'hello',submission_id:'alias-request'})
+  await vi.waitFor(()=>expect(send).toHaveBeenCalledTimes(1))
+  await expect(unrelated.request('session.interrupt',{session_id:'original'})).resolves.toEqual({cancel_requested:false})
+  expect(interrupt).not.toHaveBeenCalled()
+  unrelated.close()
+  for (const foreignScope of [{...scope,userId:'b'}, {...scope,workspaceId:'other-workspace'}, {...scope,organizationId:'other-org'}]) {
+    const foreign = new HermesGateway()
+    window.hermesDesktop!.workspace!.identity = vi.fn().mockResolvedValue({...identity,user:{user_id:foreignScope.userId,workspace_id:foreignScope.workspaceId},workspace:{id:foreignScope.workspaceId},organization_id:foreignScope.organizationId})
+    await foreign.connectWorkspace('https://cloud.example',foreignScope)
+    await expect(foreign.request('session.interrupt',{session_id:'original'})).resolves.toEqual({cancel_requested:false})
+    foreign.close()
+  }
+  window.hermesDesktop!.workspace!.identity = vi.fn().mockResolvedValue(identity)
+  const closingAlias = new HermesGateway()
+  await closingAlias.connectWorkspace('https://cloud.example',scope,'closing-alias')
+  closingAlias.close()
+  await expect(controller.request('session.interrupt',{session_id:'original'})).resolves.toMatchObject({cancel_requested:true})
+  expect(interrupt).toHaveBeenCalledWith('https://cloud.example',scope,'original','alias-request')
+  finish!({sessionId:'original',messages:[{messageId:'263',role:'user',metadata:{durable_request_id:'alias-request'}}]})
+  await pending
+  sender.close();controller.close()
+})

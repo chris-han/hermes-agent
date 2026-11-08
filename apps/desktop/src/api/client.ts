@@ -83,6 +83,8 @@ function remainingRequestBudget(deadline: number, signal?: AbortSignal): number 
 }
 
 const workspaceReadScopes = new Map<string, { scope: WorkspaceScope; origin: string }>()
+// HTTP aliases share a server workspace, not one physical WebSocket/client instance.
+const workspacePendingRequests = new Map<string, { owner: object; requestId: string }>()
 
 export class HermesGateway extends JsonRpcGatewayClient {
   private workspaceConnection: { origin: string; scope: WorkspaceScope; connectionId?: string; profile?: string } | null = null
@@ -94,7 +96,6 @@ export class HermesGateway extends JsonRpcGatewayClient {
   private workspacePollTimer: ReturnType<typeof setTimeout> | null = null
   private workspacePollGeneration: number | null = null
   private workspacePollDelay = 2_000
-  private readonly workspacePendingRequests = new Map<string, string>()
   private readonly workspaceOriginalContexts = new Map<string, WorkspaceMainContext>()
   private readonly workspaceSnapshots = new Map<string, { profile: string; messages: string; cursor?: string; fullReadAt: number }>()
   private readonly wakeWorkspacePoll = () => {
@@ -106,7 +107,9 @@ export class HermesGateway extends JsonRpcGatewayClient {
     this.workspacePollTimer = null
     this.workspaceSnapshots.clear()
     this.workspaceOriginalContexts.clear()
-    this.workspacePendingRequests.clear()
+    for (const [key, pending] of workspacePendingRequests) {
+      if (pending.owner === this) workspacePendingRequests.delete(key)
+    }
     if (typeof window !== 'undefined') {
       window.removeEventListener('online', this.wakeWorkspacePoll)
       window.removeEventListener('focus', this.wakeWorkspacePoll)
@@ -247,6 +250,8 @@ export class HermesGateway extends JsonRpcGatewayClient {
     const bridge = window.hermesDesktop.workspace!
     signal?.throwIfAborted()
     const sessionId = String(params.session_id || params.session_key || '')
+    const pendingKey = JSON.stringify([new URL(connection.origin).origin, connection.scope.userId,
+      connection.scope.workspaceId, connection.scope.organizationId, sessionId])
     if (method === 'model.options') {
       if (params.query_only !== true || typeof params.query_scope !== 'string' || !params.query_scope.trim()) {
         throw new Error('Cloud model discovery requires the query-only source contract.')
@@ -362,7 +367,7 @@ export class HermesGateway extends JsonRpcGatewayClient {
     }
     if (method === 'session.interrupt') {
       if (!bridge.interrupt) throw new Error('Stream interruption requires its Cloud owner adapter.')
-      const requestId = this.workspacePendingRequests.get(sessionId)
+      const requestId = workspacePendingRequests.get(pendingKey)?.requestId
       if (!requestId) return { cancel_requested: false } as T
       const result = await bridge.interrupt(connection.origin, connection.scope, sessionId, requestId)
       this.requireConnectionGeneration(generation)
@@ -371,8 +376,8 @@ export class HermesGateway extends JsonRpcGatewayClient {
     if (method === 'prompt.submit') {
       const requestId = String(params.submission_id || params.request_id || '')
       if (!requestId) throw new Error('A retained request identity is required to send a Cloud message.')
-      if (this.workspacePendingRequests.has(sessionId)) throw new Error('A Cloud request is already pending in this conversation.')
-      this.workspacePendingRequests.set(sessionId, requestId)
+      if (workspacePendingRequests.has(pendingKey)) throw new Error('A Cloud request is already pending in this conversation.')
+      workspacePendingRequests.set(pendingKey, { owner: this, requestId })
       try {
         if ((params.profile || connection.profile || 'default') !== 'default') {
           if (!bridge.sendNative) { throw new Error('Native Bot Chat submission requires its Cloud owner adapter.') }
@@ -399,7 +404,8 @@ export class HermesGateway extends JsonRpcGatewayClient {
         return { session_id: sessionId, submission_id: identity, status: 'terminal',
           ...(Number.isSafeInteger(rowId) && rowId > 0 ? { user_row_id: rowId } : {}) } as T
       } finally {
-        if (this.workspacePendingRequests.get(sessionId) === requestId) this.workspacePendingRequests.delete(sessionId)
+        if (workspacePendingRequests.get(pendingKey)?.owner === this && workspacePendingRequests.get(pendingKey)?.requestId === requestId)
+          workspacePendingRequests.delete(pendingKey)
       }
     }
     throw Object.assign(new Error(`Semantier Workspace does not support Desktop operation ${method}.`), { code: -32601 })
