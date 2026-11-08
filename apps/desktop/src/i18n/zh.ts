@@ -79,6 +79,7 @@ export const zhOverrides = {
     connecting: '连接中',
     continue: '继续',
     bots: '机器人',
+    sessionsTab: '会话',
     winmanTab: '僚机',
     copied: '已复制',
     copy: '复制',

@@ -145,3 +145,22 @@ it('isolates stale reads and failed saves when the same profile moves between co
   act(() => $connection.set({ baseUrl: 'https://second.example' } as never))
   await waitFor(() => expect(screen.getByTestId('locale').textContent).toBe('ar'))
 })
+
+it('restores Cloud language on a fresh provider and switches identity without Native config', async () => {
+  localStorage.clear()
+  const { workspaceLocaleClient } = await import('./workspace-locale')
+  const a = { userId: 'a', workspaceId: 'a', organizationId: 'org' }
+  await workspaceLocaleClient('https://cloud.example', a)!.saveConfig({ display: { language: 'zh-hant' } })
+  const api = vi.fn().mockRejectedValue(new Error('Native config must not own Cloud language'))
+  window.hermesDesktop = { api, getMachineProfile: vi.fn().mockResolvedValue({ locale: 'en', platform: 'linux' }) } as never
+  act(() => $connection.set({ connectionId: 'cloud', baseUrl: 'https://cloud.example', transport: 'semantier-workspace-http', workspaceScope: a } as never))
+  const view = render(<I18nProvider><Probe /></I18nProvider>)
+  await waitFor(() => expect(screen.getByTestId('locale').textContent).toBe('zh-hant'))
+  view.unmount()
+  render(<I18nProvider><Probe /></I18nProvider>)
+  await waitFor(() => expect(screen.getByTestId('locale').textContent).toBe('zh-hant'))
+  act(() => $connection.set({ connectionId: 'cloud', baseUrl: 'https://cloud.example', transport: 'semantier-workspace-http', workspaceScope: { ...a, userId: 'b', workspaceId: 'b' } } as never))
+  await waitFor(() => expect(screen.getByTestId('locale').textContent).toBe('en'))
+  expect(api).not.toHaveBeenCalled()
+  localStorage.clear()
+})

@@ -195,7 +195,7 @@ registry.registerMany([
     area: 'panes',
     // String fallback only (menus, drag ghosts); the tab itself renders
     // `tabTitle` below so the strip follows `display.language` once it loads.
-    title: translateNow('sidebar.sessions'),
+    title: translateNow('common.sessionsTab'),
     // Collapsible: leaves the grid on narrow viewports (edge overlay instead).
     // dock: where a RE-ADOPTED pane lands (healed from a stale dismissal) —
     // its default-ish spot beside main, not a random same-placement stack.
@@ -207,8 +207,8 @@ registry.registerMany([
       // Standing chrome: no close gestures at all — the tab is shown/hidden
       // (zone menu Show/Hide rows + the auto-registered ⌘K toggle below).
       hideOnly: true,
-      tabTitle: () => <LocalizedTabTitle select={t => t.sidebar.sessions} />,
-      tabTitleText: () => translateNow('sidebar.sessions'),
+      tabTitle: () => <LocalizedTabTitle select={t => t.common.sessionsTab} />,
+      tabTitleText: () => translateNow('common.sessionsTab'),
       width: `${SIDEBAR_DEFAULT_WIDTH}px`,
       minWidth: `${SIDEBAR_DEFAULT_WIDTH}px`,
       maxWidth: `${SIDEBAR_MAX_WIDTH}px`

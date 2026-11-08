@@ -372,6 +372,7 @@ export interface Translations extends NoticeTranslations {
     connecting: string
     continue: string
     bots: string
+    sessionsTab: string
     winmanTab: string
     copied: string
     copy: string
