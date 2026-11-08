@@ -3,7 +3,7 @@ export interface WorkspaceIdentity {
   authenticated: boolean
   account_provisioning?: { inference_ready?: boolean; reason?: string | null }
   organization_id?: null | string
-  user?: null | { user_id: string; workspace_id: string }
+  user?: null | { user_id: string; workspace_id: string; name?: string }
   workspace?: null | { id: string; slug?: string }
 }
 
