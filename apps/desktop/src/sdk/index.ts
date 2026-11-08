@@ -903,6 +903,7 @@ export const host = {
 
     // Only explicit navigation from a focused Main pane changes the server
     // association. Cold/background hydration reads the retained association.
+    let originalBindingOpened = false
     const originalId = $focusedStoredSessionId.get()
     const originalOwner = $focusedSessionOwner.get()
     if (options.workspaceMode === 'bots' && !options.refreshInPlace && options.tabTitle === 'Bot Chat' &&
@@ -912,9 +913,17 @@ export const host = {
       const binding = (async () => {
         await previous?.catch(() => undefined)
         if (generation !== openSessionGeneration) { return }
-        await requestGatewayForAgent(ownerRoute.connectionId, ownerRoute.profile, 'session.bind_original', {
-          session_id: storedSessionId, original_session_key: originalId
-        })
+        // Keep the expected binding token on the same owner connection through
+        // opening. A per-request lease would discard it before the chat resumes.
+        const release = await retainGatewayForAgent(ownerRoute.connectionId, ownerRoute.profile, { spawnPriority: 'foreground' })
+        try {
+          await requestGatewayForAgent(ownerRoute.connectionId, ownerRoute.profile, 'session.bind_original', {
+            session_id: storedSessionId, original_session_key: originalId
+          })
+          if (generation !== openSessionGeneration || $focusedStoredSessionId.get() !== originalId) { return }
+          await openGatewayForAgent(ownerRoute.connectionId, ownerRoute.profile, { spawnPriority: 'foreground' })
+          originalBindingOpened = true
+        } finally { release() }
       })()
       workspaceMainBinding = binding
       try { await binding } finally { if (workspaceMainBinding === binding) { workspaceMainBinding = null } }
@@ -992,7 +1001,9 @@ export const host = {
       // profile must dial through openGatewayForProfile (its established path),
       // not the registry-secondary path openGatewayForAgent takes for a 'local'
       // connection id. Behavior for a plain local open is unchanged.
-      const dial = explicitRoute
+      const dial = originalBindingOpened
+        ? null
+        : explicitRoute
         ? () =>
             openGatewayForAgent(explicitRoute.connectionId, explicitRoute.profile, {
               spawnPriority: 'foreground'
