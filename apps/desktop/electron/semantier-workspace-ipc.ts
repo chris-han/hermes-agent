@@ -11,6 +11,7 @@ export interface DesktopWorkspaceApi {
   identity: (origin: string) => Promise<WorkspaceIdentity>
   login: (origin: string) => Promise<WorkspaceIdentity>
   logout: (origin: string) => Promise<void>
+  ensureWinmanChat: (origin: string, scope: WorkspaceScope) => Promise<import('./semantier-workspace-client').WorkspaceWinmanProfile>
   sessions: (origin: string, scope: WorkspaceScope) => Promise<{ sessions: Array<{ key: string; title?: string }> }>
   history: (origin: string, scope: WorkspaceScope, sessionId: string, afterId?: string) => Promise<import('./semantier-workspace-client').WorkspaceHistory>
   nativeHistory: (origin: string, scope: WorkspaceScope, sessionId: string) => Promise<import('./semantier-workspace-client').WorkspaceNativeSnapshot>
@@ -63,6 +64,13 @@ export function registerSemantierWorkspaceIpc(onAccountChanged?: (origin: string
     } finally {
       if (!win.isDestroyed()) { win.close() }
     }
+  })
+  ipcMain.handle('hermes:workspace:ensure-winman-chat', async (_event, origin: string, scope: WorkspaceScope) => {
+    const { client } = workspace(origin)
+    assertWorkspaceScope(await client.identity(), scope)
+    const result = await client.ensureWinmanChat()
+    assertWorkspaceScope(await client.identity(), scope)
+    return result
   })
   ipcMain.handle('hermes:workspace:sessions', async (_event, origin: string, scope: WorkspaceScope) => {
     const { client } = workspace(origin)

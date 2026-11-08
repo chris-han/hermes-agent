@@ -212,6 +212,25 @@ export class HermesGateway extends JsonRpcGatewayClient {
     const bridge = window.hermesDesktop.workspace!
     signal?.throwIfAborted()
     const sessionId = String(params.session_id || params.session_key || '')
+    if (method === 'session.create') {
+      if (params.title !== 'Bot Chat' || !connection.connectionId) {
+        throw new Error('Cloud creation is available only for the canonical Bot Chat.')
+      }
+      const target = String(params.profile || connection.profile || 'default')
+      const roster = await hermesApiAs<{ profiles: Array<{ name: string }> }>(
+        { connectionId: connection.connectionId, profile: 'default' }, { path: '/api/profiles' })
+      this.requireConnectionGeneration(generation)
+      if (!roster.profiles.some(profile => profile.name === target)) {
+        throw new Error('This Native profile is unavailable in the current workspace.')
+      }
+      const result = await bridge.ensureWinmanChat(connection.origin, connection.scope)
+      this.requireConnectionGeneration(generation)
+      if (result.profile.name !== target || !result.profile.canonical_session?.id) {
+        throw new Error('The canonical Native profile changed during creation.')
+      }
+      const canonical = result.profile.canonical_session
+      return { session_id: canonical.resolved_id || canonical.id, stored_session_id: canonical.id } as T
+    }
     if (method === 'profiles.list') {
       if (!connection.connectionId) { throw new Error('The Cloud roster requires an explicit connection owner.') }
       const result = await hermesApiAs<T>({ connectionId: connection.connectionId, profile: 'default' }, { path: '/api/profiles' })

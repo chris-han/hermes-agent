@@ -29,6 +29,13 @@ export interface WorkspaceMessage {
   metadata?: Record<string, unknown>
 }
 
+export interface WorkspaceWinmanProfile {
+  bot_id: string
+  native_profile_id: string
+  profile: { name: string; path: string; canonical_session?: { id: string; resolved_id?: string } | null; [key: string]: unknown }
+  bot_mode_protocol?: boolean
+}
+
 export interface WorkspaceNativeSnapshot {
   session_id: string
   canonical_session: { id: string; resolved_id?: string }
@@ -84,12 +91,20 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
     async identity(): Promise<WorkspaceIdentity> {
       return (await request('/auth/context')).json()
     },
-    async winman(): Promise<{ bot_id: string; native_profile_id: string;
-      profile: { name: string; path: string; [key: string]: unknown }; bot_mode_protocol?: boolean }> {
+    async winman(): Promise<WorkspaceWinmanProfile> {
       const result = await (await request('/api/winman')).json()
       if (!result?.bot_id || !result.native_profile_id || !result.profile?.name ||
         result.profile.path !== result.native_profile_id) {
         throw new Error('The server-owned Winman profile is unavailable.')
+      }
+      return result
+    },
+    async ensureWinmanChat(): Promise<WorkspaceWinmanProfile> {
+      // No automatic retry. Native's durable title creation identity owns recovery.
+      const result: WorkspaceWinmanProfile = await (await request('/api/winman', {})).json()
+      if (!result?.bot_id || !result.native_profile_id || !result.profile?.name ||
+          result.profile.path !== result.native_profile_id || !result.profile.canonical_session?.id) {
+        throw new Error('The server-owned canonical Bot Chat is unavailable.')
       }
       return result
     },

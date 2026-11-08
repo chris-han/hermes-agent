@@ -87,3 +87,13 @@ it('uses server-owned keyset cursors without changing conversation identity', as
   await expect(client.history('original', '218&other=1')).rejects.toThrow('Invalid message cursor')
   expect(transport).toHaveBeenCalledTimes(1)
 })
+
+it('ensures only the server canonical Chat with an empty JSON request and no POST retry', async () => {
+  const response={bot_id:'bot_a',native_profile_id:'/owned/winman-a',profile:{name:'winman-a',path:'/owned/winman-a',canonical_session:{id:'canonical-a'}}}
+  const transport=vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(response)).mockRejectedValueOnce(new TypeError('lost response'))
+  const client=createSemantierWorkspaceClient('https://cloud.example',transport)
+  await expect(client.ensureWinmanChat()).resolves.toEqual(response)
+  expect(transport.mock.calls[0]).toMatchObject(['https://cloud.example/api/winman',{method:'POST',body:'{}',credentials:'include',redirect:'error'}])
+  await expect(client.ensureWinmanChat()).rejects.toThrow('lost response')
+  expect(transport).toHaveBeenCalledTimes(2)
+})

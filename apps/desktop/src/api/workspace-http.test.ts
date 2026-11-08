@@ -214,3 +214,19 @@ it('uses the server cursor for idle reads and periodically recovers an authorita
     expect(history.mock.calls.at(-1)?.slice(3)).toEqual([])
   } finally { gateway.close(); vi.useRealTimers() }
 })
+
+it('creates only the authenticated Native Bot Chat through its owner adapter', async () => {
+  const ensureWinmanChat = vi.fn().mockResolvedValue({ bot_id: 'bot_a', profile: { name: 'winman-a', canonical_session: { id: 'canonical-a' } } })
+  const api = vi.fn().mockResolvedValue({ profiles: [{ name: 'winman-a' }] })
+  Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: { api, workspace: { identity: vi.fn().mockResolvedValue(identity), ensureWinmanChat } } })
+  const gateway = new HermesGateway()
+  try {
+    await gateway.connectWorkspace('https://cloud.example', scope, 'cloud-a', 'winman-a')
+    await expect(gateway.request('session.create', { profile: 'foreign', title: 'Bot Chat' })).rejects.toThrow('profile')
+    expect(ensureWinmanChat).not.toHaveBeenCalled()
+    await expect(gateway.request('session.create', { profile: 'winman-a', title: 'Bot Chat', hidden: true, follow_profile_config: true })).resolves.toMatchObject({ stored_session_id: 'canonical-a', session_id: 'canonical-a' })
+    expect(ensureWinmanChat).toHaveBeenCalledWith('https://cloud.example', scope)
+    await expect(gateway.request('session.create', { title: 'Other' })).rejects.toThrow()
+    expect(ensureWinmanChat).toHaveBeenCalledTimes(1)
+  } finally { gateway.close() }
+})
