@@ -330,7 +330,7 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     login: origin => ipcRenderer.invoke('hermes:workspace:login', origin),
     logout: origin => ipcRenderer.invoke('hermes:workspace:logout', origin),
     sessions: (origin, scope) => ipcRenderer.invoke('hermes:workspace:sessions', origin, scope),
-    history: (origin, scope, sessionId) => ipcRenderer.invoke('hermes:workspace:history', origin, scope, sessionId),
+    history: (origin, scope, sessionId, afterId) => ipcRenderer.invoke('hermes:workspace:history', origin, scope, sessionId, ...(afterId === undefined ? [] : [afterId])),
     nativeHistory: (origin, scope, sessionId) => ipcRenderer.invoke('hermes:workspace:native-history', origin, scope, sessionId),
     send: (origin, scope, sessionId, message, requestIdentity) => ipcRenderer.invoke('hermes:workspace:send', origin, scope, sessionId, message, requestIdentity)
   },

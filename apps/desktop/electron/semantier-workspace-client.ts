@@ -39,6 +39,8 @@ export interface WorkspaceNativeSnapshot {
 }
 
 export interface WorkspaceHistory {
+  nextCursor?: string
+  hasMore?: boolean
   sessionId: string
   messages: WorkspaceMessage[]
 }
@@ -102,8 +104,11 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
       }
       return result
     },
-    async history(sessionKey: string): Promise<WorkspaceHistory> {
-      const result: WorkspaceHistory = await (await request(`/api/history?sessionKey=${encodeURIComponent(sessionKey)}`)).json()
+    async history(sessionKey: string, afterId?: string): Promise<WorkspaceHistory> {
+      if (afterId !== undefined && !/^\d+$/.test(afterId)) { throw new Error('Invalid message cursor.') }
+      const query = new URLSearchParams({ sessionKey })
+      if (afterId !== undefined) { query.set('afterId', afterId) }
+      const result: WorkspaceHistory = await (await request(`/api/history?${query}`)).json()
 
       // A foreign/missing Workspace history may deliberately be an empty 200.
       // Never adopt its "new" placeholder as the requested durable session.

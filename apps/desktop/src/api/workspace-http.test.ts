@@ -193,3 +193,24 @@ it('discards a pending recovery read after the Cloud owner closes', async () => 
     expect(history).toHaveBeenCalledTimes(2)
   } finally { gateway.close(); vi.useRealTimers() }
 })
+
+it('uses the server cursor for idle reads and periodically recovers an authoritative snapshot', async () => {
+  vi.useFakeTimers()
+  const history = vi.fn().mockResolvedValueOnce({ sessionId: 'original', nextCursor: '218', messages: [{ messageId: '218', role: 'assistant', text: 'last' }] })
+    .mockResolvedValue({ sessionId: 'original', nextCursor: '218', messages: [] })
+  Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: { workspace: { identity: vi.fn().mockResolvedValue(identity), history } } })
+  const gateway = new HermesGateway(), changed = vi.fn()
+  gateway.on('session.replay_gap', changed)
+  try {
+    await gateway.connectWorkspace('https://cloud.example', scope)
+    await gateway.request('session.resume', { session_id: 'original' })
+    window.dispatchEvent(new Event('online'))
+    await vi.advanceTimersByTimeAsync(1)
+    expect(history).toHaveBeenLastCalledWith('https://cloud.example', scope, 'original', '218')
+    expect(changed).not.toHaveBeenCalled()
+    vi.setSystemTime(Date.now() + 61_000)
+    window.dispatchEvent(new Event('online'))
+    await vi.advanceTimersByTimeAsync(1)
+    expect(history.mock.calls.at(-1)?.slice(3)).toEqual([])
+  } finally { gateway.close(); vi.useRealTimers() }
+})

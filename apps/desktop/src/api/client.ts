@@ -92,7 +92,7 @@ export class HermesGateway extends JsonRpcGatewayClient {
   private workspacePollTimer: ReturnType<typeof setTimeout> | null = null
   private workspacePollGeneration: number | null = null
   private workspacePollDelay = 2_000
-  private readonly workspaceSnapshots = new Map<string, { profile: string; messages: string }>()
+  private readonly workspaceSnapshots = new Map<string, { profile: string; messages: string; cursor?: string; fullReadAt: number }>()
   private readonly wakeWorkspacePoll = () => {
     if (this.workspaceConnection) { this.scheduleWorkspacePoll(0) }
   }
@@ -114,8 +114,8 @@ export class HermesGateway extends JsonRpcGatewayClient {
     }, delay)
   }
 
-  private rememberWorkspaceSnapshot(sessionId: string, profile: string, messages: unknown): void {
-    this.workspaceSnapshots.set(sessionId, { profile, messages: JSON.stringify(messages) })
+  private rememberWorkspaceSnapshot(sessionId: string, profile: string, messages: unknown, cursor?: string): void {
+    this.workspaceSnapshots.set(sessionId, { profile, messages: JSON.stringify(messages), cursor, fullReadAt: Date.now() })
     if (this.workspacePollTimer === null && this.workspacePollGeneration !== this.connectionGeneration) { this.scheduleWorkspacePoll() }
   }
 
@@ -128,15 +128,21 @@ export class HermesGateway extends JsonRpcGatewayClient {
     try {
       for (const [sessionId, previous] of this.workspaceSnapshots) {
         const bridge = window.hermesDesktop.workspace!
+        const incremental = previous.profile === 'default' && previous.cursor !== undefined && Date.now() - previous.fullReadAt < 60_000
         const snapshot = previous.profile === 'default'
-          ? await bridge.history(connection.origin, connection.scope, sessionId)
+          ? await bridge.history(connection.origin, connection.scope, sessionId, ...(incremental ? [previous.cursor!] : []))
           : await bridge.nativeHistory(connection.origin, connection.scope, sessionId)
         this.requireConnectionGeneration(generation)
         const messages = JSON.stringify(snapshot.messages)
         // A concurrent explicit resume owns its newer snapshot; do not rewind its cursor.
         if (this.workspaceSnapshots.get(sessionId) !== previous) { continue }
-        if (messages !== previous.messages) {
-          this.workspaceSnapshots.set(sessionId, { profile: previous.profile, messages })
+        const cursor = 'nextCursor' in snapshot && typeof snapshot.nextCursor === 'string' ? snapshot.nextCursor : undefined
+        const isDelta = incremental && cursor !== undefined
+        const hasChanges = isDelta ? snapshot.messages.length > 0 : messages !== previous.messages
+        this.workspaceSnapshots.set(sessionId, { profile: previous.profile,
+          messages: isDelta ? previous.messages : messages, cursor,
+          fullReadAt: isDelta ? previous.fullReadAt : Date.now() })
+        if (hasChanges) {
           changed = true
           this.workspaceEvents.dispatch({ type: 'session.replay_gap', session_id: sessionId, profile: previous.profile, payload: {} })
         }
@@ -248,7 +254,7 @@ export class HermesGateway extends JsonRpcGatewayClient {
       const history = await bridge.history(connection.origin, connection.scope, sessionId)
       this.requireConnectionGeneration(generation)
       signal?.throwIfAborted()
-      this.rememberWorkspaceSnapshot(sessionId, 'default', history.messages)
+      this.rememberWorkspaceSnapshot(sessionId, 'default', history.messages, history.nextCursor)
       return { resumed: history.sessionId, session_id: history.sessionId, session_key: history.sessionId,
         message_count: history.messages.length, messages: workspaceTranscript(history) } as T
     }

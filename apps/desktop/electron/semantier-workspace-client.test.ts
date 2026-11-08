@@ -78,3 +78,12 @@ it('keeps canonical Native history IDs and refuses another conversation', async 
   await expect(client.nativeHistory('foreign')).rejects.toThrow('canonical')
   expect(transport.mock.calls[0][0]).toBe('https://cloud.example/api/winman/history/canonical-a')
 })
+
+it('uses server-owned keyset cursors without changing conversation identity', async () => {
+  const transport = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ sessionId: 'original', messages: [], nextCursor: '218', hasMore: false }))
+  const client = createSemantierWorkspaceClient('https://cloud.example', transport)
+  await expect(client.history('original', '218')).resolves.toMatchObject({ sessionId: 'original', nextCursor: '218', messages: [] })
+  expect(transport.mock.calls[0][0]).toBe('https://cloud.example/api/history?sessionKey=original&afterId=218')
+  await expect(client.history('original', '218&other=1')).rejects.toThrow('Invalid message cursor')
+  expect(transport).toHaveBeenCalledTimes(1)
+})

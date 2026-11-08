@@ -30,3 +30,16 @@ it('signals account invalidation only after clearing the origin-owned cookie jar
   expect(changed).toHaveBeenCalledWith('https://cloud.example', false)
   expect(order).toEqual(['cookies', 'cache', 'changed'])
 })
+
+it('forwards incremental reads through the same before-and-after account guard', async () => {
+  const fetch = vi.fn().mockResolvedValueOnce(Response.json(identity))
+    .mockResolvedValueOnce(Response.json({ sessionId: 'original', messages: [], nextCursor: '218' }))
+    .mockResolvedValueOnce(Response.json({ ...identity, user: { ...identity.user, user_id: 'user-b' } }))
+  vi.mocked(session.fromPartition).mockReturnValue({ fetch } as never)
+  vi.mocked(ipcMain.handle).mockClear()
+  registerSemantierWorkspaceIpc()
+  const handler = vi.mocked(ipcMain.handle).mock.calls.find(([name]) => name === 'hermes:workspace:history')![1]
+  await expect(handler({} as never, 'https://cloud.example', scope, 'original', '218')).rejects.toThrow('changed')
+  expect(fetch.mock.calls[1][0]).toBe('https://cloud.example/api/history?sessionKey=original&afterId=218')
+  expect(fetch).toHaveBeenCalledTimes(3)
+})
