@@ -15,6 +15,7 @@ import {
 } from './local-gateway'
 import { closeGatewayTicketBridges, createGatewayTicketResolver } from './local-gateway-python'
 import { registerSemantierFeedbackIpc } from './updater/semantier-feedback-ipc'
+import { registerSemantierWorkspaceIpc } from './semantier-workspace-ipc'
 import { JourneyObservations } from './journey-observations'
 let journeyObservations: JourneyObservations | null = null
 import { SemantierObservations } from './updater/semantier-observations'
@@ -16685,6 +16686,8 @@ function formatApiRequestFailure(
 
   return `[hermes:api ${method} ${path}] ${detail}`.slice(0, 6000)
 }
+
+registerSemantierWorkspaceIpc()
 
 ipcMain.handle('hermes:api', async (_event, request) => {
   // Hold the deletion gate for BOTH profile deletes and renames: a concurrent

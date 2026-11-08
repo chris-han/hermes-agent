@@ -7,6 +7,7 @@ import type { ScreenshotApi } from '../electron/command-screenshot-types'
 import type { DesktopBranding } from '../electron/desktop-branding-types'
 import type { HudModifierApi } from '../electron/hud-modifier-types'
 import type { MachineProfile } from '../electron/machine-profile'
+import type { DesktopWorkspaceApi } from '../electron/semantier-workspace-ipc'
 import type { WindowCloseAction, WindowCloseRequest, WindowCloseResult } from '../electron/minimize-to-tray'
 import type { HermesNotification } from '../electron/notification-types'
 import type { KeepAwakeMode } from '../electron/power-save'
@@ -264,6 +265,7 @@ declare global {
       oauthLogoutConnectionConfig: (remoteUrl: string) => Promise<DesktopOauthLogoutResult>
       // Hermes Cloud: one portal login powers discovery + silent per-agent
       // sign-in (cloud-auto-discovery Phase 3).
+      workspace?: DesktopWorkspaceApi
       cloud: {
         status: () => Promise<DesktopCloudStatus>
         login: () => Promise<DesktopCloudStatus & { ok: boolean }>

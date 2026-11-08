@@ -325,6 +325,14 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     discover: org => ipcRenderer.invoke('hermes:cloud:discover', org),
     agentSignIn: dashboardUrl => ipcRenderer.invoke('hermes:cloud:agent-sign-in', dashboardUrl)
   },
+  workspace: {
+    identity: origin => ipcRenderer.invoke('hermes:workspace:identity', origin),
+    login: origin => ipcRenderer.invoke('hermes:workspace:login', origin),
+    logout: origin => ipcRenderer.invoke('hermes:workspace:logout', origin),
+    sessions: (origin, scope) => ipcRenderer.invoke('hermes:workspace:sessions', origin, scope),
+    history: (origin, scope, sessionId) => ipcRenderer.invoke('hermes:workspace:history', origin, scope, sessionId),
+    send: (origin, scope, sessionId, message, requestIdentity) => ipcRenderer.invoke('hermes:workspace:send', origin, scope, sessionId, message, requestIdentity)
+  },
   profile: {
     getDefault: () => ipcRenderer.invoke('hermes:profile:default:get'),
     setDefault: (route: DesktopProfileRoute) => ipcRenderer.invoke('hermes:profile:default:set', route),
