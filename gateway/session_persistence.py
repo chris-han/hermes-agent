@@ -43,7 +43,7 @@ class SessionPersistenceMixin:
 
     def can_coordinate_retirement(self, authority):
         """Require the live runner's registered, exclusively owned stores."""
-        if postgres_enabled() or not getattr(self.config, 'multiplex_profiles', False):
+        if not getattr(self.config, 'multiplex_profiles', False):
             return False
         from gateway.runtime_ownership import process_ownership
         from hermes_state_backend import session_store_home, session_store_key

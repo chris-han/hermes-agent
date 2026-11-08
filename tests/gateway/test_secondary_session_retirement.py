@@ -283,7 +283,10 @@ def test_coordination_refuses_unregistered_and_unreserved_authorities(stores):
     assert not store.can_coordinate_retirement(forged)
 
 
-def test_coordination_requires_live_registry_and_both_reservations(stores):
+@pytest.mark.parametrize('postgres_flag', [False, True])
+def test_coordination_requires_live_registry_and_both_reservations(stores, monkeypatch, postgres_flag):
+    # This is the ownership predicate test, not PostgreSQL SQL integration.
+    monkeypatch.setattr('gateway.session_persistence.postgres_enabled', lambda: postgres_flag)
     from gateway.runtime_ownership import process_ownership
     from gateway.session_authorities import SessionAuthorities
     home, store, db, other = stores
