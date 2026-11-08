@@ -36,6 +36,7 @@ import {
   normAuthMode
 } from './connection-config'
 import { matchingConnectionId, type StoredRoute } from './connection-route-identity'
+import { normalizeSemantierWorkspaceOrigin } from './semantier-workspace-client'
 
 export const REGISTRY_VERSION = 2
 
@@ -47,6 +48,8 @@ export const LOCAL_CONNECTION_ID = 'local'
 export type ConnectionKind = 'cloud' | 'local' | 'remote' | 'ssh'
 
 export interface RegistryConnection {
+  /** Explicit Semantier HTTP provenance; absence retains the existing Native/Nous transport. */
+  transport?: 'semantier-workspace-http'
   id: string
   kind: ConnectionKind
   /** Required, unique (case-insensitive) display name — the "device name". */
@@ -915,6 +918,7 @@ export function connectionIdForPendingLogin(opts: {
 // ── Validation ──────────────────────────────────────────────────────────────
 
 export interface ConnectionInput {
+  transport?: 'semantier-workspace-http'
   id?: string
   kind: ConnectionKind
   label: string
@@ -969,6 +973,10 @@ export function normalizeConnectionInput(input: ConnectionInput, registry: Conne
   }
 
   const kind = input.kind
+
+  if (input.transport !== undefined && (input.transport !== 'semantier-workspace-http' || kind !== 'cloud')) {
+    throw new Error('The Semantier Workspace HTTP transport requires a Cloud connection.')
+  }
 
   if (kind === 'local') {
     // The local entry is managed by the app; only its label is editable.
@@ -1034,7 +1042,9 @@ export function normalizeConnectionInput(input: ConnectionInput, registry: Conne
 
   if (kind === 'remote' || kind === 'cloud') {
     // normalizeRemoteBaseUrl throws its own user-facing message on bad input.
-    const url = normalizeRemoteBaseUrl(input.url)
+    const url = input.transport === 'semantier-workspace-http'
+      ? normalizeSemantierWorkspaceOrigin(input.url || '')
+      : normalizeRemoteBaseUrl(input.url)
 
     // Duplicate prevention: remote/cloud entries collide on the normalized URL
     // (trimmed, trailing slashes stripped, lowercased) regardless of kind — a
@@ -1052,6 +1062,13 @@ export function normalizeConnectionInput(input: ConnectionInput, registry: Conne
     // Cloud never stores a token (below), so it is always oauth.
     const authMode = storedAuthMode(kind, input.authMode, undefined)
     const entry: RegistryConnection = { id, kind, label, url, authMode }
+
+    if (input.transport === 'semantier-workspace-http') {
+      if (input.token !== undefined || Object.keys(input.headers || {}).length) {
+        throw new Error('Semantier Workspace uses its own signed-in browser session, not gateway credentials.')
+      }
+      entry.transport = input.transport
+    }
 
     // A token is only meaningful for token-auth remotes. Dropping it here is
     // what clears the stale envelope when an entry is switched token→oauth
@@ -1113,6 +1130,7 @@ export function mergeConnectionInput(input: ConnectionInput, existing?: null | R
     }
   }
 
+  inherit('transport')
   inherit('url')
   inherit('authMode')
   inherit('org')
@@ -1162,6 +1180,7 @@ export function connectionDialFieldsChanged(before: RegistryConnection, after: R
 
   const fields: (keyof RegistryConnection)[] = [
     'url',
+    'transport',
     'authMode',
     'org',
     'host',
@@ -1265,6 +1284,11 @@ export function normalizeRegistry(raw: unknown): ConnectionRegistry {
         continue
       }
 
+      if (entry.transport !== undefined && (entry.transport !== 'semantier-workspace-http' || kind !== 'cloud')) {
+        quarantine('entry-unrecognized-transport', item)
+        continue
+      }
+
       let label = String(entry.label || '').trim()
 
       if (!label) {
@@ -1300,7 +1324,19 @@ export function normalizeRegistry(raw: unknown): ConnectionRegistry {
           continue
         }
 
-        clean.url = url
+        if (entry.transport === 'semantier-workspace-http') {
+          try { clean.url = normalizeSemantierWorkspaceOrigin(url) } catch {
+            quarantine('entry-invalid-workspace-origin', item)
+            continue
+          }
+          if (entry.token !== undefined || Object.keys(entry.headers || {}).length) {
+            quarantine('entry-workspace-gateway-credentials', item)
+            continue
+          }
+          clean.transport = entry.transport
+        } else {
+          clean.url = url
+        }
         clean.authMode = storedAuthMode(kind, entry.authMode, entry.token)
 
         if (entry.token !== undefined) {

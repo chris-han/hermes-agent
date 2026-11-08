@@ -1,4 +1,6 @@
 import {
+  type ConnectionState,
+  GatewayEventHub,
   type GatewayEvent,
   type GatewayEventName,
   JsonRpcGatewayClient,
@@ -8,6 +10,8 @@ import {
 import { map, type MapStore } from 'nanostores'
 
 import type { HermesApiRequest } from '@/global'
+import type { WorkspaceScope } from '../../electron/semantier-workspace-ipc'
+import { workspaceTranscript } from '../../electron/semantier-workspace-client'
 
 import { CANONICAL_GATEWAY_PROTOCOL, CanonicalDesktopProtocol, canonicalProfile, canonicalSessionKey, recordCanonicalOwner, splitRewindSubmit } from './canonical-protocol'
 
@@ -77,7 +81,77 @@ function remainingRequestBudget(deadline: number, signal?: AbortSignal): number 
   return remaining
 }
 
+const workspaceReadScopes = new Map<string, WorkspaceScope>()
+
 export class HermesGateway extends JsonRpcGatewayClient {
+  private workspaceConnection: { origin: string; scope: WorkspaceScope } | null = null
+  private workspaceState: ConnectionState = 'idle'
+  private readonly workspaceStates = new Set<(state: ConnectionState) => void>()
+  private readonly workspaceEvents = new GatewayEventHub()
+
+  override get connectionState(): ConnectionState {
+    return this.workspaceConnection ? this.workspaceState : super.connectionState
+  }
+
+  override onState(handler: (state: ConnectionState) => void): () => void {
+    this.workspaceStates.add(handler)
+    const off = super.onState(state => { if (!this.workspaceConnection) { handler(state) } })
+    if (this.workspaceConnection) { handler(this.workspaceState) }
+    return () => { off(); this.workspaceStates.delete(handler) }
+  }
+
+  private setWorkspaceState(state: ConnectionState): void {
+    this.workspaceState = state
+    for (const handler of this.workspaceStates) { handler(state) }
+  }
+
+  /** HTTP readiness is an authenticated resource check, never a gateway.ready handshake. */
+  async connectWorkspace(origin: string, scope: WorkspaceScope, connectionId?: string): Promise<void> {
+    this.connectionGeneration++
+    const generation = this.connectionGeneration
+    super.close()
+    this.workspaceConnection = { origin, scope }
+    this.setWorkspaceState('connecting')
+    try {
+      const identity = await window.hermesDesktop.workspace!.identity(origin)
+      this.requireConnectionGeneration(generation)
+      if (!identity.authenticated || identity.user?.user_id !== scope.userId ||
+        identity.workspace?.id !== scope.workspaceId || identity.organization_id !== scope.organizationId) {
+        throw new Error('The Semantier account or workspace changed. Sign in again.')
+      }
+      if (connectionId) { workspaceReadScopes.set(connectionId, scope) }
+      this.setWorkspaceState('open')
+    } catch (error) {
+      if (generation === this.connectionGeneration) { this.setWorkspaceState('error') }
+      throw error
+    }
+  }
+
+  private async requestWorkspace<T>(method: string, params: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
+    const connection = this.workspaceConnection!
+    const generation = this.connectionGeneration
+    const bridge = window.hermesDesktop.workspace!
+    signal?.throwIfAborted()
+    const sessionId = String(params.session_id || params.session_key || '')
+    if (method === 'session.resume' || method === 'session.activate') {
+      const history = await bridge.history(connection.origin, connection.scope, sessionId)
+      this.requireConnectionGeneration(generation)
+      signal?.throwIfAborted()
+      return { resumed: history.sessionId, session_id: history.sessionId, session_key: history.sessionId,
+        message_count: history.messages.length, messages: workspaceTranscript(history) } as T
+    }
+    if (method === 'prompt.submit') {
+      const identity = String(params.submission_id || params.request_id || '')
+      if (!identity) { throw new Error('A retained request identity is required to send a Cloud message.') }
+      await bridge.send(connection.origin, connection.scope, sessionId, String(params.text || ''), identity)
+      this.requireConnectionGeneration(generation)
+      // The existing snapshot recovery handler updates only the matching visible pane.
+      this.workspaceEvents.dispatch({ type: 'session.replay_gap', session_id: sessionId, profile: 'default', payload: {} })
+      return { session_id: sessionId } as T
+    }
+    throw Object.assign(new Error(`Semantier Workspace does not support Desktop operation ${method}.`), { code: -32601 })
+  }
+
   private canonical = false
   private readonly protocol = new CanonicalDesktopProtocol()
   private readonly promptHandlers = new Set<ServerRequestHandler>()
@@ -175,6 +249,8 @@ export class HermesGateway extends JsonRpcGatewayClient {
   }
 
   override close(): void {
+    if (this.workspaceConnection) { this.setWorkspaceState('closed') }
+    this.workspaceConnection = null
     this.connectionGeneration++
     this.deliveredPrompts.clear()
     this.sessionProfiles.clear()
@@ -200,11 +276,15 @@ export class HermesGateway extends JsonRpcGatewayClient {
   override on<K extends GatewayEventName>(type: K, handler: (event: GatewayEvent<K>) => void): () => void {
     // Named listeners run before wildcard listeners in the shared client.
     // Normalize before either kind sees the prompt, including replay delivery.
-    return super.on<K>(type, event => this.deliverNormalized(event, handler as (event: GatewayEvent) => void))
+    const offHttp = this.workspaceEvents.on(type, handler)
+    const offNative = super.on<K>(type, event => this.deliverNormalized(event, handler as (event: GatewayEvent) => void))
+    return () => { offHttp(); offNative() }
   }
 
   override onAny(handler: (event: GatewayEvent) => void): () => void {
-    return super.onAny(event => this.deliverNormalized(event, handler))
+    const offHttp = this.workspaceEvents.onAny(handler)
+    const offNative = super.onAny(event => this.deliverNormalized(event, handler))
+    return () => { offHttp(); offNative() }
   }
 
   private deliverNormalized(event: GatewayEvent, handler: (event: GatewayEvent) => void): void {
@@ -317,6 +397,7 @@ export class HermesGateway extends JsonRpcGatewayClient {
   }
 
   override async connect(wsUrl: string): Promise<void> {
+    this.workspaceConnection = null
     this.connectionGeneration++
     this.canonical = new URL(wsUrl).searchParams.has('native_dial')
     this.attached.clear()
@@ -373,6 +454,7 @@ export class HermesGateway extends JsonRpcGatewayClient {
   }
 
   override async request<T>(method: string, params: Record<string, unknown> = {}, timeoutMs?: number, signal?: AbortSignal): Promise<T> {
+    if (this.workspaceConnection) { return this.requestWorkspace<T>(method, params, signal) }
     if (!this.canonical) { return super.request<T>(method, legacyParams(method, params), timeoutMs, signal) }
     const generation = this.connectionGeneration
     const deadline = Date.now() + (timeoutMs ?? DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS)
@@ -598,11 +680,13 @@ export function resolveOwnerNow(owner?: OwnerScope): ResolvedOwner {
  *  named profile is always explicit here, so it carries the foreground
  *  priority `profileScoped` gives explicit profiles (voice is user-driven). */
 export function hermesApiAs<T>(owner: ResolvedOwner, request: HermesApiRequest): Promise<T> {
-  return window.hermesDesktop.api<T>({
+  const tagged = {
     ...(owner.connectionId ? { connectionId: owner.connectionId } : {}),
     ...(owner.profile ? { priority: 'foreground' as const, profile: owner.profile } : {}),
     ...request
-  })
+  }
+  const workspaceScope = tagged.connectionId ? workspaceReadScopes.get(tagged.connectionId) : undefined
+  return window.hermesDesktop.api<T>({ ...tagged, ...(workspaceScope ? { workspaceScope } : {}) })
 }
 
 /** Profile that profile-scoped REST/WS calls should target (null → primary).
@@ -665,7 +749,9 @@ export function ambientOwnerConnectionId(): string | undefined {
  *  underneath it. (It used to omit the key for 'local', which made the pin
  *  unable to beat the ambient tag; helpers then had to bypass this wrapper.) */
 export function hermesApi<T>(request: HermesApiRequest): Promise<T> {
-  return window.hermesDesktop.api<T>({ ...connectionScoped(), ...request })
+  const tagged = { ...connectionScoped(), ...request }
+  const workspaceScope = tagged.connectionId ? workspaceReadScopes.get(tagged.connectionId) : undefined
+  return window.hermesDesktop.api<T>({ ...tagged, ...(workspaceScope ? { workspaceScope } : {}) })
 }
 
 // ── Capability scope: (connection, profile) routing for the Capabilities

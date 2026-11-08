@@ -35,6 +35,7 @@ import {
   setDesktopBootStep
 } from '@/store/boot'
 import { resetBackgroundPollingGuard } from '@/store/composer-status'
+import { markOnboardingDecided } from '@/store/onboarding-presence'
 import { noteBackendDrop, noteBackendExited } from '@/store/desktop-metrics'
 import {
   $gateway,
@@ -1448,6 +1449,23 @@ export function useGatewayBoot({
         )
 
         if (cancelled) {
+          return
+        }
+
+        if (conn.transport === 'semantier-workspace-http') {
+          if (!conn.workspaceScope) { throw new Error('Semantier Workspace identity is missing.') }
+          publish(conn)
+          recordPrimaryConnection(conn)
+          await gateway.connectWorkspace(conn.baseUrl, conn.workspaceScope, conn.connectionId)
+          stage = 'connected'
+          await callbacksRef.current.refreshSessions()
+          // Native local-runtime setup does not own an authenticated Cloud account.
+          markOnboardingDecided()
+          if (!cancelled) {
+            completeDesktopBoot()
+            bootCompleted = true
+            bootRetryAttempt = 0
+          }
           return
         }
 

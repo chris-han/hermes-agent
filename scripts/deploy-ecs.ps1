@@ -26,6 +26,8 @@
   otherwise use your SSH key/agent or prompt for the ECS password. Secrets
   are never embedded in this script. No npm/uv install, Python publisher, WSL,
   release lock/database, split packages, bundles, ZIPs, or CH2/R2 operations.
+  -BuildOnly with -Commit stops after the unsigned package build: no signing, install or publication.
+  -BuildSource selects an independent local build clone, preserving a busy/dirty default clone.
   -LocalSetup builds a signed semantier-setup-ch0.exe for the single adjacent MSIX; never uploads.
   -SetupOnly builds/reuses and publishes Setup in its own ecs-setup-* run.
   -UpdateSetup forces a new Setup build; neither mode builds or installs MSIX.
@@ -58,6 +60,8 @@ param(
   [string]$CredentialsEnv = '',
   [string]$TimestampUrl = 'http://timestamp.digicert.com',
   [Alias('PrepareOnly')][switch]$LocalOnly,
+  [switch]$BuildOnly,
+  [string]$BuildSource = 'D:\repo\deliverables\work\ecs-build-source',
   [switch]$SkipOldCleanup,
   [switch]$NewRun,
   [switch]$SetupOnly,
@@ -115,6 +119,7 @@ function Initialize-ReleasePaths {
   if(!$Repository){$script:Repository=Split-Path -Parent $PSScriptRoot}
   $script:Repository=(Resolve-Path -LiteralPath $Repository -ErrorAction Stop).ProviderPath.TrimEnd('\','/')
   if(!(Test-Path -LiteralPath (Join-Path $Repository 'scripts\bundles\desktop.py'))){throw 'Repository must name the Hermes source checkout.'}
+  $script:BuildSource=Assert-LocalWindowsPath $BuildSource
   $script:BuildCache=Assert-LocalWindowsPath $BuildCache
   $script:Output=Assert-LocalWindowsPath $Output
   $script:VersionState=Assert-LocalWindowsPath $VersionState
@@ -785,8 +790,8 @@ function Build-CommitPackage {
   if($WhatIfPreference){
     [ordered]@{commit=$Commit;builder='existing scripts/bundles/desktop.py --prepare-only / --prepared';
       version='reserve next version using existing next-windows-build-version.ps1; reuse on resume';
-      source=$script:SourceBinding;localBuildSource='D:\repo\deliverables\work\ecs-build-source';credentialsEnv=$CredentialsEnv;python=$BuildPython;node=$Node;
-      mode=$BuildMode;verification=($(if($BuildMode -eq 'Beta'){'SKIPPED_BETA'}else{'REQUIRED_PROD'}));cache=$BuildCache;output=$Output;publish=(!$LocalOnly)} | ConvertTo-Json
+      source=$script:SourceBinding;localBuildSource=$BuildSource;credentialsEnv=$CredentialsEnv;python=$BuildPython;node=$Node;
+      mode=$BuildMode;verification=($(if($BuildMode -eq 'Beta'){'SKIPPED_BETA'}else{'REQUIRED_PROD'}));cache=$BuildCache;output=$Output;publish=(!$LocalOnly -and !$BuildOnly);unsignedOnly=[bool]$BuildOnly} | ConvertTo-Json
     return
   }
   if(!(Test-Path -LiteralPath $BuildPython -PathType Leaf)){throw 'Existing build Python is unavailable; specify -BuildPython.'}
@@ -804,13 +809,13 @@ function Build-CommitPackage {
   if(!(Test-Path -LiteralPath $Output)){New-Item -ItemType Directory -Path $Output | Out-Null}
   $script:statusLog=Join-Path $Output 'checkpoints.jsonl'
   $record=Read-CommitBuild $script:statusLog
-  if($record -and ($record.commit -cne $Commit -or $record.publicBase -cne $PublicBase -or $record.cache -cne $BuildCache)){
+  if($record -and ($record.commit -cne $Commit -or $record.publicBase -cne $PublicBase -or $record.cache -cne $BuildCache -or $record.source -cne $BuildSource)){
     throw 'Saved build configuration differs. Use -NewRun or a fresh -Output.'
   }
   if($record -and $record.stage -eq 'cancelled'){
     throw 'This tooling-only version reservation was cancelled. Resume the application source commit and its original run instead.'
   }
-  $source=if($record){[string]$record.source}else{'D:\repo\deliverables\work\ecs-build-source'}
+  $source=if($record){[string]$record.source}else{$BuildSource}
   $null=Assert-LocalWindowsPath $source
   if(!$record){
     $next=& (Join-Path $PSScriptRoot 'next-windows-build-version.ps1') -State $VersionState -SourceCommit $Commit
@@ -989,6 +994,7 @@ function Publish-IndependentSetup {
   }
 }
 try {
+if($BuildOnly -and (!$Commit -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or $PreflightOnly)){throw '-BuildOnly requires -Commit and cannot be combined with Setup or preflight modes.'}
 Initialize-ReleasePaths
 $script:explicitOutput=$PSBoundParameters.ContainsKey('Output')
 if($LocalSetup){
@@ -1006,6 +1012,14 @@ if($PreflightOnly){
 if($Commit){
   $built=Build-CommitPackage
   if($WhatIfPreference){$built;return}
+  if($BuildOnly){
+    $unsigned=[ordered]@{result='UNSIGNED_LOCAL_BUILD';commit=$Commit;version=$built.version;unsignedMsix=$built.msix;
+      sha256=$built.sha256;source=$built.source;signing='NOT_RUN';installation='NOT_RUN';publication='NOT_RUN'}
+    [IO.File]::WriteAllText((Join-Path $Output 'result.json'),($unsigned | ConvertTo-Json -Depth 8),$utf8)
+    Write-RunEvent @{type='build-only';at=[DateTime]::UtcNow.ToString('o');result=$unsigned}
+    Report-Status 'Unsigned local build complete; signing, installation and publication were not run.'
+    return
+  }
   if(!$AcceptanceNodeModules){$AcceptanceNodeModules=Join-Path $built.source 'node_modules'}
   $Msix=$built.msix;$ExpectedInputSha256=$built.sha256;$SourceCommit=$Commit;$Version=$built.version+'.0'
   $buildRequest=Get-Content -LiteralPath $built.request -Raw | ConvertFrom-Json

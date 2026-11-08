@@ -19,7 +19,7 @@ export interface WorkspaceHistory {
   messages: WorkspaceMessage[]
 }
 
-export function createSemantierWorkspaceClient(origin: string, fetchSession: typeof fetch) {
+export function normalizeSemantierWorkspaceOrigin(origin: string): string {
   const base = new URL(origin)
   const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(base.hostname)
 
@@ -27,6 +27,12 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: typ
     base.username || base.password || base.pathname !== '/' || base.search || base.hash) {
     throw new Error('Use a secure Semantier workspace origin.')
   }
+
+  return base.origin
+}
+
+export function createSemantierWorkspaceClient(origin: string, fetchSession: (input: string, init?: RequestInit) => Promise<Response>) {
+  const base = new URL(normalizeSemantierWorkspaceOrigin(origin))
 
   async function request(path: string, body?: Record<string, unknown>) {
     const response = await fetchSession(new URL(path, base.origin).href, {
@@ -76,4 +82,95 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: typ
       })
     }
   }
+}
+
+/** Present existing server IDs in Desktop's transcript shape; never mint replacements. */
+export function workspaceTranscript(history: WorkspaceHistory) {
+  return history.messages.map(message => {
+    const numericId = /^\d+$/.test(message.messageId) ? Number(message.messageId) : NaN
+    return {
+      ...message,
+      content: message.text ?? message.content,
+      ...(Number.isSafeInteger(numericId) ? { id: numericId, row_id: numericId } : {}),
+      display_metadata: message.metadata,
+      // Workspace timestamps are milliseconds; Native transcript timestamps are seconds.
+      timestamp: typeof (message as WorkspaceMessage & { timestamp?: number }).timestamp === 'number'
+        ? (message as WorkspaceMessage & { timestamp: number }).timestamp / 1000
+        : undefined
+    }
+  })
+}
+
+/** Read projection for the existing Desktop Sessions surface, not another store. */
+export async function workspaceDesktopRead(
+  client: ReturnType<typeof createSemantierWorkspaceClient>,
+  path: string
+): Promise<unknown> {
+  const url = new URL(path, 'https://desktop.invalid')
+  const pathname = url.pathname
+  const profile = url.searchParams.get('profile')
+  if (profile && profile !== 'default' && profile !== 'all') {
+    throw Object.assign(new Error('This profile requires its server-owned Cloud route.'), { statusCode: 404 })
+  }
+  if (url.searchParams.get('archived') === 'only') {
+    throw Object.assign(new Error('Archived-only enumeration is unavailable on this Workspace route.'), { statusCode: 501 })
+  }
+  const missing = () => Object.assign(new Error(`Semantier Workspace does not expose this Desktop operation: ${pathname}`), { statusCode: 404 })
+  const list = async () => {
+    const { sessions } = await client.sessions()
+    return sessions.map(item => {
+      const row = item as typeof item & { createdAt?: number; updatedAt?: number; status?: string; model?: string; platform?: string }
+      return {
+        ...row, id: row.key, profile: 'default',
+        started_at: row.createdAt === undefined ? undefined : row.createdAt / 1000,
+        last_active: row.updatedAt === undefined ? undefined : row.updatedAt / 1000,
+        is_active: row.status === 'running', source: row.platform
+      }
+    })
+  }
+
+  if (pathname === '/api/sessions' || pathname === '/api/profiles/sessions') {
+    const sessions = await list()
+    // This is the actual returned page, not a fabricated global count.
+    return { sessions, total: sessions.length, offset: 0 }
+  }
+
+  if (pathname === '/api/profiles/sessions/sidebar') {
+    const sessions = await list()
+    return {
+      recents: { sessions },
+      cron: { sessions: [], unavailable: true },
+      messaging: { sessions: [], unavailable: true }
+    }
+  }
+
+  const match = /^\/api\/sessions\/([^/]+)(\/messages)?$/.exec(pathname)
+  if (match) {
+    const sessionId = decodeURIComponent(match[1])
+    if (match[2]) {
+      const history = await client.history(sessionId)
+      const messages = workspaceTranscript(history)
+      return { session_id: history.sessionId, messages, total: messages.length }
+    }
+    const row = (await list()).find(item => item.id === sessionId)
+    if (!row) { throw missing() }
+    return row
+  }
+
+  throw missing()
+}
+
+/** A lost or error terminal event is not a successful send, and never authorizes retry. */
+export async function requireWorkspaceCompletion(response: Response): Promise<void> {
+  const stream = (await response.text()).replace(/\r\n/g, '\n')
+  let completed = false
+  for (const frame of stream.split('\n\n')) {
+    const lines = frame.split('\n')
+    if (!lines.some(line => line.trim() === 'event: done')) { continue }
+    const data = lines.filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n')
+    const terminal = JSON.parse(data)
+    if (terminal.state === 'error') { throw new Error('The Cloud turn failed. Recover its history before trying again.') }
+    if (terminal.state === 'complete') { completed = true }
+  }
+  if (!completed) { throw new Error('The Cloud send outcome is uncertain. Recover its history before trying again.') }
 }

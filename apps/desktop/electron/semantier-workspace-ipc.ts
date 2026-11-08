@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 
 import { BrowserWindow, ipcMain, session } from 'electron'
 
-import { createSemantierWorkspaceClient, type WorkspaceIdentity } from './semantier-workspace-client'
+import { createSemantierWorkspaceClient, requireWorkspaceCompletion, type WorkspaceIdentity } from './semantier-workspace-client'
 
 export interface WorkspaceScope {
   userId: string
@@ -28,7 +28,7 @@ export function assertWorkspaceScope(identity: WorkspaceIdentity, expected: Work
 }
 
 /** Cookies stay in an origin-owned Chromium jar, never in renderer payloads. */
-function workspace(origin: string) {
+export function workspace(origin: string) {
   // Validate before creating a persisted jar; the HTTP client owns origin policy.
   createSemantierWorkspaceClient(origin, fetch)
   const canonicalOrigin = new URL(origin).origin
@@ -91,7 +91,7 @@ export function registerSemantierWorkspaceIpc(): void {
     assertWorkspaceScope(await client.identity(), scope)
     const response = await client.send(sessionId, message, requestIdentity)
     // Finite on-demand SSE. Synchronizing history itself never submits a turn.
-    await response.text()
+    await requireWorkspaceCompletion(response)
     assertWorkspaceScope(await client.identity(), scope)
     const result = await client.history(sessionId)
     assertWorkspaceScope(await client.identity(), scope)

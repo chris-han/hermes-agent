@@ -15,7 +15,8 @@ import {
 } from './local-gateway'
 import { closeGatewayTicketBridges, createGatewayTicketResolver } from './local-gateway-python'
 import { registerSemantierFeedbackIpc } from './updater/semantier-feedback-ipc'
-import { registerSemantierWorkspaceIpc } from './semantier-workspace-ipc'
+import { registerSemantierWorkspaceIpc, workspace as semantierWorkspace, assertWorkspaceScope } from './semantier-workspace-ipc'
+import { workspaceDesktopRead } from './semantier-workspace-client'
 import { JourneyObservations } from './journey-observations'
 let journeyObservations: JourneyObservations | null = null
 import { SemantierObservations } from './updater/semantier-observations'
@@ -11032,6 +11033,20 @@ async function ensureRegistryBackend(
     throw new Error(`No connection with id "${id}".`)
   }
 
+  if (source.transport === 'semantier-workspace-http') {
+    const { client, origin } = semantierWorkspace(source.url)
+    const identity = await client.identity()
+    if (!identity.authenticated || !identity.user?.user_id || !identity.workspace?.id || !identity.organization_id) {
+      throw new Error('Sign in to the Semantier Cloud workspace before connecting.')
+    }
+    return {
+      baseUrl: origin, transport: source.transport, mode: 'remote', remoteKind: 'cloud',
+      connectionId: source.id, profile: 'default', registryScoped: true,
+      workspaceScope: { userId: identity.user.user_id, workspaceId: identity.workspace.id, organizationId: identity.organization_id },
+      token: '', wsUrl: '', logs: [], ...getWindowState()
+    }
+  }
+
   if (source.kind === 'ssh') {
     managedConnectionUpdateGate.assertCanDial(id, managedUpdateCorrelation)
   }
@@ -16522,6 +16537,17 @@ async function dispatchRegistryApiRequest(
         ensureRegistryBackend(registryConnectionId, routeProfile)
       )
 
+  if (connection.transport === 'semantier-workspace-http') {
+    if ((request?.method || 'GET').toUpperCase() !== 'GET') {
+      throw new Error('This Semantier Workspace Desktop mutation is not implemented.')
+    }
+    const { client } = semantierWorkspace(connection.baseUrl)
+    assertWorkspaceScope(await client.identity(), request.workspaceScope)
+    const result = await workspaceDesktopRead(client, request.path)
+    assertWorkspaceScope(await client.identity(), request.workspaceScope)
+    return result
+  }
+
   const requestPath = pathForRegistryBackendRequest(request.path, requestProfile, connection)
 
   const response = await fetchJsonForBackend(connection, requestPath, {
@@ -16576,6 +16602,11 @@ async function handleHermesApiRequest(request) {
   const registryConnectionId = apiRequestRegistryConnectionId(request)
 
   if (registryConnectionId) {
+    const source = readDesktopConnectionsRegistry().connections.find(item => item.id === registryConnectionId)
+    if (source?.transport === 'semantier-workspace-http') {
+      return dispatchRegistryApiRequest(request, registryConnectionId)
+    }
+
     if (isAllProfilesSessionListRequest(request?.method, request?.path)) {
       const aggregate = await interceptSessionRequestForRemote(request, registryConnectionId)
 
