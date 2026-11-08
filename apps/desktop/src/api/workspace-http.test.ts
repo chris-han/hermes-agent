@@ -125,3 +125,22 @@ it('rejects a late account response before it can enter renderer caches', async 
   setApiRequestConnection(null)
   gateway.close()
 })
+
+it('keeps concurrent reads valid when another profile opens for the same authenticated account', async () => {
+  let resolve!: (value: unknown) => void
+  const api = vi.fn(() => new Promise(done => { resolve = done }))
+  Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: {
+    api, workspace: { identity: vi.fn().mockResolvedValue(identity) }
+  } })
+  const primary = new HermesGateway()
+  const bot = new HermesGateway()
+  await primary.connectWorkspace('https://cloud.example', scope, 'cloud-a')
+  setApiRequestConnection('cloud-a')
+  const pending = hermesApi({ path: '/api/sessions' })
+  await bot.connectWorkspace('https://cloud.example', { ...scope }, 'cloud-a', 'winman-a')
+  resolve({ sessions: [{ id: 'own-session' }] })
+  await expect(pending).resolves.toEqual({ sessions: [{ id: 'own-session' }] })
+  setApiRequestConnection(null)
+  primary.close()
+  bot.close()
+})

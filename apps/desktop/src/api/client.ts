@@ -81,7 +81,7 @@ function remainingRequestBudget(deadline: number, signal?: AbortSignal): number 
   return remaining
 }
 
-const workspaceReadScopes = new Map<string, WorkspaceScope>()
+const workspaceReadScopes = new Map<string, { scope: WorkspaceScope; origin: string }>()
 
 export class HermesGateway extends JsonRpcGatewayClient {
   private workspaceConnection: { origin: string; scope: WorkspaceScope; connectionId?: string; profile?: string } | null = null
@@ -116,7 +116,14 @@ export class HermesGateway extends JsonRpcGatewayClient {
       const identity = await window.hermesDesktop.workspace!.identity(origin)
       this.requireConnectionGeneration(generation)
       assertWorkspaceScope(identity, scope)
-      if (connectionId) { workspaceReadScopes.set(connectionId, scope) }
+      if (connectionId) {
+        const known = workspaceReadScopes.get(connectionId)
+        const normalizedOrigin = new URL(origin).origin
+        if (!known || known.origin !== normalizedOrigin || known.scope.userId !== scope.userId ||
+          known.scope.workspaceId !== scope.workspaceId || known.scope.organizationId !== scope.organizationId) {
+          workspaceReadScopes.set(connectionId, { scope: { ...scope }, origin: normalizedOrigin })
+        }
+      }
       this.setWorkspaceState('open')
     } catch (error) {
       if (generation === this.connectionGeneration) { this.setWorkspaceState('error') }
@@ -726,11 +733,12 @@ export function hermesApiAs<T>(owner: ResolvedOwner, request: HermesApiRequest):
     ...(owner.profile ? { priority: 'foreground' as const, profile: owner.profile } : {}),
     ...request
   }
-  const workspaceScope = tagged.connectionId ? workspaceReadScopes.get(tagged.connectionId) : undefined
+  const marker = tagged.connectionId ? workspaceReadScopes.get(tagged.connectionId) : undefined
+  const workspaceScope = marker?.scope
   const response = window.hermesDesktop.api<T>({ ...tagged, ...(workspaceScope ? { workspaceScope } : {}) })
   if (!workspaceScope) { return response }
   return response.then(result => {
-    if (workspaceReadScopes.get(tagged.connectionId!) !== workspaceScope) {
+    if (workspaceReadScopes.get(tagged.connectionId!) !== marker) {
       throw new Error('The Semantier account or workspace changed during this read.')
     }
     return result
@@ -798,11 +806,12 @@ export function ambientOwnerConnectionId(): string | undefined {
  *  unable to beat the ambient tag; helpers then had to bypass this wrapper.) */
 export function hermesApi<T>(request: HermesApiRequest): Promise<T> {
   const tagged = { ...connectionScoped(), ...request }
-  const workspaceScope = tagged.connectionId ? workspaceReadScopes.get(tagged.connectionId) : undefined
+  const marker = tagged.connectionId ? workspaceReadScopes.get(tagged.connectionId) : undefined
+  const workspaceScope = marker?.scope
   const response = window.hermesDesktop.api<T>({ ...tagged, ...(workspaceScope ? { workspaceScope } : {}) })
   if (!workspaceScope) { return response }
   return response.then(result => {
-    if (workspaceReadScopes.get(tagged.connectionId!) !== workspaceScope) {
+    if (workspaceReadScopes.get(tagged.connectionId!) !== marker) {
       throw new Error('The Semantier account or workspace changed during this read.')
     }
     return result
