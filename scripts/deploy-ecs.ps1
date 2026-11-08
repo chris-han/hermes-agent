@@ -824,6 +824,8 @@ const app=path.join(output,'apps/desktop');
 const {buildDesktop}=await import(pathToFileURL(path.join(source,'scripts/build/desktop.mjs')));
 await buildDesktop({source,out:path.join(app,'dist'),icons:source,stamp:path.join(inputs,'install-stamp.json'),nativeDeps});
 fs.copyFileSync(path.join(source,'apps/desktop/package.json'),path.join(app,'package.json'));
+const {checkDesktopLaunch}=await import(pathToFileURL(path.join(source,'apps/desktop/scripts/assert-dist-built.mjs')));
+const launch=checkDesktopLaunch(path.join(app,'dist'));if(!launch.ok)throw Error(launch.error);
 fs.writeFileSync(path.join(output,'result.json'),JSON.stringify({result:'DESKTOP_CHECK_BUILT',commit,appRoot:app,stamp:built,scope:'Desktop UI check; full bundled-runtime qualification remains separate',signing:'NOT_RUN',installation:'NOT_RUN',publication:'NOT_RUN'},null,2));
 '@
   Report-Status 'Compiling the same Desktop source with prepared native inputs; no runtime preparation, package signing or installation.'

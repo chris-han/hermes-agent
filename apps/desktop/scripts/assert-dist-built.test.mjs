@@ -195,3 +195,39 @@ test('checkDistBuilt passes when every chunk parses as an ES module', () => {
     fs.rmSync(tempRoot, { recursive: true, force: true })
   }
 })
+
+test('launch smoke rejects a detached development bundle and verifies its transitive identity module', async () => {
+  const { checkDesktopLaunch } = await import('./assert-dist-built.mjs')
+  const { tempRoot, distDir } = makeDist(d => {
+    fs.writeFileSync(path.join(d, 'index.html'), '<script type="module" src="./assets/main.js"></script>')
+    fs.mkdirSync(path.join(d, 'assets'))
+    fs.writeFileSync(path.join(d, 'assets/main.js'), 'export const ready = true')
+    fs.writeFileSync(path.join(d, 'electron-main.mjs'), 'const x = typeof __HERMES_PRODUCT_IDENTITY__ === "undefined" ? require("../product-identity.cjs") : __HERMES_PRODUCT_IDENTITY__')
+    for (const name of ['electron-preload.js', 'preview-guest-preload.js']) fs.writeFileSync(path.join(d, name), '')
+  })
+  try {
+    assert.match(checkDesktopLaunch(distDir).error, /development identity/)
+    fs.writeFileSync(path.join(tempRoot, 'product-identity.cjs'), 'module.exports = require("./identity-input.cjs")')
+    assert.match(checkDesktopLaunch(distDir).error, /development identity/)
+    fs.writeFileSync(path.join(tempRoot, 'identity-input.cjs'), 'module.exports = { name: "fixture" }')
+    assert.deepEqual(checkDesktopLaunch(distDir), { ok: true })
+    fs.rmSync(path.join(distDir, 'electron-preload.js'))
+    assert.match(checkDesktopLaunch(distDir).error, /electron-preload/)
+  } finally { fs.rmSync(tempRoot, { recursive: true, force: true }) }
+})
+
+test('launch smoke accepts injected packaged identity without source modules and rejects missing HTML assets', async () => {
+  const { checkDesktopLaunch } = await import('./assert-dist-built.mjs')
+  const { tempRoot, distDir } = makeDist(d => {
+    fs.writeFileSync(path.join(d, 'index.html'), '<script src="./assets/missing.js"></script>')
+    fs.mkdirSync(path.join(d, 'assets'))
+    fs.writeFileSync(path.join(d, 'assets/main.js'), 'export const ready = true')
+    fs.writeFileSync(path.join(d, 'electron-main.mjs'), 'const identity = { name: "injected" }')
+    for (const name of ['electron-preload.js', 'preview-guest-preload.js']) fs.writeFileSync(path.join(d, name), '')
+  })
+  try {
+    assert.match(checkDesktopLaunch(distDir).error, /missing.js/)
+    fs.writeFileSync(path.join(distDir, 'index.html'), '<script src="./assets/main.js"></script>')
+    assert.deepEqual(checkDesktopLaunch(distDir), { ok: true })
+  } finally { fs.rmSync(tempRoot, { recursive: true, force: true }) }
+})
