@@ -115,7 +115,7 @@ export function preparedBuilderConfiguration(preparedSource, args) {
   const config = path.join(preparedSource, 'apps/desktop/build/external-msix.config.cjs')
   fs.mkdirSync(path.dirname(config), { recursive: true })
   const resourceFilter = windowsMsix
-    ? `config.extraResources = (config.extraResources || []).map(resource => typeof resource === 'object' && resource.to === 'agent-payload' ? { ...resource, filter: [...(resource.filter ? [].concat(resource.filter) : ['**/*']), '!**/win-native-installer{,/**/*}', '!uv-cache{,/**/*}', '!**/uv-cache{,/**/*}', '!venv/Lib/site-packages/playwright/driver/node.exe', '!**/__pycache__{,/**/*}', '!**/*.pyc'] } : resource);`
+    ? `config.extraResources = (config.extraResources || []).map(resource => typeof resource === 'object' && resource.to === 'agent-payload' ? { ...resource, filter: [...(resource.filter ? [].concat(resource.filter) : ['**/*']), '!**/win-native-installer{,/**/*}', '!uv-cache{,/**/*}', '!**/uv-cache{,/**/*}', '!**/__pycache__{,/**/*}', '!**/*.pyc'] } : resource);`
     : ''
   fs.writeFileSync(config, `const config = { ...require(${JSON.stringify(original)}) };\n${selected.map(arg => overrides.get(arg)).join('\n')}\n${resourceFilter}\nmodule.exports = config;\n`)
   return { config, args: args.filter(arg => !overrides.has(arg)) }

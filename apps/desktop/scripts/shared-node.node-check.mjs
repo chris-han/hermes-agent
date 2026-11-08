@@ -11,26 +11,27 @@ test('Windows MSIX omits only the private Playwright Node and preserves its driv
   const app = path.join(root, 'apps/desktop')
   fs.mkdirSync(app, { recursive: true })
   const original = path.join(app, 'electron-builder.config.cjs')
-  fs.writeFileSync(original, 'module.exports={extraResources:[{from:"build/agent-payload",to:"agent-payload",filter:["**/*"]}]}')
+  fs.writeFileSync(original, 'module.exports={extraResources:[{from:"build/agent-payload",to:"agent-payload",filter:["**/*","!venv/Lib/site-packages/playwright/driver/node.exe"]}]}')
   const result = preparedBuilderConfiguration(root, ['--win', 'msix'])
   const require = createRequire(import.meta.url)
   const resource = require(result.config).extraResources[0]
   assert.ok(resource.filter.includes('!venv/Lib/site-packages/playwright/driver/node.exe'))
   assert.equal(resource.from, 'build/agent-payload')
   assert.equal(resource.to, 'agent-payload')
-  assert.deepEqual(require(original).extraResources[0].filter, ['**/*'])
+  assert.deepEqual(require(original).extraResources[0].filter, ['**/*', '!venv/Lib/site-packages/playwright/driver/node.exe'])
   // Keep ordinary Python driver modules, CLI JS, and the shared PM-owned runtime.
   for (const required of ['playwright/driver/package/cli.js', 'playwright/_impl/_driver.py', 'tools/node-pinned/node.exe']) {
     assert.ok(!resource.filter.some(pattern => pattern === `!venv/Lib/site-packages/${required}` || pattern === `!${required}`))
   }
 })
 
-test('directory builds retain the private Node until an explicit MSIX composition', () => {
+test('older application source retains its private Node under current packaging tooling', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shared-node-dir-'))
   const app = path.join(root, 'apps/desktop')
   fs.mkdirSync(app, { recursive: true })
   const original = path.join(app, 'electron-builder.config.cjs')
   fs.writeFileSync(original, 'module.exports={extraResources:[{from:"build/agent-payload",to:"agent-payload",filter:["**/*"]}]}')
-  const result = preparedBuilderConfiguration(root, ['--dir'])
-  assert.equal(result.config, 'electron-builder.config.cjs')
+  const result = preparedBuilderConfiguration(root, ['--win', 'msix'])
+  const require = createRequire(import.meta.url)
+  assert.ok(!require(result.config).extraResources[0].filter.includes('!venv/Lib/site-packages/playwright/driver/node.exe'))
 })
