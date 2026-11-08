@@ -388,6 +388,12 @@ export class HermesGateway extends JsonRpcGatewayClient {
       try {
         if ((params.profile || connection.profile || 'default') !== 'default') {
           if (!bridge.sendNative) { throw new Error('Native Bot Chat submission requires its Cloud owner adapter.') }
+          if (!this.workspaceOriginalContexts.has(sessionId) && bridge.nativeContext) {
+            const recovered = await bridge.nativeContext(connection.origin, connection.scope, sessionId)
+            this.requireConnectionGeneration(generation)
+            signal?.throwIfAborted()
+            if (recovered) this.rememberWorkspaceOriginal(sessionId, recovered)
+          }
           const context = this.workspaceOriginalContexts.get(sessionId)
           if (!context) { throw new Error('Open Winman from the original Main conversation before sending.') }
           const identity = String(params.submission_id || params.request_id || '')

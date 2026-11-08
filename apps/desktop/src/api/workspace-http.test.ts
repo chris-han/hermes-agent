@@ -407,3 +407,26 @@ it('does not treat an unrequested cancellation-looking error as a user withdrawa
   expect((error as Error).message).toContain('semantier.workspace.user_stop.v1:not-stopped')
   gateway.close()
 })
+
+it('recovers the server-owned Main binding when a fresh Native client sends before resume', async () => {
+  const context={user_id:'a',workspace_id:'wa',organization_id:'org',native_profile_id:'profile-a',binding_id:'bound-a',original_conversation:{session_key:'main-a',session_id:'main-a'}}
+  const snapshot={session_id:'canonical-a',canonical_session:{id:'canonical-a'},bot_id:'bot-a',native_profile_id:'profile-a',messages:[],admission_receipt:{admission_id:'a'.repeat(32),status:'terminal',outcome:'completed',ref:{session_id:'canonical-a',profile_id:'profile-a'}}}
+  const nativeContext=vi.fn().mockResolvedValue(context),sendNative=vi.fn().mockResolvedValue(snapshot)
+  Object.defineProperty(window,'hermesDesktop',{configurable:true,value:{workspace:{identity:vi.fn().mockResolvedValue(identity),nativeContext,sendNative}}})
+  const gateway=new HermesGateway();await gateway.connectWorkspace('https://cloud.example',scope,'cloud-a','winman-a')
+  try {
+    await expect(gateway.request('prompt.submit',{session_id:'canonical-a',text:'Hello',submission_id:'retained-cold'})).resolves.toMatchObject({submission_id:'retained-cold'})
+    expect(nativeContext).toHaveBeenCalledWith('https://cloud.example',scope,'canonical-a')
+    expect(sendNative).toHaveBeenCalledWith('https://cloud.example',scope,'canonical-a','Hello','retained-cold','bound-a')
+  } finally {gateway.close()}
+})
+
+it('refuses a recovered foreign Main binding before Native admission', async () => {
+  const nativeContext=vi.fn().mockResolvedValue({user_id:'foreign',workspace_id:'wa',organization_id:'org',binding_id:'foreign-binding',original_conversation:{session_key:'foreign-main'}}),sendNative=vi.fn()
+  Object.defineProperty(window,'hermesDesktop',{configurable:true,value:{workspace:{identity:vi.fn().mockResolvedValue(identity),nativeContext,sendNative}}})
+  const gateway=new HermesGateway();await gateway.connectWorkspace('https://cloud.example',scope,'cloud-a','winman-a')
+  try {
+    await expect(gateway.request('prompt.submit',{session_id:'canonical-a',text:'Hello',submission_id:'foreign-cold'})).rejects.toThrow('owner changed')
+    expect(sendNative).not.toHaveBeenCalled()
+  } finally {gateway.close()}
+})
