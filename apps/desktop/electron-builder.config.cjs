@@ -137,7 +137,7 @@ module.exports = {
           // unpacked template source is inert, but MSIX treats _rels/*.rels as
           // package relationships and rejects those nested payload names.
           ...(process.platform === 'win32' ? {
-            filter: ['**/*', '!**/win-native-installer{,/**/*}', '!uv-cache{,/**/*}', '!**/__pycache__{,/**/*}', '!**/*.pyc',
+            filter: ['**/*', '!**/win-native-installer{,/**/*}', '!uv-cache{,/**/*}', '!venv/Lib/site-packages/playwright/driver/node.exe', '!**/__pycache__{,/**/*}', '!**/*.pyc',
               '!venv/Lib/site-packages/docx/templates/default-docx-template{,/**/*}']
           } : {}) }]
       : []),
