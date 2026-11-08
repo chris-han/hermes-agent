@@ -290,6 +290,11 @@ def test_coordination_requires_live_registry_and_both_reservations(stores, monke
     from gateway.runtime_ownership import process_ownership
     from gateway.session_authorities import SessionAuthorities
     home, store, db, other = stores
+    if postgres_flag:
+        # Predicate-only fixture: emulate the PostgreSQL concrete type while the
+        # real four-container test proves PostgreSQL persistence and publication.
+        import hermes_state_postgresql
+        monkeypatch.setattr(hermes_state_postgresql, 'PostgreSQLSessionDB', SessionDB)
     runner = SimpleNamespace(session_store=store, session_authorities=SessionAuthorities(home, multiplexed=True))
     launch = SimpleNamespace(runner=runner, db=store._routing_db)
     owner = SimpleNamespace(runner=runner, db=db, profile_id=str(db.db_path.parent), retired=False, retiring=False)

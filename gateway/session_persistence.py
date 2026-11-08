@@ -60,11 +60,20 @@ class SessionPersistenceMixin:
             # already have lent this exact handle to the registered authority.
             with self._db_handles_lock:
                 owns_handle = any(handle is authority.db for handle in self._db_handles.values())
+                owns_routing = any(handle is routing for handle in self._db_handles.values())
+            if postgres_enabled():
+                # PostgreSQL acquire deliberately bypasses the SQLite inode registry.
+                # Both exact handles must instead belong to this runner's cache.
+                from hermes_state_postgresql import PostgreSQLSessionDB
+                managed = (owns_routing and isinstance(authority.db, PostgreSQLSessionDB)
+                           and isinstance(routing, PostgreSQLSessionDB))
+            else:
+                managed = (getattr(authority.db, '_shared_registry_owned', False) is True
+                           and getattr(routing, '_shared_registry_owned', False) is True)
             return (routing is not None and registry.for_home(home) is authority
                     and session_store_home(authority.db) == Path(authority.profile_id).resolve()
                     and owns_handle
-                    and getattr(authority.db, '_shared_registry_owned', False) is True
-                    and getattr(routing, '_shared_registry_owned', False) is True
+                    and managed
                     and process_ownership.owns(home)
                     and process_ownership.owns(session_store_home(routing))
                     and getattr(launch, 'runner', None) is runner
