@@ -99,7 +99,7 @@ function promptSessionId(method: string, params: Record<string, unknown>): strin
   return method === 'prompt.submit' && typeof params.session_id === 'string' ? params.session_id.trim() : ''
 }
 
-const TERMINAL_TURN_ACK_STATUSES = new Set(['complete', 'completed', 'error'])
+const TERMINAL_TURN_ACK_STATUSES = new Set(['complete', 'completed', 'error', 'terminal'])
 
 function turnKeepsRunning(result: unknown): boolean {
   if (!result || typeof result !== 'object' || !('status' in result)) {

@@ -459,7 +459,7 @@ describe('requestForSessionProfile', () => {
     vi.useRealTimers()
   })
 
-  it.each(['queued', 'redirected', 'future-nonterminal'])(
+  it.each(['queued', 'started', 'unknown', 'redirected', 'future-nonterminal'])(
     'retains a routed socket for non-terminal ACK status %s',
     async status => {
       const primary = makePrimary()
@@ -478,7 +478,7 @@ describe('requestForSessionProfile', () => {
     }
   )
 
-  it.each(['complete', 'completed', 'error'])('releases a routed socket for terminal ACK status %s', async status => {
+  it.each(['complete', 'completed', 'error', 'terminal'])('releases a routed socket for terminal ACK status %s', async status => {
     const primary = makePrimary()
     setPrimaryGateway(primary as never, 'default')
     installDesktop()
