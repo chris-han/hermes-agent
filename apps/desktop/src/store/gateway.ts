@@ -786,14 +786,19 @@ async function openSecondary(entry: Secondary): Promise<void> {
           ? {}
           : desktop
 
-    const wsUrl = await withTimeout(
+    const wsUrl = conn.transport === 'semantier-workspace-http' ? '' : await withTimeout(
       resolveGatewayWsUrl(wsDeps, conn),
       RECONNECT_ATTEMPT_TIMEOUT_MS,
       `Timed out re-minting the gateway WebSocket URL for profile "${entry.profile}"`
     )
 
     try {
-      await entry.gateway.connect(wsUrl)
+      if (conn.transport === 'semantier-workspace-http') {
+        if (!conn.workspaceScope) { throw new Error('Semantier Workspace identity is missing.') }
+        await entry.gateway.connectWorkspace(conn.baseUrl, conn.workspaceScope, conn.connectionId, conn.profile)
+      } else {
+        await entry.gateway.connect(wsUrl)
+      }
     } catch (error) {
       // Log the dial target for support, but RETHROW THE ORIGINAL ERROR —
       // reconnectSecondary classifies failures by message ("No connection

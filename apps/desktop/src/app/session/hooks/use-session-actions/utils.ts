@@ -234,6 +234,7 @@ const _chatMessageFieldsExhaustive: {
 } = {}
 
 const COMPARED_FIELDS = [
+  'botAuthor',
   'rowId',
   'persistedTurn',
   'durableComplete',
@@ -361,6 +362,8 @@ export function chatMessagesEquivalent(a: ChatMessage, b: ChatMessage): boolean 
   if (
     a.id !== b.id ||
     a.rowId !== b.rowId ||
+    a.botAuthor?.botId !== b.botAuthor?.botId ||
+    a.botAuthor?.displayName !== b.botAuthor?.displayName ||
     !persistedTurnsEquivalent(a.persistedTurn, b.persistedTurn) ||
     a.role !== b.role ||
     a.durableComplete !== b.durableComplete ||

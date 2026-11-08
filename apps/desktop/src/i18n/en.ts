@@ -337,6 +337,7 @@ export const en: Translations = {
     connecting: 'Connecting',
     continue: 'Continue',
     bots: 'Bots',
+    winmanTab: 'Winman',
     copied: 'Copied',
     copy: 'Copy',
     copyFailed: 'Copy failed',

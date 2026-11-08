@@ -1,5 +1,7 @@
 import {
+  type ConnectionState,
   type GatewayEvent,
+  GatewayEventHub,
   type GatewayEventName,
   JsonRpcGatewayClient,
   type ServerRequest,
@@ -8,6 +10,9 @@ import {
 import { map, type MapStore } from 'nanostores'
 
 import type { HermesApiRequest } from '@/global'
+
+import { assertWorkspaceScope, type WorkspaceMainContext, workspaceTranscript } from '../../electron/semantier-workspace-client'
+import type { WorkspaceScope } from '../../electron/semantier-workspace-ipc'
 
 import { CANONICAL_GATEWAY_PROTOCOL, CanonicalDesktopProtocol, canonicalProfile, canonicalSessionKey, recordCanonicalOwner, splitRewindSubmit } from './canonical-protocol'
 
@@ -77,7 +82,281 @@ function remainingRequestBudget(deadline: number, signal?: AbortSignal): number 
   return remaining
 }
 
+const workspaceReadScopes = new Map<string, { scope: WorkspaceScope; origin: string }>()
+
 export class HermesGateway extends JsonRpcGatewayClient {
+  private workspaceConnection: { origin: string; scope: WorkspaceScope; connectionId?: string; profile?: string } | null = null
+  private workspaceDial: Promise<void> | null = null
+  private workspaceState: ConnectionState = 'idle'
+  private readonly workspaceStates = new Set<(state: ConnectionState) => void>()
+  private readonly workspaceEvents = new GatewayEventHub()
+
+  private workspacePollTimer: ReturnType<typeof setTimeout> | null = null
+  private workspacePollGeneration: number | null = null
+  private workspacePollDelay = 2_000
+  private readonly workspaceOriginalContexts = new Map<string, WorkspaceMainContext>()
+  private readonly workspaceSnapshots = new Map<string, { profile: string; messages: string; cursor?: string; fullReadAt: number }>()
+  private readonly wakeWorkspacePoll = () => {
+    if (this.workspaceConnection) { this.scheduleWorkspacePoll(0) }
+  }
+
+  private stopWorkspacePoll(): void {
+    if (this.workspacePollTimer !== null) { clearTimeout(this.workspacePollTimer) }
+    this.workspacePollTimer = null
+    this.workspaceSnapshots.clear()
+    this.workspaceOriginalContexts.clear()
+    window.removeEventListener('online', this.wakeWorkspacePoll)
+    window.removeEventListener('focus', this.wakeWorkspacePoll)
+    document.removeEventListener('visibilitychange', this.wakeWorkspacePoll)
+  }
+
+  private scheduleWorkspacePoll(delay = this.workspacePollDelay): void {
+    if (this.workspacePollTimer !== null) { clearTimeout(this.workspacePollTimer) }
+    this.workspacePollTimer = setTimeout(() => {
+      this.workspacePollTimer = null
+      void this.reconcileWorkspace()
+    }, delay)
+  }
+
+  private rememberWorkspaceSnapshot(sessionId: string, profile: string, messages: unknown, cursor?: string): void {
+    this.workspaceSnapshots.set(sessionId, { profile, messages: JSON.stringify(messages), cursor, fullReadAt: Date.now() })
+    if (this.workspacePollTimer === null && this.workspacePollGeneration !== this.connectionGeneration) { this.scheduleWorkspacePoll() }
+  }
+
+  private async reconcileWorkspace(): Promise<void> {
+    const connection = this.workspaceConnection
+    if (!connection || this.workspacePollGeneration === this.connectionGeneration) { return }
+    const generation = this.connectionGeneration
+    this.workspacePollGeneration = generation
+    let changed = false
+    try {
+      for (const [sessionId, previous] of this.workspaceSnapshots) {
+        const bridge = window.hermesDesktop.workspace!
+        const incremental = previous.profile === 'default' && previous.cursor !== undefined && Date.now() - previous.fullReadAt < 60_000
+        const snapshot = previous.profile === 'default'
+          ? await bridge.history(connection.origin, connection.scope, sessionId, ...(incremental ? [previous.cursor!] : []))
+          : await bridge.nativeHistory(connection.origin, connection.scope, sessionId)
+        this.requireConnectionGeneration(generation)
+        const messages = JSON.stringify(snapshot.messages)
+        // A concurrent explicit resume owns its newer snapshot; do not rewind its cursor.
+        if (this.workspaceSnapshots.get(sessionId) !== previous) { continue }
+        const cursor = 'nextCursor' in snapshot && typeof snapshot.nextCursor === 'string' ? snapshot.nextCursor : undefined
+        const isDelta = incremental && cursor !== undefined
+        const hasChanges = isDelta ? snapshot.messages.length > 0 : messages !== previous.messages
+        this.workspaceSnapshots.set(sessionId, { profile: previous.profile,
+          messages: isDelta ? previous.messages : messages, cursor,
+          fullReadAt: isDelta ? previous.fullReadAt : Date.now() })
+        if (hasChanges) {
+          changed = true
+          this.workspaceEvents.dispatch({ type: 'session.replay_gap', session_id: sessionId, profile: previous.profile, payload: {} })
+        }
+      }
+      this.workspacePollDelay = changed ? 2_000 : Math.min(this.workspacePollDelay * 2, 30_000)
+    } catch {
+      // Reads may retry; never retry a send. IPC enforces the current account on every read.
+      this.workspacePollDelay = Math.min(this.workspacePollDelay * 2, 30_000)
+    } finally {
+      if (this.workspacePollGeneration === generation) { this.workspacePollGeneration = null }
+      if (this.workspaceConnection === connection && generation === this.connectionGeneration) {
+        this.scheduleWorkspacePoll(document.visibilityState === 'hidden' ? Math.max(this.workspacePollDelay, 120_000) : this.workspacePollDelay)
+      }
+    }
+  }
+
+  override get connectionState(): ConnectionState {
+    return this.workspaceConnection ? this.workspaceState : super.connectionState
+  }
+
+  override onState(handler: (state: ConnectionState) => void): () => void {
+    this.workspaceStates.add(handler)
+    const off = super.onState(state => { if (!this.workspaceConnection) { handler(state) } })
+    if (this.workspaceConnection) { handler(this.workspaceState) }
+    return () => { off(); this.workspaceStates.delete(handler) }
+  }
+
+  private setWorkspaceState(state: ConnectionState): void {
+    this.workspaceState = state
+    for (const handler of this.workspaceStates) { handler(state) }
+  }
+
+  /** HTTP readiness is an authenticated resource check, never a gateway.ready handshake. */
+  async connectWorkspace(origin: string, scope: WorkspaceScope, connectionId?: string, profile = 'default'): Promise<void> {
+    const current = this.workspaceConnection
+    const same = current?.origin === origin && current.connectionId === connectionId && current.profile === profile &&
+      current.scope.userId === scope.userId && current.scope.workspaceId === scope.workspaceId &&
+      current.scope.organizationId === scope.organizationId
+    if (same && this.workspaceState === 'connecting' && this.workspaceDial) {return this.workspaceDial}
+    if (same && this.workspaceState === 'open') {
+      const generation = this.connectionGeneration
+      const identity = await window.hermesDesktop.workspace!.identity(origin)
+      this.requireConnectionGeneration(generation)
+      assertWorkspaceScope(identity, scope)
+      return
+    }
+    const pending = this.openWorkspace(origin, scope, connectionId, profile)
+    this.workspaceDial = pending
+    try {await pending} finally {if (this.workspaceDial === pending) {this.workspaceDial = null}}
+  }
+
+  private async openWorkspace(origin: string, scope: WorkspaceScope, connectionId?: string, profile = 'default'): Promise<void> {
+    this.stopWorkspacePoll()
+    this.workspacePollDelay = 2_000
+    this.connectionGeneration++
+    const generation = this.connectionGeneration
+    super.close()
+    this.workspaceConnection = { origin, scope, connectionId, profile }
+    this.setWorkspaceState('connecting')
+    try {
+      const identity = await window.hermesDesktop.workspace!.identity(origin)
+      this.requireConnectionGeneration(generation)
+      assertWorkspaceScope(identity, scope)
+      if (connectionId) {
+        const known = workspaceReadScopes.get(connectionId)
+        const normalizedOrigin = new URL(origin).origin
+        if (!known || known.origin !== normalizedOrigin || known.scope.userId !== scope.userId ||
+          known.scope.workspaceId !== scope.workspaceId || known.scope.organizationId !== scope.organizationId) {
+          workspaceReadScopes.set(connectionId, { scope: { ...scope }, origin: normalizedOrigin })
+        }
+      }
+      this.setWorkspaceState('open')
+      window.addEventListener('online', this.wakeWorkspacePoll)
+      window.addEventListener('focus', this.wakeWorkspacePoll)
+      document.addEventListener('visibilitychange', this.wakeWorkspacePoll)
+    } catch (error) {
+      if (generation === this.connectionGeneration) { this.setWorkspaceState('error') }
+      throw error
+    }
+  }
+
+  private rememberWorkspaceOriginal(sessionId: string, context: WorkspaceMainContext): void {
+    const scope = this.workspaceConnection!.scope
+    if (context.user_id !== scope.userId || context.workspace_id !== scope.workspaceId ||
+      context.organization_id !== scope.organizationId || !context.binding_id || !context.original_conversation?.session_key) {
+      throw new Error('The original Main conversation owner changed. Reopen Winman from Main.')
+    }
+    this.workspaceOriginalContexts.set(sessionId, context)
+  }
+
+  private async requestWorkspace<T>(method: string, params: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
+    const connection = this.workspaceConnection!
+    const generation = this.connectionGeneration
+    const bridge = window.hermesDesktop.workspace!
+    signal?.throwIfAborted()
+    const sessionId = String(params.session_id || params.session_key || '')
+    if (method === 'model.options') {
+      if (params.query_only !== true || typeof params.query_scope !== 'string' || !params.query_scope.trim()) {
+        throw new Error('Cloud model discovery requires the query-only source contract.')
+      }
+      const query = new URLSearchParams({query_only:'1',query_scope:params.query_scope})
+      if (params.refresh === true) {query.set('refresh','1')}
+      const result = await hermesApiAs<T>({connectionId:connection.connectionId || null,profile:connection.profile || 'default'},
+        {path:'/api/model/options?' + query})
+      this.requireConnectionGeneration(generation)
+      return result
+    }
+    if (method === 'session.bind_original') {
+      if (!bridge.bindNativeContext || (connection.profile || 'default') === 'default') {
+        throw new Error('Native original-chat binding requires its Cloud owner adapter.')
+      }
+      const context = await bridge.bindNativeContext(connection.origin, connection.scope, sessionId, String(params.original_session_key || ''))
+      this.requireConnectionGeneration(generation)
+      this.rememberWorkspaceOriginal(sessionId, context)
+      return context as T
+    }
+    if (method === 'session.create') {
+      if (params.title !== 'Bot Chat' || !connection.connectionId) {
+        throw new Error('Cloud creation is available only for the canonical Bot Chat.')
+      }
+      const target = String(params.profile || connection.profile || 'default')
+      const roster = await hermesApiAs<{ profiles: Array<{ name: string }> }>(
+        { connectionId: connection.connectionId, profile: 'default' }, { path: '/api/profiles' })
+      this.requireConnectionGeneration(generation)
+      if (!roster.profiles.some(profile => profile.name === target)) {
+        throw new Error('This Native profile is unavailable in the current workspace.')
+      }
+      const result = await bridge.ensureWinmanChat(connection.origin, connection.scope)
+      this.requireConnectionGeneration(generation)
+      if (result.profile.name !== target || !result.profile.canonical_session?.id) {
+        throw new Error('The canonical Native profile changed during creation.')
+      }
+      const canonical = result.profile.canonical_session
+      return { session_id: canonical.resolved_id || canonical.id, stored_session_id: canonical.id } as T
+    }
+    if (method === 'profiles.list') {
+      if (!connection.connectionId) { throw new Error('The Cloud roster requires an explicit connection owner.') }
+      const result = await hermesApiAs<T>({ connectionId: connection.connectionId, profile: 'default' }, { path: '/api/profiles' })
+      this.requireConnectionGeneration(generation)
+      return result
+    }
+    if (method === 'session.list' && params.title === 'Bot Chat') {
+      if (!connection.connectionId) { throw new Error('The Cloud registry requires an explicit connection owner.') }
+      const roster = await hermesApiAs<{ profiles: Array<{ name: string; canonical_session?: {
+        id: string; resolved_id?: string; title?: string; root_title?: string; [key: string]: unknown
+      } | null }> }>({ connectionId: connection.connectionId, profile: 'default' }, { path: '/api/profiles' })
+      this.requireConnectionGeneration(generation)
+      const profile = roster.profiles.find(row => row.name === params.profile)
+      if (!profile) { throw new Error('This Native profile is unavailable in the current workspace.') }
+      const canonical = profile.canonical_session
+      if (canonical && (canonical.root_title || canonical.title) !== 'Bot Chat') {
+        throw new Error('The Native Bot Chat title registry is unavailable.')
+      }
+      return { sessions: canonical ? [{ ...canonical, session_id: canonical.resolved_id || canonical.id }] : [], scope: 'stored' } as T
+    }
+    if (method === 'ping' || method === 'setup.status' || method === 'setup.runtime_check') {
+      const identity = await bridge.identity(connection.origin)
+      this.requireConnectionGeneration(generation)
+      assertWorkspaceScope(identity, connection.scope)
+      if (method === 'ping') { return { ok: true } as T }
+      const ready = identity.account_provisioning?.inference_ready
+      if (typeof ready !== 'boolean') { throw new Error('Cloud inference readiness is unavailable.') }
+      return (method === 'setup.status'
+        ? { ready, provider_configured: ready }
+        : { ok: ready, error: ready ? undefined : identity.account_provisioning?.reason }) as T
+    }
+    if (method === 'session.resume' || method === 'session.activate') {
+      if ((params.profile || connection.profile || 'default') !== 'default') {
+        const snapshot = await bridge.nativeHistory(connection.origin, connection.scope, sessionId)
+        this.requireConnectionGeneration(generation)
+        signal?.throwIfAborted()
+        if (bridge.nativeContext && !this.workspaceOriginalContexts.has(sessionId)) {
+          const context = await bridge.nativeContext(connection.origin, connection.scope, sessionId)
+          this.requireConnectionGeneration(generation)
+          if (context) { this.rememberWorkspaceOriginal(sessionId, context) }
+        }
+        this.rememberWorkspaceSnapshot(sessionId, String(params.profile || connection.profile), snapshot.messages)
+        return snapshot as T
+      }
+      const history = await bridge.history(connection.origin, connection.scope, sessionId)
+      this.requireConnectionGeneration(generation)
+      signal?.throwIfAborted()
+      this.rememberWorkspaceSnapshot(sessionId, 'default', history.messages, history.nextCursor)
+      return { resumed: history.sessionId, session_id: history.sessionId, session_key: history.sessionId,
+        message_count: history.messages.length, messages: workspaceTranscript(history) } as T
+    }
+    if (method === 'prompt.submit') {
+      if ((params.profile || connection.profile || 'default') !== 'default') {
+        if (!bridge.sendNative) { throw new Error('Native Bot Chat submission requires its Cloud owner adapter.') }
+        const context = this.workspaceOriginalContexts.get(sessionId)
+        if (!context) { throw new Error('Open Winman from the original Main conversation before sending.') }
+        const identity = String(params.submission_id || params.request_id || '')
+        if (!identity) { throw new Error('A retained Native request identity is required.') }
+        const snapshot = await bridge.sendNative(connection.origin, connection.scope, sessionId, String(params.text || ''), identity, context.binding_id)
+        this.requireConnectionGeneration(generation)
+        this.rememberWorkspaceSnapshot(sessionId, String(params.profile || connection.profile), snapshot.messages)
+        this.workspaceEvents.dispatch({ type: 'session.replay_gap', session_id: sessionId, profile: String(connection.profile), payload: {} })
+        return this.protocol.result('prompt.submit', params, snapshot.admission_receipt) as T
+      }
+      const identity = String(params.submission_id || params.request_id || '')
+      if (!identity) { throw new Error('A retained request identity is required to send a Cloud message.') }
+      await bridge.send(connection.origin, connection.scope, sessionId, String(params.text || ''), identity)
+      this.requireConnectionGeneration(generation)
+      // The existing snapshot recovery handler updates only the matching visible pane.
+      this.workspaceEvents.dispatch({ type: 'session.replay_gap', session_id: sessionId, profile: 'default', payload: {} })
+      return { session_id: sessionId } as T
+    }
+    throw Object.assign(new Error(`Semantier Workspace does not support Desktop operation ${method}.`), { code: -32601 })
+  }
+
   private canonical = false
   private readonly protocol = new CanonicalDesktopProtocol()
   private readonly promptHandlers = new Set<ServerRequestHandler>()
@@ -175,6 +454,9 @@ export class HermesGateway extends JsonRpcGatewayClient {
   }
 
   override close(): void {
+    this.stopWorkspacePoll()
+    if (this.workspaceConnection) { this.setWorkspaceState('closed') }
+    this.workspaceConnection = null
     this.connectionGeneration++
     this.deliveredPrompts.clear()
     this.sessionProfiles.clear()
@@ -200,11 +482,15 @@ export class HermesGateway extends JsonRpcGatewayClient {
   override on<K extends GatewayEventName>(type: K, handler: (event: GatewayEvent<K>) => void): () => void {
     // Named listeners run before wildcard listeners in the shared client.
     // Normalize before either kind sees the prompt, including replay delivery.
-    return super.on<K>(type, event => this.deliverNormalized(event, handler as (event: GatewayEvent) => void))
+    const offHttp = this.workspaceEvents.on(type, handler)
+    const offNative = super.on<K>(type, event => this.deliverNormalized(event, handler as (event: GatewayEvent) => void))
+    return () => { offHttp(); offNative() }
   }
 
   override onAny(handler: (event: GatewayEvent) => void): () => void {
-    return super.onAny(event => this.deliverNormalized(event, handler))
+    const offHttp = this.workspaceEvents.onAny(handler)
+    const offNative = super.onAny(event => this.deliverNormalized(event, handler))
+    return () => { offHttp(); offNative() }
   }
 
   private deliverNormalized(event: GatewayEvent, handler: (event: GatewayEvent) => void): void {
@@ -317,6 +603,8 @@ export class HermesGateway extends JsonRpcGatewayClient {
   }
 
   override async connect(wsUrl: string): Promise<void> {
+    this.stopWorkspacePoll()
+    this.workspaceConnection = null
     this.connectionGeneration++
     this.canonical = new URL(wsUrl).searchParams.has('native_dial')
     this.attached.clear()
@@ -373,6 +661,7 @@ export class HermesGateway extends JsonRpcGatewayClient {
   }
 
   override async request<T>(method: string, params: Record<string, unknown> = {}, timeoutMs?: number, signal?: AbortSignal): Promise<T> {
+    if (this.workspaceConnection) { return this.requestWorkspace<T>(method, params, signal) }
     if (!this.canonical) { return super.request<T>(method, legacyParams(method, params), timeoutMs, signal) }
     const generation = this.connectionGeneration
     const deadline = Date.now() + (timeoutMs ?? DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS)
@@ -597,11 +886,25 @@ export function resolveOwnerNow(owner?: OwnerScope): ResolvedOwner {
  *  ambient connection spread underneath. An untagged half stays untagged. A
  *  named profile is always explicit here, so it carries the foreground
  *  priority `profileScoped` gives explicit profiles (voice is user-driven). */
+export function forgetWorkspaceReadScope(connectionId: string): void {
+  workspaceReadScopes.delete(connectionId)
+}
+
 export function hermesApiAs<T>(owner: ResolvedOwner, request: HermesApiRequest): Promise<T> {
-  return window.hermesDesktop.api<T>({
+  const tagged = {
     ...(owner.connectionId ? { connectionId: owner.connectionId } : {}),
     ...(owner.profile ? { priority: 'foreground' as const, profile: owner.profile } : {}),
     ...request
+  }
+  const marker = tagged.connectionId ? workspaceReadScopes.get(tagged.connectionId) : undefined
+  const workspaceScope = marker?.scope
+  const response = window.hermesDesktop.api<T>({ ...tagged, ...(workspaceScope ? { workspaceScope } : {}) })
+  if (!workspaceScope) { return response }
+  return response.then(result => {
+    if (workspaceReadScopes.get(tagged.connectionId!) !== marker) {
+      throw new Error('The Semantier account or workspace changed during this read.')
+    }
+    return result
   })
 }
 
@@ -665,7 +968,17 @@ export function ambientOwnerConnectionId(): string | undefined {
  *  underneath it. (It used to omit the key for 'local', which made the pin
  *  unable to beat the ambient tag; helpers then had to bypass this wrapper.) */
 export function hermesApi<T>(request: HermesApiRequest): Promise<T> {
-  return window.hermesDesktop.api<T>({ ...connectionScoped(), ...request })
+  const tagged = { ...connectionScoped(), ...request }
+  const marker = tagged.connectionId ? workspaceReadScopes.get(tagged.connectionId) : undefined
+  const workspaceScope = marker?.scope
+  const response = window.hermesDesktop.api<T>({ ...tagged, ...(workspaceScope ? { workspaceScope } : {}) })
+  if (!workspaceScope) { return response }
+  return response.then(result => {
+    if (workspaceReadScopes.get(tagged.connectionId!) !== marker) {
+      throw new Error('The Semantier account or workspace changed during this read.')
+    }
+    return result
+  })
 }
 
 // ── Capability scope: (connection, profile) routing for the Capabilities

@@ -69,7 +69,8 @@ async def dispatch_group_control(connection, method, params):
         from gateway.hosted_rooms import HostedRoomError
         with _profile_runtime_scope(home):
             if method == 'profiles.list':
-                return _profiles(authority, actor, home, supplied)
+                return _profiles(authority, actor, home, supplied,
+                    include_siblings=connection._identity.get('profile_scope') == 'host')
             try:
                 return _group(authority, actor, home, method, supplied)
             except RuntimeStoreError:
@@ -257,7 +258,7 @@ def _execution_control(service, method, params):
     return handlers[method]()
 
 
-def _profiles(authority, actor, home, params):
+def _profiles(authority, actor, home, params, *, include_siblings=True):
     from hermes_cli.profiles import _profile_info, read_profile_meta
     import hermes_yaml as yaml
     include_sessions = params.get('include_sessions', True)
@@ -344,7 +345,9 @@ def _profiles(authority, actor, home, params):
     # Sibling profiles this process multiplexes: the roster lists them with the same
     # standing as a hosted-room destination, and the client routes their sessions by name.
     registry = getattr(getattr(authority, 'runner', None), 'session_authorities', None)
-    for sibling in (registry or ()):
+    # Only a host grant discovers process siblings. Explicit destinations
+    # configured by this profile remain available to its Hosted Rooms.
+    for sibling in ((registry or ()) if include_siblings else ()):
         discovered(served_profile_name(Path(sibling.profile_id)), Path(sibling.profile_id))
     service = getattr(authority, 'hosted_room_service', None)
     if service is not None:

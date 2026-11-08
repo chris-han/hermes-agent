@@ -15,6 +15,10 @@ import {
 } from './local-gateway'
 import { closeGatewayTicketBridges, createGatewayTicketResolver } from './local-gateway-python'
 import { registerSemantierFeedbackIpc } from './updater/semantier-feedback-ipc'
+import { registerSemantierWorkspaceIpc, workspace as semantierWorkspace, assertWorkspaceScope } from './semantier-workspace-ipc'
+
+const workspaceAccountGenerations = new Map<string, number>()
+import { workspaceDesktopRead } from './semantier-workspace-client'
 import { JourneyObservations } from './journey-observations'
 let journeyObservations: JourneyObservations | null = null
 import { SemantierObservations } from './updater/semantier-observations'
@@ -456,7 +460,8 @@ import { previewHttpUrlTarget } from './preview-url-target'
 import {
   createPrimaryRemoteConnection,
   FirstRunSetupResetError,
-  runPrimaryBackendStartup
+  runPrimaryBackendStartup,
+  type ResolvedPrimaryRemote
 } from './primary-backend-startup'
 import { rehomePrimaryConnection } from './primary-connection-rehome'
 import { PrimaryProfilePin, resolveLaunchProfile } from './primary-profile-pin'
@@ -6285,6 +6290,8 @@ async function buildReadinessHealthProbe(baseUrl, authMode, token) {
 // a manual "Use gateway" click. Run the cascade once and retry once; anything
 // that is not that exact case surfaces unchanged.
 async function waitForRemoteHermes(remote) {
+  // Workspace readiness was checked through its authenticated identity owner.
+  if (remote.transport === 'semantier-workspace-http') { return }
   try {
     await waitForHermes(remote.baseUrl, remote.token, undefined, remote.authMode, remote.headers)
   } catch (error) {
@@ -10367,7 +10374,7 @@ function persistSshConnectionToken(profile, source, token, registryConnectionId 
 async function resolveRemoteBackend(
   profile,
   options: { forceRegistryPrimary?: boolean; poolKey?: string; primary?: boolean } = {}
-) {
+): Promise<ResolvedPrimaryRemote | null> {
   const profileKey = String(profile || '').trim() || 'default'
 
   const managedPrimary = options.primary
@@ -10435,6 +10442,13 @@ async function resolveRemoteBackend(
 
   if (!route) {
     return null
+  }
+
+  if (route.kind !== 'ssh' && route.transport === 'semantier-workspace-http') {
+    if (!route.connectionId) { throw new Error('Workspace HTTP requires its registered connection owner.') }
+    // Legacy primary/prewarm callers must keep the selected registry transport.
+    // Reuse the same authenticated HTTP descriptor as explicit registry dials.
+    return ensureRegistryBackend(route.connectionId, profileKey)
   }
 
   let connection
@@ -10853,7 +10867,7 @@ function sendConnectionApplied() {
 // scoped to that connection. Without this, a removed remote/cloud source keeps
 // its renderer WebSocket open and streaming as a ghost, and an edited one
 // keeps talking to the OLD endpoint indefinitely.
-function broadcastConnectionsChanged(payload: { connectionId: string; reason: 'removed' | 'saved' | 'updated' }) {
+function broadcastConnectionsChanged(payload: { connectionId: string; reason: 'removed' | 'saved' | 'updated' | 'account-changed'; authenticated?: boolean }) {
   for (const win of BrowserWindow.getAllWindows()) {
     const { webContents } = win
 
@@ -11029,6 +11043,27 @@ async function ensureRegistryBackend(
 
   if (!source) {
     throw new Error(`No connection with id "${id}".`)
+  }
+
+  if (source.transport === 'semantier-workspace-http') {
+    const { client, origin } = semantierWorkspace(source.url)
+    const identity = await client.identity()
+    if (!identity.authenticated || !identity.user?.user_id || !identity.workspace?.id || !identity.organization_id) {
+      throw new Error('Sign in to the Semantier Cloud workspace before connecting.')
+    }
+    const selectedProfile = profile || 'default'
+    if (selectedProfile !== 'default') {
+      const owner = await client.winman()
+      if (owner.profile.name !== selectedProfile) { throw new Error('This Native profile is unavailable in the current workspace.') }
+      assertWorkspaceScope(await client.identity(), { userId: identity.user.user_id,
+        workspaceId: identity.workspace.id, organizationId: identity.organization_id })
+    }
+    return {
+      baseUrl: origin, transport: source.transport, mode: 'remote', remoteKind: 'cloud',
+      connectionId: source.id, profile: selectedProfile, registryScoped: true,
+      workspaceScope: { userId: identity.user.user_id, workspaceId: identity.workspace.id, organizationId: identity.organization_id },
+      token: '', wsUrl: '', logs: [], ...getWindowState()
+    }
   }
 
   if (source.kind === 'ssh') {
@@ -14495,6 +14530,11 @@ function createWindow() {
 }
 
 ipcMain.handle('hermes:connection', async (event, profile) => {
+  const ownRoute = windowConnectionRoutes.get(event.sender.id)
+  const ownSource = readDesktopConnectionsRegistry().connections.find(item => item.id === ownRoute?.connectionId)
+  if (ownRoute?.registryScoped && ownSource?.transport === 'semantier-workspace-http') {
+    return connectDesktopProfileRoute({ ...ownRoute, profile: typeof profile === 'string' && profile ? profile : ownRoute.profile }, event.sender)
+  }
   const route = resolveDesktopConnectionRequest(
     profile,
     windowConnectionRoutes.get(event.sender.id),
@@ -15382,6 +15422,7 @@ async function enumerateRegistryAgentSources(registry = readDesktopConnectionsRe
   return withoutInteractiveOauthLogin(() =>
     Promise.all(
       registry.connections.map(async connection => {
+        const accountGeneration = workspaceAccountGenerations.get(connection.id) || 0
         let sourceFailureDetail = ''
 
         let raw: {
@@ -15492,7 +15533,7 @@ async function enumerateRegistryAgentSources(registry = readDesktopConnectionsRe
 
             // The root HERMES_HOME is an agent too; enumerations that omit it
             // (older backends list only named profiles) still get a default row.
-            if (!profiles.includes('default')) {
+            if (connection.transport !== 'semantier-workspace-http' && !profiles.includes('default')) {
               profiles.unshift('default')
             }
 
@@ -15512,6 +15553,10 @@ async function enumerateRegistryAgentSources(registry = readDesktopConnectionsRe
             needsSignIn:
               isReauthRequiredError(error) || (connection.authMode === 'oauth' && isGatewayAuthRejection(error))
           }
+        }
+
+        if ((workspaceAccountGenerations.get(connection.id) || 0) !== accountGeneration) {
+          return { connection, profiles: null, error: 'account-changed' }
         }
 
         if (raw.error && raw.error !== 'connect-on-demand') {
@@ -15742,6 +15787,16 @@ async function fetchJsonForBackend(
   path,
   opts: { method?: string; body?: unknown; upload?: unknown; timeoutMs?: number; profileScoped?: boolean } = {}
 ) {
+  if (descriptor.transport === 'semantier-workspace-http') {
+    if ((opts.method || 'GET').toUpperCase() !== 'GET') {
+      throw new Error('This Semantier Workspace Desktop mutation is not implemented.')
+    }
+    const { client } = semantierWorkspace(descriptor.baseUrl)
+    assertWorkspaceScope(await client.identity(), descriptor.workspaceScope)
+    const result = await workspaceDesktopRead(client, path, descriptor.profile)
+    assertWorkspaceScope(await client.identity(), descriptor.workspaceScope)
+    return result
+  }
   const url = `${descriptor.baseUrl}${path}`
 
   // A native grant names one profile and the gateway refuses `all`: assemble the unified
@@ -16521,6 +16576,21 @@ async function dispatchRegistryApiRequest(
         ensureRegistryBackend(registryConnectionId, routeProfile)
       )
 
+  if (connection.transport === 'semantier-workspace-http') {
+    const method = (request?.method || 'GET').toUpperCase()
+    const path = new URL(request.path, 'https://desktop.invalid').pathname
+    if (method !== 'GET' && !(method === 'POST' && path === '/api/model/set' && connection.profile === 'default')) {
+      throw new Error('This Semantier Workspace Desktop mutation is not implemented.')
+    }
+    const { client } = semantierWorkspace(connection.baseUrl)
+    assertWorkspaceScope(await client.identity(), request.workspaceScope)
+    const result = method === 'GET'
+      ? await workspaceDesktopRead(client, request.path, connection.profile)
+      : await client.setMainModel(request.body, request.workspaceScope)
+    assertWorkspaceScope(await client.identity(), request.workspaceScope)
+    return result
+  }
+
   const requestPath = pathForRegistryBackendRequest(request.path, requestProfile, connection)
 
   const response = await fetchJsonForBackend(connection, requestPath, {
@@ -16575,6 +16645,11 @@ async function handleHermesApiRequest(request) {
   const registryConnectionId = apiRequestRegistryConnectionId(request)
 
   if (registryConnectionId) {
+    const source = readDesktopConnectionsRegistry().connections.find(item => item.id === registryConnectionId)
+    if (source?.transport === 'semantier-workspace-http') {
+      return dispatchRegistryApiRequest(request, registryConnectionId)
+    }
+
     if (isAllProfilesSessionListRequest(request?.method, request?.path)) {
       const aggregate = await interceptSessionRequestForRemote(request, registryConnectionId)
 
@@ -16686,7 +16761,30 @@ function formatApiRequestFailure(
   return `[hermes:api ${method} ${path}] ${detail}`.slice(0, 6000)
 }
 
-ipcMain.handle('hermes:api', async (_event, request) => {
+registerSemantierWorkspaceIpc((origin, authenticated) => {
+  for (const source of readDesktopConnectionsRegistry().connections) {
+    if (source.transport !== 'semantier-workspace-http' || new URL(source.url).origin !== origin) { continue }
+    workspaceAccountGenerations.set(source.id, (workspaceAccountGenerations.get(source.id) || 0) + 1)
+    sshRosterCache.delete(source.id)
+    rosterSourceErrors.delete(source.id)
+    connectionInstallIds.delete(source.id)
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (windowConnectionRoutes.get(win.webContents.id)?.connectionId === source.id) {
+        recordWindowConnectionRoute(win.webContents, { connectionId: source.id, profile: 'default', registryScoped: true })
+      }
+    }
+    broadcastConnectionsChanged({ connectionId: source.id, reason: 'account-changed', authenticated })
+  }
+})
+
+ipcMain.handle('hermes:api', async (event, request) => {
+  const ownRoute = windowConnectionRoutes.get(event.sender.id)
+  const ownSource = readDesktopConnectionsRegistry().connections.find(item => item.id === ownRoute?.connectionId)
+  if (!apiRequestRegistryConnectionId(request) && ownRoute?.registryScoped && ownSource?.transport === 'semantier-workspace-http') {
+    // Untagged calls in this Cloud window cannot fall through to the local/Nous owner.
+    // A missing expected account scope still fails the HTTP authorization guard.
+    request = { ...request, connectionId: ownRoute.connectionId }
+  }
   // Hold the deletion gate for BOTH profile deletes and renames: a concurrent
   // renderer reconnect entering ensureBackend() mid-mutation would otherwise
   // respawn the old-name backend and recreate its HERMES_HOME (#45474).

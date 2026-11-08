@@ -486,6 +486,7 @@ export function toRuntimeMessage(message: ChatMessage): ThreadMessage {
       steps: [],
       // Carries ChatMessage.interim to AssistantMessage's footer gate.
       custom: {
+        ...(message.botAuthor ? { botAuthor: message.botAuthor } : {}),
         ...(message.interim ? { interim: true } : {}),
         ...(message.interrupted ? { interrupted: true } : {}),
         ...timelineMeta,
@@ -576,7 +577,12 @@ export function coalesceToolOnlyAssistants(messages: ChatMessage[], cache: ToolM
   for (const message of messages) {
     const prev = out.at(-1)
 
-    if (prev && prev.role === 'assistant' && !prev.pending && !prev.hidden && isToolOnlyAssistant(message)) {
+    if (
+      prev && prev.role === 'assistant' &&
+      prev.botAuthor?.botId === message.botAuthor?.botId &&
+      prev.botAuthor?.displayName === message.botAuthor?.displayName &&
+      !prev.pending && !prev.hidden && isToolOnlyAssistant(message)
+    ) {
       const cached = cache.get(message)
 
       const merged =

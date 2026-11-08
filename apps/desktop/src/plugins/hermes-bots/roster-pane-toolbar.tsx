@@ -71,7 +71,7 @@ export function renderRosterToolbar({
     <>
       <div className="flex items-center justify-between gap-2 px-2.5 pt-2.5 pb-1.5">
         <span className="text-[0.6875rem] font-semibold uppercase tracking-wider text-(--ui-text-quaternary)">
-          Bots
+          {b.roster.heading}
         </span>
         <div className="flex items-center gap-0.5">
           <Tip

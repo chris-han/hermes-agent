@@ -28,6 +28,7 @@ import { $keepAwakeMode, type KeepAwakeMode, setKeepAwakeMode } from '@/store/ke
 import { notify, notifyError } from '@/store/notifications'
 import { normalizeProfileKey } from '@/store/profile'
 import { repoDiscoveryPolicyFromConfig, repoDiscoveryPolicySignature, scanAndRecordRepos } from '@/store/projects'
+import { $connection } from '@/store/session'
 import { $settingsRequestProfile } from '@/store/settings-scope'
 import type { ConfigFieldSchema, HermesConfigRecord } from '@/types/hermes'
 
@@ -70,6 +71,16 @@ export function ConfigSettings({
   // when the target profile changes — the same guarantee useOnProfileSwitch
   // provides for app-wide switches, without hand-clearing each piece.
   const scopeProfile = useStore($settingsRequestProfile)
+  const connection = useStore($connection)
+  // Cloud Main owns a query-only inventory and its validated assignment route.
+  // The unrelated Native configuration schema is not a prerequisite for it.
+  if (connection?.transport === 'semantier-workspace-http' && activeSectionId === 'model' && subpage === 'main') {
+    return <SettingsContent>
+      <SettingsProfileScope className="mb-5" />
+      <ModelSettings onMainModelChanged={onMainModelChanged} scopeProfile={scopeProfile} subpage={subpage} />
+    </SettingsContent>
+  }
+
 
   return (
     <ConfigSettingsInner

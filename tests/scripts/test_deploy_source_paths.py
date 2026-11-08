@@ -153,3 +153,35 @@ if(Test-Path Env:GIT_CONFIG_KEY_1){throw 'Temporary trust leaked'}
     assert result.returncode != 0
     assert "Clear SEMANTIER_WSL_GIT_DISTRO" in result.stderr
     assert not output.exists()
+
+
+_BUILD_ONLY_BOUNDARY_PS = r'''
+$ErrorActionPreference='Stop'
+Set-StrictMode -Version Latest
+$e=$null;$t=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile($args[0],[ref]$t,[ref]$e)
+if($e){throw ($e | Out-String)}
+$main=@($ast.EndBlock.Statements | Where-Object {$_ -is [Management.Automation.Language.TryStatementAst]})[-1]
+$BuildOnly=$true;$Commit='a'*40;$SetupOnly=$false;$LocalSetup=$false;$UpdateSetup=$false;$PreflightOnly=$false
+$DesktopOnly=$false;$WhatIfPreference=$false;$Output=$args[1];$utf8=New-Object Text.UTF8Encoding($false)
+$script:releaseEnvironment=@{}
+function Initialize-ReleasePaths {}
+function Build-CommitPackage {return [pscustomobject]@{version='0.0.90';msix='owned-unsigned.msix';sha256=('b'*64);source='owned-source'}}
+function Assert-ReleaseToolchain {throw 'Signing/release preflight must not run'}
+function Sign-Copy {throw 'Signing must not run'}
+function Report-Status([string]$Message) {}
+function Write-RunEvent($Event) {if($Event.type -cne 'build-only'){throw 'Unexpected release event'}}
+& ([scriptblock]::Create($main.Extent.Text))
+$result=Get-Content -LiteralPath (Join-Path $Output 'result.json') -Raw | ConvertFrom-Json
+if($result.result -cne 'UNSIGNED_LOCAL_BUILD' -or $result.commit -cne $Commit){throw 'Unsigned result missing'}
+foreach($field in @('signing','installation','publication')){if($result.$field -cne 'NOT_RUN'){throw "Unexpected $field"}}
+'BUILD_ONLY_BOUNDARY_PASS'
+'''
+
+
+def test_build_only_returns_before_signing_installation_and_publication(tmp_path):
+    script = tmp_path / 'build-only-boundary.ps1'
+    script.write_text(_BUILD_ONLY_BOUNDARY_PS, encoding='utf-8')
+    result = invoke_ps(script, SOURCE, tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'BUILD_ONLY_BOUNDARY_PASS' in result.stdout

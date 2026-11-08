@@ -10,12 +10,14 @@ import {
 import { useEffect, useRef } from 'react'
 
 import { canonicalOwnerProfile } from '@/api/canonical-protocol'
+import { forgetWorkspaceReadScope } from '@/api/client'
 import { createGatewayEventDedupe } from '@/app/gateway/gateway-event-dedupe'
 import { reportStartupLatency } from '@/app/gateway/report-startup-latency'
 import { shouldApplyPostBootProgressError } from '@/components/boot-failure-reauth'
 import type { DesktopBootProgress, HermesConnection, HermesWindowState } from '@/global'
 import { HermesGateway } from '@/hermes'
 import { translateNow } from '@/i18n'
+import { rescopeConnectionScopedStores } from '@/lib/connection-scoped'
 import { desktopDefaultCwd } from '@/lib/desktop-fs'
 import {
   decideLivenessForceClose,
@@ -23,6 +25,7 @@ import {
   LIVENESS_REPROBE_DELAY_MS
 } from '@/lib/gateway-liveness-policy'
 import { resolveDesktopGatewayWsUrl } from '@/lib/gateway-ws-url'
+import { queryClient } from '@/lib/query-client'
 import { refreshModelsOnConnectionReady } from '@/lib/startup-model-discovery'
 import { BACKEND_BOOT_WAIT_TIMEOUT_MS, RECONNECT_ATTEMPT_TIMEOUT_MS, withTimeout } from '@/lib/with-timeout'
 import {
@@ -36,6 +39,7 @@ import {
 } from '@/store/boot'
 import { resetBackgroundPollingGuard } from '@/store/composer-status'
 import { noteBackendDrop, noteBackendExited } from '@/store/desktop-metrics'
+import { forgetFleetRosterConnection } from '@/store/fleet-roster'
 import {
   $gateway,
   activeGateway,
@@ -66,7 +70,8 @@ import {
   registerGatewaySwitchLifecycle
 } from '@/store/gateway-switch'
 import { notify, notifyError, RECOVERY_ACTIONS } from '@/store/notifications'
-import { $activeGatewayProfile, normalizeProfileKey, refreshActiveProfile } from '@/store/profile'
+import { markOnboardingDecided } from '@/store/onboarding-presence'
+import { $activeGatewayProfile, $profiles, $profilesByConnection, invalidateProfileListFetches, normalizeProfileKey, refreshActiveProfile } from '@/store/profile'
 import { requestBackendRestart } from '@/store/recovery-requests'
 import {
   $activeSessionId,
@@ -88,6 +93,7 @@ import {
   $sessionOwnerHoldRevision,
   $sessionTiles,
   $workingSessionIds,
+  dropTilesForConnection,
   foregroundSessionScopes,
   forgetProfileOnlyRuntimeOwners,
   liveSessionScopes,
@@ -504,7 +510,7 @@ export function useGatewayBoot({
         // explicit auth rejection asks for sign-in; transport failures stay in
         // this reconnect loop. For local/token gateways the URL carries a
         // long-lived token and the re-mint is a cheap no-op.
-        const wsUrl = await withTimeout(
+        const wsUrl = conn.transport === 'semantier-workspace-http' ? '' : await withTimeout(
           resolveDesktopGatewayWsUrl(desktop, conn),
           RECONNECT_ATTEMPT_TIMEOUT_MS,
           'Timed out re-minting the gateway WebSocket URL'
@@ -516,7 +522,12 @@ export function useGatewayBoot({
           return
         }
 
-        await gateway.connect(wsUrl)
+        if (conn.transport === 'semantier-workspace-http') {
+          if (!conn.workspaceScope) { throw new Error('Semantier Workspace identity is missing.') }
+          await gateway.connectWorkspace(conn.baseUrl, conn.workspaceScope, conn.connectionId, conn.profile)
+        } else {
+          await gateway.connect(wsUrl)
+        }
 
         if (cancelled) {
           return
@@ -835,7 +846,7 @@ export function useGatewayBoot({
 
         // Bounded for the same reason as attemptReconnect() (#93454): a wedged
         // ticket mint would otherwise hang the gateway switch forever.
-        const wsUrl = await withTimeout(
+        const wsUrl = conn.transport === 'semantier-workspace-http' ? '' : await withTimeout(
           resolveDesktopGatewayWsUrl(desktop, conn),
           RECONNECT_ATTEMPT_TIMEOUT_MS,
           'Timed out re-minting the gateway WebSocket URL'
@@ -845,7 +856,12 @@ export function useGatewayBoot({
           return
         }
 
-        await gateway.connect(wsUrl)
+        if (conn.transport === 'semantier-workspace-http') {
+          if (!conn.workspaceScope) { throw new Error('Semantier Workspace identity is missing.') }
+          await gateway.connectWorkspace(conn.baseUrl, conn.workspaceScope, conn.connectionId, conn.profile)
+        } else {
+          await gateway.connect(wsUrl)
+        }
 
         if (!ownsSwitch()) {
           return
@@ -1283,8 +1299,50 @@ export function useGatewayBoot({
     // (remote/cloud have no local process whose death would drop the socket —
     // they'd keep streaming ghost events); a materially edited one is
     // disposed AND re-dialed so its sockets target the new endpoint.
+    let signedOutWorkspaceConnectionId: null | string = null
     const offConnectionsChanged = desktop.connections?.onChanged?.(payload => {
       if (!payload || typeof payload.connectionId !== 'string') {
+        return
+      }
+
+      if (payload.reason === 'account-changed') {
+        const previous = $connection.get()
+        const ownsView = previous?.connectionId === payload.connectionId || signedOutWorkspaceConnectionId === payload.connectionId
+        disposeSecondariesForConnection(payload.connectionId)
+        forgetWorkspaceReadScope(payload.connectionId)
+        const catalogScope = {predicate:(query: {queryKey: readonly unknown[]}) => {
+          const key = query.queryKey
+          const owner = key[3] === 'owner' ? key[4] : null
+          return key[0] === 'model-options' && typeof owner === 'string' &&
+            (owner === payload.connectionId || owner.startsWith(payload.connectionId + ':'))
+        }}
+        void queryClient.cancelQueries(catalogScope)
+        queryClient.removeQueries(catalogScope)
+        forgetSessionOwnerHintsForConnection(payload.connectionId)
+        dropTilesForConnection(payload.connectionId)
+        invalidateProfileListFetches()
+        const profiles = new Map($profilesByConnection.get())
+        profiles.delete(payload.connectionId)
+        $profilesByConnection.set(profiles)
+        forgetFleetRosterConnection(payload.connectionId)
+        if (ownsView) {
+          signedOutWorkspaceConnectionId = payload.authenticated ? null : payload.connectionId
+          const token = beginGatewaySwitch()
+          try {
+            clearReconnectTimer()
+            clearBootRetryTimer()
+            gateway.close()
+            $profiles.set([])
+            $activeGatewayProfile.set('default')
+            if (previous?.transport === 'semantier-workspace-http') {
+              const signedOut = { ...previous, profile: 'default', workspaceScope: undefined }
+              rescopeConnectionScopedStores(signedOut)
+              publish(signedOut)
+            }
+            window.location.hash = '#/'
+          } finally { endGatewaySwitch(token) }
+          if (payload.authenticated) { void softSwitch() }
+        }
         return
       }
 
@@ -1448,6 +1506,24 @@ export function useGatewayBoot({
         )
 
         if (cancelled) {
+          return
+        }
+
+        if (conn.transport === 'semantier-workspace-http') {
+          if (!conn.workspaceScope) { throw new Error('Semantier Workspace identity is missing.') }
+          publish(conn)
+          recordPrimaryConnection(conn)
+          await gateway.connectWorkspace(conn.baseUrl, conn.workspaceScope, conn.connectionId, conn.profile)
+          await adoptPrimaryProfile(conn)
+          stage = 'connected'
+          await callbacksRef.current.refreshSessions()
+          // Native local-runtime setup does not own an authenticated Cloud account.
+          markOnboardingDecided()
+          if (!cancelled) {
+            completeDesktopBoot()
+            bootCompleted = true
+            bootRetryAttempt = 0
+          }
           return
         }
 

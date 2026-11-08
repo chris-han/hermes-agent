@@ -214,6 +214,10 @@ const AssistantMessageBody: FC<AssistantMessageProps & { collapsedNotice?: null 
   onBranchInNewChat,
   onDismissError
 }) => {
+  const botAuthorName = useAuiState(s => {
+    const author = s.message.metadata?.custom?.botAuthor as { displayName?: unknown } | undefined
+    return typeof author?.displayName === 'string' ? author.displayName : ''
+  })
   const messageId = useAuiState(s => s.message.id)
   const messageRuntime = useMessageRuntime()
   const threadRuntime = useThreadRuntime()
@@ -307,6 +311,14 @@ const AssistantMessageBody: FC<AssistantMessageProps & { collapsedNotice?: null 
             className="wrap-anywhere min-w-0 max-w-full overflow-hidden text-pretty text-[length:var(--conversation-text-font-size)] leading-(--dt-line-height) text-foreground"
             data-slot="aui_assistant-message-content"
           >
+            {botAuthorName ? (
+              <span
+                data-slot="message-bot-author"
+                className="mb-1 block text-[length:var(--conversation-caption-font-size)] font-medium text-(--ui-text-secondary)"
+              >
+                {botAuthorName}
+              </span>
+            ) : null}
             {/* Todos render in the composer status stack now, not inline. */}
             {MESSAGE_PARTS}
             <StoppedNotice />

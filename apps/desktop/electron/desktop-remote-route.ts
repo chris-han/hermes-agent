@@ -27,6 +27,7 @@ export type DesktopRemoteRoute =
       connectionId?: string
       headers?: Record<string, unknown>
       kind: 'cloud' | 'remote'
+      transport?: 'semantier-workspace-http'
       org?: string
       source: RouteSource
       token?: unknown
@@ -223,6 +224,7 @@ function resolveRegistryPrimaryRoute(registry: ConnectionRegistry): DesktopRemot
     org: entry.kind === 'cloud' ? String(entry.org || '').trim() || undefined : undefined,
     source: 'registry',
     token: entry.token,
+    ...(entry.transport ? { transport: entry.transport } : {}),
     url
   }
 }

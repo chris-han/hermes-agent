@@ -26,6 +26,8 @@
   otherwise use your SSH key/agent or prompt for the ECS password. Secrets
   are never embedded in this script. No npm/uv install, Python publisher, WSL,
   release lock/database, split packages, bundles, ZIPs, or CH2/R2 operations.
+  -BuildOnly with -Commit stops after the unsigned package build: no signing, install or publication.
+  -BuildSource selects an independent local build clone, preserving a busy/dirty default clone.
   -LocalSetup builds a signed semantier-setup-ch0.exe for the single adjacent MSIX; never uploads.
   -SetupOnly builds/reuses and publishes Setup in its own ecs-setup-* run.
   -UpdateSetup forces a new Setup build; neither mode builds or installs MSIX.
@@ -58,6 +60,9 @@ param(
   [string]$CredentialsEnv = '',
   [string]$TimestampUrl = 'http://timestamp.digicert.com',
   [Alias('PrepareOnly')][switch]$LocalOnly,
+  [switch]$BuildOnly,
+  [switch]$DesktopOnly,
+  [string]$BuildSource = 'D:\repo\deliverables\work\ecs-build-source',
   [switch]$SkipOldCleanup,
   [switch]$NewRun,
   [switch]$SetupOnly,
@@ -115,6 +120,7 @@ function Initialize-ReleasePaths {
   if(!$Repository){$script:Repository=Split-Path -Parent $PSScriptRoot}
   $script:Repository=(Resolve-Path -LiteralPath $Repository -ErrorAction Stop).ProviderPath.TrimEnd('\','/')
   if(!(Test-Path -LiteralPath (Join-Path $Repository 'scripts\bundles\desktop.py'))){throw 'Repository must name the Hermes source checkout.'}
+  $script:BuildSource=Assert-LocalWindowsPath $BuildSource
   $script:BuildCache=Assert-LocalWindowsPath $BuildCache
   $script:Output=Assert-LocalWindowsPath $Output
   $script:VersionState=Assert-LocalWindowsPath $VersionState
@@ -778,6 +784,55 @@ function Remove-ExistingAcceptancePackage {
     throw 'Existing acceptance package remains registered; installation stopped.'
   }
 }
+function Build-DesktopCheck {
+  if($Commit -cnotmatch '^[a-f0-9]{40}$'){throw '-DesktopOnly requires an exact -Commit.'}
+  if($WhatIfPreference){
+    [ordered]@{result='DESKTOP_CHECK_PLAN';commit=$Commit;source=$BuildSource;output=$Output;
+      compiler='existing scripts/build/desktop.mjs';nativeRuntime='separate full-build qualification';
+      signing='NOT_RUN';installation='NOT_RUN';publication='NOT_RUN'} | ConvertTo-Json
+    return
+  }
+  $head=& git.exe -C $BuildSource rev-parse HEAD
+  if($LASTEXITCODE -ne 0 -or $head -cne $Commit){
+    Initialize-LocalBuildSource $BuildSource $Commit
+    $head=& git.exe -C $BuildSource rev-parse HEAD
+    if($LASTEXITCODE -ne 0 -or $head -cne $Commit){throw 'Desktop source does not match the requested commit.'}
+  }
+  $receipt=Join-Path $BuildSource 'node_modules\.hermes-node-deps.native-toolchain'
+  if(!(Test-Path -LiteralPath $receipt)){throw 'Desktop dependencies are not prepared; use the existing preparation workflow first.'}
+  $nativeIdentity=([IO.File]::ReadAllLines($receipt) | Select-Object -Last 1) | ConvertFrom-Json
+  if($nativeIdentity -isnot [string] -or $nativeIdentity -cnotmatch '^[a-f0-9]{32}$'){throw 'Unsupported native-input receipt; no fallback attempted.'}
+  $nativeInputs=Join-Path $BuildCache ('native\node\'+$nativeIdentity)
+  if(!(Test-Path -LiteralPath $nativeInputs -PathType Container)){throw 'Prepared native Desktop inputs are unavailable.'}
+  if(!(Test-Path -LiteralPath $Output)){New-Item -ItemType Directory -Path $Output | Out-Null}
+  $script:statusLog=Join-Path $Output 'checkpoints.jsonl'
+  Set-ReleaseEnvironment 'HERMES_BUILD_COMMIT' $Commit
+  Set-ReleaseEnvironment 'HERMES_DESKTOP_VARIANT' ''
+  Set-ReleaseEnvironment 'HERMES_PAYLOAD_TAG' ''
+  Set-ReleaseEnvironment '_HERMES_CHANNEL_REQUEST_JSON' ''
+  $code=@'
+import fs from 'node:fs';
+import path from 'node:path';
+import {pathToFileURL} from 'node:url';
+const [source,output,nativeDeps,commit]=process.argv.slice(1);
+const stamps=await import(pathToFileURL(path.join(source,'apps/desktop/scripts/write-build-stamp.mjs')));
+const resolved=stamps.resolveStamp({repoRoot:source});
+if(resolved.commit!==commit || resolved.dirty)throw Error('Desktop source differs from the requested clean commit');
+const built=stamps.buildStampPayload(resolved);
+const inputs=path.join(output,'inputs');stamps.writeDesktopStamp(inputs,built);
+const app=path.join(output,'apps/desktop');
+const {buildDesktop}=await import(pathToFileURL(path.join(source,'scripts/build/desktop.mjs')));
+await buildDesktop({source,out:path.join(app,'dist'),icons:source,stamp:path.join(inputs,'install-stamp.json'),nativeDeps});
+fs.copyFileSync(path.join(source,'apps/desktop/package.json'),path.join(app,'package.json'));
+fs.writeFileSync(path.join(output,'result.json'),JSON.stringify({result:'DESKTOP_CHECK_BUILT',commit,appRoot:app,stamp:built,scope:'Desktop UI check; full bundled-runtime qualification remains separate',signing:'NOT_RUN',installation:'NOT_RUN',publication:'NOT_RUN'},null,2));
+'@
+  Report-Status 'Compiling the same Desktop source with prepared native inputs; no runtime preparation, package signing or installation.'
+  Push-Location -LiteralPath $BuildSource
+  try { Run $Node @('--input-type=module','-e',$code,$BuildSource,$Output,$nativeInputs,$Commit) }
+  finally { Pop-Location }
+  Report-Status 'Desktop check build complete; this is not full bundled application qualification.'
+}
+
 function Build-CommitPackage {
   if($Commit -cnotmatch '^[a-f0-9]{40}$'){throw '-Commit requires a complete 40-character Git commit.'}
   $resolved=& git.exe -C $Repository rev-parse --verify ($Commit+'^{commit}')
@@ -785,8 +840,8 @@ function Build-CommitPackage {
   if($WhatIfPreference){
     [ordered]@{commit=$Commit;builder='existing scripts/bundles/desktop.py --prepare-only / --prepared';
       version='reserve next version using existing next-windows-build-version.ps1; reuse on resume';
-      source=$script:SourceBinding;localBuildSource='D:\repo\deliverables\work\ecs-build-source';credentialsEnv=$CredentialsEnv;python=$BuildPython;node=$Node;
-      mode=$BuildMode;verification=($(if($BuildMode -eq 'Beta'){'SKIPPED_BETA'}else{'REQUIRED_PROD'}));cache=$BuildCache;output=$Output;publish=(!$LocalOnly)} | ConvertTo-Json
+      source=$script:SourceBinding;localBuildSource=$BuildSource;credentialsEnv=$CredentialsEnv;python=$BuildPython;node=$Node;
+      mode=$BuildMode;verification=($(if($BuildMode -eq 'Beta'){'SKIPPED_BETA'}else{'REQUIRED_PROD'}));cache=$BuildCache;output=$Output;publish=(!$LocalOnly -and !$BuildOnly);unsignedOnly=[bool]$BuildOnly} | ConvertTo-Json
     return
   }
   if(!(Test-Path -LiteralPath $BuildPython -PathType Leaf)){throw 'Existing build Python is unavailable; specify -BuildPython.'}
@@ -804,13 +859,13 @@ function Build-CommitPackage {
   if(!(Test-Path -LiteralPath $Output)){New-Item -ItemType Directory -Path $Output | Out-Null}
   $script:statusLog=Join-Path $Output 'checkpoints.jsonl'
   $record=Read-CommitBuild $script:statusLog
-  if($record -and ($record.commit -cne $Commit -or $record.publicBase -cne $PublicBase -or $record.cache -cne $BuildCache)){
+  if($record -and ($record.commit -cne $Commit -or $record.publicBase -cne $PublicBase -or $record.cache -cne $BuildCache -or $record.source -cne $BuildSource)){
     throw 'Saved build configuration differs. Use -NewRun or a fresh -Output.'
   }
   if($record -and $record.stage -eq 'cancelled'){
     throw 'This tooling-only version reservation was cancelled. Resume the application source commit and its original run instead.'
   }
-  $source=if($record){[string]$record.source}else{'D:\repo\deliverables\work\ecs-build-source'}
+  $source=if($record){[string]$record.source}else{$BuildSource}
   $null=Assert-LocalWindowsPath $source
   if(!$record){
     $next=& (Join-Path $PSScriptRoot 'next-windows-build-version.ps1') -State $VersionState -SourceCommit $Commit
@@ -989,7 +1044,13 @@ function Publish-IndependentSetup {
   }
 }
 try {
+if($BuildOnly -and (!$Commit -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or $PreflightOnly)){throw '-BuildOnly requires -Commit and cannot be combined with Setup or preflight modes.'}
 Initialize-ReleasePaths
+if($DesktopOnly){
+  if($BuildOnly -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or $PreflightOnly){throw '-DesktopOnly cannot be combined with package/setup/preflight modes.'}
+  Build-DesktopCheck
+  return
+}
 $script:explicitOutput=$PSBoundParameters.ContainsKey('Output')
 if($LocalSetup){
   $SetupOnly=$true;$UpdateSetup=$true;$LocalOnly=$true
@@ -1006,6 +1067,14 @@ if($PreflightOnly){
 if($Commit){
   $built=Build-CommitPackage
   if($WhatIfPreference){$built;return}
+  if($BuildOnly){
+    $unsigned=[ordered]@{result='UNSIGNED_LOCAL_BUILD';commit=$Commit;version=$built.version;unsignedMsix=$built.msix;
+      sha256=$built.sha256;source=$built.source;signing='NOT_RUN';installation='NOT_RUN';publication='NOT_RUN'}
+    [IO.File]::WriteAllText((Join-Path $Output 'result.json'),($unsigned | ConvertTo-Json -Depth 8),$utf8)
+    Write-RunEvent @{type='build-only';at=[DateTime]::UtcNow.ToString('o');result=$unsigned}
+    Report-Status 'Unsigned local build complete; signing, installation and publication were not run.'
+    return
+  }
   if(!$AcceptanceNodeModules){$AcceptanceNodeModules=Join-Path $built.source 'node_modules'}
   $Msix=$built.msix;$ExpectedInputSha256=$built.sha256;$SourceCommit=$Commit;$Version=$built.version+'.0'
   $buildRequest=Get-Content -LiteralPath $built.request -Raw | ConvertFrom-Json

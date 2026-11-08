@@ -34,6 +34,8 @@ export interface ConnectionScopeDescriptor {
   baseUrl?: string
   mode?: 'local' | 'remote'
   profile?: null | string
+  transport?: 'semantier-workspace-http'
+  workspaceScope?: { userId: string; workspaceId: string; organizationId: string }
 }
 
 export interface ConnectionScopeOptions {
@@ -57,14 +59,20 @@ export function connectionScopeSuffix(
   }
 
   const base = encodeURIComponent(connection.baseUrl || 'remote')
+  // One Cloud origin serves many accounts. Legacy Native connections keep
+  // their existing keys; authenticated Workspace caches follow server identity.
+  const scope = connection.workspaceScope
+  const account = connection.transport === 'semantier-workspace-http'
+    ? `.workspace.${scope ? encodeURIComponent(JSON.stringify([scope.userId, scope.workspaceId, scope.organizationId])) : 'signed-out'}`
+    : ''
 
   if (!includeProfile) {
-    return `.remote.${base}`
+    return `.remote.${base}${account}`
   }
 
   const profile = encodeURIComponent(connection.profile || 'default')
 
-  return `.remote.${base}.${profile}`
+  return `.remote.${base}${account}.${profile}`
 }
 
 interface ScopedEntry<T> {

@@ -17,6 +17,7 @@ export const zhHantCommon = {
     connecting: '連線中',
     continue: '繼續',
     bots: '機器人',
+    winmanTab: '僚機',
     copied: '已複製',
     copy: '複製',
     copyFailed: '複製失敗',

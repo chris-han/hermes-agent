@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const requestModelOptions = vi.fn()
+const requestDiscoveredModelOptions = vi.fn()
 const requestGatewayForAgent = vi.fn()
 const activeGatewayConnectionId = vi.fn(() => 'source-b')
 const invalidateQueries = vi.fn()
 
-vi.mock('@/lib/model-options', () => ({ requestModelOptions: (...args: unknown[]) => requestModelOptions(...args) }))
+vi.mock('@/lib/model-options', () => ({ requestDiscoveredModelOptions: (...args: unknown[]) => requestDiscoveredModelOptions(...args), requestModelOptions: (...args: unknown[]) => requestModelOptions(...args) }))
 vi.mock('@/store/gateway', () => ({
   activeGatewayConnectionId: () => activeGatewayConnectionId(),
   requestGatewayForAgent: (...args: unknown[]) => requestGatewayForAgent(...args)
@@ -59,3 +60,13 @@ describe('connection-ready model discovery', () => {
     expect(predicate({ queryKey: ['model-options', 'profile-b', 'global', 'owner', 'source-a'] })).toBe(false)
   })
 })
+
+ it('refreshes Cloud through Workspace once per captured account', async () => {
+ const {refreshModelsOnConnectionReady}=await import('./startup-model-discovery')
+ const c={baseUrl:'https://cloud.example',connectionId:'cloud',transport:'semantier-workspace-http' as const,workspaceScope:{userId:'a',workspaceId:'wa',organizationId:'org'}}
+ await refreshModelsOnConnectionReady('cloud','default',c)
+ await refreshModelsOnConnectionReady('cloud','default',c)
+ await refreshModelsOnConnectionReady('cloud','default',{...c,workspaceScope:{...c.workspaceScope,userId:'b',workspaceId:'wb'}})
+ expect(requestDiscoveredModelOptions).toHaveBeenCalledTimes(2)
+ expect(requestModelOptions).not.toHaveBeenCalled()
+ })

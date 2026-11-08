@@ -29,6 +29,8 @@ export interface TimelinePartMetadata {
 export type ChatMessagePart = Exclude<ThreadMessageLike['content'], string>[number] & TimelinePartMetadata
 
 export type ChatMessage = {
+  /** Author supplied by the server for an assistant business message. */
+  botAuthor?: { botId: string; displayName: string }
   id: string
   role: SessionMessage['role']
   parts: ChatMessagePart[]

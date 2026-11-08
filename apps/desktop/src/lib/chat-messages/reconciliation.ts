@@ -20,6 +20,12 @@ const latestBoundary = (...values: (number | undefined)[]) => {
 const normalizedTimelineText = (message: ChatMessage) => chatMessageText(message).replace(/\s+/g, ' ').trim()
 
 const assistantTimelineMatch = (stored: ChatMessage, local: ChatMessage) => {
+  // Repeated replies and tool IDs are not message identity. Once both rows
+  // are durable, their server identity takes precedence over text matching.
+  if (stored.rowId !== undefined && local.rowId !== undefined) {
+    return stored.rowId === local.rowId
+  }
+
   if (stored.id === local.id) {
     return true
   }

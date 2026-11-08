@@ -149,6 +149,13 @@ export async function requestDiscoveredModelOptions({
     throw new Error('The model discovery owner is not connected.')
   }
   const queryScope = await modelDiscoveryScope(ownerConnectionId, connection)
+  if (connection?.transport === 'semantier-workspace-http' &&
+      (!ownerConnectionId || ownerConnectionId === connection.connectionId)) {
+    const result = await getGlobalModelOptions({explicitOnly:true, queryOnly:true, queryScope, refresh:request.refresh},
+      {connectionId:ownerConnectionId || connection.connectionId, profile:request.profile || 'default'})
+    if (!hasVerifiedProvenance(result)) {throw new Error('The Workspace provider discovery contract is unavailable.')}
+    return result
+  }
   return requestModelOptions({ ...request, queryOnly: true, queryScope })
 }
 

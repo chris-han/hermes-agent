@@ -7,6 +7,7 @@ import type { ScreenshotApi } from '../electron/command-screenshot-types'
 import type { DesktopBranding } from '../electron/desktop-branding-types'
 import type { HudModifierApi } from '../electron/hud-modifier-types'
 import type { MachineProfile } from '../electron/machine-profile'
+import type { DesktopWorkspaceApi } from '../electron/semantier-workspace-ipc'
 import type { WindowCloseAction, WindowCloseRequest, WindowCloseResult } from '../electron/minimize-to-tray'
 import type { HermesNotification } from '../electron/notification-types'
 import type { KeepAwakeMode } from '../electron/power-save'
@@ -251,7 +252,7 @@ declare global {
         // secondary gateways scoped to it. Optional: older Electron mains
         // don't emit it.
         onChanged?: (
-          callback: (payload: { connectionId: string; reason: 'removed' | 'saved' | 'updated' }) => void
+          callback: (payload: { connectionId: string; reason: 'removed' | 'saved' | 'updated' | 'account-changed'; authenticated?: boolean }) => void
         ) => () => void
       }
       sshConfigHosts: () => Promise<DesktopSshHostsResult>
@@ -264,6 +265,7 @@ declare global {
       oauthLogoutConnectionConfig: (remoteUrl: string) => Promise<DesktopOauthLogoutResult>
       // Hermes Cloud: one portal login powers discovery + silent per-agent
       // sign-in (cloud-auto-discovery Phase 3).
+      workspace?: DesktopWorkspaceApi
       cloud: {
         status: () => Promise<DesktopCloudStatus>
         login: () => Promise<DesktopCloudStatus & { ok: boolean }>
@@ -1004,6 +1006,8 @@ export interface DesktopPluginProfileRoute {
 }
 
 export interface HermesConnection {
+  transport?: 'semantier-workspace-http'
+  workspaceScope?: import('../electron/semantier-workspace-ipc').WorkspaceScope
   baseUrl: string
   customWindowControls?: boolean
   darwinMajor?: number
@@ -1171,6 +1175,7 @@ export type DesktopConnectionKind = 'cloud' | 'local' | 'remote' | 'ssh'
 // A registered agent source as the renderer sees it: token bytes never cross
 // the IPC boundary (preview + set flag instead, like DesktopConnectionConfig).
 export interface DesktopRegistryConnection {
+  transport?: 'semantier-workspace-http'
   id: string
   kind: DesktopConnectionKind
   // Required, registry-unique device name ("Homelab", "Work laptop").
@@ -1214,6 +1219,7 @@ export interface DesktopConnectionsRegistry {
 }
 
 export interface DesktopRegistryConnectionInput {
+  transport?: 'semantier-workspace-http'
   // Present for edits; omitted on create (the main process mints the id).
   id?: string
   kind: DesktopConnectionKind
@@ -1540,6 +1546,7 @@ export type DesktopBootstrapEvent =
     }
 
 export interface HermesApiRequest {
+  workspaceScope?: import('../electron/semantier-workspace-ipc').WorkspaceScope
   path: string
   method?: string
   body?: unknown

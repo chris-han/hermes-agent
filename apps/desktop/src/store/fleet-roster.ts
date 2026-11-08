@@ -14,9 +14,17 @@ const FLEET_ROSTER_STALE_MS = 60_000
 // Focus/mount may retry a partial result sooner, but never on every event.
 const FLEET_ROSTER_RETRY_MS = 5_000
 
+let generation = 0
 let fetchedAt = 0
 let inflight: null | Promise<void> = null
 let forcedRefresh: null | Promise<void> = null
+
+export function forgetFleetRosterConnection(connectionId: string): void {
+  generation++
+  fetchedAt = 0
+  const current = $fleetRoster.get()
+  if (current) { $fleetRoster.set({ ...current, agents: current.agents.filter(row => row.connectionId !== connectionId) }) }
+}
 
 export async function refreshFleetRoster(options: { force?: boolean } = {}): Promise<void> {
   const bridge = window.hermesDesktop?.getAgentRoster
@@ -47,8 +55,10 @@ export async function refreshFleetRoster(options: { force?: boolean } = {}): Pro
     return inflight
   }
 
+  const requestGeneration = generation
   inflight = bridge()
     .then(roster => {
+      if (requestGeneration !== generation) { return }
       $fleetRoster.set(roster)
       fetchedAt = Date.now()
     })
@@ -66,6 +76,7 @@ export async function refreshFleetRoster(options: { force?: boolean } = {}): Pro
 
 /** @internal */
 export function _resetFleetRosterForTests(): void {
+  generation++
   $fleetRoster.set(null)
   fetchedAt = 0
   inflight = null

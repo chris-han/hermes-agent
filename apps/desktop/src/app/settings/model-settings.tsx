@@ -279,9 +279,9 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
   const currentProfile = useStore($settingsScopeProfile)
   const searchSource = modelSearchSource(connection)
   const searchProfile = scopeProfile ?? currentProfile
-  const scopeBinding = JSON.stringify([searchSource, searchProfile])
   const queryClient = useQueryClient()
   const ownerKey = modelDiscoveryOwnerKey(null, connection)
+  const scopeBinding = JSON.stringify([searchSource, searchProfile, ownerKey])
   const catalogKey = useMemo(() => modelOptionsQueryKey(searchProfile, null, ownerKey), [searchProfile, ownerKey])
   const requestDiscovery = useCallback((forceRefresh = false) => requestDiscoveredModelOptions({
     connection,
@@ -514,7 +514,7 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
   // An unconfigured provider was picked: no credentials yet, so there are no
   // models to choose. `api_key` providers can be activated inline (paste key);
   // OAuth / external flows hand off to the onboarding sign-in.
-  const needsSetup = !!selectedProvider && !isProviderReady(selectedProviderRow)
+  const needsSetup = connection?.transport !== 'semantier-workspace-http' && !!selectedProvider && !isProviderReady(selectedProviderRow)
   const setupIsApiKey = needsSetup && selectedProviderRow?.auth_type === 'api_key' && !!selectedProviderRow?.key_env
 
   // Clear any half-typed key when switching provider so it can't leak across.
