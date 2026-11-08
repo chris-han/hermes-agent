@@ -264,7 +264,7 @@ function Test-UnsignedRepackageResume($Saved, [string]$Binding, $Build) {
 }
 function Run([string]$Exe, [string[]]$Arguments) {
   $timer = [Diagnostics.Stopwatch]::StartNew()
-  Report-Status ("Running {0} {1}" -f [IO.Path]::GetFileName($Exe), $Arguments[0])
+  Report-Status (("Running {0} {1}" -f [IO.Path]::GetFileName($Exe), ($Arguments -join ' ')).TrimEnd())
   if([IO.Path]::GetFileName($Exe) -ieq 'sftp.exe') {
     # The progress meter needs the inherited console, not a PowerShell pipe.
     Invoke-SshNative $Exe $Arguments
@@ -721,6 +721,7 @@ globalThis.fetch=async(input,options)=>{
   Report-Status "Preflight: Electron $version official SHA-256 verified; Node will reuse the local archive and checksums."
 }
 function Initialize-BuildPreflight {
+  param([switch]$NativeOnly)
   if([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT){throw 'Build preflight requires native Windows.'}
   Report-Status 'Preflight: initializing Windows PATH and VS 2022 x64 SDK environment.'
   $systemPaths=@("$env:WINDIR\System32","$env:WINDIR","$env:WINDIR\System32\Wbem",
@@ -769,7 +770,20 @@ function Initialize-BuildPreflight {
     & $msbuild $probe /nologo /getProperty:WindowsSdkDir,WindowsSdkDir_10,TargetPlatformVersion,WindowsSDKInstalled | Out-Host
     throw 'Preflight failed: MSBuild cannot recognize the SDK despite VS initialization. No npm install or build was started.'
   }
-  Report-Status 'Preflight: SDK files are readable and MSBuild SDK discovery passed.'
+  # Python wheels invoke link.exe directly, including its rc.exe/mt.exe children.
+  # SDK file discovery alone does not prove that these tools are executable.
+  $null=Get-Command cl.exe,link.exe,rc.exe,mt.exe -ErrorAction Stop
+  $nativeProbe=Join-Path $Output 'native-toolchain-preflight'
+  New-Item -ItemType Directory -Path $nativeProbe -Force | Out-Null
+  $probeC=Join-Path $nativeProbe 'probe.c'
+  $probeObj=Join-Path $nativeProbe 'probe.obj'
+  $probeExe=Join-Path $nativeProbe 'probe.exe'
+  [IO.File]::WriteAllText($probeC,'int main(void) { return 0; }',[Text.Encoding]::ASCII)
+  Run 'cl.exe' @('/nologo','/c',$probeC,('/Fo'+$probeObj))
+  Run 'link.exe' @('/nologo','/MANIFEST:EMBED',('/OUT:'+$probeExe),$probeObj)
+  Run $probeExe @()
+  Report-Status 'Preflight: native compile, SDK resource/manifest linking and execution passed.'
+  if($NativeOnly){return}
   Initialize-RustPreflight
 
   $cacheRoot='D:\repo\deliverables\cache\node-pre-gyp\get-windows'
@@ -945,7 +959,7 @@ function Build-CommitPackage {
     Report-Status 'Reusing checkpointed unsigned MSIX; no rebuild.'
     return $record
   }
-  if($BuildMode -eq 'Prod'){Initialize-BuildPreflight}
+  Initialize-BuildPreflight -NativeOnly:($BuildMode -ne 'Prod')
   Initialize-LocalBuildSource $source $Commit
   if(!(Test-Path -LiteralPath $record.request)){
     Run $BuildPython @('-B',(Join-Path $source 'scripts\releases\semantier_windows.py'),
@@ -1117,7 +1131,7 @@ if($PreflightOnly){
   if($WhatIfPreference){Write-Output 'Preflight only: Windows tools, VS/SDK discovery and official prebuilt cache; no version reservation or build.';return}
   if(!(Test-Path -LiteralPath $Output)){New-Item -ItemType Directory -Path $Output | Out-Null}
   $script:statusLog=Join-Path $Output 'checkpoints.jsonl'
-  if($BuildMode -eq 'Prod'){Initialize-BuildPreflight}
+  Initialize-BuildPreflight -NativeOnly:($BuildMode -ne 'Prod')
   return
 }
 if($Commit){
