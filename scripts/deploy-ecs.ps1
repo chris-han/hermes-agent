@@ -830,9 +830,14 @@ function Build-DesktopCheck {
 import fs from 'node:fs';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
+import {execFileSync} from 'node:child_process';
 const [source,output,nativeDeps,commit]=process.argv.slice(1);
 const stamps=await import(pathToFileURL(path.join(source,'apps/desktop/scripts/write-build-stamp.mjs')));
-const resolved=stamps.resolveStamp({repoRoot:source});
+const resolved=stamps.resolveStamp({repoRoot:source,execFn:(argv,opts)=>{
+  const started=Date.now();
+  try{return execFileSync(argv[0],argv.slice(1),{encoding:'utf8',stdio:['ignore','pipe','pipe'],timeout:5000,...opts}).trim();}
+  catch(error){console.error(`Desktop identity ${argv.slice(1).join(' ')} failed after ${Date.now()-started}ms: ${String(error.stderr||error.message).trim()}`);throw error;}
+}});
 if(resolved.commit!==commit || resolved.dirty)throw Error('Desktop source differs from the requested clean commit');
 const built=stamps.buildStampPayload(resolved);
 const inputs=path.join(output,'inputs');stamps.writeDesktopStamp(inputs,built);
