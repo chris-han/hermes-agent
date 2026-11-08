@@ -1777,13 +1777,15 @@ export function overlayConcurrentMessageChanges(
     changed = true
   }
 
-  // A live row the store retired while REST was in flight (message.complete
-  // settled it into the committed reply) stays retired: the page was composed
-  // from the older baseline, so it can still carry that row by id.
+  // A live row retired by completion or a terminal admission stays retired
+  // while REST is in flight. User bubbles do not carry the assistant's pending
+  // flag, but their local user-* identity can still linger in the older page.
   const currentIds = new Set(currentMessages.map(message => message.id))
 
   const retired = (message: ChatMessage) =>
-    dropped.has(message.id) || (isLiveTailRow(message) && baselineById.has(message.id) && !currentIds.has(message.id))
+    dropped.has(message.id) ||
+    ((isLiveTailRow(message) || (message.role === 'user' && message.id.startsWith('user-'))) &&
+      baselineById.has(message.id) && !currentIds.has(message.id))
 
   if (currentMessages.length && overlaid.some(retired)) {
     return overlaid.filter(message => !retired(message))
