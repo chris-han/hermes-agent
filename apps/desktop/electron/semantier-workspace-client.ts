@@ -125,7 +125,7 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
         request('/api/hermes-proxy/api/available-models?provider=configured&refresh=' + refresh).then(r => r.json()),
         request('/api/hermes-config').then(r => r.json()),
         request('/api/hermes-proxy/api/cloud-provider/catalog').then(r => r.json()).catch(error => {
-          if (error.needsWorkspaceLogin) {throw error}
+          if (error.statusCode === 401) {throw error}
           return {object:'list',data:[],discovery_state:'error'}
         })
       ])

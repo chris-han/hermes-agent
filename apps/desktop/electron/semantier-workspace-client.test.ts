@@ -150,8 +150,8 @@ it('refuses a foreign profile before querying any inventory', async () => {
   expect(transport.mock.calls.every(([url])=>!String(url).includes('available-models'))).toBe(true)
 })
 
-it('does not turn a managed catalog outage into BYOK failure or a stale managed grant', async () => {
- const transport=vi.fn<typeof fetch>().mockImplementation(async url=>String(url).includes('catalog')?new Response('{}',{status:503}):new Response(JSON.stringify(String(url).includes('available-models')?{discovery_contract:'provider-query-v1',providers:[{slug:'custom',models:['returned'],discovery_state:'fresh',discovery_source_id:'same-source',discovery_fetched_at:'2026-11-08T00:00:00Z'}]}:{activeProvider:'custom',activeModel:'returned'})))
+it.each([403,503])('keeps managed refusal %s separate from BYOK discovery and grants', async status => {
+ const transport=vi.fn<typeof fetch>().mockImplementation(async url=>String(url).includes('catalog')?new Response('{}',{status}):new Response(JSON.stringify(String(url).includes('available-models')?{discovery_contract:'provider-query-v1',providers:[{slug:'custom',models:['returned'],discovery_state:'fresh',discovery_source_id:'same-source',discovery_fetched_at:'2026-11-08T00:00:00Z'}]}:{activeProvider:'custom',activeModel:'returned'})))
  const result=await createSemantierWorkspaceClient('https://cloud.example',transport).modelOptions(true)
  expect(result.providers[0].models).toEqual(['returned'])
  expect(result.providers[1]).toMatchObject({slug:'semantier-cloud',authenticated:false,discovery_state:'error',models:[],eligible_models:[]})
