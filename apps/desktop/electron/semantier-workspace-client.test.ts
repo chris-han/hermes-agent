@@ -156,3 +156,17 @@ it.each([403,503])('keeps managed refusal %s separate from BYOK discovery and gr
  expect(result.providers[0].models).toEqual(['returned'])
  expect(result.providers[1]).toMatchObject({slug:'semantier-cloud',authenticated:false,discovery_state:'error',models:[],eligible_models:[]})
 })
+
+it('creates Main through the existing Workspace owner with a retained request identity', async () => {
+  const transport = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ok:true,sessionKey:'session_desktop_create-001',entry:{key:'session_desktop_create-001'}})))
+  const client = createSemantierWorkspaceClient('https://cloud.example', transport)
+  await expect(client.createSession('New Main', 'create-001')).resolves.toMatchObject({sessionKey:'session_desktop_create-001'})
+  expect(transport).toHaveBeenCalledTimes(1)
+  expect(JSON.parse(String(transport.mock.calls[0][1]?.body))).toEqual({label:'New Main',requestIdentity:'create-001'})
+})
+
+it('never retries an uncertain Main creation', async () => {
+  const transport = vi.fn<typeof fetch>().mockRejectedValue(new TypeError('Connection lost'))
+  await expect(createSemantierWorkspaceClient('https://cloud.example',transport).createSession('', 'create-001')).rejects.toThrow()
+  expect(transport).toHaveBeenCalledTimes(1)
+})

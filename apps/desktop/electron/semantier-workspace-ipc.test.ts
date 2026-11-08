@@ -64,3 +64,21 @@ it.each(['native-context','bind-native-context','send-native'])('rejects a chang
   await expect(handler({} as never,'https://cloud.example',scope,'canonical-a','main-a','request','binding')).rejects.toThrow('changed')
   expect(fetch).toHaveBeenCalledTimes(1)
 })
+
+it('creates only in the captured account and returns the real concurrent history snapshot', async () => {
+  const fetcher=vi.fn(async (url:string,init?:RequestInit)=>{
+    if(url.endsWith('/auth/context')) return Response.json(identity)
+    if(url.endsWith('/api/sessions')&&init?.method==='POST') return Response.json({ok:true,sessionKey:'session_desktop_create-001',entry:{key:'session_desktop_create-001'}})
+    return Response.json({sessionId:'session_desktop_create-001',messages:[{messageId:'91',role:'assistant',text:'Server-owned'}]})
+  })
+  vi.mocked(session.fromPartition).mockReturnValue({fetch:fetcher} as never)
+  vi.mocked(ipcMain.handle).mockClear()
+  registerSemantierWorkspaceIpc()
+  const handler=vi.mocked(ipcMain.handle).mock.calls.find(([name])=>name==='hermes:workspace:create-session')![1]
+  const result=await handler({} as never,'https://cloud.example',scope,'Main','create-001')
+  expect(result).toMatchObject({sessionId:'session_desktop_create-001',messages:[{messageId:'91'}]})
+  expect(fetcher.mock.calls.filter(([,init])=>init?.method==='POST')).toHaveLength(1)
+  fetcher.mockClear()
+  await expect(handler({} as never,'https://cloud.example',{...scope,userId:'foreign'},'Main','other')).rejects.toThrow('changed')
+  expect(fetcher.mock.calls.some(([,init])=>init?.method==='POST')).toBe(false)
+})

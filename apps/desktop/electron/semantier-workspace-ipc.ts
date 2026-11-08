@@ -12,6 +12,7 @@ export interface DesktopWorkspaceApi {
   login: (origin: string) => Promise<WorkspaceIdentity>
   logout: (origin: string) => Promise<void>
   ensureWinmanChat: (origin: string, scope: WorkspaceScope) => Promise<import('./semantier-workspace-client').WorkspaceWinmanProfile>
+  createSession: (origin: string, scope: WorkspaceScope, label: string, requestIdentity: string) => Promise<import('./semantier-workspace-client').WorkspaceHistory>
   sessions: (origin: string, scope: WorkspaceScope) => Promise<{ sessions: Array<{ key: string; title?: string }> }>
   history: (origin: string, scope: WorkspaceScope, sessionId: string, afterId?: string) => Promise<import('./semantier-workspace-client').WorkspaceHistory>
   nativeContext: (origin: string, scope: WorkspaceScope, sessionId: string) => Promise<import('./semantier-workspace-client').WorkspaceMainContext | null>
@@ -74,6 +75,14 @@ export function registerSemantierWorkspaceIpc(onAccountChanged?: (origin: string
     const result = await client.ensureWinmanChat()
     assertWorkspaceScope(await client.identity(), scope)
     return result
+  })
+  ipcMain.handle('hermes:workspace:create-session', async (_event, origin: string, scope: WorkspaceScope, label: string, requestIdentity: string) => {
+    const { client } = workspace(origin)
+    assertWorkspaceScope(await client.identity(), scope)
+    const created = await client.createSession(label, requestIdentity)
+    const history = await client.history(created.sessionKey)
+    assertWorkspaceScope(await client.identity(), scope)
+    return history
   })
   ipcMain.handle('hermes:workspace:sessions', async (_event, origin: string, scope: WorkspaceScope) => {
     const { client } = workspace(origin)

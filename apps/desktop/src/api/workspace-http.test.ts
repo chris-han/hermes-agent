@@ -278,3 +278,28 @@ it('coalesces identical Cloud authentication dials without weakening a different
  await expect(gateway.connectWorkspace('https://cloud.example',{...scope,userId:'foreign'},'same-cloud')).rejects.toThrow(/changed/)
  gateway.close();forgetWorkspaceReadScope('same-cloud')
 })
+
+it('retains Main creation identity across an uncertain response and retires it after success', async () => {
+  const createSession = vi.fn().mockRejectedValueOnce(new Error('Outcome unknown')).mockImplementation(async (_origin,_scope,_title,id)=>({sessionId:'session_desktop_'+id,messages:[]}))
+  Object.defineProperty(window,'hermesDesktop',{configurable:true,value:{workspace:{identity:vi.fn().mockResolvedValue(identity),createSession}}})
+  const gateway=new HermesGateway()
+  await gateway.connectWorkspace('https://cloud.example',scope,'cloud-a')
+  await expect(gateway.request('session.create',{title:'New Main',fast:false})).rejects.toThrow('Outcome unknown')
+  const created=await gateway.request<{session_id:string}>('session.create',{title:'New Main',fast:false})
+  expect(createSession.mock.calls[1][3]).toBe(createSession.mock.calls[0][3])
+  expect(created.session_id).toBe('session_desktop_'+createSession.mock.calls[0][3])
+  await gateway.request('session.create',{title:'New Main',fast:false})
+  expect(createSession.mock.calls[2][3]).not.toBe(createSession.mock.calls[0][3])
+  gateway.close()
+})
+
+it('does not silently discard explicit Main model or tier choices', async () => {
+  const createSession=vi.fn()
+  Object.defineProperty(window,'hermesDesktop',{configurable:true,value:{workspace:{identity:vi.fn().mockResolvedValue(identity),createSession}}})
+  const gateway=new HermesGateway()
+  await gateway.connectWorkspace('https://cloud.example',scope,'cloud-a')
+  await expect(gateway.request('session.create',{model:'manual-model'})).rejects.toThrow('explicit options')
+  await expect(gateway.request('session.create',{fast:true})).rejects.toThrow('explicit options')
+  expect(createSession).not.toHaveBeenCalled()
+  gateway.close()
+})

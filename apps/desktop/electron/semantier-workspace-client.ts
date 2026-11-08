@@ -111,6 +111,13 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
   }
 
   return {
+    async createSession(label: string, requestIdentity: string): Promise<{ sessionKey: string }> {
+      if (!/^[A-Za-z0-9_-]{1,96}$/.test(requestIdentity)) { throw new Error('Invalid Main creation request identity.') }
+      const result = await (await request('/api/sessions', { label, requestIdentity })).json()
+      if (result.ok !== true || typeof result.sessionKey !== 'string' || !result.sessionKey ||
+        result.sessionKey !== result.entry?.key) { throw new Error('Main creation did not return its server-owned conversation.') }
+      return { sessionKey: result.sessionKey }
+    },
     async auxiliaryModels() {
       const data = await (await request('/api/hermes-config')).json()
       const main = data.config?.model || {}

@@ -330,6 +330,7 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     login: origin => ipcRenderer.invoke('hermes:workspace:login', origin),
     logout: origin => ipcRenderer.invoke('hermes:workspace:logout', origin),
     ensureWinmanChat: (origin, scope) => ipcRenderer.invoke('hermes:workspace:ensure-winman-chat', origin, scope),
+    createSession: (origin, scope, label, requestIdentity) => ipcRenderer.invoke('hermes:workspace:create-session', origin, scope, label, requestIdentity),
     sessions: (origin, scope) => ipcRenderer.invoke('hermes:workspace:sessions', origin, scope),
     history: (origin, scope, sessionId, afterId) => ipcRenderer.invoke('hermes:workspace:history', origin, scope, sessionId, ...(afterId === undefined ? [] : [afterId])),
     nativeContext: (origin, scope, sessionId) => ipcRenderer.invoke('hermes:workspace:native-context', origin, scope, sessionId),

@@ -264,6 +264,22 @@ export class HermesGateway extends JsonRpcGatewayClient {
       return context as T
     }
     if (method === 'session.create') {
+      if (String(params.profile || connection.profile || 'default') === 'default') {
+        const unsupported = ['model', 'provider', 'toolsets', 'reasoning_effort', 'reasoning', 'service_tier']
+          .filter(key => params[key] !== undefined)
+        // The composer always includes false for its default normal-speed mode.
+        if (params.fast !== undefined && params.fast !== false) { unsupported.push('fast') }
+        if (params.cwd_explicit === true) { unsupported.push('cwd') }
+        if (params.hidden === true) { unsupported.push('hidden') }
+        if (unsupported.length) { throw new Error(`Cloud Main creation uses server settings; explicit options are unavailable: ${unsupported.join(', ')}`) }
+        if (!bridge.createSession) { throw new Error('Cloud Main creation is unavailable in this Desktop build.') }
+        const prepared = this.protocol.prepare('session.create', params)
+        const snapshot = await bridge.createSession(connection.origin, connection.scope, String(params.title || ''), String(prepared.request_id))
+        this.requireConnectionGeneration(generation)
+        return this.protocol.result('session.create', prepared, {
+          session_id: snapshot.sessionId, stored_session_id: snapshot.sessionId, messages: workspaceTranscript(snapshot)
+        }) as T
+      }
       if (params.title !== 'Bot Chat' || !connection.connectionId) {
         throw new Error('Cloud creation is available only for the canonical Bot Chat.')
       }
