@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest'
 
-import { createSemantierWorkspaceClient, workspaceTranscript, workspaceDesktopRead, requireWorkspaceCompletion } from './semantier-workspace-client'
+import { createSemantierWorkspaceClient, requireWorkspaceCompletion, workspaceDesktopRead, workspaceTranscript } from './semantier-workspace-client'
 
 it('refuses insecure remote origins and URL credentials', () => {
   for (const origin of ['http://cloud.example', 'https://user:secret@cloud.example', 'https://cloud.example/other']) {
@@ -118,4 +118,41 @@ it('reconciles a completed Native admission by reads and refuses an unknown outc
   nativeHistory.mockResolvedValue({...snapshot,admission_receipt:{admission_id:id,status:'unknown',outcome:null}})
   await expect(requireNativeCompletion({nativeHistory},'canonical-a',id)).rejects.toThrow('unknown')
   expect(nativeHistory).toHaveBeenCalledTimes(2)
+})
+
+it('projects real configured BYOK and managed rows without copying credentials or entitlements', async () => {
+  const query = { discovery_contract: 'provider-query-v1', providers: [{slug:'openai',name:'OpenAI',authenticated:true,models:['returned-model'],discovery_state:'fresh',discovery_source_id:'opaque',discovery_fetched_at:'2026-11-08T00:00:00Z'}] }
+  const transport = vi.fn<typeof fetch>().mockImplementation(async url => new Response(JSON.stringify(String(url).includes('available-models') ? query : String(url).includes('catalog') ? {object:'list',data:[{id:'managed-profile',capabilities:{},request_parameters:{}}]} : {activeProvider:'openai',activeModel:'returned-model'})))
+  const client = createSemantierWorkspaceClient('https://cloud.example', transport)
+  const result = await workspaceDesktopRead(client, '/api/model/options?query_only=1&refresh=1') as any
+  expect(result.discovery_contract).toBe('provider-query-v1')
+  expect(result.providers[0]).toMatchObject({slug:'openai',models:['returned-model']})
+  expect(result.providers[0].eligible_models).toBeUndefined()
+  expect(result.providers[1]).toMatchObject({slug:'semantier-cloud',models:['managed-profile'],eligible_models:['managed-profile']})
+  expect(transport.mock.calls.map(([url])=>String(url))).toContain('https://cloud.example/api/hermes-proxy/api/available-models?provider=configured&refresh=true')
+})
+
+it('keeps provider identity and native credential pointers in an explicit Main save; never copies a key', async () => {
+  const transport = vi.fn<typeof fetch>().mockImplementation(async (_url, init) => new Response(JSON.stringify(init?.method === 'PATCH' ? {ok:true} : {config:{providers:{openai:{base_url:'https://api.openai.com/v1',key_env:'OPENAI_API_KEY',api_key:'[configured]'}}}})))
+  const client = createSemantierWorkspaceClient('https://cloud.example',transport)
+  await expect(client.setMainModel({scope:'main',provider:'openai',model:'actual-model'},{userId:'a',workspaceId:'wa',organizationId:'org'})).resolves.toMatchObject({ok:true,provider:'openai',model:'actual-model'})
+  const [,options] = transport.mock.calls[1]
+  expect(options?.method).toBe('PATCH')
+  expect(JSON.parse(String(options?.body))).toMatchObject({expected_scope:{user_id:'a',workspace_id:'wa',organization_id:'org'},config:{model:{provider:'openai',default:'actual-model',key_env:'OPENAI_API_KEY',api_key:''}}})
+  await expect(client.setMainModel({scope:'main',provider:'openai',model:'actual-model',api_key:'forbidden'},{userId:'a',workspaceId:'wa',organizationId:'org'})).rejects.toThrow()
+  expect(transport).toHaveBeenCalledTimes(2)
+})
+
+it('refuses a foreign profile before querying any inventory', async () => {
+  const transport = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({bot_id:'bot',native_profile_id:'native',profile:{name:'winman',path:'native'}})))
+  const client = createSemantierWorkspaceClient('https://cloud.example',transport)
+  await expect(workspaceDesktopRead(client,'/api/model/options?profile=foreign','default')).rejects.toMatchObject({statusCode:404})
+  expect(transport.mock.calls.every(([url])=>!String(url).includes('available-models'))).toBe(true)
+})
+
+it('does not turn a managed catalog outage into BYOK failure or a stale managed grant', async () => {
+ const transport=vi.fn<typeof fetch>().mockImplementation(async url=>String(url).includes('catalog')?new Response('{}',{status:503}):new Response(JSON.stringify(String(url).includes('available-models')?{discovery_contract:'provider-query-v1',providers:[{slug:'custom',models:['returned'],discovery_state:'fresh',discovery_source_id:'same-source',discovery_fetched_at:'2026-11-08T00:00:00Z'}]}:{activeProvider:'custom',activeModel:'returned'})))
+ const result=await createSemantierWorkspaceClient('https://cloud.example',transport).modelOptions(true)
+ expect(result.providers[0].models).toEqual(['returned'])
+ expect(result.providers[1]).toMatchObject({slug:'semantier-cloud',authenticated:false,discovery_state:'error',models:[],eligible_models:[]})
 })

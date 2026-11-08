@@ -1,7 +1,7 @@
 import {
   type ConnectionState,
-  GatewayEventHub,
   type GatewayEvent,
+  GatewayEventHub,
   type GatewayEventName,
   JsonRpcGatewayClient,
   type ServerRequest,
@@ -10,8 +10,9 @@ import {
 import { map, type MapStore } from 'nanostores'
 
 import type { HermesApiRequest } from '@/global'
+
+import { assertWorkspaceScope, type WorkspaceMainContext, workspaceTranscript } from '../../electron/semantier-workspace-client'
 import type { WorkspaceScope } from '../../electron/semantier-workspace-ipc'
-import { assertWorkspaceScope, workspaceTranscript, type WorkspaceMainContext } from '../../electron/semantier-workspace-client'
 
 import { CANONICAL_GATEWAY_PROTOCOL, CanonicalDesktopProtocol, canonicalProfile, canonicalSessionKey, recordCanonicalOwner, splitRewindSubmit } from './canonical-protocol'
 
@@ -223,6 +224,17 @@ export class HermesGateway extends JsonRpcGatewayClient {
     const bridge = window.hermesDesktop.workspace!
     signal?.throwIfAborted()
     const sessionId = String(params.session_id || params.session_key || '')
+    if (method === 'model.options') {
+      if (params.query_only !== true || typeof params.query_scope !== 'string' || !params.query_scope.trim()) {
+        throw new Error('Cloud model discovery requires the query-only source contract.')
+      }
+      const query = new URLSearchParams({query_only:'1',query_scope:params.query_scope})
+      if (params.refresh === true) {query.set('refresh','1')}
+      const result = await hermesApiAs<T>({connectionId:connection.connectionId || null,profile:connection.profile || 'default'},
+        {path:'/api/model/options?' + query})
+      this.requireConnectionGeneration(generation)
+      return result
+    }
     if (method === 'session.bind_original') {
       if (!bridge.bindNativeContext || (connection.profile || 'default') === 'default') {
         throw new Error('Native original-chat binding requires its Cloud owner adapter.')

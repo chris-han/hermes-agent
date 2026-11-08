@@ -331,3 +331,13 @@ describe('customDefaultSupersedesPick', () => {
     expect(customDefaultSupersedesPick('nvidia', 'custom:')).toBe(false)
   })
 })
+
+it('uses captured Workspace REST discovery instead of an ambient gateway model.options', async () => {
+  const {requestDiscoveredModelOptions} = await import('./model-options')
+  const result = {discovery_contract:'provider-query-v1',providers:[{slug:'openai',models:['actual'],discovery_state:'fresh',discovery_source_id:'opaque',discovery_fetched_at:'2026-11-08T00:00:00Z'}]}
+  vi.mocked(getGlobalModelOptions).mockResolvedValueOnce(result as never)
+  const gateway = {request:vi.fn()}
+  await expect(requestDiscoveredModelOptions({gateway:gateway as never,profile:'default',refresh:true,connection:{connectionId:'cloud',baseUrl:'https://cloud.example',transport:'semantier-workspace-http',workspaceScope:{userId:'a',workspaceId:'w',organizationId:'o'}}})).resolves.toBe(result)
+  expect(gateway.request).not.toHaveBeenCalled()
+  expect(getGlobalModelOptions).toHaveBeenLastCalledWith(expect.objectContaining({refresh:true,queryOnly:true}),{connectionId:'cloud',profile:'default'})
+})

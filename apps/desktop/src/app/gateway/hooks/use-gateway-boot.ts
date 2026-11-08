@@ -11,14 +11,13 @@ import { useEffect, useRef } from 'react'
 
 import { canonicalOwnerProfile } from '@/api/canonical-protocol'
 import { forgetWorkspaceReadScope } from '@/api/client'
-import { rescopeConnectionScopedStores } from '@/lib/connection-scoped'
-import { forgetFleetRosterConnection } from '@/store/fleet-roster'
 import { createGatewayEventDedupe } from '@/app/gateway/gateway-event-dedupe'
 import { reportStartupLatency } from '@/app/gateway/report-startup-latency'
 import { shouldApplyPostBootProgressError } from '@/components/boot-failure-reauth'
 import type { DesktopBootProgress, HermesConnection, HermesWindowState } from '@/global'
 import { HermesGateway } from '@/hermes'
 import { translateNow } from '@/i18n'
+import { rescopeConnectionScopedStores } from '@/lib/connection-scoped'
 import { desktopDefaultCwd } from '@/lib/desktop-fs'
 import {
   decideLivenessForceClose,
@@ -26,6 +25,7 @@ import {
   LIVENESS_REPROBE_DELAY_MS
 } from '@/lib/gateway-liveness-policy'
 import { resolveDesktopGatewayWsUrl } from '@/lib/gateway-ws-url'
+import { queryClient } from '@/lib/query-client'
 import { refreshModelsOnConnectionReady } from '@/lib/startup-model-discovery'
 import { BACKEND_BOOT_WAIT_TIMEOUT_MS, RECONNECT_ATTEMPT_TIMEOUT_MS, withTimeout } from '@/lib/with-timeout'
 import {
@@ -38,8 +38,8 @@ import {
   setDesktopBootStep
 } from '@/store/boot'
 import { resetBackgroundPollingGuard } from '@/store/composer-status'
-import { markOnboardingDecided } from '@/store/onboarding-presence'
 import { noteBackendDrop, noteBackendExited } from '@/store/desktop-metrics'
+import { forgetFleetRosterConnection } from '@/store/fleet-roster'
 import {
   $gateway,
   activeGateway,
@@ -70,7 +70,8 @@ import {
   registerGatewaySwitchLifecycle
 } from '@/store/gateway-switch'
 import { notify, notifyError, RECOVERY_ACTIONS } from '@/store/notifications'
-import { $profiles, $profilesByConnection, invalidateProfileListFetches, $activeGatewayProfile, normalizeProfileKey, refreshActiveProfile } from '@/store/profile'
+import { markOnboardingDecided } from '@/store/onboarding-presence'
+import { $activeGatewayProfile, $profiles, $profilesByConnection, invalidateProfileListFetches, normalizeProfileKey, refreshActiveProfile } from '@/store/profile'
 import { requestBackendRestart } from '@/store/recovery-requests'
 import {
   $activeSessionId,
@@ -92,8 +93,8 @@ import {
   $sessionOwnerHoldRevision,
   $sessionTiles,
   $workingSessionIds,
-  foregroundSessionScopes,
   dropTilesForConnection,
+  foregroundSessionScopes,
   forgetProfileOnlyRuntimeOwners,
   liveSessionScopes,
   openTileGatewayScopes,
@@ -1309,6 +1310,14 @@ export function useGatewayBoot({
         const ownsView = previous?.connectionId === payload.connectionId || signedOutWorkspaceConnectionId === payload.connectionId
         disposeSecondariesForConnection(payload.connectionId)
         forgetWorkspaceReadScope(payload.connectionId)
+        const catalogScope = {predicate:(query: {queryKey: readonly unknown[]}) => {
+          const key = query.queryKey
+          const owner = key[3] === 'owner' ? key[4] : null
+          return key[0] === 'model-options' && typeof owner === 'string' &&
+            (owner === payload.connectionId || owner.startsWith(payload.connectionId + ':'))
+        }}
+        void queryClient.cancelQueries(catalogScope)
+        queryClient.removeQueries(catalogScope)
         forgetSessionOwnerHintsForConnection(payload.connectionId)
         dropTilesForConnection(payload.connectionId)
         invalidateProfileListFetches()

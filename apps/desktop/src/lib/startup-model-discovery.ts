@@ -1,5 +1,5 @@
 import { type DiscoveryConnection, modelDiscoveryOwnerKey, modelDiscoveryScope } from '@/lib/model-discovery-scope'
-import { requestModelOptions } from '@/lib/model-options'
+import { requestDiscoveredModelOptions, requestModelOptions } from '@/lib/model-options'
 import { queryClient } from '@/lib/query-client'
 import { activeGatewayConnectionId, requestGatewayForAgent } from '@/store/gateway'
 import { setModelDiscoveryRefreshing } from '@/store/model-discovery'
@@ -28,6 +28,9 @@ export async function refreshModelsOnConnectionReady(
   if (ownerKey) {setModelDiscoveryRefreshing(ownerKey, profileKey, true)}
 
   try {
+    if (connection?.transport === 'semantier-workspace-http') {
+      await requestDiscoveredModelOptions({connection,ownerConnectionId:connectionId,profile:profileKey,refresh:true})
+    } else {
     await requestModelOptions({
       profile: profileKey,
       queryOnly: true,
@@ -36,6 +39,7 @@ export async function refreshModelsOnConnectionReady(
       request: <T>(method: string, params?: Record<string, unknown>) =>
         requestGatewayForAgent<T>(connectionId, profileKey, method, params)
     })
+    }
     const activeSource = await modelDiscoveryScope(activeGatewayConnectionId(), $connection.get()).catch(() => null)
     await queryClient.invalidateQueries({
       predicate: query => {
