@@ -244,6 +244,14 @@ export function NarrowOverlays() {
                   aria-selected={pane.id === revealed.id}
                   data-narrow-overlay-tab={pane.id}
                   key={pane.id}
+                  role="tab"
+                  tabIndex={0}
+                  onKeyDown={event => {
+                    if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+                      event.preventDefault()
+                      setReveal(current => ({ id: pane.id, pinned: current?.pinned ?? false }))
+                    }
+                  }}
                   onPointerDown={event => {
                     if (event.button === 0) {
                       event.preventDefault()
@@ -251,7 +259,7 @@ export function NarrowOverlays() {
                     }
                   }}
                 >
-                  <PaneTabLabel>{pane.title ?? pane.id}</PaneTabLabel>
+                  <PaneTabLabel>{paneChrome(pane).tabTitle?.() ?? pane.title ?? pane.id}</PaneTabLabel>
                 </PaneTab>
               ))}
             </PaneTabStrip>
