@@ -30,7 +30,11 @@ export type PrimaryBackendStartupResult<RuntimeBackend, Connection, Attached = n
   | { kind: 'local'; backend: RuntimeBackend }
   | { kind: 'remote'; connection: Connection }
 
-interface ResolvedPrimaryRemote {
+export interface ResolvedPrimaryRemote {
+  transport?: 'semantier-workspace-http'
+  workspaceScope?: { userId: string; workspaceId: string; organizationId: string }
+  profile?: string
+  registryScoped?: boolean
   authMode?: 'oauth' | 'token'
   baseUrl: string
   connectionId?: string
@@ -66,11 +70,12 @@ export function createPrimaryRemoteConnection<State extends object>(
     baseUrl: remote.baseUrl,
     mode: 'remote' as const,
     source: remote.source,
-    authMode: remote.authMode || 'token',
+    authMode: remote.transport === 'semantier-workspace-http' ? undefined : remote.authMode || 'token',
     remoteHost: remote.remoteHost,
     remoteKind: remote.remoteKind,
     remoteHermesVersion: remote.remoteHermesVersion,
     ...(remote.connectionId ? { connectionId: remote.connectionId } : {}),
+    ...(remote.transport === 'semantier-workspace-http' ? { transport: remote.transport, workspaceScope: remote.workspaceScope, profile: remote.profile, registryScoped: remote.registryScoped } : {}),
     ...(remote.ssh ? { ssh: remote.ssh } : {}),
     // fetchJsonForBackend reads descriptor.headers for every REST call; the
     // WebSocket header store is keyed by exact URL and cannot stand in for it.

@@ -460,7 +460,8 @@ import { previewHttpUrlTarget } from './preview-url-target'
 import {
   createPrimaryRemoteConnection,
   FirstRunSetupResetError,
-  runPrimaryBackendStartup
+  runPrimaryBackendStartup,
+  type ResolvedPrimaryRemote
 } from './primary-backend-startup'
 import { rehomePrimaryConnection } from './primary-connection-rehome'
 import { PrimaryProfilePin, resolveLaunchProfile } from './primary-profile-pin'
@@ -6289,6 +6290,8 @@ async function buildReadinessHealthProbe(baseUrl, authMode, token) {
 // a manual "Use gateway" click. Run the cascade once and retry once; anything
 // that is not that exact case surfaces unchanged.
 async function waitForRemoteHermes(remote) {
+  // Workspace readiness was checked through its authenticated identity owner.
+  if (remote.transport === 'semantier-workspace-http') { return }
   try {
     await waitForHermes(remote.baseUrl, remote.token, undefined, remote.authMode, remote.headers)
   } catch (error) {
@@ -10371,7 +10374,7 @@ function persistSshConnectionToken(profile, source, token, registryConnectionId 
 async function resolveRemoteBackend(
   profile,
   options: { forceRegistryPrimary?: boolean; poolKey?: string; primary?: boolean } = {}
-) {
+): Promise<ResolvedPrimaryRemote | null> {
   const profileKey = String(profile || '').trim() || 'default'
 
   const managedPrimary = options.primary
@@ -10439,6 +10442,13 @@ async function resolveRemoteBackend(
 
   if (!route) {
     return null
+  }
+
+  if (route.kind !== 'ssh' && route.transport === 'semantier-workspace-http') {
+    if (!route.connectionId) { throw new Error('Workspace HTTP requires its registered connection owner.') }
+    // Legacy primary/prewarm callers must keep the selected registry transport.
+    // Reuse the same authenticated HTTP descriptor as explicit registry dials.
+    return ensureRegistryBackend(route.connectionId, profileKey)
   }
 
   let connection
