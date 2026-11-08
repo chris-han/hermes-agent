@@ -54,3 +54,13 @@ it('checks the authenticated scope before canonical Chat creation', async () => 
   expect(fetch).toHaveBeenCalledTimes(1)
   expect(fetch.mock.calls[0][0]).toBe('https://cloud.example/auth/context')
 })
+
+it.each(['native-context','bind-native-context','send-native'])('rejects a changed account before %s can access its captured Native owner', async name => {
+  const fetch=vi.fn().mockResolvedValue(Response.json({...identity,user:{...identity.user,user_id:'user-b'}}))
+  vi.mocked(session.fromPartition).mockReturnValue({fetch} as never)
+  vi.mocked(ipcMain.handle).mockClear()
+  registerSemantierWorkspaceIpc()
+  const handler=vi.mocked(ipcMain.handle).mock.calls.find(([channel])=>channel==='hermes:workspace:'+name)![1]
+  await expect(handler({} as never,'https://cloud.example',scope,'canonical-a','main-a','request','binding')).rejects.toThrow('changed')
+  expect(fetch).toHaveBeenCalledTimes(1)
+})

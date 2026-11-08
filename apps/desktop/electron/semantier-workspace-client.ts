@@ -36,7 +36,29 @@ export interface WorkspaceWinmanProfile {
   bot_mode_protocol?: boolean
 }
 
+export interface WorkspaceMainContext {
+  user_id: string
+  workspace_id: string
+  organization_id: string
+  native_profile_id: string
+  binding_id: string
+  original_conversation: { session_key: string; session_id: string }
+}
+
+export interface WorkspaceNativeReceipt {
+  admission_id: string
+  status: 'queued' | 'started' | 'unknown' | 'terminal'
+  outcome: string | null
+}
+
+export interface WorkspaceNativeSubmission {
+  bot_id: string
+  session_id: string
+  receipt: WorkspaceNativeReceipt
+}
+
 export interface WorkspaceNativeSnapshot {
+  admission_receipt?: WorkspaceNativeReceipt
   session_id: string
   canonical_session: { id: string; resolved_id?: string }
   bot_id: string
@@ -111,8 +133,26 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
     async sessions(): Promise<{ sessions: Array<{ key: string; title?: string }> }> {
       return (await request('/api/sessions')).json()
     },
-    async nativeHistory(sessionId: string): Promise<WorkspaceNativeSnapshot> {
-      const result: WorkspaceNativeSnapshot = await (await request(`/api/winman/history/${encodeURIComponent(sessionId)}`)).json()
+    async nativeContext(sessionId: string): Promise<WorkspaceMainContext | null> {
+      return (await request(`/api/winman/context/${encodeURIComponent(sessionId)}`)).json()
+    },
+    async bindNativeContext(sessionId: string, originalSessionKey: string): Promise<WorkspaceMainContext> {
+      return (await request(`/api/winman/context/${encodeURIComponent(sessionId)}`, { original_session_key: originalSessionKey })).json()
+    },
+    async sendNative(sessionId: string, text: string, requestId: string, bindingId: string): Promise<WorkspaceNativeSubmission> {
+      if (!/^[A-Za-z0-9_-]{1,128}$/.test(requestId) || !bindingId || !text.trim()) { throw new Error('A retained Native request identity and Main binding are required.') }
+      const result: WorkspaceNativeSubmission = await (await request(`/api/winman/messages/${encodeURIComponent(sessionId)}`, {
+        text, request_id: requestId, binding_id: bindingId
+      })).json()
+      if (!result.bot_id || result.session_id !== sessionId || !/^[a-f0-9]{32}$/.test(result.receipt?.admission_id)) {
+        throw new Error('Native admission identity is unavailable. Recover history before sending again.')
+      }
+      return result
+    },
+    async nativeHistory(sessionId: string, admissionId?: string): Promise<WorkspaceNativeSnapshot> {
+      if (admissionId !== undefined && !/^[a-f0-9]{32}$/.test(admissionId)) { throw new Error('Invalid Native admission identity.') }
+      const query = admissionId === undefined ? '' : `?admission_id=${admissionId}`
+      const result: WorkspaceNativeSnapshot = await (await request(`/api/winman/history/${encodeURIComponent(sessionId)}${query}`)).json()
       const ids = [result.canonical_session?.id, result.canonical_session?.resolved_id]
       if (!result.bot_id || !result.native_profile_id || !ids.includes(sessionId) || !ids.includes(result.session_id)) {
         throw new Error('This canonical Bot Chat is unavailable in the current workspace.')
@@ -261,4 +301,26 @@ export async function requireWorkspaceCompletion(response: Response): Promise<vo
     if (terminal.state === 'complete') { completed = true }
   }
   if (!completed) { throw new Error('The Cloud send outcome is uncertain. Recover its history before trying again.') }
+}
+
+/** Finite receipt reads after one explicit submit; an uncertain outcome never resubmits. */
+export async function requireNativeCompletion(
+  client: Pick<ReturnType<typeof createSemantierWorkspaceClient>, 'nativeHistory'>,
+  sessionId: string, admissionId: string
+): Promise<WorkspaceNativeSnapshot> {
+  const deadline = Date.now() + 120_000
+  let delay = 250
+  while (Date.now() < deadline) {
+    const snapshot = await client.nativeHistory(sessionId, admissionId)
+    const receipt = snapshot.admission_receipt
+    if (receipt?.admission_id !== admissionId) { throw new Error('Native receipt changed. Recover history before sending again.') }
+    if (receipt.status === 'terminal') {
+      if (receipt.outcome !== 'completed') { throw new Error('Winman did not complete this request. Recover its status before sending again.') }
+      return snapshot
+    }
+    if (receipt.status === 'unknown') { throw new Error('Winman execution outcome is unknown. Recover its status before sending again.') }
+    await new Promise(resolve => setTimeout(resolve, delay))
+    delay = Math.min(delay * 2, 2_000)
+  }
+  throw new Error('Winman is still processing the retained request. Recover its status before sending again.')
 }

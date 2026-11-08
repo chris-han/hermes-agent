@@ -282,6 +282,7 @@ export const BOT_CHAT_SESSION_HYDRATION_TIMEOUT_MS = 60_000
  *  needs a bound of its own or it outlives the wake it describes. */
 export const HYDRATION_SYNC_BADGE_TIMEOUT_MS = 30_000
 let openSessionGeneration = 0
+let workspaceMainBinding: Promise<void> | null = null
 /** Which generation's wake most recently set $gatewaySwapTarget. Clearing it
  *  keys off this, not off `generation === openSessionGeneration`, so a
  *  superseded wake still clears the overlay IT put up — the generation
@@ -899,6 +900,26 @@ export const host = {
       (options.workspaceMode === 'bots' && profile && ambientConnectionId
         ? { connectionId: ambientConnectionId, mode: ambientMode, profile: targetProfile }
         : null)
+
+    // Only explicit navigation from a focused Main pane changes the server
+    // association. Cold/background hydration reads the retained association.
+    const originalId = $focusedStoredSessionId.get()
+    const originalOwner = $focusedSessionOwner.get()
+    if (options.workspaceMode === 'bots' && !options.refreshInPlace && options.tabTitle === 'Bot Chat' &&
+      liveConnection?.transport === 'semantier-workspace-http' && originalId && originalOwner?.profile === 'default' &&
+      ownerRoute?.connectionId === liveConnectionId && originalOwner.connectionId === liveConnectionId && targetProfile !== 'default') {
+      const previous = workspaceMainBinding
+      const binding = (async () => {
+        await previous?.catch(() => undefined)
+        if (generation !== openSessionGeneration) { return }
+        await requestGatewayForAgent(ownerRoute.connectionId, ownerRoute.profile, 'session.bind_original', {
+          session_id: storedSessionId, original_session_key: originalId
+        })
+      })()
+      workspaceMainBinding = binding
+      try { await binding } finally { if (workspaceMainBinding === binding) { workspaceMainBinding = null } }
+      if (generation !== openSessionGeneration || $focusedStoredSessionId.get() !== originalId) { return }
+    }
 
     const expectHistory = options.expectHistory ?? false
 

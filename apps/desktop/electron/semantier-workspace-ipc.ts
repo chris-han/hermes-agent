@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 
 import { BrowserWindow, ipcMain, session } from 'electron'
 
-import { assertWorkspaceScope, createSemantierWorkspaceClient, requireWorkspaceCompletion, type WorkspaceIdentity, type WorkspaceScope } from './semantier-workspace-client'
+import { assertWorkspaceScope, createSemantierWorkspaceClient, requireNativeCompletion, requireWorkspaceCompletion, type WorkspaceIdentity, type WorkspaceScope } from './semantier-workspace-client'
 
 export { assertWorkspaceScope } from './semantier-workspace-client'
 export type { WorkspaceScope } from './semantier-workspace-client'
@@ -14,6 +14,9 @@ export interface DesktopWorkspaceApi {
   ensureWinmanChat: (origin: string, scope: WorkspaceScope) => Promise<import('./semantier-workspace-client').WorkspaceWinmanProfile>
   sessions: (origin: string, scope: WorkspaceScope) => Promise<{ sessions: Array<{ key: string; title?: string }> }>
   history: (origin: string, scope: WorkspaceScope, sessionId: string, afterId?: string) => Promise<import('./semantier-workspace-client').WorkspaceHistory>
+  nativeContext: (origin: string, scope: WorkspaceScope, sessionId: string) => Promise<import('./semantier-workspace-client').WorkspaceMainContext | null>
+  bindNativeContext: (origin: string, scope: WorkspaceScope, sessionId: string, originalSessionKey: string) => Promise<import('./semantier-workspace-client').WorkspaceMainContext>
+  sendNative: (origin: string, scope: WorkspaceScope, sessionId: string, message: string, requestId: string, bindingId: string) => Promise<import('./semantier-workspace-client').WorkspaceNativeSnapshot>
   nativeHistory: (origin: string, scope: WorkspaceScope, sessionId: string) => Promise<import('./semantier-workspace-client').WorkspaceNativeSnapshot>
   send: (origin: string, scope: WorkspaceScope, sessionId: string, message: string, requestIdentity: string) => Promise<import('./semantier-workspace-client').WorkspaceHistory>
 }
@@ -83,6 +86,28 @@ export function registerSemantierWorkspaceIpc(onAccountChanged?: (origin: string
     const { client } = workspace(origin)
     assertWorkspaceScope(await client.identity(), scope)
     const result = await client.history(sessionId, ...(afterId === undefined ? [] : [afterId]))
+    assertWorkspaceScope(await client.identity(), scope)
+    return result
+  })
+  ipcMain.handle('hermes:workspace:native-context', async (_event, origin: string, scope: WorkspaceScope, sessionId: string) => {
+    const { client } = workspace(origin)
+    assertWorkspaceScope(await client.identity(), scope)
+    const result = await client.nativeContext(sessionId)
+    assertWorkspaceScope(await client.identity(), scope)
+    return result
+  })
+  ipcMain.handle('hermes:workspace:bind-native-context', async (_event, origin: string, scope: WorkspaceScope, sessionId: string, originalSessionKey: string) => {
+    const { client } = workspace(origin)
+    assertWorkspaceScope(await client.identity(), scope)
+    const result = await client.bindNativeContext(sessionId, originalSessionKey)
+    assertWorkspaceScope(await client.identity(), scope)
+    return result
+  })
+  ipcMain.handle('hermes:workspace:send-native', async (_event, origin: string, scope: WorkspaceScope, sessionId: string, message: string, requestId: string, bindingId: string) => {
+    const { client } = workspace(origin)
+    assertWorkspaceScope(await client.identity(), scope)
+    const admitted = await client.sendNative(sessionId, message, requestId, bindingId)
+    const result = await requireNativeCompletion(client, sessionId, admitted.receipt.admission_id)
     assertWorkspaceScope(await client.identity(), scope)
     return result
   })

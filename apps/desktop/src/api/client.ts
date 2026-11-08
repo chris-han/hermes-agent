@@ -11,7 +11,7 @@ import { map, type MapStore } from 'nanostores'
 
 import type { HermesApiRequest } from '@/global'
 import type { WorkspaceScope } from '../../electron/semantier-workspace-ipc'
-import { assertWorkspaceScope, workspaceTranscript } from '../../electron/semantier-workspace-client'
+import { assertWorkspaceScope, workspaceTranscript, type WorkspaceMainContext } from '../../electron/semantier-workspace-client'
 
 import { CANONICAL_GATEWAY_PROTOCOL, CanonicalDesktopProtocol, canonicalProfile, canonicalSessionKey, recordCanonicalOwner, splitRewindSubmit } from './canonical-protocol'
 
@@ -92,6 +92,7 @@ export class HermesGateway extends JsonRpcGatewayClient {
   private workspacePollTimer: ReturnType<typeof setTimeout> | null = null
   private workspacePollGeneration: number | null = null
   private workspacePollDelay = 2_000
+  private readonly workspaceOriginalContexts = new Map<string, WorkspaceMainContext>()
   private readonly workspaceSnapshots = new Map<string, { profile: string; messages: string; cursor?: string; fullReadAt: number }>()
   private readonly wakeWorkspacePoll = () => {
     if (this.workspaceConnection) { this.scheduleWorkspacePoll(0) }
@@ -101,6 +102,7 @@ export class HermesGateway extends JsonRpcGatewayClient {
     if (this.workspacePollTimer !== null) { clearTimeout(this.workspacePollTimer) }
     this.workspacePollTimer = null
     this.workspaceSnapshots.clear()
+    this.workspaceOriginalContexts.clear()
     window.removeEventListener('online', this.wakeWorkspacePoll)
     window.removeEventListener('focus', this.wakeWorkspacePoll)
     document.removeEventListener('visibilitychange', this.wakeWorkspacePoll)
@@ -206,12 +208,30 @@ export class HermesGateway extends JsonRpcGatewayClient {
     }
   }
 
+  private rememberWorkspaceOriginal(sessionId: string, context: WorkspaceMainContext): void {
+    const scope = this.workspaceConnection!.scope
+    if (context.user_id !== scope.userId || context.workspace_id !== scope.workspaceId ||
+      context.organization_id !== scope.organizationId || !context.binding_id || !context.original_conversation?.session_key) {
+      throw new Error('The original Main conversation owner changed. Reopen Winman from Main.')
+    }
+    this.workspaceOriginalContexts.set(sessionId, context)
+  }
+
   private async requestWorkspace<T>(method: string, params: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
     const connection = this.workspaceConnection!
     const generation = this.connectionGeneration
     const bridge = window.hermesDesktop.workspace!
     signal?.throwIfAborted()
     const sessionId = String(params.session_id || params.session_key || '')
+    if (method === 'session.bind_original') {
+      if (!bridge.bindNativeContext || (connection.profile || 'default') === 'default') {
+        throw new Error('Native original-chat binding requires its Cloud owner adapter.')
+      }
+      const context = await bridge.bindNativeContext(connection.origin, connection.scope, sessionId, String(params.original_session_key || ''))
+      this.requireConnectionGeneration(generation)
+      this.rememberWorkspaceOriginal(sessionId, context)
+      return context as T
+    }
     if (method === 'session.create') {
       if (params.title !== 'Bot Chat' || !connection.connectionId) {
         throw new Error('Cloud creation is available only for the canonical Bot Chat.')
@@ -267,6 +287,11 @@ export class HermesGateway extends JsonRpcGatewayClient {
         const snapshot = await bridge.nativeHistory(connection.origin, connection.scope, sessionId)
         this.requireConnectionGeneration(generation)
         signal?.throwIfAborted()
+        if (bridge.nativeContext && !this.workspaceOriginalContexts.has(sessionId)) {
+          const context = await bridge.nativeContext(connection.origin, connection.scope, sessionId)
+          this.requireConnectionGeneration(generation)
+          if (context) { this.rememberWorkspaceOriginal(sessionId, context) }
+        }
         this.rememberWorkspaceSnapshot(sessionId, String(params.profile || connection.profile), snapshot.messages)
         return snapshot as T
       }
@@ -279,7 +304,16 @@ export class HermesGateway extends JsonRpcGatewayClient {
     }
     if (method === 'prompt.submit') {
       if ((params.profile || connection.profile || 'default') !== 'default') {
-        throw new Error('Native Bot Chat submission requires its Cloud owner adapter. Continue in the original Main conversation.')
+        if (!bridge.sendNative) { throw new Error('Native Bot Chat submission requires its Cloud owner adapter.') }
+        const context = this.workspaceOriginalContexts.get(sessionId)
+        if (!context) { throw new Error('Open Winman from the original Main conversation before sending.') }
+        const identity = String(params.submission_id || params.request_id || '')
+        if (!identity) { throw new Error('A retained Native request identity is required.') }
+        const snapshot = await bridge.sendNative(connection.origin, connection.scope, sessionId, String(params.text || ''), identity, context.binding_id)
+        this.requireConnectionGeneration(generation)
+        this.rememberWorkspaceSnapshot(sessionId, String(params.profile || connection.profile), snapshot.messages)
+        this.workspaceEvents.dispatch({ type: 'session.replay_gap', session_id: sessionId, profile: String(connection.profile), payload: {} })
+        return { session_id: snapshot.session_id, admission_id: snapshot.admission_receipt?.admission_id } as T
       }
       const identity = String(params.submission_id || params.request_id || '')
       if (!identity) { throw new Error('A retained request identity is required to send a Cloud message.') }

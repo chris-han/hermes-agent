@@ -97,3 +97,25 @@ it('ensures only the server canonical Chat with an empty JSON request and no POS
   await expect(client.ensureWinmanChat()).rejects.toThrow('lost response')
   expect(transport).toHaveBeenCalledTimes(2)
 })
+
+it('retains the server Main binding and Native request identity without retrying a lost send', async () => {
+  const transport=vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({binding_id:'server-token',original_conversation:{session_key:'main-a'}}))
+    .mockRejectedValueOnce(new TypeError('Connection lost'))
+  const client=createSemantierWorkspaceClient('https://cloud.example',transport)
+  await expect(client.bindNativeContext('canonical-a','main-a')).resolves.toMatchObject({binding_id:'server-token'})
+  await expect(client.sendNative('canonical-a','Hello','same-request','server-token')).rejects.toThrow('Connection lost')
+  expect(transport).toHaveBeenCalledTimes(2)
+  expect(JSON.parse(String(transport.mock.calls[1][1]?.body))).toEqual({text:'Hello',request_id:'same-request',binding_id:'server-token'})
+})
+
+it('reconciles a completed Native admission by reads and refuses an unknown outcome', async () => {
+  const { requireNativeCompletion }=await import('./semantier-workspace-client')
+  const id='a'.repeat(32)
+  const snapshot={session_id:'canonical-a',canonical_session:{id:'canonical-a'},bot_id:'bot-a',native_profile_id:'profile-a',messages:[],admission_receipt:{admission_id:id,status:'terminal' as const,outcome:'completed'}}
+  const nativeHistory=vi.fn().mockResolvedValue(snapshot)
+  await expect(requireNativeCompletion({nativeHistory},'canonical-a',id)).resolves.toEqual(snapshot)
+  expect(nativeHistory).toHaveBeenCalledExactlyOnceWith('canonical-a',id)
+  nativeHistory.mockResolvedValue({...snapshot,admission_receipt:{admission_id:id,status:'unknown',outcome:null}})
+  await expect(requireNativeCompletion({nativeHistory},'canonical-a',id)).rejects.toThrow('unknown')
+  expect(nativeHistory).toHaveBeenCalledTimes(2)
+})
