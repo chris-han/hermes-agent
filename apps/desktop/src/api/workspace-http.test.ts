@@ -144,3 +144,52 @@ it('keeps concurrent reads valid when another profile opens for the same authent
   primary.close()
   bot.close()
 })
+
+it('recovers changed history on network restoration without sending a turn and suppresses duplicate refreshes', async () => {
+  vi.useFakeTimers()
+  const first = { sessionId: 'original', messages: [{ messageId: '204', role: 'assistant', text: 'Reminder' }] }
+  const history = vi.fn().mockResolvedValue(first), send = vi.fn()
+  Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: { workspace: { identity: vi.fn().mockResolvedValue(identity), history, send } } })
+  const gateway = new HermesGateway(), changed = vi.fn()
+  gateway.on('session.replay_gap', changed)
+  try {
+    await gateway.connectWorkspace('https://cloud.example', scope)
+    await gateway.request('session.resume', { session_id: 'original' })
+    history.mockResolvedValue({ ...first, messages: [...first.messages, { messageId: '217', role: 'assistant', text: 'Missed update' }] })
+    window.dispatchEvent(new Event('online'))
+    await vi.advanceTimersByTimeAsync(1)
+    expect(changed).toHaveBeenCalledTimes(1)
+    expect(changed.mock.calls[0][0]).toMatchObject({ session_id: 'original', profile: 'default' })
+    window.dispatchEvent(new Event('online'))
+    await vi.advanceTimersByTimeAsync(1)
+    expect(changed).toHaveBeenCalledTimes(1)
+    expect(send).not.toHaveBeenCalled()
+    gateway.close()
+    const count = history.mock.calls.length
+    window.dispatchEvent(new Event('online'))
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(history).toHaveBeenCalledTimes(count)
+  } finally { gateway.close(); vi.useRealTimers() }
+})
+
+it('discards a pending recovery read after the Cloud owner closes', async () => {
+  vi.useFakeTimers()
+  let resolve!: (value: unknown) => void
+  const history = vi.fn().mockResolvedValueOnce({ sessionId: 'original', messages: [] })
+    .mockImplementationOnce(() => new Promise(done => { resolve = done }))
+  Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: { workspace: { identity: vi.fn().mockResolvedValue(identity), history } } })
+  const gateway = new HermesGateway(), changed = vi.fn()
+  gateway.on('session.replay_gap', changed)
+  try {
+    await gateway.connectWorkspace('https://cloud.example', scope)
+    await gateway.request('session.resume', { session_id: 'original' })
+    window.dispatchEvent(new Event('online'))
+    await vi.advanceTimersByTimeAsync(1)
+    expect(history).toHaveBeenCalledTimes(2)
+    gateway.close()
+    resolve({ sessionId: 'original', messages: [{ messageId: 'late' }] })
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(changed).not.toHaveBeenCalled()
+    expect(history).toHaveBeenCalledTimes(2)
+  } finally { gateway.close(); vi.useRealTimers() }
+})

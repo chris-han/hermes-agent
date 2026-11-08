@@ -89,6 +89,70 @@ export class HermesGateway extends JsonRpcGatewayClient {
   private readonly workspaceStates = new Set<(state: ConnectionState) => void>()
   private readonly workspaceEvents = new GatewayEventHub()
 
+  private workspacePollTimer: ReturnType<typeof setTimeout> | null = null
+  private workspacePollGeneration: number | null = null
+  private workspacePollDelay = 2_000
+  private readonly workspaceSnapshots = new Map<string, { profile: string; messages: string }>()
+  private readonly wakeWorkspacePoll = () => {
+    if (this.workspaceConnection) { this.scheduleWorkspacePoll(0) }
+  }
+
+  private stopWorkspacePoll(): void {
+    if (this.workspacePollTimer !== null) { clearTimeout(this.workspacePollTimer) }
+    this.workspacePollTimer = null
+    this.workspaceSnapshots.clear()
+    window.removeEventListener('online', this.wakeWorkspacePoll)
+    window.removeEventListener('focus', this.wakeWorkspacePoll)
+    document.removeEventListener('visibilitychange', this.wakeWorkspacePoll)
+  }
+
+  private scheduleWorkspacePoll(delay = this.workspacePollDelay): void {
+    if (this.workspacePollTimer !== null) { clearTimeout(this.workspacePollTimer) }
+    this.workspacePollTimer = setTimeout(() => {
+      this.workspacePollTimer = null
+      void this.reconcileWorkspace()
+    }, delay)
+  }
+
+  private rememberWorkspaceSnapshot(sessionId: string, profile: string, messages: unknown): void {
+    this.workspaceSnapshots.set(sessionId, { profile, messages: JSON.stringify(messages) })
+    if (this.workspacePollTimer === null && this.workspacePollGeneration !== this.connectionGeneration) { this.scheduleWorkspacePoll() }
+  }
+
+  private async reconcileWorkspace(): Promise<void> {
+    const connection = this.workspaceConnection
+    if (!connection || this.workspacePollGeneration === this.connectionGeneration) { return }
+    const generation = this.connectionGeneration
+    this.workspacePollGeneration = generation
+    let changed = false
+    try {
+      for (const [sessionId, previous] of this.workspaceSnapshots) {
+        const bridge = window.hermesDesktop.workspace!
+        const snapshot = previous.profile === 'default'
+          ? await bridge.history(connection.origin, connection.scope, sessionId)
+          : await bridge.nativeHistory(connection.origin, connection.scope, sessionId)
+        this.requireConnectionGeneration(generation)
+        const messages = JSON.stringify(snapshot.messages)
+        // A concurrent explicit resume owns its newer snapshot; do not rewind its cursor.
+        if (this.workspaceSnapshots.get(sessionId) !== previous) { continue }
+        if (messages !== previous.messages) {
+          this.workspaceSnapshots.set(sessionId, { profile: previous.profile, messages })
+          changed = true
+          this.workspaceEvents.dispatch({ type: 'session.replay_gap', session_id: sessionId, profile: previous.profile, payload: {} })
+        }
+      }
+      this.workspacePollDelay = changed ? 2_000 : Math.min(this.workspacePollDelay * 2, 30_000)
+    } catch {
+      // Reads may retry; never retry a send. IPC enforces the current account on every read.
+      this.workspacePollDelay = Math.min(this.workspacePollDelay * 2, 30_000)
+    } finally {
+      if (this.workspacePollGeneration === generation) { this.workspacePollGeneration = null }
+      if (this.workspaceConnection === connection && generation === this.connectionGeneration) {
+        this.scheduleWorkspacePoll(document.visibilityState === 'hidden' ? Math.max(this.workspacePollDelay, 120_000) : this.workspacePollDelay)
+      }
+    }
+  }
+
   override get connectionState(): ConnectionState {
     return this.workspaceConnection ? this.workspaceState : super.connectionState
   }
@@ -107,6 +171,8 @@ export class HermesGateway extends JsonRpcGatewayClient {
 
   /** HTTP readiness is an authenticated resource check, never a gateway.ready handshake. */
   async connectWorkspace(origin: string, scope: WorkspaceScope, connectionId?: string, profile = 'default'): Promise<void> {
+    this.stopWorkspacePoll()
+    this.workspacePollDelay = 2_000
     this.connectionGeneration++
     const generation = this.connectionGeneration
     super.close()
@@ -125,6 +191,9 @@ export class HermesGateway extends JsonRpcGatewayClient {
         }
       }
       this.setWorkspaceState('open')
+      window.addEventListener('online', this.wakeWorkspacePoll)
+      window.addEventListener('focus', this.wakeWorkspacePoll)
+      document.addEventListener('visibilitychange', this.wakeWorkspacePoll)
     } catch (error) {
       if (generation === this.connectionGeneration) { this.setWorkspaceState('error') }
       throw error
@@ -173,11 +242,13 @@ export class HermesGateway extends JsonRpcGatewayClient {
         const snapshot = await bridge.nativeHistory(connection.origin, connection.scope, sessionId)
         this.requireConnectionGeneration(generation)
         signal?.throwIfAborted()
+        this.rememberWorkspaceSnapshot(sessionId, String(params.profile || connection.profile), snapshot.messages)
         return snapshot as T
       }
       const history = await bridge.history(connection.origin, connection.scope, sessionId)
       this.requireConnectionGeneration(generation)
       signal?.throwIfAborted()
+      this.rememberWorkspaceSnapshot(sessionId, 'default', history.messages)
       return { resumed: history.sessionId, session_id: history.sessionId, session_key: history.sessionId,
         message_count: history.messages.length, messages: workspaceTranscript(history) } as T
     }
@@ -293,6 +364,7 @@ export class HermesGateway extends JsonRpcGatewayClient {
   }
 
   override close(): void {
+    this.stopWorkspacePoll()
     if (this.workspaceConnection) { this.setWorkspaceState('closed') }
     this.workspaceConnection = null
     this.connectionGeneration++
@@ -441,6 +513,7 @@ export class HermesGateway extends JsonRpcGatewayClient {
   }
 
   override async connect(wsUrl: string): Promise<void> {
+    this.stopWorkspacePoll()
     this.workspaceConnection = null
     this.connectionGeneration++
     this.canonical = new URL(wsUrl).searchParams.has('native_dial')
