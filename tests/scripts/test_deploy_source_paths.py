@@ -163,7 +163,7 @@ $ast=[Management.Automation.Language.Parser]::ParseFile($args[0],[ref]$t,[ref]$e
 if($e){throw ($e | Out-String)}
 $main=@($ast.EndBlock.Statements | Where-Object {$_ -is [Management.Automation.Language.TryStatementAst]})[-1]
 $BuildOnly=$true;$Commit='a'*40;$SetupOnly=$false;$LocalSetup=$false;$UpdateSetup=$false;$PreflightOnly=$false
-$WhatIfPreference=$false;$Output=$args[1];$utf8=New-Object Text.UTF8Encoding($false)
+$DesktopOnly=$false;$WhatIfPreference=$false;$Output=$args[1];$utf8=New-Object Text.UTF8Encoding($false)
 $script:releaseEnvironment=@{}
 function Initialize-ReleasePaths {}
 function Build-CommitPackage {return [pscustomobject]@{version='0.0.90';msix='owned-unsigned.msix';sha256=('b'*64);source='owned-source'}}

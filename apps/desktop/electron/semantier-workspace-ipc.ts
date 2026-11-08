@@ -2,13 +2,10 @@ import { createHash } from 'node:crypto'
 
 import { BrowserWindow, ipcMain, session } from 'electron'
 
-import { createSemantierWorkspaceClient, requireWorkspaceCompletion, type WorkspaceIdentity } from './semantier-workspace-client'
+import { assertWorkspaceScope, createSemantierWorkspaceClient, requireWorkspaceCompletion, type WorkspaceIdentity, type WorkspaceScope } from './semantier-workspace-client'
 
-export interface WorkspaceScope {
-  userId: string
-  workspaceId: string
-  organizationId: string
-}
+export { assertWorkspaceScope } from './semantier-workspace-client'
+export type { WorkspaceScope } from './semantier-workspace-client'
 
 export interface DesktopWorkspaceApi {
   identity: (origin: string) => Promise<WorkspaceIdentity>
@@ -17,14 +14,6 @@ export interface DesktopWorkspaceApi {
   sessions: (origin: string, scope: WorkspaceScope) => Promise<{ sessions: Array<{ key: string; title?: string }> }>
   history: (origin: string, scope: WorkspaceScope, sessionId: string) => Promise<import('./semantier-workspace-client').WorkspaceHistory>
   send: (origin: string, scope: WorkspaceScope, sessionId: string, message: string, requestIdentity: string) => Promise<import('./semantier-workspace-client').WorkspaceHistory>
-}
-
-export function assertWorkspaceScope(identity: WorkspaceIdentity, expected: WorkspaceScope): void {
-  if (!identity.authenticated || !expected?.userId || !expected.workspaceId || !expected.organizationId ||
-    identity.user?.user_id !== expected.userId || identity.workspace?.id !== expected.workspaceId ||
-    identity.organization_id !== expected.organizationId) {
-    throw new Error('The Semantier account or workspace changed. Reconnect before continuing.')
-  }
 }
 
 /** Cookies stay in an origin-owned Chromium jar, never in renderer payloads. */

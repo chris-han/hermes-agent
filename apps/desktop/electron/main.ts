@@ -14511,6 +14511,12 @@ function createWindow() {
 }
 
 ipcMain.handle('hermes:connection', async (event, profile) => {
+  const ownRoute = windowConnectionRoutes.get(event.sender.id)
+  const ownSource = readDesktopConnectionsRegistry().connections.find(item => item.id === ownRoute?.connectionId)
+  if (ownRoute?.registryScoped && ownSource?.transport === 'semantier-workspace-http' &&
+      (!profile || profile === ownRoute.profile)) {
+    return connectDesktopProfileRoute(ownRoute, event.sender)
+  }
   const route = resolveDesktopConnectionRequest(
     profile,
     windowConnectionRoutes.get(event.sender.id),
@@ -16720,7 +16726,14 @@ function formatApiRequestFailure(
 
 registerSemantierWorkspaceIpc()
 
-ipcMain.handle('hermes:api', async (_event, request) => {
+ipcMain.handle('hermes:api', async (event, request) => {
+  const ownRoute = windowConnectionRoutes.get(event.sender.id)
+  const ownSource = readDesktopConnectionsRegistry().connections.find(item => item.id === ownRoute?.connectionId)
+  if (!apiRequestRegistryConnectionId(request) && ownRoute?.registryScoped && ownSource?.transport === 'semantier-workspace-http') {
+    // Untagged calls in this Cloud window cannot fall through to the local/Nous owner.
+    // A missing expected account scope still fails the HTTP authorization guard.
+    request = { ...request, connectionId: ownRoute.connectionId }
+  }
   // Hold the deletion gate for BOTH profile deletes and renames: a concurrent
   // renderer reconnect entering ensureBackend() mid-mutation would otherwise
   // respawn the old-name backend and recreate its HERMES_HOME (#45474).

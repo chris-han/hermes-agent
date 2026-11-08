@@ -46,3 +46,15 @@ it('pins REST reads to the identity that actually opened the Cloud connection', 
   setApiRequestConnection(null)
   gateway.close()
 })
+
+it('uses server-owned Cloud admission for readiness and a real context read for ping', async () => {
+  const read = vi.fn().mockResolvedValue({ ...identity, account_provisioning: { inference_ready: true } })
+  Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: { workspace: { identity: read } } })
+  const gateway = new HermesGateway()
+  await gateway.connectWorkspace('https://cloud.example', scope)
+  await expect(gateway.request('ping')).resolves.toEqual({ ok: true })
+  await expect(gateway.request('setup.runtime_check')).resolves.toMatchObject({ ok: true })
+  read.mockResolvedValue({ ...identity, account_provisioning: { inference_ready: false, reason: 'admission revoked' } })
+  await expect(gateway.request('setup.runtime_check')).resolves.toEqual({ ok: false, error: 'admission revoked' })
+  gateway.close()
+})

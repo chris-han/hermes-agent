@@ -11,7 +11,7 @@ import { map, type MapStore } from 'nanostores'
 
 import type { HermesApiRequest } from '@/global'
 import type { WorkspaceScope } from '../../electron/semantier-workspace-ipc'
-import { workspaceTranscript } from '../../electron/semantier-workspace-client'
+import { assertWorkspaceScope, workspaceTranscript } from '../../electron/semantier-workspace-client'
 
 import { CANONICAL_GATEWAY_PROTOCOL, CanonicalDesktopProtocol, canonicalProfile, canonicalSessionKey, recordCanonicalOwner, splitRewindSubmit } from './canonical-protocol'
 
@@ -115,10 +115,7 @@ export class HermesGateway extends JsonRpcGatewayClient {
     try {
       const identity = await window.hermesDesktop.workspace!.identity(origin)
       this.requireConnectionGeneration(generation)
-      if (!identity.authenticated || identity.user?.user_id !== scope.userId ||
-        identity.workspace?.id !== scope.workspaceId || identity.organization_id !== scope.organizationId) {
-        throw new Error('The Semantier account or workspace changed. Sign in again.')
-      }
+      assertWorkspaceScope(identity, scope)
       if (connectionId) { workspaceReadScopes.set(connectionId, scope) }
       this.setWorkspaceState('open')
     } catch (error) {
@@ -133,6 +130,17 @@ export class HermesGateway extends JsonRpcGatewayClient {
     const bridge = window.hermesDesktop.workspace!
     signal?.throwIfAborted()
     const sessionId = String(params.session_id || params.session_key || '')
+    if (method === 'ping' || method === 'setup.status' || method === 'setup.runtime_check') {
+      const identity = await bridge.identity(connection.origin)
+      this.requireConnectionGeneration(generation)
+      assertWorkspaceScope(identity, connection.scope)
+      if (method === 'ping') { return { ok: true } as T }
+      const ready = identity.account_provisioning?.inference_ready
+      if (typeof ready !== 'boolean') { throw new Error('Cloud inference readiness is unavailable.') }
+      return (method === 'setup.status'
+        ? { ready, provider_configured: ready }
+        : { ok: ready, error: ready ? undefined : identity.account_provisioning?.reason }) as T
+    }
     if (method === 'session.resume' || method === 'session.activate') {
       const history = await bridge.history(connection.origin, connection.scope, sessionId)
       this.requireConnectionGeneration(generation)

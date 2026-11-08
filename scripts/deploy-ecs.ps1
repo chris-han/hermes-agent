@@ -61,6 +61,7 @@ param(
   [string]$TimestampUrl = 'http://timestamp.digicert.com',
   [Alias('PrepareOnly')][switch]$LocalOnly,
   [switch]$BuildOnly,
+  [switch]$DesktopOnly,
   [string]$BuildSource = 'D:\repo\deliverables\work\ecs-build-source',
   [switch]$SkipOldCleanup,
   [switch]$NewRun,
@@ -783,6 +784,55 @@ function Remove-ExistingAcceptancePackage {
     throw 'Existing acceptance package remains registered; installation stopped.'
   }
 }
+function Build-DesktopCheck {
+  if($Commit -cnotmatch '^[a-f0-9]{40}$'){throw '-DesktopOnly requires an exact -Commit.'}
+  if($WhatIfPreference){
+    [ordered]@{result='DESKTOP_CHECK_PLAN';commit=$Commit;source=$BuildSource;output=$Output;
+      compiler='existing scripts/build/desktop.mjs';nativeRuntime='separate full-build qualification';
+      signing='NOT_RUN';installation='NOT_RUN';publication='NOT_RUN'} | ConvertTo-Json
+    return
+  }
+  $head=& git.exe -C $BuildSource rev-parse HEAD
+  if($LASTEXITCODE -ne 0 -or $head -cne $Commit){
+    Initialize-LocalBuildSource $BuildSource $Commit
+    $head=& git.exe -C $BuildSource rev-parse HEAD
+    if($LASTEXITCODE -ne 0 -or $head -cne $Commit){throw 'Desktop source does not match the requested commit.'}
+  }
+  $receipt=Join-Path $BuildSource 'node_modules\.hermes-node-deps.native-toolchain'
+  if(!(Test-Path -LiteralPath $receipt)){throw 'Desktop dependencies are not prepared; use the existing preparation workflow first.'}
+  $nativeIdentity=([IO.File]::ReadAllLines($receipt) | Select-Object -Last 1) | ConvertFrom-Json
+  if($nativeIdentity -isnot [string] -or $nativeIdentity -cnotmatch '^[a-f0-9]{32}$'){throw 'Unsupported native-input receipt; no fallback attempted.'}
+  $nativeInputs=Join-Path $BuildCache ('native\node\'+$nativeIdentity)
+  if(!(Test-Path -LiteralPath $nativeInputs -PathType Container)){throw 'Prepared native Desktop inputs are unavailable.'}
+  if(!(Test-Path -LiteralPath $Output)){New-Item -ItemType Directory -Path $Output | Out-Null}
+  $script:statusLog=Join-Path $Output 'checkpoints.jsonl'
+  Set-ReleaseEnvironment 'HERMES_BUILD_COMMIT' $Commit
+  Set-ReleaseEnvironment 'HERMES_DESKTOP_VARIANT' ''
+  Set-ReleaseEnvironment 'HERMES_PAYLOAD_TAG' ''
+  Set-ReleaseEnvironment '_HERMES_CHANNEL_REQUEST_JSON' ''
+  $code=@'
+import fs from 'node:fs';
+import path from 'node:path';
+import {pathToFileURL} from 'node:url';
+const [source,output,nativeDeps,commit]=process.argv.slice(1);
+const stamps=await import(pathToFileURL(path.join(source,'apps/desktop/scripts/write-build-stamp.mjs')));
+const resolved=stamps.resolveStamp({repoRoot:source});
+if(resolved.commit!==commit || resolved.dirty)throw Error('Desktop source differs from the requested clean commit');
+const built=stamps.buildStampPayload(resolved);
+const inputs=path.join(output,'inputs');stamps.writeDesktopStamp(inputs,built);
+const app=path.join(output,'apps/desktop');
+const {buildDesktop}=await import(pathToFileURL(path.join(source,'scripts/build/desktop.mjs')));
+await buildDesktop({source,out:path.join(app,'dist'),icons:source,stamp:path.join(inputs,'install-stamp.json'),nativeDeps});
+fs.copyFileSync(path.join(source,'apps/desktop/package.json'),path.join(app,'package.json'));
+fs.writeFileSync(path.join(output,'result.json'),JSON.stringify({result:'DESKTOP_CHECK_BUILT',commit,appRoot:app,stamp:built,scope:'Desktop UI check; full bundled-runtime qualification remains separate',signing:'NOT_RUN',installation:'NOT_RUN',publication:'NOT_RUN'},null,2));
+'@
+  Report-Status 'Compiling the same Desktop source with prepared native inputs; no runtime preparation, package signing or installation.'
+  Push-Location -LiteralPath $BuildSource
+  try { Run $Node @('--input-type=module','-e',$code,$BuildSource,$Output,$nativeInputs,$Commit) }
+  finally { Pop-Location }
+  Report-Status 'Desktop check build complete; this is not full bundled application qualification.'
+}
+
 function Build-CommitPackage {
   if($Commit -cnotmatch '^[a-f0-9]{40}$'){throw '-Commit requires a complete 40-character Git commit.'}
   $resolved=& git.exe -C $Repository rev-parse --verify ($Commit+'^{commit}')
@@ -996,6 +1046,11 @@ function Publish-IndependentSetup {
 try {
 if($BuildOnly -and (!$Commit -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or $PreflightOnly)){throw '-BuildOnly requires -Commit and cannot be combined with Setup or preflight modes.'}
 Initialize-ReleasePaths
+if($DesktopOnly){
+  if($BuildOnly -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or $PreflightOnly){throw '-DesktopOnly cannot be combined with package/setup/preflight modes.'}
+  Build-DesktopCheck
+  return
+}
 $script:explicitOutput=$PSBoundParameters.ContainsKey('Output')
 if($LocalSetup){
   $SetupOnly=$true;$UpdateSetup=$true;$LocalOnly=$true

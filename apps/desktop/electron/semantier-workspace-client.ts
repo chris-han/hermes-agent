@@ -1,9 +1,24 @@
 /** Semantier's existing Workspace HTTP resources, using an owned Electron session. */
 export interface WorkspaceIdentity {
   authenticated: boolean
+  account_provisioning?: { inference_ready?: boolean; reason?: string | null }
   organization_id?: null | string
   user?: null | { user_id: string; workspace_id: string }
   workspace?: null | { id: string; slug?: string }
+}
+
+export interface WorkspaceScope {
+  userId: string
+  workspaceId: string
+  organizationId: string
+}
+
+export function assertWorkspaceScope(identity: WorkspaceIdentity, expected: WorkspaceScope): void {
+  if (!identity.authenticated || !expected?.userId || !expected.workspaceId || !expected.organizationId ||
+    identity.user?.user_id !== expected.userId || identity.workspace?.id !== expected.workspaceId ||
+    identity.organization_id !== expected.organizationId) {
+    throw new Error('The Semantier account or workspace changed. Reconnect before continuing.')
+  }
 }
 
 export interface WorkspaceMessage {

@@ -505,7 +505,7 @@ export function useGatewayBoot({
         // explicit auth rejection asks for sign-in; transport failures stay in
         // this reconnect loop. For local/token gateways the URL carries a
         // long-lived token and the re-mint is a cheap no-op.
-        const wsUrl = await withTimeout(
+        const wsUrl = conn.transport === 'semantier-workspace-http' ? '' : await withTimeout(
           resolveDesktopGatewayWsUrl(desktop, conn),
           RECONNECT_ATTEMPT_TIMEOUT_MS,
           'Timed out re-minting the gateway WebSocket URL'
@@ -517,7 +517,12 @@ export function useGatewayBoot({
           return
         }
 
-        await gateway.connect(wsUrl)
+        if (conn.transport === 'semantier-workspace-http') {
+          if (!conn.workspaceScope) { throw new Error('Semantier Workspace identity is missing.') }
+          await gateway.connectWorkspace(conn.baseUrl, conn.workspaceScope, conn.connectionId)
+        } else {
+          await gateway.connect(wsUrl)
+        }
 
         if (cancelled) {
           return
@@ -836,7 +841,7 @@ export function useGatewayBoot({
 
         // Bounded for the same reason as attemptReconnect() (#93454): a wedged
         // ticket mint would otherwise hang the gateway switch forever.
-        const wsUrl = await withTimeout(
+        const wsUrl = conn.transport === 'semantier-workspace-http' ? '' : await withTimeout(
           resolveDesktopGatewayWsUrl(desktop, conn),
           RECONNECT_ATTEMPT_TIMEOUT_MS,
           'Timed out re-minting the gateway WebSocket URL'
@@ -846,7 +851,12 @@ export function useGatewayBoot({
           return
         }
 
-        await gateway.connect(wsUrl)
+        if (conn.transport === 'semantier-workspace-http') {
+          if (!conn.workspaceScope) { throw new Error('Semantier Workspace identity is missing.') }
+          await gateway.connectWorkspace(conn.baseUrl, conn.workspaceScope, conn.connectionId)
+        } else {
+          await gateway.connect(wsUrl)
+        }
 
         if (!ownsSwitch()) {
           return
@@ -1457,6 +1467,7 @@ export function useGatewayBoot({
           publish(conn)
           recordPrimaryConnection(conn)
           await gateway.connectWorkspace(conn.baseUrl, conn.workspaceScope, conn.connectionId)
+          await adoptPrimaryProfile(conn)
           stage = 'connected'
           await callbacksRef.current.refreshSessions()
           // Native local-runtime setup does not own an authenticated Cloud account.
