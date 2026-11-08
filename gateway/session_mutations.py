@@ -42,6 +42,15 @@ def _authorize_control(authority, actor, ref, params):
     if not has_mutation_receipt(authority.db, actor.subject, ref.session_id, params['request_id']):
         ref = _owner_ref(authority, ref, params)
         if ref.session_id not in authority.sessions:
+            # A verified profile operator may retire failed/corrupt cold state without
+            # restoring its execution policy. The store still owns revision, idle,
+            # epoch, routing-publication and exact-retry fences below.
+            if params.get('operation') == 'delete' and 'session:operator' in actor.capabilities:
+                from gateway.session_authorities import require_serving
+                require_serving(authority)
+                if authority.db.get_session(ref.session_id) is None:
+                    raise RuntimeStoreError('not_found')
+                return False
             from hermes_state_mutation_binding import authorize_history
             with authority.db._read_ctx() as conn:
                 from gateway.session_local_migration import require_history_claim
