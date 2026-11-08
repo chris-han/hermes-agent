@@ -136,7 +136,7 @@ export function useGatewayRequest() {
 
         if (conn.transport === 'semantier-workspace-http') {
           if (!conn.workspaceScope) { throw new Error('Semantier Workspace identity is missing.') }
-          await existing.connectWorkspace(conn.baseUrl, conn.workspaceScope, conn.connectionId)
+          await existing.connectWorkspace(conn.baseUrl, conn.workspaceScope, conn.connectionId, conn.profile)
         } else {
           await existing.connect(wsUrl)
         }

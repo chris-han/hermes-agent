@@ -13,6 +13,7 @@ export interface DesktopWorkspaceApi {
   logout: (origin: string) => Promise<void>
   sessions: (origin: string, scope: WorkspaceScope) => Promise<{ sessions: Array<{ key: string; title?: string }> }>
   history: (origin: string, scope: WorkspaceScope, sessionId: string) => Promise<import('./semantier-workspace-client').WorkspaceHistory>
+  nativeHistory: (origin: string, scope: WorkspaceScope, sessionId: string) => Promise<import('./semantier-workspace-client').WorkspaceNativeSnapshot>
   send: (origin: string, scope: WorkspaceScope, sessionId: string, message: string, requestIdentity: string) => Promise<import('./semantier-workspace-client').WorkspaceHistory>
 }
 
@@ -72,6 +73,13 @@ export function registerSemantierWorkspaceIpc(): void {
     const { client } = workspace(origin)
     assertWorkspaceScope(await client.identity(), scope)
     const result = await client.history(sessionId)
+    assertWorkspaceScope(await client.identity(), scope)
+    return result
+  })
+  ipcMain.handle('hermes:workspace:native-history', async (_event, origin: string, scope: WorkspaceScope, sessionId: string) => {
+    const { client } = workspace(origin)
+    assertWorkspaceScope(await client.identity(), scope)
+    const result = await client.nativeHistory(sessionId)
     assertWorkspaceScope(await client.identity(), scope)
     return result
   })

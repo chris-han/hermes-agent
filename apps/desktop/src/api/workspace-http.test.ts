@@ -74,3 +74,36 @@ it('reads the Native Winman roster through the explicit account-scoped HTTP owne
   }))
   gateway.close()
 })
+
+it('resolves Bot Chat by its server title registry only for the selected Native profile', async () => {
+  const api = vi.fn().mockResolvedValue({ profiles: [{ name: 'winman-a',
+    canonical_session: { id: 'canonical-a', resolved_id: 'tip-a', title: 'Bot Chat', message_count: 7 } }] })
+  Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: {
+    api, workspace: { identity: vi.fn().mockResolvedValue(identity) }
+  } })
+  const gateway = new HermesGateway()
+  await gateway.connectWorkspace('https://cloud.example', scope, 'cloud-a')
+  await expect(gateway.request('session.list', { profile: 'winman-a', title: 'Bot Chat', include_hidden: true }))
+    .resolves.toMatchObject({ sessions: [{ id: 'canonical-a', resolved_id: 'tip-a' }], scope: 'stored' })
+  await expect(gateway.request('session.list', { profile: 'foreign', title: 'Bot Chat' })).rejects.toThrow('profile')
+  await expect(gateway.request('session.list', { profile: 'winman-a', title: 'Other' })).rejects.toMatchObject({ code: -32601 })
+  gateway.close()
+})
+
+it('resumes the explicit Native Cloud profile through its owner and never sends it to Main history', async () => {
+  const snapshot = { session_id: 'canonical-a', messages: [{ row_id: 44, role: 'assistant', content: 'Native reply', timestamp: 10 }] }
+  const nativeHistory = vi.fn().mockResolvedValue(snapshot)
+  const history = vi.fn()
+  const send = vi.fn()
+  Object.defineProperty(window, 'hermesDesktop', { configurable: true, value: {
+    workspace: { identity: vi.fn().mockResolvedValue(identity), nativeHistory, history, send }
+  } })
+  const gateway = new HermesGateway()
+  await gateway.connectWorkspace('https://cloud.example', scope, 'cloud-a', 'winman-a')
+  await expect(gateway.request('session.resume', { session_id: 'canonical-a' })).resolves.toEqual(snapshot)
+  expect(nativeHistory).toHaveBeenCalledWith('https://cloud.example', scope, 'canonical-a')
+  expect(history).not.toHaveBeenCalled()
+  await expect(gateway.request('prompt.submit', { session_id: 'canonical-a', text: 'Hello', submission_id: 'stable' })).rejects.toThrow('owner adapter')
+  expect(send).not.toHaveBeenCalled()
+  gateway.close()
+})

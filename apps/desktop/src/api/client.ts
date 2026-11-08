@@ -84,7 +84,7 @@ function remainingRequestBudget(deadline: number, signal?: AbortSignal): number 
 const workspaceReadScopes = new Map<string, WorkspaceScope>()
 
 export class HermesGateway extends JsonRpcGatewayClient {
-  private workspaceConnection: { origin: string; scope: WorkspaceScope; connectionId?: string } | null = null
+  private workspaceConnection: { origin: string; scope: WorkspaceScope; connectionId?: string; profile?: string } | null = null
   private workspaceState: ConnectionState = 'idle'
   private readonly workspaceStates = new Set<(state: ConnectionState) => void>()
   private readonly workspaceEvents = new GatewayEventHub()
@@ -106,11 +106,11 @@ export class HermesGateway extends JsonRpcGatewayClient {
   }
 
   /** HTTP readiness is an authenticated resource check, never a gateway.ready handshake. */
-  async connectWorkspace(origin: string, scope: WorkspaceScope, connectionId?: string): Promise<void> {
+  async connectWorkspace(origin: string, scope: WorkspaceScope, connectionId?: string, profile = 'default'): Promise<void> {
     this.connectionGeneration++
     const generation = this.connectionGeneration
     super.close()
-    this.workspaceConnection = { origin, scope, connectionId }
+    this.workspaceConnection = { origin, scope, connectionId, profile }
     this.setWorkspaceState('connecting')
     try {
       const identity = await window.hermesDesktop.workspace!.identity(origin)
@@ -136,6 +136,20 @@ export class HermesGateway extends JsonRpcGatewayClient {
       this.requireConnectionGeneration(generation)
       return result
     }
+    if (method === 'session.list' && params.title === 'Bot Chat') {
+      if (!connection.connectionId) { throw new Error('The Cloud registry requires an explicit connection owner.') }
+      const roster = await hermesApiAs<{ profiles: Array<{ name: string; canonical_session?: {
+        id: string; resolved_id?: string; title?: string; root_title?: string; [key: string]: unknown
+      } | null }> }>({ connectionId: connection.connectionId, profile: 'default' }, { path: '/api/profiles' })
+      this.requireConnectionGeneration(generation)
+      const profile = roster.profiles.find(row => row.name === params.profile)
+      if (!profile) { throw new Error('This Native profile is unavailable in the current workspace.') }
+      const canonical = profile.canonical_session
+      if (canonical && (canonical.root_title || canonical.title) !== 'Bot Chat') {
+        throw new Error('The Native Bot Chat title registry is unavailable.')
+      }
+      return { sessions: canonical ? [{ ...canonical, session_id: canonical.resolved_id || canonical.id }] : [], scope: 'stored' } as T
+    }
     if (method === 'ping' || method === 'setup.status' || method === 'setup.runtime_check') {
       const identity = await bridge.identity(connection.origin)
       this.requireConnectionGeneration(generation)
@@ -148,6 +162,12 @@ export class HermesGateway extends JsonRpcGatewayClient {
         : { ok: ready, error: ready ? undefined : identity.account_provisioning?.reason }) as T
     }
     if (method === 'session.resume' || method === 'session.activate') {
+      if ((params.profile || connection.profile || 'default') !== 'default') {
+        const snapshot = await bridge.nativeHistory(connection.origin, connection.scope, sessionId)
+        this.requireConnectionGeneration(generation)
+        signal?.throwIfAborted()
+        return snapshot as T
+      }
       const history = await bridge.history(connection.origin, connection.scope, sessionId)
       this.requireConnectionGeneration(generation)
       signal?.throwIfAborted()
@@ -155,6 +175,9 @@ export class HermesGateway extends JsonRpcGatewayClient {
         message_count: history.messages.length, messages: workspaceTranscript(history) } as T
     }
     if (method === 'prompt.submit') {
+      if ((params.profile || connection.profile || 'default') !== 'default') {
+        throw new Error('Native Bot Chat submission requires its Cloud owner adapter. Continue in the original Main conversation.')
+      }
       const identity = String(params.submission_id || params.request_id || '')
       if (!identity) { throw new Error('A retained request identity is required to send a Cloud message.') }
       await bridge.send(connection.origin, connection.scope, sessionId, String(params.text || ''), identity)

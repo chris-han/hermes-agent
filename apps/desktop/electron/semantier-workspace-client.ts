@@ -29,6 +29,15 @@ export interface WorkspaceMessage {
   metadata?: Record<string, unknown>
 }
 
+export interface WorkspaceNativeSnapshot {
+  session_id: string
+  canonical_session: { id: string; resolved_id?: string }
+  bot_id: string
+  native_profile_id: string
+  messages: Array<Record<string, unknown>>
+  [key: string]: unknown
+}
+
 export interface WorkspaceHistory {
   sessionId: string
   messages: WorkspaceMessage[]
@@ -85,6 +94,14 @@ export function createSemantierWorkspaceClient(origin: string, fetchSession: (in
     async sessions(): Promise<{ sessions: Array<{ key: string; title?: string }> }> {
       return (await request('/api/sessions')).json()
     },
+    async nativeHistory(sessionId: string): Promise<WorkspaceNativeSnapshot> {
+      const result: WorkspaceNativeSnapshot = await (await request(`/api/winman/history/${encodeURIComponent(sessionId)}`)).json()
+      const ids = [result.canonical_session?.id, result.canonical_session?.resolved_id]
+      if (!result.bot_id || !result.native_profile_id || !ids.includes(sessionId) || !ids.includes(result.session_id)) {
+        throw new Error('This canonical Bot Chat is unavailable in the current workspace.')
+      }
+      return result
+    },
     async history(sessionKey: string): Promise<WorkspaceHistory> {
       const result: WorkspaceHistory = await (await request(`/api/history?sessionKey=${encodeURIComponent(sessionKey)}`)).json()
 
@@ -128,13 +145,34 @@ export function workspaceTranscript(history: WorkspaceHistory) {
 /** Read projection for the existing Desktop Sessions surface, not another store. */
 export async function workspaceDesktopRead(
   client: ReturnType<typeof createSemantierWorkspaceClient>,
-  path: string
+  path: string,
+  routeProfile?: string
 ): Promise<unknown> {
   const url = new URL(path, 'https://desktop.invalid')
   const pathname = url.pathname
-  const profile = url.searchParams.get('profile')
+  const profile = routeProfile && routeProfile !== 'default' ? routeProfile : url.searchParams.get('profile')
   if (profile && profile !== 'default' && profile !== 'all') {
-    throw Object.assign(new Error('This profile requires its server-owned Cloud route.'), { statusCode: 404 })
+    const owner = await client.winman()
+    if (owner.profile.name !== profile) {
+      throw Object.assign(new Error('This Native profile is unavailable in the current workspace.'), { statusCode: 404 })
+    }
+    if (pathname === '/api/profiles') {
+      return { profiles: [{ ...owner.profile, runtime_bot_id: owner.bot_id,
+        native_profile_id: owner.native_profile_id }], bot_mode_protocol: owner.bot_mode_protocol }
+    }
+    const canonical = owner.profile.canonical_session as null | { id: string; resolved_id?: string; [key: string]: unknown }
+    const match = /^\/api\/sessions\/([^/]+)(\/messages)?$/.exec(pathname)
+    if (match && canonical && [canonical.id, canonical.resolved_id].includes(decodeURIComponent(match[1]))) {
+      if (match[2]) {
+        const snapshot = await client.nativeHistory(decodeURIComponent(match[1]))
+        return { session_id: snapshot.session_id, messages: snapshot.messages, total: snapshot.messages.length }
+      }
+      return { ...canonical, id: decodeURIComponent(match[1]), profile }
+    }
+    if (pathname === '/api/sessions' || pathname === '/api/profiles/sessions') {
+      return { sessions: canonical ? [{ ...canonical, profile }] : [], total: canonical ? 1 : 0, offset: 0 }
+    }
+    throw Object.assign(new Error('This Native Bot Chat operation is unavailable.'), { statusCode: 404 })
   }
   if (url.searchParams.get('archived') === 'only') {
     throw Object.assign(new Error('Archived-only enumeration is unavailable on this Workspace route.'), { statusCode: 501 })

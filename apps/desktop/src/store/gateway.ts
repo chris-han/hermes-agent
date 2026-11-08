@@ -795,7 +795,7 @@ async function openSecondary(entry: Secondary): Promise<void> {
     try {
       if (conn.transport === 'semantier-workspace-http') {
         if (!conn.workspaceScope) { throw new Error('Semantier Workspace identity is missing.') }
-        await entry.gateway.connectWorkspace(conn.baseUrl, conn.workspaceScope, conn.connectionId)
+        await entry.gateway.connectWorkspace(conn.baseUrl, conn.workspaceScope, conn.connectionId, conn.profile)
       } else {
         await entry.gateway.connect(wsUrl)
       }

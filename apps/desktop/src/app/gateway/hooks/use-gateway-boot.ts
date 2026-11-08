@@ -519,7 +519,7 @@ export function useGatewayBoot({
 
         if (conn.transport === 'semantier-workspace-http') {
           if (!conn.workspaceScope) { throw new Error('Semantier Workspace identity is missing.') }
-          await gateway.connectWorkspace(conn.baseUrl, conn.workspaceScope, conn.connectionId)
+          await gateway.connectWorkspace(conn.baseUrl, conn.workspaceScope, conn.connectionId, conn.profile)
         } else {
           await gateway.connect(wsUrl)
         }
@@ -853,7 +853,7 @@ export function useGatewayBoot({
 
         if (conn.transport === 'semantier-workspace-http') {
           if (!conn.workspaceScope) { throw new Error('Semantier Workspace identity is missing.') }
-          await gateway.connectWorkspace(conn.baseUrl, conn.workspaceScope, conn.connectionId)
+          await gateway.connectWorkspace(conn.baseUrl, conn.workspaceScope, conn.connectionId, conn.profile)
         } else {
           await gateway.connect(wsUrl)
         }
@@ -1466,7 +1466,7 @@ export function useGatewayBoot({
           if (!conn.workspaceScope) { throw new Error('Semantier Workspace identity is missing.') }
           publish(conn)
           recordPrimaryConnection(conn)
-          await gateway.connectWorkspace(conn.baseUrl, conn.workspaceScope, conn.connectionId)
+          await gateway.connectWorkspace(conn.baseUrl, conn.workspaceScope, conn.connectionId, conn.profile)
           await adoptPrimaryProfile(conn)
           stage = 'connected'
           await callbacksRef.current.refreshSessions()

@@ -68,3 +68,13 @@ it('projects only the server-selected Native Winman profile and canonical chat',
   expect(transport).toHaveBeenCalledWith('https://cloud.example/api/winman', expect.objectContaining({ method: 'GET' }))
   expect(transport).toHaveBeenCalledTimes(1)
 })
+
+it('keeps canonical Native history IDs and refuses another conversation', async () => {
+  const snapshot = { session_id: 'canonical-a', canonical_session: { id: 'canonical-a' },
+    bot_id: 'bot-a', native_profile_id: 'native-a', messages: [{ row_id: 44, role: 'assistant', content: 'Native reply', timestamp: 10 }] }
+  const transport = vi.fn<typeof fetch>().mockImplementation(async () => Response.json(snapshot))
+  const client = createSemantierWorkspaceClient('https://cloud.example', transport)
+  await expect(client.nativeHistory('canonical-a')).resolves.toEqual(snapshot)
+  await expect(client.nativeHistory('foreign')).rejects.toThrow('canonical')
+  expect(transport.mock.calls[0][0]).toBe('https://cloud.example/api/winman/history/canonical-a')
+})

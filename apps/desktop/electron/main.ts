@@ -11039,9 +11039,16 @@ async function ensureRegistryBackend(
     if (!identity.authenticated || !identity.user?.user_id || !identity.workspace?.id || !identity.organization_id) {
       throw new Error('Sign in to the Semantier Cloud workspace before connecting.')
     }
+    const selectedProfile = profile || 'default'
+    if (selectedProfile !== 'default') {
+      const owner = await client.winman()
+      if (owner.profile.name !== selectedProfile) { throw new Error('This Native profile is unavailable in the current workspace.') }
+      assertWorkspaceScope(await client.identity(), { userId: identity.user.user_id,
+        workspaceId: identity.workspace.id, organizationId: identity.organization_id })
+    }
     return {
       baseUrl: origin, transport: source.transport, mode: 'remote', remoteKind: 'cloud',
-      connectionId: source.id, profile: 'default', registryScoped: true,
+      connectionId: source.id, profile: selectedProfile, registryScoped: true,
       workspaceScope: { userId: identity.user.user_id, workspaceId: identity.workspace.id, organizationId: identity.organization_id },
       token: '', wsUrl: '', logs: [], ...getWindowState()
     }
@@ -15770,7 +15777,7 @@ async function fetchJsonForBackend(
     }
     const { client } = semantierWorkspace(descriptor.baseUrl)
     assertWorkspaceScope(await client.identity(), descriptor.workspaceScope)
-    const result = await workspaceDesktopRead(client, path)
+    const result = await workspaceDesktopRead(client, path, descriptor.profile)
     assertWorkspaceScope(await client.identity(), descriptor.workspaceScope)
     return result
   }
@@ -16559,7 +16566,7 @@ async function dispatchRegistryApiRequest(
     }
     const { client } = semantierWorkspace(connection.baseUrl)
     assertWorkspaceScope(await client.identity(), request.workspaceScope)
-    const result = await workspaceDesktopRead(client, request.path)
+    const result = await workspaceDesktopRead(client, request.path, connection.profile)
     assertWorkspaceScope(await client.identity(), request.workspaceScope)
     return result
   }
