@@ -263,3 +263,18 @@ it('routes an owned Cloud model.options to scoped Workspace HTTP without a socke
  await expect(gateway.request('model.options',{query_only:false})).rejects.toThrow(/query-only/)
  gateway.close();forgetWorkspaceReadScope('cloud-discovery')
 })
+
+it('coalesces identical Cloud authentication dials without weakening a different account fence', async () => {
+ let release!: (value: unknown)=>void
+ const pending=new Promise(resolve=>{release=resolve})
+ const auth=vi.fn().mockReturnValueOnce(pending).mockResolvedValue(identity)
+ Object.defineProperty(window,'hermesDesktop',{configurable:true,value:{workspace:{identity:auth}}})
+ const gateway=new HermesGateway()
+ const first=gateway.connectWorkspace('https://cloud.example',scope,'same-cloud')
+ const second=gateway.connectWorkspace('https://cloud.example',{...scope},'same-cloud')
+ release(identity)
+ await expect(Promise.all([first,second])).resolves.toEqual([undefined,undefined])
+ expect(auth).toHaveBeenCalledTimes(1)
+ await expect(gateway.connectWorkspace('https://cloud.example',{...scope,userId:'foreign'},'same-cloud')).rejects.toThrow(/changed/)
+ gateway.close();forgetWorkspaceReadScope('same-cloud')
+})

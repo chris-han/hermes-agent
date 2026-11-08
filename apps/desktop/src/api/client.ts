@@ -86,6 +86,7 @@ const workspaceReadScopes = new Map<string, { scope: WorkspaceScope; origin: str
 
 export class HermesGateway extends JsonRpcGatewayClient {
   private workspaceConnection: { origin: string; scope: WorkspaceScope; connectionId?: string; profile?: string } | null = null
+  private workspaceDial: Promise<void> | null = null
   private workspaceState: ConnectionState = 'idle'
   private readonly workspaceStates = new Set<(state: ConnectionState) => void>()
   private readonly workspaceEvents = new GatewayEventHub()
@@ -180,6 +181,24 @@ export class HermesGateway extends JsonRpcGatewayClient {
 
   /** HTTP readiness is an authenticated resource check, never a gateway.ready handshake. */
   async connectWorkspace(origin: string, scope: WorkspaceScope, connectionId?: string, profile = 'default'): Promise<void> {
+    const current = this.workspaceConnection
+    const same = current?.origin === origin && current.connectionId === connectionId && current.profile === profile &&
+      current.scope.userId === scope.userId && current.scope.workspaceId === scope.workspaceId &&
+      current.scope.organizationId === scope.organizationId
+    if (same && this.workspaceState === 'connecting' && this.workspaceDial) {return this.workspaceDial}
+    if (same && this.workspaceState === 'open') {
+      const generation = this.connectionGeneration
+      const identity = await window.hermesDesktop.workspace!.identity(origin)
+      this.requireConnectionGeneration(generation)
+      assertWorkspaceScope(identity, scope)
+      return
+    }
+    const pending = this.openWorkspace(origin, scope, connectionId, profile)
+    this.workspaceDial = pending
+    try {await pending} finally {if (this.workspaceDial === pending) {this.workspaceDial = null}}
+  }
+
+  private async openWorkspace(origin: string, scope: WorkspaceScope, connectionId?: string, profile = 'default'): Promise<void> {
     this.stopWorkspacePoll()
     this.workspacePollDelay = 2_000
     this.connectionGeneration++
