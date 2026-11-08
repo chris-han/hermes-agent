@@ -661,6 +661,7 @@ export interface SessionInfo {
 }
 
 export type TimelineDisplayMetadata =
+  | { author_bot_id: string; author_display_name: string }
   | { model: string; provider?: string }
   | {
       delegation_id: string

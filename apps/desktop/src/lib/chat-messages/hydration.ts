@@ -205,6 +205,15 @@ function parseDisplayMetadata(metadata: SessionMessage['display_metadata']): nul
   return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null
 }
 
+function messageBotAuthor(message: SessionMessage): ChatMessage['botAuthor'] {
+  if (message.role !== 'assistant') { return undefined }
+  const metadata = parseDisplayMetadata(message.display_metadata)
+  const botId = metadata?.author_bot_id
+  const displayName = metadata?.author_display_name
+  return typeof botId === 'string' && botId.trim() && typeof displayName === 'string' && displayName.trim()
+    ? { botId, displayName } : undefined
+}
+
 // `agent/conversation_loop.py::_failed_turn_display_metadata`: the failed turn's error card,
 // kept on its boundary row so a reopened session shows it after the live frame is gone.
 function failedTurnError(
@@ -544,10 +553,18 @@ export function toChatMessages(messages: SessionMessage[]): ChatMessage[] {
       return
     }
 
+    const botAuthor = messageBotAuthor(message)
+    if (message.role === 'assistant' && activeAssistantIndex !== null &&
+        (result[activeAssistantIndex]?.botAuthor?.botId !== botAuthor?.botId ||
+         result[activeAssistantIndex]?.botAuthor?.displayName !== botAuthor?.displayName)) {
+      flushPendingTools(index)
+      activeAssistantIndex = null
+    }
+
     const isToolOnlyAssistant =
       message.role === 'assistant' && parts.length > 0 && parts.every(part => part.type === 'tool-call')
 
-    if (isToolOnlyAssistant) {
+    if (isToolOnlyAssistant && !botAuthor) {
       pendingToolParts = [...pendingToolParts, ...parts]
       pendingToolTimestamp ??= message.timestamp
       pendingToolRows += 1
@@ -613,6 +630,7 @@ export function toChatMessages(messages: SessionMessage[]): ChatMessage[] {
     result.push({
       id: `${message.timestamp || Date.now()}-${index}-${displayRole}`,
       role: displayRole,
+      ...(botAuthor ? { botAuthor } : {}),
       parts,
       ...(message.role === 'assistant' && durableComplete !== undefined ? { durableComplete } : {}),
       ...(message.display_kind === 'async_delegation_complete' || message.display_kind === 'process_complete'

@@ -2491,3 +2491,11 @@ describe('applyStoredSessionPreviewRuntimeInfo does not persist the preview', ()
     expect(localStorage.getItem('hermes.desktop.composer.provider')).toBe('anthropic')
   })
 })
+
+it('compares Bot author values so attribution changes repaint without idle churn', () => {
+  const base = msg('1', 'assistant', 'Reminder')
+  const authored = { ...base, botAuthor: { botId: 'bot_a', displayName: 'Winman' } }
+  expect(chatMessagesEquivalent(base, authored)).toBe(false)
+  expect(chatMessagesEquivalent(authored, { ...authored, botAuthor: { ...authored.botAuthor } })).toBe(true)
+  expect(chatMessagesEquivalent(authored, { ...authored, botAuthor: { ...authored.botAuthor, displayName: 'Custom name' } })).toBe(false)
+})
