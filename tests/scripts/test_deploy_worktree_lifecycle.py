@@ -105,7 +105,6 @@ foreach($name in @('Get-SourceGit','Run')){
 function Report-Status([string]$Message){}
 # Execute the production ancestry/merge/equality segment. Windows path and
 # process qualification are separate; this fixture proves only the Git logic.
-function git.exe { & $args[0] } # replaced below with the fixture's native Git
 $git=$args[2]
 function git.exe { & $git @args }
 $f=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Sync-GitHubLatestSource'},$true)
