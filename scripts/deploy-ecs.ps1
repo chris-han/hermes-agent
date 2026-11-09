@@ -194,6 +194,42 @@ function Initialize-ReleasePaths {
     $script:SourceBinding.runtimeHead=[string]$runtimeHead;$script:SourceBinding.hermesGitlink=$Matches[1]
   }
 }
+function Initialize-ReactCompilerCache([string]$Source) {
+  # The admitted Vite config already keys compiled output by module text,
+  # relative module path, lockfile, compiler helper, config and NODE_ENV.
+  # Keep that cache outside disposable source without patching pinned code.
+  $sourceRoot=Assert-LocalWindowsPath $Source
+  $shared=Assert-LocalWindowsPath (Join-Path $BuildCache 'react-compiler\desktop')
+  $local=Join-Path $sourceRoot 'apps\desktop\node_modules\.cache\hermes-react-compiler'
+  if(!(Test-Path -LiteralPath (Join-Path $sourceRoot 'apps\desktop\scripts\compiler-cache.mjs'))){
+    Report-Status 'React Compiler cache: selected source has no cache helper; unchanged.'
+    return
+  }
+  New-Item -ItemType Directory -Path $shared -Force | Out-Null
+  New-Item -ItemType Directory -Path (Split-Path -Parent $local) -Force | Out-Null
+  # Resolve dependency junctions before writing: never mutate Linux dependencies.
+  $realParent=& $Node -e 'const fs=require("node:fs");process.stdout.write(fs.realpathSync(process.argv[1]))' (Split-Path -Parent $local)
+  if($LASTEXITCODE -ne 0){throw 'Cannot resolve React Compiler cache parent.'}
+  $null=Assert-LocalWindowsPath ([string]$realParent)
+  if(Test-Path -LiteralPath $local){
+    $item=Get-Item -LiteralPath $local -Force
+    if($item.Attributes -band [IO.FileAttributes]::ReparsePoint){
+      $realCache=& $Node -e 'const fs=require("node:fs");process.stdout.write(fs.realpathSync(process.argv[1]))' $local
+      if($LASTEXITCODE -ne 0 -or [IO.Path]::GetFullPath([string]$realCache).TrimEnd('\') -ine $shared.TrimEnd('\')){
+        throw 'React Compiler cache points elsewhere; preserve and inspect existing link.'
+      }
+      Report-Status ('Reusing persistent React Compiler cache: '+$shared)
+      return
+    }
+    if(!$item.PSIsContainer){throw 'React Compiler cache path is not a directory.'}
+    # Seed warm entries once; retain the original rather than deleting work.
+    & "$env:WINDIR\System32\robocopy.exe" $local $shared /E /XJ /R:1 /W:1 /NFL /NDL /NP | Out-Null
+    if($LASTEXITCODE -gt 7){throw 'React Compiler cache seed failed.'}
+    Move-Item -LiteralPath $local -Destination ($local+'.previous-'+[Guid]::NewGuid().ToString('N'))
+  }
+  New-Item -ItemType Junction -Path $local -Target $shared | Out-Null
+  Report-Status ('Persistent React Compiler cache ready: '+$shared)
+}
 function Initialize-LocalBuildSource([string]$Source,[string]$Revision) {
   $null=Assert-LocalWindowsPath $Source
   if(!(Test-Path -LiteralPath $Source)){
@@ -783,8 +819,8 @@ function Initialize-BuildPreflight {
   Run 'link.exe' @('/nologo','/MANIFEST:EMBED',('/OUT:'+$probeExe),$probeObj)
   Run $probeExe @()
   Report-Status 'Preflight: native compile, SDK resource/manifest linking and execution passed.'
-  if($NativeOnly){return}
   Initialize-RustPreflight
+  if($NativeOnly){return}
 
   $cacheRoot='D:\repo\deliverables\cache\node-pre-gyp\get-windows'
   $archive=Join-Path $cacheRoot 'v9.3.0\napi-9-win32-unknown-x64.tar.gz'
@@ -994,6 +1030,7 @@ function Build-CommitPackage {
   }
   # --prepared performs the builder's own source-bound integrity checks. Never
   # delete a rejected preparation or silently reinstall all dependencies.
+  Initialize-ReactCompilerCache $source
   Report-Status 'Building one complete unsigned MSIX from validated prepared inputs.'
   # Sign only the finished distribution MSIX later. Do not let builder
   # certificate discovery or inherited Azure credentials sign every payload PE.
