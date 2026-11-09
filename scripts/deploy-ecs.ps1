@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+#Requires -Version 7.6
 <#
 .SYNOPSIS
   Build an exact -Commit, sign, locally accept and publish one MSIX to ECS.
@@ -19,7 +19,7 @@
 .EXAMPLE
   .\scripts\deploy-ecs.ps1 -Commit eede5238816caa515089f99c558964fe6adec2e9
 .EXAMPLE
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -File 'R:\hermes-agent\scripts\deploy-ecs.ps1' -WhatIf
+  pwsh.exe -NoProfile -ExecutionPolicy Bypass -File 'R:\hermes-agent\scripts\deploy-ecs.ps1' -WhatIf
   If Windows blocks this unsigned network-source script before it starts, use this process-scoped launch.
 .DESCRIPTION
   BuildMode defaults to Beta: sign, install and publish without release verification.
@@ -123,11 +123,11 @@ function Assert-ExecutionPolicyPreflight {
   $managed=@($policies | Where-Object {$_.Scope -in @('MachinePolicy','UserPolicy') -and $_.ExecutionPolicy -ne 'Undefined'})
   if($effective -in @('Restricted','AllSigned')){
     if($managed.Count){throw "Execution policy $effective is enforced by Group Policy. Use administrator-approved signed build scripts; this operator cannot override managed policy."}
-    throw "Execution policy $effective can block unsigned build helpers. Relaunch with: powershell.exe -NoProfile -ExecutionPolicy Bypass -File '$PSCommandPath' (append the same build arguments). Persistent CurrentUser Bypass is an explicit user choice; this script never sets it."
+    throw "Execution policy $effective can block unsigned build helpers. Relaunch with: pwsh.exe -NoProfile -ExecutionPolicy Bypass -File '$PSCommandPath' (append the same build arguments). Persistent CurrentUser Bypass is an explicit user choice; this script never sets it."
   }
   Report-Status ("Execution-policy preflight: {0}; persistent policy unchanged." -f $effective)
   if($effective -eq 'RemoteSigned'){
-    Report-Status "UNC/R: unsigned scripts may be blocked before preflight. If so, use powershell.exe -NoProfile -ExecutionPolicy Bypass -File '$PSCommandPath' with the same arguments."
+    Report-Status "UNC/R: unsigned scripts may be blocked before preflight. If so, use pwsh.exe -NoProfile -ExecutionPolicy Bypass -File '$PSCommandPath' with the same arguments."
   }
 }
 function Initialize-ReleasePaths {
@@ -760,7 +760,7 @@ function Initialize-BuildPreflight {
   param([switch]$NativeOnly)
   if([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT){throw 'Build preflight requires native Windows.'}
   Report-Status 'Preflight: initializing Windows PATH and VS 2022 x64 SDK environment.'
-  $systemPaths=@("$env:WINDIR\System32","$env:WINDIR","$env:WINDIR\System32\Wbem",
+  $systemPaths=@($PSHOME,"$env:WINDIR\System32","$env:WINDIR","$env:WINDIR\System32\Wbem",
     "$env:WINDIR\System32\OpenSSH","$env:WINDIR\System32\WindowsPowerShell\v1.0",'D:\Program Files\Git\cmd')
   $vs='C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat'
   $sdk='10.0.26100.0'

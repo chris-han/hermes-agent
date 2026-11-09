@@ -40,6 +40,12 @@ export default async function beforeBuild() {
 
 function stageMsixAssets() {
   const desktop = path.join(import.meta.dirname, '..')
+  // Windows App Installer otherwise adds a gray plate around the branded PNG.
+  // Check the actual packaging config before staging assets, including commit builds.
+  const packaging = require('../electron-builder.config.cjs')
+  if (packaging.msix?.backgroundColor !== 'transparent') {
+    throw new Error('Semantier MSIX must use a transparent logo background')
+  }
   const sourceDir = path.join(desktop, 'assets', 'appx')
   const stageDir = path.join(desktop, 'build', 'appx')
   // Every generated logo goes in: the qualified siblings (*.scale-N,

@@ -259,6 +259,10 @@ module.exports = {
     publisher: store ? mustStoreMsix(storeMsixWhenStore).publisher : OUT_OF_STORE_PUBLISHER,
     publisherDisplayName: store ? mustStoreMsix(storeMsixWhenStore).publisherDisplayName
       : 'Semantier Technology',
+    // App Installer otherwise places the already full-bleed Semantier mark on
+    // electron-builder's default opaque gray tile (#464646).
+    // Windows owns the icon's displayed dimensions; this removes the gray plate.
+    backgroundColor: 'transparent',
     // The native quad is the build time (scripts/msix-shared.mjs::nativeQuad),
     // baked into the manifest template, so the builder's own build-number
     // override would stamp a second, conflicting version.
