@@ -723,6 +723,26 @@ describe('ModelSettings', () => {
     )
   })
 
+  it('searches auxiliary providers and models locally and keeps the draft until Apply', async () => {
+    getGlobalModelOptions.mockResolvedValue({ providers: [
+      { name: 'Nous', slug: 'nous', authenticated: true, eligible_models: ['shared-id'], models: ['shared-id'] },
+      { name: 'Second Provider', slug: 'second', authenticated: true, eligible_models: ['shared-id'], models: ['shared-id'] }
+    ] })
+    renderModelSettings()
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Change' }))[0])
+    fireEvent.click(screen.getByRole('combobox', { name: 'Vision provider' }))
+    fireEvent.change(screen.getByPlaceholderText('Provider'), { target: { value: 'Second' } })
+    fireEvent.click(screen.getByRole('option', { name: 'Second Provider' }))
+    expect(setModelAssignment).not.toHaveBeenCalled()
+    const calls = getGlobalModelOptions.mock.calls.length
+    fireEvent.click(screen.getByRole('combobox', { name: 'Vision model' }))
+    fireEvent.change(screen.getByPlaceholderText('Model'), { target: { value: 'shared' } })
+    fireEvent.click(screen.getByRole('option', { name: 'shared-id' }))
+    expect(getGlobalModelOptions).toHaveBeenCalledTimes(calls)
+    fireEvent.click(screen.getAllByRole('button', { name: 'Apply' }).at(-1)!)
+    await waitFor(() => expect(setModelAssignment).toHaveBeenCalledWith(expect.objectContaining({ provider: 'second', model: 'shared-id', task: 'vision' })))
+  })
+
   it('edits auxiliary reasoning effort and applies it with the assignment', async () => {
     getAuxiliaryModels.mockResolvedValueOnce({
       main: { provider: 'nous', model: 'hermes-4' },

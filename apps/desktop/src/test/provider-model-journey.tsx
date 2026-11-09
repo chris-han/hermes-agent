@@ -3,13 +3,14 @@ import '@/styles.css'
 /** Acceptance entry only: real UI, native ticket bridge, canonical sessions and provider HTTP. */
 import { useStore } from '@nanostores/react'
 import { QueryClientProvider } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { MemoryRouter } from 'react-router'
 
 import { HermesGateway, setApiRequestConnection, setApiRequestProfile } from '@/api/client'
 import { getGlobalModelInfo } from '@/api/models'
 import { useModelControls } from '@/app/session/hooks/use-model-controls'
+import { FallbackModelsField } from '@/app/settings/fallback-models-field'
 import { ModelSettings } from '@/app/settings/model-settings'
 import { ProvidersSettings } from '@/app/settings/providers-settings'
 import { ModelMenuCloseContext, ModelMenuPanel } from '@/app/shell/model-menu-panel'
@@ -18,6 +19,7 @@ import { NotificationStack } from '@/components/notifications'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import type { HermesApiRequest, HermesConnection } from '@/global'
+import { getHermesConfigRecord, saveHermesConfig } from '@/hermes'
 import { I18nProvider } from '@/i18n'
 import { queryClient } from '@/lib/query-client'
 import { setPrimaryGateway, setPrimaryGatewayConnection } from '@/store/gateway'
@@ -62,6 +64,17 @@ async function connect(next: number) {
 
 await connect(source)
 
+function BackupJourney() {
+  const [chain, setChain] = useState<unknown>([])
+  const [ready, setReady] = useState(false)
+  useEffect(() => { void getHermesConfigRecord('default').then(config => { setChain(config.fallback_providers ?? []); setReady(true) }) }, [])
+
+  return ready && <section aria-label="Backup Models"><FallbackModelsField onChange={next => {
+    setChain(next)
+    void saveHermesConfig({ fallback_providers: next }, 'default')
+  }} value={chain} /></section>
+}
+
 function Journey() {
   const [page, setPage] = useState('providers')
   const [providerView, setProviderView] = useState<'keys' | 'accounts' | 'custom-endpoints'>('keys')
@@ -98,12 +111,17 @@ function Journey() {
     <nav className="flex flex-wrap gap-2">
       <Button onClick={() => { setProviderView('keys'); setPage('providers') }}>API Keys</Button>
       <Button onClick={() => setPage('main')}>Main Model</Button>
+      <Button onClick={() => { setProviderView('custom-endpoints'); setPage('providers') }}>Custom Endpoints</Button>
+      <Button onClick={() => setPage('backup')}>Backup Models</Button>
+      <Button onClick={() => setPage('auxiliary')}>Auxiliary Models</Button>
       <Button onClick={() => void newChat()}>Open Chat</Button>
     </nav>
     {error && <p role="alert">{error}</p>}
     {page === 'providers' && <ProvidersSettings onClose={() => {}} onConfigSaved={() => void queryClient.invalidateQueries()}
       onMainModelChanged={applySavedMainModel} onViewChange={setProviderView} view={providerView} />}
     {page === 'main' && <ModelSettings onMainModelChanged={applySavedMainModel} scopeProfile="default" subpage="main" />}
+    {page === 'backup' && <BackupJourney />}
+    {page === 'auxiliary' && <ModelSettings scopeProfile="default" subpage="auxiliary" />}
     {page === 'composer' && <section>
       <p data-testid="route">{provider} / {model}</p>
       <DropdownMenu onOpenChange={setMenuOpen} open={menuOpen}>

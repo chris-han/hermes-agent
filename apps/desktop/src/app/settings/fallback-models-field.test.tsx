@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Radix Select calls scrollIntoView / pointer-capture APIs jsdom lacks.
@@ -10,8 +10,11 @@ beforeAll(() => {
 })
 
 const getGlobalModelOptions = vi.fn()
+vi.mock('@/store/session', async importOriginal => ({ ...(await importOriginal<Record<string, unknown>>()), $connection: (await import('nanostores')).atom({ mode: 'local', baseUrl: 'http://fixture', connectionId: 'test-local' }) }))
+vi.mock('@/lib/model-options', async importOriginal => ({ ...(await importOriginal<Record<string, unknown>>()), requestDiscoveredModelOptions: (...args: unknown[]) => getGlobalModelOptions(...args) }))
 
-vi.mock('@/hermes', () => ({
+vi.mock('@/hermes', async importOriginal => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   getGlobalModelOptions: () => getGlobalModelOptions()
 }))
 
@@ -22,9 +25,9 @@ const { FallbackModelsField } = await import('./fallback-models-field')
 beforeEach(() => {
   getGlobalModelOptions.mockResolvedValue({
     providers: [
-      { name: 'GitHub Copilot', slug: 'copilot', models: ['gpt-5-mini', 'gpt-5.4-mini'] },
-      { name: 'OpenAI Codex', slug: 'openai-codex', models: ['gpt-5.4-mini'] },
-      { name: 'Nous', slug: 'nous', models: ['hermes-4'] }
+      { name: 'GitHub Copilot', slug: 'copilot', models: ['gpt-5-mini', 'gpt-5.4-mini'], eligible_models: ['gpt-5-mini', 'gpt-5.4-mini'] },
+      { name: 'OpenAI Codex', slug: 'openai-codex', models: ['gpt-5.4-mini'], eligible_models: ['gpt-5.4-mini'] },
+      { name: 'Nous', slug: 'nous', models: ['hermes-4'], eligible_models: ['hermes-4'] }
     ]
   })
 })
@@ -69,6 +72,15 @@ const CHAIN = [
 ]
 
 describe('FallbackModelsField', () => {
+  it('does not delete a saved fallback during an incomplete provider replacement', async () => {
+    const routed = { ...CHAIN[0], base_url: 'http://fixture/v1', key_env: 'FIXTURE_KEY', api_key: '${FIXTURE_KEY}', api_mode: 'responses' }
+    const onChange = renderField([routed, CHAIN[1]])
+    await waitFor(() => expect(getGlobalModelOptions).toHaveBeenCalled())
+    fireEvent.click(screen.getAllByRole('combobox')[0])
+    fireEvent.click(await screen.findByRole('option', { name: 'Nous' }))
+    expect(onChange.mock.calls.every(([chain]) => JSON.stringify(chain) === JSON.stringify([routed, CHAIN[1]]))).toBe(true)
+  })
+
   it('renders each {provider, model} entry as its own row (never "[object Object]")', async () => {
     await renderField(CHAIN)
 
@@ -123,5 +135,91 @@ describe('FallbackModelsField', () => {
     rerender([])
 
     await waitFor(() => expect(screen.getAllByLabelText('Remove')).toHaveLength(1))
+  })
+})
+
+describe('fallback atomic searchable edits', () => {
+  const routed = { ...CHAIN[0], base_url: 'http://fixture/v1', key_env: 'FIXTURE_KEY', api_key: '${FIXTURE_KEY}', api_mode: 'responses' }
+
+  it('searches names locally, cancels replacement, and retains same-provider route metadata', async () => {
+    const onChange = renderField([routed, CHAIN[1]])
+    await waitFor(() => expect(getGlobalModelOptions).toHaveBeenCalled())
+    const calls = getGlobalModelOptions.mock.calls.length
+    fireEvent.click(screen.getAllByRole('combobox')[0])
+    await screen.findByRole('option', { name: 'Nous' })
+    fireEvent.change(screen.getByPlaceholderText('Provider'), { target: { value: 'nOuS' } })
+    expect(screen.queryByRole('option', { name: 'GitHub Copilot' })).toBeNull()
+    fireEvent.click(await screen.findByRole('option', { name: 'Nous' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(onChange).toHaveBeenLastCalledWith([routed, CHAIN[1]])
+    fireEvent.click(screen.getAllByRole('combobox')[1])
+    fireEvent.change(screen.getByPlaceholderText('Model'), { target: { value: '5.4' } })
+    fireEvent.click(screen.getByRole('option', { name: 'gpt-5.4-mini' }))
+    expect(onChange).toHaveBeenLastCalledWith([{ ...routed, model: 'gpt-5.4-mini' }, CHAIN[1]])
+    expect(getGlobalModelOptions).toHaveBeenCalledTimes(calls)
+  })
+
+  it('commits a replacement in order without previous provider routing metadata', async () => {
+    const onChange = renderField([routed, CHAIN[1]])
+    await waitFor(() => expect(getGlobalModelOptions).toHaveBeenCalled())
+    fireEvent.click(screen.getAllByRole('combobox')[0])
+    fireEvent.click(await screen.findByRole('option', { name: 'Nous' }))
+    fireEvent.click(screen.getAllByRole('combobox')[1])
+    fireEvent.click(screen.getByRole('option', { name: 'hermes-4' }))
+    expect(onChange).toHaveBeenLastCalledWith([{ provider: 'nous', model: 'hermes-4' }, CHAIN[1]])
+  })
+
+  it('removes another row without losing an incomplete replacement saved route', async () => {
+    const onChange = renderField([routed, CHAIN[1]])
+    await waitFor(() => expect(getGlobalModelOptions).toHaveBeenCalled())
+    fireEvent.click(screen.getAllByRole('combobox')[0])
+    fireEvent.click(await screen.findByRole('option', { name: 'Nous' }))
+    fireEvent.click(screen.getAllByLabelText('Remove')[1])
+    expect(onChange).toHaveBeenLastCalledWith([routed])
+  })
+})
+
+
+describe('fallback discovery ownership', () => {
+  it('drops a delayed old-source catalog and scopes discovery to the active settings profile', async () => {
+    const { $connection } = await import('@/store/session')
+    const { $settingsScopeOverride } = await import('@/store/settings-scope')
+    let finish!: (value: unknown) => void
+    getGlobalModelOptions.mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
+    const onChange = renderField(CHAIN)
+    await waitFor(() => expect(getGlobalModelOptions).toHaveBeenCalled())
+    await act(async () => {
+      $settingsScopeOverride.set('research')
+      $connection.set({ mode: 'remote', baseUrl: 'http://source-b', connectionId: 'source-b' } as never)
+    })
+    await waitFor(() => expect(getGlobalModelOptions).toHaveBeenLastCalledWith(expect.objectContaining({ profile: 'research', ownerConnectionId: 'source-b' })))
+    await act(async () => { finish({ providers: [{ name: 'Old Private Provider', slug: 'old', models: ['private'] }] }) })
+    fireEvent.click(screen.getAllByRole('combobox')[0])
+    expect(screen.queryByRole('option', { name: 'Old Private Provider' })).toBeNull()
+    expect(onChange).not.toHaveBeenCalled()
+    await act(async () => {
+      $settingsScopeOverride.set(null)
+      $connection.set({ mode: 'local', baseUrl: 'http://fixture', connectionId: 'test-local' } as never)
+    })
+  })
+})
+
+describe('fallback manual models', () => {
+  it('allows an explicit unverified ID with IME-safe Enter and never renders route credentials', async () => {
+    getGlobalModelOptions.mockResolvedValue({ providers: [{ name: 'Nous', slug: 'nous', authenticated: true, models: [], discovery_state: 'missing' }] })
+    const onChange = renderField([{ provider: 'nous', model: 'saved-id', api_key: 'synthetic-private-key' }])
+    await waitFor(() => expect(getGlobalModelOptions).toHaveBeenCalled())
+    await waitFor(() => expect((screen.getByRole('combobox', { name: 'Model' }) as HTMLButtonElement).disabled).toBe(false))
+    fireEvent.click(screen.getByRole('combobox', { name: 'Model' }))
+    fireEvent.click(await screen.findByRole('option', { name: /Custom model/ }))
+    const input = screen.getByPlaceholderText('Model id')
+    fireEvent.change(input, { target: { value: 'manual/new-id' } })
+    fireEvent.compositionStart(input)
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true, keyCode: 229 })
+    expect(screen.getByPlaceholderText('Model id')).toBeTruthy()
+    fireEvent.compositionEnd(input)
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onChange).toHaveBeenLastCalledWith([{ provider: 'nous', model: 'manual/new-id', api_key: 'synthetic-private-key' }])
+    expect(screen.queryByText('synthetic-private-key')).toBeNull()
   })
 })

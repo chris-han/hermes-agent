@@ -2,23 +2,22 @@ import { useStore } from '@nanostores/react'
 import type { ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
-import { $apiRequestScope } from '@/api/client'
 import { runInTerminal } from '@/app/right-sidebar/store'
 import { FEATURED_ID, FeaturedProviderRow, ProviderRow, providerTitle, sortProviders } from '@/components/onboarding'
 import { Button } from '@/components/ui/button'
 import { RowButton } from '@/components/ui/row-button'
 import { SearchField } from '@/components/ui/search-field'
 import { Tip } from '@/components/ui/tooltip'
-import { disconnectOAuthProvider, getCustomEndpoints, listOAuthProviders } from '@/hermes'
+import { disconnectOAuthProvider, listOAuthProviders } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { modelServiceCopy } from '@/i18n/model-service'
-import { Check, ChevronRight, KeyRound, Loader2, Terminal, Trash2 } from '@/lib/icons'
+import { Check, ChevronRight, KeyRound, Loader2, Plus, Terminal, Trash2 } from '@/lib/icons'
 import { normalize } from '@/lib/text'
 import { confirm } from '@/store/confirm'
 import { notify, notifyError } from '@/store/notifications'
 import { $desktopOnboarding, startManualProviderOAuth } from '@/store/onboarding'
 import { $settingsRequestProfile } from '@/store/settings-scope'
-import type { CustomEndpoint, EnvVarInfo, OAuthProvider } from '@/types/hermes'
+import type { EnvVarInfo, OAuthProvider } from '@/types/hermes'
 
 import { isKeyVar, ProviderKeyRows } from './credential-key-ui'
 import { CustomEndpointsSettings } from './custom-endpoints-settings'
@@ -84,6 +83,12 @@ function buildProviderKeyGroups(vars: Record<string, EnvVarInfo>): ProviderKeyGr
       : [info]
 
     for (const scopedInfo of scopedInfos) {
+      // Custom endpoint credentials belong exclusively to the endpoint editor.
+      // Display names and built-in base URL overrides do not change ownership.
+      if (scopedInfo.provider === 'custom' || scopedInfo.provider?.startsWith('custom:')) {
+        continue
+      }
+
       // Prefer the backend-supplied provider label/id so the Keys tab groups by
       // the same identity the CLI picker uses; fall back to the prefix guess.
       const name = scopedInfo.provider_label?.trim() || scopedInfo.provider?.trim() || providerGroup(key)
@@ -131,37 +136,6 @@ function buildProviderKeyGroups(vars: Record<string, EnvVarInfo>): ProviderKeyGr
   }
 
   return groups.sort((a, b) => a.priority - b.priority || a.name.localeCompare(b.name))
-}
-
-function ConfiguredCustomProviderRows({ known, onOpen }: { known: Set<string>; onOpen: () => void }) {
-  const scopeProfile = useStore($settingsRequestProfile)
-  const requestScope = useStore($apiRequestScope)
-  const { locale } = useI18n()
-  const [endpoints, setEndpoints] = useState<CustomEndpoint[]>([])
-  useEffect(() => {
-    let cancelled = false
-    setEndpoints([])
-    void getCustomEndpoints(scopeProfile).then(result => {
-      if (!cancelled) { setEndpoints(result.endpoints) }
-    }).catch(() => { /* The editor owns load errors and retry. */ })
-
-    return () => { cancelled = true }
-  }, [scopeProfile, requestScope.connectionId])
-
-  return endpoints.filter(endpoint => !known.has(endpoint.id)).map(endpoint => (
-    <RowButton key={endpoint.id} onClick={onOpen}>
-      <div className="min-w-0 flex-1 text-left">
-        <div className="text-sm font-medium">{endpoint.name}</div>
-        <div className="truncate font-mono text-xs text-muted-foreground">{endpoint.base_url}</div>
-        <div className="text-xs text-muted-foreground">
-          {endpoint.enabled === false
-            ? (locale === 'zh' ? '已停用' : 'Disabled')
-            : endpoint.has_api_key ? (locale === 'zh' ? '密钥已保存' : 'Key saved') : (locale === 'zh' ? '无密钥' : 'No key')}
-        </div>
-      </div>
-      <ChevronRight />
-    </RowButton>
-  ))
 }
 
 // Accounts leads with model-service setup and preserves connected account controls.
@@ -355,16 +329,6 @@ function NoProviderKeys() {
   )
 }
 
-// Surfaces the "Local / custom endpoint" entry point directly in the API-keys
-// tab so users can add any OpenAI-compatible endpoint (Zyphra, vLLM, Ollama…)
-// from the GUI. The composer pill and the providers "have an API key" affordance
-// both dead-end on the env-var-driven key catalog, which never lists a custom
-// endpoint — so without this row there is no reachable Desktop path to it.
-// The whole row is the button so the click target and a11y focus match the
-// visible area (the chevron + gutter are inside the button, not beside it).
-// Pass reason: null — the onboarding overlay renders an unmapped reason string
-// verbatim as a banner (see ReasonNotice in onboarding/index.tsx), and we don't
-// want a raw identifier like "providers-keys-tab" showing as literal text.
 function LocalEndpointRow({ onOpen }: { onOpen: (reason: null | string) => void }) {
   const { locale } = useI18n()
   const copy = modelServiceCopy[locale] ?? modelServiceCopy.en
@@ -382,6 +346,17 @@ function LocalEndpointRow({ onOpen }: { onOpen: (reason: null | string) => void 
       </div>
       <ChevronRight className="size-4 text-muted-foreground transition group-hover:text-foreground" />
     </RowButton>
+  )
+}
+
+function AddProviderButton({ onOpen }: { onOpen: () => void }) {
+  const { locale } = useI18n()
+
+  return (
+    <Button className="shrink-0" onClick={onOpen} size="sm" variant="textStrong">
+      <Plus className="size-3.5" />
+      {locale === 'zh' ? '添加服务商' : locale === 'zh-hant' ? '新增供應商' : 'Add Provider'}
+    </Button>
   )
 }
 
@@ -550,14 +525,37 @@ export function ProvidersSettings({
     }
   }
 
+  const providerToolbar = (
+    <div className="mb-3 flex flex-wrap items-center gap-2" data-provider-toolbar key="provider-toolbar">
+      <SearchField
+        aria-label={t.settings.providers.searchKeys}
+        containerClassName="min-w-36 flex-1"
+        onChange={setKeyQuery}
+        placeholder={t.settings.providers.searchKeys}
+        value={keyQuery}
+      />
+      <AddProviderButton onOpen={() => onViewChange('custom-endpoints')} />
+    </div>
+  )
+
+  if (view === 'custom-endpoints') {
+    return <CustomEndpointsSettings onConfigSaved={onConfigSaved} onMainModelChanged={onMainModelChanged} />
+  }
+
   if (!vars) {
-    return <SettingsSkeleton search sections={[{ rows: 6 }]} />
+    return (
+      <SettingsContent>
+        <SettingsProfileScope className="mb-5" />
+        {view === 'keys' && providerToolbar}
+        <SettingsSkeleton sections={[{ rows: 6 }]} />
+      </SettingsContent>
+    )
   }
 
   const hasOauth = oauthProviders.length > 0
   // The sidebar subnav owns the Accounts/API-keys split now; with no OAuth
   // providers there's nothing for the "Accounts" view to show, so fall to keys.
-  const showApiKeys = view === 'keys' || (!hasOauth && view !== 'custom-endpoints')
+  const showApiKeys = view === 'keys' || !hasOauth
 
   const keyGroups = buildProviderKeyGroups(vars)
 
@@ -575,17 +573,9 @@ export function ProvidersSettings({
     return (
       <SettingsContent>
         <SettingsProfileScope className="mb-5" />
-        <LocalEndpointRow onOpen={() => onViewChange('custom-endpoints')} />
-        <ConfiguredCustomProviderRows known={new Set(keyGroups.map(group => group.primary[1].provider ?? ''))} onOpen={() => onViewChange('custom-endpoints')} />
+        {providerToolbar}
         {keyGroups.length > 0 ? (
           <div className="grid gap-3">
-            <SearchField
-              aria-label={t.settings.providers.searchKeys}
-              containerClassName="w-full"
-              onChange={setKeyQuery}
-              placeholder={t.settings.providers.searchKeys}
-              value={keyQuery}
-            />
             {visibleGroups.length > 0 ? (
               <div className="grid gap-2">
                 {visibleGroups.map(group => (
@@ -611,10 +601,6 @@ export function ProvidersSettings({
         )}
       </SettingsContent>
     )
-  }
-
-  if (view === 'custom-endpoints') {
-    return <CustomEndpointsSettings onConfigSaved={onConfigSaved} onMainModelChanged={onMainModelChanged} />
   }
 
   return (

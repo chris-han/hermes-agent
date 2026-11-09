@@ -550,10 +550,8 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
     setApiKeyDraft('')
   }, [selectedProvider])
 
-  const auxDraftProviderModels = useMemo(
-    () => findCatalogProvider(providers, auxDraft.provider)?.models ?? [],
-    [auxDraft.provider, providers]
-  )
+  const { provider: auxDraftProvider, models: auxDraftProviderModels, unknown: auxEligibilityUnknown, unavailable: auxUnavailable } =
+    mainModelChoices(providers, auxDraft.provider, auxDraft.model)
 
   const modelsForProvider = useCallback(
     (provider: string) => findCatalogProvider(providers, provider)?.models ?? [],
@@ -1016,7 +1014,7 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
 
   const applyAuxiliaryDraft = useCallback(
     async (task: string) => {
-      if (!auxDraft.provider || !auxDraft.model) {
+      if (!auxDraft.provider || !auxDraft.model || auxEligibilityUnknown || auxUnavailable || !isProviderReady(auxDraftProvider)) {
         return
       }
 
@@ -1043,7 +1041,7 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
         setApplying(false)
       }
     },
-    [auxDraft, endpointForProvider, m.loadFailed, refresh, scopeProfile, setCaughtError]
+    [auxDraft, auxDraftProvider, auxEligibilityUnknown, auxUnavailable, endpointForProvider, m.loadFailed, refresh, scopeProfile, setCaughtError]
   )
 
   const beginAuxiliaryEdit = useCallback(
@@ -1383,31 +1381,28 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
                       isEditing && (
                         <div className="mt-2 grid gap-2 pt-1">
                           <div className="flex flex-wrap items-center gap-2">
-                            <Select
-                              onValueChange={value => setAuxDraft(prev => ({ ...prev, provider: value, model: '' }))}
-                              value={findCatalogProvider(providers, auxDraft.provider)?.slug ?? auxDraft.provider}
-                            >
-                              <SelectTrigger
-                                aria-label={`${copy.label} provider`}
-                                className={cn('min-w-32', CONTROL_TEXT)}
-                              >
-                                <SelectValue placeholder={m.provider} />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {providerOptions.map(provider => (
-                                  <SelectItem key={provider.slug || 'none'} value={provider.slug || 'none'}>
-                                    {modelProviderName(provider, locale)}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
+                            <SearchableSelect
+                              aria-label={`${copy.label} provider`}
+                              disabled={applying}
+                              onChange={value => {
+                                if (value !== auxDraft.provider) {setAuxDraft(prev => ({ ...prev, provider: value, model: '' }))}
+                              }}
+                              options={mainProviderSelectOptions(mainProviderOptionsFor(providers, auxDraft.provider), locale)}
+                              placeholder={m.provider}
+                              value={auxDraftProvider?.slug ?? auxDraft.provider}
+                            />
                             <ModelSelect
+                              allowedModels={auxDraftProvider?.eligible_models}
                               aria-label={`${copy.label} model`}
                               className="min-w-48"
+                              disabled={applying || !isProviderReady(auxDraftProvider)}
+                              excludeUnavailable
+                              manualScope={`${ownerKey}:${searchProfile}`}
                               models={auxDraftProviderModels}
                               onValueChange={value => setAuxDraft(prev => ({ ...prev, model: value }))}
-                              provider={findCatalogProvider(providers, auxDraft.provider)}
+                              provider={auxDraftProvider}
                               providerSlug={auxDraft.provider}
+                              searchable
                               value={auxDraft.model}
                             />
                           </div>
@@ -1435,7 +1430,7 @@ export function ModelSettings({ onMainModelChanged, scopeProfile, subpage }: Mod
                           </div>
                           <div className="flex flex-wrap items-center gap-2">
                             <Button
-                              disabled={!auxDraft.provider || !auxDraft.model || applying}
+                              disabled={!auxDraft.provider || !auxDraft.model || auxEligibilityUnknown || auxUnavailable || !isProviderReady(auxDraftProvider) || applying}
                               onClick={() => void applyAuxiliaryDraft(meta.key)}
                               size="sm"
                             >

@@ -121,6 +121,36 @@ async function renderProvidersSettings() {
 }
 
 describe('ProvidersSettings', () => {
+  it('keeps creation available while key metadata is pending', async () => {
+    getEnvVars.mockReturnValueOnce(new Promise(() => {}))
+    const onViewChange = vi.fn()
+    render(<ProvidersSettings onClose={vi.fn()} onViewChange={onViewChange} view="keys" />)
+    fireEvent.click(screen.getByRole('button', { name: 'Add Provider' }))
+    expect(onViewChange).toHaveBeenCalledWith('custom-endpoints')
+  })
+
+  it('keeps Add Provider beside Search even for an empty catalog', async () => {
+    const onViewChange = vi.fn()
+    render(<ProvidersSettings onClose={vi.fn()} onViewChange={onViewChange} view="keys" />)
+    const search = await screen.findByRole('textbox', { name: /search/i })
+    const add = screen.getByRole('button', { name: 'Add Provider' })
+    expect(search.closest('[data-provider-toolbar]')?.contains(add)).toBe(true)
+    fireEvent.click(add)
+    expect(onViewChange).toHaveBeenCalledWith('custom-endpoints')
+    expect(setEnvVar).not.toHaveBeenCalled()
+  })
+
+  it('filters custom environment ownership without filtering built-in display names', async () => {
+    getEnvVars.mockResolvedValue({
+      CUSTOM_KEY: keyVar({ provider: 'custom:kaiwen', provider_label: 'kaiwen', is_set: true }),
+      OPENAI_API_KEY: keyVar({ provider: 'openai-api', provider_label: 'Custom compatible OpenAI' })
+    })
+    render(<ProvidersSettings onClose={vi.fn()} onViewChange={vi.fn()} view="keys" />)
+    expect(await screen.findByText('Custom compatible OpenAI', { exact: true })).toBeTruthy()
+    expect(screen.queryByText('kaiwen', { exact: true })).toBeNull()
+    expect(setEnvVar).not.toHaveBeenCalled()
+  })
+
   it('shows and saves optional OpenAI organization/project fields in the existing API card', async () => {
     getEnvVars.mockResolvedValue({
       OPENAI_API_KEY: keyVar({ provider: 'openai-api', provider_label: 'OpenAI API', provider_primary: true }),

@@ -3,15 +3,18 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { getGlobalModelOptions } from '@/hermes'
 import { useI18n } from '@/i18n'
+import { modelProviderName } from '@/i18n/model-service'
 import { Plus, X } from '@/lib/icons'
-import { cn } from '@/lib/utils'
-import { $customModels, withCustomModels } from '@/store/custom-models'
+import { modelDiscoveryOwnerKey } from '@/lib/model-discovery-scope'
+import { findCatalogProvider, modelOptionsQueryKey, providerManualModels, providerSelectableModels, requestDiscoveredModelOptions } from '@/lib/model-options'
+import { $customModels } from '@/store/custom-models'
+import { requestGatewayForAgent } from '@/store/gateway'
+import { $connection } from '@/store/session'
+import { $settingsScopeProfile } from '@/store/settings-scope'
 
-import { CONTROL_TEXT } from './constants'
 import { ModelSelect } from './model-select'
+import { SearchableSelect } from './searchable-select'
 
 // An entry is `{provider, model}` plus whatever routing the user hand-wrote
 // (`base_url`, `api_key`, `key_env`, `api_mode`, ...). The editor only edits
@@ -58,43 +61,45 @@ function entriesEqual(a: FallbackEntry[], b: FallbackEntry[]): boolean {
   return a.length === b.length && a.every((entry, index) => JSON.stringify(entry) === JSON.stringify(b[index]))
 }
 
-/**
- * Structured editor for the top-level `fallback_providers` config list — a
- * chain of `{provider, model}` pairs tried in order when the default model
- * fails. Replaces the generic comma-string `list` input, which stringified the
- * objects to "[object Object], [object Object]".
- *
- * Mirrors the Auxiliary Models picker in `model-settings.tsx`: provider + model
- * selects sourced from `getGlobalModelOptions()`. Half-filled rows are kept in
- * local state and only complete pairs are emitted upward, so the config
- * autosave never persists a partial `{provider, model: ''}`.
- */
-export function FallbackModelsField({
-  value,
-  onChange
-}: {
-  value: unknown
-  onChange: (next: FallbackEntry[]) => void
-}) {
-  const { t } = useI18n()
+/** Profile/source changes discard drafts and outstanding picker state. */
+export function FallbackModelsField(props: { value: unknown; onChange: (next: FallbackEntry[]) => void }) {
+  const connection = useStore($connection)
+  const profile = useStore($settingsScopeProfile)
+  const ownerKey = modelDiscoveryOwnerKey(null, connection)
+
+  return <ScopedFallbackModelsField {...props} key={`${ownerKey}:${profile}`} />
+}
+
+function ScopedFallbackModelsField({ value, onChange }: { value: unknown; onChange: (next: FallbackEntry[]) => void }) {
+  const { t, locale } = useI18n()
   const m = t.settings.model
+  const connection = useStore($connection)
+  const profile = useStore($settingsScopeProfile)
+  const ownerKey = modelDiscoveryOwnerKey(null, connection)
+  const manualScope = `${ownerKey}:${profile}`
 
   const modelOptions = useQuery({
-    queryKey: ['model-options', 'global'],
-    queryFn: () => getGlobalModelOptions()
+    queryKey: modelOptionsQueryKey(profile, null, ownerKey),
+    enabled: !!ownerKey,
+    queryFn: () => requestDiscoveredModelOptions({
+      connection,
+      ownerConnectionId: connection?.connectionId,
+      profile,
+      request: <T,>(method: string, params?: Record<string, unknown>) =>
+        requestGatewayForAgent<T>(connection?.connectionId ?? null, profile, method, params)
+    })
   })
 
   const customModels = useStore($customModels)
 
-  const providers = withCustomModels(
-    (modelOptions.data?.providers ?? []).filter(provider => provider.slug),
-    customModels
-  )
+  const providers = (modelOptions.data?.providers ?? []).filter(provider => provider.slug)
 
   const [rows, setRows] = useState<FallbackEntry[]>(() => normalizeEntries(value))
   // Last complete chain we emitted (or seeded). Autosave echoes the same
   // filtered list back through `value`; ignore that echo so draft rows stay.
   const lastEmittedRef = useRef(normalizeEntries(value))
+  // One saved slot per draft row. Incomplete replacements retain this route.
+  const savedRows = useRef<(FallbackEntry | undefined)[]>(normalizeEntries(value))
 
   // Resync on real external changes (profile switch / config reload). Skip
   // when `value` is just our own commit echoing through the parent.
@@ -107,12 +112,15 @@ export function FallbackModelsField({
     }
 
     lastEmittedRef.current = persisted
+    savedRows.current = persisted
     setRows(persisted)
   }, [value])
 
-  const commit = (next: FallbackEntry[]) => {
-    const complete = completeEntries(next)
+  const commit = (next: FallbackEntry[], saved = savedRows.current) => {
+    const slots = next.map((entry, index) => entry.provider && entry.model ? entry : saved[index])
+    const complete = completeEntries(slots.filter((entry): entry is FallbackEntry => !!entry))
 
+    savedRows.current = slots
     setRows(next)
     lastEmittedRef.current = complete
     onChange(complete)
@@ -121,38 +129,49 @@ export function FallbackModelsField({
   const updateRow = (index: number, patch: Partial<FallbackEntry>) =>
     commit(rows.map((entry, i) => (i === index ? { ...entry, ...patch } : entry)))
 
+  const switchProvider = (index: number, provider: string) => {
+    if ((findCatalogProvider(providers, rows[index].provider)?.slug ?? rows[index].provider) === provider) {return}
+    // The previous route remains saved, but none of its metadata enters the new draft.
+    commit(rows.map((entry, i) => i === index ? { provider, model: '' } : entry))
+  }
+
   return (
     <div className="grid w-full gap-1.5">
       {rows.length === 0 && <p className="text-xs text-muted-foreground">{m.fallbackEmpty}</p>}
       {rows.map((entry, index) => {
-        const providerRow = providers.find(provider => provider.slug === entry.provider)
+        const providerRow = findCatalogProvider(providers, entry.provider)
 
         return (
           <div className="flex flex-wrap items-center gap-2" key={index}>
             <span className="w-4 shrink-0 text-center font-mono text-[0.7rem] text-muted-foreground">{index + 1}</span>
-            <Select onValueChange={provider => updateRow(index, { provider, model: '' })} value={entry.provider}>
-              <SelectTrigger className={cn('min-w-36', CONTROL_TEXT)}>
-                <SelectValue placeholder={m.provider} />
-              </SelectTrigger>
-              <SelectContent>
-                {providers.map(provider => (
-                  <SelectItem key={provider.slug} value={provider.slug}>
-                    {provider.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              aria-label={m.provider}
+              onChange={provider => switchProvider(index, provider)}
+              options={providers.map(provider => ({ value: provider.slug, label: modelProviderName(provider, locale), disabled: provider.authenticated === false }))}
+              placeholder={m.provider}
+              value={providerRow?.slug ?? entry.provider}
+            />
             <ModelSelect
+              allowedModels={providerRow?.eligible_models}
               className="min-w-52 flex-1"
-              models={providerRow?.models ?? []}
+              disabled={!providerRow || providerRow.authenticated === false}
+              excludeUnavailable
+              manualScope={manualScope}
+              models={[...providerSelectableModels(providerRow), ...providerManualModels(providerRow), ...customModels.filter(custom => custom.scope === manualScope && custom.provider === (providerRow?.slug ?? entry.provider)).map(custom => custom.model)]}
               onValueChange={model => updateRow(index, { model })}
               provider={providerRow}
               providerSlug={entry.provider}
+              searchable
               value={entry.model}
             />
+            {!entry.model && savedRows.current[index] && (
+              <Button onClick={() => updateRow(index, savedRows.current[index]!)} size="sm" variant="ghost">
+                {t.common.cancel}
+              </Button>
+            )}
             <Button
               aria-label={t.common.remove}
-              onClick={() => commit(rows.filter((_, i) => i !== index))}
+              onClick={() => commit(rows.filter((_, i) => i !== index), savedRows.current.filter((_, i) => i !== index))}
               size="icon-xs"
               variant="ghost"
             >
