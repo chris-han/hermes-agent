@@ -136,7 +136,7 @@ $e=$null;$t=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile($args[0],[ref]$t,[ref]$e)
 if($e){throw ($e | Out-String)}
 $main=@($ast.EndBlock.Statements | Where-Object {$_ -is [Management.Automation.Language.TryStatementAst]})[-1]
-$BuildOnly=$true;$Commit='a'*40;$SetupOnly=$false;$LocalSetup=$false;$UpdateSetup=$false;$PreflightOnly=$false
+$Latest=$false;$BuildOnly=$true;$Commit='a'*40;$SetupOnly=$false;$LocalSetup=$false;$UpdateSetup=$false;$PreflightOnly=$false
 $DesktopOnly=$false;$WhatIfPreference=$false;$Output=$args[1];$utf8=New-Object Text.UTF8Encoding($false)
 $script:releaseEnvironment=@{}
 $script:SourceBinding=@{}

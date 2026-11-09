@@ -19,6 +19,8 @@
 .EXAMPLE
   .\scripts\deploy-ecs.ps1 -Commit eede5238816caa515089f99c558964fe6adec2e9
 .EXAMPLE
+  .\scripts\deploy-ecs.ps1 -Latest -BuildMode Prod -VerifyPublicDownload
+.EXAMPLE
   pwsh.exe -NoProfile -ExecutionPolicy Bypass -File 'D:\repo\semantier-runtime\hermes-agent\scripts\deploy-ecs.ps1' -WhatIf
   If Windows blocks this unsigned network-source script before it starts, use this process-scoped launch.
 .DESCRIPTION
@@ -31,6 +33,8 @@
   release lock/database, split packages, bundles, ZIPs, or CH2/R2 operations.
   -BuildOnly with -Commit stops after the unsigned package build: no signing, install or publication.
   -BuildSource must equal <selected Output>\source; detached worktrees share Hermes objects.
+  -Latest runs a safe GitHub Runtime main fast-forward and pinned Hermes submodule sync before building.
+  -Latest -WhatIf is read-only. If syncing changes this script, re-run it to load the new operator.
   -LocalSetup builds a signed semantier-setup-ch0.exe for the single adjacent MSIX; never uploads.
   -SetupOnly builds/reuses and publishes Setup in its own ecs-setup-* run.
   -UpdateSetup forces a new Setup build; neither mode builds or installs MSIX.
@@ -72,6 +76,7 @@ param(
   [switch]$LocalSetup,
   [switch]$UpdateSetup,
   [switch]$VerifyPublicDownload,
+  [switch]$Latest,
   [string]$Commit = '',
   [string]$BuildCache = 'D:\repo\deliverables\cache\desktop-inputs',
   [string]$BuildPython = '',
@@ -257,6 +262,68 @@ function Get-SourceGit([string]$Root,[string[]]$Arguments) {
   $value=& git.exe -C $Root @Arguments
   if($LASTEXITCODE -ne 0){throw ('Native Git inspection failed: '+($Arguments -join ' '))}
   return ($value -join "`n").Trim()
+}
+function Sync-GitHubLatestSource([string]$Runtime,[string]$Operator) {
+  if($WhatIfPreference){
+    Write-Output 'PLAN_ONLY: fast-forward GitHub Runtime main, synchronize pinned Hermes, then build exact gitlink; no files changed.'
+    return $null
+  }
+  if(!$IsWindows){throw '-Latest requires native Windows PowerShell and Git for Windows.'}
+  $expected='D:\repo\semantier-runtime'
+  if([IO.Path]::GetFullPath($Runtime).TrimEnd('\') -ine $expected -or
+      [IO.Path]::GetFullPath($Operator) -ine (Join-Path $expected 'hermes-agent\scripts\deploy-ecs.ps1')){
+    throw '-Latest requires the canonical D:\repo\semantier-runtime checkout and operator.'
+  }
+  $null=Assert-LocalWindowsPath $Runtime
+  Assert-NoReparseAncestor $Runtime
+  foreach($name in @('GIT_DIR','GIT_WORK_TREE','GIT_COMMON_DIR','GIT_INDEX_FILE','GIT_OBJECT_DIRECTORY','GIT_ALTERNATE_OBJECT_DIRECTORIES')){
+    if([Environment]::GetEnvironmentVariable($name,'Process')){throw ('Unset Git override before sync: '+$name)}
+  }
+  if($env:SEMANTIER_WSL_GIT_DISTRO){throw 'WSL Git is not supported by the native release workflow.'}
+  $null=Get-Command git.exe -CommandType Application -ErrorAction Stop
+  $root=Get-SourceGit $Runtime @('rev-parse','--show-toplevel')
+  if($root.Replace('\','/') -ine $expected.Replace('\','/')){throw 'Runtime Git top-level mismatch.'}
+  if((Get-SourceGit $Runtime @('branch','--show-current')) -cne 'main'){
+    throw 'GitHub sync requires checked-out Runtime main.'
+  }
+  $remote=Get-SourceGit $Runtime @('remote','get-url','origin')
+  if($remote -cnotmatch '^(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)chris-han/semantier-runtime(?:\.git)?$'){
+    throw 'origin is not the expected chris-han/semantier-runtime GitHub repository.'
+  }
+  if(Get-SourceGit $Runtime @('status','--porcelain','--untracked-files=all')){
+    throw 'Runtime checkout is dirty; preserve local changes and synchronize manually.'
+  }
+  $hermes=Join-Path $Runtime 'hermes-agent'
+  if((Test-Path -LiteralPath $hermes) -and (Get-SourceGit $hermes @('status','--porcelain','--untracked-files=all'))){
+    throw 'Hermes submodule is dirty; preserve changes before GitHub sync.'
+  }
+  $operatorHash=(Get-FileHash -LiteralPath $Operator -Algorithm SHA256).Hash
+  Report-Status 'GitHub sync: fetch and fast-forward Runtime main.'
+  Run 'git.exe' @('-C',$Runtime,'fetch','--no-tags','origin','main')
+  $fetched=Get-SourceGit $Runtime @('rev-parse','FETCH_HEAD^{commit}')
+  $local=Get-SourceGit $Runtime @('rev-parse','HEAD')
+  if((Get-SourceGit $Runtime @('merge-base',$local,$fetched)) -cne $local){
+    throw 'Runtime main is ahead of or diverged from GitHub main; preserve local commits and synchronize manually.'
+  }
+  Run 'git.exe' @('-C',$Runtime,'merge','--ff-only',$fetched)
+  if((Get-SourceGit $Runtime @('rev-parse','HEAD')) -cne $fetched){
+    throw 'Runtime HEAD does not equal fetched GitHub main; refusing to build.'
+  }
+  Run 'git.exe' @('-C',$Runtime,'submodule','sync','--','hermes-agent')
+  Run 'git.exe' @('-C',$Runtime,'submodule','update','--init','--checkout','--','hermes-agent')
+  $link=Get-SourceGit $Runtime @('ls-tree','HEAD','hermes-agent')
+  if($link -cnotmatch '^160000 commit ([a-f0-9]{40})\s+hermes-agent$'){
+    throw 'Updated Runtime HEAD has no valid Hermes gitlink.'
+  }
+  $pinned=$Matches[1]
+  if((Get-SourceGit $hermes @('rev-parse','HEAD')) -cne $pinned){
+    throw 'Hermes HEAD is not the Runtime-pinned gitlink after GitHub sync.'
+  }
+  if((Get-FileHash -LiteralPath $Operator -Algorithm SHA256).Hash -cne $operatorHash){
+    throw 'GitHub updated deploy-ecs.ps1. Re-run the same -Latest invocation to load the new operator before building.'
+  }
+  Report-Status ('GitHub sync PASS: Runtime '+(Get-SourceGit $Runtime @('rev-parse','HEAD'))+'; Hermes '+$pinned)
+  return $pinned
 }
 function Assert-StageInactive($Owner) {
   # Never kill a process inferred from command text. Any possible stage use
@@ -1304,6 +1371,14 @@ function Publish-IndependentSetup {
   }
 }
 try {
+if($Latest){
+  if($Commit -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or $PreflightOnly -or $PSBoundParameters.ContainsKey('Msix')){
+    throw '-Latest is for a Runtime-pinned commit build only; do not combine with -Commit, Setup, preflight-only or a fixed MSIX.'
+  }
+  if($WhatIfPreference){$null=Sync-GitHubLatestSource '' '';return}
+  $runtime=Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+  $Commit=Sync-GitHubLatestSource $runtime $PSCommandPath
+}
 if($BuildOnly -and (!$Commit -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or $PreflightOnly)){throw '-BuildOnly requires -Commit and cannot be combined with Setup or preflight modes.'}
 $script:explicitOutput=$PSBoundParameters.ContainsKey('Output')
 Initialize-ReleasePaths
