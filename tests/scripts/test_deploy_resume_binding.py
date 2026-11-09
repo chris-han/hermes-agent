@@ -33,7 +33,7 @@ foreach($stage in @('signed','installed','published','finished')){
 }
 'RESUME_BINDING_PASS'
 ''', encoding="utf-8")
-    result = subprocess.run(["powershell.exe", "-NoProfile", "-File", str(script), str(source)],
+    result = subprocess.run(["pwsh.exe", "-NoProfile", "-File", str(script), str(source)],
                             capture_output=True, text=True, timeout=30, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "RESUME_BINDING_PASS" in result.stdout
@@ -64,7 +64,7 @@ if((Read-RunCheckpoint $args[1]).binding -cne 'latest'){throw 'Wrong checkpoint'
 if((Read-CommitBuild $args[1]).commit -cne 'latest'){throw 'Wrong build record'}
 'CHECKPOINT_READERS_PASS'
 ''', encoding="utf-8")
-    result = subprocess.run(["powershell.exe", "-NoProfile", "-File", str(script),
+    result = subprocess.run(["pwsh.exe", "-NoProfile", "-File", str(script),
                              str(source), str(tmp_path / "checkpoints.jsonl")],
                             capture_output=True, text=True, timeout=30, check=False)
     assert result.returncode == 0, result.stdout + result.stderr

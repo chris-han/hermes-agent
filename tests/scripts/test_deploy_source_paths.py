@@ -1,4 +1,4 @@
-"""Native Windows source migration: local clone reuse and non-mutating planning."""
+"""Native Windows source migration: owned worktree lifecycle and non-mutating planning."""
 import os
 import shutil
 import subprocess
@@ -12,7 +12,7 @@ SOURCE = Path(__file__).resolve().parents[2] / "scripts/deploy-ecs.ps1"
 
 
 def invoke_ps(script, *args):
-    return subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+    return subprocess.run(["pwsh.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
                            "-File", str(script), *map(str, args)], capture_output=True,
                           text=True, encoding="utf-8", errors="replace", timeout=60, check=False)
 
@@ -25,7 +25,7 @@ def git(repo, *args):
 
 
 def fixture_repo(tmp_path):
-    repo = tmp_path / "shared-source"
+    repo = tmp_path / "runtime/hermes-agent"
     (repo / "scripts/bundles").mkdir(parents=True)
     (repo / "pm").mkdir()
     (repo / "scripts/bundles/desktop.py").write_text("# source fixture\n", encoding="utf-8")
@@ -34,6 +34,12 @@ def fixture_repo(tmp_path):
     git(repo, "init", "-q")
     git(repo, "add", ".")
     git(repo, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "fixture")
+    runtime = repo.parent
+    (runtime / ".gitmodules").write_text('[submodule "hermes-agent"]\n path = hermes-agent\n url = fixture\n', encoding="utf-8")
+    git(runtime, "init", "-q")
+    git(runtime, "add", ".gitmodules")
+    git(runtime, "update-index", "--add", "--cacheinfo", "160000", git(repo, "rev-parse", "HEAD"), "hermes-agent")
+    git(runtime, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "pin")
     return repo
 
 
@@ -51,43 +57,11 @@ $script:statusLog=$null
 """
 
 
-def test_local_clone_reuses_dependencies_fetches_commit_and_preserves_dirty_work(tmp_path):
-    repo = fixture_repo(tmp_path)
-    first = git(repo, "rev-parse", "HEAD")
-    script = tmp_path / "clone.ps1"
-    script.write_text(EXTRACT + r"""
-$Repository=$args[1];$local=$args[2]
-Initialize-LocalBuildSource $local $args[3]
-if((Get-Item -Force -LiteralPath (Join-Path $local '.git')).PSIsContainer -ne $true){throw 'Not independent'}
-if(Test-Path -LiteralPath (Join-Path $local '.git/objects/info/alternates')){throw 'Cross-filesystem alternates'}
-New-Item -ItemType Directory -Path (Join-Path $local 'node_modules') | Out-Null
-[IO.File]::WriteAllText((Join-Path $local '.git/info/exclude'),"node_modules/`n")
-[IO.File]::WriteAllText((Join-Path $local 'node_modules/retained.txt'),'existing dependencies')
-'CLONE_PASS'
-""", encoding="utf-8")
-    local = tmp_path / "native-build"
-    result = invoke_ps(script, SOURCE, repo, local, first)
+def test_native_worktree_lifecycle(tmp_path):
+    result = invoke_ps(SOURCE.parent / "tests/test-deploy-ecs-worktree.ps1")
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "CLONE_PASS" in result.stdout
-    assert not (repo / ".git/worktrees").exists()
-    (repo / "application.txt").write_text("next committed source", encoding="utf-8")
-    git(repo, "add", "application.txt")
-    git(repo, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "next")
-    second = git(repo, "rev-parse", "HEAD")
-    script.write_text(EXTRACT + r"""
-$Repository=$args[1]
-Initialize-LocalBuildSource $args[2] $args[3]
-'REUSE_PASS'
-""", encoding="utf-8")
-    result = invoke_ps(script, SOURCE, repo, local, second)
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert git(local, "rev-parse", "HEAD") == second
-    assert (local / "node_modules/retained.txt").read_text(encoding="utf-8") == "existing dependencies"
-    (local / "application.txt").write_text("uncommitted user changes", encoding="utf-8")
-    result = invoke_ps(script, SOURCE, repo, local, first)
-    assert result.returncode != 0
-    assert (local / "application.txt").read_text(encoding="utf-8") == "uncommitted user changes"
-    assert git(local, "rev-parse", "HEAD") == second
+    assert "COMMON_DIR_EQUAL:" in result.stdout
+    assert "PASS: exact SHA" in result.stdout
 
 
 def test_credentials_are_explicit_validated_and_never_echoed(tmp_path):
@@ -122,7 +96,7 @@ if($value -cne 'fixture secret # retained'){throw 'Password parsing mismatch'}
 def test_whatif_from_other_directory_preserves_ledger_environment_and_output(tmp_path):
     repo = fixture_repo(tmp_path)
     commit = git(repo, "rev-parse", "HEAD")
-    output = tmp_path / "never-created"
+    output = Path("D:/repo/deliverables/work/ecs-deploy-20990101-000000-" + os.urandom(4).hex())
     ledger = tmp_path / "ledger.json"
     ledger.write_bytes(b'{"preserve":"existing reservation"}')
     cache = tmp_path / "existing-cache"
@@ -146,7 +120,7 @@ if(Test-Path Env:GIT_CONFIG_KEY_1){throw 'Temporary trust leaked'}
     assert not (repo / ".git/worktrees").exists()
     assert dict(os.environ) == before
     env = dict(os.environ, SEMANTIER_WSL_GIT_DISTRO="must-not-run")
-    result = subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+    result = subprocess.run(["pwsh.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
                              str(repo / "scripts/deploy-ecs.ps1"), "-WhatIf"], env=env,
                             capture_output=True, text=True, encoding="utf-8", errors="replace",
                             timeout=30, check=False)
@@ -162,10 +136,15 @@ $e=$null;$t=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile($args[0],[ref]$t,[ref]$e)
 if($e){throw ($e | Out-String)}
 $main=@($ast.EndBlock.Statements | Where-Object {$_ -is [Management.Automation.Language.TryStatementAst]})[-1]
-$BuildOnly=$true;$Commit='a'*40;$SetupOnly=$false;$LocalSetup=$false;$UpdateSetup=$false;$PreflightOnly=$false
+$Latest=$false;$BuildOnly=$true;$Commit='a'*40;$SetupOnly=$false;$LocalSetup=$false;$UpdateSetup=$false;$PreflightOnly=$false
 $DesktopOnly=$false;$WhatIfPreference=$false;$Output=$args[1];$utf8=New-Object Text.UTF8Encoding($false)
 $script:releaseEnvironment=@{}
+$script:SourceBinding=@{}
+$script:sourceLease=$null
+$script:explicitOutput=$true
+$NewRun=$true
 function Initialize-ReleasePaths {}
+function Set-RunBuildSource {}
 function Build-CommitPackage {return [pscustomobject]@{version='0.0.90';msix='owned-unsigned.msix';sha256=('b'*64);source='owned-source'}}
 function Assert-ReleaseToolchain {throw 'Signing/release preflight must not run'}
 function Sign-Copy {throw 'Signing must not run'}

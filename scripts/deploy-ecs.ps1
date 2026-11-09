@@ -19,7 +19,9 @@
 .EXAMPLE
   .\scripts\deploy-ecs.ps1 -Commit eede5238816caa515089f99c558964fe6adec2e9
 .EXAMPLE
-  pwsh.exe -NoProfile -ExecutionPolicy Bypass -File 'R:\hermes-agent\scripts\deploy-ecs.ps1' -WhatIf
+  .\scripts\deploy-ecs.ps1 -Latest -BuildMode Prod -VerifyPublicDownload
+.EXAMPLE
+  pwsh.exe -NoProfile -ExecutionPolicy Bypass -File 'D:\repo\semantier-runtime\hermes-agent\scripts\deploy-ecs.ps1' -WhatIf
   If Windows blocks this unsigned network-source script before it starts, use this process-scoped launch.
 .DESCRIPTION
   BuildMode defaults to Beta: sign, install and publish without release verification.
@@ -30,7 +32,9 @@
   are never embedded in this script. No npm/uv install, Python publisher, WSL,
   release lock/database, split packages, bundles, ZIPs, or CH2/R2 operations.
   -BuildOnly with -Commit stops after the unsigned package build: no signing, install or publication.
-  -BuildSource selects an independent local build clone, preserving a busy/dirty default clone.
+  -BuildSource must equal <selected Output>\source; detached worktrees share Hermes objects.
+  -Latest runs a safe GitHub Runtime main fast-forward and pinned Hermes submodule sync before building.
+  -Latest -WhatIf is read-only. If syncing changes this script, re-run it to load the new operator.
   -LocalSetup builds a signed semantier-setup-ch0.exe for the single adjacent MSIX; never uploads.
   -SetupOnly builds/reuses and publishes Setup in its own ecs-setup-* run.
   -UpdateSetup forces a new Setup build; neither mode builds or installs MSIX.
@@ -65,13 +69,14 @@ param(
   [Alias('PrepareOnly')][switch]$LocalOnly,
   [switch]$BuildOnly,
   [switch]$DesktopOnly,
-  [string]$BuildSource = 'D:\repo\deliverables\work\ecs-build-source',
+  [string]$BuildSource = '',
   [switch]$SkipOldCleanup,
   [switch]$NewRun,
   [switch]$SetupOnly,
   [switch]$LocalSetup,
   [switch]$UpdateSetup,
   [switch]$VerifyPublicDownload,
+  [switch]$Latest,
   [string]$Commit = '',
   [string]$BuildCache = 'D:\repo\deliverables\cache\desktop-inputs',
   [string]$BuildPython = '',
@@ -90,6 +95,9 @@ $script:milestoneClock = [Diagnostics.Stopwatch]::StartNew()
 $script:statusLog = $null
 $script:askPassExe = $null
 $script:releaseEnvironment = @{}
+$script:sourceLease = $null
+$script:sourceOwner = $null
+$script:sourceRecreated = $false
 function Set-ReleaseEnvironment([string]$Name,[string]$Value) {
   if(!$script:releaseEnvironment.ContainsKey($Name)){$script:releaseEnvironment[$Name]=[Environment]::GetEnvironmentVariable($Name,'Process')}
   [Environment]::SetEnvironmentVariable($Name,$Value,'Process')
@@ -133,11 +141,15 @@ function Assert-ExecutionPolicyPreflight {
 function Initialize-ReleasePaths {
   Assert-ExecutionPolicyPreflight
   if([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT){throw 'Run on native Windows.'}
+  foreach($name in @('GIT_DIR','GIT_WORK_TREE','GIT_COMMON_DIR','GIT_OBJECT_DIRECTORY','GIT_ALTERNATE_OBJECT_DIRECTORIES','GIT_INDEX_FILE')){
+    if([Environment]::GetEnvironmentVariable($name,'Process')){throw ('Clear Git repository override before building: '+$name)}
+  }
   if($env:SEMANTIER_WSL_GIT_DISTRO){throw 'Clear SEMANTIER_WSL_GIT_DISTRO; WSL Git is not supported by this workflow.'}
   if(!$Repository){$script:Repository=Split-Path -Parent $PSScriptRoot}
+  $null=Assert-LocalWindowsPath $Repository
+  Assert-NoReparseAncestor $Repository
   $script:Repository=(Resolve-Path -LiteralPath $Repository -ErrorAction Stop).ProviderPath.TrimEnd('\','/')
   if(!(Test-Path -LiteralPath (Join-Path $Repository 'scripts\bundles\desktop.py'))){throw 'Repository must name the Hermes source checkout.'}
-  $script:BuildSource=Assert-LocalWindowsPath $BuildSource
   $script:BuildCache=Assert-LocalWindowsPath $BuildCache
   $script:Output=Assert-LocalWindowsPath $Output
   $script:VersionState=Assert-LocalWindowsPath $VersionState
@@ -172,27 +184,16 @@ function Initialize-ReleasePaths {
   $script:SourceBinding=[ordered]@{repository=$Repository;toolingHermesHead=[string]$head;runtimeHead=$null;hermesGitlink=$null}
   if($RuntimeRoot){
     $runtimeGitArgs=@('-C',$RuntimeRoot)
-    $runtimeGitFile=Join-Path $RuntimeRoot '.git'
-    if(Test-Path -LiteralPath $runtimeGitFile -PathType Leaf){
-      $pointer=[IO.File]::ReadAllText($runtimeGitFile).Trim()
-      # WSL worktree pointers are POSIX absolute paths. Translate only within
-      # the selected WSL share; never rewrite the pointer or invoke WSL Git.
-      if($pointer -match '^gitdir: (/[^\r\n]+)$'){
-        $posixGitDir=$Matches[1]
-        if($RuntimeRoot -notmatch '^(\\\\(?:wsl\.localhost|wsl\$)\\[^\\]+)\\'){
-          throw 'A WSL Runtime worktree requires its explicit UNC Repository path.'
-        }
-        $nativeGitDir=$Matches[1]+$posixGitDir.Replace('/','\')
-        if(!(Test-Path -LiteralPath $nativeGitDir -PathType Container)){throw 'Runtime worktree Git directory is unavailable on the selected WSL share.'}
-        $runtimeGitArgs=@("--git-dir=$nativeGitDir","--work-tree=$RuntimeRoot",'-C',$RuntimeRoot)
-      }
-    }
     $runtimeHead=& git.exe @runtimeGitArgs rev-parse HEAD
     if($LASTEXITCODE -ne 0){throw 'Cannot inspect Runtime HEAD.'}
     $link=& git.exe @runtimeGitArgs ls-tree HEAD hermes-agent
     if($LASTEXITCODE -ne 0 -or $link -notmatch '^160000 commit ([a-f0-9]{40})\s'){throw 'Cannot inspect recorded Hermes gitlink.'}
     $script:SourceBinding.runtimeHead=[string]$runtimeHead;$script:SourceBinding.hermesGitlink=$Matches[1]
+    if($Commit -and ($Commit -cne $script:SourceBinding.hermesGitlink -or $head -cne $Commit)){
+      throw 'Requested commit and actual Hermes HEAD must equal the Runtime gitlink; synchronize the pinned source first.'
+    }
   }
+  if($Commit -and !$RuntimeRoot){throw 'Commit builds require the Runtime checkout and its pinned Hermes gitlink.'}
 }
 function Initialize-ReactCompilerCache([string]$Source) {
   # The admitted Vite config already keys compiled output by module text,
@@ -230,24 +231,219 @@ function Initialize-ReactCompilerCache([string]$Source) {
   New-Item -ItemType Junction -Path $local -Target $shared | Out-Null
   Report-Status ('Persistent React Compiler cache ready: '+$shared)
 }
-function Initialize-LocalBuildSource([string]$Source,[string]$Revision) {
-  $null=Assert-LocalWindowsPath $Source
-  if(!(Test-Path -LiteralPath $Source)){
-    Run 'git.exe' @('-c','core.autocrlf=false','clone','--no-local','--no-checkout','--',$Repository,$Source)
-  } else {
-    if(!(Test-Path -LiteralPath (Join-Path $Source '.git') -PathType Container) -or
-        (Test-Path -LiteralPath (Join-Path $Source '.git\objects\info\alternates'))){throw 'Build source must be an independent local clone; preserve and inspect existing directory.'}
-    $dirty=@(& git.exe -C $Source status --porcelain --untracked-files=all)
-    if($LASTEXITCODE -ne 0 -or $dirty){throw 'Local build clone has changes; preserve and inspect before continuing.'}
+function Assert-NoReparseAncestor([string]$Path) {
+  $cursor=[IO.Path]::GetFullPath($Path)
+  while($cursor){
+    if(Test-Path -LiteralPath $cursor){
+      if((Get-Item -LiteralPath $cursor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint){throw "Reparse point in build path: $cursor"}
+    }
+    $cursor=[IO.Path]::GetDirectoryName($cursor)
   }
-  $previousErrorPreference=$ErrorActionPreference
+}
+function Set-RunBuildSource {
+  $run=Assert-LocalWindowsPath $Output
+  $work=[IO.Path]::GetFullPath('D:\repo\deliverables\work')
+  if([IO.Path]::GetDirectoryName($run) -ine $work -or (Split-Path -Leaf $run) -cnotmatch '^ecs-deploy-\d{8}-\d{6}-[a-f0-9]{8}$'){
+    throw 'Commit builds require a unique ecs-deploy-<date>-<time>-<id> run directly under D:\repo\deliverables\work.'
+  }
+  $expected=Join-Path $run 'source'
+  if($BuildSource -and [IO.Path]::GetFullPath($BuildSource) -ine $expected){throw '-BuildSource must equal the selected run Output\source.'}
+  Assert-NoReparseAncestor $expected
+  foreach($protected in @($Repository,$BuildCache,$VersionState,$SetupExe,$UserProfile,$CredentialsEnv,$AcceptanceNodeModules,$BuildPython,$Node,$SignTool)){
+    if(!$protected){continue}
+    $full=[IO.Path]::GetFullPath($protected)
+    if($full -ieq $run -or $full.StartsWith($run+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){
+      throw 'Source retirement cannot contain a protected source/cache/ledger/release input.'
+    }
+  }
+  $script:BuildSource=$expected
+}
+function Get-SourceGit([string]$Root,[string[]]$Arguments) {
+  $value=& git.exe -C $Root @Arguments
+  if($LASTEXITCODE -ne 0){throw ('Native Git inspection failed: '+($Arguments -join ' '))}
+  return ($value -join "`n").Trim()
+}
+function Sync-GitHubLatestSource([string]$Runtime,[string]$Operator) {
+  if($WhatIfPreference){
+    Write-Output 'PLAN_ONLY: fast-forward GitHub Runtime main, synchronize pinned Hermes, then build exact gitlink; no files changed.'
+    return $null
+  }
+  if(!$IsWindows){throw '-Latest requires native Windows PowerShell and Git for Windows.'}
+  $expected='D:\repo\semantier-runtime'
+  if([IO.Path]::GetFullPath($Runtime).TrimEnd('\') -ine $expected -or
+      [IO.Path]::GetFullPath($Operator) -ine (Join-Path $expected 'hermes-agent\scripts\deploy-ecs.ps1')){
+    throw '-Latest requires the canonical D:\repo\semantier-runtime checkout and operator.'
+  }
+  $null=Assert-LocalWindowsPath $Runtime
+  Assert-NoReparseAncestor $Runtime
+  foreach($name in @('GIT_DIR','GIT_WORK_TREE','GIT_COMMON_DIR','GIT_INDEX_FILE','GIT_OBJECT_DIRECTORY','GIT_ALTERNATE_OBJECT_DIRECTORIES')){
+    if([Environment]::GetEnvironmentVariable($name,'Process')){throw ('Unset Git override before sync: '+$name)}
+  }
+  if($env:SEMANTIER_WSL_GIT_DISTRO){throw 'WSL Git is not supported by the native release workflow.'}
+  $null=Get-Command git.exe -CommandType Application -ErrorAction Stop
+  $root=Get-SourceGit $Runtime @('rev-parse','--show-toplevel')
+  if($root.Replace('\','/') -ine $expected.Replace('\','/')){throw 'Runtime Git top-level mismatch.'}
+  if((Get-SourceGit $Runtime @('branch','--show-current')) -cne 'main'){
+    throw 'GitHub sync requires checked-out Runtime main.'
+  }
+  $remote=Get-SourceGit $Runtime @('remote','get-url','origin')
+  if($remote -cnotmatch '^(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)chris-han/semantier-runtime(?:\.git)?$'){
+    throw 'origin is not the expected chris-han/semantier-runtime GitHub repository.'
+  }
+  if(Get-SourceGit $Runtime @('status','--porcelain','--untracked-files=all')){
+    throw 'Runtime checkout is dirty; preserve local changes and synchronize manually.'
+  }
+  $hermes=Join-Path $Runtime 'hermes-agent'
+  if((Test-Path -LiteralPath $hermes) -and (Get-SourceGit $hermes @('status','--porcelain','--untracked-files=all'))){
+    throw 'Hermes submodule is dirty; preserve changes before GitHub sync.'
+  }
+  $operatorHash=(Get-FileHash -LiteralPath $Operator -Algorithm SHA256).Hash
+  Report-Status 'GitHub sync: fetch and fast-forward Runtime main.'
+  Run 'git.exe' @('-C',$Runtime,'fetch','--no-tags','origin','main')
+  $fetched=Get-SourceGit $Runtime @('rev-parse','FETCH_HEAD^{commit}')
+  $local=Get-SourceGit $Runtime @('rev-parse','HEAD')
+  if((Get-SourceGit $Runtime @('merge-base',$local,$fetched)) -cne $local){
+    throw 'Runtime main is ahead of or diverged from GitHub main; preserve local commits and synchronize manually.'
+  }
+  Run 'git.exe' @('-C',$Runtime,'merge','--ff-only',$fetched)
+  if((Get-SourceGit $Runtime @('rev-parse','HEAD')) -cne $fetched){
+    throw 'Runtime HEAD does not equal fetched GitHub main; refusing to build.'
+  }
+  Run 'git.exe' @('-C',$Runtime,'submodule','sync','--','hermes-agent')
+  Run 'git.exe' @('-C',$Runtime,'submodule','update','--init','--checkout','--','hermes-agent')
+  $link=Get-SourceGit $Runtime @('ls-tree','HEAD','hermes-agent')
+  if($link -cnotmatch '^160000 commit ([a-f0-9]{40})\s+hermes-agent$'){
+    throw 'Updated Runtime HEAD has no valid Hermes gitlink.'
+  }
+  $pinned=$Matches[1]
+  if((Get-SourceGit $hermes @('rev-parse','HEAD')) -cne $pinned){
+    throw 'Hermes HEAD is not the Runtime-pinned gitlink after GitHub sync.'
+  }
+  if((Get-FileHash -LiteralPath $Operator -Algorithm SHA256).Hash -cne $operatorHash){
+    throw 'GitHub updated deploy-ecs.ps1. Re-run the same -Latest invocation to load the new operator before building.'
+  }
+  Report-Status ('GitHub sync PASS: Runtime '+(Get-SourceGit $Runtime @('rev-parse','HEAD'))+'; Hermes '+$pinned)
+  return $pinned
+}
+function Assert-StageInactive($Owner) {
+  # Never kill a process inferred from command text. Any possible stage use
+  # defers retirement; the synchronous build/acceptance callers normally exit first.
+  $processes=@(Get-CimInstance Win32_Process -ErrorAction Stop)
+  foreach($process in $processes){
+    if($process.ProcessId -eq $PID){continue}
+    if(($process.ProcessId -eq $Owner.pid -and $process.CreationDate.ToUniversalTime().ToString('o') -ceq $Owner.started) -or
+       ($process.ParentProcessId -eq $Owner.pid -and $process.CreationDate.ToUniversalTime() -ge [datetime]$Owner.started) -or
+       ($process.ExecutablePath -and ($process.ExecutablePath.StartsWith($Owner.source+'\',[StringComparison]::OrdinalIgnoreCase) -or
+         $process.ExecutablePath.StartsWith($Owner.cache+'\',[StringComparison]::OrdinalIgnoreCase))) -or
+       ($process.CommandLine -and $process.CommandLine.IndexOf($Owner.source,[StringComparison]::OrdinalIgnoreCase) -ge 0)){
+      throw 'Stage may have active children or an active previous operator; cleanup/recovery deferred.'
+    }
+  }
+}
+function Read-SourceOwner {
+  $last=$null
+  foreach($line in [IO.File]::ReadLines($script:statusLog)){
+    if($line -notmatch '"type"\s*:\s*"source-owner"\s*[,}]'){continue}
+    try{$event=$line | ConvertFrom-Json -ErrorAction Stop}catch{continue}
+    if($event.type -ceq 'source-owner'){$last=$event.owner}
+  }
+  return $last
+}
+function Assert-SourceOwner($Owner,[string]$Source,[string]$Revision) {
+  if(!$Owner -or $Owner.kind -cne 'native-git-worktree-v1' -or $Owner.run -ine $Output -or
+    $Owner.source -ine $Source -or $Owner.repository -ine $Repository -or $Owner.cache -ine $BuildCache -or $Owner.commit -cne $Revision){
+    throw 'Source ownership differs; preserve the foreign stage and inspect the run.'
+  }
+  Assert-NoReparseAncestor $Source
+}
+function Get-SourceRegistration([string]$Source,[string]$Revision) {
+  $records=(Get-SourceGit $Repository @('worktree','list','--porcelain')) -split "`n`n"
+  $registrations=@($records | Where-Object {($_ -split "`n")[0] -ceq ('worktree '+$Source.Replace('\','/'))})
+  if(!$registrations.Count){return $null}
+  if($registrations.Count -ne 1 -or $registrations[0] -notmatch '(?:\n)detached(?:\n|$)' -or
+    $registrations[0] -notmatch ('(?:\n)HEAD '+$Revision+'(?:\n|$)') -or $registrations[0] -match '(?:\n)locked'){
+    throw 'Exact detached stage registration differs or is locked.'
+  }
+  return $registrations[0]
+}
+function Assert-RegisteredSource([string]$Source,[string]$Revision) {
+  if(!(Test-Path -LiteralPath (Join-Path $Source '.git') -PathType Leaf)){throw 'Expected a linked-worktree .git file.'}
+  Assert-NoReparseAncestor (Join-Path $Source '.git')
+  if((Get-SourceGit $Source @('rev-parse','--show-toplevel')).Replace('\','/') -ine $Source.Replace('\','/')){throw 'Stage Git root differs from the owned source.'}
+  $common=Get-SourceGit $Repository @('rev-parse','--path-format=absolute','--git-common-dir')
+  if($IsWindows){$null=Assert-LocalWindowsPath $common;Assert-NoReparseAncestor $common}
+  $actual=Get-SourceGit $Source @('rev-parse','--path-format=absolute','--git-common-dir')
+  if($actual -ine $common -or (Test-Path -LiteralPath (Join-Path $common 'objects/info/alternates'))){throw 'Stage must share the Hermes common directory without alternates.'}
+  if((Get-SourceGit $Source @('rev-parse','HEAD')) -cne $Revision){throw 'Stage commit differs from the exact pinned SHA.'}
+  if(!(Get-SourceRegistration $Source $Revision)){throw 'Exact detached stage registration is missing.'}
+  return $common
+}
+function Initialize-LocalBuildSource([string]$Source,[string]$Revision) {
+  if($WhatIfPreference){return}
+  if($Revision -cnotmatch '^[a-f0-9]{40}$'){throw 'Exact source SHA required.'}
+  if($Source -ine $BuildSource){throw 'Stage must be the selected run source.'}
+  Assert-NoReparseAncestor $Source
+  $script:statusLog=Join-Path $Output 'checkpoints.jsonl'
+  if(!$script:sourceLease){
+    if(!(Test-Path -LiteralPath $Output)){New-Item -ItemType Directory -Path $Output | Out-Null}
+    $lock=Join-Path $Output '.source.lock'
+    Assert-NoReparseAncestor $lock
+    $script:sourceLease=[IO.File]::Open($lock,'OpenOrCreate','ReadWrite','None')
+    if(!(Test-Path -LiteralPath $script:statusLog)){[IO.File]::WriteAllText($script:statusLog,'')}
+    Assert-NoReparseAncestor $script:statusLog
+    $previous=Read-SourceOwner
+    if($previous){Assert-SourceOwner $previous $Source $Revision;Assert-StageInactive $previous}
+    elseif((Test-Path -LiteralPath $Source) -or (Get-Item -LiteralPath $script:statusLog).Length -gt 0 -or
+      @(Get-ChildItem -LiteralPath $Output -Force | Where-Object {$_.Name -notin @('.source.lock','checkpoints.jsonl')}).Count){
+      throw 'Occupied run/source has no workflow ownership; preserve it.'
+    }
+    if(Test-Path -LiteralPath $Source){
+      $null=Assert-RegisteredSource $Source $Revision
+      if(Get-SourceGit $Source @('status','--porcelain','--untracked-files=all')){throw 'Recovered stage has source changes; preserve and inspect.'}
+    }
+    $self=Get-Process -Id $PID
+    $script:sourceOwner=[ordered]@{kind='native-git-worktree-v1';run=$Output;source=$Source;repository=$Repository;
+      commit=$Revision;cache=$BuildCache;pid=$PID;started=$self.StartTime.ToUniversalTime().ToString('o')}
+    Write-RunEvent @{type='source-owner';owner=$script:sourceOwner}
+  }
+  Assert-SourceOwner $script:sourceOwner $Source $Revision
+  if(Test-Path -LiteralPath $Source){
+    $null=Assert-RegisteredSource $Source $Revision
+    $dirty=Get-SourceGit $Source @('status','--porcelain','--untracked-files=all')
+    if($dirty){throw 'Recovered stage has source changes; preserve and inspect before rebuilding.'}
+  } else {
+    # Repair only this owned, exact-SHA registration after an interrupted
+    # retirement. Never prune unrelated registrations.
+    if(Get-SourceRegistration $Source $Revision){Run 'git.exe' @('-C',$Repository,'worktree','remove','--force',$Source)}
+    Run 'git.exe' @('-C',$Repository,'-c','core.autocrlf=false','worktree','add','--detach',$Source,$Revision)
+    $script:sourceRecreated=$true
+  }
+  $common=Assert-RegisteredSource $Source $Revision
+  Write-RunEvent @{type='source-verified';source=$Source;commit=$Revision;commonDir=$common;binding=$script:SourceBinding}
+}
+function Remove-OwnedBuildSource {
+  if(!$script:sourceOwner){return 'NOT_CREATED'}
   try {
-    $ErrorActionPreference='Continue'
-    & git.exe -C $Source cat-file -e ($Revision+'^{commit}') 2>$null
-    $present=$LASTEXITCODE -eq 0
-  } finally {$ErrorActionPreference=$previousErrorPreference}
-  if(!$present){Run 'git.exe' @('-C',$Source,'fetch','--no-tags','--',$Repository,$Revision)}
-  Run 'git.exe' @('-C',$Source,'-c','core.autocrlf=false','switch','--detach',$Revision)
+    Assert-SourceOwner $script:sourceOwner $BuildSource $Commit
+    Assert-StageInactive $script:sourceOwner
+    if(Test-Path -LiteralPath $BuildSource){
+      $null=Assert-RegisteredSource $BuildSource $Commit
+      Run 'git.exe' @('-C',$Repository,'worktree','remove','--force',$BuildSource)
+    }
+    $listed=Get-SourceGit $Repository @('worktree','list','--porcelain')
+    if((Test-Path -LiteralPath $BuildSource) -or ($listed -split "`n") -contains ('worktree '+$BuildSource.Replace('\','/'))){throw 'Stage or registration remains.'}
+    return 'REMOVED'
+  } catch {Write-Warning ('CLEANUP_DEFERRED: '+$_.Exception.Message);return ('CLEANUP_DEFERRED: '+$_.Exception.Message)}
+}
+function Reset-StalePreparation([string]$Prepared) {
+  if(!$script:sourceRecreated -or !(Test-Path -LiteralPath $Prepared)){return}
+  $expected=Join-Path $Output 'desktop-job\prepared.json'
+  if([IO.Path]::GetFullPath($Prepared) -ine $expected){throw 'Prepared receipt escaped the selected run.'}
+  Assert-NoReparseAncestor $Prepared
+  # The receipt may reference retired payload paths. Regenerate through the
+  # existing builder; persistent native/npm/uv/toolchain caches are untouched.
+  Remove-Item -LiteralPath $Prepared -Force
+  Report-Status 'Retired source preparation invalidated; reusing verified persistent caches through the existing builder.'
 }
 function Report-Status([string]$Message) {
   $line = '[{0}] [+{1:0}s] {2}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $script:statusClock.Elapsed.TotalSeconds, $Message
@@ -657,6 +853,11 @@ function Remove-OlderDeploymentRuns([string]$KeepRun, [string]$CurrentVersion) {
       if($old.PSObject.Properties['plan'] -and $old.plan.PSObject.Properties['version']){$version=[Version]$old.plan.version}
     }
     if(!$cancelled -and (!$version -or $version -ge $current)){continue}
+    $log=Join-Path $path 'checkpoints.jsonl'
+    $checkpoint=if(Test-Path -LiteralPath $log){Read-RunCheckpoint $log}else{$null}
+    if(!$cancelled -and (!$checkpoint -or !$checkpoint.completed.PSObject.Properties['finished'])){continue}
+    if(Test-Path -LiteralPath (Join-Path $path 'source')){$deferred+=@($path);continue}
+    if(@(Get-ChildItem -LiteralPath $path -Recurse -File -Include '*.msix','*.exe','*.pfx').Count){$deferred+=@($path);continue}
     if(($directory.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
       (Test-Path -LiteralPath (Join-Path $path '.git')) -or
       @($active | Where-Object {$_.StartsWith($path+'\',[StringComparison]::OrdinalIgnoreCase)}).Count){
@@ -887,12 +1088,12 @@ function Build-DesktopCheck {
       signing='NOT_RUN';installation='NOT_RUN';publication='NOT_RUN'} | ConvertTo-Json
     return
   }
-  $head=& git.exe -C $BuildSource rev-parse HEAD
-  if($LASTEXITCODE -ne 0 -or $head -cne $Commit){
-    Initialize-LocalBuildSource $BuildSource $Commit
-    $head=& git.exe -C $BuildSource rev-parse HEAD
-    if($LASTEXITCODE -ne 0 -or $head -cne $Commit){throw 'Desktop source does not match the requested commit.'}
-  }
+  Initialize-LocalBuildSource $BuildSource $Commit
+  Initialize-BuildPreflight -NativeOnly
+  $desktopPrepared=Join-Path $Output 'desktop-check-job\prepared.json'
+  # Rebuild job-local bindings on every Desktop check; PM owns cache validation.
+  Run $BuildPython @('-B',(Join-Path $BuildSource 'scripts\bundles\desktop.py'),'--repo',$BuildSource,
+    '--commit',$Commit,'--variant','light','--prepare-only','--work',(Split-Path -Parent $desktopPrepared),'--cache',$BuildCache)
   $receipt=Join-Path $BuildSource 'node_modules\.hermes-node-deps.native-toolchain'
   if(!(Test-Path -LiteralPath $receipt)){throw 'Desktop dependencies are not prepared; use the existing preparation workflow first.'}
   $nativeIdentity=([IO.File]::ReadAllLines($receipt) | Select-Object -Last 1) | ConvertFrom-Json
@@ -949,66 +1150,9 @@ function Assert-MsixWithoutUvCache([string]$Path) {
     }
   } finally {$archive.Dispose()}
 }
-function Build-CommitPackage {
-  if($Commit -cnotmatch '^[a-f0-9]{40}$'){throw '-Commit requires a complete 40-character Git commit.'}
-  $resolved=& git.exe -C $Repository rev-parse --verify ($Commit+'^{commit}')
-  if($LASTEXITCODE -ne 0 -or $resolved -cne $Commit){throw 'Requested commit is not available locally; fetch it first.'}
-  if($WhatIfPreference){
-    [ordered]@{commit=$Commit;builder='existing scripts/bundles/desktop.py --prepare-only / --prepared';
-      version='reserve next version using existing next-windows-build-version.ps1; reuse on resume';
-      source=$script:SourceBinding;localBuildSource=$BuildSource;credentialsEnv=$CredentialsEnv;python=$BuildPython;node=$Node;
-      mode=$BuildMode;verification=($(if($BuildMode -eq 'Beta'){'SKIPPED_BETA'}else{'REQUIRED_PROD'}));cache=$BuildCache;output=$Output;publish=(!$LocalOnly -and !$BuildOnly);unsignedOnly=[bool]$BuildOnly} | ConvertTo-Json
-    return
-  }
-  if(!(Test-Path -LiteralPath $BuildPython -PathType Leaf)){throw 'Existing build Python is unavailable; specify -BuildPython.'}
-  if($NewRun -and $script:explicitOutput -and (Test-Path -LiteralPath $Output)){throw '-NewRun requires a fresh -Output directory.'}
-  if(!$NewRun -and !$PSBoundParameters.ContainsKey('Output') -and !$script:explicitOutput){
-    foreach($candidate in (Get-ChildItem -LiteralPath (Split-Path -Parent $Output) -Directory -Filter 'ecs-deploy-*' | Sort-Object LastWriteTime -Descending)){
-      $log=Join-Path $candidate.FullName 'checkpoints.jsonl';$record=Read-CommitBuild $log
-      if($record -and $record.commit -ceq $Commit){
-        $checkpoint=if(Test-Path -LiteralPath $log){Read-RunCheckpoint $log}else{$null}
-        if(!$checkpoint -or !$checkpoint.completed.PSObject.Properties['finished']){$script:Output=$candidate.FullName}
-        break
-      }
-    }
-  }
-  if(!(Test-Path -LiteralPath $Output)){New-Item -ItemType Directory -Path $Output | Out-Null}
-  $script:statusLog=Join-Path $Output 'checkpoints.jsonl'
-  $record=Read-CommitBuild $script:statusLog
-  if($record -and ($record.commit -cne $Commit -or $record.publicBase -cne $PublicBase -or $record.cache -cne $BuildCache -or $record.source -cne $BuildSource)){
-    throw 'Saved build configuration differs. Use -NewRun or a fresh -Output.'
-  }
-  if($record -and $record.stage -eq 'cancelled'){
-    throw 'This tooling-only version reservation was cancelled. Resume the application source commit and its original run instead.'
-  }
-  $source=if($record){[string]$record.source}else{$BuildSource}
-  $null=Assert-LocalWindowsPath $source
-  if(!$record){
-    $next=& (Join-Path $PSScriptRoot 'next-windows-build-version.ps1') -State $VersionState -SourceCommit $Commit
-    $record=[pscustomobject]@{commit=$Commit;version=[string]$next;source=$source;publicBase=$PublicBase;cache=$BuildCache;
-      request=(Join-Path $Output 'channel-request.json');prepared=(Join-Path $Output 'desktop-job\prepared.json');
-      msix=(Join-Path $Output 'unsigned.msix');sha256='';stage='reserved'}
-    Write-RunEvent @{type='build';build=$record;at=[DateTime]::UtcNow.ToString('o')}
-    Report-Status ('Reserved version '+$record.version+' for '+$Commit)
-  }
-  if($record.stage -eq 'built'){
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    $package=[IO.Compression.ZipFile]::OpenRead($record.msix)
-    try{[xml]$manifest=Read-ZipText $package 'AppxManifest.xml'}finally{$package.Dispose()}
-    if($manifest.Package.Identity.Publisher -cne $publisher){
-      Report-Status 'Existing unsigned MSIX has the wrong Publisher; repackaging the same version with cached build products.'
-      $record.stage='publisher-repackage-required'
-      Write-RunEvent @{type='build';build=$record;at=[DateTime]::UtcNow.ToString('o')}
-    }
-  }
-  if($record.stage -eq 'built'){
-    if($BuildMode -eq 'Prod' -and (Hash $record.msix) -cne $record.sha256){throw 'Checkpoint unsigned MSIX integrity mismatch.'}
-    Assert-MsixWithoutUvCache $record.msix
-    Report-Status 'Reusing checkpointed unsigned MSIX; no rebuild.'
-    return $record
-  }
+function Initialize-CommitInputs($record) {
+  $source=[string]$record.source
   Initialize-BuildPreflight -NativeOnly:($BuildMode -ne 'Prod')
-  Initialize-LocalBuildSource $source $Commit
   if(!(Test-Path -LiteralPath $record.request)){
     Run $BuildPython @('-B',(Join-Path $source 'scripts\releases\semantier_windows.py'),
       '--source',$source,'--commit',$Commit,'--controller',$Commit,'--version',$record.version,
@@ -1040,6 +1184,70 @@ function Build-CommitPackage {
     Run $BuildPython @('-B',$builder,'--repo',$source,'--channel-request',$record.request,'--variant','bundled',
       '--prepare-only','--work',(Split-Path -Parent $record.prepared),'--cache',$BuildCache)
   }
+}
+function Build-CommitPackage {
+  if($Commit -cnotmatch '^[a-f0-9]{40}$'){throw '-Commit requires a complete 40-character Git commit.'}
+  $resolved=& git.exe -C $Repository rev-parse --verify ($Commit+'^{commit}')
+  if($LASTEXITCODE -ne 0 -or $resolved -cne $Commit){throw 'Requested commit is not available locally; fetch it first.'}
+  if($WhatIfPreference){
+    [ordered]@{commit=$Commit;builder='existing scripts/bundles/desktop.py --prepare-only / --prepared';
+      version='reserve next version using existing next-windows-build-version.ps1; reuse on resume';
+      source=$script:SourceBinding;localBuildSource=$BuildSource;credentialsEnv=$CredentialsEnv;python=$BuildPython;node=$Node;
+      mode=$BuildMode;verification=($(if($BuildMode -eq 'Beta'){'SKIPPED_BETA'}else{'REQUIRED_PROD'}));cache=$BuildCache;output=$Output;publish=(!$LocalOnly -and !$BuildOnly);unsignedOnly=[bool]$BuildOnly} | ConvertTo-Json
+    return
+  }
+  if(!(Test-Path -LiteralPath $BuildPython -PathType Leaf)){throw 'Existing build Python is unavailable; specify -BuildPython.'}
+  if($NewRun -and $script:explicitOutput -and (Test-Path -LiteralPath $Output)){throw '-NewRun requires a fresh -Output directory.'}
+  if(!(Test-Path -LiteralPath $Output)){New-Item -ItemType Directory -Path $Output | Out-Null}
+  $script:statusLog=Join-Path $Output 'checkpoints.jsonl'
+  $record=Read-CommitBuild $script:statusLog
+  if($record -and ($record.commit -cne $Commit -or $record.publicBase -cne $PublicBase -or $record.cache -cne $BuildCache -or $record.source -cne $BuildSource)){
+    throw 'Saved build configuration differs. Use -NewRun or a fresh -Output.'
+  }
+  $inputs=([ordered]@{python=(Hash $BuildPython);node=(Hash $Node);
+    driver=(Hash (Join-Path $Repository 'scripts\bundles\desktop.py'));
+    runner=(Hash (Join-Path $Repository 'apps\desktop\scripts\run-electron-builder.mjs'));
+    operator=(Hash $PSCommandPath);lock=(Hash (Join-Path $Repository 'pm\lock.json'))} | ConvertTo-Json -Compress)
+  if($record){
+    foreach($entry in @{request='channel-request.json';prepared='desktop-job\prepared.json';msix='unsigned.msix'}.GetEnumerator()){
+      if($record.($entry.Key) -ine (Join-Path $Output $entry.Value)){throw 'Saved build output escaped the selected run.'}
+      Assert-NoReparseAncestor $record.($entry.Key)
+    }
+    if(!$record.PSObject.Properties['inputs'] -or $record.inputs -cne $inputs){throw 'Saved source/toolchain configuration changed; preserve the reservation and use a fresh run.'}
+  }
+  if($record -and $record.stage -eq 'cancelled'){
+    throw 'This tooling-only version reservation was cancelled. Resume the application source commit and its original run instead.'
+  }
+  $source=if($record){[string]$record.source}else{$BuildSource}
+  $null=Assert-LocalWindowsPath $source
+  Initialize-LocalBuildSource $source $Commit
+  Reset-StalePreparation (Join-Path $Output 'desktop-job\prepared.json')
+  if(!$record){
+    $next=& (Join-Path $PSScriptRoot 'next-windows-build-version.ps1') -State $VersionState -SourceCommit $Commit
+    $record=[pscustomobject]@{inputs=$inputs;commit=$Commit;version=[string]$next;source=$source;publicBase=$PublicBase;cache=$BuildCache;
+      request=(Join-Path $Output 'channel-request.json');prepared=(Join-Path $Output 'desktop-job\prepared.json');
+      msix=(Join-Path $Output 'unsigned.msix');sha256='';stage='reserved'}
+    Write-RunEvent @{type='build';build=$record;at=[DateTime]::UtcNow.ToString('o')}
+    Report-Status ('Reserved version '+$record.version+' for '+$Commit)
+  }
+  if($record.stage -eq 'built'){
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $package=[IO.Compression.ZipFile]::OpenRead($record.msix)
+    try{[xml]$manifest=Read-ZipText $package 'AppxManifest.xml'}finally{$package.Dispose()}
+    if($manifest.Package.Identity.Publisher -cne $publisher){
+      Report-Status 'Existing unsigned MSIX has the wrong Publisher; repackaging the same version with cached build products.'
+      $record.stage='publisher-repackage-required'
+      Write-RunEvent @{type='build';build=$record;at=[DateTime]::UtcNow.ToString('o')}
+    }
+  }
+  if($record.stage -eq 'built'){
+    if($BuildMode -eq 'Prod' -and (Hash $record.msix) -cne $record.sha256){throw 'Checkpoint unsigned MSIX integrity mismatch.'}
+    Assert-MsixWithoutUvCache $record.msix
+    if(!$BuildOnly -and !$AcceptanceNodeModules){Initialize-CommitInputs $record}
+    Report-Status 'Reusing checkpointed unsigned MSIX; no rebuild.'
+    return $record
+  }
+  Initialize-CommitInputs $record
   # --prepared performs the builder's own source-bound integrity checks. Never
   # delete a rejected preparation or silently reinstall all dependencies.
   Initialize-ReactCompilerCache $source
@@ -1105,7 +1313,7 @@ function Publish-IndependentSetup {
   }
   $script:runBinding=([ordered]@{kind='setup';localSetup=[bool]$LocalSetup;signer=$Thumbprint;target=$SshTarget;root=$RemoteRoot;origin=$PublicBase;forceRebuild=[bool]$UpdateSetup;implementation='winhttp-framework-asimov-v2';contract='verify-remote-expected-sha256-v2'} | ConvertTo-Json -Compress)
   if($WhatIfPreference){[ordered]@{kind='Setup only';output=$Output;update=[bool]$UpdateSetup;stages=$(if($LocalSetup){@('build signed offline Setup','verify signature and adjacent-file contract')}else{@('reuse or build signed Setup','verify signature and download contract','SFTP upload Setup only','activate Setup only')});msix='UNCHANGED';CH2='UNCHANGED'} | ConvertTo-Json;return}
-  if(!$NewRun -and !$script:explicitOutput){
+  if(!$NewRun -and !$script:explicitOutput -and (Test-Path -LiteralPath (Split-Path -Parent $Output))){
     foreach($candidate in (Get-ChildItem 'D:\repo\deliverables\work' -Directory -Filter 'ecs-setup-*' | Sort-Object LastWriteTime -Descending)){
       $log=Join-Path $candidate.FullName 'checkpoints.jsonl'
       if(!(Test-Path -LiteralPath $log)){continue}
@@ -1163,9 +1371,32 @@ function Publish-IndependentSetup {
   }
 }
 try {
+if($Latest){
+  if($Commit -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or $PreflightOnly -or $PSBoundParameters.ContainsKey('Msix')){
+    throw '-Latest is for a Runtime-pinned commit build only; do not combine with -Commit, Setup, preflight-only or a fixed MSIX.'
+  }
+  if($WhatIfPreference){$null=Sync-GitHubLatestSource '' '';return}
+  $runtime=Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+  $Commit=Sync-GitHubLatestSource $runtime $PSCommandPath
+}
 if($BuildOnly -and (!$Commit -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or $PreflightOnly)){throw '-BuildOnly requires -Commit and cannot be combined with Setup or preflight modes.'}
+$script:explicitOutput=$PSBoundParameters.ContainsKey('Output')
 Initialize-ReleasePaths
+if($Commit){
+  if(!$NewRun -and !$script:explicitOutput){
+    foreach($candidate in (Get-ChildItem -LiteralPath (Split-Path -Parent $Output) -Directory -Filter 'ecs-deploy-*' | Sort-Object LastWriteTime -Descending)){
+      $log=Join-Path $candidate.FullName 'checkpoints.jsonl';$record=Read-CommitBuild $log
+      if($record -and $record.commit -ceq $Commit){
+        $checkpoint=if(Test-Path -LiteralPath $log){Read-RunCheckpoint $log}else{$null}
+        if(!$checkpoint -or !$checkpoint.completed.PSObject.Properties['finished']){$script:Output=$candidate.FullName}
+        break
+      }
+    }
+  }
+  Set-RunBuildSource
+}
 if($DesktopOnly){
+  if(!$Commit){throw '-DesktopOnly requires an exact -Commit.'}
   if($BuildOnly -or $SetupOnly -or $LocalSetup -or $UpdateSetup -or $PreflightOnly){throw '-DesktopOnly cannot be combined with package/setup/preflight modes.'}
   Build-DesktopCheck
   return
@@ -1188,7 +1419,7 @@ if($Commit){
   if($WhatIfPreference){$built;return}
   if($BuildOnly){
     $unsigned=[ordered]@{result='UNSIGNED_LOCAL_BUILD';commit=$Commit;version=$built.version;unsignedMsix=$built.msix;
-      sha256=$built.sha256;source=$built.source;signing='NOT_RUN';installation='NOT_RUN';publication='NOT_RUN'}
+      sha256=$built.sha256;source=$built.source;binding=$script:SourceBinding;signing='NOT_RUN';installation='NOT_RUN';publication='NOT_RUN'}
     [IO.File]::WriteAllText((Join-Path $Output 'result.json'),($unsigned | ConvertTo-Json -Depth 8),$utf8)
     Write-RunEvent @{type='build-only';at=[DateTime]::UtcNow.ToString('o');result=$unsigned}
     Report-Status 'Unsigned local build complete; signing, installation and publication were not run.'
@@ -1228,7 +1459,7 @@ foreach ($tool in $tools) {
   if (!(Test-Path -LiteralPath $tool -PathType Leaf)) { throw "Required existing tool unavailable: $tool" }
 }
 if($BuildMode -eq 'Prod'){
-  if(!$AcceptanceNodeModules){throw 'Prod acceptance requires -AcceptanceNodeModules pointing to existing Windows dependencies, or a -Commit build clone.'}
+  if(!$AcceptanceNodeModules){throw 'Prod acceptance requires -AcceptanceNodeModules pointing to existing Windows dependencies, or a -Commit build worktree.'}
   $null=Assert-LocalWindowsPath $AcceptanceNodeModules
   if(!(Test-Path -LiteralPath (Join-Path $AcceptanceNodeModules '@playwright\test'))){throw 'Existing Windows Playwright dependencies unavailable; no npm installation attempted.'}
   & $BuildPython -B -c 'import curl_cffi'
@@ -1652,6 +1883,34 @@ printf 'OLD_PACKAGE_CLEANUP_PASS\n'
   Write-Host "Result and evidence: $Output"
 }
 
+} catch {
+  if($script:sourceOwner){
+    $failurePath=Join-Path $Output 'result.json'
+    if(Test-Path -LiteralPath $failurePath){
+      $failure=Get-Content -LiteralPath $failurePath -Raw | ConvertFrom-Json
+    } else {
+      $failure=[pscustomobject]@{commit=$Commit;binding=$script:SourceBinding;signing='NOT_RUN';installation='NOT_RUN';publication='NOT_RUN'}
+    }
+    $failure | Add-Member -NotePropertyName result -NotePropertyValue 'FAIL' -Force
+    $failure | Add-Member -NotePropertyName error -NotePropertyValue $_.Exception.Message -Force
+    Save-Json $failure $failurePath
+  }
+  throw
 } finally {
-  foreach($name in $script:releaseEnvironment.Keys){[Environment]::SetEnvironmentVariable($name,$script:releaseEnvironment[$name],'Process')}
+  try {
+    if($script:sourceLease -and $script:sourceOwner){
+      $cleanup=Remove-OwnedBuildSource
+      Write-RunEvent @{type='source-cleanup';source=$BuildSource;result=$cleanup;at=[DateTime]::UtcNow.ToString('o')}
+      $resultPath=Join-Path $Output 'result.json'
+      if(Test-Path -LiteralPath $resultPath){
+        $result=Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json
+        $result | Add-Member -NotePropertyName sourceCleanup -NotePropertyValue $cleanup -Force
+        Save-Json $result $resultPath
+        [IO.File]::AppendAllText((Join-Path $Output 'release-note.md'),"Result: $($result.result)`nApplication commit: $Commit`nSource cleanup: $cleanup`n",$utf8)
+      }
+    }
+  } finally {
+    if($script:sourceLease){$script:sourceLease.Dispose();$script:sourceLease=$null}
+    foreach($name in $script:releaseEnvironment.Keys){[Environment]::SetEnvironmentVariable($name,$script:releaseEnvironment[$name],'Process')}
+  }
 }
