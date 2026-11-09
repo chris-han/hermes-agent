@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useI18n } from '@/i18n'
 import { modelProviderName } from '@/i18n/model-service'
-import { Plus, X } from '@/lib/icons'
+import { Plus } from '@/lib/icons'
 import { modelDiscoveryOwnerKey } from '@/lib/model-discovery-scope'
 import { findCatalogProvider, modelOptionsQueryKey, providerManualModels, providerSelectableModels, requestDiscoveredModelOptions } from '@/lib/model-options'
 import { $customModels } from '@/store/custom-models'
@@ -146,63 +146,80 @@ function ScopedFallbackModelsField({ value, onChange }: { value: unknown; onChan
   return (
     <div className="grid w-full gap-1.5">
       {rows.length === 0 && <p className="text-xs text-muted-foreground">{m.fallbackEmpty}</p>}
-      {rows.map((entry, index) => {
-        const providerRow = findCatalogProvider(providers, entry.provider)
+      {rows.length > 0 && <ol className="grid gap-4">
+        {rows.map((entry, index) => {
+          const providerRow = findCatalogProvider(providers, entry.provider)
 
-        return (
-          <div className="flex flex-wrap items-center gap-2" key={index}>
-            <span className="w-4 shrink-0 text-center font-mono text-[0.7rem] text-muted-foreground">{index + 1}</span>
-            <SearchableSelect
-              aria-label={m.provider}
-              disabled={saving}
-              onChange={provider => switchProvider(index, provider)}
-              options={providers.map(provider => ({ value: provider.slug, label: modelProviderName(provider, locale), disabled: provider.authenticated === false }))}
-              placeholder={m.provider}
-              value={providerRow?.slug ?? entry.provider}
-            />
-            <ModelSelect
-              allowedModels={providerRow?.eligible_models}
-              className="min-w-52 flex-1"
-              disabled={saving || !providerRow || providerRow.authenticated === false}
-              excludeUnavailable
-              manualScope={manualScope}
-              models={[...providerSelectableModels(providerRow), ...providerManualModels(providerRow), ...customModels.filter(custom => custom.scope === manualScope && custom.provider === (providerRow?.slug ?? entry.provider)).map(custom => custom.model)]}
-              onValueChange={model => updateRow(index, { model })}
-              provider={providerRow}
-              providerSlug={entry.provider}
-              searchable
-              value={entry.model}
-            />
-            <Select
-              disabled={saving || providerRow?.capabilities?.[entry.model]?.reasoning === false}
-              onValueChange={effort => {
-                const { reasoning_effort: _previous, ...route } = entry
-                commit(rows.map((row, i) => i === index
-                  ? effort === '__inherit__' ? route as FallbackEntry : { ...entry, reasoning_effort: effort }
-                  : row))
-              }}
-              value={entry.reasoning_effort === false ? 'none' : String(entry.reasoning_effort ?? '__inherit__')}
-            >
-              <SelectTrigger aria-label={`${m.reasoning} ${index + 1}`}><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__inherit__">{m.fallbackInheritEffort}</SelectItem>
-                {REASONING_EFFORT_VALUES.map(effort => (
-                  <SelectItem key={effort} value={effort}>{effort === 'none' ? m.reasoningOff : t.shell.modelOptions[effort]}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Button
-              aria-label={t.common.remove}
-              disabled={saving}
-              onClick={() => commit(rows.filter((_, i) => i !== index))}
-              size="icon-xs"
-              variant="ghost"
-            >
-              <X className="size-3.5" />
-            </Button>
-          </div>
-        )
-      })}
+          return (
+            <li className="grid gap-2" key={index}>
+              <div className="flex items-center gap-2">
+                <span className="w-4 shrink-0 text-center font-mono text-[0.7rem] text-muted-foreground">{index + 1}</span>
+                <Button
+                  aria-label={t.common.remove}
+                  disabled={saving}
+                  onClick={() => commit(rows.filter((_, i) => i !== index))}
+                  size="sm"
+                  variant="text"
+                >
+                  {t.common.remove}
+                </Button>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-3">
+                <label className="grid min-w-0 gap-1">
+                  <span className="text-xs text-muted-foreground">{m.provider}</span>
+                  <SearchableSelect
+                    aria-label={m.provider}
+                    className="w-full min-w-0"
+                    disabled={saving}
+                    onChange={provider => switchProvider(index, provider)}
+                    options={providers.map(provider => ({ value: provider.slug, label: modelProviderName(provider, locale), disabled: provider.authenticated === false }))}
+                    placeholder={m.provider}
+                    value={providerRow?.slug ?? entry.provider}
+                  />
+                </label>
+                <label className="grid min-w-0 gap-1">
+                  <span className="text-xs text-muted-foreground">{m.model}</span>
+                  <ModelSelect
+                    allowedModels={providerRow?.eligible_models}
+                    aria-label={m.model}
+                    className="w-full min-w-0"
+                    disabled={saving || !providerRow || providerRow.authenticated === false}
+                    excludeUnavailable
+                    manualScope={manualScope}
+                    models={[...providerSelectableModels(providerRow), ...providerManualModels(providerRow), ...customModels.filter(custom => custom.scope === manualScope && custom.provider === (providerRow?.slug ?? entry.provider)).map(custom => custom.model)]}
+                    onValueChange={model => updateRow(index, { model })}
+                    provider={providerRow}
+                    providerSlug={entry.provider}
+                    searchable
+                    value={entry.model}
+                  />
+                </label>
+                <label className="grid min-w-0 gap-1">
+                  <span className="text-xs text-muted-foreground">{m.reasoning}</span>
+                  <Select
+                    disabled={saving || providerRow?.capabilities?.[entry.model]?.reasoning === false}
+                    onValueChange={effort => {
+                      const { reasoning_effort: _previous, ...route } = entry
+                      commit(rows.map((row, i) => i === index
+                        ? effort === '__inherit__' ? route as FallbackEntry : { ...entry, reasoning_effort: effort }
+                        : row))
+                    }}
+                    value={entry.reasoning_effort === false ? 'none' : String(entry.reasoning_effort ?? '__inherit__')}
+                  >
+                    <SelectTrigger aria-label={`${m.reasoning} ${index + 1}`} className="w-full"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__inherit__">{m.fallbackInheritEffort}</SelectItem>
+                      {REASONING_EFFORT_VALUES.map(effort => (
+                        <SelectItem key={effort} value={effort}>{effort === 'none' ? m.reasoningOff : t.shell.modelOptions[effort]}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </label>
+              </div>
+            </li>
+          )
+        })}
+      </ol>}
       <div>
         <Button disabled={saving} onClick={() => commit([...rows, { provider: '', model: '' }])} size="sm" variant="textStrong">
           <Plus className="size-3.5" />

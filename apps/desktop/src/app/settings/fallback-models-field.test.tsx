@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Radix Select calls scrollIntoView / pointer-capture APIs jsdom lacks.
@@ -72,6 +72,30 @@ const CHAIN = [
 ]
 
 describe('FallbackModelsField', () => {
+  it('labels each selector and places a visible Remove action immediately after its fallback number', async () => {
+    const onChange = renderField(CHAIN)
+    await waitFor(() => expect(getGlobalModelOptions).toHaveBeenCalled())
+    expect(screen.getAllByText('Reasoning', { selector: 'span' })).toHaveLength(2)
+    const rows = screen.getAllByRole('listitem')
+    expect(rows).toHaveLength(2)
+    rows.forEach((row, index) => {
+      const remove = within(row).getByRole('button', { name: 'Remove' })
+      expect(remove.textContent).toBe('Remove')
+      expect(remove.querySelector('svg')).toBeNull()
+      expect(remove.previousElementSibling?.textContent).toBe(String(index + 1))
+
+      for (const name of ['Provider', 'Model', 'Reasoning']) {
+        const label = within(row).getByText(name, { selector: 'span', exact: true }).closest('label')
+        expect(label?.control).toBe(within(row).getByLabelText(name, { exact: true }))
+      }
+    })
+    fireEvent.click(within(rows[0]).getByRole('button', { name: 'Remove' }))
+    expect(onChange).not.toHaveBeenCalled()
+    expect(screen.getAllByRole('listitem')).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.getAllByRole('listitem')).toHaveLength(2)
+  })
+
   it('keeps reasoning and removal as drafts until one chain Apply, and Cancel restores the saved chain', async () => {
     const onChange = renderField(CHAIN)
     fireEvent.click(screen.getAllByLabelText('Remove')[1])
