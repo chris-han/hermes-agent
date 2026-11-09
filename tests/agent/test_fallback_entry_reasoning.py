@@ -85,7 +85,7 @@ def test_initial_credential_fallback_applies_selected_entry_before_snapshot(tmp_
         assert posts[-1].get('reasoning_effort') == 'none'
 
 
-@pytest.mark.parametrize("effort,expected", [("none", {"enabled": False}), ("high", {"enabled": True, "effort": "high"})])
+@pytest.mark.parametrize("effort,expected", [("none", {"enabled": False}), ("high", {"enabled": True, "effort": "high"}), (None, {"enabled": True, "effort": "low"}), ("absent-default", None)])
 def test_gateway_credential_resolution_carries_entry_reasoning(monkeypatch, effort, expected):
     from tui_gateway import server as agent_factory
     from hermes_cli.auth import AuthError
@@ -95,6 +95,44 @@ def test_gateway_credential_resolution_carries_entry_reasoning(monkeypatch, effo
             raise AuthError("synthetic missing credentials")
         return {"provider": "custom", "api_key": "fixture-key", "base_url": "http://fixture/v1"}
     monkeypatch.setattr(providers, "resolve_runtime_provider", resolve)
-    monkeypatch.setattr(agent_factory, "_load_fallback_model", lambda: [{"provider": "custom", "model": "same", "reasoning_effort": effort}])
+    config = {"agent": {"reasoning_effort": "medium", "reasoning_overrides": {"same": "low"}}} if effort != "absent-default" else {}
+    entry = {"provider": "custom", "model": "same"}
+    if effort in {"none", "high"}:
+        entry["reasoning_effort"] = effort
+    monkeypatch.setattr(agent_factory, "_load_cfg", lambda: config)
+    monkeypatch.setattr(agent_factory, "_load_fallback_model", lambda: [entry])
     resolution = agent_factory._resolve_runtime_with_fallback({"requested": "primary"})
     assert resolution.runtime["_fallback_reasoning_config"] == expected
+
+
+@pytest.mark.parametrize("is_fallback", [False, True])
+def test_gateway_factory_does_not_carry_primary_effort_into_inherited_absence(monkeypatch, is_fallback):
+    from types import SimpleNamespace
+    from tui_gateway import server
+    import run_agent
+    import agent.shell_hooks
+    original_import = server.importlib.import_module
+    def without_external_discovery(name, *args, **kwargs):
+        if name in {"hermes_cli.mcp_startup", "tui_gateway.entry"}:
+            return SimpleNamespace(wait_for_mcp_discovery=lambda: None)
+        return original_import(name, *args, **kwargs)
+    monkeypatch.setattr(server.importlib, "import_module", without_external_discovery)
+    runtime = {"provider": "custom"}
+    if is_fallback:
+        runtime["_fallback_reasoning_config"] = None
+    monkeypatch.setattr(server, "_load_cfg", lambda: {})
+    monkeypatch.setattr(server, "_resolve_agent_model_runtime", lambda *args: ("same", runtime))
+    monkeypatch.setattr(server, "_startup_system_prompt", lambda *args: "")
+    for name, value in [("_load_provider_routing", {}), ("_load_enabled_toolsets", []), ("_load_disabled_toolsets", []), ("_load_fallback_model", []), ("_load_prefill_messages", []), ("_load_service_tier", None)]:
+        monkeypatch.setattr(server, name, lambda *args, value=value: value)
+    monkeypatch.setattr(server, "_agent_cbs", lambda *args: {})
+    monkeypatch.setattr(server, "_onboarding_toolsets", lambda *args: [])
+    monkeypatch.setattr(agent.shell_hooks, "register_from_config", lambda *args: None)
+    # Observe the real production factory's constructor boundary; actual AIAgent
+    # HTTP reasoning/failover is independently exercised above.
+    monkeypatch.setattr(run_agent, "AIAgent", lambda **kwargs: SimpleNamespace(**kwargs))
+    primary_effort = {"enabled": True, "effort": "high"}
+    result = server._make_agent("reasoning-fixture", "reasoning-fixture", session_db=object(),
+                               reasoning_config_override=primary_effort,
+                               context_cwd_is_launch_artifact=False, auth_user_id="fixture")
+    assert result.reasoning_config == (None if is_fallback else primary_effort)
