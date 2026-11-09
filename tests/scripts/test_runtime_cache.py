@@ -193,7 +193,7 @@ def test_clean_preserves_only_guarded_owned_runtime_and_restores_receipt(tmp_pat
     assert (entry/'runtime.tar').is_file() and not work.exists()
     assert not (source/'apps/desktop/build/products').exists()
     assert not (source/'apps/desktop/dist').exists() and not (source/'apps/desktop/release').exists()
-    assert out.exists()==(guarded and not corrupt)
+    assert out.exists()==(not corrupt)
     restored=restore_cache(entry,'key',out,source,'b'*40)
     assert load_prepared(restored).ref=='b'*40
     assert (out/'hermes-agent/entry.py').read_text()=='unchanged backend'
@@ -232,6 +232,20 @@ def test_empty_linked_restore_output_cannot_write_outside_owner(tmp_path):
     with pytest.raises(ValueError,match='symlinked native output'):
         restore_cache(cache,'key',out,tmp_path,'b'*40)
     assert not list(outside.iterdir())
+
+
+def test_retained_preparation_reuses_sealed_bytes_without_archive(tmp_path):
+    from scripts.bundles.runtime_cache import retain_runtime
+    from scripts.bundles.native_prepared import load_prepared
+    out, prepared = payload(tmp_path)
+    retain_runtime(out, tmp_path, 'key')
+    candidate = restore_cache(tmp_path / 'cache/native/runtime/key', 'key', out, tmp_path, 'b' * 40)
+    assert candidate == prepared
+    assert load_prepared(candidate).ref == 'b' * 40
+    (out / 'hermes-agent/entry.py').write_text('corrupted')
+    candidate = restore_cache(tmp_path / 'cache/native/runtime/key', 'key', out, tmp_path, 'b' * 40)
+    with pytest.raises(ValueError, match='prepared bytes changed'):
+        load_prepared(candidate)
 
 
 def test_dependency_key_ignores_application_source_but_tracks_install_inputs(tmp_path):
@@ -302,7 +316,7 @@ def test_source_refresh_calls_real_native_flow_without_installing_dependencies(t
     import pm
     import pm.features
     from pm.packages import Venv
-    out, prepared = payload(tmp_path)
+    out, _prepared = payload(tmp_path)
     (out / 'hermes-agent/pm').mkdir()
     (out / 'hermes-agent/pm/lock.json').write_bytes(paths.lockfile_path().read_bytes())
     # The staged PM authority points to the fixture's existing interpreter.
@@ -311,7 +325,7 @@ def test_source_refresh_calls_real_native_flow_without_installing_dependencies(t
     def forbid(*args, **kwargs):
         raise AssertionError('source-only preparation must not acquire/copy/install dependencies')
     monkeypatch.setattr(native, 'get_package', lambda name: SimpleNamespace(binary=lambda *args: out / 'tools/python/python.exe'))
-    monkeypatch.setattr(native, '_bundle_package_names', lambda: [])
+    monkeypatch.setattr(native, '_bundle_package_names', list)
     monkeypatch.setattr(pm, 'prepare_tools', forbid)
     monkeypatch.setattr(pm, 'stage_tools', forbid)
     monkeypatch.setattr(pm, 'build_environment', forbid)

@@ -293,11 +293,11 @@ def prepare_native(*, out: Path, ref: str, source: Path, cache: Path,
         owned_candidate = retained_runtime(out, Path(source).resolve())
         if runtime_cache is not None and any(out.iterdir()) and not owned_candidate:
             raise ValueError('nonempty native output has no admitted retention ownership')
-        prepared_path(out).unlink(missing_ok=True)
         (out / "manifest.json").unlink(missing_ok=True)
         from scripts.bundles.runtime_cache import measure
         log_root = Path(env["HERMES_DESKTOP_SERIAL_CACHE"]) if env and env.get("HERMES_DESKTOP_SERIAL_CACHE") else None
         def cold(reuse_dependencies=False):
+            prepared_path(out).unlink(missing_ok=True)
             with measure(log_root, "runtime.prepare"):
                 extra = {"reuse_dependencies": True} if reuse_dependencies else {}
                 return _prepare_native(out=out, ref=ref, source=Path(source).resolve(),

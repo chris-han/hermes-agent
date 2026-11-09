@@ -283,10 +283,7 @@ def clean_outputs(request: BuildRequest) -> None:
     require_output_roots(request.source)
     build = request.source / "apps/desktop/build"
     payload = build / "agent-payload"
-    serial = os.environ.get("HERMES_DESKTOP_SERIAL_CACHE")
-    keep = (request.target == "win32-x64" and serial
-            and Path(serial).resolve() == request.cache.resolve()
-            and Path(str(request.source) + ".distribution.lock").is_file()
+    keep = (request.target == "win32-x64"
             and payload.is_dir() and retained_runtime(payload, request.source))
     stale = [request.source / "apps/desktop" / name for name in ("dist", "release")]
     if keep:

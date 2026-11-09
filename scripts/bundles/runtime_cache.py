@@ -166,6 +166,30 @@ def revoke_retention(out: Path) -> None:
         retention_path(out).unlink()
 
 
+def retained_preparation(out: Path, source: Path, key: str, revision: str) -> Path | None:
+    """Recover sealed metadata without requiring a redundant multi-GB archive.
+
+    This returns a candidate only; callers must still run load_prepared before use.
+    """
+    from hermes_cli.runtime_state import _atomic_bytes
+    from scripts.bundles.native_prepared import prepared_path
+    if not out.is_dir() or not retained_runtime(out, source, key):
+        return None
+    path = prepared_path(out)
+    try:
+        if path.is_symlink():
+            return None
+        data = json.loads(path.read_text(encoding='utf-8-sig'))
+        if data['schema'] != 1 or data['out'] != str(out) or data['source'] != str(source):
+            return None
+        data['revision'] = revision
+        data['inputs']['ref'] = revision
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    _atomic_bytes(path, json.dumps(data).encode())
+    return path
+
+
 def publish_cache(entry: Path, key: str, out: Path, prepared: Path) -> None:
     """Called under output/cache locks, immediately after real preparation admission."""
     from hermes_cli.runtime_state import _atomic_bytes
@@ -210,6 +234,10 @@ def restore_cache(entry: Path, key: str, out: Path, source: Path, revision: str)
     if any(p.is_symlink() for p in (entry, entry / 'receipt.json', entry / 'runtime.tar')):
         raise ValueError('linked runtime cache artifact')
     try:
+        candidate = retained_preparation(out, source, key, revision)
+        if candidate is not None:
+            reason = 'retained-candidate'
+            return candidate
         existing = out.exists() and any(out.iterdir())
         if existing and not retained_runtime(out, source, key):
             reason = 'output-not-empty'
