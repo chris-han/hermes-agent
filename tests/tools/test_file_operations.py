@@ -63,6 +63,8 @@ class TestIsWriteDenied:
         root = tmp_path / "hermes"
         profile = root / "profiles" / "coder"
         profile.mkdir(parents=True)
+        (root / "config.yaml").write_text("{}")
+        (profile / "config.yaml").write_text("{}")
         monkeypatch.setenv("HERMES_HOME", str(profile))
 
         assert _is_write_denied(str(profile / "mcp-tokens" / "tok.json")) is True
@@ -82,6 +84,8 @@ class TestIsWriteDenied:
         root = tmp_path / "hermes"
         profile = root / "profiles" / "coder"
         profile.mkdir(parents=True)
+        (root / "config.yaml").write_text("{}")
+        (profile / "config.yaml").write_text("{}")
         monkeypatch.setenv("HERMES_HOME", str(profile))
 
         # Active profile pairing entries

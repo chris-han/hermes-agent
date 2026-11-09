@@ -35,6 +35,7 @@ class TestWriteDenyExactPaths:
         root = tmp_path / "hermes_root"
         profile_home = root / "profiles" / "coder"
         profile_home.mkdir(parents=True)
+        (profile_home / "config.yaml").write_text("{}")
         global_env = root / ".env"
         global_env.write_text("OPENAI_API_KEY=sk-real\n")
 

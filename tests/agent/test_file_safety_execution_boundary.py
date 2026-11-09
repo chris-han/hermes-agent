@@ -19,7 +19,7 @@ def test_bound_roots_reject_escapes_and_keep_credential_guards(tmp_path, monkeyp
     escape = artifacts / "escape"
     escape.symlink_to(outside)
     scope = boundary.ExecutionBoundary(
-        source="test", paths=boundary.BoundaryPaths(hermes_home=workspace, artifacts_root=artifacts),
+        source="test", paths=boundary.BoundaryPaths(hermes_home=workspace, profile_owner_root=workspace, artifacts_root=artifacts),
         policy=boundary.BoundaryPolicy(require_boundary=True, allowed_read_roots=(workspace,), allowed_write_roots=(artifacts,)),
     )
     with boundary.bind_execution_boundary(scope):
