@@ -257,7 +257,19 @@ function Report-Status([string]$Message) {
 function Write-RunEvent($Event) {
   # Leading newline isolates a partial final record left by an interrupted write.
   $json=ConvertTo-Json -InputObject $Event -Depth 32 -Compress
-  [IO.File]::AppendAllText($script:statusLog,"`n"+$json+"`n",$utf8)
+  $deadline=[Diagnostics.Stopwatch]::StartNew()
+  while($true) {
+    try {
+      [IO.File]::AppendAllText($script:statusLog,"`n"+$json+"`n",$utf8)
+      return
+    } catch [IO.IOException] {
+      # Readers and other appenders can briefly deny write sharing on Windows.
+      # Retry only contention, never permission, disk-space, or path errors.
+      $code=$_.Exception.HResult -band 0xffff
+      if($code -notin @(32,33) -or $deadline.Elapsed.TotalSeconds -ge 10){throw}
+      Start-Sleep -Milliseconds 50
+    }
+  }
 }
 function Read-RunCheckpoint([string]$Path) {
   $last=$null
