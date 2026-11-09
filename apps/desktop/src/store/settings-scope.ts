@@ -19,25 +19,24 @@ export const $settingsScopeProfile = computed([$settingsScopeOverride, $activeGa
   normalizeProfileKey(override ?? active)
 )
 
-// The native startup owner already selects the managed desktop home. Hermes'
-// is_default still identifies its legacy root; it must not make that root a
-// competing desktop default. Never borrow a local preference on another source.
+// Default is the canonical root after the native migration. Never borrow a
+// local preference on another connection's independently owned profile roster.
 const $desktopLocalDefault = computed([$defaultProfileRoute, $connection, $profiles], (route, connection, profiles) => {
   const localSource = connection?.mode === 'local' &&
     (!connection.connectionId || connection.connectionId === LOCAL_CONNECTION_ID)
 
   const localPreference = route && (!route.connectionId || route.connectionId === LOCAL_CONNECTION_ID)
 
-  return localSource && localPreference && route.profile === 'semantier-local' &&
+  return localSource && localPreference && route.profile === 'default' &&
     profiles.some(profile => profile.name === route.profile) ? route.profile : null
 })
 
 // Ordinary Settings need no second root choice for a managed single-profile
-// desktop. An explicitly selected legacy root remains visible and keeps its
+// desktop. An explicitly selected legacy home remains visible and keeps its
 // exact request scope; advanced profile access and all stored data stay intact.
 export const $settingsScopeProfiles = computed([$profiles, $desktopLocalDefault, $settingsScopeProfile], (profiles, desktopDefault, selected) =>
-  desktopDefault && selected !== 'default'
-    ? profiles.filter(profile => !(profile.is_default && normalizeProfileKey(profile.name) === 'default'))
+  desktopDefault && selected !== 'semantier-local'
+    ? profiles.filter(profile => normalizeProfileKey(profile.name) !== 'semantier-local')
     : profiles
 )
 

@@ -30,6 +30,7 @@ vi.mock('@/store/session', async (importOriginal): Promise<Record<string, unknow
 
 vi.mock('@/store/updates', async (): Promise<Record<string, unknown>> => {
   const { atom } = await import('nanostores')
+  const actual = await vi.importActual<typeof UpdatesStore>('@/store/updates')
 
   const idle: UpdateApplyState = {
     applying: false,
@@ -42,6 +43,7 @@ vi.mock('@/store/updates', async (): Promise<Record<string, unknown>> => {
   }
 
   return {
+    ...actual,
     $desktopVersion: atom<DesktopVersionInfo | null>(null),
     $backendUpdateApply: atom<UpdateApplyState>(idle),
     $backendUpdateChecking: atom<boolean>(false),
@@ -77,6 +79,7 @@ function connection(mode: 'local' | 'remote'): HermesConnection {
 describe('AboutSettings', (): void => {
   beforeEach((): void => {
     vi.clearAllMocks()
+    window.hermesDesktop ??= {} as typeof window.hermesDesktop
     $connection.set(connection('local'))
     $desktopVersion.set({
       appVersion: '1.2.3',

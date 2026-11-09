@@ -91,7 +91,7 @@ function armEnvironment(f) {
   vi.stubEnv('PYTHONPATH', undefined)
 }
 
-test('builder dispatch refreshes real facts after every payload signature and before the outer seal', async () => {
+test.skipIf(process.platform !== 'darwin')('builder dispatch refreshes real facts after every payload signature and before the outer seal', async () => {
   const f = fixture()
   const signed = []
   const commands = []

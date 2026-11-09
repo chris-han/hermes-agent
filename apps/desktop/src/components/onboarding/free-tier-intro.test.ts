@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { $freeTierRoute, $freeTierStatus, freeTierStripPending } from '@/store/free-tier'
 import { $desktopOnboarding, refreshOnboarding } from '@/store/onboarding'
@@ -33,6 +33,10 @@ function gatewayReturning(freeTier: FreeTierStatus, route = true) {
     return { provider_configured: true } as T
   }
 }
+
+beforeEach(() => {
+  $desktopOnboarding.set({ ...$desktopOnboarding.get(), manual: false, requested: true, freeTierReady: false })
+})
 
 afterEach(() => {
   $freeTierStatus.set(null)

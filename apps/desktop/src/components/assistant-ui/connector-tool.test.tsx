@@ -146,7 +146,7 @@ describe('ConnectorOffer named-account notice', () => {
       </I18nProvider>
     )
 
-    expect(screen.getAllByText('Hermes named this Gmail account work.')).toHaveLength(1)
+    expect(screen.getAllByText('Semantier named this Gmail account work.')).toHaveLength(1)
 
     fireEvent.click(screen.getByRole('button', { name: 'Rename' }))
 

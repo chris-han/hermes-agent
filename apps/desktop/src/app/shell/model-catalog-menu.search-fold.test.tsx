@@ -16,6 +16,13 @@ beforeAll(() => {
 
 const getGlobalModelOptions = vi.fn()
 
+vi.mock('@/lib/startup-model-discovery', () => ({ refreshModelsOnConnectionReady: vi.fn(async () => undefined) }))
+
+vi.mock('@/lib/model-options', async importOriginal => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  requestDiscoveredModelOptions: () => getGlobalModelOptions()
+}))
+
 vi.mock('@/hermes', () => ({
   getGlobalModelOptions: (...args: unknown[]) => getGlobalModelOptions(...args),
   setApiRequestProfile: vi.fn()
@@ -48,7 +55,7 @@ function renderMenu() {
     <QueryClientProvider client={client}>
       <DropdownMenu open>
         <DropdownMenuContent>
-          <ModelCatalogMenu controller={controller} />
+          <ModelCatalogMenu controller={controller} ownerConnectionId="fixture-owner" />
         </DropdownMenuContent>
       </DropdownMenu>
     </QueryClientProvider>

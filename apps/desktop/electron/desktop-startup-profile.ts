@@ -59,7 +59,7 @@ export async function prepareDesktopStartupProfile(deps: {
 
   deps.remember(resolved.profile)
 
-  if (route || resolved.profile === 'semantier-local') {
+  if (route || resolved.profile === 'default') {
     deps.setDefault({ connectionId: route?.connectionId ?? null, profile: resolved.profile })
   }
 

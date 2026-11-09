@@ -301,13 +301,14 @@ describe('watchDeadSessionPrune', () => {
       $sessions.set([row('a')])
       vi.advanceTimersByTime(1_000)
       $sessions.set([row('a'), row('b')])
-      expect(vi.getTimerCount()).toBe(1)
+      expect(getSessionMock).not.toHaveBeenCalled()
 
-      vi.advanceTimersByTime(1_000)
-      await vi.runOnlyPendingTimersAsync()
+      await vi.advanceTimersByTimeAsync(1_000)
 
       expect($pinnedSessionIds.get()).toEqual([])
-      expect(vi.getTimerCount()).toBe(0)
+      expect(getSessionMock).toHaveBeenCalledTimes(2)
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(getSessionMock).toHaveBeenCalledTimes(2)
     } finally {
       unsubscribe()
       vi.useRealTimers()

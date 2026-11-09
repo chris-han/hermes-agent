@@ -40,24 +40,24 @@ beforeEach(() => {
 })
 
 describe('settings scope store', () => {
-  it('uses the native semantier-local default without changing the concrete request scope', () => {
+  it('uses the native default default without changing the concrete request scope', () => {
     $connection.set({ mode: 'local', connectionId: 'local' } as HermesConnection)
-    $defaultProfileRoute.set({ connectionId: null, profile: 'semantier-local' })
+    $defaultProfileRoute.set({ connectionId: null, profile: 'default' })
     $profiles.set([
       { name: 'default', is_default: true },
       { name: 'semantier-local', is_default: false },
       { name: 'scout', is_default: false }
     ] as ProfileInfo[])
-    $activeGatewayProfile.set('semantier-local')
+    $activeGatewayProfile.set('default')
     expect($settingsScopeEditsNonDefault.get()).toBe(false)
-    expect($settingsRequestProfile.get()).toBe('semantier-local')
+    expect($settingsRequestProfile.get()).toBe('default')
     $activeGatewayProfile.set('scout')
     expect($settingsScopeEditsNonDefault.get()).toBe(true)
     expect($settingsRequestProfile.get()).toBe('scout')
     setSettingsScope('default')
     expect($settingsScopeProfile.get()).toBe('default')
     expect($settingsRequestProfile.get()).toBe('default')
-    expect($settingsScopeEditsNonDefault.get()).toBe(true)
+    expect($settingsScopeEditsNonDefault.get()).toBe(false)
   })
 
   it.each([

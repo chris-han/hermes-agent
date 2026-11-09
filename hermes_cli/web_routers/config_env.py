@@ -27,7 +27,7 @@ from hermes_cli.web_server_profiles import (
 from fastapi import HTTPException, Request
 from hermes_cli.config import DEFAULT_CONFIG, OPTIONAL_ENV_VARS, read_raw_config, require_readable_config_before_write, custom_endpoint_key_env, coerce_provider_id, find_provider_entry, get_compatible_custom_providers, _ENV_REF_RE, _deep_merge
 from hermes_cli.config_providers import _canonical_api_mode, _custom_provider_entry_to_provider_config
-from hermes_cli.web_models import ConfigUpdate, EnvVarUpdate, EnvVarDelete, EnvVarReveal, CustomEndpointUpdate
+from hermes_cli.web_models import ConfigUpdate, EnvVarUpdate, EnvVarDelete, EnvVarReveal, SavedProviderProbe, CustomEndpointUpdate
 from typing import Any, Dict, List, Optional, Tuple
 
 _log = logging.getLogger("hermes_cli.web_server")
@@ -1057,6 +1057,46 @@ async def validate_provider_credential(body: EnvVarUpdate, request: Request):
         # 429 = key is valid but rate-limited; success = valid.
         return {"ok": True, "reachable": True, "message": ""}
     return {"ok": False, "reachable": True, "message": f"Provider returned HTTP {resp.status_code} for this key."}
+
+
+@router.post("/api/providers/validate-saved")
+async def validate_saved_provider_credential(body: SavedProviderProbe, request: Request, profile: Optional[str] = None):
+    """Probe a profile-owned key without disclosing its value to the Desktop renderer."""
+    _require_token(request)
+    from hermes_cli.provider_catalog import provider_catalog
+
+    provider = next((item for item in provider_catalog()
+                     if item.slug == body.provider and item.auth_type == "api_key"
+                     and body.key in item.api_key_env_vars), None)
+    if provider is None:
+        raise HTTPException(400, "Unknown API-key provider binding.")
+
+    def _probe():
+        from hermes_cli.auth import PROVIDER_REGISTRY
+        from hermes_cli.config import is_provider_enabled, load_config, load_env
+        from hermes_cli.desktop_model_discovery import read_configured_provider_snapshot
+        from hermes_cli.model_switch import _scoped_key_env
+        from hermes_constants import get_hermes_home
+
+        value = load_env().get(body.key)
+        if not value:
+            return {"ok": False, "reachable": False, "message": "No API key is saved in this profile."}
+        entry = (load_config().get("providers") or {}).get(body.provider, {})
+        if isinstance(entry, dict) and entry and not is_provider_enabled(entry):
+            return {"ok": False, "reachable": False, "message": "This provider is disabled."}
+        registered = PROVIDER_REGISTRY.get(provider.slug)
+        if registered is None:
+            return {"ok": False, "reachable": False, "message": "No registered provider endpoint."}
+        endpoint = (entry.get("base_url") if isinstance(entry, dict) else "") or (
+            _scoped_key_env(provider.base_url_env_var) if provider.base_url_env_var else "") or registered.inference_base_url
+        snapshot = read_configured_provider_snapshot(provider=provider.slug, entry=entry, base_url=endpoint,
+            api_key=value, source_scope=str(get_hermes_home().resolve()), refresh=True)
+        if snapshot.state == "fresh":
+            return {"ok": True, "reachable": True, "message": "Provider model-list request succeeded."}
+        return {"ok": False, "reachable": False,
+                "message": "Could not verify the provider model endpoint; check its key, address or network."}
+
+    return await scoped_to_thread(body.profile or profile, _probe)
 
 
 @router.delete("/api/env")

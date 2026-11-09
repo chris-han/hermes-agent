@@ -1,8 +1,10 @@
 import { defineFieldCopy } from '@/app/settings/field-copy'
 
+import { deBranding } from './branding'
 import { deAuxTasks } from './de_aux_tasks'
 import { deBoot } from './de_boot'
 import { deClarify } from './de_clarify'
+import { deCommon } from './de_common'
 import { deConnectorAccounts } from './de_connector_accounts'
 import { deConnectorCard } from './de_connector_card'
 import { deFirstRun } from './de_first_run'
@@ -19,6 +21,7 @@ import { semantierBillingCopy } from './semantier-billing'
 import { feedbackEnglish } from './semantier-feedback'
 
 export const deOverrides = {
+  branding: deBranding,
   semantierFeedback: feedbackEnglish,
   sharedMetrics: deSharedMetrics,
   firstRun: deFirstRun,
@@ -325,48 +328,7 @@ export const deOverrides = {
     continue: 'In Semantier fortfahren',
     importError: 'Diese Konversation konnte nicht importiert werden.'
   },
-  common: {
-    apply: 'Übernehmen',
-    back: 'Zurück',
-    save: 'Speichern',
-    saving: 'Speichern…',
-    cancel: 'Abbrechen',
-    change: 'Ändern',
-    choose: 'Wählen',
-    clear: 'Leeren',
-    close: 'Schließen',
-    collapse: 'Einklappen',
-    confirm: 'Bestätigen',
-    connect: 'Verbinden',
-    connecting: 'Verbindung wird hergestellt…',
-    continue: 'Weiter',
-    bots: 'Bots',
-    copied: 'Kopiert',
-    copy: 'Kopieren',
-    copyFailed: 'Kopieren fehlgeschlagen',
-    delete: 'Löschen',
-    docs: 'Doku',
-    done: 'Fertig',
-    error: 'Fehler',
-    expand: 'Aufklappen',
-    failed: 'Fehlgeschlagen',
-    formatJson: 'JSON formatieren',
-    free: 'Kostenlos',
-    loading: 'Lädt…',
-    notSet: 'Nicht gesetzt',
-    refresh: 'Aktualisieren',
-    remove: 'Entfernen',
-    replace: 'Ersetzen',
-    retry: 'Erneut versuchen',
-    run: 'Ausführen',
-    send: 'Senden',
-    set: 'Setzen',
-    skip: 'Überspringen',
-    update: 'Aktualisieren',
-    tryHint: term => `Versuchen Sie „${term}“`,
-    on: 'An',
-    off: 'Aus'
-  },
+  common: deCommon,
   fileMenu: {
     revealFinder: 'Im Finder anzeigen',
     revealExplorer: 'Im Datei-Explorer anzeigen',
@@ -2289,6 +2251,7 @@ export const deOverrides = {
       }
     },
     providers: {
+      cloudRemoteRevokePending: "Lokal getrennt. Der entfernte Widerruf konnte nicht bestätigt werden; widerrufen Sie dieses Gerät unter Abrechnung oder autorisieren Sie es erneut.",
       connectAccount: 'Ein Konto verbinden',
       haveApiKey: 'Haben Sie stattdessen einen API-Key?',
       intro:

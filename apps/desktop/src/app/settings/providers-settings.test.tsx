@@ -14,6 +14,7 @@ const disconnectOAuthProvider = vi.fn()
 const getEnvVars = vi.fn()
 const revealEnvVar = vi.fn()
 const setEnvVar = vi.fn()
+const validateSavedProviderCredential = vi.fn()
 const startManualProviderOAuth = vi.fn()
 const startManualLocalEndpoint = vi.fn()
 const onboarding = atom({ manual: false })
@@ -28,6 +29,7 @@ vi.mock('@/store/profile', () => ({
 
 vi.mock('@/hermes', () => ({
   setApiRequestProfile: vi.fn(),
+  validateSavedProviderCredential: (...args: unknown[]) => validateSavedProviderCredential(...args),
   getProfiles: async () => ({ profiles: (await import('@/store/profile')).$profiles.get() }),
   disconnectOAuthProvider: (...args: unknown[]) => disconnectOAuthProvider(...args),
   getEnvVars: (...args: unknown[]) => getEnvVars(...args),
@@ -83,6 +85,7 @@ function keyVar(patch: Partial<EnvVarInfo> = {}): EnvVarInfo {
 }
 
 beforeEach(() => {
+  validateSavedProviderCredential.mockReset()
   onboarding.set({ manual: false })
   getEnvVars.mockResolvedValue({})
   disconnectOAuthProvider.mockResolvedValue({ ok: true, provider: 'nous' })
@@ -120,9 +123,27 @@ describe('ProvidersSettings', () => {
   it('shows and saves optional OpenAI organization/project fields in the existing API card', async () => {
     getEnvVars.mockResolvedValue({
       OPENAI_API_KEY: keyVar({ provider: 'openai-api', provider_label: 'OpenAI API', provider_primary: true }),
-      OPENAI_BASE_URL: keyVar({ provider: 'openai-api', provider_label: 'OpenAI API', description: 'Base URL', is_password: false, advanced: true }),
-      OPENAI_ORG_ID: keyVar({ provider: 'openai-api', provider_label: 'OpenAI API', description: 'Organization ID', is_password: false, advanced: true }),
-      OPENAI_PROJECT_ID: keyVar({ provider: 'openai-api', provider_label: 'OpenAI API', description: 'Project ID', is_password: false, advanced: true })
+      OPENAI_BASE_URL: keyVar({
+        provider: 'openai-api',
+        provider_label: 'OpenAI API',
+        description: 'Base URL',
+        is_password: false,
+        advanced: true
+      }),
+      OPENAI_ORG_ID: keyVar({
+        provider: 'openai-api',
+        provider_label: 'OpenAI API',
+        description: 'Organization ID',
+        is_password: false,
+        advanced: true
+      }),
+      OPENAI_PROJECT_ID: keyVar({
+        provider: 'openai-api',
+        provider_label: 'OpenAI API',
+        description: 'Project ID',
+        is_password: false,
+        advanced: true
+      })
     })
     render(<ProvidersSettings onClose={vi.fn()} onViewChange={vi.fn()} view="keys" />)
     fireEvent.click(await screen.findByText('OpenAI API', { exact: true }))
@@ -479,7 +500,9 @@ describe('ProvidersSettings', () => {
     const onViewChange = vi.fn()
     render(<ProvidersSettings onClose={vi.fn()} onViewChange={onViewChange} view="accounts" />)
     const endpoint = await screen.findByText('Custom endpoint')
-    expect(screen.getByText('Semantier Model Provider').compareDocumentPosition(endpoint) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(
+      screen.getByText('Semantier Model Provider').compareDocumentPosition(endpoint) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
     expect(screen.queryByText('Run models locally')).toBeNull()
     fireEvent.click(screen.getByText('Other providers'))
     fireEvent.click(screen.getByText('Nous Portal'))
@@ -491,10 +514,14 @@ describe('ProvidersSettings', () => {
   })
 
   it('keeps a connected Semantier Model Provider account above Custom endpoint', async () => {
-    listOAuthProviders.mockResolvedValue({ providers: [provider('semantier-cloud', true, { name: 'Semantier Model Provider' })] })
+    listOAuthProviders.mockResolvedValue({
+      providers: [provider('semantier-cloud', true, { name: 'Semantier Model Provider' })]
+    })
     render(<ProvidersSettings onClose={vi.fn()} onViewChange={vi.fn()} view="accounts" />)
     const endpoint = await screen.findByText('Custom endpoint')
-    expect(screen.getByText('Semantier Model Provider').compareDocumentPosition(endpoint) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(
+      screen.getByText('Semantier Model Provider').compareDocumentPosition(endpoint) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
     expect(screen.getAllByText('Connected').length).toBeGreaterThan(0)
   })
 
@@ -529,7 +556,9 @@ describe('ProvidersSettings', () => {
 
 it('starts the real Cloud provider through the shared coordinator and refreshes connection facts on focus', async () => {
   const onClose = vi.fn()
-  listOAuthProviders.mockResolvedValue({ providers: [provider('semantier-cloud', false, { name: 'Semantier Model Provider' })] })
+  listOAuthProviders.mockResolvedValue({
+    providers: [provider('semantier-cloud', false, { name: 'Semantier Model Provider' })]
+  })
   render(
     <MemoryRouter>
       <ProvidersSettings onClose={onClose} onViewChange={() => undefined} view="accounts" />
@@ -544,7 +573,9 @@ it('starts the real Cloud provider through the shared coordinator and refreshes 
 })
 
 it('resolves a saved retired local destination to Model service Accounts', async () => {
-  listOAuthProviders.mockResolvedValue({ providers: [provider('semantier-cloud', false, { name: 'Semantier Model Provider' })] })
+  listOAuthProviders.mockResolvedValue({
+    providers: [provider('semantier-cloud', false, { name: 'Semantier Model Provider' })]
+  })
 
   function SavedDestination() {
     const [view, onViewChange] = useRouteEnumParam('pview', PROVIDER_VIEWS, 'accounts')
@@ -560,4 +591,57 @@ it('resolves a saved retired local destination to Model service Accounts', async
   expect(await screen.findByText('Custom endpoint')).toBeTruthy()
   expect(screen.getByRole('button', { name: /Semantier Model Provider/ })).toBeTruthy()
   expect(screen.queryByText('Local Models')).toBeNull()
+})
+
+describe('saved API key connectivity', () => {
+  it('probes the saved key in the settings profile and reports failure without revealing it', async () => {
+    $settingsScopeOverride.set('beta')
+    getEnvVars.mockResolvedValue({
+      OPENAI_API_KEY: keyVar({ provider: 'openai-api', provider_label: 'OpenAI API', is_set: true })
+    })
+    validateSavedProviderCredential.mockResolvedValue({ ok: false, reachable: false, message: 'Provider unavailable' })
+
+    try {
+      render(<ProvidersSettings onClose={vi.fn()} onViewChange={vi.fn()} view="keys" />)
+      fireEvent.click(await screen.findByText('OpenAI API', { exact: true }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Test' }))
+      await waitFor(() =>
+        expect(validateSavedProviderCredential).toHaveBeenCalledWith('openai-api', 'OPENAI_API_KEY', 'beta')
+      )
+      expect((await screen.findByRole('status')).textContent).toContain('Provider unavailable')
+      expect(revealEnvVar).not.toHaveBeenCalled()
+    } finally {
+      $settingsScopeOverride.set(null)
+    }
+  })
+
+  it('ignores a delayed result after switching profiles', async () => {
+    $settingsScopeOverride.set('beta')
+    getEnvVars.mockResolvedValue({
+      OPENAI_API_KEY: keyVar({ provider: 'openai-api', provider_label: 'OpenAI API', is_set: true })
+    })
+    let finish!: (value: { ok: boolean; message: string }) => void
+    validateSavedProviderCredential.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          finish = resolve
+        })
+    )
+
+    try {
+      render(<ProvidersSettings onClose={vi.fn()} onViewChange={vi.fn()} view="keys" />)
+      fireEvent.click(await screen.findByText('OpenAI API', { exact: true }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Test' }))
+      expect(validateSavedProviderCredential).toHaveBeenCalled()
+      await act(async () => {
+        $settingsScopeOverride.set('gamma')
+      })
+      await act(async () => {
+        finish({ ok: true, message: 'Old profile passed' })
+      })
+      expect(screen.queryByText('Old profile passed')).toBeNull()
+    } finally {
+      $settingsScopeOverride.set(null)
+    }
+  })
 })

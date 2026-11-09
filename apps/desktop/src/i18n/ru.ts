@@ -1,9 +1,11 @@
 import { defineFieldCopy } from '@/app/settings/field-copy'
 
+import { ruBranding } from './branding'
 import { defineLocale, type TranslationOverrides } from './define-locale'
 import { ruAuxTasks } from './ru_aux_tasks'
 import { ruBoot } from './ru_boot'
 import { ruClarify } from './ru_clarify'
+import { ruCommon } from './ru_common'
 import { ruConnectors } from './ru_connectors'
 import { ruFirstRun } from './ru_first_run'
 import { ruModelMenu } from './ru_model_menu'
@@ -39,53 +41,13 @@ const RU_NOUN = (count: number | string, one: string, few: string, many: string)
 }
 
 export const ruOverrides = {
+  branding: ruBranding,
   semantierFeedback: feedbackEnglish,
   connectors: ruConnectors.connectors,
   sharedMetrics: ruSharedMetrics,
   firstRun: ruFirstRun,
   sessionImport: ruConnectors.sessionImport,
-  common: {
-    apply: 'Применить',
-    back: 'Назад',
-    save: 'Сохранить',
-    saving: 'Сохранение…',
-    cancel: 'Отмена',
-    change: 'Изменить',
-    choose: 'Выбрать',
-    clear: 'Очистить',
-    close: 'Закрыть',
-    collapse: 'Свернуть',
-    confirm: 'Подтвердить',
-    connect: 'Подключить',
-    connecting: 'Подключение',
-    continue: 'Продолжить',
-    bots: 'Боты',
-    copied: 'Скопировано',
-    copy: 'Копировать',
-    copyFailed: 'Не удалось скопировать',
-    delete: 'Удалить',
-    docs: 'Документация',
-    done: 'Готово',
-    error: 'Ошибка',
-    expand: 'Развернуть',
-    failed: 'Ошибка',
-    formatJson: 'Форматировать JSON',
-    free: 'Бесплатно',
-    loading: 'Загрузка…',
-    notSet: 'Не задано',
-    refresh: 'Обновить',
-    remove: 'Убрать',
-    replace: 'Заменить',
-    retry: 'Повторить',
-    run: 'Запустить',
-    send: 'Отправить',
-    set: 'Установить',
-    skip: 'Пропустить',
-    update: 'Обновить',
-    tryHint: term => `Попробуйте «${term}»`,
-    on: 'Вкл',
-    off: 'Выкл'
-  },
+  common: ruCommon,
   fileMenu: {
     revealFinder: 'Показать в Finder',
     revealExplorer: 'Показать в Проводнике',
@@ -1358,6 +1320,7 @@ export const ruOverrides = {
       tasks: ruAuxTasks
     },
     providers: {
+      cloudRemoteRevokePending: "Локальное подключение отключено. Удалённый отзыв доступа не подтверждён; отзовите доступ устройства в разделе оплаты или авторизуйте его заново.",
       connectAccount: 'Подключить аккаунт',
       haveApiKey: 'Ввести API-ключ вместо этого?',
       intro:

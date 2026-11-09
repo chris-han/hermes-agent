@@ -77,6 +77,25 @@ def test_http3_mode_requires_https(monkeypatch):
         device._wire('http://127.0.0.1:1', 'start')
 
 
+
+def test_windows_local_docker_loopback_does_not_require_http3(monkeypatch):
+    from hermes_cli import cloud_device_client as device
+
+    calls = []
+    class Session:
+        def __init__(self, **kwargs): calls.append(kwargs)
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def post(self, url, **kwargs):
+            return types.SimpleNamespace(status_code=200, content=b"{}", json=lambda: {"contract_version": device.CONTRACT})
+    class RequestException(Exception): pass
+    fake = types.SimpleNamespace(Session=Session, exceptions=types.SimpleNamespace(RequestException=RequestException))
+    monkeypatch.setattr(device.sys, "platform", "win32")
+    monkeypatch.setitem(sys.modules, "requests", fake)
+    monkeypatch.setattr(device, "_config", lambda: {"providers": {"semantier-cloud": {}}})
+    assert device._wire("http://127.0.0.1:55474", "start")["contract_version"] == device.CONTRACT
+    assert calls == [{}]
+
 def test_provider_normalization_preserves_http3_setting():
     from hermes_cli.config_providers import _normalize_custom_provider_entry, _custom_provider_entry_to_provider_config
     entry = {'base_url': 'https://cloud.example/v1', 'http_version': '3'}

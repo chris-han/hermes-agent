@@ -21,6 +21,13 @@ beforeAll(() => {
 
 const getGlobalModelOptions = vi.fn()
 
+vi.mock('@/lib/startup-model-discovery', () => ({ refreshModelsOnConnectionReady: vi.fn(async () => undefined) }))
+
+vi.mock('@/lib/model-options', async importOriginal => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  requestDiscoveredModelOptions: () => getGlobalModelOptions()
+}))
+
 vi.mock('@/hermes', () => ({
   getGlobalModelOptions: (...args: unknown[]) => getGlobalModelOptions(...args),
   setApiRequestProfile: vi.fn()
@@ -28,7 +35,7 @@ vi.mock('@/hermes', () => ({
 
 beforeEach(() => {
   getGlobalModelOptions.mockResolvedValue({
-    providers: [{ models: ['gemini-3.1-pro', 'gemini-2.5-flash'], name: 'Google', slug: 'google' }]
+    providers: [{ models: ['gemini-3.1-pro', 'gemini-2.5-flash'], eligible_models: ['gemini-3.1-pro', 'gemini-2.5-flash'], name: 'Google', slug: 'google' }]
   })
 })
 
@@ -76,7 +83,7 @@ describe('the shared catalog menu, driven by an override controller', () => {
       <QueryClientProvider client={client}>
         <DropdownMenu open>
           <DropdownMenuContent>
-            <ModelCatalogMenu controller={controller} />
+            <ModelCatalogMenu controller={controller} ownerConnectionId="fixture-owner" />
           </DropdownMenuContent>
         </DropdownMenu>
       </QueryClientProvider>
@@ -100,7 +107,7 @@ describe('the shared catalog menu, driven by an override controller', () => {
   it('never renders MoA presets — a preset is not a worker model', async () => {
     getGlobalModelOptions.mockResolvedValue({
       providers: [
-        { models: ['gemini-3.1-pro'], name: 'Google', slug: 'google' },
+        { models: ['gemini-3.1-pro'], eligible_models: ['gemini-3.1-pro'], name: 'Google', slug: 'google' },
         { models: ['BeastMode'], name: 'Mixture of Agents', slug: 'moa' }
       ]
     })

@@ -43,36 +43,36 @@ afterEach(cleanup)
 describe('SettingsProfileScope', () => {
   it('omits the redundant root choice and selector for the managed desktop default', () => {
     $connection.set({ mode: 'local', connectionId: 'local' } as HermesConnection)
-    $defaultProfileRoute.set({ connectionId: null, profile: 'semantier-local' })
-    $activeGatewayProfile.set('semantier-local')
+    $defaultProfileRoute.set({ connectionId: null, profile: 'default' })
+    $activeGatewayProfile.set('default')
     $profiles.set([profile('default', true), profile('semantier-local')])
     const { container } = render(<SettingsProfileScope />)
     expect(container.textContent).toBe('')
   })
 
-  it('keeps real bot choices and scope warnings with semantier-local as the desktop default', () => {
+  it('keeps real bot choices and scope warnings with default as the desktop profile', () => {
     $connection.set({ mode: 'local', connectionId: 'local' } as HermesConnection)
-    $defaultProfileRoute.set({ connectionId: null, profile: 'semantier-local' })
-    $activeGatewayProfile.set('semantier-local')
+    $defaultProfileRoute.set({ connectionId: null, profile: 'default' })
+    $activeGatewayProfile.set('default')
     $profiles.set([profile('default', true), profile('semantier-local'), profile('scout')])
     const { container } = render(<SettingsProfileScope />)
-    expect(screen.queryByRole('button', { name: 'default' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'semantier-local' })).toBeNull()
     expect(container.querySelector('[role="status"]')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'scout' }))
     expect(container.querySelector('[data-scope-loud="true"]')?.textContent).toContain('scout')
-    fireEvent.click(screen.getByRole('button', { name: 'semantier-local' }))
+    fireEvent.click(screen.getByRole('button', { name: 'default' }))
     expect($settingsScopeOverride.get()).toBeNull()
     expect(container.querySelector('[role="status"]')).toBeNull()
   })
 
-  it('keeps an explicitly selected legacy root visible instead of silently retargeting', () => {
+  it('keeps an explicitly selected legacy home visible instead of silently retargeting', () => {
     $connection.set({ mode: 'local', connectionId: 'local' } as HermesConnection)
-    $defaultProfileRoute.set({ connectionId: null, profile: 'semantier-local' })
-    $activeGatewayProfile.set('default')
+    $defaultProfileRoute.set({ connectionId: null, profile: 'default' })
+    $activeGatewayProfile.set('semantier-local')
     $profiles.set([profile('default', true), profile('semantier-local')])
     render(<SettingsProfileScope />)
-    expect(screen.getByRole('button', { name: 'default' })).toBeTruthy()
-    expect(screen.getByRole('status').textContent).toContain('default')
+    expect(screen.getByRole('button', { name: 'semantier-local' })).toBeTruthy()
+    expect(screen.getByRole('status').textContent).toContain('semantier-local')
   })
 
   it('does not hide a real root merely because a profile is named semantier-local', () => {

@@ -1,6 +1,7 @@
 import type { TranslationOverrides } from './define-locale'
 
 export const deOnboarding: TranslationOverrides['onboarding'] = {
+  cloudBrowserOpened: "Bestätigen Sie dieses Gerät im Browser. Kehren Sie zu diesem Profil zurück, um die Verbindung abzuschließen.",
   headerTitle: 'Semantier Agent für Sie einrichten',
   headerDesc:
     'Verbinden Sie einen Modell-Anbieter, um mit dem Chatten zu beginnen. Die meisten Optionen brauchen nur einen Klick.',

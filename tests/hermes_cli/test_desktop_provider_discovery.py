@@ -299,6 +299,30 @@ def test_configured_registered_provider_uses_profile_credential_and_runtime_endp
     assert calls == [("profile-key", "https://relay.test/v1")]
 
 
+def test_keyed_catalog_providers_appear_without_provider_config(cache_path, monkeypatch):
+    from dataclasses import replace
+    from hermes_cli import models, model_switch
+    from hermes_cli.desktop_model_discovery import configured_provider_rows
+    from hermes_cli.inventory import ConfigContext
+    from agent import semantier_gateway
+
+    monkeypatch.setattr(semantier_gateway, "cloud_connection_config", dict)
+    keys = {"OPENAI_API_KEY": "a", "DASHSCOPE_API_KEY": "b", "DEEPSEEK_API_KEY": "c"}
+    monkeypatch.setattr(model_switch, "_scoped_key_env", lambda name: keys.get(name, ""))
+    monkeypatch.setattr(models, "probe_api_models", lambda value, url, **kwargs: {"models": [url]})
+    ctx = ConfigContext(current_provider="", current_model="", current_base_url="",
+                        user_providers={}, custom_providers=[])
+    rows = configured_provider_rows(ctx, source_scope="profile-a", refresh=True)
+    assert {"openai-api", "alibaba", "deepseek"} <= {row["slug"] for row in rows if row["models"]}
+    restricted = replace(ctx, user_providers={"openai-api": {"enabled": False}},
+                         excluded_providers=["alibaba"])
+    restricted_rows = configured_provider_rows(restricted, source_scope="profile-a", refresh=True)
+    restricted_slugs = {row["slug"] for row in restricted_rows}
+    assert "openai-api" not in restricted_slugs
+    assert "alibaba" not in restricted_slugs
+    assert "deepseek" in restricted_slugs
+
+
 def test_refresh_queries_sources_concurrently_with_profile_context(cache_path, monkeypatch):
     import contextvars
     import threading

@@ -42,6 +42,7 @@ vi.mock('@/store/session', async () => {
     $selectedStoredSessionId: atom(null),
     $sessions: atom([]),
     $unreadFinishedSessionIds: atom([]),
+    getSessionOwnerHints: () => [],
     lineageAliases: (storedId: string) => [storedId],
     rememberedSessionProfile: (_sessions: unknown, _sessionId: null | string, activeProfile: null | string) =>
       (activeProfile ?? '').trim() || 'default',

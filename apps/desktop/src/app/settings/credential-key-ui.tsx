@@ -1,11 +1,15 @@
+import { useStore } from '@nanostores/react'
 import { type ChangeEvent, type KeyboardEvent } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { validateSavedProviderCredential } from '@/hermes'
 import { translateNow, useI18n } from '@/i18n'
 import { ChevronDown, ExternalLink, Loader2, Save, Trash2 } from '@/lib/icons'
 import { isSubmitEnter } from '@/lib/ime'
 import { cn } from '@/lib/utils'
+import { $settingsRequestProfile } from '@/store/settings-scope'
 import type { EnvVarInfo } from '@/types/hermes'
 
 import { CONTROL_TEXT } from './constants'
@@ -254,12 +258,92 @@ export function CredentialKeyCard({
   )
 }
 
+function savedProviderKey(group: ProviderKeyRowGroup) {
+  return [group.primary, ...group.advanced].find(
+    ([key, info]) => info.is_set && isKeyVar(key, info) && Boolean(info.provider)
+  )
+}
+
+function SavedProviderConnectionTest({
+  candidate,
+  identity,
+  rowProps
+}: {
+  candidate: [string, EnvVarInfo]
+  identity: ProviderKeyRowGroup
+  rowProps: KeyRowProps
+}) {
+  const { t } = useI18n()
+  const profile = useStore($settingsRequestProfile)
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null)
+  const testGeneration = useRef(0)
+  // eslint-disable-next-line no-restricted-syntax -- Invalidate request tokens; no atom value is mirrored into this ref.
+  useEffect(() => {
+    testGeneration.current += 1
+    setTestResult(null)
+    setTesting(false)
+
+    return () => {
+      testGeneration.current += 1
+    }
+  }, [identity, profile])
+
+  async function checkSavedKey() {
+    if (!candidate?.[1].provider) {
+      return
+    }
+
+    const generation = ++testGeneration.current
+    setTesting(true)
+    setTestResult(null)
+
+    try {
+      const result = await validateSavedProviderCredential(candidate[1].provider, candidate[0], profile)
+
+      if (generation === testGeneration.current) {
+        setTestResult(result)
+      }
+    } catch {
+      if (generation === testGeneration.current) {
+        setTestResult({ ok: false, message: t.settings.connections.loadFailed })
+      }
+    } finally {
+      if (generation === testGeneration.current) {
+        setTesting(false)
+      }
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      <Button
+        aria-busy={testing}
+        disabled={testing || Boolean(rowProps.saving) || Object.keys(rowProps.edits).length > 0}
+        onClick={() => void checkSavedKey()}
+        size="sm"
+        type="button"
+        variant="ghost"
+      >
+        {testing && <Loader2 className="size-3 animate-spin" />}
+        {t.settings.connections.testConnection}
+      </Button>
+      {testResult && (
+        <span className={cn('text-xs', testResult.ok ? 'text-primary' : 'text-muted-foreground')} role="status">
+          {testResult.message}
+        </span>
+      )}
+    </div>
+  )
+}
+
 /** Provider API key group — collapsible card; description, docs link, and advanced fields expand on click. */
 export function ProviderKeyRows({ expanded, group, onExpand, onToggle, rowProps }: ProviderKeyRowsProps) {
   const { t } = useI18n()
   const docsUrl = group.docsUrl?.trim()
   const description = group.description?.trim()
-  const expandable = Boolean(description || docsUrl || group.advanced.length > 0)
+  const candidate = savedProviderKey(group)
+  const expandable = Boolean(description || docsUrl || group.advanced.length > 0 || candidate)
 
   return (
     <div
@@ -366,6 +450,13 @@ export function ProviderKeyRows({ expanded, group, onExpand, onToggle, rowProps 
             })}
 
             {docsUrl && <CredentialDocsLink href={docsUrl} />}
+            {candidate && (
+              <SavedProviderConnectionTest
+                candidate={candidate}
+                identity={group}
+                rowProps={rowProps}
+              />
+            )}
           </div>
         )}
       </div>

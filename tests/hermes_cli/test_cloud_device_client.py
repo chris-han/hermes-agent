@@ -384,3 +384,38 @@ def test_install_preserves_selected_http3_transport(native, monkeypatch):
     assert device.poll(session)['status'] == 'approved'
     assert device._config()['providers']['semantier-cloud']['http_version'] == '3'
     assert device._config()['providers']['semantier-cloud']['ssl_ca_cert'] == '/fixture/root.crt'
+
+
+def test_start_conflict_rotates_only_the_exact_obsolete_start_and_preserves_credentials(native, monkeypatch):
+    device, _ = native
+    first = device._new_state({})
+    first['credentials'] = {'retained': {'opaque': 'saved'}}
+    device._write(first)
+    calls = []
+    def wire(origin, operation, body=None, bearer=None):
+        calls.append(body)
+        if len(calls) == 1:
+            raise device.CloudDeviceError(409, 'start_conflict')
+        return {'contract_version':device.CONTRACT, 'intent_ref':'fresh-intent', 'status':'pending',
+                'expires_at':'2099-01-01T00:00:00+00:00',
+                'data':{'verification_uri':origin+'/billing/connect?intent_ref=fresh-intent'}}
+    monkeypatch.setattr(device, '_wire', wire)
+    result = device.start()
+    assert len(calls) == 2
+    assert calls[0]['idempotency_key'] != calls[1]['idempotency_key']
+    assert calls[0]['possession_challenge'] != calls[1]['possession_challenge']
+    assert result['session_id'] != first['session_id']
+    assert device._read()['credentials'] == first['credentials']
+
+
+@pytest.mark.parametrize('reason', [None, 'profile_generation_mismatch', 'start_conflict'])
+def test_start_conflicts_are_bounded_and_never_hide_other_conflicts(native, monkeypatch, reason):
+    device, _ = native
+    calls = []
+    def conflict(*args, **kwargs):
+        calls.append(1)
+        raise device.CloudDeviceError(409, reason)
+    monkeypatch.setattr(device, '_wire', conflict)
+    with pytest.raises(device.CloudDeviceError):
+        device.start()
+    assert len(calls) == (2 if reason == 'start_conflict' else 1)

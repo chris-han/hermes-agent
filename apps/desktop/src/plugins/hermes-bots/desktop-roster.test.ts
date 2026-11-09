@@ -4,11 +4,11 @@ import { desktopBotRoster, preferredDesktopBot } from './desktop-roster'
 import type { RosterRow } from './types'
 
 const local = (name: string): RosterRow => ({ name, connectionId: 'local', connectionKind: 'local' })
-const route = { connectionId: null, profile: 'semantier-local' }
+const route = { connectionId: null, profile: 'default' }
 
 describe('managed desktop bot roster', () => {
   it('shows the managed bot once, omits the duplicate root, and preserves raw owner rows', () => {
-    const root = local('default'), managed = local('semantier-local'), other = local('scout')
+    const root = local('semantier-local'), managed = local('default'), other = local('scout')
     const source = [root, other, managed]
     const visible = desktopBotRoster(source, route)
     expect(visible).toEqual([other, managed])
@@ -18,24 +18,24 @@ describe('managed desktop bot roster', () => {
   })
 
   it('does not drop remote roots or bots with the same names', () => {
-    const remote = { name: 'default', connectionId: 'lab', connectionKind: 'remote' }
-    const remoteManaged = { name: 'semantier-local', connectionId: 'lab', connectionKind: 'remote' }
-    const source = [local('default'), local('semantier-local'), remote, remoteManaged]
+    const remote = { name: 'semantier-local', connectionId: 'lab', connectionKind: 'remote' }
+    const remoteManaged = { name: 'default', connectionId: 'lab', connectionKind: 'remote' }
+    const source = [local('semantier-local'), local('default'), remote, remoteManaged]
     expect(desktopBotRoster(source, route)).toEqual([source[1], remote, remoteManaged])
   })
 
   it('keeps the roster unchanged until the managed local owner is confirmed', () => {
-    const source = [local('default'), local('semantier-local')]
+    const source = [local('semantier-local'), local('default')]
     expect(desktopBotRoster(source, null)).toBe(source)
-    expect(desktopBotRoster(source, { connectionId: 'lab', profile: 'semantier-local' })).toBe(source)
+    expect(desktopBotRoster(source, { connectionId: 'lab', profile: 'default' })).toBe(source)
     expect(desktopBotRoster([source[0]], route)).toEqual([source[0]])
     expect(preferredDesktopBot(source, null)).toBeUndefined()
   })
 
   it('does not suppress a real root on a stale or ghost-only managed roster', () => {
-    const root = local('default')
+    const root = local('semantier-local')
 
-    for (const managed of [{ ...local('semantier-local'), ghost: true }, { ...local('semantier-local'), retained: true }]) {
+    for (const managed of [{ ...local('default'), ghost: true }, { ...local('default'), retained: true }]) {
       const source = [root, managed]
       expect(desktopBotRoster(source, route)).toBe(source)
     }

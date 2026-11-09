@@ -4,7 +4,7 @@ import type { WritableAtom } from 'nanostores'
 import { afterEach, expect, it, vi } from 'vitest'
 
 import { I18nProvider } from '@/i18n'
-import { requestModelOptions } from '@/lib/model-options'
+import { requestDiscoveredModelOptions } from '@/lib/model-options'
 import { startManualOnboarding } from '@/store/onboarding'
 import { $gatewayState, $modelPickerOpen, $selectedStoredSessionId } from '@/store/session'
 import { $focusedTreePaneId as $focusedTreePaneIdMock } from '@/store/session-focus'
@@ -34,7 +34,7 @@ vi.mock('@/store/session-focus', async () => {
 })
 vi.mock('@/lib/model-options', async importOriginal => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  requestModelOptions: vi.fn().mockResolvedValue({ model: '', provider: '', providers: [] })
+  requestDiscoveredModelOptions: vi.fn().mockResolvedValue({ model: '', provider: '', providers: [] })
 }))
 vi.mock('@/store/onboarding', async importOriginal => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -80,8 +80,8 @@ it('reads the catalog from the backend profile but hands the Desktop alias to pr
     </QueryClientProvider>
   )
 
-  await waitFor(() => expect(requestModelOptions).toHaveBeenCalled())
-  expect(vi.mocked(requestModelOptions).mock.calls.every(([options]) => options.profile === 'backend-b')).toBe(true)
+  await waitFor(() => expect(requestDiscoveredModelOptions).toHaveBeenCalled())
+  expect(vi.mocked(requestDiscoveredModelOptions).mock.calls.every(([options]) => options.profile === 'backend-b')).toBe(true)
 
   fireEvent.click(await screen.findByRole('button', { name: 'Add provider' }))
   expect(startManualOnboarding).toHaveBeenCalledWith(undefined, { connectionId: 'connection-b', profile: 'desktop-b' })

@@ -1142,7 +1142,7 @@ export function botAppearance(name: string, meta: BotMeta | null | undefined, ow
   // EXPLICIT customization still wins: an uploaded/generated/pet image, or a
   // shape/color they set via the editor (tracked by meta.custom === true).
   const managed = Boolean(owner && preferredDesktopBot([owner], sdk.host?.state?.defaultProfileRoute?.get?.() ?? null))
-  const isPrimary = managed || (name || '').trim().toLowerCase() === 'default'
+  const isPrimary = managed || (!owner && (name || '').trim().toLowerCase() === 'default')
   const userCustomized = Boolean(meta?.custom)
 
   if (isPrimary && !userCustomized) {

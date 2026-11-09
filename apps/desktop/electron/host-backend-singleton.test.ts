@@ -65,6 +65,7 @@ test('the spawn guard and the router agree on which requests keep a backend', ()
     ['POST', '/api/skills'],
     ['POST', '/api/memory/reset'],
     ['GET', '/api/config'],
+    ['POST', '/api/providers/validate-saved'],
     ['PATCH', '/api/sessions/session-1']
   ]
 

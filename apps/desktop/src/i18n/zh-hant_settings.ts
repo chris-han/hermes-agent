@@ -1312,6 +1312,7 @@ export const zhHantSettings = {
       }
     },
     providers: {
+      cloudRemoteRevokePending: "已在本機中斷連線。無法確認遠端撤銷；請從帳務頁面撤銷此裝置，或重新授權。",
       connectAccount: '連結帳號',
       haveApiKey: '改用 API 金鑰？',
       intro: '使用訂閱登入，無需複製 API 金鑰。Semantier 會在應用程式中為您完成瀏覽器登入。',

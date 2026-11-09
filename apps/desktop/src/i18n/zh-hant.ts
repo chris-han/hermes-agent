@@ -1,3 +1,4 @@
+import { zhHantBranding } from './branding'
 import { defineLocale, type TranslationOverrides } from './define-locale'
 import { introZhHant } from './intro-zh-hant'
 import { feedbackEnglish } from './semantier-feedback'
@@ -15,6 +16,7 @@ import { zhHantFirstRun } from './zh-hant_first_run'
 import { zhHantSettings } from './zh-hant_settings'
 
 export const zhHantOverrides = {
+  branding: zhHantBranding,
   semantierFeedback: feedbackEnglish,
   connectors: {
     directory: {

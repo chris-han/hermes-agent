@@ -1,9 +1,11 @@
 import { defineFieldCopy } from '@/app/settings/field-copy'
 
+import { esBranding } from './branding'
 import { defineLocale, type TranslationOverrides } from './define-locale'
 import { esAuxTasks } from './es_aux_tasks'
 import { esBoot } from './es_boot'
 import { esClarify } from './es_clarify'
+import { esCommon } from './es_common'
 import { esConnectorAccounts } from './es_connector_accounts'
 import { esConnectorCard } from './es_connector_card'
 import { esFirstRun } from './es_first_run'
@@ -19,6 +21,7 @@ import { semantierBillingCopy } from './semantier-billing'
 import { feedbackEnglish } from './semantier-feedback'
 
 export const esOverrides = {
+  branding: esBranding,
   semantierFeedback: feedbackEnglish,
   sharedMetrics: esSharedMetrics,
   firstRun: esFirstRun,
@@ -328,48 +331,7 @@ export const esOverrides = {
     continue: 'Continuar en Semantier',
     importError: 'No se pudo importar esta conversación.'
   },
-  common: {
-    apply: 'Aplicar',
-    back: 'Atrás',
-    save: 'Guardar',
-    saving: 'Guardando…',
-    cancel: 'Cancelar',
-    change: 'Cambiar',
-    choose: 'Elegir',
-    clear: 'Limpiar',
-    close: 'Cerrar',
-    collapse: 'Contraer',
-    confirm: 'Confirmar',
-    connect: 'Conectar',
-    connecting: 'Conectando',
-    continue: 'Continuar',
-    bots: 'Bots',
-    copied: 'Copiado',
-    copy: 'Copiar',
-    copyFailed: 'No se pudo copiar',
-    delete: 'Eliminar',
-    docs: 'Docs',
-    done: 'Listo',
-    error: 'Error',
-    expand: 'Expandir',
-    failed: 'Falló',
-    formatJson: 'Formatear JSON',
-    free: 'Gratis',
-    loading: 'Cargando…',
-    notSet: 'Sin definir',
-    refresh: 'Actualizar',
-    remove: 'Quitar',
-    replace: 'Reemplazar',
-    retry: 'Reintentar',
-    run: 'Ejecutar',
-    send: 'Enviar',
-    set: 'Definir',
-    skip: 'Omitir',
-    update: 'Actualizar',
-    tryHint: term => `Prueba “${term}”`,
-    on: 'Activado',
-    off: 'Desactivado'
-  },
+  common: esCommon,
   fileMenu: {
     revealFinder: 'Mostrar en Finder',
     revealExplorer: 'Mostrar en el Explorador de archivos',
@@ -2282,6 +2244,7 @@ export const esOverrides = {
       }
     },
     providers: {
+      cloudRemoteRevokePending: "Desconectado localmente. No se pudo confirmar la revocación remota; revoca este dispositivo desde Facturación o vuelve a autorizarlo.",
       connectAccount: 'Conectar una cuenta',
       haveApiKey: '¿Tienes una clave API?',
       intro:

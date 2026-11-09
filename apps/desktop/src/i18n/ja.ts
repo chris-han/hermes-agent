@@ -1,10 +1,12 @@
 import { defineFieldCopy } from '@/app/settings/field-copy'
 
+import { jaBranding } from './branding'
 import { defineLocale, type TranslationOverrides } from './define-locale'
 import { introJa } from './intro-ja'
 import { jaAuxTasks } from './ja_aux_tasks'
 import { jaBoot } from './ja_boot'
 import { jaClarify } from './ja_clarify'
+import { jaCommon } from './ja_common'
 import { jaConnectors } from './ja_connectors'
 import { jaFirstRun } from './ja_first_run'
 import { jaModelMenu } from './ja_model_menu'
@@ -19,6 +21,7 @@ import { semantierBillingCopy } from './semantier-billing'
 import { feedbackEnglish } from './semantier-feedback'
 
 export const jaOverrides = {
+  branding: jaBranding,
   semantierFeedback: feedbackEnglish,
   connectors: jaConnectors.connectors,
   externalOpenFailed: {
@@ -31,48 +34,7 @@ export const jaOverrides = {
   firstRun: jaFirstRun,
   intro: introJa,
   sessionImport: jaConnectors.sessionImport,
-  common: {
-    apply: '適用',
-    back: '戻る',
-    save: '保存',
-    saving: '保存中…',
-    cancel: 'キャンセル',
-    change: '変更',
-    choose: '選択',
-    clear: 'クリア',
-    close: '閉じる',
-    collapse: '折りたたむ',
-    confirm: '確認',
-    connect: '接続',
-    connecting: '接続中',
-    continue: '続ける',
-    bots: 'ボット',
-    copied: 'コピーしました',
-    copy: 'コピー',
-    copyFailed: 'コピーに失敗しました',
-    delete: '削除',
-    docs: 'ドキュメント',
-    done: '完了',
-    error: 'エラー',
-    expand: '展開',
-    failed: '失敗',
-    formatJson: 'JSON を整形',
-    free: '無料',
-    loading: '読み込み中…',
-    notSet: '未設定',
-    refresh: '更新',
-    remove: '削除',
-    replace: '置き換え',
-    retry: '再試行',
-    run: '実行',
-    send: '送信',
-    set: '設定',
-    skip: 'スキップ',
-    update: '更新',
-    tryHint: term => `「${term}」を試す`,
-    on: 'オン',
-    off: 'オフ'
-  },
+  common: jaCommon,
 
   fileMenu: {
     revealFinder: 'Finder で表示',
@@ -1224,6 +1186,7 @@ export const jaOverrides = {
       tasks: jaAuxTasks
     },
     providers: {
+      cloudRemoteRevokePending: "ローカルで切断しました。リモートでの取り消しを確認できませんでした。「請求」でこのデバイスの認証を取り消すか、再認証してください。",
       connectAccount: 'アカウントを接続',
       haveApiKey: 'API キーをお持ちですか？',
       intro:

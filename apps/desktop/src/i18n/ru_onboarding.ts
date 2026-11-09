@@ -1,6 +1,7 @@
 import type { TranslationOverrides } from './define-locale'
 
 export const ruOnboarding: TranslationOverrides['onboarding'] = {
+  cloudBrowserOpened: "Разрешите доступ этому устройству в браузере. Вернитесь в этот профиль, чтобы завершить подключение.",
   headerTitle: 'Настроим для вас Semantier Agent',
   headerDesc: 'Подключите провайдера модели, чтобы начать общение. Большинство вариантов — в один клик.',
   preparingInstall: 'Semantier завершает установку. Обычно это занимает меньше минуты при первом запуске.',

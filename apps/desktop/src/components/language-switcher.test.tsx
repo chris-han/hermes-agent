@@ -38,7 +38,11 @@ describe('LanguageSwitcher', () => {
     fireEvent.click(screen.getByRole('option', { name: /日本語/i }))
 
     await waitFor(() => expect(saveConfig).toHaveBeenCalledTimes(1))
-    expect(saveConfig).toHaveBeenCalledWith({ display: { language: 'ja', skin: 'slate' } })
+    expect(saveConfig).toHaveBeenCalledWith({
+      display: { language: 'ja', skin: 'slate' },
+      stt: { language: 'ja', local: { language: 'ja' } },
+      tts: { edge: { voice: 'ja-JP-NanamiNeural' } }
+    })
   })
 
   it('lists a registered language by endonym, renders its pack, and writes its id to display.language', async () => {

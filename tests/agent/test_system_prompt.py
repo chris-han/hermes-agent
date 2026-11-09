@@ -412,6 +412,7 @@ class TestNamedProfileHintIntegration:
         root = tmp_path / ".hermes"
         profile_home = root / "profiles" / "coder"
         profile_home.mkdir(parents=True)
+        (profile_home / "config.yaml").write_text("{}\n", encoding="utf-8")
 
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         monkeypatch.setenv("HERMES_HOME", str(profile_home))
@@ -956,3 +957,21 @@ class TestConversationStartedTwoLine:
         vol = self._volatile(agent)
         assert "Conversation started:" not in vol
         assert "as of the last context rebuild" not in vol
+
+
+def test_migrated_semantier_soul_is_the_single_identity_in_the_real_assembly(tmp_path, monkeypatch):
+    from hermes_cli.profiles_desktop import resolve_desktop_startup_profile
+    from pm.paths import repo_root
+    owner = tmp_path / 'desktop-home'
+    monkeypatch.setenv('HERMES_HOME', str(owner))
+    resolve_desktop_startup_profile(owner)
+    canonical = (repo_root() / 'semantier-runtime/src/prompts/agents/SOUL.md').read_text(encoding='utf-8-sig').strip()
+    agent = _make_agent(skip_context_files=True, load_soul_identity=True,
+                        _session_db=SimpleNamespace(db_path=str(owner / 'state.db')))
+    actual = build_system_prompt(agent)
+    assert actual.count(canonical) == 1
+    assert 'You are Hermes Agent, built by Nous Research' not in actual
+    (owner / 'SOUL.md').write_text('Custom user persona', encoding='utf-8')
+    customized = build_system_prompt(agent)
+    assert customized.count('Custom user persona') == 1
+    assert canonical not in customized

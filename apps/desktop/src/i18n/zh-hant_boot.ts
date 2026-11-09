@@ -276,6 +276,7 @@ export const zhHantBoot = {
   },
 
   onboarding: {
+    cloudBrowserOpened: "請在瀏覽器中授權此裝置，再返回此設定檔完成連線。",
     headerTitle: '開始設定 Semantier Agent',
     headerDesc: '連線模型提供方即可開始聊天。大多數選項只需一次點擊。',
     preparingInstall: 'Semantier 正在完成安裝。首次執行通常不到一分鐘。',

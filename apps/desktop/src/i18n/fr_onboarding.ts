@@ -1,6 +1,7 @@
 import type { TranslationOverrides } from './define-locale'
 
 export const frOnboarding: TranslationOverrides['onboarding'] = {
+  cloudBrowserOpened: "Autorisez cet appareil dans votre navigateur. Revenez à ce profil pour terminer la connexion.",
   headerTitle: 'Configurons Semantier Agent pour vous',
   headerDesc:
     'Connectez un fournisseur de modèles pour commencer à discuter. La plupart des options nécessitent un clic.',

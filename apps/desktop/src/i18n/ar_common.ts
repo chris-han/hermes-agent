@@ -33,6 +33,8 @@ export const arCommon = {
     stripDetails: 'التفاصيل'
   },
   common: {
+    sessionsTab: 'الجلسات',
+    winmanTab: 'المساعد',
     apply: 'تطبيق',
     back: 'رجوع',
     save: 'حفظ',

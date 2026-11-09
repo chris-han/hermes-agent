@@ -657,6 +657,7 @@ const LOCAL_PRIMARY_SCOPED_ROUTES = new Set([
   'GET /api/env',
   'PUT /api/env',
   'POST /api/env/reveal',
+  'POST /api/providers/validate-saved',
   'GET /api/model/auxiliary',
   'GET /api/model/info',
   'GET /api/model/moa',

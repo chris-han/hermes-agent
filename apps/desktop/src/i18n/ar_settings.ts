@@ -813,6 +813,7 @@ export const arSettings = {
       }
     },
     providers: {
+      cloudRemoteRevokePending: "تم قطع الاتصال محليًا. تعذّر تأكيد إلغاء الوصول عن بُعد؛ ألغِ وصول هذا الجهاز من الفوترة أو أعد التفويض.",
       connectAccount: 'ربط حساب',
       haveApiKey: 'لديك مفتاح API بدلاً من ذلك؟',
       intro: 'سجل الدخول باشتراكك دون نسخ مفتاح API. يشغّل Semantier تسجيل الدخول من المتصفح لك داخل التطبيق.',

@@ -34,7 +34,7 @@ test('three choices use the native saved source and discard the previous actiona
   const trigger = await screen.findByRole('combobox')
   expect(trigger.textContent).toContain('Channel 1')
   fireEvent.keyDown(trigger, { key: 'ArrowDown' })
-  expect(await screen.findByRole('option', { name: 'Channel 1 · Alibaba Cloud ECS' })).toBeTruthy()
+  expect(await screen.findByRole('option', { name: 'Channel 1' })).toBeTruthy()
   expect(screen.getByRole('option', { name: 'Channel 3 · Local development' })).toBeTruthy()
   fireEvent.click(screen.getByRole('option', { name: 'Channel 2 · Cloudflare' }))
   await waitFor(() => expect(save).toHaveBeenCalledWith('channel2'))

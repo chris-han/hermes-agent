@@ -10,10 +10,12 @@ import { arConnectors } from './ar_connectors'
 import { arDiagnostics } from './ar_diagnostics'
 import { arFirstRun } from './ar_first_run'
 import { arSettings } from './ar_settings'
+import { arBranding } from './branding'
 import { defineLocale, type TranslationOverrides } from './define-locale'
 import { feedbackEnglish } from './semantier-feedback'
 
 export const arOverrides = {
+  branding: arBranding,
   semantierFeedback: feedbackEnglish,
   connectors: {
     directory: {

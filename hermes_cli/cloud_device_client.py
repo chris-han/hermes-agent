@@ -23,8 +23,9 @@ _LOCK_HOLDER = threading.local()
 
 
 class CloudDeviceError(ValueError):
-    def __init__(self, status):
+    def __init__(self, status, reason=None):
         self.status = status
+        self.reason = reason
         super().__init__('Cloud connection unavailable (HTTP '+str(status)+'); retry or reauthorize.')
 
 
@@ -155,7 +156,7 @@ def _config_hash():
 def _cloud_http(origin):
     settings = (_config().get('providers') or {}).get('semantier-cloud') or {}
     version = settings.get('http_version')
-    if version is None and sys.platform == 'win32':
+    if version is None and sys.platform == 'win32' and urlsplit(origin).scheme == 'https':
         version = '3'
     if version not in (None, '3'):
         raise ValueError('Unsupported Cloud HTTP version.')
@@ -195,8 +196,18 @@ def _wire(origin, operation, body=None, bearer=None):
             else:
                 response = client.post(origin+'/api/cloud-provider/device/'+operation,
                     json={'contract_version':CONTRACT, **(body or {})}, **kwargs)
-        if response.status_code != 200 or len(response.content) > 1024*1024:
+        if len(response.content) > 1024*1024:
             raise CloudDeviceError(response.status_code)
+        if response.status_code != 200:
+            reason = None
+            if response.status_code == 409:
+                try:
+                    detail = response.json().get('detail')
+                    if detail == 'start_conflict':
+                        reason = detail
+                except (ValueError, AttributeError):
+                    pass
+            raise CloudDeviceError(response.status_code, reason)
         result = response.json()
         if not isinstance(result, dict) or result.get('contract_version') != CONTRACT:
             raise ValueError('Cloud connection contract mismatch.')
@@ -253,10 +264,21 @@ def start():
         if not state or state.get('status') != 'starting':
             state = _new_state(state)
             _write(state)  # persist idempotency/proof BEFORE a possibly lost start reply
-        body = {k:state[k] for k in ('runtime_ref','profile_ref','generation')}
-        body.update(client_label='Semantier Agent Windows', possession_challenge=_digest(state['proof'].encode()),
-                    idempotency_key=state['session_id'])
-        reply = _wire(state['origin'], 'start', body)
+        for attempt in range(2):
+            body = {k:state[k] for k in ('runtime_ref','profile_ref','generation')}
+            body.update(client_label='Semantier Agent Windows', possession_challenge=_digest(state['proof'].encode()),
+                        idempotency_key=state['session_id'])
+            try:
+                reply = _wire(state['origin'], 'start', body)
+                break
+            except CloudDeviceError as error:
+                if attempt or error.status != 409 or error.reason != 'start_conflict':
+                    raise
+                # An older client may have persisted the proof before losing its
+                # reply, then upgraded its start payload. Only that exact conflict
+                # permits a new intent; retain all already-installed credentials.
+                state = _new_state(state)
+                _write(state)
         uri = reply['data']['verification_uri']
         if _origin(f'{urlsplit(uri).scheme}://{urlsplit(uri).netloc}') != state['portal_origin']:
             raise ValueError('Cloud verification origin mismatch.')

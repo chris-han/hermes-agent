@@ -231,6 +231,65 @@ def read_provider_snapshot(*, provider: str, base_url: str, api_key: str | None,
             _inflight.pop(key, None)
 
 
+
+def read_configured_provider_snapshot(*, provider: str, entry: dict, base_url: str,
+                                      api_key: str, source_scope: str,
+                                      refresh: bool = False) -> ProviderSnapshot:
+    """Use the same native adapter and request identity for discovery and key tests."""
+    from hermes_cli.model_switch import _extra_headers_from_config, _scoped_key_env
+    from hermes_cli.model_switch_providers import _entry_api_mode
+
+    host = (urlsplit(base_url).hostname or "").lower()
+    slug = provider.lower()
+    adapter = "openai"
+    if slug == "anthropic" and host == "api.anthropic.com":
+        adapter = "anthropic"
+    elif slug == "gemini" and host == "generativelanguage.googleapis.com" and urlsplit(base_url).path.rstrip("/") in {"/v1", "/v1beta"}:
+        adapter = "gemini"
+    elif slug in {"ollama", "custom:ollama"} and host != "ollama.com" and not host.endswith(".ollama.com"):
+        adapter = "ollama"
+    headers = _extra_headers_from_config(entry)
+    if slug == "openai-api":
+        for header, name in (("OpenAI-Organization", "OPENAI_ORG_ID"), ("OpenAI-Project", "OPENAI_PROJECT_ID")):
+            value = _scoped_key_env(name)
+            if value and not any(key.lower() == header.lower() for key in headers):
+                headers[header] = value
+    return read_provider_snapshot(provider=provider, base_url=base_url, api_key=api_key,
+                                  source_scope=source_scope, api_mode=_entry_api_mode(entry),
+                                  headers=headers, refresh=refresh, adapter=adapter)
+
+
+def _catalog_key_sources(ctx, excluded, cloud_identity):
+    from hermes_cli.provider_catalog import provider_catalog
+    from hermes_cli.auth import PROVIDER_REGISTRY
+    from hermes_cli.model_switch import _scoped_key_env
+    from hermes_cli.route_identity import normalize_route_base_url
+
+    sources = []
+
+    # The provider catalog already owns all API-key provider identities,
+    # credentials and endpoint defaults. Treat a profile key as a configured
+    # provider without inventing per-vendor model-discovery special cases.
+    for descriptor in provider_catalog():
+        slug = descriptor.slug
+        if descriptor.auth_type != "api_key" or not descriptor.api_key_env_vars:
+            continue
+        if slug.lower() in excluded or any(name.lower() == slug.lower() for name in ctx.user_providers):
+            continue
+        registered = PROVIDER_REGISTRY.get(slug)
+        if not registered or registered.auth_type != "api_key":
+            continue
+        key = next((value for name in descriptor.api_key_env_vars if (value := _scoped_key_env(name))), "")
+        if not key:
+            continue
+        endpoint = (_scoped_key_env(descriptor.base_url_env_var) if descriptor.base_url_env_var else "") or registered.inference_base_url
+        if cloud_identity and normalize_route_base_url(endpoint) == cloud_identity:
+            continue
+        sources.append((slug, descriptor.label, endpoint, key, {}, None))
+
+    return sources
+
+
 def configured_provider_rows(ctx, *, source_scope: str, refresh: bool = False) -> list[dict]:
     """Project explicit configured endpoints; never accept endpoint input from a client."""
     from hermes_cli.config import is_provider_enabled, load_config
@@ -253,12 +312,6 @@ def configured_provider_rows(ctx, *, source_scope: str, refresh: bool = False) -
             cloud_endpoint = str(_entry_base_url(cloud_entry) or "")
     cloud_identity = normalize_route_base_url(cloud_endpoint)
     def project(slug, name, endpoint, key, entry, *, aliases=None):
-        try:
-            host = urlsplit(endpoint).hostname or ""
-        except ValueError:
-            host = ""
-        native_ollama = slug.lower() in {"ollama", "custom:ollama"} and not (
-            host == "ollama.com" or host.endswith(".ollama.com"))
         is_cloud = slug.lower() == "semantier-cloud"
         settings = None
         if is_cloud:
@@ -271,21 +324,13 @@ def configured_provider_rows(ctx, *, source_scope: str, refresh: bool = False) -
         if (is_cloud and (not settings or settings.base_url.rstrip("/") != endpoint.rstrip("/"))) or not _discover_flag(entry):
             snapshot = ProviderSnapshot(None, "unsupported")
         else:
-            native_anthropic = slug.lower() == "anthropic" and host == "api.anthropic.com"
-            native_gemini = (slug.lower() == "gemini" and host == "generativelanguage.googleapis.com"
-                             and urlsplit(endpoint).path.rstrip("/") in {"/v1", "/v1beta"})
-            request_headers = _extra_headers_from_config(entry)
-            if slug.lower() == "openai-api":
-                for header, env_var in (("OpenAI-Organization", "OPENAI_ORG_ID"),
-                                        ("OpenAI-Project", "OPENAI_PROJECT_ID")):
-                    value = _scoped_key_env(env_var)
-                    if value and not any(k.lower() == header.lower() for k in request_headers):
-                        request_headers[header] = value
-            snapshot = read_provider_snapshot(provider=slug, base_url=endpoint, api_key=settings.api_key if is_cloud else key,
-                source_scope=source_scope, api_mode=_entry_api_mode(entry),
-                headers=request_headers, refresh=refresh,
-                adapter="cloud" if is_cloud else "ollama" if native_ollama else "anthropic" if native_anthropic
-                        else "gemini" if native_gemini else "openai")
+            if is_cloud:
+                snapshot = read_provider_snapshot(provider=slug, base_url=endpoint, api_key=settings.api_key,
+                    source_scope=source_scope, api_mode=_entry_api_mode(entry),
+                    headers=_extra_headers_from_config(entry), refresh=refresh, adapter="cloud")
+            else:
+                snapshot = read_configured_provider_snapshot(provider=slug, entry=entry, base_url=endpoint,
+                    api_key=key, source_scope=source_scope, refresh=refresh)
         aliases = sorted(aliases or [])
         current = ctx.current_provider.lower()
         is_current = current in {slug.lower(), *(alias.lower() for alias in aliases)}
@@ -329,6 +374,8 @@ def configured_provider_rows(ctx, *, source_scope: str, refresh: bool = False) -
             # listing adapter; an anonymous OpenAI-style request is not one.
             entry = {**entry, "discover_models": False}
         sources.append((slug, str(entry.get("name") or slug), endpoint, key, entry, aliases))
+
+    sources.extend(_catalog_key_sources(ctx, excluded, cloud_identity))
 
     groups = {}
     for entry in ctx.custom_providers:

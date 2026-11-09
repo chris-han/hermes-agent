@@ -1,9 +1,11 @@
 import { defineFieldCopy } from '@/app/settings/field-copy'
 
+import { frBranding } from './branding'
 import { defineLocale, type TranslationOverrides } from './define-locale'
 import { frAuxTasks } from './fr_aux_tasks'
 import { frBoot } from './fr_boot'
 import { frClarify } from './fr_clarify'
+import { frCommon } from './fr_common'
 import { frConnectorAccounts } from './fr_connector_accounts'
 import { frConnectorCard } from './fr_connector_card'
 import { frFirstRun } from './fr_first_run'
@@ -19,6 +21,7 @@ import { semantierBillingCopy } from './semantier-billing'
 import { feedbackEnglish } from './semantier-feedback'
 
 export const frOverrides = {
+  branding: frBranding,
   semantierFeedback: feedbackEnglish,
   sharedMetrics: frSharedMetrics,
   firstRun: frFirstRun,
@@ -327,48 +330,7 @@ export const frOverrides = {
     continue: 'Continuer dans Semantier',
     importError: "Impossible d'importer cette conversation."
   },
-  common: {
-    apply: 'Appliquer',
-    back: 'Retour',
-    save: 'Enregistrer',
-    saving: 'Enregistrement…',
-    cancel: 'Annuler',
-    change: 'Modifier',
-    choose: 'Choisir',
-    clear: 'Effacer',
-    close: 'Fermer',
-    collapse: 'Réduire',
-    confirm: 'Confirmer',
-    connect: 'Connecter',
-    connecting: 'Connexion',
-    continue: 'Continuer',
-    bots: 'Bots',
-    copied: 'Copié',
-    copy: 'Copier',
-    copyFailed: 'Échec de la copie',
-    delete: 'Supprimer',
-    docs: 'Documentation',
-    done: 'Terminé',
-    error: 'Erreur',
-    expand: 'Développer',
-    failed: 'Échec',
-    formatJson: 'Formater le JSON',
-    free: 'Gratuit',
-    loading: 'Chargement…',
-    notSet: 'Non défini',
-    refresh: 'Actualiser',
-    remove: 'Retirer',
-    replace: 'Remplacer',
-    retry: 'Réessayer',
-    run: 'Exécuter',
-    send: 'Envoyer',
-    set: 'Définir',
-    skip: 'Ignorer',
-    update: 'Mettre à jour',
-    tryHint: term => `Essayez « ${term} »`,
-    on: 'Activé',
-    off: 'Désactivé'
-  },
+  common: frCommon,
   fileMenu: {
     revealFinder: 'Afficher dans le Finder',
     revealExplorer: "Afficher dans l'Explorateur de fichiers",
@@ -2296,6 +2258,7 @@ export const frOverrides = {
       }
     },
     providers: {
+      cloudRemoteRevokePending: "Déconnecté localement. La révocation distante n’a pas pu être confirmée ; révoquez cet appareil dans Facturation ou autorisez-le à nouveau.",
       connectAccount: 'Connecter un compte',
       haveApiKey: 'Vous avez une clé API ?',
       intro:

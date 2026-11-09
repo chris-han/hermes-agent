@@ -262,6 +262,17 @@ export function validateProviderCredential(
   })
 }
 
+export function validateSavedProviderCredential(
+  provider: string, key: string, profile?: ProfileScope
+): Promise<{ ok: boolean; reachable: boolean; message: string }> {
+  return window.hermesDesktop.api<{ ok: boolean; reachable: boolean; message: string }>({
+    ...capabilityScoped(profile),
+    path: '/api/providers/validate-saved',
+    method: 'POST',
+    body: { provider, key }
+  })
+}
+
 export function getCustomEndpoints(profile?: null | string): Promise<CustomEndpointsResponse> {
   return hermesApi<CustomEndpointsResponse>({
     ...profileScoped(profile),

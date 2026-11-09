@@ -1,6 +1,7 @@
 import type { TranslationOverrides } from './define-locale'
 
 export const jaOnboarding: TranslationOverrides['onboarding'] = {
+  cloudBrowserOpened: "ブラウザーでこのデバイスを承認してください。このプロファイルに戻ると接続を完了できます。",
   headerTitle: 'Semantier Agent のセットアップをしましょう',
   headerDesc: 'チャットを始めるにはモデルプロバイダーを接続してください。ほとんどのオプションはワンクリックです。',
   preparingInstall: 'Semantier はインストールを完了中です。初回実行では通常 1 分以内に完了します。',

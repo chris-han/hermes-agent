@@ -261,6 +261,7 @@ export const arBoot = {
     reloadRetry: 'إعادة التحميل وإعادة المحاولة'
   },
   onboarding: {
+    cloudBrowserOpened: "وافق على هذا الجهاز في المتصفح، ثم عد إلى هذا الملف الشخصي لإكمال الاتصال.",
     headerTitle: 'لنُعِدّ لك Semantier Agent',
     headerDesc: 'اربط مزوّد نماذج لبدء المحادثة. معظم الخيارات تتطلب نقرة واحدة.',
     preparingInstall: 'يُكمل Semantier التثبيت. عادة ما يستغرق ذلك أقل من دقيقة في أول تشغيل.',

@@ -30,6 +30,11 @@ class EnvVarDelete(BaseModel):
 class EnvVarReveal(EnvVarDelete):
     pass
 
+class SavedProviderProbe(BaseModel):
+    provider: str
+    key: str
+    profile: Optional[str] = None
+
 class MemoryProviderConfigUpdate(BaseModel):
     values: dict[str, Any] = {}
 
