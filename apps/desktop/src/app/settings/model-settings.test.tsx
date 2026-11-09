@@ -743,6 +743,19 @@ describe('ModelSettings', () => {
     await waitFor(() => expect(setModelAssignment).toHaveBeenCalledWith(expect.objectContaining({ provider: 'second', model: 'shared-id', task: 'vision' })))
   })
 
+  it('keeps an auxiliary manual model draft unsaved until Apply', async () => {
+    getGlobalModelOptions.mockResolvedValue({ providers: [{ name: 'Nous', slug: 'nous', authenticated: true, models: [], discovery_state: 'missing' }] })
+    getAuxiliaryModels.mockResolvedValue({ main: { provider: 'nous', model: 'saved' }, tasks: [{ task: 'vision', provider: 'nous', model: 'saved', reasoning_effort: 'high' }] })
+    renderModelSettings()
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Change' }))[0])
+    fireEvent.click(screen.getByRole('combobox', { name: 'Vision model' }))
+    fireEvent.click(await screen.findByRole('option', { name: /Custom model/ }))
+    fireEvent.change(screen.getByPlaceholderText('Model id'), { target: { value: 'manual/vision' } })
+    expect(setModelAssignment).not.toHaveBeenCalled()
+    fireEvent.click(screen.getAllByRole('button', { name: 'Apply' }).at(-1)!)
+    await waitFor(() => expect(setModelAssignment).toHaveBeenCalledWith(expect.objectContaining({ provider: 'nous', model: 'manual/vision', reasoning_effort: 'high', task: 'vision' })))
+  })
+
   it('edits auxiliary reasoning effort and applies it with the assignment', async () => {
     getAuxiliaryModels.mockResolvedValueOnce({
       main: { provider: 'nous', model: 'hermes-4' },
