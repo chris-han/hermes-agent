@@ -37,6 +37,7 @@ export function ConfigField({
   enumOptions,
   optionLabels,
   onChange,
+  onApply,
   descriptionExtra
 }: {
   schemaKey: string
@@ -45,6 +46,7 @@ export function ConfigField({
   enumOptions?: string[]
   optionLabels?: Record<string, string>
   onChange: (value: unknown) => void
+  onApply?: (value: unknown) => Promise<void>
   descriptionExtra?: ReactNode
 }) {
   const { t } = useI18n()
@@ -109,7 +111,7 @@ export function ConfigField({
   // `list` branch below would stringify them to "[object Object]". Render the
   // dedicated structured editor instead.
   if (schemaKey === 'fallback_providers') {
-    return wideRow(<FallbackModelsField onChange={onChange} value={value} />)
+    return wideRow(<FallbackModelsField onChange={onApply ?? onChange} value={value} />)
   }
 
   if (schema.type === 'boolean') {
@@ -125,6 +127,7 @@ export function ConfigField({
   }
 
   const schemaOptions = schema.type === 'select' ? (schema.options ?? []).map(String) : undefined
+
   const selectOptions =
     (schemaKey === 'stt.provider' || schemaKey === 'tts.provider') && schemaOptions
       ? [...new Set([...(enumOptions ?? []), ...schemaOptions])]

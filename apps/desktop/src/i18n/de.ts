@@ -1950,6 +1950,7 @@ export const deOverrides = {
       change: 'Ändern',
       autoUseMain: 'automatisch · Hauptmodell verwenden',
       inheritMainEffort: 'übernehmen · Aufwand des Hauptmodells',
+      fallbackInheritEffort: 'Erben',
       inheritsFrom: task => `erbt von ${task}`,
       followTask: task => `${task} folgen`,
       providerDefault: '(Anbietervorgabe)',

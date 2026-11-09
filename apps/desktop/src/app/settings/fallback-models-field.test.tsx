@@ -72,6 +72,19 @@ const CHAIN = [
 ]
 
 describe('FallbackModelsField', () => {
+  it('keeps reasoning and removal as drafts until one chain Apply, and Cancel restores the saved chain', async () => {
+    const onChange = renderField(CHAIN)
+    fireEvent.click(screen.getAllByLabelText('Remove')[1])
+    expect(onChange).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.getAllByLabelText('Remove')).toHaveLength(2)
+    fireEvent.click(screen.getAllByRole('combobox', { name: /reasoning/i })[0])
+    fireEvent.click(await screen.findByRole('option', { name: 'High' }))
+    expect(onChange).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith([{ ...CHAIN[0], reasoning_effort: 'high' }, CHAIN[1]]))
+  })
+
   it('does not delete a saved fallback during an incomplete provider replacement', async () => {
     const routed = { ...CHAIN[0], base_url: 'http://fixture/v1', key_env: 'FIXTURE_KEY', api_key: '${FIXTURE_KEY}', api_mode: 'responses' }
     const onChange = renderField([routed, CHAIN[1]])
@@ -100,6 +113,8 @@ describe('FallbackModelsField', () => {
 
     fireEvent.click(screen.getAllByLabelText('Remove')[0])
 
+    expect(onChange).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
     expect(onChange.mock.calls.at(-1)?.[0]).toEqual([{ provider: 'openai-codex', model: 'gpt-5.4-mini' }, routed])
   })
 
@@ -109,7 +124,7 @@ describe('FallbackModelsField', () => {
     fireEvent.click(screen.getByText('Add fallback'))
 
     // The new empty row stays in the UI but only complete pairs are emitted.
-    expect(onChange.mock.calls.at(-1)?.[0]).toEqual(CHAIN)
+    expect(onChange).not.toHaveBeenCalled()
     expect(screen.getAllByLabelText('Remove')).toHaveLength(3)
   })
 
@@ -128,7 +143,7 @@ describe('FallbackModelsField', () => {
 
     fireEvent.click(screen.getByText('Add fallback'))
 
-    expect(onChange.mock.calls.at(-1)?.[0]).toEqual([])
+    expect(onChange).not.toHaveBeenCalled()
     expect(screen.getAllByLabelText('Remove')).toHaveLength(1)
 
     // Parent autosave echo — same complete chain, new array identity.
@@ -151,10 +166,11 @@ describe('fallback atomic searchable edits', () => {
     expect(screen.queryByRole('option', { name: 'GitHub Copilot' })).toBeNull()
     fireEvent.click(await screen.findByRole('option', { name: 'Nous' }))
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
-    expect(onChange).toHaveBeenLastCalledWith([routed, CHAIN[1]])
+    expect(onChange).not.toHaveBeenCalled()
     fireEvent.click(screen.getAllByRole('combobox')[1])
     fireEvent.change(screen.getByPlaceholderText('Model'), { target: { value: '5.4' } })
     fireEvent.click(screen.getByRole('option', { name: 'gpt-5.4-mini' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
     expect(onChange).toHaveBeenLastCalledWith([{ ...routed, model: 'gpt-5.4-mini' }, CHAIN[1]])
     expect(getGlobalModelOptions).toHaveBeenCalledTimes(calls)
   })
@@ -166,6 +182,7 @@ describe('fallback atomic searchable edits', () => {
     fireEvent.click(await screen.findByRole('option', { name: 'Nous' }))
     fireEvent.click(screen.getAllByRole('combobox')[1])
     fireEvent.click(screen.getByRole('option', { name: 'hermes-4' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
     expect(onChange).toHaveBeenLastCalledWith([{ provider: 'nous', model: 'hermes-4' }, CHAIN[1]])
   })
 
@@ -175,7 +192,8 @@ describe('fallback atomic searchable edits', () => {
     fireEvent.click(screen.getAllByRole('combobox')[0])
     fireEvent.click(await screen.findByRole('option', { name: 'Nous' }))
     fireEvent.click(screen.getAllByLabelText('Remove')[1])
-    expect(onChange).toHaveBeenLastCalledWith([routed])
+    expect(onChange).not.toHaveBeenCalled()
+    expect((screen.getByRole('button', { name: 'Apply' }) as HTMLButtonElement).disabled).toBe(true)
   })
 })
 
@@ -219,7 +237,26 @@ describe('fallback manual models', () => {
     expect(screen.getByPlaceholderText('Model id')).toBeTruthy()
     fireEvent.compositionEnd(input)
     fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onChange).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
     expect(onChange).toHaveBeenLastCalledWith([{ provider: 'nous', model: 'manual/new-id', api_key: 'synthetic-private-key' }])
     expect(screen.queryByText('synthetic-private-key')).toBeNull()
+  })
+})
+
+
+describe('chain Apply recovery', () => {
+  it('retains a failed draft for retry and omits an inherited reasoning override', async () => {
+    const apply = vi.fn().mockRejectedValueOnce(new Error('synthetic persistence failure')).mockResolvedValue(undefined)
+    renderField([{ ...CHAIN[0], reasoning_effort: 'none', api_mode: 'responses' }], apply)
+    fireEvent.click(screen.getByRole('combobox', { name: /Reasoning/ }))
+    fireEvent.click(await screen.findByRole('option', { name: /inherit/i }))
+    expect(apply).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    await screen.findByRole('alert')
+    expect(apply).toHaveBeenCalledWith([{ ...CHAIN[0], api_mode: 'responses' }])
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+    expect(apply).toHaveBeenCalledTimes(2)
   })
 })

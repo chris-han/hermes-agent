@@ -1,11 +1,10 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { atom } from 'nanostores'
 import { createRef } from 'react'
 import { MemoryRouter } from 'react-router'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type * as ConfigApi from '@/api/config'
 import { $connection } from '@/store/session'
 import { $settingsRequestProfile } from '@/store/settings-scope'
 
@@ -22,10 +21,11 @@ const getHermesConfigSchema = vi.fn()
 const saveHermesConfig = vi.fn()
 const getElevenLabsVoices = vi.fn()
 
-// Keep the real read-origin helpers (WeakMap peek/bind) live: the shared
-// config hook reaches them through the barrel, and a bare mock would throw.
+// These records have no captured transport origin; keep the hook’s identity
+// helpers pure without importing the gateway/session cycle into this unit fixture.
 vi.mock('@/hermes', async () => ({
-  ...(await vi.importActual<typeof ConfigApi>('@/api/config')),
+  peekConfigReadOrigin: () => undefined,
+  retainConfigReadOrigin: <T,>(record: T) => record,
   // use-config-record folds the scope into its cache key via the barrel; the
   // real one is a pure string fold, mirrored here for the string scopes this
   // suite passes.
@@ -163,9 +163,29 @@ describe('ConfigSettings autosave', () => {
   getHermesConfigRecord.mockRejectedValue(new Error('unsupported Native config'))
   getHermesConfigSchema.mockRejectedValue(new Error('unsupported Native schema'))
   const queryClient=new QueryClient({defaultOptions:{queries:{retry:false}}})
+
   try {
-   render(<QueryClientProvider client={queryClient}><MemoryRouter><ConfigSettings activeSectionId="model" subpage="main" importInputRef={createRef()} /></MemoryRouter></QueryClientProvider>)
+   render(<QueryClientProvider client={queryClient}><MemoryRouter><ConfigSettings activeSectionId="model" importInputRef={createRef()} subpage="main" /></MemoryRouter></QueryClientProvider>)
    expect(await screen.findByText('Cloud model controller')).toBeTruthy()
    expect(getHermesConfigSchema).not.toHaveBeenCalled()
   } finally {$connection.set(null);queryClient.clear()}
  })
+
+
+describe('ConfigSettings fallback Apply owner', () => {
+  it('keeps removal local, rejects a failed Apply, and retries exactly the sparse ordered chain', async () => {
+    const chain = [{ provider: 'custom:a', model: 'same', base_url: 'http://fixture-a/v1', reasoning_effort: 'high' }, { provider: 'custom:b', model: 'same', key_env: 'SYNTHETIC_KEY' }]
+    getHermesConfigRecord.mockResolvedValue({ fallback_providers: chain, agent: { reasoning_effort: 'medium' } })
+    saveHermesConfig.mockRejectedValueOnce(new Error('synthetic disk failure')).mockResolvedValue({ ok: true })
+    renderConfigSettings('model')
+    fireEvent.click((await screen.findAllByLabelText('Remove'))[0])
+    expect(saveHermesConfig).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    await screen.findByRole('alert')
+    expect(saveHermesConfig).toHaveBeenCalledWith({ fallback_providers: [chain[1]] }, 'default')
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+    expect(saveHermesConfig).toHaveBeenCalledTimes(2)
+    expect(screen.getAllByLabelText('Remove')).toHaveLength(1)
+  })
+})

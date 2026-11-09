@@ -1673,6 +1673,7 @@ export const zhOverrides = {
       change: '更改',
       autoUseMain: '自动 · 使用主模型',
       inheritMainEffort: '继承 · 主模型推理强度',
+      fallbackInheritEffort: '继承',
       inheritsFrom: task => `继承 ${task}`,
       followTask: task => `跟随 ${task}`,
       providerDefault: '(提供方默认)',

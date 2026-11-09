@@ -1,8 +1,10 @@
+import { REASONING_EFFORT_VALUES } from '@hermes/shared'
 import { useStore } from '@nanostores/react'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useI18n } from '@/i18n'
 import { modelProviderName } from '@/i18n/model-service'
 import { Plus, X } from '@/lib/icons'
@@ -18,7 +20,7 @@ import { SearchableSelect } from './searchable-select'
 
 // An entry is `{provider, model}` plus whatever routing the user hand-wrote
 // (`base_url`, `api_key`, `key_env`, `api_mode`, ...). The editor only edits
-// the two selects; every other key rides along untouched, or an autosave
+// provider/model/reasoning; every other key rides along untouched, or a save
 // would rewrite a local-gateway chain as bare provider/model pairs and route
 // fallbacks to the public provider (#89184).
 interface FallbackEntry extends Record<string, unknown> {
@@ -53,16 +55,12 @@ function normalizeEntries(value: unknown): FallbackEntry[] {
   })
 }
 
-function completeEntries(rows: FallbackEntry[]): FallbackEntry[] {
-  return rows.filter(entry => entry.provider && entry.model)
-}
-
 function entriesEqual(a: FallbackEntry[], b: FallbackEntry[]): boolean {
   return a.length === b.length && a.every((entry, index) => JSON.stringify(entry) === JSON.stringify(b[index]))
 }
 
 /** Profile/source changes discard drafts and outstanding picker state. */
-export function FallbackModelsField(props: { value: unknown; onChange: (next: FallbackEntry[]) => void }) {
+export function FallbackModelsField(props: { value: unknown; onChange: (next: FallbackEntry[]) => void | Promise<void> }) {
   const connection = useStore($connection)
   const profile = useStore($settingsScopeProfile)
   const ownerKey = modelDiscoveryOwnerKey(null, connection)
@@ -70,7 +68,7 @@ export function FallbackModelsField(props: { value: unknown; onChange: (next: Fa
   return <ScopedFallbackModelsField {...props} key={`${ownerKey}:${profile}`} />
 }
 
-function ScopedFallbackModelsField({ value, onChange }: { value: unknown; onChange: (next: FallbackEntry[]) => void }) {
+function ScopedFallbackModelsField({ value, onChange }: { value: unknown; onChange: (next: FallbackEntry[]) => void | Promise<void> }) {
   const { t, locale } = useI18n()
   const m = t.settings.model
   const connection = useStore($connection)
@@ -95,35 +93,45 @@ function ScopedFallbackModelsField({ value, onChange }: { value: unknown; onChan
   const providers = (modelOptions.data?.providers ?? []).filter(provider => provider.slug)
 
   const [rows, setRows] = useState<FallbackEntry[]>(() => normalizeEntries(value))
-  // Last complete chain we emitted (or seeded). Autosave echoes the same
-  // filtered list back through `value`; ignore that echo so draft rows stay.
-  const lastEmittedRef = useRef(normalizeEntries(value))
-  // One saved slot per draft row. Incomplete replacements retain this route.
-  const savedRows = useRef<(FallbackEntry | undefined)[]>(normalizeEntries(value))
+  const [savedRows, setSavedRows] = useState(() => normalizeEntries(value))
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState(false)
+  const lastReceived = useRef(normalizeEntries(value))
 
-  // Resync on real external changes (profile switch / config reload). Skip
-  // when `value` is just our own commit echoing through the parent.
-  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+  // A genuine reload replaces the saved snapshot; ordinary parent renders do not discard drafts.
+  // eslint-disable-next-line no-restricted-syntax -- local persisted editor snapshot, not an atom mirror
   useEffect(() => {
     const persisted = normalizeEntries(value)
 
-    if (entriesEqual(persisted, lastEmittedRef.current)) {
-      return
+    if (!entriesEqual(persisted, lastReceived.current)) {
+      lastReceived.current = persisted
+      setSavedRows(persisted)
+      setRows(persisted)
+      setSaveError(false)
     }
-
-    lastEmittedRef.current = persisted
-    savedRows.current = persisted
-    setRows(persisted)
   }, [value])
 
-  const commit = (next: FallbackEntry[], saved = savedRows.current) => {
-    const slots = next.map((entry, index) => entry.provider && entry.model ? entry : saved[index])
-    const complete = completeEntries(slots.filter((entry): entry is FallbackEntry => !!entry))
+  const dirty = !entriesEqual(rows, savedRows)
+  const complete = rows.every(entry => entry.provider && entry.model.trim())
 
-    savedRows.current = slots
+  const commit = (next: FallbackEntry[]) => {
     setRows(next)
-    lastEmittedRef.current = complete
-    onChange(complete)
+    setSaveError(false)
+  }
+
+  const apply = async () => {
+    if (!dirty || !complete || saving) {return}
+    setSaving(true)
+    setSaveError(false)
+
+    try {
+      await onChange(rows)
+      setSavedRows(rows)
+    } catch {
+      setSaveError(true)
+    } finally {
+      setSaving(false)
+    }
   }
 
   const updateRow = (index: number, patch: Partial<FallbackEntry>) =>
@@ -146,6 +154,7 @@ function ScopedFallbackModelsField({ value, onChange }: { value: unknown; onChan
             <span className="w-4 shrink-0 text-center font-mono text-[0.7rem] text-muted-foreground">{index + 1}</span>
             <SearchableSelect
               aria-label={m.provider}
+              disabled={saving}
               onChange={provider => switchProvider(index, provider)}
               options={providers.map(provider => ({ value: provider.slug, label: modelProviderName(provider, locale), disabled: provider.authenticated === false }))}
               placeholder={m.provider}
@@ -154,7 +163,7 @@ function ScopedFallbackModelsField({ value, onChange }: { value: unknown; onChan
             <ModelSelect
               allowedModels={providerRow?.eligible_models}
               className="min-w-52 flex-1"
-              disabled={!providerRow || providerRow.authenticated === false}
+              disabled={saving || !providerRow || providerRow.authenticated === false}
               excludeUnavailable
               manualScope={manualScope}
               models={[...providerSelectableModels(providerRow), ...providerManualModels(providerRow), ...customModels.filter(custom => custom.scope === manualScope && custom.provider === (providerRow?.slug ?? entry.provider)).map(custom => custom.model)]}
@@ -164,14 +173,28 @@ function ScopedFallbackModelsField({ value, onChange }: { value: unknown; onChan
               searchable
               value={entry.model}
             />
-            {!entry.model && savedRows.current[index] && (
-              <Button onClick={() => updateRow(index, savedRows.current[index]!)} size="sm" variant="ghost">
-                {t.common.cancel}
-              </Button>
-            )}
+            <Select
+              disabled={saving || providerRow?.capabilities?.[entry.model]?.reasoning === false}
+              onValueChange={effort => {
+                const { reasoning_effort: _previous, ...route } = entry
+                commit(rows.map((row, i) => i === index
+                  ? effort === '__inherit__' ? route as FallbackEntry : { ...entry, reasoning_effort: effort }
+                  : row))
+              }}
+              value={entry.reasoning_effort === false ? 'none' : String(entry.reasoning_effort ?? '__inherit__')}
+            >
+              <SelectTrigger aria-label={`${m.reasoning} ${index + 1}`}><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__inherit__">{m.fallbackInheritEffort}</SelectItem>
+                {REASONING_EFFORT_VALUES.map(effort => (
+                  <SelectItem key={effort} value={effort}>{effort === 'none' ? m.reasoningOff : t.shell.modelOptions[effort]}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Button
               aria-label={t.common.remove}
-              onClick={() => commit(rows.filter((_, i) => i !== index), savedRows.current.filter((_, i) => i !== index))}
+              disabled={saving}
+              onClick={() => commit(rows.filter((_, i) => i !== index))}
               size="icon-xs"
               variant="ghost"
             >
@@ -181,11 +204,20 @@ function ScopedFallbackModelsField({ value, onChange }: { value: unknown; onChan
         )
       })}
       <div>
-        <Button onClick={() => commit([...rows, { provider: '', model: '' }])} size="sm" variant="textStrong">
+        <Button disabled={saving} onClick={() => commit([...rows, { provider: '', model: '' }])} size="sm" variant="textStrong">
           <Plus className="size-3.5" />
           {m.fallbackAdd}
         </Button>
       </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button disabled={!dirty || !complete || saving} onClick={() => void apply()} size="sm">
+          {saving ? t.common.saving : t.common.apply}
+        </Button>
+        <Button disabled={!dirty || saving} onClick={() => { setRows(savedRows); setSaveError(false) }} size="sm" variant="ghost">
+          {t.common.cancel}
+        </Button>
+      </div>
+      {saveError && <p className="text-xs text-destructive" role="alert">{t.settings.config.autosaveFailed}</p>}
     </div>
   )
 }

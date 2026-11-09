@@ -1635,6 +1635,7 @@ export const en: Translations = {
       change: 'Change',
       autoUseMain: 'auto · use main model',
       inheritMainEffort: 'inherit · main model effort',
+      fallbackInheritEffort: 'Inherit',
       inheritsFrom: task => `inherits ${task}`,
       followTask: task => `Follow ${task}`,
       providerDefault: '(provider default)',

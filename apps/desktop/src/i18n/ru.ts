@@ -1310,6 +1310,7 @@ export const ruOverrides = {
       change: 'Изменить',
       autoUseMain: 'авто · использовать основную модель',
       inheritMainEffort: 'наследовать · усилие основной модели',
+      fallbackInheritEffort: 'Наследовать',
       inheritsFrom: task => `наследует ${task}`,
       followTask: task => `Как ${task}`,
       providerDefault: '(по умолчанию провайдера)',

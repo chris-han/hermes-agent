@@ -88,7 +88,7 @@ def bind_route_entry(agent: Any, entry: dict[str, Any], provider: str, model: st
         provider=provider, base_url=base_url, api_mode=api_mode, model=model)
     agent._ensure_lmstudio_runtime_loaded()  # LM Studio: preload before probing context length
     _update_fallback_context_compressor(agent)
-    _reresolve_fallback_reasoning_config(agent)
+    _reresolve_fallback_reasoning_config(agent, entry)
     _rescope_fallback_extra_body(agent, old_model, old_provider, old_base_url)
     return old_model, old_provider
 
@@ -126,8 +126,8 @@ def reinstall_runtime_snapshot(agent: Any, rt: dict[str, Any]) -> None:
         revalidate_compression_feasibility(agent)
     # Older snapshots have no reasoning_config; keep the current value.
     saved_reasoning = rt.get("reasoning_config")
-    if saved_reasoning is not None:
-        agent.reasoning_config = dict(saved_reasoning)
+    if "reasoning_config" in rt:
+        agent.reasoning_config = dict(saved_reasoning) if saved_reasoning is not None else None
     # Reset the stale-call circuit breaker: its streak measured the route being left.
     from agent.chat_completion_helpers import _reset_stale_streak, rewrite_prompt_model_identity
     _reset_stale_streak(agent)

@@ -525,6 +525,9 @@ def _resolve_runtime_with_fallback(resolve_kwargs: dict | None = None) -> _Runti
                 # Named custom entries resolve to the bare "custom" billing class; keep the configured
                 # identity so the session/UI shows the provider name, matching the manual-switch path (#98739).
                 runtime["provider"] = effective_runtime_provider(entry, runtime)
+                if "reasoning_effort" in entry:
+                    from hermes_constants import parse_reasoning_effort
+                    runtime["_fallback_reasoning_config"] = parse_reasoning_effort(entry["reasoning_effort"])
                 from hermes_cli.auth import primary_failure_wording
                 logging.getLogger(__name__).warning(
                     "Primary %s (%s), falling back to %s model %s",
@@ -656,8 +659,8 @@ def _make_agent(
         acp_command=runtime.get("command"), acp_args=runtime.get("args"),
         credential_pool=runtime.get("credential_pool"), quiet_mode=True,
         verbose_logging=False,  # DEBUG agent logging; independent of tool_progress_mode
-        reasoning_config=(
-            reasoning_config_override if reasoning_config_override is not None else _load_reasoning_config(str(model or ""))),
+        reasoning_config=(runtime.get("_fallback_reasoning_config") or (
+            reasoning_config_override if reasoning_config_override is not None else _load_reasoning_config(str(model or "")))),
         service_tier=service_tier_override if service_tier_override is not None else _load_service_tier(),
         enabled_toolsets=_onboarding_toolsets(_load_enabled_toolsets(platform), session_db, session_id or key),
         disabled_toolsets=_load_disabled_toolsets(),

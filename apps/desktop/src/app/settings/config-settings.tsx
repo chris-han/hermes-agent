@@ -11,6 +11,7 @@ import { getElevenLabsVoices, getHermesConfigSchema, saveHermesConfig } from '@/
 import { useI18n } from '@/i18n'
 import { triggerHaptic } from '@/lib/haptics'
 import { isSubmitEnter } from '@/lib/ime'
+import { modelDiscoveryOwnerKey } from '@/lib/model-discovery-scope'
 import { confirm } from '@/store/confirm'
 import {
   $dataUrlReadMaxMb,
@@ -72,6 +73,7 @@ export function ConfigSettings({
   // provides for app-wide switches, without hand-clearing each piece.
   const scopeProfile = useStore($settingsRequestProfile)
   const connection = useStore($connection)
+
   // Cloud Main owns a query-only inventory and its validated assignment route.
   // The unrelated Native configuration schema is not a prerequisite for it.
   if (connection?.transport === 'semantier-workspace-http' && activeSectionId === 'model' && subpage === 'main') {
@@ -86,7 +88,7 @@ export function ConfigSettings({
     <ConfigSettingsInner
       activeSectionId={activeSectionId}
       importInputRef={importInputRef}
-      key={scopeProfile ?? '__active__'}
+      key={`${modelDiscoveryOwnerKey(null, connection)}:${scopeProfile ?? '__active__'}`}
       onConfigSaved={onConfigSaved}
       onMainModelChanged={onMainModelChanged}
       scopeProfile={scopeProfile}
@@ -172,6 +174,8 @@ function ConfigSettingsInner({
   // resolve after a newer one and re-advance the baseline / cache with stale
   // data — each save's diff+request only starts once the previous one lands.
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const scopeEpoch = useRef(0)
+  useEffect(() => () => { scopeEpoch.current += 1 }, [])
 
   // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
   useEffect(() => {
@@ -191,6 +195,7 @@ function ConfigSettingsInner({
   // B. Drop the seed + draft (re-seeds from B's refetch) and zero saveVersion so
   // the pending debounced autosave is cancelled by its effect cleanup.
   useOnProfileSwitch(() => {
+    scopeEpoch.current += 1
     configSeeded.current = false
     configBaselineRef.current = null
     savedDiscoverySignatureRef.current = undefined
@@ -230,6 +235,7 @@ function ConfigSettingsInner({
     }
 
     const v = saveVersion
+    const epoch = scopeEpoch.current
     const snapshot = config
 
     const t = window.setTimeout(() => {
@@ -239,7 +245,16 @@ function ConfigSettingsInner({
       // has fully resolved.
       saveQueueRef.current = saveQueueRef.current.then(async () => {
         try {
-          const patch = diffConfig(configBaselineRef.current ?? {}, snapshot)
+          if (scopeEpoch.current !== epoch) {return}
+          // The explicit chain Apply owns this field. A queued generic snapshot
+          // must never revert a fallback chain acknowledged after it was captured.
+          const committed = { ...snapshot }
+          const baseline = configBaselineRef.current ?? {}
+
+          if ('fallback_providers' in baseline) {committed.fallback_providers = baseline.fallback_providers}
+          else {delete committed.fallback_providers}
+
+          const patch = diffConfig(baseline, committed)
 
           if (Object.keys(patch).length === 0) {
             return
@@ -255,11 +270,12 @@ function ConfigSettingsInner({
           // diffs against what's actually on disk instead of the page-load
           // (or last-baseline) copy — otherwise reverting a field to its
           // pre-save value diffs to nothing and the revert never reaches disk.
-          configBaselineRef.current = snapshot
+          if (scopeEpoch.current !== epoch) {return}
+          configBaselineRef.current = committed
 
           // Mirror the saved record into the shared cache so MCP/model surfaces
           // reflect the edit without their own refetch.
-          writeConfigCache(snapshot)
+          writeConfigCache(committed)
           const savedScope = writeScope ?? scopeProfile
 
           recordSettingsSaved(patch, schema ?? {}, typeof savedScope === 'string' ? savedScope : savedScope?.profile)
@@ -268,7 +284,7 @@ function ConfigSettingsInner({
             // The repo-discovery scan reads the ACTIVE profile's workspace
             // policy; skip it when this page is editing another profile.
             if (scopeProfile == null) {
-              const discoverySignature = repoDiscoveryPolicySignature(repoDiscoveryPolicyFromConfig(snapshot))
+              const discoverySignature = repoDiscoveryPolicySignature(repoDiscoveryPolicyFromConfig(committed))
 
               if (savedDiscoverySignatureRef.current !== discoverySignature) {
                 savedDiscoverySignatureRef.current = discoverySignature
@@ -289,6 +305,33 @@ function ConfigSettingsInner({
     return () => window.clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- copy is stable; avoid re-scheduling autosave on locale change
   }, [config, onConfigSaved, saveVersion, writeScope, scopeProfile])
+
+  // One queue and one captured request scope serve autosave and explicit chain Apply.
+  const applyField = (key: string, value: unknown): Promise<void> => {
+    const epoch = scopeEpoch.current
+    const requestScope = writeScope ?? scopeProfile
+
+    const pending = saveQueueRef.current.then(async () => {
+      if (scopeEpoch.current !== epoch) {throw new Error(c.autosaveFailed)}
+      const snapshot = setNested(configBaselineRef.current ?? config ?? {}, key, value)
+      const patch = setNested({}, key, value)
+      const result = await saveHermesConfig(patch, requestScope)
+
+      if (!result.ok) {throw new Error(c.autosaveFailed)}
+
+      if (scopeEpoch.current !== epoch) {return}
+      configBaselineRef.current = snapshot
+      writeConfigCache(snapshot)
+      setConfig(current => setNested(current ?? snapshot, key, value))
+      recordSettingsSaved(patch, schema ?? {}, typeof requestScope === 'string' ? requestScope : requestScope?.profile)
+      onConfigSaved?.()
+    })
+
+    // A rejected Apply remains retryable and cannot poison later saves.
+    saveQueueRef.current = pending.catch(() => {})
+
+    return pending
+  }
 
   const applyConfig = (next: HermesConfigRecord) => {
     saveVersionRef.current += 1
@@ -533,6 +576,7 @@ function ConfigSettingsInner({
                     ? enumOptionsFor(key, getNested(config, key), config, elevenLabsVoiceOptions ?? undefined)
                     : enumOptionsFor(key, getNested(config, key), config)
                 }
+                onApply={key === 'fallback_providers' ? value => applyField(key, value) : undefined}
                 onChange={value => updateConfig(setNested(config, key, value))}
                 optionLabels={key === 'tts.elevenlabs.voice_id' ? elevenLabsVoiceLabels : undefined}
                 schema={field}

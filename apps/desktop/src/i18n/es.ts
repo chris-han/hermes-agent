@@ -1947,6 +1947,7 @@ export const esOverrides = {
       change: 'Cambiar',
       autoUseMain: 'auto · usar modelo principal',
       inheritMainEffort: 'heredar · esfuerzo del modelo principal',
+      fallbackInheritEffort: 'Heredar',
       inheritsFrom: task => `hereda de ${task}`,
       followTask: task => `Seguir ${task}`,
       providerDefault: '(predeterminado del proveedor)',

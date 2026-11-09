@@ -1380,6 +1380,7 @@ export interface Translations extends NoticeTranslations {
       change: string
       autoUseMain: string
       inheritMainEffort: string
+      fallbackInheritEffort: string
       inheritsFrom: (task: string) => string
       followTask: (task: string) => string
       providerDefault: string

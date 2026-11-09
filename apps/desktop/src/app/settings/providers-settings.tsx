@@ -526,7 +526,7 @@ export function ProvidersSettings({
   }
 
   const providerToolbar = (
-    <div className="mb-3 flex flex-wrap items-center gap-2" data-provider-toolbar key="provider-toolbar">
+    <div className="mb-3 flex flex-wrap items-center gap-2 pt-1" data-provider-toolbar key="provider-toolbar">
       <SearchField
         aria-label={t.settings.providers.searchKeys}
         containerClassName="min-w-36 flex-1"

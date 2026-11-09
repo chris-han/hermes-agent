@@ -1161,11 +1161,15 @@ def resolve_per_model_provider_routing(model: str, models: dict | None) -> dict:
     return {}
 
 
-def resolve_reasoning_config(cfg: dict | None, model: str = "") -> dict | None:
-    """Effective reasoning config for *model*: per-model override, then global ``agent.reasoning_effort``.
+def resolve_reasoning_config(cfg: dict | None, model: str = "", *, fallback_entry: dict | None = None) -> dict | None:
+    """Effective reasoning: fallback entry override, per-model override, then global default.
 
     Single chokepoint for every surface (CLI, gateway, TUI, cron, ``/model``, fallback activation).
     """
+    if isinstance(fallback_entry, dict):
+        explicit = parse_reasoning_effort(fallback_entry.get("reasoning_effort"))
+        if explicit is not None:
+            return explicit
     cfg = cfg if isinstance(cfg, dict) else {}
     agent_cfg = cfg.get("agent") if isinstance(cfg.get("agent"), dict) else {}
 
