@@ -27,6 +27,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, required=True)
     parser.add_argument('--port', type=int, default=55475)
+    parser.add_argument('--provider-port', type=int, default=55476)
     parser.add_argument('--renderer-origin', default='http://127.0.0.1:5188')
     args = parser.parse_args()
     root = args.root.resolve()
@@ -59,15 +60,17 @@ def main():
             self.wfile.write(raw)
         def log_message(self, *_args):
             pass
-    provider = ThreadingHTTPServer(('127.0.0.1', 0), Provider)
+    provider = ThreadingHTTPServer(('127.0.0.1', args.provider_port), Provider)
     provider_thread = threading.Thread(target=provider.serve_forever, daemon=True)
     provider_thread.start()
     homes = [root / 'source-a', root / 'source-b']
     for home in homes:
-        home.mkdir(mode=0o700)
-        (home / '.env').write_text('# Synthetic fixture only\n', encoding='utf-8')
+        home.mkdir(mode=0o700, exist_ok=True)
+        if not (home / '.env').exists():
+            (home / '.env').write_text('# Synthetic fixture only\n', encoding='utf-8')
         from hermes_cli.config_defaults import DEFAULT_CONFIG
-        (home / 'config.yaml').write_text(json.dumps({'_config_version': DEFAULT_CONFIG['_config_version'], 'model': {}, 'gateway': {'allow_empty': True}}), encoding='utf-8')
+        if not (home / 'config.yaml').exists():
+            (home / 'config.yaml').write_text(json.dumps({'_config_version': DEFAULT_CONFIG['_config_version'], 'model': {}, 'gateway': {'allow_empty': True}}), encoding='utf-8')
         (home / '.no-bundled-skills').touch()
     from hermes_cli.gateway_runtime import ensure_gateway_runtime
     from hermes_cli.gateway_client import _session_ticket, gateway_ws_target
