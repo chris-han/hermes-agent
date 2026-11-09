@@ -979,6 +979,10 @@ async def delete_profile_endpoint(name: str):
     the generic 500 made a dashboard client read a completed delete as a failure (its retry
     then 404'd)."""
     from hermes_cli import profiles as profiles_mod
+    # The former Desktop home must be promoted, never deleted as a spare profile.
+    # A successful migration retains its original bytes in legacy-home.
+    if name.strip().lower() == "semantier-local":
+        raise HTTPException(status_code=409, detail="Restart Semantier Desktop to migrate this legacy profile into default before cleanup.")
     try:
         with _profile_errors("DELETE /api/profiles/%s failed", name):
             # Polls a running gateway's PID for up to 10 s, then rmtree()s the directory; on the

@@ -95,6 +95,8 @@ test.skipIf(process.platform === 'win32').each([0o700, 0o750, 0o701])('native HT
     for (const [route, method, purpose] of [
       ['/api/profiles', 'POST', 'native-profile-create'],
       ['/api/profiles?unused=1', 'post', 'native-profile-create'],
+      ['/api/profiles/other', 'DELETE', 'native-profile-delete'],
+      ['/api/profiles/default', 'delete', 'native-profile-delete']
       ['/api/profiles', 'GET', 'native-http'],
       ['/api/profiles/import', 'POST', 'native-http'],
       ['/api/config', 'POST', 'native-http']

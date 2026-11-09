@@ -359,21 +359,24 @@ export async function nativeGatewayHttpHeaders(descriptor: { gatewayEndpoint: Ga
     throw new Error('Native gateway HTTP origin mismatch')
   }
 
-  const purpose = method.toUpperCase() === 'POST' && new URL(url).pathname.replace(/\/$/, '') === '/api/profiles'
-    ? 'native-profile-create' : 'native-http'
+  const pathname = new URL(url).pathname.replace(/\/$/, '')
+  const purpose = method.toUpperCase() === 'POST' && pathname === '/api/profiles'
+    ? 'native-profile-create'
+    : method.toUpperCase() === 'DELETE' && /^\/api\/profiles\/[a-z0-9][a-z0-9_-]{0,63}$/.test(pathname)
+      ? 'native-profile-delete' : 'native-http'
 
   return { 'X-Hermes-Gateway-Ticket': await mintLocalGatewayTicket(routedGatewayEndpoint(descriptor.gatewayEndpoint, nativeGrantRoute(url, body), launchHome), purpose) }
 }
 
 // The installed runtime's own ticket client: every Windows mint (SID-validated pipe), and a POSIX
 // home whose group-write only Python can prove private.
-let pythonTicketClient: ((endpoint: GatewayEndpoint, purpose: 'interactive' | 'native-http' | 'native-profile-create') => Promise<string>) | undefined
+let pythonTicketClient: ((endpoint: GatewayEndpoint, purpose: 'interactive' | 'native-http' | 'native-profile-create' | 'native-profile-delete') => Promise<string>) | undefined
 
 export function configurePythonGatewayTicketClient(client: NonNullable<typeof pythonTicketClient>) {
   pythonTicketClient = client
 }
 
-async function mintGroupWritableHome(endpoint: GatewayEndpoint, purpose: 'interactive' | 'native-http' | 'native-profile-create', homes: string[]) {
+async function mintGroupWritableHome(endpoint: GatewayEndpoint, purpose: 'interactive' | 'native-http' | 'native-profile-create' | 'native-profile-delete', homes: string[]) {
   if (!pythonTicketClient) {throw new Error(`Unsafe gateway control path: profile home is group-writable and this Desktop cannot verify the group is private: run chmod g-w ${homes.map(shellQuote).join(' ')}`)}
 
   try {
@@ -415,11 +418,11 @@ async function resolveControlSocket(home: string): Promise<string> {
 /** The Desktop's interactive socket is the one shared-primary route: its renderer selects every
  *  served sibling with a `profile` param, so it asks for a host-scoped grant explicitly. Every
  *  other ticket (and every other client's) stays bound to the one profile it names. */
-export function ticketScope(purpose: 'interactive' | 'native-http' | 'native-profile-create'): { scope?: 'host' } {
+export function ticketScope(purpose: 'interactive' | 'native-http' | 'native-profile-create' | 'native-profile-delete'): { scope?: 'host' } {
   return purpose === 'interactive' ? { scope: 'host' } : {}
 }
 
-export async function mintLocalGatewayTicket(endpoint: GatewayEndpoint, purpose: 'interactive' | 'native-http' | 'native-profile-create' = 'interactive'): Promise<string> {
+export async function mintLocalGatewayTicket(endpoint: GatewayEndpoint, purpose: 'interactive' | 'native-http' | 'native-profile-create' | 'native-profile-delete' = 'interactive'): Promise<string> {
   if (process.platform === 'win32') {
     if (!pythonTicketClient) {throw new Error('Gateway ticket client is not configured')}
 

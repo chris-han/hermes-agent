@@ -6,6 +6,7 @@ issuer. A browser Origin (including an empty one) always disqualifies this path.
 """
 from __future__ import annotations
 
+import re
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -109,13 +110,15 @@ def _redeem_http_ticket(store, ticket, request):
         grant = store.redeem(ticket, profile_id=None, purpose='native-http')
         expected = frozenset({'http:owner'})
     except PermissionError:
-        # Only this host-management operation accepts the dedicated same-user grant.
-        # Wrong-purpose redemption does not consume a ticket; ordinary profile grants
-        # still reach _check_profile_scope and remain unable to create other profiles.
-        if request.method != 'POST' or request.url.path.rstrip('/') != '/api/profiles':
+        # Host mutations need exact, purpose-bound grants.
+        path = request.url.path.rstrip('/')
+        if request.method == 'POST' and path == '/api/profiles':
+            purpose, expected = 'native-profile-create', frozenset({'profiles:create'})
+        elif request.method == 'DELETE' and re.fullmatch(r'/api/profiles/[a-z0-9][a-z0-9_-]{0,63}', path):
+            purpose, expected = 'native-profile-delete', frozenset({'profiles:delete'})
+        else:
             raise
-        grant = store.redeem(ticket, profile_id=None, purpose='native-profile-create')
-        expected = frozenset({'profiles:create'})
+        grant = store.redeem(ticket, profile_id=None, purpose=purpose)
     if grant['capabilities'] != expected:
         raise PermissionError('invalid native grant')
     return grant
@@ -153,7 +156,15 @@ async def authenticate_native_http(request):
     except PermissionError:
         return JSONResponse({'detail': 'Unauthorized'}, status_code=401)
     try:
-        if grant['purpose'] != 'native-profile-create':
+        if grant['purpose'] == 'native-profile-delete':
+            from hermes_constants import get_default_hermes_root
+            # Only the default owner's same-user private control may delete a
+            # named sibling. Never interpret other profile selectors as authority.
+            if (Path(grant['profile_id']).resolve() != get_default_hermes_root().resolve()
+                    or request.query_params.getlist('profile')
+                    or request.url.path.rstrip('/').removeprefix('/api/profiles/') == 'default'):
+                raise PermissionError('profile_scope_mismatch')
+        elif grant['purpose'] != 'native-profile-create':
             await _check_profile_scope(request, grant['profile_id'])
     except PermissionError:
         return JSONResponse({'detail': 'profile_scope_mismatch'}, status_code=403)

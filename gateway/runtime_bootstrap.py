@@ -12,6 +12,7 @@ _PURPOSE_CAPABILITIES = {
     'native-http': frozenset({'http:owner'}),
     # Same-user host operation, not permission to read or mutate another profile.
     'native-profile-create': frozenset({'profiles:create'}),
+    'native-profile-delete': frozenset({'profiles:delete'}),
     'exposure': frozenset({'transport:delegate'}),
     'worker-adoption': frozenset({'worker:adopt'}),
 }
