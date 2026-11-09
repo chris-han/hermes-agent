@@ -143,3 +143,17 @@ export function setModelAssignment(
     timeoutMs: STARTUP_REQUEST_TIMEOUT_MS
   })
 }
+
+export interface ModelTestResult {
+  ok: boolean
+  status: string
+  provider: string
+  model: string
+}
+
+export function testProviderModel(provider: string, model: string, scope: ProfileScope): Promise<ModelTestResult> {
+  return hermesApi<ModelTestResult>({
+    ...capabilityScoped(scope), path: '/api/model/test', method: 'POST',
+    body: { provider, model, accept_cost: true }, timeoutMs: 25_000
+  })
+}

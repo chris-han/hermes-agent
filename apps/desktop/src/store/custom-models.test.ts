@@ -105,3 +105,18 @@ describe('resetModelVisibilityKeepingCustoms', () => {
     expect(effectiveVisibleKeys(null, catalog).has(modelVisibilityKey('qwen', 'qwen-next'))).toBe(true)
   })
 })
+
+
+it('keeps manual IDs in their exact source/profile scope, including visibility reset', () => {
+  $customModels.set([])
+  const row = { slug: 'fixture', name: 'Fixture', models: [] }
+  addCustomModel('fixture', 'private-a', row, 'source-a:profile-a')
+  addCustomModel('fixture', 'private-b', row, 'source-a:profile-b')
+  const first = withCustomModels([row], $customModels.get(), 'source-a:profile-a')
+  const second = withCustomModels([row], $customModels.get(), 'source-a:profile-b')
+  expect(first[0].models).toEqual(['private-a'])
+  expect(second[0].models).toEqual(['private-b'])
+  expect(withCustomModels([row], $customModels.get(), 'source-b:profile-a')[0].models).toEqual([])
+  resetModelVisibilityKeepingCustoms(first, 'source-a:profile-a')
+  expect($customModels.get()).toHaveLength(2)
+})

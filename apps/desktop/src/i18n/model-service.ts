@@ -31,7 +31,7 @@ export const modelServiceCopy: Record<string, ModelServiceCopy> = {
     providerName: 'Semantier Model Provider',
     title: "Model service",
     custom: "Custom endpoint",
-    customDescription: "Use an OpenAI-compatible model URL, API key and model. The agent keeps running locally.",
+    customDescription: "Save an OpenAI-compatible provider URL and API key. Choose a model afterward.",
     cloudDescription: "Sign in to use your Semantier models and account credit.",
     signIn: "Sign in to Semantier Model Provider",
     advancedRuntime: "Advanced · Agent runtime",
@@ -56,7 +56,7 @@ export const modelServiceCopy: Record<string, ModelServiceCopy> = {
     providerName: 'Semantier 模型服务',
     title: "模型服务",
     custom: "自定义端点",
-    customDescription: "填写兼容 OpenAI 的模型服务地址、API 密钥和模型。Agent 仍在本地运行。",
+    customDescription: "保存兼容 OpenAI 的服务商地址和 API 密钥，之后再选择模型。",
     cloudDescription: "登录后使用 Semantier 模型与账户额度。",
     signIn: "登录 Semantier 模型服务",
     advancedRuntime: "高级 · Agent 运行位置",
@@ -81,7 +81,7 @@ export const modelServiceCopy: Record<string, ModelServiceCopy> = {
     providerName: 'Semantier 模型服務',
     title: "模型服務",
     custom: "自訂端點",
-    customDescription: "填寫相容 OpenAI 的模型服務網址、API 金鑰與模型。Agent 仍在本機執行。",
+    customDescription: "儲存相容 OpenAI 的供應商網址與 API 金鑰，之後再選擇模型。",
     cloudDescription: "登入後使用 Semantier 模型與帳戶額度。",
     signIn: "登入 Semantier 模型服務",
     advancedRuntime: "進階 · Agent 執行位置",
@@ -259,4 +259,65 @@ export function modelProviderName(provider: { slug?: string; id?: string; name: 
   return (provider.slug ?? provider.id) === 'semantier-cloud'
     ? (modelServiceCopy[locale] ?? modelServiceCopy.en).providerName
     : provider.name
+}
+
+const providerJourneyMessages = {
+  en: { add: 'Add Provider', listUrl: 'Model List API URL (optional)', enabled: 'Enabled',
+    manual: 'Manual model ID · availability unverified', unverified: 'Unverified', enterModel: 'Enter model ID',
+    disabled: 'Disabled', keySaved: 'Key saved', noKey: 'No key', test: 'Test Model',
+    cost: 'Sends one small inference request through the selected provider. Tokens and charges may apply. Your conversation is preserved.',
+    observed: 'Model response observed.' },
+  zh: { add: '添加服务商', listUrl: '模型列表 API URL（可选）', enabled: '启用服务商',
+    manual: '手动输入 · 模型可用性尚未验证', unverified: '未验证', enterModel: '手动输入模型 ID',
+    disabled: '已停用', keySaved: '密钥已保存', noKey: '无密钥', test: '测试模型',
+    cost: '将通过所选服务商发送一次小型推理请求，可能消耗 Token 并产生费用。不会修改当前会话。',
+    observed: '已观察到模型回复。' },
+  'zh-hant': { add: '新增供應商', listUrl: '模型清單 API URL（選填）', enabled: '啟用供應商',
+    manual: '手動輸入 · 模型可用性尚未驗證', unverified: '未驗證', enterModel: '手動輸入模型 ID',
+    disabled: '已停用', keySaved: '金鑰已儲存', noKey: '無金鑰', test: '測試模型',
+    cost: '將透過所選供應商傳送一次小型推論請求，可能消耗 Token 並產生費用。不會修改目前對話。',
+    observed: '已觀察到模型回覆。' }
+}
+
+export function providerJourneyCopy(locale: string) {
+  return providerJourneyMessages[locale as keyof typeof providerJourneyMessages] ?? providerJourneyMessages.en
+}
+
+export function providerTestStatus(locale: string, status: string): string {
+  const english: Record<string, string> = {
+    catalog_verified: 'Model catalog verified. Inference has not been tested.',
+    empty: 'The model catalog is empty. You can enter a model ID manually.',
+    invalid_key: 'The provider rejected the API key (401).', forbidden: 'The provider denied this request (403).',
+    unsupported: 'No supported model catalog. Enter a model ID manually.',
+    rate_limited: 'The provider rate limited the request (429). Try again later.',
+    timeout: 'The provider request timed out.', unreachable: 'The provider could not be reached.',
+    invalid_url: 'Invalid or blocked provider URL.', model_unavailable: 'The provider rejected this model (404).',
+    empty_response: 'The provider returned no model response.', response_observed: 'Model response observed.',
+    error: 'The provider request failed. Check the provider configuration and retry.',
+    unknown: 'The provider result could not be verified.', unavailable: 'This provider route is unavailable.'
+  }
+
+  const chinese: Record<string, string> = {
+    catalog_verified: '模型列表已验证；尚未测试推理。', empty: '模型列表为空，仍可手动输入模型 ID。',
+    invalid_key: '服务商拒绝了 API 密钥（401）。', forbidden: '服务商拒绝了此请求（403）。',
+    unsupported: '无可用的模型列表 API，请手动输入模型 ID。', rate_limited: '服务商限制了请求频率（429），请稍后重试。',
+    timeout: '服务商请求超时。', unreachable: '无法连接到服务商。', invalid_url: '服务商 URL 无效或被网络安全规则阻止。',
+    model_unavailable: '服务商不支持此模型（404）。', empty_response: '服务商未返回模型回复。',
+    response_observed: '已观察到模型回复。', error: '服务商请求失败，请检查配置后重试。',
+    unknown: '无法验证服务商结果。', unavailable: '此服务商路由不可用。'
+  }
+
+  const traditional: Record<string, string> = {
+    catalog_verified: '模型清單已驗證；尚未測試推論。', empty: '模型清單為空，仍可手動輸入模型 ID。',
+    invalid_key: '供應商拒絕了 API 金鑰（401）。', forbidden: '供應商拒絕了此請求（403）。',
+    unsupported: '無可用的模型清單 API，請手動輸入模型 ID。', rate_limited: '供應商限制了請求頻率（429），請稍後重試。',
+    timeout: '供應商請求逾時。', unreachable: '無法連線至供應商。', invalid_url: '供應商 URL 無效或遭網路安全規則阻擋。',
+    model_unavailable: '供應商不支援此模型（404）。', empty_response: '供應商未傳回模型回覆。',
+    response_observed: '已觀察到模型回覆。', error: '供應商請求失敗，請檢查設定後重試。',
+    unknown: '無法驗證供應商結果。', unavailable: '此供應商路由無法使用。'
+  }
+
+  const messages = ({ zh: chinese, 'zh-hant': traditional } as Record<string, Record<string, string>>)[locale] ?? english
+
+  return messages[status] ?? messages.unknown
 }

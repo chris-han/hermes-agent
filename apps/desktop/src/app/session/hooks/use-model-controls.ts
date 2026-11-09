@@ -52,6 +52,8 @@ export function useModelControls({
   const { t } = useI18n()
   const copy = t.desktop
   const profileRefreshEpochRef = useRef(0)
+  const latestOwner = useRef('')
+  latestOwner.current = JSON.stringify([cacheOwnerConnectionId, cacheProfile])
 
   // All callbacks here read reactive session state from the store (.get())
   // rather than capturing it as a prop. The actions bag in wiring.tsx mutates
@@ -252,6 +254,8 @@ export function useModelControls({
   // busy primary turn.
   const selectModel = useCallback(
     async (selection: ModelSelection): Promise<boolean> => {
+      const capturedOwner = latestOwner.current
+      const capturedProfile = $activeGatewayProfile.get()
       const primaryRuntimeId = $activeSessionId.get()
       const liveSessionId = 'sessionId' in selection ? (selection.sessionId ?? null) : primaryRuntimeId
       const touchesPrimary = !liveSessionId || liveSessionId === primaryRuntimeId
@@ -295,7 +299,12 @@ export function useModelControls({
         updateModelOptionsCache(liveSessionId, provider, model, touchesPrimary && !liveSessionId, liveGatewayProfile)
       }
 
+      const stillOwnsSelection = () => latestOwner.current === capturedOwner &&
+        (!touchesPrimary || ($activeGatewayProfile.get() === capturedProfile && $activeSessionId.get() === primaryRuntimeId))
+
       const rollbackSelection = () => {
+        if (!stillOwnsSelection()) { return }
+
         if (liveSessionId) {
           sessionTileDelegate()?.updateSession(liveSessionId, state => ({
             ...state,
@@ -325,21 +334,9 @@ export function useModelControls({
         return true
       }
 
-      // The PRIMARY profile's main agent lets the gateway decide persistence
-      // (resolve_persist_behavior): session-only by default, persisted when
-      // model.persist_switch_by_default is true or when no default has ever
-      // been configured (the first-ever pick, so resolve_provider never falls
-      // through to a leftover OPENAI_API_KEY env var — #86414). A plain pick
-      // no longer silently rewrites config.yaml (#90235); Settings → Model
-      // remains the explicit "set as default" door.
-      //
-      // Two things stay --session, deliberately:
-      //  - a SECONDARY chat tile: picking a model there must not rewrite the
-      //    profile default (the cross-session-contamination guard).
-      //  - MoA (mixture-of-agents) presets: a transient orchestration choice
-      //    that must never become the persisted global gateway default.
-      const isSessionOnlyPreset = (selection.provider || '').toLowerCase() === 'moa'
-      const scope = touchesPrimary && !isSessionOnlyPreset ? '' : ' --session'
+      // Composer changes belong only to this conversation, even if the profile
+      // normally persists CLI /model switches. Settings owns the Main default.
+      const scope = ' --session'
 
       const requestSwitch = (confirmExpensiveModel = false) =>
         requestGateway<ModelSwitchResponse>('config.set', {
@@ -365,6 +362,8 @@ export function useModelControls({
       try {
         const result = await requestSwitch()
 
+        if (!stillOwnsSelection()) { return false }
+
         if (result?.confirm_required) {
           rollbackSelection()
           // ONE shared applier for guarded switches (#95293): the same
@@ -380,7 +379,7 @@ export function useModelControls({
             // dialog is open. Answering it must not clobber the newer choice:
             // bail (with a notice) if the live state no longer matches the
             // snapshot this prompt was created for.
-            isStale: () =>
+            isStale: () => !stillOwnsSelection() || (
               touchesPrimary
                 ? $activeSessionId.get() !== liveSessionId ||
                   $currentModel.get() !== prevModel ||
@@ -390,7 +389,7 @@ export function useModelControls({
                       $sessionStates.get()[liveSessionId]?.provider !== prevSession.provider))
                 : !liveSessionId ||
                   $sessionStates.get()[liveSessionId]?.model !== prevModel ||
-                  $sessionStates.get()[liveSessionId]?.provider !== prevProvider,
+                  $sessionStates.get()[liveSessionId]?.provider !== prevProvider),
             model: selection.model,
             repaint: () => {
               paintSelection()
@@ -407,6 +406,8 @@ export function useModelControls({
 
         return true
       } catch (err) {
+        if (!stillOwnsSelection()) { return false }
+
         // An OLDER gateway refuses a mid-turn switch outright (4009) instead of
         // deferring it. Don't punish the user for a backend they haven't
         // updated: keep the pick painted as the composer's selection, which is

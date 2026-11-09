@@ -18,7 +18,7 @@ from hermes_cli.web_server_config import (
 )
 from agent.model_metadata import is_local_endpoint
 from starlette.concurrency import run_in_threadpool
-from hermes_cli.web_models import ModelAssignment, MoaConfigPayload, MoaModelSlot
+from hermes_cli.web_models import ModelAssignment, MoaConfigPayload, MoaModelSlot, ModelTestRequest
 from hermes_cli.web_routers._common import _CONFIG_MUTATION_LOCK, config_write_scope, http_failure
 
 _log = logging.getLogger("hermes_cli.web_server")
@@ -456,3 +456,47 @@ async def set_model_assignment(body: ModelAssignment, profile: Optional[str] = N
                         reasoning_effort=reasoning_effort, prepared=prepared)
 
         return await asyncio.to_thread(_apply_assignment)
+
+
+@router.post('/api/model/test')
+async def test_provider_model(body: ModelTestRequest, profile: Optional[str] = None):
+    """An explicit bounded invocation; never changes the default or any conversation."""
+    from hermes_cli.web_routers._common import scoped_to_thread
+    if not body.accept_cost:
+        raise HTTPException(400, 'Explicit acknowledgement of possible token charges is required.')
+    if not body.model.strip() or any(character.isspace() for character in body.model.strip()):
+        raise HTTPException(400, 'Enter one model ID without command options.')
+    if not body.provider.strip() or body.provider.strip().lower() in {'auto', 'main', 'moa'}:
+        raise HTTPException(400, 'Choose a concrete provider for the model test.')
+
+    def run():
+        from agent.auxiliary_client import resolve_provider_client, extract_content_or_reasoning, auxiliary_max_tokens_param
+        from hermes_cli.runtime_provider import resolve_runtime_provider
+        from hermes_cli.web_server_config import _validated_main_model_selection
+
+        cfg = load_config()
+        selection = _validated_main_model_selection(cfg, body.provider, body.model)
+        runtime = resolve_runtime_provider(requested=selection.target_provider, target_model=selection.new_model)
+        client, model = resolve_provider_client(
+            selection.target_provider, selection.new_model,
+            explicit_base_url=runtime.get('base_url'), explicit_api_key=runtime.get('api_key'),
+            api_mode=runtime.get('api_mode'), main_runtime=runtime)
+        if client is None or model != selection.new_model:
+            return {'ok': False, 'status': 'unavailable', 'provider': body.provider, 'model': body.model}
+        try:
+            if callable(getattr(client, 'with_options', None)):
+                client = client.with_options(max_retries=0, timeout=15.0)
+            response = client.chat.completions.create(
+                model=model, messages=[{'role': 'user', 'content': 'Reply OK.'}],
+                **auxiliary_max_tokens_param(32, model=model), timeout=15.0)
+            observed = bool(extract_content_or_reasoning(response).strip())
+            return {'ok': observed, 'status': 'response_observed' if observed else 'empty_response',
+                    'provider': body.provider, 'model': body.model}
+        except Exception as exc:  # health: allow BLE001 -- SDK adapters vary; keep raw provider exceptions (which may echo secrets) out of HTTP responses.
+            code = getattr(exc, 'status_code', None)
+            status = {401: 'invalid_key', 403: 'forbidden', 404: 'model_unavailable',
+                      429: 'rate_limited'}.get(code, 'timeout' if 'timeout' in type(exc).__name__.lower() else 'error')
+            # Provider errors may echo headers; never return their raw text to the renderer.
+            return {'ok': False, 'status': status, 'provider': body.provider, 'model': body.model}
+
+    return await scoped_to_thread(profile, run)

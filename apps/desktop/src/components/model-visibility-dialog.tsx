@@ -1,4 +1,3 @@
-import { modelProviderName } from '@/i18n/model-service'
 import type { ModelOptionProvider, ModelOptionsResult } from '@hermes/shared'
 import { useStore } from '@nanostores/react'
 import { useQuery } from '@tanstack/react-query'
@@ -14,12 +13,14 @@ import { HighlightMatches } from '@/components/ui/highlight-matches'
 import { Switch } from '@/components/ui/switch'
 import type { HermesGateway } from '@/hermes'
 import { useI18n } from '@/i18n'
+import { modelProviderName } from '@/i18n/model-service'
 import { Search } from '@/lib/icons'
 import { modelDiscoveryOwnerKey } from '@/lib/model-discovery-scope'
-import { modelOptionsQueryKey, providerSelectableModels, requestDiscoveredModelOptions } from '@/lib/model-options'
+import { modelOptionsQueryKey, requestDiscoveredModelOptions, withManualModelChoices } from '@/lib/model-options'
 import { displayModelName, modelDisplayParts } from '@/lib/model-status-label'
 import { foldIncludes, normalize } from '@/lib/text'
 import { confirm } from '@/store/confirm'
+import { $customModels } from '@/store/custom-models'
 import { resetModelVisibilityKeepingCustoms } from '@/store/custom-models'
 import { requestGatewayForAgent } from '@/store/gateway'
 import {
@@ -59,6 +60,8 @@ export function ModelVisibilityDialog({
   const [search, setSearch] = useState('')
   const connection = useStore($connection)
   const ownerKey = modelDiscoveryOwnerKey(ownerConnectionId, connection)
+  const customs = useStore($customModels)
+  const manualScope = `${ownerKey}:${profile}`
   const stored = useStore($visibleModels)
   const collapsedProviders = useStore($collapsedProviders)
 
@@ -75,9 +78,10 @@ export function ModelVisibilityDialog({
   const providers = useMemo(
     () =>
       (modelOptions.data?.providers ?? [])
-        .map(provider => provider.discovery_state == null ? provider : { ...provider, models: providerSelectableModels(provider) })
+        .map(provider => provider.discovery_state == null ? provider : withManualModelChoices(provider,
+          customs.filter(entry => entry.scope === manualScope && entry.provider === provider.slug).map(entry => entry.model)))
         .filter(provider => (provider.models ?? []).length > 0),
-    [modelOptions.data]
+    [modelOptions.data, customs, manualScope]
   )
 
   useEffect(() => seedKnownModels(providers), [providers])
@@ -101,7 +105,7 @@ export function ModelVisibilityDialog({
     })
 
     if (ok) {
-      resetModelVisibilityKeepingCustoms(providers)
+      resetModelVisibilityKeepingCustoms(providers, manualScope)
     }
   }
 

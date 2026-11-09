@@ -67,8 +67,10 @@ vi.mock('@/lib/model-options', async importOriginal => ({
   requestDiscoveredModelOptions: async (opts: { profile?: string; refresh?: boolean }) => {
     const profile = opts.profile === 'default' ? undefined : opts.profile
     const options = await getGlobalModelOptions(opts.refresh ? { refresh: true } : undefined, profile)
+
     if (options.model !== undefined && options.provider !== undefined) {return options}
     const info = await getGlobalModelInfo(profile)
+
     return { model: info.model, provider: info.provider, ...options }
   }
 }))
@@ -145,10 +147,12 @@ describe('ModelSettings profile scope', () => {
     expect((await screen.findAllByRole('combobox'))[0].textContent).toContain('Private A')
     await act(async () => { profileSwitchHandler?.() })
     const triggers = screen.queryAllByRole('combobox')
+
     if (triggers.length) {
       fireEvent.click(triggers[0])
       expect(screen.queryByRole('option', { name: 'Private A' })).toBeNull()
     }
+
     await act(async () => { finish({ providers: [] }) })
   })
 
@@ -181,6 +185,7 @@ describe('ModelSettings profile scope', () => {
     await act(async () => { failB(new Error('catalog unavailable')) })
     expect(await screen.findByText(/catalog unavailable/)).toBeTruthy()
     const triggers = screen.queryAllByRole('combobox')
+
     if (triggers.length) {
       fireEvent.click(triggers[0])
       expect(screen.queryByRole('option', { name: 'Private A' })).toBeNull()
@@ -220,17 +225,13 @@ describe('ModelSettings', () => {
     expect(getGlobalModelInfo).not.toHaveBeenCalled()
   })
 
-  it('allows a verified generic model but rejects Apply when its refresh becomes stale', async () => {
-    const row = { slug: 'lab', name: 'Lab', models: ['live-model'], discovery_state: 'fresh', discovery_source_id: 'opaque' }
+  it('applies a generic cached model through backend validation without treating discovery as entitlement', async () => {
     getGlobalModelInfo.mockResolvedValue({ provider: 'lab', model: 'live-model' })
-    getGlobalModelOptions.mockResolvedValueOnce({ providers: [row] })
-      .mockResolvedValueOnce({ providers: [{ ...row, discovery_state: 'stale' }] })
+    getGlobalModelOptions.mockResolvedValue({ providers: [{ slug: 'lab', name: 'Lab', models: ['live-model'],
+      discovery_state: 'stale', discovery_source_id: 'opaque', authenticated: true }] })
     renderModelSettings()
-    const apply = await screen.findByRole('button', { name: 'Apply' })
-    expect(apply.hasAttribute('disabled')).toBe(false)
-    fireEvent.click(apply)
-    expect(await screen.findByText(/no longer available/i)).toBeTruthy()
-    expect(setModelAssignment).not.toHaveBeenCalled()
+    fireEvent.click(await screen.findByRole('button', { name: 'Apply' }))
+    await waitFor(() => expect(setModelAssignment).toHaveBeenCalledWith({ scope: 'main', provider: 'lab', model: 'live-model' }))
   })
 
   it('does not apply a source-backed model removed during revalidation', async () => {
@@ -329,34 +330,17 @@ describe('ModelSettings', () => {
     expect(screen.queryByRole('option', { name: 'not-offered' })).toBeNull()
   })
 
-  it('does not offer or apply models when eligibility is unknown', async () => {
-    getGlobalModelInfo.mockResolvedValueOnce({ provider: 'nous', model: 'saved-unknown' })
-    getGlobalModelOptions.mockResolvedValueOnce({ providers: [{
-      name: 'Nous', slug: 'nous', authenticated: true, models: ['saved-unknown', 'unproven-model']
-    }] })
+  it('offers manual entry for a configured provider with no catalog', async () => {
+    getGlobalModelOptions.mockResolvedValue({ providers: [{ name: 'Lab', slug: 'lab', authenticated: true,
+      models: [], discovery_state: 'unsupported' }] })
+    getGlobalModelInfo.mockResolvedValue({ provider: 'lab', model: '' })
     renderModelSettings()
-    const model = (await screen.findAllByRole('combobox'))[1]
-    expect(model.textContent).toContain('saved-unknown')
-    expect((await screen.findByRole('button', { name: 'Apply' }) as HTMLButtonElement).disabled).toBe(true)
-    expect(screen.getByText('Model availability could not be verified. Refresh the list or check the provider configuration.')).toBeTruthy()
-    fireEvent.click(model)
-    expect(screen.queryByRole('option', { name: 'unproven-model' })).toBeNull()
-    expect(screen.queryByRole('option', { name: /custom model/i })).toBeNull()
-    expect(setModelAssignment).not.toHaveBeenCalled()
-  })
-
-  it('retries an unknown inventory without applying the saved model', async () => {
-    getGlobalModelInfo.mockResolvedValue({ provider: 'nous', model: 'saved-model' })
-    getGlobalModelOptions.mockResolvedValueOnce({ providers: [{
-      name: 'Nous', slug: 'nous', authenticated: true, models: ['saved-model']
-    }] }).mockResolvedValueOnce({ providers: [{
-      name: 'Nous', slug: 'nous', authenticated: true, models: ['saved-model'], eligible_models: ['saved-model']
-    }] })
-    renderModelSettings()
-    fireEvent.click(await screen.findByRole('button', { name: 'Retry' }))
-    await waitFor(() => expect((screen.getByRole('button', { name: 'Apply' }) as HTMLButtonElement).disabled).toBe(false))
-    expect(getGlobalModelOptions).toHaveBeenLastCalledWith({ refresh: true }, undefined)
-    expect(setModelAssignment).not.toHaveBeenCalled()
+    fireEvent.click((await screen.findAllByRole('combobox'))[1])
+    fireEvent.click(await screen.findByRole('option', { name: /custom model/i }))
+    const input = screen.getByPlaceholderText('Model id')
+    fireEvent.change(input, { target: { value: 'manual/hidden' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    await waitFor(() => expect(setModelAssignment).toHaveBeenCalledWith({ scope: 'main', provider: 'lab', model: 'manual/hidden' }))
   })
 
   it('searches the Main model list case-insensitively and selects with Enter', async () => {
@@ -1003,14 +987,14 @@ describe('ModelSettings provider switch', () => {
     await waitFor(() => expect(screen.queryByText('hermes-4')).toBeNull())
   })
 
-  it('does not offer an empty provider as an eligible choice', async () => {
+  it('offers an empty configured provider while preserving its account eligibility', async () => {
     getGlobalModelOptions.mockResolvedValue({ providers: [
       { name: 'Nous', slug: 'nous', models: ['hermes-4'], eligible_models: ['hermes-4'], authenticated: true },
       { name: 'Lab', slug: 'custom:lab', models: [], eligible_models: [], authenticated: true }
     ] })
     renderModelSettings()
     fireEvent.click((await screen.findAllByRole('combobox'))[0])
-    expect(screen.queryByRole('option', { name: 'Lab' })).toBeNull()
+    expect(screen.getByRole('option', { name: 'Lab' }).getAttribute('aria-disabled')).toBe('false')
   })
 
 })

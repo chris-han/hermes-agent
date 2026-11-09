@@ -79,6 +79,32 @@ afterEach(() => {
 })
 
 describe('CustomEndpointsSettings', () => {
+  it('saves a provider without a model or implicit default', async () => {
+    getCustomEndpoints.mockResolvedValue(emptyResponse)
+    saveCustomEndpoint.mockResolvedValue(emptyResponse)
+    render(<CustomEndpointsSettings />)
+    fireEvent.change(await screen.findByPlaceholderText('http://localhost:4000/v1'), { target: { value: 'http://localhost:4000/v1' } })
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Fixture provider' } })
+    fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'synthetic-key' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(saveCustomEndpoint).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'Fixture provider', model: '', make_default: false }), 'default'))
+  })
+
+  it('drops a catalog completion when its URL or credential draft changed', async () => {
+    getCustomEndpoints.mockResolvedValue(emptyResponse)
+    let finish!: (value: unknown) => void
+    validateCustomEndpoint.mockImplementation(() => new Promise(resolve => { finish = resolve }))
+    render(<CustomEndpointsSettings />)
+    const url = await screen.findByPlaceholderText('http://localhost:4000/v1')
+    fireEvent.change(url, { target: { value: 'http://localhost:4000/v1' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Test' }))
+    fireEvent.change(url, { target: { value: 'http://localhost:5000/v1' } })
+    await act(async () => finish({ ok: true, reachable: true, models: ['wrong-source'], message: 'old response' }))
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.queryByText('wrong-source')).toBeNull()
+  })
+
   it('shows explicit success beside Test and announces it again on a repeated test', async () => {
     getCustomEndpoints.mockResolvedValue(emptyResponse)
     validateCustomEndpoint.mockResolvedValueOnce({ ok: true, reachable: true, models: ['example-model'], message: '' })
@@ -138,7 +164,7 @@ describe('CustomEndpointsSettings', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Test' }))
     await screen.findByText('Catalog unsupported')
     expect(screen.getByPlaceholderText<HTMLInputElement>('gpt-5.4').value).toBe('model-a')
-    fireEvent.click(screen.getByRole('button', { name: 'Save and use' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() =>
       expect(saveCustomEndpoint).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -183,7 +209,7 @@ describe('CustomEndpointsSettings', () => {
     expect(screen.getByRole('button', { name: '自動偵測' })).toBeTruthy()
     expect(saveCustomEndpoint).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('checkbox', { name: '此端點不需要 API 金鑰' }))
-    fireEvent.click(screen.getByRole('button', { name: '儲存並使用' }))
+    fireEvent.click(screen.getByRole('button', { name: '儲存' }))
     expect(saveCustomEndpoint).toHaveBeenCalledWith(
       expect.objectContaining({
         name: 'Fixture Ω',
@@ -217,13 +243,13 @@ describe('CustomEndpointsSettings', () => {
     fireEvent.change(screen.getByPlaceholderText('http://localhost:4000/v1'), {
       target: { value: 'https://responses-gateway.example.com/v1' }
     })
+    fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'synthetic-key' } })
     fireEvent.click(screen.getByRole('button', { name: 'Responses API' }))
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Test' }))
     })
     fireEvent.change(screen.getByPlaceholderText('gpt-5.4'), { target: { value: 'gpt-5.6-sol-high' } })
-    fireEvent.click(screen.getByRole('checkbox', { name: 'This endpoint requires no API key' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Save and use' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     expect(validateCustomEndpoint).toHaveBeenCalledWith(
       expect.objectContaining({ api_mode: 'codex_responses' }),
@@ -271,7 +297,7 @@ describe('CustomEndpointsSettings', () => {
     })
     fireEvent.change(await screen.findByPlaceholderText('gpt-5.4'), { target: { value: 'studio-model' } })
     fireEvent.click(screen.getByRole('checkbox', { name: 'This endpoint requires no API key' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Save and use' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     expect(saveCustomEndpoint).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'Studio gateway' }),
@@ -309,7 +335,7 @@ describe('CustomEndpointsSettings', () => {
     })
     fireEvent.change(screen.getByPlaceholderText('gpt-5.4'), { target: { value: 'model-a' } })
     fireEvent.click(screen.getByRole('checkbox', { name: 'This endpoint requires no API key' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Save and use' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     expect(saveCustomEndpoint).toHaveBeenCalledTimes(1)
 
     // SettingsView keys ProvidersSettings by the selected profile, so a profile
@@ -355,7 +381,7 @@ describe('CustomEndpointsSettings', () => {
     })
     fireEvent.change(screen.getByPlaceholderText('gpt-5.4'), { target: { value: 'my-existing-model' } })
     fireEvent.click(screen.getByRole('checkbox', { name: 'This endpoint requires no API key' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Save and use' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     expect(saveCustomEndpoint).toHaveBeenCalledWith(
       expect.objectContaining({ base_url: 'http://localhost:8081/v1', model: 'my-existing-model' }),
       'default'

@@ -466,6 +466,8 @@ def _endpoint_row(
     return {
         "id": endpoint_id, "name": name, "base_url": base_url, "model": model, "models": models,
         "api_mode": _endpoint_api_mode(key_entry),
+        "model_list_url": key_entry.get("model_list_url", ""),
+        "enabled": key_entry.get("enabled", True),
         "context_length": context_length, "discover_models": discover_models,
         "has_api_key": has_api_key, "api_key_preview": api_key_preview,
         "is_current": is_current, "source": source,
@@ -588,6 +590,42 @@ def _require_custom_endpoint_owner(identifier: str) -> None:
         raise HTTPException(status_code=400, detail='Use the native Semantier Cloud connection settings.')
 
 
+def _validate_custom_provider_form(body: CustomEndpointUpdate, base_url: str, model: str) -> None:
+    from hermes_cli.desktop_model_discovery import validate_catalog_url
+    try:
+        validate_catalog_url(base_url)
+        if body.model_list_url:
+            validate_catalog_url(body.model_list_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if body.make_default and not model:
+        raise HTTPException(status_code=400, detail="model required to make default")
+
+
+def _validate_custom_provider_credential(body: CustomEndpointUpdate, base_url: str, entry: dict, existing: dict) -> None:
+    from agent.model_metadata import is_local_endpoint
+    from hermes_cli.config import get_env_value
+    from hermes_cli.urllib_security import url_origin
+    submitted = (body.api_key or '').strip()
+    retained_env = str(entry.get('key_env') or entry.get('api_key_env') or '')
+    retained_key = get_env_value(retained_env) if retained_env else entry.get('api_key')
+    if not submitted and not retained_key and not is_local_endpoint(base_url):
+        raise HTTPException(status_code=400, detail='API key required for this provider.')
+    if body.api_key == '' and not is_local_endpoint(base_url):
+        raise HTTPException(status_code=400, detail='Only local endpoints may omit an API key.')
+    if retained_key and not submitted:
+        old_base = str(existing.get('base_url') or base_url)
+        old_list = str(existing.get('model_list_url') or old_base)
+        new_list = str(entry.get('model_list_url') or base_url)
+        if url_origin(old_base) != url_origin(base_url) or url_origin(old_list) != url_origin(new_list):
+            raise HTTPException(status_code=400, detail='Re-enter the API key when changing the provider origin.')
+
+
+def _update_custom_provider_enabled(entry: dict, enabled: Optional[bool]) -> None:
+    if enabled is not None:
+        entry["enabled"] = enabled
+
+
 def _write_custom_endpoint(cfg: dict[str, Any], body: CustomEndpointUpdate) -> tuple[str, dict[str, Any]]:
     _require_custom_endpoint_owner(body.id or body.name)
     name = (body.name or "").strip()
@@ -604,8 +642,7 @@ def _write_custom_endpoint(cfg: dict[str, Any], body: CustomEndpointUpdate) -> t
         raise HTTPException(status_code=400, detail="base_url must include scheme and host") from exc
     if not parsed.scheme or not parsed.netloc:
         raise HTTPException(status_code=400, detail="base_url must include scheme and host")
-    if not model:
-        raise HTTPException(status_code=400, detail="model required")
+    _validate_custom_provider_form(body, base_url, model)
 
     # Deliver the bearer token through a named provider entry. A bare ``provider: custom`` cannot carry a
     # credential for this host: OPENAI_API_KEY is deliberately gated to openai.com (#28660), so the token
@@ -644,6 +681,9 @@ def _write_custom_endpoint(cfg: dict[str, Any], body: CustomEndpointUpdate) -> t
     # credentials — ``request_overrides``); rebuilding from scratch silently
     # dropped them on an unrelated edit.
     entry: dict[str, Any] = dict(existing)
+    if body.model_list_url is not None:
+        entry["model_list_url"] = body.model_list_url.strip()
+    _update_custom_provider_enabled(entry, body.enabled)
     entry.update({
         "name": name, "base_url": base_url, "model": model,
         "discover_models": bool(body.discover_models),
@@ -699,9 +739,11 @@ def _write_custom_endpoint(cfg: dict[str, Any], body: CustomEndpointUpdate) -> t
         model = canonical
         entry["model"] = model
         models_map.setdefault(model, {})
-    if body.context_length and body.context_length > 0:
+    if model and body.context_length and body.context_length > 0:
         entry["context_length"] = int(body.context_length)
         entry["models"][model]["context_length"] = int(body.context_length)
+
+    _validate_custom_provider_credential(body, base_url, entry, existing)
 
     # API keys never belong in config.yaml: write to .env and reference it via
     # ``key_env`` — the indirection built-in providers use and that
@@ -878,15 +920,24 @@ async def validate_custom_endpoint(body: CustomEndpointUpdate, profile: Optional
     if not base_url:
         return {"ok": False, "reachable": True, "message": "Enter an endpoint URL first.", "models": []}
 
+    from hermes_cli.desktop_model_discovery import validate_catalog_url
+    try:
+        validate_catalog_url(base_url)
+    except ValueError:
+        return {"ok": False, "reachable": False, "status": "invalid_url", "message": "Invalid or blocked provider URL.", "models": []}
     headers = _custom_endpoint_probe_headers(body, profile)
 
+    if body.model_list_url is not None:
+        from hermes_cli.desktop_model_discovery import query_catalog_url
+        result = await asyncio.to_thread(query_catalog_url, body.model_list_url or base_url + "/models", headers)
+        return result
     resolved, resp = await _probe_openai_compatible_models(base_url, headers)
     if resp is None:
-        return {"ok": False, "reachable": False, "message": f"Could not reach {base_url}/models.", "models": []}
+        return {"ok": False, "reachable": False, "status": "unreachable", "message": "Could not reach the model catalog.", "models": []}
     if resp.status_code in (401, 403):
-        return {"ok": False, "reachable": True, "message": "The endpoint rejected the API key.", "models": []}
+        return {"ok": False, "reachable": True, "status": "invalid_key" if resp.status_code == 401 else "forbidden", "message": "The endpoint rejected the API key.", "models": []}
     if not resp.is_success:
-        return {"ok": False, "reachable": True, "message": f"Endpoint returned HTTP {resp.status_code}.", "models": []}
+        return {"ok": False, "reachable": True, "status": {404: "unsupported", 429: "rate_limited"}.get(resp.status_code, "error"), "message": f"Endpoint returned HTTP {resp.status_code}.", "models": []}
     # ``models`` stays the bare id list older clients read; ``model_details`` keeps the
     # alias metadata (``canonical_model`` / ``reasoning_effort``) the id list flattens.
     entries = _parse_model_entries(resp)
@@ -897,11 +948,11 @@ async def validate_custom_endpoint(body: CustomEndpointUpdate, profile: Optional
         # is lenient by design, so classify the empty result here instead of reporting
         # success. ok:false + reachable:true is a warning in the UI — Save stays possible
         # for endpoints that legitimately expose no model list.
-        return {"ok": False, "reachable": True, "message": _no_models_probe_message(resp, resolved),
+        return {"ok": False, "reachable": True, "status": "empty", "message": _no_models_probe_message(resp, resolved),
                 "models": [], "model_details": [], "resolved_base_url": resolved}
     # Catalog/authentication only. A transport POST is inference, even at one
     # token; readiness and an explicit user Send are separate facts.
-    return {"ok": True, "reachable": True, "message": "", "models": ids,
+    return {"ok": True, "reachable": True, "status": "catalog_verified", "message": "", "models": ids,
             "model_details": entries, "resolved_base_url": resolved}
 
 
@@ -918,15 +969,15 @@ def _custom_endpoint_probe_headers(body: CustomEndpointUpdate, profile: Optional
                               and _custom_endpoint_id(row['name']) == body.id), None)
             if entry:
                 previous = str(entry.get("base_url") or "").rstrip("/")
-                if previous != body.base_url.strip().rstrip("/"):
+                previous_list = str(entry.get("model_list_url") or "").strip()
+                changed_list = body.model_list_url is not None and previous_list != body.model_list_url.strip()
+                if previous != body.base_url.strip().rstrip("/") or changed_list:
                     raise HTTPException(status_code=400, detail="Enter a key explicitly when testing a changed endpoint URL.")
                 from hermes_cli.config import get_env_value
                 key_name = str(entry.get("key_env") or entry.get("api_key_env") or "")
                 key = get_env_value(key_name) if key_name else entry.get("api_key")
-    headers = {"Accept": "application/json"}
-    if key and key.strip():
-        headers["Authorization"] = f"Bearer {key.strip()}"
-    return headers
+    from hermes_cli.desktop_model_discovery import catalog_request_headers
+    return catalog_request_headers(key.strip() if key else None, body.api_mode)
 
 def _no_models_probe_message(resp: Any, base_url: str) -> str:
     """Why a 200 ``/models`` probe yielded no usable models (#83128).
@@ -1053,8 +1104,9 @@ async def validate_provider_credential(body: EnvVarUpdate, request: Request):
 
     if resp.status_code in (401, 403):
         return {"ok": False, "reachable": True, "message": "That API key was rejected. Double-check it and try again."}
-    if resp.status_code == 429 or resp.is_success:
-        # 429 = key is valid but rate-limited; success = valid.
+    if resp.status_code == 429:
+        return {"ok": False, "reachable": True, "status": "rate_limited", "message": "Provider rate limited the check; key validity is unverified."}
+    if resp.is_success:
         return {"ok": True, "reachable": True, "message": ""}
     return {"ok": False, "reachable": True, "message": f"Provider returned HTTP {resp.status_code} for this key."}
 
@@ -1092,9 +1144,11 @@ async def validate_saved_provider_credential(body: SavedProviderProbe, request: 
         snapshot = read_configured_provider_snapshot(provider=provider.slug, entry=entry, base_url=endpoint,
             api_key=value, source_scope=str(get_hermes_home().resolve()), refresh=True)
         if snapshot.state == "fresh":
-            return {"ok": True, "reachable": True, "message": "Provider model-list request succeeded."}
-        return {"ok": False, "reachable": False,
-                "message": "Could not verify the provider model endpoint; check its key, address or network."}
+            return {"ok": True, "reachable": True, "status": "catalog_verified" if snapshot.models else "empty",
+                    "message": "Provider model-list request succeeded. Inference has not been tested."}
+        status = snapshot.status or "unknown"
+        return {"ok": False, "reachable": status in {"invalid_key", "forbidden", "unsupported", "rate_limited"},
+                "status": status, "message": f"Provider catalog check: {status}. Inference has not been tested."}
 
     return await scoped_to_thread(body.profile or profile, _probe)
 

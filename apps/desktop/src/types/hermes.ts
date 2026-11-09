@@ -272,6 +272,8 @@ export interface CustomEndpointModelDetail {
 }
 
 export interface CustomEndpoint {
+  model_list_url?: string
+  enabled?: boolean
   api_key_preview?: null | string
   api_mode?: CustomEndpointApiMode
   base_url: string
@@ -298,6 +300,8 @@ export interface CustomEndpointsResponse {
 }
 
 export interface CustomEndpointUpdate {
+  enabled?: boolean
+  model_list_url?: string
   api_key?: string
   api_mode?: CustomEndpointApiMode
   base_url: string
@@ -312,6 +316,7 @@ export interface CustomEndpointUpdate {
 }
 
 export interface CustomEndpointValidationResponse {
+  status?: string
   message: string
   /** Older backends send only `models`. */
   model_details?: CustomEndpointModelDetail[]

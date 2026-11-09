@@ -28,6 +28,7 @@ vi.mock('@/store/profile', () => ({
 }))
 
 vi.mock('@/hermes', () => ({
+  getCustomEndpoints: async () => ({ endpoints: [] }),
   setApiRequestProfile: vi.fn(),
   validateSavedProviderCredential: (...args: unknown[]) => validateSavedProviderCredential(...args),
   getProfiles: async () => ({ profiles: (await import('@/store/profile')).$profiles.get() }),
@@ -499,7 +500,7 @@ describe('ProvidersSettings', () => {
     listOAuthProviders.mockResolvedValue({ providers: [provider('semantier-cloud', false), provider('nous', false)] })
     const onViewChange = vi.fn()
     render(<ProvidersSettings onClose={vi.fn()} onViewChange={onViewChange} view="accounts" />)
-    const endpoint = await screen.findByText('Custom endpoint')
+    const endpoint = await screen.findByText('Add Provider')
     expect(
       screen.getByText('Semantier Model Provider').compareDocumentPosition(endpoint) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
@@ -518,7 +519,7 @@ describe('ProvidersSettings', () => {
       providers: [provider('semantier-cloud', true, { name: 'Semantier Model Provider' })]
     })
     render(<ProvidersSettings onClose={vi.fn()} onViewChange={vi.fn()} view="accounts" />)
-    const endpoint = await screen.findByText('Custom endpoint')
+    const endpoint = await screen.findByText('Add Provider')
     expect(
       screen.getByText('Semantier Model Provider').compareDocumentPosition(endpoint) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
@@ -546,7 +547,7 @@ describe('ProvidersSettings', () => {
     const onViewChange = vi.fn()
     render(<ProvidersSettings onClose={vi.fn()} onViewChange={onViewChange} view="keys" />)
 
-    const row = await screen.findByText('Custom endpoint')
+    const row = await screen.findByText('Add Provider')
 
     fireEvent.click(row)
 
@@ -588,7 +589,7 @@ it('resolves a saved retired local destination to Model service Accounts', async
       <SavedDestination />
     </MemoryRouter>
   )
-  expect(await screen.findByText('Custom endpoint')).toBeTruthy()
+  expect(await screen.findByText('Add Provider')).toBeTruthy()
   expect(screen.getByRole('button', { name: /Semantier Model Provider/ })).toBeTruthy()
   expect(screen.queryByText('Local Models')).toBeNull()
 })

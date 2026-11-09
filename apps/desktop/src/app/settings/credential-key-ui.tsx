@@ -2,10 +2,12 @@ import { useStore } from '@nanostores/react'
 import { type ChangeEvent, type KeyboardEvent } from 'react'
 import { useEffect, useRef, useState } from 'react'
 
+import { $apiRequestScope } from '@/api/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { validateSavedProviderCredential } from '@/hermes'
 import { translateNow, useI18n } from '@/i18n'
+import { providerTestStatus } from '@/i18n/model-service'
 import { ChevronDown, ExternalLink, Loader2, Save, Trash2 } from '@/lib/icons'
 import { isSubmitEnter } from '@/lib/ime'
 import { cn } from '@/lib/utils'
@@ -273,8 +275,9 @@ function SavedProviderConnectionTest({
   identity: ProviderKeyRowGroup
   rowProps: KeyRowProps
 }) {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const profile = useStore($settingsRequestProfile)
+  const requestScope = useStore($apiRequestScope)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null)
   const testGeneration = useRef(0)
@@ -287,7 +290,7 @@ function SavedProviderConnectionTest({
     return () => {
       testGeneration.current += 1
     }
-  }, [identity, profile])
+  }, [identity, profile, requestScope.connectionId])
 
   async function checkSavedKey() {
     if (!candidate?.[1].provider) {
@@ -302,7 +305,7 @@ function SavedProviderConnectionTest({
       const result = await validateSavedProviderCredential(candidate[1].provider, candidate[0], profile)
 
       if (generation === testGeneration.current) {
-        setTestResult(result)
+        setTestResult({ ...result, message: result.status ? providerTestStatus(locale, result.status) : result.message })
       }
     } catch {
       if (generation === testGeneration.current) {

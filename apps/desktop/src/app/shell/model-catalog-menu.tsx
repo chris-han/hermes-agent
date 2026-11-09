@@ -1,4 +1,3 @@
-import { modelProviderName } from '@/i18n/model-service'
 import type { ModelOptionProvider, ModelOptionsResult, ModelPricing } from '@hermes/shared'
 import { DEFAULT_REASONING_EFFORT } from '@hermes/shared'
 import { useStore } from '@nanostores/react'
@@ -36,17 +35,18 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Tip, TipHintLabel } from '@/components/ui/tooltip'
 import type { HermesGateway } from '@/hermes'
 import { useI18n } from '@/i18n'
+import { modelProviderName, providerJourneyCopy } from '@/i18n/model-service'
 import { triggerHaptic } from '@/lib/haptics'
 import { isSubmitEnter } from '@/lib/ime'
 import { modelDiscoveryOwnerKey } from '@/lib/model-discovery-scope'
-import { catalogProviderMatches, modelOptionsQueryKey, providerSelectableModels, requestDiscoveredModelOptions } from '@/lib/model-options'
+import { catalogProviderMatches, modelOptionsQueryKey, providerManualModels, providerSelectableModels, requestDiscoveredModelOptions, withManualModelChoices } from '@/lib/model-options'
 import { displayModelName, modelDisplayParts } from '@/lib/model-status-label'
 import { accountResetMs, formatReset, modelResetMs } from '@/lib/provider-limit'
 import { reasoningEffortLabel } from '@/lib/reasoning-effort'
 import { refreshModelsOnConnectionReady } from '@/lib/startup-model-discovery'
 import { foldIncludes, normalize } from '@/lib/text'
 import { cn } from '@/lib/utils'
-import { addCustomModel, customModelCandidate } from '@/store/custom-models'
+import { $customModels, addCustomModel, customModelCandidate } from '@/store/custom-models'
 import { $favoriteModels, favoriteModelKey, toggleFavoriteModel } from '@/store/favorite-models'
 import { requestGatewayForAgent } from '@/store/gateway'
 import { $showModelPricing } from '@/store/model-pricing'
@@ -71,6 +71,22 @@ import { ModelMenuRowIcon, useModelMenuRowDecoration } from './model-menu-row-de
 // hover-revealed edit submenu (reasoning/fast) stays open to play with (its
 // items preventDefault on select).
 export const ModelMenuCloseContext = createContext<() => void>(() => {})
+
+function canSelectModel(provider: ModelOptionProvider, model: string, manual: boolean): boolean {
+  const isManual = manual || providerManualModels(provider).includes(model)
+
+  if ((provider.unavailable_models ?? []).some(value => normalize(value) === normalize(model))) { return false }
+
+  if (provider.eligible_models != null) { return provider.eligible_models.includes(model) }
+
+  return isManual || providerSelectableModels(provider).includes(model)
+}
+
+function ManualModelChip({ provider, model, locale }: { provider: ModelOptionProvider; model: string; locale: string }) {
+  if (!providerManualModels(provider).includes(model) || providerSelectableModels(provider).includes(model)) { return null }
+
+  return <ModelChip>{providerJourneyCopy(locale).unverified}</ModelChip>
+}
 
 function omitUnavailable(provider: ModelOptionProvider): ModelOptionProvider {
   const excluded = new Set((provider.unavailable_models ?? []).map(normalize))
@@ -276,12 +292,18 @@ export function ModelCatalogMenu({
     [providers, includeMoa]
   )
 
+  const customModels = useStore($customModels)
+  const manualScope = `${ownerKey}:${profile}`
+
   const pickerProviders = useMemo(
     () => (providers ?? [])
       .filter(provider => provider.slug.toLowerCase() !== 'moa' && provider.authenticated !== false)
-      .map(provider => ({ ...provider, models: providerSelectableModels(provider) }))
-      .filter(provider => provider.models.length > 0),
-    [providers]
+      .map(provider => {
+        const scopedManual = customModels.filter(value => value.scope === manualScope && value.provider === provider.slug).map(value => value.model)
+
+        return withManualModelChoices(provider, scopedManual)
+      }),
+    [providers, customModels, manualScope]
   )
 
   const current = controller.current
@@ -352,13 +374,13 @@ export function ModelCatalogMenu({
   // catalog lacks is one Enter away, then remember it as a normal row. While
   // the query still matches catalog rows the section stays out of the way
   // unless the user asked for it via "Add custom model…".
-  const customSlug = slugEntry ? customModelCandidate(search, pickerProviders) : null
+  const customSlug = customModelCandidate(search, slugEntry ? [] : pickerProviders)
 
   const customProviders = useMemo(
     () =>
       customSlug
         ? pickerProviders
-            .filter(provider => provider.eligible_models == null && (provider.models ?? []).length > 0 &&
+            .filter(provider => provider.eligible_models == null &&
               !(provider.unavailable_models ?? []).some(model => normalize(model) === normalize(customSlug)))
             .sort(
               (a, b) =>
@@ -379,11 +401,7 @@ export function ModelCatalogMenu({
     const variantFast = !(caps?.fast ?? false) && !!family.fastId
     const targetId = variantFast && preset.fast === true ? family.fastId! : family.id
 
-    if ((!manual && !providerSelectableModels(provider).includes(targetId)) ||
-        (manual && provider.eligible_models != null && !provider.eligible_models.includes(targetId)) ||
-        (provider.unavailable_models ?? []).some(model => normalize(model) === normalize(targetId))) {
-      return false
-    }
+    if (!canSelectModel(provider, targetId, manual)) { return false }
 
     if ((await controller.select(targetId, provider.slug)) === false) {
       return false
@@ -424,7 +442,7 @@ export function ModelCatalogMenu({
       return
     }
 
-    addCustomModel(provider.slug, slug, provider)
+    addCustomModel(provider.slug, slug, provider, manualScope)
     closeMenu()
   }
 
@@ -676,7 +694,7 @@ export function ModelCatalogMenu({
 
       {!hideCatalog && <ModelDiscoveryRefreshStatus ownerKey={ownerKey} profile={profile} />}
 
-      {!hideCatalog && (modelOptions.data?.providers ?? []).map(provider => (
+      {!hideCatalog && providers?.filter(provider => catalogProviderMatches(provider, current.provider)).map(provider => (
         <ModelDiscoveryStatus key={provider.slug} provider={provider} />
       ))}
 
@@ -807,6 +825,19 @@ export function ModelCatalogMenu({
           })}
         </div>
       ) : null}
+
+      {!hideCatalog && pickerProviders.filter(provider => !(provider.models?.length) &&
+        (!q || foldIncludes(`${provider.name} ${provider.slug}`, q))).map(provider => (
+        <DropdownMenuItem key={`empty:${provider.slug}`} onSelect={event => {
+          event.preventDefault()
+          setSlugEntry(true)
+          setSearch('')
+          window.setTimeout(() => searchRef.current?.focus(), 0)
+        }}>
+          <span className="min-w-0 flex-1 truncate">{modelProviderName(provider, locale)}</span>
+          <span className="text-xs text-(--ui-text-tertiary)">{providerJourneyCopy(locale).enterModel}</span>
+        </DropdownMenuItem>
+      ))}
 
       {customSlug && customProviders.length > 0 ? (
         <div>
@@ -940,7 +971,7 @@ function ModelFamilyRow({
   provider,
   search
 }: ModelFamilyRowProps): ReactElement {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const copy = t.shell.modelMenu
   const copyPicker = t.modelPicker
   const closeMenu = useContext(ModelMenuCloseContext)
@@ -958,14 +989,17 @@ function ModelFamilyRow({
 
   const isCurrent = activeId !== null
   const { name, tag } = modelDisplayParts(family.id)
+
   const displayCollision = (provider.models ?? []).some(model => {
     if (model === family.id) {
       return false
     }
+
     const other = modelDisplayParts(model)
 
     return other.name === name && other.tag === tag
   })
+
   const label = displayCollision ? family.id : name
   const decoration = useModelMenuRowDecoration({ label, model: family.id, provider: provider.slug })
   const caps = provider.capabilities?.[family.id]
@@ -1082,6 +1116,7 @@ function ModelFamilyRow({
             <HighlightMatches foldSeparators query={search} text={label} />
           </span>
           {tag ? <ModelChip>{tag}</ModelChip> : null}
+          <ManualModelChip locale={locale} model={family.id} provider={provider} />
           {decoration.badge ? (
             <Badge className="shrink-0 uppercase tracking-wide" data-model-menu-row-badge="" size="xs" variant="muted">
               {decoration.badge}

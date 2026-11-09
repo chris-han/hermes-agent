@@ -134,6 +134,27 @@ describe('useModelControls', () => {
     }
   }
 
+  it('ignores a late model-switch failure after the source owner changes', async () => {
+    seedLivePrimary()
+    const response = deferred<never>()
+    const requestGateway = vi.fn(() => response.promise)
+    const client = new QueryClient()
+
+    const { result, rerender } = renderHook(({ owner }) => useModelControls({
+      queryClient: client, requestGateway, cacheOwnerConnectionId: owner, cacheProfile: 'default'
+    }), { initialProps: { owner: 'source-a' } })
+
+    const pending = result.current.selectModel({ model: 'new-a', provider: 'provider-a' })
+    rerender({ owner: 'source-b' })
+    setCurrentModel('keep-b')
+    setCurrentProvider('provider-b')
+    response.reject(new Error('old source failed'))
+    await expect(pending).resolves.toBe(false)
+    expect($currentModel.get()).toBe('keep-b')
+    expect($currentProvider.get()).toBe('provider-b')
+    expect(notifyError).not.toHaveBeenCalled()
+  })
+
   it('updates the live primary selector before the gateway answers and keeps it after success', async () => {
     seedLivePrimary()
     const response = deferred<never>()
@@ -368,7 +389,7 @@ describe('useModelControls', () => {
     expect(requestGateway).toHaveBeenCalledWith('config.set', {
       session_id: 'session-1',
       key: 'model',
-      value: 'claude-sonnet-4.6 --provider anthropic'
+      value: 'claude-sonnet-4.6 --provider anthropic --session'
     })
     expect(requestGateway).not.toHaveBeenCalledWith('slash.exec', expect.anything())
   })
@@ -453,7 +474,7 @@ describe('useModelControls', () => {
       confirm_expensive_model: true,
       key: 'model',
       session_id: 'session-1',
-      value: 'muse-spark-1.2-contributor --provider opencode-go'
+      value: 'muse-spark-1.2-contributor --provider opencode-go --session'
     })
     expect($currentModel.get()).toBe('muse-spark-1.2-contributor')
     expect($currentProvider.get()).toBe('opencode-go')

@@ -786,13 +786,13 @@ class TestValidateCustomUnreachableFallback:
             return validate_requested_model(model, provider, api_key="k", base_url="http://localhost:8000/v1", **kw)
 
     @pytest.mark.parametrize("provider", ["custom", "custom:myproxy"])
-    @pytest.mark.parametrize("api_mode", ["chat_completions", "anthropic_messages"])
+    @pytest.mark.parametrize("api_mode", ["chat_completions", "anthropic_messages", "codex_responses"])
     def test_unreachable_catalog_persists_unverified_for_chat_modes(self, provider, api_mode):
         result = self._validate("my-proxy-model", provider, models=None, api_mode=api_mode)
         assert (result["accepted"], result["persist"], result["recognized"]) == (True, True, False)
         assert "accepted without verification" in result["message"]
 
-    @pytest.mark.parametrize("api_mode", [None, "codex_responses"])
+    @pytest.mark.parametrize("api_mode", [None])
     def test_unreachable_catalog_still_rejects_other_api_modes(self, api_mode):
         result = self._validate("my-proxy-model", "custom", models=None, api_mode=api_mode)
         assert result["accepted"] is False

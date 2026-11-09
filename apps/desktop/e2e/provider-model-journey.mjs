@@ -1,0 +1,147 @@
+import assert from 'node:assert/strict'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { chromium } from 'playwright'
+import { expect } from '@playwright/test'
+
+const bridge = 'http://127.0.0.1:55475'
+const evidence = process.env.JOURNEY_EVIDENCE || '/tmp/provider-model-journey-evidence'
+await mkdir(evidence, { recursive: true })
+const isInference = call => call.method === 'POST' && ['/chat/completions', '/responses', '/messages'].some(path => call.path.endsWith(path))
+const fixture = async () => (await fetch(`${bridge}/fixture`)).json()
+const configure = async values => fetch(`${bridge}/fixture`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(values) })
+const api = async request => {
+  const response = await fetch(`${bridge}/api`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source: 0, request }) })
+  const result = await response.json()
+  assert(response.ok, JSON.stringify(result))
+  return result
+}
+const browser = await chromium.launch({ headless: true })
+const receipt = { browser: browser.version(), mode: 'isolated Linux Chromium headless; exact viewport rendering', started_at: new Date().toISOString(), checks: [], screenshots: [], errors: [] }
+let page
+const check = name => { receipt.checks.push({ name, result: 'PASS' }); console.log(`PASS ${name}`) }
+try {
+  page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, colorScheme: 'light' })
+  page.setDefaultTimeout(20000)
+  page.on('pageerror', error => receipt.errors.push(error.message))
+  await configure({ status: 200, inference_status: 200, models: ['fixture/alpha', 'fixture/shared'] })
+  await api({ path: '/api/providers/custom-endpoints/fixture-provider', method: 'DELETE', profile: 'default' }).catch(() => {})
+  await api({ path: '/api/config', method: 'PUT', profile: 'default', body: { config: { model: { default: '', name: '', provider: '', base_url: '' } } } })
+  const { provider_origin: origin } = await fixture()
+  await page.goto('http://127.0.0.1:5188/provider-model-journey.html?locale=en')
+  await page.getByText('Add Provider', { exact: true }).click()
+  await page.getByLabel('Name', { exact: true }).fill('Fixture Provider')
+  await page.getByPlaceholder('http://localhost:4000/v1').fill(`${origin}/v1`)
+  await page.getByLabel('API Key', { exact: true }).fill('fixture-key')
+  await page.getByLabel('Model List API URL (optional)', { exact: true }).fill(`${origin}/catalog`)
+  const before = (await fixture()).calls.filter(isInference).length
+  await page.getByRole('button', { name: 'Test', exact: true }).click()
+  await page.getByRole('status').filter({ hasText: /catalog verified/i }).waitFor()
+  assert.equal((await fixture()).calls.filter(isInference).length, before)
+  await page.getByRole('button', { name: 'Save', exact: true }).click()
+  await page.getByText('Fixture Provider', { exact: true }).first().waitFor()
+  let saved = await api({ path: '/api/providers/custom-endpoints', profile: 'default' })
+  assert.equal(saved.current.model, '')
+  assert.equal(saved.endpoints[0].model_list_url, `${origin}/catalog`)
+  assert(!JSON.stringify(saved).includes('fixture-key'))
+  check('provider save without model/default; exact list URL; no renderer saved key; connection test never invokes')
+  await page.reload()
+  await page.getByText('Fixture Provider', { exact: true }).waitFor()
+  check('saved provider reloaded in API Keys')
+  await page.getByRole('button', { name: 'Main Model', exact: true }).click()
+  const selects = page.getByRole('combobox')
+  await selects.first().click()
+  await page.mouse.move(1, 1)
+  await page.getByRole('option', { name: 'Fixture Provider', exact: true }).click()
+  await selects.nth(1).click()
+  await page.mouse.move(1, 1)
+  await page.getByRole('option', { name: 'fixture/alpha', exact: true }).click()
+  await page.getByRole('button', { name: 'Apply', exact: true }).click()
+  await expect.poll(async () => (await api({ path: '/api/providers/custom-endpoints', profile: 'default' })).current.model,
+    { timeout: 30000 }).toBe('fixture/alpha')
+  saved = await api({ path: '/api/providers/custom-endpoints', profile: 'default' })
+  assert.equal(saved.current.model, 'fixture/alpha')
+  check('Main discovered model selection reaches real scoped configuration route')
+  await page.getByRole('button', { name: 'Open Chat', exact: true }).click()
+  await page.getByRole('button', { name: 'Choose chat model' }).waitFor()
+  await page.getByRole('button', { name: 'Choose chat model' }).click()
+  const search = page.getByRole('textbox', { name: 'Search models' })
+  await search.fill('manual/hidden')
+  await page.getByRole('menuitem').filter({ hasText: 'manual/hidden' }).filter({ hasText: 'Fixture Provider' }).click()
+  await page.getByTestId('route').filter({ hasText: 'manual/hidden' }).waitFor()
+  assert.equal((await api({ path: '/api/providers/custom-endpoints', profile: 'default' })).current.model, 'fixture/alpha')
+  check('Composer manual selection uses same Provider through canonical session mutation without changing Main')
+  await page.getByRole('button', { name: 'Choose chat model' }).click()
+  await page.getByRole('menuitem', { name: 'Test Model', exact: true }).click()
+  await page.getByRole('dialog').filter({ hasText: 'Tokens and charges may apply' }).waitFor()
+  assert.equal((await fixture()).calls.filter(isInference).length, before)
+  await page.getByRole('button', { name: 'Test Model', exact: true }).click()
+  await page.getByText(/Model response observed\.$/).waitFor()
+  const posts = (await fixture()).calls.filter(isInference)
+  assert.equal(posts.length, before + 1)
+  assert.equal(posts.at(-1).model, 'manual/hidden')
+  assert.equal(posts.at(-1).max_tokens, 32)
+  check('explicit Test Model cost disclosure and one bounded real inference, independent of list success')
+  await page.keyboard.press('Escape')
+  await configure({ inference_status: 403 })
+  await page.getByRole('button', { name: 'Choose chat model' }).click()
+  await page.getByRole('menuitem', { name: 'Test Model', exact: true }).click()
+  await page.getByRole('button', { name: 'Test Model', exact: true }).click()
+  await page.getByText(/provider denied this request \(403\)/i).waitFor()
+  assert.match(await page.getByTestId('route').innerText(), /manual\/hidden/)
+  assert.equal((await api({ path: '/api/providers/custom-endpoints', profile: 'default' })).current.model, 'fixture/alpha')
+  assert.equal((await fixture()).calls.filter(isInference).length, before + 2)
+  check('inference denial after catalog success is truthful and preserves conversation/model/default')
+  await configure({ inference_status: 200 })
+
+  await page.keyboard.press('Escape')
+  await configure({ status: 404 })
+  await page.getByRole('button', { name: 'API Keys', exact: true }).click()
+  await page.getByText('Fixture Provider', { exact: true }).click()
+  await page.getByLabel('Model List API URL (optional)', { exact: true }).fill('')
+  await page.getByLabel('API Key', { exact: true }).fill('fixture-key')
+  await page.getByRole('button', { name: 'Test', exact: true }).click()
+  await page.getByRole('status').filter({ hasText: /No supported model catalog/ }).waitFor()
+  await page.getByRole('button', { name: 'Save', exact: true }).click()
+  await page.getByRole('button', { name: 'Main Model', exact: true }).click()
+  await page.getByRole('combobox').nth(1).click()
+  await page.mouse.move(1, 1)
+  await page.getByRole('option', { name: /Custom model/ }).click()
+  const manual = page.getByPlaceholder('Model id')
+  await manual.fill('manual/fallback')
+  await manual.dispatchEvent('compositionstart')
+  await manual.dispatchEvent('keydown', { key: 'Enter', code: 'Enter', isComposing: true, keyCode: 229 })
+  assert.equal(await manual.inputValue(), 'manual/fallback')
+  await manual.dispatchEvent('compositionend')
+  await page.getByRole('button', { name: 'Apply', exact: true }).click()
+  await page.waitForFunction(async () => {
+    const r = await fetch('http://127.0.0.1:55475/api', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source: 0, request: { path: '/api/providers/custom-endpoints', profile: 'default' } }) })
+    return (await r.json()).current.model === 'manual/fallback'
+  })
+  check('optional list URL absent and 404 do not block manual Main entry; IME Enter preserves draft')
+  await page.screenshot({ path: `${evidence}/main-en-light-1440.png` })
+  receipt.screenshots.push('main-en-light-1440.png')
+  await page.evaluate(() => window.__providerJourney.connect(1))
+  await page.getByRole('button', { name: 'API Keys', exact: true }).click()
+  await page.getByText('Add Provider', { exact: true }).waitFor()
+  assert.equal(await page.getByText('Fixture Provider', { exact: true }).count(), 0)
+  check('source switch does not leak provider metadata or cached models')
+  await page.evaluate(() => window.__providerJourney.connect(0))
+  await page.getByRole('button', { name: 'Main Model', exact: true }).click()
+  await page.getByRole('combobox').nth(1).filter({ hasText: 'manual/fallback' }).waitFor()
+  check('source return restores persisted Main')
+  assert.deepEqual(receipt.errors, [])
+  receipt.result = 'PASS'
+} catch (error) {
+  receipt.result = 'FAIL'
+  receipt.failure = error.stack
+  console.error(error)
+  if (page) {
+    await page.screenshot({ path: `${evidence}/failure.png`, fullPage: true }).catch(() => {})
+    await writeFile(`${evidence}/failure-dom.txt`, await page.locator('body').innerText().catch(() => ''))
+  }
+  process.exitCode = 1
+} finally {
+  receipt.finished_at = new Date().toISOString()
+  await writeFile(`${evidence}/browser-receipt.json`, JSON.stringify(receipt, null, 2))
+  await browser.close()
+}

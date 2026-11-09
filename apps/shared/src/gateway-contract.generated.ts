@@ -917,6 +917,7 @@ export interface ModelOptionProvider {
   slug: string
   name: string
   models?: string[]
+  manual_models?: string[] | null
   eligible_models?: string[] | null
   discovery_state?: 'fresh' | 'cached' | 'stale' | 'missing' | 'error' | 'unsupported' | null
   discovery_source_id?: string | null

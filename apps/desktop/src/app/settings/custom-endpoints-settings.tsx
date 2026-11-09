@@ -1,6 +1,7 @@
 import { useStore } from '@nanostores/react'
 import { useEffect, useRef, useState } from 'react'
 
+import { $apiRequestScope } from '@/api/client'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
@@ -13,7 +14,7 @@ import {
   validateCustomEndpoint
 } from '@/hermes'
 import { useI18n } from '@/i18n'
-import { modelServiceCopy } from '@/i18n/model-service'
+import { modelServiceCopy, providerJourneyCopy, providerTestStatus } from '@/i18n/model-service'
 import { triggerHaptic } from '@/lib/haptics'
 import { Check, Globe, Loader2, Plus, Save, Trash2, Zap } from '@/lib/icons'
 import { cn } from '@/lib/utils'
@@ -37,8 +38,10 @@ interface CustomEndpointsSettingsProps {
 }
 
 interface EndpointForm {
+  enabled: boolean
   apiKey: string
   apiMode: CustomEndpointApiMode
+  modelListUrl: string
   baseUrl: string
   contextLength: string
   discoverModels: boolean
@@ -58,13 +61,15 @@ const API_MODE_OPTIONS: readonly { id: CustomEndpointApiMode; label: string }[] 
 ]
 
 const EMPTY_FORM: EndpointForm = {
+  enabled: true,
   apiKey: '',
   apiMode: '',
   baseUrl: '',
+  modelListUrl: '',
   contextLength: '',
   discoverModels: true,
   id: '',
-  makeDefault: true,
+  makeDefault: false,
   model: '',
   name: '',
   noApiKey: false
@@ -72,13 +77,15 @@ const EMPTY_FORM: EndpointForm = {
 
 function formFromEndpoint(endpoint: CustomEndpoint): EndpointForm {
   return {
+    enabled: endpoint.enabled !== false,
     apiKey: '',
     apiMode: endpoint.api_mode ?? '',
     baseUrl: endpoint.base_url,
+    modelListUrl: endpoint.model_list_url ?? '',
     contextLength: endpoint.context_length ? String(endpoint.context_length) : '',
     discoverModels: endpoint.discover_models,
     id: endpoint.id,
-    makeDefault: Boolean(endpoint.is_current),
+    makeDefault: false,
     model: endpoint.model,
     name: endpoint.name,
     noApiKey: !endpoint.has_api_key
@@ -94,8 +101,10 @@ function toPayload(
 
   return {
     id: form.id.trim() || undefined,
+    enabled: form.enabled,
     name: form.name.trim(),
     base_url: form.baseUrl.trim(),
+    model_list_url: form.modelListUrl.trim(),
     model: form.model.trim(),
     api_key: form.noApiKey ? '' : form.apiKey.trim() || undefined,
     api_mode: form.apiMode,
@@ -107,9 +116,16 @@ function toPayload(
   }
 }
 
+function canSaveProvider(form: EndpointForm, endpoints: CustomEndpoint[]): boolean {
+  const credential = form.noApiKey || !!form.apiKey.trim() || endpoints.some(endpoint => endpoint.id === form.id && endpoint.has_api_key)
+
+  return !!form.name.trim() && !!form.baseUrl.trim() && (!form.makeDefault || !!form.model.trim()) && credential
+}
+
 export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: CustomEndpointsSettingsProps) {
   const { t, locale } = useI18n()
   const serviceCopy = modelServiceCopy[locale] ?? modelServiceCopy.en
+  const journeyCopy = providerJourneyCopy(locale)
   const ce = t.settings.customEndpoints
   const copyRef = useRef(ce)
   copyRef.current = ce
@@ -122,6 +138,10 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
   // not whichever Bot is active in the left rail. Undefined follows the
   // active profile (request-shaped — never pass null, which retargets primary).
   const scopeProfile = useStore($settingsRequestProfile)
+  const requestScope = useStore($apiRequestScope)
+  const scopeKey = JSON.stringify([scopeProfile, requestScope.connectionId])
+  const scopeRef = useRef(scopeKey)
+  scopeRef.current = scopeKey
   const mounted = useRef(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -136,19 +156,34 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
   // canonical model + reasoning effort on Save (#93622).
   const [discoveredDetails, setDiscoveredDetails] = useState<CustomEndpointModelDetail[]>([])
 
+  const formRevision = useRef(0)
+
+  const changeConnection = (patch: Partial<EndpointForm>) => {
+    formRevision.current += 1
+    setValidation(null)
+    setDiscoveredModels([])
+    setDiscoveredDetails([])
+    setForm(current => ({ ...current, ...patch }))
+  }
+
   async function refresh() {
+    const operationProfile = scopeKey
     const data = await getCustomEndpoints(scopeProfile)
 
-    if (mounted.current) {
+    if (mounted.current && scopeRef.current === operationProfile) {
       setEndpoints(data.endpoints)
     }
   }
 
-  // eslint-disable-next-line no-restricted-syntax -- lifecycle guard drops stale async completions; it does not mirror an atom
+  // eslint-disable-next-line no-restricted-syntax -- Lifecycle guards invalidate requests; no atom value is mirrored into this ref.
   useEffect(() => {
     let cancelled = false
     mounted.current = true
+    formRevision.current += 1
     setLoading(true)
+    setSaving(false)
+    setTesting(false)
+    setValidation(null)
     setForm(EMPTY_FORM)
     setDiscoveredModels([])
     setDiscoveredDetails([])
@@ -184,14 +219,16 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
       cancelled = true
       mounted.current = false
     }
-  }, [scopeProfile])
+  }, [scopeProfile, scopeKey])
 
   async function handleSave() {
+    const operationProfile = scopeKey
+
     try {
       setSaving(true)
       const response = await saveCustomEndpoint(toPayload(form, discoveredModels, discoveredDetails), scopeProfile)
 
-      if (!mounted.current) {
+      if (!mounted.current || scopeRef.current !== operationProfile) {
         return
       }
 
@@ -203,7 +240,7 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
         setDiscoveredModels(saved.models)
       }
 
-      if (saved && saved.is_current) {
+      if (saved && saved.is_current && form.makeDefault) {
         onMainModelChanged?.(saved.id, saved.model)
       }
 
@@ -211,26 +248,30 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
       onConfigSaved?.()
       notify({ kind: 'success', message: ce.endpointSaved })
     } catch (err) {
-      if (mounted.current) {
+      if (mounted.current && scopeRef.current === operationProfile) {
         notifyError(err, ce.saveFailed)
       }
     } finally {
-      if (mounted.current) {
+      if (mounted.current && scopeRef.current === operationProfile) {
         setSaving(false)
       }
     }
   }
 
   async function handleValidate() {
+    const operationProfile = scopeKey
+    const revision = formRevision.current
+
     try {
       setTesting(true)
       setValidation(null)
       const response = await validateCustomEndpoint(toPayload(form), scopeProfile)
 
-      if (!mounted.current) {
+      if (!mounted.current || scopeRef.current !== operationProfile || revision !== formRevision.current) {
         return
       }
 
+      const resultMessage = response.status ? providerTestStatus(locale, response.status) : response.message
       setDiscoveredModels(response.models)
       setDiscoveredDetails(response.model_details ?? [])
 
@@ -238,9 +279,7 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
         // Show a discovery suggestion without silently changing the entered URL.
         const resolvedBaseUrl = response.resolved_base_url?.trim()
 
-        if (!form.model && response.models[0]) {
-          setForm(current => ({ ...current, model: response.models[0] }))
-        }
+
 
         const reachable = response.transport_checked
           ? ce.endpointReachableTransport(response.transport_checked)
@@ -251,34 +290,36 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
         const suggestion = resolvedBaseUrl && resolvedBaseUrl !== form.baseUrl.trim().replace(/\/+$/, '')
           ? `${ce.fields.endpointUrl}: ${resolvedBaseUrl}` : ''
 
-        setValidation([success, response.message, serviceCopy.coverage, suggestion].filter(Boolean).join(' '))
+        setValidation([success, resultMessage, serviceCopy.coverage, suggestion].filter(Boolean).join(' '))
 
       } else {
-        setValidation(response.message || ce.endpointValidationFailed)
+        setValidation(resultMessage || ce.endpointValidationFailed)
       }
     } catch (err) {
-      if (mounted.current) {
+      if (mounted.current && scopeRef.current === operationProfile) {
         setValidation(err instanceof Error ? err.message : ce.validationFailed)
       }
     } finally {
-      if (mounted.current) {
+      if (mounted.current && scopeRef.current === operationProfile) {
         setTesting(false)
       }
     }
   }
 
   async function handleActivate(endpoint: CustomEndpoint) {
+    const operationProfile = scopeKey
+
     try {
       setActivating(endpoint.id)
       const response = await activateCustomEndpoint(endpoint.id, scopeProfile)
 
-      if (!mounted.current) {
+      if (!mounted.current || scopeRef.current !== operationProfile) {
         return
       }
 
       await refresh()
 
-      if (!mounted.current) {
+      if (!mounted.current || scopeRef.current !== operationProfile) {
         return
       }
 
@@ -286,17 +327,19 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
       onMainModelChanged?.(response.provider, response.model)
       triggerHaptic('success')
     } catch (err) {
-      if (mounted.current) {
+      if (mounted.current && scopeRef.current === operationProfile) {
         notifyError(err, ce.activationFailed)
       }
     } finally {
-      if (mounted.current) {
+      if (mounted.current && scopeRef.current === operationProfile) {
         setActivating(null)
       }
     }
   }
 
   async function handleDelete(endpoint: CustomEndpoint) {
+    const operationProfile = scopeKey
+
     if (!(await confirm({ destructive: true, title: ce.deleteConfirm(endpoint.name) }))) {
       return
     }
@@ -305,7 +348,7 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
       setDeleting(endpoint.id)
       const response = await deleteCustomEndpoint(endpoint.id, scopeProfile)
 
-      if (!mounted.current) {
+      if (!mounted.current || scopeRef.current !== operationProfile) {
         return
       }
 
@@ -320,11 +363,11 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
       onConfigSaved?.()
       triggerHaptic('success')
     } catch (err) {
-      if (mounted.current) {
+      if (mounted.current && scopeRef.current === operationProfile) {
         notifyError(err, ce.deleteFailed)
       }
     } finally {
-      if (mounted.current) {
+      if (mounted.current && scopeRef.current === operationProfile) {
         setDeleting(null)
       }
     }
@@ -342,7 +385,7 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
   const allModelOptions = Array.from(new Set([...discoveredModels, form.model].filter(Boolean)))
   const savedKey = endpoints.some(endpoint => endpoint.id === form.id && endpoint.has_api_key)
 
-  const canSave = form.name.trim() && form.baseUrl.trim() && form.model.trim()
+  const canSave = canSaveProvider(form, endpoints)
     && (form.noApiKey || form.apiKey.trim() || savedKey)
 
   return (
@@ -358,6 +401,8 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
                   <button
                     className="min-w-0 text-left"
                     onClick={() => {
+                      formRevision.current += 1
+                      setValidation(null)
                       setForm(formFromEndpoint(endpoint))
                       setDiscoveredModels(endpoint.models)
                       setDiscoveredDetails([])
@@ -384,7 +429,7 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
                   </button>
                   <div className="flex items-center gap-2 sm:justify-end">
                     <Button
-                      disabled={endpoint.is_current || activating === endpoint.id}
+                      disabled={!endpoint.model || endpoint.is_current || activating === endpoint.id}
                       onClick={() => void handleActivate(endpoint)}
                       size="sm"
                       variant="outline"
@@ -431,6 +476,7 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
               <label className="grid gap-1.5 text-xs text-muted-foreground">
                 {ce.fields.providerId}
                 <Input
+                  disabled={endpoints.some(endpoint => endpoint.id === form.id)}
                   onChange={event => setForm(current => ({ ...current, id: event.target.value }))}
                   placeholder="axet-proxy"
                   value={form.id}
@@ -440,7 +486,7 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
             <label className="grid gap-1.5 text-xs text-muted-foreground">
               {ce.fields.endpointUrl}
               <Input
-                onChange={event => setForm(current => ({ ...current, baseUrl: event.target.value }))}
+                onChange={event => changeConnection({ baseUrl: event.target.value })}
                 placeholder="http://localhost:4000/v1"
                 value={form.baseUrl}
               />
@@ -450,7 +496,7 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
                 {ce.fields.apiKey}
                 <Input
                   disabled={form.noApiKey}
-                  onChange={event => setForm(current => ({ ...current, apiKey: event.target.value }))}
+                  onChange={event => changeConnection({ apiKey: event.target.value })}
                   placeholder={form.id ? ce.fields.apiKeyNewPlaceholder : ce.fields.apiKeyPlaceholder}
                   type="password"
                   value={form.apiKey}
@@ -466,11 +512,19 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
               </Button>
             </div>
             {validation && <p aria-live="polite" className="text-xs text-(--ui-text-secondary)" role="status">{validation}</p>}
+            <label className="grid gap-1.5 text-xs text-muted-foreground">
+              {journeyCopy.listUrl}
+              <Input
+                onChange={event => changeConnection({ modelListUrl: event.target.value })}
+                placeholder="https://api.example.com/v1/models"
+                value={form.modelListUrl}
+              />
+            </label>
             <fieldset className="grid min-w-0 gap-1.5 text-xs text-muted-foreground">
               <legend className="mb-1.5">{ce.apiMode}</legend>
               <SegmentedControl
                 className="w-full max-w-full"
-                onChange={apiMode => setForm(current => ({ ...current, apiMode }))}
+                onChange={apiMode => changeConnection({ apiMode })}
                 options={apiModeOptions}
                 value={form.apiMode}
               />
@@ -497,7 +551,11 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
             </div>
             <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
               <label className="flex items-center gap-2">
-                <Checkbox checked={form.noApiKey} onCheckedChange={checked => setForm(current => ({ ...current, noApiKey: checked === true, apiKey: '' }))} />
+                <Checkbox checked={form.enabled} onCheckedChange={checked => setForm(current => ({ ...current, enabled: checked === true }))} />
+                {journeyCopy.enabled}
+              </label>
+              <label className="flex items-center gap-2">
+                <Checkbox checked={form.noApiKey} onCheckedChange={checked => changeConnection({ noApiKey: checked === true, apiKey: '' })} />
                 {serviceCopy.noKey}
               </label>
               <label className="flex items-center gap-2">
@@ -510,7 +568,7 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
               <label className="flex items-center gap-2">
                 <Checkbox
                   checked={form.discoverModels}
-                  onCheckedChange={checked => setForm(current => ({ ...current, discoverModels: checked === true }))}
+                  onCheckedChange={checked => changeConnection({ discoverModels: checked === true })}
                 />
                 {ce.fields.discoverModels}
               </label>
@@ -522,6 +580,7 @@ export function CustomEndpointsSettings({ onConfigSaved, onMainModelChanged }: C
               </Button>
               <Button onClick={() => {
                 const previous = endpoints.find(endpoint => endpoint.id === form.id)
+                formRevision.current += 1
                 setForm(previous ? formFromEndpoint(previous) : EMPTY_FORM)
                 setValidation(null)
               }} variant="text">{serviceCopy.cancel}</Button>

@@ -16,6 +16,11 @@ beforeAll(() => {
   Element.prototype.releasePointerCapture = vi.fn()
 })
 
+const testProviderModel = vi.fn()
+const confirmModelTest = vi.fn()
+vi.mock('@/api/models', () => ({ testProviderModel: (...args: unknown[]) => testProviderModel(...args) }))
+vi.mock('@/store/confirm', () => ({ confirm: (...args: unknown[]) => confirmModelTest(...args) }))
+
 const getGlobalModelOptions = vi.fn()
 
 vi.mock('@/hermes', () => ({
@@ -45,6 +50,8 @@ const GOOGLE_PROVIDER = {
 const MOCK_PROVIDERS = [DEEPSEEK_PROVIDER, GOOGLE_PROVIDER, MOA_PROVIDER]
 
 beforeEach(() => {
+  confirmModelTest.mockResolvedValue(true)
+  testProviderModel.mockResolvedValue({ ok: true, status: 'response_observed', provider: 'deepseek', model: 'deepseek-chat' })
   $activeSessionId.set('runtime-1')
   $currentModel.set('')
   $currentProvider.set('')
@@ -64,6 +71,7 @@ function renderPanel(onSelectModel = vi.fn(), onFollowDefaultModel?: () => void)
   const requestGateway = vi.fn(async (method: string) => {
     if (method === 'model.options') {
       const options = await getGlobalModelOptions()
+
       return { ...options, discovery_contract: 'provider-query-v1', providers: (options.providers ?? []).map((provider: Record<string, unknown>) => ({
         ...provider, discovery_state: provider.discovery_state ?? 'fresh', discovery_source_id: 'fixture-source', discovery_fetched_at: '2026-11-07T00:00:00+00:00'
       })) }
@@ -145,6 +153,19 @@ describe('ModelMenuPanel MoA presets', () => {
 })
 
 describe('ModelMenuPanel current selection', () => {
+  it('tests only on an explicit cost-disclosed action and keeps the selected conversation model', async () => {
+    $currentProvider.set('deepseek')
+    $currentModel.set('deepseek-chat')
+    const { onSelectModel } = renderPanel()
+    const test = await screen.findByRole('menuitem', { name: 'Test Model' })
+    expect(testProviderModel).not.toHaveBeenCalled()
+    fireEvent.click(test)
+    await vi.waitFor(() => expect(testProviderModel).toHaveBeenCalledWith('deepseek', 'deepseek-chat', { connectionId: 'test', profile: 'default' }))
+    expect(confirmModelTest).toHaveBeenCalledWith(expect.objectContaining({ description: expect.stringContaining('Tokens and charges may apply') }))
+    expect(onSelectModel).not.toHaveBeenCalled()
+    expect($currentModel.get()).toBe('deepseek-chat')
+  })
+
   it('distinguishes eligible model IDs whose display names collide', async () => {
     getGlobalModelOptions.mockResolvedValue({ providers: [{
       slug: 'case-fixture', name: 'Case fixture', models: ['Model-A', 'model-a'], eligible_models: ['Model-A', 'model-a']
@@ -156,7 +177,7 @@ describe('ModelMenuPanel current selection', () => {
     await vi.waitFor(() => expect(onSelectModel).toHaveBeenCalledWith({ model: 'model-a', provider: 'case-fixture', sessionId: 'runtime-1' }))
   })
 
-  it('does not offer models without a verified provider response', async () => {
+  it('routes an explicit manual model through its chosen configured provider', async () => {
     getGlobalModelOptions.mockResolvedValue({ providers: [{
       slug: 'unknown', name: 'Unknown provider', models: [], discovery_state: 'missing'
     }, { slug: 'known', name: 'Known provider', models: ['verified-model'], eligible_models: ['verified-model'] }] })
@@ -165,8 +186,7 @@ describe('ModelMenuPanel current selection', () => {
     await content.findByText('Known provider')
     fireEvent.change(input, { target: { value: 'unproven-model' } })
     fireEvent.keyDown(input, { key: 'Enter' })
-    expect(content.queryByText(/unproven.model/i)).toBeNull()
-    expect(onSelectModel).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(onSelectModel).toHaveBeenCalledWith({ model: 'unproven-model', provider: 'unknown', sessionId: 'runtime-1' }))
   })
 
   it('does not reintroduce IDs outside a source-backed eligibility set', async () => {

@@ -2,13 +2,14 @@ import { useStore } from '@nanostores/react'
 import type { ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
+import { $apiRequestScope } from '@/api/client'
 import { runInTerminal } from '@/app/right-sidebar/store'
 import { FEATURED_ID, FeaturedProviderRow, ProviderRow, providerTitle, sortProviders } from '@/components/onboarding'
 import { Button } from '@/components/ui/button'
 import { RowButton } from '@/components/ui/row-button'
 import { SearchField } from '@/components/ui/search-field'
 import { Tip } from '@/components/ui/tooltip'
-import { disconnectOAuthProvider, listOAuthProviders } from '@/hermes'
+import { disconnectOAuthProvider, getCustomEndpoints, listOAuthProviders } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { modelServiceCopy } from '@/i18n/model-service'
 import { Check, ChevronRight, KeyRound, Loader2, Terminal, Trash2 } from '@/lib/icons'
@@ -17,7 +18,7 @@ import { confirm } from '@/store/confirm'
 import { notify, notifyError } from '@/store/notifications'
 import { $desktopOnboarding, startManualProviderOAuth } from '@/store/onboarding'
 import { $settingsRequestProfile } from '@/store/settings-scope'
-import type { EnvVarInfo, OAuthProvider } from '@/types/hermes'
+import type { CustomEndpoint, EnvVarInfo, OAuthProvider } from '@/types/hermes'
 
 import { isKeyVar, ProviderKeyRows } from './credential-key-ui'
 import { CustomEndpointsSettings } from './custom-endpoints-settings'
@@ -130,6 +131,37 @@ function buildProviderKeyGroups(vars: Record<string, EnvVarInfo>): ProviderKeyGr
   }
 
   return groups.sort((a, b) => a.priority - b.priority || a.name.localeCompare(b.name))
+}
+
+function ConfiguredCustomProviderRows({ known, onOpen }: { known: Set<string>; onOpen: () => void }) {
+  const scopeProfile = useStore($settingsRequestProfile)
+  const requestScope = useStore($apiRequestScope)
+  const { locale } = useI18n()
+  const [endpoints, setEndpoints] = useState<CustomEndpoint[]>([])
+  useEffect(() => {
+    let cancelled = false
+    setEndpoints([])
+    void getCustomEndpoints(scopeProfile).then(result => {
+      if (!cancelled) { setEndpoints(result.endpoints) }
+    }).catch(() => { /* The editor owns load errors and retry. */ })
+
+    return () => { cancelled = true }
+  }, [scopeProfile, requestScope.connectionId])
+
+  return endpoints.filter(endpoint => !known.has(endpoint.id)).map(endpoint => (
+    <RowButton key={endpoint.id} onClick={onOpen}>
+      <div className="min-w-0 flex-1 text-left">
+        <div className="text-sm font-medium">{endpoint.name}</div>
+        <div className="truncate font-mono text-xs text-muted-foreground">{endpoint.base_url}</div>
+        <div className="text-xs text-muted-foreground">
+          {endpoint.enabled === false
+            ? (locale === 'zh' ? '已停用' : 'Disabled')
+            : endpoint.has_api_key ? (locale === 'zh' ? '密钥已保存' : 'Key saved') : (locale === 'zh' ? '无密钥' : 'No key')}
+        </div>
+      </div>
+      <ChevronRight />
+    </RowButton>
+  ))
 }
 
 // Accounts leads with model-service setup and preserves connected account controls.
@@ -343,7 +375,7 @@ function LocalEndpointRow({ onOpen }: { onOpen: (reason: null | string) => void 
       onClick={() => onOpen(null)}
     >
       <div className="flex min-w-0 flex-col gap-0.5">
-        <span className="text-[length:var(--conversation-text-font-size)] font-semibold">{copy.custom}</span>
+        <span className="text-[length:var(--conversation-text-font-size)] font-semibold">{locale === 'zh' ? '添加服务商' : locale === 'zh-hant' ? '新增供應商' : 'Add Provider'}</span>
         <span className="truncate text-[length:var(--conversation-caption-font-size)] leading-5 text-muted-foreground">
           {copy.customDescription}
         </span>
@@ -544,6 +576,7 @@ export function ProvidersSettings({
       <SettingsContent>
         <SettingsProfileScope className="mb-5" />
         <LocalEndpointRow onOpen={() => onViewChange('custom-endpoints')} />
+        <ConfiguredCustomProviderRows known={new Set(keyGroups.map(group => group.primary[1].provider ?? ''))} onOpen={() => onViewChange('custom-endpoints')} />
         {keyGroups.length > 0 ? (
           <div className="grid gap-3">
             <SearchField

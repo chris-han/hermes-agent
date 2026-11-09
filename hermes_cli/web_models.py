@@ -52,7 +52,9 @@ class CustomEndpointUpdate(BaseModel):
     id: str = ""
     name: str
     base_url: str
-    model: str
+    model: str = ""
+    model_list_url: Optional[str] = None
+    enabled: Optional[bool] = None
     api_key: Optional[str] = None
     # Same choices as the CLI's custom-provider setup; "" = auto-detect at runtime.
     # None (older UI payload) leaves a hand-written api_mode alone.
@@ -557,3 +559,9 @@ class _PluginProvidersPutBody(BaseModel):
 class _PluginVisibilityBody(BaseModel):
     hidden: bool
 
+
+
+class ModelTestRequest(BaseModel):
+    provider: str
+    model: str
+    accept_cost: bool = False

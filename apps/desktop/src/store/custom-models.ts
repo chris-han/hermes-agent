@@ -19,6 +19,7 @@ import {
  *  the backend (a newer release, a custom endpoint), so remembering it makes
  *  it a normal row on every picker instead of something to retype. */
 export interface CustomModel {
+  scope?: string
   model: string
   provider: string
 }
@@ -61,11 +62,11 @@ function persist(next: readonly CustomModel[]): void {
   persistString(STORAGE_KEY, JSON.stringify(next))
 }
 
-const sameEntry = (entry: CustomModel, provider: string, model: string): boolean =>
-  entry.provider === provider && entry.model === model
+const sameEntry = (entry: CustomModel, provider: string, model: string, scope?: string): boolean =>
+  entry.provider === provider && entry.model === model && entry.scope === scope
 
-export function isCustomModel(customs: readonly CustomModel[], provider: string, model: string): boolean {
-  return customs.some(entry => sameEntry(entry, provider, model))
+export function isCustomModel(customs: readonly CustomModel[], provider: string, model: string, scope?: string): boolean {
+  return customs.some(entry => sameEntry(entry, provider, model, scope))
 }
 
 /** A typed model id: something with no whitespace inside it. Nothing stricter —
@@ -96,7 +97,8 @@ export function customModelCandidate(search: string, providers: readonly ModelOp
  *  their reference. */
 export function withCustomModels(
   providers: readonly ModelOptionProvider[],
-  customs: readonly CustomModel[]
+  customs: readonly CustomModel[],
+  scope?: string
 ): readonly ModelOptionProvider[] {
   if (customs.length === 0) {
     return providers
@@ -106,7 +108,7 @@ export function withCustomModels(
 
   const next = providers.map(provider => {
     const models = provider.models ?? []
-    const extra = customs.filter(entry => entry.provider === provider.slug && !models.includes(entry.model))
+    const extra = customs.filter(entry => entry.scope === scope && entry.provider === provider.slug && !models.includes(entry.model))
 
     if (extra.length === 0) {
       return provider
@@ -125,7 +127,7 @@ export function withCustomModels(
  *  re-resolved against that row before the key is added, so a provider the
  *  user never curated keeps its default shortlist instead of collapsing to
  *  the one new row. */
-export function addCustomModel(provider: string, model: string, row?: ModelOptionProvider): void {
+export function addCustomModel(provider: string, model: string, row?: ModelOptionProvider, scope?: string): void {
   const slug = customModelSlug(model)
 
   if (!slug) {
@@ -134,15 +136,15 @@ export function addCustomModel(provider: string, model: string, row?: ModelOptio
 
   const customs = $customModels.get()
 
-  if (!isCustomModel(customs, provider, slug)) {
-    persist([...customs, { model: slug, provider }])
+  if (!isCustomModel(customs, provider, slug, scope)) {
+    persist([...customs, { model: slug, provider, ...(scope ? { scope } : {}) }])
   }
 
   if (!row) {
     return
   }
 
-  const merged = withCustomModels([row], $customModels.get())
+  const merged = withCustomModels([row], $customModels.get(), scope)
   const next = resolveVisibleKeys($visibleModels.get(), merged)
   next.delete(emptyProviderSentinelKey(provider))
   next.add(modelVisibilityKey(provider, slug))
@@ -153,16 +155,16 @@ export function addCustomModel(provider: string, model: string, row?: ModelOptio
  *  a featured-shortlist row or past the top-N the bare default rule would bring
  *  it back hidden. Only a provider holding such an id is curated again, the way
  *  adding the id curated it; every other provider returns to the live defaults. */
-export function resetModelVisibilityKeepingCustoms(providers: readonly ModelOptionProvider[]): void {
+export function resetModelVisibilityKeepingCustoms(providers: readonly ModelOptionProvider[], scope?: string): void {
   resetModelVisibility()
 
   const defaults = defaultVisibleKeys(providers)
 
-  for (const { model, provider } of $customModels.get()) {
+  for (const { model, provider } of $customModels.get().filter(entry => entry.scope === scope)) {
     const row = providers.find(candidate => candidate.slug === provider)
 
     if (row && !defaults.has(modelVisibilityKey(provider, model))) {
-      addCustomModel(provider, model, row)
+      addCustomModel(provider, model, row, scope)
     }
   }
 }

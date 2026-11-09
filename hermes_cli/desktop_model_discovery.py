@@ -21,6 +21,7 @@ class ProviderSnapshot:
     state: str
     source_id: str | None = None
     fetched_at: str | None = None
+    status: str | None = None
 
 
 _inflight_lock = threading.Lock()
@@ -30,7 +31,7 @@ _inflight: dict[str, Future[ProviderSnapshot]] = {}
 def read_provider_snapshot(*, provider: str, base_url: str, api_key: str | None,
                            source_scope: str, api_mode: str | None = None,
                            headers: dict[str, str] | None = None,
-                           refresh: bool = False, adapter: str = "openai", query=None, cache_path=None) -> ProviderSnapshot:
+                           refresh: bool = False, adapter: str = "openai", query=None, cache_path=None, model_list_url: str = "") -> ProviderSnapshot:
     """Read a verified same-source snapshot or refresh it through the provider adapter."""
     from hermes_cli import models as owner
 
@@ -45,6 +46,7 @@ def read_provider_snapshot(*, provider: str, base_url: str, api_key: str | None,
         return ProviderSnapshot(None, "unsupported")
     from agent.command_token_source import materialize_probe_api_key
 
+    adapter = _effective_catalog_adapter(adapter, model_list_url)
     materialized_key = materialize_probe_api_key(api_key)
     if callable(api_key) and not materialized_key:
         return ProviderSnapshot(None, "error")
@@ -54,7 +56,7 @@ def read_provider_snapshot(*, provider: str, base_url: str, api_key: str | None,
     principal_full = hashlib.sha256(principal_material.encode()).hexdigest()
     cache_path = cache_path or owner._provider_models_cache_path()
     identity = json.dumps([str(cache_path.resolve()), source_scope, provider, endpoint,
-                           principal, principal_full, adapter],
+                           principal, principal_full, adapter, model_list_url],
                           ensure_ascii=True, separators=(",", ":"))
     key = "desktop-query-v1:" + hashlib.sha256(identity.encode()).hexdigest()
 
@@ -99,14 +101,14 @@ def read_provider_snapshot(*, provider: str, base_url: str, api_key: str | None,
         return ProviderSnapshot(previous, state if previous is not None else "missing", key,
                                 previous_row.get("fetched_at") if previous_row else None)
 
-    def failed() -> ProviderSnapshot:
+    def failed(status: str = "unknown") -> ProviderSnapshot:
         if previous is not None:
             with owner._cache_write_lock:
                 current = cached()
                 if current is not None:
                     store({**current, "last_refresh_failed": True})
         return ProviderSnapshot(previous, "stale" if previous is not None else "error", key,
-                                previous_row.get("fetched_at") if previous_row else None)
+                                previous_row.get("fetched_at") if previous_row else None, status)
     with _inflight_lock:
         future = _inflight.get(key)
         owns_refresh = future is None
@@ -121,6 +123,7 @@ def read_provider_snapshot(*, provider: str, base_url: str, api_key: str | None,
                                     previous_row.get("fetched_at") if previous_row else None)
     try:
         try:
+            probe_status = "unknown"
             if adapter == "workspace-byok":
                 values = query() if callable(query) else None
             elif adapter == "gemini":
@@ -210,11 +213,11 @@ def read_provider_snapshot(*, provider: str, base_url: str, api_key: str | None,
                 else:
                     values = [item.get("model") or item["name"] for item in raw]
             else:
-                result = owner.probe_api_models(materialized_key, endpoint, api_mode=api_mode,
-                                                request_headers=headers, require_complete=True)
+                result = _query_openai_snapshot(materialized_key, endpoint, api_mode, headers, model_list_url)
                 values = result.get("models") if isinstance(result, dict) else None
+                probe_status = result.get("status", "unknown") if isinstance(result, dict) else "unknown"
             if not isinstance(values, list) or any(not isinstance(value, str) or not value.strip() for value in values):
-                snapshot = failed()
+                snapshot = failed(probe_status)
             else:
                 values = list(dict.fromkeys(value.strip() for value in values))
                 row = {"source": "provider-query-v1", "models": values,
@@ -222,8 +225,9 @@ def read_provider_snapshot(*, provider: str, base_url: str, api_key: str | None,
                 with owner._cache_write_lock:
                     store(row)
                 snapshot = ProviderSnapshot(values, "fresh", key, row["fetched_at"])
-        except Exception:
-            snapshot = failed()
+        except Exception as exc:  # health: allow BLE001 -- Provider adapters are external boundaries; only sanitized status leaves this query.
+            from hermes_cli.models_probe import probe_failure_status
+            snapshot = failed(probe_failure_status(exc))
         future.set_result(snapshot)
         return snapshot
     finally:
@@ -256,7 +260,8 @@ def read_configured_provider_snapshot(*, provider: str, entry: dict, base_url: s
                 headers[header] = value
     return read_provider_snapshot(provider=provider, base_url=base_url, api_key=api_key,
                                   source_scope=source_scope, api_mode=_entry_api_mode(entry),
-                                  headers=headers, refresh=refresh, adapter=adapter)
+                                  headers=headers, refresh=refresh, adapter=adapter,
+                                  model_list_url=str(entry.get("model_list_url") or ""))
 
 
 def _catalog_key_sources(ctx, excluded, cloud_identity):
@@ -338,9 +343,13 @@ def configured_provider_rows(ctx, *, source_scope: str, refresh: bool = False) -
             is_current = True
         if ctx.current_base_url and is_current:
             is_current = endpoint.rstrip("/") == ctx.current_base_url.rstrip("/")
+        from agent.model_metadata import is_local_endpoint
         row = {"slug": slug, "name": name, "is_current": is_current,
+               "authenticated": bool(key) or is_local_endpoint(endpoint),
                "is_user_defined": True, "aliases": aliases,
                "models": snapshot.models or [], "total_models": len(snapshot.models or []),
+               "manual_models": list(dict.fromkeys(str(value).strip() for value in
+                   [*(entry.get("models") or []), entry.get("model") or ""] if str(value).strip())),
                "discovery_state": snapshot.state, "discovery_source_id": snapshot.source_id,
                "discovery_fetched_at": snapshot.fetched_at}
         # This separate actor-authorized catalog is an existing authorization
@@ -449,3 +458,96 @@ def configured_provider_rows(ctx, *, source_scope: str, refresh: bool = False) -
     with ThreadPoolExecutor(max_workers=min(4, len(sources)), thread_name_prefix="desktop-model-query") as pool:
         futures = [pool.submit(copy_context().run, build, source) for source in sources]
         return [future.result() for future in futures]
+
+
+def validate_catalog_url(url: str, *, check_network: bool = False) -> str:
+    """Native endpoints may be local; metadata targets and URL credentials never are valid."""
+    from agent.model_metadata import is_local_endpoint
+    from tools.url_safety import is_always_blocked_url, is_safe_url
+
+    value = url.strip()
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError('Invalid provider URL.') from exc
+    if (parsed.scheme not in {'http', 'https'} or not parsed.hostname or parsed.username
+            or parsed.password or parsed.fragment or parsed.query or port == 0):
+        raise ValueError('Provider URL requires an HTTP(S) host without credentials, query or fragment.')
+    if is_always_blocked_url(value) or (check_network and not is_local_endpoint(value) and not is_safe_url(value)):
+        raise ValueError('Provider URL is blocked by network security rules.')
+    return value
+
+
+def query_catalog_url(url: str, headers: dict[str, str] | None = None) -> dict:
+    """Read only the explicitly configured catalog; never POST or guess another endpoint."""
+    import httpx
+    from agent.model_metadata import is_local_endpoint
+    from tools.url_safety import create_ssrf_safe_client
+
+    def result(status, message, *, reachable=False, models=None):
+        return {'ok': status in {'catalog_verified', 'empty'}, 'status': status,
+                'reachable': reachable, 'message': message, 'models': models or []}
+
+    try:
+        target = validate_catalog_url(url, check_network=True)
+        local = is_local_endpoint(target)
+        factory = httpx.Client if local else create_ssrf_safe_client
+        with factory(timeout=5.0, follow_redirects=False, trust_env=not local) as client:
+            with client.stream('GET', target, headers={'Accept': 'application/json', **(headers or {})}) as response:
+                if not response.is_success:
+                    status = {401: 'invalid_key', 403: 'forbidden', 404: 'unsupported',
+                              405: 'unsupported', 429: 'rate_limited'}.get(response.status_code, 'error')
+                    return result(status, f'Catalog returned HTTP {response.status_code}.', reachable=True)
+                body = bytearray()
+                for chunk in response.iter_bytes():
+                    body.extend(chunk)
+                    if len(body) > 2 * 1024 * 1024:
+                        return result('error', 'Catalog response is too large.', reachable=True)
+        payload = json.loads(body)
+        rows = payload.get('data') if isinstance(payload, dict) else None
+        if (not isinstance(rows, list) or _catalog_has_more(payload)
+                or any(not isinstance(row, dict) or not isinstance(row.get('id'), str)
+                       or not row['id'].strip() for row in rows)):
+            return result('unsupported', 'No complete supported model catalog; enter a model ID manually.', reachable=True)
+        models = list(dict.fromkeys(row['id'].strip() for row in rows))
+        return result('catalog_verified' if models else 'empty',
+                      'Catalog verified. Inference has not been tested.' if models else
+                      'The catalog is empty. You can enter a model ID manually.', reachable=True, models=models)
+    except httpx.TimeoutException:
+        return result('timeout', 'Catalog request timed out. Manual model entry remains available.')
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return result('unsupported', 'Response is not a supported catalog. Enter a model ID manually.', reachable=True)
+    except ValueError:
+        return result('invalid_url', 'Provider URL is invalid or blocked by network security rules.')
+    except httpx.HTTPError:
+        return result('unreachable', 'Could not reach the catalog. Manual model entry remains available.')
+
+
+def _effective_catalog_adapter(adapter: str, model_list_url: str) -> str:
+    return "openai" if model_list_url else adapter
+
+
+def _query_openai_snapshot(api_key, endpoint, api_mode, headers, model_list_url):
+    from hermes_cli import models as owner
+    if model_list_url:
+        request_headers = catalog_request_headers(api_key, api_mode, headers)
+        result = query_catalog_url(model_list_url, request_headers)
+        return {**result, "models": result["models"] if result["ok"] else None}
+    return owner.probe_api_models(api_key, endpoint, api_mode=api_mode, request_headers=headers, require_complete=True)
+
+
+def _catalog_has_more(payload: dict) -> bool:
+    links = payload.get('links')
+    return bool(payload.get('has_more') or payload.get('next') or payload.get('next_page')
+                or (isinstance(links, dict) and links.get('next')))
+
+
+def catalog_request_headers(api_key: str | None, api_mode: str | None, headers: dict | None = None) -> dict:
+    result = {"Accept": "application/json"}
+    if api_key:
+        if api_mode == "anthropic_messages":
+            result.update({"x-api-key": api_key, "anthropic-version": "2023-06-01"})
+        else:
+            result["Authorization"] = f"Bearer {api_key}"
+    return {**result, **(headers or {})}

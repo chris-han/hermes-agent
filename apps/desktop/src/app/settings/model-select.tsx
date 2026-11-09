@@ -33,6 +33,7 @@ export const fromItemValue = (item: string): string | null =>
   item.startsWith(MODEL_PREFIX) ? item.slice(MODEL_PREFIX.length) : null
 
 interface ModelSelectProps {
+  manualScope?: string
   'aria-label'?: string
   className?: string
   disabled?: boolean
@@ -58,6 +59,7 @@ interface ModelSelectProps {
  */
 export function ModelSelect({
   'aria-label': ariaLabel,
+  manualScope,
   allowedModels,
   className,
   disabled = false,
@@ -73,6 +75,7 @@ export function ModelSelect({
   const m = t.settings.model
   const [typing, setTyping] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+
   const isUnavailable = (model: string) =>
     (allowedModels != null && !allowedModels.includes(model)) ||
     (excludeUnavailable && (provider?.unavailable_models ?? []).some(item => normalize(item) === normalize(model)))
@@ -101,7 +104,7 @@ export function ModelSelect({
     }
 
     if (!models.includes(slug)) {
-      addCustomModel(providerSlug, slug, provider)
+      addCustomModel(providerSlug, slug, provider, manualScope)
     }
   }
 
@@ -149,6 +152,7 @@ export function ModelSelect({
         disabled={disabled}
         onChange={next => {
           const model = fromItemValue(next)
+
           if (model === null) {
             setTyping(true)
           } else {

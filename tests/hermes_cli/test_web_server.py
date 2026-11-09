@@ -2014,7 +2014,7 @@ CONFIG_SCHEMA = ProviderConfigSchema(
             "/api/providers/custom-endpoints",
             json={
                 "id": "custom-responses", "name": "custom-responses",
-                "base_url": "https://responses-gateway.example.com/v1",
+                "base_url": "https://responses-gateway.example.com/v1", "api_key": "synthetic-test-key",
                 "model": "gpt-5.6-sol-high", "api_mode": "codex_responses", "make_default": True,
                 "models": ["gpt-5.6-sol", "gpt-5.6-sol-high"],
                 "model_details": [
@@ -2115,30 +2115,27 @@ CONFIG_SCHEMA = ProviderConfigSchema(
 
         monkeypatch.setattr(config_env, "_endpoint_probe_client", probe_client)
 
-    def test_custom_endpoint_validate_fails_when_the_transport_route_is_missing(self, monkeypatch):
-        """Test must exercise the leg the runtime will use: a Responses-only host answers /models
-        fine, so validation also POSTs the resolved transport's route and fails on 404 (#93622)."""
+    def test_custom_endpoint_validate_is_catalog_only_when_transport_is_missing(self, monkeypatch):
+        """A successful list request says nothing about Chat Completions support."""
         posted = []
         self._responses_only_host(monkeypatch, posted)
-        for api_mode in ("", "chat_completions"):  # auto-detect resolves to chat_completions here
+        for api_mode in ("", "chat_completions"):
             body = self.client.post("/api/providers/custom-endpoints/validate", json={
                 "name": "x", "base_url": "https://gw.example.com/v1", "model": "", "api_mode": api_mode}).json()
-            assert body["ok"] is False and body["reachable"] is True
-            assert body["transport_checked"] == "chat_completions"
-            assert body["message"]
-            assert body["models"] == ["gpt-5.6-sol"], "discovered models still returned so the user can re-pick"
-        assert posted[-1][0] == "https://gw.example.com/v1/chat/completions"
-        assert posted[-1][1]["model"] == "gpt-5.6-sol"
+            assert body["ok"] is True and body["reachable"] is True
+            assert body["status"] == "catalog_verified"
+            assert "transport_checked" not in body
+            assert body["models"] == ["gpt-5.6-sol"]
+        assert posted == [], "Catalog validation must never send implicit inference."
 
-    def test_custom_endpoint_validate_passes_when_the_pinned_transport_is_served(self, monkeypatch):
+    def test_custom_endpoint_validate_does_not_infer_for_a_pinned_transport(self, monkeypatch):
         posted = []
         self._responses_only_host(monkeypatch, posted)
         body = self.client.post("/api/providers/custom-endpoints/validate", json={
             "name": "x", "base_url": "https://gw.example.com/v1", "model": "", "api_mode": "codex_responses"}).json()
-        assert body["ok"] is True and body["message"] == ""
-        assert body["transport_checked"] == "codex_responses"
-        assert [url for url, _ in posted] == ["https://gw.example.com/v1/responses"]
-        assert posted[0][1]["model"] == "gpt-5.6-sol"
+        assert body["ok"] is True and body["status"] == "catalog_verified"
+        assert "transport_checked" not in body
+        assert posted == []
 
     def test_custom_endpoint_save_leaves_a_hand_written_env_ref_alone(self, monkeypatch):
         """``api_key: ${MY_KEY}`` is already safe — don't copy it elsewhere.
