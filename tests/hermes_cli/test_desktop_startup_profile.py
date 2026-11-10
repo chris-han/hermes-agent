@@ -150,3 +150,33 @@ def test_actual_semantier_soul_enters_prompt_and_custom_persona_survives(owner):
     (owner / 'SOUL.md').write_text('My own persona', encoding='utf-8')
     resolve(owner)
     assert 'My own persona' in load_soul_md(home_override=owner)
+
+
+def test_saved_custom_selection_survives_ordinary_restart(owner):
+    custom = profiles.create_profile('work', no_alias=True, no_skills=True)
+    before = (custom / 'config.yaml').read_bytes()
+    for _ in range(2):
+        assert resolve(owner, 'work')['profile'] == 'work'
+    assert (custom / 'config.yaml').read_bytes() == before
+
+
+def test_explicit_legacy_selection_migrates_instead_of_reopening_it(owner):
+    legacy = profiles.create_profile('semantier-local', no_alias=True, no_skills=True)
+    (legacy / '.env').write_text('KEEP=fixture\n')
+    assert resolve(owner, 'semantier-local', explicit=True)['profile'] == 'default'
+    assert (owner / '.env').read_text() == 'KEEP=fixture\n'
+    assert not legacy.exists()
+
+
+def test_managed_identity_refresh_keeps_appended_user_instructions(owner):
+    from hermes_cli.default_soul import DEFAULT_SOUL_MD
+    addition = '\n\n## My instructions\nAlways use my project glossary.\n'
+    (owner / 'SOUL.md').write_text(DEFAULT_SOUL_MD + addition)
+    resolve(owner)
+    actual = (owner / 'SOUL.md').read_text()
+    assert 'You are Semantier Agent' in actual
+    assert 'by Semantier' in actual
+    assert 'Nous Research' not in actual
+    assert actual.endswith(addition)
+    resolve(owner)
+    assert (owner / 'SOUL.md').read_text() == actual
