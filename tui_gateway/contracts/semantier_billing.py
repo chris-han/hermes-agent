@@ -45,6 +45,7 @@ class AccountProvisioning(Result):
     billing_account_id: str | None = None
     currency: str | None = None
     reason: str | None = None
+    execution_backend: Literal['proxy', 'embedded_sdk'] | None = None
 
 
 class SemantierBillingState(Result):

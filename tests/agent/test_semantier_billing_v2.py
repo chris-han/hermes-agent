@@ -116,3 +116,23 @@ def test_v2_readiness_survives_registered_rpc_envelope(ready):
     wire = METHODS['billing.state'].result.model_validate({'ok': True, **validated})
     assert wire.account_provisioning.inference_ready is ready
     assert wire.credits.allowance.amount == '100.00'
+
+@pytest.mark.parametrize('backend', ['embedded_sdk', 'proxy'])
+def test_v2_provisioning_execution_backend_survives_rpc_without_granting_readiness(backend):
+    from tui_gateway.contracts.registry import METHODS
+    payload = state()
+    payload['account_provisioning'] = {
+        'local_status': 'READY', 'inference_ready': False,
+        'reason': 'ROUTE_UNAVAILABLE', 'execution_backend': backend,
+        'organization_id': 'org-a', 'billing_account_id': 'account-a', 'currency': 'CNY',
+    }
+    validated = SemantierBillingV2.model_validate(payload).model_dump(exclude_unset=True)
+    wire = METHODS['billing.state'].result.model_validate({'ok': True, **validated})
+    assert wire.account_provisioning.execution_backend == backend
+    assert wire.account_provisioning.inference_ready is False
+    assert wire.account_provisioning.reason == 'ROUTE_UNAVAILABLE'
+    for field, value in [('execution_backend', 'unknown'), ('undeclared_field', 'value')]:
+        bad = deepcopy(payload)
+        bad['account_provisioning'][field] = value
+        with pytest.raises(ValidationError):
+            SemantierBillingV2.model_validate(bad)

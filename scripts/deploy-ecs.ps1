@@ -1290,6 +1290,7 @@ function Build-CommitPackage {
   $packages=@(Get-ChildItem -LiteralPath $release -File -Filter '*.msix' | Where-Object {$_.Name -like ('*'+$record.version+'*')})
   if($packages.Count -ne 1){throw 'Expected exactly one newly built version-matching MSIX.'}
   if($BuildMode -eq 'Prod'){
+  $request=Get-Content -LiteralPath $record.request -Raw | ConvertFrom-Json
   Add-Type -AssemblyName System.IO.Compression.FileSystem
   $zip=[IO.Compression.ZipFile]::OpenRead($packages[0].FullName)
   try{

@@ -5,9 +5,60 @@ BuildOnly qualification remain separate from this result.
 """
 import shutil
 import subprocess
+import json
+import zipfile
 from pathlib import Path
 
 import pytest
+
+
+@pytest.mark.parametrize('stamp_build_id', ['expected-build', 'wrong-build'])
+def test_prod_package_validation_reads_its_saved_request(tmp_path, stamp_build_id):
+    pwsh = shutil.which('pwsh') or shutil.which('pwsh.exe')
+    if not pwsh:
+        pytest.skip('PowerShell 7 unavailable')
+    package = tmp_path / 'package.msix'
+    with zipfile.ZipFile(package, 'w') as archive:
+        archive.writestr('app/resources/install-stamp.json', json.dumps({
+            'commit': 'a' * 40, 'dirty': False,
+            'channelBuild': {'buildId': stamp_build_id},
+        }))
+        archive.writestr('AppxManifest.xml',
+                         '<Package><Properties><DisplayName>Semantier Agent 0.0.100'
+                         '</DisplayName></Properties></Package>')
+    request = tmp_path / 'request.json'
+    request.write_text(json.dumps({'buildId': 'expected-build'}))
+    script = tmp_path / 'validate.ps1'
+    script.write_text(r'''
+$ErrorActionPreference='Stop'
+Set-StrictMode -Version Latest
+$errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile($args[0],[ref]$null,[ref]$errors)
+if($errors){throw ($errors | Out-String)}
+$helper=$ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Read-ZipText'},$true)
+Invoke-Expression $helper.Extent.Text
+$build=$ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Build-CommitPackage'},$true)
+$validation=@($build.Body.EndBlock.Statements | Where-Object {
+  $_ -is [Management.Automation.Language.IfStatementAst] -and
+  $_.Clauses[0].Item1.Extent.Text -eq ('$' + "BuildMode -eq 'Prod'")
+})
+if($validation.Count -ne 1){throw 'Expected one production package validation block.'}
+$BuildMode='Prod'
+$Commit='a'*40
+$record=[pscustomobject]@{version='0.0.100';request=$args[2]}
+$packages=@(Get-Item -LiteralPath $args[1])
+Invoke-Expression $validation[0].Extent.Text
+''')
+    operator = Path(__file__).resolve().parents[2] / 'scripts/deploy-ecs.ps1'
+    result = subprocess.run(
+        [pwsh, '-NoProfile', '-File', str(script), str(operator), str(package), str(request)],
+        capture_output=True, text=True, timeout=30, check=False,
+    )
+    if stamp_build_id == 'expected-build':
+        assert result.returncode == 0, result.stdout + result.stderr
+    else:
+        assert result.returncode != 0
+        assert 'New MSIX source/build stamp mismatch.' in result.stderr
 
 
 def test_real_git_worktree_lifecycle():
