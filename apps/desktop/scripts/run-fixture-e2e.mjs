@@ -85,11 +85,12 @@ export function runFixtureChild(command, args, options, timeoutMs, graceMs = 500
 }
 
 /** Public middleware API avoids Vite interpreting configured port zero as its default port. */
-export async function startFixtureRenderer(desktop) {
+export async function startFixtureRenderer(desktop, cacheDir) {
   const { createServer } = await import('vite')
   const http = createHttpServer()
   const vite = await createServer({
     root: desktop,
+    ...(cacheDir ? { cacheDir } : {}),
     configFile: path.join(desktop, 'vite.config.ts'),
     server: { middlewareMode: true, hmr: false, watch: null },
     clearScreen: false
@@ -214,7 +215,7 @@ export async function runFixtureE2E(options) {
       await bundleElectronMain({ source, out: path.join(desktop, 'dist'), dev: true })
     })
     await stage('vite', async () => {
-      renderer = await startFixtureRenderer(desktop)
+      renderer = await startFixtureRenderer(desktop, path.join(tmp, 'fixture-cache', 'node_modules', '.vite'))
       receipt.renderer = renderer.url
     })
     const env = {

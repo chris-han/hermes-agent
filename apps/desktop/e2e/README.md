@@ -71,9 +71,8 @@ try {
 ```
 
 Keep feature-owned service/model fixtures in their specs. Cloud uses local mock
-Cloud plus a fixture-only Fernet adapter; browser affinity uses a scripted model.
-Passing them does not qualify Windows DPAPI, production OAuth or autonomous LLM
-routing.
+Cloud with native DPAPI on Windows and a fixture-only Fernet adapter on Linux; browser affinity uses a scripted model.
+The Windows Cloud journey verifies native encrypted persistence and restart. Production OAuth and autonomous LLM routing remain outside this synthetic lane.
 
 Cleanup validates ownership/source/home before using the supported native
 `gateway stop` command. A failed stop retains the home and fails the run; process

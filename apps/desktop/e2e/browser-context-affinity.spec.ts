@@ -19,7 +19,7 @@ const root = path.resolve(import.meta.dirname, '../../..')
 // eslint-disable-next-line no-empty-pattern -- Electron supplies its own page; only Playwright TestInfo is used.
 test('authenticated owned Electron page remains distinct from independent automation', async ({}, info) => {
   test.skip(
-    process.platform !== 'linux' || !process.env.HERMES_DESKTOP_DEV_SERVER,
+    !['linux', 'win32'].includes(process.platform) || !process.env.HERMES_DESKTOP_DEV_SERVER,
     'WSL source-renderer lane requires HERMES_DESKTOP_DEV_SERVER and local browser tools'
   )
   // gateway.run also loads the source checkout's dotenv. Never let this synthetic
@@ -28,7 +28,7 @@ test('authenticated owned Electron page remains distinct from independent automa
     fs.existsSync(path.join(root, '.env')),
     'Run this lane from a clean source worktree without a project .env'
   ).toBe(false)
-  test.setTimeout(240_000)
+  test.setTimeout(process.platform === 'win32' ? 420_000 : 240_000)
   const results: { name: string; content: string }[] = []
   const requests: any[] = []
   let clicks = 0
@@ -56,7 +56,7 @@ test('authenticated owned Electron page remains distinct from independent automa
     res.setHeader('Content-Type', 'text/html')
     res.end(
       signedIn
-        ? "<h1>Synthetic account signed in</h1><button id=\"harmless\" onclick=\"fetch('/action').then(()=>document.querySelector('output').textContent='clicked')\">Harmless action</button><output>unchanged</output>"
+        ? "<h1>Synthetic account signed in</h1><button id=\"harmless\" onclick=\"fetch('/action').then(()=>document.querySelector('output').textContent='clicked')\">Harmless action</button><output>unchanged</output><input id=fixture-input aria-label=Fixture-input>"
         : '<h1>Sign in required</h1>'
     )
   })
@@ -83,7 +83,7 @@ test('authenticated owned Electron page remains distinct from independent automa
     const messages = body.messages || []
 
     const readTurn = messages.findLastIndex(
-      (m: any) => m.role === 'user' && JSON.stringify(m.content).includes('AFFINITY_READ')
+      (m: any) => m.role === 'user' && ['Inspect the page currently open in my right-side browser.', 'Click the test button on the webpage visible beside this conversation.'].some(text => JSON.stringify(m.content).includes(text))
     )
 
     const lastUser = readTurn >= 0 ? readTurn : messages.findLastIndex((m: any) => m.role === 'user')
@@ -99,10 +99,11 @@ test('authenticated owned Electron page remains distinct from independent automa
     const steps = [
       ['desktop_preview', { action: 'read' }],
       ['drive_preview', { action: 'elements' }],
-      ['drive_preview', { action: 'click', selector: '#harmless' }]
+      ['drive_preview', { action: 'click', selector: '#harmless' }],
+      ['drive_preview', { action: 'type', selector: '#fixture-input', text: 'fixture typed' }]
     ] as const
 
-    const step = prompt.includes('AFFINITY_READ') ? steps[toolResults.length] : undefined
+    const step = (prompt.includes('Inspect the page currently open') || prompt.includes('Click the test button')) ? steps[toolResults.length] : undefined
 
     const message = step
       ? {
@@ -116,7 +117,7 @@ test('authenticated owned Electron page remains distinct from independent automa
             }
           ]
         }
-      : { role: 'assistant', content: prompt.includes('AFFINITY_READ') ? 'AFFINITY_DONE' : 'AFFINITY_READY' }
+      : { role: 'assistant', content: (prompt.includes('Inspect the page currently open') || prompt.includes('Click the test button')) ? 'AFFINITY_DONE' : 'AFFINITY_READY' }
 
     const finish = step ? 'tool_calls' : 'stop'
 
@@ -154,7 +155,7 @@ test('authenticated owned Electron page remains distinct from independent automa
   writeMockProviderConfig(
     sandbox.hermesHome,
     providerUrl,
-    'language: en',
+    'language: en\ndisplay:\n  language: en',
     'agent:\n  verify_on_stop: false\nbrowser:\n  backend: browser-use\n  cloud_provider: local\n  engine: chrome\n  allow_private_urls: true\n  use_real_profile: false\n'
   )
   writeEnvFile(sandbox.hermesHome)
@@ -175,7 +176,7 @@ test('authenticated owned Electron page remains distinct from independent automa
           console.log('RENDERER_ERROR', msg.text().slice(0, 350))
         }
       })
-      const composer = await waitForChatReady(page)
+      const composer = await waitForChatReady(page, process.platform === 'win32' ? 180_000 : 120_000)
       await composer.fill('AFFINITY_INIT')
       await composer.press('Enter')
       await expect(page.getByText('AFFINITY_READY', { exact: true })).toBeVisible({ timeout: 60_000 })
@@ -204,7 +205,7 @@ test('authenticated owned Electron page remains distinct from independent automa
       })
 
       await composer.click()
-      await composer.pressSequentially('AFFINITY_READ this authenticated right-side page')
+      await composer.pressSequentially('Inspect the page currently open in my right-side browser.')
       await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeEnabled()
       await page.getByRole('button', { name: 'Send', exact: true }).click()
       await expect(page.getByText('AFFINITY_DONE', { exact: true })).toBeVisible({ timeout: 60_000 })
@@ -240,6 +241,8 @@ test('authenticated owned Electron page remains distinct from independent automa
         .toContain('clicked')
       expect(clicks).toBe(1)
 
+      expect(await guest.evaluate((el: any) => el.executeJavaScript("document.querySelector('#fixture-input').value"))).toBe('fixture typed')
+      await page.screenshot({ path: info.outputPath('authenticated-pane.png') })
       const guestId = await guest.evaluate((el: any) => el.getWebContentsId())
       await page.evaluate(async () => (await import('/src/store/' + 'layout.ts')).toggleRightSide())
       expect(await guest.evaluate((el: any) => el.getWebContentsId())).toBe(guestId)
@@ -258,12 +261,53 @@ test('authenticated owned Electron page remains distinct from independent automa
         )
         .toBe('open')
       results.length = 0
-      await composer.fill('AFFINITY_READ_RECONNECT this same authenticated pane')
+      await composer.fill('Click the test button on the webpage visible beside this conversation.')
       await page.getByRole('button', { name: 'Send', exact: true }).click()
       await expect(page.getByText('AFFINITY_DONE', { exact: true })).toHaveCount(2, { timeout: 60_000 })
       expect(results[0]?.content).toContain('Synthetic account signed in')
       expect(clicks).toBe(2)
       expect(await guest.evaluate((el: any) => el.getWebContentsId())).toBe(guestId)
+
+      await fixture.stage('browser.two-windows', async () => {
+        const nextWindow = fixture.app!.waitForEvent('window')
+        await page.evaluate(() => (window as any).hermesDesktop.openWindow())
+        const second = await nextWindow
+        await second.waitForLoadState('domcontentloaded')
+        await expect(second.getByRole('button', { name: 'default', exact: true })).toBeVisible({ timeout: 180_000 })
+        await second.bringToFront()
+        await second.evaluate(async url => {
+          const preview = await import('/src/store/' + 'preview.ts')
+          preview.openPreview({ kind: 'url', source: 'user', label: 'Second window fixture', url })
+        }, siteUrl + '/account')
+        const secondGuestId = await second.locator('webview').first().evaluate((el: any) => el.getWebContentsId())
+        expect(secondGuestId).not.toBe(guestId)
+        await second.evaluate(async () => {
+          const preview = await import('/src/store/' + 'preview.ts')
+
+          for (const tab of preview.$previewTabs.get()) {preview.closeRightRailTab(tab.id)}
+        })
+
+        const refused = await second.evaluate(async owner => {
+          const { readActivePreview } = await import('/src/app/chat/right-rail/' + 'preview-reader.ts')
+          const { actOnActivePreview } = await import('/src/app/chat/right-rail/' + 'preview-act.ts')
+
+          return {
+            read: await readActivePreview({}, { sessionId: owner.stored, profile: 'default' }),
+            action: await actOnActivePreview({ kind: 'click', selector: '#harmless' }, undefined, {
+              sessionId: owner.stored, profile: 'default'
+            })
+          }
+        }, owner)
+
+        expect(refused.read).toBeNull()
+        expect(refused.action.success).toBe(false)
+        expect(clicks).toBe(2)
+        await page.bringToFront()
+        expect(await guest.evaluate((el: any) => el.getWebContentsId())).toBe(guestId)
+        await expect.poll(() => guest.evaluate((el: any) => el.executeJavaScript('document.body.innerText'))).toContain('Synthetic account signed in')
+        await second.close()
+        console.log('TWO_WINDOWS', JSON.stringify({ isolation: 'PASS', focusSwitch: 'PASS' }))
+      })
 
       // Exercise the production request owner and live-target registries in this real renderer.
       const boundaries = await page.evaluate(async owner => {

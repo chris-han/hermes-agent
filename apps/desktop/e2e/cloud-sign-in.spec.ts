@@ -18,10 +18,10 @@ const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'"
 // eslint-disable-next-line no-empty-pattern -- Electron supplies its own page; only Playwright TestInfo is used.
 test('default Cloud sign-in recovers, approves and persists through real Desktop IPC', async ({}, info) => {
   test.skip(
-    process.platform !== 'linux' || !process.env.HERMES_DESKTOP_DEV_SERVER,
+    !['linux', 'win32'].includes(process.platform) || !process.env.HERMES_DESKTOP_DEV_SERVER,
     'Requires WSL Electron development renderer and fixture-owned X display'
   )
-  test.setTimeout(240_000)
+  test.setTimeout(process.platform === 'win32' ? 420_000 : 240_000)
   expect(fs.existsSync(path.join(root, '.env')), 'Use a clean source worktree').toBe(false)
   const sandbox = createSandbox('cloud-sign-in')
   writeEnvFile(sandbox.hermesHome)
@@ -203,7 +203,8 @@ test('default Cloud sign-in recovers, approves and persists through real Desktop
   // The runtime client, journal, scope, protocol, persistence and IPC remain real.
   const support = path.join(sandbox.root, 'python-fixture')
   fs.mkdirSync(support)
-  const wrapper = path.join(support, 'python')
+  const nativePython = process.env.HERMES_PYTHON || path.join(root, '.venv/bin/python')
+  const wrapper = process.platform === 'win32' ? nativePython : path.join(support, 'python')
   const key = randomBytes(32).toString('base64url') + '='
   fs.writeFileSync(
     path.join(support, 'sitecustomize.py'),
@@ -223,11 +224,16 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
 `
   )
   const python = process.env.HERMES_PYTHON || path.join(root, '.venv/bin/python')
-  fs.writeFileSync(
+
+  if (process.platform !== 'win32') {fs.writeFileSync(
     wrapper,
     `#!/bin/sh\nexport PYTHONPATH=${quote(support + ':' + root)}\nexec ${quote(python)} "$@"\n`,
     { mode: 0o700 }
-  )
+  )}
+
+  if (process.platform === 'win32') {
+    fs.writeFileSync(path.join(sandbox.hermesHome, 'config.yaml'), 'language: en\ndisplay:\n  language: en\nbilling: null\nproviders:\n  semantier-cloud:\n    base_url: ' + origin + '/v1\n    portal_origin: ' + origin + '\n')
+  }
 
   const env = buildAppEnv(sandbox, {
     HERMES_DESKTOP_DEV_SERVER: process.env.HERMES_DESKTOP_DEV_SERVER!,
@@ -244,7 +250,7 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
     const page = launched.page
     await fixture.stage('desktop.ready', async () => {
       await expect(page.getByRole('button', { name: 'default', exact: true })).toHaveAttribute('aria-pressed', 'true', {
-        timeout: 90_000
+        timeout: process.platform === 'win32' ? 180_000 : 90_000
       })
       // Use the actual first-run control, just as a user does. No store injection.
       await page
@@ -331,7 +337,7 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
     await expect(reopened.getByRole('button', { name: 'default', exact: true })).toHaveAttribute(
       'aria-pressed',
       'true',
-      { timeout: 90_000 }
+      { timeout: process.platform === 'win32' ? 180_000 : 90_000 }
     )
     await expect(reopened.getByRole('button', { name: /synthetic-model/ })).toBeVisible({ timeout: 60_000 })
     await expect(
@@ -350,7 +356,7 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
         expiredSessionRecovery: 'PASS',
         restart: 'PASS',
         transport: 'local-http',
-        protectedStore: 'fixture-fernet-not-windows-dpapi',
+        protectedStore: process.platform === 'win32' ? 'windows-native-dpapi' : 'fixture-fernet-not-windows-dpapi',
         requests
       })
     )
