@@ -256,6 +256,35 @@ Remove-Item -Recurse -Force "$env:LOCALAPPDATA\hermes\hermes-agent\venv"
 
 ---
 
+## WSL source Browser Pane regression
+
+The canonical gateway binds Desktop callbacks per local turn in
+`gateway/local_desktop_ui.py` (upstream #138917), using existing session request
+authorization and renderer tab ownership. `desktop_preview` / `drive_preview`
+operate the owned live pane; independent `browser_exec` keeps its configured
+backend. Missing pane/bridge fails without opening a replacement. Browser
+engine choice and real-profile consent remain separate.
+
+With existing Electron, Xvfb, Python/browser-harness and PM Chromium dependencies,
+run from the repository root (no Windows package build):
+
+```bash
+node apps/desktop/scripts/bundle-electron-main.mjs --dev
+# Separate terminal, apps/desktop:
+node ../../node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5178 --strictPort
+# apps/desktop, with the existing test interpreter:
+HERMES_DESKTOP_DEV_SERVER=http://127.0.0.1:5178 HERMES_PYTHON=/path/to/python \
+  xvfb-run -a node ../../node_modules/@playwright/test/cli.js test \
+  e2e/browser-context-affinity.spec.ts --workers=1 --reporter=line
+```
+
+This opt-in source lane uses disposable localhost authentication and declines
+real-profile sharing. It checks native agent dispatch, the actual Electron
+webview, independent browser sessions, socket reconnect, hide/restore and target
+scope. Its deterministic provider proves bridge mechanics, **not autonomous LLM
+tool selection** or Windows installed-app behavior. It is skipped without the
+explicit development server.
+
 ## Community
 
 - 💬 [Discord](https://discord.gg/NousResearch)
