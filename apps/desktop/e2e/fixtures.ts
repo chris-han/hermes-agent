@@ -17,7 +17,8 @@
  * `electron-builder --dir` step and matches `hermes desktop --source`. The
  * packaged-binary path is already covered by `launch.spec.ts`.
  *
- * Prerequisite: `npm run build` must have been run so that `dist/` exists.
+ * Use scripts/run-fixture-e2e.mjs for dev bundles + an isolated renderer,
+ * or provide an existing full `dist/` build.
  */
 
 import * as fs from 'node:fs'
@@ -31,75 +32,13 @@ import { writeEnvFile, writeMockProviderConfig } from '../../../tests-js/scripts
 import { type MockServerOptions, startMockServer } from '../../../tests-js/scripts/mock-server'
 
 import { resolveElectronBinary } from './electron-binary'
+import { fixturePythonEnv, stripCredentials, writeFixtureOwner } from './fixture-environment'
+import { stopFixtureGateway } from './fixture-session'
 import { installErrorBannerGuard } from './test'
 
 const DESKTOP_ROOT = path.resolve(import.meta.dirname, '..')
 const REPO_ROOT = path.resolve(DESKTOP_ROOT, '..', '..')
 const RELEASE_ROOT = path.join(DESKTOP_ROOT, 'release')
-
-// ─── Credential stripping (matches launch.spec.ts) ──────────────────────
-
-const CREDENTIAL_SUFFIXES: string[] = [
-  '_API_KEY',
-  '_TOKEN',
-  '_SECRET',
-  '_PASSWORD',
-  '_CREDENTIALS',
-  '_ACCESS_KEY',
-  '_PRIVATE_KEY',
-  '_OAUTH_TOKEN',
-]
-
-const CREDENTIAL_NAMES = new Set([
-  'ANTHROPIC_BASE_URL',
-  'ANTHROPIC_TOKEN',
-  'AWS_ACCESS_KEY_ID',
-  'AWS_SECRET_ACCESS_KEY',
-  'AWS_SESSION_TOKEN',
-  'CUSTOM_API_KEY',
-  'GEMINI_BASE_URL',
-  'OPENAI_BASE_URL',
-  'OPENROUTER_BASE_URL',
-  'OLLAMA_BASE_URL',
-  'GROQ_BASE_URL',
-  'XAI_BASE_URL',
-])
-
-function isCredentialEnvVar(name: string): boolean {
-  if (CREDENTIAL_NAMES.has(name)) {
-    return true
-  }
-
-  return CREDENTIAL_SUFFIXES.some((suffix) => name.endsWith(suffix))
-}
-
-// Runtime state of whatever Hermes launched this run. A spec driven from inside
-// an agent's terminal inherits HERMES_YOLO_MODE, HERMES_INTERACTIVE,
-// HERMES_SESSION_ID…, and the sandboxed backend then skips approvals or binds
-// the caller's session — the approval spec failed locally on the leaked yolo
-// flag while CI (which never has these) stayed green. The fixtures set every
-// HERMES_* the app needs themselves; only the harness's own knobs pass.
-function isInheritedHermesRuntimeVar(name: string): boolean {
-  return name.startsWith('HERMES_') && !name.startsWith('HERMES_DESKTOP_') && !name.startsWith('HERMES_E2E_')
-}
-
-function stripCredentials(env: Record<string, string | undefined>): Record<string, string> {
-  const clean: Record<string, string> = {}
-
-  for (const [key, value] of Object.entries(env)) {
-    if (!value) {
-      continue
-    }
-
-    if (isCredentialEnvVar(key) || isInheritedHermesRuntimeVar(key)) {
-      continue
-    }
-
-    clean[key] = value
-  }
-
-  return clean
-}
 
 // ─── Sandbox creation ──────────────────────────────────────────────────
 
@@ -144,6 +83,8 @@ export function createSandbox(prefix: string): Sandbox {
     JSON.stringify({ zoomLevel: 0 }, null, 2),
     'utf8',
   )
+
+  writeFixtureOwner({ root, hermesHome, userDataDir }, REPO_ROOT)
 
   return {
     root,
@@ -223,7 +164,7 @@ export function buildAppEnv(sandbox: Sandbox, extra: Record<string, string> = {}
     // Clear dev-server override — we want the built dist/, not a vite server.
     // The dev-server check in main.ts looks for this env var; if it's set,
     // it loads from the vite URL instead of the local file.
-    ...extra,
+    ...fixturePythonEnv(extra),
   }
 }
 
@@ -234,7 +175,7 @@ export function buildAppEnv(sandbox: Sandbox, extra: Record<string, string> = {}
  * tests can't run without it — the Electron main process loads
  * dist/electron-main.mjs and the renderer loads dist/index.html.
  */
-function assertDistBuilt(): void {
+function assertDistBuilt(devServer?: string): void {
   const distDir = path.join(DESKTOP_ROOT, 'dist')
   const electronMain = path.join(distDir, 'electron-main.mjs')
   const indexHtml = path.join(distDir, 'index.html')
@@ -246,7 +187,7 @@ function assertDistBuilt(): void {
     )
   }
 
-  if (!fs.existsSync(indexHtml)) {
+  if (!devServer && !fs.existsSync(indexHtml)) {
     throw new Error(
       `Desktop dist/index.html not found. Run 'cd apps/desktop && npm run build' first.\n` +
         `Missing: ${indexHtml}`,
@@ -280,7 +221,7 @@ export function findElectron(): string {
 export async function launchDesktop(
   env: Record<string, string>,
 ): Promise<{ app: ElectronApplication; page: Page }> {
-  assertDistBuilt()
+  assertDistBuilt(env.HERMES_DESKTOP_DEV_SERVER)
 
   const electronBin = findElectron()
 
@@ -292,8 +233,9 @@ export async function launchDesktop(
       DESKTOP_ROOT, // `electron .` — the `.` is the desktop package dir
       '--disable-gpu',
       '--no-sandbox',
+      ...(process.platform === 'linux' ? ['--ozone-platform=x11'] : []),
     ],
-    env,
+    env: { ...env, HERMES_DESKTOP_CDP_PORT: 'off' },
     cwd: DESKTOP_ROOT,
   })
 
@@ -370,6 +312,7 @@ export async function setupMockBackend(options: MockBackendOptions = {}): Promis
     cleanup: async () => {
       await app.close().catch(() => undefined)
       await mock.close()
+      await stopFixtureGateway(REPO_ROOT, sandbox, env)
       sandbox.cleanup()
     },
   }
@@ -399,6 +342,7 @@ export async function setupNoProvider(): Promise<NoProviderFixture> {
     sandbox,
     cleanup: async () => {
       await app.close().catch(() => undefined)
+      await stopFixtureGateway(REPO_ROOT, sandbox, env)
       sandbox.cleanup()
     },
   }
@@ -445,6 +389,7 @@ export async function setupDeadBackend(options: DeadBackendOptions = {}): Promis
     sandbox,
     cleanup: async () => {
       await app.close().catch(() => undefined)
+      await stopFixtureGateway(REPO_ROOT, sandbox, env)
       sandbox.cleanup()
     },
   }

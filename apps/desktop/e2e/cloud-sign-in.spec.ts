@@ -5,16 +5,18 @@ import fs from 'node:fs'
 import http from 'node:http'
 import path from 'node:path'
 
-import { _electron, expect, test } from '@playwright/test'
+import { expect, test } from '@playwright/test'
 
 import { writeEnvFile } from '../../../tests-js/scripts/mock-provider-config'
 
-import { buildAppEnv, createSandbox, findElectron } from './fixtures'
+import { DesktopFixtureSession } from './fixture-session'
+import { buildAppEnv, createSandbox } from './fixtures'
 
 const root = path.resolve(import.meta.dirname, '../../..')
 const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'"
 
-test('default Cloud sign-in recovers, approves and persists through real Desktop IPC', async () => {
+// eslint-disable-next-line no-empty-pattern -- Electron supplies its own page; only Playwright TestInfo is used.
+test('default Cloud sign-in recovers, approves and persists through real Desktop IPC', async ({}, info) => {
   test.skip(
     process.platform !== 'linux' || !process.env.HERMES_DESKTOP_DEV_SERVER,
     'Requires WSL Electron development renderer and fixture-owned X display'
@@ -234,27 +236,25 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
     HERMES_DESKTOP_PYTHON: wrapper
   })
 
-  let app
+  const fixture = new DesktopFixtureSession(sandbox, env, info)
 
   try {
-    app = await _electron.launch({
-      executablePath: findElectron(),
-      args: [path.join(root, 'apps/desktop'), '--no-sandbox', '--disable-gpu', '--ozone-platform=x11'],
-      cwd: path.join(root, 'apps/desktop'),
-      env
+    const launched = await fixture.launch()
+    let app = launched.app
+    const page = launched.page
+    await fixture.stage('desktop.ready', async () => {
+      await expect(page.getByRole('button', { name: 'default', exact: true })).toHaveAttribute('aria-pressed', 'true', {
+        timeout: 90_000
+      })
+      // Use the actual first-run control, just as a user does. No store injection.
+      await page
+        .getByRole('button', { name: 'Sign in to Semantier Model Provider', exact: true })
+        .click({ timeout: 60_000 })
+      await expect(page.getByRole('button', { name: 'Try again', exact: true })).toBeVisible({ timeout: 60_000 })
+      await expect(page.getByText(/Semantier Cloud could not complete sign-in/)).toBeVisible()
+      await expect(page.getByRole('button', { name: 'Use an API key', exact: true })).toBeVisible()
+      expect(startCount).toBe(1)
     })
-    const page = await app.firstWindow()
-    await expect(page.getByRole('button', { name: 'default', exact: true })).toHaveAttribute('aria-pressed', 'true', {
-      timeout: 90_000
-    })
-    // Use the actual first-run control, just as a user does. No store injection.
-    await page
-      .getByRole('button', { name: 'Sign in to Semantier Model Provider', exact: true })
-      .click({ timeout: 60_000 })
-    await expect(page.getByRole('button', { name: 'Try again', exact: true })).toBeVisible({ timeout: 60_000 })
-    await expect(page.getByText(/Semantier Cloud could not complete sign-in/)).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Use an API key', exact: true })).toBeVisible()
-    expect(startCount).toBe(1)
     unavailable = false
     await app.evaluate(({ ipcMain }, expected) => {
       ;(globalThis as any).__cloudVerificationUrl = null
@@ -271,35 +271,38 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
     await page.getByRole('button', { name: 'Try again', exact: true }).click()
     await expect.poll(() => app!.evaluate(() => (globalThis as any).__cloudVerificationUrl)).toBeTruthy()
     // Approval is an external service boundary; submit its local HTML form.
-    const { chromium } = await import('@playwright/test')
-    const browser = await chromium.launch({ channel: 'chromium', headless: true })
+    await fixture.stage('cloud.authorize', async () => {
+      const { chromium } = await import('@playwright/test')
+      const browser = await chromium.launch({ channel: 'chromium', headless: true })
 
-    try {
-      const consent = await browser.newPage()
-      await consent.goto(await app.evaluate(() => (globalThis as any).__cloudVerificationUrl))
-      await consent.getByRole('button', { name: 'Approve device' }).click()
-      await expect(consent.getByText('Synthetic approval complete')).toBeVisible()
+      try {
+        const consent = await browser.newPage()
+        await consent.goto(await app.evaluate(() => (globalThis as any).__cloudVerificationUrl))
+        await consent.getByRole('button', { name: 'Approve device' }).click()
+        await expect(consent.getByText('Synthetic approval complete')).toBeVisible()
+        await expect(
+          page.getByText('This sign-in session expired. Try again to open a new authorization page.', { exact: true })
+        ).toBeVisible({ timeout: 30_000 })
+        const retiredUrl = await app.evaluate(() => (globalThis as any).__cloudVerificationUrl)
+        await page.getByRole('button', { name: 'Try again', exact: true }).click()
+        await expect.poll(() => app!.evaluate(() => (globalThis as any).__cloudVerificationUrl)).not.toBe(retiredUrl)
+        await consent.goto(await app.evaluate(() => (globalThis as any).__cloudVerificationUrl))
+        await consent.getByRole('button', { name: 'Approve device' }).click()
+        await expect(consent.getByText('Synthetic approval complete')).toBeVisible()
+      } finally {
+        await browser.close()
+      }
+    })
+    await fixture.stage('cloud.confirm', async () => {
+      // Assert the rendered journey rather than importing a second HMR store instance.
+      await expect(fixture.button('Begin')).toBeVisible({ timeout: 60_000 })
+      await fixture.button('Begin').click()
+      await expect(fixture.button('Begin')).not.toBeVisible()
+      await expect(page.getByRole('button', { name: 'Try again', exact: true })).not.toBeVisible()
       await expect(
-        page.getByText('This sign-in session expired. Try again to open a new authorization page.', { exact: true })
-      ).toBeVisible({ timeout: 30_000 })
-      const retiredUrl = await app.evaluate(() => (globalThis as any).__cloudVerificationUrl)
-      await page.getByRole('button', { name: 'Try again', exact: true }).click()
-      await expect.poll(() => app!.evaluate(() => (globalThis as any).__cloudVerificationUrl)).not.toBe(retiredUrl)
-      await consent.goto(await app.evaluate(() => (globalThis as any).__cloudVerificationUrl))
-      await consent.getByRole('button', { name: 'Approve device' }).click()
-      await expect(consent.getByText('Synthetic approval complete')).toBeVisible()
-    } finally {
-      await browser.close()
-    }
-
-    // Assert the rendered journey rather than importing a second HMR store instance.
-    await expect(page.getByRole('button', { name: /Begin/ })).toBeVisible({ timeout: 60_000 })
-    await page.getByRole('button', { name: /Begin/ }).click()
-    await expect(page.getByRole('button', { name: /Begin/ })).not.toBeVisible()
-    await expect(page.getByRole('button', { name: 'Try again', exact: true })).not.toBeVisible()
-    await expect(
-      page.getByRole('button', { name: 'Sign in to Semantier Model Provider', exact: true })
-    ).not.toBeVisible()
+        page.getByRole('button', { name: 'Sign in to Semantier Model Provider', exact: true })
+      ).not.toBeVisible()
+    })
     expect(startCount).toBe(3)
     expect(claimCount).toBe(1)
     expect(ackCount).toBe(1)
@@ -310,15 +313,9 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
       false
     )
     expect(fs.existsSync(path.join(sandbox.hermesHome, 'profiles/semantier-local'))).toBe(false)
-    // Restart both processes against the same journal; no new device intent or claim.
-    await app.close()
-    app = undefined
-    execFileSync(wrapper, ['-P', '-m', 'hermes_cli.main', 'gateway', 'stop'], {
-      cwd: root,
-      env,
-      timeout: 20_000,
-      stdio: 'pipe'
-    })
+    // Same lifecycle helper stops the owning gateway before relaunching the same home.
+    const restarted = await fixture.restart()
+    app = restarted.app
 
     const recovered = execFileSync(
       wrapper,
@@ -330,13 +327,7 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
     )
 
     expect(recovered.trim()).toBe('fixture-credential-recovered')
-    app = await _electron.launch({
-      executablePath: findElectron(),
-      args: [path.join(root, 'apps/desktop'), '--no-sandbox', '--disable-gpu', '--ozone-platform=x11'],
-      cwd: path.join(root, 'apps/desktop'),
-      env
-    })
-    const reopened = await app.firstWindow()
+    const reopened = restarted.page
     await expect(reopened.getByRole('button', { name: 'default', exact: true })).toHaveAttribute(
       'aria-pressed',
       'true',
@@ -371,28 +362,10 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
         : 'NOT_LOADED'
     )
 
-    if (app) {
-      await app.close().catch(() => undefined)
-    }
-
-    let stopped = false
-
     try {
-      execFileSync(wrapper, ['-P', '-m', 'hermes_cli.main', 'gateway', 'stop'], {
-        cwd: root,
-        env,
-        timeout: 20_000,
-        stdio: 'pipe'
-      })
-      stopped = true
+      await fixture.close()
     } finally {
       await new Promise<void>(resolve => cloud.close(() => resolve()))
-
-      if (stopped) {
-        sandbox.cleanup()
-      }
     }
-
-    expect(stopped, 'fixture gateway stopped before home cleanup').toBe(true)
   }
 })
