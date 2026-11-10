@@ -289,6 +289,45 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
       false
     )
     expect(fs.existsSync(path.join(sandbox.hermesHome, 'profiles/semantier-local'))).toBe(false)
+    // Restart both processes against the same journal; no new device intent or claim.
+    await app.close()
+    app = undefined
+    execFileSync(wrapper, ['-P', '-m', 'hermes_cli.main', 'gateway', 'stop'], {
+      cwd: root,
+      env,
+      timeout: 20_000,
+      stdio: 'pipe'
+    })
+
+    const recovered = execFileSync(
+      wrapper,
+      [
+        '-c',
+        `from hermes_cli.cloud_device_client import credential; assert credential('synthetic-token', base_url=${JSON.stringify(origin + '/v1')}); print('fixture-credential-recovered')`
+      ],
+      { cwd: root, env, timeout: 20_000, encoding: 'utf8' }
+    )
+
+    expect(recovered.trim()).toBe('fixture-credential-recovered')
+    app = await _electron.launch({
+      executablePath: findElectron(),
+      args: [path.join(root, 'apps/desktop'), '--no-sandbox', '--disable-gpu', '--ozone-platform=x11'],
+      cwd: path.join(root, 'apps/desktop'),
+      env
+    })
+    const reopened = await app.firstWindow()
+    await expect(reopened.getByRole('button', { name: 'default', exact: true })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+      { timeout: 90_000 }
+    )
+    await expect(reopened.getByRole('button', { name: /synthetic-model/ })).toBeVisible({ timeout: 60_000 })
+    await expect(
+      reopened.getByRole('button', { name: 'Sign in to Semantier Model Provider', exact: true })
+    ).not.toBeVisible()
+    expect(startCount).toBe(2)
+    expect(claimCount).toBe(1)
+    expect(fs.existsSync(path.join(sandbox.hermesHome, 'profiles/semantier-local'))).toBe(false)
     console.log(
       'CLOUD_DEV_E2E',
       JSON.stringify({
@@ -296,6 +335,7 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
         startCount,
         claimCount,
         ackCount,
+        restart: 'PASS',
         transport: 'local-http',
         protectedStore: 'fixture-fernet-not-windows-dpapi',
         requests
