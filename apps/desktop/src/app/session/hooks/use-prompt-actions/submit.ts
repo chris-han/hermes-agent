@@ -1,7 +1,7 @@
-import { WorkspaceRequestStopped } from '@/api/client'
 import type { PromptSubmitResult } from '@hermes/shared'
 import { type MutableRefObject, useCallback } from 'react'
 
+import { WorkspaceRequestStopped } from '@/api/client'
 import { getSession, PROMPT_SUBMIT_REQUEST_TIMEOUT_MS } from '@/hermes'
 import { translateNow, type Translations } from '@/i18n'
 import { type ChatMessage, finalizeInterruptedMessages, textPart } from '@/lib/chat-messages'
@@ -995,6 +995,7 @@ export function useSubmitPrompt(deps: SubmitPromptDeps) {
       }
 
       let attemptedJournalKey: string | undefined
+
       try {
         // Attach runs BEFORE prompt.submit, so a stale runtime id fails there
         // first and submit's own recovery never runs — that asymmetry is why
@@ -1304,14 +1305,19 @@ export function useSubmitPrompt(deps: SubmitPromptDeps) {
         return true
       } catch (err) {
         releaseBusy()
+
         if (err instanceof WorkspaceRequestStopped && err.requestId === submissionId) {
           // Withdraw only this local retry. No receipt or rollback of server effects is inferred.
           const admitted = sessionId && $sessionStates.get()[sessionId]?.messages.some(
             message => message.id === optimisticId && typeof message.rowId === 'number' && message.rowId > 0)
-          if (!admitted) dropOptimistic(sessionId)
-          if (options?.fromQueue) removeQueuedPrompt(targetStoredSessionId ?? sessionId, submissionId)
-          if (attemptedJournalKey) await removePreparedSubmission(attemptedJournalKey, submissionId)
-            .catch(error => console.warn('[prepared-submission-retire]', error))
+
+          if (!admitted) {dropOptimistic(sessionId)}
+
+          if (options?.fromQueue) {removeQueuedPrompt(targetStoredSessionId ?? sessionId, submissionId)}
+
+          if (attemptedJournalKey) {await removePreparedSubmission(attemptedJournalKey, submissionId)
+            .catch(error => console.warn('[prepared-submission-retire]', error))}
+
           throw err
         }
 

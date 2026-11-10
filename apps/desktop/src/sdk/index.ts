@@ -906,27 +906,35 @@ export const host = {
     let originalBindingOpened = false
     const originalId = $focusedStoredSessionId.get()
     const originalOwner = $focusedSessionOwner.get()
+
     if (options.workspaceMode === 'bots' && !options.refreshInPlace && options.tabTitle === 'Bot Chat' &&
       liveConnection?.transport === 'semantier-workspace-http' && originalId && originalOwner?.profile === 'default' &&
       ownerRoute?.connectionId === liveConnectionId && originalOwner.connectionId === liveConnectionId && targetProfile !== 'default') {
       const previous = workspaceMainBinding
+
       const binding = (async () => {
         await previous?.catch(() => undefined)
+
         if (generation !== openSessionGeneration) { return }
         // Keep the expected binding token on the same owner connection through
         // opening. A per-request lease would discard it before the chat resumes.
         const release = await retainGatewayForAgent(ownerRoute.connectionId, ownerRoute.profile, { spawnPriority: 'foreground' })
+
         try {
           await requestGatewayForAgent(ownerRoute.connectionId, ownerRoute.profile, 'session.bind_original', {
             session_id: storedSessionId, original_session_key: originalId
           })
+
           if (generation !== openSessionGeneration || $focusedStoredSessionId.get() !== originalId) { return }
           await openGatewayForAgent(ownerRoute.connectionId, ownerRoute.profile, { spawnPriority: 'foreground' })
           originalBindingOpened = true
         } finally { release() }
       })()
+
       workspaceMainBinding = binding
+
       try { await binding } finally { if (workspaceMainBinding === binding) { workspaceMainBinding = null } }
+
       if (generation !== openSessionGeneration || $focusedStoredSessionId.get() !== originalId) { return }
     }
 

@@ -17,21 +17,29 @@ export function modelDiscoveryOwnerKey(
   connection: DiscoveryConnection | null | undefined
 ): string | undefined {
   const id = ownerConnectionId?.trim() || connection?.connectionId?.trim()
+
   if (connection?.transport === 'semantier-workspace-http' &&
       (!ownerConnectionId || ownerConnectionId === connection.connectionId)) {
     const s = connection.workspaceScope
     let origin = 'unavailable'
+
     try {origin = new URL(connection.baseUrl).origin} catch { /* An incomplete connection has no reusable source. */ }
+
     return `${id || 'workspace'}:${JSON.stringify(s ? [origin,s.userId,s.workspaceId,s.organizationId] : [origin,'signed-out'])}`
   }
+
   if (id) {return id}
+
   if (connection?.mode === 'local') {return 'local'}
+
   if (connection?.mode !== 'remote') {return undefined}
   let key = remoteOwnerKeys.get(connection)
+
   if (!key) {
     key = `legacy-remote-owner:${++nextRemoteOwner}`
     remoteOwnerKeys.set(connection, key)
   }
+
   return key
 }
 
@@ -40,13 +48,18 @@ export async function modelDiscoveryScope(
   connection: DiscoveryConnection | null | undefined
 ): Promise<string> {
   const id = ownerConnectionId?.trim() || connection?.connectionId?.trim()
+
   if (connection?.transport === 'semantier-workspace-http' &&
       (!ownerConnectionId || ownerConnectionId === connection.connectionId)) {
     if (!connection.workspaceScope) {throw new Error('Sign in to the Workspace before model discovery.')}
+
     return modelDiscoveryOwnerKey(ownerConnectionId, connection)!
   }
+
   if (id) {return id}
+
   if (connection?.mode === 'local') {return 'local'}
+
   if (connection?.mode !== 'remote' || !connection.baseUrl || !globalThis.crypto?.subtle) {
     throw new Error('The model discovery connection is not ready.')
   }
@@ -57,5 +70,6 @@ export async function modelDiscoveryScope(
   // separate components of the cache key.
   const source = JSON.stringify([endpoint.origin, endpoint.pathname, connection.remoteIdentity ?? ''])
   const digest = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(source))
+
   return `legacy-remote:${Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')}`
 }
