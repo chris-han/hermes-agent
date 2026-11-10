@@ -464,6 +464,7 @@ test('launchMode=last-used does not force the registry primary before a local sp
 
 test('registry Workspace HTTP primary keeps its transport through legacy startup selection', () => {
   const owned=registry('semantier-cloud',[{id:'semantier-cloud',kind:'cloud',label:'Semantier Cloud',url:'https://cloud.example',transport:'semantier-workspace-http'}])
+
   for(const route of [resolveDesktopRemoteRoute({config:{mode:'local'},registry:owned}),registryPrimaryBootRoute(owned)]) {
     assert.equal(route?.source,'registry')
     assert.equal(route?.connectionId,'semantier-cloud')
