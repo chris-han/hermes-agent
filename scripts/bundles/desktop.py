@@ -55,17 +55,27 @@ class BuildCheckpoints:
         event = {"type": "build-stage", "binding": self.binding, "stage": stage,
                  "outputs": {str(p): fingerprint(p) if self.verify else "BETA_UNVERIFIED" for p in outputs}}
         self.log.parent.mkdir(parents=True, exist_ok=True)
-        with self.log.open("a", encoding="utf-8") as stream:
+        with self._open_log() as stream:
             stream.write("\n" + json.dumps(event) + "\n")
         self.saved[key] = event
         self.binding = hashlib.sha256(json.dumps(event, sort_keys=True).encode()).hexdigest()
         print(f"[CHECKPOINT SAVED] {stage}", flush=True)
         self._timing(stage, started, "SUCCESS")
 
+    def _open_log(self):
+        deadline = time.monotonic() + 10
+        while True:
+            try:
+                return self.log.open("a", encoding="utf-8")
+            except OSError as exc:
+                if not (getattr(exc, "winerror", None) in (32, 33) or (sys.platform == "win32" and isinstance(exc, PermissionError) and exc.winerror is None)) or time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.05)
+
     def _timing(self, stage: str, started: float, status: str) -> None:
         seconds = round(time.perf_counter() - started, 3)
         self.log.parent.mkdir(parents=True, exist_ok=True)
-        with self.log.open("a", encoding="utf-8") as stream:
+        with self._open_log() as stream:
             stream.write("\n" + json.dumps({"type": "milestone-timing", "stage": stage,
                 "status": status, "seconds": seconds, "mode": "Prod" if self.verify else "Beta"}) + "\n")
         print(f"[TIMING] {stage}: {seconds:.3f}s ({status})", flush=True)
