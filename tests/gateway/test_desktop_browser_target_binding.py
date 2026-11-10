@@ -38,7 +38,7 @@ def test_unrelated_tools_and_unbound_turns_keep_existing_behavior():
     assert state().guard('read_file',{}) is None
     from agent.desktop_browser_target import guard_browser_call
     assert guard_browser_call('browser_exec',{}) is None
-    assert state('NONE').guard('browser_exec',{})['code']=='TARGET_UNRESOLVED'
+    assert state('NONE').guard('browser_exec',{}) is None
 
 
 def test_case_d_missing_live_read_cannot_become_verified():

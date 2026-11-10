@@ -70,6 +70,7 @@ class BrowserTurnState:
         return name,args
 
     def guard(self,name,args):
+        if self.kind == 'NONE':return None
         browser=name in ('desktop_preview','drive_preview','annotate_preview','browser_exec','browser_cdp')
         if not browser and not (self.kind=='VISIBLE_PANE' and name=='execute_code'):return None
         if self.native_failure is not None:return dict(self.native_failure)
@@ -124,7 +125,8 @@ def guard_browser_call(name,args):
 
 def state_for_agent(agent):
     state=getattr(agent,'_desktop_browser_turn',None)
-    return state if isinstance(state,BrowserTurnState) else current_browser_turn()
+    state = state if isinstance(state,BrowserTurnState) else current_browser_turn()
+    return None if state is not None and state.kind == 'NONE' else state
 
 
 

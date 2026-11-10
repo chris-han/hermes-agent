@@ -239,3 +239,45 @@ def test_generation_change_withdraws_pending_action_and_rejects_late_reply(windo
     finally:
         window.agent._interrupt_requested = True
         worker.join(2)
+
+
+def test_appserver_owned_bridge_retains_actions_without_native_prelude(window):
+    window.agent.platform = "desktop"
+    window.agent.api_mode = "codex_app_server"
+    sinks = local_viewer_events.wire(window.turn, window.agent)
+    try:
+        result = json.loads(window.agent.drive_preview_callback({"action": "click"}))
+        assert result["success"] is True
+        assert getattr(window.agent, "_desktop_browser_turn", None) is None
+        window.turn._approval_owner[0].sessions.clear()
+        assert json.loads(window.agent.drive_preview_callback({"action": "click"}))["success"] is False
+    finally:
+        local_viewer_events.restore(window.agent, sinks)
+
+
+def test_native_desktop_turn_still_installs_browser_binding(window):
+    from agent.desktop_browser_target import BrowserTurnState
+
+    window.agent.platform = "desktop"
+    window.agent.api_mode = "chat_completions"
+    sinks = local_viewer_events.wire(window.turn, window.agent)
+    try:
+        assert isinstance(window.agent._desktop_browser_turn, BrowserTurnState)
+        result = json.loads(window.agent.drive_preview_callback({"action": "click"}))
+        assert result["code"] == "TARGET_UNRESOLVED"
+    finally:
+        local_viewer_events.restore(window.agent, sinks)
+
+
+def test_nonbrowser_turn_preserves_unbound_preview_callback(window):
+    window.agent.platform = "desktop"
+    window.agent.api_mode = "chat_completions"
+    sinks = local_viewer_events.wire(window.turn, window.agent)
+    try:
+        window.agent._desktop_browser_turn.select("NONE")
+        # Nonbrowser turns may preview generated files through the legacy API.
+        assert window.agent.read_preview_callback() == "page text"
+        window.turn._approval_owner[0].sessions.clear()
+        assert window.agent.read_preview_callback() == ""
+    finally:
+        local_viewer_events.restore(window.agent, sinks)
