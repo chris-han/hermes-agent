@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router'
 import type * as ReactRouterDom from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { I18nProvider } from '@/i18n'
 import type { ToolsetConfig, WebCapability } from '@/types/hermes'
 
 // Collect the component graph before the behavioral test deadline starts.
@@ -640,7 +641,7 @@ describe('ToolsetConfigPanel', () => {
 
       render(<ToolsetConfigPanel onConfiguredChange={vi.fn()} toolset="browser" />)
 
-      await screen.findByText('Local Browser')
+      await screen.findByText('Built-in Chromium (default)')
       expect(await screen.findByText('Installed')).toBeTruthy()
       expect(await screen.findByRole('button', { name: /Re-run setup/ })).toBeTruthy()
       expect(screen.queryByRole('button', { name: /^Run setup$/ })).toBeNull()
@@ -997,3 +998,50 @@ describe('ToolsetConfigPanel', () => {
     })
   })
 })
+
+it.each(['en', 'zh'])(
+  'browser labels and explicit selection remain distinct from real-profile consent (%s)',
+  async locale => {
+    getToolsetConfig.mockResolvedValue(
+      config({
+        name: 'browser',
+        active_provider: 'Local Browser',
+        providers: [
+          {
+            name: 'Local Browser',
+            badge: '',
+            tag: '',
+            env_vars: [],
+            post_setup: null,
+            requires_nous_auth: false,
+            is_active: true,
+            status: 'ready'
+          },
+          {
+            name: 'Edge (system)',
+            badge: '',
+            tag: '',
+            env_vars: [],
+            post_setup: null,
+            requires_nous_auth: false,
+            is_active: false,
+            status: 'ready'
+          }
+        ]
+      })
+    )
+    render(
+      <I18nProvider configClient={null} initialLocale={locale}>
+        <ToolsetConfigPanel onConfiguredChange={vi.fn()} toolset="browser" />
+      </I18nProvider>
+    )
+    const builtin = locale === 'zh' ? '内置 Chromium（默认）' : 'Built-in Chromium (default)'
+    const edge = locale === 'zh' ? 'Edge（系统浏览器）' : 'Edge (system)'
+    expect(await screen.findByText(builtin)).toBeTruthy()
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp(edge.replace(/[()]/g, '\\$&')) }))
+    const activate = locale === 'zh' ? /使用此后端/ : /Use this backend/
+    fireEvent.click(await screen.findByRole('button', { name: activate }))
+    await waitFor(() => expect(selectToolsetProvider).toHaveBeenCalledWith('browser', 'Edge (system)'))
+    expect(saveHermesConfigRecord).not.toHaveBeenCalled()
+  }
+)

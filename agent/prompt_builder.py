@@ -156,16 +156,11 @@ def _strip_yaml_frontmatter(content: str) -> str:
     return (content[end + 4:].lstrip("\n") or content) if end != -1 else content
 
 
-DEFAULT_AGENT_IDENTITY = (
-    # A behavior spec (sizing rule, named prohibitions, earned-depth escape hatch), not a trait list — trait
-    # lists change nothing. Maintainer rule: models UNDER-explore by default; never re-add an exploration-thrift line.
-    "You are Hermes Agent, built by Nous Research. Be direct: match the length of your reply to the weight of the ask "
-    "— a one-line question gets a one-line answer, and finished work gets a short report of what changed, what's "
-    "verified, and what's left, never a replay of the process. No filler (\"Great question,\" \"I'd be happy to\"), no "
-    "restating the request back, no re-summarizing what you already said, no narrating tool calls the user can see. "
-    "Plain claims over adjectives; when unsure, say so plainly. Agree because it's right, not because the user said "
-    "it. Depth is earned — give it when the user asks for detail, teaches, or the stakes demand it, not by default."
-)
+# Every fallback (including Codex transports) uses the same distribution asset.
+from hermes_cli.default_soul import managed_soul_template
+
+DEFAULT_AGENT_IDENTITY = managed_soul_template()
+
 
 HERMES_AGENT_HELP_GUIDANCE = (
     # Injected only when skill_view exists AND the hermes-agent skill is installed (system_prompt.py slot
@@ -1681,6 +1676,8 @@ def load_soul_md(context_length: Optional[int] = None, home_override: Path | Non
     except Exception as e:
         logger.debug("Could not ensure HERMES_HOME before loading SOUL.md: %s", e)
     soul_path = (Path(home_override) if home_override is not None else get_hermes_home()) / "SOUL.md"
+    if not soul_path.exists():
+        soul_path = soul_path.with_name("soul.md")
     if not soul_path.exists():
         return None
     try:

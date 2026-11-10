@@ -1051,7 +1051,13 @@ export interface RegistryBackendRequestScope {
  * isolated SSH backends already own one profile but may translate a Desktop
  * alias in an existing self-profile filter.
  */
-function pathForRegistryBackendRequest(path, profile, backend: RegistryBackendRequestScope) {
+function pathForRegistryBackendRequest(path, profile, backend: RegistryBackendRequestScope, method = 'GET') {
+  // Host deletion names the target in the path; an injected profile query would
+  // contradict the purpose-bound default-owner grant. Explicit queries still reach the guard.
+  if (method.toUpperCase() === 'DELETE' && /^\/api\/profiles\/[^/?#]+(?:[?#]|$)/.test(String(path))) {
+    return path
+  }
+
   return backend.sharedRemote || backend.sharedPrimary || backend.mode === 'local'
     ? pathWithProfileScope(path, profile)
     : translateSelfProfileQuery(path, profile, backend.remoteProfile)

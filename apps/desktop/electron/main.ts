@@ -14,12 +14,12 @@ import {
   runGatewayEnsure
 } from './local-gateway'
 import { closeGatewayTicketBridges, createGatewayTicketResolver } from './local-gateway-python'
+import { assertWorkspaceScope, registerSemantierWorkspaceIpc, workspace as semantierWorkspace } from './semantier-workspace-ipc'
 import { registerSemantierFeedbackIpc } from './updater/semantier-feedback-ipc'
-import { registerSemantierWorkspaceIpc, workspace as semantierWorkspace, assertWorkspaceScope } from './semantier-workspace-ipc'
 
 const workspaceAccountGenerations = new Map<string, number>()
-import { workspaceDesktopRead } from './semantier-workspace-client'
 import { JourneyObservations } from './journey-observations'
+import { workspaceDesktopRead } from './semantier-workspace-client'
 let journeyObservations: JourneyObservations | null = null
 import { SemantierObservations } from './updater/semantier-observations'
 const localGatewayDials = createLocalGatewayDials()
@@ -460,8 +460,8 @@ import { previewHttpUrlTarget } from './preview-url-target'
 import {
   createPrimaryRemoteConnection,
   FirstRunSetupResetError,
-  runPrimaryBackendStartup,
-  type ResolvedPrimaryRemote
+  type ResolvedPrimaryRemote,
+  runPrimaryBackendStartup
 } from './primary-backend-startup'
 import { rehomePrimaryConnection } from './primary-connection-rehome'
 import { PrimaryProfilePin, resolveLaunchProfile } from './primary-profile-pin'
@@ -14101,7 +14101,7 @@ function createWindow() {
 
   const createdMainWindow = mainWindow
   createdMainWindow.webContents.on('did-fail-load', (_event, code, _description, _url, isMainFrame) => {
-    if(isMainFrame && code !== -3) void journeyObservations?.rendererState(true)
+    if(isMainFrame && code !== -3) {void journeyObservations?.rendererState(true)}
   })
   createdMainWindow.webContents.on('did-finish-load', () => { void journeyObservations?.rendererState(false) })
   registerChatWindow(createdMainWindow)
@@ -16591,7 +16591,7 @@ async function dispatchRegistryApiRequest(
     return result
   }
 
-  const requestPath = pathForRegistryBackendRequest(request.path, requestProfile, connection)
+  const requestPath = pathForRegistryBackendRequest(request.path, requestProfile, connection, request?.method)
 
   const response = await fetchJsonForBackend(connection, requestPath, {
     method: request?.method,

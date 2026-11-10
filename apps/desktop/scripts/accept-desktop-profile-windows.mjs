@@ -45,7 +45,7 @@ function environment(root) {
     HTTP_PROXY: 'http://127.0.0.1:9', HTTPS_PROXY: 'http://127.0.0.1:9', ALL_PROXY: 'http://127.0.0.1:9', NO_PROXY: '127.0.0.1,localhost,::1' }
 }
 async function close() { if (app) { await app.close(); app = null; page = null } }
-async function launch(root, label, executable = binding.executable.path) {
+async function launch(root, label, executable = binding.executable.path, selected = 'default') {
   app = await _electron.launch({ executablePath: executable, cwd: path.dirname(executable), env: environment(root), timeout: 120000 })
   const identity = await app.evaluate(({ app }) => ({ platform: process.platform, packaged: app.isPackaged, version: app.getVersion(), executable: process.execPath, userData: app.getPath('userData'), home: app.getPath('home'), locale: app.getLocale() }))
   assert.equal(identity.platform, 'win32'); assert.equal(identity.packaged, true)
@@ -56,7 +56,7 @@ async function launch(root, label, executable = binding.executable.path) {
   page = await app.firstWindow({ timeout: 120000 })
   page.on('pageerror', error => errors.push(error.message))
   await expect(page.locator('html')).toHaveAttribute('data-hermes-theme', /.+/, { timeout: 120000 })
-  await expect.poll(() => page.evaluate(async () => (await window.hermesDesktop.api({ path: '/api/profiles/active' })).current), { timeout: 120000 }).toBe('semantier-local')
+  await expect.poll(() => page.evaluate(async () => (await window.hermesDesktop.api({ path: '/api/profiles/active' })).current), { timeout: 120000 }).toBe(selected)
   await page.screenshot({ path: path.join(output, label + '.png'), fullPage: true })
   return identity
 }
@@ -67,15 +67,15 @@ async function roster() {
     native: await window.hermesDesktop.profile.get()
   }))
 }
-async function assertLocal(root, label, locale = 'zh') {
+async function assertLocal(root, label, locale = 'zh', selected = 'default', expectedNamed = []) {
   await expect(page.locator('html')).toHaveAttribute('lang', locale, { timeout: 120000 })
   await expect(page.locator('html')).toHaveAttribute('data-hermes-theme', 'semantier')
   const state = await roster()
-  assert.deepEqual(state.names, ['semantier-local']); assert.equal(state.current, 'semantier-local')
+  assert.deepEqual(state.names, ['default', ...expectedNamed].sort()); assert.equal(state.current, selected)
   const preference = JSON.parse(fs.readFileSync(path.join(root, 'userdata/active-profile.json'), 'utf8'))
-  assert.equal(preference.profile, 'semantier-local'); assert.equal(preference.defaultRoute.profile, 'semantier-local')
+  assert.equal(preference.profile, selected); assert.equal(preference.defaultRoute.profile, selected)
   const named = fs.readdirSync(path.join(profileHome(root), 'profiles'), { withFileTypes: true }).filter(e => e.isDirectory() && !e.name.startsWith('.')).map(e => e.name).sort()
-  assert.deepEqual(named, ['semantier-local'])
+  assert.deepEqual(named, expectedNamed)
   assert.ok(!fs.existsSync(path.join(profileHome(root), 'eos.db')))
   observations.push({ label, state, preference, named })
 }
@@ -143,21 +143,21 @@ try {
   for (const withLocal of [false, true]) {
     const root = path.join(output, withLocal ? 'legacy-and-local' : 'legacy-only')
     const seeded = seedLegacy(root, withLocal)
-    await launch(root, withLocal ? 'legacy-local-migrated' : 'legacy-only-migrated')
-    await assertLocal(root, 'legacy-selection', withLocal ? 'zh' : 'en')
-    const batches = fs.readdirSync(path.join(profileHome(root), '.desktop-retired-profiles'))
-    assert.equal(batches.length, 1)
-    const backup = path.join(profileHome(root), '.desktop-retired-profiles', batches[0], 'tender-runtime-expert')
-    assert.deepEqual(snapshot(backup), seeded.files)
-    assert.ok(fs.existsSync(path.join(profileHome(root), 'profiles/.deleted/tender-runtime-expert')))
-    if (seeded.local) {
-      for (const file of ['.env', 'SOUL.md']) assert.equal(digest(path.join(profileHome(root), 'profiles/semantier-local', file)), seeded.local[file])
-      assert.ok(fs.readFileSync(path.join(profileHome(root), 'profiles/semantier-local/config.yaml'), 'utf8').includes('keep-local-provider'))
+    await launch(root, withLocal ? 'legacy-local-migrated' : 'legacy-only-preserved', binding.executable.path, 'tender-runtime-expert')
+    await assertLocal(root, 'custom-selection', 'en', 'tender-runtime-expert', ['tender-runtime-expert'])
+    for (const file of ['.env', 'memories/MEMORY.md', 'sessions/retained.json']) {
+      assert.equal(digest(path.join(seeded.legacy, file)), seeded.files[file])
     }
-    observations.push({ retainedBackup: backup, hashes: seeded.files, localHashes: seeded.local })
-    await close(); await launch(root, withLocal ? 'legacy-local-full-restart' : 'legacy-full-restart')
-    await assertLocal(root, 'retirement-restart', withLocal ? 'zh' : 'en')
-    assert.deepEqual(snapshot(backup), seeded.files)
+    assert.ok(fs.readFileSync(path.join(seeded.legacy, 'config.yaml'), 'utf8').includes('retained-fixture'))
+    assert.ok(!fs.existsSync(path.join(profileHome(root), 'profiles/semantier-local')))
+    if (seeded.local) {
+      const retained = path.join(profileHome(root), '.desktop-default-migration/legacy-home')
+      assert.deepEqual(snapshot(retained), seeded.local)
+      assert.equal(digest(path.join(profileHome(root), '.env')), seeded.local['.env'])
+      assert.ok(fs.readFileSync(path.join(profileHome(root), 'config.yaml'), 'utf8').includes('keep-local-provider'))
+    }
+    await close(); await launch(root, 'migration-full-restart', binding.executable.path, 'tender-runtime-expert')
+    await assertLocal(root, 'migration-restart', 'en', 'tender-runtime-expert', ['tender-runtime-expert'])
     await close()
   }
   results.P02 = 'PASS'; results.P04 = 'PASS'

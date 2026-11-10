@@ -30,8 +30,8 @@ def test_semantier_desktop_soul_upgrades_only_stock_identity(owner):
     local = profiles.create_profile("work", no_alias=True, no_skills=True)
     (local / "SOUL.md").write_text(DEFAULT_SOUL_MD, encoding="utf-8")
     assert resolve(owner, "work", explicit=True)["profile"] == "work"
-    # A retained named profile is user-owned; only the default is initialized.
-    assert (local / "SOUL.md").read_text(encoding="utf-8") == DEFAULT_SOUL_MD
+    # Stock identity is managed even in a deliberately created named profile.
+    assert "You are Semantier Agent" in (local / "SOUL.md").read_text(encoding="utf-8")
     (owner / "SOUL.md").write_text(DEFAULT_SOUL_MD, encoding="utf-8")
     resolve(owner)
     actual = (owner / "SOUL.md").read_text(encoding="utf-8")
@@ -150,3 +150,79 @@ def test_actual_semantier_soul_enters_prompt_and_custom_persona_survives(owner):
     (owner / 'SOUL.md').write_text('My own persona', encoding='utf-8')
     resolve(owner)
     assert 'My own persona' in load_soul_md(home_override=owner)
+
+
+def test_saved_custom_choice_survives_restart(owner):
+    custom = profiles.create_profile('work', no_alias=True, no_skills=True)
+    for _ in range(2):
+        assert resolve(owner, 'work')['profile'] == 'work'
+    assert resolve(owner)['profile'] == 'work'
+    assert custom.exists()
+
+
+def test_explicit_legacy_choice_is_migrated(owner):
+    legacy = profiles.create_profile('semantier-local', no_alias=True, no_skills=True)
+    (legacy / '.env').write_text('KEEP=fixture\n')
+    assert resolve(owner, 'semantier-local', explicit=True)['profile'] == 'default'
+    assert (owner / '.env').read_text() == 'KEEP=fixture\n'
+    assert not legacy.exists()
+
+
+def test_managed_identity_keeps_appended_user_instructions(owner):
+    from hermes_cli.default_soul import DEFAULT_SOUL_MD
+    addition = '\n\n## My instructions\nUse my project glossary.\n'
+    (owner / 'SOUL.md').write_text(DEFAULT_SOUL_MD + addition)
+    resolve(owner)
+    actual = (owner / 'SOUL.md').read_text()
+    assert 'You are Semantier Agent' in actual
+    assert 'by Semantier' in actual
+    assert 'Nous Research' not in actual
+    assert actual.endswith(addition)
+    resolve(owner)
+    assert (owner / 'SOUL.md').read_text() == actual
+
+
+def test_runtime_assembly_uses_managed_identity_and_keeps_lowercase_custom_soul(owner):
+    from types import SimpleNamespace
+    from agent.system_prompt import _identity_parts
+    resolve(owner)
+    agent = SimpleNamespace(load_soul_identity=True, skip_context_files=False,
+                            _session_db=SimpleNamespace(home=owner))
+    parts, loaded = _identity_parts(agent, None)
+    assert loaded and 'You are Semantier Agent' in parts[0] and 'by Semantier' in parts[0]
+    (owner / 'SOUL.md').unlink()
+    (owner / 'soul.md').write_text('My lowercase custom persona')
+    resolve(owner)
+    parts, loaded = _identity_parts(agent, None)
+    assert loaded and 'My lowercase custom persona' in parts[0]
+
+
+def test_distribution_identity_resolution_matches_staged_package_layout(tmp_path, monkeypatch):
+    from hermes_cli.default_soul import managed_soul_template
+    from pm import paths
+    source = managed_soul_template()
+    payload = tmp_path / 'resources' / 'agent' / 'src'
+    asset = payload / 'semantier-runtime/src/prompts/agents/SOUL.md'
+    asset.parent.mkdir(parents=True)
+    asset.write_text(source)
+    monkeypatch.setattr(paths, 'repo_root', lambda: payload)
+    assert managed_soul_template() == source
+    assert 'You are Semantier Agent' in source and 'by Semantier' in source
+
+
+def test_stale_legacy_delete_acknowledges_only_confirmed_retirement(owner):
+    import asyncio
+    from fastapi import HTTPException
+    from hermes_cli.web_routers.profiles import delete_profile_endpoint
+    legacy = profiles.create_profile('semantier-local', no_alias=True, no_skills=True)
+    (legacy / '.env').write_text('KEEP=fixture\n')
+    with pytest.raises(HTTPException) as refused:
+        asyncio.run(delete_profile_endpoint('semantier-local'))
+    assert refused.value.status_code == 409
+    assert legacy.exists()
+    resolve(owner)
+    for _ in range(2):
+        result = asyncio.run(delete_profile_endpoint('semantier-local'))
+        assert result['ok'] and result['migrated_to'] == 'default'
+    assert (owner / '.desktop-default-migration/legacy-home/.env').read_text() == 'KEEP=fixture\n'
+    assert (owner / '.env').read_text() == 'KEEP=fixture\n'

@@ -42,7 +42,6 @@ def _require_no_profile_writer(home: Path) -> None:
     current = psutil.Process()
     own_chain = {current.pid, *(parent.pid for parent in current.parents())}
     username = current.username().casefold()
-    profile = _LEGACY if home.name == _LEGACY else 'default'
     for process in psutil.process_iter(['pid', 'name', 'username', 'cmdline']):
         try:
             if process.pid in own_chain:
@@ -58,8 +57,20 @@ def _require_no_profile_writer(home: Path) -> None:
             environment = process.environ()
             bound = next((value for key, value in environment.items() if key.upper() == 'HERMES_HOME'), '')
             selectors = list(profiles._argv_profile_selectors(argv))
-            if ((bound and Path(bound).resolve() == home.resolve()) or profile in selectors
-                    or (profile == 'default' and not bound and not selectors)):
+            selected = selectors[-1] if selectors else 'default'
+            if bound:
+                candidate = Path(bound)
+                # A CLI selector may still be resolving against its launch root.
+                if selectors and selected != 'default' and candidate.parent.name != 'profiles':
+                    candidate = candidate / 'profiles' / selected
+            else:
+                user_home = environment.get('USERPROFILE') or environment.get('HOME')
+                if not user_home:
+                    raise RuntimeError('Cannot establish profile writer home')
+                candidate = Path(user_home) / '.hermes'
+                if selected != 'default':
+                    candidate = candidate / 'profiles' / selected
+            if candidate.resolve() == home.resolve():
                 raise RuntimeError('Desktop profile is owned by a running writer')
         except (psutil.NoSuchProcess, psutil.ZombieProcess):
             continue
@@ -72,8 +83,7 @@ def _require_idle(home: Path) -> None:
     from gateway.status import _is_gateway_runtime_lock_active_strict
     _require_no_profile_writer(home)
     if (_is_gateway_runtime_lock_active_strict(home / 'gateway.lock')
-            or profiles._check_gateway_running(home)
-            or profiles._profile_bound_backend_pids(_LEGACY if home.name == _LEGACY else 'default', home)):
+            or profiles._check_gateway_running(home)):
         raise RuntimeError('Desktop profile migration requires its running gateway to stop')
 
 
@@ -235,3 +245,15 @@ def _promote_pending(owner: Path, source: Path, work: Path, journal: Path, recor
     record['status'] = 'complete'
     atomic_write_bytes(journal, json.dumps(record).encode(), mode=0o600, fsync_dir=True)
     return True
+
+
+def legacy_retirement_confirmed(owner: Path) -> bool:
+    """A stale DELETE may acknowledge completed retirement without removing backups."""
+    source = owner / 'profiles' / _LEGACY
+    work = owner / '.desktop-default-migration'
+    if source.exists() or source.is_symlink() or not (work / 'migration.json').is_file():
+        return False
+    _plain_tree(work)
+    record = json.loads((work / 'migration.json').read_text(encoding='utf-8-sig'))
+    return (isinstance(record, dict) and record.get('schema') == 1
+            and record.get('status') == 'complete' and (work / 'legacy-home').is_dir())

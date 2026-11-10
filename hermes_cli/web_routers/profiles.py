@@ -982,6 +982,10 @@ async def delete_profile_endpoint(name: str):
     # The former Desktop home must be promoted, never deleted as a spare profile.
     # A successful migration retains its original bytes in legacy-home.
     if name.strip().lower() == "semantier-local":
+        from hermes_constants import get_default_hermes_root
+        from hermes_cli.profiles_desktop_migration import legacy_retirement_confirmed
+        if legacy_retirement_confirmed(get_default_hermes_root()):
+            return {"ok": True, "migrated_to": "default", "identity_settled": True}
         raise HTTPException(status_code=409, detail="Restart Semantier Desktop to migrate this legacy profile into default before cleanup.")
     try:
         with _profile_errors("DELETE /api/profiles/%s failed", name):

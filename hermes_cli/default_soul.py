@@ -70,3 +70,10 @@ def is_legacy_template_soul(text: str) -> bool:
     """
     normalized = _normalize_soul(text)
     return any(normalized == _normalize_soul(t) for t in _LEGACY_TEMPLATE_SOULS)
+
+
+def managed_soul_template() -> str:
+    """Use the distribution-owned identity asset when shipped by Semantier."""
+    from pm.paths import repo_root
+    template = repo_root() / "semantier-runtime/src/prompts/agents/SOUL.md"
+    return template.read_text(encoding="utf-8-sig") if template.is_file() else DEFAULT_SOUL_MD

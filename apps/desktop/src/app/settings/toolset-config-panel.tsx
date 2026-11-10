@@ -19,6 +19,7 @@ import {
   startOAuthLogin
 } from '@/hermes'
 import { useI18n } from '@/i18n'
+import { browserProviderLabel } from '@/i18n/browser-provider-label'
 import { Check, Loader2, Save, Terminal } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import { upsertDesktopActionTask } from '@/store/activity'
@@ -539,7 +540,7 @@ function ModelCatalogPicker({ toolset, providerName, isActiveBackend, profile }:
 }
 
 export function ToolsetConfigPanel({ toolset, onConfiguredChange, profile }: ToolsetConfigPanelProps) {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const copy = t.settings.toolsets
   const [cfg, setCfg] = useState<ToolsetConfig | null>(null)
   const [loading, setLoading] = useState(true)
@@ -842,7 +843,9 @@ export function ToolsetConfigPanel({ toolset, onConfiguredChange, profile }: Too
               type="button"
             >
               <span className="flex min-w-0 items-center gap-2">
-                <span className="truncate text-sm font-medium">{provider.name}</span>
+                <span className="truncate text-sm font-medium">
+                  {toolset === 'browser' ? browserProviderLabel(provider.name, locale) : provider.name}
+                </span>
                 {provider.badge && <Pill>{provider.badge}</Pill>}
                 {isBackendActive && (
                   <Pill tone="primary">

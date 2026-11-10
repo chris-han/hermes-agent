@@ -7,13 +7,13 @@ const local = (name: string): RosterRow => ({ name, connectionId: 'local', conne
 const route = { connectionId: null, profile: 'default' }
 
 describe('managed desktop bot roster', () => {
-  it('shows the managed bot once, omits the duplicate root, and preserves raw owner rows', () => {
+  it('shows live profile owners until lifecycle migration retires them', () => {
     const root = local('semantier-local'), managed = local('default'), other = local('scout')
     const source = [root, other, managed]
     const visible = desktopBotRoster(source, route)
-    expect(visible).toEqual([other, managed])
+    expect(visible).toEqual([root, other, managed])
     expect(source).toEqual([root, other, managed])
-    expect(visible[1]).toBe(managed)
+    expect(visible[2]).toBe(managed)
     expect(preferredDesktopBot(visible, route)).toBe(managed)
   })
 
@@ -21,7 +21,7 @@ describe('managed desktop bot roster', () => {
     const remote = { name: 'semantier-local', connectionId: 'lab', connectionKind: 'remote' }
     const remoteManaged = { name: 'default', connectionId: 'lab', connectionKind: 'remote' }
     const source = [local('semantier-local'), local('default'), remote, remoteManaged]
-    expect(desktopBotRoster(source, route)).toEqual([source[1], remote, remoteManaged])
+    expect(desktopBotRoster(source, route)).toEqual(source)
   })
 
   it('keeps the roster unchanged until the managed local owner is confirmed', () => {

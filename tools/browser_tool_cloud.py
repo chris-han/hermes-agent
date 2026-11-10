@@ -138,6 +138,13 @@ def _resolve_cloud_provider_uncached() -> Optional[CloudBrowserProvider]:
             if provider_key == "nous":
                 # Managed "Nous Subscription" is serviced by the Browser Use provider.
                 provider_key = "browser-use"
+        if not provider_key:
+            from hermes_cli.browser_runtime import chromium_executable
+            if chromium_executable(allow_override=False):
+                # Installed Chromium is the local default; saved cloud choices still win.
+                _bt._cached_cloud_provider = None
+                _bt._cloud_provider_resolved = True
+                return None
         if provider_key:
             resolved = _instantiate_explicit_cloud_provider(provider_key)
             if resolved is None:

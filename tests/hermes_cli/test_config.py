@@ -1,5 +1,4 @@
 """Tests for hermes_cli configuration management."""
-
 import logging
 import os
 import sys
@@ -8,6 +7,8 @@ from unittest.mock import patch
 
 import pytest
 import hermes_yaml as yaml
+
+from hermes_cli.default_soul import managed_soul_template
 
 from hermes_cli.config import (
     DEFAULT_CONFIG,
@@ -62,7 +63,7 @@ class TestEnsureHermesHome:
             soul_path = tmp_path / "SOUL.md"
             soul_path.write_text(_LEGACY_TEMPLATE_SOULS[0] + "\n", encoding="utf-8")
             ensure_hermes_home()
-            assert soul_path.read_text(encoding="utf-8") == DEFAULT_SOUL_MD
+            assert soul_path.read_text(encoding="utf-8") == managed_soul_template()
 
     # The pre-#95681 DEFAULT_SOUL_MD text, hardcoded (not read from the
     # module) so this fixture keeps testing the OLD text regardless of any
@@ -92,7 +93,7 @@ class TestEnsureHermesHome:
             soul_path = tmp_path / "SOUL.md"
             soul_path.write_text(self._PRE_REWRITE_DEFAULT_SOUL, encoding="utf-8")
             ensure_hermes_home()
-            assert soul_path.read_text(encoding="utf-8") == DEFAULT_SOUL_MD
+            assert soul_path.read_text(encoding="utf-8") == managed_soul_template()
 
     def test_does_not_upgrade_user_customized_soul_md(self, tmp_path):
         # A SOUL.md that merely starts with the old default but was edited by
