@@ -173,6 +173,10 @@ def _desktop_preview(agent, args: dict, ctx: InlineToolContext) -> Any:
     # registry handler like any other tool.
     if (args.get("action") or "").strip() == "read":
         return _read_preview(agent, args, ctx)
+    from agent.desktop_browser_target import state_for_agent
+    if args.get('action') in ('open','close') and state_for_agent(agent) is not None:
+        callback=getattr(agent,'open_preview_callback' if args.get('action')=='open' else 'close_preview_callback',None)
+        if callable(callback):return callback(args)
     from tools.preview_tool import _handle_preview
 
     return _handle_preview(args)

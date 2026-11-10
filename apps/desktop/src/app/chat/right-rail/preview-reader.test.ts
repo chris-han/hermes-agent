@@ -298,3 +298,54 @@ function mountSplit(fileId: string, browserId: string) {
 
   return tree
 }
+
+describe('native bound preview lease', () => {
+  it('records a live guest and rejects stale or foreign window metadata before reading', async () => {
+    closeRightRail()
+    const tabId=openPreview(urlTarget('http://localhost/lease'))!
+    let epoch=1
+    let reads=0
+
+    const unregister=registerPreviewPageReader(tabId,async()=>{reads++;
+
+return {text:'live',title:'lease',url:'http://localhost/lease'}},()=>({guest_id:17,page_epoch:epoch,loading:false}))
+
+    try {
+      const initial=await readActivePreview({require_live:true})
+      expect(initial?.binding).toMatchObject({tab_id:tabId,guest_id:17,page_epoch:1})
+      const binding=initial!.binding!
+      const count=reads
+      await expect(readActivePreview({require_live:true,expected_binding:{...binding,window_id:'another-window'}})).rejects.toThrow('WRONG_OWNER')
+      expect(reads).toBe(count)
+      epoch=2
+      await expect(readActivePreview({require_live:true,expected_binding:binding})).rejects.toThrow('STALE_TARGET')
+      const refreshed=await readActivePreview({require_live:true,expected_binding:binding,refresh_binding:true})
+      expect(refreshed?.binding?.page_epoch).toBe(2)
+    } finally {unregister();closeRightRail()}
+  })
+
+  it('never treats an identity-only or loading page as live access', async()=>{
+    closeRightRail()
+    const tabId=openPreview(urlTarget('http://localhost/loading'))!
+    await expect(readActivePreview({require_live:true})).rejects.toThrow('PANE_UNAVAILABLE')
+    const unregister=registerPreviewPageReader(tabId,async()=>({text:'old',title:'loading',url:'http://localhost/loading'}),()=>({guest_id:2,page_epoch:1,loading:true}))
+
+    try {await expect(readActivePreview({require_live:true})).rejects.toThrow('PANE_UNAVAILABLE')}
+    finally {unregister();closeRightRail()}
+  })
+})
+
+it('does not label old document text with a new navigation epoch', async()=>{
+  closeRightRail()
+  const tabId=openPreview(urlTarget('http://localhost/navigation-race'))!
+  let epoch=1
+
+  const unregister=registerPreviewPageReader(tabId,async()=>{
+    epoch=2
+
+    return {text:'old document',title:'race',url:'http://localhost/navigation-race'}
+  },()=>({guest_id:5,page_epoch:epoch,loading:false}))
+
+  try {await expect(readActivePreview({require_live:true})).rejects.toThrow('STALE_TARGET')}
+  finally {unregister();closeRightRail()}
+})

@@ -29,11 +29,29 @@ export function accessRoute(names: string[], catalog: string) {
   return 'UNPROVEN'
 }
 
+/** Renderer observations, including native preflight calls and code-owned final replies. */
+export function turnEvidence(messages: any[], prompt: string) {
+  const text = (message: any) => (message.parts ?? []).filter((part: any) => part.type === 'text').map((part: any) => part.text ?? '').join('\n')
+  const start = messages.findLastIndex(message => message.role === 'user' && text(message).trim() === prompt.trim())
+
+  if (start < 0) { return { requestReached: false, calls: [], finalResponse: '', completed: false } }
+  const assistant = messages.slice(start + 1).filter(message => message.role === 'assistant')
+
+  const calls = assistant.flatMap(message => (message.parts ?? []).filter((part: any) => part.type === 'tool-call').map((part: any) => ({
+    id: part.toolCallId, function: { name: part.toolName, arguments: part.args ?? {} },
+    result: part.result, isError: part.isError, completedAt: part.completedAt
+  })))
+
+  const last = assistant.at(-1)
+
+  return { requestReached: true, calls, finalResponse: assistant.map(text).filter(Boolean).join('\n'), completed: !!(last?.durableComplete || last?.persistedTurn?.complete) }
+}
+
 export function scoreTrial(x: any) {
   if (!x.requestReached || !x.inferenceCalls) { return { validity: 'INVALID_TEST', reason: 'NO_MODEL_REQUEST', routing: null, workflow: null } }
 
   if (x.fixtureError || x.consentBlocked || x.authorizedToolUnavailable) { return { validity: 'INVALID_TEST', reason: x.consentBlocked ? 'CONSENT_BLOCKED' : x.authorizedToolUnavailable ? 'NO_AUTHORIZED_TOOL' : 'FIXTURE_ERROR', routing: null, workflow: null } }
-  const operations = browserOperations(x.calls)
+  const operations = browserOperations(x.nativeCalls ?? x.calls)
   const first = operations[0]
   const routing = x.target === 'independent' ? first?.name === 'browser_exec' : ['desktop_preview', 'drive_preview'].includes(first?.name)
   const owner = x.ownerCorrect === true

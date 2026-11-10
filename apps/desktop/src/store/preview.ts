@@ -378,13 +378,13 @@ if (typeof window !== 'undefined') {
  *  it shows (the chat window decided the requester may see it —
  *  `previewTabIdsVisibleTo`). */
 export function previewTabsFor(owner: PreviewOwner = $focusedStoredSessionId.get()): PreviewTab[] {
-  if (isBrowserWindow()) {
-    const own = windowBrowserTabId()
+  const requestedTab = owner && typeof owner === 'object' ? owner.tabId : undefined
 
-    return $previewTabs.get().filter(tab => tab.id === own)
-  }
+  const tabs = isBrowserWindow()
+    ? $previewTabs.get().filter(tab => tab.id === windowBrowserTabId())
+    : bucketTabsFor($previewTabs.get(), ownerIdentity(owner), viewKey, viewKey)
 
-  return bucketTabsFor($previewTabs.get(), ownerIdentity(owner), viewKey, viewKey)
+  return requestedTab ? tabs.filter(tab => tab.id === requestedTab) : tabs
 }
 
 /** Ids of the tabs `owner` may see in ANY profile's rail, for scoping a
@@ -926,7 +926,8 @@ export function openPreview(
   runtimeId: null | string = $activeSessionId.get(),
   /** The asking agent's profile, when it is not the chat on screen: only that
    *  profile's pins may be reused. Omitted = the viewed profile. */
-  profile?: null | string
+  profile?: null | string,
+  requestedTabId?: string
 ) {
   // Stamp the tip, not an alias: the alias map is memory-only, so a tab
   // stamped with a rotated-away id would be orphaned by the next relaunch.
@@ -943,7 +944,9 @@ export function openPreview(
     viewKey
   )
 
-  const existing =
+  if (requestedTabId && !visible.some(tab=>tab.id===requestedTabId)) { return undefined }
+
+  const existing = requestedTabId ? visible.find(tab=>tab.id===requestedTabId) :
     target.kind === 'url'
       ? browserTabFor(visible)
       : target.kind === 'file'
@@ -969,11 +972,13 @@ export function openPreview(
   if (!$visiblePreviewTabs.get().some(item => item.id === id)) {
     rememberActiveTab(owner, id)
 
-    return
+    return id
   }
 
   noteExplicitPreviewOpen(id)
   selectRightRailTab(id)
+
+  return id
 }
 
 const blankPage = (): PreviewTarget => ({ kind: 'url', label: 'Browser', source: 'about:blank', url: 'about:blank' })

@@ -6,6 +6,37 @@ with tempfile.TemporaryDirectory(prefix='semantier-evaluator-unit-') as home:
  os.environ['DASHSCOPE_API_KEY']='synthetic-unit-key';os.environ['DASHSCOPE_BASE_URL']='https://127.0.0.1/v1';os.environ['SEMANTIER_EVAL_OUTPUT']=home;os.environ['SEMANTIER_EVAL_CREDENTIALS_ENV']=str(env)
  spec=importlib.util.spec_from_file_location('observer',source);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
  class ObserverTests(unittest.TestCase):
+  def test_zero_inference_preflight_reaches_main_composition(self):
+   from unittest.mock import patch
+   from types import SimpleNamespace
+   handler=SimpleNamespace(reply=lambda code,value:(code,value))
+   body={'messages':[{'role':'system','content':m.INTENT['prompt']}],'tools':[m.INTENT['schema']]}
+   with patch.dict(os.environ,{'SEMANTIER_EVAL_PREFLIGHT_ONLY':'1'}),patch.dict(m.STATE,{'case':'A','calls':[],'counts':{},'composition':[],'failures':[],'preflight_requests':0}),patch.object(m.urllib.request,'urlopen',side_effect=AssertionError('No upstream request during preflight')):
+    code,value=m.Handler.forward(handler,body)
+    self.assertEqual(code,200)
+    self.assertEqual(value['choices'][0]['message']['tool_calls'][0]['function']['name'],'browser_target_intent')
+    self.assertEqual(m.STATE['calls'],[])
+    main={'messages':[{'role':'system','content':m.HINT}], 'tools':[{'function':{'name':name,'description':'desktop_preview drive_preview'}} for name in ('tool_search','tool_describe','tool_call','browser_exec')]}
+    code,value=m.Handler.forward(handler,main)
+    self.assertEqual(code,503)
+    self.assertEqual(m.STATE['preflight_requests'],2)
+    self.assertEqual(m.STATE['failures'],[])
+
+  def test_native_intent_composition_is_distinct_from_main_agent(self):
+   body={'messages':[{'role':'system','content':m.INTENT['prompt']}],'tools':[m.INTENT['schema']]}
+   self.assertEqual(m.request_composition(body)['access_route'],'NATIVE_TARGET_INTENT')
+   self.assertTrue(m.request_composition(body)['valid'])
+   body['tools'][0]={'type':'function','function':{'name':'browser_target_intent'}}
+   self.assertFalse(m.request_composition(body)['valid'])
+  def test_intent_is_allowed_only_for_native_intent_request(self):
+   calls=[{'function':{'name':'browser_target_intent','arguments':'{"target_kind":"VISIBLE_PANE","operation":"existing"}'}}]
+   self.assertIsNone(m.forbidden_tool(calls,allow_intent=True))
+   self.assertIn('outside_authorized',m.forbidden_tool(calls))
+  def test_budget_cap_never_expands_native_classifier_limit(self):
+   self.assertEqual(m.capped_output({'max_tokens':512})['max_tokens'],512)
+   self.assertEqual(m.capped_output({'max_tokens':9000})['max_tokens'],4096)
+  def test_renderer_reasoning_parts_are_redacted(self):
+   self.assertNotIn('private chain',json.dumps(m.scrub({'parts':[{'type':'reasoning','text':'private chain'}]})))
   def test_single_wrapper_and_discovery_allowed(self):
    self.assertIsNone(m.forbidden_tool([{'function':{'name':'tool_search','arguments':'{"query":"visible page"}'}}]))
    self.assertIsNone(m.forbidden_tool([{'function':{'name':'tool_call','arguments':json.dumps({'name':'desktop_preview','arguments':{'action':'read'}})}}]))

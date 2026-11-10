@@ -13,7 +13,7 @@ import re
 from urllib.parse import urlsplit
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import urllib.error
 import urllib.request
@@ -33,12 +33,13 @@ if not KEY or not BASE.startswith('https://'):
     raise SystemExit('Configured Qwen credential/HTTPS provider missing')
 TOKEN = secrets.token_hex(24)  # fixture capability, not the real provider credential
 LOCK = threading.Lock()
-STATE = {'composition': [], 'preflight_requests': 0, 'case': None, 'counts': {}, 'calls': [], 'failures': [], 'budget_per_case': 12}
+STATE = {'composition': [], 'preflight_requests': 0, 'case': None, 'counts': {}, 'calls': [], 'failures': [], 'budget_per_case': 18, 'budget_total': 234}
 HINT = (Path(__file__).resolve().parents[3] / 'semantier-runtime/src/prompts/agents/DESKTOP_BROWSER_CONTEXT.md').read_text(encoding='utf-8').strip()
+INTENT = json.loads((Path(__file__).resolve().parents[3] / 'semantier-runtime/src/prompts/agents/DESKTOP_BROWSER_TARGET_INTENT.json').read_text(encoding='utf-8'))
 
 
 def stamp():
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def digest(value):
@@ -47,6 +48,8 @@ def digest(value):
 
 def scrub(value):
     if isinstance(value, dict):
+        if value.get('type') == 'reasoning':
+            return {'type': 'reasoning', 'text': '[omitted model reasoning]'}
         return {k: '[omitted model reasoning]' if k in ('reasoning_content', 'reasoning') else scrub(v) for k, v in value.items()}
     if isinstance(value, list):
         return [scrub(v) for v in value]
@@ -82,8 +85,32 @@ def normalize_response(raw, content_type):
     return {'model': model, 'usage': usage, 'finish_reason': finish, 'message': {'role': 'assistant', 'content': ''.join(content), 'tool_calls': list(tool_calls.values())}}
 
 
-def forbidden_tool(calls):
+def request_composition(body):
+    names = [tool.get('function', {}).get('name') for tool in body.get('tools', [])]
+    system = '\n'.join(str(m.get('content', '')) for m in body.get('messages', []) if m.get('role') in ('system', 'developer'))
+    catalog = json.dumps(body.get('tools', []))
+    intent = body.get('tools') == [INTENT['schema']] and system == INTENT['prompt']
+    direct = {'desktop_preview', 'drive_preview'}.issubset(names)
+    deferred = {'tool_search', 'tool_describe', 'tool_call'}.issubset(names) and all(n in catalog for n in ('desktop_preview', 'drive_preview'))
+    return {'tools': names, 'access_route': 'NATIVE_TARGET_INTENT' if intent else 'DIRECT' if direct else 'DEFERRED' if deferred else 'UNPROVEN',
+            'system_prompt_sha256': digest(system), 'browser_hint_sha256': digest(HINT), 'hint_loaded': HINT in system,
+            'valid': intent or ((direct or deferred) and 'browser_exec' in names and HINT in system)}
+
+
+def capped_output(body):
+    result = dict(body)
+    keys = [key for key in ('max_tokens', 'max_completion_tokens', 'max_output_tokens') if key in result]
+    for key in keys:
+        result[key] = min(int(result[key] or 4096), 4096)
+    if not keys:
+        result['max_tokens'] = 4096
+    return result
+
+
+def forbidden_tool(calls, *, allow_intent=False):
     allowed = {'desktop_preview', 'drive_preview', 'browser_exec', 'todo_list', 'clarify', 'focus_pane', 'annotate_preview', 'tool_search', 'tool_describe'}
+    if allow_intent:
+        allowed.add('browser_target_intent')
     for call in calls or []:
         function = call.get('function', {})
         name = function.get('name', '')
@@ -167,27 +194,33 @@ class Handler(BaseHTTPRequestHandler):
                 count = STATE['counts'].get(case, 0)
                 if STATE['failures']:
                     return self.reply(400, {'error': 'Evaluation composition/scope stopped'})
-                if not case or count >= STATE['budget_per_case']:
+                if not case or count >= STATE['budget_per_case'] or len(STATE['calls']) >= STATE['budget_total']:
                     return self.reply(429, {'error': 'frozen trial call budget exhausted'})
-                names = [tool.get('function', {}).get('name') for tool in body.get('tools', [])]
-                system = '\n'.join(str(m.get('content', '')) for m in body.get('messages', []) if m.get('role') in ('system', 'developer'))
-                catalog = json.dumps(body.get('tools', []))
-                direct = {'desktop_preview', 'drive_preview'}.issubset(names)
-                deferred = {'tool_search', 'tool_describe', 'tool_call'}.issubset(names) and all(n in catalog for n in ('desktop_preview', 'drive_preview'))
-                STATE['composition'].append({'case': case, 'at': stamp(), 'tools': names, 'access_route': 'DIRECT' if direct else 'DEFERRED' if deferred else 'UNPROVEN', 'system_prompt_sha256': digest(system), 'browser_hint_sha256': digest(HINT), 'hint_loaded': HINT in system})
-                if not (direct or deferred) or 'browser_exec' not in names or HINT not in system:
-                    STATE['failures'].append({'case': case, 'type': 'missing_effective_prompt_or_tools', 'at': stamp(), 'available_tools': names, 'hint_loaded': HINT in system})
+                composition = request_composition(body)
+                STATE['composition'].append({'case': case, 'at': stamp(), **composition})
+                if not composition['valid']:
+                    STATE['failures'].append({'case': case, 'type': 'missing_effective_prompt_or_tools', 'at': stamp(), **composition})
                     save()
                     return self.reply(503, {'error': 'Evaluation composition missing required effective browser prompt/tools'})
                 if os.environ.get('SEMANTIER_EVAL_PREFLIGHT_ONLY') == '1':
                     STATE['preflight_requests'] += 1
+                    if composition['access_route'] == 'NATIVE_TARGET_INTENT':
+                        # Unscored apparatus check only: reach native preparation and the
+                        # main Agent request without spending a real inference call.
+                        STATE['preflight_native_fixture_replies'] = STATE.get('preflight_native_fixture_replies', 0) + 1
+                        save()
+                        return self.reply(200, {'model': 'synthetic-preflight-not-qwen', 'choices': [{'index': 0, 'finish_reason': 'tool_calls', 'message': {
+                            'role': 'assistant', 'content': None, 'tool_calls': [{'id': 'unscored-intent', 'type': 'function', 'function': {
+                                'name': 'browser_target_intent', 'arguments': json.dumps({'target_kind': 'VISIBLE_PANE', 'operation': 'existing'})
+                            }}]
+                        }}], 'usage': {'prompt_tokens': 0, 'completion_tokens': 0, 'total_tokens': 0}})
                     save()
                     return self.reply(503, {'error': 'Intentional unscored no-inference submission preflight'})
-                body['max_tokens'] = 4096
+                body = capped_output(body)
                 if body.get('stream'):
                     body['stream_options'] = {**body.get('stream_options', {}), 'include_usage': True}
                 STATE['counts'][case] = count + 1
-                record = {'case': case, 'index': count + 1, 'at': stamp(), 'system_prompt_sha256': digest(system), 'browser_hint_sha256': digest(HINT), 'request': scrub(body), 'request_sha256': digest(json.dumps(body, sort_keys=True))}
+                record = {'case': case, 'index': count + 1, 'at': stamp(), 'system_prompt_sha256': composition['system_prompt_sha256'], 'browser_hint_sha256': digest(HINT), 'request_kind': composition['access_route'], 'request': scrub(body), 'request_sha256': digest(json.dumps(body, sort_keys=True))}
                 STATE['calls'].append(record)
                 save()
         target = BASE + ('/chat/completions' if body is not None else '/models')
@@ -201,7 +234,7 @@ class Handler(BaseHTTPRequestHandler):
             if record is not None:
                 with LOCK:
                     record.update(response=scrub(normalize_response(raw, content_type)), duration_ms=round((time.monotonic() - start) * 1000), http_status=code)
-                    violation = forbidden_tool(record['response'].get('message', {}).get('tool_calls'))
+                    violation = forbidden_tool(record['response'].get('message', {}).get('tool_calls'), allow_intent=record['request_kind'] == 'NATIVE_TARGET_INTENT')
                     if violation:
                         record['harness_delivery_blocked'] = violation
                         STATE['failures'].append({'case': record['case'], 'type': 'forbidden_action_attempt', 'reason': violation, 'at': stamp()})

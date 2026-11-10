@@ -43,6 +43,7 @@ import {
 } from './preview-drive'
 import { activePreviewInput, type PreviewInputHandle } from './preview-input'
 import { activePreviewNav, type PreviewNavHandle } from './preview-nav'
+import { bindingStatus, type PreviewBinding } from './preview-reader'
 import { activePreviewScriptRunner, type PreviewScriptRunner } from './preview-script-runner'
 
 /** Verbs the pane owns; a guest page cannot drive its own history. */
@@ -764,10 +765,18 @@ async function driveScroll(
  *  see. `kind` is a bare string: the verb arrives off the wire, and the
  *  history ones never reach the in-page engine. */
 export async function actOnActivePreview(
-  action: Omit<PreviewActAction, 'kind'> & { kind: string },
+  action: Omit<PreviewActAction, 'kind'> & { kind: string; expectedBinding?: PreviewBinding },
   signal?: AbortSignal,
   owner?: PreviewOwner
 ): Promise<PreviewActResult> {
+  const assertBoundPage = () => {
+    if (action.expectedBinding && signal?.aborted) { throw new Error('STALE_TARGET') }
+    const code = action.expectedBinding ? bindingStatus(action.expectedBinding,false,owner) : null
+
+    if (code) { throw new Error(code) }
+  }
+
+  assertBoundPage()
   const nav = NAV_ACTIONS.find(verb => verb === action.kind)
 
   if (nav) {
@@ -784,7 +793,11 @@ export async function actOnActivePreview(
     return { acted: nav, note: 'Page is loading — call elements to see what is on it.', success: true }
   }
 
-  const run = activePreviewScriptRunner(owner)
+  const rawRun = activePreviewScriptRunner(owner)
+
+  const run = rawRun && action.expectedBinding ? (code: string) => { assertBoundPage();
+
+ return rawRun(code) } : rawRun
 
   if (!run) {
     return { error: NOTHING_OPEN, success: false }
@@ -813,7 +826,16 @@ export async function actOnActivePreview(
     return trip.kind === 'answered' ? trip.result : { acted: typed.kind, note: NAVIGATED, success: true }
   }
 
-  const input = activePreviewInput(owner)
+  const rawInput = activePreviewInput(owner)
+
+  const input: PreviewInputHandle | null = rawInput && action.expectedBinding ? {
+    focus: () => { assertBoundPage(); rawInput.focus() },
+    send: event => { assertBoundPage(); rawInput.send(event) }
+  } : rawInput
+
+  if (action.expectedBinding && !input && typed.kind !== 'elements') {
+    return {success:false,error:'PANE_UNAVAILABLE'}
+  }
 
   if (input && DRIVEN.indexOf(typed.kind) !== -1) {
     return driveAction(run, input, typed, signal)

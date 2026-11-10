@@ -426,6 +426,12 @@ def _unwrap_tool_search_call(
                 _ts.out_of_scope_reason(underlying)
                 or f"'{underlying}' is not available in this session. Use tool_search to find tools you can call."
             )
+        from agent.desktop_browser_target import state_for_agent
+        browser_turn = state_for_agent(agent)
+        if browser_turn is not None:
+            underlying, underlying_args = browser_turn.canonical_call(underlying, underlying_args)
+            if underlying not in _tool_search_scoped_names(agent):
+                return function_name, function_args, _ts.out_of_scope_reason(underlying) or 'TARGET_MISMATCH'
         # Validate before unwrapping: the generic bridge hides the concrete
         # parameter schema from provider-native tool-call validation.
         scope_block = _ts.validate_deferred_call_args(underlying, underlying_args)
@@ -463,6 +469,10 @@ def _parse_tool_call(agent, tool_call, *, flatten_probe: bool = False) -> _Parse
     args, parse_error = _parse_tool_arguments(tool_call.function.arguments)
     scope_block = None
     if parse_error is None:
+        from agent.desktop_browser_target import state_for_agent
+        browser_turn = state_for_agent(agent)
+        if browser_turn is not None:
+            name, args = browser_turn.canonical_call(name, args)
         name, args, scope_block = _unwrap_tool_search_call(agent, name, args, flatten_probe=flatten_probe)
     return _ParsedCall(tool_call, name, args, [], parse_error, scope_block)
 
@@ -715,6 +725,14 @@ def _dispatch_authorized_once(
         block_message, ref.args = resolve() if authorization_gate is None else authorization_gate.run(resolve)
         state.args = ref.args
     block_body = None if block_message is None else {"error": block_message}
+    if block_body is None:
+        from agent.desktop_browser_target import state_for_agent
+        browser_turn = state_for_agent(agent)
+        if browser_turn is not None:
+            block_body = browser_turn.guard(ref.name, ref.args)
+            if block_body is not None:
+                block_error_type = 'browser_target_block'
+
 
     # Checked once, after plugin modify hooks (which may replace arguments) and
     # before guardrails or real dispatch: a copied compression marker in an

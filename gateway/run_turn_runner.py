@@ -932,7 +932,12 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
             captured = execution_result.get()
             before = (getattr(agent, 'session_prompt_tokens', 0) or 0,
                       getattr(agent, 'session_completion_tokens', 0) or 0)
-            with notification_turn(agent, muted=ctx.mute_notification_reply, session_id=ctx.session_id or ""):
+            from agent.desktop_browser_target import state_for_agent, browser_turn_scope
+            browser_turn=state_for_agent(agent)
+            if browser_turn is not None and _accepts_keyword(agent.run_conversation,'prelude'):
+                from agent.desktop_browser_target import prelude
+                kwargs['prelude']=prelude(browser_turn,agent,api_message,agent_history)
+            with notification_turn(agent, muted=ctx.mute_notification_reply, session_id=ctx.session_id or ""), browser_turn_scope(browser_turn):
                 result = agent.run_conversation(api_message, **kwargs)
             if captured is not None:
                 incoming = max(0, (getattr(agent, 'session_prompt_tokens', 0) or 0) - before[0])

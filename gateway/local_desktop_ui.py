@@ -38,7 +38,8 @@ logger = logging.getLogger(__name__)
 
 # Agent attributes ``wire`` installs for one local-viewer turn (restored by ``local_viewer_events``).
 CALLBACK_ATTRS = ("read_terminal_callback", "read_preview_callback", "drive_preview_callback",
-                  "read_window_below_callback", "theme_callback", "tour_callback", "setup_beat_callback")
+                  "read_window_below_callback", "theme_callback", "tour_callback", "setup_beat_callback",
+                  "open_preview_callback", "close_preview_callback", "_desktop_browser_turn")
 
 # main: tui_gateway/agent_callbacks.py ``_read_block`` budgets and tui_gateway/server.py's preview.act ladder.
 _TERMINAL_READ_TIMEOUT_S = 30
@@ -268,6 +269,20 @@ def wire(turn, agent):
     agent.theme_callback = lambda payload: _theme(turn, agent, dict(payload or {}))
     agent.tour_callback = lambda payload: _tour(turn, agent, dict(payload or {}))
     agent.setup_beat_callback = lambda payload: _setup_beat(turn, agent, dict(payload or {}))
+    if getattr(agent,'platform',None)=='desktop':
+        from agent.desktop_browser_target import BrowserTurnState
+        from gateway.desktop_browser_turn import read_live, open_live, close_live, act_live
+        state=BrowserTurnState(session_id=owner[1],generation=owner[2],turn_id=str(getattr(turn._ctx,'inbound_message_id','') or key),live_check=lambda:_live_turn(turn,agent))
+        state.capture_context=lambda:_ask(turn,agent,'preview.context',{},3)
+        state.language=(getattr(turn._ctx,'user_config',None) or {}).get('language','en')
+        raw_read=lambda params:_ask(turn,agent,'preview.read',params,_PREVIEW_READ_TIMEOUT_S)
+        raw_open=lambda params:_ask(turn,agent,'preview.open',params,15)
+        raw_act=lambda params:_preview_action(turn,agent,params)
+        agent._desktop_browser_turn=state
+        agent.read_preview_callback=lambda start=None,count=None:read_live(state,raw_read,start=start,count=count,refresh=state.preflight_complete)
+        agent.open_preview_callback=lambda args:open_live(state,raw_open,args)
+        agent.close_preview_callback=lambda args:close_live(state,raw_read,lambda params:_ask(turn,agent,'preview.close',params,10),args)
+        agent.drive_preview_callback=lambda payload:act_live(state,raw_read,raw_act,dict(payload or {}))
     return key, publish
 
 

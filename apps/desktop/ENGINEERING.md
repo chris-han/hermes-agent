@@ -161,3 +161,12 @@ disagree about whether the notice was shown. Sign-in goes through the existing
 connector transfer and reports `reason`, `account_email` and `model` on completion; every entry
 point (Billing, status chip, ready screen) opens the one free-tier sign-in dialog. Never branch on
 provider display names: the picker row carries `free_tier_row`, status cards carry `free_tier`.
+
+
+## Desktop browser targets and live access
+
+A Desktop turn may carry an ephemeral target binding owned by the gateway/Agent, separate from the configured browser executable or provider. A bounded structured intent request uses the same configured, interruptible model transport and attribution as the conversation. It proposes a target kind; it cannot supply renderer owner identifiers or override an explicit native binding. Ambiguous intent asks one clarification. Browser instructions and recovery copy are loaded from the Semantier-managed prompt assets.
+
+The existing session-owned renderer request bridge captures the selected window/tab/guest/navigation epoch before intent inference. Visible-page turns use native preparation through normal persisted tool rounds: open or live read, then element inventory. Deferred pane tools use the existing scoped tool_call route; native preparation does not widen the session catalog. Missing, stale or foreign live access ends preparation with a typed recovery response before a main-model answer can reuse old page text. Independent browsing retains browser_exec and its configured isolated backend.
+
+Direct/deferred dispatch shares the target guard. Pane input revalidates the owner, guest, epoch and cancellation lease; navigation invalidates old element references. Live DOM extraction checks identity before and after the asynchronous read. A subsequent explicit inventory may refresh the same owned guest, but initial preparation cannot silently adopt a different epoch. The current turn does not grant another session/window access or enable real-profile cookie copying. These checks cover native browser tools and their bridge; they are not a new OS sandbox for arbitrary terminal programs.

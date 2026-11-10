@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 
-import { accessRoute, declineProfileConsent, scoreTrial, unwrapTools } from '../e2e/autonomous-evaluator.ts'
+import { accessRoute, declineProfileConsent, scoreTrial, turnEvidence, unwrapTools } from '../e2e/autonomous-evaluator.ts'
 const direct = [{function:{name:'drive_preview',arguments:'{"action":"click"}'}}]
 const deferred = [{function:{name:'tool_search',arguments:'{"query":"visible page"}'}},{function:{name:'tool_call',arguments:JSON.stringify({name:'drive_preview',arguments:{action:'click'}})}}]
 const base = {requestReached:true,inferenceCalls:2,calls:direct,target:'desktop',ownerCorrect:true,operationSuccess:true,effect:true}
@@ -43,4 +43,22 @@ test('background maintenance is not a browser trial final action',()=>{
  const s=scoreTrial({...base,target:'independent',calls})
  assert.equal(s.routing,true)
  assert.equal(unwrapTools(calls)[1].name,'skills_list')
+})
+
+
+test('native execution receipts are separate from model proposals',()=>{
+ const messages=[{role:'user',parts:[{type:'text',text:'prior'}]},{role:'assistant',parts:[{type:'tool-call',toolName:'browser_exec',args:{}}]},
+ {role:'user',parts:[{type:'text',text:'current'}]},{role:'assistant',parts:[{type:'tool-call',toolCallId:'native-read',toolName:'tool_call',args:{name:'desktop_preview',arguments:{action:'read'}},result:{success:false,code:'PANE_UNAVAILABLE'}},{type:'reasoning',text:'private chain'},{type:'text',text:'Cannot access that page live.'}]}]
+ const result=turnEvidence(messages,'current')
+ assert.equal(result.requestReached,true)
+ assert.equal(result.calls.length,1)
+ assert.equal(unwrapTools(result.calls)[0].name,'desktop_preview')
+ assert.equal(result.finalResponse,'Cannot access that page live.')
+ assert.ok(!JSON.stringify(result).includes('private chain'))
+ assert.equal(turnEvidence(messages,'never submitted').requestReached,false)
+})
+test('native routing does not imply a verified effect',()=>{
+ const calls=[{name:'desktop_preview',arguments:{action:'open'}}]
+ assert.equal(scoreTrial({...base,calls:[],nativeCalls:calls,effect:false}).routing,true)
+ assert.equal(scoreTrial({...base,calls:[],nativeCalls:calls,effect:false}).workflow,false)
 })

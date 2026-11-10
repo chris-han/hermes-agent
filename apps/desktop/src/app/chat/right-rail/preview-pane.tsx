@@ -91,6 +91,7 @@ type PreviewWebview = HTMLElement & {
   goForward?: () => void
   inspectElement?: (x: number, y: number) => void
   isDevToolsOpened?: () => boolean
+  isLoading?: () => boolean
   loadURL?: (url: string) => Promise<void>
   openDevTools?: () => void
   paste?: () => void
@@ -276,6 +277,7 @@ export function PreviewPane({
   const lastRestartEventRef = useRef('')
   const previewContentRef = useRef<HTMLDivElement | null>(null)
   const webviewRef = useRef<PreviewWebview | null>(null)
+  const browserPageEpochRef = useRef(0)
   const noteGuestReady = usePreviewGuestOffscreen(webviewRef, tabId)
   const previewServerRestart = useStore($previewServerRestart)
   const consoleHeight = useStore(consoleState.$height)
@@ -855,7 +857,7 @@ export function PreviewPane({
         text: typeof text === 'string' ? text : '',
         ...guestPage(webview)
       }
-    })
+    }, () => ({guest_id:webviewRef.current?.getWebContentsId?.() ?? -1,page_epoch:browserPageEpochRef.current,loading:webviewRef.current?.isLoading?.() ?? true}))
   }, [isWebPreview, tabId])
 
   // Publish the SCRIPT runner for this tab: the one channel into the guest
@@ -1206,6 +1208,7 @@ export function PreviewPane({
     }
 
     const onNavigate = (event: Event) => {
+      browserPageEpochRef.current++
       const detail = event as Event & { url?: string }
 
       if (detail.url) {
@@ -1356,6 +1359,12 @@ export function PreviewPane({
     webview.addEventListener('devtools-closed', onDevToolsClosed)
     webview.addEventListener('devtools-opened', onDevToolsOpened)
     webview.addEventListener('did-fail-load', onFail)
+
+    const invalidateBrowserEpoch = (event: Event) => {
+      if ((event as Event & {isMainFrame?:boolean}).isMainFrame !== false) { browserPageEpochRef.current++ }
+    }
+
+    webview.addEventListener('did-start-navigation', invalidateBrowserEpoch)
     webview.addEventListener('did-navigate', onNavigate)
     webview.addEventListener('did-navigate-in-page', onNavigate)
     webview.addEventListener('did-start-loading', onStart)
@@ -1377,6 +1386,7 @@ export function PreviewPane({
       webview.removeEventListener('devtools-closed', onDevToolsClosed)
       webview.removeEventListener('devtools-opened', onDevToolsOpened)
       webview.removeEventListener('did-fail-load', onFail)
+      webview.removeEventListener('did-start-navigation', invalidateBrowserEpoch)
       webview.removeEventListener('did-navigate', onNavigate)
       webview.removeEventListener('did-navigate-in-page', onNavigate)
       webview.removeEventListener('did-start-loading', onStart)

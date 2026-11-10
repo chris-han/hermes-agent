@@ -14,12 +14,25 @@
  */
 
 import { type PreviewTab, previewTabsFor } from '@/store/preview'
-import type { PreviewOwner } from '@/store/preview-ownership'
+import { ownerIdentity, type PreviewOwner } from '@/store/preview-ownership'
 
 import { resolveActivePreviewTab } from './preview-active-tab'
 import { nudgeOverlay } from './preview-nudge'
 
+export interface PreviewBinding {
+  session_id: string
+  window_id: string
+  tab_id: string
+  guest_id: number
+  page_epoch: number
+}
+const previewWindowId = crypto.randomUUID()
 export interface PreviewReadOptions {
+  require_live?: boolean
+  binding_only?: boolean
+  refresh_binding?: boolean
+  expected_binding?: PreviewBinding
+
   /** Characters to return from `start` (capped at PREVIEW_READ_MAX_CHARS). */
   count?: number
   /** 0-indexed character offset into the page text. */
@@ -34,6 +47,9 @@ export interface PreviewReadTabSummary {
 }
 
 export interface PreviewReadResult {
+  binding?: PreviewBinding
+  success?: boolean
+  code?: string
   /** Set when more than one preview is mounted — the tab this read used. */
   active_tab_id?: string
   end: number
@@ -63,14 +79,39 @@ type PageReader = () => Promise<PreviewPage>
 export const PREVIEW_READ_MAX_CHARS = 24_000
 
 const readers = new Map<string, PageReader>()
+const identities = new Map<string, () => { guest_id: number; page_epoch: number; loading?: boolean }>()
+
+export function activePreviewBinding(owner?: PreviewOwner, includeLoading = false): PreviewBinding | null {
+  const tab=resolveActivePreviewTab(previewTabsFor(owner))
+
+  if(!tab){return null}
+  let identity: {guest_id:number;page_epoch:number;loading?:boolean} | undefined
+
+  try {identity=identities.get(tab.id)?.()} catch {return null}
+
+  if(!identity || identity.guest_id<0 || (!includeLoading && identity.loading)){return null}
+  const who=ownerIdentity(owner ?? null)
+
+  return {session_id:who.runtimeId ?? who.sessionId ?? '',window_id:previewWindowId,tab_id:tab.id,guest_id:identity.guest_id,page_epoch:identity.page_epoch}
+}
+
+export function bindingStatus(expected: PreviewBinding, allowEpochRefresh = false, owner?: PreviewOwner, allowLoading = false): 'WRONG_OWNER' | 'STALE_TARGET' | null {
+  if (expected.window_id !== previewWindowId || !previewTabsFor(owner).some(tab=>tab.id===expected.tab_id)) { return 'WRONG_OWNER' }
+  const live = identities.get(expected.tab_id)?.()
+
+  return !live || (!allowLoading && live.loading) || live.guest_id !== expected.guest_id || (!allowEpochRefresh && live.page_epoch !== expected.page_epoch) ? 'STALE_TARGET' : null
+}
 
 /** Register a live preview's page reader; returns an idempotent unregister. */
-export function registerPreviewPageReader(tabId: string, reader: PageReader): () => void {
+export function registerPreviewPageReader(tabId: string, reader: PageReader, identity?: () => {guest_id:number;page_epoch:number;loading?:boolean}): () => void {
   readers.set(tabId, reader)
+
+  if (identity) { identities.set(tabId, identity) }
 
   return () => {
     if (readers.get(tabId) === reader) {
       readers.delete(tabId)
+      identities.delete(tabId)
     }
   }
 }
@@ -118,20 +159,47 @@ export async function readActivePreview(
   sessionId?: PreviewOwner
 ): Promise<null | PreviewReadResult> {
   const tabs = previewTabsFor(sessionId)
-  const tab = resolveActivePreviewTab(tabs)
+  const tab = opts.expected_binding ? tabs.find(tab => tab.id === opts.expected_binding!.tab_id) : resolveActivePreviewTab(tabs)
 
   if (!tab) {
     return null
   }
 
   const { target } = tab
+
+  if (opts.binding_only) {
+    const binding=activePreviewBinding(sessionId,true)
+
+    if(!binding || binding.tab_id!==tab.id){throw new Error('PANE_UNAVAILABLE')}
+
+    return windowText({binding,success:true,kind:target.kind,title:target.label,url:target.url},'',opts)
+  }
+
+
+  if (opts.expected_binding && bindingStatus(opts.expected_binding,opts.refresh_binding,sessionId)) {
+    throw new Error(bindingStatus(opts.expected_binding,opts.refresh_binding,sessionId)!)
+  }
+
   const reader = readers.get(tab.id)
   const multi = tabs.length > 1
   const meta = zoneMeta(tab, tabs)
 
   if (reader) {
     try {
+      const before = identities.get(tab.id)?.()
+
+      if (opts.require_live && (!before || before.guest_id < 0 || before.loading)) { throw new Error('PANE_UNAVAILABLE') }
       const page = await reader()
+      const identity = identities.get(tab.id)?.()
+
+      if (opts.require_live && before && identity &&
+        (before.guest_id !== identity.guest_id || before.page_epoch !== identity.page_epoch)) { throw new Error('STALE_TARGET') }
+
+      if (opts.require_live && (!identity || identity.guest_id < 0 || identity.loading)) { throw new Error('PANE_UNAVAILABLE') }
+      const who = ownerIdentity(sessionId ?? null)
+      const binding = identity ? {session_id:who.runtimeId ?? who.sessionId ?? '',window_id:previewWindowId,tab_id:tab.id,guest_id:identity.guest_id,page_epoch:identity.page_epoch} : undefined
+
+      if (opts.expected_binding && bindingStatus(opts.expected_binding,opts.refresh_binding,sessionId)) { throw new Error(bindingStatus(opts.expected_binding,opts.refresh_binding,sessionId)!) }
 
       // Say it on the page. Reading is by far the cheapest thing the agent
       // does — a few hundredths of a second against a model round trip either
@@ -143,6 +211,7 @@ export async function readActivePreview(
       return windowText(
         {
           ...meta,
+          ...(opts.require_live ? {binding,success:true} : {}),
           kind: target.kind,
           note: withMultiNote(undefined, multi),
           path: target.path,
@@ -152,11 +221,14 @@ export async function readActivePreview(
         page.text,
         opts
       )
-    } catch {
+    } catch (error) {
+      if (opts.require_live) { throw error }
       // Webview not ready (still booting / just navigated) — fall through to
       // the identity answer, whose note says to retry.
     }
   }
+
+  if (opts.require_live) { throw new Error('PANE_UNAVAILABLE') }
 
   // No live webview behind the tab (a file peek, an artifact, or a page still
   // booting): answer with the tab's identity so the agent knows what's on

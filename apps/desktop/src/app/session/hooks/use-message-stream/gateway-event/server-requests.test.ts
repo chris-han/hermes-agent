@@ -380,6 +380,17 @@ describe('preview pop-out forwarding', () => {
     expect(requestPopoutPreviewAct).not.toHaveBeenCalled()
   })
 
+  it('preserves a typed stale-target failure for a bound act', async () => {
+    requestPopoutPreviewAct.mockRejectedValueOnce(new Error('STALE_TARGET'))
+
+    const { respond } = deliver('preview.act', { action: 'click', session_id: 'session-a',
+      expected_binding: { session_id: 'session-a', window_id: 'w', tab_id: 'tab', guest_id: 1, page_epoch: 1 }
+    }, 'session-a')
+
+    await vi.waitFor(() => expect(respond).toHaveBeenCalledTimes(1), { timeout: 30_000 })
+    expect(JSON.parse(respond.mock.calls[0][0].value)).toMatchObject({ success: false, code: 'STALE_TARGET' })
+  })
+
   it('reads from the pop-out when the chat window has no live surface', async () => {
     requestPopoutPreviewRead.mockResolvedValue({ kind: 'url', text: 'page' })
 

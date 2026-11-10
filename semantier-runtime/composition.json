@@ -147,6 +147,22 @@
       "sha256": "c2b82e89dc888b3b592495d64c59d02b5af907852fd0b5c7c262af332a4b5e07"
     },
     {
+      "path": "docs/workshop/materials/student-hands-on-morning-zh.md",
+      "sha256": "3ad224c2fe3d9c6d1eda4d1a816cff263bbfaebbbd1554a2a65afe7d936607f3"
+    },
+    {
+      "path": "docs/workshop/materials/student-hands-on-morning-zh.pdf",
+      "sha256": "e9eb3e798c50735dc2f3753ebe39ed642a19315925f7c297f36cb9903e4ed72a"
+    },
+    {
+      "path": "docs/workshop/materials/student-records-sample-zh.md",
+      "sha256": "3e1658d84872185ae1462d325cc4ee87ae97166b0b89d95416db87d684e54ea5"
+    },
+    {
+      "path": "docs/workshop/materials/student-records-sample-zh.pdf",
+      "sha256": "a20b76016b5d83eeb5f33750743bb49153f169a4c8c9d03353bc46848531792e"
+    },
+    {
       "path": "docs/workshop/materials/student/finance-briefing-sample-zh.md",
       "sha256": "d9e421d6d1ab4ee9c17d0a0ea91a81c3e17b188df81d055da459ca2599daea21"
     },
@@ -177,22 +193,6 @@
     {
       "path": "docs/workshop/materials/student/student-records-sample-zh.pdf",
       "sha256": "aea96d8ade10af2c19a486115ebbf4a1ee04a929f42eecb004685901131a636e"
-    },
-    {
-      "path": "docs/workshop/materials/student-hands-on-morning-zh.md",
-      "sha256": "3ad224c2fe3d9c6d1eda4d1a816cff263bbfaebbbd1554a2a65afe7d936607f3"
-    },
-    {
-      "path": "docs/workshop/materials/student-hands-on-morning-zh.pdf",
-      "sha256": "e9eb3e798c50735dc2f3753ebe39ed642a19315925f7c297f36cb9903e4ed72a"
-    },
-    {
-      "path": "docs/workshop/materials/student-records-sample-zh.md",
-      "sha256": "3e1658d84872185ae1462d325cc4ee87ae97166b0b89d95416db87d684e54ea5"
-    },
-    {
-      "path": "docs/workshop/materials/student-records-sample-zh.pdf",
-      "sha256": "a20b76016b5d83eeb5f33750743bb49153f169a4c8c9d03353bc46848531792e"
     },
     {
       "path": "docs/workshop/materials/suspected-classified-sample-zh.md",
@@ -3427,6 +3427,16 @@
       "sha256": "15cb948e968b5f1086eb6703e4b90d85687dc65ecca24b192f6e637392ff5bed"
     },
     {
+      "path": "src/prompts/agents/DESKTOP_BROWSER_CONTEXT.md",
+      "sha256": "bd6946d743ce290301349a39265a93121418230b4ed583e7f43b3011adb7351d",
+      "source_commit": "ca749753ec6515a48ace40b3a8f7e47896346c80"
+    },
+    {
+      "path": "src/prompts/agents/DESKTOP_BROWSER_TARGET_INTENT.json",
+      "sha256": "ef94e5160e264e74c7edbc14b09fdeb4e50ee7640987aa58d6f41c38563c4e4e",
+      "source_commit": "ca749753ec6515a48ace40b3a8f7e47896346c80"
+    },
+    {
       "path": "src/prompts/agents/DIGITAL_CFO_METRIC_CONTEXT.md",
       "sha256": "68933fae63bfb7749e4738757babf73d5f8e88a69267a4037e6761ce8d651304"
     },
@@ -3453,11 +3463,6 @@
     {
       "path": "src/prompts/agents/SHORT_AFFIRMATIVE_FOLLOWUP_CONTEXT.md",
       "sha256": "457f5fe08d3e81a4e1238b5710448842dd3073ce0d2c64205b2b81d7be9e5b49"
-    },
-    {
-      "path": "src/prompts/agents/DESKTOP_BROWSER_CONTEXT.md",
-      "sha256": "34061d0e091efee892d7f9ed78ba3341494483a8fe34449de77c62e1b25bdb00",
-      "source_commit": "1ca3e98375beec322b4b5e93e98c551782519b47"
     },
     {
       "path": "src/prompts/agents/SOUL.md",

@@ -693,6 +693,10 @@ def stop_harness_daemons() -> None:
 def browser_exec(code: str, session: str = "", timeout_s: int = _DEFAULT_TIMEOUT_S,
                  task_id: Optional[str] = None, local: bool = False):
     """Run Python code through the browser-use CLI, and return its output"""
+    from agent.desktop_browser_target import guard_browser_call
+    bound_error = guard_browser_call('browser_exec', {})
+    if bound_error is not None:
+        return json.dumps(bound_error)
     from agent.redact import redact_sensitive_text
     from tools.registry import tool_error, tool_result
     if not code or not code.strip():

@@ -75,7 +75,7 @@ function tabVisibleTo(
  *  (no profile) is a request from the chat on screen: the viewed bucket's
  *  pins. */
 export type PreviewOwner =
-  null | string | { profile?: null | string; runtimeId: null | string; sessionId: null | string }
+  null | string | { profile?: null | string; runtimeId: null | string; sessionId: null | string; tabId?: string }
 
 export interface OwnerIdentity {
   /** Normalized profile whose pins the owner shares; null = the view's. */

@@ -5,7 +5,7 @@ import {
   requestPopoutPreviewAct,
   requestPopoutPreviewRead
 } from '@/app/chat/right-rail/preview-popout-bridge'
-import { readActivePreview } from '@/app/chat/right-rail/preview-reader'
+import { activePreviewBinding, bindingStatus, type PreviewBinding, readActivePreview } from '@/app/chat/right-rail/preview-reader'
 import {
   abortPreviewTyping,
   releasePreviewTyping,
@@ -21,6 +21,7 @@ import { type AppearanceValues, applyAppearance, THEME_MODES } from '@/store/app
 import { type ClarifyRequest, normalizeQuestions, setClarifyRequest } from '@/store/clarify'
 import type { ScopedServerRequest } from '@/store/gateway'
 import { dispatchNativeNotification } from '@/store/native-notifications'
+import { closeRightRailTab, openPreview, previewTabsFor } from '@/store/preview'
 import type { PreviewOwner } from '@/store/preview-ownership'
 import {
   receiveApprovalRequest,
@@ -110,6 +111,9 @@ type PreviewSessionRoute = 'ignore' | 'retry' | 'run'
 const WINDOW_OWNED_REQUESTS = new Set([
   'preview.act',
   'preview.read',
+  'preview.open',
+  'preview.close',
+  'preview.context',
   'terminal.read',
   'theme.apply',
   'window.read',
@@ -519,14 +523,140 @@ const terminalRead: Handler = ({ request }) => {
   answerValue(request, readActiveTerminal({ count: num(request.params.count), start: num(request.params.start) }))
 }
 
+const boundOwnerFor = (sessionId: string, expected?: PreviewBinding): PreviewOwner | undefined => {
+  const owner = previewOwnerFor(sessionId)
+
+  return expected?.tab_id && owner && typeof owner === 'object' ? { ...owner, tabId: expected.tab_id } : owner
+}
+
+const previewFailure = (request: ScopedServerRequest, error: unknown) => {
+  const message = error instanceof Error ? error.message : ''
+  const code = ['WRONG_OWNER', 'STALE_TARGET', 'PANE_UNAVAILABLE'].includes(message) ? message : 'PANE_UNAVAILABLE'
+  answerValue(request, { success: false, code, error: code })
+}
+
+const previewRequestIsCurrent = (deps: ServerRequestContext['deps'], sessionId: string) =>
+  !deps.sessionInterrupted(sessionId) && requestNamesActiveSession({
+    activeSessionId: deps.activeSessionIdRef.current,
+    sessionId,
+    storedIdForRuntimeId: id => deps.sessionStateByRuntimeIdRef.current.get(id)?.storedSessionId ?? undefined
+  })
+
+const previewContext: Handler = ({ request, sessionId }) => {
+  const owner = previewOwnerFor(sessionId)
+  const binding = activePreviewBinding(owner, true)
+
+  if (binding) {
+    answerValue(request, { success: true, binding, live_verified: false, selection_provenance: 'renderer_selection' })
+
+    return
+  }
+
+  void requestPopoutPreviewRead({ binding_only: true }, owner).then(result => {
+    answerValue(request, result?.binding
+      ? { success: true, binding: result.binding, live_verified: false, selection_provenance: 'renderer_selection' }
+      : { success: false, code: 'PANE_UNAVAILABLE', error: 'PANE_UNAVAILABLE' })
+  }).catch(error => previewFailure(request, error))
+}
+
+const previewOpen: Handler = ({ deps, request, sessionId, isActiveSession }) => {
+  const expected = request.params.expected_binding as PreviewBinding | undefined
+  const owner = boundOwnerFor(sessionId, expected)
+  const url = str(request.params.url)
+
+  if (!isActiveSession || !sessionId || !owner || typeof owner !== 'object' || !url) {
+    previewFailure(request, new Error('WRONG_OWNER'))
+
+    return
+  }
+
+  const signal = trackPreviewTyping(request.id)
+  const alreadyRequested = previewTabsFor(owner).some(tab => tab.target.url === url)
+  void (async () => {
+    const code = expected ? bindingStatus(expected, false, owner, true) : null
+
+    if (code) {
+      throw new Error(code)
+    }
+
+    if (signal.aborted || !previewRequestIsCurrent(deps, sessionId)) {
+      throw new Error('STALE_TARGET')
+    }
+
+    const initialBinding = activePreviewBinding(owner, true)
+
+    const tabId = openPreview(
+      { kind: 'url', url, label: str(request.params.label), source: 'agent' },
+      owner.sessionId, owner.runtimeId, owner.profile, expected?.tab_id
+    )
+
+    if (!tabId) {
+      throw new Error('WRONG_OWNER')
+    }
+
+    const deadline = Date.now() + 8000
+
+    while (Date.now() < deadline) {
+      if (signal.aborted || !previewRequestIsCurrent(deps, sessionId)) {
+        throw new Error('STALE_TARGET')
+      }
+
+      try {
+        const result = await readActivePreview({ require_live: true }, { ...owner, tabId })
+
+        const changed = !initialBinding || result?.binding?.guest_id !== initialBinding.guest_id ||
+          result?.binding?.page_epoch !== initialBinding.page_epoch
+
+        if (result?.binding && !result.url.startsWith('about:') && (alreadyRequested || changed)) {
+          answerValue(request, result)
+
+          return
+        }
+      } catch {
+        // The selected owned guest may still be mounting or navigating.
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+
+    throw new Error('PANE_UNAVAILABLE')
+  })().catch(error => previewFailure(request, error)).finally(() => releasePreviewTyping(request.id, signal))
+}
+
+const previewClose: Handler = ({ deps, request, sessionId, isActiveSession }) => {
+  const expected = request.params.expected_binding as PreviewBinding | undefined
+  const owner = boundOwnerFor(sessionId, expected)
+
+  if (!isActiveSession || !expected || !hasLivePreviewSurface(owner)) {
+    previewFailure(request, new Error('PANE_UNAVAILABLE'))
+
+    return
+  }
+
+  const signal = trackPreviewTyping(request.id)
+  void readActivePreview({ require_live: true, expected_binding: expected }, owner).then(result => {
+    if (signal.aborted || !previewRequestIsCurrent(deps, sessionId)) {
+      throw new Error('STALE_TARGET')
+    }
+
+    if (!result?.binding || result.binding.tab_id !== expected.tab_id) {
+      throw new Error('WRONG_OWNER')
+    }
+
+    closeRightRailTab(expected.tab_id)
+    answerValue(request, { success: true, closed: true, binding: result.binding })
+  }).catch(error => previewFailure(request, error)).finally(() => releasePreviewTyping(request.id, signal))
+}
+
 const previewRead: Handler = ({ request, sessionId }) => {
   // read_preview tool: the active preview tab's page text is async. Empty = nothing open.
   // The window that passes the session gate may be the chat window while the
   // live webview lives in the popped-out Browser renderer — forward there
   // first; a null (no pop-out answered) falls back to the legacy local read.
   // A local read sees only the tabs the requesting session can see.
-  const opts = { count: num(request.params.count), start: num(request.params.start) }
-  const owner = previewOwnerFor(sessionId)
+  const expected = request.params.expected_binding as PreviewBinding | undefined
+  const opts = { count: num(request.params.count), start: num(request.params.start),...(request.params.require_live===true?{require_live:true}:{}),...(request.params.refresh_binding===true?{refresh_binding:true}:{}),...(expected?{expected_binding:expected}:{}) }
+  const owner = boundOwnerFor(sessionId,expected)
 
   void (async () => {
     const result = hasLivePreviewSurface(owner)
@@ -534,7 +664,7 @@ const previewRead: Handler = ({ request, sessionId }) => {
       : ((await requestPopoutPreviewRead(opts, owner)) ?? (await readActivePreview(opts, owner)))
 
     answerValue(request, result)
-  })()
+  })().catch(error => previewFailure(request,error))
 }
 
 const previewAct: Handler = ({ deps, isActiveSession, request, sessionId }) => {
@@ -556,7 +686,8 @@ const previewAct: Handler = ({ deps, isActiveSession, request, sessionId }) => {
 
   // The agent drives ITS session's page: with a tile focused, the primary's
   // agent must not reach into the tile's tabs (#73890).
-  const owner = previewOwnerFor(sessionId)
+  const expected = p.expected_binding as PreviewBinding | undefined
+  const owner = boundOwnerFor(sessionId,expected)
 
   // The keystroke loop has to be able to stop when this request is withdrawn
   // (tool timeout or turn interrupt). The local interrupted flag can flip
@@ -565,13 +696,14 @@ const previewAct: Handler = ({ deps, isActiveSession, request, sessionId }) => {
 
   const watch = sessionId
     ? setInterval(() => {
-        if (deps.sessionInterrupted(sessionId)) {
+        if (!previewRequestIsCurrent(deps, sessionId)) {
           abortPreviewTyping(request.id, 'interrupted')
         }
       }, 50)
     : undefined
 
   const action = {
+    ...(expected ? {expectedBinding:expected}:{}),
     allowShortcut: p.allow_shortcut === true,
     amount: p.amount as never,
     key: p.key as never,
@@ -606,7 +738,8 @@ const previewAct: Handler = ({ deps, isActiveSession, request, sessionId }) => {
 
       answerValue(request, result)
     } catch (error) {
-      answerValue(request, { error: error instanceof Error ? error.message : String(error), success: false })
+      if (expected) { previewFailure(request, error) }
+      else { answerValue(request, { error: error instanceof Error ? error.message : String(error), success: false }) }
     } finally {
       if (watch !== undefined) {
         clearInterval(watch)
@@ -772,6 +905,9 @@ export const SERVER_REQUEST_HANDLERS: Record<string, Handler> = {
   'display.install.sudo': displayInstallSudo,
   'preview.act': previewAct,
   'preview.read': previewRead,
+  'preview.open': previewOpen,
+  'preview.close': previewClose,
+  'preview.context': previewContext,
   secret,
   setup_beat: setupBeat,
   sudo,

@@ -98,14 +98,14 @@ strictly qwen3.5-plus. Keep native tool_search/deferred defaults and consent on.
 First run with `SEMANTIER_EVAL_PREFLIGHT_ONLY=1` (and optionally
 `SEMANTIER_EVAL_LOCALE=en` or `zh`) to exercise supported consent, actual composer
 submission, scoped tool catalog, and restart with **zero upstream inference**.
-Remove that flag only after evaluator self-tests and readiness pass. Run using
+In this unscored preflight, the observer returns one explicitly synthetic intent proposal so native preparation can reach the main Agent request; it then blocks upstream inference after checking the effective prompt and deferred catalog. This is apparatus evidence, never autonomous selection evidence. Remove that flag only after evaluator self-tests and readiness pass. Run using
 only the existing CLI flags:
 
 ```powershell
 node apps/desktop/scripts/run-fixture-e2e.mjs --python <native-python.exe> --output <new-run-directory> --timeout-ms 2100000 e2e/autonomous-browser.spec.ts
 ```
 
-The six cases cap each at12upstream requests,4096output tokens/request and240s.
+The binding-development exposed cases cap each at18 upstream requests (including the native intent proposal),4096 output tokens/request and240s, with a234-request total ceiling. The held-out qualification must freeze a separate six-case contract before inference.
 The observer forwards real provider bytes, buffering streaming responses for
 redacted traces; observed streaming latency therefore differs from normal UI.
 The test emits measurement rows: a green runner exit does **not** establish
@@ -128,3 +128,5 @@ seed two synthetic pages via supported renderer controls and execute C,E,F,D
 without re-spending A/B. C is a retry; E/F/D are first attempts. Retain and bind
 the original manifest/traces, freeze the config amendment, and report fresh
 fixture/session identities rather than claiming continuity across processes.
+
+The native binding evaluator records raw model proposals, native execution calls, intent/main request counts, and durable renderer completion separately. A native unavailable response may complete a turn without a final main-model request; the response is read from the actual renderer transcript. Routing, operation success, verified effects and final-answer review remain separate gates. Exposed A–F runs are regression diagnostics and do not qualify a held-out claim.

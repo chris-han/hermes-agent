@@ -80,10 +80,35 @@ test('authenticated owned Electron page remains distinct from independent automa
 
     const body = JSON.parse(raw)
     requests.push(body)
+
+    // The native semantic proposal is separate from the normal Agent tool loop.
+    // This deterministic provider fixture tests execution, never autonomous routing.
+    if (body.tools?.length === 1 && body.tools[0]?.function?.name === 'browser_target_intent') {
+      const request = JSON.parse(body.messages.at(-1).content).request
+      const opening = request.startsWith('Open the synthetic dashboard beside our conversation:')
+      const visible = opening || request.includes('page currently open') || request.includes('webpage visible') || request.includes('that exact page')
+      res.setHeader('Content-Type', 'application/json')
+      res.end(JSON.stringify({
+        id: 'fixture-intent',
+        choices: [{ index: 0, finish_reason: 'tool_calls', message: {
+          role: 'assistant', content: null,
+          tool_calls: [{ id: 'fixture-intent', type: 'function', function: {
+            name: 'browser_target_intent', arguments: JSON.stringify({
+              target_kind: visible ? 'VISIBLE_PANE' : 'NONE', operation: opening ? 'open' : visible ? 'existing' : 'none',
+              ...(opening ? { url: request.match(/https?:\/\/[^\s]+/)[0] } : {})
+            })
+          } }]
+        } }],
+        usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 }
+      }))
+
+      return
+    }
+
     const messages = body.messages || []
 
     const readTurn = messages.findLastIndex(
-      (m: any) => m.role === 'user' && ['Inspect the page currently open in my right-side browser.', 'Click the test button on the webpage visible beside this conversation.'].some(text => JSON.stringify(m.content).includes(text))
+      (m: any) => m.role === 'user' && ['Inspect the page currently open in my right-side browser.', 'Click the test button on the webpage visible beside this conversation.', 'Open the synthetic dashboard beside our conversation:', 'Continue using that exact page; check it live.'].some(text => JSON.stringify(m.content).includes(text))
     )
 
     const lastUser = readTurn >= 0 ? readTurn : messages.findLastIndex((m: any) => m.role === 'user')
@@ -103,7 +128,14 @@ test('authenticated owned Electron page remains distinct from independent automa
       ['drive_preview', { action: 'type', selector: '#fixture-input', text: 'fixture typed' }]
     ] as const
 
-    const step = (prompt.includes('Inspect the page currently open') || prompt.includes('Click the test button')) ? steps[toolResults.length] : undefined
+    const opening = prompt.includes('Open the synthetic dashboard beside our conversation:')
+
+    const openingSteps = [undefined, undefined,
+      ['drive_preview', { action: 'open', url: siteUrl + '/login' }],
+      ['drive_preview', { action: 'click', selector: '#harmless' }]
+    ] as const
+
+    const step = opening ? openingSteps[toolResults.length] : (prompt.includes('Inspect the page currently open') || prompt.includes('Click the test button')) ? steps[toolResults.length] : undefined
 
     const message = step
       ? {
@@ -117,7 +149,7 @@ test('authenticated owned Electron page remains distinct from independent automa
             }
           ]
         }
-      : { role: 'assistant', content: (prompt.includes('Inspect the page currently open') || prompt.includes('Click the test button')) ? 'AFFINITY_DONE' : 'AFFINITY_READY' }
+      : { role: 'assistant', content: opening ? 'BINDING_OPEN_DONE' : (prompt.includes('Inspect the page currently open') || prompt.includes('Click the test button')) ? 'AFFINITY_DONE' : 'AFFINITY_READY' }
 
     const finish = step ? 'tool_calls' : 'stop'
 
@@ -156,7 +188,7 @@ test('authenticated owned Electron page remains distinct from independent automa
     sandbox.hermesHome,
     providerUrl,
     'language: en\ndisplay:\n  language: en',
-    'agent:\n  verify_on_stop: false\nbrowser:\n  backend: browser-use\n  cloud_provider: local\n  engine: chrome\n  allow_private_urls: true\n  use_real_profile: false\n'
+    'auxiliary:\n  background_review:\n    enabled: false\n  title_generation:\n    enabled: false\nagent:\n  verify_on_stop: false\nbrowser:\n  backend: browser-use\n  cloud_provider: local\n  engine: chrome\n  allow_private_urls: true\n  use_real_profile: false\n'
   )
   writeEnvFile(sandbox.hermesHome)
 
@@ -309,6 +341,57 @@ test('authenticated owned Electron page remains distinct from independent automa
         console.log('TWO_WINDOWS', JSON.stringify({ isolation: 'PASS', focusSwitch: 'PASS' }))
       })
 
+      await fixture.stage('browser.binding-open-and-unavailable', async () => {
+        results.length = 0
+        await composer.fill('Open the synthetic dashboard beside our conversation: ' + siteUrl + '/login')
+        await page.getByRole('button', { name: 'Send', exact: true }).click()
+        await expect(page.getByText('BINDING_OPEN_DONE', { exact: true })).toBeVisible({ timeout: 60_000 })
+        expect(clicks).toBe(3)
+        expect(results.every(row => !row.content.includes('does not exist') && !row.content.includes('must be one of'))).toBe(true)
+        expect(requests.some(body => (body.messages || []).some((message: any) =>
+          message.tool_calls?.some((call: any) => call.function?.arguments?.includes('drive_preview') && call.function?.arguments?.includes('open'))))).toBe(true)
+        const requestsBefore = requests.length
+        await page.evaluate(() => {
+          const state = (globalThis as any)[Symbol.for('hermes.desktop.gatewayRegistryState')]
+
+          if (!state?.config?.onServerRequest) { throw new Error('Missing native bridge for fault fixture') }
+          ;(globalThis as any).__bindingRestore = state.config.onServerRequest
+          ;(globalThis as any).__bindingDeclined = []
+
+          state.config.onServerRequest = (request: any) => {
+            if (request.method === 'preview.read' || request.method === 'preview.act') {
+              ;(globalThis as any).__bindingDeclined.push(request.method)
+              request.decline()
+            } else { (globalThis as any).__bindingRestore(request) }
+          }
+        })
+
+        try {
+          await composer.fill('Continue using that exact page; check it live.')
+          await page.getByRole('button', { name: 'Send', exact: true }).click()
+          await expect(page.getByText('I cannot access that page live in this conversation right now.', { exact: false })).toBeVisible({ timeout: 90_000 })
+          expect(await page.evaluate(() => (globalThis as any).__bindingDeclined)).toContain('preview.read')
+          const attempted = requests.slice(requestsBefore)
+          expect(attempted).toHaveLength(1)
+          expect(attempted[0].tools[0].function.name).toBe('browser_target_intent')
+          expect(clicks).toBe(3)
+          console.log('NATIVE_BINDING_B_D', JSON.stringify({ open: 'PASS', deferredNormalization: 'PASS', liveUnavailable: 'PASS', mainModelAfterUnavailable: 0 }))
+        } finally {
+          await page.evaluate(() => {
+            const state = (globalThis as any)[Symbol.for('hermes.desktop.gatewayRegistryState')]
+            state.config.onServerRequest = (globalThis as any).__bindingRestore
+          })
+        }
+      })
+
+      await page.evaluate(async () => {
+        const session = await import('/src/store/' + 'session.ts')
+
+        return session.$messages.get().map((message: any) => ({ ...message,
+          parts: message.parts?.filter((part: any) => part.type !== 'reasoning')
+        }))
+      }).then(messages => fs.writeFileSync(info.outputPath('native-turns.json'), JSON.stringify(messages, null, 2)))
+
       // Exercise the production request owner and live-target registries in this real renderer.
       const boundaries = await page.evaluate(async owner => {
         const { handleServerRequest } = await import(
@@ -318,6 +401,28 @@ test('authenticated owned Electron page remains distinct from independent automa
         const { actOnActivePreview } = await import('/src/app/chat/right-rail/' + 'preview-act.ts')
         const { readActivePreview } = await import('/src/app/chat/right-rail/' + 'preview-reader.ts')
         const preview = await import('/src/store/' + 'preview.ts')
+        const lease = await readActivePreview({ require_live: true }, { sessionId: owner.stored, profile: 'default' })
+
+        if (!lease?.binding) { throw new Error('Missing actual Electron live lease') }
+        const view = document.querySelector('webview') as any
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error('Fixture navigation timed out')), 15000)
+          view.addEventListener('dom-ready', () => { clearTimeout(timer); resolve() }, { once: true })
+          view.reload()
+        })
+        let navigationReadError = ''
+
+        try { await readActivePreview({ require_live: true, expected_binding: lease.binding }, { sessionId: owner.stored, profile: 'default' }) }
+        catch (error) { navigationReadError = String(error) }
+
+        const navigationAction = await new Promise<any>((resolve, reject) => {
+          handleServerRequest({ id: 'synthetic-stale-lease', method: 'preview.act', profile: 'default',
+            params: { session_id: owner.runtime, action: 'click', selector: '#harmless', expected_binding: lease.binding },
+            respond: (result: any) => resolve(JSON.parse(result.value)),
+            decline: () => reject(new Error('Owner request unexpectedly declined')), fail: reject
+          }, { activeSessionIdRef: { current: owner.runtime }, sessionStateByRuntimeIdRef: { current: new Map() }, sessionInterrupted: () => false }, owner.runtime)
+        })
+
         let declined = false
         let answered = false
         handleServerRequest(
@@ -359,6 +464,8 @@ test('authenticated owned Electron page remains distinct from independent automa
         return {
           declined,
           answered,
+          navigationReadError,
+          navigationAction,
           foreignRead,
           profileRead,
           stale,
@@ -369,18 +476,22 @@ test('authenticated owned Electron page remains distinct from independent automa
         }
       }, owner)
 
+      expect(boundaries.navigationReadError).toContain('STALE_TARGET')
+      expect(boundaries.navigationAction.success).toBe(false)
+      expect(JSON.stringify(boundaries.navigationAction)).toContain('STALE_TARGET')
       expect(boundaries.declined).toBe(true)
       expect(boundaries.answered).toBe(false)
       expect(boundaries.foreignRead).toBeNull()
       expect(boundaries.profileRead).toBeNull()
       expect(boundaries.stale.success).toBe(false)
       expect(boundaries.closed.success).toBe(false)
-      expect(clicks).toBe(2)
+      expect(clicks).toBe(3)
       console.log(
         'ELECTRON_BOUNDARIES',
         JSON.stringify({
           hideRestore: 'PASS',
           reconnect: 'PASS',
+          navigationLease: 'PASS',
           foreignSession: 'PASS',
           foreignProfile: 'PASS',
           staleTarget: 'PASS',

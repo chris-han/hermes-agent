@@ -1651,6 +1651,13 @@ def _run_conversation_turn(
         return codex_result
 
     _prelude_action, _prelude_result = play_prelude(agent, s, prelude)
+    from agent.desktop_browser_target import state_for_agent
+    browser_turn=state_for_agent(agent)
+    if browser_turn is not None and browser_turn.native_failure is not None:
+        from agent.desktop_browser_target import recovery_text
+        s.final_response=recovery_text(browser_turn,getattr(browser_turn,'language','en'))
+        s._turn_exit_reason='browser_target_unavailable'
+        _prelude_action='break'
     if _prelude_action == "return":
         return _prelude_result
     while _prelude_action != "break" and (
@@ -1771,6 +1778,13 @@ def run_conversation(
     result = export_current_turn_boundary(agent, result, user_message)
     if isinstance(result, dict):
         result["user_intervened"] = bool(getattr(agent, "_turn_user_intervened", False))
+        from agent.desktop_browser_target import state_for_agent
+        browser_turn=state_for_agent(agent)
+        if browser_turn is not None:
+            from dataclasses import asdict
+            result['browser_target_binding']=asdict(browser_turn.binding)
+            result['browser_target_receipts']=list(browser_turn.receipts)
+            if browser_turn.native_failure:result['browser_target_failure']=dict(browser_turn.native_failure)
     _close_durable_failed_turn(agent, result)
     return result
 
