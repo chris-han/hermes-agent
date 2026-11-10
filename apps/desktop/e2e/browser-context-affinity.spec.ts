@@ -1,21 +1,23 @@
 /** Real Electron webview + real gateway; deterministic provider calls, not LLM selection evidence. */
-import { execFile, execFileSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import fs from 'node:fs'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
-import { _electron, expect, test } from '@playwright/test'
+import { expect, test } from '@playwright/test'
 
 import { waitForChatReady } from '../../../tests-js/scripts/desktop-chat-smoke'
 import { writeEnvFile, writeMockProviderConfig } from '../../../tests-js/scripts/mock-provider-config'
 
-import { buildAppEnv, createSandbox, findElectron } from './fixtures'
+import { DesktopFixtureSession } from './fixture-session'
+import { buildAppEnv, createSandbox } from './fixtures'
 
 const root = path.resolve(import.meta.dirname, '../../..')
 
-test('authenticated owned Electron page remains distinct from independent automation', async () => {
+// eslint-disable-next-line no-empty-pattern -- Electron supplies its own page; only Playwright TestInfo is used.
+test('authenticated owned Electron page remains distinct from independent automation', async ({}, info) => {
   test.skip(
     process.platform !== 'linux' || !process.env.HERMES_DESKTOP_DEV_SERVER,
     'WSL source-renderer lane requires HERMES_DESKTOP_DEV_SERVER and local browser tools'
@@ -163,218 +165,193 @@ test('authenticated owned Electron page remains distinct from independent automa
     HERMES_PYTHON: process.env.HERMES_PYTHON || path.join(root, '.venv/bin/python')
   })
 
-  let app
+  const fixture = new DesktopFixtureSession(sandbox, env, info)
 
   try {
-    app = await _electron.launch({
-      executablePath: findElectron(),
-      args: [path.join(root, 'apps/desktop'), '--no-sandbox', '--disable-gpu', '--ozone-platform=x11'],
-      cwd: path.join(root, 'apps/desktop'),
-      env
-    })
-    const page = await app.firstWindow()
-    page.on('console', msg => {
-      if (msg.type() === 'error') {
-        console.log('RENDERER_ERROR', msg.text().slice(0, 350))
-      }
-    })
-    const composer = await waitForChatReady(page)
-    await composer.fill('AFFINITY_INIT')
-    await composer.press('Enter')
-    await expect(page.getByText('AFFINITY_READY', { exact: true })).toBeVisible({ timeout: 60_000 })
-    await page.getByRole('button', { name: 'No thanks', exact: true }).click()
-    await page.evaluate(async url => {
-      const { openPreview } = await import('/src/store/' + 'preview.ts')
-      openPreview({ kind: 'url', source: 'user', label: 'Synthetic authenticated page', url })
-    }, siteUrl + '/login')
-    const guest = page.locator('webview').first()
-    await guest.waitFor()
-    await expect
-      .poll(async () => guest.evaluate((el: any) => el.executeJavaScript('document.body.innerText')).catch(() => ''))
-      .toContain('Synthetic account signed in')
-    await page.getByRole('button', { name: 'Not now', exact: true }).click()
-    console.log('W0_AUTHENTICATED_WEBVIEW_READY')
-
-    const owner = await page.evaluate(async () => {
-      const preview = await import('/src/store/' + 'preview.ts')
-      const session = await import('/src/store/' + 'session.ts')
-
-      return {
-        runtime: session.$activeSessionId.get(),
-        stored: session.$selectedStoredSessionId.get(),
-        tabs: preview.$previewTabs.get().map((t: any) => ({ id: t.id, sessionId: t.sessionId, profile: t.profile }))
-      }
-    })
-
-    await composer.click()
-    await composer.pressSequentially('AFFINITY_READ this authenticated right-side page')
-    await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeEnabled()
-    await page.getByRole('button', { name: 'Send', exact: true }).click()
-    await expect(page.getByText('AFFINITY_DONE', { exact: true })).toBeVisible({ timeout: 60_000 })
-    console.log(
-      'AFFINITY_RECEIPT',
-      JSON.stringify({ owner, results, clicks, scriptedProvider: true, autonomousToolSelection: 'NOT_RUN' })
-    )
-    expect(results[0]?.content).toContain('Synthetic account signed in')
-    expect(results[1]?.content).toContain('Harmless action')
-    expect(clicks).toBe(1)
-    await expect
-      .poll(() => guest.evaluate((el: any) => el.executeJavaScript('document.body.innerText')))
-      .toContain('clicked')
-
-    const independent = await promisify(execFile)(
-      env.HERMES_PYTHON,
-      [path.join(root, 'tests-js/scripts/browser-affinity-independent.py'), siteUrl],
-      {
-        cwd: root,
-        timeout: 120_000,
-        env: {
-          ...env,
-          PYTHONPATH: root,
-          HERMES_RUNTIME_DIR: process.env.HERMES_RUNTIME_DIR || path.join(os.homedir(), '.hermes/tools')
+    const { page } = await fixture.launch()
+    await fixture.stage('browser.affinity', async () => {
+      page.on('console', msg => {
+        if (msg.type() === 'error') {
+          console.log('RENDERER_ERROR', msg.text().slice(0, 350))
         }
-      }
-    )
+      })
+      const composer = await waitForChatReady(page)
+      await composer.fill('AFFINITY_INIT')
+      await composer.press('Enter')
+      await expect(page.getByText('AFFINITY_READY', { exact: true })).toBeVisible({ timeout: 60_000 })
+      await page.getByRole('button', { name: 'No thanks', exact: true }).click()
+      await page.evaluate(async url => {
+        const { openPreview } = await import('/src/store/' + 'preview.ts')
+        openPreview({ kind: 'url', source: 'user', label: 'Synthetic authenticated page', url })
+      }, siteUrl + '/login')
+      const guest = page.locator('webview').first()
+      await guest.waitFor()
+      await expect
+        .poll(async () => guest.evaluate((el: any) => el.executeJavaScript('document.body.innerText')).catch(() => ''))
+        .toContain('Synthetic account signed in')
+      await page.getByRole('button', { name: 'Not now', exact: true }).click()
+      console.log('W0_AUTHENTICATED_WEBVIEW_READY')
 
-    expect(independent.stdout).toContain('"named_session_isolation": "PASS"')
-    console.log('INDEPENDENT_BROWSER_EXEC', independent.stdout.trim())
-    await expect
-      .poll(() => guest.evaluate((el: any) => el.executeJavaScript('document.body.innerText')))
-      .toContain('clicked')
-    expect(clicks).toBe(1)
+      const owner = await page.evaluate(async () => {
+        const preview = await import('/src/store/' + 'preview.ts')
+        const session = await import('/src/store/' + 'session.ts')
 
-    const guestId = await guest.evaluate((el: any) => el.getWebContentsId())
-    await page.evaluate(async () => (await import('/src/store/' + 'layout.ts')).toggleRightSide())
-    expect(await guest.evaluate((el: any) => el.getWebContentsId())).toBe(guestId)
-    await page.evaluate(async () => (await import('/src/store/' + 'layout.ts')).toggleRightSide())
-    await expect
-      .poll(() => guest.evaluate((el: any) => el.executeJavaScript('document.body.innerText')))
-      .toContain('clicked')
-
-    // Real socket loss/resume; a new turn must bind to the same mounted page.
-    await page.evaluate(async () =>
-      (await import('/src/store/' + 'gateway.ts')).activeGateway().invalidate('synthetic reconnect')
-    )
-    await expect
-      .poll(() =>
-        page.evaluate(async () => (await import('/src/store/' + 'gateway.ts')).activeGateway()?.connectionState)
-      )
-      .toBe('open')
-    results.length = 0
-    await composer.fill('AFFINITY_READ_RECONNECT this same authenticated pane')
-    await page.getByRole('button', { name: 'Send', exact: true }).click()
-    await expect(page.getByText('AFFINITY_DONE', { exact: true })).toHaveCount(2, { timeout: 60_000 })
-    expect(results[0]?.content).toContain('Synthetic account signed in')
-    expect(clicks).toBe(2)
-    expect(await guest.evaluate((el: any) => el.getWebContentsId())).toBe(guestId)
-
-    // Exercise the production request owner and live-target registries in this real renderer.
-    const boundaries = await page.evaluate(async owner => {
-      const { handleServerRequest } = await import(
-        '/src/app/session/hooks/use-message-stream/gateway-event/' + 'server-requests.ts'
-      )
-
-      const { actOnActivePreview } = await import('/src/app/chat/right-rail/' + 'preview-act.ts')
-      const { readActivePreview } = await import('/src/app/chat/right-rail/' + 'preview-reader.ts')
-      const preview = await import('/src/store/' + 'preview.ts')
-      let declined = false
-      let answered = false
-      handleServerRequest(
-        {
-          id: 'synthetic-foreign',
-          method: 'preview.act',
-          profile: 'default',
-          params: { session_id: 'foreign-session', action: 'click', selector: '#harmless' },
-          decline: () => {
-            declined = true
-          },
-          respond: () => {
-            answered = true
-          },
-          fail: () => {
-            answered = true
-          }
-        },
-        { activeSessionIdRef: { current: owner.runtime }, sessionStateByRuntimeIdRef: { current: new Map() } },
-        owner.runtime
-      )
-      const foreignRead = await readActivePreview({}, { sessionId: 'foreign-session', profile: 'default' })
-      preview.setPreviewTabPinned(owner.tabs[0].id, true)
-
-      const profileRead = await readActivePreview(
-        {},
-        { sessionId: 'foreign-profile-session', runtimeId: null, profile: 'foreign-profile' }
-      )
-
-      preview.setPreviewTabPinned(owner.tabs[0].id, false)
-
-      const stale = await actOnActivePreview({ kind: 'click', ref: 'btn-removed-synthetic' }, undefined, {
-        sessionId: owner.stored,
-        profile: 'default'
+        return {
+          runtime: session.$activeSessionId.get(),
+          stored: session.$selectedStoredSessionId.get(),
+          tabs: preview.$previewTabs.get().map((t: any) => ({ id: t.id, sessionId: t.sessionId, profile: t.profile }))
+        }
       })
 
-      preview.closeRightRailTab(owner.tabs[0].id)
+      await composer.click()
+      await composer.pressSequentially('AFFINITY_READ this authenticated right-side page')
+      await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeEnabled()
+      await page.getByRole('button', { name: 'Send', exact: true }).click()
+      await expect(page.getByText('AFFINITY_DONE', { exact: true })).toBeVisible({ timeout: 60_000 })
+      console.log(
+        'AFFINITY_RECEIPT',
+        JSON.stringify({ owner, results, clicks, scriptedProvider: true, autonomousToolSelection: 'NOT_RUN' })
+      )
+      expect(results[0]?.content).toContain('Synthetic account signed in')
+      expect(results[1]?.content).toContain('Harmless action')
+      expect(clicks).toBe(1)
+      await expect
+        .poll(() => guest.evaluate((el: any) => el.executeJavaScript('document.body.innerText')))
+        .toContain('clicked')
 
-      return {
-        declined,
-        answered,
-        foreignRead,
-        profileRead,
-        stale,
-        closed: await actOnActivePreview({ kind: 'click', selector: '#harmless' }, undefined, {
+      const independent = await promisify(execFile)(
+        env.HERMES_PYTHON,
+        [path.join(root, 'tests-js/scripts/browser-affinity-independent.py'), siteUrl],
+        {
+          cwd: root,
+          timeout: 120_000,
+          env: {
+            ...env,
+            PYTHONPATH: root,
+            HERMES_RUNTIME_DIR: process.env.HERMES_RUNTIME_DIR || path.join(os.homedir(), '.hermes/tools')
+          }
+        }
+      )
+
+      expect(independent.stdout).toContain('"named_session_isolation": "PASS"')
+      console.log('INDEPENDENT_BROWSER_EXEC', independent.stdout.trim())
+      await expect
+        .poll(() => guest.evaluate((el: any) => el.executeJavaScript('document.body.innerText')))
+        .toContain('clicked')
+      expect(clicks).toBe(1)
+
+      const guestId = await guest.evaluate((el: any) => el.getWebContentsId())
+      await page.evaluate(async () => (await import('/src/store/' + 'layout.ts')).toggleRightSide())
+      expect(await guest.evaluate((el: any) => el.getWebContentsId())).toBe(guestId)
+      await page.evaluate(async () => (await import('/src/store/' + 'layout.ts')).toggleRightSide())
+      await expect
+        .poll(() => guest.evaluate((el: any) => el.executeJavaScript('document.body.innerText')))
+        .toContain('clicked')
+
+      // Real socket loss/resume; a new turn must bind to the same mounted page.
+      await page.evaluate(async () =>
+        (await import('/src/store/' + 'gateway.ts')).activeGateway().invalidate('synthetic reconnect')
+      )
+      await expect
+        .poll(() =>
+          page.evaluate(async () => (await import('/src/store/' + 'gateway.ts')).activeGateway()?.connectionState)
+        )
+        .toBe('open')
+      results.length = 0
+      await composer.fill('AFFINITY_READ_RECONNECT this same authenticated pane')
+      await page.getByRole('button', { name: 'Send', exact: true }).click()
+      await expect(page.getByText('AFFINITY_DONE', { exact: true })).toHaveCount(2, { timeout: 60_000 })
+      expect(results[0]?.content).toContain('Synthetic account signed in')
+      expect(clicks).toBe(2)
+      expect(await guest.evaluate((el: any) => el.getWebContentsId())).toBe(guestId)
+
+      // Exercise the production request owner and live-target registries in this real renderer.
+      const boundaries = await page.evaluate(async owner => {
+        const { handleServerRequest } = await import(
+          '/src/app/session/hooks/use-message-stream/gateway-event/' + 'server-requests.ts'
+        )
+
+        const { actOnActivePreview } = await import('/src/app/chat/right-rail/' + 'preview-act.ts')
+        const { readActivePreview } = await import('/src/app/chat/right-rail/' + 'preview-reader.ts')
+        const preview = await import('/src/store/' + 'preview.ts')
+        let declined = false
+        let answered = false
+        handleServerRequest(
+          {
+            id: 'synthetic-foreign',
+            method: 'preview.act',
+            profile: 'default',
+            params: { session_id: 'foreign-session', action: 'click', selector: '#harmless' },
+            decline: () => {
+              declined = true
+            },
+            respond: () => {
+              answered = true
+            },
+            fail: () => {
+              answered = true
+            }
+          },
+          { activeSessionIdRef: { current: owner.runtime }, sessionStateByRuntimeIdRef: { current: new Map() } },
+          owner.runtime
+        )
+        const foreignRead = await readActivePreview({}, { sessionId: 'foreign-session', profile: 'default' })
+        preview.setPreviewTabPinned(owner.tabs[0].id, true)
+
+        const profileRead = await readActivePreview(
+          {},
+          { sessionId: 'foreign-profile-session', runtimeId: null, profile: 'foreign-profile' }
+        )
+
+        preview.setPreviewTabPinned(owner.tabs[0].id, false)
+
+        const stale = await actOnActivePreview({ kind: 'click', ref: 'btn-removed-synthetic' }, undefined, {
           sessionId: owner.stored,
           profile: 'default'
         })
-      }
-    }, owner)
 
-    expect(boundaries.declined).toBe(true)
-    expect(boundaries.answered).toBe(false)
-    expect(boundaries.foreignRead).toBeNull()
-    expect(boundaries.profileRead).toBeNull()
-    expect(boundaries.stale.success).toBe(false)
-    expect(boundaries.closed.success).toBe(false)
-    expect(clicks).toBe(2)
-    console.log(
-      'ELECTRON_BOUNDARIES',
-      JSON.stringify({
-        hideRestore: 'PASS',
-        reconnect: 'PASS',
-        foreignSession: 'PASS',
-        foreignProfile: 'PASS',
-        staleTarget: 'PASS',
-        closedTarget: 'PASS'
-      })
-    )
+        preview.closeRightRailTab(owner.tabs[0].id)
+
+        return {
+          declined,
+          answered,
+          foreignRead,
+          profileRead,
+          stale,
+          closed: await actOnActivePreview({ kind: 'click', selector: '#harmless' }, undefined, {
+            sessionId: owner.stored,
+            profile: 'default'
+          })
+        }
+      }, owner)
+
+      expect(boundaries.declined).toBe(true)
+      expect(boundaries.answered).toBe(false)
+      expect(boundaries.foreignRead).toBeNull()
+      expect(boundaries.profileRead).toBeNull()
+      expect(boundaries.stale.success).toBe(false)
+      expect(boundaries.closed.success).toBe(false)
+      expect(clicks).toBe(2)
+      console.log(
+        'ELECTRON_BOUNDARIES',
+        JSON.stringify({
+          hideRestore: 'PASS',
+          reconnect: 'PASS',
+          foreignSession: 'PASS',
+          foreignProfile: 'PASS',
+          staleTarget: 'PASS',
+          closedTarget: 'PASS'
+        })
+      )
+    })
   } finally {
     console.log('W0_TOOL_RESULTS', JSON.stringify(results))
 
-    if (app) {
-      await app.close().catch(() => undefined)
-    }
-
-    let gatewayStopped = false
-
     try {
-      execFileSync(env.HERMES_PYTHON, ['-P', '-m', 'hermes_cli.main', 'gateway', 'stop'], {
-        cwd: root,
-        env: { ...env, PYTHONPATH: root },
-        timeout: 20_000,
-        stdio: 'pipe'
-      })
-      gatewayStopped = true
-    } catch (error) {
-      // Retain the home if a fixture gateway could still be running.
-      console.error('Fixture gateway stop failed', sandbox.hermesHome, error)
+      await fixture.close()
+    } finally {
+      await new Promise<void>(resolve => provider.close(() => resolve()))
+      await new Promise<void>(resolve => site.close(() => resolve()))
     }
-
-    await new Promise<void>(resolve => provider.close(() => resolve()))
-    await new Promise<void>(resolve => site.close(() => resolve()))
-
-    if (gatewayStopped) {
-      sandbox.cleanup()
-    }
-
-    expect(gatewayStopped, 'fixture gateway stopped before removing its home').toBe(true)
   }
 })
