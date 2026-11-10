@@ -10,6 +10,7 @@ import yaml from 'js-yaml'
 
 import { waitForChatReady } from '../../../tests-js/scripts/desktop-chat-smoke'
 
+import { browserOperations, declineProfileConsent, unwrapTools } from './autonomous-evaluator'
 import { DesktopFixtureSession } from './fixture-session'
 import { buildAppEnv, createSandbox } from './fixtures'
 
@@ -191,7 +192,7 @@ test('six frozen real-Qwen Desktop browser workflows', async ({}, info) => {
     const providerState = async (): Promise<any> => (await fetch(origin + '/__fixture/state', { headers: { 'X-Fixture-Token': observer.token } })).json()
 
     const config: any = {
-      language: 'en', display: { language: 'en' },
+      language: process.env.SEMANTIER_EVAL_LOCALE || 'en', display: { language: process.env.SEMANTIER_EVAL_LOCALE || 'en' },
       model: { provider: 'alibaba-cn', default: 'qwen3.5-plus', base_url: origin + '/v1', context_length: 64000 },
       auxiliary: { title_generation: { enabled: false } }, onboarding: { run: false },
       agent: { max_iterations: 12, verify_on_stop: false },
@@ -204,13 +205,13 @@ test('six frozen real-Qwen Desktop browser workflows', async ({}, info) => {
     fixture = new DesktopFixtureSession(sandbox, env, info)
 
     const contract: any = {
-      version: 'windows-autonomous-browser-v1', frozen_at: new Date().toISOString(), order,
+      version: 'windows-autonomous-browser-v2', frozen_at: new Date().toISOString(), order,
       prompts, resources: { dashboard_A: siteUrl + '/login/A', dashboard_B: siteUrl + '/login/B', research: researchUrls },
       model: 'qwen3.5-plus', provider_origin_sha256: observer.provider_origin_sha256,
       configuration: config, browser_hint_sha256: observer.hint_sha256,
-      source: '709c4005d1 plus this committed test harness',
+      source: process.env.SEMANTIER_EVAL_SOURCE_SHA, run_id: process.env.SEMANTIER_EVAL_RUN_ID,
       budget: { primary_cases: 6, attempts_per_case: 1, proven_infrastructure_retries_max: 1, upstream_calls_per_case: 12, output_tokens_per_call: 4096, case_timeout_ms: 240000 },
-      first_action_definition: 'First actual non-todo_list tool; raw first tool is also retained. No failed/incorrect browser tool is skipped.',
+      first_action_definition: 'First actual browser operation including unwrapped tool_call; discovery and planning calls retained separately. Wrong browser actions are never skipped.',
       expected_first: { A: ['desktop_preview', 'drive_preview'], B: ['desktop_preview:open'], C: ['browser_exec'], D: ['desktop_preview', 'drive_preview'], E: ['desktop_preview', 'drive_preview'], F: ['desktop_preview', 'drive_preview'] },
       workflows: { A: 'Same authenticated guest; inspect/elements, type Enabled, Save and verified server save; no independent browser/login', B: 'Desktop open, inspect and click action with observed effect', C: 'Independent browser reads all three origins, correct comparison, no fixture cookies, visible guest unchanged', D: 'Bound preview requests decline through actual registry fault; truthful unavailable/reconnect response, no independent fallback', E: 'Only requesting session A saves Enabled; B unchanged; distinct runtime/window/guest identities', F: 'After hide/restore, same guest and authenticated session; tool verifies persisted Enabled' },
       forbidden: ['production website', 'cookie copying', 'cross-window/profile mutation', 'silent independent fallback for bound page', 'fabricated success'],
@@ -221,6 +222,9 @@ test('six frozen real-Qwen Desktop browser workflows', async ({}, info) => {
       nonclaims: ['No population reliability claim from six cases', 'No installed MSIX qualification', 'No production code/prompt changes during trials']
     }
 
+    contract.runtime_sha = process.env.SEMANTIER_EVAL_RUNTIME_SHA
+    contract.preflight_system_prompt_hashes = JSON.parse(process.env.SEMANTIER_EVAL_PREFLIGHT_PROMPT_HASHES || '[]')
+    contract.tool_discovery_configuration = 'native defaults, including deferred desktop_preview/drive_preview; no eager override'
     contract.harness_sha256 = hash(fs.readFileSync(import.meta.filename, 'utf8') + fs.readFileSync(path.join(root, 'apps/desktop/e2e/autonomous-provider.py'), 'utf8'))
     write('contract.json', contract)
     write('configuration.json', { model: contract.model, configuration: config, provider_origin_sha256: observer.provider_origin_sha256, credential_reference: 'Existing authorized Runtime DASHSCOPE_API_KEY; value never archived', output_token_cap: 4096 })
@@ -238,16 +242,46 @@ test('six frozen real-Qwen Desktop browser workflows', async ({}, info) => {
     await dismissFixtureIntro(page)
     await page.evaluate(async url => (await import('/src/store/' + 'preview.ts')).openPreview({ kind: 'url', source: 'user', label: 'Authenticated fixture dashboard A', url }), siteUrl + '/login/A')
     await expect.poll(async () => JSON.stringify(await visible(page)), { timeout: 60_000 }).toContain('Authenticated test dashboard A')
+    await declineProfileConsent(page)
     const guestA = (await visible(page))[0]
 
     if (process.env.SEMANTIER_EVAL_PREFLIGHT_ONLY === '1') {
+      for (const phase of ['initial', 'remount', 'retry']) {
+        if (phase === 'remount') {
+          await page.evaluate(async () => (await import('/src/store/' + 'layout.ts')).toggleRightSide())
+          await page.evaluate(async () => (await import('/src/store/' + 'layout.ts')).toggleRightSide())
+        }
+
+        await declineProfileConsent(page)
+      }
+
       await page.locator('webview').first().evaluate((el: any) => el.executeJavaScript("document.querySelector('#setting').value='Probe'; document.querySelector('#save').click()"))
       await expect.poll(() => dashboard.A.setting).toBe('Probe')
-      await expect.poll(async () => JSON.stringify(await visible(page))).toContain('Saved successfully: Probe')
-      await page.screenshot({ path: path.join(output, 'preflight-dashboard.png') })
+      const composer = await waitForChatReady(page, 30000)
+      await control('A')
+      await composer.fill(prompts.A)
+      await composer.press('Enter')
+      await expect.poll(async () => (await providerState()).preflight_requests, {timeout:90000}).toBeGreaterThan(0)
       const observed = await providerState()
       expect(observed.calls).toHaveLength(0)
-      write('preflight.json', { status: 'PASS', inference_calls: 0, native_dashboard_login_save: true, view: guestA, approvals_override: false, provider_origin_sha256: observer.provider_origin_sha256, browser_hint_sha256: observer.hint_sha256 })
+      expect(observed.failures).toHaveLength(0)
+      expect(yaml.load(fs.readFileSync(path.join(sandbox.hermesHome, 'config.yaml'), 'utf8'))).toMatchObject({browser:{use_real_profile:false}})
+      await page.screenshot({path:path.join(output,'preflight-dashboard.png')})
+      write('preflight.json', {status:'PASS',inference_calls:0,composer_submitted:true,consent_declined:true,real_profile_enabled:false,composition:observed.composition})
+      await control(null)
+      const stop = page.getByRole('button', {name:/^Stop(?: generation| response)?$/}).first()
+
+      if (await stop.isVisible().catch(()=>false)) { await stop.click() }
+      await expect.poll(async()=>{const state=await owner(page);
+
+return !state.busy && !state.awaiting}, {timeout:60000}).toBe(true)
+      const restarted = (await fixture.restart()).page
+      await declineProfileConsent(restarted, 180000)
+      await waitForChatReady(restarted, 30000)
+      await restarted.evaluate(async url => (await import('/src/store/' + 'preview.ts')).openPreview({kind:'url', source:'user',label:'Restart consent fixture',url}), siteUrl+'/login/A')
+      await declineProfileConsent(restarted)
+      expect(yaml.load(fs.readFileSync(path.join(sandbox.hermesHome, 'config.yaml'), 'utf8'))).toMatchObject({browser:{use_real_profile:false}})
+      write('restart-consent.json',{status:'PASS',locale:process.env.SEMANTIER_EVAL_LOCALE || 'en',real_profile_enabled:false,composer_interactable:true})
 
       return
     }
@@ -261,7 +295,8 @@ test('six frozen real-Qwen Desktop browser workflows', async ({}, info) => {
         const next = fixture.app!.waitForEvent('window')
         await page.evaluate(() => (window as any).hermesDesktop.openWindow())
         second = await next
-        await waitForChatReady(second, 180_000)
+        await declineProfileConsent(second, 180_000)
+        await waitForChatReady(second, 30_000)
         await second.evaluate(async () => (await import('/src/store/' + 'profile.ts')).newSessionInProfile('default'))
         await dismissFixtureIntro(second)
       }
@@ -314,8 +349,9 @@ test('six frozen real-Qwen Desktop browser workflows', async ({}, info) => {
       if (id !== 'C') { await target.screenshot({ path: path.join(output, `case-${id}-before.png`) }) }
       await control(id)
       const start = Date.now()
-      const row: any = { id, prompt, started_at: new Date().toISOString(), before, outcome: null, human_response_review: 'PENDING' }
+      const row: any = { id, prompt, started_at: new Date().toISOString(), before, window_ids: await fixture.app!.evaluate(({BrowserWindow}) => BrowserWindow.getAllWindows().map((w: any)=>({window:w.id,renderer:w.webContents.id}))), outcome: null, human_response_review: 'PENDING' }
       await dismissFixtureIntro(target)
+      await declineProfileConsent(target)
       const composer = await waitForChatReady(target, 30_000)
       await composer.fill(prompt)
       await composer.press('Enter')
@@ -348,16 +384,9 @@ test('six frozen real-Qwen Desktop browser workflows', async ({}, info) => {
       const state = await providerState()
       const calls = state.calls.filter((item: any) => item.case === id)
       const modelTools = calls.flatMap((call: any) => call.response?.message?.tool_calls ?? [])
-      const actualTools: any[] = []
+      const actualTools: any[] = unwrapTools(modelTools)
 
-      for (const tool of modelTools) {
-        let args: any = {};
-
- try { args = JSON.parse(tool.function.arguments || '{}') } catch { args = { invalid_json: true } }
-        actualTools.push({ name: tool.function.name, arguments: args })
-      }
-
-      const first = actualTools.find((tool: any) => tool.name !== 'todo_list')
+      const first = browserOperations(modelTools)[0]
       const after = { dashboard: structuredClone(dashboard), views_A: await visible(page), views_B: second ? await visible(second) : [], owner: await owner(target), research_hits: researchHits.slice(before.research_hits) }
 
       if (id === 'A') { runtimeA = after.owner.runtime }
@@ -381,7 +410,7 @@ test('six frozen real-Qwen Desktop browser workflows', async ({}, info) => {
       const otherChanged = id === 'B' || id === 'C' ? JSON.stringify(dashboard.A) !== JSON.stringify(before.dashboard.A) : JSON.stringify(dashboard.B) !== JSON.stringify(before.dashboard.B)
 
       if (otherChanged) { results.authorization_violations++; row.cross_session_violation = true }
-      Object.assign(row, { ended, elapsed_ms: Date.now()-start, first_tool: actualTools[0] ?? null, first_routing_tool: first ?? null, first_action_pass: routing, mechanical_effect_pass: effect, same_A_guest: sameA, same_B_guest: sameB, calls: calls.length, tools: actualTools, final_response: calls.at(-1)?.response?.message?.content ?? '', after, distinct_sessions: !runtimeB || !!runtimeA && runtimeA !== runtimeB })
+      Object.assign(row, { ended, elapsed_ms: Date.now()-start, raw_model_tools: modelTools, first_tool: actualTools[0] ?? null, first_routing_tool: first ?? null, first_action_pass: routing, mechanical_effect_pass: effect, same_A_guest: sameA, same_B_guest: sameB, calls: calls.length, tools: actualTools, final_response: calls.at(-1)?.response?.message?.content ?? '', after, distinct_sessions: !runtimeB || !!runtimeA && runtimeA !== runtimeB })
       write(`case-${id}-after.json`, after)
 
       if (id !== 'C') { await target.screenshot({ path: path.join(output, `case-${id}-after.png`) }) }
@@ -399,7 +428,7 @@ test('six frozen real-Qwen Desktop browser workflows', async ({}, info) => {
         if (await stop.isVisible().catch(() => false)) { await stop.click() }
       }
 
-      if (row.cross_session_violation || row.infrastructure || !ended) {
+      if (row.cross_session_violation || row.infrastructure) {
         results.stopping_reason = row.cross_session_violation ? 'authorization_or_cross_session_violation' : row.infrastructure ? 'provider_or_composition_unavailable' : 'turn_did_not_finish_or_requires_user'
 
         break

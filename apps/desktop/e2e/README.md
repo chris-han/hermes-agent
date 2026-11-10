@@ -80,3 +80,42 @@ identity is never guessed from command-line substrings. The runner also recovers
 marked homes under its own temporary root after worker interruption. Shared
 browsers and development servers are not stopped. Existing legacy specs should
 use the shared session or source fixture teardown to get these guarantees.
+
+
+## Optional authorized real-model qualification
+
+`e2e/autonomous-browser.spec.ts` uses actual Electron chats and the existing
+canonical Agent/gateway. It is skipped unless `SEMANTIER_AUTONOMOUS_BROWSER_RUN=1`.
+It never mocks model choices. Use an isolated source worktree without `.env`.
+Set `SEMANTIER_EVAL_CREDENTIALS_ENV` to an existing authorized Windows-local
+Runtime env file containing DASHSCOPE_API_KEY and DASHSCOPE_BASE_URL; the observer
+reads only those entries and never passes the real key into Electron.
+Set `SEMANTIER_EVAL_OUTPUT` to a new evidence directory, and bind
+`SEMANTIER_EVAL_SOURCE_SHA`, `SEMANTIER_EVAL_RUNTIME_SHA`, `SEMANTIER_EVAL_RUN_ID`
+and `SEMANTIER_EVAL_PREFLIGHT_PROMPT_HASHES` before the frozen run. The model is
+strictly qwen3.5-plus. Keep native tool_search/deferred defaults and consent on.
+
+First run with `SEMANTIER_EVAL_PREFLIGHT_ONLY=1` (and optionally
+`SEMANTIER_EVAL_LOCALE=en` or `zh`) to exercise supported consent, actual composer
+submission, scoped tool catalog, and restart with **zero upstream inference**.
+Remove that flag only after evaluator self-tests and readiness pass. Run using
+only the existing CLI flags:
+
+```powershell
+node apps/desktop/scripts/run-fixture-e2e.mjs --python <native-python.exe> --output <new-run-directory> --timeout-ms 2100000 e2e/autonomous-browser.spec.ts
+```
+
+The six cases cap each at12upstream requests,4096output tokens/request and240s.
+The observer forwards real provider bytes, buffering streaming responses for
+redacted traces; observed streaming latency therefore differs from normal UI.
+The test emits measurement rows: a green runner exit does **not** establish
+qualification. Review actual tool results, final responses, webview/server state,
+ownership and all six case outcomes against the frozen contract. Never score
+zero model calls as autonomous success. Discovery/wrappers are retained and the
+first actual browser operation is scored separately. No production website or
+real-profile cookie copying is permitted.
+
+Evaluator self-tests use the existing Electron Vitest project:
+`vitest run scripts/autonomous-evaluator.test.mjs`.
+Observer parser/scope tests run with native Python:
+`python apps/desktop/e2e/autonomous-provider.test.py`.

@@ -33,7 +33,7 @@ if not KEY or not BASE.startswith('https://'):
     raise SystemExit('Configured Qwen credential/HTTPS provider missing')
 TOKEN = secrets.token_hex(24)  # fixture capability, not the real provider credential
 LOCK = threading.Lock()
-STATE = {'case': None, 'counts': {}, 'calls': [], 'failures': [], 'budget_per_case': 12}
+STATE = {'composition': [], 'preflight_requests': 0, 'case': None, 'counts': {}, 'calls': [], 'failures': [], 'budget_per_case': 12}
 HINT = (Path(__file__).resolve().parents[3] / 'semantier-runtime/src/prompts/agents/DESKTOP_BROWSER_CONTEXT.md').read_text(encoding='utf-8').strip()
 
 
@@ -83,7 +83,7 @@ def normalize_response(raw, content_type):
 
 
 def forbidden_tool(calls):
-    allowed = {'desktop_preview', 'drive_preview', 'browser_exec', 'todo_list', 'clarify', 'focus_pane', 'annotate_preview'}
+    allowed = {'desktop_preview', 'drive_preview', 'browser_exec', 'todo_list', 'clarify', 'focus_pane', 'annotate_preview', 'tool_search', 'tool_describe'}
     for call in calls or []:
         function = call.get('function', {})
         name = function.get('name', '')
@@ -92,7 +92,15 @@ def forbidden_tool(calls):
         except ValueError:
             continue  # Canonical tool argument validation owns invalid JSON.
         if name == 'tool_call':
-            nested = [{'function': {'name': item.get('name'), 'arguments': json.dumps(item.get('arguments', {}))}} for item in args.get('calls', [])]
+            entries = args.get('calls')
+            if isinstance(entries, str):
+                try:
+                    entries = json.loads(entries)
+                except ValueError:
+                    continue  # Native argument validation owns malformed envelopes.
+            if not isinstance(entries, list):
+                entries = [args] if args.get('name') else []
+            nested = [{'function': {'name': item.get('name'), 'arguments': item.get('arguments', '{}') if isinstance(item.get('arguments'), str) else json.dumps(item.get('arguments', {}))}} for item in entries if isinstance(item, dict)]
             violation = forbidden_tool(nested)
             if violation:
                 return violation
@@ -163,10 +171,18 @@ class Handler(BaseHTTPRequestHandler):
                     return self.reply(429, {'error': 'frozen trial call budget exhausted'})
                 names = [tool.get('function', {}).get('name') for tool in body.get('tools', [])]
                 system = '\n'.join(str(m.get('content', '')) for m in body.get('messages', []) if m.get('role') in ('system', 'developer'))
-                if not {'desktop_preview', 'drive_preview', 'browser_exec'}.issubset(names) or HINT not in system:
+                catalog = json.dumps(body.get('tools', []))
+                direct = {'desktop_preview', 'drive_preview'}.issubset(names)
+                deferred = {'tool_search', 'tool_describe', 'tool_call'}.issubset(names) and all(n in catalog for n in ('desktop_preview', 'drive_preview'))
+                STATE['composition'].append({'case': case, 'at': stamp(), 'tools': names, 'access_route': 'DIRECT' if direct else 'DEFERRED' if deferred else 'UNPROVEN', 'system_prompt_sha256': digest(system), 'browser_hint_sha256': digest(HINT), 'hint_loaded': HINT in system})
+                if not (direct or deferred) or 'browser_exec' not in names or HINT not in system:
                     STATE['failures'].append({'case': case, 'type': 'missing_effective_prompt_or_tools', 'at': stamp(), 'available_tools': names, 'hint_loaded': HINT in system})
                     save()
                     return self.reply(503, {'error': 'Evaluation composition missing required effective browser prompt/tools'})
+                if os.environ.get('SEMANTIER_EVAL_PREFLIGHT_ONLY') == '1':
+                    STATE['preflight_requests'] += 1
+                    save()
+                    return self.reply(503, {'error': 'Intentional unscored no-inference submission preflight'})
                 body['max_tokens'] = 4096
                 if body.get('stream'):
                     body['stream_options'] = {**body.get('stream_options', {}), 'include_usage': True}
@@ -206,6 +222,7 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(code, {'error': 'Real Qwen request failed', 'type': type(error).__name__, 'upstream_status': code})
 
 
-server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
-print(json.dumps({'port': server.server_address[1], 'token': TOKEN, 'model': 'qwen3.5-plus', 'provider_origin_sha256': digest(BASE), 'hint_sha256': digest(HINT)}), flush=True)
-server.serve_forever()
+if __name__ == '__main__':
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    print(json.dumps({'port': server.server_address[1], 'token': TOKEN, 'model': 'qwen3.5-plus', 'provider_origin_sha256': digest(BASE), 'hint_sha256': digest(HINT)}), flush=True)
+    server.serve_forever()
