@@ -1,5 +1,6 @@
 /** Real Electron webview + real gateway; deterministic provider calls, not LLM selection evidence. */
 import { execFile, execFileSync } from 'node:child_process'
+import fs from 'node:fs'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
@@ -19,6 +20,12 @@ test('authenticated owned Electron page remains distinct from independent automa
     process.platform !== 'linux' || !process.env.HERMES_DESKTOP_DEV_SERVER,
     'WSL source-renderer lane requires HERMES_DESKTOP_DEV_SERVER and local browser tools'
   )
+  // gateway.run also loads the source checkout's dotenv. Never let this synthetic
+  // journey hydrate developer messaging credentials or auto-install adapters.
+  expect(
+    fs.existsSync(path.join(root, '.env')),
+    'Run this lane from a clean source worktree without a project .env'
+  ).toBe(false)
   test.setTimeout(240_000)
   const results: { name: string; content: string }[] = []
   const requests: any[] = []

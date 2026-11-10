@@ -265,6 +265,7 @@ operate the owned live pane; independent `browser_exec` keeps its configured
 backend. Missing pane/bridge fails without opening a replacement. Browser
 engine choice and real-profile consent remain separate.
 
+Use a clean source worktree with no project `.env` (the fixture refuses one).
 With existing Electron, Xvfb, Python/browser-harness and PM Chromium dependencies,
 run from the repository root (no Windows package build):
 
