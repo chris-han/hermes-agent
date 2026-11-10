@@ -27,7 +27,7 @@
   BuildMode defaults to Beta: sign, install and publish without release verification.
   Use -BuildMode Prod for full verification and acceptance. Timings use checkpoints.jsonl.
   Run in an interactive Windows PowerShell session as the installing user.
-  Native SSH/SFTP read ALI_ECS_SSH_PASSWORDE only from an explicit -CredentialsEnv,
+  Native SSH/SFTP prefer environment variable ALI_ECS_SSH_PASSWORD, then an explicit -CredentialsEnv,
   otherwise use your SSH key/agent or prompt for the ECS password. Secrets
   are never embedded in this script. No npm/uv install, Python publisher, WSL,
   release lock/database, split packages, bundles, ZIPs, or CH2/R2 operations.
@@ -110,11 +110,12 @@ function Assert-LocalWindowsPath([string]$Path) {
   return $full
 }
 function Get-EcsSshPassword([string]$Path) {
+  if($env:ALI_ECS_SSH_PASSWORD){return $env:ALI_ECS_SSH_PASSWORD}
   if(!$Path){return $null}
   if(!(Test-Path -LiteralPath $Path -PathType Leaf)){throw 'The explicit -CredentialsEnv file is unavailable.'}
   $password=$null;$found=$false
   foreach($line in [IO.File]::ReadAllLines($Path)) {
-    if($line -cnotmatch '^\s*(?:export\s+)?ALI_ECS_SSH_PASSWORDE\s*=\s*(.*)$'){continue}
+    if($line -cnotmatch '^\s*(?:export\s+)?ALI_ECS_SSH_PASSWORD\s*=\s*(.*)$'){continue}
     if($found){throw 'Duplicate SSH password assignments in -CredentialsEnv.'}
     $found=$true;$value=$Matches[1].Trim()
     if($value.StartsWith('"') -or $value.StartsWith("'")) {
@@ -122,7 +123,7 @@ function Get-EcsSshPassword([string]$Path) {
       $password=$Matches[2]
     } else {$password=($value -replace '\s+#.*$','').Trim()}
   }
-  if(!$password){throw 'Credentials file must contain nonempty ALI_ECS_SSH_PASSWORDE; omit -CredentialsEnv to use SSH keys.'}
+  if(!$password){throw 'Credentials file must contain nonempty ALI_ECS_SSH_PASSWORD; omit -CredentialsEnv to use SSH keys.'}
   return $password
 }
 function Assert-ExecutionPolicyPreflight {
@@ -669,7 +670,7 @@ class AskPass {
   static int Main(string[] args) {
     if(args.Length!=1 || args[0].IndexOf("password",StringComparison.OrdinalIgnoreCase)<0)return 1;
     Console.OutputEncoding=new UTF8Encoding(false);
-    Console.WriteLine(Environment.GetEnvironmentVariable("SEMANTIER_SSH_PASSWORD"));return 0;
+    Console.WriteLine(Environment.GetEnvironmentVariable("ALI_ECS_SSH_PASSWORD"));return 0;
   }
 }
 '@,$utf8)
@@ -677,14 +678,14 @@ class AskPass {
     if($LASTEXITCODE -ne 0){throw 'Cannot compile native SSH password helper.'}
     $script:askPassExe=$helper
   }
-  $names=@('SSH_ASKPASS','SSH_ASKPASS_REQUIRE','DISPLAY','SEMANTIER_SSH_PASSWORD')
+  $names=@('SSH_ASKPASS','SSH_ASKPASS_REQUIRE','DISPLAY','ALI_ECS_SSH_PASSWORD')
   $savedEnvironment=@{}
   foreach($name in $names){$savedEnvironment[$name]=[Environment]::GetEnvironmentVariable($name,'Process')}
   try {
     [Environment]::SetEnvironmentVariable('SSH_ASKPASS',$script:askPassExe,'Process')
     [Environment]::SetEnvironmentVariable('SSH_ASKPASS_REQUIRE','force','Process')
     [Environment]::SetEnvironmentVariable('DISPLAY','semantier','Process')
-    [Environment]::SetEnvironmentVariable('SEMANTIER_SSH_PASSWORD',$password,'Process')
+    [Environment]::SetEnvironmentVariable('ALI_ECS_SSH_PASSWORD',$password,'Process')
     $Arguments=@('-o','PreferredAuthentications=password','-o','NumberOfPasswordPrompts=1')+$Arguments
     & $Exe @Arguments
   } finally {
