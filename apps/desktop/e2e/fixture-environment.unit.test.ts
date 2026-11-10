@@ -42,6 +42,6 @@ test('validates owned roots before gateway stop or deletion and rejects escaped/
   expect(assertFixtureOwner(root, '/source', base)).toEqual(sandbox)
   expect(() => assertFixtureOwner(root, '/other-source', base)).toThrow(/owner/)
   fs.rmSync(sandbox.hermesHome, { recursive: true })
-  fs.symlinkSync(base, sandbox.hermesHome)
+  fs.symlinkSync(base, sandbox.hermesHome, process.platform === 'win32' ? 'junction' : 'dir')
   expect(() => assertFixtureOwner(root, '/source', base)).toThrow(/symlink/)
 })
