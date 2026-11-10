@@ -27,7 +27,7 @@ const prompts = {
 } as const
 
 type CaseId = keyof typeof prompts
-const order: CaseId[] = ['A', 'B', 'C', 'E', 'F', 'D']
+const order: CaseId[] = process.env.SEMANTIER_EVAL_RECOVER_REMAINING === '1' ? ['C', 'E', 'F', 'D'] : ['A', 'B', 'C', 'E', 'F', 'D']
 
 async function listen(server: http.Server): Promise<string> {
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
@@ -194,7 +194,7 @@ test('six frozen real-Qwen Desktop browser workflows', async ({}, info) => {
     const config: any = {
       language: process.env.SEMANTIER_EVAL_LOCALE || 'en', display: { language: process.env.SEMANTIER_EVAL_LOCALE || 'en' },
       model: { provider: 'alibaba-cn', default: 'qwen3.5-plus', base_url: origin + '/v1', context_length: 64000 },
-      auxiliary: { title_generation: { enabled: false } }, onboarding: { run: false },
+      auxiliary: { title_generation: { enabled: false }, background_review: { enabled: false } }, onboarding: { run: false },
       agent: { max_iterations: 12, verify_on_stop: false },
       browser: { backend: 'browser-use', cloud_provider: 'local', engine: 'chrome', allow_private_urls: true, use_real_profile: false }
     }
@@ -289,6 +289,20 @@ return !state.busy && !state.awaiting}, {timeout:60000}).toBe(true)
     let guestB: any
     let runtimeA: string | null = null
     let runtimeB: string | null = null
+
+    if (process.env.SEMANTIER_EVAL_RECOVER_REMAINING === '1') {
+      const next = fixture.app!.waitForEvent('window')
+      await page.evaluate(() => (window as any).hermesDesktop.openWindow())
+      second = await next
+      await declineProfileConsent(second, 180000)
+      await waitForChatReady(second, 30000)
+      await second.evaluate(async () => (await import('/src/store/' + 'profile.ts')).newSessionInProfile('default'))
+      await second.evaluate(async url => (await import('/src/store/' + 'preview.ts')).openPreview({kind:'url',source:'user',label:'Synthetic recovery dashboard B',url}),siteUrl+'/login/B')
+      await expect.poll(async()=>JSON.stringify(await visible(second!)),{timeout:60000}).toContain('Authenticated test dashboard B')
+      await declineProfileConsent(second)
+      guestB=(await visible(second))[0]
+    }
+
 
     for (const id of order) {
       if (id === 'B') {
@@ -389,7 +403,9 @@ return !state.busy && !state.awaiting}, {timeout:60000}).toBe(true)
       const first = browserOperations(modelTools)[0]
       const after = { dashboard: structuredClone(dashboard), views_A: await visible(page), views_B: second ? await visible(second) : [], owner: await owner(target), research_hits: researchHits.slice(before.research_hits) }
 
-      if (id === 'A') { runtimeA = after.owner.runtime }
+      if (id === 'A' || id === 'E') { runtimeA = after.owner.runtime }
+
+      if (id === 'C' && process.env.SEMANTIER_EVAL_RECOVER_REMAINING === '1') { runtimeB = after.owner.runtime }
 
       if (id === 'B') { runtimeB = after.owner.runtime; guestB = after.views_B[0] }
       const sameA = after.views_A.some((view: any) => view.id === guestA.id && view.url?.includes('/dashboard/A'))

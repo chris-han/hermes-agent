@@ -37,3 +37,10 @@ return {first:()=>button}},locator:()=>({locator:()=>({first:()=>composer})})}
 }
 
 test('native JSON-string batch envelope is unwrapped',()=>assert.equal(unwrapTools([{name:'tool_call',arguments:{calls:JSON.stringify([{name:'desktop_preview',arguments:'{"action":"read"}'}])}}])[0].name,'desktop_preview'))
+
+test('background maintenance is not a browser trial final action',()=>{
+ const calls=[{name:'browser_exec',arguments:{}},{name:'skills_list',arguments:{}}]
+ const s=scoreTrial({...base,target:'independent',calls})
+ assert.equal(s.routing,true)
+ assert.equal(unwrapTools(calls)[1].name,'skills_list')
+})

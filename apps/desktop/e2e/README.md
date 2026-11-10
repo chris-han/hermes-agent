@@ -119,3 +119,12 @@ Evaluator self-tests use the existing Electron Vitest project:
 `vitest run scripts/autonomous-evaluator.test.mjs`.
 Observer parser/scope tests run with native Python:
 `python apps/desktop/e2e/autonomous-provider.test.py`.
+
+The fixture disables `auxiliary.background_review.enabled` in its isolated home,
+so automatic skill-library maintenance is not mistaken for the user's browser
+turn or included in its inference budget. Product defaults are unchanged.
+`SEMANTIER_EVAL_RECOVER_REMAINING=1` is the bounded v2 infrastructure recovery:
+seed two synthetic pages via supported renderer controls and execute C,E,F,D
+without re-spending A/B. C is a retry; E/F/D are first attempts. Retain and bind
+the original manifest/traces, freeze the config amendment, and report fresh
+fixture/session identities rather than claiming continuity across processes.
