@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 import requests
 
+from tests.hermes_cli.test_cloud_device_client import install_wire
 from tests.hermes_cli.test_cloud_device_client import native as native  # noqa: PLC0414 -- pytest fixture re-export
 
 
@@ -257,3 +258,18 @@ def test_retry_replaces_only_definitely_invalid_device_intent_and_keeps_credenti
     assert len(starts) == (2 if invalid else 1)
     assert device._read()['credentials'] == original['credentials']
     assert device.credential('retained', base_url=original['origin'] + '/v1') == 'synthetic-retained'
+
+
+@pytest.mark.parametrize('provider_sections', [
+    'providers: null\nbilling: null\n',
+    'providers: {semantier-cloud: null}\nbilling: null\n',
+])
+def test_optional_null_sections_preserve_existing_legacy_cloud_origin(native, monkeypatch, provider_sections):
+    device, home = native
+    (home / 'config.yaml').write_text(provider_sections +
+        'semantier_gateway: {enabled: true, base_url: "http://127.0.0.1:8765/v1"}\n', encoding='utf-8')
+    assert device._new_state({})['origin'] == 'http://127.0.0.1:8765'
+    install_wire(device, monkeypatch)
+    session = device.start()['session_id']
+    assert device.poll(session)['status'] == 'approved'
+    assert device._config()['model']['provider'] == 'semantier-cloud'

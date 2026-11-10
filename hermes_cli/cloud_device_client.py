@@ -208,8 +208,9 @@ def _config():
     from hermes_cli.config import read_user_config_raw
     cfg = read_user_config_raw()
     if (not isinstance(cfg, dict)
-            or any(key in cfg and not isinstance(cfg[key], dict) for key in ('providers', 'billing', 'semantier_gateway'))
-            or not isinstance((cfg.get('providers') or {}).get('semantier-cloud', {}), dict)):
+            or any(cfg.get(key) is not None and not isinstance(cfg[key], dict) for key in ('providers', 'billing', 'semantier_gateway'))
+            or ((cfg.get('providers') or {}).get('semantier-cloud') is not None
+                and not isinstance((cfg.get('providers') or {}).get('semantier-cloud'), dict))):
         raise CloudConnectionError('cloud_config_invalid', 'Semantier Cloud provider configuration is invalid. Check this profile settings.', 422, recovery='provider_settings')
     return cfg
 
@@ -480,7 +481,8 @@ def _install(state, binding):
             entry['http_version'] = '3'
             if previous_cloud.get('ssl_ca_cert'):
                 entry['ssl_ca_cert'] = previous_cloud['ssl_ca_cert']
-        cfg.setdefault('providers',{})['semantier-cloud'] = entry
+        cfg['providers'] = cfg.get('providers') or {}
+        cfg['providers']['semantier-cloud'] = entry
         if not isinstance(cfg.get('model'),dict):
             cfg['model'] = {'default':str(cfg.get('model') or '')}
         previous = cfg['model']
@@ -517,7 +519,8 @@ def _install(state, binding):
                 raise CloudConnectionError('cloud_response_invalid', 'Cloud model capability revision unavailable; retry the same connection.', 502, recovery='retry')
             cfg['model']['capability_revision'] = revision
         state['model'] = selected
-        cfg.setdefault('billing',{}).update(backend='semantier', account_id=data['account_id'], currency=data['currency'], portal_origin=state['portal_origin'])
+        cfg['billing'] = cfg.get('billing') or {}
+        cfg['billing'].update(backend='semantier', account_id=data['account_id'], currency=data['currency'], portal_origin=state['portal_origin'])
         # Persist the complete intended config inside the protected journal before its atomic replace.
         state['staged_config'] = cfg
         state['status'] = 'installing'

@@ -23,7 +23,7 @@ test('default Cloud sign-in recovers, approves and persists through real Desktop
   expect(fs.existsSync(path.join(root, '.env')), 'Use a clean source worktree').toBe(false)
   const sandbox = createSandbox('cloud-sign-in')
   writeEnvFile(sandbox.hermesHome)
-  fs.writeFileSync(path.join(sandbox.hermesHome, 'config.yaml'), 'language: en\n')
+  fs.writeFileSync(path.join(sandbox.hermesHome, 'config.yaml'), 'language: en\nproviders: null\nbilling: null\n')
   let unavailable = true
   let approved = false
   let startCount = 0
