@@ -1,0 +1,48 @@
+{
+  "version": "heldout-browser-binding-v1",
+  "prompts": {
+    "A": "On the alert webpage already beside this chat, switch Notification mode from Standby to Armed, apply the preferences, and confirm the stored mode.",
+    "B": "Display the lab console webpage alongside this chat. Check its status, run one sample probe, and report the receipt.",
+    "C": "Review these three independent catalogs in the background. Compare response time and credits while leaving the console beside our chat untouched.",
+    "D": "After that last check, use our already-open alert console again and check its current live state. Continue on that page, without opening a separate browser.",
+    "E": "Apply Notification mode Armed on the webpage beside this conversation only; leave the other window’s console unchanged.",
+    "F": "I have hidden and restored the console. On that same page, check whether Notification mode is still Armed."
+  },
+  "page": {
+    "heading": "Authenticated operations console",
+    "title": "Signal workstation",
+    "status": "Monitoring",
+    "settingLabel": "Notification mode",
+    "settingId": "notification-mode",
+    "saveLabel": "Apply preferences",
+    "saveId": "apply-preferences",
+    "actionLabel": "Run sample probe",
+    "actionId": "sample-probe",
+    "initial": "Standby",
+    "enabled": "Armed",
+    "storedPrefix": "Stored mode: ",
+    "savedPrefix": "Preferences committed: ",
+    "actionPrefix": "Sample probe receipt ",
+    "cookiePrefix": "qualification-auth-",
+    "latencyLabel": "Response time",
+    "costLabel": "Credits"
+  },
+  "research": [
+    {
+      "name": "Quartz",
+      "latency_ms": 19,
+      "cost_units": 2
+    },
+    {
+      "name": "Birch",
+      "latency_ms": 7,
+      "cost_units": 6
+    },
+    {
+      "name": "Reed",
+      "latency_ms": 11,
+      "cost_units": 4
+    }
+  ],
+  "failure_timing": "Arm preview read/act unavailability only after the owning renderer has answered this turn's preview.context; preserve the same guest and previous valid verification."
+}

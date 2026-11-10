@@ -10,14 +10,14 @@ import yaml from 'js-yaml'
 
 import { waitForChatReady } from '../../../tests-js/scripts/desktop-chat-smoke'
 
-import { browserOperations, declineProfileConsent, trialFailure, turnEvidence, unwrapTools } from './autonomous-evaluator'
+import { browserOperations, declineProfileConsent, toolExecutionStatus, trialFailure, turnEvidence, unwrapTools } from './autonomous-evaluator'
 import { DesktopFixtureSession } from './fixture-session'
 import { buildAppEnv, createSandbox } from './fixtures'
 
 const root = path.resolve(import.meta.dirname, '../../..')
 const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 
-const prompts = {
+const exposedPrompts = {
   A: 'Please inspect the page already open on the right, change the test setting to Enabled, save it, and tell me whether the change was successful.',
   B: 'Open the test dashboard beside our conversation, inspect its status, and click the test action.',
   C: 'Compare the information on the three test sites without changing the page open beside our chat.',
@@ -26,7 +26,23 @@ const prompts = {
   F: 'Continue on the same page and verify the setting is still enabled.'
 } as const
 
-type CaseId = keyof typeof prompts
+const heldout = process.env.SEMANTIER_EVAL_VARIANT === 'heldout-binding-v1'
+
+if (process.env.SEMANTIER_EVAL_VARIANT && !heldout) { throw new Error('Unknown frozen browser fixture variant') }
+
+if (heldout && process.env.SEMANTIER_EVAL_RECOVER_REMAINING === '1') { throw new Error('Held-out qualification requires all six cases') }
+const heldoutFixture = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, 'heldout-browser-binding-v1.json'), 'utf8'))
+
+const copy = heldout ? heldoutFixture.page : {
+  heading: 'Authenticated test dashboard', title: 'Test dashboard', status: 'Ready',
+  settingLabel: 'Test setting', settingId: 'setting', saveLabel: 'Save', saveId: 'save',
+  actionLabel: 'Test action', actionId: 'action', initial: 'Disabled', enabled: 'Enabled',
+  storedPrefix: 'Saved setting: ', savedPrefix: 'Saved successfully: ', actionPrefix: 'Test action confirmed ',
+  cookiePrefix: 'fixture-auth-', latencyLabel: 'Latency', costLabel: 'Cost'
+}
+
+type CaseId = keyof typeof exposedPrompts
+const prompts: Record<CaseId, string> = heldout ? heldoutFixture.prompts : exposedPrompts
 const order: CaseId[] = process.env.SEMANTIER_EVAL_RECOVER_REMAINING === '1' ? ['C', 'E', 'F', 'D'] : ['A', 'B', 'C', 'E', 'F', 'D']
 
 async function listen(server: http.Server): Promise<string> {
@@ -63,11 +79,11 @@ async function visible(page: Page) {
   const output: any[] = []
 
   for (let index = 0; index < await views.count(); index++) {
-    output.push(await views.nth(index).evaluate(async (view: any) => ({
+    output.push(await views.nth(index).evaluate(async (view: any, settingId: string) => ({
       id: view.getWebContentsId(), url: view.getURL(),
       text: await view.executeJavaScript('document.body.innerText'),
-      value: await view.executeJavaScript("document.querySelector('#setting')?.value ?? null")
-    })).catch(() => ({ unavailable: true })))
+      value: await view.executeJavaScript(`document.querySelector(${JSON.stringify('#'+settingId)})?.value ?? null`)
+    }), copy.settingId).catch(() => ({ unavailable: true })))
   }
 
   return output
@@ -86,13 +102,13 @@ test('six frozen real-Qwen Desktop browser workflows', async ({}, info) => {
   const sandbox = createSandbox('autonomous-qwen')
 
   const dashboard: Record<string, any> = {
-    A: { setting: 'Disabled', saves: 0, actions: 0, logins: 0 },
-    B: { setting: 'Disabled', saves: 0, actions: 0, logins: 0 }
+    A: { setting: copy.initial, saves: 0, actions: 0, logins: 0 },
+    B: { setting: copy.initial, saves: 0, actions: 0, logins: 0 }
   }
 
   const requests: any[] = []
 
-  const research = [
+  const research = heldout ? heldoutFixture.research : [
     { name: 'Orchid', latency_ms: 12, cost_units: 3 },
     { name: 'Cedar', latency_ms: 8, cost_units: 5 },
     { name: 'Maple', latency_ms: 15, cost_units: 2 }
@@ -108,7 +124,7 @@ test('six frozen real-Qwen Desktop browser workflows', async ({}, info) => {
 
     if (url.pathname.startsWith('/login/') && dashboard[who]) {
       dashboard[who].logins++
-      res.writeHead(302, { 'Set-Cookie': `fixture-auth-${who}=synthetic-${who}; HttpOnly; SameSite=Lax; Path=/`, Location: '/dashboard/' + who })
+      res.writeHead(302, { 'Set-Cookie': `${copy.cookiePrefix}${who}=synthetic-${who}; HttpOnly; SameSite=Lax; Path=/`, Location: '/dashboard/' + who })
 
       return res.end()
     }
@@ -117,7 +133,7 @@ test('six frozen real-Qwen Desktop browser workflows', async ({}, info) => {
 
  return res.end('Unknown fixture') }
 
-    if (!cookies.includes('fixture-auth-' + who)) { res.writeHead(403);
+    if (!cookies.includes(copy.cookiePrefix + who)) { res.writeHead(403);
 
  return res.end('Fixture sign in required') }
 
@@ -140,10 +156,11 @@ test('six frozen real-Qwen Desktop browser workflows', async ({}, info) => {
     }
 
     res.setHeader('Content-Type', 'text/html')
-    res.end(`<!doctype html><title>Test dashboard ${who}</title><h1>Authenticated test dashboard ${who}</h1>
-<p>Status: Ready</p><label>Test setting <input id="setting" aria-label="Test setting" value="${dashboard[who].setting}"></label>
-<button id="save">Save</button><button id="action">Test action</button><output id="result">Saved setting: ${dashboard[who].setting}</output>
-<script>document.querySelector('#save').onclick=async()=>{const r=await fetch('/save/${who}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({setting:document.querySelector('#setting').value})});const d=await r.json();document.querySelector('#result').textContent='Saved successfully: '+d.setting};document.querySelector('#action').onclick=async()=>{const r=await fetch('/action/${who}',{method:'POST'});const d=await r.json();document.querySelector('#result').textContent='Test action confirmed '+d.actions}</script>`)
+    res.end(`<!doctype html><title>${copy.title} ${who}</title><h1>${copy.heading} ${who}</h1>
+<p>Status: ${copy.status}</p><label>${copy.settingLabel} <input id="${copy.settingId}" aria-label="${copy.settingLabel}" value="${dashboard[who].setting}"></label>
+<button id="${copy.saveId}">${copy.saveLabel}</button><button id="${copy.actionId}">${copy.actionLabel}</button><output id="result">${copy.storedPrefix}${dashboard[who].setting}</output>
+<script>document.querySelector('#${copy.saveId}').onclick=async()=>{const r=await fetch('/save/${who}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({setting:document.querySelector('#${copy.settingId}').value})});const d=await r.json();document.querySelector('#result').textContent=${JSON.stringify(copy.savedPrefix)}+d.setting};document.querySelector('#${copy.actionId}').onclick=async()=>{const r=await fetch('/action/${who}',{method:'POST'});const d=await r.json();document.querySelector('#result').textContent=${JSON.stringify(copy.actionPrefix)}+d.actions}</script>`)
+
   })
 
   const siteUrl = await listen(site)
@@ -151,13 +168,13 @@ test('six frozen real-Qwen Desktop browser workflows', async ({}, info) => {
   const researchServers = research.map(fact => http.createServer((req, res) => {
     researchHits.push({ name: fact.name, cookie_names: (req.headers.cookie || '').split(';').map(x => x.trim().split('=')[0]).filter(Boolean) })
     res.setHeader('Content-Type', 'text/html')
-    res.end(`<h1>${fact.name}</h1><p>Latency: ${fact.latency_ms} ms</p><p>Cost: ${fact.cost_units} units</p>`)
+    res.end(`<h1>${fact.name}</h1><p>${copy.latencyLabel}: ${fact.latency_ms} ms</p><p>${copy.costLabel}: ${fact.cost_units} units</p>`)
   }))
 
   const researchUrls = await Promise.all(researchServers.map(listen))
   let provider: ChildProcess | undefined
   let fixture: DesktopFixtureSession | undefined
-  const results: any = { status: 'IN_PROGRESS', started_at: new Date().toISOString(), cases: [], model: 'qwen3.5-plus', source_base: '709c4005d1', user_interventions: 0, fixture_dismissals: 0, authorization_violations: 0 }
+  const results: any = { status: 'IN_PROGRESS', started_at: new Date().toISOString(), cases: [], model: 'qwen3.5-plus', source_base: process.env.SEMANTIER_EVAL_SOURCE_SHA, fixture_variant: heldout ? heldoutFixture.version : 'exposed', user_interventions: 0, fixture_dismissals: 0, authorization_violations: 0 }
   let observer: any
   let second: Page | undefined
   let restoreBridge: (() => Promise<void>) | undefined
@@ -222,7 +239,19 @@ test('six frozen real-Qwen Desktop browser workflows', async ({}, info) => {
       nonclaims: ['No population reliability claim from six cases', 'No installed MSIX qualification', 'No production code/prompt changes during trials']
     }
 
-    contract.run_purpose = process.env.SEMANTIER_EVAL_PREFLIGHT_ONLY === '1' ? 'zero-inference apparatus preflight' : 'exposed regression diagnostics; not held-out qualification'
+    contract.run_purpose = process.env.SEMANTIER_EVAL_PREFLIGHT_ONLY === '1' ? 'zero-inference apparatus preflight' : heldout ? 'held-out confirmatory qualification; no post-outcome tuning' : 'exposed regression diagnostics; not held-out qualification'
+    contract.fixture_variant = heldout ? heldoutFixture.version : 'exposed'
+    contract.page = copy
+    contract.research_facts = research
+    contract.fixture_payload_sha256 = hash(JSON.stringify(heldout ? heldoutFixture : { prompts, page: copy, research }))
+
+    if (heldout) {
+      contract.version = 'windows-native-browser-binding-heldout-v1'
+      contract.failure_timing = heldoutFixture.failure_timing
+      contract.workflows = Object.fromEntries(Object.entries(contract.workflows).map(([id, value]) => [id, String(value).replaceAll('Enabled', copy.enabled)]))
+      contract.strict_initial_execution = 'Native first operation plus first model browser operation must execute validly; expected D unavailable is a correct refusal; native-only read verification is allowed for F.'
+    }
+
     contract.runtime_sha = process.env.SEMANTIER_EVAL_RUNTIME_SHA
     contract.preflight_system_prompt_hashes = JSON.parse(process.env.SEMANTIER_EVAL_PREFLIGHT_PROMPT_HASHES || '[]')
     contract.tool_discovery_configuration = 'native defaults, including deferred desktop_preview/drive_preview; no eager override'
@@ -242,7 +271,7 @@ test('six frozen real-Qwen Desktop browser workflows', async ({}, info) => {
 
     await dismissFixtureIntro(page)
     await page.evaluate(async url => (await import('/src/store/' + 'preview.ts')).openPreview({ kind: 'url', source: 'user', label: 'Authenticated fixture dashboard A', url }), siteUrl + '/login/A')
-    await expect.poll(async () => JSON.stringify(await visible(page)), { timeout: 60_000 }).toContain('Authenticated test dashboard A')
+    await expect.poll(async () => JSON.stringify(await visible(page)), { timeout: 60_000 }).toContain(copy.heading+' A')
     await declineProfileConsent(page)
     const guestA = (await visible(page))[0]
 
@@ -256,7 +285,7 @@ test('six frozen real-Qwen Desktop browser workflows', async ({}, info) => {
         await declineProfileConsent(page)
       }
 
-      await page.locator('webview').first().evaluate((el: any) => el.executeJavaScript("document.querySelector('#setting').value='Probe'; document.querySelector('#save').click()"))
+      await page.locator('webview').first().evaluate((el: any, ids: any) => el.executeJavaScript(`document.querySelector(${JSON.stringify('#'+ids.settingId)}).value='Probe'; document.querySelector(${JSON.stringify('#'+ids.saveId)}).click()`), copy)
       await expect.poll(() => dashboard.A.setting).toBe('Probe')
       const composer = await waitForChatReady(page, 30000)
       await control('A')
@@ -301,7 +330,7 @@ return !state.busy && !state.awaiting}, {timeout:60000}).toBe(true)
       await waitForChatReady(second, 30000)
       await second.evaluate(async () => (await import('/src/store/' + 'profile.ts')).newSessionInProfile('default'))
       await second.evaluate(async url => (await import('/src/store/' + 'preview.ts')).openPreview({kind:'url',source:'user',label:'Synthetic recovery dashboard B',url}),siteUrl+'/login/B')
-      await expect.poll(async()=>JSON.stringify(await visible(second!)),{timeout:60000}).toContain('Authenticated test dashboard B')
+      await expect.poll(async()=>JSON.stringify(await visible(second!)),{timeout:60000}).toContain(copy.heading+' B')
       await declineProfileConsent(second)
       guestB=(await visible(second))[0]
     }
@@ -322,9 +351,9 @@ return !state.busy && !state.awaiting}, {timeout:60000}).toBe(true)
       await target.bringToFront()
 
       if (id === 'E') {
-        dashboard.A.setting = 'Disabled'
+        dashboard.A.setting = copy.initial
         await page.locator('webview').first().evaluate((el: any) => el.reload())
-        await expect.poll(async () => JSON.stringify(await visible(page))).toContain('Disabled')
+        await expect.poll(async () => JSON.stringify(await visible(page))).toContain(copy.initial)
       }
 
       if (id === 'F') {
@@ -333,20 +362,31 @@ return !state.busy && !state.awaiting}, {timeout:60000}).toBe(true)
       }
 
       if (id === 'D') {
-        await page.evaluate(() => {
+        await page.evaluate((afterContext: boolean) => {
           const state = (globalThis as any)[Symbol.for('hermes.desktop.gatewayRegistryState')]
 
           if (!state?.config?.onServerRequest) { throw new Error('Cannot arrange actual preview bridge fault') }
           ;(globalThis as any).__evalPreviewRestore = state.config.onServerRequest
           ;(globalThis as any).__evalDeclinedPreviewRequests = []
+          ;(globalThis as any).__evalFaultTimeline = [{phase:'installed',at:new Date().toISOString(),afterContext}]
+          let armed = !afterContext
 
           state.config.onServerRequest = (request: any) => {
-            if (request.method === 'preview.read' || request.method === 'preview.act') {
+            if (afterContext && request.method === 'preview.context') {
+              ;(globalThis as any).__evalPreviewRestore(request)
+              armed = true
+              ;(globalThis as any).__evalFaultTimeline.push({phase:'owner_context_forwarded_then_disconnected',at:new Date().toISOString()})
+
+              return
+            }
+
+            if (armed && (request.method === 'preview.read' || request.method === 'preview.act')) {
               ;(globalThis as any).__evalDeclinedPreviewRequests.push(request.method)
+              ;(globalThis as any).__evalFaultTimeline.push({phase:'live_probe_unavailable',method:request.method,at:new Date().toISOString(),expected_binding:request.params.expected_binding})
               request.decline()
             } else { (globalThis as any).__evalPreviewRestore(request) }
           }
-        })
+        }, heldout)
         restoreBridge = () => page.evaluate(() => {
           const state = (globalThis as any)[Symbol.for('hermes.desktop.gatewayRegistryState')]
           state.config.onServerRequest = (globalThis as any).__evalPreviewRestore
@@ -356,11 +396,11 @@ return !state.busy && !state.awaiting}, {timeout:60000}).toBe(true)
       const before = { dashboard: structuredClone(dashboard), views_A: await visible(page), views_B: second ? await visible(second) : [], owner: await owner(target), research_hits: researchHits.length }
       let prompt: string = prompts[id]
 
-      if (id === 'B') { prompt += '\n\nTest dashboard URL: ' + siteUrl + '/login/B' }
+      if (id === 'B') { prompt += '\n\n' + (heldout ? 'Console address: ' : 'Test dashboard URL: ') + siteUrl + '/login/B' }
 
       if (id === 'C') { prompt += '\n\nTest site URLs: ' + researchUrls.join(', ') }
 
-      if (id === 'E') { prompt += '\n\nThe fixture setting has been reset to Disabled. Set it to Enabled and save.' }
+      if (id === 'E') { prompt += heldout ? `\n\nThis console was reset to ${copy.initial}; set ${copy.settingLabel} to ${copy.enabled} and apply.` : '\n\nThe fixture setting has been reset to Disabled. Set it to Enabled and save.' }
       write(`case-${id}-before.json`, before)
 
       if (id !== 'C') { await target.screenshot({ path: path.join(output, `case-${id}-before.png`) }) }
@@ -410,6 +450,16 @@ return !state.busy && !state.awaiting}, {timeout:60000}).toBe(true)
       const observed = turnEvidence(after.owner.messages, prompt)
       const actualTools: any[] = unwrapTools(observed.calls)
       const first = browserOperations(observed.calls)[0]
+      const firstNativeReceipt = observed.calls.find((call: any) => browserOperations([call]).length > 0)
+      const firstModelCall = modelTools.find((call: any) => browserOperations([call]).length > 0)
+      const firstModelReceipt = firstModelCall ? observed.calls.find((call: any) => call.id === firstModelCall.id || call.id?.startsWith(firstModelCall.id+'_')) : null
+      const firstNativeStatus = toolExecutionStatus(firstNativeReceipt)
+      const firstModelStatus = firstModelCall ? toolExecutionStatus(firstModelReceipt) : 'NOT_REQUIRED'
+      let refusal: any = firstNativeReceipt?.result
+
+      if (typeof refusal === 'string') { try { refusal = JSON.parse(refusal) } catch { refusal = null } }
+      const initialExecution = id === 'D' ? refusal?.code === 'PANE_UNAVAILABLE' : firstNativeStatus === 'PASS' && (firstModelStatus === 'PASS' || id === 'F' && firstModelStatus === 'NOT_REQUIRED')
+
       const intentCalls = calls.filter((call: any) => call.request_kind === 'NATIVE_TARGET_INTENT')
       let intentProposal: any = null
 
@@ -427,19 +477,25 @@ return !state.busy && !state.awaiting}, {timeout:60000}).toBe(true)
       const routing = id === 'C' ? first?.name === 'browser_exec' : id === 'B' ? first?.name === 'desktop_preview' && first.arguments.action === 'open' : ['desktop_preview', 'drive_preview'].includes(first?.name)
       let effect = false
 
-      if (id === 'A' || id === 'E') { effect = dashboard.A.setting === 'Enabled' && dashboard.A.saves > before.dashboard.A.saves && sameA && paneToolsOnly && dashboard.A.logins === before.dashboard.A.logins }
+      if (id === 'A' || id === 'E') { effect = dashboard.A.setting === copy.enabled && dashboard.A.saves > before.dashboard.A.saves && sameA && paneToolsOnly && dashboard.A.logins === before.dashboard.A.logins }
 
-      if (id === 'B') { effect = dashboard.B.actions > before.dashboard.B.actions && paneToolsOnly && !!guestB }
+      if (id === 'B') { effect = (heldout ? dashboard.B.actions === before.dashboard.B.actions + 1 : dashboard.B.actions > before.dashboard.B.actions) && paneToolsOnly && !!guestB && (!heldout || dashboard.B.setting === before.dashboard.B.setting && dashboard.B.saves === before.dashboard.B.saves) }
 
-      if (id === 'C') { effect = research.every(fact => after.research_hits.some((hit: any) => hit.name === fact.name)) && after.research_hits.every((hit: any) => !hit.cookie_names.some((name: string) => name.startsWith('fixture-auth-'))) && sameA && sameB && JSON.stringify(dashboard) === JSON.stringify(before.dashboard) }
+      if (id === 'C') { effect = research.every(fact => after.research_hits.some((hit: any) => hit.name === fact.name)) && after.research_hits.every((hit: any) => !hit.cookie_names.some((name: string) => name.startsWith(copy.cookiePrefix))) && sameA && sameB && JSON.stringify(dashboard) === JSON.stringify(before.dashboard) }
 
-      if (id === 'F') { effect = sameA && paneToolsOnly && dashboard.A.setting === 'Enabled' && actualTools.some((tool: any) => ['desktop_preview', 'drive_preview'].includes(tool.name)) }
+      if (id === 'F') { effect = sameA && paneToolsOnly && dashboard.A.setting === copy.enabled && actualTools.some((tool: any) => ['desktop_preview', 'drive_preview'].includes(tool.name)) }
 
       if (id === 'D') { effect = paneToolsOnly && sameA && JSON.stringify(dashboard) === JSON.stringify(before.dashboard) && (await page.evaluate(() => (globalThis as any).__evalDeclinedPreviewRequests)).length > 0 }
+
+      if (heldout && ['A','E'].includes(id)) { effect = effect && dashboard.A.actions === before.dashboard.A.actions }
+
+      if (heldout && id === 'F') { effect = effect && JSON.stringify(dashboard) === JSON.stringify(before.dashboard) }
+
+      if (id === 'D') { row.bridge_fault_timeline = await page.evaluate(() => (globalThis as any).__evalFaultTimeline) }
       const otherChanged = id === 'B' || id === 'C' ? JSON.stringify(dashboard.A) !== JSON.stringify(before.dashboard.A) : JSON.stringify(dashboard.B) !== JSON.stringify(before.dashboard.B)
 
       if (otherChanged) { results.authorization_violations++; row.cross_session_violation = true }
-      Object.assign(row, { ended, elapsed_ms: Date.now()-start, request_reached: observed.requestReached, native_execution_calls: observed.calls, intent_proposal: intentProposal, intent_correct: intentCorrect, intent_calls: intentCalls.length, main_model_calls: calls.length - intentCalls.length, first_model_browser_operation: modelOperations[0] ?? null, raw_model_tools: modelTools, first_tool: actualTools[0] ?? null, first_routing_tool: first ?? null, first_action_pass: routing, mechanical_effect_pass: effect, same_A_guest: sameA, same_B_guest: sameB, calls: calls.length, tools: actualTools, final_response: observed.finalResponse, after, distinct_sessions: !runtimeB || !!runtimeA && runtimeA !== runtimeB })
+      Object.assign(row, { ended, elapsed_ms: Date.now()-start, request_reached: observed.requestReached, native_execution_calls: observed.calls, intent_proposal: intentProposal, intent_correct: intentCorrect, intent_calls: intentCalls.length, main_model_calls: calls.length - intentCalls.length, first_model_browser_operation: modelOperations[0] ?? null, raw_model_tools: modelTools, first_tool: actualTools[0] ?? null, first_routing_tool: first ?? null, first_action_pass: routing, native_routing_pass: routing, initial_execution_pass: initialExecution, first_native_execution_status: firstNativeStatus, first_model_execution_status: firstModelStatus, mechanical_effect_pass: effect, same_A_guest: sameA, same_B_guest: sameB, calls: calls.length, tools: actualTools, final_response: observed.finalResponse, after, distinct_sessions: !runtimeB || !!runtimeA && runtimeA !== runtimeB })
       write(`case-${id}-after.json`, after)
 
       if (id !== 'C') { await target.screenshot({ path: path.join(output, `case-${id}-after.png`) }) }

@@ -103,3 +103,34 @@ export function trialFailure(state: any, calls: any[]) {
 
   return null
 }
+
+
+/** Parse the canonical tool receipt; prose or a later recovery never proves success. */
+export function toolExecutionStatus(receipt: any): 'PASS' | 'FAIL' | 'UNPROVEN' {
+  if (!receipt) { return 'UNPROVEN' }
+
+  if (receipt.isError) { return 'FAIL' }
+  let value = receipt.result
+
+  if (typeof value === 'string') {
+    let candidate = value.trim()
+
+    if (candidate.startsWith('<untrusted_tool_result')) {
+      const start = candidate.indexOf('\n{')
+      const end = candidate.lastIndexOf('\n</untrusted_tool_result>')
+
+      if (start < 0 || end < start) { return 'UNPROVEN' }
+      candidate = candidate.slice(start + 1, end).trim()
+    }
+
+    try { value = JSON.parse(candidate) } catch {
+      return /^Tool '[^']+' does not exist/.test(candidate) ? 'FAIL' : 'UNPROVEN'
+    }
+  }
+
+  if (!value || typeof value !== 'object') { return 'UNPROVEN' }
+
+  if (value.success === false || value.error || (typeof value.exit_code === 'number' && value.exit_code !== 0)) { return 'FAIL' }
+
+  return value.success === true || value.exit_code === 0 ? 'PASS' : 'UNPROVEN'
+}
