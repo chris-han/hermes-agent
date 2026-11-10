@@ -30,6 +30,8 @@ test('default Cloud sign-in recovers, approves and persists through real Desktop
   let claimCount = 0
   let ackCount = 0
   let intent: any
+  let intentRef = 'synthetic-intent'
+  let rejectFirstPoll = true
   let origin = ''
   const secret = 'synthetic-only-' + randomBytes(16).toString('hex')
   const requests: string[] = []
@@ -74,6 +76,8 @@ test('default Cloud sign-in recovers, approves and persists through real Desktop
       }
 
       intent = body
+      intentRef = 'synthetic-intent-' + startCount
+      approved = false
     }
 
     const binding = {
@@ -86,7 +90,7 @@ test('default Cloud sign-in recovers, approves and persists through real Desktop
 
     const envelope: any = {
       contract_version: 'semantier-cloud-device-connection/v1',
-      intent_ref: 'synthetic-intent',
+      intent_ref: intentRef,
       expires_at: '2099-01-01T00:00:00+00:00',
       retry_after: 5,
       status: 'pending',
@@ -94,11 +98,19 @@ test('default Cloud sign-in recovers, approves and persists through real Desktop
     }
 
     if (route === '/api/cloud-provider/device/start') {
-      envelope.data.verification_uri = origin + '/billing/connect?intent_ref=synthetic-intent'
-    } else if (route === '/api/cloud-provider/device/synthetic-intent/poll') {
+      envelope.data.verification_uri = origin + '/billing/connect?intent_ref=' + intentRef
+    } else if (route === `/api/cloud-provider/device/${intentRef}/poll`) {
+      if (rejectFirstPoll) {
+        rejectFirstPoll = false
+        res.writeHead(410)
+        res.end('{"detail":"expired"}')
+
+        return
+      }
+
       envelope.status = approved ? 'approved' : 'pending'
       envelope.data = binding
-    } else if (route === '/api/cloud-provider/device/synthetic-intent/claim') {
+    } else if (route === `/api/cloud-provider/device/${intentRef}/claim`) {
       claimCount++
       envelope.status = 'claimed'
       envelope.data = {
@@ -113,7 +125,7 @@ test('default Cloud sign-in recovers, approves and persists through real Desktop
         installation_expires_at: '2099-01-01T00:00:00+00:00',
         renewal: 'reauthorization_required'
       }
-    } else if (route === '/api/cloud-provider/device/synthetic-intent/ack') {
+    } else if (route === `/api/cloud-provider/device/${intentRef}/ack`) {
       ackCount++
       envelope.status = 'installed'
       envelope.data = { claim_id: body.claim_id, installed_generation: body.installed_generation }
@@ -267,6 +279,15 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
       await consent.goto(await app.evaluate(() => (globalThis as any).__cloudVerificationUrl))
       await consent.getByRole('button', { name: 'Approve device' }).click()
       await expect(consent.getByText('Synthetic approval complete')).toBeVisible()
+      await expect(
+        page.getByText('This sign-in session expired. Try again to open a new authorization page.', { exact: true })
+      ).toBeVisible({ timeout: 30_000 })
+      const retiredUrl = await app.evaluate(() => (globalThis as any).__cloudVerificationUrl)
+      await page.getByRole('button', { name: 'Try again', exact: true }).click()
+      await expect.poll(() => app!.evaluate(() => (globalThis as any).__cloudVerificationUrl)).not.toBe(retiredUrl)
+      await consent.goto(await app.evaluate(() => (globalThis as any).__cloudVerificationUrl))
+      await consent.getByRole('button', { name: 'Approve device' }).click()
+      await expect(consent.getByText('Synthetic approval complete')).toBeVisible()
     } finally {
       await browser.close()
     }
@@ -279,7 +300,7 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
     await expect(
       page.getByRole('button', { name: 'Sign in to Semantier Model Provider', exact: true })
     ).not.toBeVisible()
-    expect(startCount).toBe(2)
+    expect(startCount).toBe(3)
     expect(claimCount).toBe(1)
     expect(ackCount).toBe(1)
     const config = fs.readFileSync(path.join(sandbox.hermesHome, 'config.yaml'), 'utf8')
@@ -325,7 +346,7 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
     await expect(
       reopened.getByRole('button', { name: 'Sign in to Semantier Model Provider', exact: true })
     ).not.toBeVisible()
-    expect(startCount).toBe(2)
+    expect(startCount).toBe(3)
     expect(claimCount).toBe(1)
     expect(fs.existsSync(path.join(sandbox.hermesHome, 'profiles/semantier-local'))).toBe(false)
     console.log(
@@ -335,6 +356,7 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
         startCount,
         claimCount,
         ackCount,
+        expiredSessionRecovery: 'PASS',
         restart: 'PASS',
         transport: 'local-http',
         protectedStore: 'fixture-fernet-not-windows-dpapi',

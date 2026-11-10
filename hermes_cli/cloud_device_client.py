@@ -395,37 +395,48 @@ def cancel(session_id):
 def poll(session_id):
     with _locked():
         state = _session(session_id)
-        if state['status'] in _TERMINAL | {'approved'}:
-            return _public(state)
-        if state.get('staged_config') and _config() == state['staged_config']:
-            state['committed_hash'] = _config_hash()
+        try:
+            if state['status'] in _TERMINAL | {'approved'}:
+                return _public(state)
+            if state.get('staged_config') and _config() == state['staged_config']:
+                state['committed_hash'] = _config_hash()
+                _write(state)
+            if state.get('committed_hash') and _config_hash() == state['committed_hash']:
+                return _ack(state)
+            if state['config_hash'] != _config_hash():
+                cancel(session_id)
+                return _public(_read())
+            if _time(state['expires_at']) <= _now():
+                state['status'] = 'expired'
+                _write(state)
+                return _public(state)
+            if state.get('next_poll') and _now() < _time(state['next_poll']):
+                return _public(state)
+            reply = _wire(state['origin'], state['intent_ref']+'/poll', {'proof':state['proof']})
+            if reply.get('intent_ref') != state['intent_ref']:
+                raise CloudConnectionError('cloud_profile_mismatch', 'Cloud intent mismatch.', 409, recovery='original_profile')
+            status = reply['status']
+            state['retry_after'] = min(60,max(5,int(reply.get('retry_after',5))))
+            state['next_poll'] = _after(state['retry_after'])
+            if status in _TERMINAL:
+                state['status'] = status
+            elif status in {'approved','claimed'}:
+                _install(state, reply['data'])
+                return _ack(state)
+            elif status not in {'pending','slow_down'}:
+                raise CloudConnectionError('cloud_response_invalid', 'Cloud connection status is invalid; reconnect.', 502, recovery='reauthorize')
             _write(state)
-        if state.get('committed_hash') and _config_hash() == state['committed_hash']:
-            return _ack(state)
-        if state['config_hash'] != _config_hash():
-            cancel(session_id)
-            return _public(_read())
-        if _time(state['expires_at']) <= _now():
-            state['status'] = 'expired'
-            _write(state)
             return _public(state)
-        if state.get('next_poll') and _now() < _time(state['next_poll']):
-            return _public(state)
-        reply = _wire(state['origin'], state['intent_ref']+'/poll', {'proof':state['proof']})
-        if reply.get('intent_ref') != state['intent_ref']:
-            raise CloudConnectionError('cloud_profile_mismatch', 'Cloud intent mismatch.', 409, recovery='original_profile')
-        status = reply['status']
-        state['retry_after'] = min(60,max(5,int(reply.get('retry_after',5))))
-        state['next_poll'] = _after(state['retry_after'])
-        if status in _TERMINAL:
-            state['status'] = status
-        elif status in {'approved','claimed'}:
-            _install(state, reply['data'])
-            return _ack(state)
-        elif status not in {'pending','slow_down'}:
-            raise CloudConnectionError('cloud_response_invalid', 'Cloud connection status is invalid; reconnect.', 502, recovery='reauthorize')
-        _write(state)
-        return _public(state)
+        except CloudConnectionError as error:
+            # Only a definite authorization/session refusal retires this intent.
+            # The owning session was validated before this boundary. Preserve all
+            # installed credentials; network/409 failures keep the same proof.
+            if error.code in {'cloud_authorization_required', 'cloud_authorization_denied',
+                              'cloud_session_unavailable', 'cloud_session_expired', 'cloud_credential_expired'}:
+                state['status'] = 'denied' if error.code in {
+                    'cloud_authorization_required', 'cloud_authorization_denied'} else 'expired'
+                _write(state)
+            raise
 
 
 def _binding(state, data):

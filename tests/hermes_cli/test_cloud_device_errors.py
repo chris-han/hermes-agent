@@ -227,3 +227,33 @@ def test_oversized_success_body_is_invalid_response_not_http_success(native, mon
         device._wire('http://127.0.0.1:1', 'start')
     assert error.value.status == 502
     assert error.value.code == 'cloud_response_invalid'
+
+
+@pytest.mark.parametrize('status', [401, 403, 404, 410, 409, 503])
+def test_retry_replaces_only_definitely_invalid_device_intent_and_keeps_credentials(native, monkeypatch, status):
+    device, _ = native
+    original = device._new_state({})
+    original.update(status='approved', credentials={'retained': {
+        'credential': {'secret': 'synthetic-retained', 'expires_at': '2099-01-01T00:00:00+00:00'},
+        'inference_origin': original['origin']}})
+    device._write(original)
+    starts = []
+    def wire(origin, operation, body=None, bearer=None):
+        if operation != 'start':
+            raise device.CloudDeviceError(status)
+        starts.append(body)
+        ref = 'intent-' + str(len(starts))
+        return {'contract_version': device.CONTRACT, 'intent_ref': ref,
+                'expires_at': '2099-01-01T00:00:00+00:00',
+                'data': {'verification_uri': origin + '/billing/connect?intent_ref=' + ref}}
+    monkeypatch.setattr(device, '_wire', wire)
+    first = device.start()
+    with pytest.raises(device.CloudDeviceError) as error:
+        device.poll(first['session_id'])
+    assert error.value.status == status
+    retry = device.start()
+    invalid = status in {401, 403, 404, 410}
+    assert (retry['session_id'] != first['session_id']) is invalid
+    assert len(starts) == (2 if invalid else 1)
+    assert device._read()['credentials'] == original['credentials']
+    assert device.credential('retained', base_url=original['origin'] + '/v1') == 'synthetic-retained'
