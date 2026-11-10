@@ -3456,7 +3456,8 @@
     },
     {
       "path": "src/prompts/agents/SOUL.md",
-      "sha256": "cc92477c68a1c1bbdf922478cc1a5b86712466ec375efcb4f7bf737f1b7fb501"
+      "sha256": "9c645536a701e2babb144bf3b92f47fd56673677ffd5022513821baaad48726b",
+      "source_commit": "0b3f0eeb2583694e9ece042a52d5c8d4a8940617"
     },
     {
       "path": "src/prompts/agents/WEBAPI_BUNDLED_SKILL_INVOCATION.md",

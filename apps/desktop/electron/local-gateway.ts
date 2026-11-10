@@ -1,7 +1,7 @@
-import { desktopCloudEnvironment } from './semantier-cloud'
 import { spawn } from 'node:child_process'
 import crypto from 'node:crypto'
 
+import { desktopCloudEnvironment } from './semantier-cloud'
 import { hiddenWindowsChildOptions, windowsShellCommand } from './windows-child-options'
 
 // `hermes gateway ensure` answers with a protocol verdict (ready, or `starting: deadline`) within
@@ -360,12 +360,13 @@ export async function nativeGatewayHttpHeaders(descriptor: { gatewayEndpoint: Ga
   }
 
   const pathname = new URL(url).pathname.replace(/\/$/, '')
+
   const purpose = method.toUpperCase() === 'POST' && pathname === '/api/profiles'
     ? 'native-profile-create'
     : method.toUpperCase() === 'DELETE' && /^\/api\/profiles\/[a-z0-9][a-z0-9_-]{0,63}$/.test(pathname)
       ? 'native-profile-delete' : 'native-http'
 
-  return { 'X-Hermes-Gateway-Ticket': await mintLocalGatewayTicket(routedGatewayEndpoint(descriptor.gatewayEndpoint, nativeGrantRoute(url, body), launchHome), purpose) }
+  return { 'X-Hermes-Gateway-Ticket': await mintLocalGatewayTicket(routedGatewayEndpoint(descriptor.gatewayEndpoint, purpose === 'native-profile-delete' ? 'default' : nativeGrantRoute(url, body), launchHome), purpose) }
 }
 
 // The installed runtime's own ticket client: every Windows mint (SID-validated pipe), and a POSIX

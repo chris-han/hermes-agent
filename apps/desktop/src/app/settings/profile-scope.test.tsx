@@ -41,13 +41,13 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('SettingsProfileScope', () => {
-  it('omits the redundant root choice and selector for the managed desktop default', () => {
+  it('shows a still-live legacy profile until migration confirms retirement', () => {
     $connection.set({ mode: 'local', connectionId: 'local' } as HermesConnection)
     $defaultProfileRoute.set({ connectionId: null, profile: 'default' })
     $activeGatewayProfile.set('default')
     $profiles.set([profile('default', true), profile('semantier-local')])
     const { container } = render(<SettingsProfileScope />)
-    expect(container.textContent).toBe('')
+    expect(container.textContent).toContain('semantier-local')
   })
 
   it('keeps real bot choices and scope warnings with default as the desktop profile', () => {
@@ -56,7 +56,7 @@ describe('SettingsProfileScope', () => {
     $activeGatewayProfile.set('default')
     $profiles.set([profile('default', true), profile('semantier-local'), profile('scout')])
     const { container } = render(<SettingsProfileScope />)
-    expect(screen.queryByRole('button', { name: 'semantier-local' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'semantier-local' })).toBeTruthy()
     expect(container.querySelector('[role="status"]')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'scout' }))
     expect(container.querySelector('[data-scope-loud="true"]')?.textContent).toContain('scout')

@@ -168,6 +168,11 @@ def _visible_providers(
     builder = _PLUGIN_ROW_BUILDERS.get(cat.get("name"))
     if builder is not None:
         visible.extend(builder())
+    if cat.get("name") == "Browser Automation":
+        from hermes_cli.browser_runtime import system_browsers
+        visible.extend({"name": row["key"].replace("-", " ").title() + " (system)", "badge": "", "tag": row["executable"],
+                        "env_vars": [], "browser_provider": "local", "browser_engine": "auto",
+                        "local_browser": row["key"]} for row in system_browsers())
     return visible
 
 
@@ -468,11 +473,15 @@ def _browser_use_default_active(config: dict) -> bool:
 
 def _browser_provider_active(provider: dict, config: dict) -> bool:
     # Browser Use mode composes with the provider (driver over its CDP endpoint) — don't deactivate the row.
-    if provider["browser_provider"] != cfg_get(config, "browser", "cloud_provider"):
+    if provider["browser_provider"] != (cfg_get(config, "browser", "cloud_provider") or "local"):
         return False
     # Two local rows differ only by engine ("Local Browser" vs "Lightpanda"): config.yaml is the picker's
     # source of truth here, the AGENT_BROWSER_ENGINE env var is not consulted.
     if provider.get("browser_engine"):
+        choice = str(cfg_get(config, "browser", "local_browser") or "auto")
+        choice = "auto" if choice == "builtin" else choice
+        if choice != provider.get("local_browser", "auto"):
+            return False
         engine = str(cfg_get(config, "browser", "engine") or "auto").strip().lower()
         return engine == provider["browser_engine"]
     return True
@@ -758,6 +767,7 @@ def _write_provider_config(provider: dict, config: dict, *, managed_feature) -> 
     # Local engine rows ("Local Browser" resets to auto, "Lightpanda" sets lightpanda); composes with browser.backend.
     if provider.get("browser_engine"):
         config.setdefault("browser", {})["engine"] = provider["browser_engine"]
+        config["browser"]["local_browser"] = provider.get("local_browser", "auto")
 
     if provider.get("web_backend"):
         web_cfg = _select_into(config, "web", "backend", provider["web_backend"], managed_feature)

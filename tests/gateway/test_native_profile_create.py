@@ -30,6 +30,9 @@ def test_native_profile_delete_uses_same_user_route_bound_grant(tmp_path):
         assert client.get("/api/config", headers=headers(grant)).status_code == 401
         assert client.delete("/api/profiles/default", headers=headers(grant)).status_code == 403
         grant = ticket(home, descriptor, "native-profile-delete")
+        assert client.delete("/api/profiles/other?profile=other", headers=headers(grant)).status_code == 403
+        assert target.exists()
+        grant = ticket(home, descriptor, "native-profile-delete")
         assert client.delete("/api/profiles/other", headers={**headers(grant), "Origin": "null"}).status_code == 401
         reply = client.delete("/api/profiles/other", headers=headers(grant))
         assert reply.status_code == 200, reply.text
@@ -68,3 +71,25 @@ def test_native_profile_create_grant_is_route_bound_and_single_use(tmp_path):
         assert client.post('/api/profiles', json={**body, 'name': 'replay'},
             headers=headers(grant)).status_code == 401
         assert not (home / 'profiles' / 'replay').exists()
+
+
+@pytest.mark.platforms('linux')
+def test_owner_delete_acknowledges_real_legacy_migration_without_widening_profile_grants(tmp_path, monkeypatch):
+    from hermes_cli.profiles_desktop import resolve_desktop_startup_profile
+    def prepare(home):
+        legacy = home / 'profiles/semantier-local'
+        legacy.mkdir()
+        (legacy / 'config.yaml').write_text('{}')
+        (legacy / '.env').write_text('KEEP=synthetic-fixture\n')
+        with monkeypatch.context() as scoped:
+            scoped.setenv('HERMES_HOME', str(home))
+            assert resolve_desktop_startup_profile(home, 'semantier-local')['profile'] == 'default'
+    with daemon(tmp_path, prepare=prepare) as (home, descriptor), httpx.Client(
+            base_url=descriptor['api_origin'], trust_env=False, timeout=20) as client:
+        assert client.delete('/api/profiles/semantier-local', headers=headers(ticket(home, descriptor))).status_code == 403
+        for _ in range(2):
+            response = client.delete('/api/profiles/semantier-local', headers=headers(ticket(home, descriptor, 'native-profile-delete')))
+            assert response.status_code == 200, response.text
+            assert response.json()['migrated_to'] == 'default'
+        assert not (home / 'profiles/semantier-local').exists()
+        assert (home / '.desktop-default-migration/legacy-home/.env').read_text() == 'KEEP=synthetic-fixture\n'

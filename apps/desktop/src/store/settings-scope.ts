@@ -31,14 +31,8 @@ const $desktopLocalDefault = computed([$defaultProfileRoute, $connection, $profi
     profiles.some(profile => profile.name === route.profile) ? route.profile : null
 })
 
-// Ordinary Settings need no second root choice for a managed single-profile
-// desktop. An explicitly selected legacy home remains visible and keeps its
-// exact request scope; advanced profile access and all stored data stay intact.
-export const $settingsScopeProfiles = computed([$profiles, $desktopLocalDefault, $settingsScopeProfile], (profiles, desktopDefault, selected) =>
-  desktopDefault && selected !== 'semantier-local'
-    ? profiles.filter(profile => normalizeProfileKey(profile.name) !== 'semantier-local')
-    : profiles
-)
+// Lifecycle migration owns retirement. Never conceal a still-live profile.
+export const $settingsScopeProfiles = $profiles
 
 // Whether the settings pages are editing a profile OTHER than the default
 // one. The scope follows the app's active profile when no override is set —

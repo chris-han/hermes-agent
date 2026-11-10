@@ -526,7 +526,11 @@ def seed_config_file(config_path: Path, template: Optional[Path] = None) -> bool
 def _ensure_default_soul_md(home: Path) -> None:
     """Seed DEFAULT_SOUL_MD on first run; upgrade a legacy comment-only scaffold in place.
     A SOUL.md the user actually customized is never touched."""
+    from hermes_cli.default_soul import managed_soul_template
+    template = managed_soul_template()
     soul_path = home / "SOUL.md"
+    if not soul_path.exists() and (home / "soul.md").exists():
+        soul_path = home / "soul.md"
     if soul_path.exists():
         try:
             existing = soul_path.read_text(encoding="utf-8-sig")
@@ -535,7 +539,7 @@ def _ensure_default_soul_md(home: Path) -> None:
         if not is_legacy_template_soul(existing):
             return
     try:
-        soul_path.write_text(DEFAULT_SOUL_MD, encoding="utf-8")
+        soul_path.write_text(template, encoding="utf-8")
     except OSError:
         if not soul_path.is_symlink():
             raise
@@ -548,7 +552,7 @@ def _ensure_default_soul_md(home: Path) -> None:
         fd, tmp_name = tempfile.mkstemp(prefix=".SOUL.md.", suffix=".seed", dir=str(home))
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                handle.write(DEFAULT_SOUL_MD)
+                handle.write(template)
             os.replace(tmp_name, soul_path)
         except OSError:
             with suppress(OSError):

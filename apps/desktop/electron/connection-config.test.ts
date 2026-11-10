@@ -1607,3 +1607,14 @@ test('FIX #95701: transport and server failures at the ticket mint stay retryabl
     assert.equal(wrapped.isReauthRequired, undefined)
   }
 })
+
+test('registry profile DELETE carries its target in the path without adding a scope selector', () => {
+  assert.equal(
+    pathForRegistryBackendRequest('/api/profiles/worker', 'worker', { mode: 'local' }, 'DELETE'),
+    '/api/profiles/worker'
+  )
+  assert.equal(
+    pathForRegistryBackendRequest('/api/profiles/worker?profile=other', 'worker', { mode: 'local' }, 'DELETE'),
+    '/api/profiles/worker?profile=other'
+  )
+})

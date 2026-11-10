@@ -436,6 +436,10 @@ DEFAULT_CONFIG = {
         # headed: visible Chromium window (local); skips per-turn cleanup, idle reaper still applies
         "headed": False,
         "allow_private_urls": False,  # allow private/internal IPs (localhost, 192.168.x.x, ...)
+        # Executable choice is independent of real-profile cookie/login consent.
+        # auto/builtin prefers installed PM Chromium, then a discovered system fallback.
+        # A system key (chrome, edge, brave, brave-origin, chromium) is an explicit choice.
+        "local_browser": "auto",
         # Local browser engine for both drivers. "auto" = Chrome; "lightpanda" = faster navigation,
         # no screenshots (Browser Use mode spawns `lightpanda serve` per session; built-in tools
         # pass `--engine <value>` to agent-browser with Chrome fallback); "chrome" = explicit.

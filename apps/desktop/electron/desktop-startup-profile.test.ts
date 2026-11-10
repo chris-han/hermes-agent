@@ -119,8 +119,8 @@ test.skipIf(!python)('default migration repairs remembered routes while preservi
       },
       log: () => {}
     })
-    assert.equal(preferences.readStartup().profile, 'default')
-    assert.equal(preferences.readStartup().defaultRoute?.profile, 'default')
+    assert.equal(preferences.readStartup().profile, 'tender-runtime-expert')
+    assert.equal(preferences.readStartup().defaultRoute?.profile, 'tender-runtime-expert')
     assert.equal(existsSync(legacy), true)
     assert.equal(readFileSync(path.join(legacy, '.env'), 'utf8'), 'fixture-secret-retained')
     assert.equal(existsSync(path.join(root, '.desktop-retired-profiles')), false)

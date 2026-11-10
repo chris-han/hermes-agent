@@ -20,10 +20,16 @@ DESKTOP_FALLBACK = "default"
 
 def _ensure_semantier_desktop_soul(home: Path) -> None:
     """Change only uncustomized upstream identity in the Semantier Desktop host."""
-    from hermes_cli.default_soul import DEFAULT_SOUL_MD, is_legacy_template_soul
+    from hermes_cli.default_soul import DEFAULT_SOUL_MD, is_legacy_template_soul, managed_soul_template
     soul = home / "SOUL.md"
+    if not soul.exists() and (home / "soul.md").exists():
+        soul = home / "soul.md"
     if soul.is_symlink() or getattr(soul, "is_junction", lambda: False)():
         return  # Linked identity may be deliberate user configuration.
+    canonical = managed_soul_template()
+    previous = canonical.replace("developed by Semantier (司序科技 / Semantier Technology)",
+                                 "developed by 司序科技 (Semantier Technology)")
+    existing = ""
     if soul.exists():
         if not soul.is_file():
             return
@@ -31,13 +37,16 @@ def _ensure_semantier_desktop_soul(home: Path) -> None:
             existing = soul.read_text(encoding="utf-8-sig")
         except (OSError, UnicodeDecodeError):
             return
-        if existing.strip() != DEFAULT_SOUL_MD.strip() and not is_legacy_template_soul(existing):
+        from hermes_cli.default_soul import _LEGACY_TEMPLATE_SOULS
+        normalized = existing.replace("\r\n", "\n").lstrip("\ufeff")
+        managed = next((text for text in (DEFAULT_SOUL_MD, previous.rstrip(), *_LEGACY_TEMPLATE_SOULS)
+                        if normalized == text or normalized.startswith(text + "\n")), None)
+        if managed is None and not is_legacy_template_soul(existing):
             return
-    from pm.paths import repo_root
-    canonical = (repo_root() / "semantier-runtime/src/prompts/agents/SOUL.md").read_text(encoding="utf-8-sig")
+        existing = normalized[len(managed):] if managed is not None else ""
     with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=home,
                                      prefix=".semantier-soul-", delete=False) as stream:
-        stream.write(canonical)
+        stream.write(canonical.rstrip() + existing if existing else canonical)
         stream.flush()
         os.fsync(stream.fileno())
         temporary = Path(stream.name)
@@ -147,19 +156,25 @@ def resolve_desktop_startup_profile(
                 or not namespace.resolve().is_relative_to(owner)):
             raise ValueError("Profile namespace escapes its owner")
         with profiles._profile_lifecycle_lock(owner):
+            requested = requested or profiles.get_active_profile(owner)
             # Validate old metadata before promoting the former Desktop home.
             _read_owner_role(owner)
-            if explicit and requested and requested != "default":
-                if not _validate_profile(owner, requested):
-                    raise ValueError(f"Explicit profile '{requested}' is missing")
-                return {"profile": requested, "recovered": False}
             from hermes_cli.profiles_desktop_migration import migrate_local_to_default
             migrated = migrate_local_to_default(owner)
+            for home in profiles._iter_named_profile_dirs():
+                _ensure_semantier_desktop_soul(home)
             from hermes_cli.config import require_readable_config_before_write
             require_readable_config_before_write(owner / "config.yaml")
             owner.mkdir(parents=True, exist_ok=True)
             _ensure_semantier_desktop_soul(owner)
             _write_owner_role(owner, "user_profile")
+            if requested and requested not in {"default", "semantier-local"}:
+                if _validate_profile(owner, requested):
+                    _ensure_semantier_desktop_soul(profiles.get_profile_dir(requested))
+                    profiles.set_active_profile(requested)
+                    return {"profile": requested, "recovered": False}
+                if explicit:
+                    raise ValueError(f"Explicit profile '{requested}' is missing")
             profiles.set_active_profile("default")
             return {"profile": "default", "recovered": migrated or bool(requested and requested != "default")}
 

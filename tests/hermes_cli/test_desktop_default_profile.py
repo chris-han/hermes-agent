@@ -202,3 +202,19 @@ def test_migration_preserves_homes_while_an_interactive_profile_writer_is_runnin
         resolve_desktop_startup_profile(owner)
     assert local.is_dir()
     assert (owner / 'SOUL.md').read_text(encoding='utf-8-sig') == 'Root persona'
+
+
+def test_other_home_default_writer_does_not_block_migration(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import psutil
+    from hermes_cli.profiles_desktop_migration import _require_no_profile_writer
+    current = psutil.Process()
+    foreign = tmp_path / 'other-install'
+    writer = SimpleNamespace(pid=99999999,
+        info={'pid': 99999999, 'name': 'hermes', 'username': current.username(),
+              'cmdline': ['hermes', '--profile', 'default', 'gateway', 'run']},
+        environ=lambda: {'HERMES_HOME': str(foreign)})
+    monkeypatch.setattr(psutil, 'process_iter', lambda *_: iter([writer]))
+    _require_no_profile_writer(tmp_path / 'migration-owner')
+    with pytest.raises(RuntimeError, match='owned'):
+        _require_no_profile_writer(foreign)

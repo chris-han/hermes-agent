@@ -18,7 +18,7 @@ from tests.gateway.test_normal_runtime_boot import control
 
 
 @contextmanager
-def daemon(tmp_path):
+def daemon(tmp_path, prepare=None):
     home, user = tmp_path / 'state', tmp_path / 'user'
     home.mkdir(mode=0o700, exist_ok=True)
     user.mkdir(exist_ok=True)
@@ -33,6 +33,8 @@ def daemon(tmp_path):
                   'base_url': 'http://127.0.0.1:1/v1'},
         'auxiliary': {'title_generation': {'enabled': False}},
     }))
+    if prepare is not None:
+        prepare(home)
     root = Path(__file__).resolve().parents[2]
     env = {k: os.environ[k] for k in ('PATH', 'LANG', 'TZ', 'TIRITH_ENABLED') if k in os.environ}
     env.update(HOME=str(user), USERPROFILE=str(user), HERMES_HOME=str(home),
