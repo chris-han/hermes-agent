@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 
-import { accessRoute, declineProfileConsent, scoreTrial, turnEvidence, unwrapTools } from '../e2e/autonomous-evaluator.ts'
+import { accessRoute, declineProfileConsent, scoreTrial, trialFailure, turnEvidence, unwrapTools } from '../e2e/autonomous-evaluator.ts'
 const direct = [{function:{name:'drive_preview',arguments:'{"action":"click"}'}}]
 const deferred = [{function:{name:'tool_search',arguments:'{"query":"visible page"}'}},{function:{name:'tool_call',arguments:JSON.stringify({name:'drive_preview',arguments:{action:'click'}})}}]
 const base = {requestReached:true,inferenceCalls:2,calls:direct,target:'desktop',ownerCorrect:true,operationSuccess:true,effect:true}
@@ -61,4 +61,12 @@ test('native routing does not imply a verified effect',()=>{
  const calls=[{name:'desktop_preview',arguments:{action:'open'}}]
  assert.equal(scoreTrial({...base,calls:[],nativeCalls:calls,effect:false}).routing,true)
  assert.equal(scoreTrial({...base,calls:[],nativeCalls:calls,effect:false}).workflow,false)
+})
+
+
+test('forbidden model action remains a model failure, not an invalid fixture',()=>{
+ assert.equal(trialFailure({failures:[{type:'forbidden_action_attempt',reason:'terminal'}]},[]).kind,'MODEL_FAILURE')
+ assert.equal(trialFailure({failures:[{type:'missing_effective_prompt_or_tools'}]},[]).kind,'INFRASTRUCTURE')
+ assert.equal(trialFailure({failures:[]},[{http_status:503}]).kind,'INFRASTRUCTURE')
+ assert.equal(trialFailure({failures:[]},[{http_status:200}]),null)
 })

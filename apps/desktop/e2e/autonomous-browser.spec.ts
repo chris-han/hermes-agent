@@ -10,7 +10,7 @@ import yaml from 'js-yaml'
 
 import { waitForChatReady } from '../../../tests-js/scripts/desktop-chat-smoke'
 
-import { browserOperations, declineProfileConsent, turnEvidence, unwrapTools } from './autonomous-evaluator'
+import { browserOperations, declineProfileConsent, trialFailure, turnEvidence, unwrapTools } from './autonomous-evaluator'
 import { DesktopFixtureSession } from './fixture-session'
 import { buildAppEnv, createSandbox } from './fixtures'
 
@@ -381,8 +381,11 @@ return !state.busy && !state.awaiting}, {timeout:60000}).toBe(true)
         const calls = state.calls.filter((item: any) => item.case === id)
         const current = await owner(target)
 
-        if (state.failures.length || calls.some((call: any) => call.transport_error || call.http_status >= 400)) {
-          row.infrastructure = { failures: state.failures, calls: calls.map((call: any) => ({ index: call.index, http_status: call.http_status, error: call.transport_error })) }
+        const failure = trialFailure(state, calls)
+
+        if (failure) {
+          if (failure.kind === 'MODEL_FAILURE') { row.model_failure = failure }
+          else { row.infrastructure = failure }
 
           break
         }
@@ -454,8 +457,8 @@ return !state.busy && !state.awaiting}, {timeout:60000}).toBe(true)
         if (await stop.isVisible().catch(() => false)) { await stop.click() }
       }
 
-      if (row.cross_session_violation || row.infrastructure) {
-        results.stopping_reason = row.cross_session_violation ? 'authorization_or_cross_session_violation' : row.infrastructure ? 'provider_or_composition_unavailable' : 'turn_did_not_finish_or_requires_user'
+      if (row.cross_session_violation || row.infrastructure || row.model_failure) {
+        results.stopping_reason = row.cross_session_violation ? 'authorization_or_cross_session_violation' : row.model_failure ? 'forbidden_model_action_attempt' : row.infrastructure ? 'provider_or_composition_unavailable' : 'turn_did_not_finish_or_requires_user'
 
         break
       }

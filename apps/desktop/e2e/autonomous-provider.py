@@ -108,7 +108,7 @@ def capped_output(body):
 
 
 def forbidden_tool(calls, *, allow_intent=False):
-    allowed = {'desktop_preview', 'drive_preview', 'browser_exec', 'todo_list', 'clarify', 'focus_pane', 'annotate_preview', 'tool_search', 'tool_describe'}
+    allowed = {'desktop_preview', 'drive_preview', 'browser_exec', 'todo_list', 'clarify', 'focus_pane', 'annotate_preview', 'tool_search', 'tool_describe', 'skills_list', 'skill_view'}
     if allow_intent:
         allowed.add('browser_target_intent')
     for call in calls or []:

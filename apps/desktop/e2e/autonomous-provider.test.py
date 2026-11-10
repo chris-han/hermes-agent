@@ -40,6 +40,9 @@ with tempfile.TemporaryDirectory(prefix='semantier-evaluator-unit-') as home:
   def test_single_wrapper_and_discovery_allowed(self):
    self.assertIsNone(m.forbidden_tool([{'function':{'name':'tool_search','arguments':'{"query":"visible page"}'}}]))
    self.assertIsNone(m.forbidden_tool([{'function':{'name':'tool_call','arguments':json.dumps({'name':'desktop_preview','arguments':{'action':'read'}})}}]))
+  def test_read_only_procedural_lookup_is_not_a_forbidden_action(self):
+   for name in ('skills_list','skill_view'):
+    self.assertIsNone(m.forbidden_tool([{'function':{'name':name,'arguments':'{"name":"browser"}'}}]))
   def test_nested_forbidden_action_rejected(self):
    self.assertIn('outside_authorized',m.forbidden_tool([{'function':{'name':'tool_call','arguments':json.dumps({'calls':[{'name':'terminal','arguments':{}}]})}}]))
   def test_external_url_rejected(self):

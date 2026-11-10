@@ -90,3 +90,16 @@ export async function declineProfileConsent(page: any, timeout = 30000) {
 
   throw new Error('Consent/composer readiness did not settle through supported UI')
 }
+
+
+export function trialFailure(state: any, calls: any[]) {
+  const modelFailure = state.failures?.find((failure: any) => failure.type === 'forbidden_action_attempt')
+
+  if (modelFailure) { return { kind: 'MODEL_FAILURE', detail: modelFailure } }
+
+  if (state.failures?.length || calls.some(call => call.transport_error || call.http_status >= 400)) {
+    return { kind: 'INFRASTRUCTURE', failures: state.failures, calls: calls.map(call => ({ index: call.index, http_status: call.http_status, error: call.transport_error })) }
+  }
+
+  return null
+}
