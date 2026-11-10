@@ -315,6 +315,7 @@ test('six frozen real-Qwen Desktop browser workflows', async ({}, info) => {
       await control(id)
       const start = Date.now()
       const row: any = { id, prompt, started_at: new Date().toISOString(), before, outcome: null, human_response_review: 'PENDING' }
+      await dismissFixtureIntro(target)
       const composer = await waitForChatReady(target, 30_000)
       await composer.fill(prompt)
       await composer.press('Enter')
