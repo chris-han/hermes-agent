@@ -295,3 +295,51 @@ it('observes the same native operation after a lost poll reply without starting 
   await vi.advanceTimersByTimeAsync(3000)
   expect(observations).toBe(1)
 })
+
+it('deduplicates concurrent Cloud starts on the same owning profile', async () => {
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  deferStart = () => gate
+  const ctx = beginContext()
+  const provider = { ...makeOAuthProvider('semantier-cloud'), flow: 'device_code' as const }
+  const first = startProviderOAuth(provider, ctx)
+  const second = startProviderOAuth(provider, ctx)
+  expect(requests.filter(request => request.path.endsWith('/start'))).toHaveLength(1)
+  release()
+  await Promise.all([first, second])
+  expect(window.hermesDesktop.openExternal).toHaveBeenCalledTimes(1)
+  expectOwnerRequests()
+})
+
+it('shows Cloud recovery instead of the raw Electron transport error', async () => {
+  const ctx = beginContext()
+
+  deferStart = async () => { throw new Error('Error invoking remote method \'hermes:api\': Error: 503: {"detail":{"code":"cloud_http3_unavailable","message":"PRIVATE ENDPOINT","profile":"leverage-ai"}}') }
+  await startProviderOAuth({ ...makeOAuthProvider('semantier-cloud'), flow: 'device_code' }, ctx)
+  const flow = $desktopOnboarding.get().flow
+  expect(flow.status).toBe('error')
+
+  if (flow.status !== 'error') { throw new Error('Expected Cloud failure') }
+  expect(flow.message).toContain('HTTP/3')
+  expect(flow.detail).toContain('cloud_http3_unavailable')
+  expect(JSON.stringify(flow)).not.toContain('PRIVATE ENDPOINT')
+})
+
+it('starts a reopened same-owner Cloud flow after the retired start is cancelled', async () => {
+  let release!: () => void
+  deferStart = () => new Promise<void>(resolve => { release = resolve })
+  const ctx = beginContext()
+  const provider = { ...makeOAuthProvider('semantier-cloud'), flow: 'device_code' as const }
+  const retired = startProviderOAuth(provider, ctx)
+  closeManualOnboarding()
+  startManualProviderOAuth('semantier-cloud', ctx.scope)
+  const reopened = startProviderOAuth(provider, ctx)
+  expect(requests.filter(request => request.path.endsWith('/start'))).toHaveLength(1)
+  deferStart = undefined
+  release()
+  await Promise.all([retired, reopened])
+  expect(requests.filter(request => request.path.endsWith('/start'))).toHaveLength(2)
+  expect(requests.filter(request => request.method === 'DELETE')).toHaveLength(1)
+  expect($desktopOnboarding.get().flow.status).toBe('polling')
+  expectOwnerRequests()
+})

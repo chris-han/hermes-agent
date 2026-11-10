@@ -3,7 +3,9 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type * as HermesApi from '@/hermes'
+import { I18nProvider, TRANSLATIONS } from '@/i18n'
 import { $desktopOnboarding, type DesktopOnboardingState, type OnboardingContext } from '@/store/onboarding'
+import { makeOAuthProvider } from '@/test/oauth-provider'
 
 import { FlowPanel } from './flow'
 
@@ -123,5 +125,26 @@ describe('ConfirmingModelPanel model pick', () => {
       expect(flow.providerSlug).toBe('nous')
       expect(flow.label).toBe('Nous Portal')
     }
+  })
+})
+
+
+describe('Cloud sign-in localized recovery', () => {
+  it.each(['en', 'zh'] as const)('keeps safe recovery and retry/API-key controls in %s', locale => {
+    const t = TRANSLATIONS[locale].onboarding
+
+    const flow = { status: 'error' as const, provider: { ...makeOAuthProvider('semantier-cloud'), flow: 'device_code' as const },
+      message: t.cloudSignInError('cloud_http3_unavailable', 'default'), detail: 'cloud_http3_unavailable · HTTP 503' }
+
+    render(<I18nProvider configClient={null} initialLocale={locale}>
+      <FlowPanel ctx={ctx} flow={flow} leaving={false} onBegin={() => undefined} />
+    </I18nProvider>)
+    expect(screen.getByText(flow.message)).toBeTruthy()
+    expect(screen.getByRole('button', { name: t.tryAgain })).toBeTruthy()
+    expect(screen.getByRole('button', { name: t.useApiKeyInstead })).toBeTruthy()
+    expect(flow.message).toContain('HTTP/3')
+    expect(flow.message).not.toContain('Hermes')
+    expect(t.cloudSignInError('cloud_profile_mismatch', 'work')).toContain('work')
+    expect(t.cloudSignInError('cloud_session_expired', 'default')).not.toEqual(flow.message)
   })
 })

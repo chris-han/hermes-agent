@@ -1,5 +1,30 @@
 import type { TranslationOverrides } from './define-locale'
 
+const cloudSignInErrors: Record<string, string> = {
+  cloud_network_unavailable: '无法连接司序云。请检查网络连接后重试。',
+  cloud_dns_failed: '司序云 DNS 解析失败。请检查 DNS 和云提供方配置后重试。',
+  cloud_tls_failed: '无法验证司序云的 TLS 证书。请检查提供方地址和受信任的 CA 证书配置。',
+  cloud_http3_unavailable: '司序云 HTTP/3 传输不可用。请检查 HTTP/3 支持及 UDP 网络连通性后重试。',
+  cloud_config_invalid: '司序云提供方配置无效。请检查当前配置档案的设置，或使用 API 密钥。',
+  cloud_response_invalid: '司序云返回了无效响应。请重试同一次连接。',
+  cloud_profile_mismatch: '此次登录与配置档案 {profile} 不匹配。请返回原配置档案后重试。',
+  cloud_profile_changed: '登录期间配置档案 {profile} 已更改。请返回该档案并重新登录。',
+  cloud_profile_unavailable: '配置档案 {profile} 不可用。请返回原配置档案后重试。',
+  cloud_storage_invalid: '无法读取配置档案 {profile} 的受保护云凭据。请在该档案中重新授权。',
+  cloud_storage_unavailable: 'Windows 受保护凭据存储不可用。请检查 Windows 用户会话，或使用 API 密钥。',
+  cloud_credential_expired: '司序云授权已过期。请在配置档案 {profile} 中重新登录。',
+  cloud_authorization_required: '司序云需要授权。请在当前配置档案中重新登录。',
+  cloud_authorization_denied: '司序云拒绝了此次授权。请检查账户和权限后重试。',
+  cloud_server_conflict: '司序云报告了服务端冲突。请重试同一次连接。',
+  cloud_session_unavailable: '此登录会话在配置档案 {profile} 中不可用。请返回原档案，或重新开始登录。',
+  cloud_session_expired: '此登录会话已过期。请重试以打开新的授权页面。',
+  cloud_session_cancelled: '此次登录已取消。准备好后可重试。',
+  cloud_rate_limited: '司序云当前繁忙。请稍候重试。',
+  cloud_server_error: '司序云暂时无法完成登录。请稍后重试，或使用 API 密钥。',
+  cloud_internal_error: '司序云登录未完成。请重试，或使用 API 密钥。',
+  cloud_unknown_failure: '司序云登录未完成。请重试，或使用 API 密钥。'
+}
+
 export const zhOnboarding: TranslationOverrides['onboarding'] = {
   headerTitle: '开始设置 Semantier Agent',
   headerDesc: '连接模型提供方即可开始对话。大多数选项只需一次点击。',
@@ -47,6 +72,8 @@ export const zhOnboarding: TranslationOverrides['onboarding'] = {
   verifyingCode: provider => `正在通过 ${provider} 验证你的代码...`,
   connectedProvider: provider => `${provider} 已连接`,
   connectedPicking: provider => `${provider} 已连接。正在选择默认模型...`,
+  cloudSignInError: (code, profile) =>
+    (cloudSignInErrors[code] || cloudSignInErrors.cloud_unknown_failure).replace('{profile}', profile),
   signInFailed: '登录失败，请重试。',
   signInExpired:
     '等待授权超时。通常是因为登录页面在打开的标签页中卡住（服务端问题）——请在该页面完成登录后重试。若仍失败，请改用 API 密钥或 CLI 方式。',

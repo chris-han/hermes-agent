@@ -424,6 +424,14 @@ def _default_platform_hint(platform_key: str) -> str:
             hint = (_entry and _entry.platform_hint) or ""
         except Exception:
             pass
+    if platform_key == "desktop":
+        asset = Path(__file__).resolve().parent.parent / "semantier-runtime/src/prompts/agents/DESKTOP_BROWSER_CONTEXT.md"
+        try:
+            guidance = asset.read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            guidance = ""  # Plain upstream distributions do not carry Semantier assets.
+        if guidance:
+            hint = f"{hint}\n\n{guidance}".strip()
     if platform_key == "telegram" and hint and _telegram_rich_messages_enabled():
         hint = hint.rstrip() + " " + TELEGRAM_RICH_MESSAGES_HINT
     return hint
