@@ -31,6 +31,7 @@ export interface OnboardingTranslations {
   verifyingCode: (provider: string) => string
   connectedProvider: (provider: string) => string
   connectedPicking: (provider: string) => string
+  cloudSignInError: (code: string, profile: string) => string
   signInFailed: string
   signInExpired: string
   signInDidNotFinish: (provider: string) => string

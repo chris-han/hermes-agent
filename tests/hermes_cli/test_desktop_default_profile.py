@@ -75,6 +75,7 @@ def test_local_profile_is_migrated_with_real_sessions_and_home_bound_credentials
     assert migrated['home'] == str(owner.resolve())
     assert migrated['profile_ref'] == 'original-server-binding'
     assert migrated['credentials'] == state['credentials']
+    assert device.credential('saved', base_url='https://cloud.example/v1') == 'fixture-protected'
     assert not local.exists()
     assert (owner / '.desktop-default-migration/previous/SOUL.md').read_text() == 'Original default persona'
     import gateway.status

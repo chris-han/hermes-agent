@@ -3455,6 +3455,11 @@
       "sha256": "457f5fe08d3e81a4e1238b5710448842dd3073ce0d2c64205b2b81d7be9e5b49"
     },
     {
+      "path": "src/prompts/agents/DESKTOP_BROWSER_CONTEXT.md",
+      "sha256": "34061d0e091efee892d7f9ed78ba3341494483a8fe34449de77c62e1b25bdb00",
+      "source_commit": "1ca3e98375beec322b4b5e93e98c551782519b47"
+    },
+    {
       "path": "src/prompts/agents/SOUL.md",
       "sha256": "9c645536a701e2babb144bf3b92f47fd56673677ffd5022513821baaad48726b",
       "source_commit": "0b3f0eeb2583694e9ece042a52d5c8d4a8940617"

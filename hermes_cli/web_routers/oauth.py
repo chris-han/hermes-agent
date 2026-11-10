@@ -816,8 +816,15 @@ async def _cloud_device_request(profile, operation, *args):
     action = getattr(cloud_device_client, operation)
     try:
         return await scoped_to_thread(profile, lambda: action(*args))
+    except cloud_device_client.CloudConnectionError as error:
+        detail = {**error.detail(), 'profile': _oauth_profile_name(profile) or 'default'}
+        raise HTTPException(error.status, detail) from None
     except ValueError:
-        raise HTTPException(409, "Cloud connection unavailable; retry from the original profile or reauthorize.") from None
+        # An unclassified internal error is not evidence of a foreign profile.
+        _log.error('Cloud device operation failed: operation=%s code=cloud_internal_error', operation)
+        raise HTTPException(500, {'code': 'cloud_internal_error',
+            'message': 'Semantier Cloud sign-in could not complete. Retry or use an API key.',
+            'retryable': True, 'recovery': 'retry'}) from None
 
 
 # Retain each protected local poll until observed completion. HTTP cancellation
@@ -844,8 +851,14 @@ async def _cloud_poll(profile, session_id, operation_id):
         async def run():
             try:
                 return await _cloud_device_request(profile, "poll", session_id)
+            except HTTPException as error:
+                detail = error.detail if isinstance(error.detail, dict) else {
+                    'code': 'cloud_request_failed', 'message': 'Semantier Cloud sign-in could not complete.'}
+                return {'status': 'error', 'error_message': detail['message'],
+                        'error_code': detail['code'], 'http_status': error.status_code, **detail}
             except Exception:
-                return {"status": "error", "error_message": "Cloud connection unavailable; retry from the original profile or reauthorize."}
+                return {'status': 'error', 'error_code': 'cloud_internal_error',
+                        'error_message': 'Semantier Cloud sign-in could not complete. Retry or use an API key.'}
         task = asyncio.create_task(run())
         _cloud_polls[key] = task
     return await asyncio.shield(task)

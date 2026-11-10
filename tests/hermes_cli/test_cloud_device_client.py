@@ -223,7 +223,8 @@ def test_actual_local_routes_require_auth_and_bind_session_to_original_profile(n
     assert approved.json()['status'] == 'approved'
     assert 'private-account-token' not in approved.text
     foreign=client.get('/api/providers/oauth/semantier-cloud/poll/cloud-foreign',headers=headers)
-    assert foreign.status_code == 409
+    assert foreign.status_code == 404
+    assert foreign.json()['detail']['code'] == 'cloud_session_unavailable'
     assert 'private-account-token' not in foreign.text
 
 
@@ -236,8 +237,10 @@ def test_profile_copy_rejects_private_original_binding(native):
     (foreign/'.cloud-device.bin').write_bytes((home/'.cloud-device.bin').read_bytes())
     token=set_hermes_home_override(str(foreign))
     try:
-        with pytest.raises(ValueError,match='unavailable'):
+        with pytest.raises(device.CloudConnectionError) as failure:
             device._read()
+        assert failure.value.code == 'cloud_profile_mismatch'
+        assert failure.value.status == 409
     finally:
         reset_hermes_home_override(token)
 
@@ -284,10 +287,17 @@ def test_portal_navigation_origin_is_distinct_from_authenticated_billing_api_ori
 def test_connect_never_reuses_an_unrelated_provider_origin(native,monkeypatch):
     device,home=native
     (home/'config.yaml').write_text('model: {provider: custom, base_url: https://unrelated.invalid/v1, api_key: prior-secret}\n')
-    monkeypatch.setattr(device,'_wire',lambda *args,**kwargs:pytest.fail('unrelated endpoint contacted'))
-    with pytest.raises(ValueError,match='Cloud deployment origin'):
-        device.start()
-    assert not (home/'.cloud-device.bin').exists()
+    contacted = []
+    def wire(origin, operation, body=None, bearer=None):
+        contacted.append((origin, body, bearer))
+        return {'contract_version': device.CONTRACT, 'intent_ref': 'public-service',
+                'expires_at': '2099-01-01T00:00:00+00:00',
+                'data': {'verification_uri': origin + '/billing/connect?intent_ref=public-service'}}
+    monkeypatch.setattr(device, '_wire', wire)
+    device.start()
+    assert contacted[0][0] == device.DEFAULT_CLOUD_ORIGIN
+    assert 'prior-secret' not in json.dumps(contacted)
+    assert device._config()['model']['base_url'] == 'https://unrelated.invalid/v1'
 
 
 def test_install_retains_embedded_previous_provider_and_capability_revision(native,monkeypatch):

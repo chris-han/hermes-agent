@@ -1,5 +1,38 @@
 import type { Translations } from './types'
 
+const cloudSignInErrors: Record<string, string> = {
+  cloud_network_unavailable: 'Semantier Cloud could not be reached. Check your network connection and retry.',
+  cloud_dns_failed: 'Semantier Cloud DNS lookup failed. Check DNS and the configured Cloud provider, then retry.',
+  cloud_tls_failed:
+    'Semantier Cloud could not validate its TLS certificate. Check the provider and trusted CA settings.',
+  cloud_http3_unavailable:
+    'Semantier Cloud HTTP/3 is unavailable. Check HTTP/3 support and UDP connectivity, then retry.',
+  cloud_config_invalid:
+    'Semantier Cloud provider settings are invalid. Check this profile’s configuration or use an API key.',
+  cloud_response_invalid: 'Semantier Cloud returned an invalid response. Retry the same connection.',
+  cloud_profile_mismatch:
+    'This sign-in does not match profile {profile}. Return to the original profile before retrying.',
+  cloud_profile_changed: 'Profile {profile} changed during sign-in. Return to that profile and start sign-in again.',
+  cloud_profile_unavailable: 'Profile {profile} is unavailable. Return to the original profile before retrying.',
+  cloud_storage_invalid:
+    'Protected Cloud credentials for profile {profile} could not be read. Reauthorize in that profile.',
+  cloud_storage_unavailable:
+    'Windows protected credential storage is unavailable. Check the Windows user session or use an API key.',
+  cloud_credential_expired: 'Your Semantier Cloud authorization expired. Start sign-in again in profile {profile}.',
+  cloud_authorization_required: 'Semantier Cloud requires authorization. Start sign-in again in this profile.',
+  cloud_authorization_denied:
+    'Semantier Cloud refused authorization. Check your account and permissions before retrying.',
+  cloud_server_conflict: 'Semantier Cloud reported a server-side conflict. Retry the same connection.',
+  cloud_session_unavailable:
+    'This sign-in session is unavailable in profile {profile}. Return to its original profile or start again.',
+  cloud_session_expired: 'This sign-in session expired. Try again to open a new authorization page.',
+  cloud_session_cancelled: 'This sign-in was cancelled. Try again when you are ready.',
+  cloud_rate_limited: 'Semantier Cloud is busy. Wait briefly, then try again.',
+  cloud_server_error: 'Semantier Cloud could not complete sign-in. Retry later or use an API key.',
+  cloud_internal_error: 'Semantier Cloud sign-in could not complete. Try again or use an API key.',
+  cloud_unknown_failure: 'Semantier Cloud sign-in did not finish. Try again or use an API key.'
+}
+
 export const enOnboarding: Translations['onboarding'] = {
   headerTitle: "Let's get you setup with Semantier Agent",
   headerDesc: 'Connect a model provider to start chatting. Most options take one click.',
@@ -54,6 +87,8 @@ export const enOnboarding: Translations['onboarding'] = {
   verifyingCode: provider => `Verifying your code with ${provider}...`,
   connectedProvider: provider => `${provider} connected`,
   connectedPicking: provider => `${provider} connected. Picking a default model...`,
+  cloudSignInError: (code, profile) =>
+    (cloudSignInErrors[code] || cloudSignInErrors.cloud_unknown_failure).replace('{profile}', profile),
   signInFailed: 'Sign-in failed. Try again.',
   signInExpired:
     'The sign-in page timed out before you finished. Try again and complete the browser step within a few minutes, or use an API key instead.',

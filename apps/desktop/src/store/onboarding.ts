@@ -14,6 +14,7 @@ import {
   validateProviderCredential
 } from '@/hermes'
 import { translateNow } from '@/i18n'
+import { decodeCloudSignInError } from '@/lib/cloud-sign-in-error'
 import { isProviderSetupErrorMessage } from '@/lib/provider-setup-errors'
 import { evaluateRuntimeReadiness, type RuntimeReadinessResult } from '@/lib/runtime-readiness'
 import {
@@ -197,6 +198,21 @@ function captureContext(ctx: OnboardingContext): OnboardingContext & { scope: On
 // One plain sentence for every way a provider sign-in can fail (start, poll,
 // code exchange); the raw error text rides along as `detail` (desktop-09).
 function signInDidNotFinish(provider: OAuthProvider, raw: unknown): { message: string; detail?: string } {
+  if (provider.id === 'semantier-cloud') {
+    const failure = decodeCloudSignInError(raw)
+
+    return {
+      message: translateNow('onboarding.cloudSignInError', failure.code, failure.profile || flowScope?.profile || 'default'),
+      detail: [
+        failure.code,
+        failure.httpStatus ? `HTTP ${failure.httpStatus}` : '',
+        failure.profile ? `Profile: ${failure.profile}` : ''
+      ]
+        .filter(Boolean)
+        .join(' · ')
+    }
+  }
+
   const detail = raw instanceof Error ? errMessage(raw) : typeof raw === 'string' ? raw.trim() : ''
 
   return { message: translateNow('onboarding.signInDidNotFinish', provider.name), detail: detail || undefined }
@@ -794,7 +810,10 @@ export async function refreshOnboarding(ctx: OnboardingContext, stillWanted?: ()
     const explicitlyRequested = $desktopOnboarding.get().requested
     completeDesktopOnboarding()
 
-    if (explicitlyRequested) { await applyFreeTierIntro(ctx, runtime) }
+    if (explicitlyRequested) {
+      await applyFreeTierIntro(ctx, runtime)
+    }
+
     ctx.onCompleted?.()
 
     return true
@@ -834,7 +853,9 @@ export async function refreshOnboarding(ctx: OnboardingContext, stillWanted?: ()
     return false
   }
 
-  if (state.requested) { await refreshProviders() }
+  if (state.requested) {
+    await refreshProviders()
+  }
 
   return false
 }
@@ -898,7 +919,40 @@ async function openSignInUrl(url: string) {
   window.open(url, '_blank', 'noopener,noreferrer')
 }
 
-export async function startProviderOAuth(provider: OAuthProvider, ctx: OnboardingContext) {
+const pendingOAuthStarts = new Map<string, { generation: number; task: Promise<void> }>()
+
+export function startProviderOAuth(provider: OAuthProvider, ctx: OnboardingContext): Promise<void> {
+  const captured = captureContext(ctx)
+  const generation = flowGeneration
+  const key = JSON.stringify([provider.id, captured.scope])
+  const pending = pendingOAuthStarts.get(key)
+
+  if (pending) {
+    if (pending.generation === generation) {
+      return pending.task
+    }
+
+    // A reopened flow waits for the retired owner's late start/cancellation.
+    // Do not attach its UI to a stale completion or start parallel device intents.
+    return pending.task.then(() => {
+      if (generation === flowGeneration) {
+        return startProviderOAuth(provider, captured)
+      }
+    })
+  }
+
+  const task = beginProviderOAuth(provider, captured).finally(() => {
+    if (pendingOAuthStarts.get(key)?.task === task) {
+      pendingOAuthStarts.delete(key)
+    }
+  })
+
+  pendingOAuthStarts.set(key, { generation, task })
+
+  return task
+}
+
+async function beginProviderOAuth(provider: OAuthProvider, ctx: OnboardingContext) {
   ctx = captureContext(ctx)
   const generation = flowGeneration
   flowScope = ctx.scope
@@ -916,7 +970,7 @@ export async function startProviderOAuth(provider: OAuthProvider, ctx: Onboardin
     const start = await startOAuthLogin(provider.id, ctx.scope)
 
     if (generation !== flowGeneration) {
-      void cancelOAuthSession(start.session_id, ctx.scope).catch(() => undefined)
+      await cancelOAuthSession(start.session_id, ctx.scope).catch(() => undefined)
 
       return
     }
@@ -925,7 +979,7 @@ export async function startProviderOAuth(provider: OAuthProvider, ctx: Onboardin
     await openSignInUrl(browserUrl)
 
     if (generation !== flowGeneration) {
-      void cancelOAuthSession(start.session_id, ctx.scope).catch(() => undefined)
+      await cancelOAuthSession(start.session_id, ctx.scope).catch(() => undefined)
 
       return
     }
@@ -964,13 +1018,27 @@ async function pollCloudSession(start: DeviceStart, ctx: OnboardingContext) {
 
   try {
     return await pollOAuthSession('semantier-cloud', start.session_id, ctx.scope, operation)
-  } catch {
+  } catch (error) {
+    const terminal = (reason: unknown) => {
+      const status = decodeCloudSignInError(reason).httpStatus
+
+      return status !== undefined && status >= 400 && status < 500
+    }
+
+    if (terminal(error)) {
+      throw error
+    }
+
     for (;;) {
       try {
         return await pollOAuthSession('semantier-cloud', start.session_id, ctx.scope, {
           ...operation
         })
-      } catch {
+      } catch (error) {
+        if (terminal(error)) {
+          throw error
+        }
+
         await new Promise(resolve => window.setTimeout(resolve, 1000))
       }
     }
@@ -1023,7 +1091,12 @@ async function pollSession(provider: OAuthProvider, start: DeviceStart, ctx: Onb
       )
     } else if (status !== 'pending') {
       clearPoll()
-      setFlow({ status: 'error', provider, start, ...signInDidNotFinish(provider, error_message || status) })
+      setFlow({
+        status: 'error',
+        provider,
+        start,
+        ...signInDidNotFinish(provider, provider.id === 'semantier-cloud' ? reply : error_message || status)
+      })
     }
   } catch (error) {
     if (generation !== flowGeneration) {
