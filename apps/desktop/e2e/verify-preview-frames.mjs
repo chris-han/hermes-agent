@@ -18,6 +18,7 @@ const site = httpServer((req, res) => {
     if (!req.headers.cookie?.includes('fixture_auth=synthetic')) { res.statusCode = 403; return res.end('Not authenticated') }
     return res.end(`<h1>Outer authenticated</h1><button>Outer button</button><iframe id="same" src="/same" style="width:400px;height:120px"></iframe><iframe id="cross" src="http://localhost:${site.address().port}/cross" style="width:450px;height:290px"></iframe><iframe style="display:none" src="/hidden"></iframe><div style="height:0;overflow:hidden"><iframe src="/clipped"></iframe></div>`)
   }
+  if (url.pathname === '/empty-outer') return res.end(`<h1>Outer navigation only</h1><iframe src="http://localhost:${site.address().port}/cross" style="width:450px;height:290px"></iframe>`)
   if (url.pathname === '/same') return res.end(req.headers.cookie?.includes('fixture_auth=synthetic') ? '<p>Same authenticated</p><button>Same button</button>' : '<p>Not authenticated</p>')
   if (url.pathname === '/cross' || url.pathname === '/replacement') return res.end(`<p>${url.pathname === '/cross' ? 'Cross content' : 'Replacement content'}</p><button onclick="document.querySelector('output').textContent='Clicked trusted: '+event.isTrusted">Cross action</button><label>Cross field<input id="field" value="previous" oninput="document.querySelector('#typed').textContent='Typed trusted: '+event.isTrusted+' '+this.value"></label><output></output><p id="typed"></p><iframe src="http://127.0.0.1:${site.address().port}/nested" style="width:350px;height:90px"></iframe>`)
   if (url.pathname === '/nested') return res.end('<p>Nested cross content</p><button>Nested action</button>')
@@ -42,12 +43,26 @@ try {
   await page.waitForTimeout(750)
   const read = () => page.evaluate(() => window.fixture.read())
   const act = action => page.evaluate(value => window.fixture.act(value), action)
+  const topText = await page.evaluate(() => window.fixture.guestScript('document.body.innerText'))
+  assert.ok(topText.includes('Outer authenticated'))
+  assert.ok(!topText.includes('Cross content'), 'the original top-document read misses frame content')
   let result = await read()
   for (const text of ['Outer authenticated', 'Same authenticated', 'Cross content', 'Nested cross content']) assert.ok(result.text.includes(text), text)
   assert.ok(!result.text.includes('Hidden private frame'))
   assert.ok(!result.text.includes('Clipped private frame'))
-  const processIds = await app.evaluate(({ webContents }, id) => webContents.fromId(id).mainFrame.framesInSubtree.map(frame => frame.processId), guestId)
-  assert.ok(new Set(processIds).size >= 2, 'cross-origin frame must be out of process')
+  const frameProcesses = await app.evaluate(({ webContents }, id) => webContents.fromId(id).mainFrame.framesInSubtree.map(frame => ({ url: frame.url, processId: frame.processId })), guestId)
+  const outerProcess = frameProcesses.find(frame => frame.url.includes('/app'))?.processId
+  const crossProcess = frameProcesses.find(frame => frame.url.includes('/cross'))?.processId
+  const nestedProcess = frameProcesses.find(frame => frame.url.includes('/nested'))?.processId
+  assert.ok(outerProcess && crossProcess && nestedProcess, 'all fixture frame processes must be available')
+  assert.notEqual(outerProcess, crossProcess, 'cross-origin frame must be out of process')
+  assert.notEqual(crossProcess, nestedProcess, 'nested cross-origin frame must cross a process boundary')
+  // Unscoped selectors cannot reach into a child document, even after repeated guesses.
+  for (const selector of ['#field', '#account-detail', '#field']) {
+    const guess = await act({ kind: 'click', selector })
+    assert.equal(guess.success, false, `selector guess ${selector} must not trigger frame input`)
+  }
+  assert.ok(!(await read()).text.includes('Clicked trusted: true'))
   result = await act({ kind: 'elements', full: true })
   assert.equal(result.success, true, JSON.stringify(result))
   for (const label of ['Outer button', 'Same button', 'Cross action', 'Cross field', 'Nested action']) assert.ok(result.elements.some(element => element.label.includes(label)), label)
@@ -103,6 +118,14 @@ try {
   await page.evaluate(id => window.hermesDesktop.setPreviewGuestHidden(id, false), guestId)
   result = await read()
   assert.ok(result.text.includes('Same authenticated'), 'same guest authentication remains available')
+  await page.evaluate(url => window.fixture.guestLoad(url), `http://127.0.0.1:${site.address().port}/empty-outer`)
+  await page.waitForFunction(async () => { try { return (await window.fixture.read()).text.includes('Nested cross content') } catch { return false } })
+  assert.equal(await page.evaluate(() => window.fixture.guestScript("document.querySelectorAll('button,input,select,textarea,a[href]').length")), 0)
+  result = await act({ kind: 'elements', full: true })
+  assert.equal(result.success, true, JSON.stringify(result))
+  for (const label of ['Cross action', 'Cross field', 'Nested action']) {
+    assert.ok(result.elements.some(element => element.label.includes(label)), `empty outer document must expose ${label}`)
+  }
   await page.evaluate(url => window.fixture.guestLoad(url), `http://127.0.0.1:${site.address().port}/ordinary`)
   await page.waitForFunction(async () => { try { return (await window.fixture.read()).text.includes('Ordinary page') } catch { return false } })
   result = await act({ kind: 'elements', full: true })
