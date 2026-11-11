@@ -74,7 +74,7 @@ import { usePreviewGuestOffscreen } from './preview-guest-offscreen'
 import { type PreviewInputEvent, registerPreviewInput, toWebviewInputSpace } from './preview-input'
 import { PREVIEW_BROWSER_ATTR, registerPreviewNav } from './preview-nav'
 import { registerPreviewPageReader } from './preview-reader'
-import { registerPreviewScriptRunner } from './preview-script-runner'
+import { createPreviewFrameRunner, readPreviewFrameText, registerPreviewFrameRunner, registerPreviewScriptRunner } from './preview-script-runner'
 import { RealProfileConsentDialog } from './real-profile-consent-dialog'
 
 type PreviewWebview = HTMLElement & {
@@ -271,7 +271,16 @@ function usePreviewPageReader(isWebPreview: boolean, tabId: string | undefined, 
         throw new Error('preview webview is not ready')
       }
 
-      const text = await webview.executeJavaScript('document.body ? document.body.innerText : ""')
+      let text: unknown
+      const bridge = window.hermesDesktop?.previewFrames
+      const webContentsId = webview.getWebContentsId?.()
+      if (bridge) {
+        if (typeof webContentsId !== 'number') { throw new Error('PANE_UNAVAILABLE') }
+        text = await readPreviewFrameText(createPreviewFrameRunner(() => webviewRef.current, bridge))
+        if (webviewRef.current !== webview || webview.getWebContentsId?.() !== webContentsId) {throw new Error('STALE_TARGET')}
+      } else {
+        text = await webview.executeJavaScript('document.body ? document.body.innerText : ""')
+      }
 
       return {
         text: typeof text === 'string' ? text : '',
@@ -880,6 +889,22 @@ export function PreviewPane({
     })
   }, [isWebPreview, tabId])
 
+  useEffect(() => {
+    if (!isWebPreview || isRemoteHtml || !tabId || !window.hermesDesktop?.previewFrames) {return}
+    const bridge = window.hermesDesktop?.previewFrames
+    const runner = createPreviewFrameRunner(() => webviewRef.current, bridge)
+    const unregister = registerPreviewFrameRunner(tabId, runner)
+    return () => {
+      unregister()
+      try {
+        const webContentsId = webviewRef.current?.getWebContentsId?.()
+        if (typeof webContentsId === 'number') { void bridge({ operation: 'dispose', webContentsId }).catch(() => {}) }
+      } catch {
+        // A destroyed guest disposes its own debugger in the main process.
+      }
+    }
+  }, [isRemoteHtml, isWebPreview, tabId])
+
   // Publish the INPUT channel for this tab. Same idea as the script runner, but
   // it carries real Chromium input rather than script — the agent's clicks and
   // keystrokes arrive as trusted events, so the page hovers, focuses and reacts
@@ -1361,8 +1386,8 @@ export function PreviewPane({
     webview.addEventListener('devtools-opened', onDevToolsOpened)
     webview.addEventListener('did-fail-load', onFail)
 
-    const invalidateBrowserEpoch = (event: Event) => {
-      if ((event as Event & {isMainFrame?:boolean}).isMainFrame !== false) { browserPageEpochRef.current++ }
+    const invalidateBrowserEpoch = () => {
+      browserPageEpochRef.current++
     }
 
     webview.addEventListener('did-start-navigation', invalidateBrowserEpoch)

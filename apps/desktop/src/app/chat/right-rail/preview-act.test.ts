@@ -9,7 +9,7 @@ import { closeRightRail, openPreview, type PreviewTarget } from '@/store/preview
 import { actOnActivePreview } from './preview-act'
 import { registerPreviewInput } from './preview-input'
 import { registerPreviewNav } from './preview-nav'
-import { registerPreviewScriptRunner } from './preview-script-runner'
+import { registerPreviewFrameRunner, registerPreviewScriptRunner } from './preview-script-runner'
 
 function urlTarget(url: string): PreviewTarget {
   return { kind: 'url', label: 'Browser', source: url, url }
@@ -129,6 +129,63 @@ describe('actOnActivePreview (drive_preview tool)', () => {
       document.body.replaceChildren()
       delete (window as unknown as { __hermesActHolder?: unknown }).__hermesActHolder
     }
+  })
+
+  it('inventories controls across frames and routes a frame click through real input', async () => {
+    const tabId = openBrowserTab()
+    const token = '12345678-1234-1234-1234-123456789abc'
+    const send = vi.fn()
+    cleanups.push(registerPreviewScriptRunner(tabId, async () => ''))
+    cleanups.push(registerPreviewInput(tabId, { focus: vi.fn(), send }))
+    cleanups.push(registerPreviewFrameRunner(tabId, {
+      list: async () => [{ token: 'main' }, { token }],
+      input: async (_token, event) => { send(event) },
+      mapPoint: async (_token, point) => ({ visible: true, x: point.x + 100, y: point.y + 50 }),
+      run: async (frame, code) => code.includes('"kind":"locate"')
+        ? JSON.stringify({ success: true, acted: 'looking at button "Save"', point: { x: 10, y: 20 } })
+        : JSON.stringify({ success: true, elements: [{ label: frame === 'main' ? 'Outer' : 'Save', ref: 'btn-save', role: 'button' }], hit: { tag: 'BUTTON', trusted: true } })
+    }))
+    const inventory = await actOnActivePreview({ kind: 'elements' })
+    expect(inventory.elements?.map(item => item.ref)).toEqual(['btn-save', `frame:${token}:btn-save`])
+    const clicked = await actOnActivePreview({ kind: 'click', ref: `frame:${token}:btn-save` })
+    expect(clicked.success).toBe(true)
+    expect(send.mock.calls.map(([event]) => event).find(event => event.type === 'mouseDown')).toMatchObject({ x: 110, y: 70 })
+  })
+
+  it('does not report an empty outer page when a child frame has controls', async () => {
+    const tabId = openBrowserTab()
+    const token = '12345678-1234-1234-1234-123456789abc'
+    cleanups.push(registerPreviewScriptRunner(tabId, async () => ''))
+    cleanups.push(registerPreviewFrameRunner(tabId, {
+      list: async () => [{ token: 'main' }, { token }],
+      input: async () => {},
+      mapPoint: async (_token, point) => ({ visible: true, ...point }),
+      run: async frame => JSON.stringify(frame === 'main'
+        ? { success: true, elements: [], title: 'Outer', url: 'https://example.com/', note: 'No interactive elements found — the page may still be loading.' }
+        : { success: true, elements: [{ label: 'Child', ref: 'btn-child', role: 'button' }] })
+    }))
+    const result = await actOnActivePreview({ kind: 'elements' })
+    expect(result.elements?.[0].ref).toBe(`frame:${token}:btn-child`)
+    expect(result.title).toBe('Outer')
+    expect(result.url).toBe('https://example.com/')
+    expect(result.note).toBeUndefined()
+  })
+
+  it('does not send input when a frame target becomes obscured', async () => {
+    const tabId = openBrowserTab()
+    const token = '12345678-1234-1234-1234-123456789abc'
+    const send = vi.fn()
+    cleanups.push(registerPreviewScriptRunner(tabId, async () => ''))
+    cleanups.push(registerPreviewInput(tabId, { focus: vi.fn(), send }))
+    cleanups.push(registerPreviewFrameRunner(tabId, {
+      list: async () => [{ token }],
+      input: async (_token, event) => { send(event) },
+      mapPoint: async (_token, point) => ({ visible: false, ...point }),
+      run: async () => JSON.stringify({ success: true, point: { x: 10, y: 20 } })
+    }))
+    const result = await actOnActivePreview({ kind: 'click', ref: `frame:${token}:btn-save` })
+    expect(result.success).toBe(false)
+    expect(send).not.toHaveBeenCalled()
   })
 
   it('reports a page that answers with nothing', async () => {

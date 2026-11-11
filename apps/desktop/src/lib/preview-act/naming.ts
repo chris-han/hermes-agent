@@ -59,6 +59,12 @@ export function namingKit(doc: Document): NamingKit {
       return clamp(text, 80)
     }
 
+    const labels = (el as HTMLInputElement).labels
+    if (labels) {
+      const nativeLabel = Array.from(labels).map(label => (label.textContent || '').trim()).filter(Boolean).join(' ').replace(/\s+/g, ' ')
+      if (nativeLabel) {return clamp(nativeLabel, 80)}
+    }
+
     for (const attr of ['placeholder', 'title', 'alt', 'name', 'value']) {
       const value = el.getAttribute(attr)
 

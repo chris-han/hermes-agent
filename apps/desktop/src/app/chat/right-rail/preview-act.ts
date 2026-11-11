@@ -43,8 +43,8 @@ import {
 } from './preview-drive'
 import { activePreviewInput, type PreviewInputHandle } from './preview-input'
 import { activePreviewNav, type PreviewNavHandle } from './preview-nav'
-import { bindingStatus, type PreviewBinding } from './preview-reader'
-import { activePreviewScriptRunner, type PreviewScriptRunner } from './preview-script-runner'
+import { activePreviewBinding, bindingStatus, type PreviewBinding } from './preview-reader'
+import { activePreviewFrameRunner, activePreviewScriptRunner, type PreviewFrameRunner, type PreviewScriptRunner } from './preview-script-runner'
 
 /** Verbs the pane owns; a guest page cannot drive its own history. */
 const NAV_ACTIONS: readonly (keyof PreviewNavHandle)[] = ['back', 'forward', 'reload']
@@ -560,7 +560,8 @@ async function driveAction(
   run: PreviewScriptRunner,
   input: PreviewInputHandle,
   action: PreviewActAction,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  mapFramePoint?: (point: { x: number; y: number }) => Promise<{ visible: boolean; x: number; y: number }>
 ): Promise<PreviewActResult> {
   // A key press must not be preceded by a click — that would activate the
   // control rather than type into it — so the page hands it focus instead.
@@ -587,7 +588,19 @@ async function driveAction(
     return { error: 'Could not work out where that element is on screen.', success: false }
   }
 
-  await glideTo(input, found.point)
+  let point = found.point
+  if (mapFramePoint) {
+    const mapped = await mapFramePoint(point)
+    if (!mapped.visible) {return { success: false, error: 'Frame target is hidden or obscured; no input was sent.' }}
+    point = mapped
+  }
+  await glideTo(input, point)
+  if (mapFramePoint) {
+    const mapped = await mapFramePoint(found.point)
+    if (!mapped.visible || Math.abs(mapped.x - point.x) > 1 || Math.abs(mapped.y - point.y) > 1) {
+      return { success: false, error: 'Frame target moved or became hidden; no input was sent.' }
+    }
+  }
 
   if (action.kind === 'click') {
     await clickAt(input)
@@ -605,7 +618,7 @@ async function driveAction(
       return stoppedType(signal, 0, text.length)
     }
 
-    input.focus()
+    await input.focus()
     await clickAt(input)
 
     if (signal?.aborted) {
@@ -662,7 +675,7 @@ async function driveAction(
       }
     }
 
-    input.focus()
+    await input.focus()
     await pressKey(input, key)
   }
   // hover is the glide and nothing else — the pointer is already sitting on the
@@ -770,8 +783,8 @@ function ownerCheckedRunner(raw: ReturnType<typeof activePreviewScriptRunner>, b
 
 function ownerCheckedInput(raw: PreviewInputHandle | null, binding: PreviewBinding | undefined, assertPage: () => void): PreviewInputHandle | null {
   return raw && binding ? {
-    focus: () => {assertPage(); raw.focus()},
-    send: event => {assertPage(); raw.send(event)}
+    focus: () => {assertPage(); return raw.focus()},
+    send: event => {assertPage(); return raw.send(event)}
   } : raw
 }
 
@@ -779,14 +792,64 @@ function isPlainScroll(action: PreviewActAction) {
   return action.kind === 'scroll' && !action.to && !action.ref && !action.selector
 }
 
+const FRAME_REF = /^frame:([0-9a-f-]{36}):(.*)$/
+
+function prefixFrameResult(result: PreviewActResult, token: string): PreviewActResult {
+  const ref = (value: string) => `frame:${token}:${value}`
+  if (result.elements) {result.elements = result.elements.map(item => ({ ...item, ref: ref(item.ref) }))}
+  if (result.delta) {
+    const delta = result.delta
+    if (delta.added) {delta.added = delta.added.map(item => ({ ...item, ref: ref(item.ref) }))}
+    if (delta.changed) {delta.changed = delta.changed.map(item => ({ ...item, ref: ref(item.ref) }))}
+    if (delta.removed) {delta.removed = delta.removed.map(ref)}
+    if (delta.rebound) {delta.rebound = delta.rebound.map(ref)}
+  }
+  return result
+}
+
+async function frameInventory(frames: PreviewFrameRunner, action: PreviewActAction, assertPage: () => void): Promise<PreviewActResult> {
+  assertPage()
+  const list = await frames.list()
+  assertPage()
+  const elements: NonNullable<PreviewActResult['elements']> = []
+  const rows: NonNullable<PreviewActResult['elements']>[] = []
+  let rootResult: PreviewActResult = { success: true }
+  const requestedMax = Number.isFinite(action.max) ? Math.floor(action.max!) : 120
+  const limit = Math.min(120, Math.max(1, requestedMax))
+  for (let i = 0; i < list.length; i++) {
+    const trip = await runJson(code => { assertPage(); return frames.run(list[i].token, code) }, buildScriptedScript({ ...action, full: true, max: limit }, 0))
+    assertPage()
+    if (trip.kind !== 'answered') {return { success: false, error: trip.kind === 'failed' ? trip.error : UNANSWERED }}
+    if (!trip.result.success) {return trip.result}
+    const result = i === 0 ? trip.result : prefixFrameResult(trip.result, list[i].token)
+    if (i === 0) {rootResult = result}
+    rows.push(result.elements || [])
+  }
+  // A busy outer navigation must not consume the entire inventory budget
+  // before any embedded application gets a chance to appear.
+  for (let row = 0; elements.length < limit; row++) {
+    let found = false
+    for (const frameRows of rows) {
+      if (frameRows[row]) { elements.push(frameRows[row]); found = true }
+      if (elements.length === limit) {break}
+    }
+    if (!found) {break}
+  }
+  const result = { ...rootResult, success: true, elements }
+  if (elements.length && result.note?.startsWith('No interactive elements found')) {delete result.note}
+  return result
+}
+
 export async function actOnActivePreview(
   action: Omit<PreviewActAction, 'kind'> & { kind: string; expectedBinding?: PreviewBinding },
   signal?: AbortSignal,
   owner?: PreviewOwner
 ): Promise<PreviewActResult> {
+  const expectedBinding = action.expectedBinding ?? activePreviewBinding(owner) ?? undefined
+  let frameGuard = false
   const assertBoundPage = () => {
-    if (action.expectedBinding && signal?.aborted) { throw new Error('STALE_TARGET') }
-    const code = action.expectedBinding ? bindingStatus(action.expectedBinding,false,owner) : null
+    if ((expectedBinding || frameGuard) && signal?.aborted) { throw new Error('STALE_TARGET') }
+    const code = expectedBinding ? bindingStatus(expectedBinding,false,owner) : null
 
     if (code) { throw new Error(code) }
   }
@@ -808,13 +871,38 @@ export async function actOnActivePreview(
     return { acted: nav, note: 'Page is loading — call elements to see what is on it.', success: true }
   }
 
-  const run = ownerCheckedRunner(activePreviewScriptRunner(owner), action.expectedBinding, assertBoundPage)
+  const run = ownerCheckedRunner(activePreviewScriptRunner(owner), expectedBinding, assertBoundPage)
 
   if (!run) {
     return { error: NOTHING_OPEN, success: false }
   }
 
   const typed = action as PreviewActAction
+
+  const frameRunner = activePreviewFrameRunner(owner)
+  frameGuard = Boolean(frameRunner)
+  if (frameRunner && typed.kind === 'elements') {return frameInventory(frameRunner, typed, assertBoundPage)}
+  const frameMatch = typed.ref?.match(FRAME_REF)
+  if (typed.ref?.startsWith('frame:') && !frameMatch) {return { success: false, code: 'STALE_TARGET', error: 'Invalid frame reference; call elements again.' }}
+  if (frameMatch) {
+    if (!frameRunner) {return { success: false, code: 'STALE_TARGET', error: 'Frame is unavailable; call elements again.' }}
+    const token = frameMatch[1]
+    const localAction = { ...typed, ref: frameMatch[2] }
+    const frameRun: PreviewScriptRunner = code => { assertBoundPage(); return frameRunner.run(token, code) }
+    const input = ownerCheckedInput(activePreviewInput(owner), expectedBinding, assertBoundPage)
+    if (!input || DRIVEN.indexOf(localAction.kind) === -1) {return { success: false, error: 'This frame action requires trusted input.' }}
+    let targetPoint: { x: number; y: number } | undefined
+    const frameInput: PreviewInputHandle = {
+      focus: () => { assertBoundPage(); return input.focus() },
+      send: event => { assertBoundPage(); return frameRunner.input(token, event, targetPoint) }
+    }
+    const result = await driveAction(frameRun, frameInput, localAction, signal, point => {
+      assertBoundPage()
+      targetPoint = point
+      return frameRunner.mapPoint(token, point)
+    })
+    return prefixFrameResult(result, token)
+  }
 
   // Annotation, not interaction: nothing is clicked, nothing settles, and the
   // page is not re-read, so these skip the whole act-then-inventory path.
@@ -837,9 +925,9 @@ export async function actOnActivePreview(
     return trip.kind === 'answered' ? trip.result : { acted: typed.kind, note: NAVIGATED, success: true }
   }
 
-  const input = ownerCheckedInput(activePreviewInput(owner), action.expectedBinding, assertBoundPage)
+  const input = ownerCheckedInput(activePreviewInput(owner), expectedBinding, assertBoundPage)
 
-  if (action.expectedBinding && !input && typed.kind !== 'elements') {
+  if (expectedBinding && !input && typed.kind !== 'elements') {
     return {success:false,error:'PANE_UNAVAILABLE'}
   }
 

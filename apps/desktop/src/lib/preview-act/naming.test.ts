@@ -91,6 +91,12 @@ describe('labelOf', () => {
     expect(naming().labelOf(document.querySelector('button')!)).toBe('Billing')
   })
 
+  it('names controls from associated native labels, including wrapping labels', () => {
+    document.body.innerHTML = '<label for="external">Account</label><input id="external"><label>Amount<input id="wrapped"></label>'
+    expect(naming().labelOf(document.querySelector('#external')!)).toBe('Account')
+    expect(naming().labelOf(document.querySelector('#wrapped')!)).toBe('Amount')
+  })
+
   it('falls back through placeholder and title before giving up', () => {
     expect(naming().labelOf(el('<input placeholder="Your email" />'))).toBe('Your email')
     expect(naming().labelOf(el('<a href="/x" title="Help"></a>'))).toBe('Help')

@@ -67,7 +67,7 @@ export async function glideTo(input: PreviewInputHandle, to: DrivePoint): Promis
   for (let step = 1; step <= GLIDE_STEPS; step++) {
     const progress = easeOut(step / GLIDE_STEPS)
 
-    input.send({
+    await input.send({
       type: 'mouseMove',
       x: Math.round(from.x + (to.x - from.x) * progress),
       y: Math.round(from.y + (to.y - from.y) * progress)
@@ -83,8 +83,8 @@ export async function glideTo(input: PreviewInputHandle, to: DrivePoint): Promis
  *  text under it, which is how a field gets cleared without a modifier key. */
 export async function clickAt(input: PreviewInputHandle, clicks = 1): Promise<void> {
   for (let click = 1; click <= clicks; click++) {
-    input.send({ button: 'left', clickCount: click, type: 'mouseDown', x: pointer.x, y: pointer.y })
-    input.send({ button: 'left', clickCount: click, type: 'mouseUp', x: pointer.x, y: pointer.y })
+    await input.send({ button: 'left', clickCount: click, type: 'mouseDown', x: pointer.x, y: pointer.y })
+    await input.send({ button: 'left', clickCount: click, type: 'mouseUp', x: pointer.x, y: pointer.y })
     await wait(KEY_MS)
   }
 }
@@ -103,7 +103,7 @@ export async function wheelBy(input: PreviewInputHandle, down: number): Promise<
     sent = so_far
 
     if (notch) {
-      input.send({ deltaX: 0, deltaY: -notch, type: 'mouseWheel', x: pointer.x, y: pointer.y })
+      await input.send({ deltaX: 0, deltaY: -notch, type: 'mouseWheel', x: pointer.x, y: pointer.y })
     }
 
     await wait(WHEEL_MS / WHEEL_STEPS)
@@ -112,9 +112,9 @@ export async function wheelBy(input: PreviewInputHandle, down: number): Promise<
 
 /** Send one key the long way round, so a page watching any of the three sees it. */
 export async function pressKey(input: PreviewInputHandle, key: string): Promise<void> {
-  input.send({ keyCode: key, type: 'keyDown' })
-  input.send({ keyCode: key, type: 'char' })
-  input.send({ keyCode: key, type: 'keyUp' })
+  await input.send({ keyCode: key, type: 'keyDown' })
+  await input.send({ keyCode: key, type: 'char' })
+  await input.send({ keyCode: key, type: 'keyUp' })
   await wait(KEY_MS)
 }
 
@@ -132,8 +132,8 @@ export async function pressKey(input: PreviewInputHandle, key: string): Promise<
 export async function selectAll(input: PreviewInputHandle): Promise<void> {
   const chord = isMacPlatform() ? ['meta'] : ['control']
 
-  input.send({ keyCode: 'a', modifiers: chord, type: 'keyDown' })
-  input.send({ keyCode: 'a', modifiers: chord, type: 'keyUp' })
+  await input.send({ keyCode: 'a', modifiers: chord, type: 'keyDown' })
+  await input.send({ keyCode: 'a', modifiers: chord, type: 'keyUp' })
   await wait(KEY_MS)
 }
 
@@ -141,8 +141,8 @@ export async function selectAll(input: PreviewInputHandle): Promise<void> {
  *  phase would type the key's literal meaning for editable content, which a
  *  deletion or caret move must never do. */
 export async function pressControlKey(input: PreviewInputHandle, key: string): Promise<void> {
-  input.send({ keyCode: key, type: 'keyDown' })
-  input.send({ keyCode: key, type: 'keyUp' })
+  await input.send({ keyCode: key, type: 'keyDown' })
+  await input.send({ keyCode: key, type: 'keyUp' })
   await wait(KEY_MS)
 }
 

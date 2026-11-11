@@ -32,8 +32,8 @@ export type PreviewInputEvent =
 
 export interface PreviewInputHandle {
   /** Give the guest keyboard focus, so key events reach its active element. */
-  focus: () => void
-  send: (event: PreviewInputEvent) => void
+  focus: () => void | Promise<void>
+  send: (event: PreviewInputEvent) => void | Promise<void>
 }
 
 /** Convert a point the act engine measured in guest CSS pixels into the

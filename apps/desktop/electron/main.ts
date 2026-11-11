@@ -452,6 +452,7 @@ import { readPreUpdateBackupEnabled } from './pre-update-backup-config'
 import { registerPreparedSubmissions } from './prepared-submissions'
 import { capturePreviewContents } from './preview-capture'
 import { onPreviewWatchOwnerDestroyed, sendPreviewFileChangedToOwner } from './preview-file-watch'
+import { registerPreviewFramesIpc } from './preview-frame-access'
 import { hasClosePreviewFlag, previewGuestInputAction } from './preview-guest-escape'
 import { commandFocusedGuest, notePreviewGuestHidden } from './preview-guest-offscreen'
 import { applyPreviewGuestAttachPrefs } from './preview-guest-throttle'
@@ -17119,6 +17120,8 @@ ipcMain.handle('hermes:context-menu:guest-add-word', (_event, payload) => {
     guest.session.addWordToSpellCheckerDictionary(word)
   }
 })
+
+registerPreviewFramesIpc(ipcMain, id => electronWebContents.fromId(id) || undefined, () => session.fromPartition('persist:hermes-preview'))
 
 ipcMain.handle('hermes:capturePreview', async (_event, payload) => {
   const guest = electronWebContents.fromId(Number(payload?.webContentsId))

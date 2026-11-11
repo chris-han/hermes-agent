@@ -12,7 +12,7 @@ import { resolveActivePreviewTab } from './preview-active-tab'
 import { activePreviewInput, registerPreviewInput } from './preview-input'
 import { activePreviewNav, registerPreviewNav } from './preview-nav'
 import { PREVIEW_READ_MAX_CHARS, readActivePreview, registerPreviewPageReader } from './preview-reader'
-import { activePreviewScriptRunner, registerPreviewScriptRunner } from './preview-script-runner'
+import { activePreviewFrameRunner, activePreviewScriptRunner, registerPreviewFrameRunner, registerPreviewScriptRunner } from './preview-script-runner'
 
 function urlTarget(url: string): PreviewTarget {
   return { kind: 'url', label: 'Browser', source: url, url }
@@ -224,6 +224,8 @@ describe('agent preview reads stay inside the session (#73890)', () => {
     const unbindNav = registerPreviewNav(hidden, navA)
     const unbindInput = registerPreviewInput(hidden, inputA)
     const unbindRun = registerPreviewScriptRunner(hidden, runA)
+    const framesA = { list: async () => [], run: async () => 'a', mapPoint: async () => ({ visible: true, x: 0, y: 0 }), input: async () => {} }
+    const unbindFrames = registerPreviewFrameRunner(hidden, framesA)
 
     try {
       $selectedStoredSessionId.set('sess-b')
@@ -236,6 +238,7 @@ describe('agent preview reads stay inside the session (#73890)', () => {
       expect(activePreviewNav()).toBeNull()
       expect(activePreviewInput()).toBeNull()
       expect(activePreviewScriptRunner()).toBeNull()
+      expect(activePreviewFrameRunner()).toBeNull()
 
       const read = await readActivePreview()
 
@@ -246,12 +249,15 @@ describe('agent preview reads stay inside the session (#73890)', () => {
       expect(activePreviewNav('sess-a')).toBe(navA)
       expect(activePreviewInput('sess-a')).toBe(inputA)
       expect(activePreviewScriptRunner('sess-a')).toBe(runA)
+      expect(activePreviewFrameRunner('sess-a')).toBe(framesA)
+      expect(activePreviewFrameRunner(null)).toBeNull()
       // A requester with no resolved session sees no session's tabs.
       expect(activePreviewScriptRunner(null)).toBeNull()
     } finally {
       unbindNav()
       unbindInput()
       unbindRun()
+      unbindFrames()
     }
   })
 })
@@ -317,6 +323,7 @@ return {text:'live',title:'lease',url:'http://localhost/lease'}},()=>({guest_id:
       const count=reads
       await expect(readActivePreview({require_live:true,expected_binding:{...binding,window_id:'another-window'}})).rejects.toThrow('WRONG_OWNER')
       expect(reads).toBe(count)
+      await expect(readActivePreview({require_live:true,expected_binding:{...binding,session_id:'different-session'}})).rejects.toThrow('WRONG_OWNER')
       epoch=2
       await expect(readActivePreview({require_live:true,expected_binding:binding})).rejects.toThrow('STALE_TARGET')
       const refreshed=await readActivePreview({require_live:true,expected_binding:binding,refresh_binding:true})

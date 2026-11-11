@@ -96,7 +96,10 @@ export function activePreviewBinding(owner?: PreviewOwner, includeLoading = fals
 }
 
 export function bindingStatus(expected: PreviewBinding, allowEpochRefresh = false, owner?: PreviewOwner, allowLoading = false): 'WRONG_OWNER' | 'STALE_TARGET' | null {
-  if (expected.window_id !== previewWindowId || !previewTabsFor(owner).some(tab=>tab.id===expected.tab_id)) { return 'WRONG_OWNER' }
+  const who = ownerIdentity(owner ?? null)
+  const tabs = previewTabsFor(owner)
+  if (expected.window_id !== previewWindowId || expected.session_id !== (who.runtimeId ?? who.sessionId ?? '') || !tabs.some(tab => tab.id === expected.tab_id)) { return 'WRONG_OWNER' }
+  if (resolveActivePreviewTab(tabs)?.id !== expected.tab_id) { return 'STALE_TARGET' }
   const live = identities.get(expected.tab_id)?.()
 
   return !live || (!allowLoading && live.loading) || live.guest_id !== expected.guest_id || (!allowEpochRefresh && live.page_epoch !== expected.page_epoch) ? 'STALE_TARGET' : null

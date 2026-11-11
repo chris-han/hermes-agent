@@ -7,10 +7,10 @@ import type { ScreenshotApi } from '../electron/command-screenshot-types'
 import type { DesktopBranding } from '../electron/desktop-branding-types'
 import type { HudModifierApi } from '../electron/hud-modifier-types'
 import type { MachineProfile } from '../electron/machine-profile'
-import type { DesktopWorkspaceApi } from '../electron/semantier-workspace-ipc'
 import type { WindowCloseAction, WindowCloseRequest, WindowCloseResult } from '../electron/minimize-to-tray'
 import type { HermesNotification } from '../electron/notification-types'
 import type { KeepAwakeMode } from '../electron/power-save'
+import type { DesktopWorkspaceApi, WorkspaceScope } from '../electron/semantier-workspace-ipc'
 import type { UpdateHoldWire } from '../electron/update-hold-types'
 import type { DeliverySourceId, DeliverySourceStatus } from '../electron/updater/delivery-source'
 import type { Observation } from '../electron/updater/semantier-observations'
@@ -19,6 +19,7 @@ import type { UpdateWorkReview } from '../electron/updater/work-review'
 import type { WindowSizeMode } from '../electron/window-size-types'
 import type { BrandShortcutBridge } from '../electron/windows-brand-shortcuts-types'
 
+import type { PreviewInputEvent } from './app/chat/right-rail/preview-input'
 import type { WakeIndicatorState } from './lib/wake-indicator'
 import type {
   PetOverlayBounds,
@@ -354,6 +355,8 @@ declare global {
         callback: (payload: { misspelledWord: string; suggestions: string[] }) => void
       ) => () => void
       saveImageBuffer: (data: ArrayBuffer | Uint8Array, ext: string, name?: string) => Promise<string>
+      /** Private frame routing used only by the embedded preview engine. */
+      previewFrames?: (payload: { webContentsId: number; operation: 'list' | 'run' | 'mapPoint' | 'input' | 'dispose'; token?: string; code?: string; point?: { x: number; y: number }; event?: PreviewInputEvent }) => Promise<any>
       /** Crop the in-app browser guest. `rect` is CSS pixels in the page viewport. */
       capturePreview?: (payload: {
         rect?: { height: number; width: number; x: number; y: number }
@@ -1007,7 +1010,7 @@ export interface DesktopPluginProfileRoute {
 
 export interface HermesConnection {
   transport?: 'semantier-workspace-http'
-  workspaceScope?: import('../electron/semantier-workspace-ipc').WorkspaceScope
+  workspaceScope?: WorkspaceScope
   baseUrl: string
   customWindowControls?: boolean
   darwinMajor?: number
@@ -1546,7 +1549,7 @@ export type DesktopBootstrapEvent =
     }
 
 export interface HermesApiRequest {
-  workspaceScope?: import('../electron/semantier-workspace-ipc').WorkspaceScope
+  workspaceScope?: WorkspaceScope
   path: string
   method?: string
   body?: unknown
