@@ -70,11 +70,15 @@ def test_initial_inventory_cannot_adopt_navigation_after_live_read():
 
 def test_native_prelude_uses_scoped_wrapper_when_pane_tools_are_deferred(monkeypatch):
     monkeypatch.setattr('agent.desktop_browser_target.propose_intent',lambda *args:{'target_kind':'VISIBLE_PANE','operation':'existing'})
-    s=state();agent=SimpleNamespace(valid_tool_names={'tool_call','tool_search'})
+    s=state();agent=SimpleNamespace(valid_tool_names={'tool_call','tool_search','tool_describe'})
     p=prelude(s,agent,'Inspect the page beside me',[])
-    assert next(p)[1:] == ('tool_call',{'name':'desktop_preview','arguments':{'action':'read'}})
-    assert p.send(json.dumps(live()))[1:] == ('tool_call',{'name':'drive_preview','arguments':{'action':'elements'}})
-    with pytest.raises(StopIteration):p.send(json.dumps({'success':True,'elements':[]}))
+    assert next(p)[1:] == ('tool_call',{'calls':[{'name':'desktop_preview','arguments':{'action':'read'}}]})
+    assert p.send(json.dumps(live()))[1:] == ('tool_call',{'calls':[{'name':'drive_preview','arguments':{'action':'elements'}}]})
+    assert p.send(json.dumps({'success':True,'elements':[]}))[1] == 'tool_describe'
+    from tools.drive_preview_tool import ACT_PREVIEW_SCHEMA
+    from tools.preview_tool import PREVIEW_SCHEMA
+    schemas = {'tools': {schema['name']: {'parameters': schema['parameters']} for schema in (ACT_PREVIEW_SCHEMA, PREVIEW_SCHEMA)}}
+    with pytest.raises(StopIteration):p.send(json.dumps(schemas))
     assert s.preflight_complete
 
 
@@ -91,3 +95,43 @@ def test_independent_turn_cannot_enter_pane_through_shared_annotation_callback()
     s=state();s.select('INDEPENDENT')
     result=act_live(s,lambda _:pytest.fail('Independent callback must not read visible page'),lambda _:pytest.fail('Independent callback must not annotate visible page'),{'action':'pin','ref':'target'})
     assert json.loads(result)['code']=='TARGET_MISMATCH'
+
+
+def test_deferred_prelude_discloses_complete_scoped_contract_before_main(monkeypatch):
+    from tools.drive_preview_tool import ACT_PREVIEW_SCHEMA
+    monkeypatch.setattr('agent.desktop_browser_target.propose_intent', lambda *args: {'target_kind': 'VISIBLE_PANE', 'operation': 'existing'})
+    s = state()
+    agent = SimpleNamespace(valid_tool_names={'tool_call', 'tool_search', 'tool_describe'})
+    p = prelude(s, agent, 'Update the field on the page beside me', [])
+    assert next(p)[1] == 'tool_call'
+    assert p.send(json.dumps(live()))[1] == 'tool_call'
+    disclosure = p.send(json.dumps({'success': True, 'elements': []}))
+    assert disclosure[1:] == ('tool_describe', {'names': ['desktop_preview', 'drive_preview']})
+    assert not s.preflight_complete
+    schemas = {'tools': {'drive_preview': {'parameters': ACT_PREVIEW_SCHEMA['parameters']}, 'desktop_preview': {'parameters': {'type': 'object', 'properties': {'action': {'type': 'string'}}, 'required': ['action']}}}}
+    with pytest.raises(StopIteration):
+        p.send(json.dumps(schemas))
+    assert s.preflight_complete and s.native_failure is None
+
+
+def test_missing_scoped_contract_stops_without_browser_substitution(monkeypatch):
+    monkeypatch.setattr('agent.desktop_browser_target.propose_intent', lambda *args: {'target_kind': 'VISIBLE_PANE', 'operation': 'existing'})
+    s = state()
+    p = prelude(s, SimpleNamespace(valid_tool_names={'tool_call', 'tool_describe'}), 'Update the owned page', [])
+    next(p)
+    p.send(json.dumps(live()))
+    assert p.send(json.dumps({'success': True, 'elements': []}))[1] == 'tool_describe'
+    with pytest.raises(StopIteration):
+        p.send(json.dumps({'tools': {}, 'not_found': ['drive_preview']}))
+    assert s.native_failure['code'] == 'TOOL_CONTRACT_UNAVAILABLE'
+    assert s.kind == 'VISIBLE_PANE'
+
+
+def test_native_wrapper_example_conforms_to_the_advertised_bridge_schema():
+    from jsonschema import validate
+    from agent.desktop_browser_target import native_pane_call
+    from tools.tool_search import bridge_tool_schemas
+    agent = SimpleNamespace(valid_tool_names={'tool_call', 'tool_describe', 'tool_search'})
+    _, name, arguments = native_pane_call(agent, 'drive_preview', {'action': 'elements'})
+    schema = next(td['function']['parameters'] for td in bridge_tool_schemas(2) if td['function']['name'] == name)
+    validate(arguments, schema)

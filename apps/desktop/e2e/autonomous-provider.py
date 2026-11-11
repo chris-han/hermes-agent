@@ -33,9 +33,39 @@ if not KEY or not BASE.startswith('https://'):
     raise SystemExit('Configured Qwen credential/HTTPS provider missing')
 TOKEN = secrets.token_hex(24)  # fixture capability, not the real provider credential
 LOCK = threading.Lock()
-STATE = {'composition': [], 'preflight_requests': 0, 'case': None, 'counts': {}, 'calls': [], 'failures': [], 'budget_per_case': 18, 'budget_total': 234}
+STATE = {'composition': [], 'preflight_requests': 0, 'case': None, 'counts': {}, 'calls': [], 'failures': [], 'budget_per_case': 18, 'budget_total': 36 if os.environ.get('SEMANTIER_EVAL_DIAGNOSTIC_AC') == '1' else 108}
 HINT = (Path(__file__).resolve().parents[3] / 'semantier-runtime/src/prompts/agents/DESKTOP_BROWSER_CONTEXT.md').read_text(encoding='utf-8').strip()
 INTENT = json.loads((Path(__file__).resolve().parents[3] / 'semantier-runtime/src/prompts/agents/DESKTOP_BROWSER_TARGET_INTENT.json').read_text(encoding='utf-8'))
+
+
+def raw_contract_status(request, response):
+    """Read-only measurement against schemas actually sent; never normalizes calls."""
+    import jsonschema
+    definitions = {tool.get('function', {}).get('name'): tool.get('function', {}).get('parameters') for tool in request.get('tools', [])}
+    measured = []
+    for call in response.get('message', {}).get('tool_calls', []):
+        fn = call.get('function', {})
+        name = fn.get('name')
+        row = {'id': call.get('id'), 'name': name}
+        if name not in definitions:
+            row.update(status='FAIL', reason='TOOL_NOT_IN_REQUEST')
+        elif not isinstance(definitions[name], dict):
+            row.update(status='UNPROVEN', reason='NO_REQUEST_SCHEMA')
+        else:
+            try:
+                arguments = json.loads(fn.get('arguments', ''))
+                jsonschema.validate(arguments, definitions[name])
+            except (TypeError, ValueError):
+                row.update(status='FAIL', reason='INVALID_ARGUMENT_JSON')
+            except jsonschema.ValidationError as error:
+                # Schema path only: no argument values or provider secrets.
+                row.update(status='FAIL', reason='SCHEMA_VALIDATION', schema_path=list(error.absolute_schema_path))
+            except jsonschema.SchemaError:
+                row.update(status='UNPROVEN', reason='INVALID_REQUEST_SCHEMA')
+            else:
+                row.update(status='PASS', reason='RAW_REQUEST_SCHEMA_CONFORMANT')
+        measured.append(row)
+    return measured
 
 
 def stamp():
@@ -234,6 +264,7 @@ class Handler(BaseHTTPRequestHandler):
             if record is not None:
                 with LOCK:
                     record.update(response=scrub(normalize_response(raw, content_type)), duration_ms=round((time.monotonic() - start) * 1000), http_status=code)
+                    record['raw_contract'] = raw_contract_status(record['request'], record['response'])
                     violation = forbidden_tool(record['response'].get('message', {}).get('tool_calls'), allow_intent=record['request_kind'] == 'NATIVE_TARGET_INTENT')
                     if violation:
                         record['harness_delivery_blocked'] = violation

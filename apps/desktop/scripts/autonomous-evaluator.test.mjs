@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 
-import { accessRoute, declineProfileConsent, scoreTrial, toolExecutionStatus, trialFailure, turnEvidence, unwrapTools } from '../e2e/autonomous-evaluator.ts'
+import { accessRoute, assessComparisonEvidence, declineProfileConsent, scoreTrial, toolExecutionStatus, trialFailure, turnEvidence, unwrapTools } from '../e2e/autonomous-evaluator.ts'
 const direct = [{function:{name:'drive_preview',arguments:'{"action":"click"}'}}]
 const deferred = [{function:{name:'tool_search',arguments:'{"query":"visible page"}'}},{function:{name:'tool_call',arguments:JSON.stringify({name:'drive_preview',arguments:{action:'click'}})}}]
 const base = {requestReached:true,inferenceCalls:2,calls:direct,target:'desktop',ownerCorrect:true,operationSuccess:true,effect:true}
@@ -80,3 +80,37 @@ test('initial API errors are not hidden by later successful effects',()=>{
  assert.equal(toolExecutionStatus({result:wrap({success:true,exit_code:0,output:'site says {"success":false}'})}),'PASS')
  assert.equal(toolExecutionStatus({result:'unrecognized evidence'}),'UNPROVEN')
 })
+
+
+const comparisonReference = [
+  {source:'http://localhost/a',revision:1,metric:'duration',value:19,unit:'ms',quote:'Response time: 19 ms'},
+  {source:'http://localhost/b',revision:1,metric:'duration',value:0.007,unit:'s',quote:'Response time: 0.007 s'},
+  {source:'http://localhost/c',revision:1,metric:'duration',value:11,unit:'ms',quote:'Response time: 11 ms'}
+]
+const factors = {duration:{ms:1,s:1000}}
+const claims = [{metric:'duration',lowest:['http://localhost/b'],highest:['http://localhost/a']}]
+const reviewComparison = (observations=comparisonReference, conclusions=claims, reference=comparisonReference) => assessComparisonEvidence(reference,observations,conclusions,factors)
+test('C1 source-specific comparison uses verified values and explicit unit conversion',()=>assert.equal(reviewComparison().status,'SUPPORTED'))
+test('C2 missing source evidence stays unverified',()=>assert.equal(reviewComparison(comparisonReference.slice(0,2)).reason,'MISSING_SOURCE_EVIDENCE'))
+test('C3 contradictory source values cannot establish a ranking',()=>{
+ const contradictory=[...comparisonReference,{...comparisonReference[0],value:21,quote:'Response time: 21 ms'}]
+ assert.equal(reviewComparison(contradictory,claims,contradictory).reason,'CONTRADICTORY_SOURCE')
+})
+test('C4 incompatible units cannot be silently normalized',()=>{
+ const incompatible=comparisonReference.map((row,i)=>i===1?{...row,unit:'packets'}:row)
+ assert.equal(reviewComparison(incompatible,claims,incompatible).reason,'INCOMPARABLE_UNITS')
+})
+test('C5 changed source state invalidates current observation',()=>{
+ const changed=comparisonReference.map((row,i)=>i===0?{...row,revision:2}:row)
+ assert.equal(reviewComparison(comparisonReference,claims,changed).reason,'STALE_OBSERVATION')
+})
+test('C6 unsupported final ranking fails despite complete observations',()=>assert.equal(reviewComparison(comparisonReference,[{...claims[0],lowest:['http://localhost/a']}]).reason,'UNSUPPORTED_CONCLUSION'))
+test('C7 wrong source attribution cannot borrow another source facts',()=>{
+ const foreign=comparisonReference.map((row,i)=>i===0?{...row,source:'http://localhost/foreign'}:row)
+ assert.equal(reviewComparison(foreign).reason,'WRONG_SOURCE_OR_METRIC')
+})
+test('comparison without a supported source quote cannot pass',()=>{
+ const unquoted=comparisonReference.map((row,i)=>i===0?{...row,quote:'Browser measured 19 ms'}:row)
+ assert.equal(reviewComparison(unquoted).reason,'UNSUPPORTED_SOURCE_QUOTE')
+})
+test('tool observations without a comparison conclusion are not workflow proof',()=>assert.equal(reviewComparison(comparisonReference,[]).status,'UNVERIFIED'))

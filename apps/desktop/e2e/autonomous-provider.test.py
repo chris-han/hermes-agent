@@ -6,6 +6,24 @@ with tempfile.TemporaryDirectory(prefix='semantier-evaluator-unit-') as home:
  os.environ['DASHSCOPE_API_KEY']='synthetic-unit-key';os.environ['DASHSCOPE_BASE_URL']='https://127.0.0.1/v1';os.environ['SEMANTIER_EVAL_OUTPUT']=home;os.environ['SEMANTIER_EVAL_CREDENTIALS_ENV']=str(env)
  spec=importlib.util.spec_from_file_location('observer',source);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
  class ObserverTests(unittest.TestCase):
+  def test_raw_contract_uses_actual_request_schema_and_never_repairs(self):
+   schema={'type':'object','properties':{'calls':{'type':'array','items':{'type':'object','required':['name','arguments']}}},'required':['calls']}
+   request={'tools':[{'function':{'name':'tool_call','parameters':schema}}]}
+   good={'message':{'tool_calls':[{'id':'1','function':{'name':'tool_call','arguments':json.dumps({'calls':[{'name':'drive_preview','arguments':{'action':'type','text':'Armed'}}]})}}]}}
+   self.assertEqual(m.raw_contract_status(request,good)[0]['status'],'PASS')
+   bad={'message':{'tool_calls':[{'id':'2','function':{'name':'tool_call','arguments':'{"name":"drive_preview","arguments":{"action":"type"}}'}}]}}
+   original=json.dumps(bad,sort_keys=True)
+   self.assertEqual(m.raw_contract_status(request,bad)[0]['status'],'FAIL')
+   self.assertEqual(json.dumps(bad,sort_keys=True),original)
+  def test_raw_contract_missing_schema_invalid_json_unknown_tool_and_no_calls(self):
+   request={'tools':[{'function':{'name':'drive_preview','parameters':{'type':'object','properties':{'action':{'enum':['elements','type']}},'required':['action']}}}]}
+   for args in ('{"action":"fill"}','{'):
+    reply={'message':{'tool_calls':[{'function':{'name':'drive_preview','arguments':args}}]}}
+    self.assertEqual(m.raw_contract_status(request,reply)[0]['status'],'FAIL')
+   reply={'message':{'tool_calls':[{'function':{'name':'foreign_tool','arguments':'{}'}}]}}
+   self.assertEqual(m.raw_contract_status(request,reply)[0]['status'],'FAIL')
+   self.assertEqual(m.raw_contract_status(request,{'message':{'content':'done'}}),[])
+   self.assertEqual(m.raw_contract_status({'tools':[{'function':{'name':'drive_preview'}}]}, {'message':{'tool_calls':[{'function':{'name':'drive_preview','arguments':'{}'}}]}})[0]['status'],'UNPROVEN')
   def test_zero_inference_preflight_reaches_main_composition(self):
    from unittest.mock import patch
    from types import SimpleNamespace

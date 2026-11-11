@@ -152,7 +152,6 @@ def test_local_server_failure_keeps_transport_and_http_distinct(native, monkeypa
     """Exercise real requests sockets; no external DNS, TLS service or credentials."""
     import http.server
     import ssl
-    import subprocess
     import threading
 
     device, _ = native
@@ -171,9 +170,21 @@ def test_local_server_failure_keeps_transport_and_http_distinct(native, monkeypa
     server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
     if tls:
         certificate, key = tmp_path / 'certificate.pem', tmp_path / 'key.pem'
-        subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
-                        '-keyout', str(key), '-out', str(certificate), '-days', '1',
-                        '-subj', '/CN=localhost'], check=True, capture_output=True)
+        from datetime import UTC, datetime, timedelta
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.x509.oid import NameOID
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, 'localhost')])
+        now = datetime.now(UTC)
+        cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name)
+                .public_key(private_key.public_key()).serial_number(x509.random_serial_number())
+                .not_valid_before(now - timedelta(minutes=1)).not_valid_after(now + timedelta(days=1))
+                .sign(private_key, hashes.SHA256()))
+        key.write_bytes(private_key.private_bytes(serialization.Encoding.PEM,
+                        serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+        certificate.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(certificate, key)
         server.socket = context.wrap_socket(server.socket, server_side=True)

@@ -19,10 +19,13 @@ def test_device_request_uses_http3_when_configured(monkeypatch):
             return types.SimpleNamespace(status_code=200, content=b'{}', json=lambda: {'contract_version': device.CONTRACT})
     class RequestException(Exception): pass
     fake = types.SimpleNamespace(Session=Session, exceptions=types.SimpleNamespace(RequestException=RequestException))
-    monkeypatch.setitem(sys.modules, 'curl_cffi', types.SimpleNamespace(requests=fake))
+    monkeypatch.setitem(sys.modules, 'curl_cffi', types.SimpleNamespace(requests=fake, CurlOpt=types.SimpleNamespace(SSL_OPTIONS=216)))
     monkeypatch.setattr(device, '_config', lambda: {'providers': {'semantier-cloud': {'http_version': '3'}}})
     assert device._wire('https://cloud.example', 'start')['contract_version'] == device.CONTRACT
-    assert calls[0] == ('session', {'http_version': 'v3only', 'trust_env': False})
+    expected = {'http_version': 'v3only', 'trust_env': False}
+    if sys.platform == 'win32':
+        expected['curl_options'] = {216: 1 << 4}
+    assert calls[0] == ('session', expected)
     assert calls[1][2]['allow_redirects'] is False
 
 
@@ -36,11 +39,16 @@ def test_http3_failure_does_not_retry_with_another_protocol(monkeypatch):
         def __exit__(self, *args): pass
         def post(self, *args, **kwargs): raise RequestException('unavailable')
     fake = types.SimpleNamespace(Session=Session, exceptions=types.SimpleNamespace(RequestException=RequestException))
-    monkeypatch.setitem(sys.modules, 'curl_cffi', types.SimpleNamespace(requests=fake))
+    monkeypatch.setitem(sys.modules, 'curl_cffi', types.SimpleNamespace(requests=fake, CurlOpt=types.SimpleNamespace(SSL_OPTIONS=216)))
     monkeypatch.setattr(device, '_config', lambda: {'providers': {'semantier-cloud': {'http_version': '3'}}})
-    with pytest.raises(ValueError, match='Cloud connection unavailable'):
+    with pytest.raises(device.CloudConnectionError) as error:
         device._wire('https://cloud.example', 'start')
-    assert attempts == [{'http_version': 'v3only', 'trust_env': False}]
+    assert error.value.code == 'cloud_network_unavailable'
+    assert error.value.status == 503
+    expected = {'http_version': 'v3only', 'trust_env': False}
+    if sys.platform == 'win32':
+        expected['curl_options'] = {216: 1 << 4}
+    assert attempts == [expected]
 
 
 def test_unknown_transport_does_not_silently_change_protocol(monkeypatch):
@@ -62,10 +70,13 @@ def test_catalog_uses_http3_and_keeps_bearer_in_authorization(monkeypatch):
             return types.SimpleNamespace(status_code=200, content=b'{}', json=lambda: {'object': 'list', 'data': []})
     class RequestException(Exception): pass
     fake = types.SimpleNamespace(Session=Session, exceptions=types.SimpleNamespace(RequestException=RequestException))
-    monkeypatch.setitem(sys.modules, 'curl_cffi', types.SimpleNamespace(requests=fake))
+    monkeypatch.setitem(sys.modules, 'curl_cffi', types.SimpleNamespace(requests=fake, CurlOpt=types.SimpleNamespace(SSL_OPTIONS=216)))
     monkeypatch.setattr(device, '_config', lambda: {'providers': {'semantier-cloud': {'http_version': '3'}}})
     assert device._catalog('https://cloud.example', 'private-token') == []
-    assert calls[0] == ('session', {'http_version': 'v3only', 'trust_env': False})
+    expected = {'http_version': 'v3only', 'trust_env': False}
+    if sys.platform == 'win32':
+        expected['curl_options'] = {216: 1 << 4}
+    assert calls[0] == ('session', expected)
     assert calls[1][2]['headers'] == {'Authorization': 'Bearer private-token'}
     assert calls[1][2]['allow_redirects'] is False
 
@@ -114,7 +125,7 @@ def test_http3_uses_explicit_development_ca_without_disabling_verification(monke
             return types.SimpleNamespace(status_code=200, content=b'{}', json=lambda: {'contract_version': device.CONTRACT})
     class RequestException(Exception): pass
     fake = types.SimpleNamespace(Session=Session, exceptions=types.SimpleNamespace(RequestException=RequestException))
-    monkeypatch.setitem(sys.modules, 'curl_cffi', types.SimpleNamespace(requests=fake))
+    monkeypatch.setitem(sys.modules, 'curl_cffi', types.SimpleNamespace(requests=fake, CurlOpt=types.SimpleNamespace(SSL_OPTIONS=216)))
     monkeypatch.setattr(device, '_config', lambda: {'providers': {'semantier-cloud': {'http_version': '3', 'ssl_ca_cert': '/fixture/root.crt'}}})
     assert device._wire('https://cloud.example', 'start')['contract_version'] == device.CONTRACT
     assert calls == [{'http_version': 'v3only', 'trust_env': False, 'verify': '/fixture/root.crt'}]

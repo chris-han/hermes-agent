@@ -115,6 +115,11 @@ test('authenticated owned Electron page remains distinct from independent automa
     const prompt = JSON.stringify(messages[lastUser]?.content || '')
     const toolResults = messages.slice(lastUser + 1).filter((m: any) => m.role === 'tool')
 
+    const describeIds = new Set(messages.slice(lastUser + 1).flatMap((m: any) =>
+      (m.tool_calls || []).filter((call: any) => call.function?.name === 'tool_describe').map((call: any) => call.id)))
+
+    const actionResultCount = toolResults.filter((m: any) => !describeIds.has(m.tool_call_id)).length
+
     for (const m of toolResults) {
       if (!results.some(r => r.name === (m.name || m.tool_call_id))) {
         results.push({ name: m.name || m.tool_call_id, content: String(m.content) })
@@ -135,7 +140,7 @@ test('authenticated owned Electron page remains distinct from independent automa
       ['drive_preview', { action: 'click', selector: '#harmless' }]
     ] as const
 
-    const step = opening ? openingSteps[toolResults.length] : (prompt.includes('Inspect the page currently open') || prompt.includes('Click the test button')) ? steps[toolResults.length] : undefined
+    const step = opening ? openingSteps[actionResultCount] : (prompt.includes('Inspect the page currently open') || prompt.includes('Click the test button')) ? steps[actionResultCount] : undefined
 
     const message = step
       ? {
@@ -145,7 +150,7 @@ test('authenticated owned Electron page remains distinct from independent automa
             {
               id: `affinity-${toolResults.length}`,
               type: 'function',
-              function: { name: 'tool_call', arguments: JSON.stringify({ name: step[0], arguments: step[1] }) }
+              function: { name: 'tool_call', arguments: JSON.stringify({ calls: [{ name: step[0], arguments: step[1] }] }) }
             }
           ]
         }
@@ -247,6 +252,39 @@ test('authenticated owned Electron page remains distinct from independent automa
       )
       expect(results[0]?.content).toContain('Synthetic account signed in')
       expect(results[1]?.content).toContain('Harmless action')
+
+      const disclosed = results.map(result => {
+        try { return JSON.parse(result.content) } catch { return null }
+      }).find(result => result?.tools?.drive_preview)
+
+      expect(disclosed.tools.drive_preview.parameters.properties.action.enum).toContain('type')
+      expect(disclosed.tools.drive_preview.parameters.properties.action.enum).not.toContain('fill')
+      expect(disclosed.tools.drive_preview.parameters.properties.text.type).toBe('string')
+      fs.writeFileSync(info.outputPath('provider-requests.json'), JSON.stringify(requests, null, 2))
+
+      const firstMain = requests.find(request => request.tools?.some((tool: any) => tool.function?.name === 'tool_call')
+        && request.messages?.some((message: any) => message.role === 'user' && message.content === 'Inspect the page currently open in my right-side browser.'))
+
+      expect(firstMain).toBeTruthy()
+
+      const contractsBeforeMain = firstMain.messages.filter((message: any) => message.role === 'tool').map((message: any) => {
+        try { return JSON.parse(message.content) } catch { return null }
+      }).find((result: any) => result?.tools?.drive_preview)
+
+      expect(contractsBeforeMain?.tools.drive_preview.parameters).toEqual(disclosed.tools.drive_preview.parameters)
+      fs.writeFileSync(info.outputPath('native-contract-before-main.json'), JSON.stringify({
+        scope: 'Scripted provider; actual native preparation before first main request; no autonomous selection claim',
+        contracts: contractsBeforeMain.tools,
+        nativeCalls: firstMain.messages.flatMap((message: any) => message.tool_calls || [])
+      }, null, 2))
+
+      for (const message of firstMain.messages) {
+        for (const call of message.tool_calls || []) {
+          if (call.function?.name === 'tool_call') {expect(JSON.parse(call.function.arguments).calls).toBeInstanceOf(Array)}
+        }
+      }
+
+      console.log('NATIVE_TOOL_CONTRACT', JSON.stringify({ fullSchemaBeforeMain: 'PASS', nativeWrapperShape: 'PASS' }))
       expect(clicks).toBe(1)
       await expect
         .poll(() => guest.evaluate((el: any) => el.executeJavaScript('document.body.innerText')))

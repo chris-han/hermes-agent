@@ -26,12 +26,16 @@ const exposedPrompts = {
   F: 'Continue on the same page and verify the setting is still enabled.'
 } as const
 
-const heldout = process.env.SEMANTIER_EVAL_VARIANT === 'heldout-binding-v1'
+const variant = process.env.SEMANTIER_EVAL_VARIANT
+const diagnosticAC = process.env.SEMANTIER_EVAL_DIAGNOSTIC_AC === '1'
+const heldout = ['heldout-binding-v1', 'residual-confirm-v2'].includes(variant || '')
 
 if (process.env.SEMANTIER_EVAL_VARIANT && !heldout) { throw new Error('Unknown frozen browser fixture variant') }
 
+if (diagnosticAC && variant !== 'heldout-binding-v1') { throw new Error('A/C diagnostics must use original archived failures') }
+
 if (heldout && process.env.SEMANTIER_EVAL_RECOVER_REMAINING === '1') { throw new Error('Held-out qualification requires all six cases') }
-const heldoutFixture = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, 'heldout-browser-binding-v1.json'), 'utf8'))
+const heldoutFixture = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, variant === 'residual-confirm-v2' ? 'residual-confirm-v2.json' : 'heldout-browser-binding-v1.json'), 'utf8'))
 
 const copy = heldout ? heldoutFixture.page : {
   heading: 'Authenticated test dashboard', title: 'Test dashboard', status: 'Ready',
@@ -43,7 +47,7 @@ const copy = heldout ? heldoutFixture.page : {
 
 type CaseId = keyof typeof exposedPrompts
 const prompts: Record<CaseId, string> = heldout ? heldoutFixture.prompts : exposedPrompts
-const order: CaseId[] = process.env.SEMANTIER_EVAL_RECOVER_REMAINING === '1' ? ['C', 'E', 'F', 'D'] : ['A', 'B', 'C', 'E', 'F', 'D']
+const order: CaseId[] = diagnosticAC ? ['A', 'C'] : process.env.SEMANTIER_EVAL_RECOVER_REMAINING === '1' ? ['C', 'E', 'F', 'D'] : ['A', 'B', 'C', 'E', 'F', 'D']
 
 async function listen(server: http.Server): Promise<string> {
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
@@ -108,7 +112,7 @@ test('six frozen real-Qwen Desktop browser workflows', async ({}, info) => {
 
   const requests: any[] = []
 
-  const research = heldout ? heldoutFixture.research : [
+  const research: { name: string; latency_ms: number; cost_units: number }[] = heldout ? heldoutFixture.research : [
     { name: 'Orchid', latency_ms: 12, cost_units: 3 },
     { name: 'Cedar', latency_ms: 8, cost_units: 5 },
     { name: 'Maple', latency_ms: 15, cost_units: 2 }
@@ -227,7 +231,7 @@ test('six frozen real-Qwen Desktop browser workflows', async ({}, info) => {
       model: 'qwen3.5-plus', provider_origin_sha256: observer.provider_origin_sha256,
       configuration: config, browser_hint_sha256: observer.hint_sha256,
       source: process.env.SEMANTIER_EVAL_SOURCE_SHA, run_id: process.env.SEMANTIER_EVAL_RUN_ID,
-      budget: { primary_cases: 6, attempts_per_case: 1, proven_infrastructure_retries_max: 1, upstream_calls_per_case: 18, upstream_calls_total: 234, output_tokens_per_call: 4096, case_timeout_ms: 240000 },
+      budget: { primary_cases: 6, attempts_per_case: 1, proven_infrastructure_retries_max: 1, upstream_calls_per_case: 18, upstream_calls_total: diagnosticAC ? 36 : 108, output_tokens_per_call: 4096, case_timeout_ms: 240000 },
       first_action_definition: 'First actual native browser operation, including scripted preflight; raw model proposal/first operation and main/native execution recorded separately. Discovery is not task completion; all failed browser attempts remain visible.',
       expected_first: { A: ['desktop_preview', 'drive_preview'], B: ['desktop_preview:open'], C: ['browser_exec'], D: ['desktop_preview', 'drive_preview'], E: ['desktop_preview', 'drive_preview'], F: ['desktop_preview', 'drive_preview'] },
       workflows: { A: 'Same authenticated guest; inspect/elements, type Enabled, Save and verified server save; no independent browser/login', B: 'Desktop open, inspect and click action with observed effect', C: 'Independent browser reads all three origins, correct comparison, no fixture cookies, visible guest unchanged', D: 'Bound preview requests decline through actual registry fault; truthful unavailable/reconnect response, no independent fallback', E: 'Only requesting session A saves Enabled; B unchanged; distinct runtime/window/guest identities', F: 'After hide/restore, same guest and authenticated session; tool verifies persisted Enabled' },
@@ -239,14 +243,17 @@ test('six frozen real-Qwen Desktop browser workflows', async ({}, info) => {
       nonclaims: ['No population reliability claim from six cases', 'No installed MSIX qualification', 'No production code/prompt changes during trials']
     }
 
-    contract.run_purpose = process.env.SEMANTIER_EVAL_PREFLIGHT_ONLY === '1' ? 'zero-inference apparatus preflight' : heldout ? 'held-out confirmatory qualification; no post-outcome tuning' : 'exposed regression diagnostics; not held-out qualification'
+    contract.selected_cases = order
+    contract.raw_contract_gate = 'First main-model tool call must conform to the actual request JSON schema before normalization; later recovery cannot erase an initial failure.'
+    contract.comparison_gate = 'Every source-specific metric, unit, source identity and final ranking must be supported by retrieved receipts; navigation elapsed time is not the page-reported metric. Review all factual conclusions, not only hit count.'
+    contract.run_purpose = process.env.SEMANTIER_EVAL_PREFLIGHT_ONLY === '1' ? 'zero-inference apparatus preflight' : diagnosticAC ? 'exposed archived A/C diagnostic; not independent qualification' : heldout ? 'held-out confirmatory qualification; no post-outcome tuning' : 'exposed regression diagnostics; not held-out qualification'
     contract.fixture_variant = heldout ? heldoutFixture.version : 'exposed'
     contract.page = copy
     contract.research_facts = research
     contract.fixture_payload_sha256 = hash(JSON.stringify(heldout ? heldoutFixture : { prompts, page: copy, research }))
 
     if (heldout) {
-      contract.version = 'windows-native-browser-binding-heldout-v1'
+      contract.version = variant === 'residual-confirm-v2' ? 'windows-native-browser-residual-confirm-v2' : 'windows-native-browser-binding-heldout-v1'
       contract.failure_timing = heldoutFixture.failure_timing
       contract.workflows = Object.fromEntries(Object.entries(contract.workflows).map(([id, value]) => [id, String(value).replaceAll('Enabled', copy.enabled)]))
       contract.strict_initial_execution = 'Native first operation plus first model browser operation must execute validly; expected D unavailable is a correct refusal; native-only read verification is allowed for F.'
@@ -322,7 +329,7 @@ return !state.busy && !state.awaiting}, {timeout:60000}).toBe(true)
     let runtimeA: string | null = null
     let runtimeB: string | null = null
 
-    if (process.env.SEMANTIER_EVAL_RECOVER_REMAINING === '1') {
+    if (diagnosticAC || process.env.SEMANTIER_EVAL_RECOVER_REMAINING === '1') {
       const next = fixture.app!.waitForEvent('window')
       await page.evaluate(() => (window as any).hermesDesktop.openWindow())
       second = await next
@@ -495,7 +502,7 @@ return !state.busy && !state.awaiting}, {timeout:60000}).toBe(true)
       const otherChanged = id === 'B' || id === 'C' ? JSON.stringify(dashboard.A) !== JSON.stringify(before.dashboard.A) : JSON.stringify(dashboard.B) !== JSON.stringify(before.dashboard.B)
 
       if (otherChanged) { results.authorization_violations++; row.cross_session_violation = true }
-      Object.assign(row, { ended, elapsed_ms: Date.now()-start, request_reached: observed.requestReached, native_execution_calls: observed.calls, intent_proposal: intentProposal, intent_correct: intentCorrect, intent_calls: intentCalls.length, main_model_calls: calls.length - intentCalls.length, first_model_browser_operation: modelOperations[0] ?? null, raw_model_tools: modelTools, first_tool: actualTools[0] ?? null, first_routing_tool: first ?? null, first_action_pass: routing, native_routing_pass: routing, initial_execution_pass: initialExecution, first_native_execution_status: firstNativeStatus, first_model_execution_status: firstModelStatus, mechanical_effect_pass: effect, same_A_guest: sameA, same_B_guest: sameB, calls: calls.length, tools: actualTools, final_response: observed.finalResponse, after, distinct_sessions: !runtimeB || !!runtimeA && runtimeA !== runtimeB })
+      Object.assign(row, { ended, elapsed_ms: Date.now()-start, request_reached: observed.requestReached, native_execution_calls: observed.calls, intent_proposal: intentProposal, intent_correct: intentCorrect, intent_calls: intentCalls.length, main_model_calls: calls.length - intentCalls.length, first_model_browser_operation: modelOperations[0] ?? null, raw_model_tools: modelTools, first_tool: actualTools[0] ?? null, first_routing_tool: first ?? null, first_action_pass: routing, native_routing_pass: routing, initial_execution_pass: initialExecution, initial_raw_contract: calls.filter((call: any) => call.request_kind !== 'NATIVE_TARGET_INTENT').flatMap((call: any) => call.raw_contract || [])[0] ?? null, first_native_execution_status: firstNativeStatus, first_model_execution_status: firstModelStatus, mechanical_effect_pass: effect, same_A_guest: sameA, same_B_guest: sameB, calls: calls.length, tools: actualTools, final_response: observed.finalResponse, after, distinct_sessions: !runtimeB || !!runtimeA && runtimeA !== runtimeB })
       write(`case-${id}-after.json`, after)
 
       if (id !== 'C') { await target.screenshot({ path: path.join(output, `case-${id}-after.png`) }) }

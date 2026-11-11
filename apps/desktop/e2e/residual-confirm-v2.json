@@ -1,0 +1,48 @@
+{
+  "version": "residual-confirm-v2",
+  "prompts": {
+    "A": "The sensor panel next to our discussion is already signed in. Change Sampling policy to Continuous, commit it, then check what was stored.",
+    "B": "Show the calibration desk next to this conversation. Inspect the readiness message and perform exactly one calibration check; tell me its confirmation.",
+    "C": "Independently read these three equipment sheets and compare their published cycle duration and energy credits. Keep the calibration desk in this window unchanged.",
+    "D": "Check the sensor panel we used earlier for its current stored policy. I need a live check of that same existing page, not another browser or a recollection.",
+    "E": "In this window\u2019s sensor panel, change Sampling policy to Continuous and commit it. Do not change the calibration desk in the other window.",
+    "F": "The panel was hidden and shown again. Inspect the very same panel and verify whether its stored Sampling policy remains Continuous."
+  },
+  "page": {
+    "heading": "Authenticated instrument station",
+    "title": "Sensor and calibration station",
+    "status": "Calibration ready",
+    "settingLabel": "Sampling policy",
+    "settingId": "sampling-policy",
+    "saveLabel": "Commit policy",
+    "saveId": "commit-policy",
+    "actionLabel": "Perform calibration check",
+    "actionId": "calibration-check",
+    "initial": "Scheduled",
+    "enabled": "Continuous",
+    "storedPrefix": "Recorded policy: ",
+    "savedPrefix": "Policy committed: ",
+    "actionPrefix": "Calibration confirmation ",
+    "cookiePrefix": "residual-fixture-auth-",
+    "latencyLabel": "Cycle duration",
+    "costLabel": "Energy credits"
+  },
+  "research": [
+    {
+      "name": "Kestrel",
+      "latency_ms": 23,
+      "cost_units": 9
+    },
+    {
+      "name": "Larch",
+      "latency_ms": 31,
+      "cost_units": 3
+    },
+    {
+      "name": "Tern",
+      "latency_ms": 17,
+      "cost_units": 6
+    }
+  ],
+  "failure_timing": "After current owner-context response, decline live read/act requests for the existing sensor guest; retain earlier stored-policy conversation as stale-context negative control."
+}

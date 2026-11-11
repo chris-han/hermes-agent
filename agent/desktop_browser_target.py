@@ -204,7 +204,7 @@ def native_pane_call(agent, name, arguments):
     """Use native deferred dispatch without widening the session's tool catalog."""
     valid = getattr(agent, 'valid_tool_names', None)
     if isinstance(valid, (set, frozenset, list, tuple)) and name not in valid and 'tool_call' in valid:
-        return '', 'tool_call', {'name': name, 'arguments': arguments}
+        return '', 'tool_call', {'calls': [{'name': name, 'arguments': arguments}]}
     return '', name, arguments
 
 
@@ -255,5 +255,21 @@ def prelude(state: BrowserTurnState,agent,message,history):
         state.native_failure=failure((result or {}).get('code','PANE_UNAVAILABLE') if isinstance(result,dict) else 'PANE_UNAVAILABLE')
         return
     state.mark_inventory()
-    state.preflight_complete=True
     state.receipts.append({'phase':'inventory','success':True,'binding':asdict(state.binding)})
+    valid = getattr(agent, 'valid_tool_names', None)
+    if isinstance(valid, (set, frozenset, list, tuple)):
+        needed = [name for name in ('desktop_preview', 'drive_preview') if name not in valid]
+        if needed:
+            if 'tool_describe' not in valid:
+                state.native_failure = failure('TOOL_CONTRACT_UNAVAILABLE')
+                return
+            raw = yield '', 'tool_describe', {'names': needed}
+            result = parse_result(raw)
+            contracts = result.get('tools') if isinstance(result, dict) else None
+            if (not isinstance(contracts, dict) or any(
+                    not isinstance(contracts.get(name), dict)
+                    or not isinstance(contracts[name].get('parameters'), dict) for name in needed)):
+                state.native_failure = failure('TOOL_CONTRACT_UNAVAILABLE')
+                return
+            state.receipts.append({'phase': 'tool_contract', 'success': True, 'names': needed})
+    state.preflight_complete=True

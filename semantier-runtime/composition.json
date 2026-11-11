@@ -211,19 +211,19 @@
       "sha256": "bbf78c5d2ce7e64f0134deab1bdf1fb608710e473f99f302b1305524f3930e8a"
     },
     {
-      "path": "docs/workshop/materials/\u5317\u4eac\u8c61\u9c9c\u79d1\u6280\u6709\u9650\u516c\u53f8_\u53d1\u7968\u91d1\u989d45.92\u5143.pdf",
+      "path": "docs/workshop/materials/北京象鲜科技有限公司_发票金额45.92元.pdf",
       "sha256": "0cd38513c4e542626c5abd45f9a4d13b52566b3e847e82156078203aed17e80f"
     },
     {
-      "path": "docs/workshop/materials/\u8d22\u52a1\u62a5\u9500\u653f\u7b56-v2-development.md",
+      "path": "docs/workshop/materials/财务报销政策-v2-development.md",
       "sha256": "7c1548d830f1bf93e02f4dadf4b579bf1b5f6803d76b14e7ca1cca97e6fecfb9"
     },
     {
-      "path": "docs/workshop/materials/\u8d22\u52a1\u62a5\u9500\u653f\u7b56.md",
+      "path": "docs/workshop/materials/财务报销政策.md",
       "sha256": "cea66b2e5a27bc3fbeb22438524e370f238c729c01c3dbe3c6d8ccc76e94e32e"
     },
     {
-      "path": "docs/workshop/materials/\u8d22\u52a1\u62a5\u9500\u653f\u7b56.pdf",
+      "path": "docs/workshop/materials/财务报销政策.pdf",
       "sha256": "e01cd3b648361881e405e5cdba70643001a7e782b059d085c4e05ff32202f4c8"
     },
     {
@@ -3428,13 +3428,13 @@
     },
     {
       "path": "src/prompts/agents/DESKTOP_BROWSER_CONTEXT.md",
-      "sha256": "bd6946d743ce290301349a39265a93121418230b4ed583e7f43b3011adb7351d",
-      "source_commit": "ca749753ec6515a48ace40b3a8f7e47896346c80"
+      "sha256": "862af86268a54ad80f57aee3b13f11ad9e1e86cb8c101d7c8e0af2c1ce8214f4",
+      "source_commit": "079c5954e4df62e946b059011dc7459705ea5fc2"
     },
     {
       "path": "src/prompts/agents/DESKTOP_BROWSER_TARGET_INTENT.json",
-      "sha256": "ef94e5160e264e74c7edbc14b09fdeb4e50ee7640987aa58d6f41c38563c4e4e",
-      "source_commit": "ca749753ec6515a48ace40b3a8f7e47896346c80"
+      "sha256": "6062051dc2405ee4976650af890aa3d2ce02553d6ad6f7dd3ca2c99132fab40c",
+      "source_commit": "079c5954e4df62e946b059011dc7459705ea5fc2"
     },
     {
       "path": "src/prompts/agents/DIGITAL_CFO_METRIC_CONTEXT.md",

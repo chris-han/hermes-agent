@@ -132,3 +132,27 @@ fixture/session identities rather than claiming continuity across processes.
 The native binding evaluator records raw model proposals, native execution calls, intent/main request counts, and durable renderer completion separately. A native unavailable response may complete a turn without a final main-model request; the response is read from the actual renderer transcript. Routing, operation success, verified effects and final-answer review remain separate gates. Exposed A–F runs are regression diagnostics and do not qualify a held-out claim.
 
 For the frozen binding holdout, set `SEMANTIER_EVAL_VARIANT=heldout-binding-v1`; the same spec reads `heldout-browser-binding-v1.json`. Its prompts, field/button IDs, values, cookie prefix and research facts differ from the exposed set. D arms the synthetic bridge fault after forwarding the current owner-context request. Run an unscored zero-inference fixture preflight first, then explicitly remove `SEMANTIER_EVAL_PREFLIGHT_ONLY` for real qualification. The holdout records `native_routing_pass` separately from `initial_execution_pass`: a failed first model browser operation cannot become an initial-action PASS merely because a later attempt succeeds. Expected D refusal and native-only live verification for F have explicit handling. Do not rerun or tune against valid held-out failures.
+
+
+Residual A/C qualification uses the same harness. Set
+`SEMANTIER_EVAL_VARIANT=heldout-binding-v1` and
+`SEMANTIER_EVAL_DIAGNOSTIC_AC=1` for the archived A/C diagnostics only
+(36 upstream responses maximum). The fixture creates a second isolated pane
+without model assistance so C has its required unchanged visible-page control.
+For the fresh six-case set, use `SEMANTIER_EVAL_VARIANT=residual-confirm-v2`
+and omit the diagnostic flag (108 upstream responses maximum). Its checked-in
+fixture freezes different prompts, source facts, field IDs and values. Both use
+18 responses per case, including native intent classification. Retain a separate
+run ID and immutable source/contract receipt before inference; enforce the owning
+plan's cumulative budget across runs.
+
+The observer records `raw_contract` using jsonschema against the exact schemas
+in each upstream request. This is read-only measurement: forwarded replies are
+unchanged, malformed calls are never repaired by the evaluator, and later
+success cannot erase a failed initial contract. `initial_raw_contract`, native
+routing, first execution, observable effects and final-answer evidence review
+are separate gates. The offline comparison controls test source/value/unit/
+revision/attribution and ranking adjudication; they do not prove the Agent
+followed the managed evidence procedure. A fetched-page hit is insufficient
+for comparison PASS. Review every factual final claim against actual tool
+receipts and fixture truth; record unsupported or incomparable claims explicitly.

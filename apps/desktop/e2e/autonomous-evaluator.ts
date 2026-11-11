@@ -134,3 +134,70 @@ export function toolExecutionStatus(receipt: any): 'PASS' | 'FAIL' | 'UNPROVEN' 
 
   return value.success === true || value.exit_code === 0 ? 'PASS' : 'UNPROVEN'
 }
+
+
+/** Offline evaluation of fixture evidence only; never routes tools or supplies facts to the Agent. */
+export function assessComparisonEvidence(reference: any[], observations: any[], claims: any[], unitFactors: Record<string, Record<string, number>>) {
+  const verdict = (status: string, reason: string) => ({ status, reason })
+  const key = (row: any) => JSON.stringify([row.source, row.metric])
+
+  const normalized = (row: any) => {
+    const factor = unitFactors[row.metric]?.[row.unit]
+
+    return typeof row.value === 'number' && Number.isFinite(row.value) && typeof factor === 'number' && Number.isFinite(factor)
+      ? row.value * factor : null
+  }
+
+  const same = (a: number, b: number) => Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b))
+  const expected = new Map<string, any>()
+
+  if (!reference.length) {return verdict('UNVERIFIED', 'NO_SOURCE_REFERENCE')}
+
+  for (const row of reference) {
+    const value = normalized(row)
+
+    if (value === null) {return verdict('UNVERIFIED', 'INCOMPARABLE_UNITS')}
+    const previous = expected.get(key(row))
+
+    if (previous && !same(normalized(previous)!, value)) {return verdict('UNVERIFIED', 'CONTRADICTORY_SOURCE')}
+    expected.set(key(row), row)
+  }
+
+  const seen = new Set<string>()
+
+  for (const row of observations) {
+    const original = expected.get(key(row))
+
+    if (!original) {return verdict('UNSUPPORTED', 'WRONG_SOURCE_OR_METRIC')}
+
+    if (row.revision !== original.revision) {return verdict('UNVERIFIED', 'STALE_OBSERVATION')}
+
+    if (typeof original.quote !== 'string' || !original.quote.trim()) {return verdict('UNVERIFIED', 'NO_SOURCE_QUOTE')}
+
+    if (typeof row.quote !== 'string' || !row.quote.includes(original.quote)) {return verdict('UNSUPPORTED', 'UNSUPPORTED_SOURCE_QUOTE')}
+    const value = normalized(row)
+
+    if (value === null) {return verdict('UNVERIFIED', 'INCOMPARABLE_UNITS')}
+
+    if (!same(value, normalized(original)!)) {return verdict('UNSUPPORTED', 'UNSUPPORTED_VALUE')}
+    seen.add(key(row))
+  }
+
+  if ([...expected.keys()].some(id => !seen.has(id))) {return verdict('UNVERIFIED', 'MISSING_SOURCE_EVIDENCE')}
+  const metrics = [...new Set(reference.map(row => row.metric))]
+
+  if (claims.length !== metrics.length || new Set(claims.map(claim => claim.metric)).size !== metrics.length) {return verdict('UNVERIFIED', 'MISSING_COMPARISON_CLAIM')}
+
+  for (const claim of claims) {
+    const rows = [...expected.values()].filter(row => row.metric === claim.metric)
+
+    if (!rows.length) {return verdict('UNSUPPORTED', 'UNSUPPORTED_CONCLUSION')}
+    const low = Math.min(...rows.map(row => normalized(row)!))
+    const high = Math.max(...rows.map(row => normalized(row)!))
+    const sources = (value: number) => rows.filter(row => same(normalized(row)!, value)).map(row => row.source).sort()
+
+    if (JSON.stringify(claim.lowest?.slice().sort()) !== JSON.stringify(sources(low)) || JSON.stringify(claim.highest?.slice().sort()) !== JSON.stringify(sources(high))) {return verdict('UNSUPPORTED', 'UNSUPPORTED_CONCLUSION')}
+  }
+
+  return verdict('SUPPORTED', 'SOURCE_VALUES_AND_COMPARISONS_VERIFIED')
+}
