@@ -34,7 +34,7 @@
   -BuildOnly with -Commit stops after the unsigned package build: no signing, install or publication.
   -BuildSource must equal <selected Output>\source; detached worktrees share Hermes objects.
   -Latest commits Runtime changes, merges/pushes GitHub main and syncs pinned Hermes before building.
-  Dirty Hermes or a changed gitlink requires separate qualification. Git conflicts stop without discarding work.
+  Dirty Hermes changes are committed and pushed, then require separate qualification before the gitlink advances. Git conflicts stop without discarding work.
   -Latest -WhatIf is read-only. If syncing changes this script, re-run it to load the new operator.
   -LocalSetup builds a signed semantier-setup-ch0.exe for the single adjacent MSIX; never uploads.
   -SetupOnly builds/reuses and publishes Setup in its own ecs-setup-* run.
@@ -336,6 +336,17 @@ function Get-SourceGit([string]$Root,[string[]]$Arguments) {
   if($LASTEXITCODE -ne 0){throw ('Native Git inspection failed: '+($Arguments -join ' '))}
   return ($value -join "`n").Trim()
 }
+function Save-HermesChanges([string]$Hermes) {
+  if(Get-SourceGit $Hermes @('ls-files','--unmerged')){throw 'Resolve existing Hermes merge conflicts before sync.'}
+  Report-Status 'Saving all tracked and untracked Hermes changes before GitHub sync.'
+  Run 'git.exe' @('-C',$Hermes,'add','--all')
+  Run 'git.exe' @('-C',$Hermes,'commit','-m','chore: save local Hermes changes before latest deployment')
+  if(Get-SourceGit $Hermes @('status','--porcelain','--untracked-files=all')){throw 'Hermes changed during auto-commit; retry after active writers finish.'}
+  Run 'git.exe' @('-C',$Hermes,'fetch','--no-tags','origin','main')
+  $fetched=Get-SourceGit $Hermes @('rev-parse','FETCH_HEAD^{commit}')
+  Run 'git.exe' @('-C',$Hermes,'merge','--no-edit',$fetched)
+  Run 'git.exe' @('-C',$Hermes,'push','origin','HEAD:refs/heads/main')
+}
 function Save-RuntimeChanges([string]$Runtime) {
   if(Get-SourceGit $Runtime @('ls-files','--unmerged')){throw 'Resolve existing Runtime merge conflicts before sync.'}
   if(Get-SourceGit $Runtime @('status','--porcelain','--','hermes-agent')){
@@ -352,7 +363,7 @@ function Save-RuntimeChanges([string]$Runtime) {
 }
 function Sync-GitHubLatestSource([string]$Runtime,[string]$Operator) {
   if($WhatIfPreference){
-    Write-Output 'PLAN_ONLY: commit Runtime changes, merge/push GitHub main, synchronize pinned Hermes, then build exact gitlink; no files changed.'
+    Write-Output 'PLAN_ONLY: save and push dirty Hermes changes, stopping for qualification; otherwise commit Runtime changes, merge/push GitHub main, synchronize pinned Hermes, then build exact gitlink. No files changed.'
     return $null
   }
   if(!$IsWindows){throw '-Latest requires native Windows PowerShell and Git for Windows.'}
@@ -379,7 +390,11 @@ function Sync-GitHubLatestSource([string]$Runtime,[string]$Operator) {
   }
   $hermes=Join-Path $Runtime 'hermes-agent'
   if((Test-Path -LiteralPath $hermes) -and (Get-SourceGit $hermes @('status','--porcelain','--untracked-files=all'))){
-    throw 'Hermes submodule is dirty; preserve changes before GitHub sync.'
+    if((Get-SourceGit $hermes @('branch','--show-current')) -cne 'main'){throw 'Dirty Hermes sync requires checked-out Hermes main.'}
+    $hermesRemote=Get-SourceGit $hermes @('remote','get-url','origin')
+    if($hermesRemote -cnotmatch '^(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)chris-han/hermes-agent(?:\.git)?$'){throw 'Hermes origin is not the expected GitHub repository.'}
+    Save-HermesChanges $hermes
+    throw 'Hermes changes were committed and pushed. Qualify the resulting Hermes revision and synchronize the Runtime gitlink before retrying -Latest.'
   }
   Save-RuntimeChanges $Runtime
   $operatorHash=(Get-FileHash -LiteralPath $Operator -Algorithm SHA256).Hash
