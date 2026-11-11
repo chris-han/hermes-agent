@@ -99,6 +99,77 @@ $script:releaseEnvironment = @{}
 $script:sourceLease = $null
 $script:sourceOwner = $null
 $script:sourceRecreated = $false
+function Get-ProfileFileHolders([string[]]$Files) {
+  if(-not ('SemantierProfileLocks' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Collections.Generic;
+public static class SemantierProfileLocks {
+  [StructLayout(LayoutKind.Sequential)] public struct UniqueProcess { public int pid; public System.Runtime.InteropServices.ComTypes.FILETIME started; }
+  [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)] public struct ProcessInfo {
+    public UniqueProcess process;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst=256)] public string app;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst=64)] public string service;
+    public int type; public uint status; public uint session; [MarshalAs(UnmanagedType.Bool)] public bool restartable;
+  }
+  [DllImport("rstrtmgr.dll", CharSet=CharSet.Unicode)] static extern int RmStartSession(out uint handle, int flags, System.Text.StringBuilder key);
+  [DllImport("rstrtmgr.dll")] static extern int RmEndSession(uint handle);
+  [DllImport("rstrtmgr.dll", CharSet=CharSet.Unicode)] static extern int RmRegisterResources(uint handle, uint count, string[] files, uint apps, IntPtr processes, uint services, IntPtr names);
+  [DllImport("rstrtmgr.dll")] static extern int RmGetList(uint handle, out uint needed, ref uint count, [In, Out] ProcessInfo[] info, ref uint reasons);
+  public static ProcessInfo[] Find(string[] files) {
+    uint h; int rc=RmStartSession(out h,0,new System.Text.StringBuilder(33));
+    if(rc!=0) throw new System.ComponentModel.Win32Exception(rc);
+    try {
+      rc=RmRegisterResources(h,(uint)files.Length,files,0,IntPtr.Zero,0,IntPtr.Zero);
+      if(rc!=0) throw new System.ComponentModel.Win32Exception(rc);
+      uint needed, count=0, reasons=0;
+      rc=RmGetList(h,out needed,ref count,null,ref reasons);
+      if(rc==0) return new ProcessInfo[0];
+      if(rc!=234) throw new System.ComponentModel.Win32Exception(rc);
+      for(int retry=0;retry<3;retry++) {
+        count=needed; var list=new ProcessInfo[count];
+        rc=RmGetList(h,out needed,ref count,list,ref reasons);
+        if(rc==0) { Array.Resize(ref list,(int)count); return list; }
+        if(rc!=234) throw new System.ComponentModel.Win32Exception(rc);
+      }
+      throw new InvalidOperationException("Profile holder list changed repeatedly.");
+    } finally { RmEndSession(h); }
+  }
+}
+'@
+  }
+  foreach($file in $Files) {
+    foreach($holder in [SemantierProfileLocks]::Find(@($file))) {
+      $ticks=([long]$holder.process.started.dwHighDateTime -shl 32) -bor ([long]$holder.process.started.dwLowDateTime -band 0xffffffffL)
+      [pscustomobject]@{Id=$holder.process.pid; Started=[DateTime]::FromFileTimeUtc($ticks)}
+    }
+  }
+}
+function Stop-ProfileBrowserHolders([string]$ProfilePath) {
+  $locked=@(Get-ChildItem -LiteralPath $ProfilePath -Recurse -File | Where-Object {
+    $_.FullName -match '[\\/]browser-profile[\\/]' -and $_.Length -ge 0
+  } | Where-Object {
+    try { $stream=[IO.File]::Open($_.FullName,'Open','Read','None'); $stream.Dispose(); $false } catch [IO.IOException] { $true }
+  } | ForEach-Object { $_.FullName })
+  $holders=@(Get-ProfileFileHolders $locked | Sort-Object Id -Unique)
+  $browsers=@()
+  foreach($holder in $holders) {
+    $process=Get-Process -Id $holder.Id -ErrorAction SilentlyContinue
+    if(!$process) { continue }
+    if($process.ProcessName -notin @('msedge','chrome','chromium','brave') -or $process.StartTime.ToUniversalTime() -ne $holder.Started) {
+      throw "Profile file held by process $($holder.Id); close it and retry."
+    }
+    $browsers+= $process
+  }
+  foreach($process in $browsers) {
+    if($process.HasExited) { continue }
+    Report-Status "Stopping browser process $($process.Id) holding a selected profile file."
+    Stop-Process -Id $process.Id -Force -ErrorAction Stop
+    $process.WaitForExit()
+  }
+  return $holders.Count
+}
 function Set-ReleaseEnvironment([string]$Name,[string]$Value) {
   if(!$script:releaseEnvironment.ContainsKey($Name)){$script:releaseEnvironment[$Name]=[Environment]::GetEnvironmentVariable($Name,'Process')}
   [Environment]::SetEnvironmentVariable($Name,$Value,'Process')
@@ -1613,7 +1684,13 @@ try {
     Report-Status 'Backing up profile files, excluding transient gateway/PID state; no per-file hashing.'
     $databasePatterns=@('*.db','*.db-wal','*.db-shm','*.db-journal','*.sqlite','*.sqlite-*','*.sqlite3','*.sqlite3-*')
     & robocopy.exe $profilePath $backup /E /XJ /R:1 /W:1 /NFL /NDL /NP /XF @runtimeFiles @databasePatterns | Out-Host
-    if ($LASTEXITCODE -gt 7) { throw 'Profile backup failed.' }
+    if ($LASTEXITCODE -gt 7) {
+      Report-Status 'Checking for browser processes holding files in the selected profile.'
+      if((Stop-ProfileBrowserHolders $profilePath) -gt 0) {
+        & robocopy.exe $profilePath $backup /E /XJ /R:1 /W:1 /NFL /NDL /NP /XF @runtimeFiles @databasePatterns | Out-Host
+      }
+      if($LASTEXITCODE -gt 7) { throw "Profile backup failed (robocopy exit $LASTEXITCODE). Close any remaining file holders and retry." }
+    }
     Report-Status 'Taking consistent SQLite snapshots, including committed WAL data; live databases are not byte-hashed.'
     Preserve-Databases 'backup'
     $profileFiles=@(Get-ChildItem -LiteralPath $profilePath -Recurse -File | Where-Object { $_.Name -notin $runtimeFiles -and $_.Name -notmatch '\.(db|sqlite|sqlite3)(-wal|-shm|-journal)?$' } | ForEach-Object {
