@@ -1651,13 +1651,8 @@ def _run_conversation_turn(
         return codex_result
 
     _prelude_action, _prelude_result = play_prelude(agent, s, prelude)
-    from agent.desktop_browser_target import state_for_agent
-    browser_turn=state_for_agent(agent)
-    if browser_turn is not None and browser_turn.native_failure is not None:
-        from agent.desktop_browser_target import recovery_text
-        s.final_response=recovery_text(browser_turn,getattr(browser_turn,'language','en'))
-        s._turn_exit_reason='browser_target_unavailable'
-        _prelude_action='break'
+    from agent.desktop_browser_target import finish_failed_browser_prelude
+    _prelude_action = finish_failed_browser_prelude(agent, s, _prelude_action)
     if _prelude_action == "return":
         return _prelude_result
     while _prelude_action != "break" and (

@@ -112,7 +112,9 @@ export async function stopFixtureGateway(root: string, sandbox: Sandbox, env: Re
     await promisify(execFile)(python, ['-P', '-m', 'hermes_cli.main', 'gateway', 'stop'], {
       cwd: root,
       env: { ...env, PYTHONPATH: root },
-      timeout: 20_000
+      // CLI cold imports plus Windows graceful gateway shutdown can exceed20s.
+      // Ownership checks above remain mandatory; this wait is still bounded.
+      timeout: 60_000
     })
   } catch (error) {
     if (process.env.HERMES_E2E_RUN_TMP)

@@ -953,6 +953,14 @@ class ToolRegistry:
         if not entry:
             return tool_error(f"Unknown tool: {name}")
         try:
+            from agent.desktop_browser_target import guard_browser_call
+            bound_error = guard_browser_call(name, args)
+            if bound_error is not None:
+                return json.dumps(bound_error)
+            from tools.tool_search_validation import browser_call_arguments
+            args, error = browser_call_arguments(name, args)
+            if error is not None:
+                return error
             # Plugin contract (plugins/AGENTS.md): optional context kwargs (task_id, session_id, user_task,
             # parent_agent, ...) are signature-inspected like hook payloads, so a narrow ``handle(args)``
             # plugin handler is not broken by every field the dispatcher injects (#68318).

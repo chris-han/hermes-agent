@@ -65,6 +65,11 @@ def lightpanda_engine_status() -> tuple[bool, str]:
     return True, "Browser Use mode: Hermes spawns `lightpanda serve` per session"
 
 
+def unavailable_browser_cdp_methods() -> frozenset[str]:
+    """Existing engine capability fact, shared by browser_exec's native preflight."""
+    return frozenset({'Page.captureScreenshot'}) if lightpanda_engine_status()[0] else frozenset()
+
+
 def _lightpanda_fallback_reason(engine: str, command: str, result: dict[str, Any]) -> Optional[str]:
     """User-visible reason a Lightpanda result needs the Chrome fallback (copied into the result), or None."""
     if engine != "lightpanda" or command not in _FALLBACK_ELIGIBLE:

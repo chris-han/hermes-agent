@@ -27,18 +27,22 @@ const exposedPrompts = {
 } as const
 
 const variant = process.env.SEMANTIER_EVAL_VARIANT
+const executionDiagnostic = variant === 'execution-contract-diagnostic-v1'
+const executionCase = process.env.SEMANTIER_EVAL_DIAGNOSTIC_CF
+
+if (executionDiagnostic && !['C', 'F'].includes(executionCase || '')) { throw new Error('Execution diagnostic requires one frozen C or F task') }
 const diagnosticMode = process.env.SEMANTIER_EVAL_DIAGNOSTIC_AC
 
 if (diagnosticMode && !['1', 'C'].includes(diagnosticMode)) { throw new Error('Unknown exposed diagnostic subset') }
 const diagnosticAC = !!diagnosticMode
-const heldout = ['heldout-binding-v1', 'residual-confirm-v2'].includes(variant || '')
+const heldout = ['heldout-binding-v1', 'residual-confirm-v2', 'execution-contract-diagnostic-v1'].includes(variant || '')
 
 if (process.env.SEMANTIER_EVAL_VARIANT && !heldout) { throw new Error('Unknown frozen browser fixture variant') }
 
 if (diagnosticAC && variant !== 'heldout-binding-v1') { throw new Error('A/C diagnostics must use original archived failures') }
 
 if (heldout && process.env.SEMANTIER_EVAL_RECOVER_REMAINING === '1') { throw new Error('Held-out qualification requires all six cases') }
-const heldoutFixture = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, variant === 'residual-confirm-v2' ? 'residual-confirm-v2.json' : 'heldout-browser-binding-v1.json'), 'utf8'))
+const heldoutFixture = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, executionDiagnostic ? 'execution-contract-diagnostic-v1.json' : variant === 'residual-confirm-v2' ? 'residual-confirm-v2.json' : 'heldout-browser-binding-v1.json'), 'utf8'))
 
 const copy = heldout ? heldoutFixture.page : {
   heading: 'Authenticated test dashboard', title: 'Test dashboard', status: 'Ready',
@@ -50,7 +54,39 @@ const copy = heldout ? heldoutFixture.page : {
 
 type CaseId = keyof typeof exposedPrompts
 const prompts: Record<CaseId, string> = heldout ? heldoutFixture.prompts : exposedPrompts
-const order: CaseId[] = diagnosticAC ? (diagnosticMode === 'C' ? ['C'] : ['A', 'C']) : process.env.SEMANTIER_EVAL_RECOVER_REMAINING === '1' ? ['C', 'E', 'F', 'D'] : ['A', 'B', 'C', 'E', 'F', 'D']
+const order: CaseId[] = executionDiagnostic ? [executionCase as CaseId] : diagnosticAC ? (diagnosticMode === 'C' ? ['C'] : ['A', 'C']) : process.env.SEMANTIER_EVAL_RECOVER_REMAINING === '1' ? ['C', 'E', 'F', 'D'] : ['A', 'B', 'C', 'E', 'F', 'D']
+
+function diagnosticOverrides() {
+  return executionDiagnostic ? {version: 'browser-execution-contract-diagnostics-v1',
+    budget: {primary_cases: 1, attempts_per_case: 1, proven_infrastructure_retries_max: 0, upstream_calls_per_case: 12, upstream_calls_total: 12, aggregate_two_task_max: 24, output_tokens_per_call: 4096, intent_tokens_per_call: 512, case_timeout_ms: 240000},
+    terminal: {DIAGNOSTIC_PASS: 'Verified task effects, factual receipts and authorized context; correction is separately reported', DIAGNOSTIC_FAIL: 'A valid task fails its frozen required effect or reports unsupported success', INCONCLUSIVE: 'Model/apparatus unavailable'}} : {}
+}
+
+function evaluationPurpose() {
+  return executionDiagnostic ? 'Two separately gated fresh mechanism diagnostics; never six-case qualification' : process.env.SEMANTIER_EVAL_PREFLIGHT_ONLY === '1' ? 'zero-inference apparatus preflight' : diagnosticAC ? 'exposed archived A/C diagnostic; not independent qualification' : heldout ? 'held-out confirmatory qualification; no post-outcome tuning' : 'exposed regression diagnostics; not held-out qualification'
+}
+
+function requestingPage(id: CaseId, page: Page, second?: Page) {
+  return id === 'B' || id === 'C' && !executionDiagnostic ? second! : page
+}
+
+function initialExecutionFor(id: CaseId, refusal: any, nativeStatus: string, modelStatus: string) {
+  return id === 'D' ? refusal?.code === 'PANE_UNAVAILABLE' : nativeStatus === 'PASS' && (modelStatus === 'PASS' || id === 'F' && modelStatus === 'NOT_REQUIRED')
+}
+
+function bindExecutionIdentity(contract: any) {
+  contract.runtime_sha = process.env.SEMANTIER_EVAL_RUNTIME_SHA
+  contract.preflight_system_prompt_hashes = JSON.parse(process.env.SEMANTIER_EVAL_PREFLIGHT_PROMPT_HASHES || '[]')
+  contract.tool_discovery_configuration = 'native defaults, including deferred desktop_preview/drive_preview; no eager override'
+  contract.harness_sha256 = hash(fs.readFileSync(import.meta.filename, 'utf8') + fs.readFileSync(path.join(root, 'apps/desktop/e2e/autonomous-provider.py'), 'utf8'))
+}
+
+function createDashboardState() {
+  return {
+    A: { setting: executionDiagnostic ? copy.enabled : copy.initial, saves: 0, actions: 0, logins: 0 },
+    B: { setting: copy.initial, saves: 0, actions: 0, logins: 0 }
+  }
+}
 
 async function listen(server: http.Server): Promise<string> {
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
@@ -108,10 +144,7 @@ test('six frozen real-Qwen Desktop browser workflows', async ({}, info) => {
   const write = (name: string, value: unknown) => fs.writeFileSync(path.join(output, name), JSON.stringify(value, null, 2))
   const sandbox = createSandbox('autonomous-qwen')
 
-  const dashboard: Record<string, any> = {
-    A: { setting: copy.initial, saves: 0, actions: 0, logins: 0 },
-    B: { setting: copy.initial, saves: 0, actions: 0, logins: 0 }
-  }
+  const dashboard: Record<string, any> = createDashboardState()
 
   const requests: any[] = []
 
@@ -249,7 +282,7 @@ test('six frozen real-Qwen Desktop browser workflows', async ({}, info) => {
     contract.selected_cases = order
     contract.raw_contract_gate = 'First main-model tool call must conform to the actual request JSON schema before normalization; later recovery cannot erase an initial failure.'
     contract.comparison_gate = 'Every source-specific metric, unit, source identity and final ranking must be supported by retrieved receipts; navigation elapsed time is not the page-reported metric. Review all factual conclusions, not only hit count.'
-    contract.run_purpose = process.env.SEMANTIER_EVAL_PREFLIGHT_ONLY === '1' ? 'zero-inference apparatus preflight' : diagnosticAC ? 'exposed archived A/C diagnostic; not independent qualification' : heldout ? 'held-out confirmatory qualification; no post-outcome tuning' : 'exposed regression diagnostics; not held-out qualification'
+    contract.run_purpose = evaluationPurpose()
     contract.fixture_variant = heldout ? heldoutFixture.version : 'exposed'
     contract.page = copy
     contract.research_facts = research
@@ -262,10 +295,8 @@ test('six frozen real-Qwen Desktop browser workflows', async ({}, info) => {
       contract.strict_initial_execution = 'Native first operation plus first model browser operation must execute validly; expected D unavailable is a correct refusal; native-only read verification is allowed for F.'
     }
 
-    contract.runtime_sha = process.env.SEMANTIER_EVAL_RUNTIME_SHA
-    contract.preflight_system_prompt_hashes = JSON.parse(process.env.SEMANTIER_EVAL_PREFLIGHT_PROMPT_HASHES || '[]')
-    contract.tool_discovery_configuration = 'native defaults, including deferred desktop_preview/drive_preview; no eager override'
-    contract.harness_sha256 = hash(fs.readFileSync(import.meta.filename, 'utf8') + fs.readFileSync(path.join(root, 'apps/desktop/e2e/autonomous-provider.py'), 'utf8'))
+    Object.assign(contract, diagnosticOverrides())
+    bindExecutionIdentity(contract)
     write('contract.json', contract)
     write('configuration.json', { model: contract.model, configuration: config, provider_origin_sha256: observer.provider_origin_sha256, credential_reference: 'Existing authorized Runtime DASHSCOPE_API_KEY; value never archived', output_token_cap: 4096 })
     const { page } = await fixture.launch()
@@ -346,6 +377,24 @@ return !state.busy && !state.awaiting}, {timeout:60000}).toBe(true)
     }
 
 
+    async function verifyEffect(id: CaseId, before: any, after: any, actualTools: any[], sameA: boolean, sameB: boolean, paneToolsOnly: boolean) {
+      const saved = () => dashboard.A.setting === copy.enabled && dashboard.A.saves > before.dashboard.A.saves && sameA && paneToolsOnly && dashboard.A.logins === before.dashboard.A.logins
+      const checks: Record<CaseId, () => boolean | Promise<boolean>> = {
+        A: saved, E: saved,
+        B: () => (heldout ? dashboard.B.actions === before.dashboard.B.actions + 1 : dashboard.B.actions > before.dashboard.B.actions) && paneToolsOnly && !!guestB && (!heldout || dashboard.B.setting === before.dashboard.B.setting && dashboard.B.saves === before.dashboard.B.saves),
+        C: () => research.every(fact => after.research_hits.some((hit: any) => hit.name === fact.name)) && after.research_hits.every((hit: any) => !hit.cookie_names.some((name: string) => name.startsWith(copy.cookiePrefix))) && sameA && sameB && JSON.stringify(dashboard) === JSON.stringify(before.dashboard),
+        F: () => sameA && paneToolsOnly && dashboard.A.setting === copy.enabled && actualTools.some((tool: any) => ['desktop_preview', 'drive_preview'].includes(tool.name)),
+        D: async () => paneToolsOnly && sameA && JSON.stringify(dashboard) === JSON.stringify(before.dashboard) && (await page.evaluate(() => (globalThis as any).__evalDeclinedPreviewRequests)).length > 0
+      }
+      let effect = await checks[id]()
+
+      if (heldout && ['A','E'].includes(id)) {effect = effect && dashboard.A.actions === before.dashboard.A.actions}
+
+      if (heldout && id === 'F') {effect = effect && JSON.stringify(dashboard) === JSON.stringify(before.dashboard)}
+
+      return effect
+    }
+
     for (const id of order) {
       if (id === 'B') {
         const next = fixture.app!.waitForEvent('window')
@@ -357,7 +406,7 @@ return !state.busy && !state.awaiting}, {timeout:60000}).toBe(true)
         await dismissFixtureIntro(second)
       }
 
-      const target = id === 'B' || id === 'C' ? second! : page
+      const target = requestingPage(id, page, second)
       await target.bringToFront()
 
       if (id === 'E') {
@@ -468,7 +517,7 @@ return !state.busy && !state.awaiting}, {timeout:60000}).toBe(true)
       let refusal: any = firstNativeReceipt?.result
 
       if (typeof refusal === 'string') { try { refusal = JSON.parse(refusal) } catch { refusal = null } }
-      const initialExecution = id === 'D' ? refusal?.code === 'PANE_UNAVAILABLE' : firstNativeStatus === 'PASS' && (firstModelStatus === 'PASS' || id === 'F' && firstModelStatus === 'NOT_REQUIRED')
+      const initialExecution = initialExecutionFor(id, refusal, firstNativeStatus, firstModelStatus)
 
       const intentCalls = calls.filter((call: any) => call.request_kind === 'NATIVE_TARGET_INTENT')
       let intentProposal: any = null
@@ -485,21 +534,7 @@ return !state.busy && !state.awaiting}, {timeout:60000}).toBe(true)
       const sameB = !guestB || after.views_B.some((view: any) => view.id === guestB.id && view.url === guestB.url)
       const paneToolsOnly = !actualTools.some((tool: any) => tool.name === 'browser_exec')
       const routing = id === 'C' ? first?.name === 'browser_exec' : id === 'B' ? first?.name === 'desktop_preview' && first.arguments.action === 'open' : ['desktop_preview', 'drive_preview'].includes(first?.name)
-      let effect = false
-
-      if (id === 'A' || id === 'E') { effect = dashboard.A.setting === copy.enabled && dashboard.A.saves > before.dashboard.A.saves && sameA && paneToolsOnly && dashboard.A.logins === before.dashboard.A.logins }
-
-      if (id === 'B') { effect = (heldout ? dashboard.B.actions === before.dashboard.B.actions + 1 : dashboard.B.actions > before.dashboard.B.actions) && paneToolsOnly && !!guestB && (!heldout || dashboard.B.setting === before.dashboard.B.setting && dashboard.B.saves === before.dashboard.B.saves) }
-
-      if (id === 'C') { effect = research.every(fact => after.research_hits.some((hit: any) => hit.name === fact.name)) && after.research_hits.every((hit: any) => !hit.cookie_names.some((name: string) => name.startsWith(copy.cookiePrefix))) && sameA && sameB && JSON.stringify(dashboard) === JSON.stringify(before.dashboard) }
-
-      if (id === 'F') { effect = sameA && paneToolsOnly && dashboard.A.setting === copy.enabled && actualTools.some((tool: any) => ['desktop_preview', 'drive_preview'].includes(tool.name)) }
-
-      if (id === 'D') { effect = paneToolsOnly && sameA && JSON.stringify(dashboard) === JSON.stringify(before.dashboard) && (await page.evaluate(() => (globalThis as any).__evalDeclinedPreviewRequests)).length > 0 }
-
-      if (heldout && ['A','E'].includes(id)) { effect = effect && dashboard.A.actions === before.dashboard.A.actions }
-
-      if (heldout && id === 'F') { effect = effect && JSON.stringify(dashboard) === JSON.stringify(before.dashboard) }
+      const effect = await verifyEffect(id, before, after, actualTools, sameA, sameB, paneToolsOnly)
 
       if (id === 'D') { row.bridge_fault_timeline = await page.evaluate(() => (globalThis as any).__evalFaultTimeline) }
       const otherChanged = id === 'B' || id === 'C' ? JSON.stringify(dashboard.A) !== JSON.stringify(before.dashboard.A) : JSON.stringify(dashboard.B) !== JSON.stringify(before.dashboard.B)

@@ -740,7 +740,8 @@ def _dispatch_bridge_tool(function_name: str, function_args: dict[str, Any],
         return ts.dispatch_tool_describe(args, current_tool_defs=current_defs, call=call), None
     underlying_name, underlying_args, err = ts.resolve_underlying_call(args)
     if err or not underlying_name:
-        return tool_error(err or "tool_call could not be resolved"), None
+        from tools.tool_search_validation import tool_call_argument_error
+        return tool_call_argument_error(err or "tool_call could not be resolved"), None
     if underlying_name == ts.CONNECTOR_BATCH_SENTINEL:
         if not ts.connections_in_scope(current_defs):
             return tool_error("Connectors are not available in this session."), None
@@ -753,6 +754,12 @@ def _dispatch_bridge_tool(function_name: str, function_args: dict[str, Any],
         return tool_error(ts.out_of_scope_reason(underlying_name)
                           or f"'{underlying_name}' is not available in this session. "
                           "Use tool_search to find tools you can call."), None
+    from agent.desktop_browser_target import current_browser_turn
+    browser_turn = current_browser_turn()
+    if browser_turn is not None:
+        underlying_name, underlying_args = browser_turn.canonical_call(underlying_name, underlying_args)
+        if underlying_name not in ts.scoped_deferrable_names(current_defs):
+            return tool_error(ts.out_of_scope_reason(underlying_name) or 'TARGET_MISMATCH'), None
     # Validate against the deferred tool's concrete schema — the generic
     # ``arguments: object`` bridge schema can't enforce it.
     probe_err = ts.validate_deferred_call_args(underlying_name, underlying_args)
@@ -901,6 +908,10 @@ def handle_function_call(
     denial = execution_tool_denial(function_name)
     if denial is not None:
         return denial
+    from tools.tool_search_validation import browser_call_arguments
+    function_args, argument_error = browser_call_arguments(function_name, function_args)
+    if argument_error is not None:
+        return argument_error
     function_args = coerce_tool_args(function_name, function_args)
     if not isinstance(function_args, dict):
         function_args = {}

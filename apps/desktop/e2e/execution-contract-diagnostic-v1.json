@@ -1,0 +1,45 @@
+{
+  "version": "execution-contract-diagnostic-v1",
+  "prompts": {
+    "C": "Read these three synthetic pump specification pages in an independent browser session. Compare their stated pulse time and service credits, identify the smallest value for each, and give each source's figures and units. Leave the signed-in console beside our chat unchanged.",
+    "F": "I hid and restored the signed-in pump console beside this conversation. Check that exact existing page now and tell me whether its recorded operating mode is still Steady. Do not change its controls.",
+    "A": "Inspect the operating mode in this signed-in console beside our conversation."
+  },
+  "page": {
+    "heading": "Authenticated pump console",
+    "title": "Pump console",
+    "status": "Fixture operational",
+    "settingLabel": "Operating mode",
+    "settingId": "pump-mode",
+    "saveLabel": "Record mode",
+    "saveId": "record-mode",
+    "actionLabel": "Probe pump",
+    "actionId": "probe-pump",
+    "initial": "Intermittent",
+    "enabled": "Steady",
+    "storedPrefix": "Recorded operating mode: ",
+    "savedPrefix": "Mode recorded: ",
+    "actionPrefix": "Probe receipt ",
+    "cookiePrefix": "execution-fixture-auth-",
+    "latencyLabel": "Pulse time",
+    "costLabel": "Service credits"
+  },
+  "research": [
+    {
+      "name": "Aster pump",
+      "latency_ms": 29,
+      "cost_units": 4
+    },
+    {
+      "name": "Birch pump",
+      "latency_ms": 11,
+      "cost_units": 8
+    },
+    {
+      "name": "Crocus pump",
+      "latency_ms": 37,
+      "cost_units": 2
+    }
+  ],
+  "failure_timing": "No induced bridge fault; authenticated Steady console is established by the synthetic fixture before hide/restore, with no cookie copying."
+}

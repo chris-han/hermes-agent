@@ -158,3 +158,37 @@ for comparison PASS. Review every factual final claim against actual tool
 receipts and fixture truth; record unsupported or incomparable claims explicitly.
 
 `SEMANTIER_EVAL_DIAGNOSTIC_AC=C` runs only the original C diagnostic with an18-response ceiling. Use it only within the owning plan’s explicit bounded follow-up allowance; it is not an automatic retry or confirmatory score.
+
+
+### Browser Execution Contract checks
+
+The affinity spec also exercises malformed action/target/envelope rejection,
+repeated independent-backend denial, unknown refs and valid correction on the
+same authenticated Electron guest. Its independent-browser child rejects an
+uninstalled helper import before a marker can be written, then corrects the
+call without replacing the named session. These are scripted native execution
+checks, not autonomous model qualification.
+
+`browser_exec` derives its public helper signatures from the installed
+`browser_harness` source (including same-task helpers) without importing that
+source during inspection. Static import/name checks run before browser startup.
+Unknown imports/helpers, unavailable backend capabilities and runtime browser
+errors have distinct codes. This validates statically resolvable interface use;
+it is not a Python sandbox or proof for arbitrary dynamic Python. Unverifiable
+namespace construction receives explicit correction feedback. No dependency is
+automatically installed. Desktop arguments use the registered JSON schema for
+both direct and deferred execution; invalid calls retain their bound target.
+The Semantier Windows dependency profile already declares `jsonschema`;
+missing validation support returns `ARGUMENT_CONTRACT_UNAVAILABLE`.
+
+For the separately authorized two-task mechanism diagnostic, set
+`SEMANTIER_EVAL_VARIANT=execution-contract-diagnostic-v1` and
+`SEMANTIER_EVAL_DIAGNOSTIC_CF=C` or `F`, using the existing autonomous spec and
+runner command above. Freeze the source, fixture and criteria before inference.
+Run C once and review its source-specific receipts and final claims before F;
+a valid failure stops further inference. Each invocation permits one primary
+task, 12 upstream responses including native intent, 4096 main output tokens,
+512 intent output tokens and 240 seconds. The aggregate ceiling is 24 responses
+across C and F. There is no automatic retry. Record initial validity, rejection,
+correction, routing, live effects and factual accuracy separately. Two diagnostic
+passes can nominate a new six-case qualification; they cannot establish one.

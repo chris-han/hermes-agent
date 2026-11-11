@@ -99,10 +99,12 @@ ACT_PREVIEW_SCHEMA = {
             "ref": {
                 "type": "string",
                 "description": "Element ref from an earlier elements call.",
+                "pattern": r"\S",
             },
             "selector": {
                 "type": "string",
                 "description": "CSS selector fallback. Prefer ref.",
+                "pattern": r"\S",
             },
             "text": {"type": "string", "description": "type: the text."},
             "submit": {
@@ -136,6 +138,12 @@ ACT_PREVIEW_SCHEMA = {
             },
         },
         "required": ["action"],
+        "allOf": [
+            {"if": {"properties": {"action": {"enum": ["click", "hover", "type"]}}, "required": ["action"]},
+             "then": {"anyOf": [{"required": ["ref"]}, {"required": ["selector"]}]}},
+            {"if": {"properties": {"action": {"const": "type"}}, "required": ["action"]}, "then": {"required": ["text"]}},
+            {"if": {"properties": {"action": {"const": "press"}}, "required": ["action"]}, "then": {"required": ["key"]}},
+        ],
     },
 }
 

@@ -11,10 +11,43 @@ import { expect, test } from '@playwright/test'
 import { waitForChatReady } from '../../../tests-js/scripts/desktop-chat-smoke'
 import { writeEnvFile, writeMockProviderConfig } from '../../../tests-js/scripts/mock-provider-config'
 
+import { toolResultPayload } from './autonomous-evaluator'
 import { DesktopFixtureSession } from './fixture-session'
 import { buildAppEnv, createSandbox } from './fixtures'
 
 const root = path.resolve(import.meta.dirname, '../../..')
+
+function nativeIntentReply(body: any, res: http.ServerResponse) {
+  if (body.tools?.length !== 1 || body.tools[0]?.function?.name !== 'browser_target_intent') {return false}
+  const request = JSON.parse(body.messages.at(-1).content).request
+  const opening = request.startsWith('Open the synthetic dashboard beside our conversation:')
+  const visible = opening || request.includes('page currently open') || request.includes('webpage visible') || request.includes('that exact page')
+  res.setHeader('Content-Type', 'application/json')
+  res.end(JSON.stringify({
+    id: 'fixture-intent',
+    choices: [{ index: 0, finish_reason: 'tool_calls', message: {
+      role: 'assistant', content: null,
+      tool_calls: [{ id: 'fixture-intent', type: 'function', function: {
+        name: 'browser_target_intent', arguments: JSON.stringify({
+          target_kind: visible ? 'VISIBLE_PANE' : 'NONE', operation: opening ? 'open' : visible ? 'existing' : 'none',
+          ...(opening ? { url: request.match(/https?:\/\/[^\s]+/)[0] } : {})
+        })
+      } }]
+    } }],
+    usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 }
+  }))
+
+  return true
+}
+
+function scriptedStep(opening: boolean, prompt: string, steps: ReadonlyArray<readonly [string, unknown] | undefined>, openingSteps: ReadonlyArray<readonly [string, unknown] | undefined>, index: number) {
+  return opening ? openingSteps[index] : (prompt.includes('Inspect the page currently open') || prompt.includes('Click the test button')) ? steps[index] : undefined
+}
+
+function scriptedCall(step: readonly [string, unknown]) {
+  return { name: step[0] === 'browser_exec' ? 'browser_exec' : 'tool_call',
+    arguments: JSON.stringify(['tool_call', 'browser_exec'].includes(step[0]) ? step[1] : {calls: [{name: step[0], arguments: step[1]}]}) }
+}
 
 // eslint-disable-next-line no-empty-pattern -- Electron supplies its own page; only Playwright TestInfo is used.
 test('authenticated owned Electron page remains distinct from independent automation', async ({}, info) => {
@@ -83,27 +116,7 @@ test('authenticated owned Electron page remains distinct from independent automa
 
     // The native semantic proposal is separate from the normal Agent tool loop.
     // This deterministic provider fixture tests execution, never autonomous routing.
-    if (body.tools?.length === 1 && body.tools[0]?.function?.name === 'browser_target_intent') {
-      const request = JSON.parse(body.messages.at(-1).content).request
-      const opening = request.startsWith('Open the synthetic dashboard beside our conversation:')
-      const visible = opening || request.includes('page currently open') || request.includes('webpage visible') || request.includes('that exact page')
-      res.setHeader('Content-Type', 'application/json')
-      res.end(JSON.stringify({
-        id: 'fixture-intent',
-        choices: [{ index: 0, finish_reason: 'tool_calls', message: {
-          role: 'assistant', content: null,
-          tool_calls: [{ id: 'fixture-intent', type: 'function', function: {
-            name: 'browser_target_intent', arguments: JSON.stringify({
-              target_kind: visible ? 'VISIBLE_PANE' : 'NONE', operation: opening ? 'open' : visible ? 'existing' : 'none',
-              ...(opening ? { url: request.match(/https?:\/\/[^\s]+/)[0] } : {})
-            })
-          } }]
-        } }],
-        usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 }
-      }))
-
-      return
-    }
+    if (nativeIntentReply(body, res)) {return}
 
     const messages = body.messages || []
 
@@ -126,9 +139,17 @@ test('authenticated owned Electron page remains distinct from independent automa
       }
     }
 
+    const forbiddenIndependent = `new_tab(${JSON.stringify(siteUrl + '/login')}); wait_for_load(); print(js('document.body.innerText')); js("document.querySelector('#harmless').click()")`
     const steps = [
       ['desktop_preview', { action: 'read' }],
       ['drive_preview', { action: 'elements' }],
+      ['drive_preview', { action: 'fill', selector: '#fixture-input', text: 'SHOULD_NOT_LAND' }],
+      ['drive_preview', { action: 'click' }],
+      ['tool_call', { calls: '{not-json' }],
+      ['browser_exec', { code: forbiddenIndependent, session: 'rejected-one' }],
+      ['browser_exec', { code: forbiddenIndependent, session: 'rejected-two' }],
+      ['drive_preview', { action: 'click', ref: 'btn-unavailable' }],
+      ['drive_preview', { action: 'elements', full: true }],
       ['drive_preview', { action: 'click', selector: '#harmless' }],
       ['drive_preview', { action: 'type', selector: '#fixture-input', text: 'fixture typed' }]
     ] as const
@@ -140,7 +161,7 @@ test('authenticated owned Electron page remains distinct from independent automa
       ['drive_preview', { action: 'click', selector: '#harmless' }]
     ] as const
 
-    const step = opening ? openingSteps[actionResultCount] : (prompt.includes('Inspect the page currently open') || prompt.includes('Click the test button')) ? steps[actionResultCount] : undefined
+    const step = scriptedStep(opening, prompt, steps, openingSteps, actionResultCount)
 
     const message = step
       ? {
@@ -150,7 +171,7 @@ test('authenticated owned Electron page remains distinct from independent automa
             {
               id: `affinity-${toolResults.length}`,
               type: 'function',
-              function: { name: 'tool_call', arguments: JSON.stringify({ calls: [{ name: step[0], arguments: step[1] }] }) }
+              function: scriptedCall(step)
             }
           ]
         }
@@ -193,7 +214,7 @@ test('authenticated owned Electron page remains distinct from independent automa
     sandbox.hermesHome,
     providerUrl,
     'language: en\ndisplay:\n  language: en',
-    'auxiliary:\n  background_review:\n    enabled: false\n  title_generation:\n    enabled: false\nagent:\n  verify_on_stop: false\nbrowser:\n  backend: browser-use\n  cloud_provider: local\n  engine: chrome\n  allow_private_urls: true\n  use_real_profile: false\n'
+    'auxiliary:\n  background_review:\n    enabled: false\n  title_generation:\n    enabled: false\nagent:\n  max_iterations: 16\n  verify_on_stop: false\nbrowser:\n  backend: browser-use\n  cloud_provider: local\n  engine: chrome\n  allow_private_urls: true\n  use_real_profile: false\n'
   )
   writeEnvFile(sandbox.hermesHome)
 
@@ -260,6 +281,15 @@ test('authenticated owned Electron page remains distinct from independent automa
       expect(disclosed.tools.drive_preview.parameters.properties.action.enum).toContain('type')
       expect(disclosed.tools.drive_preview.parameters.properties.action.enum).not.toContain('fill')
       expect(disclosed.tools.drive_preview.parameters.properties.text.type).toBe('string')
+      const rejections = results.flatMap(result => {
+        const data = toolResultPayload(result.content)
+        return data?.code ? [data] : []
+      })
+      expect(rejections.map(result => result.code)).toEqual(['UNKNOWN_ACTION', 'MISSING_REQUIRED_FIELD', 'INVALID_ARGUMENT', 'TARGET_MISMATCH', 'TARGET_MISMATCH', 'INVALID_ELEMENT_REF'])
+      expect(rejections.every(result => result.recovery?.same_context)).toBe(true)
+      fs.writeFileSync(info.outputPath('execution-contract-rejections.json'), JSON.stringify({
+        scope: 'Scripted native reject/correct journey; not autonomous model qualification', rejections
+      }, null, 2))
       fs.writeFileSync(info.outputPath('provider-requests.json'), JSON.stringify(requests, null, 2))
 
       const firstMain = requests.find(request => request.tools?.some((tool: any) => tool.function?.name === 'tool_call')

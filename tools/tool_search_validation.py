@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from decimal import Decimal, InvalidOperation
 import json
 import logging
 import re
@@ -65,10 +66,41 @@ def _validation_path(error: Any) -> str:
     return path
 
 
-def _validation_error(message: str, *, path: str, constraint: str, parameters: Any) -> str:
-    return tool_error(
-        message, path=path, constraint=constraint, parameters=parameters,
-        hint="Retry tool_call with 'arguments' matching the parameters schema above.")
+def is_browser_call(name: str) -> bool:
+    from tools.registry import registry
+    entry = registry.get_entry(name)
+    return name in ('desktop_preview', 'drive_preview', 'annotate_preview', 'browser_exec') or bool(entry and entry.toolset in ('browser', 'browser_use'))
+
+
+def _validation_error(message: str, *, path: str, constraint: str, parameters: Any, name: str = '') -> str:
+    if is_browser_call(name):
+        code = 'MISSING_REQUIRED_FIELD' if constraint in ('required', 'anyOf') else 'UNKNOWN_ACTION' if constraint == 'enum' and path.endswith('.action') else 'INVALID_ELEMENT_REF' if constraint == 'pattern' and path.endswith('.ref') else 'INVALID_ARGUMENT'
+        return tool_error(f"Browser arguments rejected at {path} ({constraint}); tool was not invoked.",
+            success=False, code=code, path=path, constraint=constraint, parameters=parameters, rejected_tool=name,
+            recovery={'same_context': True, 'next_action': 'correct_arguments_using_parameters'}, retryable=True)
+    return tool_error(message, path=path, constraint=constraint, parameters=parameters,
+                      hint="Retry tool_call with 'arguments' matching the parameters schema above.")
+
+
+def _contract_unavailable(name, reason):
+    return tool_error('Browser argument contract unavailable; tool was not invoked.', success=False, code='ARGUMENT_CONTRACT_UNAVAILABLE',
+        path='arguments', rejected_tool=name, reason=reason, retryable=False,
+        recovery={'same_context': True, 'next_action': 'restore_native_tool_contract'})
+
+
+def browser_call_arguments(name, args):
+    if not is_browser_call(name):
+        return args, None
+    error = validate_deferred_call_args(name, args)
+    if error is not None:
+        return args, error
+    from model_tools import coerce_tool_args
+    return coerce_tool_args(name, copy.deepcopy(args)), None
+
+
+def tool_call_argument_error(message):
+    return tool_error(message, success=False, code='MISSING_REQUIRED_FIELD' if "requires a 'name'" in message else 'INVALID_ARGUMENT',
+        path='arguments.calls', recovery={'same_context': True, 'next_action': 'supply_calls_array_with_name_and_arguments'}, retryable=True)
 
 
 def validate_deferred_call_args(name: str, args: dict[str, Any]) -> Optional[str]:
@@ -76,21 +108,25 @@ def validate_deferred_call_args(name: str, args: dict[str, Any]) -> Optional[str
     deferred tools "blind" (schema unseen) and omit required args; without this, the opaque
     downstream failure makes cheap models loop. Required-field probe first, then the same
     schema-guided coercion normal dispatch applies, then jsonschema on the repaired copy.
-    Missing/malformed schemas, no validator, and external refs all fail OPEN. Returns a JSON
+    Browser schemas fail closed; other tools retain existing fail-open behavior. Returns a JSON
     error string when invalid, ``None`` when the call should dispatch.
 
     This restores the concrete-schema checks that the provider cannot perform through the generic
     ``arguments: object`` bridge. See #5149.
     """
+    strict = is_browser_call(name)
     try:
         from tools.registry import registry as _registry
         schema = _registry.get_schema(name)
         if not isinstance(schema, dict):
-            return None
+            return _contract_unavailable(name, 'missing_schema') if strict else None
         fn = schema.get("function") if schema.get("type") == "function" else schema
         params = fn.get("parameters") if isinstance(fn, dict) else None
         if not isinstance(params, dict):
-            return None
+            return _contract_unavailable(name, 'missing_parameters') if strict else None
+        if strict and not isinstance(args, dict):
+            return _validation_error('Expected an arguments object; tool was not invoked.', name=name,
+                                     path='arguments', constraint='type', parameters=params)
         required = params.get("required")
         missing = ([r for r in required if isinstance(r, str) and r not in args]
                    if isinstance(required, list) else [])
@@ -98,25 +134,36 @@ def validate_deferred_call_args(name: str, args: dict[str, Any]) -> Optional[str
             return _validation_error(
                 f"tool_call to '{name}' is missing required argument(s): "
                 f"{', '.join(missing)}. The tool was NOT invoked.",
-                path="arguments", constraint="required", parameters=params)
+                path="arguments", constraint="required", parameters=params, name=name)
         validation_schema = _schema_for_local_validation(params)
         if _schema_has_external_ref(validation_schema):
             logger.debug("Skipping local deferred-argument validation for %s: external $ref", name)
-            return None
+            return _contract_unavailable(name, 'external_schema_reference') if strict else None
         # Validate the repaired shape dispatch will see; copy because coerce_tool_args may
         # normalize in place (dispatch re-coerces canonically).
         try:
             from model_tools import coerce_tool_args
-            candidate_args = coerce_tool_args(name, dict(args))
+            candidate_args = coerce_tool_args(name, copy.deepcopy(args))
         except Exception:
             logger.debug("Deferred-argument coercion failed for %s", name, exc_info=True)
             candidate_args = dict(args)
+        if strict:
+            for key, value in args.items():
+                normalized = candidate_args.get(key)
+                if isinstance(value, str) and isinstance(normalized, (int, float)) and not isinstance(normalized, bool):
+                    try:
+                        if Decimal(value) != Decimal(str(normalized)):
+                            return _validation_error('Lossful browser argument coercion rejected.', name=name,
+                                path='arguments.' + key, constraint='lossless_coercion', parameters=params)
+                    except InvalidOperation:
+                        return _validation_error('Ambiguous browser argument coercion rejected.', name=name,
+                            path='arguments.' + key, constraint='lossless_coercion', parameters=params)
         try:
             from jsonschema.exceptions import best_match
             from jsonschema.validators import validator_for
         except ImportError:
             logger.debug("jsonschema unavailable; keeping required-only validation for %s", name)
-            return None
+            return _contract_unavailable(name, 'missing_validator') if strict else None
         validator_cls = validator_for(validation_schema)
         validator_cls.check_schema(validation_schema)
         validation_error = best_match(validator_cls(validation_schema).iter_errors(candidate_args))
@@ -130,10 +177,10 @@ def validate_deferred_call_args(name: str, args: dict[str, Any]) -> Optional[str
         return _validation_error(
             f"tool_call to '{name}' failed argument validation at {path} "
             f"({constraint}): {detail}. The tool was NOT invoked.",
-            path=path, constraint=constraint, parameters=params)
-    except Exception:  # pragma: no cover — never block dispatch on validator bugs
+            path=path, constraint=constraint, parameters=params, name=name)
+    except Exception:  # Browser calls fail closed on validator faults.
         logger.debug("validate_deferred_call_args failed for %s", name, exc_info=True)
-        return None
+        return _contract_unavailable(name, 'invalid_contract') if strict else None
 
 
 def normalize_tool_call_entries(args: dict[str, Any]) -> tuple[list[dict[str, Any]], Optional[str]]:

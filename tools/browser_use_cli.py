@@ -302,13 +302,19 @@ def _find_cli() -> Optional[list[str]]:
     return [sys.executable, "-m", "browser_harness.run"]
 
 
+def _workspace_path(task_id: Optional[str]) -> Path:
+    if os.environ.get("BH_AGENT_WORKSPACE"):
+        return Path(os.environ["BH_AGENT_WORKSPACE"])
+    safe = _TASK_ID_SAFE_RE.sub("_", str(task_id or "default"))[:80] or "default"
+    return Path(get_hermes_home()) / "cache" / "browser-use" / "workspace" / safe
+
+
 def _workspace_dir(task_id: Optional[str]) -> Optional[str]:
     """Stable per-task scratch dir that persists across browser_exec calls"""
     if os.environ.get("BH_AGENT_WORKSPACE"):
         return os.environ["BH_AGENT_WORKSPACE"]
     try:
-        safe = _TASK_ID_SAFE_RE.sub("_", str(task_id or "default"))[:80] or "default"
-        path = Path(get_hermes_home()) / "cache" / "browser-use" / "workspace" / safe
+        path = _workspace_path(task_id)
         path.mkdir(parents=True, exist_ok=True)
         return str(path)
     except Exception as e:
@@ -690,15 +696,33 @@ def stop_harness_daemons() -> None:
             _run_cli_killing_process_group([*cmd, "--reload"], "", {**env, "BU_NAME": name}, 15)
 
 
+def _browser_contract_error(code, task_id):
+    from agent.desktop_browser_target import guard_browser_call
+    bound_error = guard_browser_call('browser_exec', {})
+    if bound_error is not None or not code or not code.strip():
+        return bound_error
+    from tools.browser_exec_contract import validate_code
+    from tools.browser_tool_lightpanda_fallback import unavailable_browser_cdp_methods
+    return validate_code(code, workspace=_workspace_path(task_id),
+                         unavailable_cdp=unavailable_browser_cdp_methods())
+
+
+def _set_exec_session(env, session):
+    if session and not _SESSION_RE.match(session):
+        return f"Invalid session name {session!r}: use 1-64 letters, digits, dashes, or underscores (e.g. 'r7k2')."
+    if session:
+        env['BU_NAME'] = session
+    return None
+
+
 def browser_exec(code: str, session: str = "", timeout_s: int = _DEFAULT_TIMEOUT_S,
                  task_id: Optional[str] = None, local: bool = False):
     """Run Python code through the browser-use CLI, and return its output"""
-    from agent.desktop_browser_target import guard_browser_call
-    bound_error = guard_browser_call('browser_exec', {})
-    if bound_error is not None:
-        return json.dumps(bound_error)
     from agent.redact import redact_sensitive_text
     from tools.registry import tool_error, tool_result
+    contract_error = _browser_contract_error(code, task_id)
+    if contract_error is not None:
+        return json.dumps(contract_error)
     if not code or not code.strip():
         return tool_error("No code provided. Pass Python that uses the pre-imported helpers, e.g. new_tab(\"https://example.com\") then print(page_info()).")
 
@@ -718,11 +742,9 @@ def browser_exec(code: str, session: str = "", timeout_s: int = _DEFAULT_TIMEOUT
                           "Run `hermes update` to re-sync it.")
 
     env = _base_subprocess_env()
-    if session:
-        if not _SESSION_RE.match(session):
-            return tool_error(f"Invalid session name {session!r}: use 1-64 letters, digits, "
-                              "dashes, or underscores (e.g. 'r7k2').")
-        env["BU_NAME"] = session
+    session_error = _set_exec_session(env, session)
+    if session_error:
+        return tool_error(session_error)
     route_err = _route_backend(env, session, task_id, bool(local), force_local_sidecar=local_sidecar)
     if route_err:
         return tool_error(route_err)
@@ -780,6 +802,7 @@ def browser_exec(code: str, session: str = "", timeout_s: int = _DEFAULT_TIMEOUT
     result = {
         "success": proc.returncode == 0,
         "exit_code": proc.returncode,
+        **({"code": "RUNTIME_BROWSER_ERROR", "recovery": {"same_context": True, "next_action": "inspect_runtime_error_then_correct_code"}} if proc.returncode else {}),
         "output": redact_sensitive_text(proc.stdout, force=True),
     }
     if workspace:
@@ -837,21 +860,16 @@ _HEADER_LIGHTPANDA = (
     "every later navigation — a second new_tab() fails with TargetAlreadyLoaded."
 )
 
-# Pinned quick-reference for the CLI's pre-imported helpers, replacing the live
-# ``browser-use skill`` fetch (uncontrolled third-party text in every schema: version
-# drift, supply-chain exposure, byte-unstable prompt). A/B benchmarked ~equal.
-_HELPERS_DIGEST = (
-    "\n\nHELPERS (pre-imported): new_tab(url) opens/navigates (use for the FIRST navigation), goto_url(url) "
-    "navigates the current tab, wait_for_load() after navigation, page_info() summarizes the current page "
-    "state, js(expr) evaluates a JS expression and returns its value (js('document.title'); wrap function "
-    "bodies as js('(() => {...})()') — a bare '() => {...}' returns the function itself, uncalled), "
-    "fill_input(selector, text) types into inputs, click_at_xy(x, y) clicks viewport coordinates, "
-    "capture_screenshot() saves and prints a screenshot path, cdp('Domain.method', **kwargs) is raw CDP — "
-    "cdp('Accessibility.getFullAXTree')['nodes'] lists every element's role/name/backendDOMNodeId (filter "
-    "in Python before printing; it is thousands of nodes), then cdp('DOM.getBoxModel', backendNodeId=n) "
-    "gives click coordinates. ensure_real_tab() recovers from a stale/internal tab. Login walls: never guess "
-    "credentials; see the vault note below if present, otherwise stop and ask the user."
-)
+# Installed-source quick reference for pre-imported helpers; no live skill fetch.
+def _helpers_digest() -> str:
+    from tools.browser_exec_contract import installed_api
+    try:
+        api = installed_api()
+    except (ImportError, OSError, RuntimeError, SyntaxError, ValueError):
+        return "\n\n" + json.dumps({'browser_api': 'unavailable'})
+    metadata = {key: api[key] for key in ('module', 'version', 'source_sha256', 'helpers')}
+    metadata['pre_imported'] = True
+    return "\n\n" + json.dumps({'browser_api': metadata}, sort_keys=True)
 
 
 def _description_header() -> str:
@@ -864,7 +882,7 @@ def _description_header() -> str:
 
 
 def _dynamic_schema_overrides() -> dict:
-    overrides: dict = {"description": _description_header() + _HELPERS_DIGEST}
+    overrides: dict = {"description": _description_header() + _helpers_digest()}
     # ``local`` exists ONLY when the user consented to real-profile browsing — everyone
     # else's schema carries zero extra surface. The caller memoizes on config.yaml mtime,
     # so toggling consent applies next session, not mid-chat.
@@ -884,7 +902,7 @@ def _dynamic_schema_overrides() -> dict:
 BROWSER_EXEC_SCHEMA = {
     "name": "browser_exec",
     # Static fallback description, used only when the managed CLI is unavailable
-    "description": (_HEADER_BASE + _HELPERS_DIGEST
+    "description": (_HEADER_BASE + _helpers_digest()
                     + "\n\n(The browser-use CLI is not installed yet. Install it with `hermes tools` (Browser Automation → Browser Use).)"),
     "parameters": {
         "type": "object",

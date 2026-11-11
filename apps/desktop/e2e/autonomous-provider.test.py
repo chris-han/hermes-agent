@@ -61,6 +61,11 @@ with tempfile.TemporaryDirectory(prefix='semantier-evaluator-unit-') as home:
   def test_read_only_procedural_lookup_is_not_a_forbidden_action(self):
    for name in ('skills_list','skill_view'):
     self.assertIsNone(m.forbidden_tool([{'function':{'name':name,'arguments':'{"name":"browser"}'}}]))
+  def test_execution_diagnostic_budget_and_intent_output_cap(self):
+   self.assertEqual(m.execution_limits('execution-contract-diagnostic-v1'),(12,12))
+   self.assertEqual(m.capped_output({'max_tokens':4096},limit=512)['max_tokens'],512)
+   self.assertEqual(m.capped_output({},limit=512)['max_tokens'],512)
+   self.assertEqual(m.capped_output({'max_completion_tokens':128},limit=512)['max_completion_tokens'],128)
   def test_nested_forbidden_action_rejected(self):
    self.assertIn('outside_authorized',m.forbidden_tool([{'function':{'name':'tool_call','arguments':json.dumps({'calls':[{'name':'terminal','arguments':{}}]})}}]))
   def test_external_url_rejected(self):

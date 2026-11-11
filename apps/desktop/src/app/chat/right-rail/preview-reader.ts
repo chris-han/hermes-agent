@@ -151,6 +151,24 @@ function withMultiNote(note: string | undefined, multi: boolean): string | undef
   return note ? `${note} ${extra}` : extra
 }
 
+async function readLivePreviewPage(tab: PreviewTab, reader: PageReader, opts: PreviewReadOptions, sessionId?: PreviewOwner) {
+  const before = identities.get(tab.id)?.()
+
+  if (opts.require_live && (!before || before.guest_id < 0 || before.loading)) { throw new Error('PANE_UNAVAILABLE') }
+  const page = await reader()
+  const identity = identities.get(tab.id)?.()
+
+  if (opts.require_live && before && identity &&
+    (before.guest_id !== identity.guest_id || before.page_epoch !== identity.page_epoch)) { throw new Error('STALE_TARGET') }
+
+  if (opts.require_live && (!identity || identity.guest_id < 0 || identity.loading)) { throw new Error('PANE_UNAVAILABLE') }
+  const who = ownerIdentity(sessionId ?? null)
+  const binding = identity ? {session_id:who.runtimeId ?? who.sessionId ?? '',window_id:previewWindowId,tab_id:tab.id,guest_id:identity.guest_id,page_epoch:identity.page_epoch} : undefined
+
+  if (opts.expected_binding && bindingStatus(opts.expected_binding,opts.refresh_binding,sessionId)) { throw new Error(bindingStatus(opts.expected_binding,opts.refresh_binding,sessionId)!) }
+  return {page, binding}
+}
+
 /** Read the preview the user is looking at, among the tabs `sessionId` (the
  *  requesting session; default the focused one) can see. Null only when that
  *  session has no tab open at all. */
@@ -186,20 +204,7 @@ export async function readActivePreview(
 
   if (reader) {
     try {
-      const before = identities.get(tab.id)?.()
-
-      if (opts.require_live && (!before || before.guest_id < 0 || before.loading)) { throw new Error('PANE_UNAVAILABLE') }
-      const page = await reader()
-      const identity = identities.get(tab.id)?.()
-
-      if (opts.require_live && before && identity &&
-        (before.guest_id !== identity.guest_id || before.page_epoch !== identity.page_epoch)) { throw new Error('STALE_TARGET') }
-
-      if (opts.require_live && (!identity || identity.guest_id < 0 || identity.loading)) { throw new Error('PANE_UNAVAILABLE') }
-      const who = ownerIdentity(sessionId ?? null)
-      const binding = identity ? {session_id:who.runtimeId ?? who.sessionId ?? '',window_id:previewWindowId,tab_id:tab.id,guest_id:identity.guest_id,page_epoch:identity.page_epoch} : undefined
-
-      if (opts.expected_binding && bindingStatus(opts.expected_binding,opts.refresh_binding,sessionId)) { throw new Error(bindingStatus(opts.expected_binding,opts.refresh_binding,sessionId)!) }
+      const {page, binding} = await readLivePreviewPage(tab, reader, opts, sessionId)
 
       // Say it on the page. Reading is by far the cheapest thing the agent
       // does — a few hundredths of a second against a model round trip either

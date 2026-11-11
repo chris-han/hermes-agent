@@ -47,6 +47,10 @@ export function turnEvidence(messages: any[], prompt: string) {
   return { requestReached: true, calls, finalResponse: assistant.map(text).filter(Boolean).join('\n'), completed: !!(last?.durableComplete || last?.persistedTurn?.complete) }
 }
 
+function workflowReason(x: any, routing: boolean, owner: boolean) {
+  return !routing ? 'WRONG_BROWSER_OR_NO_BROWSER_ACTION' : !owner ? 'WRONG_OWNER' : !x.operationSuccess ? 'OPERATION_FAILED' : !x.effect ? 'NO_VERIFIED_EFFECT' : x.falseSuccess ? 'FALSE_SUCCESS' : x.unexpectedSwitch ? 'UNEXPECTED_SWITCH' : 'VERIFIED'
+}
+
 export function scoreTrial(x: any) {
   if (!x.requestReached || !x.inferenceCalls) { return { validity: 'INVALID_TEST', reason: 'NO_MODEL_REQUEST', routing: null, workflow: null } }
 
@@ -57,7 +61,7 @@ export function scoreTrial(x: any) {
   const owner = x.ownerCorrect === true
   const workflow = routing && owner && x.operationSuccess === true && x.effect === true && !x.falseSuccess && !x.unexpectedSwitch
 
-  return { validity: 'VALID', reason: !routing ? 'WRONG_BROWSER_OR_NO_BROWSER_ACTION' : !owner ? 'WRONG_OWNER' : !x.operationSuccess ? 'OPERATION_FAILED' : !x.effect ? 'NO_VERIFIED_EFFECT' : x.falseSuccess ? 'FALSE_SUCCESS' : x.unexpectedSwitch ? 'UNEXPECTED_SWITCH' : 'VERIFIED', routing, workflow }
+  return { validity: 'VALID', reason: workflowReason(x, routing, owner), routing, workflow }
 }
 
 /** Use supported buttons; never dismiss an unknown authorization dialog. */
@@ -105,12 +109,9 @@ export function trialFailure(state: any, calls: any[]) {
 }
 
 
-/** Parse the canonical tool receipt; prose or a later recovery never proves success. */
-export function toolExecutionStatus(receipt: any): 'PASS' | 'FAIL' | 'UNPROVEN' {
-  if (!receipt) { return 'UNPROVEN' }
-
-  if (receipt.isError) { return 'FAIL' }
-  let value = receipt.result
+/** Decode canonical JSON/untrusted envelopes without interpreting retrieved prose. */
+export function toolResultPayload(raw: any): any | null {
+  let value = raw
 
   if (typeof value === 'string') {
     let candidate = value.trim()
@@ -119,17 +120,26 @@ export function toolExecutionStatus(receipt: any): 'PASS' | 'FAIL' | 'UNPROVEN' 
       const start = candidate.indexOf('\n{')
       const end = candidate.lastIndexOf('\n</untrusted_tool_result>')
 
-      if (start < 0 || end < start) { return 'UNPROVEN' }
+      if (start < 0 || end < start) { return null }
       candidate = candidate.slice(start + 1, end).trim()
     }
 
     try { value = JSON.parse(candidate) } catch {
-      return /^Tool '[^']+' does not exist/.test(candidate) ? 'FAIL' : 'UNPROVEN'
+      return null
     }
   }
 
-  if (!value || typeof value !== 'object') { return 'UNPROVEN' }
+  if (!value || typeof value !== 'object') { return null }
 
+  return value
+}
+
+/** Execution success remains separate from access, schema validity and effects. */
+export function toolExecutionStatus(receipt: any): 'PASS' | 'FAIL' | 'UNPROVEN' {
+  if (!receipt) { return 'UNPROVEN' }
+  if (receipt.isError) { return 'FAIL' }
+  const value = toolResultPayload(receipt.result)
+  if (!value) { return typeof receipt.result === 'string' && /^Tool '[^']+' does not exist/.test(receipt.result.trim()) ? 'FAIL' : 'UNPROVEN' }
   if (value.success === false || value.error || (typeof value.exit_code === 'number' && value.exit_code !== 0)) { return 'FAIL' }
 
   return value.success === true || value.exit_code === 0 ? 'PASS' : 'UNPROVEN'
@@ -137,6 +147,14 @@ export function toolExecutionStatus(receipt: any): 'PASS' | 'FAIL' | 'UNPROVEN' 
 
 
 /** Offline evaluation of fixture evidence only; never routes tools or supplies facts to the Agent. */
+function hasCompleteClaims(claims: any[], metrics: unknown[]) {
+  return claims.length === metrics.length && new Set(claims.map(claim => claim.metric)).size === metrics.length
+}
+
+function hasSourceQuote(row: any) {
+  return typeof row.quote === 'string' && !!row.quote.trim()
+}
+
 export function assessComparisonEvidence(reference: any[], observations: any[], claims: any[], unitFactors: Record<string, Record<string, number>>) {
   const verdict = (status: string, reason: string) => ({ status, reason })
   const key = (row: any) => JSON.stringify([row.source, row.metric])
@@ -172,7 +190,7 @@ export function assessComparisonEvidence(reference: any[], observations: any[], 
 
     if (row.revision !== original.revision) {return verdict('UNVERIFIED', 'STALE_OBSERVATION')}
 
-    if (typeof original.quote !== 'string' || !original.quote.trim()) {return verdict('UNVERIFIED', 'NO_SOURCE_QUOTE')}
+    if (!hasSourceQuote(original)) {return verdict('UNVERIFIED', 'NO_SOURCE_QUOTE')}
 
     if (typeof row.quote !== 'string' || !row.quote.includes(original.quote)) {return verdict('UNSUPPORTED', 'UNSUPPORTED_SOURCE_QUOTE')}
     const value = normalized(row)
@@ -186,7 +204,7 @@ export function assessComparisonEvidence(reference: any[], observations: any[], 
   if ([...expected.keys()].some(id => !seen.has(id))) {return verdict('UNVERIFIED', 'MISSING_SOURCE_EVIDENCE')}
   const metrics = [...new Set(reference.map(row => row.metric))]
 
-  if (claims.length !== metrics.length || new Set(claims.map(claim => claim.metric)).size !== metrics.length) {return verdict('UNVERIFIED', 'MISSING_COMPARISON_CLAIM')}
+  if (!hasCompleteClaims(claims, metrics)) {return verdict('UNVERIFIED', 'MISSING_COMPARISON_CLAIM')}
 
   for (const claim of claims) {
     const rows = [...expected.values()].filter(row => row.metric === claim.metric)

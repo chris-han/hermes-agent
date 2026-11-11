@@ -95,6 +95,9 @@ export interface PreviewActResult {
    *  the page changed too much for a delta to be the cheaper answer. */
   elements?: PreviewElement[]
   error?: string
+  code?: string
+  path?: string
+  recovery?: { same_context: boolean; next_action: string }
   note?: string
   /** Viewport centre of a located target, for aiming real pointer input at it. */
   point?: { x: number; y: number }

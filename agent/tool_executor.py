@@ -178,7 +178,7 @@ def _parse_tool_arguments(raw_arguments: Any) -> tuple[dict, Optional[str]]:
     if isinstance(arguments, dict):
         return arguments, None
     return {}, json.dumps(
-        {"error": "Invalid tool arguments", "message": "Tool arguments must be a valid JSON object; tool was not executed."},
+        {"error": "Invalid tool arguments", "success": False, "code": "INVALID_ARGUMENT", "path": "arguments", "recovery": {"same_context": True, "next_action": "supply_valid_json_object"}, "message": "Tool arguments must be a valid JSON object; tool was not executed."},
         ensure_ascii=False,
     )
 
@@ -439,6 +439,8 @@ def _unwrap_tool_search_call(
             return underlying, underlying_args, None
         if flatten_probe:
             probe = json.loads(scope_block)
+            if probe.get("code"):
+                return function_name, function_args, scope_block
             scope_block = (
                 f"{probe.get('error', '')} Parameters schema: "
                 f"{json.dumps(probe.get('parameters', {}), ensure_ascii=False)}. "
@@ -725,6 +727,13 @@ def _dispatch_authorized_once(
         block_message, ref.args = resolve() if authorization_gate is None else authorization_gate.run(resolve)
         state.args = ref.args
     block_body = None if block_message is None else {"error": block_message}
+    if block_message is not None and isinstance(block_message, str):
+        try:
+            structured = json.loads(block_message)
+            if isinstance(structured, dict) and structured.get('code') and structured.get('error'):
+                block_body = structured
+        except (TypeError, ValueError):
+            pass
     if block_body is None:
         from agent.desktop_browser_target import state_for_agent
         browser_turn = state_for_agent(agent)
@@ -733,6 +742,13 @@ def _dispatch_authorized_once(
             if block_body is not None:
                 block_error_type = 'browser_target_block'
 
+
+    if block_body is None:
+        from tools.tool_search_validation import browser_call_arguments
+        ref.args, argument_error = browser_call_arguments(ref.name, ref.args)
+        state.args = ref.args
+        if argument_error is not None:
+            block_body, block_error_type = json.loads(argument_error), 'browser_argument_block'
 
     # Checked once, after plugin modify hooks (which may replace arguments) and
     # before guardrails or real dispatch: a copied compression marker in an

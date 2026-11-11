@@ -3,7 +3,7 @@
 import './preview-mind'
 
 import { useStore } from '@nanostores/react'
-import type { PointerEvent as ReactPointerEvent } from 'react'
+import type { PointerEvent as ReactPointerEvent, RefObject } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { requestComposerAttachImages, requestComposerFocus, requestComposerInsert } from '@/app/chat/composer/focus'
@@ -255,6 +255,30 @@ function PreviewLoadError({
       title={loadErrorTitle(error, copy)}
     />
   )
+}
+
+/** Register page text and live guest identity together for the owning tab. */
+function usePreviewPageReader(isWebPreview: boolean, tabId: string | undefined, webviewRef: RefObject<PreviewWebview | null>, browserPageEpochRef: RefObject<number>) {
+  useEffect(() => {
+    if (!isWebPreview || !tabId) {
+      return
+    }
+
+    return registerPreviewPageReader(tabId, async () => {
+      const webview = webviewRef.current
+
+      if (!webview?.executeJavaScript) {
+        throw new Error('preview webview is not ready')
+      }
+
+      const text = await webview.executeJavaScript('document.body ? document.body.innerText : ""')
+
+      return {
+        text: typeof text === 'string' ? text : '',
+        ...guestPage(webview)
+      }
+    }, () => ({guest_id:webviewRef.current?.getWebContentsId?.() ?? -1,page_epoch:browserPageEpochRef.current,loading:webviewRef.current?.isLoading?.() ?? true}))
+  }, [isWebPreview, tabId, webviewRef, browserPageEpochRef])
 }
 
 export function PreviewPane({
@@ -835,30 +859,7 @@ export function PreviewPane({
     return registerPreviewNav(tabId, { back: goBack, forward: goForward, reload: reloadPreview })
   }, [goBack, goForward, isRemoteHtml, isWebPreview, reloadPreview, tabId])
 
-  // Publish the PAGE reader for this tab (the read_preview tool): extract the
-  // rendered page's title + visible text from the webview. innerText (not
-  // textContent) so hidden nodes and script/style bodies stay out, matching
-  // what the user actually sees.
-  useEffect(() => {
-    if (!isWebPreview || !tabId) {
-      return
-    }
-
-    return registerPreviewPageReader(tabId, async () => {
-      const webview = webviewRef.current
-
-      if (!webview?.executeJavaScript) {
-        throw new Error('preview webview is not ready')
-      }
-
-      const text = await webview.executeJavaScript('document.body ? document.body.innerText : ""')
-
-      return {
-        text: typeof text === 'string' ? text : '',
-        ...guestPage(webview)
-      }
-    }, () => ({guest_id:webviewRef.current?.getWebContentsId?.() ?? -1,page_epoch:browserPageEpochRef.current,loading:webviewRef.current?.isLoading?.() ?? true}))
-  }, [isWebPreview, tabId])
+  usePreviewPageReader(isWebPreview, tabId, webviewRef, browserPageEpochRef)
 
   // Publish the SCRIPT runner for this tab: the one channel into the guest
   // page, shared by the tour tool (injected driver.js walkthroughs) and the

@@ -966,11 +966,9 @@ class TestHeaderVariants:
 
 
 class TestSkillTextDescription:
-    """The schema description is fully pinned: header + _HELPERS_DIGEST.
+    """The schema description uses the installed helper API and never shells out.
 
-    The live ``browser-use skill`` fetch was removed after A/B benchmarking
-    showed the pinned digest matches the full skill dump on success rate
-    (36/36 vs 36/36, opus-4.8 + kimi-k3) — see tools/browser_use_cli.py.
+    Helper signatures are derived from the installed source; no live skill fetch.
     """
 
     def test_description_is_pinned_header_plus_digest(self, monkeypatch):
@@ -981,7 +979,7 @@ class TestSkillTextDescription:
         )
         overrides = bu_cli._dynamic_schema_overrides()
         assert overrides["description"].startswith(bu_cli._HEADER_BASE)
-        assert overrides["description"].endswith(bu_cli._HELPERS_DIGEST)
+        assert overrides["description"].endswith(bu_cli._helpers_digest())
 
 
 
@@ -1178,7 +1176,7 @@ class TestLightpandaHeader:
         assert bu_cli._HEADER_VISION not in header
         overrides = bu_cli._dynamic_schema_overrides()
         assert overrides["description"].startswith(bu_cli._HEADER_BASE)
-        assert overrides["description"].endswith(bu_cli._HELPERS_DIGEST)
+        assert overrides["description"].endswith(bu_cli._helpers_digest())
 
     def test_shadowed_engine_keeps_default_header(self, monkeypatch):
         monkeypatch.setattr(

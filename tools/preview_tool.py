@@ -59,12 +59,15 @@ PREVIEW_SCHEMA = {
             "url": {
                 "type": "string",
                 "description": "open: the target. close: one tab (omit for the whole pane).",
+                "pattern": r"\S",
             },
             "label": {"type": "string", "description": "open: optional tab label."},
             "start": {"type": "integer", "description": "read: 0-indexed char offset."},
             "count": {"type": "integer", "description": "read: chars to return (capped per read)."},
         },
         "required": ["action"],
+        "allOf": [{"if": {"properties": {"action": {"const": "open"}}, "required": ["action"]},
+                   "then": {"required": ["url"]}}],
     },
 }
 

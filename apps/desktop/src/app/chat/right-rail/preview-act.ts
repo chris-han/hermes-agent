@@ -764,6 +764,21 @@ async function driveScroll(
  *  (the requesting session's stored id; omitted = the focused session) may
  *  see. `kind` is a bare string: the verb arrives off the wire, and the
  *  history ones never reach the in-page engine. */
+function ownerCheckedRunner(raw: ReturnType<typeof activePreviewScriptRunner>, binding: PreviewBinding | undefined, assertPage: () => void) {
+  return raw && binding ? (code: string) => {assertPage(); return raw(code)} : raw
+}
+
+function ownerCheckedInput(raw: PreviewInputHandle | null, binding: PreviewBinding | undefined, assertPage: () => void): PreviewInputHandle | null {
+  return raw && binding ? {
+    focus: () => {assertPage(); raw.focus()},
+    send: event => {assertPage(); raw.send(event)}
+  } : raw
+}
+
+function isPlainScroll(action: PreviewActAction) {
+  return action.kind === 'scroll' && !action.to && !action.ref && !action.selector
+}
+
 export async function actOnActivePreview(
   action: Omit<PreviewActAction, 'kind'> & { kind: string; expectedBinding?: PreviewBinding },
   signal?: AbortSignal,
@@ -793,11 +808,7 @@ export async function actOnActivePreview(
     return { acted: nav, note: 'Page is loading — call elements to see what is on it.', success: true }
   }
 
-  const rawRun = activePreviewScriptRunner(owner)
-
-  const run = rawRun && action.expectedBinding ? (code: string) => { assertBoundPage();
-
- return rawRun(code) } : rawRun
+  const run = ownerCheckedRunner(activePreviewScriptRunner(owner), action.expectedBinding, assertBoundPage)
 
   if (!run) {
     return { error: NOTHING_OPEN, success: false }
@@ -826,12 +837,7 @@ export async function actOnActivePreview(
     return trip.kind === 'answered' ? trip.result : { acted: typed.kind, note: NAVIGATED, success: true }
   }
 
-  const rawInput = activePreviewInput(owner)
-
-  const input: PreviewInputHandle | null = rawInput && action.expectedBinding ? {
-    focus: () => { assertBoundPage(); rawInput.focus() },
-    send: event => { assertBoundPage(); rawInput.send(event) }
-  } : rawInput
+  const input = ownerCheckedInput(activePreviewInput(owner), action.expectedBinding, assertBoundPage)
 
   if (action.expectedBinding && !input && typed.kind !== 'elements') {
     return {success:false,error:'PANE_UNAVAILABLE'}
@@ -843,7 +849,7 @@ export async function actOnActivePreview(
 
   // A plain page scroll is a wheel gesture. Jumping to an end is not — no hand
   // wheels to the bottom of a long article — so `to` stays a scripted glide.
-  const plain = typed.kind === 'scroll' && !typed.to && !typed.ref && !typed.selector
+  const plain = isPlainScroll(typed)
 
   if (plain && input) {
     return driveScroll(run, input, typed)

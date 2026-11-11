@@ -5,6 +5,7 @@ are stored here. The same turn object follows native/direct/deferred execution.
 """
 from __future__ import annotations
 import json
+import logging
 from pathlib import Path
 from urllib.parse import urlsplit
 from contextlib import contextmanager
@@ -13,6 +14,8 @@ from dataclasses import asdict, dataclass, replace
 from threading import RLock
 from typing import Any
 
+
+logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class BrowserTargetBinding:
@@ -28,7 +31,10 @@ class BrowserTargetBinding:
 
 
 def failure(code: str) -> dict:
-    return {'success': False, 'code': code, 'error': code}
+    next_action = {'STALE_TARGET': 'recheck_owned_page', 'PANE_UNAVAILABLE': 'request_reopen_or_reconnect',
+                   'WRONG_OWNER': 'use_requesting_window', 'TARGET_UNRESOLVED': 'clarify_browser_target'}.get(code, 'correct_request_in_bound_context')
+    return {'success': False, 'code': code, 'error': code, 'retryable': code != 'WRONG_OWNER',
+            'recovery': {'same_context': True, 'next_action': next_action}}
 
 
 class BrowserTurnState:
@@ -71,13 +77,18 @@ class BrowserTurnState:
 
     def guard(self,name,args):
         if self.kind == 'NONE':return None
-        browser=name in ('desktop_preview','drive_preview','annotate_preview','browser_exec','browser_cdp')
+        from tools.registry import registry
+        entry = registry.get_entry(name)
+        independent = name in ('browser_exec', 'browser_cdp') or bool(entry and entry.toolset in ('browser', 'browser_use'))
+        browser = independent or name in ('desktop_preview','drive_preview','annotate_preview')
         if not browser and not (self.kind=='VISIBLE_PANE' and name=='execute_code'):return None
         if self.native_failure is not None:return dict(self.native_failure)
         if self.closed:return failure('PANE_UNAVAILABLE')
         if self.live_check is not None and not self.live_check():return failure('STALE_TARGET')
         if self.kind in ('UNRESOLVED','NONE'):return failure('TARGET_UNRESOLVED')
-        if self.kind=='VISIBLE_PANE' and name in ('browser_exec','browser_cdp','execute_code'):return failure('TARGET_MISMATCH')
+        if self.kind=='VISIBLE_PANE' and (independent or name=='execute_code'):
+            return {**failure('TARGET_MISMATCH'), 'rejected_tool': name, 'target_kind': self.kind,
+                    'recovery': {'same_context': True, 'next_action': 'inspect_bound_pane'}, 'retryable': True}
         if self.kind=='INDEPENDENT' and name in ('desktop_preview','drive_preview','annotate_preview'):return failure('TARGET_MISMATCH')
         if name=='drive_preview' and args.get('ref') and args.get('action')!='elements':
             if self.binding.tab_id is None:return failure('PANE_UNAVAILABLE')
@@ -212,10 +223,15 @@ def prelude(state: BrowserTurnState,agent,message,history):
     """Native preflight is observable through the existing scripted tool-round path."""
     capture=getattr(state,'capture_context',None)
     try:pane_context=parse_result(capture()) if callable(capture) else None
-    except Exception:pane_context=None
+    except Exception as error:
+        logger.exception('Desktop context capture failed: %s', type(error).__name__,
+                         exc_info=(RuntimeError, RuntimeError(type(error).__name__), None))
+        pane_context=None
     try:
         proposal=propose_intent(agent,message,history,pane_context)
-    except Exception:
+    except Exception as error:
+        logger.exception('Desktop intent proposal failed: %s', type(error).__name__,
+                         exc_info=(RuntimeError, RuntimeError(type(error).__name__), None))
         state.native_failure=failure('INTENT_UNAVAILABLE')
         return
     state.binding=replace(state.binding,turn_id=str(getattr(agent,'_current_turn_id',None) or state.binding.turn_id))
@@ -273,3 +289,12 @@ def prelude(state: BrowserTurnState,agent,message,history):
                 return
             state.receipts.append({'phase': 'tool_contract', 'success': True, 'names': needed})
     state.preflight_complete=True
+
+
+def finish_failed_browser_prelude(agent, loop_state, action):
+    state = state_for_agent(agent)
+    if state is not None and state.native_failure is not None:
+        loop_state.final_response = recovery_text(state, getattr(state, 'language', 'en'))
+        loop_state._turn_exit_reason = 'browser_target_unavailable'
+        return 'break'
+    return action

@@ -33,7 +33,14 @@ if not KEY or not BASE.startswith('https://'):
     raise SystemExit('Configured Qwen credential/HTTPS provider missing')
 TOKEN = secrets.token_hex(24)  # fixture capability, not the real provider credential
 LOCK = threading.Lock()
-STATE = {'composition': [], 'preflight_requests': 0, 'case': None, 'counts': {}, 'calls': [], 'failures': [], 'budget_per_case': 18, 'budget_total': 18 if os.environ.get('SEMANTIER_EVAL_DIAGNOSTIC_AC') == 'C' else 36 if os.environ.get('SEMANTIER_EVAL_DIAGNOSTIC_AC') == '1' else 108}
+def execution_limits(variant):
+    if variant == 'execution-contract-diagnostic-v1':
+        return 12, 12  # One task per invocation; two separately gated invocations maximum.
+    diagnostic = os.environ.get('SEMANTIER_EVAL_DIAGNOSTIC_AC')
+    return 18, 18 if diagnostic == 'C' else 36 if diagnostic == '1' else 108
+
+
+STATE = {'composition': [], 'preflight_requests': 0, 'case': None, 'counts': {}, 'calls': [], 'failures': [], 'budget_per_case': 18, 'budget_total': 108}
 HINT = (Path(__file__).resolve().parents[3] / 'semantier-runtime/src/prompts/agents/DESKTOP_BROWSER_CONTEXT.md').read_text(encoding='utf-8').strip()
 INTENT = json.loads((Path(__file__).resolve().parents[3] / 'semantier-runtime/src/prompts/agents/DESKTOP_BROWSER_TARGET_INTENT.json').read_text(encoding='utf-8'))
 
@@ -127,13 +134,13 @@ def request_composition(body):
             'valid': intent or ((direct or deferred) and 'browser_exec' in names and HINT in system)}
 
 
-def capped_output(body):
+def capped_output(body, *, limit=4096):
     result = dict(body)
     keys = [key for key in ('max_tokens', 'max_completion_tokens', 'max_output_tokens') if key in result]
     for key in keys:
-        result[key] = min(int(result[key] or 4096), 4096)
+        result[key] = min(int(result[key] or limit), limit)
     if not keys:
-        result['max_tokens'] = 4096
+        result['max_tokens'] = limit
     return result
 
 
@@ -246,7 +253,8 @@ class Handler(BaseHTTPRequestHandler):
                         }}], 'usage': {'prompt_tokens': 0, 'completion_tokens': 0, 'total_tokens': 0}})
                     save()
                     return self.reply(503, {'error': 'Intentional unscored no-inference submission preflight'})
-                body = capped_output(body)
+                cap = 512 if os.environ.get('SEMANTIER_EVAL_VARIANT') == 'execution-contract-diagnostic-v1' and composition['access_route'] == 'NATIVE_TARGET_INTENT' else 4096
+                body = capped_output(body, limit=cap)
                 if body.get('stream'):
                     body['stream_options'] = {**body.get('stream_options', {}), 'include_usage': True}
                 STATE['counts'][case] = count + 1
@@ -287,6 +295,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == '__main__':
+    STATE['budget_per_case'], STATE['budget_total'] = execution_limits(os.environ.get('SEMANTIER_EVAL_VARIANT'))
     server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
     print(json.dumps({'port': server.server_address[1], 'token': TOKEN, 'model': 'qwen3.5-plus', 'provider_origin_sha256': digest(BASE), 'hint_sha256': digest(HINT)}), flush=True)
     server.serve_forever()
