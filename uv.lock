@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.11, <3.15"
 resolution-markers = [
     "(python_full_version >= '3.14' and sys_platform == 'darwin') or (python_full_version >= '3.14' and sys_platform == 'linux') or (python_full_version >= '3.14' and sys_platform == 'win32')",
@@ -2312,7 +2312,6 @@ wheels = [
 name = "hermes-agent"
 version = "0.0.0"
 source = { editable = "." }
-default-groups = []
 dependencies = [
     { name = "browser-harness" },
     { name = "certifi" },
@@ -2326,6 +2325,7 @@ dependencies = [
     { name = "httptools" },
     { name = "httpx", extra = ["socks"] },
     { name = "jinja2" },
+    { name = "jsonschema" },
     { name = "markdown" },
     { name = "nemo-relay", marker = "(platform_machine == 'aarch64' and 'android' not in platform_release and sys_platform == 'linux') or (platform_machine == 'x86_64' and 'android' not in platform_release and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (platform_machine == 'ARM64' and sys_platform == 'win32') or (platform_machine == 'arm64' and sys_platform != 'linux' and sys_platform != 'win32')" },
     { name = "openai" },
@@ -2723,6 +2723,7 @@ requires-dist = [
     { name = "huggingface-hub", marker = "extra == 'trace-upload'", specifier = "==1.24.0" },
     { name = "jinja2", marker = "python_full_version >= '3.14'", specifier = "==3.1.6" },
     { name = "jinja2", marker = "python_full_version < '3.14' and extra == 'semantier-windows'", specifier = "==3.1.6" },
+    { name = "jsonschema", marker = "python_full_version >= '3.14'", specifier = "==4.26.0" },
     { name = "jsonschema", marker = "extra == 'semantier-windows'", specifier = ">=4.23" },
     { name = "kittentts", marker = "(platform_machine != 'x86_64' and sys_platform == 'darwin' and extra == 'kittentts') or (platform_machine != 'ARM64' and sys_platform == 'win32' and extra == 'kittentts') or (sys_platform != 'darwin' and sys_platform != 'win32' and extra == 'kittentts')", url = "https://github.com/KittenML/KittenTTS/releases/download/0.8.1/kittentts-0.8.1-py3-none-any.whl" },
     { name = "lark-oapi", marker = "extra == 'feishu'", specifier = "==1.6.8" },

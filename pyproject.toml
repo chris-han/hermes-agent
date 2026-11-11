@@ -82,6 +82,8 @@ dependencies = [
   # Requirement and version checks must work in lean installs without
   # relying on another package to bring packaging in transitively.
   "packaging==26.0; python_version >= '3.14'",
+  # Browser tools validate direct and deferred arguments before dispatch.
+  "jsonschema==4.26.0; python_version >= '3.14'",
   # Markdown -> HTML conversion for rich message delivery (Matrix
   # `formatted_body`, and the `send_message` tool's HTML path). Now on the
   # DEFAULT delivery path, not matrix-specific: without it both
