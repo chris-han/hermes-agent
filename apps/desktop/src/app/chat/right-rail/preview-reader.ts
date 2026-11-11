@@ -166,6 +166,7 @@ async function readLivePreviewPage(tab: PreviewTab, reader: PageReader, opts: Pr
   const binding = identity ? {session_id:who.runtimeId ?? who.sessionId ?? '',window_id:previewWindowId,tab_id:tab.id,guest_id:identity.guest_id,page_epoch:identity.page_epoch} : undefined
 
   if (opts.expected_binding && bindingStatus(opts.expected_binding,opts.refresh_binding,sessionId)) { throw new Error(bindingStatus(opts.expected_binding,opts.refresh_binding,sessionId)!) }
+
   return {page, binding}
 }
 

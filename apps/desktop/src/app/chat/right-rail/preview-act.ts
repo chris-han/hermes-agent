@@ -765,7 +765,9 @@ async function driveScroll(
  *  see. `kind` is a bare string: the verb arrives off the wire, and the
  *  history ones never reach the in-page engine. */
 function ownerCheckedRunner(raw: ReturnType<typeof activePreviewScriptRunner>, binding: PreviewBinding | undefined, assertPage: () => void) {
-  return raw && binding ? (code: string) => {assertPage(); return raw(code)} : raw
+  return raw && binding ? (code: string) => {assertPage();
+
+ return raw(code)} : raw
 }
 
 function ownerCheckedInput(raw: PreviewInputHandle | null, binding: PreviewBinding | undefined, assertPage: () => void): PreviewInputHandle | null {

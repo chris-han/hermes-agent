@@ -23,7 +23,9 @@ test.each([
   revision = 8
   await intervene(mutate, read)
   revision = 9
-  await mutate(key('title', 'A'), read, async id => { sent.push(id.expected_revision); return 'ok' })
+  await mutate(key('title', 'A'), read, async id => { sent.push(id.expected_revision);
+
+ return 'ok' })
   expect(sent).toEqual([7, 9])
 })
 
@@ -36,6 +38,8 @@ test('a retained identity on another session survives an acknowledged write', as
   await expect(mutate(other, read, async id => { sent.push(id.expected_revision); throw new Error('timeout') })).rejects.toThrow('timeout')
   revision = 4
   await mutate(key('hidden', true), read, async () => 'ok')
-  await mutate(other, read, async id => { sent.push(id.expected_revision); return 'ok' })
+  await mutate(other, read, async id => { sent.push(id.expected_revision);
+
+ return 'ok' })
   expect(sent).toEqual([3, 3])
 })

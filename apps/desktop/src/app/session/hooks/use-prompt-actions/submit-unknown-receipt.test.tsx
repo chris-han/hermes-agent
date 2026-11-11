@@ -1,7 +1,7 @@
-import { WorkspaceRequestStopped } from '@/api/client'
 import { act, cleanup, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
+import { WorkspaceRequestStopped } from '@/api/client'
 import { en } from '@/i18n/en'
 import { createClientSessionState } from '@/lib/chat-runtime'
 import { readPendingSubmissions } from '@/store/pending-submissions'
@@ -84,15 +84,20 @@ it('an exact retry answered `unknown` keeps the bubble, retires the retry identi
 it.each([false,true])('a user-stopped HTTP send retires its retry without a false receipt or failure (admitted row=%s)', async admitted => {
   let state: ClientSessionState=createClientSessionState()
   const accepted=vi.fn()
+
   const requestGateway=vi.fn(async (_method:string,params?:Record<string,unknown>)=>{
     if(admitted){state={...state,messages:state.messages.map(m=>m.role==='user'?{...m,rowId:263}:m)};$sessionStates.set({'runtime-a':state})}
     throw new WorkspaceRequestStopped(String(params?.submission_id))
   })
+
   const deps={activeSessionIdRef:{current:'runtime-a'},selectedStoredSessionIdRef:{current:'stored-a'},busyRef:{current:false},copy:en.desktop,
     createBackendSessionForSend:vi.fn(async()=>null),getRoutedStoredSessionId:()=>null,getRuntimeIdForStoredSession:()=>'runtime-a',getRouteToken:()=>'same-route',
     requestGateway:requestGateway as GatewayRequest,runtimeIdByStoredSessionIdRef:{current:new Map([['stored-a','runtime-a']])},resumeStoredSession:vi.fn(),
     syncAttachmentsForSubmit:vi.fn(async(sessionId:string)=>({sessionId,attachments:[]})),
-    updateSessionState:vi.fn((_sid:string,updater:(s:ClientSessionState)=>ClientSessionState)=>{state=updater(state);$sessionStates.set({'runtime-a':state});return state})}
+    updateSessionState:vi.fn((_sid:string,updater:(s:ClientSessionState)=>ClientSessionState)=>{state=updater(state);$sessionStates.set({'runtime-a':state});
+
+return state})}
+
   const {result}=renderHook(()=>useSubmitPrompt(deps as never))
   await act(async()=>{await expect(result.current('stopped input',{submission_id:'stopped-1',onAccepted:accepted})).rejects.toMatchObject({name:'WorkspaceRequestStopped',requestId:'stopped-1'})})
   expect(accepted).not.toHaveBeenCalled()

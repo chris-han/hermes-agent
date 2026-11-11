@@ -1,5 +1,5 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { useStore } from '@nanostores/react'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { atom } from 'nanostores'
 import type { ComponentProps } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'

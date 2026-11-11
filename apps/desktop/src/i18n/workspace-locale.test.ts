@@ -1,4 +1,5 @@
 import { beforeEach, expect, it } from 'vitest'
+
 import { workspaceLocaleClient } from './workspace-locale'
 const scope = { userId: 'a', workspaceId: 'a', organizationId: 'org' }
 beforeEach(() => localStorage.clear())
@@ -10,6 +11,7 @@ it('persists Cloud chrome language without Native configuration', async () => {
 })
 it('isolates account, workspace, organization and origin', async () => {
   await workspaceLocaleClient('https://cloud.example', scope)!.saveConfig({ display: { language: 'zh' } })
+
   for (const client of [workspaceLocaleClient('https://other.example', scope), workspaceLocaleClient('https://cloud.example', { ...scope, userId: 'b' }), workspaceLocaleClient('https://cloud.example', { ...scope, workspaceId: 'b' }), workspaceLocaleClient('https://cloud.example', { ...scope, organizationId: 'other' })]) {
     expect(await client!.getConfig()).toEqual({})
   }

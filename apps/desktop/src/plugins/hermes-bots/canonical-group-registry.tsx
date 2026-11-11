@@ -41,6 +41,7 @@ export function CanonicalGroupList({ onOpen }: { onOpen: (key: string) => void }
       // Keep transport/auth failures visible and retryable.
       const unsupported = typeof e === 'object' && e !== null && e.code === -32601
       setAvailable(!unsupported)
+
       if (!unsupported) {setError(e instanceof Error ? e.message : String(e))}
     })
 
