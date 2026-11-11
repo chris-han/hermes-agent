@@ -33,7 +33,7 @@ if not KEY or not BASE.startswith('https://'):
     raise SystemExit('Configured Qwen credential/HTTPS provider missing')
 TOKEN = secrets.token_hex(24)  # fixture capability, not the real provider credential
 LOCK = threading.Lock()
-STATE = {'composition': [], 'preflight_requests': 0, 'case': None, 'counts': {}, 'calls': [], 'failures': [], 'budget_per_case': 18, 'budget_total': 36 if os.environ.get('SEMANTIER_EVAL_DIAGNOSTIC_AC') == '1' else 108}
+STATE = {'composition': [], 'preflight_requests': 0, 'case': None, 'counts': {}, 'calls': [], 'failures': [], 'budget_per_case': 18, 'budget_total': 18 if os.environ.get('SEMANTIER_EVAL_DIAGNOSTIC_AC') == 'C' else 36 if os.environ.get('SEMANTIER_EVAL_DIAGNOSTIC_AC') == '1' else 108}
 HINT = (Path(__file__).resolve().parents[3] / 'semantier-runtime/src/prompts/agents/DESKTOP_BROWSER_CONTEXT.md').read_text(encoding='utf-8').strip()
 INTENT = json.loads((Path(__file__).resolve().parents[3] / 'semantier-runtime/src/prompts/agents/DESKTOP_BROWSER_TARGET_INTENT.json').read_text(encoding='utf-8'))
 

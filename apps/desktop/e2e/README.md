@@ -156,3 +156,5 @@ revision/attribution and ranking adjudication; they do not prove the Agent
 followed the managed evidence procedure. A fetched-page hit is insufficient
 for comparison PASS. Review every factual final claim against actual tool
 receipts and fixture truth; record unsupported or incomparable claims explicitly.
+
+`SEMANTIER_EVAL_DIAGNOSTIC_AC=C` runs only the original C diagnostic with an18-response ceiling. Use it only within the owning plan’s explicit bounded follow-up allowance; it is not an automatic retry or confirmatory score.

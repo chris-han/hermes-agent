@@ -14,9 +14,13 @@ Never silently substitute another browser when the requested Desktop page or bri
 A native per-turn browser binding, when present, fixes the browser target and live page lease. Its owner-checked preflight receipts are current evidence; prior conversation text is not. Use only the bound target, refresh elements after navigation, and treat TARGET_MISMATCH, STALE_TARGET, WRONG_OWNER or PANE_UNAVAILABLE as real failures, never permission to substitute another browser. Native logical pane actions are dispatched to the corresponding open/read or interaction handler; backend executable preferences remain independent of that binding.
 
 
-## Evidence-grounded webpage comparison (procedure v1)
+## Evidence-grounded webpage comparison (procedure v2)
 
-For comparisons across webpages, keep source-reported facts separate from browser measurements:
+For comparisons across webpages, compare what the pages actually report. Unless the user explicitly requests a performance benchmark, do not measure navigation/load time or substitute it for a page's stated metric. A request to compare response time, price, credits or other information on sources is a content-reading task by default.
+
+Read the actual source body after navigation, for example with `js('document.body.innerText')` inside browser_exec. `page_info()` supplies browser metadata; it does not supply the page's factual text. Preserve the source heading and the lines containing every requested metric before selecting or ranking values. Extracting only one requested field does not support a complete comparison. If a requested field is absent, report it as missing rather than replacing it with a browser measurement.
+
+Keep source-reported facts separate from browser measurements:
 
 1. Read each requested source in its own authorized browsing context. Retain the actual page URL, title, observed time and a short source quote supporting each extracted value. Prior conversation and an attractive page title do not establish a current source fact.
 2. Build source-specific observation rows with the original metric label, quoted value, parsed value and unit. Keep navigation/load timings in separate browser-measurement fields. A page's reported response time is not evidence of server processing time or internal latency; do not invent those meanings.

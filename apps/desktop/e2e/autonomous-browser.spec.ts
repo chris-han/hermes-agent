@@ -27,7 +27,10 @@ const exposedPrompts = {
 } as const
 
 const variant = process.env.SEMANTIER_EVAL_VARIANT
-const diagnosticAC = process.env.SEMANTIER_EVAL_DIAGNOSTIC_AC === '1'
+const diagnosticMode = process.env.SEMANTIER_EVAL_DIAGNOSTIC_AC
+
+if (diagnosticMode && !['1', 'C'].includes(diagnosticMode)) { throw new Error('Unknown exposed diagnostic subset') }
+const diagnosticAC = !!diagnosticMode
 const heldout = ['heldout-binding-v1', 'residual-confirm-v2'].includes(variant || '')
 
 if (process.env.SEMANTIER_EVAL_VARIANT && !heldout) { throw new Error('Unknown frozen browser fixture variant') }
@@ -47,7 +50,7 @@ const copy = heldout ? heldoutFixture.page : {
 
 type CaseId = keyof typeof exposedPrompts
 const prompts: Record<CaseId, string> = heldout ? heldoutFixture.prompts : exposedPrompts
-const order: CaseId[] = diagnosticAC ? ['A', 'C'] : process.env.SEMANTIER_EVAL_RECOVER_REMAINING === '1' ? ['C', 'E', 'F', 'D'] : ['A', 'B', 'C', 'E', 'F', 'D']
+const order: CaseId[] = diagnosticAC ? (diagnosticMode === 'C' ? ['C'] : ['A', 'C']) : process.env.SEMANTIER_EVAL_RECOVER_REMAINING === '1' ? ['C', 'E', 'F', 'D'] : ['A', 'B', 'C', 'E', 'F', 'D']
 
 async function listen(server: http.Server): Promise<string> {
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
@@ -231,7 +234,7 @@ test('six frozen real-Qwen Desktop browser workflows', async ({}, info) => {
       model: 'qwen3.5-plus', provider_origin_sha256: observer.provider_origin_sha256,
       configuration: config, browser_hint_sha256: observer.hint_sha256,
       source: process.env.SEMANTIER_EVAL_SOURCE_SHA, run_id: process.env.SEMANTIER_EVAL_RUN_ID,
-      budget: { primary_cases: 6, attempts_per_case: 1, proven_infrastructure_retries_max: 1, upstream_calls_per_case: 18, upstream_calls_total: diagnosticAC ? 36 : 108, output_tokens_per_call: 4096, case_timeout_ms: 240000 },
+      budget: { primary_cases: 6, attempts_per_case: 1, proven_infrastructure_retries_max: 1, upstream_calls_per_case: 18, upstream_calls_total: diagnosticMode === 'C' ? 18 : diagnosticAC ? 36 : 108, output_tokens_per_call: 4096, case_timeout_ms: 240000 },
       first_action_definition: 'First actual native browser operation, including scripted preflight; raw model proposal/first operation and main/native execution recorded separately. Discovery is not task completion; all failed browser attempts remain visible.',
       expected_first: { A: ['desktop_preview', 'drive_preview'], B: ['desktop_preview:open'], C: ['browser_exec'], D: ['desktop_preview', 'drive_preview'], E: ['desktop_preview', 'drive_preview'], F: ['desktop_preview', 'drive_preview'] },
       workflows: { A: 'Same authenticated guest; inspect/elements, type Enabled, Save and verified server save; no independent browser/login', B: 'Desktop open, inspect and click action with observed effect', C: 'Independent browser reads all three origins, correct comparison, no fixture cookies, visible guest unchanged', D: 'Bound preview requests decline through actual registry fault; truthful unavailable/reconnect response, no independent fallback', E: 'Only requesting session A saves Enabled; B unchanged; distinct runtime/window/guest identities', F: 'After hide/restore, same guest and authenticated session; tool verifies persisted Enabled' },
