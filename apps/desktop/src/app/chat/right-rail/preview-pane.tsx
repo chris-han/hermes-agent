@@ -274,9 +274,11 @@ function usePreviewPageReader(isWebPreview: boolean, tabId: string | undefined, 
       let text: unknown
       const bridge = window.hermesDesktop?.previewFrames
       const webContentsId = webview.getWebContentsId?.()
+
       if (bridge) {
         if (typeof webContentsId !== 'number') { throw new Error('PANE_UNAVAILABLE') }
         text = await readPreviewFrameText(createPreviewFrameRunner(() => webviewRef.current, bridge))
+
         if (webviewRef.current !== webview || webview.getWebContentsId?.() !== webContentsId) {throw new Error('STALE_TARGET')}
       } else {
         text = await webview.executeJavaScript('document.body ? document.body.innerText : ""')
@@ -894,10 +896,13 @@ export function PreviewPane({
     const bridge = window.hermesDesktop?.previewFrames
     const runner = createPreviewFrameRunner(() => webviewRef.current, bridge)
     const unregister = registerPreviewFrameRunner(tabId, runner)
+
     return () => {
       unregister()
+
       try {
         const webContentsId = webviewRef.current?.getWebContentsId?.()
+
         if (typeof webContentsId === 'number') { void bridge({ operation: 'dispose', webContentsId }).catch(() => {}) }
       } catch {
         // A destroyed guest disposes its own debugger in the main process.

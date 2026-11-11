@@ -589,14 +589,19 @@ async function driveAction(
   }
 
   let point = found.point
+
   if (mapFramePoint) {
     const mapped = await mapFramePoint(point)
+
     if (!mapped.visible) {return { success: false, error: 'Frame target is hidden or obscured; no input was sent.' }}
     point = mapped
   }
+
   await glideTo(input, point)
+
   if (mapFramePoint) {
     const mapped = await mapFramePoint(found.point)
+
     if (!mapped.visible || Math.abs(mapped.x - point.x) > 1 || Math.abs(mapped.y - point.y) > 1) {
       return { success: false, error: 'Frame target moved or became hidden; no input was sent.' }
     }
@@ -778,13 +783,19 @@ async function driveScroll(
  *  see. `kind` is a bare string: the verb arrives off the wire, and the
  *  history ones never reach the in-page engine. */
 function ownerCheckedRunner(raw: ReturnType<typeof activePreviewScriptRunner>, binding: PreviewBinding | undefined, assertPage: () => void) {
-  return raw && binding ? (code: string) => {assertPage(); return raw(code)} : raw
+  return raw && binding ? (code: string) => {assertPage();
+
+ return raw(code)} : raw
 }
 
 function ownerCheckedInput(raw: PreviewInputHandle | null, binding: PreviewBinding | undefined, assertPage: () => void): PreviewInputHandle | null {
   return raw && binding ? {
-    focus: () => {assertPage(); return raw.focus()},
-    send: event => {assertPage(); return raw.send(event)}
+    focus: () => {assertPage();
+
+ return raw.focus()},
+    send: event => {assertPage();
+
+ return raw.send(event)}
   } : raw
 }
 
@@ -796,14 +807,21 @@ const FRAME_REF = /^frame:([0-9a-f-]{36}):(.*)$/
 
 function prefixFrameResult(result: PreviewActResult, token: string): PreviewActResult {
   const ref = (value: string) => `frame:${token}:${value}`
+
   if (result.elements) {result.elements = result.elements.map(item => ({ ...item, ref: ref(item.ref) }))}
+
   if (result.delta) {
     const delta = result.delta
+
     if (delta.added) {delta.added = delta.added.map(item => ({ ...item, ref: ref(item.ref) }))}
+
     if (delta.changed) {delta.changed = delta.changed.map(item => ({ ...item, ref: ref(item.ref) }))}
+
     if (delta.removed) {delta.removed = delta.removed.map(ref)}
+
     if (delta.rebound) {delta.rebound = delta.rebound.map(ref)}
   }
+
   return result
 }
 
@@ -816,27 +834,41 @@ async function frameInventory(frames: PreviewFrameRunner, action: PreviewActActi
   let rootResult: PreviewActResult = { success: true }
   const requestedMax = Number.isFinite(action.max) ? Math.floor(action.max!) : 120
   const limit = Math.min(120, Math.max(1, requestedMax))
+
   for (let i = 0; i < list.length; i++) {
-    const trip = await runJson(code => { assertPage(); return frames.run(list[i].token, code) }, buildScriptedScript({ ...action, full: true, max: limit }, 0))
+    const trip = await runJson(code => { assertPage();
+
+ return frames.run(list[i].token, code) }, buildScriptedScript({ ...action, full: true, max: limit }, 0))
+
     assertPage()
+
     if (trip.kind !== 'answered') {return { success: false, error: trip.kind === 'failed' ? trip.error : UNANSWERED }}
+
     if (!trip.result.success) {return trip.result}
     const result = i === 0 ? trip.result : prefixFrameResult(trip.result, list[i].token)
+
     if (i === 0) {rootResult = result}
     rows.push(result.elements || [])
   }
+
   // A busy outer navigation must not consume the entire inventory budget
   // before any embedded application gets a chance to appear.
   for (let row = 0; elements.length < limit; row++) {
     let found = false
+
     for (const frameRows of rows) {
       if (frameRows[row]) { elements.push(frameRows[row]); found = true }
+
       if (elements.length === limit) {break}
     }
+
     if (!found) {break}
   }
+
   const result = { ...rootResult, success: true, elements }
+
   if (elements.length && result.note?.startsWith('No interactive elements found')) {delete result.note}
+
   return result
 }
 
@@ -847,6 +879,7 @@ export async function actOnActivePreview(
 ): Promise<PreviewActResult> {
   const expectedBinding = action.expectedBinding ?? activePreviewBinding(owner) ?? undefined
   let frameGuard = false
+
   const assertBoundPage = () => {
     if ((expectedBinding || frameGuard) && signal?.aborted) { throw new Error('STALE_TARGET') }
     const code = expectedBinding ? bindingStatus(expectedBinding,false,owner) : null
@@ -881,26 +914,42 @@ export async function actOnActivePreview(
 
   const frameRunner = activePreviewFrameRunner(owner)
   frameGuard = Boolean(frameRunner)
+
   if (frameRunner && typed.kind === 'elements') {return frameInventory(frameRunner, typed, assertBoundPage)}
   const frameMatch = typed.ref?.match(FRAME_REF)
+
   if (typed.ref?.startsWith('frame:') && !frameMatch) {return { success: false, code: 'STALE_TARGET', error: 'Invalid frame reference; call elements again.' }}
+
   if (frameMatch) {
     if (!frameRunner) {return { success: false, code: 'STALE_TARGET', error: 'Frame is unavailable; call elements again.' }}
     const token = frameMatch[1]
     const localAction = { ...typed, ref: frameMatch[2] }
-    const frameRun: PreviewScriptRunner = code => { assertBoundPage(); return frameRunner.run(token, code) }
+
+    const frameRun: PreviewScriptRunner = code => { assertBoundPage();
+
+ return frameRunner.run(token, code) }
+
     const input = ownerCheckedInput(activePreviewInput(owner), expectedBinding, assertBoundPage)
+
     if (!input || DRIVEN.indexOf(localAction.kind) === -1) {return { success: false, error: 'This frame action requires trusted input.' }}
     let targetPoint: { x: number; y: number } | undefined
+
     const frameInput: PreviewInputHandle = {
-      focus: () => { assertBoundPage(); return input.focus() },
-      send: event => { assertBoundPage(); return frameRunner.input(token, event, targetPoint) }
+      focus: () => { assertBoundPage();
+
+ return input.focus() },
+      send: event => { assertBoundPage();
+
+ return frameRunner.input(token, event, targetPoint) }
     }
+
     const result = await driveAction(frameRun, frameInput, localAction, signal, point => {
       assertBoundPage()
       targetPoint = point
+
       return frameRunner.mapPoint(token, point)
     })
+
     return prefixFrameResult(result, token)
   }
 

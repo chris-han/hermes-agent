@@ -284,9 +284,11 @@ test('a null registry primary classifies the following runtime failure as local'
 
 test('primary HTTP workspace descriptor retains authenticated scope and does not become a Native WS descriptor', () => {
   const scope={userId:'a',workspaceId:'wa',organizationId:'org'}
+
   const connection=createPrimaryRemoteConnection({baseUrl:'https://cloud.example',connectionId:'cloud-a',
     transport:'semantier-workspace-http',workspaceScope:scope,profile:'default',registryScoped:true,
     token:'',wsUrl:''},[],{})
+
   assert.equal(connection.transport,'semantier-workspace-http')
   assert.equal(connection.authMode,undefined)
   assert.deepEqual(connection.workspaceScope,scope)

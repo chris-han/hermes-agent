@@ -1,4 +1,3 @@
-import { modelProviderName } from '@/i18n/model-service'
 import type { ModelOptionProvider, ModelPricing } from '@hermes/shared'
 import { fuzzyRank, modelSearchText } from '@hermes/shared'
 import { useStore } from '@nanostores/react'
@@ -6,6 +5,7 @@ import { useQuery } from '@tanstack/react-query'
 import { type ReactElement, useRef, useState } from 'react'
 
 import { useI18n } from '@/i18n'
+import { modelProviderName } from '@/i18n/model-service'
 import { modelDiscoveryOwnerKey } from '@/lib/model-discovery-scope'
 import { catalogProviderMatches, modelOptionsQueryKey, providerSelectableModels, requestDiscoveredModelOptions } from '@/lib/model-options'
 import { currentPickerSelection } from '@/lib/model-status-label'
