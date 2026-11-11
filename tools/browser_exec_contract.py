@@ -60,11 +60,11 @@ def installed_api(workspace: str | Path | None = None) -> dict[str, Any]:
         custom = Path(workspace) / 'agent_helpers.py'
         if custom.is_file():
             extra, extra_names, extra_methods, extra_source = _source_namespace(custom)
-            helpers.update(extra); names.update(extra_names); methods.update(extra_methods)
+            helpers.update(extra); names.update(name for name in extra_names if not name.startswith('_')); methods.update(extra_methods)
             source += extra_source
     return {'module': 'browser_harness.helpers', 'version': importlib.metadata.version('browser-harness'),
             'source_sha256': hashlib.sha256((source + runtime_source).encode()).hexdigest(),
-            'helpers': helpers, 'exports': sorted(names), 'globals': sorted(names | runtime_names | set(vars(builtins))), 'cdp_methods': methods}
+            'helpers': helpers, 'exports': sorted(names), 'globals': sorted({name for name in names if not name.startswith('_')} | runtime_names | set(vars(builtins))), 'cdp_methods': methods}
 
 
 def _module_spec(name: str):
@@ -104,7 +104,7 @@ def _import_error(node, api):
             requested = [alias.name for alias in node.names] if isinstance(node, ast.ImportFrom) else []
             code = 'UNSUPPORTED_HELPER_IMPORT' if any(name in api['helpers'] for name in requested) else 'IMPORT_UNAVAILABLE'
             return _error(code, api=api, module=module, line=node.lineno, requested_names=requested)
-    if isinstance(node, ast.ImportFrom) and modules[0] == api['module'].rsplit('.', 1)[0]:
+    if isinstance(node, ast.ImportFrom) and (modules[0] == api['module'].rsplit('.', 1)[0] or modules[0].startswith(api['module'].rsplit('.', 1)[0] + '.')):
         spec = _module_spec(modules[0])
         _, exported, _, _ = _source_namespace(Path(spec.origin))
         for alias in node.names:

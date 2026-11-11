@@ -148,3 +148,20 @@ def test_helper_namespace_lookup_is_validated_without_executing_it(expression, c
 def test_known_literal_helper_lookup_and_ordinary_getattr_remain_supported():
     assert validate_code('from browser_harness import helpers as h\noperation = getattr(h, "goto_url")') is None
     assert validate_code('import math\nprint(getattr(math, "pi"))') is None
+
+
+
+def test_private_helper_is_not_assumed_to_be_preimported():
+    assert validate_code('_load_env()')['code'] == 'UNKNOWN_HELPER'
+    assert validate_code('from browser_harness.helpers import _load_env') is None
+
+
+def test_custom_private_names_are_not_copied_into_the_runtime_namespace(tmp_path):
+    (tmp_path / 'agent_helpers.py').write_text('def _fixture_private():\n return 1\n')
+    api = installed_api(workspace=tmp_path)
+    assert '_fixture_private' not in api['globals']
+    assert validate_code('_fixture_private()', api=api)['code'] == 'UNKNOWN_HELPER'
+
+
+def test_existing_wrong_sdk_module_cannot_import_an_unavailable_helper():
+    assert validate_code('from browser_harness.daemon import goto_url')['code'] == 'UNSUPPORTED_HELPER_IMPORT'
