@@ -439,7 +439,9 @@ test('authenticated owned Electron page remains distinct from independent automa
           await page.getByRole('button', { name: 'Send', exact: true }).click()
           await expect(page.getByText('I cannot access that page live in this conversation right now.', { exact: false })).toBeVisible({ timeout: 90_000 })
           expect(await page.evaluate(() => (globalThis as any).__bindingDeclined)).toContain('preview.read')
-          const attempted = requests.slice(requestsBefore)
+          // Background model-availability probes have no Chat Completions messages.
+          // Count every actual Agent request, including an unexpected main completion.
+          const attempted = requests.slice(requestsBefore).filter(body => Array.isArray(body.messages))
           expect(attempted).toHaveLength(1)
           expect(attempted[0].tools[0].function.name).toBe('browser_target_intent')
           expect(clicks).toBe(3)
