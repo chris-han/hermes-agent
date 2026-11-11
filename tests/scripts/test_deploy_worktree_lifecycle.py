@@ -115,8 +115,8 @@ def test_latest_rejects_incompatible_modes_before_sync(tmp_path, options):
     assert set(tmp_path.iterdir()) == before
 
 
-@pytest.mark.parametrize('state', ['equal', 'behind', 'ahead', 'diverged'])
-def test_latest_requires_local_main_to_be_ancestor_of_fetched_main(tmp_path, state):
+@pytest.mark.parametrize('state', ['equal', 'behind', 'ahead', 'diverged', 'dirty', 'conflict'])
+def test_latest_preserves_local_changes_and_syncs_main(tmp_path, state):
     pwsh = shutil.which('pwsh') or shutil.which('pwsh.exe')
     if not pwsh:
         pytest.skip('PowerShell 7 unavailable')
@@ -130,17 +130,26 @@ def test_latest_requires_local_main_to_be_ancestor_of_fetched_main(tmp_path, sta
         ).strip()
 
     def commit(value):
-        (repo / 'value').write_text(value)
+        (repo / ('value' if state == 'conflict' else value)).write_text(value)
         run_git('add', '.')
         run_git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
                 'commit', '-qm', value)
         return run_git('rev-parse', 'HEAD')
 
     run_git('init', '-q')
+    run_git('config', 'user.name', 'Fixture')
+    run_git('config', 'user.email', 'fixture@example.invalid')
     base = commit('base')
-    fetched = commit('remote') if state in ('behind', 'diverged') else base
+    fetched = commit('remote') if state in ('behind', 'diverged', 'conflict') else base
     run_git('checkout', '--detach', base)
-    before = commit('local') if state in ('ahead', 'diverged') else base
+    before = commit('local') if state in ('ahead', 'diverged', 'conflict') else base
+    remote = tmp_path / 'remote.git'
+    subprocess.check_call([git, 'init', '--bare', '-q', str(remote)])
+    run_git('remote', 'add', 'origin', str(remote))
+    run_git('push', 'origin', fetched + ':refs/heads/main')
+    if state == 'dirty':
+        (repo / 'untracked').write_text('preserve me')
+        (repo / 'base').write_text('tracked change')
     # Bind FETCH_HEAD without network or touching the maintained checkouts.
     (repo / '.git/FETCH_HEAD').write_text(fetched + '\n')
     script = tmp_path / 'sync-guard.ps1'
@@ -149,7 +158,7 @@ $ErrorActionPreference='Stop'
 $e=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile($args[0],[ref]$null,[ref]$e)
 if($e){throw ($e | Out-String)}
-foreach($name in @('Get-SourceGit','Run')){
+foreach($name in @('Get-SourceGit','Run','Save-RuntimeChanges')){
   $f=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$true)
   . ([scriptblock]::Create($f.Extent.Text))
 }
@@ -167,6 +176,7 @@ foreach($statement in $f.Body.EndBlock.Statements){
 }
 if(!$segment.Count){throw 'Missing production sync guard'}
 $Runtime=$args[1]
+Save-RuntimeChanges $Runtime
 & ([scriptblock]::Create($segment -join "`n"))
 ''', encoding='utf-8')
     operator = Path(__file__).resolve().parents[2] / 'scripts/deploy-ecs.ps1'
@@ -174,11 +184,19 @@ $Runtime=$args[1]
         [pwsh, '-NoProfile', '-File', str(script), str(operator), str(repo), git],
         capture_output=True, text=True, timeout=30, check=False,
     )
-    if state in ('equal', 'behind'):
-        assert result.returncode == 0, result.stdout + result.stderr
-        assert run_git('rev-parse', 'HEAD') == fetched
-    else:
+    if state == 'conflict':
         assert result.returncode != 0
-        assert 'ahead of or diverged from GitHub main' in result.stderr
         assert run_git('rev-parse', 'HEAD') == before
+        assert run_git('ls-files', '--unmerged')
+        return
+    assert result.returncode == 0, result.stdout + result.stderr
+    run_git('merge-base', '--is-ancestor', fetched, 'HEAD')
+    run_git('merge-base', '--is-ancestor', before, 'HEAD')
+    published = subprocess.check_output(
+        [git, '--git-dir', str(remote), 'rev-parse', 'refs/heads/main'], text=True,
+    ).strip()
+    assert run_git('rev-parse', 'HEAD') == published
+    if state == 'dirty':
+        assert run_git('show', 'HEAD:untracked') == 'preserve me'
+        assert run_git('show', 'HEAD:base') == 'tracked change'
     assert not run_git('status', '--porcelain')

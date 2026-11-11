@@ -33,7 +33,8 @@
   release lock/database, split packages, bundles, ZIPs, or CH2/R2 operations.
   -BuildOnly with -Commit stops after the unsigned package build: no signing, install or publication.
   -BuildSource must equal <selected Output>\source; detached worktrees share Hermes objects.
-  -Latest runs a safe GitHub Runtime main fast-forward and pinned Hermes submodule sync before building.
+  -Latest commits Runtime changes, merges/pushes GitHub main and syncs pinned Hermes before building.
+  Dirty Hermes or a changed gitlink requires separate qualification. Git conflicts stop without discarding work.
   -Latest -WhatIf is read-only. If syncing changes this script, re-run it to load the new operator.
   -LocalSetup builds a signed semantier-setup-ch0.exe for the single adjacent MSIX; never uploads.
   -SetupOnly builds/reuses and publishes Setup in its own ecs-setup-* run.
@@ -264,9 +265,23 @@ function Get-SourceGit([string]$Root,[string[]]$Arguments) {
   if($LASTEXITCODE -ne 0){throw ('Native Git inspection failed: '+($Arguments -join ' '))}
   return ($value -join "`n").Trim()
 }
+function Save-RuntimeChanges([string]$Runtime) {
+  if(Get-SourceGit $Runtime @('ls-files','--unmerged')){throw 'Resolve existing Runtime merge conflicts before sync.'}
+  if(Get-SourceGit $Runtime @('status','--porcelain','--','hermes-agent')){
+    throw 'Hermes changes require separate qualification; commit and synchronize the qualified pin before -Latest.'
+  }
+  if(Get-SourceGit $Runtime @('status','--porcelain','--untracked-files=all')){
+    Report-Status 'Saving Runtime local changes in Git before GitHub sync.'
+    Run 'git.exe' @('-C',$Runtime,'add','--all')
+    Run 'git.exe' @('-C',$Runtime,'commit','-m','chore: save local Runtime changes before latest deployment')
+    if(Get-SourceGit $Runtime @('status','--porcelain','--untracked-files=all')){
+      throw 'Runtime changed during auto-commit; retry after active writers finish.'
+    }
+  }
+}
 function Sync-GitHubLatestSource([string]$Runtime,[string]$Operator) {
   if($WhatIfPreference){
-    Write-Output 'PLAN_ONLY: fast-forward GitHub Runtime main, synchronize pinned Hermes, then build exact gitlink; no files changed.'
+    Write-Output 'PLAN_ONLY: commit Runtime changes, merge/push GitHub main, synchronize pinned Hermes, then build exact gitlink; no files changed.'
     return $null
   }
   if(!$IsWindows){throw '-Latest requires native Windows PowerShell and Git for Windows.'}
@@ -291,24 +306,19 @@ function Sync-GitHubLatestSource([string]$Runtime,[string]$Operator) {
   if($remote -cnotmatch '^(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)chris-han/semantier-runtime(?:\.git)?$'){
     throw 'origin is not the expected chris-han/semantier-runtime GitHub repository.'
   }
-  if(Get-SourceGit $Runtime @('status','--porcelain','--untracked-files=all')){
-    throw 'Runtime checkout is dirty; preserve local changes and synchronize manually.'
-  }
   $hermes=Join-Path $Runtime 'hermes-agent'
   if((Test-Path -LiteralPath $hermes) -and (Get-SourceGit $hermes @('status','--porcelain','--untracked-files=all'))){
     throw 'Hermes submodule is dirty; preserve changes before GitHub sync.'
   }
+  Save-RuntimeChanges $Runtime
   $operatorHash=(Get-FileHash -LiteralPath $Operator -Algorithm SHA256).Hash
-  Report-Status 'GitHub sync: fetch and fast-forward Runtime main.'
+  Report-Status 'GitHub sync: fetch and merge Runtime main, then push preserved local commits.'
   Run 'git.exe' @('-C',$Runtime,'fetch','--no-tags','origin','main')
   $fetched=Get-SourceGit $Runtime @('rev-parse','FETCH_HEAD^{commit}')
   $local=Get-SourceGit $Runtime @('rev-parse','HEAD')
-  if((Get-SourceGit $Runtime @('merge-base',$local,$fetched)) -cne $local){
-    throw 'Runtime main is ahead of or diverged from GitHub main; preserve local commits and synchronize manually.'
-  }
-  Run 'git.exe' @('-C',$Runtime,'merge','--ff-only',$fetched)
+  Run 'git.exe' @('-C',$Runtime,'merge','--no-edit',$fetched)
   if((Get-SourceGit $Runtime @('rev-parse','HEAD')) -cne $fetched){
-    throw 'Runtime HEAD does not equal fetched GitHub main; refusing to build.'
+    Run 'git.exe' @('-C',$Runtime,'push','origin','HEAD:refs/heads/main')
   }
   Run 'git.exe' @('-C',$Runtime,'submodule','sync','--','hermes-agent')
   Run 'git.exe' @('-C',$Runtime,'submodule','update','--init','--checkout','--','hermes-agent')
