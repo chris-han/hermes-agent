@@ -21,8 +21,8 @@ const close = (server: http.Server) =>
 // eslint-disable-next-line no-empty-pattern -- Electron owns its browser window.
 test('desktop tools read and drive an authenticated cross-origin frame', async ({}, info) => {
   test.skip(
-    process.platform !== 'linux' || !process.env.HERMES_DESKTOP_DEV_SERVER,
-    'source Electron fixture requires WSL/Linux and the source renderer'
+    !process.env.HERMES_DESKTOP_DEV_SERVER,
+    'source Electron fixture requires the source renderer'
   )
   test.setTimeout(240_000)
   const results: any[] = []

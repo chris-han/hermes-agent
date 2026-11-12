@@ -344,6 +344,7 @@ test('desktop preview opens redirects and reopens owned navigated pages', async 
     expect(combined).toContain('Click trusted: true')
     expect(combined).toContain('Type trusted: true synthetic')
   } finally {
+    await info.attach('public-gateway-results', { body: JSON.stringify(results), contentType: 'application/json' })
     console.log('FRAME_GATEWAY_RESULT_COUNT', results.length)
 
     try {
