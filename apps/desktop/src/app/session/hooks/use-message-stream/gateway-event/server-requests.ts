@@ -5,7 +5,7 @@ import {
   requestPopoutPreviewAct,
   requestPopoutPreviewRead
 } from '@/app/chat/right-rail/preview-popout-bridge'
-import { activePreviewBinding, bindingStatus, type PreviewBinding, readActivePreview } from '@/app/chat/right-rail/preview-reader'
+import { activePreviewBinding, activePreviewCommittedEpoch, bindingStatus, isActivePreviewLoading, type PreviewBinding, readActivePreview } from '@/app/chat/right-rail/preview-reader'
 import {
   abortPreviewTyping,
   releasePreviewTyping,
@@ -571,7 +571,14 @@ const previewOpen: Handler = ({ deps, request, sessionId, isActiveSession }) => 
   }
 
   const signal = trackPreviewTyping(request.id)
-  const alreadyRequested = previewTabsFor(owner).some(tab => tab.target.url === url)
+
+  const initialPages = new Map(previewTabsFor(owner).map(tab => {
+    const tabOwner = { ...owner, tabId: tab.id }
+    const binding = activePreviewBinding(tabOwner, true)
+
+    return [tab.id, { binding, committed: binding ? activePreviewCommittedEpoch(tabOwner, binding.guest_id) : undefined }]
+  }))
+
   void (async () => {
     const code = expected ? bindingStatus(expected, false, owner, true) : null
 
@@ -583,8 +590,6 @@ const previewOpen: Handler = ({ deps, request, sessionId, isActiveSession }) => 
       throw new Error('STALE_TARGET')
     }
 
-    const initialBinding = activePreviewBinding(owner, true)
-
     const tabId = openPreview(
       { kind: 'url', url, label: str(request.params.label), source: 'agent' },
       owner.sessionId, owner.runtimeId, owner.profile, expected?.tab_id
@@ -594,6 +599,10 @@ const previewOpen: Handler = ({ deps, request, sessionId, isActiveSession }) => 
       throw new Error('WRONG_OWNER')
     }
 
+    const initialPage = initialPages.get(tabId)
+    const initialBinding = initialPage?.binding
+    let observedGuest = initialBinding?.guest_id
+    const selectedOwner = { ...owner, tabId }
     const deadline = Date.now() + 8000
 
     while (Date.now() < deadline) {
@@ -601,19 +610,74 @@ const previewOpen: Handler = ({ deps, request, sessionId, isActiveSession }) => 
         throw new Error('STALE_TARGET')
       }
 
+      let beforeRead: PreviewBinding | null = null
+
       try {
-        const result = await readActivePreview({ require_live: true }, { ...owner, tabId })
+        if (!previewTabsFor(selectedOwner).some(tab => tab.id === tabId && tab.target.url === url)) {
+          throw new Error('STALE_TARGET')
+        }
 
-        const changed = !initialBinding || result?.binding?.guest_id !== initialBinding.guest_id ||
-          result?.binding?.page_epoch !== initialBinding.page_epoch
+        const status = expected ? bindingStatus(expected, true, selectedOwner, true) : null
 
-        if (result?.binding && !result.url.startsWith('about:') && (alreadyRequested || changed)) {
+        if (status) { throw new Error(status) }
+        beforeRead = activePreviewBinding(selectedOwner, true)
+
+        if (beforeRead && observedGuest !== undefined && beforeRead.guest_id !== observedGuest) {
+          throw new Error('STALE_TARGET')
+        }
+
+        observedGuest ??= beforeRead?.guest_id
+        const result = await readActivePreview({ require_live: true }, selectedOwner)
+        const binding = result?.binding
+
+        if (signal.aborted || !previewRequestIsCurrent(deps, sessionId) ||
+          !previewTabsFor(selectedOwner).some(tab => tab.id === tabId && tab.target.url === url)) {
+          throw new Error('STALE_TARGET')
+        }
+
+        if (expected) {
+          const currentStatus = bindingStatus(expected, true, selectedOwner, true)
+
+          if (currentStatus) { throw new Error(currentStatus) }
+        }
+
+        if (binding) {
+          const liveStatus = bindingStatus(binding, false, selectedOwner)
+
+          if (liveStatus) { throw new Error(liveStatus) }
+
+          if (observedGuest !== undefined && binding.guest_id !== observedGuest) { throw new Error('STALE_TARGET') }
+          observedGuest ??= binding.guest_id
+        }
+
+        const committed = binding ? activePreviewCommittedEpoch(selectedOwner, binding.guest_id) : undefined
+
+        const changed = !initialBinding || (initialPage?.committed !== undefined && committed !== undefined &&
+          committed !== initialPage.committed)
+
+        if (binding && !result.url.startsWith('about:') && (result.url === url || changed)) {
           answerValue(request, result)
 
           return
         }
-      } catch {
-        // The selected owned guest may still be mounting or navigating.
+      } catch (error) {
+        if (!(error instanceof Error)) { throw error }
+
+        if (error.message !== 'PANE_UNAVAILABLE') {
+          const afterRead = activePreviewBinding(selectedOwner, true)
+
+          const frameTransition = /\b(?:STALE_FRAME|PREVIEW_FRAME_UNAVAILABLE)\b|Session with given id not found/.test(error.message)
+          const epochChanged = beforeRead && afterRead && beforeRead.page_epoch !== afterRead.page_epoch
+
+          const racedNavigation = beforeRead && afterRead && beforeRead.guest_id === afterRead.guest_id &&
+            (observedGuest === undefined || afterRead.guest_id === observedGuest) &&
+            previewTabsFor(selectedOwner).some(tab => tab.id === tabId && tab.target.url === url) &&
+            ((error.message === 'STALE_TARGET' && epochChanged) ||
+              (frameTransition && (epochChanged || isActivePreviewLoading(selectedOwner, afterRead.guest_id))))
+
+          if (!racedNavigation) { throw error }
+        }
+        // Retry a missing guest or a read interrupted by navigation in the same guest.
       }
 
       await new Promise(resolve => setTimeout(resolve, 100))

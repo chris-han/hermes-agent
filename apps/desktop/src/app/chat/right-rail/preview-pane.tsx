@@ -258,7 +258,7 @@ function PreviewLoadError({
 }
 
 /** Register page text and live guest identity together for the owning tab. */
-function usePreviewPageReader(isWebPreview: boolean, tabId: string | undefined, webviewRef: RefObject<PreviewWebview | null>, browserPageEpochRef: RefObject<number>) {
+function usePreviewPageReader(isWebPreview: boolean, tabId: string | undefined, webviewRef: RefObject<PreviewWebview | null>, browserPageEpochRef: RefObject<number>, browserCommittedEpochRef: RefObject<number>) {
   useEffect(() => {
     if (!isWebPreview || !tabId) {
       return
@@ -286,8 +286,8 @@ function usePreviewPageReader(isWebPreview: boolean, tabId: string | undefined, 
         text: typeof text === 'string' ? text : '',
         ...guestPage(webview)
       }
-    }, () => ({guest_id:webviewRef.current?.getWebContentsId?.() ?? -1,page_epoch:browserPageEpochRef.current,loading:webviewRef.current?.isLoading?.() ?? true}))
-  }, [isWebPreview, tabId, webviewRef, browserPageEpochRef])
+    }, () => ({guest_id:webviewRef.current?.getWebContentsId?.() ?? -1,page_epoch:browserPageEpochRef.current,committed_epoch:browserCommittedEpochRef.current,loading:webviewRef.current?.isLoading?.() ?? true}))
+  }, [isWebPreview, tabId, webviewRef, browserPageEpochRef, browserCommittedEpochRef])
 }
 
 export function PreviewPane({
@@ -311,6 +311,7 @@ export function PreviewPane({
   const previewContentRef = useRef<HTMLDivElement | null>(null)
   const webviewRef = useRef<PreviewWebview | null>(null)
   const browserPageEpochRef = useRef(0)
+  const browserCommittedEpochRef = useRef(0)
   const noteGuestReady = usePreviewGuestOffscreen(webviewRef, tabId)
   const previewServerRestart = useStore($previewServerRestart)
   const consoleHeight = useStore(consoleState.$height)
@@ -868,7 +869,7 @@ export function PreviewPane({
     return registerPreviewNav(tabId, { back: goBack, forward: goForward, reload: reloadPreview })
   }, [goBack, goForward, isRemoteHtml, isWebPreview, reloadPreview, tabId])
 
-  usePreviewPageReader(isWebPreview, tabId, webviewRef, browserPageEpochRef)
+  usePreviewPageReader(isWebPreview, tabId, webviewRef, browserPageEpochRef, browserCommittedEpochRef)
 
   // Publish the SCRIPT runner for this tab: the one channel into the guest
   // page, shared by the tour tool (injected driver.js walkthroughs) and the
@@ -1235,8 +1236,11 @@ export function PreviewPane({
 
     const onNavigate = (event: Event) => {
       browserPageEpochRef.current++
-      const detail = event as Event & { url?: string }
+      const detail = event as Event & { isMainFrame?: boolean; url?: string }
 
+      if (detail.isMainFrame !== false) {
+        browserCommittedEpochRef.current++
+      }
       if (detail.url) {
         setLoadError(null)
         setCurrentUrl(detail.url)
@@ -1470,7 +1474,7 @@ export function PreviewPane({
       })
       setLoading(false)
     })
-  }, [annotateGuest, consoleState, copy.unreachableDescription, isRemoteHtml, isWebPreview, target.url])
+  }, [annotateGuest, consoleState, copy.unreachableDescription, isRemoteHtml, isWebPreview, target])
 
   return (
     <aside

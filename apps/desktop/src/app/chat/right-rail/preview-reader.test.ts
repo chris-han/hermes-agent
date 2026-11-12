@@ -331,6 +331,19 @@ return {text:'live',title:'lease',url:'http://localhost/lease'}},()=>({guest_id:
     } finally {unregister();closeRightRail()}
   })
 
+  it('does not substitute the requested address when a live page URL is unavailable', async () => {
+    closeRightRail()
+    const tabId = openPreview(urlTarget('http://localhost/requested'))!
+    const unregister = registerPreviewPageReader(tabId, async () => ({ text: 'live', title: '', url: '' }), () => ({ guest_id: 2, page_epoch: 1, loading: false }))
+
+    try {
+      await expect(readActivePreview({ require_live: true })).rejects.toThrow('PANE_UNAVAILABLE')
+    } finally {
+      unregister()
+      closeRightRail()
+    }
+  })
+
   it('never treats an identity-only or loading page as live access', async()=>{
     closeRightRail()
     const tabId=openPreview(urlTarget('http://localhost/loading'))!

@@ -10,6 +10,7 @@ import { $connection, $selectedStoredSessionId } from '@/store/session'
 import { PreviewTilePane } from './preview'
 import { forgetPreviewConsole, previewConsoleState } from './preview-console-store'
 import { PreviewPane } from './preview-pane'
+import { activePreviewCommittedEpoch } from './preview-reader'
 
 // The consent dialog has its own test file and needs a QueryClientProvider;
 // these tests exercise the pane's console/watch/webview wiring, not the
@@ -333,6 +334,42 @@ describe('PreviewPane console state', () => {
     expect((rendered.getByRole('textbox', { name: 'Address' }) as HTMLInputElement).value).toBe(
       'http://localhost:5174/two'
     )
+  })
+
+  it.each(['did-navigate', 'did-navigate-in-page'])(
+    'reopens the requested URL after %s without replacing the guest',
+    async navigationEvent => {
+      const target = { kind: 'url' as const, label: 'Preview', source: 'test', url: 'https://test.example/start' }
+      const rendered = render(<PreviewPane tabId="reopen-guest" target={target} />)
+      const guest = rendered.container.querySelector('webview') as HTMLElement & Record<string, unknown>
+      const loadURL = vi.fn(async () => undefined)
+      Object.assign(guest, { loadURL, getURL: () => 'https://test.example/elsewhere' })
+      const event = new Event(navigationEvent)
+      Object.assign(event, { url: 'https://test.example/elsewhere' })
+      await act(async () => { guest.dispatchEvent(event) })
+      await act(async () => { rendered.rerender(<PreviewPane tabId="reopen-guest" target={{ ...target }} />) })
+      expect(rendered.container.querySelector('webview')).toBe(guest)
+      expect(loadURL).toHaveBeenCalledWith(target.url)
+    }
+  )
+
+  it('only advances the committed navigation marker for the main frame', async () => {
+    closeRightRail()
+    const target = { kind: 'url' as const, label: 'Preview', source: 'test', url: 'https://test.example/start' }
+    const id = openPreview(target)!
+    const rendered = render(<PreviewPane tabId={id} target={target} />)
+    const guest = rendered.container.querySelector('webview') as HTMLElement & Record<string, unknown>
+    Object.assign(guest, { getWebContentsId: () => 3, isLoading: () => false })
+    expect(activePreviewCommittedEpoch(null, 3)).toBe(0)
+    const subframe = new Event('did-navigate-in-page')
+    Object.assign(subframe, { isMainFrame: false, url: 'https://frame.example/route' })
+    await act(async () => { guest.dispatchEvent(subframe) })
+    expect(activePreviewCommittedEpoch(null, 3)).toBe(0)
+    const main = new Event('did-navigate-in-page')
+    Object.assign(main, { isMainFrame: true, url: 'https://test.example/route' })
+    await act(async () => { guest.dispatchEvent(main) })
+    expect(activePreviewCommittedEpoch(null, 3)).toBe(1)
+    closeRightRail()
   })
 
   it('continues comment numbering in one conversation and resets it when the conversation changes', async () => {

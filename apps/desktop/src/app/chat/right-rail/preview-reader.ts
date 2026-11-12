@@ -79,13 +79,14 @@ type PageReader = () => Promise<PreviewPage>
 export const PREVIEW_READ_MAX_CHARS = 24_000
 
 const readers = new Map<string, PageReader>()
-const identities = new Map<string, () => { guest_id: number; page_epoch: number; loading?: boolean }>()
+type PreviewIdentity = { guest_id: number; page_epoch: number; committed_epoch?: number; loading?: boolean }
+const identities = new Map<string, () => PreviewIdentity>()
 
 export function activePreviewBinding(owner?: PreviewOwner, includeLoading = false): PreviewBinding | null {
   const tab=resolveActivePreviewTab(previewTabsFor(owner))
 
   if(!tab){return null}
-  let identity: {guest_id:number;page_epoch:number;loading?:boolean} | undefined
+  let identity: PreviewIdentity | undefined
 
   try {identity=identities.get(tab.id)?.()} catch {return null}
 
@@ -93,6 +94,30 @@ export function activePreviewBinding(owner?: PreviewOwner, includeLoading = fals
   const who=ownerIdentity(owner ?? null)
 
   return {session_id:who.runtimeId ?? who.sessionId ?? '',window_id:previewWindowId,tab_id:tab.id,guest_id:identity.guest_id,page_epoch:identity.page_epoch}
+}
+
+/** Top-level navigation commits are separate from starts and subframe changes. */
+export function activePreviewCommittedEpoch(owner: PreviewOwner, guestId: number): number | undefined {
+  const tab = resolveActivePreviewTab(previewTabsFor(owner))
+
+  if (!tab) { return undefined }
+  try {
+    const identity = identities.get(tab.id)?.()
+
+    return identity?.guest_id === guestId ? identity.committed_epoch : undefined
+  } catch { return undefined }
+}
+
+/** Whether the owned tab's registered guest currently reports a load in progress. */
+export function isActivePreviewLoading(owner: PreviewOwner, guestId: number): boolean {
+  const tab = resolveActivePreviewTab(previewTabsFor(owner))
+
+  if (!tab) { return false }
+  try {
+    const identity = identities.get(tab.id)?.()
+
+    return identity?.guest_id === guestId && identity.loading === true
+  } catch { return false }
 }
 
 export function bindingStatus(expected: PreviewBinding, allowEpochRefresh = false, owner?: PreviewOwner, allowLoading = false): 'WRONG_OWNER' | 'STALE_TARGET' | null {
@@ -106,7 +131,7 @@ export function bindingStatus(expected: PreviewBinding, allowEpochRefresh = fals
 }
 
 /** Register a live preview's page reader; returns an idempotent unregister. */
-export function registerPreviewPageReader(tabId: string, reader: PageReader, identity?: () => {guest_id:number;page_epoch:number;loading?:boolean}): () => void {
+export function registerPreviewPageReader(tabId: string, reader: PageReader, identity?: () => PreviewIdentity): () => void {
   readers.set(tabId, reader)
 
   if (identity) { identities.set(tabId, identity) }
@@ -169,6 +194,7 @@ async function readLivePreviewPage(tab: PreviewTab, reader: PageReader, opts: Pr
   const binding = identity ? {session_id:who.runtimeId ?? who.sessionId ?? '',window_id:previewWindowId,tab_id:tab.id,guest_id:identity.guest_id,page_epoch:identity.page_epoch} : undefined
 
   if (opts.expected_binding && bindingStatus(opts.expected_binding,opts.refresh_binding,sessionId)) { throw new Error(bindingStatus(opts.expected_binding,opts.refresh_binding,sessionId)!) }
+  if (opts.require_live && !page.url) { throw new Error('PANE_UNAVAILABLE') }
   return {page, binding}
 }
 
