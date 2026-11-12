@@ -103,7 +103,7 @@ test('default Cloud sign-in recovers, approves and persists through real Desktop
     if (route === '/api/cloud-provider/device/start') {
       envelope.data.verification_uri = origin + '/billing/connect?intent_ref=' + intentRef
     } else if (route === `/api/cloud-provider/device/${intentRef}/poll`) {
-      if (rejectFirstPoll) {
+      if (rejectFirstPoll && approved) {
         rejectFirstPoll = false
         res.writeHead(410)
         res.end('{"detail":"expired"}')
@@ -140,10 +140,13 @@ test('default Cloud sign-in recovers, approves and persists through real Desktop
           data: [
             {
               id: 'synthetic-model',
+              account_id: 'synthetic-account',
+              protocol: 'openai_chat_completions',
+              max_output_tokens: 4096,
               revision: 'fixture-v1',
               context_window: 32768,
               capabilities: { reasoning: false },
-              request_parameters: { reasoning_controls: {} }
+              request_parameters: { output: 'max_tokens', reasoning_controls: {} }
             }
           ]
         })
@@ -287,6 +290,7 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
       ;(globalThis as any).__cloudExternalCalls = 0
       ipcMain.removeHandler('hermes:openExternal')
       ipcMain.handle('hermes:openExternal', () => { (globalThis as any).__cloudExternalCalls++; throw new Error('External launch forbidden') })
+
       if (trust.fingerprint) {
         app.on('certificate-error', (event: { preventDefault(): void }, _contents: unknown, url: string, _error: string, certificate: { fingerprint: string }, callback: (trusted: boolean) => void) => {
           if (new URL(url).origin === trust.origin && certificate.fingerprint.toUpperCase() === trust.fingerprint.toUpperCase()) {
@@ -302,6 +306,10 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
       const approveCurrent = async () => {
         const guest = page.locator('webview').last()
         await expect(guest).toBeVisible()
+        const declineSnapshot = page.getByRole('button', { name: 'Not now', exact: true })
+        await declineSnapshot.waitFor({ state: 'visible', timeout: 5000 }).catch(() => undefined)
+
+        if (await declineSnapshot.isVisible()) { await declineSnapshot.click() }
         await expect.poll(() => guest.evaluate((view: any) => view.getURL())).toContain('/billing/connect?intent_ref=')
         await expect.poll(() => guest.evaluate((view: any) => view.executeJavaScript(`Boolean(document.querySelector('form button'))`)), { timeout: 30_000 }).toBe(true)
         const rect = await guest.evaluate((view: any) => view.executeJavaScript(`(() => {const rect=document.querySelector('form button').getBoundingClientRect();return {x:rect.x,y:rect.y,width:rect.width,height:rect.height};})()`))
@@ -309,7 +317,9 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
         await page.mouse.click(host!.x + rect.x + rect.width / 2, host!.y + rect.y + rect.height / 2)
         await expect.poll(() => guest.evaluate((view: any) => view.executeJavaScript('document.body.innerText'))).toContain('Synthetic approval complete')
       }
+
       const decline = page.getByRole('button', { name: 'Not now', exact: true })
+
       if (await decline.isVisible()) { await decline.click() }
       await approveCurrent()
       await expect(page.getByText('This sign-in session expired. Try again to open a new authorization page.', { exact: true })).toBeVisible({ timeout: 30_000 })
@@ -327,6 +337,7 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
       if (await fixture.button('Begin').isVisible()) {
         await fixture.button('Begin').click()
       }
+
       await expect(model).toBeVisible()
       await expect(fixture.button('Begin')).not.toBeVisible()
       await expect(page.getByRole('button', { name: 'Try again', exact: true })).not.toBeVisible()
