@@ -67,7 +67,9 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
       })
       await fixture.stage('billing.embedded-static-en-zh', async () => {
         await app.evaluate(({ BrowserWindow }) => {const window = BrowserWindow.getAllWindows()[0]; window.unmaximize(); window.setSize(1280, 900)})
-        await expect.poll(async () => { const box=await guest.boundingBox(); const width=await guest.evaluate((view: any)=>view.executeJavaScript('innerWidth')); return Math.abs(width-(box?.width || 0)) }, { timeout: 15_000 }).toBeLessThan(3)
+        await expect.poll(async () => { const box=await guest.boundingBox(); const width=await guest.evaluate((view: any)=>view.executeJavaScript('innerWidth'));
+
+ return Math.abs(width-(box?.width || 0)) }, { timeout: 15_000 }).toBeLessThan(3)
 
         for (const [language, toggle] of [['en', ['EN']], ['zh', ['中']]] as const) {
           await clickGuest([...toggle])
@@ -107,11 +109,31 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
         await expect(page.getByRole('button', { name: 'Try again', exact: true })).not.toBeVisible()
         expect(fs.readFileSync(configPath, 'utf8').includes('capability_revision:')).toBe(true)
       })
+      await fixture.stage('billing.login-reuse-and-real-logout', async () => {
+        const protectedStore = fs.readFileSync(sandbox.hermesHome + '/.cloud-device.bin')
+        await page.getByRole('button', { name: 'Reload page', exact: true }).click()
+        await expect.poll(() => guest.evaluate((view: any) => view.executeJavaScript('document.body.innerText')), { timeout: 45_000 }).toMatch(/Log out|退出登录/)
+        await clickGuest(['Log out', '退出登录'])
+        await expect.poll(() => guest.evaluate((view: any) => view.executeJavaScript(`fetch('/auth/context',{cache:'no-store'}).then(r=>r.json()).then(v=>v.authenticated)`)), { timeout: 30_000 }).toBe(false)
+        await expect.poll(() => guest.evaluate((view: any) => view.executeJavaScript('document.body.innerText'))).not.toContain('semantier-billing-qa-1112')
+        expect(await guest.evaluate((view: any) => view.executeJavaScript(`fetch('/api/billing/commerce/accounts',{cache:'no-store'}).then(r=>r.status)`))).toBe(401)
+        const back = page.getByRole('button', { name: 'Back', exact: true })
+
+        if (await back.isEnabled()) { await back.click() }
+        await expect.poll(() => guest.evaluate((view: any) => view.executeJavaScript('document.body.innerText'))).not.toContain('unified-fixture')
+        expect(fs.readFileSync(sandbox.hermesHome + '/.cloud-device.bin').equals(protectedStore)).toBe(true)
+      })
       await fixture.stage('cloud.controlled-local-chat', async () => {
         const composer = page.getByRole('textbox', { name: 'Message', exact: true })
         await composer.fill('Run the local connection check.')
         await composer.press('Enter')
-        await expect(page.getByText('Cloud connection verified.', { exact: true })).toBeVisible({ timeout: 90_000 })
+        const response = page.getByText('Cloud connection verified.', { exact: true })
+        const failure = page.getByRole('alert').filter({ hasText: "couldn't finish this reply" })
+        await expect.poll(async () => (await response.isVisible()) || (await failure.isVisible()), { timeout: 90_000 }).toBe(true)
+
+        if (await failure.isVisible()) { await failure.locator('summary').click() }
+        await expect(response).toBeVisible()
+
       })
       await fixture.stage('cloud.restart-persistence', async () => {
         const restarted = await fixture.restart()
