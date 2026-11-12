@@ -247,19 +247,20 @@ def _cloud_http(origin):
         if urlsplit(origin).scheme != 'https':
             raise CloudConnectionError('cloud_config_invalid', 'HTTP/3 requires HTTPS.', 422, recovery='provider_settings')
         try:
-            from curl_cffi import requests
+            from curl_cffi import requests, CurlOpt
         except ImportError:
             raise CloudConnectionError('cloud_http3_unavailable', 'HTTP/3 transport unavailable.', 503, recovery='http3') from None
-        options = {'http_version': 'v3only', 'trust_env': False}
+        # trust_env=False alone does not stop libcurl's native proxy env lookup.
+        options = {'http_version': 'v3only', 'trust_env': False,
+                   'curl_options': {CurlOpt.PROXY: b''}}
         ca_file = settings.get('ssl_ca_cert')
         if ca_file is not None:
             if not isinstance(ca_file, str) or not ca_file.strip():
                 raise CloudConnectionError('cloud_config_invalid', 'Invalid Cloud CA certificate path.', 422, recovery='tls_configuration')
             options['verify'] = ca_file.strip()
         if sys.platform == 'win32' and ca_file is None:
-            from curl_cffi import CurlOpt
             # libcurl CURLSSLOPT_NATIVE_CA: include the Windows ROOT and CA stores.
-            options['curl_options'] = {CurlOpt.SSL_OPTIONS: 1 << 4}
+            options['curl_options'][CurlOpt.SSL_OPTIONS] = 1 << 4
         return requests, options
     import requests
     return requests, {}

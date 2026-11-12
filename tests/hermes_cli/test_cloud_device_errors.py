@@ -213,7 +213,7 @@ def test_windows_http3_retains_strict_version_and_trust_store(native, monkeypatc
     if custom_ca:
         settings['ssl_ca_cert'] = 'fixture-ca.pem'
     monkeypatch.setattr(device, '_config', lambda: {'providers': {'semantier-cloud': settings}})
-    curl = SimpleNamespace(requests=object(), CurlOpt=SimpleNamespace(SSL_OPTIONS=216))
+    curl = SimpleNamespace(requests=object(), CurlOpt=SimpleNamespace(SSL_OPTIONS=216, PROXY=10004))
     monkeypatch.setitem(sys.modules, 'curl_cffi', curl)
     client, options = device._cloud_http('https://fixture.invalid')
     assert client is curl.requests
@@ -221,9 +221,9 @@ def test_windows_http3_retains_strict_version_and_trust_store(native, monkeypatc
     assert options['trust_env'] is False
     if custom_ca:
         assert options['verify'] == 'fixture-ca.pem'
-        assert 'curl_options' not in options
+        assert options['curl_options'] == {10004: b''}
     else:
-        assert options['curl_options'] == {216: 1 << 4}
+        assert options['curl_options'] == {10004: b'', 216: 1 << 4}
         assert 'verify' not in options  # Never disable certificate validation.
 
 
