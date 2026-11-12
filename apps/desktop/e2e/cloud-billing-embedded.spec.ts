@@ -34,6 +34,7 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
     expect(await app.evaluate(() => (globalThis as any).__billingExternalCalls)).toBe(0)
 
     const clickGuest = async (labels: string[], selector = 'button') => {
+      await expect.poll(() => guest.evaluate((view: any, args) => view.executeJavaScript(`Array.from(document.querySelectorAll(${JSON.stringify(args.selector)})).some(node => ${JSON.stringify(args.labels)}.includes(node.textContent.trim()) && !node.disabled)`), { labels, selector }), { timeout: 15_000 }).toBe(true)
       const rect = await guest.evaluate((view: any, args) => view.executeJavaScript(`(() => { const node = Array.from(document.querySelectorAll(${JSON.stringify(args.selector)})).find(node => ${JSON.stringify(args.labels)}.includes(node.textContent.trim())); if (!node || node.disabled) throw new Error('Guest action unavailable'); node.scrollIntoView({block:'center'}); const rect=node.getBoundingClientRect(); return {x:rect.x,y:rect.y,width:rect.width,height:rect.height}; })()`), { labels, selector })
       const host = await guest.boundingBox()
       expect(host).toBeTruthy()
@@ -61,7 +62,7 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
 
 
         }, { guestId, credentialsFile })
-        await clickGuest(['Sign in', '登录'], 'form button[type="submit"]')
+        await clickGuest(['Continue With Password', '使用密码继续'], 'form button[type="submit"]')
         await expect.poll(() => guest.evaluate((view: any) => view.executeJavaScript('document.body.innerText')), { timeout: 60_000 }).toMatch(/Log out|退出登录/)
       })
       await fixture.stage('billing.explicit-approval', async () => {
