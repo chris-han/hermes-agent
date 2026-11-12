@@ -31,3 +31,18 @@ describe('Cloud sign-in recovery boundary', () => {
     expect(decodeCloudSignInError({ code: 'cloud_profile_mismatch', profile: 'C:\\Users\\private' }).profile).toBeNull()
   })
 })
+
+it('does not present a local gateway 503 as a received Cloud response', () => {
+  expect(
+    decodeCloudSignInError(
+      new Error(
+        '503: {"detail":{"code":"cloud_http3_unavailable","http_status":null,"error_source":"transport","transport":"http3","transport_code":7,"operation":"start"}}'
+      )
+    )
+  ).toEqual({
+    code: 'cloud_http3_unavailable',
+    profile: null,
+    httpStatus: undefined,
+    diagnostics: 'transport · http3 · start · curl 7'
+  })
+})

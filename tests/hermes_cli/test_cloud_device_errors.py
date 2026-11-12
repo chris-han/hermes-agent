@@ -22,7 +22,7 @@ def test_fresh_default_sign_in_uses_managed_origin_without_changing_model(native
 
     monkeypatch.setattr(device, '_wire', wire)
     assert device.start()['flow'] == 'device_code'
-    assert seen == ['https://cloud.semantier.com']
+    assert seen == ['https://cloud.semantier.cn']
     assert device._config()['model']['provider'] == 'custom'
     assert 'providers' not in device._config()
 
@@ -284,3 +284,31 @@ def test_optional_null_sections_preserve_existing_legacy_cloud_origin(native, mo
     session = device.start()['session_id']
     assert device.poll(session)['status'] == 'approved'
     assert device._config()['model']['provider'] == 'semantier-cloud'
+
+
+@pytest.mark.parametrize('origin', ['https://cloud.semantier.cn', 'https://cloud.semantier.com', 'http://127.0.0.1:8765'])
+def test_explicit_origin_remains_owned_by_profile(native, origin):
+    device, home = native
+    (home / 'config.yaml').write_text('providers:\n  semantier-cloud:\n    base_url: '+origin+'/v1\n')
+    assert device._new_state({})['origin'] == origin
+
+
+def test_transport_error_never_claims_received_http_status(native):
+    device, _ = native
+    failure = requests.ConnectionError('PRIVATE')
+    failure.code = 7
+    public = device._transport_error(failure, transport='http3')
+    assert public.code == 'cloud_http3_unavailable'
+    assert public.detail()['http_status'] is None
+    assert public.detail()['error_source'] == 'transport'
+    assert public.detail()['transport_code'] == 7
+
+
+def test_received_503_and_protocol_422_are_distinct(native):
+    device, _ = native
+    server = device.CloudDeviceError(503)
+    assert server.detail()['http_status'] == 503
+    assert server.detail()['error_source'] == 'server'
+    protocol = device.CloudDeviceError(422)
+    assert protocol.code == 'cloud_protocol_unsupported'
+    assert protocol.recovery == 'upgrade_client'

@@ -26,7 +26,7 @@ _LOCK_HOLDER = threading.local()
 
 # Canonical public service, also linked by the provider catalog. An explicit
 # profile deployment/portal always wins; selecting a model still waits for approval.
-DEFAULT_CLOUD_ORIGIN = 'https://cloud.semantier.com'
+DEFAULT_CLOUD_ORIGIN = 'https://cloud.semantier.cn'
 
 
 class CloudConnectionError(ValueError):
@@ -34,11 +34,12 @@ class CloudConnectionError(ValueError):
     def __init__(self, code, message, status=502, *, retryable=False, recovery='retry'):
         self.code, self.status = code, status
         self.retryable, self.recovery = retryable, recovery
+        self.diagnostics = {}
         super().__init__(message)
 
     def detail(self):
         return {'code': self.code, 'message': str(self),
-                'retryable': self.retryable, 'recovery': self.recovery}
+                'retryable': self.retryable, 'recovery': self.recovery, **self.diagnostics}
 
 
 class CloudDeviceError(CloudConnectionError):
@@ -50,9 +51,11 @@ class CloudDeviceError(CloudConnectionError):
             404: ('cloud_session_unavailable', 'This Cloud authorization session is unavailable. Start sign-in again.', 'reauthorize'),
             409: ('cloud_server_conflict', 'Semantier Cloud reported a sign-in conflict. Retry the same connection.', 'retry'),
             410: ('cloud_session_expired', 'This Cloud authorization has expired. Start sign-in again.', 'reauthorize'),
+            422: ('cloud_protocol_unsupported', 'Cloud protocol unsupported by this Hermes version. Update the app or check the configured service.', 'upgrade_client'),
             429: ('cloud_rate_limited', 'Semantier Cloud is busy. Wait briefly, then retry.', 'retry'),
         }.get(status, ('cloud_server_error', 'Semantier Cloud could not complete sign-in (HTTP '+str(status)+'). Retry later.', 'retry'))
         super().__init__(code, message, status, retryable=status >= 500 or status in {409, 429}, recovery=recovery)
+        self.diagnostics = {'error_source': 'server', 'http_status': status}
 
 
 class CloudCredentialError(CloudConnectionError):
@@ -61,7 +64,7 @@ class CloudCredentialError(CloudConnectionError):
         super().__init__('cloud_credential_expired', message, 401, recovery='reauthorize')
 
 
-def _transport_error(error):
+def _transport_error(error, *, transport=None):
     """Use exception types/libcurl codes, never echo or classify private URL prose."""
     pending, seen = [error], set()
     codes, names, dns, tls = set(), set(), False, False
@@ -78,13 +81,20 @@ def _transport_error(error):
             codes.add(code)
         pending.extend([item.__cause__, item.__context__, *item.args])
         pending.extend([getattr(item, 'reason', None)])
+    def public(code, message, status, **kwargs):
+        result = CloudConnectionError(code, message, status, **kwargs)
+        result.diagnostics = {'error_source': 'transport', 'http_status': None}
+        if codes:
+            result.diagnostics['transport_code'] = min(codes)
+        return result
+
     if dns or codes & {5, 6} or 'nameresolutionerror' in names:
-        return CloudConnectionError('cloud_dns_failed', 'Semantier Cloud DNS lookup failed. Check DNS or the configured provider.', 503, retryable=True, recovery='network')
+        return public('cloud_dns_failed', 'Semantier Cloud DNS lookup failed. Check DNS or the configured provider.', 503, retryable=True, recovery='network')
     if tls or codes & {35, 51, 58, 60, 77, 83, 90} or any('ssl' in name or 'certificate' in name for name in names):
-        return CloudConnectionError('cloud_tls_failed', 'Semantier Cloud TLS certificate validation failed. Check the trusted certificate and provider settings.', 502, recovery='tls_configuration')
-    if codes & {1, 4, 95, 96}:
-        return CloudConnectionError('cloud_http3_unavailable', 'Semantier Cloud HTTP/3 transport is unavailable. Check HTTP/3 support and UDP connectivity.', 503, retryable=True, recovery='http3')
-    return CloudConnectionError('cloud_network_unavailable', 'Semantier Cloud could not be reached. Check the network and retry the same connection.', 503, retryable=True, recovery='network')
+        return public('cloud_tls_failed', 'Semantier Cloud TLS certificate validation failed. Check the trusted certificate and provider settings.', 502, recovery='tls_configuration')
+    if codes & {1, 4, 95, 96} or transport == 'http3':
+        return public('cloud_http3_unavailable', 'Semantier Cloud HTTP/3 transport is unavailable. Check HTTP/3 support and UDP connectivity.', 503, retryable=True, recovery='http3')
+    return public('cloud_network_unavailable', 'Semantier Cloud could not be reached. Check the network and retry the same connection.', 503, retryable=True, recovery='network')
 
 
 def _digest(value):
@@ -285,7 +295,10 @@ def _wire(origin, operation, body=None, bearer=None):
             raise CloudConnectionError('cloud_response_invalid', 'Cloud connection contract mismatch.', 502, recovery='retry')
         return result
     except requests.exceptions.RequestException as error:
-        raise _transport_error(error) from None
+        public = _transport_error(error, transport='http3' if session_options.get('http_version') == 'v3only' else 'http')
+        public.diagnostics.update(operation=operation.rsplit('/', 1)[-1],
+                                  transport='http3' if session_options.get('http_version') == 'v3only' else 'http')
+        raise public from None
 
 
 def _public(state):

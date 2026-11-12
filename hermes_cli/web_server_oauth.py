@@ -148,7 +148,7 @@ def _semantier_cloud_status():
 
 _OAUTH_PROVIDER_CATALOG: tuple[dict[str, Any], ...] = (
     {"id": "semantier-cloud", "name": "Semantier Cloud", "flow": "device_code",
-     "cli_command": "", "docs_url": "https://cloud.semantier.com", "status_fn": _semantier_cloud_status},
+     "cli_command": "", "docs_url": "https://cloud.semantier.cn", "status_fn": _semantier_cloud_status},
     # status_fn None → dispatched via auth.get_<provider>_auth_status.
     {"id": "nous", "name": "Nous Portal", "flow": "device_code", "cli_command": "hermes auth add nous",
      "docs_url": "https://portal.nousresearch.com", "status_fn": None},

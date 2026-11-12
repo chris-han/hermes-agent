@@ -21,6 +21,7 @@ const CODES = new Set([
   'cloud_session_cancelled',
   'cloud_rate_limited',
   'cloud_server_error',
+  'cloud_protocol_unsupported',
   'cloud_internal_error'
 ])
 
@@ -28,6 +29,7 @@ export function decodeCloudSignInError(raw: unknown): {
   code: string
   profile: null | string
   httpStatus?: number
+  diagnostics?: string
 } {
   let payload: unknown = raw
   let httpStatus: number | undefined
@@ -69,7 +71,28 @@ export function decodeCloudSignInError(raw: unknown): {
     httpStatus = status
   }
 
+  if (detail.http_status === null && detail.error_source === 'transport') {
+    httpStatus = undefined
+  }
+
+  const diagnostics = [
+    ['transport', 'server'].includes(String(detail.error_source)) ? detail.error_source : '',
+    ['http3', 'http'].includes(String(detail.transport)) ? detail.transport : '',
+    ['start', 'poll', 'claim', 'ack', 'cancel', 'readiness', 'catalog'].includes(String(detail.operation))
+      ? detail.operation
+      : '',
+    typeof detail.transport_code === 'number' &&
+    Number.isInteger(detail.transport_code) &&
+    detail.transport_code >= 1 &&
+    detail.transport_code <= 999
+      ? `curl ${detail.transport_code}`
+      : ''
+  ]
+    .filter(Boolean)
+    .join(' · ')
+
   return {
+    ...(diagnostics ? { diagnostics } : {}),
     code: typeof candidate === 'string' && CODES.has(candidate) ? candidate : 'cloud_unknown_failure',
     profile,
     httpStatus

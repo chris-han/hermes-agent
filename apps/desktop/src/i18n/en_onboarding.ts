@@ -28,6 +28,7 @@ const cloudSignInErrors: Record<string, string> = {
   cloud_session_expired: 'This sign-in session expired. Try again to open a new authorization page.',
   cloud_session_cancelled: 'This sign-in was cancelled. Try again when you are ready.',
   cloud_rate_limited: 'Semantier Cloud is busy. Wait briefly, then try again.',
+  cloud_protocol_unsupported: 'Cloud protocol unsupported by this Hermes version. Update the app or check the configured service.',
   cloud_server_error: 'Semantier Cloud could not complete sign-in. Retry later or use an API key.',
   cloud_internal_error: 'Semantier Cloud sign-in could not complete. Try again or use an API key.',
   cloud_unknown_failure: 'Semantier Cloud sign-in did not finish. Try again or use an API key.'

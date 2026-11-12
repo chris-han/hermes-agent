@@ -205,6 +205,7 @@ function signInDidNotFinish(provider: OAuthProvider, raw: unknown): { message: s
       message: translateNow('onboarding.cloudSignInError', failure.code, failure.profile || flowScope?.profile || 'default'),
       detail: [
         failure.code,
+        failure.diagnostics,
         failure.httpStatus ? `HTTP ${failure.httpStatus}` : '',
         failure.profile ? `Profile: ${failure.profile}` : ''
       ]
