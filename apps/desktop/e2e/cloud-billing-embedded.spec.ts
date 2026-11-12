@@ -131,7 +131,24 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
         const failure = page.getByRole('alert').filter({ hasText: "couldn't finish this reply" })
         await expect.poll(async () => (await response.isVisible()) || (await failure.isVisible()), { timeout: 90_000 }).toBe(true)
 
-        if (await failure.isVisible()) { await failure.locator('summary').click() }
+        if (await failure.isVisible()) {
+          await failure.locator('summary').click()
+          const directory = sandbox.hermesHome + '/logs'
+
+          for (const name of fs.readdirSync(directory).filter(name => name.endsWith('.log'))) {
+            const lines = fs.readFileSync(directory + '/' + name, 'utf8').split('\n').slice(-1200)
+
+            const frames = lines.flatMap(line => {
+              if (/^\s*File .*line \d+/.test(line)) { return [line] }
+              const exception = line.match(/^([A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception)):/)
+
+              return exception ? [exception[1]] : []
+            }).slice(-50)
+
+            if (frames.length) { console.log('OWNED_GATEWAY_FAILURE_STACK', JSON.stringify({ name, frames })) }
+          }
+        }
+
         await expect(response).toBeVisible()
 
       })
