@@ -18,6 +18,7 @@ import {
   submitOnboardingCode
 } from './onboarding'
 import { captureOnboardingScope, requestOnboardingGateway } from './onboarding-scope'
+import { $previewTabs, closeRightRail, openPreview } from './preview'
 
 const gatewayMocks = vi.hoisted(() => ({ requestGatewayForAgent: vi.fn(async () => ({ ok: true })) }))
 
@@ -35,6 +36,7 @@ beforeEach(() => {
   vi.useFakeTimers()
   authFlow = 'device_code'
   deferStart = undefined
+  closeRightRail()
   requests.length = 0
   setApiRequestConnection(owner.connectionId)
   setApiRequestProfile(owner.profile)
@@ -307,7 +309,8 @@ it('deduplicates concurrent Cloud starts on the same owning profile', async () =
   expect(requests.filter(request => request.path.endsWith('/start'))).toHaveLength(1)
   release()
   await Promise.all([first, second])
-  expect(window.hermesDesktop.openExternal).toHaveBeenCalledTimes(1)
+  expect(window.hermesDesktop.openExternal).not.toHaveBeenCalled()
+  expect($previewTabs.get().map(tab => tab.target.url)).toContain('https://example.invalid/device')
   expectOwnerRequests()
 })
 
@@ -342,4 +345,14 @@ it('starts a reopened same-owner Cloud flow after the retired start is cancelled
   expect(requests.filter(request => request.method === 'DELETE')).toHaveLength(1)
   expect($desktopOnboarding.get().flow.status).toBe('polling')
   expectOwnerRequests()
+})
+
+it('opens Cloud Billing separately and preserves an authenticated-style tab', async () => {
+  const ctx = beginContext()
+  const original = openPreview({ kind: 'url', url: 'https://bank.invalid/session', source: 'https://bank.invalid/session', label: 'Existing session' })
+  await startProviderOAuth({ ...makeOAuthProvider('semantier-cloud'), flow: 'device_code' }, ctx)
+  expect(window.hermesDesktop.openExternal).not.toHaveBeenCalled()
+  expect($previewTabs.get()).toHaveLength(2)
+  expect($previewTabs.get().find(tab => tab.id === original)?.target.url).toBe('https://bank.invalid/session')
+  expect($previewTabs.get().some(tab => tab.target.url === 'https://example.invalid/device')).toBe(true)
 })

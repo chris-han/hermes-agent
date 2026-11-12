@@ -29,7 +29,10 @@ import { setMainModelAssignment } from '@/store/model-assignment'
 import { dismissNotification, notify, notifyError } from '@/store/notifications'
 import { afterOnboardingSurfaceClear, onboardingSurfaceOpen } from '@/store/onboarding-presence'
 import { captureOnboardingScope, type OnboardingScope } from '@/store/onboarding-scope'
+import { openPreview, previewProfileScope } from '@/store/preview'
 import { withGatewayProfileActivationLock } from '@/store/profile'
+import { $activeSessionId } from '@/store/session'
+import { $focusedStoredSessionId } from '@/store/session-focus'
 import type { OAuthProvider, OAuthStartResponse } from '@/types/hermes'
 
 type PkceStart = Extract<OAuthStartResponse, { flow: 'pkce' }>
@@ -965,6 +968,7 @@ async function beginProviderOAuth(provider: OAuthProvider, ctx: OnboardingContex
     return
   }
 
+  const browserOwner = { profile: previewProfileScope(), session: $focusedStoredSessionId.get(), runtime: $activeSessionId.get() }
   setFlow({ status: 'starting', provider })
 
   try {
@@ -977,7 +981,20 @@ async function beginProviderOAuth(provider: OAuthProvider, ctx: OnboardingContex
     }
 
     const browserUrl = start.flow === 'device_code' ? start.verification_url : start.auth_url
-    await openSignInUrl(browserUrl)
+
+    if (provider.id === 'semantier-cloud') {
+      // The backend validates the portal origin and intent. Retain its exact URL;
+      // never replace another working browser tab or retarget an agent's tools.
+      if (browserOwner.profile !== previewProfileScope() || browserOwner.session !== $focusedStoredSessionId.get() || browserOwner.runtime !== $activeSessionId.get()) {
+        await cancelOAuthSession(start.session_id, ctx.scope)
+
+        return
+      }
+
+      openPreview({ kind: 'url', label: 'Semantier Billing', source: browserUrl, url: browserUrl }, browserOwner.session, browserOwner.runtime, browserOwner.profile, undefined, 'matching-url')
+    } else {
+      await openSignInUrl(browserUrl)
+    }
 
     if (generation !== flowGeneration) {
       await cancelOAuthSession(start.session_id, ctx.scope).catch(() => undefined)

@@ -23,6 +23,7 @@ import {
   startProviderOAuth,
   submitOnboardingCode
 } from '@/store/onboarding'
+import { openPreview } from '@/store/preview'
 
 import { DecodedLabel, GlyphText, HackeryButton, useScramble } from './glyph'
 import { providerTitle } from './providers'
@@ -146,7 +147,9 @@ export function FlowPanel({
       {flow.start.user_code ? (
         <DeviceCode code={flow.start.user_code} copied={flow.copied} onCopy={() => void copyDeviceCode()} />
       ) : null}
-      <FlowFooter left={<DocsLink href={flow.start.verification_url}>{t.onboarding.reopenVerification}</DocsLink>}>
+      <FlowFooter left={flow.provider.id === 'semantier-cloud'
+        ? <Button onClick={() => openPreview({ kind: 'url', label: 'Semantier Billing', source: flow.start.verification_url, url: flow.start.verification_url }, undefined, undefined, undefined, undefined, 'matching-url')} variant="text">{t.onboarding.reopenVerification}</Button>
+        : <DocsLink href={flow.start.verification_url}>{t.onboarding.reopenVerification}</DocsLink>}>
         <span aria-live="polite" className="flex items-center gap-2 text-xs text-muted-foreground">
           <Loader2 className="size-3 animate-spin" />
           {t.onboarding.waitingAuthorize}

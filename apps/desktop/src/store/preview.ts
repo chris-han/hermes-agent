@@ -927,7 +927,8 @@ export function openPreview(
   /** The asking agent's profile, when it is not the chat on screen: only that
    *  profile's pins may be reused. Omitted = the viewed profile. */
   profile?: null | string,
-  requestedTabId?: string
+  requestedTabId?: string,
+  browserReuse: 'any' | 'matching-url' = 'any'
 ) {
   // Stamp the tip, not an alias: the alias map is memory-only, so a tab
   // stamped with a rotated-away id would be orphaned by the next relaunch.
@@ -948,7 +949,9 @@ export function openPreview(
 
   const existing = requestedTabId ? visible.find(tab=>tab.id===requestedTabId) :
     target.kind === 'url'
-      ? browserTabFor(visible)
+      ? browserReuse === 'matching-url'
+        ? visible.find(tab => tab.target.kind === 'url' && tab.target.url === target.url)
+        : browserTabFor(visible)
       : target.kind === 'file'
         ? fileTabFor(visible, target)
         : current.find(tab => tab.id === previewTabId(target))
@@ -1013,6 +1016,7 @@ export function markPreviewTabMissing(tabIdOrUrl: string) {
 export function previewProfileScope(): string { return viewKey }
 let browserSelectionSequence = 0
 const browserSelections = new Map<string, number>()
+
 export function browserUserSelection(tabId: string): number | undefined {
   return browserSelections.get(`${viewKey}:${tabId}`)
 }
@@ -1023,6 +1027,7 @@ export function openBrowserTab() {
 
   recordFeatureUse('browser_pane')
   const id = openPreview(current?.target ?? blankPage())
+
   if (id) { browserSelections.set(`${viewKey}:${id}`, ++browserSelectionSequence) }
 }
 
