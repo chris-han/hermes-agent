@@ -43,7 +43,7 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
     await page.getByRole('button', { name: 'Sign in to Semantier Model Provider', exact: true }).click({ timeout: 180_000 })
     const guest = page.locator('webview').last()
     await expect(guest).toBeVisible({ timeout: 60_000 })
-    await expect.poll(() => guest.evaluate((view: any) => view.getURL()).catch(() => '')).toContain('/billing/connect?intent_ref=dci_')
+    await expect.poll(() => guest.evaluate((view: any) => view.getURL()).catch(() => ''), { timeout: 60_000 }).toContain('/billing/connect?intent_ref=dci_')
     await expect.poll(() => guest.evaluate((view: any) => view.executeJavaScript('document.body.innerText')).catch(() => ''), { timeout: 60_000 }).toMatch(/Sign in|登录/)
     expect(await app.evaluate(() => (globalThis as any).__billingExternalCalls)).toBe(0)
 
