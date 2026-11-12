@@ -292,8 +292,8 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
       ipcMain.handle('hermes:openExternal', () => { (globalThis as any).__cloudExternalCalls++; throw new Error('External launch forbidden') })
 
       if (trust.fingerprint) {
-        app.on('certificate-error', (event: { preventDefault(): void }, _contents: unknown, url: string, _error: string, certificate: { fingerprint: string }, callback: (trusted: boolean) => void) => {
-          if (new URL(url).origin === trust.origin && certificate.fingerprint.toUpperCase() === trust.fingerprint.toUpperCase()) {
+        app.on('certificate-error', (event: { preventDefault(): void }, _contents: unknown, url: string, _error: string, certificate: { data: string }, callback: (trusted: boolean) => void) => {
+          if (new URL(url).origin === trust.origin && new (process.getBuiltinModule('crypto').X509Certificate)(certificate.data).fingerprint256 === trust.fingerprint) {
             event.preventDefault()
             callback(true)
           } else { callback(false) }

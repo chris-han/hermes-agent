@@ -1,3 +1,4 @@
+import { X509Certificate } from 'node:crypto'
 /** First real loop: native card -> real Runtime intent -> Workspace login in owned pane. */
 import fs from 'node:fs'
 
@@ -17,15 +18,35 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
   const sandbox = createSandbox('billing-embedded')
   writeEnvFile(sandbox.hermesHome)
   fs.writeFileSync(sandbox.hermesHome + '/config.yaml', `language: en\ndisplay:\n  language: en\nbilling: null\nproviders:\n  semantier-cloud:\n    base_url: ${origin}/v1\n    portal_origin: ${origin}\n`)
-  const fixture = new DesktopFixtureSession(sandbox, buildAppEnv(sandbox, { HERMES_DESKTOP_DEV_SERVER: process.env.HERMES_DESKTOP_DEV_SERVER! }), info)
+  const ca = process.env.HERMES_E2E_BILLING_CA
+  const certificate = process.env.HERMES_E2E_BILLING_CERTIFICATE
+
+  if (new URL(origin!).protocol === 'https:') {
+    expect(ca).toBeTruthy()
+    expect(certificate).toBeTruthy()
+    fs.appendFileSync(sandbox.hermesHome + '/config.yaml', '    http_version: "3"\n    ssl_ca_cert: ' + JSON.stringify(ca) + '\n')
+  }
+
+  const fixture = new DesktopFixtureSession(sandbox, buildAppEnv(sandbox, { HERMES_DESKTOP_DEV_SERVER: process.env.HERMES_DESKTOP_DEV_SERVER!, ...(ca ? { HERMES_E2E_FORCE_QUIC_ORIGIN: origin! } : {}) }), info)
 
   try {
     const { app, page } = await fixture.launch()
-    await app.evaluate(({ ipcMain }) => {
+    await app.evaluate(({ ipcMain, app }, trust) => {
+      if (trust.fingerprint) {
+        app.on('certificate-error', (event: { preventDefault(): void }, _contents: unknown, url: string, _error: string, certificate: { data: string }, callback: (trusted: boolean) => void) => {
+          const actual = new (process.getBuiltinModule('crypto').X509Certificate)(certificate.data)
+          const valid = Date.parse(actual.validFrom) <= Date.now() && Date.now() <= Date.parse(actual.validTo)
+          const hostname = new URL(url).hostname
+          const hostMatches = hostname === '127.0.0.1' ? actual.checkIP(hostname) : actual.checkHost(hostname)
+
+          if (new URL(url).origin === trust.origin && actual.fingerprint256 === trust.fingerprint && valid && hostMatches) {event.preventDefault(); callback(true)} else {callback(false)}
+        })
+      }
+
       ;(globalThis as any).__billingExternalCalls = 0
       ipcMain.removeHandler('hermes:openExternal')
       ipcMain.handle('hermes:openExternal', () => { (globalThis as any).__billingExternalCalls++; throw new Error('External launch forbidden') })
-    })
+    }, { origin: origin!, fingerprint: certificate ? new X509Certificate(fs.readFileSync(certificate)).fingerprint256 : '' })
     await page.getByRole('button', { name: 'Sign in to Semantier Model Provider', exact: true }).click({ timeout: 180_000 })
     const guest = page.locator('webview').last()
     await expect(guest).toBeVisible({ timeout: 60_000 })
