@@ -321,6 +321,7 @@ return {text:'live',title:'lease',url:'http://localhost/lease'}},()=>({guest_id:
       expect(initial?.binding).toMatchObject({tab_id:tabId,guest_id:17,page_epoch:1})
       const binding=initial!.binding!
       const count=reads
+      await expect(readActivePreview({require_live:true,expected_binding:{...binding,profile_id:'foreign-profile'}})).rejects.toThrow('WRONG_OWNER')
       await expect(readActivePreview({require_live:true,expected_binding:{...binding,window_id:'another-window'}})).rejects.toThrow('WRONG_OWNER')
       expect(reads).toBe(count)
       await expect(readActivePreview({require_live:true,expected_binding:{...binding,session_id:'different-session'}})).rejects.toThrow('WRONG_OWNER')

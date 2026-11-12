@@ -114,6 +114,7 @@ const WINDOW_OWNED_REQUESTS = new Set([
   'preview.open',
   'preview.close',
   'preview.context',
+  'preview.reconnect',
   'terminal.read',
   'theme.apply',
   'window.read',
@@ -531,7 +532,7 @@ const boundOwnerFor = (sessionId: string, expected?: PreviewBinding): PreviewOwn
 
 const previewFailure = (request: ScopedServerRequest, error: unknown) => {
   const message = error instanceof Error ? error.message : ''
-  const code = ['WRONG_OWNER', 'STALE_TARGET', 'PANE_UNAVAILABLE'].includes(message) ? message : 'PANE_UNAVAILABLE'
+  const code = ['WRONG_OWNER', 'STALE_TARGET', 'PANE_UNAVAILABLE', 'USER_INTENT_REQUIRED'].includes(message) ? message : 'PANE_UNAVAILABLE'
   answerValue(request, { success: false, code, error: code })
 }
 
@@ -556,6 +557,28 @@ const previewContext: Handler = ({ request, sessionId }) => {
     answerValue(request, result?.binding
       ? { success: true, binding: result.binding, live_verified: false, selection_provenance: 'renderer_selection' }
       : { success: false, code: 'PANE_UNAVAILABLE', error: 'PANE_UNAVAILABLE' })
+  }).catch(error => previewFailure(request, error))
+}
+
+const previewReconnect: Handler = ({ deps, request, sessionId, isActiveSession }) => {
+  const expected = request.params.expected_binding as PreviewBinding | undefined
+  const owner = previewOwnerFor(sessionId)
+  const candidate = activePreviewBinding(owner)
+  if (!isActiveSession || !expected || !candidate || !expected.profile_id ||
+      candidate.session_id !== expected.session_id || candidate.window_id !== expected.window_id ||
+      candidate.profile_id !== expected.profile_id) {
+    previewFailure(request, new Error('WRONG_OWNER'))
+    return
+  }
+  if ((candidate.user_selection ?? 0) <= (expected.user_selection ?? 0)) {
+    previewFailure(request, new Error('USER_INTENT_REQUIRED'))
+    return
+  }
+  void readActivePreview({ require_live: true, expected_binding: candidate }, owner).then(result => {
+    if (!previewRequestIsCurrent(deps, sessionId) || bindingStatus(candidate, false, owner)) {
+      throw new Error('STALE_TARGET')
+    }
+    answerValue(request, { ...result, success: true, live_verified: true, explicit_user_selection: true })
   }).catch(error => previewFailure(request, error))
 }
 
@@ -972,6 +995,7 @@ export const SERVER_REQUEST_HANDLERS: Record<string, Handler> = {
   'preview.open': previewOpen,
   'preview.close': previewClose,
   'preview.context': previewContext,
+  'preview.reconnect': previewReconnect,
   secret,
   setup_beat: setupBeat,
   sudo,

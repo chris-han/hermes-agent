@@ -1008,12 +1008,22 @@ export function markPreviewTabMissing(tabIdOrUrl: string) {
  *  showing so the hotkey re-fronts your page instead of wiping it; with no
  *  browser open it lands on `about:blank`, where the pane's empty state
  *  invites an address. */
+// Memory-only proof of the user's Browser command. Agent preview.open uses
+// openPreview directly and never advances this selection sequence.
+export function previewProfileScope(): string { return viewKey }
+let browserSelectionSequence = 0
+const browserSelections = new Map<string, number>()
+export function browserUserSelection(tabId: string): number | undefined {
+  return browserSelections.get(`${viewKey}:${tabId}`)
+}
+
 export function openBrowserTab() {
   const tabs = $visiblePreviewTabs.get()
   const current = tabs.find(tab => tab.id === browserTabId(tabs))
 
   recordFeatureUse('browser_pane')
-  openPreview(current?.target ?? blankPage())
+  const id = openPreview(current?.target ?? blankPage())
+  if (id) { browserSelections.set(`${viewKey}:${id}`, ++browserSelectionSequence) }
 }
 
 /** ⌘⇧L is a TOGGLE: show the Browser when it's away, fold it away when it's

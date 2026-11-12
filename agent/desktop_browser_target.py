@@ -28,6 +28,8 @@ class BrowserTargetBinding:
     tab_id: str | None = None
     guest_id: int | None = None
     page_epoch: int | None = None
+    profile_id: str | None = None
+    user_selection: int = 0
 
 
 def failure(code: str) -> dict:
@@ -44,12 +46,17 @@ class BrowserTurnState:
                                             'proposed_intent', session_id, generation, turn_id)
         self.live_check = live_check
         self.inventory = None
+        self.discovery_failures = 0
+        self.recovery_inventories = 0
         self.native_failure = None
         self.operation = 'none'
         self.requested_url = ''
         self.current_url = ''
         self.closed = False
         self.preflight_complete = False
+        self.reconnect_callback = None
+        self.reconnecting = False
+        self.binding_revision = 0
         self.receipts = []
         self._lock = RLock()
         self._selected = target_kind != 'UNRESOLVED'
@@ -83,13 +90,20 @@ class BrowserTurnState:
         browser = independent or name in ('desktop_preview','drive_preview','annotate_preview')
         if not browser and not (self.kind=='VISIBLE_PANE' and name=='execute_code'):return None
         if self.native_failure is not None:return dict(self.native_failure)
-        if self.closed:return failure('PANE_UNAVAILABLE')
+        if self.closed and not (name == 'desktop_preview' and args.get('action') == 'read' and callable(self.reconnect_callback)):
+            return failure('PANE_UNAVAILABLE')
         if self.live_check is not None and not self.live_check():return failure('STALE_TARGET')
         if self.kind in ('UNRESOLVED','NONE'):return failure('TARGET_UNRESOLVED')
         if self.kind=='VISIBLE_PANE' and (independent or name=='execute_code'):
             return {**failure('TARGET_MISMATCH'), 'rejected_tool': name, 'target_kind': self.kind,
                     'recovery': {'same_context': True, 'next_action': 'inspect_bound_pane'}, 'retryable': True}
         if self.kind=='INDEPENDENT' and name in ('desktop_preview','drive_preview','annotate_preview'):return failure('TARGET_MISMATCH')
+        if self.kind == 'VISIBLE_PANE' and name == 'drive_preview' and self.discovery_failures >= 2:
+            if args.get('action') not in ('reload', 'back', 'forward'):return failure('TARGET_UNRESOLVED')
+        if self.kind == 'VISIBLE_PANE' and name == 'drive_preview' and args.get('action') == 'elements' and self.discovery_failures and self.recovery_inventories >= 1:
+            return failure('TARGET_UNRESOLVED')
+        if self.kind == 'VISIBLE_PANE' and name == 'drive_preview' and args.get('action') in ('reload', 'back', 'forward'):
+            if self.operation != args['action']:return failure('USER_INTENT_REQUIRED')
         if name=='drive_preview' and args.get('ref') and args.get('action')!='elements':
             if self.binding.tab_id is None:return failure('PANE_UNAVAILABLE')
             if self.inventory!=(self.binding.guest_id,self.binding.page_epoch):return failure('STALE_TARGET')
@@ -101,21 +115,70 @@ class BrowserTurnState:
             if not isinstance(b,dict) or result.get('success') is False:
                 return failure(result.get('code','PANE_UNAVAILABLE') if isinstance(result,dict) else 'PANE_UNAVAILABLE')
             if b.get('session_id')!=self.binding.session_id:return failure('WRONG_OWNER')
+            if self.binding.profile_id is not None and b.get('profile_id') != self.binding.profile_id:
+                return failure('WRONG_OWNER')
             if not all(b.get(k) is not None for k in ('window_id','tab_id','guest_id','page_epoch')):return failure('PANE_UNAVAILABLE')
             if self.binding.tab_id is not None:
                 if b['window_id']!=self.binding.window_id or b['tab_id']!=self.binding.tab_id:return failure('WRONG_OWNER')
                 if b['guest_id']!=self.binding.guest_id:return failure('STALE_TARGET')
                 if not refresh and b['page_epoch']!=self.binding.page_epoch:return failure('STALE_TARGET')
             self.binding=replace(self.binding,**{k:b[k] for k in ('window_id','tab_id','guest_id','page_epoch')})
+            if b.get('profile_id') is not None:
+                self.binding=replace(self.binding,profile_id=b['profile_id'],user_selection=b.get('user_selection', 0))
             self.current_url=result.get('url','')
             return None
+
+    def reconnect(self, verify):
+        """Renew only from a host-owned, live renderer verification callback.
+
+        Tool payloads cannot supply verification. Keep the prior binding intact
+        until verification completes and the original turn is still live.
+        """
+        with self._lock:
+            if self.kind != 'VISIBLE_PANE' or self.reconnecting:
+                return failure('TARGET_MISMATCH')
+            if self.live_check is None or not self.live_check():
+                return failure('STALE_TARGET')
+            original = self.binding
+            if not original.profile_id or not original.tab_id:
+                return failure('WRONG_OWNER')
+            self.reconnecting = True
+        try:
+            result = parse_result(verify(self.expected_page()))
+            with self._lock:
+                if not self.live_check() or self.binding != original:
+                    return failure('STALE_TARGET')
+                if not isinstance(result, dict) or result.get('success') is not True:
+                    return failure('PANE_UNAVAILABLE')
+                b = result.get('binding')
+                if not isinstance(b, dict):return failure('PANE_UNAVAILABLE')
+                if any(b.get(k) != getattr(original, k) for k in ('session_id', 'window_id', 'profile_id')):
+                    return failure('WRONG_OWNER')
+                if result.get('explicit_user_selection') is not True or result.get('live_verified') is not True:
+                    return failure('USER_INTENT_REQUIRED')
+                if any(b.get(k) is None for k in ('tab_id', 'guest_id', 'page_epoch')):
+                    return failure('PANE_UNAVAILABLE')
+                self.binding = replace(original, **{k: b[k] for k in ('tab_id', 'guest_id', 'page_epoch')}, user_selection=b.get('user_selection', 0))
+                self.binding_revision += 1
+                self.discovery_failures = 0
+                self.recovery_inventories = 0
+                self.inventory = None
+                self.current_url = result.get('url', '')
+                self.native_failure = None
+                self.closed = False
+                return None
+        finally:
+            with self._lock:self.reconnecting = False
 
     def mark_inventory(self):
         with self._lock:self.inventory=(self.binding.guest_id,self.binding.page_epoch)
 
     def expected_page(self):
         b=self.binding
-        return {k:getattr(b,k) for k in ('session_id','window_id','tab_id','guest_id','page_epoch')} if b.tab_id else None
+        if not b.tab_id:return None
+        result = {k:getattr(b,k) for k in ('session_id','window_id','tab_id','guest_id','page_epoch')}
+        if b.profile_id is not None:result.update(profile_id=b.profile_id,user_selection=b.user_selection)
+        return result
 
 
 _current: ContextVar[BrowserTurnState | None]=ContextVar('desktop_browser_turn',default=None)
@@ -198,7 +261,7 @@ def propose_intent(agent, message, history, pane_context=None):
     proposal=json.loads(raw_args) if isinstance(raw_args,str) else raw_args
     if (not isinstance(proposal,dict) or set(proposal)-{'target_kind','operation','url'}
         or proposal.get('target_kind') not in ('VISIBLE_PANE','INDEPENDENT','UNRESOLVED','NONE')
-        or proposal.get('operation') not in ('existing','open','none')):
+        or proposal.get('operation') not in ('existing','open','close','reload','back','forward','none')):
         return {'target_kind':'UNRESOLVED','operation':'none'}
     if proposal['target_kind']=='VISIBLE_PANE' and proposal['operation']=='open':
         url=str(proposal.get('url',''))

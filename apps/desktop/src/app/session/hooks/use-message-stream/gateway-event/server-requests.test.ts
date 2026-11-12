@@ -6,7 +6,7 @@ import { group } from '@/components/pane-shell/tree/model'
 import { $layoutTree, noteActiveTreeGroup } from '@/components/pane-shell/tree/store'
 import { createClientSessionState } from '@/lib/chat-runtime'
 import { runTour } from '@/lib/tour'
-import { $previewTabs, closeRightRail, closeRightRailTab, openPreview, setPreviewTabPinned } from '@/store/preview'
+import { $previewTabs, closeRightRail, closeRightRailTab, openPreview, openBrowserTab, setPreviewTabPinned } from '@/store/preview'
 import { hasOpenServerRequest, resetServerRequestsForTests } from '@/store/server-requests'
 import { setActiveSessionId, setSelectedStoredSessionId, setSessions } from '@/store/session'
 import { $sessionStates, $sessionTiles, dropSessionState, publishSessionState } from '@/store/session-states'
@@ -427,6 +427,25 @@ describe('preview requests act for the session that asked (#73890)', () => {
     setSelectedStoredSessionId(null)
     closeRightRail()
     hasLivePreviewSurface.mockReturnValue(false)
+  })
+
+  it.each([false, true])('requires a newer user selection for reconnect (selected=%s)', async selected => {
+    deps.activeSessionIdRef.current = 'rt-a'
+    publishSessionState('rt-a', createClientSessionState('stored-a'))
+    const id = openPreview({ kind: 'url', label: 'page', source: 'test', url: 'https://test.example/start' }, 'stored-a')!
+    let guest = 3
+    const unbind = registerPreviewPageReader(id, async () => ({ text: 'live', title: '', url: 'https://test.example/start' }), () => ({ guest_id: guest, page_epoch: 1 }))
+    try {
+      const owner = { sessionId: 'stored-a', runtimeId: 'rt-a', profile: 'default' }
+      const expected = activePreviewBinding(owner)!
+      guest = 4
+      if (selected) { openBrowserTab() }
+      const { respond } = deliver('preview.reconnect', { session_id: 'rt-a', expected_binding: expected }, 'rt-a')
+      await vi.waitFor(() => expect(respond).toHaveBeenCalledTimes(1))
+      expect(JSON.parse(respond.mock.calls[0][0].value)).toMatchObject(selected
+        ? { success: true, live_verified: true, explicit_user_selection: true, binding: { guest_id: 4 } }
+        : { success: false, code: 'USER_INTENT_REQUIRED' })
+    } finally { unbind() }
   })
 
   it('opens the live destination of a redirected owned browser without replacing its guest', async () => {

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { $previewTabs, closeRightRail, openBrowserTab, openPreview } from './preview'
+import { $previewTabs, closeRightRail, openBrowserTab, openPreview, browserUserSelection } from './preview'
 
 beforeEach(() => {
   closeRightRail()
@@ -49,3 +49,15 @@ describe('openBrowserTab', () => {
     expect(tabs.map(tab => tab.target.url)).toContain('file:///work/notes.md')
   })
 })
+
+ it('records user Browser reopen separately from tool opens', () => {
+    const id = openPreview({ kind: 'url', label: 'Example', source: 'https://example.com', url: 'https://example.com' })!
+    expect(browserUserSelection(id)).toBeUndefined()
+    openBrowserTab()
+    const first = browserUserSelection(id)!
+    expect(first).toBeGreaterThan(0)
+    openPreview({ kind: 'url', label: 'Example', source: 'https://example.com', url: 'https://example.com' })
+    expect(browserUserSelection(id)).toBe(first)
+    openBrowserTab()
+    expect(browserUserSelection(id)).toBeGreaterThan(first)
+  })
