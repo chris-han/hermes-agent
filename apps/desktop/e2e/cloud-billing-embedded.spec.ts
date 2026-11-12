@@ -79,6 +79,19 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
         await clickGuest(['Continue With Password', '使用密码继续'], 'form button[type="submit"]')
         await expect.poll(() => guest.evaluate((view: any) => view.executeJavaScript('document.body.innerText')), { timeout: 60_000 }).toMatch(/Log out|退出登录/)
       })
+      await fixture.stage('billing.embedded-static-en-zh', async () => {
+        await page.setViewportSize({ width: 1280, height: 900 })
+
+        for (const [language, toggle] of [['en', ['EN']], ['zh', ['中文']]] as const) {
+          await clickGuest([...toggle])
+          const metrics = await guest.evaluate((view: any) => view.executeJavaScript(`(async () => {await document.fonts.ready; const root=document.querySelector('.semantier-billing'); return {font:getComputedStyle(root).fontFamily, width:document.documentElement.clientWidth, overflow:document.documentElement.scrollWidth>document.documentElement.clientWidth, animations:document.getAnimations().filter(a=>a.playState==='running').length};})()`))
+          expect(metrics.font).toMatch(/Manrope/i)
+          expect(metrics.overflow).toBe(false)
+          expect(metrics.animations).toBe(0)
+          await page.screenshot({ path: info.outputPath('embedded-billing-' + language + '.png') })
+          console.log('BILLING_VISUAL', JSON.stringify({ language, ...metrics }))
+        }
+      })
       await fixture.stage('billing.explicit-approval', async () => {
         const account = process.env.HERMES_E2E_BILLING_ACCOUNT
         expect(account, 'Explicit permitted fixture account required').toBeTruthy()
@@ -94,16 +107,23 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
     if (credentialsFile) {
       await fixture.stage('cloud.native-install-and-model', async () => {
         const configPath = sandbox.hermesHome + '/config.yaml'
-        await expect.poll(() => fs.readFileSync(configPath, 'utf8'), { timeout: 60_000 }).toContain('credential_ref:')
+        await expect.poll(() => fs.readFileSync(configPath, 'utf8').includes('credential_ref:'), { timeout: 60_000 }).toBe(true)
         expect(fs.existsSync(sandbox.hermesHome + '/.cloud-device.bin')).toBe(true)
         const model = page.getByRole('button', { name: /Model.*local-fixture/ })
         await expect.poll(async () => (await fixture.button('Begin').isVisible()) || (await model.isVisible()), { timeout: 90_000 }).toBe(true)
+
         if (await fixture.button('Begin').isVisible()) { await fixture.button('Begin').click() }
-        await expect.poll(() => fs.readFileSync(configPath, 'utf8'), { timeout: 30_000 }).toContain('default: local-fixture')
+        await expect.poll(() => fs.readFileSync(configPath, 'utf8').match(/^ {2}default: ['"]?([^'"\n]+)['"]?$/m)?.[1], { timeout: 30_000 }).toBe('local-fixture')
         await expect(fixture.button('Begin')).not.toBeVisible({ timeout: 30_000 })
         await expect(page.getByRole('button', { name: 'Switch model', exact: true })).toBeVisible()
         await expect(page.getByRole('button', { name: 'Try again', exact: true })).not.toBeVisible()
-        expect(fs.readFileSync(configPath, 'utf8')).toContain('local-fixture')
+        expect(fs.readFileSync(configPath, 'utf8').includes('capability_revision:')).toBe(true)
+      })
+      await fixture.stage('cloud.controlled-local-chat', async () => {
+        const composer = page.getByRole('textbox', { name: 'Message', exact: true })
+        await composer.fill('Run the local connection check.')
+        await composer.press('Enter')
+        await expect(page.getByText('Cloud connection verified.', { exact: true })).toBeVisible({ timeout: 90_000 })
       })
       await fixture.stage('cloud.restart-persistence', async () => {
         const restarted = await fixture.restart()
