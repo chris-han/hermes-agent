@@ -3,6 +3,7 @@ import { X509Certificate } from 'node:crypto'
 /** First real loop: native card -> real Runtime intent -> Workspace login in owned pane. */
 import fs from 'node:fs'
 import http from 'node:http'
+import path from 'node:path'
 
 import { expect, test } from '@playwright/test'
 
@@ -51,7 +52,21 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
     fs.appendFileSync(sandbox.hermesHome + '/config.yaml', '    http_version: "3"\n    ssl_ca_cert: ' + JSON.stringify(ca) + '\n')
   }
 
-  const fixture = new DesktopFixtureSession(sandbox, buildAppEnv(sandbox, { HERMES_DESKTOP_DEV_SERVER: process.env.HERMES_DESKTOP_DEV_SERVER! }), info)
+  const env = buildAppEnv(sandbox, { HERMES_DESKTOP_DEV_SERVER: process.env.HERMES_DESKTOP_DEV_SERVER! })
+  const fixture = new DesktopFixtureSession(sandbox, env, info)
+
+  // Credential identity stays native. Only a one-way digest leaves the owner
+  // process; DPAPI ciphertext and its mutable readiness cache may change.
+  const credentialIdentity = () => execFileSync(process.env.HERMES_PYTHON!, ['-P', '-c', `
+import hashlib,os,yaml
+from pathlib import Path
+from hermes_cli.cloud_device_client import credential
+entry=yaml.safe_load((Path(os.environ['HERMES_HOME'])/'config.yaml').read_text())['providers']['semantier-cloud']
+ref=entry['credential_ref'];base=entry['base_url']
+secret=credential(ref,base_url=base)
+print(hashlib.sha256((ref+'\\0'+base+'\\0'+secret).encode()).hexdigest())
+`], { cwd: path.resolve(import.meta.dirname, '../../..'), env: { ...env, PYTHONPATH: path.resolve(import.meta.dirname, '../../..') }, encoding: 'utf8', timeout: 20_000 }).trim()
+
 
   const existingSite = http.createServer((request, response) => {
     if (request.url === '/login') {
@@ -184,14 +199,14 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
           const box = await guest.boundingBox()
           expect(box).toBeTruthy()
           expect(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.tagName, { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 })).toBe('WEBVIEW')
-          const installed = fs.readFileSync(sandbox.hermesHome + '/.cloud-device.bin')
+          const installed = credentialIdentity()
           setCatalogFault(false)
           await fixture.button('Try again').click()
           await expect(fixture.button('Begin')).toBeVisible({ timeout: 60_000 })
-          expect(fs.readFileSync(sandbox.hermesHome + '/.cloud-device.bin').equals(installed)).toBe(true)
+          expect(credentialIdentity() === installed).toBe(true)
           const counts = { start: operationCount('start') - before!.start, claim: operationCount('claim') - before!.claim, ack: operationCount('ack') - before!.ack }
           expect(counts).toEqual({ start: 1, claim: 1, ack: 1 })
-          console.log('CATALOG_REAL_RECOVERY', JSON.stringify({ counts, transportFault: 'HTTP503', protectedCustody: 'unchanged' }))
+          console.log('CATALOG_REAL_RECOVERY', JSON.stringify({ counts, transportFault: 'HTTP503', credentialIdentity: 'retained' }))
         }
 
         if (noAccess) {
@@ -216,7 +231,7 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
 
       if (noAccess) { return }
       await fixture.stage('billing.login-reuse-and-real-logout', async () => {
-        const protectedStore = fs.readFileSync(sandbox.hermesHome + '/.cloud-device.bin')
+        const protectedStore = credentialIdentity()
         await page.getByRole('button', { name: 'Reload page', exact: true }).click()
         await expect.poll(() => guest.evaluate((view: any) => view.executeJavaScript('document.body.innerText')), { timeout: 45_000 }).toMatch(/Log out|退出登录/)
         await clickGuest(['Log out', '退出登录'])
@@ -227,7 +242,7 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
 
         if (await back.isEnabled()) { await back.click() }
         await expect.poll(() => guest.evaluate((view: any) => view.executeJavaScript('document.body.innerText'))).not.toContain('unified-fixture')
-        expect(fs.readFileSync(sandbox.hermesHome + '/.cloud-device.bin').equals(protectedStore)).toBe(true)
+        expect(credentialIdentity() === protectedStore).toBe(true)
         expect(await originalGuest.evaluate((view: any) => view.getWebContentsId())).toBe(originalGuestId)
         expect(await originalGuest.evaluate((view: any) => view.getURL())).toBe(existingUrl.replace('/login', '/account'))
         expect(await originalGuest.evaluate((view: any) => view.executeJavaScript(`fetch('/account').then(r=>r.status)`))).toBe(200)
@@ -262,9 +277,11 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
 
       })
       await fixture.stage('cloud.restart-persistence', async () => {
+        const installed = credentialIdentity()
         const restarted = await fixture.restart()
         await expect(restarted.page.getByRole('button', { name: /Model.*local-fixture/ })).toBeVisible({ timeout: 120_000 })
         await expect(restarted.page.getByRole('button', { name: 'Sign in to Semantier Model Provider', exact: true })).not.toBeVisible()
+        expect(credentialIdentity() === installed).toBe(true)
         await restarted.page.screenshot({ path: info.outputPath('model-ready-after-restart.png') })
       })
     }
