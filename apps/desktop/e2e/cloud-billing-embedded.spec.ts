@@ -115,7 +115,8 @@ print(hashlib.sha256((ref+'\\0'+base+'\\0'+secret).encode()).hexdigest())
     const originalGuest = page.locator('webview').first()
     const originalGuestId = await originalGuest.evaluate((view: any) => view.getWebContentsId())
     await page.getByRole('button', { name: 'Sign in to Semantier Model Provider', exact: true }).click({ timeout: 180_000 })
-    const guest = page.locator('webview').last()
+    const billingIndex = await page.locator('webview').count() - 1
+    const guest = page.locator('webview').nth(billingIndex)
     await expect(guest).toBeVisible({ timeout: 60_000 })
     await expect.poll(() => guest.evaluate((view: any) => view.getURL()).catch(() => ''), { timeout: 60_000 }).toContain('/billing/connect?intent_ref=dci_')
     await expect.poll(() => guest.evaluate((view: any) => view.executeJavaScript('document.body.innerText')).catch(() => ''), { timeout: 60_000 }).toMatch(/Sign in|登录/)
@@ -123,10 +124,10 @@ print(hashlib.sha256((ref+'\\0'+base+'\\0'+secret).encode()).hexdigest())
     expect(await originalGuest.evaluate((view: any) => view.getWebContentsId())).toBe(originalGuestId)
     expect(await originalGuest.evaluate((view: any) => view.getURL())).toBe(existingUrl.replace('/login', '/account'))
 
-    const clickGuest = async (labels: string[], selector = 'button') => {
-      await expect.poll(() => guest.evaluate((view: any, args) => view.executeJavaScript(`Array.from(document.querySelectorAll(${JSON.stringify(args.selector)})).some(node => ${JSON.stringify(args.labels)}.includes(node.textContent.trim()) && !node.disabled)`), { labels, selector }), { timeout: 15_000 }).toBe(true)
-      const rect = await guest.evaluate((view: any, args) => view.executeJavaScript(`(() => { const node = Array.from(document.querySelectorAll(${JSON.stringify(args.selector)})).find(node => ${JSON.stringify(args.labels)}.includes(node.textContent.trim())); if (!node || node.disabled) throw new Error('Guest action unavailable'); node.scrollIntoView({block:'center'}); const rect=node.getBoundingClientRect(); return {x:rect.x,y:rect.y,width:rect.width,height:rect.height}; })()`), { labels, selector })
-      const host = await guest.boundingBox()
+    const clickGuest = async (labels: string[], selector = 'button', target = guest) => {
+      await expect.poll(() => target.evaluate((view: any, args) => view.executeJavaScript(`Array.from(document.querySelectorAll(${JSON.stringify(args.selector)})).some(node => ${JSON.stringify(args.labels)}.includes(node.textContent.trim()) && !node.disabled)`), { labels, selector }), { timeout: 15_000 }).toBe(true)
+      const rect = await target.evaluate((view: any, args) => view.executeJavaScript(`(() => { const node = Array.from(document.querySelectorAll(${JSON.stringify(args.selector)})).find(node => ${JSON.stringify(args.labels)}.includes(node.textContent.trim())); if (!node || node.disabled) throw new Error('Guest action unavailable'); node.scrollIntoView({block:'center'}); const rect=node.getBoundingClientRect(); return {x:rect.x,y:rect.y,width:rect.width,height:rect.height}; })()`), { labels, selector })
+      const host = await target.boundingBox()
       expect(host).toBeTruthy()
       await page.mouse.click(host!.x + rect.x + rect.width / 2, host!.y + rect.y + rect.height / 2)
     }
@@ -233,10 +234,22 @@ print(hashlib.sha256((ref+'\\0'+base+'\\0'+secret).encode()).hexdigest())
         const protectedStore = credentialIdentity()
         await page.getByRole('button', { name: 'Reload page', exact: true }).click()
         await expect.poll(() => guest.evaluate((view: any) => view.executeJavaScript('document.body.innerText')), { timeout: 45_000 }).toMatch(/Log out|退出登录/)
-        await clickGuest(['Log out', '退出登录'])
+        const peerUrl = origin + '/billing?lang=en'
+        await page.evaluate(async url => {
+          const preview = await import(/* @vite-ignore */ String('/src/store/preview.ts'))
+          preview.openPreview({ kind: 'url', url, source: url, label: 'Billing second tab' }, undefined, undefined, undefined, undefined, 'matching-url')
+        }, peerUrl)
+        await expect(page.locator('webview')).toHaveCount(billingIndex + 2)
+        const peer = page.locator('webview').nth(billingIndex + 1)
+        await expect.poll(() => peer.evaluate((view: any) => view.executeJavaScript(`Array.from(document.querySelectorAll('button')).some(node => ['Log out','退出登录'].includes(node.textContent.trim()))`)), { timeout: 30_000 }).toBe(true)
+        await clickGuest(['Log out', '退出登录'], 'button', peer)
+        await expect.poll(() => peer.evaluate((view: any) => view.executeJavaScript(`!document.body.innerText.includes('semantier-billing-qa-1112')`))).toBe(true)
+        await page.getByRole('tab', { name: /semantier/i }).first().click()
+
         await expect.poll(() => guest.evaluate((view: any) => view.executeJavaScript(`fetch('/auth/context',{cache:'no-store'}).then(r=>r.json()).then(v=>v.authenticated)`)), { timeout: 30_000 }).toBe(false)
         await expect.poll(() => guest.evaluate((view: any) => view.executeJavaScript('document.body.innerText'))).not.toContain('semantier-billing-qa-1112')
         expect(await guest.evaluate((view: any) => view.executeJavaScript(`fetch('/api/billing/commerce/accounts',{cache:'no-store'}).then(r=>r.status)`))).toBe(401)
+        expect(await peer.evaluate((view: any) => view.executeJavaScript(`fetch('/api/billing/commerce/accounts',{cache:'no-store'}).then(r=>r.status)`))).toBe(401)
         const back = page.getByRole('button', { name: 'Back', exact: true })
 
         if (await back.isEnabled()) { await back.click() }
