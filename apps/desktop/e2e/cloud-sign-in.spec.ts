@@ -306,7 +306,7 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
       const approveCurrent = async () => {
         const guest = page.locator('webview').last()
         await expect(guest).toBeVisible()
-        const declineSnapshot = page.getByRole('button', { name: 'Not now', exact: true })
+        const declineSnapshot = page.getByRole('button', { name: "Don't show again", exact: true })
         await declineSnapshot.waitFor({ state: 'visible', timeout: 5000 }).catch(() => undefined)
 
         if (await declineSnapshot.isVisible()) { await declineSnapshot.click() }
@@ -318,7 +318,7 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
         await expect.poll(() => guest.evaluate((view: any) => view.executeJavaScript('document.body.innerText'))).toContain('Synthetic approval complete')
       }
 
-      const decline = page.getByRole('button', { name: 'Not now', exact: true })
+      const decline = page.getByRole('button', { name: "Don't show again", exact: true })
 
       if (await decline.isVisible()) { await decline.click() }
       await approveCurrent()

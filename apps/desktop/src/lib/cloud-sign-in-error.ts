@@ -20,6 +20,7 @@ const CODES = new Set([
   'cloud_response_invalid',
   'cloud_profile_mismatch',
   'cloud_profile_changed',
+  'cloud_browser_owner_changed',
   'cloud_profile_unavailable',
   'cloud_storage_invalid',
   'cloud_storage_unavailable',

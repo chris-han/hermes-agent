@@ -208,7 +208,7 @@ export class DesktopFixtureSession {
         executablePath: resolveElectronBinary([path.join(this.root, 'apps/desktop'), this.root]),
         args: [
           path.join(this.root, 'apps/desktop'),
-          ...(quic ? ['--origin-to-force-quic-on=' + quic.host] : []),
+          ...(quic ? ['--enable-quic', '--origin-to-force-quic-on=' + quic.hostname + ':' + (quic.port || '443')] : []),
           ...(process.platform === 'linux' ? ['--no-sandbox', '--disable-gpu', '--ozone-platform=x11'] : [])
         ],
         cwd: path.join(this.root, 'apps/desktop'),

@@ -10,6 +10,7 @@ import {
   closeManualOnboarding,
   confirmOnboardingModel,
   type OnboardingContext,
+  reopenCloudVerification,
   retryCloudModelDiscovery,
   saveOnboardingLocalEndpoint,
   setOnboardingCode,
@@ -20,6 +21,7 @@ import {
 } from './onboarding'
 import { captureOnboardingScope, requestOnboardingGateway } from './onboarding-scope'
 import { $previewTabs, closeRightRail, openPreview } from './preview'
+import { $activeSessionId } from './session'
 
 const gatewayMocks = vi.hoisted(() => ({ requestGatewayForAgent: vi.fn(async () => ({ ok: true })) }))
 
@@ -376,4 +378,20 @@ it('retries installed Cloud model discovery without starting another authorizati
   expect($desktopOnboarding.get().flow).toMatchObject({ status: 'error', installed: true })
   expect(requests.filter(request => request.path.endsWith('/start'))).toHaveLength(0)
   expect(requests.filter(request => request.path === '/api/model/set')).toHaveLength(0)
+})
+
+it('keeps Cloud reopen bound to its initiating chat runtime', async () => {
+  const ctx = beginContext()
+  const originalRuntime = $activeSessionId.get()
+
+  try {
+    await startProviderOAuth({ ...makeOAuthProvider('semantier-cloud'), flow: 'device_code' }, ctx)
+    closeRightRail()
+    $activeSessionId.set('different-chat-runtime')
+    expect(reopenCloudVerification()).toBe(false)
+    expect($previewTabs.get()).toHaveLength(0)
+    $activeSessionId.set(originalRuntime)
+    expect(reopenCloudVerification()).toBe(true)
+    expect($previewTabs.get()).toHaveLength(1)
+  } finally { $activeSessionId.set(originalRuntime) }
 })

@@ -18,6 +18,7 @@ const cloudSignInErrors: Record<string, string> = {
   cloud_config_invalid: '司序云提供方配置无效。请检查当前配置档案的设置，或使用 API 密钥。',
   cloud_response_invalid: '司序云返回了无效响应。请重试同一次连接。',
   cloud_profile_mismatch: '此次登录与配置档案 {profile} 不匹配。请返回原配置档案后重试。',
+  cloud_browser_owner_changed: '请返回最初打开登录页面的会话和配置档案，然后重新打开验证页面。',
   cloud_profile_changed: '登录期间配置档案 {profile} 已更改。请返回该档案并重新登录。',
   cloud_profile_unavailable: '配置档案 {profile} 不可用。请返回原配置档案后重试。',
   cloud_storage_invalid: '无法读取配置档案 {profile} 的受保护云凭据。请在该档案中重新授权。',

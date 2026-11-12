@@ -44,7 +44,7 @@ export type OnboardingFlow =
   | { status: 'idle' }
   | { provider: OAuthProvider; status: 'starting' }
   | { code: string; provider: OAuthProvider; start: PkceStart; status: 'awaiting_user' }
-  | { copied: boolean; provider: OAuthProvider; start: DeviceStart; status: 'polling' }
+  | { copied: boolean; provider: OAuthProvider; start: DeviceStart; status: 'polling'; browserOwner?: { profile: ReturnType<typeof previewProfileScope>; session: ReturnType<typeof $focusedStoredSessionId.get>; runtime: ReturnType<typeof $activeSessionId.get> } }
   | { provider: OAuthProvider; start: OAuthStartResponse; status: 'submitting' }
   | { copied: boolean; provider: OAuthProvider; status: 'external_pending' }
   | { provider: OAuthProvider; status: 'success' }
@@ -970,6 +970,26 @@ export function startProviderOAuth(provider: OAuthProvider, ctx: OnboardingConte
   return task
 }
 
+/** Reopening an active device intent must keep its original visible-pane owner. */
+export function reopenCloudVerification(): boolean {
+  const state = $desktopOnboarding.get()
+  const flow = state.flow
+
+  if (flow.status !== 'polling' || flow.provider.id !== 'semantier-cloud') { return false }
+  const owner = flow.browserOwner
+
+  if (!owner || JSON.stringify(captureOnboardingScope()) !== JSON.stringify(state.targetScope) || owner.profile !== previewProfileScope() || owner.session !== $focusedStoredSessionId.get() || owner.runtime !== $activeSessionId.get()) {
+    notifyError(translateNow('onboarding.cloudSignInError', 'cloud_browser_owner_changed', state.targetScope?.profile || 'default'), translateNow('common.error'))
+
+    return false
+  }
+
+  const url = flow.start.verification_url
+  openPreview({ kind: 'url', label: 'Semantier Billing', source: url, url }, owner.session, owner.runtime, owner.profile, undefined, 'matching-url')
+
+  return true
+}
+
 async function beginProviderOAuth(provider: OAuthProvider, ctx: OnboardingContext) {
   ctx = captureContext(ctx)
   const generation = flowGeneration
@@ -1026,7 +1046,7 @@ async function beginProviderOAuth(provider: OAuthProvider, ctx: OnboardingContex
       return
     }
 
-    setFlow({ status: 'polling', provider, start, copied: false })
+    setFlow({ status: 'polling', provider, start, copied: false, ...(provider.id === 'semantier-cloud' ? { browserOwner } : {}) })
     schedulePollExpiry(start, () =>
       setFlow({
         status: 'error',

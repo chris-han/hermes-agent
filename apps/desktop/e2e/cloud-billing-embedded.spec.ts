@@ -66,7 +66,7 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
 
     if (credentialsFile) {
       await fixture.stage('billing.real-login', async () => {
-        const declineSnapshot = page.getByRole('button', { name: 'Not now', exact: true })
+        const declineSnapshot = page.getByRole('button', { name: "Don't show again", exact: true })
 
         if (await declineSnapshot.isVisible()) {await declineSnapshot.click()}
         await clickGuest(['Sign in', '登录'])

@@ -22,6 +22,7 @@ const cloudSignInErrors: Record<string, string> = {
   cloud_response_invalid: 'Semantier Cloud returned an invalid response. Retry the same connection.',
   cloud_profile_mismatch:
     'This sign-in does not match profile {profile}. Return to the original profile before retrying.',
+  cloud_browser_owner_changed: 'Return to the chat and profile that opened this sign-in page, then reopen it.',
   cloud_profile_changed: 'Profile {profile} changed during sign-in. Return to that profile and start sign-in again.',
   cloud_profile_unavailable: 'Profile {profile} is unavailable. Return to the original profile before retrying.',
   cloud_storage_invalid:
