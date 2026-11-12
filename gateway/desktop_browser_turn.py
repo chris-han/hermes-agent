@@ -46,18 +46,20 @@ def act_live(state,raw_read,raw_act,payload):
     result=raw_act({**action_payload,'expected_binding':state.expected_page()})
     if revision != state.binding_revision:return json.dumps(failure('STALE_TARGET'))
     value=parse_result(result)
-    if isinstance(value,dict) and value.get('success') is False and value.get('code') in ('INVALID_ELEMENT_REF', 'INVALID_SELECTOR'):
+    if isinstance(value,dict) and value.get('success') is False and (value.get('code') in ('INVALID_ELEMENT_REF', 'INVALID_SELECTOR') or (value.get('code') == 'INVALID_ARGUMENT' and value.get('path') == 'arguments.selector')):
         with state._lock:
             state.inventory = None
             state.discovery_failures += 1
     if is_inventory and isinstance(value,dict) and value.get('success') is True:
         if state.discovery_failures:state.recovery_inventories += 1
         state.mark_inventory()
-        if state.binding_revision:
-            for element in value.get('elements', []):
-                if isinstance(element, dict) and isinstance(element.get('ref'), str):
-                    element['ref']=f'binding:{state.binding_revision}:'+element['ref']
-            result=json.dumps(value)
+    if isinstance(value, dict) and state.binding_revision:
+        def scope_refs(item):
+            if isinstance(item, dict):
+                return {key: (f'binding:{state.binding_revision}:'+entry if key == 'ref' and isinstance(entry, str) else scope_refs(entry)) for key, entry in item.items()}
+            if isinstance(item, list):return [scope_refs(entry) for entry in item]
+            return item
+        result=json.dumps(scope_refs(value))
     return result
 
 

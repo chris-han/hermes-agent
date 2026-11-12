@@ -27,11 +27,16 @@ test('desktop browser preserves discovery failures and reconnects within the sam
   )
   test.setTimeout(420_000)
   const results: any[] = []
+  let waitingForCancel = false
+  let canceledEffects = 0
+  let releaseCanceled!: () => void
+  const canceled = new Promise<void>(resolve => { releaseCanceled = resolve })
   let waitingForReopen = false
   let releaseReopen!: () => void
   const reopened = new Promise<void>(resolve => { releaseReopen = resolve })
 
   const site = http.createServer((req, res) => {
+    if (req.url === '/cancel-effect') { canceledEffects++; return res.end('recorded') }
     if (req.url === '/login') {
       res.writeHead(302, { 'Set-Cookie': 'frame_fixture=synthetic; HttpOnly; SameSite=Lax; Path=/', Location: '/app' })
 
@@ -55,7 +60,7 @@ test('desktop browser preserves discovery failures and reconnects within the sam
     if (req.url === '/nested') {return res.end('<p>Nested public fixture</p><button>Nested public action</button>')}
 
     return res.end(
-      `<p>Frame account details</p><button onclick="document.querySelector('#hit').textContent='Click trusted: '+event.isTrusted">Frame action</button><label>Frame field<input oninput="document.querySelector('#typed').textContent='Type trusted: '+event.isTrusted+' '+this.value"></label><p id="hit"></p><p id="typed"></p><iframe src="http://127.0.0.1:${(site.address() as any).port}/nested" style="width:400px;height:100px"></iframe>`
+      `<p>Frame account details</p><button onclick="document.querySelector('#hit').textContent='Click trusted: '+event.isTrusted">Frame action</button><label>Frame field<input oninput="if(this.value.includes('CANCELED_SHOULD_NOT_APPEAR'))fetch('/cancel-effect');document.querySelector('#typed').textContent='Type trusted: '+event.isTrusted+' '+this.value"></label><p id="hit"></p><p id="typed"></p><iframe src="http://127.0.0.1:${(site.address() as any).port}/nested" style="width:400px;height:100px"></iframe>`
     )
   })
 
@@ -81,7 +86,7 @@ test('desktop browser preserves discovery failures and reconnects within the sam
       const prompt = JSON.parse(body.messages.at(-1).content).request
       const opening = prompt.includes('Open the frame fixture')
       const closing = prompt.includes('Close the frame fixture')
-      const visible = opening || closing || prompt.includes('Inspect the frame fixture') || prompt.includes('CONTINUITY_TASK')
+      const visible = opening || closing || prompt.includes('Inspect the frame fixture') || prompt.includes('CONTINUITY_TASK') || prompt.includes('CANCEL_RECONNECT_TASK')
       res.setHeader('Content-Type', 'application/json')
 
       return res.end(
@@ -175,6 +180,11 @@ test('desktop browser preserves discovery failures and reconnects within the sam
 
     if (prompt.includes('Close the frame fixture') && count === 2) { call = { name: 'desktop_preview', arguments: { action: 'close' } } }
 
+    if (prompt.includes('CANCEL_RECONNECT_TASK') && count === 2) {
+      waitingForCancel = true
+      await canceled
+      call = { name: 'drive_preview', arguments: { action: 'type', ref: field, text: 'CANCELED_SHOULD_NOT_APPEAR' } }
+    }
     const message = call
       ? {
           role: 'assistant',
@@ -351,10 +361,17 @@ test('desktop browser preserves discovery failures and reconnects within the sam
     await composer.fill('Inspect the frame fixture already open beside this conversation.')
     await composer.press('Enter')
     await expect(page.getByText('FRAME_DONE', { exact: true })).toHaveCount(2, { timeout: 30000 })
+    await composer.fill('CANCEL_RECONNECT_TASK: inspect the current synthetic page.')
+    await composer.press('Enter')
+    await expect.poll(() => waitingForCancel, { timeout: 30000 }).toBe(true)
+    await page.getByRole('button', { name: /^Stop(?: generation| response)?$/ }).first().click()
+    releaseCanceled()
+    await expect(page.getByRole('button', { name: /^Stop(?: generation| response)?$/ })).toHaveCount(0)
     await composer.fill('Close the frame fixture pane as explicitly requested by the user.')
     await composer.press('Enter')
     await expect(page.getByText('CLOSE_DONE', { exact: true })).toBeVisible({ timeout: 30000 })
     await expect(page.locator('webview')).toHaveCount(0)
+    expect(canceledEffects).toBe(0)
     await info.attach('continuity-results', { body: JSON.stringify(results), contentType: 'application/json' })
   } finally {
     await info.attach('public-gateway-results', { body: JSON.stringify(results), contentType: 'application/json' })

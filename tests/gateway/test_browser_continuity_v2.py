@@ -327,3 +327,17 @@ def test_fresh_reconnect_ref_is_unwrapped_only_for_current_guest_dispatch():
     assert result['success'] is True
     assert effects[0]['ref'] == 'btn-save'
     assert effects[0]['expected_binding']['guest_id'] == 2
+
+
+def test_invalid_css_selector_consumes_discovery_budget():
+    from gateway.desktop_browser_turn import act_live
+    state = BrowserTurnState(session_id='session', generation=1, turn_id='turn',
+                             target_kind='VISIBLE_PANE', live_check=lambda: True)
+    binding = {'session_id': 'session', 'window_id': 'window', 'tab_id': 'tab', 'guest_id': 1, 'page_epoch': 1}
+    state.accept_page({'success': True, 'binding': binding})
+    for _ in range(2):
+        act_live(state, lambda _: json.dumps({'success': True, 'binding': binding}),
+            lambda _: json.dumps({'success': False, 'code': 'INVALID_ARGUMENT', 'path': 'arguments.selector'}),
+            {'action': 'click', 'selector': '['})
+    assert state.discovery_failures == 2
+    assert state.guard('drive_preview', {'action': 'click', 'selector': '#guess'})['success'] is False
