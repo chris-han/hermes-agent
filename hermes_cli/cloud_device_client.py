@@ -298,11 +298,11 @@ def _wire(origin, operation, body=None, bearer=None):
         return result
     except requests.exceptions.RequestException as error:
         public = _transport_error(error, transport='http3' if session_options.get('http_version') == 'v3only' else 'http')
-        public.diagnostics.update(operation=operation.rsplit('/', 1)[-1],
+        public.diagnostics.update(origin_kind='loopback' if urlsplit(origin).hostname in {'localhost', '127.0.0.1', '::1'} else 'configured_service', operation=operation.rsplit('/', 1)[-1],
                                   transport='http3' if session_options.get('http_version') == 'v3only' else 'http')
         raise public from None
     except CloudConnectionError as error:
-        error.diagnostics.update(operation=operation.rsplit('/', 1)[-1], transport='http3' if session_options.get('http_version') == 'v3only' else 'http')
+        error.diagnostics.update(origin_kind='loopback' if urlsplit(origin).hostname in {'localhost', '127.0.0.1', '::1'} else 'configured_service', operation=operation.rsplit('/', 1)[-1], transport='http3' if session_options.get('http_version') == 'v3only' else 'http')
         raise
 
 
@@ -568,10 +568,10 @@ def _catalog(origin, bearer):
         return result['data']
     except requests.exceptions.RequestException as error:
         public = _transport_error(error, transport='http3' if session_options.get('http_version') == 'v3only' else 'http')
-        public.diagnostics.update(operation='catalog', transport='http3' if session_options.get('http_version') == 'v3only' else 'http')
+        public.diagnostics.update(origin_kind='loopback' if urlsplit(origin).hostname in {'localhost', '127.0.0.1', '::1'} else 'configured_service', operation='catalog', transport='http3' if session_options.get('http_version') == 'v3only' else 'http')
         raise public from None
     except CloudConnectionError as error:
-        error.diagnostics.update(operation='catalog', transport='http3' if session_options.get('http_version') == 'v3only' else 'http')
+        error.diagnostics.update(origin_kind='loopback' if urlsplit(origin).hostname in {'localhost', '127.0.0.1', '::1'} else 'configured_service', operation='catalog', transport='http3' if session_options.get('http_version') == 'v3only' else 'http')
         raise
 
 

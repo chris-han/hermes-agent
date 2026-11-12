@@ -48,6 +48,7 @@ def test_transport_diagnosis_has_no_raw_endpoint(native, monkeypatch, failure, c
         device._wire('http://127.0.0.1:1', 'start')
     assert getattr(error.value, 'code', None) == code
     assert 'PRIVATE' not in str(error.value)
+    assert error.value.detail()['origin_kind'] == 'loopback'
     assert getattr(error.value, 'status', None) != 409
 
 
