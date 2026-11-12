@@ -102,7 +102,7 @@ with requests.Session(http_version='v3only',trust_env=False,verify=${JSON.string
  assert r.http_version==30
 `
           ],
-          { timeout: 5_000, stdio: 'pipe' }
+          { timeout: 5_000 }
         )
 
         break
