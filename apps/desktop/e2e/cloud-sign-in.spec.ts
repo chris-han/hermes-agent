@@ -1,6 +1,6 @@
 /** Real Electron -> native IPC -> scoped OAuth -> local Cloud, without production accounts. */
 import { execFileSync } from 'node:child_process'
-import { randomBytes } from 'node:crypto'
+import { randomBytes, X509Certificate } from 'node:crypto'
 import fs from 'node:fs'
 import http from 'node:http'
 import path from 'node:path'
@@ -283,42 +283,39 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
       expect(startCount).toBe(1)
     })
     unavailable = false
-    await app.evaluate(({ ipcMain }, expected) => {
-      ;(globalThis as any).__cloudVerificationUrl = null
-      // WSL's OS adapter uses cmd.exe, so replace only this external-open boundary.
+    await app.evaluate(({ ipcMain, app }, trust) => {
+      ;(globalThis as any).__cloudExternalCalls = 0
       ipcMain.removeHandler('hermes:openExternal')
-      ipcMain.handle('hermes:openExternal', async (_event: unknown, url: string) => {
-        if (!url.startsWith(expected + '/billing/connect?')) {
-          throw new Error('Unexpected external origin')
-        }
-
-        ;(globalThis as any).__cloudVerificationUrl = url
-      })
-    }, origin)
-    await page.getByRole('button', { name: 'Try again', exact: true }).click()
-    await expect.poll(() => app!.evaluate(() => (globalThis as any).__cloudVerificationUrl)).toBeTruthy()
-    // Approval is an external service boundary; submit its local HTML form.
-    await fixture.stage('cloud.authorize', async () => {
-      const { chromium } = await import('@playwright/test')
-      const browser = await chromium.launch({ channel: 'chromium', headless: true })
-
-      try {
-        const consent = await browser.newPage({ ignoreHTTPSErrors: Boolean(h3) })
-        await consent.goto(await app.evaluate(() => (globalThis as any).__cloudVerificationUrl))
-        await consent.getByRole('button', { name: 'Approve device' }).click()
-        await expect(consent.getByText('Synthetic approval complete')).toBeVisible()
-        await expect(
-          page.getByText('This sign-in session expired. Try again to open a new authorization page.', { exact: true })
-        ).toBeVisible({ timeout: 30_000 })
-        const retiredUrl = await app.evaluate(() => (globalThis as any).__cloudVerificationUrl)
-        await page.getByRole('button', { name: 'Try again', exact: true }).click()
-        await expect.poll(() => app!.evaluate(() => (globalThis as any).__cloudVerificationUrl)).not.toBe(retiredUrl)
-        await consent.goto(await app.evaluate(() => (globalThis as any).__cloudVerificationUrl))
-        await consent.getByRole('button', { name: 'Approve device' }).click()
-        await expect(consent.getByText('Synthetic approval complete')).toBeVisible()
-      } finally {
-        await browser.close()
+      ipcMain.handle('hermes:openExternal', () => { (globalThis as any).__cloudExternalCalls++; throw new Error('External launch forbidden') })
+      if (trust.fingerprint) {
+        app.on('certificate-error', (event: { preventDefault(): void }, _contents: unknown, url: string, _error: string, certificate: { fingerprint: string }, callback: (trusted: boolean) => void) => {
+          if (new URL(url).origin === trust.origin && certificate.fingerprint.toUpperCase() === trust.fingerprint.toUpperCase()) {
+            event.preventDefault()
+            callback(true)
+          } else { callback(false) }
+        })
       }
+    }, { origin, fingerprint: h3 ? new X509Certificate(fs.readFileSync(h3.certificate)).fingerprint256 : '' })
+    await page.getByRole('button', { name: 'Try again', exact: true }).click()
+    // Consent stays in the actual owned Browser Pane. No independent browser.
+    await fixture.stage('cloud.authorize', async () => {
+      const approveCurrent = async () => {
+        const guest = page.locator('webview').last()
+        await expect(guest).toBeVisible()
+        await expect.poll(() => guest.evaluate((view: any) => view.getURL())).toContain('/billing/connect?intent_ref=')
+        await expect.poll(() => guest.evaluate((view: any) => view.executeJavaScript(`Boolean(document.querySelector('form button'))`)), { timeout: 30_000 }).toBe(true)
+        const rect = await guest.evaluate((view: any) => view.executeJavaScript(`(() => {const rect=document.querySelector('form button').getBoundingClientRect();return {x:rect.x,y:rect.y,width:rect.width,height:rect.height};})()`))
+        const host = await guest.boundingBox()
+        await page.mouse.click(host!.x + rect.x + rect.width / 2, host!.y + rect.y + rect.height / 2)
+        await expect.poll(() => guest.evaluate((view: any) => view.executeJavaScript('document.body.innerText'))).toContain('Synthetic approval complete')
+      }
+      const decline = page.getByRole('button', { name: 'Not now', exact: true })
+      if (await decline.isVisible()) { await decline.click() }
+      await approveCurrent()
+      await expect(page.getByText('This sign-in session expired. Try again to open a new authorization page.', { exact: true })).toBeVisible({ timeout: 30_000 })
+      await page.getByRole('button', { name: 'Try again', exact: true }).click()
+      await approveCurrent()
+      expect(await app.evaluate(() => (globalThis as any).__cloudExternalCalls)).toBe(0)
     })
     await fixture.stage('cloud.confirm', async () => {
       // Assert the rendered journey rather than importing a second HMR store instance.

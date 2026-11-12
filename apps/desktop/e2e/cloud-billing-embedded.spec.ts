@@ -21,6 +21,12 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
 
   try {
     const { app, page } = await fixture.launch()
+    page.on('response', async response => {
+      if (response.url().includes('/api/model/set')) {
+        const body = await response.json().catch(() => ({}))
+        console.log('MODEL_WRITE_RESULT', JSON.stringify({ status: response.status(), ok: body.ok, confirm_required: body.confirm_required, reason: body.detail || body.confirm_message }))
+      }
+    })
     await app.evaluate(({ ipcMain }) => {
       ;(globalThis as any).__billingExternalCalls = 0
       ipcMain.removeHandler('hermes:openExternal')
@@ -85,13 +91,15 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
         const model = page.getByRole('button', { name: /Model.*local-fixture/ })
         await expect.poll(async () => (await fixture.button('Begin').isVisible()) || (await model.isVisible()), { timeout: 90_000 }).toBe(true)
         if (await fixture.button('Begin').isVisible()) { await fixture.button('Begin').click() }
-        await expect(model).toBeVisible({ timeout: 60_000 })
+        await expect.poll(() => fs.readFileSync(configPath, 'utf8'), { timeout: 30_000 }).toContain('default: local-fixture')
+        await expect(fixture.button('Begin')).not.toBeVisible({ timeout: 30_000 })
+        await expect(page.getByRole('button', { name: 'Switch model', exact: true })).toBeVisible()
         await expect(page.getByRole('button', { name: 'Try again', exact: true })).not.toBeVisible()
         expect(fs.readFileSync(configPath, 'utf8')).toContain('local-fixture')
       })
       await fixture.stage('cloud.restart-persistence', async () => {
         const restarted = await fixture.restart()
-        await expect(restarted.page.getByRole('button', { name: /local-fixture/ })).toBeVisible({ timeout: 120_000 })
+        await expect(restarted.page.getByRole('button', { name: 'Switch model', exact: true })).toBeVisible({ timeout: 120_000 })
         await expect(restarted.page.getByRole('button', { name: 'Sign in to Semantier Model Provider', exact: true })).not.toBeVisible()
         await restarted.page.screenshot({ path: info.outputPath('model-ready-after-restart.png') })
       })
