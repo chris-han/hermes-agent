@@ -58,11 +58,10 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
   // Credential identity stays native. Only a one-way digest leaves the owner
   // process; DPAPI ciphertext and its mutable readiness cache may change.
   const credentialIdentity = () => execFileSync(process.env.HERMES_PYTHON!, ['-P', '-c', `
-import hashlib,os,yaml
-from pathlib import Path
-from hermes_cli.cloud_device_client import credential
-entry=yaml.safe_load((Path(os.environ['HERMES_HOME'])/'config.yaml').read_text())['providers']['semantier-cloud']
-ref=entry['credential_ref'];base=entry['base_url']
+import hashlib
+from hermes_cli.cloud_device_client import _read,credential
+state=_read()
+ref=state['credential_ref'];base=state['origin']+'/v1'
 secret=credential(ref,base_url=base)
 print(hashlib.sha256((ref+'\\0'+base+'\\0'+secret).encode()).hexdigest())
 `], { cwd: path.resolve(import.meta.dirname, '../../..'), env: { ...env, PYTHONPATH: path.resolve(import.meta.dirname, '../../..') }, encoding: 'utf8', timeout: 20_000 }).trim()
