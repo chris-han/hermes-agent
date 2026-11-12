@@ -173,6 +173,11 @@ print(hashlib.sha256((ref+'\\0'+base+'\\0'+secret).encode()).hexdigest())
           expect(metrics.bounds.every((box: {left:number;right:number}) => box.left >= -1 && box.right <= metrics.width + 1)).toBe(true)
           expect(metrics.animations).toBe(0)
           await page.screenshot({ path: info.outputPath('embedded-billing-' + language + '.png') })
+          const guestId = await guest.evaluate((view: any) => view.getWebContentsId())
+          await app.evaluate(async ({ webContents }, { guestId, output }) => {
+            const image = await webContents.fromId(guestId)!.capturePage()
+            process.getBuiltinModule('fs').writeFileSync(output, image.toPNG())
+          }, { guestId, output: info.outputPath('billing-guest-' + language + '.png') })
           console.log('BILLING_VISUAL', JSON.stringify({ language, ...metrics }))
         }
       })
