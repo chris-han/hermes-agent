@@ -81,7 +81,7 @@ test('desktop browser preserves discovery failures and reconnects within the sam
       const prompt = JSON.parse(body.messages.at(-1).content).request
       const opening = prompt.includes('Open the frame fixture')
       const closing = prompt.includes('Close the frame fixture')
-      const visible = closing || prompt.includes('Inspect the frame fixture') || prompt.includes('CONTINUITY_TASK')
+      const visible = opening || closing || prompt.includes('Inspect the frame fixture') || prompt.includes('CONTINUITY_TASK')
       res.setHeader('Content-Type', 'application/json')
 
       return res.end(
