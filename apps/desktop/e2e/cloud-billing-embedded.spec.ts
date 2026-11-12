@@ -77,7 +77,27 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
       })
     }
 
-    await page.screenshot({ path: info.outputPath('embedded-login.png') })
+    if (credentialsFile) {
+      await fixture.stage('cloud.native-install-and-model', async () => {
+        const configPath = sandbox.hermesHome + '/config.yaml'
+        await expect.poll(() => fs.readFileSync(configPath, 'utf8'), { timeout: 60_000 }).toContain('credential_ref:')
+        expect(fs.existsSync(sandbox.hermesHome + '/.cloud-device.bin')).toBe(true)
+        const model = page.getByRole('button', { name: /Model.*local-fixture/ })
+        await expect.poll(async () => (await fixture.button('Begin').isVisible()) || (await model.isVisible()), { timeout: 90_000 }).toBe(true)
+        if (await fixture.button('Begin').isVisible()) { await fixture.button('Begin').click() }
+        await expect(model).toBeVisible({ timeout: 60_000 })
+        await expect(page.getByRole('button', { name: 'Try again', exact: true })).not.toBeVisible()
+        expect(fs.readFileSync(configPath, 'utf8')).toContain('local-fixture')
+      })
+      await fixture.stage('cloud.restart-persistence', async () => {
+        const restarted = await fixture.restart()
+        await expect(restarted.page.getByRole('button', { name: /local-fixture/ })).toBeVisible({ timeout: 120_000 })
+        await expect(restarted.page.getByRole('button', { name: 'Sign in to Semantier Model Provider', exact: true })).not.toBeVisible()
+        await restarted.page.screenshot({ path: info.outputPath('model-ready-after-restart.png') })
+      })
+    }
+
+    if (!credentialsFile) { await page.screenshot({ path: info.outputPath('embedded-login.png') }) }
     console.log('EMBEDDED_REAL_LOGIN', JSON.stringify({ platform: process.platform, origin, externalCalls: 0, unconfigured: true }))
   } finally { await fixture.close() }
 })
