@@ -463,3 +463,17 @@ def test_only_confirmed_authentication_refusal_removes_native_custody(native,mon
     result=device.poll(start['session_id'])
     assert ('token-test' in device._read()['credentials']) is retained
     assert result['status']==('approved' if retained else 'revoked')
+
+
+def test_expired_custody_reaches_desktop_catalog_as_authorization_expiry(native,monkeypatch):
+    device,_=native
+    install_wire(device,monkeypatch)
+    started=device.start();device.poll(started['session_id'])
+    state=device._read()
+    state['credentials']['token-test']['credential']['expires_at']='2000-01-01T00:00:00+00:00'
+    device._write(state)
+    from hermes_cli.inventory import load_picker_context,build_desktop_model_options_payload
+    payload=build_desktop_model_options_payload(load_picker_context(),source_scope='fixture-expired-custody',refresh=True)
+    row=next(row for row in payload['providers'] if row['slug']=='semantier-cloud')
+    assert row['discovery_status']=='cloud_credential_expired'
+    assert row['models']==[]

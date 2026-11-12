@@ -320,15 +320,19 @@ def configured_provider_rows(ctx, *, source_scope: str, refresh: bool = False) -
     def project(slug, name, endpoint, key, entry, *, aliases=None):
         is_cloud = slug.lower() == "semantier-cloud"
         settings = None
+        settings_failure = None
         if is_cloud:
             from agent.semantier_gateway import gateway_settings
+            from hermes_cli.cloud_device_client import CloudConnectionError
 
             try:
                 settings = gateway_settings(allow_unselected=True)
+            except CloudConnectionError as error:
+                settings_failure = error.code
             except ValueError:
-                pass
+                settings_failure = 'cloud_config_invalid'
         if (is_cloud and (not settings or settings.base_url.rstrip("/") != endpoint.rstrip("/"))) or not _discover_flag(entry):
-            snapshot = ProviderSnapshot(None, "unsupported")
+            snapshot = ProviderSnapshot(None, "error", status=settings_failure) if settings_failure else ProviderSnapshot(None, "unsupported")
         else:
             if is_cloud:
                 snapshot = read_provider_snapshot(provider=slug, base_url=endpoint, api_key=settings.api_key,
