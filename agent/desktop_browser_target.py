@@ -105,6 +105,8 @@ class BrowserTurnState:
         if self.kind == 'VISIBLE_PANE' and name == 'drive_preview' and args.get('action') in ('reload', 'back', 'forward'):
             if self.operation != args['action']:return failure('USER_INTENT_REQUIRED')
         if name=='drive_preview' and args.get('ref') and args.get('action')!='elements':
+            if self.binding_revision and not str(args['ref']).startswith(f'binding:{self.binding_revision}:'):
+                return failure('STALE_TARGET')
             if self.binding.tab_id is None:return failure('PANE_UNAVAILABLE')
             if self.inventory!=(self.binding.guest_id,self.binding.page_epoch):return failure('STALE_TARGET')
         return None

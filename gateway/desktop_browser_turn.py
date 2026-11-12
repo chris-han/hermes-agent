@@ -40,7 +40,10 @@ def act_live(state,raw_read,raw_act,payload):
     error=state.guard('drive_preview',payload)
     if error:return json.dumps(error)
     revision=state.binding_revision
-    result=raw_act({**payload,'expected_binding':state.expected_page()})
+    action_payload=dict(payload)
+    if state.binding_revision and action_payload.get('ref'):
+        action_payload['ref']=action_payload['ref'].removeprefix(f'binding:{state.binding_revision}:')
+    result=raw_act({**action_payload,'expected_binding':state.expected_page()})
     if revision != state.binding_revision:return json.dumps(failure('STALE_TARGET'))
     value=parse_result(result)
     if isinstance(value,dict) and value.get('success') is False and value.get('code') in ('INVALID_ELEMENT_REF', 'INVALID_SELECTOR'):
@@ -50,6 +53,11 @@ def act_live(state,raw_read,raw_act,payload):
     if is_inventory and isinstance(value,dict) and value.get('success') is True:
         if state.discovery_failures:state.recovery_inventories += 1
         state.mark_inventory()
+        if state.binding_revision:
+            for element in value.get('elements', []):
+                if isinstance(element, dict) and isinstance(element.get('ref'), str):
+                    element['ref']=f'binding:{state.binding_revision}:'+element['ref']
+            result=json.dumps(value)
     return result
 
 

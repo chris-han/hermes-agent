@@ -288,3 +288,42 @@ def test_manually_replaced_pane_read_uses_verified_reconnect_once():
     assert len(requests) == 2
     assert state.discovery_failures == 0
     assert state.recovery_inventories == 0
+
+
+def test_old_ref_cannot_reenter_after_new_guest_inventory_with_same_labels():
+    from gateway.desktop_browser_turn import act_live
+    state = BrowserTurnState(session_id='session', generation=1, turn_id='turn',
+                             target_kind='VISIBLE_PANE', live_check=lambda: True)
+    binding = {'session_id': 'session', 'window_id': 'window', 'tab_id': 'tab',
+               'guest_id': 1, 'page_epoch': 1, 'profile_id': 'profile'}
+    state.accept_page({'success': True, 'binding': binding})
+    replacement = {**binding, 'guest_id': 2}
+    state.reconnect(lambda _: {'success': True, 'binding': replacement,
+        'explicit_user_selection': True, 'live_verified': True})
+    inventory = json.loads(act_live(state, lambda _: json.dumps({'success': True, 'binding': replacement}),
+        lambda _: json.dumps({'success': True, 'elements': [{'ref': 'btn-save'}]}), {'action': 'elements'}))
+    assert inventory['elements'][0]['ref'] != 'btn-save'
+    assert state.guard('drive_preview', {'action': 'click', 'ref': 'btn-save'})['code'] == 'STALE_TARGET'
+    assert state.guard('drive_preview', {'action': 'click', 'ref': inventory['elements'][0]['ref']}) is None
+
+
+def test_fresh_reconnect_ref_is_unwrapped_only_for_current_guest_dispatch():
+    from gateway.desktop_browser_turn import act_live
+    state = BrowserTurnState(session_id='session', generation=1, turn_id='turn',
+                             target_kind='VISIBLE_PANE', live_check=lambda: True)
+    binding = {'session_id': 'session', 'window_id': 'window', 'tab_id': 'tab',
+               'guest_id': 1, 'page_epoch': 1, 'profile_id': 'profile'}
+    state.accept_page({'success': True, 'binding': binding})
+    replacement = {**binding, 'guest_id': 2}
+    state.reconnect(lambda _: {'success': True, 'binding': replacement,
+        'explicit_user_selection': True, 'live_verified': True})
+    read = lambda _: json.dumps({'success': True, 'binding': replacement})
+    inventory = json.loads(act_live(state, read,
+        lambda _: json.dumps({'success': True, 'elements': [{'ref': 'btn-save'}]}), {'action': 'elements'}))
+    effects = []
+    result = json.loads(act_live(state, read,
+        lambda payload: effects.append(payload) or json.dumps({'success': True}),
+        {'action': 'hover', 'ref': inventory['elements'][0]['ref']}))
+    assert result['success'] is True
+    assert effects[0]['ref'] == 'btn-save'
+    assert effects[0]['expected_binding']['guest_id'] == 2
