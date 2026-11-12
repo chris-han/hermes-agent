@@ -28,6 +28,14 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
       }
     })
     await app.evaluate(({ ipcMain }) => {
+      const apiHandler = (ipcMain as any)._invokeHandlers.get('hermes:api')
+      ipcMain.removeHandler('hermes:api')
+      ipcMain.handle('hermes:api', async (event, request) => {
+        try { return await apiHandler(event, request) } catch (error) {
+          if (request.path === '/api/model/set') { (globalThis as any).__modelWriteFailure = String(error) }
+          throw error
+        }
+      })
       ;(globalThis as any).__billingExternalCalls = 0
       ipcMain.removeHandler('hermes:openExternal')
       ipcMain.handle('hermes:openExternal', () => { (globalThis as any).__billingExternalCalls++; throw new Error('External launch forbidden') })
@@ -107,5 +115,8 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
 
     if (!credentialsFile) { await page.screenshot({ path: info.outputPath('embedded-login.png') }) }
     console.log('EMBEDDED_REAL_LOGIN', JSON.stringify({ platform: process.platform, origin, externalCalls: 0, unconfigured: true }))
-  } finally { await fixture.close() }
+  } finally {
+    if (fixture.app) { console.log('MODEL_WRITE_FAILURE', await fixture.app.evaluate(() => (globalThis as any).__modelWriteFailure || 'none')) }
+    await fixture.close()
+  }
 })
