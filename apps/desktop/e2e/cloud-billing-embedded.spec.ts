@@ -21,21 +21,7 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
 
   try {
     const { app, page } = await fixture.launch()
-    page.on('response', async response => {
-      if (response.url().includes('/api/model/set')) {
-        const body = await response.json().catch(() => ({}))
-        console.log('MODEL_WRITE_RESULT', JSON.stringify({ status: response.status(), ok: body.ok, confirm_required: body.confirm_required, reason: body.detail || body.confirm_message }))
-      }
-    })
     await app.evaluate(({ ipcMain }) => {
-      const apiHandler = (ipcMain as any)._invokeHandlers.get('hermes:api')
-      ipcMain.removeHandler('hermes:api')
-      ipcMain.handle('hermes:api', async (event, request) => {
-        try { return await apiHandler(event, request) } catch (error) {
-          if (request.path === '/api/model/set') { (globalThis as any).__modelWriteFailure = String(error) }
-          throw error
-        }
-      })
       ;(globalThis as any).__billingExternalCalls = 0
       ipcMain.removeHandler('hermes:openExternal')
       ipcMain.handle('hermes:openExternal', () => { (globalThis as any).__billingExternalCalls++; throw new Error('External launch forbidden') })
@@ -80,10 +66,12 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
         await expect.poll(() => guest.evaluate((view: any) => view.executeJavaScript('document.body.innerText')), { timeout: 60_000 }).toMatch(/Log out|退出登录/)
       })
       await fixture.stage('billing.embedded-static-en-zh', async () => {
-        await page.setViewportSize({ width: 1280, height: 900 })
+        await app.evaluate(({ BrowserWindow }) => {const window = BrowserWindow.getAllWindows()[0]; window.unmaximize(); window.setSize(1280, 900)})
+        await expect.poll(async () => { const box=await guest.boundingBox(); const width=await guest.evaluate((view: any)=>view.executeJavaScript('innerWidth')); return Math.abs(width-(box?.width || 0)) }, { timeout: 15_000 }).toBeLessThan(3)
 
-        for (const [language, toggle] of [['en', ['EN']], ['zh', ['中文']]] as const) {
+        for (const [language, toggle] of [['en', ['EN']], ['zh', ['中']]] as const) {
           await clickGuest([...toggle])
+          await expect.poll(() => guest.evaluate((view: any) => view.executeJavaScript('document.documentElement.lang')), { timeout: 30_000 }).toBe(language)
           const metrics = await guest.evaluate((view: any) => view.executeJavaScript(`(async () => {await document.fonts.ready; const root=document.querySelector('.semantier-billing'); return {font:getComputedStyle(root).fontFamily, width:document.documentElement.clientWidth, overflow:document.documentElement.scrollWidth>document.documentElement.clientWidth, animations:document.getAnimations().filter(a=>a.playState==='running').length};})()`))
           expect(metrics.font).toMatch(/Manrope/i)
           expect(metrics.overflow).toBe(false)
@@ -115,7 +103,7 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
         if (await fixture.button('Begin').isVisible()) { await fixture.button('Begin').click() }
         await expect.poll(() => fs.readFileSync(configPath, 'utf8').match(/^ {2}default: ['"]?([^'"\n]+)['"]?$/m)?.[1], { timeout: 30_000 }).toBe('local-fixture')
         await expect(fixture.button('Begin')).not.toBeVisible({ timeout: 30_000 })
-        await expect(page.getByRole('button', { name: 'Switch model', exact: true })).toBeVisible()
+        await expect(model).toBeVisible()
         await expect(page.getByRole('button', { name: 'Try again', exact: true })).not.toBeVisible()
         expect(fs.readFileSync(configPath, 'utf8').includes('capability_revision:')).toBe(true)
       })
@@ -127,7 +115,7 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
       })
       await fixture.stage('cloud.restart-persistence', async () => {
         const restarted = await fixture.restart()
-        await expect(restarted.page.getByRole('button', { name: 'Switch model', exact: true })).toBeVisible({ timeout: 120_000 })
+        await expect(restarted.page.getByRole('button', { name: /Model.*local-fixture/ })).toBeVisible({ timeout: 120_000 })
         await expect(restarted.page.getByRole('button', { name: 'Sign in to Semantier Model Provider', exact: true })).not.toBeVisible()
         await restarted.page.screenshot({ path: info.outputPath('model-ready-after-restart.png') })
       })
@@ -136,7 +124,6 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
     if (!credentialsFile) { await page.screenshot({ path: info.outputPath('embedded-login.png') }) }
     console.log('EMBEDDED_REAL_LOGIN', JSON.stringify({ platform: process.platform, origin, externalCalls: 0, unconfigured: true }))
   } finally {
-    if (fixture.app) { console.log('MODEL_WRITE_FAILURE', await fixture.app.evaluate(() => (globalThis as any).__modelWriteFailure || 'none')) }
     await fixture.close()
   }
 })
