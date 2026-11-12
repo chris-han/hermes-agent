@@ -1173,6 +1173,7 @@ export async function retryCloudModelDiscovery(ctx: OnboardingContext, provider:
 
   if (!current()) {return}
   let installed = true
+  let detail: string | undefined
   let message = translateNow('onboarding.cloudSignInError', 'cloud_catalog_unavailable', ctx.scope?.profile ?? 'default')
 
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -1189,7 +1190,10 @@ export async function retryCloudModelDiscovery(ctx: OnboardingContext, provider:
     } catch (error) {
       const code = decodeCloudSignInError(error).code
       installed = !['cloud_authorization_required', 'cloud_credential_expired'].includes(code)
-      message = signInDidNotFinish(provider, error).message
+      const failure = signInDidNotFinish(provider, error)
+      detail = failure.detail
+      const catalogCode = code === 'cloud_server_error' ? 'cloud_catalog_http_error' : code === 'cloud_authorization_denied' ? 'cloud_catalog_access_denied' : null
+      message = installed && catalogCode ? translateNow('onboarding.cloudSignInError', catalogCode, ctx.scope?.profile ?? 'default') : failure.message
 
       if (!installed) {break}
     }
@@ -1197,7 +1201,7 @@ export async function retryCloudModelDiscovery(ctx: OnboardingContext, provider:
     if (attempt < 2) {await new Promise(resolve => window.setTimeout(resolve, 500 * (attempt + 1)))}
   }
 
-  if (current()) {setFlow({ status: 'error', installed, provider, message })}
+  if (current()) {setFlow({ status: 'error', installed, provider, message, detail })}
 }
 
 export function setOnboardingCode(code: string) {

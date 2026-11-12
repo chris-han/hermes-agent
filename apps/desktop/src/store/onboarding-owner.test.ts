@@ -395,3 +395,25 @@ it('keeps Cloud reopen bound to its initiating chat runtime', async () => {
     expect($previewTabs.get()).toHaveLength(1)
   } finally { $activeSessionId.set(originalRuntime) }
 })
+
+it.each([
+  ['cloud_server_error', 'Model catalog returned a server error'],
+  ['cloud_authorization_denied', 'Model access is denied for this account']
+])('keeps installed catalog diagnosis and read recovery for %s', async (code, message) => {
+  const ctx = beginContext()
+  const original = vi.mocked(window.hermesDesktop.api).getMockImplementation()!
+  vi.mocked(window.hermesDesktop.api).mockImplementation(async request => {
+    if (request.path.startsWith('/api/model/options')) {
+      requests.push(request)
+
+      return { providers: [{ slug: 'semantier-cloud', models: [], discovery_state: 'error', discovery_status: code }] } as never
+    }
+
+    return original(request) as never
+  })
+  const task = retryCloudModelDiscovery(ctx, { ...makeOAuthProvider('semantier-cloud'), flow: 'device_code' })
+  await vi.advanceTimersByTimeAsync(2000)
+  await task
+  expect($desktopOnboarding.get().flow).toMatchObject({ status: 'error', installed: true, message: expect.stringContaining(message) })
+  expect(requests.filter(request => request.path.endsWith('/start'))).toHaveLength(0)
+})

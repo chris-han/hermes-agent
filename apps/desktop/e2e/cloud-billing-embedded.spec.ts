@@ -1,6 +1,8 @@
+import { execFileSync } from 'node:child_process'
 import { X509Certificate } from 'node:crypto'
 /** First real loop: native card -> real Runtime intent -> Workspace login in owned pane. */
 import fs from 'node:fs'
+import http from 'node:http'
 
 import { expect, test } from '@playwright/test'
 
@@ -15,6 +17,28 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
   const origin = process.env.HERMES_E2E_BILLING_ORIGIN
   expect(origin, 'Explicit local Workspace origin required').toBeTruthy()
   expect(['localhost', '127.0.0.1']).toContain(new URL(origin!).hostname)
+  const outage = process.env.HERMES_E2E_CATALOG_OUTAGE === '1'
+  const noAccess = process.env.HERMES_E2E_EXPECT_NO_ACCESS === '1'
+  expect(outage && noAccess).toBe(false)
+  const docker = process.env.HERMES_E2E_DOCKER_CLI
+
+  if (outage) { expect(docker, 'Explicit native Docker CLI required for owned network fault').toBeTruthy() }
+  const caddy = 'semantier-candidate-20261112-caddy'
+  const marker = '/data/.cloud-billing-catalog-outage'
+  let faultActive = false
+
+  const setCatalogFault = (enabled: boolean) => {
+    execFileSync(docker!, ['exec', caddy, ...(enabled ? ['touch', marker] : ['rm', '-f', marker])], { stdio: 'pipe' })
+    faultActive = enabled
+  }
+
+  const operationCount = (operation: 'start' | 'claim' | 'ack') => {
+    const pattern = operation === 'start' ? '/api/cloud-provider/device/start' : '/' + operation + '"'
+
+    return Number(execFileSync(docker!, ['exec', caddy, 'sh', '-c', `grep -F -c '${pattern}' /data/side-workspace-access.jsonl || :`], { encoding: 'utf8' }).trim())
+  }
+
+  const before = outage ? { start: operationCount('start'), claim: operationCount('claim'), ack: operationCount('ack') } : null
   const sandbox = createSandbox('billing-embedded')
   writeEnvFile(sandbox.hermesHome)
   fs.writeFileSync(sandbox.hermesHome + '/config.yaml', `language: en\ndisplay:\n  language: en\nbilling: null\nproviders:\n  semantier-cloud:\n    base_url: ${origin}/v1\n    portal_origin: ${origin}\n`)
@@ -29,7 +53,22 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
 
   const fixture = new DesktopFixtureSession(sandbox, buildAppEnv(sandbox, { HERMES_DESKTOP_DEV_SERVER: process.env.HERMES_DESKTOP_DEV_SERVER! }), info)
 
+  const existingSite = http.createServer((request, response) => {
+    if (request.url === '/login') {
+      response.writeHead(302, { 'Set-Cookie': 'fixture_account=synthetic; HttpOnly; SameSite=Lax; Path=/', Location: '/account' })
+      response.end()
+
+      return
+    }
+
+    response.statusCode = request.headers.cookie?.includes('fixture_account=synthetic') ? 200 : 401
+    response.setHeader('Content-Type', 'text/html')
+    response.end(response.statusCode === 200 ? '<h1>Fixture account signed in</h1>' : '<h1>Sign in required</h1>')
+  })
+
   try {
+    await new Promise<void>(resolve => existingSite.listen(0, '127.0.0.1', resolve))
+    const existingUrl = `http://localhost:${(existingSite.address() as any).port}/login`
     const { app, page } = await fixture.launch()
     await app.evaluate(({ ipcMain, app }, trust) => {
       if (trust.fingerprint) {
@@ -47,12 +86,28 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
       ipcMain.removeHandler('hermes:openExternal')
       ipcMain.handle('hermes:openExternal', () => { (globalThis as any).__billingExternalCalls++; throw new Error('External launch forbidden') })
     }, { origin: origin!, fingerprint: certificate ? new X509Certificate(fs.readFileSync(certificate)).fingerprint256 : '' })
+    await fixture.stage('browser.existing-account-setup', async () => {
+      await page.getByRole('button', { name: 'Sign in to Semantier Model Provider', exact: true }).waitFor({ state: 'visible', timeout: 180_000 })
+      await page.evaluate(async url => {
+        const preview = await import(/* @vite-ignore */ String('/src/store/preview.ts'))
+        preview.openPreview({ kind: 'url', url, source: url, label: 'Existing fixture account' })
+      }, existingUrl)
+      const decline = page.getByRole('button', { name: "Don't show again", exact: true })
+      await decline.waitFor({ state: 'visible', timeout: 10_000 }).catch(() => undefined)
+
+      if (await decline.isVisible()) { await decline.click() }
+      await expect.poll(() => page.locator('webview').first().evaluate((view: any) => view.executeJavaScript('document.body.innerText')), { timeout: 30_000 }).toContain('Fixture account signed in')
+    })
+    const originalGuest = page.locator('webview').first()
+    const originalGuestId = await originalGuest.evaluate((view: any) => view.getWebContentsId())
     await page.getByRole('button', { name: 'Sign in to Semantier Model Provider', exact: true }).click({ timeout: 180_000 })
     const guest = page.locator('webview').last()
     await expect(guest).toBeVisible({ timeout: 60_000 })
     await expect.poll(() => guest.evaluate((view: any) => view.getURL()).catch(() => ''), { timeout: 60_000 }).toContain('/billing/connect?intent_ref=dci_')
     await expect.poll(() => guest.evaluate((view: any) => view.executeJavaScript('document.body.innerText')).catch(() => ''), { timeout: 60_000 }).toMatch(/Sign in|登录/)
     expect(await app.evaluate(() => (globalThis as any).__billingExternalCalls)).toBe(0)
+    expect(await originalGuest.evaluate((view: any) => view.getWebContentsId())).toBe(originalGuestId)
+    expect(await originalGuest.evaluate((view: any) => view.getURL())).toBe(existingUrl.replace('/login', '/account'))
 
     const clickGuest = async (labels: string[], selector = 'button') => {
       await expect.poll(() => guest.evaluate((view: any, args) => view.executeJavaScript(`Array.from(document.querySelectorAll(${JSON.stringify(args.selector)})).some(node => ${JSON.stringify(args.labels)}.includes(node.textContent.trim()) && !node.disabled)`), { labels, selector }), { timeout: 15_000 }).toBe(true)
@@ -110,6 +165,8 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
         await guest.evaluate((view: any, account) => view.executeJavaScript(`(() => {const select=Array.from(document.querySelectorAll('select')).find(node=>Array.from(node.options).some(option=>option.value===${JSON.stringify(account)})); if(select){select.value=${JSON.stringify(account)};select.dispatchEvent(new Event('change',{bubbles:true}));}})()`), account)
 
         await expect.poll(() => guest.evaluate((view: any) => view.executeJavaScript('document.body.innerText')), { timeout: 30_000 }).toMatch(/Approve device|授权此设备/)
+
+        if (outage) { setCatalogFault(true) }
         await clickGuest(['Approve device', '授权此设备'])
         await expect.poll(() => guest.evaluate((view: any) => view.executeJavaScript('document.body.innerText')), { timeout: 30_000 }).toMatch(/Approved|已授权/)
       })
@@ -120,6 +177,32 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
         const configPath = sandbox.hermesHome + '/config.yaml'
         await expect.poll(() => fs.readFileSync(configPath, 'utf8').includes('credential_ref:'), { timeout: 60_000 }).toBe(true)
         expect(fs.existsSync(sandbox.hermesHome + '/.cloud-device.bin')).toBe(true)
+
+        if (outage) {
+          await expect(fixture.button('Try again')).toBeVisible({ timeout: 60_000 })
+          await expect(page.getByText(/Model catalog returned a server error/)).toBeVisible()
+          const box = await guest.boundingBox()
+          expect(box).toBeTruthy()
+          expect(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.tagName, { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 })).toBe('WEBVIEW')
+          const installed = fs.readFileSync(sandbox.hermesHome + '/.cloud-device.bin')
+          setCatalogFault(false)
+          await fixture.button('Try again').click()
+          await expect(fixture.button('Begin')).toBeVisible({ timeout: 60_000 })
+          expect(fs.readFileSync(sandbox.hermesHome + '/.cloud-device.bin').equals(installed)).toBe(true)
+          const counts = { start: operationCount('start') - before!.start, claim: operationCount('claim') - before!.claim, ack: operationCount('ack') - before!.ack }
+          expect(counts).toEqual({ start: 1, claim: 1, ack: 1 })
+          console.log('CATALOG_REAL_RECOVERY', JSON.stringify({ counts, transportFault: 'HTTP503', protectedCustody: 'unchanged' }))
+        }
+
+        if (noAccess) {
+          await expect(page.getByText(/This account has no enabled model/)).toBeVisible({ timeout: 60_000 })
+          expect(fs.readFileSync(configPath, 'utf8').includes("default: ''")).toBe(true)
+          await expect(fixture.button('Try again')).toBeVisible()
+          console.log('CATALOG_REAL_EMPTY', JSON.stringify({ installed: true, selectedModel: false }))
+
+          return
+        }
+
         const model = page.getByRole('button', { name: /Model.*local-fixture/ })
         await expect.poll(async () => (await fixture.button('Begin').isVisible()) || (await model.isVisible()), { timeout: 90_000 }).toBe(true)
 
@@ -130,6 +213,8 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
         await expect(page.getByRole('button', { name: 'Try again', exact: true })).not.toBeVisible()
         expect(fs.readFileSync(configPath, 'utf8').includes('capability_revision:')).toBe(true)
       })
+
+      if (noAccess) { return }
       await fixture.stage('billing.login-reuse-and-real-logout', async () => {
         const protectedStore = fs.readFileSync(sandbox.hermesHome + '/.cloud-device.bin')
         await page.getByRole('button', { name: 'Reload page', exact: true }).click()
@@ -143,6 +228,9 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
         if (await back.isEnabled()) { await back.click() }
         await expect.poll(() => guest.evaluate((view: any) => view.executeJavaScript('document.body.innerText'))).not.toContain('unified-fixture')
         expect(fs.readFileSync(sandbox.hermesHome + '/.cloud-device.bin').equals(protectedStore)).toBe(true)
+        expect(await originalGuest.evaluate((view: any) => view.getWebContentsId())).toBe(originalGuestId)
+        expect(await originalGuest.evaluate((view: any) => view.getURL())).toBe(existingUrl.replace('/login', '/account'))
+        expect(await originalGuest.evaluate((view: any) => view.executeJavaScript(`fetch('/account').then(r=>r.status)`))).toBe(200)
       })
       await fixture.stage('cloud.controlled-local-chat', async () => {
         const composer = page.getByRole('textbox', { name: 'Message', exact: true })
@@ -184,6 +272,13 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
     if (!credentialsFile) { await page.screenshot({ path: info.outputPath('embedded-login.png') }) }
     console.log('EMBEDDED_REAL_LOGIN', JSON.stringify({ platform: process.platform, origin, externalCalls: 0, unconfigured: true }))
   } finally {
-    await fixture.close()
+    try {
+      if (faultActive) { setCatalogFault(false) }
+    } finally {
+      try { await fixture.close() } finally {
+        existingSite.closeAllConnections()
+        await new Promise<void>(resolve => existingSite.close(() => resolve()))
+      }
+    }
   }
 })

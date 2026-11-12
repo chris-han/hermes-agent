@@ -446,12 +446,12 @@ export function DesktopOnboardingOverlay({
   const showPicker = !freeTierIntro && (flow.status === 'idle' || flow.status === 'success')
   // The final "you're in" screen drops the card chrome and floats centered on
   // the surface — same bare, cinematic treatment as the connecting overlay.
-  const bare = ready && (freeTierIntro || (!showPicker && flow.status === 'confirming_model'))
+  const bare = !cloudFlow && ready && (freeTierIntro || (!showPicker && flow.status === 'confirming_model'))
 
   return (
     <div
       className={cn(
-        cloudFlow && flow.status === 'polling'
+        cloudFlow
           ? 'fixed bottom-4 left-4 z-(--z-onboarding) max-w-sm p-2'
           : 'fixed inset-0 z-(--z-onboarding) flex items-center justify-center bg-(--ui-chat-surface-background) p-6 transition-opacity duration-[520ms] ease-out',
         // On the bare confirm screen, hold the surface (text-out + hold) so the

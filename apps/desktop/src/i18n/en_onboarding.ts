@@ -8,6 +8,8 @@ const cloudSignInErrors: Record<string, string> = {
   cloud_provisioning_pending: 'Model access is being prepared. Retry readiness shortly.',
   cloud_entitlement_restricted: 'This account cannot currently use the selected model. Review account access and credit.',
   cloud_capability_mismatch: 'This model capability revision is unsupported. Refresh models or update the app.',
+  cloud_catalog_http_error: 'Model catalog returned a server error. Retry model discovery; your device remains connected.',
+  cloud_catalog_access_denied: 'Model access is denied for this account. Check account permissions; your device remains connected.',
   cloud_catalog_timeout: 'Model discovery timed out. Retry discovery; your device remains connected.',
   cloud_catalog_empty: 'This account has no enabled model. Refresh models after access is assigned. Your device remains connected.',
   cloud_catalog_unavailable: 'Model discovery is temporarily unavailable. Retry discovery; your device remains connected.',

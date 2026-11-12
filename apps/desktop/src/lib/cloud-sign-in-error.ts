@@ -10,6 +10,8 @@ const CODES = new Set([
   'cloud_capability_mismatch',
 
   'cloud_catalog_timeout',
+  'cloud_catalog_http_error',
+  'cloud_catalog_access_denied',
   'cloud_catalog_empty',
   'cloud_catalog_unavailable',
   'cloud_network_unavailable',

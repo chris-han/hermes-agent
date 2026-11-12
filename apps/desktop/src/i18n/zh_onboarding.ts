@@ -8,6 +8,8 @@ const cloudSignInErrors: Record<string, string> = {
   cloud_provisioning_pending: '正在准备模型访问，请稍后重试就绪检查。',
   cloud_entitlement_restricted: '此账户当前无法使用所选模型，请核对权限与额度。',
   cloud_capability_mismatch: '当前不支持此模型能力版本，请刷新模型或更新应用。',
+  cloud_catalog_http_error: '模型目录返回服务端错误。请重试模型发现；设备连接会保留。',
+  cloud_catalog_access_denied: '当前账户的模型访问被拒绝。请检查账户权限；设备连接会保留。',
   cloud_catalog_timeout: '读取模型列表超时。请重试模型发现；设备连接已保留。',
   cloud_catalog_empty: '此账户暂无已启用模型。分配权限后请刷新模型；设备连接已保留。',
   cloud_catalog_unavailable: '暂时无法读取模型列表。请重试模型发现；设备连接已保留。',
