@@ -764,16 +764,16 @@ def _prepare_main_assignment(cfg: dict, provider: str, model: str, base_url: str
     current = cfg.get('model') if isinstance(cfg.get('model'),dict) else {}
     current_cloud = is_gateway_route(str(current.get('base_url','')))
     if provider == 'semantier-cloud' or current_cloud and provider == current.get('provider') and not base_url or is_gateway_route(base_url):
-        settings = gateway_settings()
+        settings = gateway_settings(allow_unselected=provider == 'semantier-cloud')
         if not settings:
             raise HTTPException(422,'Semantier Model Provider connection required')
         if (base_url and base_url.rstrip('/') != settings.base_url) or api_key:
             raise HTTPException(422,'Cloud transport is profile-owned')
-        profile_info = cloud_model_profile(model,refresh=True)
-        if profile_info.get('protocol') not in {'chat','chat_completions'}:
-            raise HTTPException(422,'Cloud protocol unsupported by this Hermes version')
+        profile_info = cloud_model_profile(model,refresh=True,settings=settings)
+        if profile_info.get('protocol') not in {'chat','chat_completions','openai_chat_completions'}:
+            raise HTTPException(422,{'code':'cloud_capability_mismatch','message':'Cloud protocol unsupported by this Hermes version'})
         from hermes_cli.model_switch import ModelSwitchResult
-        target = 'semantier-cloud' if (cloud_connection_config() or {}).get('credential_ref') else 'custom'
+        target = 'semantier-cloud' if (cloud_connection_config(allow_unselected=provider == 'semantier-cloud') or {}).get('credential_ref') else 'custom'
         return settings.base_url, ModelSwitchResult(success=True,new_model=model,target_provider=target,
             base_url=settings.base_url,api_mode='chat_completions',provider_label='Semantier Model Provider',is_global=True)
     provider, model = _normalize_main_model_assignment(provider, model)
@@ -804,10 +804,12 @@ def _apply_main_assignment_sync(cfg: dict, provider: str, model: str, base_url: 
     _resolve_assignment_credentials(model_cfg, provider, provider_entry)
     from agent.semantier_gateway import is_gateway_route, cloud_model_profile
     if is_gateway_route(model_cfg.get('base_url','')):
-        model_cfg['capability_revision'] = cloud_model_profile(model)['revision']
+        from agent.semantier_gateway import gateway_settings
+        selected_settings = gateway_settings(allow_unselected=provider == 'semantier-cloud')
+        model_cfg['capability_revision'] = cloud_model_profile(model,settings=selected_settings)['revision']
         from agent.semantier_gateway import gateway_settings
         from agent.semantier_gateway import cloud_connection_config
-        cloud_config = cloud_connection_config()
+        cloud_config = cloud_connection_config(allow_unselected=provider == 'semantier-cloud')
         if cloud_config.get('credential_ref'):
             for field in ('api_key', 'api', 'key_env', 'api_key_env'):
                 model_cfg.pop(field, None)

@@ -1064,7 +1064,11 @@ def resolve_runtime_provider(*, requested: Optional[str] = None, explicit_api_ke
         if (explicit_base_url and explicit_base_url.rstrip('/') != settings.base_url) or (requested_provider == 'semantier-cloud' and explicit_api_key and explicit_api_key != settings.api_key):
             raise ValueError('Semantier Model Provider transport is profile-owned.')
         if target_model:
-            cloud_model_profile(target_model, settings=settings)
+            profile = cloud_model_profile(target_model, settings=settings)
+            if profile.get('protocol') not in {'chat','chat_completions','openai_chat_completions'}:
+                from hermes_cli.cloud_device_client import CloudConnectionError
+                raise CloudConnectionError('cloud_capability_mismatch',
+                    'Cloud protocol unsupported by this Hermes version.', recovery='check_connection')
         return {'provider':'custom','api_key':settings.api_key,'base_url':settings.base_url,
                 'api_mode':'chat_completions','source':'semantier-cloud'}
     # Same alias expansion the auxiliary client applies, so ``provider: openai`` means one thing on

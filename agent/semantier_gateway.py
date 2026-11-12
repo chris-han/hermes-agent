@@ -416,7 +416,7 @@ def cloud_switch_result(model, current_provider, *, is_global=False):
         if settings is None:
             raise ValueError('Semantier Model Provider connection required.')
         profile = cloud_model_profile(model,refresh=True)
-        if profile['protocol'] not in {'chat','chat_completions'}:
+        if profile['protocol'] not in {'chat','chat_completions','openai_chat_completions'}:
             raise ValueError('Unsupported Semantier Model Provider protocol.')
         target = 'semantier-cloud' if (cloud_connection_config() or {}).get('credential_ref') else 'custom'
         return ModelSwitchResult(success=True,new_model=model,target_provider=target,
