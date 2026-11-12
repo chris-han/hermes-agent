@@ -197,18 +197,10 @@ export class DesktopFixtureSession {
 
   async launch(): Promise<{ app: ElectronApplication; page: Page }> {
     return this.stage('electron.launch', async () => {
-      const quicOrigin = this.env.HERMES_E2E_FORCE_QUIC_ORIGIN
-      const quic = quicOrigin ? new URL(quicOrigin) : null
-
-      if (quic && (quic.protocol !== 'https:' || !['localhost', '127.0.0.1', '[::1]'].includes(quic.hostname) || quic.username || quic.password || quic.pathname !== '/' || quic.search || quic.hash)) {
-        throw new Error('Forced QUIC requires an explicit HTTPS loopback fixture origin')
-      }
-
       this.app = await _electron.launch({
         executablePath: resolveElectronBinary([path.join(this.root, 'apps/desktop'), this.root]),
         args: [
           path.join(this.root, 'apps/desktop'),
-          ...(quic ? ['--enable-quic', '--origin-to-force-quic-on=' + quic.hostname + ':' + (quic.port || '443')] : []),
           ...(process.platform === 'linux' ? ['--no-sandbox', '--disable-gpu', '--ozone-platform=x11'] : [])
         ],
         cwd: path.join(this.root, 'apps/desktop'),

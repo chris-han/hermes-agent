@@ -27,7 +27,7 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
     fs.appendFileSync(sandbox.hermesHome + '/config.yaml', '    http_version: "3"\n    ssl_ca_cert: ' + JSON.stringify(ca) + '\n')
   }
 
-  const fixture = new DesktopFixtureSession(sandbox, buildAppEnv(sandbox, { HERMES_DESKTOP_DEV_SERVER: process.env.HERMES_DESKTOP_DEV_SERVER!, ...(ca ? { HERMES_E2E_FORCE_QUIC_ORIGIN: origin! } : {}) }), info)
+  const fixture = new DesktopFixtureSession(sandbox, buildAppEnv(sandbox, { HERMES_DESKTOP_DEV_SERVER: process.env.HERMES_DESKTOP_DEV_SERVER! }), info)
 
   try {
     const { app, page } = await fixture.launch()
