@@ -322,3 +322,24 @@ def test_redirect_is_refused_without_becoming_a_gateway_redirect(native, status)
     assert error.code == 'cloud_origin_redirected'
     assert error.detail()['http_status'] == status
     assert error.retryable is False
+
+
+
+def test_uncertain_start_retries_same_intent_and_proof(native, monkeypatch):
+    device, _ = native
+    calls = []
+    def wire(origin, operation, body=None, bearer=None):
+        calls.append(body.copy())
+        if len(calls) == 1:
+            raise device.CloudConnectionError('cloud_http3_unavailable', 'HTTP/3 unavailable', 503)
+        return {'contract_version': device.CONTRACT, 'intent_ref': 'synthetic',
+                'expires_at': '2099-01-01T00:00:00+00:00',
+                'data': {'verification_uri': origin + '/billing/connect?intent_ref=synthetic'}}
+    monkeypatch.setattr(device, '_wire', wire)
+    with pytest.raises(device.CloudConnectionError):
+        device.start()
+    private = device._read()
+    device.start()
+    assert calls[0] == calls[1]
+    assert device._read()['proof'] == private['proof']
+    assert device._read()['generation'] == private['generation']

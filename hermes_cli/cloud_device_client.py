@@ -301,6 +301,9 @@ def _wire(origin, operation, body=None, bearer=None):
         public.diagnostics.update(operation=operation.rsplit('/', 1)[-1],
                                   transport='http3' if session_options.get('http_version') == 'v3only' else 'http')
         raise public from None
+    except CloudConnectionError as error:
+        error.diagnostics.update(operation=operation.rsplit('/', 1)[-1], transport='http3' if session_options.get('http_version') == 'v3only' else 'http')
+        raise
 
 
 def _public(state):
@@ -567,6 +570,9 @@ def _catalog(origin, bearer):
         public = _transport_error(error, transport='http3' if session_options.get('http_version') == 'v3only' else 'http')
         public.diagnostics.update(operation='catalog', transport='http3' if session_options.get('http_version') == 'v3only' else 'http')
         raise public from None
+    except CloudConnectionError as error:
+        error.diagnostics.update(operation='catalog', transport='http3' if session_options.get('http_version') == 'v3only' else 'http')
+        raise
 
 
 def _ack(state):

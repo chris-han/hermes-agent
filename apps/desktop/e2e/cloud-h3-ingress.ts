@@ -1,8 +1,9 @@
 /** Disposable TLS/QUIC boundary for the synthetic Cloud service; never installs a CA. */
-import { execFileSync, spawn } from 'node:child_process'
+import { execFile, execFileSync, spawn } from 'node:child_process'
 import fs from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
+import { promisify } from 'node:util'
 
 export async function startCloudH3Ingress(directory: string, upstream: string, python: string) {
   const executable = process.env.HERMES_E2E_CLOUD_CADDY
@@ -90,7 +91,7 @@ Path(${JSON.stringify(key)}).write_bytes(key.private_bytes(serialization.Encodin
       }
 
       try {
-        execFileSync(
+        await promisify(execFile)(
           python,
           [
             '-c',
