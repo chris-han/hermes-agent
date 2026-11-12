@@ -34,7 +34,7 @@ class CloudConnectionError(ValueError):
     def __init__(self, code, message, status=502, *, retryable=False, recovery='retry'):
         self.code, self.status = code, status
         self.retryable, self.recovery = retryable, recovery
-        self.diagnostics = {}
+        self.diagnostics = {'error_source': 'client', 'http_status': None}
         super().__init__(message)
 
     def detail(self):
@@ -54,7 +54,9 @@ class CloudDeviceError(CloudConnectionError):
             422: ('cloud_protocol_unsupported', 'Cloud protocol unsupported by this Hermes version. Update the app or check the configured service.', 'upgrade_client'),
             429: ('cloud_rate_limited', 'Semantier Cloud is busy. Wait briefly, then retry.', 'retry'),
         }.get(status, ('cloud_server_error', 'Semantier Cloud could not complete sign-in (HTTP '+str(status)+'). Retry later.', 'retry'))
-        super().__init__(code, message, status, retryable=status >= 500 or status in {409, 429}, recovery=recovery)
+        if 300 <= status < 400:
+            code, message, recovery = ('cloud_origin_redirected', 'Semantier Cloud redirected this request. Check the configured service origin.', 'provider_settings')
+        super().__init__(code, message, 502 if 300 <= status < 400 else status, retryable=status >= 500 or status in {409, 429}, recovery=recovery)
         self.diagnostics = {'error_source': 'server', 'http_status': status}
 
 
@@ -562,7 +564,9 @@ def _catalog(origin, bearer):
             raise CloudConnectionError('cloud_response_invalid', 'Cloud model directory invalid.', 502, recovery='retry')
         return result['data']
     except requests.exceptions.RequestException as error:
-        raise _transport_error(error) from None
+        public = _transport_error(error, transport='http3' if session_options.get('http_version') == 'v3only' else 'http')
+        public.diagnostics.update(operation='catalog', transport='http3' if session_options.get('http_version') == 'v3only' else 'http')
+        raise public from None
 
 
 def _ack(state):

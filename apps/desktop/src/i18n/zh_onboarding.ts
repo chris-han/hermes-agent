@@ -20,6 +20,7 @@ const cloudSignInErrors: Record<string, string> = {
   cloud_session_expired: '此登录会话已过期。请重试以打开新的授权页面。',
   cloud_session_cancelled: '此次登录已取消。准备好后可重试。',
   cloud_rate_limited: '司序云当前繁忙。请稍候重试。',
+  cloud_origin_redirected: 'Semantier Cloud 重定向了登录请求。请检查所配置的服务地址。',
   cloud_protocol_unsupported: '此 Hermes 版本不支持 Cloud 协议。请更新应用或检查所配置的服务。',
   cloud_server_error: '司序云暂时无法完成登录。请稍后重试，或使用 API 密钥。',
   cloud_internal_error: '司序云登录未完成。请重试，或使用 API 密钥。',

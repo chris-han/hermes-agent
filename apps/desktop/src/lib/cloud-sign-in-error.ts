@@ -22,6 +22,7 @@ const CODES = new Set([
   'cloud_rate_limited',
   'cloud_server_error',
   'cloud_protocol_unsupported',
+  'cloud_origin_redirected',
   'cloud_internal_error'
 ])
 
@@ -67,16 +68,16 @@ export function decodeCloudSignInError(raw: unknown): {
 
   const status = detail.http_status
 
-  if (typeof status === 'number' && Number.isInteger(status) && status >= 400 && status <= 599) {
+  if (typeof status === 'number' && Number.isInteger(status) && status >= 300 && status <= 599) {
     httpStatus = status
   }
 
-  if (detail.http_status === null && detail.error_source === 'transport') {
+  if (detail.http_status === null && ['transport', 'client'].includes(String(detail.error_source))) {
     httpStatus = undefined
   }
 
   const diagnostics = [
-    ['transport', 'server'].includes(String(detail.error_source)) ? detail.error_source : '',
+    ['transport', 'server', 'client'].includes(String(detail.error_source)) ? detail.error_source : '',
     ['http3', 'http'].includes(String(detail.transport)) ? detail.transport : '',
     ['start', 'poll', 'claim', 'ack', 'cancel', 'readiness', 'catalog'].includes(String(detail.operation))
       ? detail.operation

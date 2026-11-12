@@ -43,7 +43,7 @@ def test_http3_failure_does_not_retry_with_another_protocol(monkeypatch):
     monkeypatch.setattr(device, '_config', lambda: {'providers': {'semantier-cloud': {'http_version': '3'}}})
     with pytest.raises(device.CloudConnectionError) as error:
         device._wire('https://cloud.example', 'start')
-    assert error.value.code == 'cloud_network_unavailable'
+    assert error.value.code == 'cloud_http3_unavailable'
     assert error.value.status == 503
     expected = {'http_version': 'v3only', 'trust_env': False}
     if sys.platform == 'win32':

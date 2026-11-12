@@ -9,6 +9,7 @@ import { expect, test } from '@playwright/test'
 
 import { writeEnvFile } from '../../../tests-js/scripts/mock-provider-config'
 
+import { startCloudH3Ingress } from './cloud-h3-ingress'
 import { DesktopFixtureSession } from './fixture-session'
 import { buildAppEnv, createSandbox } from './fixtures'
 
@@ -199,6 +200,16 @@ test('default Cloud sign-in recovers, approves and persists through real Desktop
   await new Promise<void>(resolve => cloud.listen(0, '127.0.0.1', resolve))
   origin = `http://127.0.0.1:${(cloud.address() as any).port}`
 
+  const h3 = await startCloudH3Ingress(
+    sandbox.root,
+    origin,
+    process.env.HERMES_PYTHON || path.join(root, '.venv/bin/python')
+  )
+
+  if (h3) {
+    origin = h3.origin
+  }
+
   // Only the external Windows DPAPI boundary is replaced in this Linux fixture.
   // The runtime client, journal, scope, protocol, persistence and IPC remain real.
   const support = path.join(sandbox.root, 'python-fixture')
@@ -225,14 +236,24 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
   )
   const python = process.env.HERMES_PYTHON || path.join(root, '.venv/bin/python')
 
-  if (process.platform !== 'win32') {fs.writeFileSync(
-    wrapper,
-    `#!/bin/sh\nexport PYTHONPATH=${quote(support + ':' + root)}\nexec ${quote(python)} "$@"\n`,
-    { mode: 0o700 }
-  )}
+  if (process.platform !== 'win32') {
+    fs.writeFileSync(
+      wrapper,
+      `#!/bin/sh\nexport PYTHONPATH=${quote(support + ':' + root)}\nexec ${quote(python)} "$@"\n`,
+      { mode: 0o700 }
+    )
+  }
 
   if (process.platform === 'win32') {
-    fs.writeFileSync(path.join(sandbox.hermesHome, 'config.yaml'), 'language: en\ndisplay:\n  language: en\nbilling: null\nproviders:\n  semantier-cloud:\n    base_url: ' + origin + '/v1\n    portal_origin: ' + origin + '\n')
+    fs.writeFileSync(
+      path.join(sandbox.hermesHome, 'config.yaml'),
+      'language: en\ndisplay:\n  language: en\nbilling: null\nproviders:\n  semantier-cloud:\n    base_url: ' +
+        origin +
+        '/v1\n    portal_origin: ' +
+        origin +
+        '\n' +
+        (h3 ? '    http_version: "3"\n    ssl_ca_cert: ' + JSON.stringify(h3.certificate) + '\n' : '')
+    )
   }
 
   const env = buildAppEnv(sandbox, {
@@ -282,7 +303,7 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
       const browser = await chromium.launch({ channel: 'chromium', headless: true })
 
       try {
-        const consent = await browser.newPage()
+        const consent = await browser.newPage({ ignoreHTTPSErrors: Boolean(h3) })
         await consent.goto(await app.evaluate(() => (globalThis as any).__cloudVerificationUrl))
         await consent.getByRole('button', { name: 'Approve device' }).click()
         await expect(consent.getByText('Synthetic approval complete')).toBeVisible()
@@ -301,8 +322,15 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
     })
     await fixture.stage('cloud.confirm', async () => {
       // Assert the rendered journey rather than importing a second HMR store instance.
-      await expect(fixture.button('Begin')).toBeVisible({ timeout: 60_000 })
-      await fixture.button('Begin').click()
+      const model = page.getByRole('button', { name: /Model.*synthetic-model/ })
+      await expect
+        .poll(async () => (await fixture.button('Begin').isVisible()) || (await model.isVisible()), { timeout: 60_000 })
+        .toBe(true)
+
+      if (await fixture.button('Begin').isVisible()) {
+        await fixture.button('Begin').click()
+      }
+      await expect(model).toBeVisible()
       await expect(fixture.button('Begin')).not.toBeVisible()
       await expect(page.getByRole('button', { name: 'Try again', exact: true })).not.toBeVisible()
       await expect(
@@ -343,6 +371,21 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
     await expect(
       reopened.getByRole('button', { name: 'Sign in to Semantier Model Provider', exact: true })
     ).not.toBeVisible()
+
+    if (h3) {
+      const entries = fs
+        .readFileSync(h3.log, 'utf8')
+        .trim()
+        .split('\n')
+        .map(line => JSON.parse(line))
+
+      for (const operation of ['start', 'poll', 'claim', 'ack']) {
+        expect(
+          entries.some(entry => entry.request?.proto === 'HTTP/3.0' && entry.request?.uri?.endsWith('/' + operation))
+        ).toBe(true)
+      }
+    }
+
     expect(startCount).toBe(3)
     expect(claimCount).toBe(1)
     expect(fs.existsSync(path.join(sandbox.hermesHome, 'profiles/semantier-local'))).toBe(false)
@@ -355,7 +398,7 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
         ackCount,
         expiredSessionRecovery: 'PASS',
         restart: 'PASS',
-        transport: 'local-http',
+        transport: h3 ? 'http3' : 'local-http',
         protectedStore: process.platform === 'win32' ? 'windows-native-dpapi' : 'fixture-fernet-not-windows-dpapi',
         requests
       })
@@ -371,6 +414,7 @@ if Path(os.environ.get('HERMES_HOME', '/nonexistent')).resolve() == Path(${JSON.
     try {
       await fixture.close()
     } finally {
+      await h3?.close()
       await new Promise<void>(resolve => cloud.close(() => resolve()))
     }
   }

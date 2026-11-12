@@ -312,3 +312,13 @@ def test_received_503_and_protocol_422_are_distinct(native):
     protocol = device.CloudDeviceError(422)
     assert protocol.code == 'cloud_protocol_unsupported'
     assert protocol.recovery == 'upgrade_client'
+
+
+@pytest.mark.parametrize('status', [301, 302, 307, 308])
+def test_redirect_is_refused_without_becoming_a_gateway_redirect(native, status):
+    device, _ = native
+    error = device.CloudDeviceError(status)
+    assert error.status == 502
+    assert error.code == 'cloud_origin_redirected'
+    assert error.detail()['http_status'] == status
+    assert error.retryable is False
