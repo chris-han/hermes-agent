@@ -757,3 +757,8 @@ Semantier-managed identity is loaded from the distribution’s canonical SOUL as
 Browser backend selection is independent of real-browser cookie/login consent. Installed built-in Chromium is the default; system Chrome, Edge, Brave, Brave Origin and Chromium remain discoverable explicit alternatives. Discovery never saves a choice. Saved system/cloud choices survive restart. Missing built-in Chromium falls back to an available system executable with a diagnostic and an isolated profile.
 
 Native profile deletion is a host mutation: the target is in the URL path and Electron requests a purpose-bound default-owner grant. Do not add a profile query to this request. The backend continues rejecting ordinary profile grants, conflicting scope selectors, default deletion, browser origins and replayed grants. Refresh profile lists only after successful backend confirmation.
+
+
+### Semantier provider authorization inside Browser Pane (2026-11-12)
+
+The Semantier Model Provider card uses the backend-issued device verification URL in an owned Billing tab. It works before model configuration; no inference turn, external-browser fallback or profile-cookie import is required. Reuse only the exact owned Billing target or create a separate tab; retain other guests and agent bindings. The pending flow is non-blocking beside the pane. Other providers keep their existing OAuth behavior. Installation preserves the previous working default until explicit model confirmation, and catalog/readiness recovery never restarts device authorization for transient read failures. Canonical Billing UI/auth details remain in Runtime's derived Billing specifications.

@@ -23,7 +23,7 @@ def billing_backend() -> str:
     return str(config.get('backend') or 'nous') if isinstance(config, dict) else 'unsupported'
 
 
-def cloud_connection_config():
+def cloud_connection_config(*, allow_unselected=False):
     from hermes_cli.runtime_provider import load_config
     cfg = load_config()
     legacy = cfg.get('semantier_gateway') or {}
@@ -31,21 +31,22 @@ def cloud_connection_config():
     named = providers.get('semantier-cloud') if isinstance(providers,dict) else None
     model = cfg.get('model') or {}
     current = model if isinstance(model,dict) else {}
-    protected = isinstance(named,dict) and named.get('credential_ref') and (current.get('provider') == 'semantier-cloud' or current.get('base_url') == named.get('base_url'))
+    prefer_named_credential = allow_unselected or current.get('provider') == 'semantier-cloud' or not any(current.get(key) for key in ('api_key','key_env','key_cmd'))
+    protected = isinstance(named,dict) and named.get('credential_ref') and prefer_named_credential and (allow_unselected or current.get('provider') == 'semantier-cloud' or current.get('base_url') == named.get('base_url'))
     if isinstance(legacy,dict) and legacy.get('enabled') is True and not protected:
         return legacy
     if not isinstance(named,dict):
         return None
     base = str(named.get('base_url') or '')
-    if current.get('provider') != 'semantier-cloud' and not (base and current.get('base_url') == base):
+    if not allow_unselected and current.get('provider') != 'semantier-cloud' and not (base and current.get('base_url') == base):
         return None
-    return {'enabled':True,'base_url':base,'api_key_env':named.get('key_env') or current.get('key_env'),
-            'api_key':named.get('api_key') or current.get('api_key'), 'credential_ref':named.get('credential_ref')}
+    return {'enabled':True,'base_url':base,'api_key_env':named.get('key_env') or (current.get('key_env') if current.get('provider') == 'semantier-cloud' or current.get('base_url') == base else None),
+            'api_key':named.get('api_key') or (current.get('api_key') if current.get('provider') == 'semantier-cloud' or current.get('base_url') == base else None), 'credential_ref':named.get('credential_ref') if prefer_named_credential else None}
 
 
-def gateway_settings() -> GatewaySettings | None:
+def gateway_settings(*, allow_unselected=False) -> GatewaySettings | None:
     from hermes_cli.config import get_env_value
-    config = cloud_connection_config()
+    config = cloud_connection_config(allow_unselected=allow_unselected)
     if config is None:
         return None
     base = str(config.get('base_url') or '').rstrip('/')
@@ -176,7 +177,7 @@ def billing_request(resource: str, *, schema_version: str | None = None) -> dict
         return refusal('unsupported_capability', 'Commercial billing actions are unavailable.')
     from hermes_cli.cloud_device_client import CloudCredentialError
     try:
-        settings = gateway_settings()
+        settings = gateway_settings(allow_unselected=True)
         if not settings:
             return refusal('provider_not_configured', 'Semantier Model Provider is disabled for this profile.')
     except CloudCredentialError:
@@ -282,8 +283,9 @@ def cloud_catalog(*, refresh=False, settings=None):
     from hermes_constants import get_hermes_home
     from concurrent.futures import Future, TimeoutError
     import requests
+    from hermes_cli.cloud_device_client import CloudConnectionError, CloudDeviceError, _transport_error
     try:
-        settings = settings or gateway_settings()
+        settings = settings or gateway_settings(allow_unselected=True)
     except ValueError:
         clear_cloud_catalog()
         raise
@@ -305,7 +307,7 @@ def cloud_catalog(*, refresh=False, settings=None):
         try:
             return deepcopy(pending.result(timeout=5))
         except TimeoutError:
-            raise ValueError('Semantier Model Provider catalog timed out; refresh.') from None
+            raise CloudConnectionError('cloud_catalog_timeout', 'Model discovery timed out. Retry discovery; device authorization is retained.', 503, retryable=True) from None
     try:
         from hermes_cli.cloud_device_client import _cloud_http
         requests, options = _cloud_http(settings.base_url[:-3])
@@ -315,10 +317,18 @@ def cloud_catalog(*, refresh=False, settings=None):
                 headers={'Authorization':'Bearer '+settings.api_key}, timeout=5, allow_redirects=False)
         if response.status_code != 200:
             logging.getLogger(__name__).warning('Cloud catalog rejected status=%s',response.status_code)
-            raise ValueError('Semantier Model Provider catalog unavailable; refresh or reconnect.')
+            failure = CloudDeviceError(response.status_code)
+            try:
+                detail = response.json().get('detail', {})
+                code = detail.get('code') if isinstance(detail, dict) else None
+                if code in {'cloud_metadata_timeout', 'cloud_metadata_unavailable', 'cloud_capability_mismatch'}:
+                    failure.code = code
+            except (ValueError, AttributeError):
+                pass
+            raise failure
         payload = response.json()
         if payload.get('object') != 'list' or not isinstance(payload.get('data'),list):
-            raise ValueError('Invalid Semantier Model Provider catalog.')
+            raise CloudConnectionError('cloud_response_invalid', 'Model catalog has an unsupported response. Refresh models.', 502)
         with _catalog_lock:
             if len(_catalog_cache) >= 16:
                 _catalog_cache.clear()
@@ -326,10 +336,16 @@ def cloud_catalog(*, refresh=False, settings=None):
                 _catalog_cache[key] = (monotonic(),payload)
         pending.set_result(payload)
         return deepcopy(payload)
-    except (requests.exceptions.RequestException,ValueError):
+    except (requests.exceptions.RequestException,ValueError,TypeError,AttributeError) as cause:
         with _catalog_lock:
             _catalog_cache.pop(key,None)
-        error = ValueError('Semantier Model Provider catalog unavailable; refresh or reconnect.')
+        if isinstance(cause, CloudConnectionError):
+            error = cause
+        elif isinstance(cause, requests.exceptions.RequestException):
+            error = _transport_error(cause, transport='http3' if options.get('http_version') == 'v3only' else 'http')
+        else:
+            error = CloudConnectionError('cloud_response_invalid', 'Model catalog has an unsupported response. Refresh models.', 502)
+        error.diagnostics.update(operation='catalog')
         pending.set_exception(error)
         raise error from None
     finally:

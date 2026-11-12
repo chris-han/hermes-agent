@@ -1058,13 +1058,13 @@ def resolve_runtime_provider(*, requested: Optional[str] = None, explicit_api_ke
     from agent.semantier_gateway import gateway_settings,cloud_model_profile,is_gateway_route
     cloud_base = (explicit_base_url or str((_get_model_config() or {}).get('base_url') or '')) if requested_provider in {'custom','semantier-cloud'} else ''
     if requested_provider == 'semantier-cloud' or (requested_provider == 'custom' and is_gateway_route(cloud_base)):
-        settings = gateway_settings()
+        settings = gateway_settings(allow_unselected=requested_provider == 'semantier-cloud')
         if settings is None:
             raise ValueError('Semantier Model Provider connection required.')
         if (explicit_base_url and explicit_base_url.rstrip('/') != settings.base_url) or (requested_provider == 'semantier-cloud' and explicit_api_key and explicit_api_key != settings.api_key):
             raise ValueError('Semantier Model Provider transport is profile-owned.')
         if target_model:
-            cloud_model_profile(target_model)
+            cloud_model_profile(target_model, settings=settings)
         return {'provider':'custom','api_key':settings.api_key,'base_url':settings.base_url,
                 'api_mode':'chat_completions','source':'semantier-cloud'}
     # Same alias expansion the auxiliary client applies, so ``provider: openai`` means one thing on

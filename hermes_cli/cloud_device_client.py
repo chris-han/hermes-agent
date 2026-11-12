@@ -94,6 +94,8 @@ def _transport_error(error, *, transport=None):
         return public('cloud_dns_failed', 'Semantier Cloud DNS lookup failed. Check DNS or the configured provider.', 503, retryable=True, recovery='network')
     if tls or codes & {35, 51, 58, 60, 77, 83, 90} or any('ssl' in name or 'certificate' in name for name in names):
         return public('cloud_tls_failed', 'Semantier Cloud TLS certificate validation failed. Check the trusted certificate and provider settings.', 502, recovery='tls_configuration')
+    if 28 in codes or any('timeout' in name for name in names):
+        return public('cloud_request_timeout', 'Semantier Cloud request timed out. Retry the same connection.', 503, retryable=True)
     if codes & {1, 4, 95, 96} or transport == 'http3':
         return public('cloud_http3_unavailable', 'Semantier Cloud HTTP/3 transport is unavailable. Check HTTP/3 support and UDP connectivity.', 503, retryable=True, recovery='http3')
     return public('cloud_network_unavailable', 'Semantier Cloud could not be reached. Check the network and retry the same connection.', 503, retryable=True, recovery='network')
@@ -503,40 +505,12 @@ def _install(state, binding):
         cfg['providers']['semantier-cloud'] = entry
         if not isinstance(cfg.get('model'),dict):
             cfg['model'] = {'default':str(cfg.get('model') or '')}
-        previous = cfg['model']
-        if previous.get('provider') != 'semantier-cloud' and (previous.get('api_key') or previous.get('key_env') or previous.get('key_cmd')):
-            from hermes_cli.config_providers import get_compatible_custom_providers
-            saved = {key:previous[key] for key in ('base_url','api_key','key_env','key_cmd','api_mode') if previous.get(key)}
-            if not saved.get('base_url'):
-                raise CloudConnectionError('cloud_config_invalid', 'Previous embedded provider credential needs its configured endpoint before switching.', 422, recovery='provider_settings')
-            saved['default_model'] = previous.get('default','')
-            existing = get_compatible_custom_providers(cfg)
-            if not any(all(row.get(key) == value for key,value in saved.items() if key != 'default_model') for row in existing):
-                key = 'saved-'+_digest(saved['base_url'].encode())[:12]
-                name = key
-                suffix = 1
-                while name in cfg['providers']:
-                    suffix += 1
-                    name = key+'-'+str(suffix)
-                saved['name'] = urlsplit(saved['base_url']).hostname or str(previous.get('provider') or 'Saved provider')
-                cfg['providers'][name] = saved
-        cfg['model'].update(provider='semantier-cloud', base_url=entry['base_url'],api_mode='chat_completions')
-        cfg['model'].pop('api_key',None)
-        cfg['model'].pop('key_env',None)
-        cfg['model'].pop('key_cmd',None)
-        rows = _catalog(state['origin'], data['credential']['secret'])
-        allowed = sorted({row['id'] for row in rows if isinstance(row.get('id'),str) and row['id']})
-        selected = cfg['model'].get('default')
-        if selected not in allowed:
-            selected = allowed[0] if allowed else ''
-        cfg['model']['default'] = selected
-        cfg['model'].pop('capability_revision',None)
-        if selected:
-            revision = next(row.get('revision') for row in rows if row.get('id') == selected)
-            if not isinstance(revision,str) or not revision:
-                raise CloudConnectionError('cloud_response_invalid', 'Cloud model capability revision unavailable; retry the same connection.', 502, recovery='retry')
-            cfg['model']['capability_revision'] = revision
-        state['model'] = selected
+        # Device installation publishes custody and account binding independently
+        # of model discovery. A read outage must not hold ack hostage or replace
+        # a working default before the user confirms a permitted model.
+        if not cfg['model'].get('default'):
+            cfg['model'].update(provider='semantier-cloud', base_url=entry['base_url'], api_mode='chat_completions')
+        state['model'] = cfg['model'].get('default', '')
         cfg['billing'] = cfg.get('billing') or {}
         cfg['billing'].update(backend='semantier', account_id=data['account_id'], currency=data['currency'], portal_origin=state['portal_origin'])
         # Persist the complete intended config inside the protected journal before its atomic replace.
@@ -603,7 +577,7 @@ def _refresh_readiness(state):
         state['readiness'] = {key:readiness.get(key) for key in (
             'account_id','currency','payment_entitlement_allowance','account_provisioning','catalog','device','as_of','renewal')}
     except CloudDeviceError as error:
-        if error.status in {401,403}:
+        if error.status == 401:
             state['status'] = 'revoked'
             state['credentials'].pop(state['credential_ref'],None)
         state['readiness'] = None

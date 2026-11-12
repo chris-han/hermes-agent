@@ -17,6 +17,7 @@ import {
   type OnboardingContext,
   type OnboardingFlow,
   recheckExternalSignin,
+  retryCloudModelDiscovery,
   setOnboardingCode,
   setOnboardingModel,
   startManualOnboarding,
@@ -84,7 +85,7 @@ export function FlowPanel({
             {t.onboarding.useApiKeyInstead}
           </Button>
           {failedProvider ? (
-            <Button onClick={() => void startProviderOAuth(failedProvider, ctx)}>{t.onboarding.tryAgain}</Button>
+            <Button onClick={() => void (flow.installed ? retryCloudModelDiscovery(ctx, failedProvider) : startProviderOAuth(failedProvider, ctx))}>{t.onboarding.tryAgain}</Button>
           ) : null}
         </div>
       </div>

@@ -113,7 +113,7 @@ def test_install_and_ack_loss_recovers_same_generation_without_secret_config(nat
     raw = (home/'config.yaml').read_text()
     assert 'private-account-token' not in raw
     assert 'credential_ref: token-test' in raw
-    assert device._config()['model']['default'] == 'allowed-model'
+    assert not device._config()['model'].get('default')
     assert 'private-account-token' not in json.dumps(result)
 
 
@@ -309,13 +309,13 @@ def test_install_retains_embedded_previous_provider_and_capability_revision(nati
     install_wire(device,monkeypatch)
     monkeypatch.setattr(device,'_catalog',lambda *_:[{'id':'allowed-model','revision':'allowed-revision'}])
     started=device.start();device.poll(started['session_id'])
-    from hermes_cli.config_providers import get_compatible_custom_providers
     installed=device._config()
-    prior=[row for row in get_compatible_custom_providers(installed) if row.get('api_key')=='old-provider-secret']
-    assert len(prior)==1 and prior[0]['base_url']=='http://127.0.0.1:8765/v1'
-    assert installed['model']['capability_revision']=='allowed-revision'
-    assert installed['model']['api_mode']=='chat_completions'
-    assert prior[0]['api_mode']=='anthropic_messages'
+    assert installed['model']==cfg['model']
+    from agent.semantier_gateway import gateway_settings
+    assert gateway_settings().api_key=='old-provider-secret'
+    assert gateway_settings(allow_unselected=True).api_key=='private-account-token'
+    assert installed['providers']['semantier-cloud']['credential_ref']=='token-test'
+    assert device.credential('token-test',base_url='http://127.0.0.1:8765/v1')=='private-account-token'
 
 
 def test_slow_down_keeps_intent_pending_and_bounds_poll_frequency(native,monkeypatch):
@@ -429,3 +429,37 @@ def test_start_conflicts_are_bounded_and_never_hide_other_conflicts(native, monk
     with pytest.raises(device.CloudDeviceError):
         device.start()
     assert len(calls) == (2 if reason == 'start_conflict' else 1)
+
+
+def test_catalog_outage_does_not_prevent_install_or_replace_working_model(native, monkeypatch):
+    from hermes_cli.config import atomic_config_replace
+    device, home = native
+    cfg=device._config()
+    cfg['model'].update(provider='custom', default='prior-model', base_url='https://prior.invalid/v1', api_key='prior-fixture-only')
+    atomic_config_replace(home/'config.yaml',cfg)
+    calls=install_wire(device,monkeypatch)
+    def outage(*args):
+        raise device.CloudConnectionError('cloud_network_unavailable','catalog timeout',503,retryable=True)
+    monkeypatch.setattr(device,'_catalog',outage)
+    started=device.start()
+    assert device.poll(started['session_id'])['status']=='approved'
+    assert calls.count('intent-test/claim')==calls.count('intent-test/ack')==1
+    installed=device._config()
+    assert installed['model']==cfg['model']
+    assert installed['providers']['semantier-cloud']['credential_ref']=='token-test'
+    assert device.credential('token-test',base_url='http://127.0.0.1:8765/v1')=='private-account-token'
+
+
+@pytest.mark.parametrize('status,retained',[(401,False),(403,True)])
+def test_only_confirmed_authentication_refusal_removes_native_custody(native,monkeypatch,status,retained):
+    device,_=native
+    install_wire(device,monkeypatch)
+    original=device._wire
+    def wire(origin,operation,body=None,bearer=None):
+        if operation=='readiness':raise device.CloudDeviceError(status)
+        return original(origin,operation,body,bearer)
+    monkeypatch.setattr(device,'_wire',wire)
+    start=device.start()
+    result=device.poll(start['session_id'])
+    assert ('token-test' in device._read()['credentials']) is retained
+    assert result['status']==('approved' if retained else 'revoked')

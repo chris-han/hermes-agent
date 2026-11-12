@@ -62,7 +62,7 @@ export type OnboardingFlow =
       saving: boolean
       status: 'confirming_model'
     }
-  | { detail?: string; message: string; provider?: OAuthProvider; start?: OAuthStartResponse; status: 'error' }
+  | { detail?: string; message: string; provider?: OAuthProvider; start?: OAuthStartResponse; status: 'error'; installed?: boolean }
 
 export interface DesktopOnboardingState {
   /** null until the first runtime check resolves. Seeded from localStorage so
@@ -376,16 +376,21 @@ async function fetchProviderDefaultModel(
   profile?: ProfileScope
 ): Promise<null | { providerSlug: string; defaultModel: string }> {
   let options
+  const cloud = preferredSlugs.includes('semantier-cloud')
 
   try {
-    options = await getGlobalModelOptions({ includeUnconfigured: true, explicitOnly: false }, profile)
-  } catch {
+    options = await getGlobalModelOptions({ includeUnconfigured: true, explicitOnly: false, ...(cloud ? { queryOnly: true, queryScope: JSON.stringify(profile ?? null), refresh: true } : {}) }, profile)
+  } catch (error) {
+    if (cloud) {throw error}
+
     return null
   }
 
   const providers = options?.providers ?? []
 
   if (providers.length === 0) {
+    if (cloud) {throw new Error(JSON.stringify({ code: 'cloud_catalog_empty' }))}
+
     return null
   }
 
@@ -395,11 +400,19 @@ async function fetchProviderDefaultModel(
   const lower = preferredSlugs.map(s => s.toLowerCase())
 
   const matched =
-    providers.find((p: ModelOptionProvider) => lower.includes(String(p.slug).toLowerCase())) ?? providers[0]
+    providers.find((p: ModelOptionProvider) => lower.includes(String(p.slug).toLowerCase())) ?? (cloud ? undefined : providers[0])
+
+  if (!matched) {
+    if (cloud) {throw new Error(JSON.stringify({code: 'cloud_catalog_unavailable'}))}
+
+    return null
+  }
 
   const models = matched.models ?? []
 
   if (models.length === 0) {
+    if (cloud) {throw new Error(JSON.stringify({code: matched.discovery_status || (matched.discovery_state === 'fresh' || matched.discovery_state === 'cached' ? 'cloud_catalog_empty' : 'cloud_catalog_unavailable')}))}
+
     return null
   }
 
@@ -427,7 +440,7 @@ async function fetchProviderDefaultModel(
 
     if (recommended.model && models.map(String).includes(recommended.model)) {
       defaultModel = recommended.model
-    } else if (recommended.model) {
+    } else if (recommended.model && !cloud) {
       // Recommended model isn't in the curated options list (e.g. a Portal
       // free-recommendation the picker list didn't include); trust it anyway.
       defaultModel = recommended.model
@@ -461,6 +474,7 @@ async function completeWithModelConfirm(
   ignoreRuntimeGate = false
 ) {
   const generation = flowGeneration
+  const current = () => generation === flowGeneration && (!preferredSlugs.includes('semantier-cloud') || JSON.stringify(captureOnboardingScope()) === JSON.stringify(ctx.scope))
 
   // Scoped readiness reads fresh credentials; reload.env only mutates the
   // launch process environment and cannot reload another profile safely.
@@ -468,13 +482,13 @@ async function completeWithModelConfirm(
     await ctx.requestGateway('reload.env').catch(() => undefined)
   }
 
-  if (generation !== flowGeneration) {
+  if (!current()) {
     return
   }
 
   const defaults = await fetchProviderDefaultModel(preferredSlugs, ctx.scope)
 
-  if (generation !== flowGeneration) {
+  if (!current()) {
     return
   }
 
@@ -503,13 +517,13 @@ async function completeWithModelConfirm(
         { skipConfirmPrompt: true }
       )
 
-      if (generation !== flowGeneration) {
+      if (!current()) {
         return
       }
 
       notifyGatewayTools(res.gateway_tools)
     } catch (error) {
-      if (generation !== flowGeneration) {
+      if (!current()) {
         return
       }
 
@@ -521,7 +535,7 @@ async function completeWithModelConfirm(
 
   const runtime = await checkRuntime(ctx, preferredSlugs[0])
 
-  if (generation !== flowGeneration) {
+  if (!current()) {
     return
   }
 
@@ -972,6 +986,11 @@ async function beginProviderOAuth(provider: OAuthProvider, ctx: OnboardingContex
   setFlow({ status: 'starting', provider })
 
   try {
+    if (provider.id === 'semantier-cloud') {
+      if (JSON.stringify(captureOnboardingScope()) !== JSON.stringify(ctx.scope)) {throw new Error(JSON.stringify({code: 'cloud_profile_mismatch'}))}
+      patch({ targetScope: ctx.scope })
+    }
+
     const start = await startOAuthLogin(provider.id, ctx.scope)
 
     if (generation !== flowGeneration) {
@@ -985,10 +1004,9 @@ async function beginProviderOAuth(provider: OAuthProvider, ctx: OnboardingContex
     if (provider.id === 'semantier-cloud') {
       // The backend validates the portal origin and intent. Retain its exact URL;
       // never replace another working browser tab or retarget an agent's tools.
-      if (browserOwner.profile !== previewProfileScope() || browserOwner.session !== $focusedStoredSessionId.get() || browserOwner.runtime !== $activeSessionId.get()) {
+      if (JSON.stringify(captureOnboardingScope()) !== JSON.stringify(ctx.scope) || browserOwner.profile !== previewProfileScope() || browserOwner.session !== $focusedStoredSessionId.get() || browserOwner.runtime !== $activeSessionId.get()) {
         await cancelOAuthSession(start.session_id, ctx.scope)
-
-        return
+        throw new Error(JSON.stringify({code: 'cloud_profile_mismatch'}))
       }
 
       openPreview({ kind: 'url', label: 'Semantier Billing', source: browserUrl, url: browserUrl }, browserOwner.session, browserOwner.runtime, browserOwner.profile, undefined, 'matching-url')
@@ -1100,13 +1118,13 @@ async function pollSession(provider: OAuthProvider, start: DeviceStart, ctx: Onb
     if (status === 'approved') {
       clearPoll()
       setFlow({ status: 'success', provider })
-      await completeWithModelConfirm(ctx, provider.name, [provider.id], reason =>
-        setFlow({
-          status: 'error',
-          provider,
-          message: providerResolutionFailure(reason)
-        })
-      )
+
+      if (provider.id === 'semantier-cloud') {
+        await retryCloudModelDiscovery(ctx, provider)
+      } else {
+        await completeWithModelConfirm(ctx, provider.name, [provider.id], reason =>
+          setFlow({ status: 'error', provider, message: providerResolutionFailure(reason) }))
+      }
     } else if (status !== 'pending') {
       clearPoll()
       setFlow({
@@ -1126,6 +1144,40 @@ async function pollSession(provider: OAuthProvider, start: DeviceStart, ctx: Onb
   } finally {
     activePolls.delete(generation)
   }
+}
+
+/** Retrying this read never starts, claims, cancels or revokes a device. */
+export async function retryCloudModelDiscovery(ctx: OnboardingContext, provider: OAuthProvider) {
+  const generation = flowGeneration
+  const current = () => generation === flowGeneration && JSON.stringify(captureOnboardingScope()) === JSON.stringify(ctx.scope)
+
+  if (!current()) {return}
+  let installed = true
+  let message = translateNow('onboarding.cloudSignInError', 'cloud_catalog_unavailable', ctx.scope?.profile ?? 'default')
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (!current()) {return}
+
+    try {
+      let rejected = false
+      await completeWithModelConfirm(ctx, provider.name, [provider.id], reason => {
+        rejected = true
+        message = reason || message
+      })
+
+      if (!rejected) {return}
+    } catch (error) {
+      const code = decodeCloudSignInError(error).code
+      installed = !['cloud_authorization_required', 'cloud_credential_expired'].includes(code)
+      message = signInDidNotFinish(provider, error).message
+
+      if (!installed) {break}
+    }
+
+    if (attempt < 2) {await new Promise(resolve => window.setTimeout(resolve, 500 * (attempt + 1)))}
+  }
+
+  if (current()) {setFlow({ status: 'error', installed, provider, message })}
 }
 
 export function setOnboardingCode(code: string) {
@@ -1516,6 +1568,7 @@ export async function setOnboardingModel(model: string, providerSlug: string, la
 // the persist so the previous default survives a dismiss, so this is where
 // the picked model finally gets written — the user just confirmed it.
 export async function confirmOnboardingModel(ctx: OnboardingContext) {
+  const generation = flowGeneration
   const { flow, manual } = $desktopOnboarding.get()
 
   if (flow.status !== 'confirming_model') {
@@ -1544,8 +1597,27 @@ export async function confirmOnboardingModel(ctx: OnboardingContext) {
         }
       )
 
+      if (generation !== flowGeneration || (flow.providerSlug === 'semantier-cloud' && JSON.stringify(captureOnboardingScope()) !== JSON.stringify(ctx.scope))) {return}
       notifyGatewayTools(res.gateway_tools)
+
+      if (flow.providerSlug === 'semantier-cloud') {
+        const readiness = await checkRuntime(ctx, flow.providerSlug)
+
+        if (generation !== flowGeneration || (flow.providerSlug === 'semantier-cloud' && JSON.stringify(captureOnboardingScope()) !== JSON.stringify(ctx.scope))) {return}
+
+        if (!readiness.ready) { notifyError(readiness.reason || translateNow('onboarding.cloudSignInError', 'cloud_metadata_unavailable', ctx.scope?.profile || 'default'), translateNow('common.error'));
+
+ return }
+      }
     } catch (error) {
+      if (generation !== flowGeneration || (flow.providerSlug === 'semantier-cloud' && JSON.stringify(captureOnboardingScope()) !== JSON.stringify(ctx.scope))) {return}
+
+      if (flow.providerSlug === 'semantier-cloud') {
+        notifyError(signInDidNotFinish({ id: 'semantier-cloud' } as OAuthProvider, error).message, translateNow('common.error'))
+
+        return
+      }
+
       notifyError(error, 'Could not save the selected model.')
     }
   }

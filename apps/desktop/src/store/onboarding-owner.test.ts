@@ -10,6 +10,7 @@ import {
   closeManualOnboarding,
   confirmOnboardingModel,
   type OnboardingContext,
+  retryCloudModelDiscovery,
   saveOnboardingLocalEndpoint,
   setOnboardingCode,
   setOnboardingModel,
@@ -355,4 +356,24 @@ it('opens Cloud Billing separately and preserves an authenticated-style tab', as
   expect($previewTabs.get()).toHaveLength(2)
   expect($previewTabs.get().find(tab => tab.id === original)?.target.url).toBe('https://bank.invalid/session')
   expect($previewTabs.get().some(tab => tab.target.url === 'https://example.invalid/device')).toBe(true)
+})
+
+it('refuses a foreign Cloud open before creating an intent', async () => {
+  const ctx = beginContext()
+  switchForeground()
+  await startProviderOAuth({ ...makeOAuthProvider('semantier-cloud'), flow: 'device_code' }, ctx)
+  expect(requests.filter(request => request.path.endsWith('/start'))).toHaveLength(0)
+  expect($previewTabs.get()).toHaveLength(0)
+  expect(window.hermesDesktop.openExternal).not.toHaveBeenCalled()
+})
+
+it('retries installed Cloud model discovery without starting another authorization or selecting another provider', async () => {
+  const ctx = beginContext()
+  const provider = { ...makeOAuthProvider('semantier-cloud'), flow: 'device_code' as const }
+  const task = retryCloudModelDiscovery(ctx, provider)
+  await vi.advanceTimersByTimeAsync(2000)
+  await task
+  expect($desktopOnboarding.get().flow).toMatchObject({ status: 'error', installed: true })
+  expect(requests.filter(request => request.path.endsWith('/start'))).toHaveLength(0)
+  expect(requests.filter(request => request.path === '/api/model/set')).toHaveLength(0)
 })

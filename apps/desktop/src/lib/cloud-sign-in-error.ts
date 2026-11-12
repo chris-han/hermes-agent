@@ -1,6 +1,17 @@
 /** Only typed, public Cloud diagnoses cross into the sign-in UI. Raw transport
  * prose can contain endpoints or authorization material and is never displayed. */
 const CODES = new Set([
+  'cloud_request_timeout',
+  'cloud_metadata_timeout',
+  'cloud_metadata_unavailable',
+  'cloud_model_access_missing',
+  'cloud_provisioning_pending',
+  'cloud_entitlement_restricted',
+  'cloud_capability_mismatch',
+
+  'cloud_catalog_timeout',
+  'cloud_catalog_empty',
+  'cloud_catalog_unavailable',
   'cloud_network_unavailable',
   'cloud_dns_failed',
   'cloud_tls_failed',

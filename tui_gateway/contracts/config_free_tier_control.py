@@ -141,6 +141,7 @@ class SetupRuntimeCheckResult(Result):
     model: str | None = None
     source: str | None = None
     error: str | None = None
+    error_code: str | None = None
     free_tier_route: bool | None = None
     profile: str | None = None
 
@@ -540,6 +541,7 @@ class ModelOptionProvider(OpenModel):
     # None means the producer cannot establish eligibility; [] is a known empty set.
     eligible_models: list[str] | None = None
     discovery_state: Literal["fresh", "cached", "stale", "missing", "error", "unsupported"] | None = None
+    discovery_status: str | None = None
     discovery_source_id: str | None = None
     discovery_fetched_at: str | None = None
     total_models: int | None = None

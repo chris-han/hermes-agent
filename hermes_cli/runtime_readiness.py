@@ -31,6 +31,14 @@ def check_runtime_readiness(requested=None, *, strict_profile_scope=False, resol
         if resolve is not None:
             model, runtime = resolve()
         elif requested:
+            if requested == 'semantier-cloud' and (not isinstance(cfg_model, dict) or cfg_model.get('provider') != 'semantier-cloud'):
+                # A read-only provider check must not validate another provider's
+                # default or change it before the user's model confirmation.
+                from agent.semantier_gateway import cloud_catalog, gateway_settings
+                rows = cloud_catalog(settings=gateway_settings(allow_unselected=True))['data']
+                configured_model = next((row['id'] for row in rows if isinstance(row.get('id'), str)), None)
+                if not configured_model:
+                    raise ValueError('No enabled model for this account. Refresh models after access is assigned.')
             model = configured_model
             runtime = resolve_runtime_provider(requested=requested, target_model=configured_model)
         else:
@@ -45,7 +53,9 @@ def check_runtime_readiness(requested=None, *, strict_profile_scope=False, resol
                 selected = 'semantier-cloud'
         if selected != 'semantier-cloud':
             raise
+        from hermes_cli.cloud_device_client import CloudConnectionError
         return {'ok': False, 'provider': selected, 'source': selected,
+                **({'error_code': error.code} if isinstance(error, CloudConnectionError) else {}),
                 'model': configured_model, 'error': str(error)}
     configured = bool(_has_any_provider_configured(strict_profile_scope=strict_profile_scope))
     provider = runtime.get('provider') or 'provider'

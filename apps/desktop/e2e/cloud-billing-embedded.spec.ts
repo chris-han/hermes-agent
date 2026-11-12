@@ -32,15 +32,26 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
     await expect.poll(() => guest.evaluate((view: any) => view.getURL()).catch(() => '')).toContain('/billing/connect?intent_ref=dci_')
     await expect.poll(() => guest.evaluate((view: any) => view.executeJavaScript('document.body.innerText')).catch(() => ''), { timeout: 60_000 }).toMatch(/Sign in|登录/)
     expect(await app.evaluate(() => (globalThis as any).__billingExternalCalls)).toBe(0)
+
+    const clickGuest = async (labels: string[], selector = 'button') => {
+      const rect = await guest.evaluate((view: any, args) => view.executeJavaScript(`(() => { const node = Array.from(document.querySelectorAll(${JSON.stringify(args.selector)})).find(node => ${JSON.stringify(args.labels)}.includes(node.textContent.trim())); if (!node || node.disabled) throw new Error('Guest action unavailable'); node.scrollIntoView({block:'center'}); const rect=node.getBoundingClientRect(); return {x:rect.x,y:rect.y,width:rect.width,height:rect.height}; })()`), { labels, selector })
+      const host = await guest.boundingBox()
+      expect(host).toBeTruthy()
+      await page.mouse.click(host!.x + rect.x + rect.width / 2, host!.y + rect.y + rect.height / 2)
+    }
+
     const credentialsFile = process.env.HERMES_E2E_BILLING_IDENTITY_FILE
 
     if (credentialsFile) {
       await fixture.stage('billing.real-login', async () => {
-        await guest.evaluate((view: any) => view.executeJavaScript(`Array.from(document.querySelectorAll('button')).find(b => ['Sign in', '登录'].includes(b.textContent.trim()))?.click()`))
+        const declineSnapshot = page.getByRole('button', { name: 'Not now', exact: true })
+
+        if (await declineSnapshot.isVisible()) {await declineSnapshot.click()}
+        await clickGuest(['Sign in', '登录'])
         await expect.poll(() => guest.evaluate((view: any) => view.executeJavaScript(`Boolean(document.querySelector('input[name="username"]'))`)), { timeout: 30_000 }).toBe(true)
         const guestId = await guest.evaluate((view: any) => view.getWebContentsId())
         await app.evaluate(async ({ webContents }, { guestId, credentialsFile }) => {
-          const { readFileSync } = await import('node:fs')
+          const { readFileSync } = process.getBuiltinModule('fs')
           const credentials = JSON.parse(readFileSync(credentialsFile, 'utf8'))
           const target = webContents.fromId(guestId)!
 
@@ -48,13 +59,18 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
             await target.executeJavaScript(`(() => {const input = document.querySelector('input[name="${name}"]'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, ${JSON.stringify(value)}); input.dispatchEvent(new Event('input', {bubbles: true}));})()`)
           }
 
-          await target.executeJavaScript(`document.querySelector('input[name="password"]').form.requestSubmit()`)
+
         }, { guestId, credentialsFile })
+        await clickGuest(['Sign in', '登录'], 'form button[type="submit"]')
         await expect.poll(() => guest.evaluate((view: any) => view.executeJavaScript('document.body.innerText')), { timeout: 60_000 }).toMatch(/Log out|退出登录/)
       })
       await fixture.stage('billing.explicit-approval', async () => {
+        const account = process.env.HERMES_E2E_BILLING_ACCOUNT
+        expect(account, 'Explicit permitted fixture account required').toBeTruthy()
+        await guest.evaluate((view: any, account) => view.executeJavaScript(`(() => {const select=Array.from(document.querySelectorAll('select')).find(node=>Array.from(node.options).some(option=>option.value===${JSON.stringify(account)})); if(select){select.value=${JSON.stringify(account)};select.dispatchEvent(new Event('change',{bubbles:true}));}})()`), account)
+
         await expect.poll(() => guest.evaluate((view: any) => view.executeJavaScript('document.body.innerText')), { timeout: 30_000 }).toMatch(/Approve device|授权此设备/)
-        await guest.evaluate((view: any) => view.executeJavaScript(`Array.from(document.querySelectorAll('button')).find(b => ['Approve device', '授权此设备'].includes(b.textContent.trim()))?.click()`))
+        await clickGuest(['Approve device', '授权此设备'])
         await expect.poll(() => guest.evaluate((view: any) => view.executeJavaScript('document.body.innerText')), { timeout: 30_000 }).toMatch(/Approved|已授权/)
       })
     }

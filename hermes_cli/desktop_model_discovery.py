@@ -227,7 +227,8 @@ def read_provider_snapshot(*, provider: str, base_url: str, api_key: str | None,
                 snapshot = ProviderSnapshot(values, "fresh", key, row["fetched_at"])
         except Exception as exc:  # health: allow BLE001 -- Provider adapters are external boundaries; only sanitized status leaves this query.
             from hermes_cli.models_probe import probe_failure_status
-            snapshot = failed(probe_failure_status(exc))
+            from hermes_cli.cloud_device_client import CloudConnectionError
+            snapshot = failed(exc.code if isinstance(exc, CloudConnectionError) else probe_failure_status(exc))
         future.set_result(snapshot)
         return snapshot
     finally:
@@ -323,7 +324,7 @@ def configured_provider_rows(ctx, *, source_scope: str, refresh: bool = False) -
             from agent.semantier_gateway import gateway_settings
 
             try:
-                settings = gateway_settings()
+                settings = gateway_settings(allow_unselected=True)
             except ValueError:
                 pass
         if (is_cloud and (not settings or settings.base_url.rstrip("/") != endpoint.rstrip("/"))) or not _discover_flag(entry):
@@ -351,6 +352,7 @@ def configured_provider_rows(ctx, *, source_scope: str, refresh: bool = False) -
                "manual_models": list(dict.fromkeys(str(value).strip() for value in
                    [*(entry.get("models") or []), entry.get("model") or ""] if str(value).strip())),
                "discovery_state": snapshot.state, "discovery_source_id": snapshot.source_id,
+               "discovery_status": snapshot.status,
                "discovery_fetched_at": snapshot.fetched_at}
         # This separate actor-authorized catalog is an existing authorization
         # owner, unlike generic model discovery. Preserve its grant projection.

@@ -43,6 +43,8 @@ export function cloudServiceStatus(result: BillingResult<BillingBackendState>): 
 
   if (projection.local_status !== 'READY') { return { state: 'denied' } }
 
+  if (projection.reason === 'NO_ACCESS') { return { state: 'denied' } }
+
   if (projection.reason === 'PREPARING') { return { state: 'preparing' } }
 
   if (available === null) { return { state: 'unavailable' } }

@@ -130,7 +130,7 @@ def test_billing_transport_failure_never_claims_missing_plan(tmp_path, monkeypat
 def test_expired_native_credential_requires_reauthorization_without_network(monkeypatch):
     from hermes_cli.cloud_device_client import CloudCredentialError
 
-    def expired():
+    def expired(**kwargs):
         raise CloudCredentialError('private credential detail')
 
     monkeypatch.setattr(sg, 'gateway_settings', expired)

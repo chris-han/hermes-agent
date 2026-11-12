@@ -4838,6 +4838,22 @@
             ],
             "default": null,
             "title": "Reason"
+          },
+          "execution_backend": {
+            "anyOf": [
+              {
+                "enum": [
+                  "proxy",
+                  "embedded_sdk"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Execution Backend"
           }
         },
         "required": [
@@ -24624,6 +24640,18 @@
             "default": null,
             "title": "Discovery State"
           },
+          "discovery_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Discovery Status"
+          },
           "discovery_source_id": {
             "anyOf": [
               {
@@ -39939,6 +39967,18 @@
             ],
             "default": null,
             "title": "Error"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Error Code"
           },
           "free_tier_route": {
             "anyOf": [

@@ -242,6 +242,14 @@ export function DesktopOnboardingOverlay({
       return
     }
 
+    const flow = $desktopOnboarding.get().flow
+
+    if (flow.status === 'confirming_model' && flow.providerSlug === 'semantier-cloud') {
+      void confirmOnboardingModel(ctx)
+
+      return
+    }
+
     const reduce = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
 
     if (reduce) {
@@ -380,7 +388,7 @@ export function DesktopOnboardingOverlay({
     ('provider' in onboarding.flow && onboarding.flow.provider?.id === 'semantier-cloud') ||
     (onboarding.flow.status === 'confirming_model' && onboarding.flow.providerSlug === 'semantier-cloud')
 
-  if (onboarding.manual && cloudFlow && JSON.stringify(captureOnboardingScope()) !== JSON.stringify(ctx.scope)) {
+  if (cloudFlow && JSON.stringify(captureOnboardingScope()) !== JSON.stringify(ctx.scope)) {
     return null
   }
 

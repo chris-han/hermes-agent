@@ -1,6 +1,16 @@
 import type { Translations } from './types'
 
 const cloudSignInErrors: Record<string, string> = {
+  cloud_request_timeout: 'The Cloud request timed out. Retry the same connection; authorization is retained.',
+  cloud_metadata_timeout: 'Model capability lookup timed out. Retry model discovery; your device remains connected.',
+  cloud_metadata_unavailable: 'Model capability information is unavailable. Retry discovery.',
+  cloud_model_access_missing: 'No model access is enabled for this account. Ask your account administrator to check access.',
+  cloud_provisioning_pending: 'Model access is being prepared. Retry readiness shortly.',
+  cloud_entitlement_restricted: 'This account cannot currently use the selected model. Review account access and credit.',
+  cloud_capability_mismatch: 'This model capability revision is unsupported. Refresh models or update the app.',
+  cloud_catalog_timeout: 'Model discovery timed out. Retry discovery; your device remains connected.',
+  cloud_catalog_empty: 'This account has no enabled model. Refresh models after access is assigned. Your device remains connected.',
+  cloud_catalog_unavailable: 'Model discovery is temporarily unavailable. Retry discovery; your device remains connected.',
   cloud_network_unavailable: 'Semantier Cloud could not be reached. Check your network connection and retry.',
   cloud_dns_failed: 'Semantier Cloud DNS lookup failed. Check DNS and the configured Cloud provider, then retry.',
   cloud_tls_failed:

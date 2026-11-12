@@ -1,6 +1,16 @@
 import type { TranslationOverrides } from './define-locale'
 
 const cloudSignInErrors: Record<string, string> = {
+  cloud_request_timeout: 'Cloud 请求超时。请重试同一连接，授权已保留。',
+  cloud_metadata_timeout: '读取模型能力信息超时。请重试模型发现，设备连接已保留。',
+  cloud_metadata_unavailable: '模型能力信息暂不可用，请重试模型发现。',
+  cloud_model_access_missing: '此账户尚未启用模型访问。请联系账户管理员核对权限。',
+  cloud_provisioning_pending: '正在准备模型访问，请稍后重试就绪检查。',
+  cloud_entitlement_restricted: '此账户当前无法使用所选模型，请核对权限与额度。',
+  cloud_capability_mismatch: '当前不支持此模型能力版本，请刷新模型或更新应用。',
+  cloud_catalog_timeout: '读取模型列表超时。请重试模型发现；设备连接已保留。',
+  cloud_catalog_empty: '此账户暂无已启用模型。分配权限后请刷新模型；设备连接已保留。',
+  cloud_catalog_unavailable: '暂时无法读取模型列表。请重试模型发现；设备连接已保留。',
   cloud_network_unavailable: '无法连接司序云。请检查网络连接后重试。',
   cloud_dns_failed: '司序云 DNS 解析失败。请检查 DNS 和云提供方配置后重试。',
   cloud_tls_failed: '无法验证司序云的 TLS 证书。请检查提供方地址和受信任的 CA 证书配置。',

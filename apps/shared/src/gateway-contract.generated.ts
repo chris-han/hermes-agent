@@ -190,6 +190,7 @@ export interface AccountProvisioning {
   billing_account_id?: string | null
   currency?: string | null
   reason?: string | null
+  execution_backend?: 'proxy' | 'embedded_sdk' | null
 }
 /** ``_serialize_subscription_state``; the view's fallback emits only ``ok / logged_in / error``. */
 export interface SubscriptionStateResult {
@@ -740,6 +741,7 @@ export interface SetupRuntimeCheckResult {
   model?: string | null
   source?: string | null
   error?: string | null
+  error_code?: string | null
   free_tier_route?: boolean | null
   profile?: string | null
 }
@@ -920,6 +922,7 @@ export interface ModelOptionProvider {
   manual_models?: string[] | null
   eligible_models?: string[] | null
   discovery_state?: 'fresh' | 'cached' | 'stale' | 'missing' | 'error' | 'unsupported' | null
+  discovery_status?: string | null
   discovery_source_id?: string | null
   discovery_fetched_at?: string | null
   total_models?: number | null

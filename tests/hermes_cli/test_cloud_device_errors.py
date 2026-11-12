@@ -31,7 +31,7 @@ def test_fresh_default_sign_in_uses_managed_origin_without_changing_model(native
     (requests.ConnectionError(socket.gaierror(-2, 'PRIVATE HOSTNAME')), 'cloud_dns_failed'),
     (requests.exceptions.SSLError('PRIVATE CERTIFICATE'), 'cloud_tls_failed'),
     (requests.ConnectionError('PRIVATE ENDPOINT'), 'cloud_network_unavailable'),
-    (requests.Timeout('PRIVATE ENDPOINT'), 'cloud_network_unavailable'),
+    (requests.Timeout('PRIVATE ENDPOINT'), 'cloud_request_timeout'),
 ])
 def test_transport_diagnosis_has_no_raw_endpoint(native, monkeypatch, failure, code):
     device, _ = native
