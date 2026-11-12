@@ -68,6 +68,7 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
       await fixture.stage('billing.explicit-approval', async () => {
         const account = process.env.HERMES_E2E_BILLING_ACCOUNT
         expect(account, 'Explicit permitted fixture account required').toBeTruthy()
+        await expect.poll(() => guest.evaluate((view: any, account) => view.executeJavaScript(`Array.from(document.querySelectorAll('select option')).some(option => option.value === ${JSON.stringify(account)})`), account), { timeout: 30_000 }).toBe(true)
         await guest.evaluate((view: any, account) => view.executeJavaScript(`(() => {const select=Array.from(document.querySelectorAll('select')).find(node=>Array.from(node.options).some(option=>option.value===${JSON.stringify(account)})); if(select){select.value=${JSON.stringify(account)};select.dispatchEvent(new Event('change',{bubbles:true}));}})()`), account)
 
         await expect.poll(() => guest.evaluate((view: any) => view.executeJavaScript('document.body.innerText')), { timeout: 30_000 }).toMatch(/Approve device|授权此设备/)
