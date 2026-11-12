@@ -32,7 +32,7 @@ test('unconfigured card opens real Billing login in the embedded pane', async ({
     await expect.poll(() => guest.evaluate((view: any) => view.getURL()).catch(() => '')).toContain('/billing/connect?intent_ref=dci_')
     await expect.poll(() => guest.evaluate((view: any) => view.executeJavaScript('document.body.innerText')).catch(() => ''), { timeout: 60_000 }).toMatch(/Sign in|登录/)
     expect(await app.evaluate(() => (globalThis as any).__billingExternalCalls)).toBe(0)
-    const credentialsFile = process.env.HERMES_E2E_BILLING_CREDENTIALS
+    const credentialsFile = process.env.HERMES_E2E_BILLING_IDENTITY_FILE
 
     if (credentialsFile) {
       await fixture.stage('billing.real-login', async () => {
