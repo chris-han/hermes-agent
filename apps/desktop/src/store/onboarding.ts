@@ -17,6 +17,8 @@ import { translateNow } from '@/i18n'
 import { decodeCloudSignInError } from '@/lib/cloud-sign-in-error'
 import { isProviderSetupErrorMessage } from '@/lib/provider-setup-errors'
 import { evaluateRuntimeReadiness, type RuntimeReadinessResult } from '@/lib/runtime-readiness'
+import { openCloudSignIn } from '@/store/cloud-sign-in'
+import { $connectionsRegistry } from '@/store/connection-registry-state'
 import {
   $freeTierStatus,
   ackFreeTierNotice,
@@ -712,6 +714,14 @@ export function startManualLocalEndpoint(reason: null | string = null, profile?:
 let pendingProviderOAuthId: null | string = null
 
 export function startManualProviderOAuth(providerId: string, profile?: ProfileScope) {
+  if (providerId === 'semantier-cloud') {
+    const scope = captureOnboardingScope(profile)
+    void openCloudSignIn(scope).catch(error => notifyError(error, translateNow('common.error')))
+    const source = $connectionsRegistry.get()?.connections.find(connection => connection.id === scope.connectionId)
+
+    if (source?.transport === 'semantier-workspace-http') { return }
+  }
+
   pendingProviderOAuthId = providerId
   startManualOnboarding(null, profile)
 }

@@ -5,6 +5,7 @@ import { setEnvVar } from '@/api/config'
 import type { HermesApiRequest } from '@/global'
 import { makeOAuthProvider } from '@/test/oauth-provider'
 
+import { $connectionsRegistry } from './connection-registry-state'
 import {
   $desktopOnboarding,
   closeManualOnboarding,
@@ -37,6 +38,7 @@ let deferStart: (() => Promise<void>) | undefined
 
 beforeEach(() => {
   vi.useFakeTimers()
+  $connectionsRegistry.set(null)
   authFlow = 'device_code'
   deferStart = undefined
   closeRightRail()
@@ -416,4 +418,50 @@ it.each([
   await task
   expect($desktopOnboarding.get().flow).toMatchObject({ status: 'error', installed: true, message: expect.stringContaining(message) })
   expect(requests.filter(request => request.path.endsWith('/start'))).toHaveLength(0)
+})
+
+
+it('opens the selected Cloud login inside Browser Pane even when provider discovery is unavailable', async () => {
+  $connectionsRegistry.set({version:2,primary:owner.connectionId,launchMode:'primary',lastUsed:owner.connectionId,connections:[
+    {id:owner.connectionId,kind:'cloud',label:'Local Docker',url:'https://127.0.0.1',transport:'semantier-workspace-http'}
+  ]} as never)
+  window.hermesDesktop.api = vi.fn().mockRejectedValue(new Error('Provider discovery unavailable'))
+  startManualProviderOAuth('semantier-cloud', owner)
+  await vi.waitFor(() => expect($previewTabs.get().map(tab => tab.target.url)).toContain('https://127.0.0.1/chat/new'))
+  expect(window.hermesDesktop.openExternal).not.toHaveBeenCalled()
+  expect(window.hermesDesktop.api).not.toHaveBeenCalled()
+})
+
+it('opens the configured Cloud portal before attempting native provider discovery', async () => {
+  const api = window.hermesDesktop.api
+  window.hermesDesktop.api = vi.fn(async request => {
+    if (request.path.startsWith('/api/config')) {
+      return {providers:{'semantier-cloud':{base_url:'https://inference.example/v1',portal_origin:'https://accounts.example'}}}
+    }
+
+    return api(request)
+  }) as typeof api
+  startManualProviderOAuth('semantier-cloud', owner)
+  await vi.waitFor(() => expect($previewTabs.get().map(tab => tab.target.url)).toContain('https://accounts.example/chat/new'))
+  expectOwnerRequests()
+  expect(window.hermesDesktop.openExternal).not.toHaveBeenCalled()
+})
+
+
+it('keeps the public Cloud login available when native settings cannot be read', async () => {
+  window.hermesDesktop.api = vi.fn().mockRejectedValue(new Error('Native runtime unavailable'))
+  startManualProviderOAuth('semantier-cloud', owner)
+  await vi.waitFor(() => expect($previewTabs.get().map(tab => tab.target.url)).toContain('https://cloud.semantier.cn/chat/new'))
+  expect(window.hermesDesktop.openExternal).not.toHaveBeenCalled()
+})
+
+it('does not open a late Cloud login after the foreground owner changes', async () => {
+  let release!: (config: unknown) => void
+  window.hermesDesktop.api = vi.fn(() => new Promise(resolve => { release = resolve })) as typeof window.hermesDesktop.api
+  const { openCloudSignIn } = await import('./cloud-sign-in')
+  const opening = openCloudSignIn(owner)
+  switchForeground()
+  release({providers:{'semantier-cloud':{portal_origin:'https://accounts.example'}}})
+  await opening
+  expect($previewTabs.get()).toHaveLength(0)
 })
