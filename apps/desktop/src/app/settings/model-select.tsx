@@ -152,7 +152,7 @@ export function ModelSelect({
         aria-label={ariaLabel ?? m.model}
         className={className}
         disabled={disabled}
-        filter={cloud ? (item, query, keywords) => catalogSearchMatches([item, ...(keywords ?? [])].join(' '), query) ? 1 : 0 : undefined}
+        filter={(item, query, keywords) => catalogSearchMatches([item, ...(keywords ?? [])].join(' '), query) ? 1 : 0}
         onChange={next => {
           const model = fromItemValue(next)
 

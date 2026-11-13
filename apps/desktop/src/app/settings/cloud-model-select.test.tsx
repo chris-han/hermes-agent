@@ -27,3 +27,18 @@ it('Settings searches provider/model terms together and commits the public id', 
   fireEvent.click(screen.getByRole('option', { name: 'GPT-4o · Azure OpenAI' }))
   expect(onChange).toHaveBeenCalledWith('gpt-4o')
 })
+
+it('Settings searches combined BYOK provider/model terms without changing the manual route', async () => {
+  const onChange = vi.fn()
+
+  const provider = { slug: 'offer-mvl-azure-search', name: 'Azure local search fixture (synthetic)', authenticated: true,
+    models: ['gpt-4o', 'gpt-4o-mini'], discovery_state: 'fresh' as const, discovery_source_id: 'fixture-source' }
+
+  render(<ModelSelect aria-label="BYOK model" models={provider.models} onValueChange={onChange} provider={provider} providerSlug={provider.slug} searchable value="gpt-4o" />)
+  fireEvent.click(screen.getByRole('combobox', { name: 'BYOK model' }))
+  fireEvent.change(screen.getByPlaceholderText('Model'), { target: { value: '  AZURE gpt-4o  ' } })
+  await waitFor(() => expect(screen.getAllByRole('option').map(n => n.textContent)).toEqual(['gpt-4o', 'gpt-4o-mini']))
+  expect(onChange).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('option', { name: 'gpt-4o-mini' }))
+  expect(onChange).toHaveBeenCalledWith('gpt-4o-mini')
+})
