@@ -1,5 +1,5 @@
 import type { ModelOptionProvider, ModelOptionsResult, ModelPricing } from '@hermes/shared'
-import { DEFAULT_REASONING_EFFORT } from '@hermes/shared'
+import { catalogModelMetadata, catalogModelSearchText, catalogSearchMatches, DEFAULT_REASONING_EFFORT } from '@hermes/shared'
 import { useStore } from '@nanostores/react'
 import { useQuery } from '@tanstack/react-query'
 import {
@@ -779,21 +779,13 @@ export function ModelCatalogMenu({
                   <ProviderStatusChip className="ml-auto mr-0.5" provider={group.provider} />
                 </DropdownMenuItem>
                 {!collapsed &&
-                  group.families.map(family => (
-                    <ModelFamilyRow
-                      controller={controller}
-                      current={current}
-                      defaultEffort={defaultEffort}
-                      family={family}
-                      favorite={favoriteSet.has(favoriteModelKey(group.provider.slug, family.id))}
-                      kbProps={kbRowProps(`${group.provider.slug}:${family.id}`)}
-                      key={`${group.provider.slug}:${family.id}`}
-                      onSelect={selectFamily}
-                      onSubOpenChange={handleSubOpenChange}
-                      provider={group.provider}
-                      search={search}
-                    />
-                  ))}
+                  <ProviderModelFamilies
+                    families={group.families}
+                    favoriteSet={favoriteSet}
+                    kbRowProps={kbRowProps}
+                    rowProps={{ controller, current, defaultEffort, onSelect: selectFamily,
+                      onSubOpenChange: handleSubOpenChange, provider: group.provider, search }}
+                  />}
               </DropdownMenuGroup>
             )
           })}
@@ -959,6 +951,36 @@ interface ModelFamilyRowProps {
  *  model, plus the hover-revealed options submenu. Shared by the Favorites
  *  section and the provider groups, so the two can never paint a model
  *  differently. */
+interface ProviderModelFamiliesProps {
+  families: ModelFamily[]
+  favoriteSet: ReadonlySet<string>
+  kbRowProps: (key: string) => ModelFamilyRowProps['kbProps']
+  rowProps: Omit<ModelFamilyRowProps, 'family' | 'favorite' | 'kbProps'>
+}
+
+function ProviderModelFamilies({ families, favoriteSet, kbRowProps, rowProps }: ProviderModelFamiliesProps): ReactElement {
+  const { provider } = rowProps
+
+  return <>{families.map((family, index) => {
+    const upstream = catalogModelMetadata(provider, family.id)?.provider_display
+    const previous = index ? catalogModelMetadata(provider, families[index - 1].id)?.provider_display : undefined
+
+    return (
+      <Fragment key={`${provider.slug}:${family.id}`}>
+        {upstream && upstream !== previous ? <DropdownMenuLabel className={favoriteProviderLabel}>{upstream}</DropdownMenuLabel> : null}
+        <ModelFamilyRow {...rowProps} family={family}
+          favorite={favoriteSet.has(favoriteModelKey(provider.slug, family.id))}
+          kbProps={kbRowProps(`${provider.slug}:${family.id}`)} />
+      </Fragment>
+    )
+  })}</>
+}
+
+
+function catalogRowLabel(provider: ModelOptionProvider, model: string, fallback: string): string {
+  return catalogModelMetadata(provider, model)?.label || fallback
+}
+
 function ModelFamilyRow({
   controller,
   current,
@@ -1000,7 +1022,7 @@ function ModelFamilyRow({
     return other.name === name && other.tag === tag
   })
 
-  const label = displayCollision ? family.id : name
+  const label = catalogRowLabel(provider, family.id, displayCollision ? family.id : name)
   const decoration = useModelMenuRowDecoration({ label, model: family.id, provider: provider.slug })
   const caps = provider.capabilities?.[family.id]
   const limit = familyLimit(provider, family, isCurrent)
@@ -1232,11 +1254,9 @@ function groupModels(
       continue
     }
 
-    const matches = (family: ModelFamily) =>
-      foldIncludes(
-        `${family.id} ${family.fastId ?? ''} ${provider.name} ${provider.slug} ${displayModelName(family.id)}`,
-        q
-      )
+    const matches = (family: ModelFamily) => catalogSearchMatches(
+      `${catalogModelSearchText(provider, family.id)} ${family.fastId ?? ''} ${displayModelName(family.id)}`, q
+    )
 
     let shown: Set<string>
 
@@ -1268,6 +1288,10 @@ function groupModels(
     )
 
     if (families.length > 0) {
+      if (provider.slug === 'semantier-cloud') {
+        families.sort((a, b) => (catalogModelMetadata(provider, a.id)?.provider_display ?? '').localeCompare(catalogModelMetadata(provider, b.id)?.provider_display ?? ''))
+      }
+
       groups.push({ families, provider })
     }
   }

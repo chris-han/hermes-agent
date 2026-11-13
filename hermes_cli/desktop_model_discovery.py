@@ -22,6 +22,31 @@ class ProviderSnapshot:
     source_id: str | None = None
     fetched_at: str | None = None
     status: str | None = None
+    model_profiles: dict[str, dict] | None = None
+
+
+_CLOUD_METADATA_FIELDS = frozenset({
+    'id', 'label', 'provider_id', 'provider_display', 'provider_aliases',
+    'source_model_id', 'modality', 'customer_price_version', 'offer_revision',
+    'publication_revision', 'account_id', 'currency', 'revision',
+    'context_window', 'max_output_tokens', 'capabilities', 'request_parameters',
+})
+
+
+def _cloud_snapshot_values(endpoint, api_key):
+    from agent.semantier_gateway import GatewaySettings, cloud_catalog
+
+    payload = cloud_catalog(refresh=True, settings=GatewaySettings(endpoint, api_key))
+    raw = payload.get('data') if isinstance(payload, dict) and payload.get('object') == 'list' else None
+    if not isinstance(raw, list) or any(not isinstance(item, dict) or not
+            isinstance(item.get('id'), str) or not item['id'].strip() for item in raw):
+        return None, None
+    ids = [item['id'] for item in raw]
+    # A repeated public id can name different accounts. Do not silently pick one.
+    if len(ids) != len(set(ids)):
+        return None, None
+    return ids, {item['id']: {key: value for key, value in item.items()
+                 if key in _CLOUD_METADATA_FIELDS} for item in raw}
 
 
 _inflight_lock = threading.Lock()
@@ -96,10 +121,11 @@ def read_provider_snapshot(*, provider: str, base_url: str, api_key: str | None,
 
     previous_row = cached()
     previous = list(previous_row["models"]) if previous_row is not None else None
+    previous_profiles = previous_row.get("model_profiles") if previous_row is not None else None
     if not refresh:
         state = "stale" if previous_row and previous_row.get("last_refresh_failed") else "cached"
         return ProviderSnapshot(previous, state if previous is not None else "missing", key,
-                                previous_row.get("fetched_at") if previous_row else None)
+                                previous_row.get("fetched_at") if previous_row else None, model_profiles=previous_profiles)
 
     def failed(status: str = "unknown") -> ProviderSnapshot:
         if previous is not None:
@@ -108,7 +134,7 @@ def read_provider_snapshot(*, provider: str, base_url: str, api_key: str | None,
                 if current is not None:
                     store({**current, "last_refresh_failed": True})
         return ProviderSnapshot(previous, "stale" if previous is not None else "error", key,
-                                previous_row.get("fetched_at") if previous_row else None, status)
+                                previous_row.get("fetched_at") if previous_row else None, status, model_profiles=previous_profiles)
     with _inflight_lock:
         future = _inflight.get(key)
         owns_refresh = future is None
@@ -120,10 +146,11 @@ def read_provider_snapshot(*, provider: str, base_url: str, api_key: str | None,
             return future.result(timeout=15)
         except TimeoutError:
             return ProviderSnapshot(previous, "stale" if previous is not None else "error", key,
-                                    previous_row.get("fetched_at") if previous_row else None)
+                                    previous_row.get("fetched_at") if previous_row else None, model_profiles=previous_profiles)
     try:
         try:
             probe_status = "unknown"
+            model_profiles = None
             if adapter == "workspace-byok":
                 values = query() if callable(query) else None
             elif adapter == "gemini":
@@ -186,15 +213,7 @@ def read_provider_snapshot(*, provider: str, base_url: str, api_key: str | None,
                     if cursor is None:
                         break
             elif adapter == "cloud":
-                from agent.semantier_gateway import GatewaySettings, cloud_catalog
-
-                payload = cloud_catalog(refresh=True, settings=GatewaySettings(endpoint, materialized_key))
-                raw = payload.get("data") if isinstance(payload, dict) and payload.get("object") == "list" else None
-                if not isinstance(raw, list) or any(not isinstance(item, dict) or not
-                        isinstance(item.get("id"), str) or not item["id"].strip() for item in raw):
-                    values = None
-                else:
-                    values = [item["id"] for item in raw]
+                values, model_profiles = _cloud_snapshot_values(endpoint, materialized_key)
             elif adapter == "ollama":
                 from hermes_cli.models_local import _root_for_ollama_native_api
 
@@ -222,9 +241,11 @@ def read_provider_snapshot(*, provider: str, base_url: str, api_key: str | None,
                 values = list(dict.fromkeys(value.strip() for value in values))
                 row = {"source": "provider-query-v1", "models": values,
                        "fetched_at": datetime.now(UTC).isoformat()}
+                if model_profiles is not None:
+                    row["model_profiles"] = model_profiles
                 with owner._cache_write_lock:
                     store(row)
-                snapshot = ProviderSnapshot(values, "fresh", key, row["fetched_at"])
+                snapshot = ProviderSnapshot(values, "fresh", key, row["fetched_at"], model_profiles=model_profiles)
         except Exception as exc:  # health: allow BLE001 -- Provider adapters are external boundaries; only sanitized status leaves this query.
             from hermes_cli.models_probe import probe_failure_status
             from hermes_cli.cloud_device_client import CloudConnectionError
@@ -362,8 +383,10 @@ def configured_provider_rows(ctx, *, source_scope: str, refresh: bool = False) -
         # owner, unlike generic model discovery. Preserve its grant projection.
         if is_cloud:
             row["authenticated"] = settings is not None
-            if snapshot.models is not None:
-                row["eligible_models"] = list(snapshot.models)
+            row["eligible_models"] = list(snapshot.models or [])
+            row["manual_models"] = []
+            if snapshot.model_profiles is not None:
+                row["model_profiles"] = snapshot.model_profiles
         return row
 
     for slug, entry in ctx.user_providers.items():

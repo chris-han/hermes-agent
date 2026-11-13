@@ -371,7 +371,7 @@ def test_cloud_uses_actor_catalog_and_retains_only_same_actor_snapshot(cache_pat
         pytest.fail("Cloud must use the actor-authorized catalog")
     monkeypatch.setattr(models, "probe_api_models", forbidden)
     principal = ["key-a"]
-    monkeypatch.setattr(semantier_gateway, "gateway_settings", lambda:
+    monkeypatch.setattr(semantier_gateway, "gateway_settings", lambda **_:
                         semantier_gateway.GatewaySettings("https://cloud.test/v1", principal[0]))
     replies = iter([{"object": "list", "data": [{"id": "actor-a"}]}, ValueError("offline")])
     def catalog(*, refresh, settings):
@@ -389,7 +389,7 @@ def test_cloud_uses_actor_catalog_and_retains_only_same_actor_snapshot(cache_pat
     assert row["discovery_state"] == "stale" and row["eligible_models"] == ["actor-a"]
     principal[0] = "key-b"
     row = configured_provider_rows(ctx, source_scope="connection-a")[0]
-    assert row["models"] == [] and row.get("eligible_models") is None
+    assert row["models"] == [] and row["eligible_models"] == [] and row["manual_models"] == []
 
 
 def test_desktop_inventory_uses_separate_query_only_path_and_retains_saved_selection(cache_path, monkeypatch):
@@ -454,7 +454,7 @@ def test_legacy_cloud_route_is_actor_catalog_only_even_when_custom_endpoint_exis
     from hermes_cli.inventory import ConfigContext
 
     monkeypatch.setattr(semantier_gateway, "cloud_connection_config", lambda: {"base_url": "https://cloud.test/v1"})
-    monkeypatch.setattr(semantier_gateway, "gateway_settings", lambda:
+    monkeypatch.setattr(semantier_gateway, "gateway_settings", lambda **_:
                         semantier_gateway.GatewaySettings("https://cloud.test/v1", "actor-key"))
     monkeypatch.setattr(semantier_gateway, "cloud_catalog", lambda **kwargs: {"object": "list", "data": [{"id": "granted"}]})
     monkeypatch.setattr(models, "probe_api_models", lambda *args, **kwargs: pytest.fail("generic Cloud query"))

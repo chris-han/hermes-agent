@@ -30,3 +30,40 @@ export function modelSearchText(model: string): string {
 
   return `${id} ${aliases.join(' ')}`
 }
+
+/** Safe catalog identity only. This projection never changes routing or grants. */
+export interface CatalogModelMetadata {
+  label?: string
+  provider_id?: string
+  provider_display?: string
+  provider_aliases?: string[]
+  source_model_id?: string
+  modality?: string
+}
+
+interface CatalogSearchProvider {
+  slug: string
+  name: string
+  aliases?: string[] | null
+  model_profiles?: Record<string, CatalogModelMetadata> | null
+}
+
+export function catalogModelMetadata(provider: CatalogSearchProvider | undefined, model: string): CatalogModelMetadata | undefined {
+  return provider?.model_profiles?.[model]
+}
+
+/** The same field union is used by Settings and every Composer catalog. */
+export function catalogModelSearchText(provider: CatalogSearchProvider, model: string): string {
+  const metadata = catalogModelMetadata(provider, model)
+
+  return [modelSearchText(model), provider.slug, provider.name, ...(provider.aliases ?? []),
+    metadata?.label, metadata?.provider_id, metadata?.provider_display,
+    ...(metadata?.provider_aliases ?? []), metadata?.source_model_id].filter(value => typeof value === 'string').join(' ')
+}
+
+/** Terms may span provider and model fields; a provider filter is applied first. */
+export function catalogSearchMatches(text: string, query: string): boolean {
+  const haystack = text.toLowerCase()
+
+  return query.trim().toLowerCase().split(/\s+/).every(term => haystack.includes(term))
+}

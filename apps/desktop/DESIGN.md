@@ -77,6 +77,17 @@ Windows App Installer channel builds expose one **Update source** selector in Ve
 
 Model service Accounts leads with **Semantier Cloud** followed by **Custom endpoint** and a disclosure for other available account providers. API Keys and Custom Endpoints preserve saved providers and credentials. Desktop does not manage model installation/downloads or expose a Local Models destination; obsolete `pview=local` links resolve to Accounts. Custom endpoint accepts independently running local (including localhost) or remote OpenAI-compatible servers. The local Hermes agent runtime and advanced remote/SSH runtime controls are separate and remain available.
 
+Semantier Cloud remains one connection. Its Main model search and Composer search
+match every trimmed, case-insensitive partial term across provider display names,
+provider IDs/aliases and model display/public/source IDs; terms may span fields
+(`azure gpt-4o`). Search narrows the already scoped catalog. Composer shows upstream
+groups inside that connection; Settings names the upstream beside each discovered
+model. Both reuse the existing search and option primitives. Unknown/draft inventory
+is not a custom chat-model entry, and declared non-chat modalities cannot become Main
+or Composer choices. Cached provider/price metadata stays with the authenticated
+source snapshot, with existing stale/retry status; it never grants invocation rights.
+
+
 - **Chat is the home surface.** The transcript and composer stay primary; tools,
   previews, files, review, and terminal complement the conversation.
 - **Pages are durable destinations.** Chat, Skills, Messaging, and Artifacts

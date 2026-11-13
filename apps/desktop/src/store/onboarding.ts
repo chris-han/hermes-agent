@@ -15,6 +15,7 @@ import {
 } from '@/hermes'
 import { translateNow } from '@/i18n'
 import { decodeCloudSignInError } from '@/lib/cloud-sign-in-error'
+import { modelDiscoveryScope } from '@/lib/model-discovery-scope'
 import { isProviderSetupErrorMessage } from '@/lib/provider-setup-errors'
 import { evaluateRuntimeReadiness, type RuntimeReadinessResult } from '@/lib/runtime-readiness'
 import { openCloudSignIn } from '@/store/cloud-sign-in'
@@ -33,7 +34,7 @@ import { afterOnboardingSurfaceClear, onboardingSurfaceOpen } from '@/store/onbo
 import { captureOnboardingScope, type OnboardingScope } from '@/store/onboarding-scope'
 import { openPreview, previewProfileScope } from '@/store/preview'
 import { withGatewayProfileActivationLock } from '@/store/profile'
-import { $activeSessionId } from '@/store/session'
+import { $activeSessionId, $connection } from '@/store/session'
 import { $focusedStoredSessionId } from '@/store/session-focus'
 import type { OAuthProvider, OAuthStartResponse } from '@/types/hermes'
 
@@ -373,6 +374,12 @@ function notifyGatewayTools(tools: string[] | undefined) {
 // card — the user gets the undefined-model auto-selection behaviour
 // we had before, which works but is surprising. The confirm step is
 // opportunistic polish, not a hard requirement for onboarding.
+async function cloudDiscoveryScope(profile?: ProfileScope): Promise<string> {
+  const owner = typeof profile === 'object' ? profile?.connectionId : undefined
+
+  return modelDiscoveryScope(owner, $connection.get())
+}
+
 async function fetchProviderDefaultModel(
   preferredSlugs: string[],
   profile?: ProfileScope
@@ -381,7 +388,7 @@ async function fetchProviderDefaultModel(
   const cloud = preferredSlugs.includes('semantier-cloud')
 
   try {
-    options = await getGlobalModelOptions({ includeUnconfigured: true, explicitOnly: false, ...(cloud ? { queryOnly: true, queryScope: JSON.stringify(profile ?? null), refresh: true } : {}) }, profile)
+    options = await getGlobalModelOptions({ includeUnconfigured: true, explicitOnly: false, ...(cloud ? { queryOnly: true, queryScope: await cloudDiscoveryScope(profile), refresh: true } : {}) }, profile)
   } catch (error) {
     if (cloud) {throw error}
 

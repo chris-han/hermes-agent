@@ -1,11 +1,11 @@
-import { modelProviderName } from '@/i18n/model-service'
 import type { ModelOptionProvider, ModelPricing } from '@hermes/shared'
-import { fuzzyRank, modelSearchText } from '@hermes/shared'
+import { catalogModelSearchText, catalogSearchMatches, fuzzyRank, modelSearchText } from '@hermes/shared'
 import { useStore } from '@nanostores/react'
 import { useQuery } from '@tanstack/react-query'
 import { type ReactElement, useRef, useState } from 'react'
 
 import { useI18n } from '@/i18n'
+import { modelProviderName } from '@/i18n/model-service'
 import { modelDiscoveryOwnerKey } from '@/lib/model-discovery-scope'
 import { catalogProviderMatches, modelOptionsQueryKey, providerSelectableModels, requestDiscoveredModelOptions } from '@/lib/model-options'
 import { currentPickerSelection } from '@/lib/model-status-label'
@@ -240,6 +240,10 @@ function ModelResults({
   // pickers use, so one query orders identically on every surface. A query
   // that names the provider itself keeps its whole curated list, in order.
   const rankModels = (provider: ModelOptionProvider, models: readonly string[]) => {
+    if (provider.slug === 'semantier-cloud') {
+      return models.filter(model => catalogSearchMatches(catalogModelSearchText(provider, model), search))
+    }
+
     if (!q || foldIncludes(provider.name, q) || foldIncludes(provider.slug, q)) {
       return [...models]
     }

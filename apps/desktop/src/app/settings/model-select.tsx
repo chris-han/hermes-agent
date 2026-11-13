@@ -1,4 +1,4 @@
-import type { ModelOptionProvider } from '@hermes/shared'
+import { catalogModelMetadata, catalogModelSearchText, catalogSearchMatches, type ModelOptionProvider } from '@hermes/shared'
 import { useEffect, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
@@ -75,9 +75,11 @@ export function ModelSelect({
   const m = t.settings.model
   const [typing, setTyping] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const cloud = providerSlug === 'semantier-cloud'
+  const eligible = cloud ? (allowedModels ?? provider?.eligible_models ?? []) : allowedModels
 
   const isUnavailable = (model: string) =>
-    (allowedModels != null && !allowedModels.includes(model)) ||
+    (eligible != null && !eligible.includes(model)) ||
     (excludeUnavailable && (provider?.unavailable_models ?? []).some(item => normalize(item) === normalize(model)))
 
   useEffect(() => {
@@ -144,12 +146,13 @@ export function ModelSelect({
     )
   }
 
-  if (searchable) {
+  if (searchable || cloud) {
     return (
       <SearchableSelect
         aria-label={ariaLabel ?? m.model}
         className={className}
         disabled={disabled}
+        filter={cloud ? (item, query, keywords) => catalogSearchMatches([item, ...(keywords ?? [])].join(' '), query) ? 1 : 0 : undefined}
         onChange={next => {
           const model = fromItemValue(next)
 
@@ -161,11 +164,12 @@ export function ModelSelect({
         }}
         options={[
           ...withActive(models.filter(model => !isUnavailable(model)), value).map(model => ({
-            value: toItemValue(model), label: model, disabled: isUnavailable(model)
+            value: toItemValue(model), label: cloud ? `${catalogModelMetadata(provider, model)?.label ?? model}${catalogModelMetadata(provider, model)?.provider_display ? ` · ${catalogModelMetadata(provider, model)?.provider_display}` : ''}` : model,
+            keywords: provider ? [catalogModelSearchText(provider, model)] : [model], disabled: isUnavailable(model)
           })),
-          ...(allowedModels == null ? [{ value: CUSTOM_ITEM, label: m.customModel }] : [])
+          ...(eligible == null ? [{ value: CUSTOM_ITEM, label: m.customModel }] : [])
         ]}
-        placeholder={m.model}
+        placeholder={cloud ? t.shell.modelMenu.search : m.model}
         value={toItemValue(value)}
       />
     )

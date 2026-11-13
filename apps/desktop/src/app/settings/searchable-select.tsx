@@ -57,7 +57,8 @@ export function SearchableSelect({
   options,
   placeholder = 'Search…',
   emptyMessage = 'No results found.',
-  clearLabel
+  clearLabel,
+  filter
 }: {
   'aria-label'?: string
   className?: string
@@ -70,6 +71,7 @@ export function SearchableSelect({
   /** When set, prepends a "clear" item that sets the value to ''.
    *  Matches the existing <Select> pattern of EMPTY_SELECT_VALUE + "(none)". */
   clearLabel?: string
+  filter?: (value: string, search: string, keywords?: string[]) => number
 }) {
   const [open, setOpen] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -122,7 +124,7 @@ export function SearchableSelect({
           "Africa/A…". The popover keeps its own width and only grows to cover a
           trigger wider than that. */}
       <PopoverContent align="start" className="min-w-(--radix-popover-trigger-width)" variant="menu">
-        <Command filter={(option, search, keywords) => Math.max(rankSearchOption(option, search), ...(keywords ?? []).map(keyword => rankSearchOption(keyword, search)))} variant="menu">
+        <Command filter={filter ?? ((option, search, keywords) => Math.max(rankSearchOption(option, search), ...(keywords ?? []).map(keyword => rankSearchOption(keyword, search))))} variant="menu">
           <CommandInput autoFocus placeholder={placeholder} />
           <CommandList>
             <CommandEmpty>{emptyMessage}</CommandEmpty>

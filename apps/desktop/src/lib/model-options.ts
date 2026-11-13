@@ -1,4 +1,4 @@
-import type { ModelCapabilities, ModelOptionProvider, ModelOptionsResult } from '@hermes/shared'
+import { catalogModelMetadata, type ModelCapabilities, type ModelOptionProvider, type ModelOptionsResult } from '@hermes/shared'
 
 import { getGlobalModelOptions, type HermesGateway } from '@/hermes'
 import { type DiscoveryConnection, modelDiscoveryScope } from '@/lib/model-discovery-scope'
@@ -17,7 +17,11 @@ export function providerSelectableModels(provider?: ModelOptionProvider): string
   const eligible = provider.eligible_models == null ? null : new Set(provider.eligible_models)
   const unavailable = new Set((provider.unavailable_models ?? []).map(normalize))
 
-  return (provider.models ?? []).filter(model => (!eligible || eligible.has(model)) && !unavailable.has(normalize(model)))
+  return (provider.models ?? []).filter(model => {
+    const modality = provider.slug === 'semantier-cloud' ? catalogModelMetadata(provider, model)?.modality : undefined
+
+    return (!eligible || eligible.has(model)) && !unavailable.has(normalize(model)) && (!modality || modality === 'chat')
+  })
 }
 
 type CatalogProviderIdentity = Partial<Pick<ModelOptionProvider, 'aliases' | 'name'>> &

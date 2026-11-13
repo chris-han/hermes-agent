@@ -417,6 +417,7 @@ it.each([
   await vi.advanceTimersByTimeAsync(2000)
   await task
   expect($desktopOnboarding.get().flow).toMatchObject({ status: 'error', installed: true, message: expect.stringContaining(message) })
+  expect(requests.filter(request => request.path.startsWith('/api/model/options')).every(request => new URL(request.path, 'https://fixture.test').searchParams.get('query_scope') === owner.connectionId)).toBe(true)
   expect(requests.filter(request => request.path.endsWith('/start'))).toHaveLength(0)
 })
 
