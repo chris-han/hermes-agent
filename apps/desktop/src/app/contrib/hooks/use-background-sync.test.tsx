@@ -5,7 +5,7 @@ import { createClientSessionState } from '@/lib/chat-runtime'
 import { $sidebarShowArchived } from '@/store/layout'
 import { $changeEventsAvailable, $cronChangeTick, $sessionsChangeTick } from '@/store/live-sync'
 import { $onBattery } from '@/store/power'
-import { $activeSessionId } from '@/store/session'
+import { $activeSessionId, rotateFreshDraftKey } from '@/store/session'
 import {
   $sessionStates,
   $workingSessionIds,
@@ -29,7 +29,9 @@ function render(
   activeGatewayProfile: string,
   activeConnectionId: string,
   refreshSessions: () => Promise<void>,
-  gatewayRequest = requestGateway
+  gatewayRequest = requestGateway,
+  freshDraftReady = false,
+  refreshCurrentModel = noop
 ) {
   return renderHook(
     ({ connectionId, profile }: { connectionId: string; profile: string }) => {
@@ -39,11 +41,11 @@ function render(
         activeIsMessaging: false,
         activeSessionId: null,
         activeStoredSessionId: null,
-        freshDraftReady: false,
+        freshDraftReady,
         gatewayState: 'open',
         refreshActiveTranscript: noop,
         refreshCronJobs: noop,
-        refreshCurrentModel: noop,
+        refreshCurrentModel,
         refreshHermesConfig: noop,
         refreshMessagingSessions: noop,
         refreshSessions,
@@ -68,6 +70,19 @@ describe('useBackgroundSync profile-scoped session refresh', () => {
   afterEach(() => {
     cleanup()
     vi.useRealTimers()
+  })
+
+  it('refreshes the saved default for each new draft while already on an empty draft', async () => {
+    const refreshModel = vi.fn()
+    render('default', 'local', vi.fn(async () => undefined), requestGateway, true, refreshModel)
+    await act(async () => undefined)
+    const initialCalls = refreshModel.mock.calls.length
+
+    await act(async () => { rotateFreshDraftKey() })
+    expect(refreshModel).toHaveBeenCalledTimes(initialCalls + 1)
+
+    await act(async () => { rotateFreshDraftKey() })
+    expect(refreshModel).toHaveBeenCalledTimes(initialCalls + 2)
   })
 
   it('coalesces change ticks while the live status request is pending', async () => {

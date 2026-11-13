@@ -29,6 +29,7 @@ import {
   $activeSessionId,
   $busy,
   $currentCwd,
+  $freshDraftKey,
   $messagingSessions,
   $selectedStoredSessionId,
   $sessions,
@@ -1001,6 +1002,7 @@ export function useBackgroundSync({
   requestGateway,
   updateSessionState
 }: BackgroundSyncParams): void {
+  const freshDraftKey = useStore($freshDraftKey)
   const changeEventsAvailable = useStore($changeEventsAvailable)
   const cronChangeTick = useStore($cronChangeTick)
   const activeTranscriptRefreshPendingRef = useRef<string | null>(null)
@@ -1521,5 +1523,5 @@ export function useBackgroundSync({
       void refreshCurrentModel()
       void refreshHermesConfig()
     }
-  }, [activeSessionId, freshDraftReady, gatewayState, refreshCurrentModel, refreshHermesConfig])
+  }, [activeSessionId, freshDraftKey, freshDraftReady, gatewayState, refreshCurrentModel, refreshHermesConfig])
 }
