@@ -22,6 +22,8 @@
  * never itself fail on a torn install.
  */
 
+import { SEMANTIER_DARK_COLORS, SEMANTIER_FONT_SANS, SEMANTIER_LIGHT_COLORS, SYSTEM_MONO } from '../semantier-palette'
+
 export interface RendererLoadErrorDetails {
   /** Chromium error code, e.g. -6 (ERR_FILE_NOT_FOUND) or its name. */
   errorCode?: number | string | undefined
@@ -95,6 +97,15 @@ function missingAssetsList(missingAssets?: string[]): string {
   )
 }
 
+// Inline the native palette so recovery never depends on renderer assets.
+function recoveryColors(colors: typeof SEMANTIER_LIGHT_COLORS): string {
+  return `--background: ${colors.background}; --foreground: ${colors.foreground};
+    --surface: ${colors.card}; --muted: ${colors.muted};
+    --secondary-text: ${colors.mutedForeground}; --border: ${colors.border};
+    --primary: ${colors.primary}; --primary-foreground: ${colors.primaryForeground};
+    --ring: ${colors.ring};`
+}
+
 /**
  * Build the self-contained error page. Deliberately dependency-free: no
  * stylesheets, no images, no fetch — a data: URL must render from a blank
@@ -113,49 +124,68 @@ export function buildRendererLoadErrorPage(details: RendererLoadErrorDetails = {
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${title}</title>
 <style>
-  :root { color-scheme: dark; }
+  :root {
+    color-scheme: light dark;
+    ${recoveryColors(SEMANTIER_LIGHT_COLORS)}
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { ${recoveryColors(SEMANTIER_DARK_COLORS)} }
+  }
   * { box-sizing: border-box; }
   body {
     margin: 0;
     min-height: 100vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: #0b0e14;
-    color: #e6e6e6;
-    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: ${SEMANTIER_FONT_SANS};
   }
   main {
+    width: 100%;
     max-width: 560px;
     padding: 32px;
-    border: 1px solid #2b2f3a;
-    border-radius: 12px;
-    background: #11151d;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
   }
-  h1 { font-size: 18px; margin: 0 0 12px; }
-  p { font-size: 14px; line-height: 1.5; margin: 8px 0; }
+  h1 { font-size: 20px; font-weight: 600; line-height: 1.4; margin: 0 0 16px; }
+  p { color: var(--secondary-text); font-size: 14px; line-height: 1.5; margin: 8px 0; }
   code {
-    font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+    font-family: ${SYSTEM_MONO};
     font-size: 12px;
-    background: #1a1f2a;
-    padding: 2px 6px;
+    color: var(--foreground);
+    background: var(--muted);
+    padding: 2px 4px;
     border-radius: 4px;
-    word-break: break-all;
+    overflow-wrap: anywhere;
   }
-  ul { margin: 8px 0; padding-left: 20px; font-size: 13px; }
+  ul { margin: 8px 0; padding-left: 20px; font-size: 13px; overflow-wrap: anywhere; }
   button {
     margin-top: 16px;
-    padding: 8px 18px;
-    border: 0;
-    border-radius: 6px;
-    background: #4f7cff;
-    color: #fff;
+    min-height: 36px;
+    padding: 8px 16px;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    background: var(--primary);
+    color: var(--primary-foreground);
+    font: inherit;
     font-size: 14px;
+    font-weight: 600;
+    line-height: 18px;
     cursor: pointer;
   }
-  button:hover { background: #6b90ff; }
+  button:hover { background: color-mix(in srgb, var(--primary) 90%, var(--background)); }
+  button:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
+  ::selection { background: var(--primary); color: var(--primary-foreground); }
+  @media (max-width: 480px) {
+    body { padding: 16px; }
+    main { padding: 24px; }
+  }
 </style>
 </head>
 <body>
