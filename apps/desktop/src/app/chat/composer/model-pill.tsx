@@ -128,7 +128,7 @@ export function ModelPill({
   // live session's footer reflects that session's model, so no badge there.
   // Tiles always have a runtime — pin badge is primary-draft only.
   const pinnedOverride =
-    view.kind === 'primary' && !runtimeId && modelSource === 'manual' && Boolean(currentModel.trim())
+    view.kind === 'primary' && !runtimeId && modelSource === 'manual' && currentProvider !== 'semantier-cloud' && Boolean(currentModel.trim())
 
   // The model resolves a beat after the gateway/session comes up. Rather than
   // flash a literal "No model", show a quiet loader (inherits the pill text

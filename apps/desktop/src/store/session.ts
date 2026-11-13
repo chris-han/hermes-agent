@@ -1720,6 +1720,17 @@ let composerSelectionGeneration = 0
 
 export const getComposerSelectionGeneration = (): number => composerSelectionGeneration
 
+/** Cloud choices belong to the current draft/session; a new chat uses Settings. */
+export const resetCloudComposerForFreshDraft = (): void => {
+  if ($currentProvider.get() !== 'semantier-cloud') {
+    return
+  }
+
+  setCurrentModelSource('default')
+  setCurrentModel('')
+  setCurrentProvider('')
+}
+
 export const markComposerSelectionManual = (): void => {
   composerSelectionGeneration += 1
   setCurrentModelSource('manual')

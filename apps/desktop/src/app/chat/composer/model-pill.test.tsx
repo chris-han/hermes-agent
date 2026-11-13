@@ -42,6 +42,14 @@ describe('ModelPill pinned-override badge', () => {
     expect(screen.getByTestId('model-pinned-dot')).toBeTruthy()
   })
 
+  it('does not describe a Cloud draft choice as a pin for future chats', () => {
+    setCurrentModel('qwen3.8-max')
+    setCurrentModelSource('manual')
+    $activeSessionId.set(null)
+    render(<ModelPill disabled={false} model={modelState({model:'qwen3.8-max',provider:'semantier-cloud'})} />)
+    expect(screen.queryByTestId('model-pinned-dot')).toBeNull()
+  })
+
   it('stays quiet when the composer reflects the profile default', () => {
     setCurrentModel('google/gemma-4-26b-a4b-it:free')
     setCurrentModelSource('default')
