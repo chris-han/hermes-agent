@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 
 import { fmtDateTime } from '@/lib/time'
+import { openCloudPortal } from '@/store/cloud-sign-in'
 import { $previewTabs, closeRightRail } from '@/store/preview'
 
 import { openExternal } from './open-external'
@@ -79,4 +80,13 @@ it('keeps paid rights visible while inference readiness is pending', () => {
   expect(screen.queryByText('Ready for inference')).toBeNull()
   rerender(<SemantierBilling state={{...state,account_provisioning:{local_status:'READY',gateway_sync_status:'SYNCED',inference_ready:true}}} />)
   expect(screen.getByText('Ready for inference')).toBeTruthy()
+})
+
+it('rejects unsafe portal destinations and retains explicit external navigation', () => {
+  for (const value of ['javascript:alert(1)', 'https://user:secret@cloud.example/billing',
+    'http://cloud.example/billing', 'https://cloud.example/redirect']) {
+    expect(openCloudPortal(value)).toBe(false)
+  }
+
+  expect($previewTabs.get()).toHaveLength(0)
 })

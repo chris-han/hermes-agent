@@ -29,7 +29,7 @@ export function isSemantierPortalReturn(initial: string, destination: string): b
 
     return source.searchParams.get('entry') === 'windows' && !next.username && !next.password &&
       ['https:', 'http:'].includes(source.protocol) && next.origin === source.origin &&
-      next.pathname.startsWith('/billing') && next.hash === '#semantier-return-to-app'
+      (next.pathname === '/billing' || next.pathname.startsWith('/billing/')) && next.hash === '#semantier-return-to-app'
   } catch {
     return false
   }
