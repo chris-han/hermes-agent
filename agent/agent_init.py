@@ -1957,6 +1957,16 @@ def _compressor_max_tokens(agent):
     """``agent.max_tokens``, or the native-Gemini adapter default when unset: generateContent
     still sends maxOutputTokens=65,535 and the threshold is pct×(window − max_tokens), so
     reserving 0 let the provider 400 before compaction fired."""
+    from agent.semantier_gateway import GatewaySettings, agent_cloud_settings, cloud_model_profile, is_gateway_route
+    settings = agent_cloud_settings(agent)
+    managed = settings is not None or is_gateway_route(str(agent.base_url or ''))
+    if managed:
+        if settings is None and isinstance(getattr(agent, 'api_key', None), str) and agent.api_key:
+            settings = GatewaySettings(str(agent.base_url).rstrip('/'), agent.api_key)
+        profile = cloud_model_profile(agent.model, settings=settings)
+        ceiling = profile['max_output_tokens']
+        requested = agent.max_tokens
+        return min(requested, ceiling) if type(requested) is int and requested > 0 else ceiling
     if agent.max_tokens is not None:
         return agent.max_tokens
     with suppress(Exception):

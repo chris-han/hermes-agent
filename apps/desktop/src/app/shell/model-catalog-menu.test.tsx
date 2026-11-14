@@ -672,3 +672,18 @@ describe('the catalog renders per-model pricing', () => {
     expect(screen.queryByText('free')).toBeNull()
   })
 })
+
+
+it('recommits a current Cloud model after metadata-only refresh and labels declared streaming', async () => {
+  getGlobalModelOptions.mockResolvedValue({ providers: [{
+    name: 'Semantier Model Provider', slug: 'semantier-cloud', authenticated: true,
+    models: ['dynamic-model'], eligible_models: ['dynamic-model'],
+    capabilities: { 'dynamic-model': { reasoning: false, fast: false } },
+    model_profiles: { 'dynamic-model': { label: 'Dynamic model', context_window: 256000,
+      max_output_tokens: 4096, revision: 'profile-2', deployment_revision: 'deployment-2',
+      capabilities: { stream: true, tools: false, vision: false } } }
+  }] })
+  const select = renderMenu({ model: 'dynamic-model', provider: 'semantier-cloud' })
+  fireEvent.click(await screen.findByText(/Dynamic model.*Streaming/))
+  await waitFor(() => expect(select).toHaveBeenCalledWith('dynamic-model', 'semantier-cloud'))
+})

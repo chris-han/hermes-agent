@@ -1,5 +1,5 @@
 import type { ModelOptionProvider, ModelOptionsResult, ModelPricing } from '@hermes/shared'
-import { catalogModelMetadata, catalogModelSearchText, catalogSearchMatches, DEFAULT_REASONING_EFFORT } from '@hermes/shared'
+import { catalogModelIssue, catalogModelMetadata, catalogModelSearchText, catalogSearchMatches, DEFAULT_REASONING_EFFORT } from '@hermes/shared'
 import { useStore } from '@nanostores/react'
 import { useQuery } from '@tanstack/react-query'
 import {
@@ -73,6 +73,7 @@ import { ModelMenuRowIcon, useModelMenuRowDecoration } from './model-menu-row-de
 export const ModelMenuCloseContext = createContext<() => void>(() => {})
 
 function canSelectModel(provider: ModelOptionProvider, model: string, manual: boolean): boolean {
+  if (catalogModelIssue(provider, model)) { return false }
   const isManual = manual || providerManualModels(provider).includes(model)
 
   if ((provider.unavailable_models ?? []).some(value => normalize(value) === normalize(model))) { return false }
@@ -977,8 +978,13 @@ function ProviderModelFamilies({ families, favoriteSet, kbRowProps, rowProps }: 
 }
 
 
-function catalogRowLabel(provider: ModelOptionProvider, model: string, fallback: string): string {
-  return catalogModelMetadata(provider, model)?.label || fallback
+function catalogRowLabel(provider: ModelOptionProvider, model: string, fallback: string, locale: string): string {
+  const metadata = catalogModelMetadata(provider, model)
+  const label = `${metadata?.label || fallback}${metadata?.capabilities?.stream === true ? ` · ${locale === 'zh' ? '支持流式' : 'Streaming'}` : ''}`
+  const issue = catalogModelIssue(provider, model)
+  const recovery = locale === 'zh' ? '请刷新模型或检查供给配置' : 'Refresh models or check offer configuration'
+
+  return issue ? `${label} · ${issue} · ${recovery}` : label
 }
 
 function ModelFamilyRow({
@@ -1022,7 +1028,7 @@ function ModelFamilyRow({
     return other.name === name && other.tag === tag
   })
 
-  const label = catalogRowLabel(provider, family.id, displayCollision ? family.id : name)
+  const label = catalogRowLabel(provider, family.id, displayCollision ? family.id : name, locale)
   const decoration = useModelMenuRowDecoration({ label, model: family.id, provider: provider.slug })
   const caps = provider.capabilities?.[family.id]
   const limit = familyLimit(provider, family, isCurrent)
@@ -1069,7 +1075,8 @@ function ModelFamilyRow({
   // that submenu — without it the row's effort badge reads as a fixed
   // model+effort combo rather than an editable setting (#86966).
   const activate = () => {
-    if (!isCurrent) {
+    // Selecting the same Cloud ID also commits its refreshed metadata revision.
+    if (!isCurrent || provider.slug === 'semantier-cloud') {
       void onSelect(family, provider)
     }
 

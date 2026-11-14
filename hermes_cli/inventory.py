@@ -593,6 +593,11 @@ def _apply_capabilities(rows: list[dict], *, metadata_config: dict | None = None
         caps: dict[str, dict[str, Any]] = {}
         read_reasoning_catalog = _reasoning_catalog_reader(slug.lower())
         for model in row.get("models") or []:
+            if slug == 'semantier-cloud':
+                profile = (row.get('model_profiles') or {}).get(model) or {}
+                # Control availability; raw tri-state declarations remain in model_profiles.
+                caps[model] = {'fast': False, 'reasoning': (profile.get('capabilities') or {}).get('reasoning') is True}
+                continue
             reasoning = True
             if get_model_capabilities is not None and slug:
                 try:

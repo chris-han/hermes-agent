@@ -7,6 +7,8 @@ rows are intentionally not read: they can contain static or curated fallbacks.
 from __future__ import annotations
 
 import hashlib
+from copy import deepcopy
+from time import monotonic
 import json
 import threading
 from concurrent.futures import Future, TimeoutError
@@ -30,11 +32,13 @@ _CLOUD_METADATA_FIELDS = frozenset({
     'source_model_id', 'modality', 'customer_price_version', 'offer_revision',
     'publication_revision', 'account_id', 'currency', 'revision',
     'context_window', 'max_output_tokens', 'capabilities', 'request_parameters',
+    'max_input_tokens', 'deployment_revision', 'sources', 'unknown_reason', 'protocol', 'transport',
+    'access', 'configured', 'funding', 'readiness',
 })
 
 
 def _cloud_snapshot_values(endpoint, api_key):
-    from agent.semantier_gateway import GatewaySettings, cloud_catalog
+    from agent.semantier_gateway import GatewaySettings, cloud_catalog, resolve_cloud_profile
 
     payload = cloud_catalog(refresh=True, settings=GatewaySettings(endpoint, api_key))
     raw = payload.get('data') if isinstance(payload, dict) and payload.get('object') == 'list' else None
@@ -45,18 +49,53 @@ def _cloud_snapshot_values(endpoint, api_key):
     # A repeated public id can name different accounts. Do not silently pick one.
     if len(ids) != len(set(ids)):
         return None, None
-    return ids, {item['id']: {key: value for key, value in item.items()
-                 if key in _CLOUD_METADATA_FIELDS} for item in raw}
+    profiles = {}
+    for item in raw:
+        try:
+            item = resolve_cloud_profile(item)
+        except ValueError:
+            pass  # Keep invalid/unknown fields visible for a model-specific UI issue.
+        profiles[item['id']] = {key: value for key, value in item.items() if key in _CLOUD_METADATA_FIELDS}
+    return ids, profiles
 
 
 _inflight_lock = threading.Lock()
 _inflight: dict[str, Future[ProviderSnapshot]] = {}
+_cloud_rows: dict[str, dict] = {}
+_cloud_generation = 0
+_cloud_failures: dict[str, float] = {}
+
+
+def clear_cloud_snapshots():
+    """Invalidate the existing profile cache after a definite scope/revision refusal."""
+    from hermes_cli import models as owner
+    global _cloud_generation
+    with _inflight_lock:
+        _cloud_generation += 1
+        _cloud_rows.clear()
+        _cloud_failures.clear()
+    with owner._cache_write_lock:
+        rows = owner._load_provider_models_cache()
+        kept = {key: row for key, row in rows.items()
+                if not isinstance(row, dict) or row.get('adapter') != 'cloud'}
+        if kept != rows:
+            owner._save_provider_models_cache(kept)
+
+
+def read_cloud_snapshot(settings, *, refresh=False):
+    # Cache path already belongs to the active profile; the existing key also
+    # binds endpoint and a non-reversible credential fingerprint. Renderer
+    # connection labels must not split discovery from the execution owner.
+    return read_provider_snapshot(provider='semantier-cloud', base_url=settings.base_url,
+        api_key=settings.api_key, source_scope='semantier-cloud-profile-v1',
+        adapter='cloud', refresh=refresh, refresh_if_missing=True)
+
 
 
 def read_provider_snapshot(*, provider: str, base_url: str, api_key: str | None,
                            source_scope: str, api_mode: str | None = None,
                            headers: dict[str, str] | None = None,
-                           refresh: bool = False, adapter: str = "openai", query=None, cache_path=None, model_list_url: str = "") -> ProviderSnapshot:
+                           refresh: bool = False, refresh_if_missing: bool = False, adapter: str = "openai", query=None, cache_path=None, model_list_url: str = "") -> ProviderSnapshot:
     """Read a verified same-source snapshot or refresh it through the provider adapter."""
     from hermes_cli import models as owner
 
@@ -85,6 +124,10 @@ def read_provider_snapshot(*, provider: str, base_url: str, api_key: str | None,
                           ensure_ascii=True, separators=(",", ":"))
     key = "desktop-query-v1:" + hashlib.sha256(identity.encode()).hexdigest()
 
+    with _inflight_lock:
+        generation = _cloud_generation
+    flight_key = key + ':' + str(generation) if adapter == 'cloud' else key
+
     def cache_rows():
         if cache_path == owner._provider_models_cache_path():
             return owner._load_provider_models_cache()
@@ -94,6 +137,8 @@ def read_provider_snapshot(*, provider: str, base_url: str, api_key: str | None,
             return {}
 
     def store(row):
+        if adapter == 'cloud':
+            _cloud_rows[key] = deepcopy(row)
         if cache_path == owner._provider_models_cache_path():
             owner._store_cache_entry(key, row)
         else:
@@ -105,7 +150,9 @@ def read_provider_snapshot(*, provider: str, base_url: str, api_key: str | None,
                 pass  # Cache failure never turns a verified query into configuration loss.
 
     def cached():
-        row = cache_rows().get(key)
+        row = _cloud_rows.get(key) if adapter == 'cloud' else None
+        if row is None:
+            row = cache_rows().get(key)
         if not isinstance(row, dict) or row.get("source") != "provider-query-v1":
             return None
         try:
@@ -117,30 +164,42 @@ def read_provider_snapshot(*, provider: str, base_url: str, api_key: str | None,
         values = row.get("models")
         if not isinstance(values, list) or any(not isinstance(value, str) or not value for value in values):
             return None
+        if adapter == 'cloud':
+            _cloud_rows[key] = deepcopy(row)
         return row
 
     previous_row = cached()
     previous = list(previous_row["models"]) if previous_row is not None else None
     previous_profiles = previous_row.get("model_profiles") if previous_row is not None else None
-    if not refresh:
+    if not refresh and (previous is not None or not refresh_if_missing):
         state = "stale" if previous_row and previous_row.get("last_refresh_failed") else "cached"
         return ProviderSnapshot(previous, state if previous is not None else "missing", key,
                                 previous_row.get("fetched_at") if previous_row else None, model_profiles=previous_profiles)
 
     def failed(status: str = "unknown") -> ProviderSnapshot:
         if previous is not None:
-            with owner._cache_write_lock:
+            with owner._cache_write_lock, _inflight_lock:
+                if adapter == 'cloud' and generation != _cloud_generation:
+                    return ProviderSnapshot(None, 'error', key, status='cloud_scope_changed')
                 current = cached()
                 if current is not None:
                     store({**current, "last_refresh_failed": True})
         return ProviderSnapshot(previous, "stale" if previous is not None else "error", key,
                                 previous_row.get("fetched_at") if previous_row else None, status, model_profiles=previous_profiles)
     with _inflight_lock:
-        future = _inflight.get(key)
+        if adapter == 'cloud' and not refresh and _cloud_failures.get(key, 0) > monotonic():
+            return ProviderSnapshot(previous, 'stale' if previous is not None else 'error', key,
+                                    model_profiles=previous_profiles, status='cloud_refresh_backoff')
+        if refresh_if_missing and not refresh:
+            latest = cached()
+            if latest is not None:
+                return ProviderSnapshot(list(latest['models']), 'cached', key,
+                    latest['fetched_at'], model_profiles=deepcopy(latest.get('model_profiles')))
+        future = _inflight.get(flight_key)
         owns_refresh = future is None
         if future is None:
             future = Future()
-            _inflight[key] = future
+            _inflight[flight_key] = future
     if not owns_refresh:
         try:
             return future.result(timeout=15)
@@ -239,22 +298,31 @@ def read_provider_snapshot(*, provider: str, base_url: str, api_key: str | None,
                 snapshot = failed(probe_status)
             else:
                 values = list(dict.fromkeys(value.strip() for value in values))
-                row = {"source": "provider-query-v1", "models": values,
+                row = {"source": "provider-query-v1", "adapter": adapter, "models": values,
                        "fetched_at": datetime.now(UTC).isoformat()}
                 if model_profiles is not None:
                     row["model_profiles"] = model_profiles
-                with owner._cache_write_lock:
+                with owner._cache_write_lock, _inflight_lock:
+                    if adapter == 'cloud' and generation != _cloud_generation:
+                        snapshot = ProviderSnapshot(None, 'error', key, status='cloud_scope_changed')
+                        future.set_result(snapshot)
+                        return snapshot
                     store(row)
+                    _cloud_failures.pop(key, None)
                 snapshot = ProviderSnapshot(values, "fresh", key, row["fetched_at"], model_profiles=model_profiles)
         except Exception as exc:  # health: allow BLE001 -- Provider adapters are external boundaries; only sanitized status leaves this query.
             from hermes_cli.models_probe import probe_failure_status
             from hermes_cli.cloud_device_client import CloudConnectionError
             snapshot = failed(exc.code if isinstance(exc, CloudConnectionError) else probe_failure_status(exc))
+        if adapter == 'cloud' and generation != _cloud_generation:
+            snapshot = ProviderSnapshot(None, 'error', key, status='cloud_scope_changed')
+        if adapter == 'cloud' and generation == _cloud_generation and snapshot.state in {'error', 'stale'}:
+            _cloud_failures[key] = monotonic() + 5
         future.set_result(snapshot)
         return snapshot
     finally:
         with _inflight_lock:
-            _inflight.pop(key, None)
+            _inflight.pop(flight_key, None)
 
 
 
@@ -356,9 +424,7 @@ def configured_provider_rows(ctx, *, source_scope: str, refresh: bool = False) -
             snapshot = ProviderSnapshot(None, "error", status=settings_failure) if settings_failure else ProviderSnapshot(None, "unsupported")
         else:
             if is_cloud:
-                snapshot = read_provider_snapshot(provider=slug, base_url=endpoint, api_key=settings.api_key,
-                    source_scope=source_scope, api_mode=_entry_api_mode(entry),
-                    headers=_extra_headers_from_config(entry), refresh=refresh, adapter="cloud")
+                snapshot = read_cloud_snapshot(settings, refresh=refresh)
             else:
                 snapshot = read_configured_provider_snapshot(provider=slug, entry=entry, base_url=endpoint,
                     api_key=key, source_scope=source_scope, refresh=refresh)

@@ -39,6 +39,15 @@ export interface CatalogModelMetadata {
   provider_aliases?: string[]
   source_model_id?: string
   modality?: string
+  context_window?: number | null
+  max_output_tokens?: number | null
+  max_input_tokens?: number | null
+  capabilities?: Record<string, boolean | null>
+  revision?: string
+  deployment_revision?: string
+  sources?: Record<string, string>
+  protocol?: string
+  unknown_reason?: string | null
 }
 
 interface CatalogSearchProvider {
@@ -50,6 +59,19 @@ interface CatalogSearchProvider {
 
 export function catalogModelMetadata(provider: CatalogSearchProvider | undefined, model: string): CatalogModelMetadata | undefined {
   return provider?.model_profiles?.[model]
+}
+
+/** Required-field issues affect only this Cloud model. */
+export function catalogModelIssue(provider: CatalogSearchProvider | undefined, model: string): string | undefined {
+  if (provider?.slug !== 'semantier-cloud') { return undefined }
+  const metadata = catalogModelMetadata(provider, model)
+  const missing = (['context_window', 'max_output_tokens'] as const).filter(key =>
+    !Number.isSafeInteger(metadata?.[key]) || (metadata?.[key] ?? 0) <= 0)
+
+  if (metadata?.protocol && !['chat', 'chat_completions', 'openai_chat_completions'].includes(metadata.protocol)) { return 'protocol' }
+  if (missing.length) { return missing.join(', ') }
+  if (metadata!.max_output_tokens! > metadata!.context_window!) { return 'context_window / max_output_tokens' }
+  return undefined
 }
 
 /** The same field union is used by Settings and every Composer catalog. */

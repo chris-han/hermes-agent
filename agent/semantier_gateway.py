@@ -277,6 +277,8 @@ def clear_cloud_catalog():
         _catalog_generation += 1
         _catalog_cache.clear()
         _catalog_pending.clear()
+    from hermes_cli.desktop_model_discovery import clear_cloud_snapshots
+    clear_cloud_snapshots()
 
 
 def cloud_catalog(*, refresh=False, settings=None):
@@ -354,12 +356,61 @@ def cloud_catalog(*, refresh=False, settings=None):
                 _catalog_pending.pop(key,None)
 
 
+def _bundled_cloud_limits(profile):
+    """Reuse offline catalog evidence only for an exact provider/model identity."""
+    from agent.models_dev import get_model_info
+    provider = str(profile.get('provider_id') or '').lower()
+    model = profile.get('source_model_id') or profile.get('id')
+    if not provider or not isinstance(model, str):
+        return {}
+    info = get_model_info(provider, model, allow_network=False, config={})
+    if info is None or info.id != model or info.provider_id != provider:
+        return {}
+    return {key: value for key, value in (
+        ('context_window', info.context_window), ('max_output_tokens', info.max_output))
+        if type(value) is int and value > 0}
+
+
+def resolve_cloud_profile(profile):
+    """Apply field-wise precedence without inventing limits for unknown aliases."""
+    result = deepcopy(profile)
+    model = result.get('id', 'unknown')
+    if (result.get('configured') is False or
+            ('access' in result and result['access'] != 'authorized') or
+            ('offer_state' in result and result['offer_state'] != 'PUBLISHED')):
+        raise ValueError(f'{model}: model is unavailable; refresh model configuration.')
+    if 'protocol' in result and result['protocol'] not in {'chat', 'chat_completions', 'openai_chat_completions'}:
+        raise ValueError(f'{model}: protocol unsupported; configure this offer or update the client.')
+    fields = ('context_window', 'max_output_tokens')
+    defaults = _bundled_cloud_limits(result) if any(key not in result for key in fields) else {}
+    sources = dict(result.get('sources') or {})
+    for key in fields:
+        if key not in result and key in defaults:
+            result[key] = defaults[key]
+            sources[key] = 'exact_local_catalog'
+        if type(result.get(key)) is not int or result[key] <= 0:
+            raise ValueError(f'{model}: {key} unknown or invalid; refresh models or configure this offer in Admin.')
+    if result['max_output_tokens'] > result['context_window']:
+        raise ValueError(f'{model}: context/output limits conflict; configure this offer in Admin.')
+    caps = result.get('capabilities', {})
+    if not isinstance(caps, dict) or any(value is not None and type(value) is not bool for value in caps.values()):
+        raise ValueError(f'{model}: invalid capabilities; refresh model configuration.')
+    result['capabilities'] = {key: caps.get(key) for key in ('tools', 'vision', 'stream', 'reasoning', 'structured_output')}
+    result['sources'] = sources
+    return result
+
+
 def cloud_model_profile(model, *, refresh=False, settings=None):
-    options = {"settings":settings} if settings is not None else {}
-    rows = [row for row in cloud_catalog(refresh=refresh,**options)['data'] if row.get('id') == model]
+    from hermes_cli.desktop_model_discovery import read_cloud_snapshot
+    settings = settings or gateway_settings(allow_unselected=True)
+    if settings is None:
+        raise ValueError('Semantier Model Provider connection required.')
+    snapshot = read_cloud_snapshot(settings, refresh=refresh)
+    row = (snapshot.model_profiles or {}).get(model)
+    rows = [deepcopy(row)] if isinstance(row, dict) else []
     if len(rows) != 1:
         raise ValueError('Selected Semantier Model Provider model is unavailable; refresh models.')
-    return rows[0]
+    return resolve_cloud_profile(rows[0])
 
 
 def configure_cloud_request(kwargs, *, base_url, settings=None, expected_revision=None):
@@ -391,7 +442,12 @@ def configure_cloud_request(kwargs, *, base_url, settings=None, expected_revisio
     import json
     prompt = {k:result[k] for k in ('messages','tools','response_format') if k in result}
     reserve = len(json.dumps(prompt,ensure_ascii=False).encode()) + 64*len(messages)
-    room = min(output,32768,context-reserve)
+    input_limit = profile.get('max_input_tokens')
+    if input_limit is not None and (type(input_limit) is not int or input_limit <= 0):
+        raise ValueError('Semantier Model Provider input limit invalid; refresh model configuration.')
+    if input_limit is not None and reserve > input_limit:
+        raise ValueError('Semantier Model Provider input budget exceeded; compact or start a new session.')
+    room = min(output,context-reserve)
     if room < 1:
         raise ValueError('Semantier Model Provider context budget exceeded; compact or start a new session.')
     cap = result.pop('max_completion_tokens',result.pop('max_tokens',None))
@@ -415,7 +471,7 @@ def cloud_switch_result(model, current_provider, *, is_global=False):
         settings = gateway_settings()
         if settings is None:
             raise ValueError('Semantier Model Provider connection required.')
-        profile = cloud_model_profile(model,refresh=True)
+        profile = cloud_model_profile(model)
         if profile['protocol'] not in {'chat','chat_completions','openai_chat_completions'}:
             raise ValueError('Unsupported Semantier Model Provider protocol.')
         target = 'semantier-cloud' if (cloud_connection_config() or {}).get('credential_ref') else 'custom'

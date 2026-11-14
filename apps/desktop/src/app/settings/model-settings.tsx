@@ -1,5 +1,5 @@
 import type { ModelOptionProvider } from '@hermes/shared'
-import { DEFAULT_REASONING_EFFORT, REASONING_EFFORT_VALUES } from '@hermes/shared'
+import { catalogModelIssue, DEFAULT_REASONING_EFFORT, REASONING_EFFORT_VALUES } from '@hermes/shared'
 import { useStore } from '@nanostores/react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -135,6 +135,7 @@ function providerHasUnknownEligibility(provider?: ModelOptionProvider): boolean 
 }
 
 function selectedModelUnavailable(provider: ModelOptionProvider | undefined, model: string, unknown: boolean): boolean {
+  if (catalogModelIssue(provider, model)) { return true }
   if ((provider?.unavailable_models ?? []).some(value => normalize(value) === normalize(model))) { return true }
 
   return provider?.eligible_models != null && !unknown && !!model && !availableMainModels(provider).includes(model)

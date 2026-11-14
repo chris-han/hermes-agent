@@ -297,10 +297,12 @@ describe('ModelSettings', () => {
     getGlobalModelInfo.mockResolvedValueOnce({ provider: 'semantier-cloud', model: 'stale-model' })
     getGlobalModelOptions.mockResolvedValueOnce({ providers: [{
       name: 'Cloud', slug: 'semantier-cloud', authenticated: true,
-      models: ['allowed-model', 'stale-model'], eligible_models: ['allowed-model']
+      models: ['allowed-model', 'stale-model'], eligible_models: ['allowed-model'],
+      model_profiles: Object.fromEntries(['allowed-model', 'stale-model'].map(id => [id, { context_window: 128000, max_output_tokens: 1024 }]))
     }] }).mockResolvedValueOnce({ providers: [{
       name: 'Cloud', slug: 'semantier-cloud', authenticated: true,
-      models: ['allowed-model'], eligible_models: ['allowed-model']
+      models: ['allowed-model'], eligible_models: ['allowed-model'],
+      model_profiles: { 'allowed-model': { context_window: 128000, max_output_tokens: 1024 } }
     }] })
     renderModelSettings()
     const model = (await screen.findAllByRole('combobox'))[1]

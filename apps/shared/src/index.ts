@@ -98,7 +98,7 @@ export {
   JsonRpcGatewayClient,
   type WebSocketLike
 } from './json-rpc-gateway'
-export { catalogModelMetadata, type CatalogModelMetadata, catalogModelSearchText, catalogSearchMatches, modelSearchText } from './model-search-text'
+export { catalogModelIssue, catalogModelMetadata, type CatalogModelMetadata, catalogModelSearchText, catalogSearchMatches, modelSearchText } from './model-search-text'
 export {
   DEFAULT_REASONING_EFFORT,
   isReasoningEffort,

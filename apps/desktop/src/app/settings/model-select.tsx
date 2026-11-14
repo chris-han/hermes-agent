@@ -1,4 +1,4 @@
-import { catalogModelMetadata, catalogModelSearchText, catalogSearchMatches, type ModelOptionProvider } from '@hermes/shared'
+import { catalogModelIssue, catalogModelMetadata, catalogModelSearchText, catalogSearchMatches, type ModelOptionProvider } from '@hermes/shared'
 import { useEffect, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
@@ -71,7 +71,7 @@ export function ModelSelect({
   searchable = false,
   value
 }: ModelSelectProps) {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const m = t.settings.model
   const [typing, setTyping] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -164,8 +164,8 @@ export function ModelSelect({
         }}
         options={[
           ...withActive(models.filter(model => !isUnavailable(model)), value).map(model => ({
-            value: toItemValue(model), label: cloud ? `${catalogModelMetadata(provider, model)?.label ?? model}${catalogModelMetadata(provider, model)?.provider_display ? ` · ${catalogModelMetadata(provider, model)?.provider_display}` : ''}` : model,
-            keywords: provider ? [catalogModelSearchText(provider, model)] : [model], disabled: isUnavailable(model)
+            value: toItemValue(model), label: cloud ? `${catalogModelMetadata(provider, model)?.label ?? model}${catalogModelMetadata(provider, model)?.provider_display ? ` · ${catalogModelMetadata(provider, model)?.provider_display}` : ''}${catalogModelMetadata(provider, model)?.capabilities?.stream === true ? ` · ${locale === 'zh' ? '支持流式' : 'Streaming'}` : ''}${catalogModelIssue(provider, model) ? ` · ${catalogModelIssue(provider, model)} · ${locale === 'zh' ? '请刷新模型或检查供给配置' : 'Refresh models or check offer configuration'}` : ''}` : model,
+            keywords: provider ? [catalogModelSearchText(provider, model)] : [model], disabled: isUnavailable(model) || !!(cloud && catalogModelIssue(provider, model))
           })),
           ...(eligible == null ? [{ value: CUSTOM_ITEM, label: m.customModel }] : [])
         ]}

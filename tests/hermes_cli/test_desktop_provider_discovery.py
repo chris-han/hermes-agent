@@ -697,3 +697,70 @@ def test_strict_query_never_changes_the_configured_endpoint_on_failure(monkeypat
     monkeypatch.setattr(models, "_get_json", fail)
     assert models.probe_api_models("key", "https://provider.test/tenant/v1", require_complete=True)["models"] is None
     assert calls == ["https://provider.test/tenant/v1/models"]
+
+
+def test_cloud_execution_misses_share_one_refresh(cache_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from agent.semantier_gateway import GatewaySettings
+    from hermes_cli import desktop_model_discovery as owner
+    entered,release=Event(),Event();calls=[]
+    def query(*args):
+        calls.append(1);entered.set();assert release.wait(3)
+        return ['new-id'],{'new-id':{'id':'new-id','revision':'r1','deployment_revision':'d1'}}
+    monkeypatch.setattr(owner,'_cloud_snapshot_values',query)
+    settings=GatewaySettings('https://fixture.test/v1','fixture-key')
+    with ThreadPoolExecutor(max_workers=20) as pool:
+        futures=[pool.submit(owner.read_cloud_snapshot,settings) for _ in range(20)]
+        assert entered.wait(3);release.set()
+        assert all(f.result().models==['new-id'] for f in futures)
+    assert len(calls)==1
+
+
+def test_cloud_invalidated_generation_cannot_repopulate_private_snapshot(cache_path,monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from agent.semantier_gateway import GatewaySettings
+    from hermes_cli import desktop_model_discovery as owner
+    entered,release=Event(),Event();calls=[]
+    def query(*args):
+        calls.append(1);index=len(calls)
+        if index==1:entered.set();assert release.wait(3)
+        name='old-private' if index==1 else 'current'
+        return [name],{name:{'id':name,'revision':str(index)}}
+    monkeypatch.setattr(owner,'_cloud_snapshot_values',query)
+    settings=GatewaySettings('https://fixture.test/v1','fixture-key')
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            old=pool.submit(owner.read_cloud_snapshot,settings,refresh=True);assert entered.wait(3)
+            owner.clear_cloud_snapshots()
+            assert owner.read_cloud_snapshot(settings,refresh=True).models==['current']
+            release.set();assert old.result().model_profiles is None
+        assert owner.read_cloud_snapshot(settings).models==['current']
+    finally:release.set()
+
+
+def test_cloud_missing_snapshot_failure_is_bounded(cache_path,monkeypatch):
+    from agent.semantier_gateway import GatewaySettings
+    from hermes_cli import desktop_model_discovery as owner
+    calls=[]
+    def query(*args):calls.append(1);raise OSError('fixture unavailable')
+    monkeypatch.setattr(owner,'_cloud_snapshot_values',query)
+    settings=GatewaySettings('https://fixture.test/v1','fixture-key')
+    for _ in range(20):assert owner.read_cloud_snapshot(settings).models is None
+    assert len(calls)==1
+    owner.read_cloud_snapshot(settings,refresh=True)
+    assert len(calls)==2
+
+
+def test_cloud_controls_use_server_capabilities_without_bundled_guessing(monkeypatch):
+    from hermes_cli.inventory import _apply_capabilities
+    from agent import models_dev
+    monkeypatch.setattr(models_dev,'get_model_capabilities',lambda *a,**kw:pytest.fail('Cloud consulted bundled capabilities'))
+    profiles={'off':{'capabilities':{'reasoning':False}},'on':{'capabilities':{'reasoning':True}},'unknown':{'capabilities':{'reasoning':None}}}
+    rows=[{'slug':'semantier-cloud','models':list(profiles),'model_profiles':profiles}]
+    _apply_capabilities(rows)
+    assert rows[0]['capabilities']['off']['reasoning'] is False
+    assert rows[0]['capabilities']['on']['reasoning'] is True
+    assert rows[0]['capabilities']['unknown']['reasoning'] is False
+    assert profiles['unknown']['capabilities']['reasoning'] is None
