@@ -366,6 +366,21 @@ describe('PreviewPane console state', () => {
     expect($previewTabs.get().some(tab => tab.id === id)).toBe(false)
   })
 
+  it('returns through the pane lifecycle owner when the Browser is a layout tile', async () => {
+    closeRightRail()
+    const url = 'https://billing.example/billing?entry=windows'
+    const target = { kind: 'url' as const, label: 'Billing', source: url, url }
+    const id = openPreview(target)!
+    const onClose = vi.fn()
+    const rendered = render(<PreviewPane onClose={onClose} tabId={id} target={target} />)
+    const guest = rendered.container.querySelector('webview')!
+    await act(async () => { guest.dispatchEvent(Object.assign(new Event('did-navigate-in-page'), {
+      isMainFrame: true, url: url + '#semantier-return-to-app'
+    })) })
+    expect(onClose).toHaveBeenCalledOnce()
+    closeRightRail()
+  })
+
   it.each(['foreign-origin', 'subframe', 'changed-runtime', 'unmarked-entry'])(
     'ignores a Billing return from %s', async reason => {
       closeRightRail()

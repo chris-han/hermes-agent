@@ -330,6 +330,8 @@ export function PreviewPane({
   // The guest-creation effect below deliberately omits target.url from its
   // deps (it reuses the guest across navigations — see #120265), so it reads
   // the live address through this mirror instead of a stale closure.
+  const portalCloseRef = useRef(onClose)
+  portalCloseRef.current = onClose
   const targetUrlRef = useRef(target.url)
   targetUrlRef.current = target.url
   const [devtoolsOpen, setDevtoolsOpen] = useState(false)
@@ -1256,7 +1258,7 @@ export function PreviewPane({
         portalProfile === previewProfileScope() && portalSession === $focusedStoredSessionId.get() && portalRuntime === $activeSessionId.get() &&
         $visiblePreviewTabs.get().some(tab => tab.id === tabId && tab.target.url === initialUrl) &&
         isSemantierPortalReturn(initialUrl, detail.url)) {
-        closeRightRailTab(tabId)
+        if (portalCloseRef.current) { portalCloseRef.current() } else { closeRightRailTab(tabId) }
         requestComposerFocus()
 
         return
