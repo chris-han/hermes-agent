@@ -546,7 +546,7 @@ export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: Set
   ) : activeView === 'keys' ? (
     <KeysSettings view={keysView} />
   ) : activeView === 'billing' ? (
-    <BillingSettings />
+    <BillingSettings onPortalOpen={onClose} />
   ) : activeView === 'plugins' ? (
     <PluginSettingsPane
       entries={plugins.entries}

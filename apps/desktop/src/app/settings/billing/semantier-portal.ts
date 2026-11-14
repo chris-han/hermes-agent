@@ -20,3 +20,17 @@ export function semantierPortalTask(origin: string | null, organizationId: strin
     return null
   }
 }
+
+/** Presentation-only return. It cannot authorize accounts, devices or arbitrary URLs. */
+export function isSemantierPortalReturn(initial: string, destination: string): boolean {
+  try {
+    const source = new URL(initial)
+    const next = new URL(destination)
+
+    return source.searchParams.get('entry') === 'windows' && !next.username && !next.password &&
+      ['https:', 'http:'].includes(source.protocol) && next.origin === source.origin &&
+      next.pathname.startsWith('/billing') && next.hash === '#semantier-return-to-app'
+  } catch {
+    return false
+  }
+}

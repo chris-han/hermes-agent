@@ -423,8 +423,10 @@ function BillingFixtureSelect({
 
 function BillingHeader({
   fixtureName,
+  onPortalOpen,
   onFixtureChange
 }: {
+  onPortalOpen?: () => void
   fixtureName?: BillingFixtureSelection
   onFixtureChange?: (value: BillingFixtureSelection) => void
 }) {
@@ -474,8 +476,10 @@ function BillingSkeleton() {
 
 function BillingSettingsContent({
   fixtureName,
+  onPortalOpen,
   onFixtureChange
 }: {
+  onPortalOpen?: () => void
   fixtureName?: BillingFixtureSelection
   onFixtureChange?: (value: BillingFixtureSelection) => void
 }) {
@@ -508,7 +512,7 @@ function BillingSettingsContent({
   if (semantierProps) {
     return <SettingsContent>
       <BillingHeader fixtureName={fixtureName} onFixtureChange={onFixtureChange} />
-      <SemantierBilling {...semantierProps} />
+      <SemantierBilling {...semantierProps} onPortalOpen={onPortalOpen} />
     </SettingsContent>
   }
 
@@ -593,7 +597,7 @@ function BillingSettingsContent({
   )
 }
 
-function BillingSettingsWithDevFixtures() {
+function BillingSettingsWithDevFixtures({ onPortalOpen }: { onPortalOpen?: () => void }) {
   const [fixtureName, setFixtureName] = useState<BillingFixtureSelection>('live')
   const queryClient = useQueryClient()
 
@@ -613,17 +617,17 @@ function BillingSettingsWithDevFixtures() {
 
   return (
     <BillingApiProvider value={simulatedApi}>
-      <BillingSettingsContent fixtureName={fixtureName} onFixtureChange={setFixtureName} />
+      <BillingSettingsContent fixtureName={fixtureName} onFixtureChange={setFixtureName} onPortalOpen={onPortalOpen} />
     </BillingApiProvider>
   )
 }
 
-export function BillingSettings() {
+export function BillingSettings({ onPortalOpen }: { onPortalOpen?: () => void }) {
   const scope = useBillingScope()
 
   if (import.meta.env.DEV) {
-    return <BillingSettingsWithDevFixtures key={scope} />
+    return <BillingSettingsWithDevFixtures key={scope} onPortalOpen={onPortalOpen} />
   }
 
-  return <BillingSettingsContent key={scope} />
+  return <BillingSettingsContent key={scope} onPortalOpen={onPortalOpen} />
 }

@@ -1001,7 +1001,9 @@ export function reopenCloudVerification(): boolean {
     return false
   }
 
-  const url = flow.start.verification_url
+  const target = new URL(flow.start.verification_url)
+  target.searchParams.set('entry', 'windows')
+  const url = target.href
   openPreview({ kind: 'url', label: 'Semantier Billing', source: url, url }, owner.session, owner.runtime, owner.profile, undefined, 'matching-url')
 
   return true
@@ -1046,7 +1048,10 @@ async function beginProviderOAuth(provider: OAuthProvider, ctx: OnboardingContex
         throw new Error(JSON.stringify({code: 'cloud_profile_mismatch'}))
       }
 
-      openPreview({ kind: 'url', label: 'Semantier Billing', source: browserUrl, url: browserUrl }, browserOwner.session, browserOwner.runtime, browserOwner.profile, undefined, 'matching-url')
+      const target = new URL(browserUrl)
+      target.searchParams.set('entry', 'windows')
+      const url = target.href
+      openPreview({ kind: 'url', label: 'Semantier Billing', source: url, url }, browserOwner.session, browserOwner.runtime, browserOwner.profile, undefined, 'matching-url')
     } else {
       await openSignInUrl(browserUrl)
     }

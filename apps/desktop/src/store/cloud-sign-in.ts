@@ -34,6 +34,27 @@ export async function openCloudSignIn(scope: OnboardingScope): Promise<void> {
   if (JSON.stringify(captureOnboardingScope()) !== JSON.stringify(scope) || owner.profile !== previewProfileScope() ||
     owner.session !== $focusedStoredSessionId.get() || owner.runtime !== $activeSessionId.get()) { return }
 
-  const url = new URL('/chat/new', origin.origin).href
+  const url = new URL('/billing?entry=windows', origin.origin).href
   openPreview({ kind: 'url', label: 'Semantier Cloud', source: url, url }, owner.session, owner.runtime, owner.profile, undefined, 'matching-url')
+}
+
+/** Open a server-supplied Semantier Billing task using the existing pane owner. */
+export function openCloudPortal(value: string, label = 'Semantier Billing'): boolean {
+  try {
+    const target = new URL(value)
+
+    if (target.username || target.password ||
+      (target.protocol !== 'https:' && !(target.protocol === 'http:' &&
+        ['localhost', '127.0.0.1', '[::1]'].includes(target.hostname))) ||
+      !['/billing', '/pricing'].some(path => target.pathname === path || target.pathname.startsWith(path + '/'))) { return false }
+
+    target.searchParams.set('entry', 'windows')
+    const url = target.href
+    openPreview({ kind: 'url', label, source: url, url }, $focusedStoredSessionId.get(),
+      $activeSessionId.get(), previewProfileScope(), undefined, 'matching-url')
+
+    return true
+  } catch {
+    return false
+  }
 }

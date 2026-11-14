@@ -3,6 +3,8 @@ import { atom } from 'nanostores'
 
 import { openExternalLink } from '@/lib/external-link'
 
+import { openCloudPortal } from './cloud-sign-in'
+
 /**
  * The active inference billing wall, if any. Set from the gateway
  * `message.complete` / `error` event when a turn fails with
@@ -58,6 +60,12 @@ export function requestBillingSettings(): void {
 export function runBillingRecovery(block: BillingBlock): void {
   if (block.is_nous) {
     requestBillingSettings()
+
+    return
+  }
+
+  if (block.provider === 'semantier-cloud') {
+    if (!block.billing_url || !openCloudPortal(block.billing_url)) { requestBillingSettings() }
 
     return
   }

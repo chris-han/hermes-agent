@@ -4,6 +4,7 @@ import { beforeEach, expect, test, vi } from 'vitest'
 vi.mock('@/lib/external-link', () => ({ openExternalLink: vi.fn() }))
 
 import { openExternalLink } from '@/lib/external-link'
+import { $previewTabs, closeRightRail } from '@/store/preview'
 
 import {
   $billingBlock,
@@ -63,4 +64,12 @@ test('runBillingRecovery falls back to in-app settings when a provider has no UR
   runBillingRecovery(makeBlock({ billing_url: null, provider: 'custom' }))
   expect(openExternalLink).not.toHaveBeenCalled()
   expect($billingSettingsRequest.get()).toBe(1)
+})
+
+test('opens Semantier recovery in the owned pane with a presentation-only native return', () => {
+  closeRightRail()
+  runBillingRecovery(makeBlock({ provider: 'semantier-cloud', billing_url: 'https://cloud.example/billing' }))
+  expect($previewTabs.get().at(-1)?.target.url).toBe('https://cloud.example/billing?entry=windows')
+  expect(openExternalLink).not.toHaveBeenCalled()
+  closeRightRail()
 })

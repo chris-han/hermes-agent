@@ -4,9 +4,9 @@ import { useNavigate } from 'react-router'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/i18n'
 import { modelServiceCopy } from '@/i18n/model-service'
-import { openExternalLink } from '@/lib/external-link'
 import type { RuntimeReadinessResult } from '@/lib/runtime-readiness'
 import { $desktopBoot } from '@/store/boot'
+import { openCloudPortal } from '@/store/cloud-sign-in'
 import { $desktopOnboarding, refreshOnboarding, startManualProviderOAuth } from '@/store/onboarding'
 import { captureOnboardingScope, type OnboardingScope } from '@/store/onboarding-scope'
 import { setSettingsScope } from '@/store/settings-scope'
@@ -62,7 +62,7 @@ function ServiceRecovery({ readiness, scope, requestGateway }: ModelServiceNotic
     <div className="flex flex-wrap gap-2">
       <Button onClick={() => setup
         ? startManualProviderOAuth('semantier-cloud', scope)
-        : portal ? void openExternalLink(portal) : retry()} size="sm">
+        : portal ? openCloudPortal(portal) : retry()} size="sm">
         {setup ? copy.signIn : portal ? copy[state] : copy.retry}
       </Button>
       <Button onClick={openCustom} size="sm" variant="text">{copy.custom}</Button>

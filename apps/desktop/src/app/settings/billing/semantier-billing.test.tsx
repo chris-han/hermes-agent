@@ -2,13 +2,14 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 
 import { fmtDateTime } from '@/lib/time'
+import { $previewTabs, closeRightRail } from '@/store/preview'
 
 import { openExternal } from './open-external'
 import { formatSemantierMoney, SemantierBilling } from './semantier-billing'
 import type { SemantierBillingV2Response } from './types'
 
 vi.mock('./open-external', () => ({ openExternal: vi.fn() }))
-afterEach(cleanup)
+afterEach(() => { cleanup(); closeRightRail() })
 
 const amount = { currency: 'CNY', amount: '100.000000000000' }
 
@@ -36,9 +37,10 @@ it('renders actual rights separately and opens an account task with independent 
   expect(screen.getByText('CNY 20.00')).toBeTruthy()
   expect(screen.getByText('CNY 1.00')).toBeTruthy()
   fireEvent.click(screen.getByRole('button', { name: 'Orders' }))
-  expect(openExternal).toHaveBeenCalledWith('https://billing.example/billing/orders?organization_id=org-a&account_id=account-a')
+  expect($previewTabs.get().at(-1)?.target.url).toBe('https://billing.example/billing/orders?organization_id=org-a&account_id=account-a&entry=windows')
+  expect(openExternal).not.toHaveBeenCalled()
   fireEvent.click(screen.getByRole('button', { name: 'Choose / renew package' }))
-  expect(openExternal).toHaveBeenLastCalledWith('https://billing.example/pricing?organization_id=org-a&account_id=account-a')
+  expect($previewTabs.get().at(-1)?.target.url).toBe('https://billing.example/pricing?organization_id=org-a&account_id=account-a&entry=windows')
 })
 
 it('renders unavailable customer-cloud credit without a crash or invented zero balance', () => {

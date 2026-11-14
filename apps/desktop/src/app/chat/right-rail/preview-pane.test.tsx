@@ -5,7 +5,7 @@ import { onComposerAttachImagesRequest } from '@/app/chat/composer/focus'
 import { PaneVisibleContext } from '@/components/pane-shell/pane-visibility'
 import { setTreePaneParked } from '@/components/pane-shell/tree/parked-panes'
 import { $previewTabs, closeRightRail, openPreview, previewTabId } from '@/store/preview'
-import { $connection, $selectedStoredSessionId } from '@/store/session'
+import { $activeSessionId, $connection, $selectedStoredSessionId } from '@/store/session'
 
 import { PreviewTilePane } from './preview'
 import { forgetPreviewConsole, previewConsoleState } from './preview-console-store'
@@ -350,6 +350,41 @@ describe('PreviewPane console state', () => {
       await act(async () => { rendered.rerender(<PreviewPane tabId="reopen-guest" target={{ ...target }} />) })
       expect(rendered.container.querySelector('webview')).toBe(guest)
       expect(loadURL).toHaveBeenCalledWith(target.url)
+    }
+  )
+
+  it('returns from the owning Billing pane without changing the native session', async () => {
+    closeRightRail()
+    const url = 'https://billing.example/billing?entry=windows'
+    const target = { kind: 'url' as const, label: 'Billing', source: url, url }
+    const id = openPreview(target)!
+    const rendered = render(<PreviewPane tabId={id} target={target} />)
+    const guest = rendered.container.querySelector('webview')!
+    const event = new Event('did-navigate-in-page')
+    Object.assign(event, { isMainFrame: true, url: url + '#semantier-return-to-app' })
+    await act(async () => { guest.dispatchEvent(event) })
+    expect($previewTabs.get().some(tab => tab.id === id)).toBe(false)
+  })
+
+  it.each(['foreign-origin', 'subframe', 'changed-runtime', 'unmarked-entry'])(
+    'ignores a Billing return from %s', async reason => {
+      closeRightRail()
+      const runtime = $activeSessionId.get()
+      const url = 'https://billing.example/billing' + (reason === 'unmarked-entry' ? '' : '?entry=windows')
+      const target = { kind: 'url' as const, label: 'Billing', source: url, url }
+      const id = openPreview(target)!
+      const rendered = render(<PreviewPane tabId={id} target={target} />)
+      const guest = rendered.container.querySelector('webview')!
+
+      if (reason === 'changed-runtime') { $activeSessionId.set('another-runtime') }
+      const event = new Event('did-navigate-in-page')
+      Object.assign(event, { isMainFrame: reason !== 'subframe', url:
+        (reason === 'foreign-origin' ? 'https://evil.example/billing' : url) + '#semantier-return-to-app' })
+
+      try {
+        await act(async () => { guest.dispatchEvent(event) })
+        expect($previewTabs.get().some(tab => tab.id === id)).toBe(true)
+      } finally { $activeSessionId.set(runtime); closeRightRail() }
     }
   )
 

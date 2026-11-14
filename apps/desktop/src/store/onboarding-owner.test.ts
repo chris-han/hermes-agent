@@ -315,7 +315,7 @@ it('deduplicates concurrent Cloud starts on the same owning profile', async () =
   release()
   await Promise.all([first, second])
   expect(window.hermesDesktop.openExternal).not.toHaveBeenCalled()
-  expect($previewTabs.get().map(tab => tab.target.url)).toContain('https://example.invalid/device')
+  expect($previewTabs.get().map(tab => tab.target.url)).toContain('https://example.invalid/device?entry=windows')
   expectOwnerRequests()
 })
 
@@ -359,7 +359,7 @@ it('opens Cloud Billing separately and preserves an authenticated-style tab', as
   expect(window.hermesDesktop.openExternal).not.toHaveBeenCalled()
   expect($previewTabs.get()).toHaveLength(2)
   expect($previewTabs.get().find(tab => tab.id === original)?.target.url).toBe('https://bank.invalid/session')
-  expect($previewTabs.get().some(tab => tab.target.url === 'https://example.invalid/device')).toBe(true)
+  expect($previewTabs.get().some(tab => tab.target.url === 'https://example.invalid/device?entry=windows')).toBe(true)
 })
 
 it('refuses a foreign Cloud open before creating an intent', async () => {
@@ -428,7 +428,7 @@ it('opens the selected Cloud login inside Browser Pane even when provider discov
   ]} as never)
   window.hermesDesktop.api = vi.fn().mockRejectedValue(new Error('Provider discovery unavailable'))
   startManualProviderOAuth('semantier-cloud', owner)
-  await vi.waitFor(() => expect($previewTabs.get().map(tab => tab.target.url)).toContain('https://127.0.0.1/chat/new'))
+  await vi.waitFor(() => expect($previewTabs.get().map(tab => tab.target.url)).toContain('https://127.0.0.1/billing?entry=windows'))
   expect(window.hermesDesktop.openExternal).not.toHaveBeenCalled()
   expect(window.hermesDesktop.api).not.toHaveBeenCalled()
 })
@@ -443,7 +443,7 @@ it('opens the configured Cloud portal before attempting native provider discover
     return api(request)
   }) as typeof api
   startManualProviderOAuth('semantier-cloud', owner)
-  await vi.waitFor(() => expect($previewTabs.get().map(tab => tab.target.url)).toContain('https://accounts.example/chat/new'))
+  await vi.waitFor(() => expect($previewTabs.get().map(tab => tab.target.url)).toContain('https://accounts.example/billing?entry=windows'))
   expectOwnerRequests()
   expect(window.hermesDesktop.openExternal).not.toHaveBeenCalled()
 })
@@ -452,7 +452,7 @@ it('opens the configured Cloud portal before attempting native provider discover
 it('keeps the public Cloud login available when native settings cannot be read', async () => {
   window.hermesDesktop.api = vi.fn().mockRejectedValue(new Error('Native runtime unavailable'))
   startManualProviderOAuth('semantier-cloud', owner)
-  await vi.waitFor(() => expect($previewTabs.get().map(tab => tab.target.url)).toContain('https://cloud.semantier.cn/chat/new'))
+  await vi.waitFor(() => expect($previewTabs.get().map(tab => tab.target.url)).toContain('https://cloud.semantier.cn/billing?entry=windows'))
   expect(window.hermesDesktop.openExternal).not.toHaveBeenCalled()
 })
 

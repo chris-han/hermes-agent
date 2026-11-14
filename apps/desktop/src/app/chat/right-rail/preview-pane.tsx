@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { requestComposerAttachImages, requestComposerFocus, requestComposerInsert } from '@/app/chat/composer/focus'
 import { openGuestContextMenu } from '@/app/context-menu/store'
 import { PanelEmpty } from '@/app/overlays/panel'
+import { isSemantierPortalReturn } from '@/app/settings/billing/semantier-portal'
 import { isElementInHiddenPane } from '@/components/pane-shell/pane-visibility'
 import { Tip } from '@/components/ui/tooltip'
 import { type Translations, useI18n } from '@/i18n'
@@ -35,15 +36,19 @@ import { notify, notifyError } from '@/store/notifications'
 import {
   $browserPages,
   $previewServerRestart,
+  $visiblePreviewTabs,
+  closeRightRailTab,
   commitBrowserTabLocation,
   failPreviewServerRestart,
   noteBrowserPage,
   popOutBrowserTab,
+  previewProfileScope,
   type PreviewRenderMode,
   type PreviewTarget,
   setPreviewRenderMode
 } from '@/store/preview'
-import { $selectedStoredSessionId } from '@/store/session'
+import { $activeSessionId, $selectedStoredSessionId } from '@/store/session'
+import { $focusedStoredSessionId } from '@/store/session-focus'
 import { canOpenBrowserWindow, isBrowserWindow } from '@/store/windows'
 
 import { placeAnnotateCard, PreviewAnnotateCard } from './preview-annotate-card'
@@ -274,9 +279,11 @@ function usePreviewPageReader(isWebPreview: boolean, tabId: string | undefined, 
       let text: unknown
       const bridge = window.hermesDesktop?.previewFrames
       const webContentsId = webview.getWebContentsId?.()
+
       if (bridge) {
         if (typeof webContentsId !== 'number') { throw new Error('PANE_UNAVAILABLE') }
         text = await readPreviewFrameText(createPreviewFrameRunner(() => webviewRef.current, bridge))
+
         if (webviewRef.current !== webview || webview.getWebContentsId?.() !== webContentsId) {throw new Error('STALE_TARGET')}
       } else {
         text = await webview.executeJavaScript('document.body ? document.body.innerText : ""')
@@ -895,10 +902,13 @@ export function PreviewPane({
     const bridge = window.hermesDesktop?.previewFrames
     const runner = createPreviewFrameRunner(() => webviewRef.current, bridge)
     const unregister = registerPreviewFrameRunner(tabId, runner)
+
     return () => {
       unregister()
+
       try {
         const webContentsId = webviewRef.current?.getWebContentsId?.()
+
         if (typeof webContentsId === 'number') { void bridge({ operation: 'dispose', webContentsId }).catch(() => {}) }
       } catch {
         // A destroyed guest disposes its own debugger in the main process.
@@ -1234,13 +1244,28 @@ export function PreviewPane({
       noteBrowserPage(tabId, guestPage(webview, liveUrlRef.current))
     }
 
+    const portalProfile = previewProfileScope()
+    const portalSession = $focusedStoredSessionId.get()
+    const portalRuntime = $activeSessionId.get()
+
     const onNavigate = (event: Event) => {
       browserPageEpochRef.current++
       const detail = event as Event & { isMainFrame?: boolean; url?: string }
 
+      if (detail.isMainFrame !== false && detail.url && tabId &&
+        portalProfile === previewProfileScope() && portalSession === $focusedStoredSessionId.get() && portalRuntime === $activeSessionId.get() &&
+        $visiblePreviewTabs.get().some(tab => tab.id === tabId && tab.target.url === initialUrl) &&
+        isSemantierPortalReturn(initialUrl, detail.url)) {
+        closeRightRailTab(tabId)
+        requestComposerFocus()
+
+        return
+      }
+
       if (detail.isMainFrame !== false) {
         browserCommittedEpochRef.current++
       }
+
       if (detail.url) {
         setLoadError(null)
         setCurrentUrl(detail.url)

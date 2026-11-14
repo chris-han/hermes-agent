@@ -7,17 +7,18 @@ import type { SemantierBillingCopy } from '@/i18n/semantier-billing'
 import { semantierCommerceCopy, semantierReadinessCopy } from '@/i18n/semantier-commerce'
 import { BarChart3, Package } from '@/lib/icons'
 import { fmtDateTime } from '@/lib/time'
+import { openCloudPortal } from '@/store/cloud-sign-in'
 import { $activeGatewayRoute } from '@/store/gateway'
 import { $connection } from '@/store/session'
 
 import { ListRow, SettingsSection } from '../primitives'
 
 import type { BillingRefusal, BillingResult } from './api'
-import { openExternal } from './open-external'
 import { semantierPortalTask } from './semantier-portal'
 import type { BillingBackendState, SemantierBillingResponse, SemantierBillingStateResponse } from './types'
 
 interface SemantierBillingProps {
+  onPortalOpen?: () => void
   state?: SemantierBillingResponse
   refusal?: BillingRefusal
 }
@@ -92,7 +93,7 @@ function usageRows(state: SemantierBillingStateResponse, c: SemantierBillingCopy
   </>
 }
 
-export function SemantierBilling({ state, refusal }: SemantierBillingProps) {
+export function SemantierBilling({ state, refusal, onPortalOpen }: SemantierBillingProps) {
   const { t, locale } = useI18n()
   const b = t.settings.billing
   const c = b.semantier
@@ -139,7 +140,9 @@ export function SemantierBilling({ state, refusal }: SemantierBillingProps) {
         {tasks.map(task => {
           const url = semantierPortalTask(state.portal.url, state.organization.id, state.billing_account_id, task)
 
-          return url && <Button key={task} onClick={() => openExternal(url)} variant="outline">{commerce[task]}</Button>
+          return url && <Button key={task} onClick={() => {
+            if (openCloudPortal(url, commerce[task])) { onPortalOpen?.() }
+          }} variant="outline">{commerce[task]}</Button>
         })}
       </div>}
       <p className="py-3 text-sm text-(--ui-text-tertiary)">{state.capabilities.can_open_portal && state.portal.url ? commerce.browserAuth : c.commercialUnavailable}</p>

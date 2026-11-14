@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
 
-import { semantierPortalTask } from './semantier-portal'
+import { isSemantierPortalReturn, semantierPortalTask } from './semantier-portal'
 
 it('opens only a configured origin and finite account-scoped tasks without secrets', () => {
   expect(semantierPortalTask('https://billing.example', 'org / a', 'account / a', 'orders'))
@@ -23,4 +23,17 @@ it('keeps same-named billing accounts in different organizations distinct', () =
   expect(new URL(second).searchParams.get('organization_id')).toBe('org-b')
   expect(first).not.toBe(second)
   expect(semantierPortalTask('https://billing.example', '', 'shared-account', 'plans')).toBeNull()
+})
+
+it('accepts only a same-origin return from a native-marked portal task', () => {
+  const initial = 'https://billing.example/billing?entry=windows'
+  expect(isSemantierPortalReturn(initial, initial + '#semantier-return-to-app')).toBe(true)
+
+  for (const next of ['https://evil.example/billing#semantier-return-to-app',
+    'https://billing.example/chat#semantier-return-to-app', initial,
+    'https://user:secret@billing.example/billing#semantier-return-to-app']) {
+    expect(isSemantierPortalReturn(initial, next)).toBe(false)
+  }
+
+  expect(isSemantierPortalReturn('https://billing.example/billing', initial + '#semantier-return-to-app')).toBe(false)
 })
