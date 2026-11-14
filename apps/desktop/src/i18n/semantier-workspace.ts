@@ -13,6 +13,7 @@ const en = {
   other: 'Other cloud agents',
   identityRequired: 'Sign-in did not return an authenticated workspace.'
 }
+
 const zh: typeof en = {
   title: 'Semantier Cloud',
   description: '打开与 Hermes Workspace 相同的会话和僚机。',
@@ -28,6 +29,7 @@ const zh: typeof en = {
   other: '其他云端智能体',
   identityRequired: '登录未返回已认证的工作区。'
 }
+
 const hant: typeof en = {
   title: 'Semantier Cloud',
   description: '開啟與 Hermes Workspace 相同的會話和僚機。',
@@ -43,6 +45,7 @@ const hant: typeof en = {
   other: '其他雲端智能體',
   identityRequired: '登入未傳回已驗證的工作區。'
 }
+
 export function semantierWorkspaceCopy(locale: string): typeof en {
   return /^zh[-_]hant|^zh[-_](tw|hk)/i.test(locale) ? hant : /^zh/i.test(locale) ? zh : en
 }

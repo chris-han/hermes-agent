@@ -55,14 +55,17 @@ it('rechecks visibility after asynchronous frame inspection before executing', a
   vi.spyOn(PreviewFrames.prototype, 'mapPoint').mockImplementation(async () => ({ visible: true, x: 0, y: 0 }))
   const evaluate = vi.spyOn(PreviewFrames.prototype, 'evaluate').mockResolvedValue('secret')
   vi.spyOn(PreviewFrames.prototype, 'dispose').mockImplementation(() => {})
+
   const access = new PreviewFrameAccess({} as never, () => {
     if (!allowed) {
       throw new Error('PANE_UNAVAILABLE')
     }
   })
+
   const token = (await access.list())[0].token
   vi.mocked(PreviewFrames.prototype.mapPoint).mockImplementation(async () => {
     allowed = false
+
     return { visible: true, x: 0, y: 0 }
   })
   await expect(access.run(token, 'x')).rejects.toThrow('PANE_UNAVAILABLE')
@@ -78,14 +81,17 @@ it('does not return frame content if the guest becomes hidden during execution',
   vi.spyOn(PreviewFrames.prototype, 'mapPoint').mockResolvedValue({ visible: true, x: 0, y: 0 })
   vi.spyOn(PreviewFrames.prototype, 'evaluate').mockImplementation(async () => {
     allowed = false
+
     return 'secret'
   })
   vi.spyOn(PreviewFrames.prototype, 'dispose').mockImplementation(() => {})
+
   const access = new PreviewFrameAccess({} as never, () => {
     if (!allowed) {
       throw new Error('PANE_UNAVAILABLE')
     }
   })
+
   const token = (await access.list())[0].token
   await expect(access.run(token, 'x')).rejects.toThrow('PANE_UNAVAILABLE')
   access.dispose()
@@ -96,6 +102,7 @@ it('disposes a guest attachment when the owned webview is destroyed', async () =
   let destroyed: (() => void) | undefined
   const partition = {} as never
   const sender = { mainFrame: {} }
+
   const guest = {
     id: 781234,
     debugger: {},
@@ -107,6 +114,7 @@ it('disposes a guest attachment when the owned webview is destroyed', async () =
       destroyed = callback
     }
   }
+
   const dispose = vi.spyOn(PreviewFrameAccess.prototype, 'dispose').mockImplementation(() => {})
   vi.spyOn(PreviewFrameAccess.prototype, 'list').mockResolvedValue([])
   registerPreviewFramesIpc(

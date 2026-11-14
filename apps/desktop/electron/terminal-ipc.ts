@@ -181,6 +181,7 @@ export function registerTerminalIpc({
     const semantierDesktop = /^Semantier Agent(?:\s|$)/.test(app.getName())
     env.TERM_PROGRAM = semantierDesktop ? 'Semantier' : 'Hermes'
     env.TERM_PROGRAM_VERSION = app.getVersion()
+
     if (semantierDesktop) {
       env.SEMANTIER_CLI_BRAND = '1'
       env.SEMANTIER_CLI_VERSION = app.getVersion()

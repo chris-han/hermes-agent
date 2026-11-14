@@ -47,6 +47,7 @@ export function useChatBarState({
   const connection = useStore($connection)
   const ownerKey = modelDiscoveryOwnerKey(modelOptionsOwnerConnectionId, connection)
   const profile = modelOptionsProfile || activeGatewayProfile
+
   const modelOptionsQuery = useQuery<ModelOptionsResult>({
     queryKey: modelOptionsQueryKey(profile, activeSessionId, ownerKey),
     queryFn: () =>

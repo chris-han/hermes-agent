@@ -62,6 +62,7 @@ export function connectionScopeSuffix(
   // One Cloud origin serves many accounts. Legacy Native connections keep
   // their existing keys; authenticated Workspace caches follow server identity.
   const scope = connection.workspaceScope
+
   const account = connection.transport === 'semantier-workspace-http'
     ? `.workspace.${scope ? encodeURIComponent(JSON.stringify([scope.userId, scope.workspaceId, scope.organizationId])) : 'signed-out'}`
     : ''

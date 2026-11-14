@@ -30,18 +30,22 @@ export class PreviewFrames {
     if (this.disposed) {
       return
     }
+
     if (method === 'Target.attachedToTarget' && params.targetInfo?.type === 'iframe') {
       const child = String(params.sessionId)
       this.sessions.set(child, String(params.targetInfo.targetId))
+
       const work = this.initialize(child).catch(() => {
         this.sessions.delete(child)
         this.childFailure = true
       })
+
       this.pending.add(work)
       void work.finally(() => this.pending.delete(work))
     } else if (method === 'Target.detachedFromTarget') {
       const child = String(params.sessionId)
       this.sessions.delete(child)
+
       for (const key of this.contexts.keys()) {
         if (key.startsWith(`${child}:`)) {
           this.contexts.delete(key)
@@ -97,15 +101,18 @@ export class PreviewFrames {
     if (this.disposed) {
       throw new Error('PREVIEW_DEBUGGER_CLOSED')
     }
+
     if (!this.started) {
       if (this.debugger_.isAttached()) {
         throw new Error('PREVIEW_DEBUGGER_BUSY')
       }
+
       this.started = (async () => {
         this.debugger_.attach('1.3')
         this.ownsDebugger = true
         this.debugger_.on('message', this.onMessage)
         this.debugger_.on('detach', this.onDetach)
+
         try {
           await this.initialize()
         } catch (error) {
@@ -114,13 +121,17 @@ export class PreviewFrames {
         }
       })()
     }
+
     await this.started
+
     while (this.pending.size) {
       await Promise.all([...this.pending])
     }
+
     if (this.childFailure) {
       throw new Error('PREVIEW_FRAME_UNAVAILABLE')
     }
+
     if (!this.ownsDebugger || this.disposed) {
       throw new Error('PREVIEW_DEBUGGER_CLOSED')
     }
@@ -129,13 +140,17 @@ export class PreviewFrames {
   async snapshot(): Promise<PreviewFrame[]> {
     await this.start()
     const frames: PreviewFrame[] = []
+
     for (const sessionId of [undefined, ...this.sessions.keys()]) {
       const result = (await this.debugger_.sendCommand('Page.getFrameTree', {}, sessionId)) as { frameTree: FrameTree }
+
       const visit = (tree: FrameTree) => {
         const contextId = this.contexts.get(this.key(sessionId, tree.frame.id))
+
         if (!contextId) {
           throw new Error('PREVIEW_FRAME_UNAVAILABLE')
         }
+
         frames.push({
           id: tree.frame.id,
           parentId: tree.frame.parentId,
@@ -143,35 +158,45 @@ export class PreviewFrames {
           sessionId,
           contextId
         })
+
         for (const child of tree.childFrames || []) {
           visit(child)
         }
       }
+
       visit(result.frameTree)
     }
+
     if (!frames.some(frame => !frame.parentId)) {
       throw new Error('PANE_UNAVAILABLE')
     }
+
     return frames
   }
 
   async evaluate(frame: PreviewFrame, expression: string): Promise<unknown> {
     await this.start()
+
     const check = () => {
       if (this.contexts.get(this.key(frame.sessionId, frame.id)) !== frame.contextId) {
         throw new Error('STALE_FRAME')
       }
     }
+
     check()
+
     const result = await this.debugger_.sendCommand(
       'Runtime.evaluate',
       { expression, uniqueContextId: frame.contextId, awaitPromise: true, returnByValue: true },
       frame.sessionId
     )
+
     check()
+
     if (result.exceptionDetails) {
       throw new Error('PREVIEW_FRAME_SCRIPT_FAILED')
     }
+
     return result.result?.value
   }
 
@@ -180,18 +205,23 @@ export class PreviewFrames {
    * compositor and still produces trusted events in the focused document. */
   async input(frame: PreviewFrame, event: any): Promise<void> {
     await this.start()
+
     const verify = () => {
       if (this.contexts.get(this.key(frame.sessionId, frame.id)) !== frame.contextId) {
         throw new Error('STALE_FRAME')
       }
     }
+
     verify()
+
     if (event?.type === 'mouseMove' || event?.type === 'mouseDown' || event?.type === 'mouseUp') {
       if (!Number.isFinite(event.x) || !Number.isFinite(event.y)) {
         throw new Error('INVALID_INPUT')
       }
+
       const type =
         event.type === 'mouseMove' ? 'mouseMoved' : event.type === 'mouseDown' ? 'mousePressed' : 'mouseReleased'
+
       await this.debugger_.sendCommand('Input.dispatchMouseEvent', {
         type,
         x: event.x,
@@ -201,9 +231,11 @@ export class PreviewFrames {
       })
     } else if (event?.type === 'keyDown' || event?.type === 'keyUp' || event?.type === 'char') {
       const key = event.keyCode
+
       if (typeof key !== 'string' || !key || key.length > 32) {
         throw new Error('INVALID_INPUT')
       }
+
       if (
         (await this.evaluate(
           frame,
@@ -212,10 +244,13 @@ export class PreviewFrames {
       ) {
         throw new Error('FRAME_NOT_FOCUSED')
       }
+
       const modifierBits: Record<string, number> = { alt: 1, control: 2, meta: 4, shift: 8 }
+
       const modifiers = Array.isArray(event.modifiers)
         ? event.modifiers.reduce((value: number, name: string) => value | (modifierBits[name] || 0), 0)
         : 0
+
       const special: Record<string, number> = {
         Backspace: 8,
         Tab: 9,
@@ -230,12 +265,16 @@ export class PreviewFrames {
         ArrowDown: 40,
         Delete: 46
       }
+
       const singleCharacter = Array.from(key).length === 1
+
       const windowsVirtualKeyCode =
         special[key] || (singleCharacter && key.codePointAt(0)! < 128 ? key.toUpperCase().charCodeAt(0) : 0)
+
       if (event.type === 'char' && !singleCharacter && key !== 'Enter') {
         return
       }
+
       const type = event.type === 'keyDown' ? 'rawKeyDown' : event.type === 'keyUp' ? 'keyUp' : 'char'
       const text = event.type === 'char' ? (key === 'Enter' ? '\r' : key) : undefined
       const code = /^[a-z]$/i.test(key) ? `Key${key.toUpperCase()}` : key
@@ -251,6 +290,7 @@ export class PreviewFrames {
     } else {
       throw new Error('INVALID_INPUT')
     }
+
     verify()
   }
 
@@ -265,15 +305,19 @@ export class PreviewFrames {
     let x = point?.x ?? 0
     let y = point?.y ?? 0
     const visited = new Set<string>()
+
     while (current.parentId) {
       if (visited.has(current.id)) {
         throw new Error('STALE_FRAME')
       }
+
       visited.add(current.id)
       const parent = frames.find(candidate => candidate.id === current.parentId)
+
       if (!parent) {
         throw new Error('STALE_FRAME')
       }
+
       const verify = () => {
         if (
           this.contexts.get(this.key(current.sessionId, current.id)) !== current.contextId ||
@@ -282,18 +326,24 @@ export class PreviewFrames {
           throw new Error('STALE_FRAME')
         }
       }
+
       verify()
       const owner = await this.debugger_.sendCommand('DOM.getFrameOwner', { frameId: current.id }, parent.sessionId)
+
       const node = await this.debugger_.sendCommand(
         'DOM.resolveNode',
         { backendNodeId: owner.backendNodeId },
         parent.sessionId
       )
+
       const objectId = node.object?.objectId
+
       if (!objectId) {
         throw new Error('STALE_FRAME')
       }
+
       let result: any
+
       try {
         result = await this.debugger_.sendCommand(
           'Runtime.callFunctionOn',
@@ -330,15 +380,19 @@ export class PreviewFrames {
       } finally {
         await this.debugger_.sendCommand('Runtime.releaseObject', { objectId }, parent.sessionId).catch(() => {})
       }
+
       verify()
       const mapped = result.result?.value
+
       if (!mapped || !mapped.visible || !Number.isFinite(mapped.x) || !Number.isFinite(mapped.y)) {
         return { visible: false, x, y }
       }
+
       x = mapped.x
       y = mapped.y
       current = parent
     }
+
     return { visible: true, x, y }
   }
 
@@ -346,12 +400,15 @@ export class PreviewFrames {
     if (this.disposed) {
       return
     }
+
     this.disposed = true
     this.debugger_.removeListener('message', this.onMessage)
     this.debugger_.removeListener('detach', this.onDetach)
+
     if (this.ownsDebugger && this.debugger_.isAttached()) {
       this.debugger_.detach()
     }
+
     this.ownsDebugger = false
     this.contexts.clear()
     this.contextNumbers.clear()
