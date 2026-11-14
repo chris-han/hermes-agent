@@ -225,13 +225,19 @@ def propose_intent(agent, message, history, pane_context=None):
     from agent.aux_accounting import record_aux_usage
     from agent.turn_truncation import normalize_response_for_agent
     data=assets()
+    from agent.semantier_gateway import agent_cloud_settings, cloud_model_profile, is_gateway_route
+    settings=agent_cloud_settings(agent)
+    managed=settings is not None or is_gateway_route(str(agent.base_url or ''))
+    text_mode=managed and cloud_model_profile(agent.model,settings=settings)['capabilities'].get('tools') is not True
     context=[{'role':m.get('role'),'content':str(m.get('content',''))[-1600:]} for m in (history or [])[-2:] if m.get('role') in ('user','assistant')]
-    messages=[{'role':'system','content':data['prompt']},{'role':'user','content':json.dumps({'request':message,'reference_context':context,'owned_page_present':bool(isinstance(pane_context,dict) and pane_context.get('success'))},ensure_ascii=False)}]
-    request=agent._build_api_kwargs(messages,tools_for_api=[data['schema']])
+    messages=[{'role':'system','content':data['text_prompt'] if text_mode else data['prompt']},{'role':'user','content':json.dumps({'request':message,'reference_context':context,'owned_page_present':bool(isinstance(pane_context,dict) and pane_context.get('success'))},ensure_ascii=False)}]
+    request=agent._build_api_kwargs(messages,tools_for_api=[] if text_mode else [data['schema']])
     request['stream']=False
     request['timeout']=30
     for key in ('max_tokens','max_completion_tokens','max_output_tokens'):
         if key in request:request[key]=min(int(request[key] or 512),512)
+    if text_mode and not any(key in request for key in ('max_tokens','max_completion_tokens','max_output_tokens')):
+        request['max_tokens']=512
     # Respect each native transport's tool-choice shape, never a new provider.
     request.pop('tool_choice',None)
     wire_tools=request.get('tools') or []
@@ -258,9 +264,14 @@ def propose_intent(agent, message, history, pane_context=None):
     record_aux_usage(response,'desktop_browser_target',provider=agent.provider,base_url=agent.base_url)
     normalized=normalize_response_for_agent(agent,response)
     calls=normalized.tool_calls or []
-    if len(calls)!=1 or calls[0].function.name!='browser_target_intent':return {'target_kind':'UNRESOLVED','operation':'none'}
-    raw_args=calls[0].function.arguments
-    proposal=json.loads(raw_args) if isinstance(raw_args,str) else raw_args
+    if text_mode:
+        if calls:return {'target_kind':'UNRESOLVED','operation':'none'}
+        raw_args=normalized.content
+    else:
+        if len(calls)!=1 or calls[0].function.name!='browser_target_intent':return {'target_kind':'UNRESOLVED','operation':'none'}
+        raw_args=calls[0].function.arguments
+    try:proposal=json.loads(raw_args) if isinstance(raw_args,str) else raw_args
+    except (TypeError,ValueError):return {'target_kind':'UNRESOLVED','operation':'none'}
     if (not isinstance(proposal,dict) or set(proposal)-{'target_kind','operation','url'}
         or proposal.get('target_kind') not in ('VISIBLE_PANE','INDEPENDENT','UNRESOLVED','NONE')
         or proposal.get('operation') not in ('existing','open','close','reload','back','forward','none')):

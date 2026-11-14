@@ -135,3 +135,41 @@ def test_native_wrapper_example_conforms_to_the_advertised_bridge_schema():
     _, name, arguments = native_pane_call(agent, 'drive_preview', {'action': 'elements'})
     schema = next(td['function']['parameters'] for td in bridge_tool_schemas(2) if td['function']['name'] == name)
     validate(arguments, schema)
+
+
+@pytest.mark.parametrize('tools_capability', [False, None])
+@pytest.mark.parametrize('reply, expected', [
+    ('{"target_kind":"NONE","operation":"none"}', 'NONE'),
+    ('not-json', 'UNRESOLVED'),
+    ('{"target_kind":"NONE","operation":"none","window_id":"forged"}', 'UNRESOLVED'),
+])
+def test_text_only_cloud_intent_uses_validated_json_without_enabling_tools(tmp_path, monkeypatch, tools_capability, reply, expected):
+    import yaml
+    from openai.types.chat import ChatCompletion
+    from agent.desktop_browser_target import propose_intent
+    from agent.transports.chat_completions import ChatCompletionsTransport
+    from agent.semantier_gateway import GatewaySettings, clear_cloud_catalog
+    base='http://127.0.0.1:12345/v1'
+    monkeypatch.setenv('HERMES_HOME',str(tmp_path))
+    monkeypatch.setenv('TEXT_ONLY_CLOUD_TEST_KEY','fixture-key')
+    (tmp_path/'config.yaml').write_text(yaml.safe_dump({'semantier_gateway':{
+        'enabled':True,'base_url':base,'api_key_env':'TEXT_ONLY_CLOUD_TEST_KEY'}}))
+    profile={'id':'novel-text-only','revision':'r1','protocol':'chat','account_id':'owned',
+        'context_window':128000,'max_output_tokens':2048,'request_parameters':{'output':'max_tokens','reasoning_controls':[]},
+        'capabilities':{'tools':tools_capability,'stream':True,'vision':False}}
+    clear_cloud_catalog()
+    monkeypatch.setattr('agent.semantier_gateway.cloud_catalog',lambda **kw:{'object':'list','data':[profile]})
+    seen=[]
+    def supplier(request):
+        seen.append(request)
+        return ChatCompletion(id='fixture',created=0,model='novel-text-only',object='chat.completion',choices=[{
+            'index':0,'finish_reason':'stop','message':{'role':'assistant','content':reply}}])
+    agent=SimpleNamespace(base_url=base,api_key='fixture-key',model='novel-text-only',provider='custom',
+        session_id='s',platform='desktop',api_mode='chat_completions',_force_ascii_payload=False,
+        _semantier_cloud_settings=GatewaySettings(base,'fixture-key'),_semantier_cloud_revision='r1',
+        _build_api_kwargs=lambda messages,tools_for_api:{'model':'novel-text-only','messages':messages,'tools':tools_for_api},
+        _interruptible_api_call=supplier,_get_transport=lambda:ChatCompletionsTransport())
+    assert propose_intent(agent,'Reply OK.',[])=={'target_kind':expected,'operation':'none'}
+    assert len(seen)==1 and not seen[0].get('tools') and 'tool_choice' not in seen[0]
+    assert seen[0]['max_tokens']==512
+    assert 'JSON' in seen[0]['messages'][0]['content']

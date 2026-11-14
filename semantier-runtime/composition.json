@@ -3433,8 +3433,8 @@
     },
     {
       "path": "src/prompts/agents/DESKTOP_BROWSER_TARGET_INTENT.json",
-      "sha256": "6062051dc2405ee4976650af890aa3d2ce02553d6ad6f7dd3ca2c99132fab40c",
-      "source_commit": "079c5954e4df62e946b059011dc7459705ea5fc2"
+      "sha256": "701d35df1d7e4d97b51066146b84fc1ec77b2625f564581b9a0642852ecf365c",
+      "source_commit": "5effa3162c4c6bd5a304c9cbc4fbdb0b964a1d35"
     },
     {
       "path": "src/prompts/agents/DIGITAL_CFO_METRIC_CONTEXT.md",
