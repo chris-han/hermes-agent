@@ -703,6 +703,7 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     onDeliverySourceChanged: callback => {
       const listener = (_event, selection) => callback(selection)
       ipcRenderer.on('hermes:updates:delivery:changed', listener)
+
       return () => ipcRenderer.removeListener('hermes:updates:delivery:changed', listener)
     },
     onProgress: callback => {

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { $previewTabs, closeRightRail, openBrowserTab, openPreview, browserUserSelection } from './preview'
+import { $previewTabs, browserUserSelection, closeRightRail, openBrowserTab, openPreview } from './preview'
 
 beforeEach(() => {
   closeRightRail()
