@@ -477,3 +477,26 @@ def test_expired_custody_reaches_desktop_catalog_as_authorization_expiry(native,
     row=next(row for row in payload['providers'] if row['slug']=='semantier-cloud')
     assert row['discovery_status']=='cloud_credential_expired'
     assert row['models']==[]
+
+
+def test_settings_can_return_to_installed_cloud_from_byok(native, monkeypatch):
+    from agent import semantier_gateway as cloud
+    from hermes_cli.config import atomic_config_replace
+    from hermes_cli.web_server_config import _apply_model_assignment_sync
+    device, home = native
+    install_wire(device, monkeypatch)
+    started = device.start()
+    device.poll(started['session_id'])
+    cfg = device._config()
+    cfg['model'] = {'provider': 'custom:other', 'default': 'byok-model',
+                    'base_url': 'https://other.example/v1', 'key_env': 'OTHER_PROVIDER_KEY'}
+    atomic_config_replace(home / 'config.yaml', cfg)
+    monkeypatch.setattr(cloud, 'cloud_model_profile', lambda *args, **kwargs: {
+        'protocol': 'chat_completions', 'revision': 'allowed-revision', 'capabilities': {}})
+    result = _apply_model_assignment_sync('main', 'semantier-cloud', 'allowed-model', '', '')
+    saved = device._config()
+    assert result['provider'] == saved['model']['provider'] == 'semantier-cloud'
+    assert saved['model']['default'] == 'allowed-model'
+    assert saved['providers']['semantier-cloud']['credential_ref'] == 'token-test'
+    assert not {'api_key', 'key_env', 'api_key_env'} & saved['model'].keys()
+    assert 'private-account-token' not in (home / 'config.yaml').read_text()

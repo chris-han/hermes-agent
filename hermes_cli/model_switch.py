@@ -1801,10 +1801,16 @@ def model_selection_config_updates(result: ModelSwitchResult, current_model_cfg:
     for key in stale:
         if key in model_cfg:
             updates[key] = None
-    from agent.semantier_gateway import is_gateway_route, cloud_connection_config, cloud_model_profile
+    from agent.semantier_gateway import is_gateway_route, cloud_connection_config, cloud_model_profile, gateway_settings
     if is_gateway_route(result.base_url):
-        cloud_config = cloud_connection_config()
-        updates['capability_revision'] = cloud_model_profile(result.new_model)['revision']
+        # An explicit Cloud pick may replace a BYOK default. Resolve its existing
+        # profile-owned connection before persisting the new model selection.
+        allow_unselected = target == 'semantier-cloud'
+        cloud_config = cloud_connection_config(allow_unselected=allow_unselected)
+        if cloud_config is None:
+            raise ValueError('Semantier Model Provider connection required')
+        settings = gateway_settings(allow_unselected=allow_unselected)
+        updates['capability_revision'] = cloud_model_profile(result.new_model, settings=settings)['revision']
         if cloud_config.get('credential_ref'):
             for field in ('api_key', 'api', 'key_env', 'api_key_env'):
                 updates[field] = None
